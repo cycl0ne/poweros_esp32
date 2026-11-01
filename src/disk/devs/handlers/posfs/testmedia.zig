@@ -21,6 +21,10 @@
 //! (`image`) on a fresh one.
 //! The clock and the random numbers are counters, so every run is the
 //! same run.
+//!
+//! Work handed to the other cores (`startWork`) waits for `finishWork` and runs
+//! there, its parts last first: a file system that looks at what the
+//! parts write before `finishWork`, or changes what they read, finds out.
 
 const std = @import("std");
 const media = @import("media.zig");
@@ -63,6 +67,12 @@ pub const TestMedia = struct {
     clock: u64 = 1_000_000_000,
     rng: std.Random.DefaultPrng,
     serial: u64 = 1,
+    /// The cores work may be handed to, the work started and not finished,
+    /// and how many works ran in parts.
+    parts: u32 = 3,
+    working: ?*media.Work = null,
+    working_parts: u32 = 0,
+    works: u32 = 0,
 
     pub const Held = struct { at: u64, data: []u8 };
 
@@ -329,7 +339,49 @@ pub const TestMedia = struct {
         var prng = std.Random.DefaultPrng.init(m.serial *% 0x9E37_79B9_7F4A_7C15);
         prng.random().bytes(into);
     }
+
+    pub fn cores(m: *TestMedia) u32 {
+        return m.parts;
+    }
+
+    pub fn startWork(m: *TestMedia, work: *media.Work, parts: u32) void {
+        std.debug.assert(m.working == null and parts >= 1 and parts <= m.parts);
+        m.working = work;
+        m.working_parts = parts;
+    }
+
+    pub fn finishWork(m: *TestMedia, work: *media.Work) void {
+        std.debug.assert(m.working == work);
+        var part = m.working_parts;
+        while (part > 0) {
+            part -= 1;
+            work.run(work, part, m.working_parts);
+        }
+        m.working = null;
+        m.works += 1;
+    }
 };
+
+test "work handed out runs at its finish, every part once" {
+    var m = try TestMedia.init(.sd, 64 * 1024, 4);
+    defer m.deinit();
+    const Count = struct {
+        work: media.Work = .{ .run = run },
+        seen: [media.max_parts]u32 = @splat(0),
+        fn run(work: *media.Work, part: u32, parts: u32) void {
+            const count: *@This() = @fieldParentPtr("work", work);
+            std.debug.assert(parts == 3);
+            count.seen[part] += 1;
+        }
+    };
+    var count: Count = .{};
+    const dev = m.device();
+    try std.testing.expectEqual(@as(u32, 3), dev.cores());
+    dev.startWork(&count.work, 3);
+    try std.testing.expectEqual(@as(u32, 0), count.seen[0]);
+    dev.finishWork(&count.work);
+    try std.testing.expectEqualSlices(u32, &.{ 1, 1, 1, 0 }, &count.seen);
+}
 
 test "flash clears bits, catches a page programmed twice, and erases" {
     var m = try TestMedia.init(.flash, 64 * 1024, 1);

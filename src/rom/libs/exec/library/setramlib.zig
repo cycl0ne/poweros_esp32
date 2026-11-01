@@ -19,8 +19,11 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// Nothing.
 ///
 /// BEHAVIOR:
-/// exec stores the word and **never looks at what it points to**. It is one
-/// pointer that a module has nowhere else to put.
+/// exec stores the word. It is one pointer that a module has nowhere else
+/// to put - and the loader's base, through which exec hands it the
+/// segments of a module that went (`UnLoadModule`, SINCE 1.25): at a last
+/// close, at an opener's base's close, in the low-memory flush. So it is a
+/// library's base with that call in its jump table, ramlib.library's.
 ///
 /// The reason it has nowhere else is worth stating, since it is the only
 /// thing this call is for. ramlib.library replaces exec's `OpenLibrary` and

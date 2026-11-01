@@ -32,7 +32,7 @@ const ImageView = @import("../image/_image.zig").ImageView;
 /// `error_out_of_host_memory`.
 ///
 /// BEHAVIOR:
-/// The colour attachment's view is of its image's first level. The size
+/// Each colour attachment's view is of its image's first level. The size
 /// may be smaller than the images: the framebuffer is their top left.
 ///
 /// CONTEXT:
@@ -65,17 +65,21 @@ pub fn CreateFramebuffer(base: *FacetBase, device: *facet.Device, info: *const f
     const pass = _objects.of(_render.RenderPass, info.render_pass);
     if (info.attachment_count != pass.attachment_count or info.layers != 1 or info.width == 0 or info.height == 0) return .error_initialization_failed;
     const views: []const *facet.ImageView = info.attachments[0..info.attachment_count];
-    const color = _objects.of(ImageView, views[pass.color]);
-    const image = color.image;
-    if (image.kind != .rows or image.format != pass.color_format or image.usage & facet.IMAGE_USAGE_COLOR_ATTACHMENT == 0) return .error_initialization_failed;
-    if (color.base_level != 0 or image.width < info.width or image.height < info.height) return .error_initialization_failed;
-    const depth: ?*ImageView = if (pass.depth) |index| depth: {
-        const view = _objects.of(ImageView, views[index]);
-        if (view.image.kind != .depth or view.image.width < info.width or view.image.height < info.height) return .error_initialization_failed;
-        break :depth view;
-    } else null;
+    var plan = _render.Framebuffer{ .device = owner, .width = info.width, .height = info.height };
+    for (pass.parts[0..pass.part_count], plan.targets[0..pass.part_count]) |part, *target| {
+        const color = _objects.of(ImageView, views[part.color]);
+        const image = color.image;
+        if (image.kind != .rows or image.format != part.color_format or image.usage & facet.IMAGE_USAGE_COLOR_ATTACHMENT == 0) return .error_initialization_failed;
+        if (color.base_level != 0 or image.width < info.width or image.height < info.height) return .error_initialization_failed;
+        const depth: ?*ImageView = if (part.depth) |index| depth: {
+            const view = _objects.of(ImageView, views[index]);
+            if (view.image.kind != .depth or view.image.width < info.width or view.image.height < info.height) return .error_initialization_failed;
+            break :depth view;
+        } else null;
+        target.* = .{ .width = info.width, .height = info.height, .color = color, .depth = depth };
+    }
     const made = _objects.create(base.sys_base, _render.Framebuffer) orelse return .error_out_of_host_memory;
-    made.* = .{ .device = owner, .width = info.width, .height = info.height, .color = color, .depth = depth };
+    made.* = plan;
     framebuffer.* = _objects.handle(facet.Framebuffer, made);
     return .success;
 }

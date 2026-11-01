@@ -62,9 +62,9 @@ pub fn CmdBindDescriptorSets(base: *FacetBase, buffer: *facet.CommandBuffer, bin
     _ = dynamic_offset_count;
     _ = dynamic_offsets;
     const made = _command.recording(buffer) orelse return;
-    if (bind_point != .graphics or first_set >= shader.MAX_SETS) return;
+    if ((bind_point != .graphics and bind_point != .compute) or first_set >= shader.MAX_SETS) return;
     var bound: [shader.MAX_SETS]*Set = undefined;
     const taken = @min(count, shader.MAX_SETS - first_set);
     for (bound[0..taken], sets[0..taken]) |*into, given| into.* = _objects.of(Set, given);
-    _command.record(made, _command.BindDescriptorSets{ .first = first_set, .count = taken }, *Set, bound[0..taken]);
+    _command.record(made, _command.BindDescriptorSets{ .first = first_set, .count = taken, .compute = @intFromBool(bind_point == .compute) }, *Set, bound[0..taken]);
 }

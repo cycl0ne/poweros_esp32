@@ -67,7 +67,7 @@ const Fake = struct {
         const fake = of(surface);
         if (pictures.len > fake.room - fake.made) return false;
         for (pictures, 0..) |*picture, k| {
-            picture.* = .{ .pixels = &fake.pixels[fake.made], .pitch = pitch, .handle = @ptrFromInt(fake.made + 1), .shown = k == 0 };
+            picture.* = .{ .pixels = &fake.pixels[fake.made], .pitch = pitch, .handle = @ptrFromInt(fake.made + 1), .shown = k == 0 and surface.swapchains == 0 };
             fake.made += 1;
         }
         return true;
@@ -387,7 +387,8 @@ test "refused: a surface that changed, a swapchain handed on, no room, a second 
     // What it handed out before is still shown.
     try testing.expectEqual(facet.Result.success, bench.present(first.?, held));
     fb.DestroySwapchain(bench.device, first);
-    try testing.expectEqual(@as(?u32, null), fake.unmade_shown);
+    // The newer one has shown nothing: the display still shows the old one's.
+    try testing.expectEqual(@as(?u32, held), fake.unmade_shown);
 
     // The surface's size changed: out of date, and nothing shown.
     const shows = fake.shows;

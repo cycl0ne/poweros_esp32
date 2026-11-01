@@ -9,40 +9,20 @@
 //! which may outlast the program's hold on the library.
 
 const std = @import("std");
+const facet_version = @import("facet_version.zig");
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const facet = sdk.facet;
+const timer = sdk.devices.timer;
 const ExecBase = sdk.interface.exec.ExecBase;
 const _base = @import("facet_base.zig");
 const FacetBase = _base.FacetBase;
 const facet_lvo = @import("facet_lvo.zig");
 
 pub const LIBRARY_NAME = facet.FACETNAME;
-pub const LIBRARY_VERSION = 1;
-/// 1: a window closed under its surface is found gone, never drawn into,
-/// and the surface answers `error_surface_lost` (intuition 0.47's
-/// window numbers); the depth pre-pass, a pipeline's own
-/// (`PIPELINE_CREATE_DEPTH_PREPASS`).
-/// 2: displays of 565 and colour attachments of R5G6B5: the tiles stay
-/// 8 bits a channel, dithered 4 x 4 into 16 bits as they are stored;
-/// command buffers recorded on the 32-bit chips too, whose chunks put
-/// the commands 4 bytes off the 8 they are aligned to.
-/// 3: a window's pixels read from intuition 0.49 (`WA_PixelFormat`).
-/// 4: a triangle's edges sorted the way its rows are walked once, as it
-/// is set up, not again in every tile it touches.
-/// 5: a window on a composed screen shows a swapchain's picture as it is
-/// (layers 0.7's `ShowLayerPicture`), not copied into the window first.
-/// 6: what draws is a driver behind each physical device's table
-/// (driver/), the cores the first; nothing a program sees changes.
-/// 7: the BCM2712's V3D a second physical device, listed after the cores;
-/// fragment functions of fixed forms (`shader.fixedFragment`), the only ones
-/// it runs, and the cores run too.
-/// 8: a device whose driver cannot carry on is lost: `error_device_lost`,
-/// nothing more played, and no image shown that may not be finished.
-/// 9: a window's picture that is late for the display's frame is shown at once,
-/// not a whole frame later.
-pub const LIBRARY_REVISION = 9;
-const BUILD_DATE = "30.10.2026";
+pub const LIBRARY_VERSION = facet_version.LIBRARY_VERSION;
+pub const LIBRARY_REVISION = facet_version.LIBRARY_REVISION;
+const BUILD_DATE = "31.10.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
@@ -54,6 +34,9 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     const header = lib.*;
     base.* = .{ .lib = header, .sys_base = sys_base, .seg_list = seg_list };
     sys_base.InitSemaphore(&base.v3d_lock);
+    sys_base.InitSemaphore(&base.modules_lock);
+    base.clock.node.message.length = @sizeOf(timer.TimeRequest);
+    base.clock_open = sys_base.OpenDevice(sdk.interface.timer.NAME, timer.UNIT_MICROHZ, &base.clock.node, 0) == 0;
     lib.revision = LIBRARY_REVISION;
     return lib;
 }
@@ -68,6 +51,8 @@ fn expunge(lib: *exec.Library) callconv(.c) ?*anyopaque {
     }
     const sys = base.sys_base;
     const seg_list = base.seg_list;
+    for (base.modules[0..base.module_count]) |module| sys.CloseLibrary(module.?);
+    if (base.clock_open) sys.CloseDevice(&base.clock.node);
     sys.DetachLibrary(lib);
     const start: *anyopaque = @ptrFromInt(@intFromPtr(lib) - lib.neg_size);
     sys.FreeMem(start, @as(usize, lib.neg_size) + lib.pos_size);

@@ -71,6 +71,12 @@
 //! the medium's first unit of writing (4 MiB on a card) to its end, and
 //! the table that says so is written after it.
 //!
+//! **Checksums on the other cores.** The crcs of a long run of blocks
+//! written are worked out by exec's workers (`PostWork`) while the run
+//! goes to the device, and the blocks of a long read are checked in parts
+//! on them; the handler waits for their replies on a port of its own
+//! before it uses what they worked out. One core: the handler does it.
+//!
 //! Notification's watchers and the record locks are the process's, as
 //! for the other file systems: the file system tells the watchers of its
 //! changes, and their replies and the record locks' timers come to ports
@@ -100,8 +106,8 @@ const fs_core = @import("fs.zig");
 
 pub const HANDLER_NAME = posfs.HANDLER_NAME;
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 6;
-const BUILD_DATE = "28.10.2026";
+const HANDLER_REVISION = 7;
+const BUILD_DATE = "31.10.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ HANDLER_VERSION, HANDLER_REVISION }) ++
@@ -150,8 +156,28 @@ pub const DeviceMedia = struct {
     /// Written to since the device was last told to put what it holds on
     /// the medium itself.
     unsynced: bool = false,
+    /// The cores, counted the first time they are asked for (0 before).
+    core_count: u32 = 0,
+    /// Where the parts of work handed to exec's workers are replied, made
+    /// the first time; the parts out, and how many have not come back.
+    work_port: ?*MsgPort = null,
+    parts: [media.max_parts]Part = undefined,
+    out: u32 = 0,
 
     pub const Area = struct { first: u64, bytes: u64 };
+
+    /// A part of work posted to exec's workers.
+    const Part = struct {
+        job: exec.WorkJob,
+        work: *media.Work,
+        part: u32,
+        parts: u32,
+
+        fn run(job: *exec.WorkJob) callconv(.c) void {
+            const part: *Part = @fieldParentPtr("job", job);
+            part.work.run(part.work, part.part, part.parts);
+        }
+    };
 
     /// The startup message's environment: the area - cylinders, or none
     /// for the whole medium - what is in it, and the most a command moves.
@@ -328,6 +354,47 @@ pub const DeviceMedia = struct {
     /// From the chip's random number generator.
     pub fn random(_: *DeviceMedia, into: *[16]u8) void {
         sdk.hardware.rng.fill(into);
+    }
+
+    /// The cores running: those ReadCoreTimes answers for.
+    pub fn cores(m: *DeviceMedia) u32 {
+        if (m.core_count == 0) {
+            var times: exec.CoreTimes = .{};
+            var count: u32 = 0;
+            while (count < media.max_parts and m.sys.ReadCoreTimes(count, &times)) count += 1;
+            m.core_count = @max(count, 1);
+        }
+        return m.core_count;
+    }
+
+    /// Each part posted as a job of its own; without a port for their
+    /// replies, done here.
+    pub fn startWork(m: *DeviceMedia, work: *media.Work, parts: u32) void {
+        if (m.work_port == null) m.work_port = m.sys.CreateMsgPort();
+        const port = m.work_port orelse {
+            var part: u32 = 0;
+            while (part < parts) : (part += 1) work.run(work, part, parts);
+            return;
+        };
+        for (m.parts[0..parts], 0..) |*part, index| {
+            part.* = .{
+                .job = .{ .message = .{ .reply_port = port, .length = @sizeOf(Part) }, .work = Part.run },
+                .work = work,
+                .part = @intCast(index),
+                .parts = parts,
+            };
+            m.out += 1;
+            m.sys.PostWork(&part.job);
+        }
+    }
+
+    /// Every part's reply taken.
+    pub fn finishWork(m: *DeviceMedia, _: *media.Work) void {
+        const port = m.work_port orelse return;
+        while (m.out != 0) {
+            _ = m.sys.WaitPort(port);
+            while (m.sys.GetMsg(port)) |_| m.out -= 1;
+        }
     }
 
     /// `bytes` at the partition's byte `at`, in commands of at most

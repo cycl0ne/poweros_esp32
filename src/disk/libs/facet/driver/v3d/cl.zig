@@ -90,10 +90,10 @@ pub fn renderTarget0(list: *List, tile: u32, clear: u32) void {
 }
 
 /// The last of the rendering mode's packets: depth and stencil's clear.
-pub fn zsClear(list: *List, depth: f32) void {
+pub fn zsClear(list: *List, depth: f32, stencil: u32) void {
     const bits: u32 = @bitCast(depth);
     list.byte(TILE_RENDERING_MODE_CFG);
-    list.double(1 | @as(u64, bits) << 16);
+    list.double(1 | @as(u64, stencil) << 8 | @as(u64, bits) << 16);
 }
 
 pub fn tileListInitialBlock(list: *List) void {
@@ -191,6 +191,7 @@ pub const Cfg = struct {
     /// As facet.CompareOp numbers them, from never to always.
     compare: u32 = COMPARE_ALWAYS,
     depth_write: bool = false,
+    stencil: bool = false,
     blend: bool = false,
 };
 
@@ -200,6 +201,7 @@ pub fn cfgBits(list: *List, cfg: Cfg) void {
         @as(u32, @intFromBool(cfg.clockwise)) << 2 |
         cfg.compare << 12 |
         @as(u32, @intFromBool(cfg.depth_write)) << 15 |
+        @as(u32, @intFromBool(cfg.stencil)) << 18 |
         @as(u32, @intFromBool(cfg.blend)) << 19 |
         Z_CLIP_ZERO_TO_ONE << 22;
     list.byte(96);
@@ -208,23 +210,69 @@ pub fn cfgBits(list: *List, cfg: Cfg) void {
     list.byte(@truncate(value >> 16));
 }
 
-const BLEND_SRC_ALPHA: u32 = 6;
-const BLEND_INV_SRC_ALPHA: u32 = 7;
-const BLEND_ADD: u32 = 0;
+/// How render target 0 is written: factors and modes as facet.library
+/// numbers them, which is as the hardware does.
+pub const Mixing = struct {
+    src_color: u32 = 1,
+    dst_color: u32 = 0,
+    color_mode: u32 = 0,
+    src_alpha: u32 = 1,
+    dst_alpha: u32 = 0,
+    alpha_mode: u32 = 0,
+    /// Red, green, blue and alpha, 0 to 1.
+    constants: [4]f32 = .{ 0, 0, 0, 0 },
+    /// Red in bit 0: the channels written.
+    channels: u32 = 0xF,
+};
 
-/// Render target 0 blended by the alpha of what is drawn, its alpha too.
-pub fn blendAlpha(list: *List) void {
+/// Render target 0 blended as `mixing` says.
+pub fn blend(list: *List, mixing: *const Mixing) void {
     list.byte(83);
     list.byte(1);
     list.byte(84);
-    const factors = BLEND_INV_SRC_ALPHA << 4 | BLEND_SRC_ALPHA;
-    list.word(1 << 24 | factors << 16 | BLEND_ADD << 12 | factors << 4 | BLEND_ADD);
+    const color = mixing.dst_color << 4 | mixing.src_color;
+    const alpha = mixing.dst_alpha << 4 | mixing.src_alpha;
+    list.word(1 << 24 | color << 16 | mixing.color_mode << 12 | alpha << 4 | mixing.alpha_mode);
+    list.byte(86);
+    list.word(half(mixing.constants[0]) | half(mixing.constants[1]) << 16);
+    list.word(half(mixing.constants[2]) | half(mixing.constants[3]) << 16);
 }
 
-/// All channels of all targets written: a bit here says not to.
-pub fn colorWriteMasks(list: *List) void {
+fn half(value: f32) u32 {
+    return @as(u16, @bitCast(@as(f16, @floatCast(value))));
+}
+
+/// The channels of render target 0 written, red in bit 0, and all of the
+/// others: a bit here says not to.
+pub fn colorWriteMasks(list: *List, channels: u32) void {
     list.byte(87);
-    list.word(0);
+    list.word(~channels & 0xF);
+}
+
+/// A face's stencil test, the operations and compare as the hardware numbers
+/// them.
+pub const StencilFace = struct {
+    fail: u32,
+    pass: u32,
+    depth_fail: u32,
+    compare: u32,
+    compare_mask: u8,
+    write_mask: u8,
+    reference: u8,
+};
+
+/// What the front faces, or the back ones, are tested with.
+pub fn stencilCfg(list: *List, face: *const StencilFace, front: bool) void {
+    list.byte(80);
+    list.word(@as(u32, face.reference) |
+        @as(u32, face.compare_mask) << 8 |
+        face.compare << 16 |
+        face.fail << 19 |
+        face.depth_fail << 22 |
+        face.pass << 25 |
+        @as(u32, @intFromBool(front)) << 28 |
+        @as(u32, @intFromBool(!front)) << 29);
+    list.byte(face.write_mask);
 }
 
 /// One sample's worth of coverage, in all 4 of its bits.

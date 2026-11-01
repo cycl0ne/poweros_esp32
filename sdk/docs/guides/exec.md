@@ -248,7 +248,8 @@ total alone.
 **When memory runs short.** An allocation that finds no room asks the
 low-memory handlers, highest priority first, and tries again after each
 one that freed something. exec's own, at priority 0, expunges a library
-or device nobody has open, one per call. A module with a cache adds one
+or device nobody has open, one per call - and one loaded from the disk
+takes its code with it, ramlib.library unloading the segments. A module with a cache adds one
 with `AddMemHandler`: an `exec.Interrupt` whose code is an
 `exec.MemHandlerFn`, answering `MEM_DID_NOTHING`, `MEM_TRY_AGAIN` or
 `MEM_ALL_DONE`. It runs inside someone's `AllocMem`, whose caller may hold
@@ -681,6 +682,7 @@ the rules exec checks and the lock order are in
 | `Alert`, `AlertAt`, `Debug`, `MemDebug` | a Guru, the ROM debugger and memory debugging: [Debugging](debugging.md), [When a check fails](programs.md#when-a-check-fails), [When it stops](programs.md#when-it-stops) |
 | `LockExecList`, `UnlockExecList` | exec's own lists, read under their lock |
 | `SetTaskAffinity`, `CoreTask`, `ReadCoreTimes` | tasks and cores: [Several cores](programs.md#several-cores) |
+| `ShareWork`, `PostWork` | a job in parts on every core, a job beside its poster: [Work on more cores](cores.md) |
 | `SetTaskEndMsg`, `AddTaskEndHook`, `RemTaskEndHook` | told when a task has ended; a library letting go of what it holds for a task - run before the task's private memory is freed, after its semaphores are let go |
 | `NewStackRun` | a function run on a bigger stack of its own, and back |
 | `RawDoFmt`, `RawPutChar` | formatting, and the raw serial port; `sdk.exec.kprintf` is the two together |

@@ -35,6 +35,8 @@ const _render = @import("../../render/_render.zig");
 const Pipeline = @import("../../pipeline/_pipeline.zig").Pipeline;
 const max_vertex_input_bindings = @import("../../instance/_instance.zig").max_vertex_input_bindings;
 const _vertices = @import("../_vertices.zig");
+const _compute = @import("../_compute.zig");
+const _transfer = @import("../_transfer.zig");
 const _draw = @import("_draw.zig");
 
 pub const VertexBuffer = _vertices.VertexBuffer;
@@ -59,11 +61,23 @@ pub const Player = struct {
     index_type: facet.IndexType = .uint16,
     viewport: facet.Viewport = .{ .width = 0, .height = 0 },
     scissor: facet.Rect2D = .{ .extent = .{} },
+    blend_constants: [4]f32 = @splat(0),
+    line_width: f32 = 1,
+    stencil: _vertices.StencilSet = .{},
+    /// The colour attachment has no alpha.
+    target_opaque: bool = false,
+    /// Something left out for want of room has been reported.
+    told_no_room: bool = false,
     /// The sets and the push constants as bound, and the copy of them in
     /// the frame's memory the draws since they last changed read; null
     /// until a draw makes one.
     resources: shader.Resources = .{},
+    /// What compute functions have bound, apart from what draws have.
+    compute_pipeline: ?*Pipeline = null,
+    compute_resources: shader.Resources = .{},
     drawn: ?*const shader.Resources = null,
+    /// What was bound where a subpass of several attachments began.
+    saved: _vertices.Bound = undefined,
     /// Memory a draw's vertices are worked in, kept for the next.
     scratch: ?[*]u8 = null,
     scratch_bytes: usize = 0,
@@ -71,7 +85,7 @@ pub const Player = struct {
 
 /// The player a queue keeps while its device lasts: false when there is no
 /// memory for it.
-pub fn open(queue: *Queue) bool {
+pub fn open(queue: *Queue) callconv(.c) bool {
     const player = _objects.create(queue.device.sys, Player) orelse return false;
     player.* = .{};
     queue.driver = player;
@@ -80,12 +94,23 @@ pub fn open(queue: *Queue) bool {
 
 /// What the queue's player kept given back, and the player, as its device
 /// goes.
-pub fn close(queue: *Queue) void {
+pub fn close(queue: *Queue) callconv(.c) void {
     const player = playerOf(queue);
     if (player.target) |*target| target.deinit();
     if (player.scratch) |scratch| queue.device.sys.FreeVec(scratch);
     _objects.destroy(queue.device.sys, player);
     queue.driver = null;
+}
+
+/// Something left out of a frame for want of room, said once a queue with
+/// what it was. The program is not told: nothing of a frame being played
+/// reaches it. What can be caught while it is recorded is refused there
+/// instead (`CmdDraw`).
+pub fn noRoom(queue: *Queue, what: [*:0]const u8) void {
+    const player = playerOf(queue);
+    if (player.told_no_room) return;
+    player.told_no_room = true;
+    exec.kprintf(queue.device.sys, "facet.library: %s left out of the frame on the cores; what follows may be too\n", .{what});
 }
 
 pub fn playerOf(queue: *const Queue) *Player {
@@ -96,13 +121,46 @@ pub fn playerOf(queue: *const Queue) *Player {
 pub fn play(queue: *Queue, buffer: *CommandBuffer) void {
     const player = playerOf(queue);
     restart(player);
-    var commands = buffer.stream.commands();
+    playStream(queue, &buffer.stream);
+    // A command buffer that ends inside its render pass ends the pass.
+    endRenderPass(player);
+}
+
+/// The commands of a recording; a secondary command buffer's go on from what
+/// the primary has bound and begun.
+fn playStream(queue: *Queue, stream: *const _stream.Stream) void {
+    const player = playerOf(queue);
+    var commands = stream.commands();
+    var repeat: ?_vertices.Repeat = null;
     while (commands.next()) |head| switch (head.op) {
         .barrier => {},
         .copy_buffer_to_image => copyBufferToImage(_stream.as(_command.CopyBufferToImage, head)),
         .copy_buffer => _vertices.copyBuffer(_stream.as(_command.CopyBuffer, head)),
-        .begin_render_pass => beginRenderPass(queue, _stream.as(_command.BeginRenderPass, head)),
-        .end_render_pass => endRenderPass(player),
+        .copy_image => _transfer.copyImage(_stream.as(_command.CopyImage, head)),
+        .blit_image => _transfer.blitImage(_stream.as(_command.BlitImage, head)),
+        .copy_image_to_buffer => _transfer.copyImageToBuffer(_stream.as(_command.CopyImageToBuffer, head)),
+        .clear_attachment => if (player.drawing) _draw.clearAttachment(queue, _stream.as(_command.ClearAttachment, head)),
+        .begin_render_pass => {
+            const command = _stream.as(_command.BeginRenderPass, head);
+            beginRenderPass(queue, command, 0);
+            if (command.part_count > 1) {
+                player.saved = .of(player);
+                repeat = .{ .begin = command, .from = commands, .output = 1 };
+            }
+        },
+        .end_render_pass => {
+            endRenderPass(player);
+            if (repeat) |*again| {
+                if (again.output == again.begin.part_count) {
+                    repeat = null;
+                } else {
+                    player.saved.restore(player);
+                    beginRenderPass(queue, again.begin, again.output);
+                    commands = again.from;
+                    again.output += 1;
+                }
+            }
+        },
         .bind_pipeline => player.pipeline = _stream.as(_command.BindPipeline, head).pipeline,
         .bind_vertex_buffers => _vertices.bindVertexBuffers(player, _stream.as(_command.BindVertexBuffers, head)),
         .bind_index_buffer => {
@@ -112,15 +170,21 @@ pub fn play(queue: *Queue, buffer: *CommandBuffer) void {
             player.index_type = command.index_type;
         },
         .bind_descriptor_sets => {
-            _vertices.bindDescriptorSets(&player.resources, _stream.as(_command.BindDescriptorSets, head));
+            const command = _stream.as(_command.BindDescriptorSets, head);
+            _vertices.bindDescriptorSets(if (command.compute != 0) &player.compute_resources else &player.resources, command);
             player.drawn = null;
         },
         .push_constants => {
-            _vertices.pushConstants(&player.resources, _stream.as(_command.PushConstants, head));
+            const command = _stream.as(_command.PushConstants, head);
+            _vertices.pushConstants(&player.resources, command);
+            _vertices.pushConstants(&player.compute_resources, command);
             player.drawn = null;
         },
         .set_viewport => player.viewport = _stream.as(_command.SetViewport, head).viewport,
         .set_scissor => player.scissor = _stream.as(_command.SetScissor, head).scissor,
+        .set_blend_constants => player.blend_constants = _stream.as(_command.SetBlendConstants, head).constants,
+        .set_line_width => player.line_width = _stream.as(_command.SetLineWidth, head).width,
+        .set_stencil => player.stencil.apply(_stream.as(_command.SetStencil, head)),
         .draw => if (player.drawing) {
             const command = _stream.as(_command.Draw, head);
             _draw.draw(queue, command.first_vertex, command.vertex_count, null, command.first_instance, command.instance_count);
@@ -129,10 +193,22 @@ pub fn play(queue: *Queue, buffer: *CommandBuffer) void {
             const command = _stream.as(_command.DrawIndexed, head);
             _draw.draw(queue, command.first_index, command.index_count, command.vertex_offset, command.first_instance, command.instance_count);
         },
+        .draw_indirect => if (player.drawing) {
+            const command = _stream.as(_command.DrawIndirect, head);
+            for (0..command.count) |k| {
+                const made = _vertices.indirectDraw(command, @intCast(k)) orelse break;
+                _draw.draw(queue, made.first, made.count, made.vertex_offset, made.first_instance, made.instances);
+            }
+        },
+        .bind_compute_pipeline => player.compute_pipeline = _stream.as(_command.BindComputePipeline, head).pipeline,
+        .dispatch => if (!player.drawing) _compute.dispatch(queue.device.sys, player.compute_pipeline, &player.compute_resources, _stream.as(_command.Dispatch, head).count),
+        .dispatch_indirect => if (!player.drawing) _compute.dispatchIndirect(queue.device.sys, player.compute_pipeline, &player.compute_resources, _stream.as(_command.DispatchIndirect, head)),
+        .execute_commands => {
+            const command = _stream.as(_command.ExecuteCommands, head);
+            for (_stream.items(_command.ExecuteCommands, *CommandBuffer, command, command.count)) |secondary| playStream(queue, &secondary.stream);
+        },
         _ => {},
     };
-    // A command buffer that ends inside its render pass ends the pass.
-    endRenderPass(player);
 }
 
 /// Nothing bound, as each command buffer starts.
@@ -142,12 +218,14 @@ fn restart(player: *Player) void {
     player.vertex_buffers = @splat(.{});
     player.index_buffer = null;
     player.resources = .{};
+    player.compute_pipeline = null;
+    player.compute_resources = .{};
     player.drawn = null;
 }
 
 /// The surface a framebuffer's colour attachment is: its image's memory,
 /// row after row. Null for an image not bound.
-fn surfaceOf(framebuffer: *const _render.Framebuffer) ?raster.Surface {
+fn surfaceOf(framebuffer: *const _render.Target) ?raster.Surface {
     const image = framebuffer.color.image;
     return .{
         .pixels = image.data orelse return null,
@@ -163,12 +241,14 @@ fn surfaceOf(framebuffer: *const _render.Framebuffer) ?raster.Surface {
     };
 }
 
-fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass) void {
+fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, output: u32) void {
     const player = playerOf(queue);
     endRenderPass(player);
-    const framebuffer = command.framebuffer;
+    player.resources.output = output;
+    const framebuffer = &command.targets[output];
     const surface = surfaceOf(framebuffer) orelse return;
-    const render_pass = command.render_pass;
+    player.target_opaque = surface.format == .rgb565;
+    const render_pass = &command.parts[output];
     // The render area, cut to the framebuffer.
     const offset = command.area.offset;
     const left: u32 = @intCast(std.math.clamp(offset.x, 0, @as(i64, framebuffer.width)));
@@ -177,8 +257,9 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass) void
     const bottom: u32 = @intCast(std.math.clamp(@as(i64, offset.y) + command.area.extent.height, top, framebuffer.height));
     const area = raster.Rect{ .x = left, .y = top, .width = right - left, .height = bottom - top };
     const attachments = raster.Attachments{
-        .color = .{ .load = if (render_pass.color_load == .clear) .clear else .keep, .clear = command.clear_color },
-        .depth = .{ .used = render_pass.depth != null, .clear = @intCast(command.clear_depth) },
+        .color = .{ .load = if (render_pass.color_load == .clear) .clear else .keep, .clear = command.clear_colors[output] },
+        .depth = .{ .used = render_pass.tests_depth, .clear = @intCast(command.clear_depth) },
+        .stencil = .{ .used = render_pass.tests_stencil, .clear = @intCast(command.clear_stencil) },
     };
     player.display = framebuffer.color.image.display;
     if (player.target) |*target| {

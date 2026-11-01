@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! The second driver: the BCM2712's V3D 7.1, the 3D core of its VideoCore
-//! VII. What knows the hardware is the module `v3d` (v3d.zig), compiled into
-//! the library as the rasterizer is; this is its table, and `_play.zig` a
-//! command buffer made into its control lists.
+//! VII, a module of its own in LIBS:facet/ (v3d_fdriver.zig). What knows the
+//! hardware is the Zig module `v3d` (v3d.zig); this is its table, and
+//! `_play.zig` a command buffer made into its control lists.
 //!
 //! The board part is what finds it: where the machine has no such part the
 //! instance lists no device of it. It is switched on when a device first
@@ -29,9 +29,10 @@ const exec = sdk.exec;
 const facet = sdk.facet;
 const v3d = @import("v3d");
 const ExecBase = sdk.interface.exec.ExecBase;
-const facet_init = @import("../../facet_init.zig");
+const facet_version = @import("../../facet_version.zig");
 const FacetBase = @import("../../facet_base.zig").FacetBase;
 const _objects = @import("../../_objects.zig");
+const _render = @import("../../render/_render.zig");
 const _instance = @import("../../instance/_instance.zig");
 const PhysicalDevice = _instance.PhysicalDevice;
 const Device = @import("../../device/_device.zig").Device;
@@ -41,7 +42,7 @@ const Pipeline = @import("../../pipeline/_pipeline.zig").Pipeline;
 const Queue = @import("../../queue/_queue.zig").Queue;
 const CommandBuffer = @import("../../command/_command.zig").CommandBuffer;
 const _driver = @import("../_driver.zig");
-const cpu = @import("../cpu/cpu.zig");
+const _format = @import("../_format.zig");
 const _play = @import("_play.zig");
 const qpu = v3d.qpu;
 const tiling = v3d.tiling;
@@ -49,7 +50,7 @@ const Block = v3d.Block;
 
 pub const ops = _driver.Ops{
     .describe = &describe,
-    .format_properties = cpu.ops.format_properties,
+    .format_properties = &_format.properties,
     .allocate_memory = &allocateMemory,
     .free_memory = &freeMemory,
     .make_pipeline = &makePipeline,
@@ -57,6 +58,7 @@ pub const ops = _driver.Ops{
     .open_queue = &_play.open,
     .close_queue = &_play.close,
     .execute = &execute,
+    .texture_offset = &textureOffset,
     .texture_memory = &textureMemory,
     .picture_memory = exec.MEMF_DMA,
 };
@@ -68,6 +70,9 @@ pub const Programs = struct {
     color: u32,
     texture: u32,
     texture_color: u32,
+    array: u32,
+    cube: u32,
+    volume: u32,
 };
 
 /// What the V3D has while anything uses it. Its job, and its table, are
@@ -87,11 +92,11 @@ pub const Hardware = struct {
     broken: bool = false,
 };
 
-fn describe(sys: *ExecBase, physical: *PhysicalDevice) bool {
+fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
     if (v3d.Gpu.find(sys) == null) return false;
     physical.properties = .{
         .api_version = facet.API_VERSION_1_0,
-        .driver_version = facet.makeVersion(facet_init.LIBRARY_VERSION, facet_init.LIBRARY_REVISION),
+        .driver_version = facet.makeVersion(facet_version.LIBRARY_VERSION, facet_version.LIBRARY_REVISION),
         .vendor_id = 0x14E4,
         .device_id = 0x2712,
         .device_type = .integrated_gpu,
@@ -100,7 +105,9 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) bool {
             .max_image_dimension_2d = _instance.max_image_dimension,
             .max_framebuffer_width = _instance.max_image_dimension,
             .max_framebuffer_height = _instance.max_image_dimension,
-            .max_color_attachments = 1,
+            .max_image_dimension_3d = _instance.max_image_dimension_3d,
+            .max_image_array_layers = _instance.max_image_array_layers,
+            .max_color_attachments = _render.most_colors,
             .max_vertex_input_bindings = _instance.max_vertex_input_bindings,
             .max_vertex_input_attributes = _instance.max_vertex_input_attributes,
             .max_vertex_input_binding_stride = 2048,
@@ -116,8 +123,33 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) bool {
     };
     const name = "VideoCore VII V3D 7.1";
     @memcpy(physical.properties.device_name[0..name.len], name);
+    physical.features = .{
+        // Only the fixed forms have QPU programs; a pipeline with a function
+        // of its own is refused here and runs on the cores instead.
+        .own_fragment_functions = false,
+        // The TMU reads a texture's format from the image it is given.
+        .sampling_format = false,
+        // Both run on the cores, whichever device made the pipeline.
+        .compute_on_device = false,
+        .tessellation_on_device = false,
+        // The depth pre-pass is the rasterizer's (driver/cpu/raster/prepass.zig).
+        .depth_prepass = false,
+        .points_and_lines = true,
+        .depth_test = true,
+        .stencil_test = true,
+        .blending = true,
+        .indirect_draws = true,
+        .secondary_command_buffers = true,
+        .several_subpasses = true,
+        .several_color_attachments = true,
+        .texture_arrays = true,
+        .cube_maps = true,
+        .textures_3d = true,
+        .compressed_textures = true,
+        .float_textures = true,
+    };
     physical.queue_family = .{
-        .queue_flags = facet.QUEUE_GRAPHICS | facet.QUEUE_TRANSFER,
+        .queue_flags = facet.QUEUE_GRAPHICS | facet.QUEUE_COMPUTE | facet.QUEUE_TRANSFER,
         .queue_count = 1,
         .timestamp_valid_bits = 0,
         .min_image_transfer_granularity = .{ .width = 1, .height = 1, .depth = 1 },
@@ -190,7 +222,7 @@ fn bringUp(sys: *ExecBase, hardware: *Hardware) bool {
 
 /// Every program in one block of the V3D's.
 fn loadPrograms(hardware: *Hardware) bool {
-    const fragments = [_]*const qpu.Fragment{ &qpu.color_fragment, &qpu.texture_fragment, &qpu.texture_color_fragment };
+    const fragments = [_]*const qpu.Fragment{ &qpu.color_fragment, &qpu.texture_fragment, &qpu.texture_color_fragment, &qpu.array_fragment, &qpu.cube_fragment, &qpu.volume_fragment };
     var words: usize = qpu.coordinate_program.len;
     for (0..qpu.most_varyings + 1) |varyings| words += qpu.vertexProgram(@intCast(varyings)).len;
     for (fragments) |fragment| words += fragment.code.len;
@@ -215,6 +247,9 @@ fn loadPrograms(hardware: *Hardware) bool {
     hardware.programs.color = put(block, &used, qpu.color_fragment.code);
     hardware.programs.texture = put(block, &used, qpu.texture_fragment.code);
     hardware.programs.texture_color = put(block, &used, qpu.texture_color_fragment.code);
+    hardware.programs.array = put(block, &used, qpu.array_fragment.code);
+    hardware.programs.cube = put(block, &used, qpu.cube_fragment.code);
+    hardware.programs.volume = put(block, &used, qpu.volume_fragment.code);
     hardware.space.toGpu(&block);
     hardware.programs_block = block;
     return true;
@@ -235,7 +270,7 @@ pub fn letGo(base: *FacetBase, hardware: *Hardware) void {
     _objects.destroy(sys, hardware);
 }
 
-fn allocateMemory(device: *Device, memory: *DeviceMemory) facet.Result {
+fn allocateMemory(device: *Device, memory: *DeviceMemory) callconv(.c) facet.Result {
     const bytes = std.math.cast(u32, memory.size) orelse return .error_out_of_device_memory;
     if (bytes == 0) return .error_out_of_device_memory;
     const base = device.base;
@@ -260,7 +295,7 @@ fn allocateMemory(device: *Device, memory: *DeviceMemory) facet.Result {
     return .success;
 }
 
-fn freeMemory(device: *Device, memory: *DeviceMemory) void {
+fn freeMemory(device: *Device, memory: *DeviceMemory) callconv(.c) void {
     const base = device.base;
     const sys = device.sys;
     const kept: *Block = @ptrCast(@alignCast(memory.block.?));
@@ -273,25 +308,31 @@ fn freeMemory(device: *Device, memory: *DeviceMemory) void {
     letGo(base, hardware);
 }
 
-fn makePipeline(pipeline: *Pipeline) facet.Result {
+fn makePipeline(pipeline: *Pipeline) callconv(.c) facet.Result {
     const fixed = pipeline.fixed;
     if (fixed.kind == .none or pipeline.varyings != fixed.varyings()) return .error_feature_not_present;
     return .success;
 }
 
-fn unmakePipeline(pipeline: *Pipeline) void {
+fn unmakePipeline(pipeline: *Pipeline) callconv(.c) void {
     _ = pipeline;
 }
 
 /// The queue's task blocks in the frame's jobs, on what the V3D's interrupts
 /// signal, so the buffer's work is done by the time this signals.
-fn execute(queue: *Queue, buffer: *CommandBuffer, done: *exec.Waitable) void {
+fn execute(queue: *Queue, buffer: *CommandBuffer, done: *exec.Waitable) callconv(.c) void {
     _play.play(queue, buffer);
     if (_play.broken(queue)) queue.device.lose();
     queue.device.sys.SignalWaitable(done);
 }
 
-fn textureMemory(format: facet.Format, width: u32, height: u32, levels: u32) _driver.TextureMemory {
+fn textureMemory(format: facet.Format, width: u32, height: u32, levels: u32) callconv(.c) _driver.TextureMemory {
     const layout = _play.layoutOf(format, width, height, levels);
     return .{ .bytes = layout.bytes, .alignment = tiling.alignment };
+}
+
+/// Where a texel of a texture is, in bytes from its memory.
+fn textureOffset(image: *const @import("../../image/_image.zig").Image, level: u32, x: u32, y: u32) callconv(.c) usize {
+    const layout = _play.layoutOf(image.format, image.width, image.height, image.levels);
+    return tiling.texelOffset(&layout, level, x, y);
 }

@@ -55,6 +55,7 @@ pub const Winding = pipeline.Winding;
 pub const Cull = pipeline.Cull;
 pub const DepthTest = pipeline.DepthTest;
 pub const Blend = pipeline.Blend;
+pub const Mixing = pipeline.Mixing;
 pub const Texture = texture.Texture;
 pub const TextureFormat = texture.Format;
 pub const Filter = texture.Filter;

@@ -34,7 +34,8 @@ const IORequest = sdk.exec.IORequest;
 ///
 /// As `CloseLibrary`: the Close vector runs inside the device's own lock,
 /// and a device whose last close leaves it marked to go is expunged by
-/// exec there and then.
+/// exec there and then - the segments it was loaded in going to the
+/// module loader, which unloads them (SINCE 1.25).
 ///
 /// CONTEXT:
 /// - Waits: for the device's lock while another task holds it, and a
@@ -66,9 +67,10 @@ pub fn CloseDevice(base: *ExecBase, io: *IORequest) void {
     io.device = null;
     io.unit = null;
     if (dev.open_cnt == 0 and dev.flags & sdk.exec.LIBF_DELEXP != 0) {
-        // Gives the lock back, or takes it with the device. The seglist of
-        // a device that went is dropped: nothing here unloads.
-        _ = _library.expungeHeld(base, dev, &base.device_list);
+        // Gives the lock back, or takes it with the device, whose
+        // segments go to the module loader.
+        const gone = _library.expungeHeld(base, dev, &base.device_list);
+        if (gone.went) _library.unloadModule(base, gone.seg_list);
         return;
     }
     sys.ReleaseSemaphore(&dev.lock);

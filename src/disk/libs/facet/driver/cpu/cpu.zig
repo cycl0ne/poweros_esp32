@@ -24,8 +24,10 @@ const exec = sdk.exec;
 const facet = sdk.facet;
 const raster = @import("raster");
 const ExecBase = sdk.interface.exec.ExecBase;
-const facet_init = @import("../../facet_init.zig");
+const facet_version = @import("../../facet_version.zig");
 const _objects = @import("../../_objects.zig");
+const _format = @import("../_format.zig");
+const _render = @import("../../render/_render.zig");
 const _instance = @import("../../instance/_instance.zig");
 const PhysicalDevice = _instance.PhysicalDevice;
 const Device = @import("../../device/_device.zig").Device;
@@ -41,7 +43,7 @@ const _draw = @import("_draw.zig");
 
 pub const ops = Ops{
     .describe = &describe,
-    .format_properties = &formatProperties,
+    .format_properties = &_format.properties,
     .allocate_memory = &allocateMemory,
     .free_memory = &freeMemory,
     .make_pipeline = &makePipeline,
@@ -53,17 +55,17 @@ pub const ops = Ops{
 
 /// The one queue family: drawing and copying, one queue.
 const queue_family: facet.QueueFamilyProperties = .{
-    .queue_flags = facet.QUEUE_GRAPHICS | facet.QUEUE_TRANSFER,
+    .queue_flags = facet.QUEUE_GRAPHICS | facet.QUEUE_COMPUTE | facet.QUEUE_TRANSFER,
     .queue_count = 1,
     .timestamp_valid_bits = 0,
     .min_image_transfer_granularity = .{ .width = 1, .height = 1, .depth = 1 },
 };
 
-fn describe(sys: *ExecBase, physical: *PhysicalDevice) bool {
+fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
     const cores = runningCores(sys);
     physical.properties = .{
         .api_version = facet.API_VERSION_1_0,
-        .driver_version = facet.makeVersion(facet_init.LIBRARY_VERSION, facet_init.LIBRARY_REVISION),
+        .driver_version = facet.makeVersion(facet_version.LIBRARY_VERSION, facet_version.LIBRARY_REVISION),
         .vendor_id = 0,
         .device_id = 0,
         .device_type = .cpu,
@@ -72,7 +74,9 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) bool {
             .max_image_dimension_2d = _instance.max_image_dimension,
             .max_framebuffer_width = _instance.max_image_dimension,
             .max_framebuffer_height = _instance.max_image_dimension,
-            .max_color_attachments = 1,
+            .max_image_dimension_3d = _instance.max_image_dimension_3d,
+            .max_image_array_layers = _instance.max_image_array_layers,
+            .max_color_attachments = _render.most_colors,
             .max_vertex_input_bindings = _instance.max_vertex_input_bindings,
             .max_vertex_input_attributes = _instance.max_vertex_input_attributes,
             .max_vertex_input_binding_stride = 2048,
@@ -88,6 +92,28 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) bool {
     };
     const shared = physical.properties.limits.cores;
     _ = std.fmt.bufPrint(physical.properties.device_name[0 .. facet.MAX_PHYSICAL_DEVICE_NAME_SIZE - 1], "facet.library rasterizer, {d} core{s}", .{ shared, if (shared == 1) "" else "s" }) catch {};
+    physical.features = .{
+        // The rasterizer calls whatever function the pipeline carries.
+        .own_fragment_functions = true,
+        .sampling_format = true,
+        // This device is the cores, which is where both of these run.
+        .compute_on_device = true,
+        .tessellation_on_device = true,
+        .depth_prepass = true,
+        .points_and_lines = true,
+        .depth_test = true,
+        .stencil_test = true,
+        .blending = true,
+        .indirect_draws = true,
+        .secondary_command_buffers = true,
+        .several_subpasses = true,
+        .several_color_attachments = true,
+        .texture_arrays = true,
+        .cube_maps = true,
+        .textures_3d = true,
+        .compressed_textures = true,
+        .float_textures = true,
+    };
     physical.queue_family = queue_family;
     describeMemory(sys, &physical.memory);
     return true;
@@ -99,24 +125,6 @@ fn runningCores(sys: *ExecBase) u32 {
     var count: u32 = 0;
     while (count < 32 and sys.ReadCoreTimes(count, &times)) count += 1;
     return @max(count, 1);
-}
-
-/// What `format` does.
-fn formatProperties(format: facet.Format) facet.FormatProperties {
-    const transfer = facet.FORMAT_FEATURE_TRANSFER_SRC | facet.FORMAT_FEATURE_TRANSFER_DST;
-    const attachment = facet.FORMAT_FEATURE_COLOR_ATTACHMENT | facet.FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND;
-    const sampled = facet.FORMAT_FEATURE_SAMPLED_IMAGE | facet.FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR | facet.FORMAT_FEATURE_TRANSFER_DST;
-    return switch (format) {
-        .b8g8r8a8_unorm, .r8g8b8a8_unorm => .{
-            .linear_tiling_features = attachment | transfer,
-            .optimal_tiling_features = attachment | transfer | sampled,
-            .buffer_features = facet.FORMAT_FEATURE_VERTEX_BUFFER,
-        },
-        .r5g6b5_unorm_pack16 => .{ .linear_tiling_features = attachment | transfer, .optimal_tiling_features = attachment | transfer | sampled, .buffer_features = 0 },
-        .d16_unorm => .{ .linear_tiling_features = 0, .optimal_tiling_features = facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT, .buffer_features = 0 },
-        .r32_sfloat, .r32g32_sfloat, .r32g32b32_sfloat, .r32g32b32a32_sfloat => .{ .linear_tiling_features = 0, .optimal_tiling_features = 0, .buffer_features = facet.FORMAT_FEATURE_VERTEX_BUFFER },
-        else => .{ .linear_tiling_features = 0, .optimal_tiling_features = 0, .buffer_features = 0 },
-    };
 }
 
 /// The attributes that make a heap.
@@ -161,7 +169,7 @@ fn memoryPropertiesOf(attributes: u32) u32 {
     return flags;
 }
 
-fn allocateMemory(device: *Device, memory: *DeviceMemory) facet.Result {
+fn allocateMemory(device: *Device, memory: *DeviceMemory) callconv(.c) facet.Result {
     const properties = &device.physical.memory;
     // Room to move the block up to a cache line: AllocMem's are aligned to
     // its chunks.
@@ -176,11 +184,11 @@ fn allocateMemory(device: *Device, memory: *DeviceMemory) facet.Result {
     return .success;
 }
 
-fn freeMemory(device: *Device, memory: *DeviceMemory) void {
+fn freeMemory(device: *Device, memory: *DeviceMemory) callconv(.c) void {
     device.sys.FreeMem(memory.block.?, memory.block_bytes);
 }
 
-fn makePipeline(pipeline: *Pipeline) facet.Result {
+fn makePipeline(pipeline: *Pipeline) callconv(.c) facet.Result {
     const made = _objects.create(pipeline.device.sys, _draw.RasterState) orelse return .error_out_of_host_memory;
     made.* = .{
         .cull = switch (pipeline.cull) {
@@ -191,20 +199,18 @@ fn makePipeline(pipeline: *Pipeline) facet.Result {
         .front = if (pipeline.front == .clockwise) .clockwise else .counter_clockwise,
         // The rasterizer's compares are numbered as facet.library's are.
         .depth_test = if (pipeline.depth_test) |compare| @enumFromInt(@intFromEnum(compare)) else null,
-        .blend = switch (pipeline.blend) {
-            .off => .off,
-            .alpha => .alpha,
-        },
+        .blend = _draw.blendOf(&pipeline.mixing),
+        .mixing = _draw.mixingOf(&pipeline.mixing),
     };
     pipeline.driver = made;
     return .success;
 }
 
-fn unmakePipeline(pipeline: *Pipeline) void {
+fn unmakePipeline(pipeline: *Pipeline) callconv(.c) void {
     _objects.destroy(pipeline.device.sys, pipeline.driver);
 }
 
-fn execute(queue: *Queue, buffer: *CommandBuffer, done: *exec.Waitable) void {
+fn execute(queue: *Queue, buffer: *CommandBuffer, done: *exec.Waitable) callconv(.c) void {
     _play.play(queue, buffer);
     queue.device.sys.SignalWaitable(done);
 }

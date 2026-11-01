@@ -105,6 +105,23 @@ pub const LVO = struct {
     pub const AcquireNextImage = libraries.lvo(88);
     pub const QueuePresent = libraries.lvo(89);
     pub const CreateWindowSurface = libraries.lvo(90);
+    pub const CmdSetBlendConstants = libraries.lvo(91);
+    pub const CmdSetLineWidth = libraries.lvo(92);
+    pub const CmdSetStencilCompareMask = libraries.lvo(93);
+    pub const CmdSetStencilWriteMask = libraries.lvo(94);
+    pub const CmdSetStencilReference = libraries.lvo(95);
+    pub const CmdCopyImage = libraries.lvo(96);
+    pub const CmdBlitImage = libraries.lvo(97);
+    pub const CmdCopyImageToBuffer = libraries.lvo(98);
+    pub const CmdClearAttachments = libraries.lvo(99);
+    pub const CmdDrawIndirect = libraries.lvo(100);
+    pub const CmdDrawIndexedIndirect = libraries.lvo(101);
+    pub const CmdExecuteCommands = libraries.lvo(102);
+    pub const CreateComputePipelines = libraries.lvo(103);
+    pub const CmdDispatch = libraries.lvo(104);
+    pub const CmdDispatchIndirect = libraries.lvo(105);
+    pub const CmdNextSubpass = libraries.lvo(106);
+    pub const GetPhysicalDeviceFeatures = libraries.lvo(107);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -197,6 +214,23 @@ pub const Fn = struct {
     pub const AcquireNextImage = *const fn (*FacetBase, *facet.Device, *facet.Swapchain, u64, ?*facet.Semaphore, ?*facet.Fence, *u32) callconv(.c) facet.Result;
     pub const QueuePresent = *const fn (*FacetBase, *facet.Queue, *const facet.PresentInfo) callconv(.c) facet.Result;
     pub const CreateWindowSurface = *const fn (*FacetBase, *facet.Instance, *const facet.WindowSurfaceCreateInfo, *?*facet.Surface) callconv(.c) facet.Result;
+    pub const CmdSetBlendConstants = *const fn (*FacetBase, *facet.CommandBuffer, *const [4]f32) callconv(.c) void;
+    pub const CmdSetLineWidth = *const fn (*FacetBase, *facet.CommandBuffer, f32) callconv(.c) void;
+    pub const CmdSetStencilCompareMask = *const fn (*FacetBase, *facet.CommandBuffer, u32, u32) callconv(.c) void;
+    pub const CmdSetStencilWriteMask = *const fn (*FacetBase, *facet.CommandBuffer, u32, u32) callconv(.c) void;
+    pub const CmdSetStencilReference = *const fn (*FacetBase, *facet.CommandBuffer, u32, u32) callconv(.c) void;
+    pub const CmdCopyImage = *const fn (*FacetBase, *facet.CommandBuffer, *facet.Image, facet.ImageLayout, *facet.Image, facet.ImageLayout, u32, [*]const facet.ImageCopy) callconv(.c) void;
+    pub const CmdBlitImage = *const fn (*FacetBase, *facet.CommandBuffer, *facet.Image, facet.ImageLayout, *facet.Image, facet.ImageLayout, u32, [*]const facet.ImageBlit, facet.Filter) callconv(.c) void;
+    pub const CmdCopyImageToBuffer = *const fn (*FacetBase, *facet.CommandBuffer, *facet.Image, facet.ImageLayout, *facet.Buffer, u32, [*]const facet.BufferImageCopy) callconv(.c) void;
+    pub const CmdClearAttachments = *const fn (*FacetBase, *facet.CommandBuffer, u32, [*]const facet.ClearAttachment, u32, [*]const facet.ClearRect) callconv(.c) void;
+    pub const CmdDrawIndirect = *const fn (*FacetBase, *facet.CommandBuffer, *facet.Buffer, u64, u32, u32) callconv(.c) void;
+    pub const CmdDrawIndexedIndirect = *const fn (*FacetBase, *facet.CommandBuffer, *facet.Buffer, u64, u32, u32) callconv(.c) void;
+    pub const CmdExecuteCommands = *const fn (*FacetBase, *facet.CommandBuffer, u32, [*]const *facet.CommandBuffer) callconv(.c) void;
+    pub const CreateComputePipelines = *const fn (*FacetBase, *facet.Device, ?*facet.PipelineCache, u32, [*]const facet.ComputePipelineCreateInfo, [*]?*facet.Pipeline) callconv(.c) facet.Result;
+    pub const CmdDispatch = *const fn (*FacetBase, *facet.CommandBuffer, u32, u32, u32) callconv(.c) void;
+    pub const CmdDispatchIndirect = *const fn (*FacetBase, *facet.CommandBuffer, *facet.Buffer, u64) callconv(.c) void;
+    pub const CmdNextSubpass = *const fn (*FacetBase, *facet.CommandBuffer, facet.SubpassContents) callconv(.c) void;
+    pub const GetPhysicalDeviceFeatures = *const fn (*FacetBase, *facet.PhysicalDevice, *facet.PhysicalDeviceFeatures) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -656,5 +690,90 @@ pub const FacetBase = opaque {
     /// to `surface`.
     pub fn CreateWindowSurface(self: *FacetBase, instance: *facet.Instance, info: *const facet.WindowSurfaceCreateInfo, surface: *?*facet.Surface) facet.Result {
         return libraries.call(self, LVO.CreateWindowSurface, Fn.CreateWindowSurface, .{ instance, info, surface });
+    }
+
+    /// Recorded: the blend constants, for a pipeline that leaves them to commands.
+    pub fn CmdSetBlendConstants(self: *FacetBase, buffer: *facet.CommandBuffer, constants: *const [4]f32) void {
+        return libraries.call(self, LVO.CmdSetBlendConstants, Fn.CmdSetBlendConstants, .{ buffer, constants });
+    }
+
+    /// Recorded: the width of lines, for a pipeline that leaves it to commands.
+    pub fn CmdSetLineWidth(self: *FacetBase, buffer: *facet.CommandBuffer, width: f32) void {
+        return libraries.call(self, LVO.CmdSetLineWidth, Fn.CmdSetLineWidth, .{ buffer, width });
+    }
+
+    /// Recorded: the stencil test's compare mask, for a pipeline that leaves it to commands.
+    pub fn CmdSetStencilCompareMask(self: *FacetBase, buffer: *facet.CommandBuffer, face_mask: u32, value: u32) void {
+        return libraries.call(self, LVO.CmdSetStencilCompareMask, Fn.CmdSetStencilCompareMask, .{ buffer, face_mask, value });
+    }
+
+    /// Recorded: the stencil test's write mask, for a pipeline that leaves it to commands.
+    pub fn CmdSetStencilWriteMask(self: *FacetBase, buffer: *facet.CommandBuffer, face_mask: u32, value: u32) void {
+        return libraries.call(self, LVO.CmdSetStencilWriteMask, Fn.CmdSetStencilWriteMask, .{ buffer, face_mask, value });
+    }
+
+    /// Recorded: the stencil test's reference, for a pipeline that leaves it to commands.
+    pub fn CmdSetStencilReference(self: *FacetBase, buffer: *facet.CommandBuffer, face_mask: u32, value: u32) void {
+        return libraries.call(self, LVO.CmdSetStencilReference, Fn.CmdSetStencilReference, .{ buffer, face_mask, value });
+    }
+
+    /// Recorded: a rectangle of texels copied from one image to another, as they are.
+    pub fn CmdCopyImage(self: *FacetBase, buffer: *facet.CommandBuffer, source: *facet.Image, source_layout: facet.ImageLayout, destination: *facet.Image, destination_layout: facet.ImageLayout, region_count: u32, regions: [*]const facet.ImageCopy) void {
+        return libraries.call(self, LVO.CmdCopyImage, Fn.CmdCopyImage, .{ buffer, source, source_layout, destination, destination_layout, region_count, regions });
+    }
+
+    /// Recorded: a rectangle of an image drawn over one of another, scaled.
+    pub fn CmdBlitImage(self: *FacetBase, buffer: *facet.CommandBuffer, source: *facet.Image, source_layout: facet.ImageLayout, destination: *facet.Image, destination_layout: facet.ImageLayout, region_count: u32, regions: [*]const facet.ImageBlit, filter: facet.Filter) void {
+        return libraries.call(self, LVO.CmdBlitImage, Fn.CmdBlitImage, .{ buffer, source, source_layout, destination, destination_layout, region_count, regions, filter });
+    }
+
+    /// Recorded: a rectangle of texels copied from an image to a buffer.
+    pub fn CmdCopyImageToBuffer(self: *FacetBase, buffer: *facet.CommandBuffer, image: *facet.Image, image_layout: facet.ImageLayout, destination: *facet.Buffer, region_count: u32, regions: [*]const facet.BufferImageCopy) void {
+        return libraries.call(self, LVO.CmdCopyImageToBuffer, Fn.CmdCopyImageToBuffer, .{ buffer, image, image_layout, destination, region_count, regions });
+    }
+
+    /// Recorded: parts of a render pass's attachments cleared, in the middle of it.
+    pub fn CmdClearAttachments(self: *FacetBase, buffer: *facet.CommandBuffer, attachment_count: u32, attachments: [*]const facet.ClearAttachment, rect_count: u32, rects: [*]const facet.ClearRect) void {
+        return libraries.call(self, LVO.CmdClearAttachments, Fn.CmdClearAttachments, .{ buffer, attachment_count, attachments, rect_count, rects });
+    }
+
+    /// Recorded: draws whose numbers, as CmdDraw takes them, are in a buffer.
+    pub fn CmdDrawIndirect(self: *FacetBase, buffer: *facet.CommandBuffer, numbers: *facet.Buffer, offset: u64, draw_count: u32, stride: u32) void {
+        return libraries.call(self, LVO.CmdDrawIndirect, Fn.CmdDrawIndirect, .{ buffer, numbers, offset, draw_count, stride });
+    }
+
+    /// Recorded: draws whose numbers, as CmdDrawIndexed takes them, are in a buffer.
+    pub fn CmdDrawIndexedIndirect(self: *FacetBase, buffer: *facet.CommandBuffer, numbers: *facet.Buffer, offset: u64, draw_count: u32, stride: u32) void {
+        return libraries.call(self, LVO.CmdDrawIndexedIndirect, Fn.CmdDrawIndexedIndirect, .{ buffer, numbers, offset, draw_count, stride });
+    }
+
+    /// Recorded: secondary command buffers played, in the order given.
+    pub fn CmdExecuteCommands(self: *FacetBase, buffer: *facet.CommandBuffer, count: u32, secondaries: [*]const *facet.CommandBuffer) void {
+        return libraries.call(self, LVO.CmdExecuteCommands, Fn.CmdExecuteCommands, .{ buffer, count, secondaries });
+    }
+
+    /// `count` compute pipelines, one for each of `infos`, into `pipelines`.
+    pub fn CreateComputePipelines(self: *FacetBase, device: *facet.Device, cache: ?*facet.PipelineCache, count: u32, infos: [*]const facet.ComputePipelineCreateInfo, pipelines: [*]?*facet.Pipeline) facet.Result {
+        return libraries.call(self, LVO.CreateComputePipelines, Fn.CreateComputePipelines, .{ device, cache, count, infos, pipelines });
+    }
+
+    /// Recorded: the compute function bound run, for each of the groups.
+    pub fn CmdDispatch(self: *FacetBase, buffer: *facet.CommandBuffer, x: u32, y: u32, z: u32) void {
+        return libraries.call(self, LVO.CmdDispatch, Fn.CmdDispatch, .{ buffer, x, y, z });
+    }
+
+    /// Recorded: as CmdDispatch, its numbers in a buffer.
+    pub fn CmdDispatchIndirect(self: *FacetBase, buffer: *facet.CommandBuffer, numbers: *facet.Buffer, offset: u64) void {
+        return libraries.call(self, LVO.CmdDispatchIndirect, Fn.CmdDispatchIndirect, .{ buffer, numbers, offset });
+    }
+
+    /// Recorded: what the subpass drew stored, and the next subpass begun.
+    pub fn CmdNextSubpass(self: *FacetBase, buffer: *facet.CommandBuffer, contents: facet.SubpassContents) void {
+        return libraries.call(self, LVO.CmdNextSubpass, Fn.CmdNextSubpass, .{ buffer, contents });
+    }
+
+    /// What the physical device does, into `features`.
+    pub fn GetPhysicalDeviceFeatures(self: *FacetBase, physical: *facet.PhysicalDevice, features: *facet.PhysicalDeviceFeatures) void {
+        return libraries.call(self, LVO.GetPhysicalDeviceFeatures, Fn.GetPhysicalDeviceFeatures, .{ physical, features });
     }
 };

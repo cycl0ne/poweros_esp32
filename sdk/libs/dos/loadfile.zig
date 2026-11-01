@@ -271,6 +271,8 @@ const narrow = native_word_size == 4;
 const TAG_FLAGS = if (narrow) 12 else 24;
 const TAG_NAME = if (narrow) 16 else 32;
 const TAG_ID_STRING = if (narrow) 20 else 40;
+/// A Resident's bytes: where what a module's tag carries after it begins.
+pub const TAG_SIZE: u32 = if (narrow) 28 else 56;
 const DEVICE_SPEAKS = if (narrow) 28 else 56;
 const DEVICE_UNIT_PART = if (narrow) 32 else 64;
 const DEVICE_UNITS = if (narrow) 36 else 68;
@@ -281,7 +283,8 @@ comptime {
     if (@sizeOf(usize) == native_word_size) {
         const Device = resident.ResidentDevice;
         if (@offsetOf(resident.Resident, "flags") != TAG_FLAGS or @offsetOf(resident.Resident, "name") != TAG_NAME or
-            @offsetOf(resident.Resident, "id_string") != TAG_ID_STRING or @offsetOf(Device, "speaks") != DEVICE_SPEAKS or
+            @offsetOf(resident.Resident, "id_string") != TAG_ID_STRING or @sizeOf(resident.Resident) != TAG_SIZE or
+            @offsetOf(Device, "speaks") != DEVICE_SPEAKS or
             @offsetOf(Device, "unit_part") != DEVICE_UNIT_PART or @offsetOf(Device, "units") != DEVICE_UNITS or
             @offsetOf(Device, "unit_labels") != DEVICE_UNIT_LABELS or @offsetOf(Device, "unit_chip") != DEVICE_UNIT_CHIP)
             @compileError("loadfile: a ROM tag's fields are not where a load file has them");
@@ -364,6 +367,38 @@ pub fn readHandler(source: Source, found: FoundTag, into: *HandlerTag) bool {
         if (readString(source, found, id_at, &id)) |text| revision = resident.revisionOf(text);
     }
     into.version = @as(u32, head[1]) << 16 | revision;
+    return true;
+}
+
+/// A library's ROM tag as its load file has it: its name, version and
+/// revision, and where the words after its Resident start - a codec
+/// module's (sdk/libs/videocodec/vcodec.zig), for `readWord`.
+pub const LibraryTag = struct {
+    name: [32:0]u8 = @splat(0),
+    version: u8 = 0,
+    /// From its ID string ("chip.vcodec 1.0 (date)"); 0 when that has none.
+    revision: u16 = 0,
+    /// The offset of what follows the Resident in the tag's segment.
+    after: u32 = 0,
+};
+
+/// The library tag found in a module's load file, into `into`: false for
+/// a tag that is not a library's, or one whose name lies past its
+/// segment.
+pub fn readLibrary(source: Source, found: FoundTag, into: *LibraryTag) bool {
+    into.* = .{};
+    var head: [3]u8 = undefined;
+    if (!readBytes(source, found, found.tag + TAG_FLAGS, &head)) return false;
+    if (head[2] != @intFromEnum(NodeType.library)) return false;
+    into.version = head[1];
+    const name_at = readWord(source, found, found.tag + TAG_NAME) orelse return false;
+    _ = readString(source, found, name_at, into.name[0..into.name.len]) orelse return false;
+    const id_at = readWord(source, found, found.tag + TAG_ID_STRING) orelse return false;
+    if (id_at != 0) {
+        var id: [64]u8 = undefined;
+        if (readString(source, found, id_at, &id)) |text| into.revision = resident.revisionOf(text);
+    }
+    into.after = found.tag + TAG_SIZE;
     return true;
 }
 

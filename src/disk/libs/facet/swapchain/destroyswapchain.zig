@@ -61,7 +61,10 @@ pub fn DestroySwapchain(base: *FacetBase, device: *facet.Device, swapchain: ?*fa
     if (made.device.has_queue) _queue.waitIdle(&made.device.queue, sys);
     const surface = made.surface;
     const live = surface.swapchain == made;
-    surface.ops.unmake(surface, made.pictures[0..made.count], if (live) _swapchain.shownImage(made) else null);
+    // A swapchain handed on has what the display shows until the newer one
+    // has shown something.
+    const newer_shows = if (surface.swapchain) |newer| !live and _swapchain.shownImage(newer) != null else false;
+    surface.ops.unmake(surface, made.pictures[0..made.count], if (newer_shows) null else _swapchain.shownImage(made));
     if (live) surface.swapchain = null;
     surface.swapchains -= 1;
     _objects.destroy(sys, made);

@@ -197,9 +197,10 @@ pub const ExecBase = extern struct {
     /// helper until the kernel starts it.
     failure: _failure.State,
     /// The loader's base, kept for whatever loads libraries and devices
-    /// from a disk. exec never looks at what it points to: it is one word
-    /// a module has nowhere else to put, since this structure is opaque to
-    /// it and a module keeps nothing in its own image. Null until
+    /// from a disk: one word a module has nowhere else to put, since this
+    /// structure is opaque to it and a module keeps nothing in its own
+    /// image. exec calls one function through it - ramlib.library's
+    /// UnLoadModule, with the segments of a module that went. Null until
     /// SetRamLib is called.
     ram_lib: ?*anyopaque = null,
     /// The tasks woken when the system log grows (SetLogSignal).

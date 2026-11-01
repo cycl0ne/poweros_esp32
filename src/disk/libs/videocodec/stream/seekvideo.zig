@@ -6,7 +6,7 @@ const media = sdk.media;
 const vc = sdk.videocodec;
 const VideoCodecBase = @import("../videocodec_base.zig").VideoCodecBase;
 const _stream = @import("_stream.zig");
-const chip = @import("../chip/_chip.zig");
+const _codec = @import("../codec/_codec.zig");
 const subtitle = @import("../subtitle/_subtitle.zig");
 
 /// Moves a film's pictures to the key frame at or before a time, and its
@@ -31,8 +31,8 @@ const subtitle = @import("../subtitle/_subtitle.zig");
 ///
 /// BEHAVIOR:
 /// The picture track is moved to the key frame at or before `time` - the
-/// first, before the first - where a decoder can start; the chip's
-/// decoder drops what it was fed and not yet shown. The next frame
+/// first, before the first - where a decoder can start; the decoder
+/// drops what it was sent and not yet shown. The next frame
 /// DecodeVideoFrame hands out is that key frame, `number` 0: frames due
 /// before it are passed over. The sound is moved to the key frame's time,
 /// so the next samples DecodeVideoSound hands out go with it, and the
@@ -79,7 +79,7 @@ pub fn SeekVideo(_: *VideoCodecBase, stream: *vc.VideoStream, time: i64) i64 {
     } else if (read != media.MERR_END) {
         return _stream.fromMedia(read);
     }
-    if (s.engine == .chip) chip.flush(s);
+    _codec.flush(s);
     s.shown_from = landed;
     s.number = 0;
     if (s.sound) |sound| {

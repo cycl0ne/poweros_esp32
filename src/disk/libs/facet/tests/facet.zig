@@ -100,7 +100,7 @@ test "an instance lists one physical device: the cores, its memory made from exe
     try testing.expectEqual(@as(u32, 1), count);
     var family: [1]facet.QueueFamilyProperties = undefined;
     rig.fb.GetPhysicalDeviceQueueFamilyProperties(physical, &count, &family);
-    try testing.expectEqual(facet.QUEUE_GRAPHICS | facet.QUEUE_TRANSFER, family[0].queue_flags);
+    try testing.expectEqual(facet.QUEUE_GRAPHICS | facet.QUEUE_COMPUTE | facet.QUEUE_TRANSFER, family[0].queue_flags);
     try testing.expectEqual(@as(u32, 1), family[0].queue_count);
 
     // The test's region comes first, as exec prefers it; exec's test RAM,
@@ -470,6 +470,105 @@ test "a recording: its commands in order over its chunks; a reset keeps them for
     try testing.expectEqual(free_before, rig.header.free);
 }
 
+test "a device says what it does, and a false is what a create call refuses" {
+    var rig = try Rig.up();
+    defer rig.down() catch |err| std.debug.panic("{}", .{err});
+    const instance, const physical = try rig.instance();
+    defer rig.fb.DestroyInstance(instance);
+    const device = try rig.device(physical);
+    defer rig.fb.DestroyDevice(device);
+
+    var features: facet.PhysicalDeviceFeatures = undefined;
+    rig.fb.GetPhysicalDeviceFeatures(physical, &features);
+
+    // The cores: the rasterizer calls whatever function the pipeline carries,
+    // and compute and tessellation are on this device because it is them.
+    try testing.expect(features.own_fragment_functions);
+    try testing.expect(features.sampling_format);
+    try testing.expect(features.compute_on_device);
+    try testing.expect(features.tessellation_on_device);
+    try testing.expect(features.depth_prepass);
+    try testing.expect(features.blending);
+    try testing.expect(features.stencil_test);
+    try testing.expect(features.several_subpasses);
+    try testing.expect(features.cube_maps);
+
+    // And what it says it does not do, it refuses: a false here is worth
+    // having only if the call agrees with it.
+    try testing.expect(!features.input_attachments);
+    try testing.expect(!features.multisampling);
+    try testing.expect(!features.stored_depth);
+
+    const color = facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal };
+    var pass: ?*facet.RenderPass = null;
+
+    // An input attachment, which features deny.
+    {
+        const attachment = facet.AttachmentDescription{ .format = .b8g8r8a8_unorm, .load_op = .clear, .final_layout = .color_attachment_optimal };
+        const subpass = facet.SubpassDescription{
+            .input_attachment_count = 1,
+            .input_attachments = @ptrCast(&color),
+            .color_attachment_count = 1,
+            .color_attachments = @ptrCast(&color),
+        };
+        const info = facet.RenderPassCreateInfo{ .attachment_count = 1, .attachments = @ptrCast(&attachment), .subpass_count = 1, .subpasses = @ptrCast(&subpass) };
+        try testing.expectEqual(facet.Result.error_feature_not_present, rig.fb.CreateRenderPass(device, &info, &pass));
+    }
+
+    // More than one sample, likewise.
+    {
+        const attachment = facet.AttachmentDescription{ .format = .b8g8r8a8_unorm, .samples = 4, .load_op = .clear, .final_layout = .color_attachment_optimal };
+        const subpass = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&color) };
+        const info = facet.RenderPassCreateInfo{ .attachment_count = 1, .attachments = @ptrCast(&attachment), .subpass_count = 1, .subpasses = @ptrCast(&subpass) };
+        try testing.expectEqual(facet.Result.error_feature_not_present, rig.fb.CreateRenderPass(device, &info, &pass));
+    }
+
+    // One sample and no input attachment: the same pass is made.
+    {
+        const attachment = facet.AttachmentDescription{ .format = .b8g8r8a8_unorm, .load_op = .clear, .final_layout = .color_attachment_optimal };
+        const subpass = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&color) };
+        const info = facet.RenderPassCreateInfo{ .attachment_count = 1, .attachments = @ptrCast(&attachment), .subpass_count = 1, .subpasses = @ptrCast(&subpass) };
+        try testing.expectEqual(facet.Result.success, rig.fb.CreateRenderPass(device, &info, &pass));
+        rig.fb.DestroyRenderPass(device, pass);
+    }
+}
+
+test "a draw of more vertices than one works is refused as it is recorded" {
+    const max_draw_vertices = @import("../instance/_instance.zig").max_draw_vertices;
+    var rig = try Rig.up();
+    defer rig.down() catch |err| std.debug.panic("{}", .{err});
+    const instance, const physical = try rig.instance();
+    defer rig.fb.DestroyInstance(instance);
+    const device = try rig.device(physical);
+    defer rig.fb.DestroyDevice(device);
+
+    var pool: ?*facet.CommandPool = null;
+    try testing.expectEqual(facet.Result.success, rig.fb.CreateCommandPool(device, &.{ .flags = facet.COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER }, &pool));
+    defer rig.fb.DestroyCommandPool(device, pool);
+    var commands: [1]?*facet.CommandBuffer = undefined;
+    try testing.expectEqual(facet.Result.success, rig.fb.AllocateCommandBuffers(device, &.{ .command_pool = pool.?, .command_buffer_count = 1 }, &commands));
+    const buffer = commands[0].?;
+
+    // As many as a draw works: recorded.
+    try testing.expectEqual(facet.Result.success, rig.fb.BeginCommandBuffer(buffer, &.{}));
+    rig.fb.CmdDraw(buffer, max_draw_vertices, 1, 0, 0);
+    try testing.expectEqual(facet.Result.success, rig.fb.EndCommandBuffer(buffer));
+
+    // One more than that: not recorded, and said so rather than left out of
+    // the frame later without a word.
+    try testing.expectEqual(facet.Result.success, rig.fb.ResetCommandBuffer(buffer, 0));
+    try testing.expectEqual(facet.Result.success, rig.fb.BeginCommandBuffer(buffer, &.{}));
+    rig.fb.CmdDraw(buffer, max_draw_vertices + 1, 1, 0, 0);
+    try testing.expectEqual(facet.Result.error_feature_not_present, rig.fb.EndCommandBuffer(buffer));
+
+    // Spent: it records again only after a reset, and the refusal is not kept.
+    try testing.expectEqual(facet.Result.error_initialization_failed, rig.fb.EndCommandBuffer(buffer));
+    try testing.expectEqual(facet.Result.success, rig.fb.ResetCommandBuffer(buffer, 0));
+    try testing.expectEqual(facet.Result.success, rig.fb.BeginCommandBuffer(buffer, &.{}));
+    rig.fb.CmdDraw(buffer, 3, 1, 0, 0);
+    try testing.expectEqual(facet.Result.success, rig.fb.EndCommandBuffer(buffer));
+}
+
 /// A buffer of `bytes` bound into memory of its own, mapped.
 pub fn mappedBuffer(rig: *Rig, device: *facet.Device, bytes: u64, usage: u32) !struct { *facet.Buffer, *facet.DeviceMemory, [*]u8 } {
     var buffer: ?*facet.Buffer = null;
@@ -517,7 +616,7 @@ test "a submission plays its command buffers in order, then signals its fence; a
     try testing.expectEqual(facet.Result.success, rig.fb.CreateCommandPool(device, &.{}, &pool));
     defer rig.fb.DestroyCommandPool(device, pool);
     var commands: [2]?*facet.CommandBuffer = undefined;
-    try testing.expectEqual(facet.Result.error_feature_not_present, rig.fb.AllocateCommandBuffers(device, &.{ .command_pool = pool.?, .level = .secondary, .command_buffer_count = 2 }, &commands));
+    try testing.expectEqual(facet.Result.error_feature_not_present, rig.fb.AllocateCommandBuffers(device, &.{ .command_pool = pool.?, .level = @enumFromInt(2), .command_buffer_count = 2 }, &commands));
     try testing.expectEqual(facet.Result.success, rig.fb.AllocateCommandBuffers(device, &.{ .command_pool = pool.?, .command_buffer_count = 2 }, &commands));
 
     // Recorded outside a recording: nothing.
@@ -607,6 +706,9 @@ test "semaphores order one submission after another; a fence alone follows all b
     try testing.expectEqual(facet.Result.success, rig.fb.CreateFence(device, &.{ .flags = facet.FENCE_CREATE_SIGNALED }, &signalled));
     try testing.expectEqual(facet.Result.success, rig.fb.GetFenceStatus(device, signalled.?));
     rig.fb.DestroyFence(device, signalled);
+    try testing.expectEqual(@as(u64, 700), @import("../sync/_sync.zig").timeLeft(1000, 50, 350));
+    try testing.expectEqual(@as(u64, 0), @import("../sync/_sync.zig").timeLeft(1000, 50, 2000));
+    try testing.expectEqual(@as(u64, 1000), @import("../sync/_sync.zig").timeLeft(1000, 50, 50));
     try testing.expectEqual(@as(u64, 1), @import("../sync/_sync.zig").microseconds(1));
     try testing.expectEqual(@as(u64, 2), @import("../sync/_sync.zig").microseconds(1001));
     try testing.expectEqual(exec.WAIT_FOREVER, @import("../sync/_sync.zig").microseconds(facet.WAIT_FOREVER_NS));

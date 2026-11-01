@@ -5,7 +5,9 @@ const sdk = @import("sdk");
 const facet = sdk.facet;
 const FacetBase = @import("../facet_base.zig").FacetBase;
 const shader = facet.shader;
+const std = @import("std");
 const _objects = @import("../_objects.zig");
+const _render = @import("../render/_render.zig");
 const Device = @import("../device/_device.zig").Device;
 const _pipeline = @import("_pipeline.zig");
 const Pipeline = _pipeline.Pipeline;
@@ -31,7 +33,9 @@ const _instance = @import("../instance/_instance.zig");
 /// RESULT:
 /// `success`; else what the first that could not be made came to:
 /// `error_invalid_shader_nv` for stages that are not one vertex and one
-/// fragment function of the same varyings; `error_feature_not_present`
+/// fragment function of the same varyings, with or without a tessellation
+/// control and evaluation function, whose varyings then the fragment
+/// function's have to be; `error_feature_not_present`
 /// for state facet.library does not draw (see BEHAVIOR);
 /// `error_format_not_supported` for an attribute in a format it does not
 /// read; `error_initialization_failed` for state that does not hold
@@ -47,13 +51,26 @@ const _instance = @import("../instance/_instance.zig");
 /// fixed form (`shader.fixedFragment`), or the pipeline is refused with
 /// `error_feature_not_present`.
 ///
-/// What it draws: triangle lists, strips and fans, a restart index ending a
-/// strip or a fan; filled, one sample a pixel, culled by facing as asked; a
-/// depth test of any compare, written or not, without stencil, bounds,
-/// bias or clamp; the colour written whole, replacing what is there, or
-/// laid over it by its alpha - SRC_ALPHA and ONE_MINUS_SRC_ALPHA, ADD - and
-/// no logic op; one viewport and one scissor, given here or set by
-/// CmdSetViewport and CmdSetScissor (DynamicState viewport and scissor;
+/// With tessellation functions, the topology is `patch_list` and the
+/// `tessellation_state` says the vertices of a patch, 1 to 32: the cores make
+/// each patch into triangles or lines (`shader.Tessellation`), for a device
+/// with a processor of its own too, and those are drawn; without them,
+/// `patch_list` is `error_initialization_failed`.
+///
+/// What it draws: points, lines and line strips, and triangle lists, strips
+/// and fans, a restart index ending a strip or a fan; triangles filled, or as
+/// their edges or corners (POLYGON_MODE_LINE, POINT); one sample a pixel,
+/// triangles culled by facing as asked; lines `line_width` pixels wide, set
+/// here or by CmdSetLineWidth, and points one pixel; a
+/// depth test of any compare, written or not, without bounds, bias or clamp;
+/// a stencil test of any compare and operations, a face's own, the masks and
+/// the reference given here or set by commands; the channels of the write mask written, replacing what is
+/// there or mixed with it by any blend factors and operation, the alpha by
+/// its own, and no logic op; one viewport and one scissor, given here or set
+/// by CmdSetViewport and CmdSetScissor (DynamicState viewport and scissor;
+/// blend_constants with CmdSetBlendConstants, line_width with CmdSetLineWidth,
+/// the stencil's with CmdSetStencilCompareMask, CmdSetStencilWriteMask and
+/// CmdSetStencilReference;
 /// the others are taken and do nothing). A pipeline with the rasterizer
 /// discarding, or culling front and back, draws nothing.
 ///
@@ -86,11 +103,14 @@ const _instance = @import("../instance/_instance.zig");
 ///
 /// NOTES:
 /// A depth test on a render pass without depth is no test, as Vulkan has
-/// it.
+/// it, nor a stencil test on one without stencil. Lines and points use the
+/// front's stencil test. On an attachment without alpha, R5G6B5, what is there reads as wholly
+/// opaque. On the cores, SRC_ALPHA and ONE_MINUS_SRC_ALPHA or ONE, with
+/// the alpha's factors the same or ZERO and ONE and the mask whole, cost
+/// less than any other mixing.
 ///
 /// BUGS:
-/// Blending lays the alpha over the attachment's as it does the colour,
-/// whatever the alpha's blend factors say.
+/// None known.
 ///
 /// SEE ALSO:
 /// `CreateShaderModule`, `CreatePipelineLayout`, `CreateRenderPass`, `CmdBindPipeline`, `DestroyPipeline`
@@ -147,19 +167,27 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
     // The functions.
     var vertex: ?*const shader.Entry = null;
     var fragment: ?*const shader.Entry = null;
+    var control: ?*const shader.Entry = null;
+    var evaluation: ?*const shader.Entry = null;
     for (info.stages[0..info.stage_count]) |stage| {
         const module = _objects.of(_shader.ShaderModule, stage.module);
         const entry = _shader.find(module, stage.stage, stage.name) orelse return .error_invalid_shader_nv;
         switch (stage.stage) {
             facet.SHADER_STAGE_VERTEX => vertex = entry,
             facet.SHADER_STAGE_FRAGMENT => fragment = entry,
+            facet.SHADER_STAGE_TESSELLATION_CONTROL => control = entry,
+            facet.SHADER_STAGE_TESSELLATION_EVALUATION => evaluation = entry,
             else => return .error_invalid_shader_nv,
         }
     }
     const vertex_entry = vertex orelse return .error_invalid_shader_nv;
     const fragment_entry = fragment orelse return .error_invalid_shader_nv;
-    if (vertex_entry.varyingCount() != fragment_entry.varyingCount()) return .error_invalid_shader_nv;
-    if (info.subpass != 0) return .error_initialization_failed;
+    if ((control == null) != (evaluation == null)) return .error_invalid_shader_nv;
+    const last_entry = evaluation orelse vertex_entry;
+    if (last_entry.varyingCount() != fragment_entry.varyingCount()) return .error_invalid_shader_nv;
+    const pass = _objects.of(_render.RenderPass, info.render_pass);
+    if (info.subpass >= pass.subpass_count) return .error_initialization_failed;
+    const colors = pass.subpasses[info.subpass].part_count;
 
     made.* = .{
         .device = device,
@@ -172,6 +200,7 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         .attributes = undefined,
         .attribute_count = 0,
         .topology = .triangle_list,
+        .drawn_topology = .triangle_list,
         .restart = false,
         .draws_nothing = false,
         .cull = .none,
@@ -179,7 +208,13 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         .depth_test = null,
         .depth_write = false,
         .prepass = info.flags & facet.PIPELINE_CREATE_DEPTH_PREPASS != 0,
-        .blend = .off,
+        .stencil = null,
+        .dynamic_stencil_compare = false,
+        .dynamic_stencil_write = false,
+        .dynamic_stencil_reference = false,
+        .polygon_mode = .fill,
+        .line_width = 1,
+        .mixing = .{},
         .viewport = null,
         .scissor = null,
     };
@@ -203,16 +238,35 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
     }
     if (info.input_assembly_state) |assembly| {
         switch (assembly.topology) {
-            .triangle_list, .triangle_strip, .triangle_fan => made.topology = assembly.topology,
+            .point_list, .line_list, .line_strip, .triangle_list, .triangle_strip, .triangle_fan, .patch_list => made.topology = assembly.topology,
             else => return .error_feature_not_present,
         }
         made.restart = assembly.primitive_restart_enable;
     }
-    if (info.tessellation_state != null) return .error_feature_not_present;
+    made.drawn_topology = made.topology;
+    if (evaluation) |entry| {
+        const state = info.tessellation_state orelse return .error_initialization_failed;
+        if (made.topology != .patch_list or state.patch_control_points == 0 or state.patch_control_points > _instance.max_patch_points) return .error_initialization_failed;
+        const way = entry.tessellation();
+        if (@intFromEnum(way.domain) > @intFromEnum(shader.Domain.isolines)) return .error_invalid_shader_nv;
+        made.tessellated = .{
+            .control = @ptrCast(@alignCast(control.?.function)),
+            .evaluation = @ptrCast(@alignCast(entry.function)),
+            .way = way,
+            .points = state.patch_control_points,
+            .vertex_varyings = vertex_entry.varyingCount(),
+        };
+        made.drawn_topology = if (way.domain == .isolines) .line_list else .triangle_list;
+    } else if (made.topology == .patch_list) return .error_initialization_failed;
 
     // The rasterization.
     const rasterization = info.rasterization_state;
-    if (rasterization.polygon_mode != .fill or rasterization.depth_clamp_enable or rasterization.depth_bias_enable) return .error_feature_not_present;
+    if (rasterization.depth_clamp_enable or rasterization.depth_bias_enable) return .error_feature_not_present;
+    switch (rasterization.polygon_mode) {
+        .fill, .line, .point => made.polygon_mode = rasterization.polygon_mode,
+        else => return .error_feature_not_present,
+    }
+    made.line_width = rasterization.line_width;
     made.front = if (rasterization.front_face == .clockwise) .clockwise else .counter_clockwise;
     switch (rasterization.cull_mode) {
         facet.CULL_MODE_NONE => made.cull = .none,
@@ -225,7 +279,26 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         if (multisample.rasterization_samples > 1 or multisample.sample_shading_enable or multisample.alpha_to_coverage_enable or multisample.alpha_to_one_enable) return .error_feature_not_present;
     }
     if (info.depth_stencil_state) |depth| {
-        if (depth.stencil_test_enable or depth.depth_bounds_test_enable) return .error_feature_not_present;
+        if (depth.depth_bounds_test_enable) return .error_feature_not_present;
+        if (depth.stencil_test_enable) {
+            var faces: [2]_pipeline.StencilFace = undefined;
+            for ([2]facet.StencilOpState{ depth.front, depth.back }, &faces) |state, *face| {
+                if (@intFromEnum(state.compare_op) > 7) return .error_initialization_failed;
+                for ([3]facet.StencilOp{ state.fail_op, state.pass_op, state.depth_fail_op }) |op| {
+                    if (@intFromEnum(op) > 7) return .error_initialization_failed;
+                }
+                face.* = .{
+                    .fail = state.fail_op,
+                    .pass = state.pass_op,
+                    .depth_fail = state.depth_fail_op,
+                    .compare = state.compare_op,
+                    .compare_mask = @truncate(state.compare_mask),
+                    .write_mask = @truncate(state.write_mask),
+                    .reference = @truncate(state.reference),
+                };
+            }
+            made.stencil = faces;
+        }
         if (depth.depth_test_enable) {
             if (@intFromEnum(depth.depth_compare_op) > 7) return .error_initialization_failed;
             made.depth_test = depth.depth_compare_op;
@@ -233,15 +306,29 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         }
     }
     if (info.color_blend_state) |blend| {
-        if (blend.logic_op_enable or blend.attachment_count > 1) return .error_feature_not_present;
-        if (blend.attachment_count == 1) {
+        if (blend.logic_op_enable) return .error_feature_not_present;
+        if (blend.attachment_count != 0 and blend.attachment_count != colors) return .error_initialization_failed;
+        // One way of mixing for all: they are drawn the same way, in turn.
+        if (blend.attachment_count > 1) for (blend.attachments.?[1..blend.attachment_count]) |other| {
+            if (!std.mem.eql(u8, std.mem.asBytes(&other), std.mem.asBytes(&blend.attachments.?[0]))) return .error_feature_not_present;
+        };
+        if (blend.attachment_count != 0) {
             const attachment = blend.attachments.?[0];
-            if (attachment.color_write_mask & facet.COLOR_COMPONENT_ALL != facet.COLOR_COMPONENT_ALL) return .error_feature_not_present;
+            made.mixing.mask = attachment.color_write_mask & facet.COLOR_COMPONENT_ALL;
             if (attachment.blend_enable) {
-                if (attachment.src_color_blend_factor != .src_alpha or attachment.dst_color_blend_factor != .one_minus_src_alpha or attachment.color_blend_op != .add or attachment.alpha_blend_op != .add) return .error_feature_not_present;
-                made.blend = .alpha;
+                const factors = [4]facet.BlendFactor{ attachment.src_color_blend_factor, attachment.dst_color_blend_factor, attachment.src_alpha_blend_factor, attachment.dst_alpha_blend_factor };
+                for (factors) |factor| if (@intFromEnum(factor) > @intFromEnum(facet.BlendFactor.src_alpha_saturate)) return .error_feature_not_present;
+                if (@intFromEnum(attachment.color_blend_op) > @intFromEnum(facet.BlendOp.max) or @intFromEnum(attachment.alpha_blend_op) > @intFromEnum(facet.BlendOp.max)) return .error_feature_not_present;
+                made.mixing.enabled = true;
+                made.mixing.src_color = factors[0];
+                made.mixing.dst_color = factors[1];
+                made.mixing.color_op = attachment.color_blend_op;
+                made.mixing.src_alpha = factors[2];
+                made.mixing.dst_alpha = factors[3];
+                made.mixing.alpha_op = attachment.alpha_blend_op;
             }
         }
+        made.mixing.constants = blend.blend_constants;
     }
 
     // The viewport and the scissor, unless commands set them.
@@ -251,6 +338,11 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         if (dynamic.dynamic_states) |states| for (states[0..dynamic.dynamic_state_count]) |state| switch (state) {
             .viewport => dynamic_viewport = true,
             .scissor => dynamic_scissor = true,
+            .blend_constants => made.mixing.constants = null,
+            .line_width => made.line_width = null,
+            .stencil_compare_mask => made.dynamic_stencil_compare = true,
+            .stencil_write_mask => made.dynamic_stencil_write = true,
+            .stencil_reference => made.dynamic_stencil_reference = true,
             else => {},
         };
     }

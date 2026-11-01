@@ -277,4 +277,14 @@ i32 WaitForAny([*]const *exec.Waitable waitables, u32 count, u64 timeout_us)
 /// workers busy, or a caller that may not wait. A part must not obtain a
 /// semaphore the caller holds: it runs on another task.
 u32 ShareWork(exec.WorkFn work, ?*anyopaque data, u32 parts)
+/// `job` run beside the poster (SINCE 1.27): a worker task calls
+/// `job.work(job)` at the poster's priority and replies the job to its
+/// message's reply port once the code has returned, while the poster goes
+/// on. Posted jobs wait their turn by priority while every worker is busy.
+/// On a machine with one core the poster runs it itself, before PostWork
+/// returns. The job stays the caller's memory and is not posted again
+/// before it is replied. Its code runs on a worker: no dos, no semaphore
+/// the poster holds, and no waiting - a job that waits keeps a core's
+/// worker from the queue.
+void PostWork(*exec.WorkJob job)
 ##end

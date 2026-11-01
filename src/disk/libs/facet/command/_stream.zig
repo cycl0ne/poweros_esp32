@@ -24,6 +24,10 @@ pub const Op = enum(u16) {
     barrier,
     copy_buffer_to_image,
     copy_buffer,
+    copy_image,
+    blit_image,
+    copy_image_to_buffer,
+    clear_attachment,
     begin_render_pass,
     end_render_pass,
     bind_pipeline,
@@ -33,8 +37,16 @@ pub const Op = enum(u16) {
     push_constants,
     set_viewport,
     set_scissor,
+    set_blend_constants,
+    set_line_width,
+    set_stencil,
     draw,
     draw_indexed,
+    draw_indirect,
+    execute_commands,
+    bind_compute_pipeline,
+    dispatch,
+    dispatch_indirect,
     _,
 };
 
@@ -69,6 +81,9 @@ pub const Stream = struct {
     last: ?*Chunk = null,
     /// A command did not fit in memory: the recording is not whole.
     failed: bool = false,
+    /// A command asked for more than the library draws and was not recorded:
+    /// what EndCommandBuffer answers. `success` while nothing was refused.
+    refusal: facet.Result = .success,
 
     /// Command `command` written, with `carried` after its fields; nothing,
     /// and the recording failed, when memory runs out.
@@ -121,11 +136,12 @@ pub const Stream = struct {
     /// Back to nothing recorded: the chunks kept for the next recording,
     /// or given back with `release`.
     pub fn reset(stream: *Stream, sys: *ExecBase, release: bool) void {
+        stream.failed = false;
+        stream.refusal = .success;
         if (release) return stream.free(sys);
         var chunk = stream.first;
         while (chunk) |each| : (chunk = each.next) each.used = 0;
         stream.last = null;
-        stream.failed = false;
     }
 
     /// Every chunk given back.

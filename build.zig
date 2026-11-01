@@ -32,6 +32,11 @@ const default_rdb_size_kib = 64;
 /// work disk, DH1:, made blank once and kept from then on with what is
 /// saved to it.
 const virt_system_bytes = 256 * 1024 * 1024;
+/// The RISC-V 64 and AArch64 machines' disk image, which their loader
+/// puts in RAM beside the kernel: not flash, so larger than the ESP32s'
+/// flash disk - room for what only those machines run, such as the video
+/// codecs in software.
+const ram_disk_size = 32 * 1024 * 1024;
 const virt_work_bytes = 1024 * 1024 * 1024;
 /// Where the work disks are kept, from the root of the tree: outside
 /// zig-out/, which cleaning the build clears.
@@ -89,6 +94,12 @@ const image_dirs = [_][]const u8{
     "c/net",
     "s",
     "libs",
+    // LIBS:facet - the drivers of GPUs facet.library draws with, beside the
+    // cores.
+    "libs/facet",
+    // LIBS:codecs - the decoders of pictures videocodec.library chooses
+    // among, a library each.
+    "libs/codecs",
     // The classes, opened through LIBS: (the startup-sequence adds this
     // directory to it): gadgets/ for the gadget classes, datatypes/ for
     // the classes that read a file's contents, docklets/ for the dock's
@@ -536,15 +547,23 @@ pub fn build(b: *std.Build) void {
     const p4_disk_dep = b.dependency("poweros_userland", .{ .optimize = optimize, .chip = Chip.esp32p4 });
     const rv64_disk_dep = b.dependency("poweros_userland", .{ .optimize = optimize, .chip = Chip.rv64sbi });
     const a64_disk_dep = b.dependency("poweros_userland", .{ .optimize = optimize, .chip = Chip.a64psci });
-    disks.addArgs(&.{
-        "System",
-        "DH0",
-        b.fmt("{d}", .{disk_size / disk_sector}),
-        b.fmt("{d}", .{dh0_sectors}),
-        b.fmt("{d}", .{disk_sector}),
-        b.fmt("{d}", .{disk_page}),
-        b.fmt("{d}", .{disk_rdb_blocks}),
-    });
+    // The ESP32s' disk is the flash past the kernel, the 64-bit machines'
+    // a RAM disk of its own size.
+    for (disks.runs, DiskImages.chips) |run, chip| {
+        const size: u32 = switch (chip) {
+            .esp32s3, .esp32p4 => disk_size,
+            .rv64sbi, .a64psci => ram_disk_size,
+        };
+        run.addArgs(&.{
+            "System",
+            "DH0",
+            b.fmt("{d}", .{size / disk_sector}),
+            b.fmt("{d}", .{dh0_sectors}),
+            b.fmt("{d}", .{disk_sector}),
+            b.fmt("{d}", .{disk_page}),
+            b.fmt("{d}", .{disk_rdb_blocks}),
+        });
+    }
     disks.addArgs(&image_dirs);
     // The directories those files need, made before anything goes in
     // them: mkfs takes its paths in the order they are given.
@@ -765,8 +784,8 @@ pub fn build(b: *std.Build) void {
     // The RISC-V 64 and AArch64 boards' flash disk is loaded into RAM
     // beside the kernel - by U-Boot's booti, or by QEMU's -initrd given
     // by hand - and is all the disk there is, so it is made as large as
-    // the disk, the rest erased (tools/padimage). QEMU's virt machines
-    // start from an NVMe SSD instead (`VirtDisks`).
+    // the disk (`ram_disk_size`), the rest erased (tools/padimage).
+    // QEMU's virt machines start from an NVMe SSD instead (`VirtDisks`).
     const padimage = b.addExecutable(.{
         .name = "padimage",
         .root_module = b.createModule(.{
@@ -778,7 +797,7 @@ pub fn build(b: *std.Build) void {
     const pad_rv64_disk = b.addRunArtifact(padimage);
     pad_rv64_disk.addFileArg(rv64_disk_made);
     const rv64_disk_bin = pad_rv64_disk.addOutputFileArg("disk-rv64.bin");
-    pad_rv64_disk.addArg(b.fmt("{d}", .{disk_size}));
+    pad_rv64_disk.addArg(b.fmt("{d}", .{ram_disk_size}));
     // The virt machine's system disk too, for QEMU run by hand.
     if (board == .qemu_virt) b.getInstallStep().dependOn(&b.addInstallBinFile(rv64_system_disk, "system-rv64.bin").step);
     if (chipOf(board) == .rv64sbi) {
@@ -793,7 +812,7 @@ pub fn build(b: *std.Build) void {
     const pad_a64_disk = b.addRunArtifact(padimage);
     pad_a64_disk.addFileArg(a64_disk_made);
     const a64_disk_bin = pad_a64_disk.addOutputFileArg("disk-a64.bin");
-    pad_a64_disk.addArg(b.fmt("{d}", .{disk_size}));
+    pad_a64_disk.addArg(b.fmt("{d}", .{ram_disk_size}));
     if (board == .qemu_virt_a64) b.getInstallStep().dependOn(&b.addInstallBinFile(a64_system_disk, "system-a64.bin").step);
     if (chipOf(board) == .a64psci) {
         b.getInstallStep().dependOn(&b.addInstallBinFile(a64_disk_bin, "disk-a64.bin").step);
@@ -1043,6 +1062,24 @@ pub fn build(b: *std.Build) void {
     const jpegdecode_mod = b.createModule(.{ .root_source_file = disk_dep.path("classes/datatypes/jpeg/decode.zig"), .target = b.graph.host });
     disk_test_mod.addImport("jpegdecode", jpegdecode_mod);
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = jpegdecode_mod })).step);
+    // The H.264 decoder, h264.vcodec's, likewise.
+    const h264core_mod = b.createModule(.{ .root_source_file = disk_dep.path("libs/codecs/h264/core.zig"), .target = b.graph.host });
+    disk_test_mod.addImport("h264core", h264core_mod);
+    test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = h264core_mod })).step);
+    // The VP8 decoder, vp8.vcodec's, likewise.
+    const vp8core_mod = b.createModule(.{ .root_source_file = disk_dep.path("libs/codecs/vp8/core.zig"), .target = b.graph.host });
+    test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = vp8core_mod })).step);
+    // The VP9 decoder, vp9.vcodec's, likewise.
+    const vp9core_mod = b.createModule(.{ .root_source_file = disk_dep.path("libs/codecs/vp9/core.zig"), .target = b.graph.host });
+    test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = vp9core_mod })).step);
+    // The AV1 decoder, av1.vcodec's, likewise.
+    const av1core_mod = b.createModule(.{ .root_source_file = disk_dep.path("libs/codecs/av1/core.zig"), .target = b.graph.host });
+    disk_test_mod.addImport("av1core", av1core_mod);
+    test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = av1core_mod })).step);
+    // The H.265 decoder, hevc.vcodec's, likewise.
+    const hevccore_mod = b.createModule(.{ .root_source_file = disk_dep.path("libs/codecs/hevc/core.zig"), .target = b.graph.host });
+    disk_test_mod.addImport("hevccore", hevccore_mod);
+    test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = hevccore_mod })).step);
     disk_test_mod.addOptions("test_options", test_options);
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = disk_test_mod })).step);
     test_step.dependOn(&posfsck.step);

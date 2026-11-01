@@ -22,9 +22,10 @@
 //!
 //! **Checksums** (the volume's VT_CHECKSUMS, unless the file is
 //! INODE_NOCSUM): every block written gets a crc, seeded with the
-//! volume's id, as it goes to the medium; the commit carries them, and a
-//! csum item beside each extent keeps them, cut and split with it. A read
-//! checks each block it touches before it gives a byte of it.
+//! volume's id, as it goes to the medium - those of a long run worked out
+//! on the other cores while the run is written; the commit carries them,
+//! and a csum item beside each extent keeps them, cut and split with it.
+//! A read checks each block it touches before it gives a byte of it.
 //! **Compression** (VT_COMPRESS, unless INODE_NOCOMP) stores a chunk of
 //! 64 KiB whole in fewer blocks when it can (compress.zig); a write into
 //! a compressed chunk takes all of it into the overlay, so the commit
@@ -42,6 +43,7 @@ const journal = @import("journal.zig");
 const checkpoint = @import("checkpoint.zig");
 const objects = @import("objects.zig");
 const compress = @import("compress.zig");
+const media = @import("media.zig");
 const Volume = volume.Volume;
 const Error = volume.Error;
 const Key = layout.Key;
@@ -510,6 +512,23 @@ fn joinable(before: Run, after: Run) bool {
 /// A block of the file being filled, in memory.
 const Pending = struct { file_block: u64, buffer: []u8 };
 
+/// The crcs of a run of blocks in memory worked out in parts on the other
+/// cores, each part its share of the blocks into its share of `crcs`.
+const RunCrcs = struct {
+    work: media.Work = .{ .run = run },
+    uuid: *const [16]u8,
+    entries: []const Pending,
+    crcs: []u32,
+
+    fn run(work: *media.Work, part: u32, parts: u32) void {
+        const sums: *RunCrcs = @fieldParentPtr("work", work);
+        const count = sums.entries.len;
+        const from = count * part / parts;
+        const to = count * (part + 1) / parts;
+        for (sums.entries[from..to], sums.crcs[from..to]) |entry, *crc| crc.* = layout.crcSeeded(sums.uuid, entry.buffer);
+    }
+};
+
 /// What a file being written holds that is not committed yet.
 pub const Overlay = struct {
     oid: u64,
@@ -964,17 +983,21 @@ fn writeRaw(vol: *Volume, ov: *Overlay, entries: []Pending, checksums: bool) Err
     const run = try space.alloc(vol, entries.len, .held, true);
     const count: usize = @intCast(run.count);
     if (checksums) try reserveCrcs(vol, ov, count);
+    // A long run's crcs are worked out on the other cores while it goes
+    // to the medium; the blocks are only read meanwhile.
+    var sums: RunCrcs = .{ .uuid = &vol.uuid, .entries = entries[0..count], .crcs = ov.crcs[ov.crc_count..][0..if (checksums) count else 0] };
+    const parts = if (checksums) vol.crcParts(count * vol.block_size) else 0;
+    if (parts != 0) vol.dev.startWork(&sums.work, parts);
     writeRun(vol, run.start, entries[0..count]) catch |err| {
+        if (parts != 0) vol.dev.finishWork(&sums.work);
         try space.releaseHeld(vol, run.start, run.count);
         return err;
     };
     var crc_first = no_crcs;
     if (checksums) {
+        if (parts != 0) vol.dev.finishWork(&sums.work) else sums.work.run(&sums.work, 0, 1);
         crc_first = @intCast(ov.crc_count);
-        for (entries[0..count]) |entry| {
-            ov.crcs[ov.crc_count] = layout.crcSeeded(&vol.uuid, entry.buffer);
-            ov.crc_count += 1;
-        }
+        ov.crc_count += count;
     }
     try placeRun(vol, ov, .{ .file_block = entries[0].file_block, .block = run.start, .count = run.count, .crc_first = crc_first });
     for (entries[0..count]) |*entry| {

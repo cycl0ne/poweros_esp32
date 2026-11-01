@@ -94,6 +94,7 @@ Generated from the source by `./zig build autodoc`.
 - [OpenDevice](#opendevice) - Opens a unit of a device, for a request to use.
 - [OpenLibrary](#openlibrary) - Opens a library by name at a version, through its own Open vector.
 - [OpenResource](#openresource) - Finds a resource by name.
+- [PostWork](#postwork) - Runs a job beside the task that posts it, and replies it when done.
 - [Procure](#procure) - Bids for a semaphore with a message, instead of waiting for it.
 - [PutMsg](#putmsg) - Sends a message to a port, and does whatever that port asks for on arrival.
 - [RamLib](#ramlib) - The module loader's base, as `SetRamLib` left it.
@@ -2343,7 +2344,8 @@ close while it still holds a request has no way to give it back.
 
 As `CloseLibrary`: the Close vector runs inside the device's own lock,
 and a device whose last close leaves it marked to go is expunged by
-exec there and then.
+exec there and then - the segments it was loaded in going to the
+module loader, which unloads them (SINCE 1.25).
 
 **CONTEXT**
 
@@ -2405,8 +2407,10 @@ then, still holding its lock - so a library marked for expunging while
 it was open goes on its last close. A Close vector does not expunge its
 library itself.
 
-The seglist of a library that went is dropped: nothing here loads a
-module, so nothing here unloads one.
+The segments a library that went was loaded in - what its Expunge, or
+an opener's base's Close, handed back - go to the module loader, which
+unloads them (ramlib.library's UnLoadModule; SINCE 1.25 - they were
+dropped).
 
 A library whose Open hands each opener a base of its own (bsdsocket's
 does) gets that base back here. It is on no list - its node has no
@@ -5966,6 +5970,92 @@ None known.
 const pb = sys.OpenResource("platform.resource") orelse return;
 ```
 
+## PostWork
+
+Runs a job beside the task that posts it, and replies it when done.
+
+**SYNOPSIS**
+
+```zig
+fn PostWork(base: *ExecBase, job: *WorkJob) void
+```
+
+**SINCE**
+
+1.27. LVO -580.
+
+**INPUTS**
+
+- `job` - the job: its message, whose `reply_port` it is replied to;
+  its code, `work`; and its `data`.
+
+**RESULT**
+
+Nothing. The job comes back on its reply port once its code has run.
+
+**BEHAVIOR**
+
+exec keeps a worker task on each core, pinned to it - the ones
+ShareWork hands its parts to. The job is queued at the poster's
+priority, and an idle worker woken for it, another core's before the
+poster's own. The worker calls `job.work(job)` at that priority and
+replies the job; meanwhile the poster goes on, and waits for the reply
+when it wants it, with whatever else it waits for.
+
+While every worker is busy the jobs wait their turn, the highest
+priority first, and in the order posted among the same; a worker done
+with a part or a job takes the next. A worker running posted jobs is not
+handed parts by ShareWork, which does without it.
+
+On a machine with one core - or before multitasking - the poster runs
+the job itself, and it is replied before PostWork returns.
+
+A job runs on a worker, not on its poster: its code may not use dos, nor
+obtain a semaphore its poster may hold, and should not wait at all - a
+job that waits keeps a core's worker from the queue. It may allocate and
+free memory, signal, put messages, post jobs and share work. Its stack
+is the worker's: 32 KiB on a 64-bit machine, 16 KiB on a 32-bit one.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: any spinlock of a program's or a driver's may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The job stays the caller's memory, lent to exec until it is replied: it
+is not changed, freed or posted again before then. PostWork sets its
+message's node - type and priority.
+
+**NOTES**
+
+Posting a job and having it back costs a few signals between the cores,
+some microseconds: a job worth posting takes longer than that.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ShareWork`, `ReplyMsg`, `WaitPort`
+
+**EXAMPLES**
+
+```zig
+fn sumRun(job: *exec.WorkJob) callconv(.c) void {
+    const run: *Run = @ptrCast(@alignCast(job.data.?));
+    run.sum = checksum(run.bytes);
+}
+var job = exec.WorkJob{ .message = .{ .reply_port = port }, .work = &sumRun, .data = &run };
+sys.PostWork(&job);
+serveNextPacket();
+_ = sys.WaitPort(port);
+_ = sys.GetMsg(port);
+```
+
 ## Procure
 
 Bids for a semaphore with a message, instead of waiting for it.
@@ -8471,8 +8561,11 @@ Nothing.
 
 **BEHAVIOR**
 
-exec stores the word and **never looks at what it points to**. It is one
-pointer that a module has nowhere else to put.
+exec stores the word. It is one pointer that a module has nowhere else
+to put - and the loader's base, through which exec hands it the
+segments of a module that went (`UnLoadModule`, SINCE 1.25): at a last
+close, at an opener's base's close, in the low-memory flush. So it is a
+library's base with that call in its jump table, ramlib.library's.
 
 The reason it has nowhere else is worth stating, since it is the only
 thing this call is for. ramlib.library replaces exec's `OpenLibrary` and
@@ -8684,7 +8777,9 @@ counts every one: signals of the same bit run together, messages queue.
 
 It is replied from the core's next exception exit after the switch, as
 an interrupt would reply it - so the reply port signals its task or
-ignores; a port that causes a software interrupt is not served.
+ignores; a port that causes a software interrupt is not served. The
+core brings that exit at once with its own cross-core interrupt (SINCE
+1.26): the reply comes some 14 us after the task ended on the VF2.
 
 **CONTEXT**
 
@@ -8881,9 +8976,11 @@ itself.
 **BEHAVIOR**
 
 exec keeps a worker task on each core, pinned to it. The job is cut
-into as many parts as `parts` asks for and there are cores: the worker
-of each core but the caller's does one, at the caller's priority, and
-the caller does part 0. The call returns when every part is done.
+into as many parts as `parts` asks for and there are idle workers on
+the other cores: each does one, at the caller's priority, and the caller
+does part 0. The call returns when every part is done. A worker running
+jobs posted with PostWork is passed over (SINCE 1.27): a job is not cut
+short.
 
 The parts run at the same time, so `work` must cut the job so that no
 two write the same memory - nor the same cache line, on a machine whose
@@ -8893,7 +8990,8 @@ a part that obtains one would wait for good.
 
 The caller does the whole job itself, as `work(data, 0, 1)`, when
 `parts` is 1 or less, the machine has one core, another job is under
-way, or the caller may not wait: in an interrupt, inside `Disable`,
+way, every other core's worker runs posted jobs, or the caller may not
+wait: in an interrupt, inside `Disable`,
 holding a spinlock, before multitasking, or as a core's idle task. A
 job shared from within a part is done by that part alone.
 
@@ -8920,7 +9018,7 @@ None known.
 
 **SEE ALSO**
 
-`SetTaskAffinity`, `CacheClearE`
+`PostWork`, `SetTaskAffinity`, `CacheClearE`
 
 **EXAMPLES**
 

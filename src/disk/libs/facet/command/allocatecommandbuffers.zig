@@ -19,17 +19,18 @@ const _command = @import("_command.zig");
 ///
 /// INPUTS:
 /// - `device` - the device.
-/// - `info` - the pool, and how many: primary ones.
+/// - `info` - the pool, how many, and whether they are primary or secondary.
 /// - `buffers` - where they are written, `info.command_buffer_count` of
 ///   them; all null when it fails.
 ///
 /// RESULT:
-/// `success`; `error_feature_not_present` for secondary command buffers;
+/// `success`; `error_feature_not_present` for a level there is not;
 /// `error_out_of_host_memory`, none allocated.
 ///
 /// BEHAVIOR:
 /// Each buffer starts with nothing recorded, ready for
-/// BeginCommandBuffer.
+/// BeginCommandBuffer. A secondary one is played by CmdExecuteCommands; given
+/// to QueueSubmit, it plays nothing.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -57,7 +58,7 @@ const _command = @import("_command.zig");
 pub fn AllocateCommandBuffers(base: *FacetBase, device: *facet.Device, info: *const facet.CommandBufferAllocateInfo, buffers: [*]?*facet.CommandBuffer) facet.Result {
     const count = info.command_buffer_count;
     for (buffers[0..count]) |*buffer| buffer.* = null;
-    if (info.level != .primary) return .error_feature_not_present;
+    if (info.level != .primary and info.level != .secondary) return .error_feature_not_present;
     const pool = _objects.of(_command.CommandPool, info.command_pool);
     const sys = base.sys_base;
     for (buffers[0..count], 0..) |*buffer, made_so_far| {
@@ -70,7 +71,7 @@ pub fn AllocateCommandBuffers(base: *FacetBase, device: *facet.Device, info: *co
             }
             return .error_out_of_host_memory;
         };
-        made.* = .{ .device = _objects.of(Device, device), .pool = pool, .next = pool.first };
+        made.* = .{ .device = _objects.of(Device, device), .pool = pool, .secondary = info.level == .secondary, .next = pool.first };
         if (pool.first) |first| first.previous = made;
         pool.first = made;
         buffer.* = _objects.handle(facet.CommandBuffer, made);

@@ -22,11 +22,14 @@ const _image = @import("../../image/_image.zig");
 const _pipeline = @import("../../pipeline/_pipeline.zig");
 const Pipeline = _pipeline.Pipeline;
 const _vertices = @import("../_vertices.zig");
+const _tessellate = @import("../_tessellate.zig");
+const _command = @import("../../command/_command.zig");
 const _play = @import("_play.zig");
 const Player = _play.Player;
 
-/// The most vertices a draw works: past it, the draw draws nothing.
-const most_vertices = 1 << 20;
+/// The most vertices a draw works, the V3D driver's limit too: past it the
+/// draw is left out and said to be, and a CmdDraw over it never gets this far.
+const most_vertices = @import("../../instance/_instance.zig").max_draw_vertices;
 
 /// A pipeline's state in the rasterizer's terms, as this driver keeps it
 /// (Pipeline.driver).
@@ -35,7 +38,78 @@ pub const RasterState = struct {
     front: raster.Winding,
     depth_test: ?raster.batched.Compare,
     blend: raster.Blend,
+    mixing: raster.Mixing,
 };
+
+/// The quickest way the rasterizer has of doing as a pipeline says.
+pub fn blendOf(mixing: *const _pipeline.Mixing) raster.Blend {
+    const whole = mixing.mask == facet.COLOR_COMPONENT_ALL;
+    if (!mixing.enabled) return if (whole) .off else .general;
+    if (!whole or mixing.color_op != .add or mixing.alpha_op != .add or mixing.src_color != .src_alpha) return .general;
+    const keeps = mixing.src_alpha == .zero and mixing.dst_alpha == .one;
+    const same = mixing.src_alpha == .src_alpha and mixing.dst_alpha == mixing.dst_color;
+    return switch (mixing.dst_color) {
+        .one_minus_src_alpha => if (same) .alpha else if (keeps) .alpha_keep else .general,
+        .one => if (same) .add else if (keeps) .add_keep else .general,
+        else => .general,
+    };
+}
+
+/// A pipeline's mixing in the rasterizer's terms: its constants and what a
+/// target without alpha changes are the draw's. Off, the colour replaces what
+/// is there, in the channels of the mask.
+pub fn mixingOf(mixing: *const _pipeline.Mixing) raster.Mixing {
+    return .{
+        .src_color = if (mixing.enabled) factorOf(mixing.src_color) else .one,
+        .dst_color = if (mixing.enabled) factorOf(mixing.dst_color) else .zero,
+        .color_op = if (mixing.enabled) operationOf(mixing.color_op) else .add,
+        .src_alpha = if (mixing.enabled) factorOf(mixing.src_alpha) else .one,
+        .dst_alpha = if (mixing.enabled) factorOf(mixing.dst_alpha) else .zero,
+        .alpha_op = if (mixing.enabled) operationOf(mixing.alpha_op) else .add,
+        .mask = maskOf(mixing.mask),
+    };
+}
+
+fn factorOf(factor: facet.BlendFactor) @TypeOf(@as(raster.Mixing, undefined).src_color) {
+    return @enumFromInt(@intFromEnum(factor));
+}
+
+fn operationOf(operation: facet.BlendOp) @TypeOf(@as(raster.Mixing, undefined).color_op) {
+    return @enumFromInt(@intFromEnum(operation));
+}
+
+/// The bits of 0xAARRGGBB the channels of a write mask are.
+fn maskOf(channels: u32) u32 {
+    var mask: u32 = 0;
+    if (channels & facet.COLOR_COMPONENT_R != 0) mask |= 0x00FF_0000;
+    if (channels & facet.COLOR_COMPONENT_G != 0) mask |= 0x0000_FF00;
+    if (channels & facet.COLOR_COMPONENT_B != 0) mask |= 0x0000_00FF;
+    if (channels & facet.COLOR_COMPONENT_A != 0) mask |= 0xFF00_0000;
+    return mask;
+}
+
+/// A pipeline's stencil test in the rasterizer's terms: numbered as it is.
+fn stencilFaceOf(face: _pipeline.StencilFace) raster.batched.StencilFace {
+    return .{
+        .fail = @enumFromInt(@intFromEnum(face.fail)),
+        .pass = @enumFromInt(@intFromEnum(face.pass)),
+        .depth_fail = @enumFromInt(@intFromEnum(face.depth_fail)),
+        .compare = @enumFromInt(@intFromEnum(face.compare)),
+        .compare_mask = face.compare_mask,
+        .write_mask = face.write_mask,
+        .reference = face.reference,
+    };
+}
+
+/// 0 to 1 as 0 to 255, in 0xAARRGGBB.
+fn constantOf(constants: [4]f32) u32 {
+    var packed_constant: u32 = 0;
+    for (constants, [4]u5{ 16, 8, 0, 24 }) |value, shift| {
+        const scaled = std.math.clamp(value, 0, 1) * 255 + 0.5;
+        packed_constant |= @as(u32, @intFromFloat(scaled)) << shift;
+    }
+    return packed_constant;
+}
 
 /// A draw of `count` vertices, or of `count` indices with `vertex_offset`
 /// added to each: the vertices or indices from `first` on, each instance
@@ -46,18 +120,27 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
     if (pipeline.draws_nothing or count == 0 or instances == 0) return;
     const indices = _vertices.indicesOf(player, pipeline, first, count, vertex_offset) orelse return;
     const lowest, const highest = _vertices.range(indices) orelse return;
-    if (highest - lowest >= most_vertices) return;
+    if (highest - lowest >= most_vertices) return _play.noRoom(queue, "a draw of more vertices than one works");
     const vertices = highest - lowest + 1;
 
     const locations = pipeline.locations;
     const stride = 4 + pipeline.varyings;
-    const most_corners = (if (pipeline.topology == .triangle_list) count / 3 else count -| 2) * 3;
+    // A patch's vertices may carry other than what comes to be drawn.
+    const point_stride = if (pipeline.tessellated) |tessellated| 4 + tessellated.vertex_varyings else stride;
+    const most_corners = _vertices.mostCorners(pipeline.topology, count);
+    const wide = _vertices.widens(pipeline);
+    const most_wide: _vertices.Wide = if (wide and pipeline.tessellated == null) _vertices.mostWide(pipeline, most_corners) else .{};
+    const wide_vertices_bytes = @as(usize, most_wide.vertices) * stride * @sizeOf(f32);
+    const wide_indices_bytes = @as(usize, most_wide.indices) * @sizeOf(u32);
     const inputs_bytes = @as(usize, vertices) * locations * @sizeOf([4]f32);
-    const outputs_bytes = @as(usize, vertices) * stride * @sizeOf(f32);
-    const scratch = scratchOf(queue, inputs_bytes + outputs_bytes + most_corners * @sizeOf(u32)) orelse return;
+    const outputs_bytes = @as(usize, vertices) * point_stride * @sizeOf(f32);
+    const corners_bytes = most_corners * @sizeOf(u32);
+    const scratch = scratchOf(queue, inputs_bytes + outputs_bytes + corners_bytes + wide_vertices_bytes + wide_indices_bytes) orelse return;
     const inputs: [*][4]f32 = @ptrCast(@alignCast(scratch));
     const outputs: [*]f32 = @ptrCast(@alignCast(scratch + inputs_bytes));
     const corners: [*]u32 = @ptrCast(@alignCast(scratch + inputs_bytes + outputs_bytes));
+    const wide_vertices: [*]f32 = @ptrCast(@alignCast(scratch + inputs_bytes + outputs_bytes + corners_bytes));
+    const wide_indices: [*]u32 = @ptrCast(@alignCast(scratch + inputs_bytes + outputs_bytes + corners_bytes + wide_vertices_bytes));
     const corner_count = _vertices.assemble(pipeline.topology, indices, lowest, corners[0..most_corners]);
 
     const target = &player.target.?;
@@ -70,6 +153,14 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
     const viewport = pipeline.viewport orelse player.viewport;
     const scissor = pipeline.scissor orelse player.scissor;
     const translated: *const RasterState = @ptrCast(@alignCast(pipeline.driver.?));
+    var mixing = translated.mixing;
+    if (translated.blend == .general) {
+        // What is there has no alpha: it reads as wholly opaque.
+        const made = if (player.target_opaque) mixingOf(&pipeline.mixing.overOpaque()) else mixing;
+        mixing = made;
+        mixing.constant = constantOf(pipeline.mixing.constants orelse player.blend_constants);
+    }
+    const stencil: ?[2]raster.batched.StencilFace = if (player.stencil.of(pipeline)) |faces| .{ stencilFaceOf(faces[0]), stencilFaceOf(faces[1]) } else null;
     const state = raster.batched.State{
         .viewport = .{ .x = viewport.x, .y = viewport.y, .width = viewport.width, .height = viewport.height },
         .min_depth = viewport.min_depth,
@@ -80,12 +171,16 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
             .width = scissor.extent.width,
             .height = scissor.extent.height,
         },
-        .cull = translated.cull,
+        // Lines and points are not culled, and a triangle's edges were as
+        // they were made.
+        .cull = if (wide) .none else translated.cull,
         .front = translated.front,
         .depth_test = translated.depth_test,
         .depth_write = pipeline.depth_write,
         .blend = translated.blend,
-        .prepass = pipeline.prepass,
+        .mixing = mixing,
+        .stencil = stencil,
+        .prepass = pipeline.prepass and stencil == null,
         .varyings = pipeline.varyings,
         .fragment = pipeline.fragment,
         .resources = resources,
@@ -99,16 +194,77 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
             .input_stride = locations,
             .count = vertices,
             .outputs = outputs,
-            .output_stride = stride,
+            .output_stride = point_stride,
             .first_vertex = lowest,
             .instance = instance,
             .resources = resources,
         };
         pipeline.vertex(&batch);
+        if (pipeline.tessellated != null) {
+            const made = _tessellate.run(queue.device.sys, pipeline, resources, outputs, corners[0..corner_count], instance, most_vertices) orelse continue;
+            defer made.free(queue.device.sys);
+            if (wide) {
+                const widened = _vertices.widen(pipeline, &viewport, pipeline.line_width orelse player.line_width, made.vertices, stride, made.corners(), made.wide_vertices, made.wide_indices);
+                raster.batched.draw(target, &state, made.wide_vertices[0 .. @as(usize, widened.vertices) * stride], stride, made.wide_indices[0..widened.indices]) catch return;
+            } else {
+                raster.batched.draw(target, &state, made.vertices[0 .. @as(usize, made.vertex_count) * stride], stride, made.corners()) catch return;
+            }
+            continue;
+        }
         // Out of the frame's memory: what was set up is drawn, the rest
         // not, as Vulkan leaves a device that runs out mid-frame.
+        if (wide) {
+            const made = _vertices.widen(pipeline, &viewport, pipeline.line_width orelse player.line_width, outputs, stride, corners[0..corner_count], wide_vertices, wide_indices);
+            raster.batched.draw(target, &state, wide_vertices[0 .. @as(usize, made.vertices) * stride], stride, wide_indices[0..made.indices]) catch return;
+            continue;
+        }
         raster.batched.draw(target, &state, outputs[0 .. @as(usize, vertices) * stride], stride, corners[0..corner_count]) catch return;
     }
+}
+
+/// The colour a clear draws with: its corners', all the same.
+fn clearColor(fragments: *const shader.Fragments) callconv(.c) void {
+    shader.smooth(fragments);
+}
+
+const no_resources = shader.Resources{};
+
+/// A part of the attachments cleared in the middle of a pass: a rectangle
+/// drawn over the part, writing what is cleared and no more.
+pub fn clearAttachment(queue: *Queue, command: *const _command.ClearAttachment) void {
+    const player = _play.playerOf(queue);
+    const target = &player.target.?;
+    const aspect = command.aspect_mask;
+    const clears_stencil = aspect & facet.IMAGE_ASPECT_STENCIL != 0;
+    const clears_depth = aspect & facet.IMAGE_ASPECT_DEPTH != 0;
+    const color = command.color;
+    const rect = command.rect;
+    const surface_width: f32 = @floatFromInt(target.surface.width);
+    const surface_height: f32 = @floatFromInt(target.surface.height);
+    const stencil_face = raster.batched.StencilFace{ .pass = .replace, .compare = .always, .write_mask = 0xFF, .reference = @truncate(command.stencil) };
+    const state = raster.batched.State{
+        .viewport = .{ .x = 0, .y = 0, .width = surface_width, .height = surface_height },
+        .scissor = .{
+            .x = @intCast(@max(rect.offset.x, 0)),
+            .y = @intCast(@max(rect.offset.y, 0)),
+            .width = rect.extent.width,
+            .height = rect.extent.height,
+        },
+        .depth_test = if (clears_depth) .always else null,
+        .depth_write = clears_depth,
+        .blend = .general,
+        .mixing = .{ .mask = if (aspect & facet.IMAGE_ASPECT_COLOR != 0 and command.output == player.resources.output) 0xFFFF_FFFF else 0 },
+        .stencil = if (clears_stencil) .{ stencil_face, stencil_face } else null,
+        .varyings = 4,
+        .fragment = &clearColor,
+        .resources = &no_resources,
+    };
+    const channels = [4]f32{ shader.channelOfByte(color >> 16 & 0xFF), shader.channelOfByte(color >> 8 & 0xFF), shader.channelOfByte(color & 0xFF), shader.channelOfByte(color >> 24) };
+    var vertices: [4 * 8]f32 = undefined;
+    for ([4][2]f32{ .{ -1, -1 }, .{ 1, -1 }, .{ -1, 1 }, .{ 1, 1 } }, 0..) |corner, k| {
+        vertices[k * 8 ..][0..8].* = .{ corner[0], corner[1], command.depth, 1, channels[0], channels[1], channels[2], channels[3] };
+    }
+    raster.batched.draw(target, &state, &vertices, 8, &[6]u32{ 0, 1, 2, 2, 1, 3 }) catch return;
 }
 
 /// `bytes` of the player's memory for a draw's vertices, aligned for a

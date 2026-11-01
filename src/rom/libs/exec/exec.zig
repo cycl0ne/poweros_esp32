@@ -31,6 +31,7 @@ comptime {
 /// Libraries: making, adding, opening, patching, expunging (library/, and
 /// the four standard vectors in exec_base.zig).
 const _library = @import("library/_library.zig");
+const _workers = @import("task/_workers.zig");
 const exec_base = @import("exec_base.zig");
 /// Memory regions, pools and the allocation trace (memory/).
 const _memory = @import("memory/_memory.zig");
@@ -162,6 +163,7 @@ pub const SignalWaitable = @import("waitable/signalwaitable.zig").SignalWaitable
 pub const ResetWaitable = @import("waitable/resetwaitable.zig").ResetWaitable;
 pub const WaitForAny = @import("waitable/waitforany.zig").WaitForAny;
 pub const ShareWork = @import("task/sharework.zig").ShareWork;
+pub const PostWork = @import("task/postwork.zig").PostWork;
 pub const CreateTask = @import("task/createtask.zig").CreateTask;
 pub const NewStackRun = @import("task/newstackrun.zig").NewStackRun;
 pub const startMultitasking = _task.startMultitasking;
@@ -865,6 +867,125 @@ test "the low-memory flush expunges one idle library per call, and passes over a
     try testing.expect(FindName(SysBase, &SysBase.lib_list, LIBRARY_NAME) != null);
     try testing.expect(SysBase.lib.flags & LIBF_GOING == 0);
     try testing.expectEqual(@as(u32, 0), SysBase.sem_libraries.state);
+    try expectNoLeaks();
+}
+
+/// A module loaded from a disk, as exec sees one: its Expunge hands back
+/// the segments it was made from - a stand-in here, only compared - and
+/// the loader kept with SetRamLib records what it is handed to unload.
+const DiskModule = struct {
+    var segments: u32 = 0;
+    var unloaded: [4]?*anyopaque = @splat(null);
+    var count: usize = 0;
+
+    fn expunge(lib: *Library) callconv(.c) ?*anyopaque {
+        const open = lib.open_cnt != 0;
+        _ = exec_base.libExpunge(lib);
+        return if (open) null else @ptrCast(&segments);
+    }
+
+    /// An opener's own base, on no list: its Close frees it, and its
+    /// library went with it.
+    fn closeOwnBase(lib: *Library) callconv(.c) ?*anyopaque {
+        _library.freeLibraryMemory(SysBase, lib);
+        return @ptrCast(&segments);
+    }
+
+    fn unload(_: *Library, seg_list: ?*anyopaque) callconv(.c) void {
+        unloaded[count] = seg_list;
+        count += 1;
+    }
+
+    /// How many were handed over since last asked - each the module's.
+    fn handed() !usize {
+        defer count = 0;
+        for (unloaded[0..count]) |seg_list| {
+            try testing.expectEqual(@as(?*anyopaque, @ptrCast(&segments)), seg_list);
+        }
+        return count;
+    }
+};
+
+const disk_module_vectors = [_]*const anyopaque{
+    vec(exec_base.libOpen),
+    vec(exec_base.libClose),
+    vec(DiskModule.expunge),
+    vec(exec_base.libExtFunc),
+};
+
+const disk_device_vectors = [_]*const anyopaque{
+    vec(testDevOpen),
+    vec(testDevClose),
+    vec(DiskModule.expunge),
+    vec(exec_base.libExtFunc),
+    vec(testDevBeginIO),
+    vec(testDevAbortIO),
+};
+
+const own_base_vectors = [_]*const anyopaque{
+    vec(exec_base.libOpen),
+    vec(DiskModule.closeOwnBase),
+    vec(exec_base.libExpunge),
+    vec(exec_base.libExtFunc),
+};
+
+/// The loader exec keeps with SetRamLib: ramlib.library's UnLoadModule in
+/// the slot after the standard four.
+const test_loader_vectors = [_]*const anyopaque{
+    vec(exec_base.libOpen),
+    vec(exec_base.libClose),
+    vec(exec_base.execExpunge),
+    vec(exec_base.libExtFunc),
+    vec(DiskModule.unload),
+};
+
+test "the segments of a module that went go to the loader: at its last close, a device's, an opener's base's, in the flush" {
+    try setUp();
+    defer deinit();
+    comptime std.debug.assert(sdk.interface.ramlib.LVO.UnLoadModule == sdk.exec.libraries.lvo(4));
+    const loader = MakeLibrary(SysBase, &test_loader_vectors, @sizeOf(Library), null, null).?;
+    SetRamLib(SysBase, loader);
+    defer SetRamLib(SysBase, null);
+
+    // Marked while open, it goes at the last close, and only then.
+    _ = CreateLibrary(SysBase, &.{ .name = "disk.library", .vectors = &disk_module_vectors }).?;
+    const lib = OpenLibrary(SysBase, "disk.library", 0).?;
+    try testing.expect(RemLibrary(SysBase, lib) == null);
+    try testing.expectEqual(@as(usize, 0), try DiskModule.handed());
+    CloseLibrary(SysBase, lib);
+    try testing.expect(FindName(SysBase, &SysBase.lib_list, "disk.library") == null);
+    try testing.expectEqual(@as(usize, 1), try DiskModule.handed());
+
+    // A device the same.
+    const dev = MakeLibrary(SysBase, &disk_device_vectors, @sizeOf(Device), null, null).?;
+    dev.node.name = "disk.device";
+    AddDevice(SysBase, dev);
+    var io: IORequest = .{};
+    try testing.expectEqual(@as(i32, 0), OpenDevice(SysBase, "disk.device", 0, &io, 0));
+    _ = RemDevice(SysBase, dev);
+    CloseDevice(SysBase, &io);
+    try testing.expect(FindName(SysBase, &SysBase.device_list, "disk.device") == null);
+    try testing.expectEqual(@as(usize, 1), try DiskModule.handed());
+
+    // An opener's own base, whose Close let its library go.
+    const own = MakeLibrary(SysBase, &own_base_vectors, @sizeOf(Library), null, null).?;
+    try testing.expect(own.node.pred == null);
+    CloseLibrary(SysBase, own);
+    try testing.expectEqual(@as(usize, 1), try DiskModule.handed());
+
+    // The low-memory flush: one that went, its segments with it.
+    _ = CreateLibrary(SysBase, &.{ .name = "idle.library", .vectors = &disk_module_vectors }).?;
+    const data: MemHandlerData = .{ .request_size = 64, .request_flags = 0, .flags = 0 };
+    try testing.expectEqual(MEM_TRY_AGAIN, _library.flushLibraries(&data, SysBase));
+    try testing.expectEqual(@as(usize, 1), try DiskModule.handed());
+
+    // Without a loader nothing is handed anywhere: a ROM machine.
+    SetRamLib(SysBase, null);
+    _ = CreateLibrary(SysBase, &.{ .name = "rom.library", .vectors = &disk_module_vectors }).?;
+    try testing.expectEqual(MEM_TRY_AGAIN, _library.flushLibraries(&data, SysBase));
+    try testing.expectEqual(@as(usize, 0), try DiskModule.handed());
+
+    _library.freeLibraryMemory(SysBase, loader);
     try expectNoLeaks();
 }
 
@@ -3019,6 +3140,89 @@ test "ShareWork: the whole job the caller's, as one part, without workers or whe
     try testing.expectEqual(@as(u32, 1), ShareWork(SysBase, &Calls.work, &calls, 1));
     try testing.expectEqual(@as(u32, 6), calls.count);
     try testing.expectEqual(@as(u32, 1), calls.parts);
+}
+
+/// Posted jobs that count how often they ran, and in what order.
+const Jobs = struct {
+    var order: [8]u8 = @splat(0);
+    var ran: usize = 0;
+    var then: ?*sdk.exec.WorkJob = null;
+
+    fn note(job: *sdk.exec.WorkJob) callconv(.c) void {
+        order[ran] = @truncate(@intFromPtr(job.data));
+        ran += 1;
+    }
+
+    /// A job that posts another.
+    fn postAnother(job: *sdk.exec.WorkJob) callconv(.c) void {
+        note(job);
+        PostWork(SysBase, then.?);
+    }
+};
+
+test "PostWork: run at once and replied with one core; with workers queued by the poster's priority, taken in order, and ShareWork does without a busy worker" {
+    try setUp();
+    defer deinit();
+    Jobs.ran = 0;
+    const port = CreateMsgPort(SysBase).?;
+
+    // One core - the host - and no workers: the poster runs it, and it is
+    // replied before PostWork returns.
+    var alone = sdk.exec.WorkJob{ .message = .{ .reply_port = port }, .work = &Jobs.note, .data = @ptrFromInt(1) };
+    PostWork(SysBase, &alone);
+    try testing.expectEqual(@as(usize, 1), Jobs.ran);
+    try testing.expectEqual(@as(?*sdk.exec.Message, &alone.message), GetMsg(SysBase, port));
+    try testing.expectEqual(NodeType.replymsg, alone.message.node.type);
+
+    // Two workers, both claimed for a part: posted jobs wait in the queue,
+    // the poster's priority first, the order posted among the same.
+    const pool = &SysBase.workers;
+    _workers.initQueue(SysBase);
+    pool.workers[0] = .{ .core = 0, .state = .part };
+    pool.workers[1] = .{ .core = 1, .state = .part };
+    pool.count = 2;
+    defer pool.count = 0;
+    const me = FindTask(SysBase, null).?;
+    const pri = me.node.pri;
+    defer me.node.pri = pri;
+    var jobs: [4]sdk.exec.WorkJob = undefined;
+    for (&jobs, 0..) |*job, i| job.* = .{ .message = .{ .reply_port = port }, .work = &Jobs.note, .data = @ptrFromInt(10 + i) };
+    me.node.pri = 0;
+    PostWork(SysBase, &jobs[0]);
+    me.node.pri = 5;
+    PostWork(SysBase, &jobs[1]);
+    PostWork(SysBase, &jobs[2]);
+    try testing.expectEqual(@as(usize, 1), Jobs.ran);
+    try testing.expectEqual(@as(i8, 5), jobs[2].message.node.pri);
+
+    // A worker claimed for a part takes none; an idle one takes them all.
+    const worker = &pool.workers[1];
+    try testing.expect(_workers.take(SysBase.iface(), pool, worker) == null);
+    worker.state = .idle;
+    const first = _workers.take(SysBase.iface(), pool, worker).?;
+    try testing.expectEqual(&jobs[1], first);
+    try testing.expectEqual(_workers.State.jobs, worker.state);
+
+    // While it runs posted jobs, ShareWork does without it: the job alone.
+    const Nothing = struct {
+        fn work(_: ?*anyopaque, _: u32, _: u32) callconv(.c) void {}
+    };
+    InitSemaphore(SysBase, &pool.lock);
+    pool.workers[0].state = .jobs;
+    try testing.expectEqual(@as(u32, 1), ShareWork(SysBase, &Nothing.work, null, 4));
+
+    // A job that posts a job: the new one queued behind its equals.
+    Jobs.then = &jobs[3];
+    first.work = &Jobs.postAnother;
+    first.work(first);
+    try testing.expectEqual(&jobs[2], _workers.take(SysBase.iface(), pool, worker).?);
+    try testing.expectEqual(&jobs[3], _workers.take(SysBase.iface(), pool, worker).?);
+    try testing.expectEqual(&jobs[0], _workers.take(SysBase.iface(), pool, worker).?);
+    try testing.expect(_workers.take(SysBase.iface(), pool, worker) == null);
+    try testing.expectEqual(_workers.State.idle, worker.state);
+    try testing.expectEqual(@as(u32, 0), pool.job_lock.state);
+    DeleteMsgPort(SysBase, port);
+    try expectNoLeaks();
 }
 
 test "waitables: SignalWaitable, ResetWaitable, WaitForAny's answers, a waiter woken, timed out and withdrawn" {

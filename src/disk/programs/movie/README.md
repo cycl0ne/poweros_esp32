@@ -1,12 +1,14 @@
 # Movie
 
 Movie plays films in a window: MP4, QuickTime's MOV and Matroska's MKV,
-their pictures in H.264, H.265 or Motion JPEG and their sound in AAC or
-AC-3 - or, in an MKV, MP3, FLAC, Vorbis or E-AC-3 too - with their
-subtitles. H.264 and H.265
-are decoded by the machine's video decoder where it has one - the
-VisionFive 2's - and Motion JPEG by the processor, which is enough for
-small pictures.
+their pictures in H.264, H.265, VP8, VP9, AV1 or Motion JPEG and their
+sound in AAC or AC-3 - or, in an MKV, MP3, FLAC, Vorbis or E-AC-3 too -
+with their subtitles. H.264 and H.265 are decoded by the machine's video
+decoder where it has one - the VisionFive 2's - and by the processor
+where it has none or the film is one the decoder refuses; VP8, VP9 and
+AV1 by the processor, on every core; Motion JPEG by the processor too,
+which is enough for small pictures. On the ESP32 boards Motion JPEG
+alone: they have neither the room nor the speed for the others.
 
 Its menus and requesters are in the language chosen on Prefs' Region
 page when there is a catalog for it - German is on the disk, in
@@ -27,8 +29,7 @@ Movie FILE,VOLUME/K/N,FULL/S
 - `FULL` starts with the film over the whole screen.
 
 A film that cannot be played says why in the shell: one whose pictures
-nothing here decodes - H.264 on a machine without a video decoder,
-MPEG-4 Part 2, VP9 or AV1 anywhere - and one that is not a film. A film
+nothing here decodes - MPEG-4 Part 2 - and one that is not a film. A film
 whose sound nothing decodes plays without it: an MKV's DTS or Opus.
 
 ## The window

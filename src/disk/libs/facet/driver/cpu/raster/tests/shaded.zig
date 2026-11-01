@@ -346,6 +346,37 @@ test "a texture missing, or in another format, is refused" {
     _ = target.finish();
 }
 
+test "a colour added to what is there by its alpha, flat or smooth, stops at full" {
+    const pixels = try testing.allocator.alloc(u32, width * height);
+    defer testing.allocator.free(pixels);
+    var log: common.Log = .{};
+    var target = try targetOn(pixels, &log, false, .{ .color = .{ .clear = 0xFF10_2030 } });
+    defer target.deinit();
+    const Added = raster.Pipeline(.{ .color = .flat, .cull = .none, .blend = .add });
+    const SmoothAdded = raster.Pipeline(.{ .color = .smooth, .cull = .none, .blend = .add });
+    inline for (.{ Added, SmoothAdded }) |Kind| {
+        const half_red = 0x80FF_0000;
+        const vertices = [3]Kind.Vertex{
+            .{ .position = .{ -0.8, -0.8, 0.5 }, .color = half_red },
+            .{ .position = .{ 0.8, -0.6, 0.5 }, .color = half_red },
+            .{ .position = .{ 0.1, 0.8, 0.5 }, .color = half_red },
+        };
+        const pipeline = Kind{ .viewport = whole };
+        // Half of the red on what was there; four times, past the top. The
+        // green and blue stay, and the alpha is full from the start.
+        for ([_][]const u16{ &.{ 0, 1, 2 }, &.{ 0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2 } }, [_]u32{ 0xFF90_2030, 0xFFFF_2030 }) |indices, want| {
+            try drawOnce(&target, &pipeline, &vertices, indices);
+            var drawn: u32 = 0;
+            for (pixels) |pixel| {
+                if (pixel == 0xFF10_2030) continue;
+                try testing.expectEqual(want, pixel);
+                drawn += 1;
+            }
+            try testing.expect(drawn > 10000);
+        }
+    }
+}
+
 test "with a texture, early and late depth, on one part or on threads, draw the same frame" {
     const Early = raster.Pipeline(.{ .color = .texture, .cull = .none, .depth = .less });
     const Late = raster.Pipeline(.{ .color = .texture, .cull = .none, .depth = .less, .early_depth = false });

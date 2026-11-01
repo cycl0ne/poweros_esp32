@@ -33,6 +33,10 @@ const PhysicalDevice = @import("_instance.zig").PhysicalDevice;
 ///   sampled, filtered, in optimal tiling; copied.
 /// - D16_UNORM: a depth attachment, in optimal tiling.
 /// - R32_SFLOAT to R32G32B32A32_SFLOAT: a vertex's value.
+/// - BC1, BC2, BC3, R16G16B16A16_SFLOAT, R32G32B32A32_SFLOAT,
+///   B10G11R11_UFLOAT and E5B9G9R9_UFLOAT: sampled, filtered, in optimal
+///   tiling, and copied into. They are kept as 8 bits a channel, floats cut to
+///   0 to 1: they save no memory and hold no more than B8G8R8A8.
 ///
 /// An image to be sampled has sides that are powers of two.
 ///

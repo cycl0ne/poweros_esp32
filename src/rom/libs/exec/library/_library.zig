@@ -36,6 +36,10 @@
 //! - **Close**: its lock around the Close vector. A library whose last
 //!   Close leaves it marked to go (`LIBF_DELEXP`) is expunged by exec there
 //!   and then, its lock still held.
+//! - **Segments**: what an Expunge hands back as its module goes - at a
+//!   last close or in the low-memory flush - goes to the module loader,
+//!   which unloads it (`unloadModule`): unloading is dos's, not exec's.
+//!   `RemLibrary` and `RemDevice` hand it to their caller instead.
 //! - **Expunge** (`expungeHeld`): with its lock held, the list held for a
 //!   moment to check that it is neither pinned nor open and to mark it
 //!   going (`LIBF_GOING`: not found by an Open, not expunged again). Then
@@ -67,7 +71,8 @@ const Library = sdk.exec.Library;
 /// Low-memory handler: expunges libraries and devices nobody has open.
 ///
 /// One per call - `MEM_TRY_AGAIN` after each one that went, so `AllocMem`
-/// retries and only as many go as the allocation needed. A module that
+/// retries and only as many go as the allocation needed. The segments one
+/// that went was loaded in go with it, to the module loader. A module that
 /// refuses to go (exec.library) is left where it is, which is read from it
 /// still being on the list rather than from what its vector answered.
 ///
@@ -102,9 +107,29 @@ pub fn flushLibraries(data: *const sdk.exec.MemHandlerData, is_data: ?*anyopaque
         const held = sys.AttemptSemaphore(&found.lib.lock);
         sys.ReleaseSemaphore(&base.sem_libraries);
         if (!held) continue;
-        if (expungeHeld(base, found.lib, found.list).went) return sdk.exec.MEM_TRY_AGAIN;
+        const gone = expungeHeld(base, found.lib, found.list);
+        if (gone.went) {
+            unloadModule(base, gone.seg_list);
+            return sdk.exec.MEM_TRY_AGAIN;
+        }
     }
     return sdk.exec.MEM_DID_NOTHING;
+}
+
+/// Hands the segments a module that went was loaded in to the module
+/// loader, which unloads them (ramlib.library's UnLoadModule): unloading is
+/// dos's, and exec does not call dos. Called once the module's Expunge -
+/// or the Close that ran it - has returned, so that nothing runs in them
+/// any more. Nothing happens without a loader or without segments: a
+/// module made from the ROM hands back none.
+///
+/// INPUTS:
+/// - `base` - exec: the loader's base, kept with SetRamLib.
+/// - `seg_list` - what the Expunge handed back, or null.
+pub fn unloadModule(base: *ExecBase, seg_list: ?*anyopaque) void {
+    const segments = seg_list orelse return;
+    const loader: *sdk.interface.ramlib.RamLibBase = @ptrCast(base.ram_lib orelse return);
+    loader.UnLoadModule(segments);
 }
 
 /// A library or device nobody has open, pinned or is expunging, and not

@@ -30,9 +30,14 @@ const _buffer = @import("../../buffer/_buffer.zig");
 const Buffer = _buffer.Buffer;
 const _image = @import("../../image/_image.zig");
 const Image = _image.Image;
-const Pipeline = @import("../../pipeline/_pipeline.zig").Pipeline;
-const max_vertex_input_bindings = @import("../../instance/_instance.zig").max_vertex_input_bindings;
+const _pipeline = @import("../../pipeline/_pipeline.zig");
+const Pipeline = _pipeline.Pipeline;
+const _instance = @import("../../instance/_instance.zig");
+const max_vertex_input_bindings = _instance.max_vertex_input_bindings;
 const _vertices = @import("../_vertices.zig");
+const _compute = @import("../_compute.zig");
+const _tessellate = @import("../_tessellate.zig");
+const _transfer = @import("../_transfer.zig");
 const driver = @import("driver.zig");
 const Hardware = driver.Hardware;
 const regs = v3d.regs;
@@ -50,7 +55,7 @@ const most_chunks = 64;
 /// Of the binner's list at a time; a list in several parts branches on.
 const list_part_bytes: u32 = 64 * 1024;
 /// What is kept free in a part: a draw's packets, then the branch out.
-const packets_bytes: u32 = 160;
+const packets_bytes: u32 = 192;
 /// The memory for the binner's lists: its first block of each tile, and what
 /// it goes on into before it asks for more.
 const tile_list_bytes: u32 = 128;
@@ -59,8 +64,9 @@ const tile_lists_extra: u32 = 1024 * 1024;
 const tile_list_triangle_bytes: u32 = 16;
 const most_tile_lists_bytes: u32 = 128 * 1024 * 1024;
 const tile_state_bytes: u32 = 256;
-/// The most vertices a draw works: past it, the draw draws nothing.
-const most_vertices = 1 << 20;
+/// The most vertices a draw works, the cores' driver's limit too: past it the
+/// draw is left out and said to be, and a CmdDraw over it never gets this far.
+const most_vertices = _instance.max_draw_vertices;
 /// A vertex's place on screen, in 1/64 of a pixel, held inside this.
 const most_screen: f32 = 1 << 30;
 /// What a sampled texture that is not there reads, as `shader.missing`.
@@ -89,7 +95,15 @@ pub const Player = struct {
     index_type: facet.IndexType = .uint16,
     viewport: facet.Viewport = .{ .width = 0, .height = 0 },
     scissor: facet.Rect2D = .{ .extent = .{} },
+    blend_constants: [4]f32 = @splat(0),
+    line_width: f32 = 1,
+    stencil: _vertices.StencilSet = .{},
     resources: shader.Resources = .{},
+    /// What was bound where a subpass of several attachments began.
+    saved: _vertices.Bound = undefined,
+    /// What compute functions have bound, apart from what draws have.
+    compute_pipeline: ?*Pipeline = null,
+    compute_resources: shader.Resources = .{},
     /// The frame being made.
     frame: Frame = undefined,
     area: Area = undefined,
@@ -111,7 +125,7 @@ pub const Player = struct {
     tile_state: ?Block = null,
 };
 
-pub fn open(queue: *Queue) bool {
+pub fn open(queue: *Queue) callconv(.c) bool {
     const device = queue.device;
     const hardware = driver.hold(device.base) orelse return false;
     const player = _objects.create(device.sys, Player) orelse {
@@ -123,7 +137,7 @@ pub fn open(queue: *Queue) bool {
     return true;
 }
 
-pub fn close(queue: *Queue) void {
+pub fn close(queue: *Queue) callconv(.c) void {
     const device = queue.device;
     const player = playerOf(queue);
     const hardware = player.hardware;
@@ -162,13 +176,56 @@ pub fn play(queue: *Queue, buffer: *CommandBuffer) void {
     player.vertex_buffers = @splat(.{});
     player.index_buffer = null;
     player.resources = .{};
-    var commands = buffer.stream.commands();
+    player.compute_pipeline = null;
+    player.compute_resources = .{};
+    playStream(queue, &buffer.stream);
+    // A command buffer that ends inside its render pass ends the pass.
+    endRenderPass(queue);
+}
+
+/// The commands of a recording; a secondary command buffer's go on from what
+/// the primary has bound and begun.
+fn playStream(queue: *Queue, stream: *const _stream.Stream) void {
+    const player = playerOf(queue);
+    var commands = stream.commands();
+    var repeat: ?_vertices.Repeat = null;
     while (commands.next()) |head| switch (head.op) {
         .barrier => {},
         .copy_buffer_to_image => copyBufferToImage(queue, _stream.as(_command.CopyBufferToImage, head)),
         .copy_buffer => _vertices.copyBuffer(_stream.as(_command.CopyBuffer, head)),
-        .begin_render_pass => beginRenderPass(queue, _stream.as(_command.BeginRenderPass, head)),
-        .end_render_pass => endRenderPass(queue),
+        .copy_image => {
+            const command = _stream.as(_command.CopyImage, head);
+            _transfer.copyImage(command);
+            texturesToGpu(queue, command.destination);
+        },
+        .blit_image => {
+            const command = _stream.as(_command.BlitImage, head);
+            _transfer.blitImage(command);
+            texturesToGpu(queue, command.destination);
+        },
+        .copy_image_to_buffer => _transfer.copyImageToBuffer(_stream.as(_command.CopyImageToBuffer, head)),
+        .clear_attachment => if (player.drawing) clearAttachment(queue, _stream.as(_command.ClearAttachment, head)),
+        .begin_render_pass => {
+            const command = _stream.as(_command.BeginRenderPass, head);
+            beginRenderPass(queue, command, 0);
+            if (command.part_count > 1) {
+                player.saved = .of(player);
+                repeat = .{ .begin = command, .from = commands, .output = 1 };
+            }
+        },
+        .end_render_pass => {
+            endRenderPass(queue);
+            if (repeat) |*again| {
+                if (again.output == again.begin.part_count) {
+                    repeat = null;
+                } else {
+                    player.saved.restore(player);
+                    beginRenderPass(queue, again.begin, again.output);
+                    commands = again.from;
+                    again.output += 1;
+                }
+            }
+        },
         .bind_pipeline => player.pipeline = _stream.as(_command.BindPipeline, head).pipeline,
         .bind_vertex_buffers => _vertices.bindVertexBuffers(player, _stream.as(_command.BindVertexBuffers, head)),
         .bind_index_buffer => {
@@ -177,10 +234,20 @@ pub fn play(queue: *Queue, buffer: *CommandBuffer) void {
             player.index_offset = command.offset;
             player.index_type = command.index_type;
         },
-        .bind_descriptor_sets => _vertices.bindDescriptorSets(&player.resources, _stream.as(_command.BindDescriptorSets, head)),
-        .push_constants => _vertices.pushConstants(&player.resources, _stream.as(_command.PushConstants, head)),
+        .bind_descriptor_sets => {
+            const command = _stream.as(_command.BindDescriptorSets, head);
+            _vertices.bindDescriptorSets(if (command.compute != 0) &player.compute_resources else &player.resources, command);
+        },
+        .push_constants => {
+            const command = _stream.as(_command.PushConstants, head);
+            _vertices.pushConstants(&player.resources, command);
+            _vertices.pushConstants(&player.compute_resources, command);
+        },
         .set_viewport => player.viewport = _stream.as(_command.SetViewport, head).viewport,
         .set_scissor => player.scissor = _stream.as(_command.SetScissor, head).scissor,
+        .set_blend_constants => player.blend_constants = _stream.as(_command.SetBlendConstants, head).constants,
+        .set_line_width => player.line_width = _stream.as(_command.SetLineWidth, head).width,
+        .set_stencil => player.stencil.apply(_stream.as(_command.SetStencil, head)),
         .draw => if (player.drawing) {
             const command = _stream.as(_command.Draw, head);
             draw(queue, command.first_vertex, command.vertex_count, null, command.first_instance, command.instance_count);
@@ -189,10 +256,22 @@ pub fn play(queue: *Queue, buffer: *CommandBuffer) void {
             const command = _stream.as(_command.DrawIndexed, head);
             draw(queue, command.first_index, command.index_count, command.vertex_offset, command.first_instance, command.instance_count);
         },
+        .draw_indirect => if (player.drawing) {
+            const command = _stream.as(_command.DrawIndirect, head);
+            for (0..command.count) |k| {
+                const made = _vertices.indirectDraw(command, @intCast(k)) orelse break;
+                draw(queue, made.first, made.count, made.vertex_offset, made.first_instance, made.instances);
+            }
+        },
+        .bind_compute_pipeline => player.compute_pipeline = _stream.as(_command.BindComputePipeline, head).pipeline,
+        .dispatch => if (!player.drawing) _compute.dispatch(queue.device.sys, player.compute_pipeline, &player.compute_resources, _stream.as(_command.Dispatch, head).count),
+        .dispatch_indirect => if (!player.drawing) _compute.dispatchIndirect(queue.device.sys, player.compute_pipeline, &player.compute_resources, _stream.as(_command.DispatchIndirect, head)),
+        .execute_commands => {
+            const command = _stream.as(_command.ExecuteCommands, head);
+            for (_stream.items(_command.ExecuteCommands, *CommandBuffer, command, command.count)) |secondary| playStream(queue, &secondary.stream);
+        },
         _ => {},
     };
-    // A command buffer that ends inside its render pass ends the pass.
-    endRenderPass(queue);
 }
 
 // --- memory -----------------------------------------------------------------
@@ -252,12 +331,15 @@ fn tileListsBytes(tiles: u32, triangles: u64) u32 {
     return @intCast(@min(wanted, most_tile_lists_bytes));
 }
 
-/// A draw left out for want of memory, said once a queue.
-fn noRoom(queue: *Queue) void {
+/// Something left out of a frame for want of room, said once a queue with
+/// what it was. The program is not told: nothing of a frame being played
+/// reaches it, and a frame half drawn is still shown. What can be caught
+/// while it is recorded is refused there instead (`CmdDraw`).
+fn noRoom(queue: *Queue, what: [*:0]const u8) void {
     const player = playerOf(queue);
     if (player.told_no_room) return;
     player.told_no_room = true;
-    exec.kprintf(queue.device.sys, "v3d: a draw of more than there is room for is left out\n", .{});
+    exec.kprintf(queue.device.sys, "v3d: %s left out of the frame for want of room; what follows may be too\n", .{what});
 }
 
 /// Where the V3D has an image, mapped the first time it is asked: 0 where it
@@ -277,11 +359,12 @@ fn addressOf(queue: *Queue, image: *Image) u32 {
 
 // --- the render pass --------------------------------------------------------
 
-fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass) void {
+fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part: u32) void {
     endRenderPass(queue);
     const player = playerOf(queue);
     if (player.hardware.broken) return;
-    const framebuffer = command.framebuffer;
+    player.resources.output = part;
+    const framebuffer = &command.targets[part];
     const image = framebuffer.color.image;
     const output: struct { u64, bool } = switch (image.format) {
         .b8g8r8a8_unorm => .{ cl.OUTPUT_RGBA8, true },
@@ -302,7 +385,7 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass) void
     const bottom: u32 = @intCast(std.math.clamp(@as(i64, offset.y) + command.area.extent.height, top, framebuffer.height));
     if (left == right or top == bottom) return;
     const whole = left == 0 and top == 0 and right == framebuffer.width and bottom == framebuffer.height;
-    const clears = command.render_pass.color_load == .clear;
+    const clears = command.parts[part].color_load == .clear;
     const tiles = ((framebuffer.width + 63) / 64) * ((framebuffer.height + 63) / 64);
     if (!sized(queue, &player.tile_lists, tileListsBytes(tiles, 0))) return;
     player.triangles = 0;
@@ -310,7 +393,7 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass) void
     for (player.chunks[0..player.chunk_count]) |*chunk| chunk.used = 0;
     player.chunk_at = 0;
     const list = carve(queue, list_part_bytes, 8) orelse return;
-    const color = command.clear_color;
+    const color = command.clear_colors[part];
     player.image = image;
     player.area = .{ .left = left, .top = top, .right = right, .bottom = bottom };
     player.frame = .{
@@ -325,8 +408,10 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass) void
         .tile_lists = player.tile_lists.?.address,
         .binned = false,
         .load = !clears or !whole,
-        .depth = command.render_pass.depth != null,
+        .depth = command.parts[part].tests_depth,
         .clear_depth = @as(f32, @floatFromInt(command.clear_depth)) / 65535,
+        .stencil = command.parts[part].tests_stencil,
+        .clear_stencil = command.clear_stencil,
         .area = if (whole) null else player.area,
     };
     player.bin = .{ .at = list.cpu, .address = list.address };
@@ -339,6 +424,36 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass) void
 /// A clear of part of the image: a rectangle of the colour, over all of it
 /// and cut to the part.
 fn clearArea(queue: *Queue, color: u32) void {
+    const player = playerOf(queue);
+    clearRectangle(queue, player.area, color, 0xF, null, null);
+}
+
+/// A part of the attachments cleared in the middle of a pass.
+fn clearAttachment(queue: *Queue, command: *const _command.ClearAttachment) void {
+    const player = playerOf(queue);
+    const aspect = command.aspect_mask;
+    const rect = command.rect;
+    const x = @as(i64, rect.offset.x);
+    const y = @as(i64, rect.offset.y);
+    const area = player.area;
+    const left: u32 = @intCast(std.math.clamp(x, area.left, area.right));
+    const top: u32 = @intCast(std.math.clamp(y, area.top, area.bottom));
+    const right: u32 = @intCast(std.math.clamp(x + rect.extent.width, left, area.right));
+    const bottom: u32 = @intCast(std.math.clamp(y + rect.extent.height, top, area.bottom));
+    if (left == right or top == bottom) return;
+    clearRectangle(
+        queue,
+        .{ .left = left, .top = top, .right = right, .bottom = bottom },
+        command.color,
+        if (aspect & facet.IMAGE_ASPECT_COLOR != 0 and command.output == player.resources.output) 0xF else 0,
+        if (aspect & facet.IMAGE_ASPECT_DEPTH != 0 and player.frame.depth) command.depth else null,
+        if (aspect & facet.IMAGE_ASPECT_STENCIL != 0 and player.frame.stencil) @truncate(command.stencil) else null,
+    );
+}
+
+/// A rectangle over the whole image, cut to `clip`, writing the `channels` of
+/// the colour and the depth and the stencil given.
+fn clearRectangle(queue: *Queue, clip: frames.Area, color: u32, channels: u32, depth: ?f32, stencil: ?u8) void {
     const player = playerOf(queue);
     const channel = struct {
         fn of(value: u32, shift: u5) f32 {
@@ -353,24 +468,35 @@ fn clearArea(queue: *Queue, color: u32) void {
     const vertices = carve(queue, 4 * stride, 4) orelse return;
     const half_width = @as(f32, @floatFromInt(player.frame.width)) / 2;
     const half_height = @as(f32, @floatFromInt(player.frame.height)) / 2;
-    const viewport = ViewportScale{ .half_width = half_width, .half_height = half_height, .scale = 0, .offset = 0 };
+    const viewport = ViewportScale{ .half_width = half_width, .half_height = half_height, .scale = 1, .offset = 0 };
     for ([4][2]f32{ .{ -1, -1 }, .{ 1, -1 }, .{ -1, 1 }, .{ 1, 1 } }, 0..) |corner, k| {
-        writeRecord(vertices.cpu + k * stride, &[4]f32{ corner[0], corner[1], 0, 1 }, &viewport, 4, .{ .constant = rgba });
+        writeRecord(vertices.cpu + k * stride, &[4]f32{ corner[0], corner[1], depth orelse 0, 1 }, &viewport, 4, .{ .constant = rgba });
     }
+    const stencil_face = cl.StencilFace{ .fail = 1, .pass = 2, .depth_fail = 1, .compare = cl.COMPARE_ALWAYS, .compare_mask = 0, .write_mask = 0xFF, .reference = stencil orelse 0 };
     const state = frames.DrawState{
-        .clip = player.area,
+        .clip = clip,
+        .cfg = .{ .compare = cl.COMPARE_ALWAYS, .depth_write = depth != null, .stencil = stencil != null },
+        .mixing = .{ .channels = channels },
+        .stencil = .{ stencil_face, stencil_face },
         .x = 0,
         .y = 0,
         .width = half_width * 2,
         .height = half_height * 2,
     };
-    const uniforms = carve(queue, 4, 4) orelse return;
-    if (!roomOnList(queue)) return;
+    const uniforms = carve(queue, 4, 4) orelse return noRoom(queue, "a clear with no memory for its uniforms");
+    if (!roomOnList(queue)) return noRoom(queue, "a clear with no memory for the binner's list");
     frames.writeDrawState(&player.bin, &state);
     if (!sendVertices(queue, vertices.address, 4, player.hardware.programs.color, uniforms.address)) return;
     cl.indexBufferSetup(&player.bin, indices.address, @sizeOf(@TypeOf(corners)));
     cl.indexedPrimList(&player.bin, cl.PRIM_TRIANGLES, corners.len);
     player.binned = true;
+}
+
+/// What was written into a texture on the cores seen by the V3D.
+fn texturesToGpu(queue: *Queue, image: *Image) void {
+    if (image.kind == .texture) if (image.data) |data| {
+        playerOf(queue).hardware.space.rangeToGpu(data, @intCast(image.bytes));
+    };
 }
 
 fn endRenderPass(queue: *Queue) void {
@@ -556,13 +682,13 @@ fn textureUniforms(queue: *Queue, fixed: shader.Fixed) ?u32 {
     };
     const layout = layoutOf(image.format, image.width, image.height, image.levels);
     const state = carve(queue, tiling.texture_state_bytes, tiling.texture_state_alignment) orelse return null;
-    tiling.writeTextureState(state.cpu[0..tiling.texture_state_bytes], &layout, texels, @intCast(@intFromPtr(image.data)), view.base_level, view.base_level + view.level_count - 1);
+    tiling.writeTextureState(state.cpu[0..tiling.texture_state_bytes], &layout, texels, @intCast(@intFromPtr(image.data) + view.base_layer * image.layer_bytes), view.base_level, view.base_level + view.level_count - 1, view.layer_count, @intCast(image.layer_bytes));
     const sampler = carve(queue, tiling.sampler_state_bytes, tiling.sampler_state_alignment) orelse return null;
     const filter: tiling.Filter = switch (fixed.sampling.filter) {
         .nearest => .nearest,
         .bilinear => .bilinear,
     };
-    const wrap: tiling.Wrap = switch (fixed.sampling.address) {
+    const wrap: tiling.Wrap = if (fixed.kind == .texture_cube) .clamp else switch (fixed.sampling.address) {
         .wrap => .repeat,
         .clamp => .clamp,
     };
@@ -572,6 +698,44 @@ fn textureUniforms(queue: *Queue, fixed: shader.Fixed) ?u32 {
     words[0] = tiling.parameter0(state.address);
     words[1] = tiling.parameter1(sampler.address);
     return place.address;
+}
+
+/// A stencil operation as the hardware numbers them: keep and zero the other
+/// way round.
+fn stencilOpOf(op: facet.StencilOp) u32 {
+    return switch (op) {
+        .keep => 1,
+        .zero => 0,
+        else => @intFromEnum(op),
+    };
+}
+
+fn stencilFaceOf(face: _pipeline.StencilFace) cl.StencilFace {
+    return .{
+        .fail = stencilOpOf(face.fail),
+        .pass = stencilOpOf(face.pass),
+        .depth_fail = stencilOpOf(face.depth_fail),
+        .compare = @intFromEnum(face.compare),
+        .compare_mask = face.compare_mask,
+        .write_mask = face.write_mask,
+        .reference = face.reference,
+    };
+}
+
+/// A pipeline's mixing in the hardware's terms.
+fn mixingOf(player: *const Player, pipeline: *const Pipeline) cl.Mixing {
+    // What is there has no alpha: it reads as wholly opaque.
+    const mixing = if (player.frame.format == cl.OUTPUT_BGR565) pipeline.mixing.overOpaque() else pipeline.mixing;
+    return .{
+        .src_color = @intFromEnum(mixing.src_color),
+        .dst_color = @intFromEnum(mixing.dst_color),
+        .color_mode = @intFromEnum(mixing.color_op),
+        .src_alpha = @intFromEnum(mixing.src_alpha),
+        .dst_alpha = @intFromEnum(mixing.dst_alpha),
+        .alpha_mode = @intFromEnum(mixing.alpha_op),
+        .constants = mixing.constants orelse player.blend_constants,
+        .channels = mixing.mask,
+    };
 }
 
 /// What a draw is drawn with, or null where nothing of it can be seen.
@@ -586,17 +750,23 @@ fn drawStateOf(player: *const Player, pipeline: *const Pipeline, viewport: *cons
     const bottom: u32 = @intCast(std.math.clamp(y + scissor.extent.height, top, area.bottom));
     if (left == right or top == bottom or viewport.width == 0 or viewport.height == 0) return null;
     const has_depth = player.frame.depth;
+    const stencil = if (player.frame.stencil) player.stencil.of(pipeline) else null;
     return .{
         .clip = .{ .left = left, .top = top, .right = right, .bottom = bottom },
         .cfg = .{
-            .forward = pipeline.cull != .front,
-            .reverse = pipeline.cull != .back,
+            // Lines and points are not culled, and a triangle's edges were
+            // as they were made.
+            .forward = pipeline.cull != .front or _vertices.widens(pipeline),
+            .reverse = pipeline.cull != .back or _vertices.widens(pipeline),
             // As Mesa has it: the hardware calls the other way round so.
             .clockwise = pipeline.front == .counter_clockwise,
             .compare = if (has_depth) (if (pipeline.depth_test) |compare| @intFromEnum(compare) else cl.COMPARE_ALWAYS) else cl.COMPARE_ALWAYS,
             .depth_write = has_depth and pipeline.depth_test != null and pipeline.depth_write,
-            .blend = pipeline.blend == .alpha,
+            .stencil = stencil != null,
+            .blend = pipeline.mixing.enabled,
         },
+        .mixing = mixingOf(player, pipeline),
+        .stencil = if (stencil) |faces| .{ stencilFaceOf(faces[0]), stencilFaceOf(faces[1]) } else undefined,
         .x = viewport.x,
         .y = viewport.y,
         .width = viewport.width,
@@ -617,34 +787,46 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
     const state = drawStateOf(player, pipeline, &viewport) orelse return;
     const indices = _vertices.indicesOf(player, pipeline, first, count, vertex_offset) orelse return;
     const lowest, const highest = _vertices.range(indices) orelse return;
-    if (highest - lowest >= most_vertices) return noRoom(queue);
+    if (highest - lowest >= most_vertices) return noRoom(queue, "a draw of more vertices than one works");
     const vertices = highest - lowest + 1;
 
     const locations = pipeline.locations;
     const stride = 4 + pipeline.varyings;
-    const most_corners = (if (pipeline.topology == .triangle_list) count / 3 else count -| 2) * 3;
+    // A patch's vertices may carry other than what comes to be drawn.
+    const point_stride = if (pipeline.tessellated) |tessellated| 4 + tessellated.vertex_varyings else stride;
+    const most_corners = _vertices.mostCorners(pipeline.topology, count);
+    const wide = _vertices.widens(pipeline);
+    const most_wide: _vertices.Wide = if (wide and pipeline.tessellated == null) _vertices.mostWide(pipeline, most_corners) else .{};
+    const wide_vertices_bytes = @as(usize, most_wide.vertices) * stride * @sizeOf(f32);
+    const wide_indices_bytes = @as(usize, most_wide.indices) * @sizeOf(u32);
     const inputs_bytes = @as(usize, vertices) * locations * @sizeOf([4]f32);
-    const outputs_bytes = @as(usize, vertices) * stride * @sizeOf(f32);
-    const scratch = scratchOf(queue, inputs_bytes + outputs_bytes + most_corners * @sizeOf(u32)) orelse return;
+    const outputs_bytes = @as(usize, vertices) * point_stride * @sizeOf(f32);
+    const corners_bytes = most_corners * @sizeOf(u32);
+    const scratch = scratchOf(queue, inputs_bytes + outputs_bytes + corners_bytes + wide_vertices_bytes + wide_indices_bytes) orelse return noRoom(queue, "a draw with no memory to work its vertices in");
     const inputs: [*][4]f32 = @ptrCast(@alignCast(scratch));
     const outputs: [*]f32 = @ptrCast(@alignCast(scratch + inputs_bytes));
     const corners: [*]u32 = @ptrCast(@alignCast(scratch + inputs_bytes + outputs_bytes));
+    const wide_vertices: [*]f32 = @ptrCast(@alignCast(scratch + inputs_bytes + outputs_bytes + corners_bytes));
+    const wide_indices: [*]u32 = @ptrCast(@alignCast(scratch + inputs_bytes + outputs_bytes + corners_bytes + wide_vertices_bytes));
     const corner_count = _vertices.assemble(pipeline.topology, indices, lowest, corners[0..most_corners]);
+    if (corner_count == 0) return;
 
-    // The triangles whose corners are all there.
-    const index_bytes: u32 = @intCast(corner_count * 4);
-    if (index_bytes == 0) return;
-    const index_place = carve(queue, index_bytes, 4) orelse return noRoom(queue);
-    const kept_indices: [*]u32 = @ptrCast(@alignCast(index_place.cpu));
+    // The triangles whose corners are all there: once for all instances,
+    // where rectangles are made anew for each.
+    var index_place: Place = undefined;
     var kept: u32 = 0;
-    var corner: usize = 0;
-    while (corner < corner_count) : (corner += 3) {
-        const three = corners[corner..][0..3];
-        if (three[0] == _vertices.no_corner or three[1] == _vertices.no_corner or three[2] == _vertices.no_corner) continue;
-        @memcpy(kept_indices[kept..][0..3], three);
-        kept += 3;
+    if (!wide and pipeline.tessellated == null) {
+        index_place = carve(queue, @intCast(corner_count * 4), 4) orelse return noRoom(queue, "a draw with no memory for its indices");
+        const kept_indices: [*]u32 = @ptrCast(@alignCast(index_place.cpu));
+        var corner: usize = 0;
+        while (corner < corner_count) : (corner += 3) {
+            const three = corners[corner..][0..3];
+            if (three[0] == _vertices.no_corner or three[1] == _vertices.no_corner or three[2] == _vertices.no_corner) continue;
+            @memcpy(kept_indices[kept..][0..3], three);
+            kept += 3;
+        }
+        if (kept == 0) return;
     }
-    if (kept == 0) return;
 
     const programs = &player.hardware.programs;
     const fixed = pipeline.fixed;
@@ -656,18 +838,24 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
         .color => {
             carried = .{ .colors_from = 0 };
             fragment = programs.color;
-            const place = carve(queue, 4, 4) orelse return;
+            const place = carve(queue, 4, 4) orelse return noRoom(queue, "a draw with no memory for its uniforms");
             uniforms = place.address;
         },
-        .texture, .texture_color => {
+        .texture, .texture_color, .texture_array, .texture_cube, .texture_3d => {
             if (fixed.kind == .texture_color) carried = .{ .colors_from = 2 };
-            fragment = if (fixed.kind == .texture) programs.texture else programs.texture_color;
+            fragment = switch (fixed.kind) {
+                .texture => programs.texture,
+                .texture_color => programs.texture_color,
+                .texture_array => programs.array,
+                .texture_cube => programs.cube,
+                else => programs.volume,
+            };
             uniforms = textureUniforms(queue, fixed) orelse missing: {
                 // As `shader.missing`: the colour says what has gone wrong.
                 varyings = 4;
                 carried = .{ .constant = missing_color };
                 fragment = programs.color;
-                const place = carve(queue, 4, 4) orelse return;
+                const place = carve(queue, 4, 4) orelse return noRoom(queue, "a draw with no memory for its uniforms");
                 break :missing place.address;
             };
         },
@@ -681,8 +869,7 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
         .offset = viewport.min_depth,
     };
     const record_bytes = recordStride(varyings);
-    const records_bytes = std.math.cast(u32, @as(u64, vertices) * record_bytes) orelse return;
-    if (!roomOnList(queue)) return;
+    if (!roomOnList(queue)) return noRoom(queue, "a draw with no memory for the binner's list");
     frames.writeDrawState(&player.bin, &state);
     for (0..instances) |k| {
         const instance = first_instance +% @as(u32, @intCast(k));
@@ -692,18 +879,53 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
             .input_stride = locations,
             .count = vertices,
             .outputs = outputs,
-            .output_stride = stride,
+            .output_stride = point_stride,
             .first_vertex = lowest,
             .instance = instance,
             .resources = &player.resources,
         };
         pipeline.vertex(&batch);
-        const records = carve(queue, records_bytes, 4) orelse return noRoom(queue);
-        for (0..vertices) |vertex| {
-            writeRecord(records.cpu + vertex * record_bytes, outputs + vertex * stride, &scale, varyings, carried);
+        var drawn: [*]const f32 = outputs;
+        var drawn_vertices: usize = vertices;
+        var drawn_corners: []const u32 = corners[0..corner_count];
+        var into_vertices: [*]f32 = wide_vertices;
+        var into_indices: [*]u32 = wide_indices;
+        var tessellated: ?_tessellate.Made = null;
+        defer if (tessellated) |made| made.free(queue.device.sys);
+        if (pipeline.tessellated != null) {
+            const made = _tessellate.run(queue.device.sys, pipeline, &player.resources, outputs, corners[0..corner_count], instance, most_vertices) orelse {
+                noRoom(queue, "a draw with no memory to tessellate it, or more vertices out of it than one works");
+                continue;
+            };
+            tessellated = made;
+            drawn = made.vertices;
+            drawn_vertices = made.vertex_count;
+            drawn_corners = made.corners();
+            into_vertices = made.wide_vertices;
+            into_indices = made.wide_indices;
+            if (!wide) {
+                if (made.corner_count == 0) continue;
+                index_place = carve(queue, made.corner_count * 4, 4) orelse return noRoom(queue, "a draw with no memory for the indices it tessellated to");
+                @memcpy(@as([*]u32, @ptrCast(@alignCast(index_place.cpu)))[0..made.corner_count], drawn_corners);
+                kept = made.corner_count;
+            }
         }
-        if (!roomOnList(queue)) return;
-        if (!sendVertices(queue, records.address, varyings, fragment, uniforms)) return;
+        if (wide) {
+            const made = _vertices.widen(pipeline, &viewport, pipeline.line_width orelse player.line_width, drawn, stride, drawn_corners, into_vertices, into_indices);
+            if (made.indices == 0) continue;
+            index_place = carve(queue, made.indices * 4, 4) orelse return noRoom(queue, "a draw with no memory for the indices of its lines or points");
+            @memcpy(@as([*]u32, @ptrCast(@alignCast(index_place.cpu)))[0..made.indices], into_indices[0..made.indices]);
+            kept = made.indices;
+            drawn = into_vertices;
+            drawn_vertices = made.vertices;
+        }
+        const records_bytes = std.math.cast(u32, drawn_vertices * record_bytes) orelse return noRoom(queue, "a draw with more vertex records than a frame holds");
+        const records = carve(queue, records_bytes, 4) orelse return noRoom(queue, "a draw with no memory for its vertex records");
+        for (0..drawn_vertices) |vertex| {
+            writeRecord(records.cpu + vertex * record_bytes, drawn + vertex * stride, &scale, varyings, carried);
+        }
+        if (!roomOnList(queue)) return noRoom(queue, "a draw with no memory for the binner's list");
+        if (!sendVertices(queue, records.address, varyings, fragment, uniforms)) return noRoom(queue, "a draw with no memory for its shader record");
         cl.indexBufferSetup(&player.bin, index_place.address, kept * 4);
         cl.indexedPrimList(&player.bin, cl.PRIM_TRIANGLES, kept);
         player.binned = true;
@@ -730,7 +952,9 @@ fn copyBufferToImage(queue: *Queue, command: *const _command.CopyBufferToImage) 
     const from = _buffer.bytes(command.source, 0, facet.WHOLE_SIZE) orelse return;
     const image = command.image;
     for (_stream.items(_command.CopyBufferToImage, facet.BufferImageCopy, command, command.count)) |*region| {
-        if (image.kind == .texture) {
+        if (_image.unpacks(image)) {
+            _image.copyUnpacking(image, from, region);
+        } else if (image.kind == .texture) {
             copyToTexture(image, from, region);
         } else {
             _image.copyFromBuffer(image, from, region);
@@ -759,14 +983,19 @@ fn copyToTexture(image: *Image, from: []const u8, region: *const facet.BufferIma
     const source_pitch = @as(usize, row_length) * pixel;
     const start = std.math.cast(usize, region.buffer_offset) orelse return;
     const layout = layoutOf(image.format, image.width, image.height, image.levels);
-    for (0..height) |row| {
-        const at = start + row * source_pitch;
-        if (at + width * pixel > from.len) return;
-        const y = top + @as(u32, @intCast(row));
-        for (0..width) |column| {
-            const x = left + @as(u32, @intCast(column));
-            const into = data + tiling.texelOffset(&layout, level, x, y);
-            @memcpy(into[0..pixel], from[at + column * pixel ..][0..pixel]);
+    const range = _image.layersOf(image, region.image_subresource, region.image_offset.z, region.image_extent.depth) orelse return;
+    const slice_height = if (region.buffer_image_height != 0) region.buffer_image_height else region.image_extent.height;
+    for (0..range.count) |slice| {
+        const layer_data = data + (range.first + slice) * @as(usize, @intCast(image.layer_bytes));
+        for (0..height) |row| {
+            const at = start + slice * slice_height * source_pitch + row * source_pitch;
+            if (at + width * pixel > from.len) return;
+            const y = top + @as(u32, @intCast(row));
+            for (0..width) |column| {
+                const x = left + @as(u32, @intCast(column));
+                const into = layer_data + tiling.texelOffset(&layout, level, x, y);
+                @memcpy(into[0..pixel], from[at + column * pixel ..][0..pixel]);
+            }
         }
     }
 }

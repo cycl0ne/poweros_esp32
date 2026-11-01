@@ -1,21 +1,23 @@
 # Video
 
 A film is two things side by side in one file: pictures, coded in H.264,
-H.265 or Motion JPEG, and sound, mostly AAC or AC-3.
+H.265, VP8, VP9, AV1 or Motion JPEG, and sound, mostly AAC or AC-3.
 **videocodec.library** opens the film and hands out both - the pictures as frames, in the order they
 are shown and with the time each is due, the sound as 16-bit samples for
 audio.device. Underneath, media.library reads the container (MP4,
 QuickTime's MOV and Matroska's MKV) and hands out each track's packets,
-the chip's decoder
-(videodec.resource, the WAVE511 on the VisionFive 2) decodes H.264 and
-H.265, the library decodes Motion JPEG itself, and audiocodec.library
-decodes the sound. A display's video layer (rtg's `ShowVideoFrame`)
+a codec module in `LIBS:codecs/` decodes the pictures - chip.vcodec
+H.264 and H.265 on the chip's decoder (videodec.resource, the WAVE511
+on the VisionFive 2), h264.vcodec H.264 in software, hevc.vcodec H.265,
+vp8.vcodec VP8, vp9.vcodec VP9 and av1.vcodec AV1 in software,
+mjpeg.vcodec Motion JPEG in software - and
+audiocodec.library decodes the sound. A display's video layer (rtg's `ShowVideoFrame`)
 shows a frame as it comes out; graphics' `WriteYUVPixelArray` and
 `ScaleYUVPixelArray` put one into a window where there is none.
 
 This guide is opening a film, its pictures, showing them on a video
 layer, its sound, keeping them together, moving in it, its tracks and
-subtitles, and what decodes what.
+subtitles, what decodes what, and writing a codec module.
 
 ## Opening a film
 
@@ -39,7 +41,8 @@ shown, the frames a second as `rate_num` / `rate_den` - how long the film
 lasts, and its sound: `sound_codec` (audiocodec's `ACODEC_*`, 0 for
 none), `sound_rate` and `sound_channels`. A film whose pictures nothing
 here decodes does not open: `VCERR_NOCODEC` - H.264 on a machine without
-the chip's decoder, MPEG-4 Part 2 anywhere. One whose sound nothing
+the chip's decoder (no module in `LIBS:codecs/` decodes it there),
+MPEG-4 Part 2 anywhere. One whose sound nothing
 decodes opens without sound. `VCA_Sound` FALSE leaves the sound closed;
 a film read through `VCA_ReadFunc` - a download - has its pictures only,
 and cannot move.
@@ -85,8 +88,8 @@ if (rb.ShowVideoFrame(layer, &frame.picture, &all) == rtg.errors.RTGERR_OK) {
 }
 ```
 
-Every frame videocodec hands out - the chip's, and its own Motion JPEG
-ones - is where a layer reads it, with nothing of it left in the
+Every frame videocodec hands out - every codec module's, the chip's and
+the Motion JPEG ones - is where a layer reads it, with nothing of it left in the
 caches. The frame shown stays lent until the next is shown: the
 `VIDEO_HELD_FRAMES` are then one on the layer, one waiting, and one
 being decoded. A program follows its window with the layer - on
@@ -186,18 +189,75 @@ colour, a pixel half covered or more is the subtitle's.
 
 | Pictures | Decoded by | On the VisionFive 2 |
 |---|---|---|
-| H.264 (baseline, main, high), 8-bit; H.265 (main, and main 10 shown in 8 bits) | the chip, videodec.resource | 1080p about 145 frames a second, 720p about 300 |
-| Motion JPEG, baseline: grey, 4:2:0, 4:2:2, 4:4:4 | the library, on the calling task | about a second for a 1080p picture: small pictures only |
+| H.264 (baseline, main, high), 8-bit; H.265 (main, and main 10 shown in 8 bits) | chip.vcodec: the chip, videodec.resource | 1080p about 145 frames a second, 720p about 300 |
+| H.264, every profile but SVC's and MVC's: up to 4:4:4 and 14 bits, fields, shown in 8 bits; what the chip refuses, and every H.264 where there is no chip | h264.vcodec: software, a worker task on each core, a picture each | 720p High 10 about 32 frames a second, 10 on one core; 1080p High about 20, 720p about 52 |
+| H.265: Main, Main 10, Main Still Picture and the range extensions' profiles - grey to 4:4:4, up to 16 bits - shown in 8 bits; the base layer of a stream in layers; what the chip refuses, and every H.265 where there is no chip | hevc.vcodec: software, a worker task on each core, a picture each | 1080p about 25 frames a second, 720p about 55, 1080p 4:2:2 in 10 bits about 17 |
+| VP8, every version (WebM, Matroska) | vp8.vcodec: software, a worker task on each core, a frame each | 720p about 84 frames a second, 1080p about 34; 27 and 11 on one core |
+| VP9, every profile: 8, 10 and 12 bits, 4:2:0, 4:2:2, 4:4:0, 4:4:4 (WebM, Matroska), shown in 8 bits | vp9.vcodec: software, a worker task on each core, a frame each | 720p about 53 frames a second, 1080p about 30, 720p in 10 bits about 38; 18, 9 and 12 on one core |
+| AV1, every profile: 8, 10 and 12 bits, grey, 4:2:0, 4:2:2, 4:4:4, film grain (MP4, WebM, Matroska), shown in 8 bits | av1.vcodec: software, a worker task on each core, a frame each | 1080p about 13 frames a second, 720p about 14, 720p in 10 bits about 13 |
+| Motion JPEG, baseline: grey, 4:2:0, 4:2:2, 4:4:4 | mjpeg.vcodec: software, on the calling task | about a second for a 1080p picture: small pictures only |
 | MPEG-4 Part 2 | nothing | - |
+
+The software modules but mjpeg.vcodec are on the RISC-V 64 and AArch64
+machines' disks alone: the ESP32s have neither the room on their flash
+disks nor the speed.
 
 The sound is audiocodec.library's: AAC-LC
 ([AAC and MP4](audio.md#aac-and-mp4)), AC-3 and E-AC-3 mixed into
 stereo ([AC-3 and E-AC-3](audio.md#ac-3-and-e-ac-3)), and in a Matroska
 file MP3, FLAC and Vorbis too ([Matroska](audio.md#matroska)); another
-codec - DTS, Opus - leaves the film without sound. A Matroska film's pictures
-in VP8, VP9 or AV1 are known to nothing here. Subtitles (1.3): SubRip,
+codec - DTS, Opus - leaves the film without sound. Subtitles (1.3): SubRip,
 SubStation Alpha (ASS and SSA), MP4's timed text and PGS, read by the
 library.
+
+## Codec modules
+
+The pictures' decoders are libraries of their own in `LIBS:codecs/`
+(1.4), so one is replaced - or a new codec added - by copying its file
+there, without videocodec.library. Each has the seven calls of
+`sdk.interface.vcodec` ([md](../autodocs/vcodec.md)) and a ROM tag that
+says what it decodes, a `ResidentVCodec` (`sdk.vcodec`):
+
+```zig
+pub export const h264_vcodec_tag: vcodec.ResidentVCodec linksection(".resident") = .{
+    .resident = .{
+        .match_tag = @ptrCast(&h264_vcodec_tag),
+        .flags = exec.RTF_AUTOINIT,
+        .version = 1,
+        .type = .library,
+        .name = "h264.vcodec",
+        .id_string = "h264.vcodec 1.0 (30.10.2026)\r\n",
+        .init = &init_table,
+    },
+    .codecs = vcodec.codecBit(vc.VCODEC_H264),
+    .kind = vcodec.VCMOD_SOFTWARE,
+    .priority = 0,
+};
+```
+
+When a film is opened, videocodec reads the tag of each file there -
+without loading it, and again only when the file changed - and tries the
+modules that name the track's codec: a chip's (`VCMOD_CHIP`) before
+software, the higher `priority` first. The file's name is the tag's,
+which ramlib loads it by. The first whose `OpenVCodec` gives a decoder
+decodes the track; `VCERR_NOCODEC` - the board has not the module's chip
+- or another error passes it to the next. A decoder that reads in the
+stream that it cannot decode it answers `ReceiveVCodecFrame` with
+`VCERR_UNSUPPORTED` before its first frame, and the next module starts
+again at the key packet.
+
+A decoder is asked for frames (`ReceiveVCodecFrame`); `VCERR_NEED_DATA`
+has videocodec send the next packet (`SendVCodecPacket`), and
+`VCERR_FULL` there has it take a frame first and send the packet again.
+A packet's bytes are videocodec's for the call alone. Its frames are
+`VideoFrame`s as a program gets them - 8-bit 4:2:0, each plane and row
+on 16 bytes, where a display's video layer reads them and out of the
+caches - its own memory, lent until `ReleaseVCodecFrame`, with
+`private` its own. `FlushVCodec` is a seek. src/disk/libs/codecs/ has
+chip.vcodec, h264.vcodec, hevc.vcodec, vp8.vcodec, vp9.vcodec,
+av1.vcodec and mjpeg.vcodec, and
+module.zig the base, init, Expunge and jump table every module there
+shares.
 
 ## From the shell
 

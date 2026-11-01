@@ -458,7 +458,7 @@ fn makePicture(scene: *Scene, across: u32, down: u32, levels: u32) ?Picture {
     const block = scene.space.alloc(layout.bytes) orelse return null;
     if (!scene.space.flush()) return null;
     var picture = Picture{ .block = block, .layout = layout };
-    tiling.writeTextureState(&picture.state, &layout, .rgba, block.address, 0, levels - 1);
+    tiling.writeTextureState(&picture.state, &layout, .rgba, block.address, 0, levels - 1, 1, 0);
     return picture;
 }
 

@@ -4,13 +4,14 @@
 //!
 //! What facet.library's pipelines draw:
 //! - triangles - lists, strips and fans - filled, one sample a pixel;
+//! - patches tessellated on the cores, into triangles or lines;
 //! - the vertex function's inputs read from up to four vertex buffers,
 //!   an attribute a location, of floats or of bytes 0 to 1;
 //! - culled by their facing, front or back or both;
-//! - a depth test of any compare, the depth written or not, and no
-//!   stencil;
-//! - the colour written whole, replacing what is there or laid over it by
-//!   its alpha (SRC_ALPHA, ONE_MINUS_SRC_ALPHA, ADD);
+//! - a depth test of any compare, the depth written or not, and a stencil
+//!   test of any compare and operations, a face's own;
+//! - the colour written, the channels asked for, replacing what is there or
+//!   mixed with it by any blend factors and operation, and no logic op;
 //! - one viewport and one scissor, given here or set by commands.
 //!
 //! Anything else is refused as the pipeline is made
@@ -46,14 +47,70 @@ pub const Attribute = struct {
 /// Which triangles are not drawn.
 pub const Cull = enum { none, back, front };
 
-/// What a pixel drawn does to what is there: replaces it, or is laid over
-/// it by its alpha.
-pub const Blend = enum { off, alpha };
+/// What a pixel drawn does to what is there. Off, it replaces it, the
+/// channels of `mask` only.
+pub const Mixing = struct {
+    enabled: bool = false,
+    src_color: facet.BlendFactor = .one,
+    dst_color: facet.BlendFactor = .zero,
+    color_op: facet.BlendOp = .add,
+    src_alpha: facet.BlendFactor = .one,
+    dst_alpha: facet.BlendFactor = .zero,
+    alpha_op: facet.BlendOp = .add,
+    mask: u32 = facet.COLOR_COMPONENT_ALL,
+    /// Null where a command sets them (CmdSetBlendConstants).
+    constants: ?[4]f32 = .{ 0, 0, 0, 0 },
+
+    /// The same over a target that has no alpha: what is there reads as
+    /// wholly opaque.
+    pub fn overOpaque(mixing: Mixing) Mixing {
+        var made = mixing;
+        made.src_color = opaqueFactor(mixing.src_color);
+        made.dst_color = opaqueFactor(mixing.dst_color);
+        made.src_alpha = opaqueFactor(mixing.src_alpha);
+        made.dst_alpha = opaqueFactor(mixing.dst_alpha);
+        return made;
+    }
+
+    fn opaqueFactor(factor: facet.BlendFactor) facet.BlendFactor {
+        return switch (factor) {
+            .dst_alpha => .one,
+            .one_minus_dst_alpha, .src_alpha_saturate => .zero,
+            else => factor,
+        };
+    }
+};
+
+/// A face's stencil test.
+pub const StencilFace = struct {
+    fail: facet.StencilOp = .keep,
+    pass: facet.StencilOp = .keep,
+    depth_fail: facet.StencilOp = .keep,
+    compare: facet.CompareOp = .never,
+    compare_mask: u8 = 0,
+    write_mask: u8 = 0,
+    reference: u8 = 0,
+};
+
+/// What a pipeline does between the vertex function and the rasterizer.
+pub const Tessellated = struct {
+    control: shader.ControlFn,
+    evaluation: shader.EvaluationFn,
+    way: shader.Tessellation,
+    /// The vertices of a patch.
+    points: u32,
+    /// What the vertex function writes past the position.
+    vertex_varyings: u32,
+};
 
 pub const Pipeline = struct {
     device: *Device,
     /// What its driver made of it (make_pipeline).
     driver: ?*anyopaque = null,
+    /// A compute pipeline: nothing else here but `device` and `driver` is
+    /// set, and no driver makes anything of it.
+    compute: ?shader.ComputeFn = null,
+    tessellated: ?Tessellated = null,
     vertex: shader.VertexFn,
     fragment: shader.FragmentFn,
     /// The fragment function's fixed form, if it has one.
@@ -66,6 +123,12 @@ pub const Pipeline = struct {
     attributes: [_instance.max_vertex_input_attributes]Attribute,
     attribute_count: u32,
     topology: facet.PrimitiveTopology,
+    /// What comes to be drawn: `topology`, or what patches are made into.
+    drawn_topology: facet.PrimitiveTopology,
+    /// Triangles drawn filled, or as their edges or their corners.
+    polygon_mode: facet.PolygonMode,
+    /// In pixels; null where a command sets it (CmdSetLineWidth).
+    line_width: ?f32,
     /// An index of all ones ends a strip or a fan, and the next starts.
     restart: bool,
     /// Its draws draw nothing: the rasterizer is switched off, or every
@@ -75,9 +138,15 @@ pub const Pipeline = struct {
     front: facet.FrontFace,
     depth_test: ?facet.CompareOp,
     depth_write: bool,
+    /// The front's and the back's test, or null for none.
+    stencil: ?[2]StencilFace,
+    /// What of them commands set (CmdSetStencilCompareMask and the like).
+    dynamic_stencil_compare: bool,
+    dynamic_stencil_write: bool,
+    dynamic_stencil_reference: bool,
     /// PIPELINE_CREATE_DEPTH_PREPASS.
     prepass: bool,
-    blend: Blend,
+    mixing: Mixing,
     /// The viewport and the scissor, or null where commands set them.
     viewport: ?facet.Viewport,
     scissor: ?facet.Rect2D,

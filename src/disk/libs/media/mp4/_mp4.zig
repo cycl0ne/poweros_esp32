@@ -462,6 +462,12 @@ fn pictureEntry(out: *media.MediaTrack, format: u32, body: []const u8) void {
             out.codec = media.MCODEC_MPEG4V;
             if (child(children, kind("esds"))) |esds| elementary(out, esds);
         },
+        kind("vp08") => out.codec = media.MCODEC_VP8,
+        kind("vp09") => out.codec = media.MCODEC_VP9,
+        kind("av01") => {
+            out.codec = media.MCODEC_AV1;
+            if (child(children, kind("av1C"))) |av1c| setup(out, av1c, 0);
+        },
         kind("jpeg"), kind("mjpa"), kind("mjpb"), kind("MJPG") => out.codec = media.MCODEC_MJPEG,
         else => {},
     }

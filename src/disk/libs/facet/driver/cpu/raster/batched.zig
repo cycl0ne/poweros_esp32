@@ -26,6 +26,9 @@
 //! its depth is tested less or less or equal and written, and it is not
 //! blended: then a pixel is shaded once, by the nearest, whatever order
 //! the triangles come in.
+//!
+//! A draw with a stencil test goes by way of its own, a pixel at a time and
+//! asking about everything: the rest pay nothing for it.
 
 const std = @import("std");
 const shader = @import("sdk").facet.shader;
@@ -62,6 +65,47 @@ pub const Compare = enum(u3) {
     always = 7,
 };
 
+/// What a stencil test does to the value kept. Numbered as Vulkan's are.
+pub const StencilOp = enum(u3) { keep, zero, replace, increment, decrement, invert, increment_wrap, decrement_wrap };
+
+/// A face's stencil test.
+pub const StencilFace = struct {
+    fail: StencilOp = .keep,
+    pass: StencilOp = .keep,
+    depth_fail: StencilOp = .keep,
+    compare: Compare = .never,
+    compare_mask: u8 = 0,
+    write_mask: u8 = 0,
+    reference: u8 = 0,
+
+    /// Whether the value kept passes.
+    inline fn passes(face: *const StencilFace, kept: u8) bool {
+        return byOrder(face.compare, face.reference & face.compare_mask, kept & face.compare_mask);
+    }
+
+    /// The value to keep after `op`.
+    inline fn after(face: *const StencilFace, op: StencilOp, kept: u8) u8 {
+        const made: u8 = switch (op) {
+            .keep => kept,
+            .zero => 0,
+            .replace => face.reference,
+            .increment => kept +| 1,
+            .decrement => kept -| 1,
+            .invert => ~kept,
+            .increment_wrap => kept +% 1,
+            .decrement_wrap => kept -% 1,
+        };
+        return (kept & ~face.write_mask) | (made & face.write_mask);
+    }
+};
+
+/// Whether `near` is as `compare` asks to `kept`.
+inline fn byOrder(compare: Compare, near: anytype, kept: anytype) bool {
+    // 0 less, 1 equal, 2 greater.
+    const order: u3 = @as(u3, @intFromBool(near >= kept)) + @intFromBool(near > kept);
+    return @as(u8, @intFromEnum(compare)) >> order & 1 != 0;
+}
+
 /// How a draw draws.
 pub const State = struct {
     viewport: setup.Viewport,
@@ -77,6 +121,10 @@ pub const State = struct {
     depth_test: ?Compare = null,
     depth_write: bool = false,
     blend: pipeline.Blend = .off,
+    /// How it mixes, with `.general`.
+    mixing: pipeline.Mixing = .{},
+    /// The stencil test on a target with stencil: the front's, the back's.
+    stencil: ?[2]StencilFace = null,
     /// The depth pre-pass, where the depth test is less or less or equal,
     /// the depth written and nothing blended; else no pre-pass.
     prepass: bool = false,
@@ -112,6 +160,10 @@ const Shading = struct {
     compare: Compare,
     depth_write: bool,
     blend: pipeline.Blend,
+    mixing: pipeline.Mixing,
+    /// The depth is tested, with a stencil test.
+    has_depth: bool,
+    stencil: [2]StencilFace,
 };
 
 /// A triangle set up for the tiles: its planes follow it.
@@ -121,6 +173,8 @@ const Triangle = struct {
     depth: setup.Depth,
     /// The least 1 / w of its vertices: the least anywhere inside.
     least_inverse_w: f32,
+    /// Which face of it is seen, 0 the front, for a stencil test.
+    face: u8,
 
     fn planes(triangle: *const Triangle) [*]const shader.Plane {
         return @ptrFromInt(@intFromPtr(triangle) + @sizeOf(Triangle));
@@ -132,7 +186,7 @@ const Clip = setup.ClipVertex(most_varyings);
 /// How the depth is tested in a tile: by the draw's test, or - `second`
 /// and `second_or_equal` - as the pre-pass's second pass does after a
 /// test of less or of less or equal (`prepass.keep`).
-const Test = enum { off, less, less_or_equal, masked, second, second_or_equal };
+const Test = enum { off, less, less_or_equal, masked, second, second_or_equal, stencil };
 
 /// A triangle in the pre-pass: its depth alone, then its quads tested as
 /// `second` says.
@@ -147,8 +201,9 @@ fn setUpAll(target: *Target, state: *const State, vertices: []const f32, stride:
     const count = vertices.len / stride;
     const depth = target.attachments.depth.used and state.depth_test != null;
     const compare = if (depth) state.depth_test.? else .always;
-    if (compare == .never) return;
+    if (compare == .never and !(target.attachments.stencil.used and state.stencil != null)) return;
     const area = scissored(target.areaBounds(), state.scissor) orelse return;
+    const stencil = if (target.attachments.stencil.used) state.stencil else null;
     const shading = target.arena.create(Shading) orelse return error.OutOfMemory;
     shading.* = .{
         .fragment = state.fragment,
@@ -157,14 +212,17 @@ fn setUpAll(target: *Target, state: *const State, vertices: []const f32, stride:
         .compare = compare,
         .depth_write = depth and state.depth_write,
         .blend = state.blend,
+        .mixing = state.mixing,
+        .has_depth = depth,
+        .stencil = stencil orelse undefined,
     };
-    const test_kind: Test = if (!depth) .off else switch (compare) {
+    const test_kind: Test = if (stencil != null) .stencil else if (!depth) .off else switch (compare) {
         .less => .less,
         .less_or_equal => .less_or_equal,
         else => .masked,
     };
     const raster = switch (test_kind) {
-        inline .off, .less, .less_or_equal, .masked => |kind| &Rasterize(kind).raster,
+        inline .off, .less, .less_or_equal, .masked, .stencil => |kind| &Rasterize(kind).raster,
         .second, .second_or_equal => unreachable,
     };
     const two = state.prepass and shading.depth_write and state.blend == .off;
@@ -273,6 +331,7 @@ const SetUp = struct {
             .shading = set.shading,
             .depth = if (set.depth) depthOf(&made, projected, state) else undefined,
             .least_inverse_w = @min(projected[0].inverse_w, projected[1].inverse_w, projected[2].inverse_w),
+            .face = faceOf(&projected, state.front),
         };
         const planes: [*]shader.Plane = @ptrFromInt(@intFromPtr(triangle) + @sizeOf(Triangle));
         planesOf(&made, &projected, carried, planes[0..plane_count]);
@@ -280,6 +339,13 @@ const SetUp = struct {
         try target.addPending(&triangle.header);
     }
 };
+
+/// Which face of a triangle on the surface is seen, 0 the front.
+fn faceOf(p: *const [3]setup.Projected, front: setup.Winding) u8 {
+    // Positive is clockwise on the surface, whose y runs down.
+    const clockwise = (p[1].x - p[0].x) * (p[2].y - p[0].y) - (p[1].y - p[0].y) * (p[2].x - p[0].x) > 0;
+    return @intFromBool(clockwise != (front == .clockwise));
+}
 
 /// The depth of a triangle, its vertices' z moved into the depth range.
 fn depthOf(made: *const setup.Triangle, projected: [3]setup.Projected, state: *const State) setup.Depth {
@@ -323,7 +389,7 @@ fn Rasterize(comptime kind: Test) type {
             const triangle: *const Triangle = @alignCast(@fieldParentPtr("header", header));
             var batch: Batch = undefined;
             batch.start(tile, triangle);
-            walk.quads(tile, header, Walker{ .tile = tile, .batch = &batch, .depth = triangle.depth, .shading = triangle.shading }, Walker.run);
+            walk.quads(tile, header, Walker{ .tile = tile, .batch = &batch, .depth = triangle.depth, .shading = triangle.shading, .face = triangle.face }, Walker.run);
             batch.flush();
         }
 
@@ -333,6 +399,7 @@ fn Rasterize(comptime kind: Test) type {
             batch: *Batch,
             depth: setup.Depth,
             shading: *const Shading,
+            face: u8,
 
             /// Rows `y` and `y + 1`, the quads from the even column at or
             /// left of the first pixel of either run to past the last of
@@ -345,7 +412,7 @@ fn Rasterize(comptime kind: Test) type {
                 const first = if (upper.empty()) lower.left else if (lower.empty()) upper.left else @min(upper.left, lower.left);
                 const end = @max(upper.right, lower.right);
                 var x = first & ~@as(u32, 1);
-                const tested = kind != .off;
+                const tested = if (kind == .stencil) walker.shading.has_depth else kind != .off;
                 const step = if (tested) walker.depth.step else 0;
                 var z_upper: i64 = if (tested) walker.rowDepth(upper, x, y) else 0;
                 var z_lower: i64 = if (tested) walker.rowDepth(lower, x, y + 1) else 0;
@@ -366,7 +433,10 @@ fn Rasterize(comptime kind: Test) type {
                     const covered = @as(u4, @intFromBool(upper.holds(x))) | @as(u4, @intFromBool(upper.holds(x + 1))) << 1 |
                         @as(u4, @intFromBool(lower.holds(x))) << 2 | @as(u4, @intFromBool(lower.holds(x + 1))) << 3;
                     var kept = covered;
-                    if (tested) {
+                    if (kind == .stencil) {
+                        const near = if (tested) [4]u64{ units(z_upper), units(z_upper +% step), units(z_lower), units(z_lower +% step) } else [4]u64{ 0, 0, 0, 0 };
+                        kept = walker.stenciled(x, y, covered, near, depths);
+                    } else if (tested) {
                         const near = [4]u64{ units(z_upper), units(z_upper +% step), units(z_lower), units(z_lower +% step) };
                         if (second) {
                             kept = prepass.keep(walker.tile, kind == .second_or_equal, x, y, covered, near, depths);
@@ -401,13 +471,33 @@ fn Rasterize(comptime kind: Test) type {
                     .off => true,
                     .less => near < kept,
                     .less_or_equal => near <= kept,
-                    .second, .second_or_equal => unreachable,
-                    .masked => mask: {
-                        // 0 less, 1 equal, 2 greater.
-                        const order: u3 = @as(u3, @intFromBool(near >= kept)) + @intFromBool(near > kept);
-                        break :mask @as(u8, @intFromEnum(walker.shading.compare)) >> order & 1 != 0;
-                    },
+                    .second, .second_or_equal, .stencil => unreachable,
+                    .masked => byOrder(walker.shading.compare, near, kept),
                 };
+            }
+
+            /// The stencil test and then the depth test for a quad's pixels,
+            /// each keeping what it should: the pixels kept.
+            inline fn stenciled(walker: Walker, x: u32, y: u32, covered: u4, near: [4]u64, depths: [*]u16) u4 {
+                const shading = walker.shading;
+                const face = &shading.stencil[walker.face];
+                const values = walker.tile.stencilRow(y);
+                var kept: u4 = 0;
+                inline for (0..4) |i| {
+                    if (covered >> i & 1 != 0) {
+                        const value = &values[offset(i) + x];
+                        if (!face.passes(value.*)) {
+                            value.* = face.after(face.fail, value.*);
+                        } else if (shading.has_depth and !byOrder(shading.compare, near[i], depths[offset(i) + x])) {
+                            value.* = face.after(face.depth_fail, value.*);
+                        } else {
+                            if (shading.depth_write) depths[offset(i) + x] = @truncate(near[i]);
+                            value.* = face.after(face.pass, value.*);
+                            kept |= @as(u4, 1) << i;
+                        }
+                    }
+                }
+                return kept;
             }
         };
     };
@@ -477,6 +567,7 @@ const Batch = struct {
         batch.fragments.count = batch.count;
         batch.shading.fragment(&batch.fragments);
         switch (batch.shading.blend) {
+            .general => batch.putMixed(),
             inline else => |blend| batch.put(blend),
         }
         batch.count = 0;
@@ -496,6 +587,19 @@ const Batch = struct {
                 inline for (0..2) |row| @as(*u64, @ptrCast(@alignCast(at + row * tile_size))).* = pairs[row];
             } else inline for (0..4) |i| {
                 if (quad.kept >> i & 1 != 0) at[offset(i)] = pipeline.blendedBy(blend, colors[i], at[offset(i)]);
+            }
+        }
+    }
+
+    /// As `put`, by what the draw's Mixing says.
+    fn putMixed(batch: *Batch) void {
+        @setRuntimeSafety(false);
+        const mixing = &batch.shading.mixing;
+        const pixels: [*]u32 = &batch.tile.buffer.color;
+        for (batch.quads[0..batch.count], batch.colors[0..batch.count]) |quad, *colors| {
+            const at = pixels + @as(u32, quad.y) * tile_size + quad.x;
+            inline for (0..4) |i| {
+                if (quad.kept >> i & 1 != 0) at[offset(i)] = mixing.mixed(colors[i], at[offset(i)]);
             }
         }
     }

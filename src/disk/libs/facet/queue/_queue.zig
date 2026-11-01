@@ -243,7 +243,7 @@ fn run(queue: *Queue, sys: *ExecBase, submission: *const Submission) void {
         sys.ResetWaitable(&semaphore.waitable);
     };
     for (submission.buffers) |buffer| {
-        if (buffer.state == .executable and !device.isLost()) {
+        if (buffer.state == .executable and !buffer.secondary and !device.isLost()) {
             device.physical.ops.execute(queue, buffer, &queue.done);
             const one = [1]*exec.Waitable{&queue.done};
             _ = sys.WaitForAny(&one, 1, exec.WAIT_FOREVER);

@@ -12,17 +12,33 @@ facet.library/CmdBindDescriptorSets
 facet.library/CmdBindIndexBuffer
 facet.library/CmdBindPipeline
 facet.library/CmdBindVertexBuffers
+facet.library/CmdBlitImage
+facet.library/CmdClearAttachments
 facet.library/CmdCopyBuffer
 facet.library/CmdCopyBufferToImage
+facet.library/CmdCopyImage
+facet.library/CmdCopyImageToBuffer
+facet.library/CmdDispatch
+facet.library/CmdDispatchIndirect
 facet.library/CmdDraw
 facet.library/CmdDrawIndexed
+facet.library/CmdDrawIndexedIndirect
+facet.library/CmdDrawIndirect
 facet.library/CmdEndRenderPass
+facet.library/CmdExecuteCommands
+facet.library/CmdNextSubpass
 facet.library/CmdPipelineBarrier
 facet.library/CmdPushConstants
+facet.library/CmdSetBlendConstants
+facet.library/CmdSetLineWidth
 facet.library/CmdSetScissor
+facet.library/CmdSetStencilCompareMask
+facet.library/CmdSetStencilReference
+facet.library/CmdSetStencilWriteMask
 facet.library/CmdSetViewport
 facet.library/CreateBuffer
 facet.library/CreateCommandPool
+facet.library/CreateComputePipelines
 facet.library/CreateDescriptorPool
 facet.library/CreateDescriptorSetLayout
 facet.library/CreateDevice
@@ -67,6 +83,7 @@ facet.library/GetDeviceQueue
 facet.library/GetFenceStatus
 facet.library/GetImageMemoryRequirements
 facet.library/GetImageSubresourceLayout
+facet.library/GetPhysicalDeviceFeatures
 facet.library/GetPhysicalDeviceFormatProperties
 facet.library/GetPhysicalDeviceMemoryProperties
 facet.library/GetPhysicalDeviceProperties
@@ -163,17 +180,18 @@ facet.library/WaitForFences
 
    INPUTS
 	- `device` - the device.
-	- `info` - the pool, and how many: primary ones.
+	- `info` - the pool, how many, and whether they are primary or secondary.
 	- `buffers` - where they are written, `info.command_buffer_count` of
 	  them; all null when it fails.
 
    RESULT
-	`success`; `error_feature_not_present` for secondary command buffers;
+	`success`; `error_feature_not_present` for a level there is not;
 	`error_out_of_host_memory`, none allocated.
 
    BEHAVIOR
 	Each buffer starts with nothing recorded, ready for
-	BeginCommandBuffer.
+	BeginCommandBuffer. A secondary one is played by CmdExecuteCommands; given
+	to QueueSubmit, it plays nothing.
 
    CONTEXT
 	- Waits: no.
@@ -461,7 +479,8 @@ facet.library/WaitForFences
 	Played, the rasterizer's frame begins over the render area of the
 	framebuffer's colour attachment, cut to the framebuffer: cleared to the
 	colour attachment's clear value where its load op is CLEAR, else kept,
-	and with the depth cleared to the depth attachment's - 1.0 where it has
+	and with the stencil cleared to the depth attachment's, 0 where it has
+	none, and with the depth cleared to the depth attachment's - 1.0 where it has
 	none - as each tile starts. The draws until CmdEndRenderPass are
 	gathered; the tiles are drawn and stored when it ends. A pass begun in
 	another ends it first.
@@ -487,7 +506,8 @@ facet.library/WaitForFences
 
    NOTES
 	Draws are recorded between CmdBeginRenderPass and CmdEndRenderPass; a
-	draw recorded outside a pass draws nothing.
+	draw recorded outside a pass draws nothing. The pass begins with its first
+	subpass: CmdNextSubpass goes on to the next.
 
    BUGS
 	None known.
@@ -679,6 +699,99 @@ facet.library/WaitForFences
    EXAMPLES
 	    const offset: u64 = 0;
 	    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertices), @ptrCast(&offset));
+facet.library/CmdBlitImage                          facet.library/CmdBlitImage
+
+   NAME
+	CmdBlitImage -- Recorded: a rectangle of an image drawn over one of another, scaled.
+
+   SYNOPSIS
+	    fn CmdBlitImage(base: *FacetBase, buffer: *facet.CommandBuffer, source: *facet.Image, source_layout: facet.ImageLayout, destination: *facet.Image, destination_layout: facet.ImageLayout, region_count: u32, regions: [*]const facet.ImageBlit, filter: facet.Filter) void
+
+   SINCE
+	1.16. LVO -392.
+
+   INPUTS
+	- `buffer` - a command buffer recording.
+	- `source`, `destination` - images of colour, of any formats.
+	- `source_layout`, `destination_layout` - not looked at.
+	- `region_count`, `regions` - the rectangles: corners the other way round
+	  turn it round.
+	- `filter` - NEAREST or LINEAR.
+
+   RESULT
+	None.
+
+   BEHAVIOR
+	Outside a render pass. Colours go by way of 8 bits a channel, and are
+	rounded into the destination's format, not dithered. What falls outside
+	the destination is left out, and the source's edge is read beyond it.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	What is given is copied as the command is recorded; the images and buffers
+	have to last until it has been played.
+
+   NOTES
+	None.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`CmdCopyImage`
+
+   EXAMPLES
+	    fb.CmdBlitImage(commands, from.?, .general, to.?, .general, 1, @ptrCast(&region), .linear);
+facet.library/CmdClearAttachments            facet.library/CmdClearAttachments
+
+   NAME
+	CmdClearAttachments -- Recorded: parts of a render pass's attachments cleared, in the middle of it.
+
+   SYNOPSIS
+	    fn CmdClearAttachments(base: *FacetBase, buffer: *facet.CommandBuffer, attachment_count: u32, attachments: [*]const facet.ClearAttachment, rect_count: u32, rects: [*]const facet.ClearRect) void
+
+   SINCE
+	1.16. LVO -400.
+
+   INPUTS
+	- `buffer` - a command buffer recording.
+	- `attachment_count`, `attachments` - what to clear: IMAGE_ASPECT_COLOR for
+	  the colour attachment, and IMAGE_ASPECT_DEPTH and IMAGE_ASPECT_STENCIL.
+	- `rect_count`, `rects` - where: inside the render area.
+
+   RESULT
+	None.
+
+   BEHAVIOR
+	Inside a render pass, whatever draws there before or after it. The scissor
+	and the pipeline bound have no part in it, and nothing bound changes.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	What is given is copied as the command is recorded; the images and buffers
+	have to last until it has been played.
+
+   NOTES
+	None.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`CmdBeginRenderPass`
+
+   EXAMPLES
+	    fb.CmdClearAttachments(commands, 1, @ptrCast(&attachment), 1, @ptrCast(&rect));
 facet.library/CmdCopyBuffer                        facet.library/CmdCopyBuffer
 
    NAME
@@ -776,6 +889,187 @@ facet.library/WaitForFences
    EXAMPLES
 	    const region = facet.BufferImageCopy{ .image_extent = .{ .width = 256, .height = 256 } };
 	    fb.CmdCopyBufferToImage(commands, staging.?, picture.?, .transfer_dst_optimal, 1, @ptrCast(&region));
+facet.library/CmdCopyImage                          facet.library/CmdCopyImage
+
+   NAME
+	CmdCopyImage -- Recorded: a rectangle of texels copied from one image to another, as they are.
+
+   SYNOPSIS
+	    fn CmdCopyImage(base: *FacetBase, buffer: *facet.CommandBuffer, source: *facet.Image, source_layout: facet.ImageLayout, destination: *facet.Image, destination_layout: facet.ImageLayout, region_count: u32, regions: [*]const facet.ImageCopy) void
+
+   SINCE
+	1.16. LVO -388.
+
+   INPUTS
+	- `buffer` - a command buffer recording.
+	- `source`, `destination` - images of the same size of texel, whatever their
+	  formats: the bytes go as they are.
+	- `source_layout`, `destination_layout` - not looked at.
+	- `region_count`, `regions` - the rectangles.
+
+   RESULT
+	None.
+
+   BEHAVIOR
+	Outside a render pass. The part of a rectangle outside either image is
+	left out, and so are images of depth or stencil, which live in the tiles.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	What is given is copied as the command is recorded; the images and buffers
+	have to last until it has been played.
+
+   NOTES
+	None.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`CmdBlitImage`, `CmdCopyImageToBuffer`, `CmdCopyBufferToImage`
+
+   EXAMPLES
+	    fb.CmdCopyImage(commands, from.?, .general, to.?, .general, 1, @ptrCast(&facet.ImageCopy{ .extent = .{ .width = 64, .height = 64 } }));
+facet.library/CmdCopyImageToBuffer          facet.library/CmdCopyImageToBuffer
+
+   NAME
+	CmdCopyImageToBuffer -- Recorded: a rectangle of texels copied from an image to a buffer.
+
+   SYNOPSIS
+	    fn CmdCopyImageToBuffer(base: *FacetBase, buffer: *facet.CommandBuffer, image: *facet.Image, image_layout: facet.ImageLayout, destination: *facet.Buffer, region_count: u32, regions: [*]const facet.BufferImageCopy) void
+
+   SINCE
+	1.16. LVO -396.
+
+   INPUTS
+	- `buffer` - a command buffer recording.
+	- `image` - an image of colour.
+	- `image_layout` - not looked at.
+	- `destination` - the buffer.
+	- `region_count`, `regions` - the rectangles.
+
+   RESULT
+	None.
+
+   BEHAVIOR
+	Outside a render pass. In the buffer the texels are in rows, in the image's
+	format. The part of a rectangle outside the image, or past the buffer's
+	end, is left out.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	What is given is copied as the command is recorded; the images and buffers
+	have to last until it has been played.
+
+   NOTES
+	None.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`CmdCopyBufferToImage`, `CmdCopyImage`
+
+   EXAMPLES
+	    fb.CmdCopyImageToBuffer(commands, picture.?, .general, readback.?, 1, @ptrCast(&region));
+facet.library/CmdDispatch                            facet.library/CmdDispatch
+
+   NAME
+	CmdDispatch -- Recorded: the compute function bound run, for each of the groups.
+
+   SYNOPSIS
+	    fn CmdDispatch(base: *FacetBase, buffer: *facet.CommandBuffer, x: u32, y: u32, z: u32) void
+
+   SINCE
+	1.18. LVO -420.
+
+   INPUTS
+	- `buffer` - a command buffer recording, outside a render pass.
+	- `x`, `y`, `z` - how many groups along each axis.
+
+   RESULT
+	None.
+
+   BEHAVIOR
+	The function of the pipeline bound with `PipelineBindPoint.compute` is
+	called once for each group, given the descriptor sets bound for compute and
+	the push constants. What it writes is there for the commands after it. It
+	runs on the cores, the groups in no order and shared between them; the
+	dispatch ends when all are done. In a render pass it does nothing.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	None.
+
+   NOTES
+	Barriers are taken and need do nothing: the cores run a command at a time.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`CreateComputePipelines`, `CmdDispatchIndirect`, `CmdBindDescriptorSets`
+
+   EXAMPLES
+	    fb.CmdDispatch(commands, 16, 1, 1);
+facet.library/CmdDispatchIndirect            facet.library/CmdDispatchIndirect
+
+   NAME
+	CmdDispatchIndirect -- Recorded: as CmdDispatch, its numbers in a buffer.
+
+   SYNOPSIS
+	    fn CmdDispatchIndirect(base: *FacetBase, buffer: *facet.CommandBuffer, numbers: *facet.Buffer, offset: u64) void
+
+   SINCE
+	1.18. LVO -424.
+
+   INPUTS
+	- `buffer` - a command buffer recording, outside a render pass.
+	- `numbers` - the buffer they are in, a `facet.DispatchIndirectCommand`.
+	- `offset` - where.
+
+   RESULT
+	None.
+
+   BEHAVIOR
+	As `CmdDispatch`, with the numbers read as the command is played. If the
+	buffer ends before them, it does nothing.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	`numbers` has to last until the work recorded is done.
+
+   NOTES
+	None.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`CmdDispatch`, `CmdDrawIndirect`
+
+   EXAMPLES
+	    fb.CmdDispatchIndirect(commands, numbers, 0);
 facet.library/CmdDraw                                    facet.library/CmdDraw
 
    NAME
@@ -795,7 +1089,8 @@ facet.library/WaitForFences
 	- `first_instance` - the first instance's number.
 
    RESULT
-	None.
+	None, but a `vertex_count` of more vertices than a draw works is not
+	recorded, and `EndCommandBuffer` then answers `error_feature_not_present`.
 
    BEHAVIOR
 	Played inside a render pass, the vertices the draw names - from the
@@ -805,6 +1100,12 @@ facet.library/WaitForFences
 	clipped, culled and set up, and gathered on the tiles they touch. The
 	fragment function colours them as the pass ends. A draw outside a render
 	pass, or without a pipeline bound, draws nothing.
+
+	A `vertex_count` of more than 1 048 576 is more than either device works,
+	and is refused as it is recorded. CmdDrawIndexed cannot be refused the
+	same way: what its indices reach is not known until it is played, so a
+	draw whose lowest index to highest spans more than that is left out of
+	the frame, with a line in the log and nothing said to the program.
 
    CONTEXT
 	- Waits: no.
@@ -882,6 +1183,104 @@ facet.library/WaitForFences
 
    EXAMPLES
 	    fb.CmdDrawIndexed(commands, 36, 1, 0, 0, 0);
+facet.library/CmdDrawIndexedIndirect      facet.library/CmdDrawIndexedIndirect
+
+   NAME
+	CmdDrawIndexedIndirect -- Recorded: draws whose numbers, as CmdDrawIndexed takes them, are in a buffer.
+
+   SYNOPSIS
+	    fn CmdDrawIndexedIndirect(base: *FacetBase, buffer: *facet.CommandBuffer, numbers: *facet.Buffer, offset: u64, draw_count: u32, stride: u32) void
+
+   SINCE
+	1.17. LVO -408.
+
+   INPUTS
+	- `buffer` - a command buffer recording, in a render pass.
+	- `numbers` - the buffer they are in.
+	- `offset` - where the first draw's are.
+	- `draw_count` - how many draws.
+	- `stride` - the bytes from one draw's to the next: `facet.DrawIndexedIndirectCommand`'s at
+	  least, unless there is one draw at most.
+
+   RESULT
+	None.
+
+   BEHAVIOR
+	The numbers are read as the command is played, not as it is recorded, so
+	a program may write them after recording, up to the submission, and a
+	compute function played before it may too. Each draw is as `CmdDrawIndexed` with
+	those numbers. The draws past the end of the buffer are left out, and with
+	a `stride` too small nothing is recorded.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	`numbers` has to last until the work recorded is done.
+
+   NOTES
+	The cores read the numbers, whichever device draws.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`CmdDrawIndexed`, `CmdDispatchIndirect`
+
+   EXAMPLES
+	    fb.CmdDrawIndexedIndirect(commands, numbers, 0, 2, @sizeOf(facet.DrawIndexedIndirectCommand));
+facet.library/CmdDrawIndirect                    facet.library/CmdDrawIndirect
+
+   NAME
+	CmdDrawIndirect -- Recorded: draws whose numbers, as CmdDraw takes them, are in a buffer.
+
+   SYNOPSIS
+	    fn CmdDrawIndirect(base: *FacetBase, buffer: *facet.CommandBuffer, numbers: *facet.Buffer, offset: u64, draw_count: u32, stride: u32) void
+
+   SINCE
+	1.17. LVO -404.
+
+   INPUTS
+	- `buffer` - a command buffer recording, in a render pass.
+	- `numbers` - the buffer they are in.
+	- `offset` - where the first draw's are.
+	- `draw_count` - how many draws.
+	- `stride` - the bytes from one draw's to the next: `facet.DrawIndirectCommand`'s at
+	  least, unless there is one draw at most.
+
+   RESULT
+	None.
+
+   BEHAVIOR
+	The numbers are read as the command is played, not as it is recorded, so
+	a program may write them after recording, up to the submission, and a
+	compute function played before it may too. Each draw is as `CmdDraw` with
+	those numbers. The draws past the end of the buffer are left out, and with
+	a `stride` too small nothing is recorded.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	`numbers` has to last until the work recorded is done.
+
+   NOTES
+	The cores read the numbers, whichever device draws.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`CmdDraw`, `CmdDispatchIndirect`
+
+   EXAMPLES
+	    fb.CmdDrawIndirect(commands, numbers, 0, 2, @sizeOf(facet.DrawIndirectCommand));
 facet.library/CmdEndRenderPass                  facet.library/CmdEndRenderPass
 
    NAME
@@ -924,6 +1323,100 @@ facet.library/WaitForFences
 
    EXAMPLES
 	    fb.CmdEndRenderPass(commands);
+facet.library/CmdExecuteCommands              facet.library/CmdExecuteCommands
+
+   NAME
+	CmdExecuteCommands -- Recorded: secondary command buffers played, in the order given.
+
+   SYNOPSIS
+	    fn CmdExecuteCommands(base: *FacetBase, buffer: *facet.CommandBuffer, count: u32, secondaries: [*]const *facet.CommandBuffer) void
+
+   SINCE
+	1.17. LVO -412.
+
+   INPUTS
+	- `buffer` - a primary command buffer recording.
+	- `count`, `secondaries` - command buffers allocated with
+	  `CommandBufferLevel.secondary`, recorded and ended.
+
+   RESULT
+	None.
+
+   BEHAVIOR
+	Their commands are played where this command stands, inside or outside
+	a render pass, into the pass that is begun there. In a secondary command
+	buffer it does nothing, nor does a buffer given that is primary or not
+	ended count: it is left out.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The secondaries have to last, and stay as they are, until the work recorded is done.
+
+   NOTES
+	Vulkan leaves what a secondary finds bound undefined, and what the primary finds after it: here each goes on from what the last left. A program written for Vulkan binds what it uses, and that works.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`AllocateCommandBuffers`, `BeginCommandBuffer`, `QueueSubmit`
+
+   EXAMPLES
+	    fb.CmdExecuteCommands(primary, 1, @ptrCast(&secondary));
+facet.library/CmdNextSubpass                      facet.library/CmdNextSubpass
+
+   NAME
+	CmdNextSubpass -- Recorded: what the subpass drew stored, and the next subpass begun.
+
+   SYNOPSIS
+	    fn CmdNextSubpass(base: *FacetBase, buffer: *facet.CommandBuffer, contents: facet.SubpassContents) void
+
+   SINCE
+	1.21. LVO -428.
+
+   INPUTS
+	- `buffer` - a command buffer recording, inside a render pass of a further
+	  subpass.
+	- `contents` - whether the subpass's draws are in secondary command
+	  buffers. Not looked at: either may be played.
+
+   RESULT
+	None.
+
+   BEHAVIOR
+	A subpass with other attachments than the one before it is a pass of its
+	own: it stores what was drawn, and begins with the clear values
+	CmdBeginRenderPass was given. One with the same attachments goes on in the
+	same tiles, the depth with them, and only the pipelines it can bind differ.
+
+	Past the last subpass, or outside a pass, nothing is recorded. A pipeline
+	bound stays bound, though Vulkan would have one made for the subpass.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	None.
+
+   NOTES
+	A subpass of several colour attachments is played over for each of them from where it began, with what was bound then.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`CmdBeginRenderPass`, `CmdEndRenderPass`, `CreateRenderPass`
+
+   EXAMPLES
+	    fb.CmdNextSubpass(commands, .@"inline");
 facet.library/CmdPipelineBarrier              facet.library/CmdPipelineBarrier
 
    NAME
@@ -1028,6 +1521,90 @@ facet.library/WaitForFences
 
    EXAMPLES
 	    fb.CmdPushConstants(commands, layout.?, facet.SHADER_STAGE_VERTEX, 0, @sizeOf(Matrix), &transform);
+facet.library/CmdSetBlendConstants          facet.library/CmdSetBlendConstants
+
+   NAME
+	CmdSetBlendConstants -- Recorded: the blend constants, for a pipeline that leaves them to commands.
+
+   SYNOPSIS
+	    fn CmdSetBlendConstants(base: *FacetBase, buffer: *facet.CommandBuffer, constants: *const [4]f32) void
+
+   SINCE
+	1.12. LVO -368.
+
+   INPUTS
+	- `buffer` - a command buffer recording.
+	- `constants` - red, green, blue and alpha, 0 to 1.
+
+   RESULT
+	None.
+
+   BEHAVIOR
+	The draws after it with a pipeline whose blend constants are dynamic mix
+	by these.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The constants are copied as the command is recorded.
+
+   NOTES
+	None.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`CreateGraphicsPipelines`
+
+   EXAMPLES
+	    fb.CmdSetBlendConstants(commands, &.{ 1, 0.5, 0.25, 1 });
+facet.library/CmdSetLineWidth                    facet.library/CmdSetLineWidth
+
+   NAME
+	CmdSetLineWidth -- Recorded: the width of lines, for a pipeline that leaves it to commands.
+
+   SYNOPSIS
+	    fn CmdSetLineWidth(base: *FacetBase, buffer: *facet.CommandBuffer, width: f32) void
+
+   SINCE
+	1.14. LVO -372.
+
+   INPUTS
+	- `buffer` - a command buffer recording.
+	- `width` - in pixels.
+
+   RESULT
+	None.
+
+   BEHAVIOR
+	The draws after it with a pipeline whose line width is dynamic draw their
+	lines this wide.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	None.
+
+   NOTES
+	None.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`CreateGraphicsPipelines`
+
+   EXAMPLES
+	    fb.CmdSetLineWidth(commands, 2);
 facet.library/CmdSetScissor                        facet.library/CmdSetScissor
 
    NAME
@@ -1071,6 +1648,138 @@ facet.library/WaitForFences
 
    EXAMPLES
 	    fb.CmdSetScissor(commands, 0, 1, @ptrCast(&facet.Rect2D{ .extent = .{ .width = 800, .height = 600 } }));
+facet.library/CmdSetStencilCompareMask  facet.library/CmdSetStencilCompareMask
+
+   NAME
+	CmdSetStencilCompareMask -- Recorded: the stencil test's compare mask, for a pipeline that leaves it to commands.
+
+   SYNOPSIS
+	    fn CmdSetStencilCompareMask(base: *FacetBase, buffer: *facet.CommandBuffer, face_mask: u32, value: u32) void
+
+   SINCE
+	1.15. LVO -376.
+
+   INPUTS
+	- `buffer` - a command buffer recording.
+	- `face_mask` - the faces it is for: STENCIL_FACE_FRONT, STENCIL_FACE_BACK
+	  or STENCIL_FACE_FRONT_AND_BACK.
+	- `value` - its low 8 bits.
+
+   RESULT
+	None.
+
+   BEHAVIOR
+	The draws after it with a pipeline that leaves this to commands test
+	their stencil by it.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	None.
+
+   NOTES
+	None.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`CreateGraphicsPipelines`
+
+   EXAMPLES
+	    fb.CmdSetStencilCompareMask(commands, facet.STENCIL_FACE_FRONT_AND_BACK, 1);
+facet.library/CmdSetStencilReference      facet.library/CmdSetStencilReference
+
+   NAME
+	CmdSetStencilReference -- Recorded: the stencil test's reference, for a pipeline that leaves it to commands.
+
+   SYNOPSIS
+	    fn CmdSetStencilReference(base: *FacetBase, buffer: *facet.CommandBuffer, face_mask: u32, value: u32) void
+
+   SINCE
+	1.15. LVO -384.
+
+   INPUTS
+	- `buffer` - a command buffer recording.
+	- `face_mask` - the faces it is for: STENCIL_FACE_FRONT, STENCIL_FACE_BACK
+	  or STENCIL_FACE_FRONT_AND_BACK.
+	- `value` - its low 8 bits.
+
+   RESULT
+	None.
+
+   BEHAVIOR
+	The draws after it with a pipeline that leaves this to commands test
+	their stencil by it.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	None.
+
+   NOTES
+	None.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`CreateGraphicsPipelines`
+
+   EXAMPLES
+	    fb.CmdSetStencilReference(commands, facet.STENCIL_FACE_FRONT_AND_BACK, 1);
+facet.library/CmdSetStencilWriteMask      facet.library/CmdSetStencilWriteMask
+
+   NAME
+	CmdSetStencilWriteMask -- Recorded: the stencil test's write mask, for a pipeline that leaves it to commands.
+
+   SYNOPSIS
+	    fn CmdSetStencilWriteMask(base: *FacetBase, buffer: *facet.CommandBuffer, face_mask: u32, value: u32) void
+
+   SINCE
+	1.15. LVO -380.
+
+   INPUTS
+	- `buffer` - a command buffer recording.
+	- `face_mask` - the faces it is for: STENCIL_FACE_FRONT, STENCIL_FACE_BACK
+	  or STENCIL_FACE_FRONT_AND_BACK.
+	- `value` - its low 8 bits.
+
+   RESULT
+	None.
+
+   BEHAVIOR
+	The draws after it with a pipeline that leaves this to commands test
+	their stencil by it.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	None.
+
+   NOTES
+	None.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`CreateGraphicsPipelines`
+
+   EXAMPLES
+	    fb.CmdSetStencilWriteMask(commands, facet.STENCIL_FACE_FRONT_AND_BACK, 1);
 facet.library/CmdSetViewport                      facet.library/CmdSetViewport
 
    NAME
@@ -1211,6 +1920,58 @@ facet.library/WaitForFences
    EXAMPLES
 	    var pool: ?*facet.CommandPool = null;
 	    if (fb.CreateCommandPool(device, &.{ .flags = facet.COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER }, &pool) != .success) return error.NoPool;
+facet.library/CreateComputePipelines      facet.library/CreateComputePipelines
+
+   NAME
+	CreateComputePipelines -- `count` compute pipelines, one for each of `infos`, into `pipelines`.
+
+   SYNOPSIS
+	    fn CreateComputePipelines(base: *FacetBase, device: *facet.Device, cache: ?*facet.PipelineCache, count: u32, infos: [*]const facet.ComputePipelineCreateInfo, pipelines: [*]?*facet.Pipeline) facet.Result
+
+   SINCE
+	1.18. LVO -416.
+
+   INPUTS
+	- `device` - the device.
+	- `cache` - null: facet.library has no pipeline caches.
+	- `count`, `infos` - each pipeline's function, of stage
+	  SHADER_STAGE_COMPUTE, and layout.
+	- `pipelines` - where each is written; null for one that could not be
+	  made.
+
+   RESULT
+	`success`; else what the first that could not be made came to:
+	`error_invalid_shader_nv` for a stage that is not of a compute function
+	the module has; `error_out_of_host_memory`. Those made are made either
+	way.
+
+   BEHAVIOR
+	A compute function runs on the cores, whichever device it was made on: a
+	CM5's V3D runs no program of the library's but its fragment programs.
+
+   CONTEXT
+	- Waits: yes, for memory.
+	- Interrupts: no.
+	- Locks: none.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The pipeline is the caller's, given back by DestroyPipeline. The module
+	may go once it is made, not the function it names.
+
+   NOTES
+	None.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`CmdDispatch`, `CmdBindPipeline`, `shader.compute`
+
+   EXAMPLES
+	    const info = facet.ComputePipelineCreateInfo{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.? }, .layout = layout.? };
+	    var pipeline: [1]?*facet.Pipeline = undefined;
+	    if (fb.CreateComputePipelines(device, null, 1, @ptrCast(&info), &pipeline) != .success) return error.NoPipeline;
 facet.library/CreateDescriptorPool          facet.library/CreateDescriptorPool
 
    NAME
@@ -1435,7 +2196,7 @@ facet.library/WaitForFences
 	`error_out_of_host_memory`.
 
    BEHAVIOR
-	The colour attachment's view is of its image's first level. The size
+	Each colour attachment's view is of its image's first level. The size
 	may be smaller than the images: the framebuffer is their top left.
 
    CONTEXT
@@ -1481,7 +2242,9 @@ facet.library/WaitForFences
    RESULT
 	`success`; else what the first that could not be made came to:
 	`error_invalid_shader_nv` for stages that are not one vertex and one
-	fragment function of the same varyings; `error_feature_not_present`
+	fragment function of the same varyings, with or without a tessellation
+	control and evaluation function, whose varyings then the fragment
+	function's have to be; `error_feature_not_present`
 	for state facet.library does not draw (see BEHAVIOR);
 	`error_format_not_supported` for an attribute in a format it does not
 	read; `error_initialization_failed` for state that does not hold
@@ -1497,13 +2260,26 @@ facet.library/WaitForFences
 	fixed form (`shader.fixedFragment`), or the pipeline is refused with
 	`error_feature_not_present`.
 
-	What it draws: triangle lists, strips and fans, a restart index ending a
-	strip or a fan; filled, one sample a pixel, culled by facing as asked; a
-	depth test of any compare, written or not, without stencil, bounds,
-	bias or clamp; the colour written whole, replacing what is there, or
-	laid over it by its alpha - SRC_ALPHA and ONE_MINUS_SRC_ALPHA, ADD - and
-	no logic op; one viewport and one scissor, given here or set by
-	CmdSetViewport and CmdSetScissor (DynamicState viewport and scissor;
+	With tessellation functions, the topology is `patch_list` and the
+	`tessellation_state` says the vertices of a patch, 1 to 32: the cores make
+	each patch into triangles or lines (`shader.Tessellation`), for a device
+	with a processor of its own too, and those are drawn; without them,
+	`patch_list` is `error_initialization_failed`.
+
+	What it draws: points, lines and line strips, and triangle lists, strips
+	and fans, a restart index ending a strip or a fan; triangles filled, or as
+	their edges or corners (POLYGON_MODE_LINE, POINT); one sample a pixel,
+	triangles culled by facing as asked; lines `line_width` pixels wide, set
+	here or by CmdSetLineWidth, and points one pixel; a
+	depth test of any compare, written or not, without bounds, bias or clamp;
+	a stencil test of any compare and operations, a face's own, the masks and
+	the reference given here or set by commands; the channels of the write mask written, replacing what is
+	there or mixed with it by any blend factors and operation, the alpha by
+	its own, and no logic op; one viewport and one scissor, given here or set
+	by CmdSetViewport and CmdSetScissor (DynamicState viewport and scissor;
+	blend_constants with CmdSetBlendConstants, line_width with CmdSetLineWidth,
+	the stencil's with CmdSetStencilCompareMask, CmdSetStencilWriteMask and
+	CmdSetStencilReference;
 	the others are taken and do nothing). A pipeline with the rasterizer
 	discarding, or culling front and back, draws nothing.
 
@@ -1536,11 +2312,14 @@ facet.library/WaitForFences
 
    NOTES
 	A depth test on a render pass without depth is no test, as Vulkan has
-	it.
+	it, nor a stencil test on one without stencil. Lines and points use the
+	front's stencil test. On an attachment without alpha, R5G6B5, what is there reads as wholly
+	opaque. On the cores, SRC_ALPHA and ONE_MINUS_SRC_ALPHA or ONE, with
+	the alpha's factors the same or ZERO and ONE and the mask whole, cost
+	less than any other mixing.
 
    BUGS
-	Blending lays the alpha over the attachment's as it does the colour,
-	whatever the alpha's blend factors say.
+	None known.
 
    SEE ALSO
 	`CreateShaderModule`, `CreatePipelineLayout`, `CreateRenderPass`, `CmdBindPipeline`, `DestroyPipeline`
@@ -1598,9 +2377,20 @@ facet.library/WaitForFences
 	  the lazily allocated type.
 	- Anything else of a colour format, one level: rows.
 
-	Images are two-dimensional, with one layer and one sample a pixel, up
-	to 8192 wide and high. One both SAMPLED and COLOR_ATTACHMENT is not
-	made: a texture and an attachment lie differently.
+	Images have one sample a pixel, and are up to 8192 wide and high. One both
+	SAMPLED and COLOR_ATTACHMENT is not made: a texture and an attachment lie
+	differently.
+
+	A SAMPLED image may have up to 256 layers, or be 3D, of type `3d`, as deep
+	as a power of two up to 256, with one level. IMAGE_CREATE_CUBE_COMPATIBLE
+	says a view of type cube will be made: of a square image of 6 layers or
+	more.
+
+	A SAMPLED image may be of BC1, BC2, BC3, R16G16B16A16_SFLOAT,
+	R32G32B32A32_SFLOAT, B10G11R11_UFLOAT or E5B9G9R9_UFLOAT, in optimal tiling.
+	It is kept as R8G8B8A8, unpacked as it is copied in: it takes that one's
+	memory, and what is in a float image above 1 or below 0 is lost. There is no
+	copying such an image out, nor another image into it, by CmdCopyImage.
 
    CONTEXT
 	- Waits: no.
@@ -1649,14 +2439,19 @@ facet.library/WaitForFences
 
    RESULT
 	`success`; `error_format_not_supported` for a view facet.library does
-	not make - of another format than the image's, of another type than
-	2D, with channels swizzled, of levels the image has not got, or of an
-	image not yet bound into memory; `error_out_of_host_memory`.
+	not make - of another format than the image's, of a type the image is
+	not for, with channels swizzled, of levels or layers the image has not
+	got, or of an image not yet bound into memory; `error_out_of_host_memory`.
 
    BEHAVIOR
 	A view of a texture samples its levels from `base_mip_level` on, as a
 	texture of its own whose first level is that one. A view of an
 	attachment is all of it.
+
+	Of type `2d` it is one layer, of a texture with any number of them. Of type
+	`2d_array` it is the layers asked for, for `shader.FixedKind.texture_array`;
+	`cube` is 6 layers of an image made IMAGE_CREATE_CUBE_COMPATIBLE, for
+	`texture_cube`, and `3d` the whole of a 3D image, for `texture_3d`.
 
    CONTEXT
 	- Waits: no.
@@ -1702,16 +2497,22 @@ facet.library/WaitForFences
 	the library's; `error_out_of_host_memory`.
 
    BEHAVIOR
-	The instance's one physical device is described as it is made: the
-	cores it draws on are counted, and its memory types made from the
-	regions exec has (GetPhysicalDeviceMemoryProperties). A region added
+	The instance's physical devices are described as it is made. The first is
+	the cores: those it draws on are counted, and its memory types made from
+	the regions exec has (GetPhysicalDeviceMemoryProperties). A region added
 	later is in the memory types of an instance made after it.
+
+	After them comes a device for each driver module that finds its hardware.
+	The first instance made on a process looks for them in LIBS:facet/, opening
+	each file there as a library; an instance made on a task before that lists
+	only the cores. One built from other source than this library is refused,
+	with a line in the log. They stay open until the library goes.
 
 	While an instance lasts the library stays loaded, even after the
 	program has closed it: its queues' tasks run the library's code.
 
    CONTEXT
-	- Waits: no.
+	- Waits: the first time on a process, on the disk.
 	- Interrupts: no.
 	- Locks: exec's memory list, for a moment.
 	- Process: a Task will do.
@@ -1795,7 +2596,7 @@ facet.library/WaitForFences
 
    INPUTS
 	- `device` - the device.
-	- `info` - the attachments and the one subpass that draws into them.
+	- `info` - the attachments and the subpasses that draw into them.
 	- `render_pass` - where the render pass is written; null when it fails.
 
    RESULT
@@ -1805,17 +2606,28 @@ facet.library/WaitForFences
 	subpass that names an attachment there is not; `error_out_of_host_memory`.
 
    BEHAVIOR
-	The pass has one subpass, which draws into one colour attachment -
-	b8g8r8a8_unorm or r8g8b8a8_unorm - and may test against a depth
-	attachment, d16_unorm. No input, resolve or multisampled attachments.
+	The pass has up to 4 subpasses and up to 8 attachments. A subpass draws
+	into 1 to 4 colour attachments - b8g8r8a8_unorm or r8g8b8a8_unorm - 8 in all
+	the subpasses, and may test against a depth attachment, d16_unorm, s8_uint
+	or d16_unorm_s8_uint. No input, resolve or multisampled attachments.
 
-	The colour attachment's load op CLEAR clears the render area; LOAD and
-	DONT_CARE keep what the image holds. What is drawn is stored, whatever
-	its store op. The depth attachment's load op is CLEAR or DONT_CARE -
-	both clear it - and its store op DONT_CARE: the depth lives in the
-	rasterizer's tiles alone and is never stored.
+	The subpasses are drawn one after another. A colour attachment's load op
+	CLEAR clears the render area the first time a subpass names it; LOAD,
+	DONT_CARE and later subpasses keep what the image holds. What is drawn is
+	stored, whatever its store op. The depth attachment's load op is CLEAR or
+	DONT_CARE - both clear it - and its store op DONT_CARE: the depth lives in
+	the rasterizer's tiles alone and is never stored.
 
-	Attachments the subpass does not name are left as they are. The
+	So two subpasses share a depth attachment only one right after the other
+	and with the same colour attachments too, when the second goes on in the
+	tiles of the first; otherwise that is `error_feature_not_present`.
+
+	A subpass of several colour attachments is drawn once for each, its commands
+	played over, so it costs that much more: its fragment function is called for
+	each, and `shader.Resources.output` says for which. A fixed fragment
+	function has one colour, which every attachment gets.
+
+	Attachments a subpass does not name are left as they are. The
 	dependencies are not looked at: a queue's commands are done one after
 	the other.
 
@@ -2060,12 +2872,13 @@ facet.library/WaitForFences
    NOTES
 	A display's memory holds a few pictures, and every screen open takes
 	one: on a display with room for three - Workbench's, the program's screen
-	and one more - two images is all there is. Make the new swapchain after
-	destroying the old one where both would not fit.
+	and one more - two images is all there is. A swapchain made while an
+	older one is there, even handed on from it, has none of its pictures:
+	make the new swapchain after destroying the old one where both would not
+	fit.
 
    BUGS
-	On a screen, a swapchain and the one it was handed on from share the
-	screen's own buffer as their first image.
+	None known.
 
    SEE ALSO
 	`DestroySwapchain`, `GetSwapchainImages`, `AcquireNextImage`, `QueuePresent`
@@ -2943,8 +3756,10 @@ facet.library/WaitForFences
 
    RESULT
 	`success`; `error_out_of_host_memory` when memory ran out for a command
-	while it recorded: it cannot be submitted, and is recorded again after
-	a reset; `error_initialization_failed` for a buffer not recording.
+	while it recorded; `error_feature_not_present` when a command asked for
+	more than the library draws, as CmdDraw does of more vertices than a draw
+	works. Either way the buffer cannot be submitted, and is recorded again
+	after a reset; `error_initialization_failed` for a buffer not recording.
 
    BEHAVIOR
 	The buffer is executable: QueueSubmit plays it, as often as it is submitted.
@@ -3377,6 +4192,70 @@ facet.library/WaitForFences
 	    var layout: facet.SubresourceLayout = undefined;
 	    fb.GetImageSubresourceLayout(device, picture, &.{}, &layout);
 	    const row = pixels + y * layout.row_pitch;
+facet.library/GetPhysicalDeviceFeatures facet.library/GetPhysicalDeviceFeatures
+
+   NAME
+	GetPhysicalDeviceFeatures -- What a physical device does, so that a program may ask before it is refused.
+
+   SYNOPSIS
+	    fn GetPhysicalDeviceFeatures(base: *FacetBase, physical: *facet.PhysicalDevice, features: *facet.PhysicalDeviceFeatures) void
+
+   SINCE
+	1.24. LVO -432.
+
+   INPUTS
+	- `physical` - a physical device EnumeratePhysicalDevices listed.
+	- `features` - where they are written.
+
+   RESULT
+	None.
+
+   BEHAVIOR
+	Every field is what the device's driver said of it as the instance was
+	made, and holds while the instance lasts. A `false` is what a create call
+	would answer `error_feature_not_present` to, so a program may choose
+	another way instead of failing; a `true` is a promise for this device, not
+	for the next one listed.
+
+	Five of the fields differ between the devices of one machine, and are the
+	reason to look. `own_fragment_functions`, `sampling_format` and
+	`depth_prepass` are the cores' and not the V3D's. `compute_on_device` and
+	`tessellation_on_device` are the cores' too, and for the plain reason that
+	the cores are that device: both kinds of work run on them whichever device
+	made the pipeline, so on the V3D they are false while the work still
+	happens. The limits say the rest of
+	what parts differ: a CM5's V3D takes one sampled image a stage where the
+	cores take sixteen (`GetPhysicalDeviceProperties`).
+
+	What the library has no call for at all - samplers, events, query pools, a
+	pipeline cache, sparse memory - has no field here. That a call is missing
+	is in the jump table, not in a feature.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	`features` is the caller's.
+
+   NOTES
+	The devices are listed with the cores first, so a program that wants the
+	GPU looks for one whose features suit it rather than taking the first.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`EnumeratePhysicalDevices`, `GetPhysicalDeviceProperties`, `CreateGraphicsPipelines`
+
+   EXAMPLES
+	    var features: facet.PhysicalDeviceFeatures = undefined;
+	    fb.GetPhysicalDeviceFeatures(physical, &features);
+	    if (!features.own_fragment_functions) {
+	        // This device runs only the fixed forms: shader.fixedFragment.
+	    }
 facet.library/GetPhysicalDeviceFormatProperties facet.library/GetPhysicalDeviceFormatProperties
 
    NAME
@@ -3405,6 +4284,10 @@ facet.library/WaitForFences
 	  sampled, filtered, in optimal tiling; copied.
 	- D16_UNORM: a depth attachment, in optimal tiling.
 	- R32_SFLOAT to R32G32B32A32_SFLOAT: a vertex's value.
+	- BC1, BC2, BC3, R16G16B16A16_SFLOAT, R32G32B32A32_SFLOAT,
+	  B10G11R11_UFLOAT and E5B9G9R9_UFLOAT: sampled, filtered, in optimal
+	  tiling, and copied into. They are kept as 8 bits a channel, floats cut to
+	  0 to 1: they save no memory and hold no more than B8G8R8A8.
 
 	An image to be sampled has sides that are powers of two.
 
@@ -3555,7 +4438,7 @@ facet.library/WaitForFences
 	None.
 
    BEHAVIOR
-	There is one family, 0: QUEUE_GRAPHICS and QUEUE_TRANSFER, with one
+	There is one family, 0: QUEUE_GRAPHICS, QUEUE_COMPUTE and QUEUE_TRANSFER, with one
 	queue. Its queue plays command buffers on a task of its own and
 	shares each frame's tiles between the cores.
 
@@ -4349,8 +5232,7 @@ facet.library/WaitForFences
 	None.
 
    BUGS
-	With `wait_all` the limit is each fence's, not the whole wait's:
-	waiting for N fences not yet signalled may take up to N times it.
+	None known.
 
    SEE ALSO
 	`ResetFences`, `GetFenceStatus`, `QueueSubmit`

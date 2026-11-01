@@ -16,6 +16,7 @@ const CreateInstance = @import("instance/createinstance.zig").CreateInstance;
 const DestroyInstance = @import("instance/destroyinstance.zig").DestroyInstance;
 const EnumeratePhysicalDevices = @import("instance/enumeratephysicaldevices.zig").EnumeratePhysicalDevices;
 const GetPhysicalDeviceProperties = @import("instance/getphysicaldeviceproperties.zig").GetPhysicalDeviceProperties;
+const GetPhysicalDeviceFeatures = @import("instance/getphysicaldevicefeatures.zig").GetPhysicalDeviceFeatures;
 const GetPhysicalDeviceQueueFamilyProperties = @import("instance/getphysicaldevicequeuefamilyproperties.zig").GetPhysicalDeviceQueueFamilyProperties;
 const GetPhysicalDeviceMemoryProperties = @import("instance/getphysicaldevicememoryproperties.zig").GetPhysicalDeviceMemoryProperties;
 const CreateDevice = @import("device/createdevice.zig").CreateDevice;
@@ -99,6 +100,22 @@ const GetSwapchainImages = @import("swapchain/getswapchainimages.zig").GetSwapch
 const AcquireNextImage = @import("swapchain/acquirenextimage.zig").AcquireNextImage;
 const QueuePresent = @import("swapchain/queuepresent.zig").QueuePresent;
 const CreateWindowSurface = @import("surface/createwindowsurface.zig").CreateWindowSurface;
+const CmdSetBlendConstants = @import("command/cmdsetblendconstants.zig").CmdSetBlendConstants;
+const CmdSetLineWidth = @import("command/cmdsetlinewidth.zig").CmdSetLineWidth;
+const CmdSetStencilCompareMask = @import("command/cmdsetstencilcomparemask.zig").CmdSetStencilCompareMask;
+const CmdSetStencilWriteMask = @import("command/cmdsetstencilwritemask.zig").CmdSetStencilWriteMask;
+const CmdSetStencilReference = @import("command/cmdsetstencilreference.zig").CmdSetStencilReference;
+const CmdCopyImage = @import("command/cmdcopyimage.zig").CmdCopyImage;
+const CmdBlitImage = @import("command/cmdblitimage.zig").CmdBlitImage;
+const CmdCopyImageToBuffer = @import("command/cmdcopyimagetobuffer.zig").CmdCopyImageToBuffer;
+const CmdClearAttachments = @import("command/cmdclearattachments.zig").CmdClearAttachments;
+const CmdDrawIndirect = @import("command/cmddrawindirect.zig").CmdDrawIndirect;
+const CmdDrawIndexedIndirect = @import("command/cmddrawindexedindirect.zig").CmdDrawIndexedIndirect;
+const CmdExecuteCommands = @import("command/cmdexecutecommands.zig").CmdExecuteCommands;
+const CreateComputePipelines = @import("pipeline/createcomputepipelines.zig").CreateComputePipelines;
+const CmdDispatch = @import("command/cmddispatch.zig").CmdDispatch;
+const CmdDispatchIndirect = @import("command/cmddispatchindirect.zig").CmdDispatchIndirect;
+const CmdNextSubpass = @import("command/cmdnextsubpass.zig").CmdNextSubpass;
 
 /// facet.library's interface, as the SDK generates it from
 /// sdk/fd/facet_lib.fd.
@@ -106,6 +123,7 @@ const interface = sdk.interface.facet;
 const LVO = interface.LVO;
 
 comptime {
+    @setEvalBranchQuota(10_000);
     for (@typeInfo(LVO).@"struct".decls) |d| {
         const f = @field(@This(), "lvo" ++ d.name);
         if (!exec.libraries.sameSignature(@TypeOf(&f), @field(interface.Fn, d.name))) {
@@ -128,6 +146,7 @@ const contract_files = [_][]const u8{
     @embedFile("instance/destroyinstance.zig"),
     @embedFile("instance/enumeratephysicaldevices.zig"),
     @embedFile("instance/getphysicaldeviceproperties.zig"),
+    @embedFile("instance/getphysicaldevicefeatures.zig"),
     @embedFile("instance/getphysicaldevicequeuefamilyproperties.zig"),
     @embedFile("instance/getphysicaldevicememoryproperties.zig"),
     @embedFile("device/createdevice.zig"),
@@ -211,6 +230,22 @@ const contract_files = [_][]const u8{
     @embedFile("swapchain/acquirenextimage.zig"),
     @embedFile("swapchain/queuepresent.zig"),
     @embedFile("surface/createwindowsurface.zig"),
+    @embedFile("command/cmdsetblendconstants.zig"),
+    @embedFile("command/cmdsetlinewidth.zig"),
+    @embedFile("command/cmdsetstencilcomparemask.zig"),
+    @embedFile("command/cmdsetstencilwritemask.zig"),
+    @embedFile("command/cmdsetstencilreference.zig"),
+    @embedFile("command/cmdcopyimage.zig"),
+    @embedFile("command/cmdblitimage.zig"),
+    @embedFile("command/cmdcopyimagetobuffer.zig"),
+    @embedFile("command/cmdclearattachments.zig"),
+    @embedFile("command/cmddrawindirect.zig"),
+    @embedFile("command/cmddrawindexedindirect.zig"),
+    @embedFile("command/cmdexecutecommands.zig"),
+    @embedFile("pipeline/createcomputepipelines.zig"),
+    @embedFile("command/cmddispatch.zig"),
+    @embedFile("command/cmddispatchindirect.zig"),
+    @embedFile("command/cmdnextsubpass.zig"),
 };
 
 fn lvoCreateInstance(base: *FacetBase, info: *const facet.InstanceCreateInfo, instance: *?*facet.Instance) callconv(.c) facet.Result {
@@ -224,6 +259,9 @@ fn lvoEnumeratePhysicalDevices(base: *FacetBase, instance: *facet.Instance, coun
 }
 fn lvoGetPhysicalDeviceProperties(base: *FacetBase, physical: *facet.PhysicalDevice, properties: *facet.PhysicalDeviceProperties) callconv(.c) void {
     return GetPhysicalDeviceProperties(base, physical, properties);
+}
+fn lvoGetPhysicalDeviceFeatures(base: *FacetBase, physical: *facet.PhysicalDevice, features: *facet.PhysicalDeviceFeatures) callconv(.c) void {
+    return GetPhysicalDeviceFeatures(base, physical, features);
 }
 fn lvoGetPhysicalDeviceQueueFamilyProperties(base: *FacetBase, physical: *facet.PhysicalDevice, count: *u32, properties: ?[*]facet.QueueFamilyProperties) callconv(.c) void {
     return GetPhysicalDeviceQueueFamilyProperties(base, physical, count, properties);
@@ -474,6 +512,54 @@ fn lvoQueuePresent(base: *FacetBase, queue: *facet.Queue, info: *const facet.Pre
 fn lvoCreateWindowSurface(base: *FacetBase, instance: *facet.Instance, info: *const facet.WindowSurfaceCreateInfo, surface: *?*facet.Surface) callconv(.c) facet.Result {
     return CreateWindowSurface(base, instance, info, surface);
 }
+fn lvoCmdSetBlendConstants(base: *FacetBase, buffer: *facet.CommandBuffer, constants: *const [4]f32) callconv(.c) void {
+    return CmdSetBlendConstants(base, buffer, constants);
+}
+fn lvoCmdSetLineWidth(base: *FacetBase, buffer: *facet.CommandBuffer, width: f32) callconv(.c) void {
+    return CmdSetLineWidth(base, buffer, width);
+}
+fn lvoCmdSetStencilCompareMask(base: *FacetBase, buffer: *facet.CommandBuffer, face_mask: u32, value: u32) callconv(.c) void {
+    return CmdSetStencilCompareMask(base, buffer, face_mask, value);
+}
+fn lvoCmdSetStencilWriteMask(base: *FacetBase, buffer: *facet.CommandBuffer, face_mask: u32, value: u32) callconv(.c) void {
+    return CmdSetStencilWriteMask(base, buffer, face_mask, value);
+}
+fn lvoCmdSetStencilReference(base: *FacetBase, buffer: *facet.CommandBuffer, face_mask: u32, value: u32) callconv(.c) void {
+    return CmdSetStencilReference(base, buffer, face_mask, value);
+}
+fn lvoCmdCopyImage(base: *FacetBase, buffer: *facet.CommandBuffer, source: *facet.Image, source_layout: facet.ImageLayout, destination: *facet.Image, destination_layout: facet.ImageLayout, region_count: u32, regions: [*]const facet.ImageCopy) callconv(.c) void {
+    return CmdCopyImage(base, buffer, source, source_layout, destination, destination_layout, region_count, regions);
+}
+fn lvoCmdBlitImage(base: *FacetBase, buffer: *facet.CommandBuffer, source: *facet.Image, source_layout: facet.ImageLayout, destination: *facet.Image, destination_layout: facet.ImageLayout, region_count: u32, regions: [*]const facet.ImageBlit, filter: facet.Filter) callconv(.c) void {
+    return CmdBlitImage(base, buffer, source, source_layout, destination, destination_layout, region_count, regions, filter);
+}
+fn lvoCmdCopyImageToBuffer(base: *FacetBase, buffer: *facet.CommandBuffer, image: *facet.Image, image_layout: facet.ImageLayout, destination: *facet.Buffer, region_count: u32, regions: [*]const facet.BufferImageCopy) callconv(.c) void {
+    return CmdCopyImageToBuffer(base, buffer, image, image_layout, destination, region_count, regions);
+}
+fn lvoCmdClearAttachments(base: *FacetBase, buffer: *facet.CommandBuffer, attachment_count: u32, attachments: [*]const facet.ClearAttachment, rect_count: u32, rects: [*]const facet.ClearRect) callconv(.c) void {
+    return CmdClearAttachments(base, buffer, attachment_count, attachments, rect_count, rects);
+}
+fn lvoCmdDrawIndirect(base: *FacetBase, buffer: *facet.CommandBuffer, numbers: *facet.Buffer, offset: u64, draw_count: u32, stride: u32) callconv(.c) void {
+    return CmdDrawIndirect(base, buffer, numbers, offset, draw_count, stride);
+}
+fn lvoCmdDrawIndexedIndirect(base: *FacetBase, buffer: *facet.CommandBuffer, numbers: *facet.Buffer, offset: u64, draw_count: u32, stride: u32) callconv(.c) void {
+    return CmdDrawIndexedIndirect(base, buffer, numbers, offset, draw_count, stride);
+}
+fn lvoCmdExecuteCommands(base: *FacetBase, buffer: *facet.CommandBuffer, count: u32, secondaries: [*]const *facet.CommandBuffer) callconv(.c) void {
+    return CmdExecuteCommands(base, buffer, count, secondaries);
+}
+fn lvoCreateComputePipelines(base: *FacetBase, device: *facet.Device, cache: ?*facet.PipelineCache, count: u32, infos: [*]const facet.ComputePipelineCreateInfo, pipelines: [*]?*facet.Pipeline) callconv(.c) facet.Result {
+    return CreateComputePipelines(base, device, cache, count, infos, pipelines);
+}
+fn lvoCmdDispatch(base: *FacetBase, buffer: *facet.CommandBuffer, x: u32, y: u32, z: u32) callconv(.c) void {
+    return CmdDispatch(base, buffer, x, y, z);
+}
+fn lvoCmdDispatchIndirect(base: *FacetBase, buffer: *facet.CommandBuffer, numbers: *facet.Buffer, offset: u64) callconv(.c) void {
+    return CmdDispatchIndirect(base, buffer, numbers, offset);
+}
+fn lvoCmdNextSubpass(base: *FacetBase, buffer: *facet.CommandBuffer, contents: facet.SubpassContents) callconv(.c) void {
+    return CmdNextSubpass(base, buffer, contents);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -569,6 +655,23 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoAcquireNextImage),
     vec(lvoQueuePresent),
     vec(lvoCreateWindowSurface),
+    vec(lvoCmdSetBlendConstants),
+    vec(lvoCmdSetLineWidth),
+    vec(lvoCmdSetStencilCompareMask),
+    vec(lvoCmdSetStencilWriteMask),
+    vec(lvoCmdSetStencilReference),
+    vec(lvoCmdCopyImage),
+    vec(lvoCmdBlitImage),
+    vec(lvoCmdCopyImageToBuffer),
+    vec(lvoCmdClearAttachments),
+    vec(lvoCmdDrawIndirect),
+    vec(lvoCmdDrawIndexedIndirect),
+    vec(lvoCmdExecuteCommands),
+    vec(lvoCreateComputePipelines),
+    vec(lvoCmdDispatch),
+    vec(lvoCmdDispatchIndirect),
+    vec(lvoCmdNextSubpass),
+    vec(lvoGetPhysicalDeviceFeatures),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

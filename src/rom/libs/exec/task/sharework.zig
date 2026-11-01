@@ -28,9 +28,11 @@ const WorkFn = sdk.exec.WorkFn;
 ///
 /// BEHAVIOR:
 /// exec keeps a worker task on each core, pinned to it. The job is cut
-/// into as many parts as `parts` asks for and there are cores: the worker
-/// of each core but the caller's does one, at the caller's priority, and
-/// the caller does part 0. The call returns when every part is done.
+/// into as many parts as `parts` asks for and there are idle workers on
+/// the other cores: each does one, at the caller's priority, and the caller
+/// does part 0. The call returns when every part is done. A worker running
+/// jobs posted with PostWork is passed over (SINCE 1.27): a job is not cut
+/// short.
 ///
 /// The parts run at the same time, so `work` must cut the job so that no
 /// two write the same memory - nor the same cache line, on a machine whose
@@ -40,7 +42,8 @@ const WorkFn = sdk.exec.WorkFn;
 ///
 /// The caller does the whole job itself, as `work(data, 0, 1)`, when
 /// `parts` is 1 or less, the machine has one core, another job is under
-/// way, or the caller may not wait: in an interrupt, inside `Disable`,
+/// way, every other core's worker runs posted jobs, or the caller may not
+/// wait: in an interrupt, inside `Disable`,
 /// holding a spinlock, before multitasking, or as a core's idle task. A
 /// job shared from within a part is done by that part alone.
 ///
@@ -62,7 +65,7 @@ const WorkFn = sdk.exec.WorkFn;
 /// None known.
 ///
 /// SEE ALSO:
-/// `SetTaskAffinity`, `CacheClearE`
+/// `PostWork`, `SetTaskAffinity`, `CacheClearE`
 ///
 /// EXAMPLES:
 /// ```zig

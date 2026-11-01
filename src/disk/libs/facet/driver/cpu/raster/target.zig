@@ -246,6 +246,7 @@ pub const Surface = struct {
 pub const Attachments = struct {
     color: Color = .{},
     depth: Depth = .{},
+    stencil: Stencil = .{},
 
     pub const Color = struct {
         /// Cleared to `clear`, or what the surface holds.
@@ -259,6 +260,13 @@ pub const Attachments = struct {
         /// 0 nearest, set to `clear` as each tile starts.
         used: bool = false,
         clear: u16 = 0xFFFF,
+    };
+
+    pub const Stencil = struct {
+        /// Whether a test may read it: 8 bits a pixel, set to `clear` as each
+        /// tile starts.
+        used: bool = false,
+        clear: u8 = 0,
     };
 
     pub const Load = enum { clear, keep };
@@ -305,6 +313,7 @@ const Buffer = extern struct {
     color: [tile_pixels]u32 align(line_bytes),
     depth: [tile_pixels]u16,
     shaded: [tile_size]u64,
+    stencil: [tile_pixels]u8,
 };
 
 /// The tile a part draws: its buffer, and where it lies on the surface.
@@ -345,6 +354,11 @@ pub const Tile = struct {
     /// Row `y` of the tile's depth, from its left.
     pub inline fn depthRow(tile: *const Tile, y: u32) [*]u16 {
         return tile.buffer.depth[y * tile_size ..].ptr;
+    }
+
+    /// Row `y` of the tile's stencil, from its left.
+    pub inline fn stencilRow(tile: *const Tile, y: u32) [*]u8 {
+        return tile.buffer.stencil[y * tile_size ..].ptr;
     }
 };
 
@@ -587,6 +601,7 @@ pub const Target = struct {
             .keep => target.load(tile),
         }
         if (target.attachments.depth.used) @memset(&buffer.depth, target.attachments.depth.clear);
+        if (target.attachments.stencil.used) @memset(&buffer.stencil, target.attachments.stencil.clear);
         const state = &target.tiles[tile.index];
         // The triangles at the head of the list that ask for the depth
         // pre-pass are shaded where their depth was left, the rest as

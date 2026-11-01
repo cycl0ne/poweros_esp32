@@ -35,10 +35,19 @@ pub const CommandBuffer = struct {
     pool: *CommandPool,
     stream: Stream = .{},
     state: State = .initial,
+    /// Played from a primary one (CmdExecuteCommands), not from a queue.
+    secondary: bool = false,
     /// Recorded with ONE_TIME_SUBMIT: spent once played.
     one_time: bool = false,
     /// Its submissions the queue has not finished playing.
     pending: u32 = 0,
+    /// The render pass being recorded, for CmdNextSubpass.
+    pass: ?*_render.RenderPass = null,
+    framebuffer: ?*_render.Framebuffer = null,
+    area: facet.Rect2D = .{ .extent = .{} },
+    subpass: u32 = 0,
+    clears: [_render.most_attachments]facet.ClearValue = undefined,
+    clear_count: u32 = 0,
     /// On its pool's list.
     next: ?*CommandBuffer = null,
     previous: ?*CommandBuffer = null,
@@ -97,12 +106,81 @@ pub const CopyBuffer = extern struct {
 pub const BeginRenderPass = extern struct {
     pub const op: _stream.Op = .begin_render_pass;
     head: Head = .{ .op = op },
-    render_pass: *_render.RenderPass,
-    framebuffer: *_render.Framebuffer,
+    /// What each colour attachment of the subpass is, and draws into. Played
+    /// once for each: the commands up to the next EndRenderPass over again.
+    parts: [*]const _render.Part,
+    targets: [*]const _render.Target,
+    part_count: u32,
     area: facet.Rect2D,
-    /// 0xAARRGGBB, and the depth buffer's 0 to 65535.
-    clear_color: u32,
+    /// 0xAARRGGBB for each, and the depth buffer's 0 to 65535.
+    clear_colors: [_render.most_colors]u32,
     clear_depth: u32,
+    clear_stencil: u32,
+};
+
+/// A subpass of `made`'s pass begun, with the clear values it was begun with.
+pub fn beginSubpass(made: *CommandBuffer, number: u32) void {
+    const pass = made.pass.?;
+    const subpass = pass.subpasses[number];
+    const first = pass.parts[subpass.first_part];
+    const clears = made.clears[0..made.clear_count];
+    var command = BeginRenderPass{
+        .parts = pass.parts[subpass.first_part..].ptr,
+        .targets = made.framebuffer.?.targets[subpass.first_part..].ptr,
+        .part_count = subpass.part_count,
+        .area = made.area,
+        .clear_colors = @splat(0xFF00_0000),
+        .clear_depth = if (first.depth) |depth| (if (depth < clears.len) _render.depthOf(clears[depth].depth_stencil) else 0xFFFF) else 0xFFFF,
+        .clear_stencil = if (first.depth) |depth| (if (depth < clears.len) clears[depth].depth_stencil.stencil & 0xFF else 0) else 0,
+    };
+    for (pass.parts[subpass.first_part..][0..subpass.part_count], command.clear_colors[0..subpass.part_count]) |part, *color| {
+        if (part.color < clears.len) color.* = _render.colorOf(clears[part.color].color);
+    }
+    record(made, command, u8, &.{});
+}
+
+/// CmdCopyImage, followed by its regions.
+pub const CopyImage = extern struct {
+    pub const op: _stream.Op = .copy_image;
+    head: Head = .{ .op = op },
+    count: u32,
+    pad: u32 = 0,
+    source: *Image,
+    destination: *Image,
+};
+
+/// CmdBlitImage, followed by its regions.
+pub const BlitImage = extern struct {
+    pub const op: _stream.Op = .blit_image;
+    head: Head = .{ .op = op },
+    count: u32,
+    filter: facet.Filter,
+    source: *Image,
+    destination: *Image,
+};
+
+/// CmdCopyImageToBuffer, followed by its regions.
+pub const CopyImageToBuffer = extern struct {
+    pub const op: _stream.Op = .copy_image_to_buffer;
+    head: Head = .{ .op = op },
+    count: u32,
+    pad: u32 = 0,
+    image: *Image,
+    destination: *Buffer,
+};
+
+/// One attachment of CmdClearAttachments over one of its rectangles.
+pub const ClearAttachment = extern struct {
+    pub const op: _stream.Op = .clear_attachment;
+    head: Head = .{ .op = op },
+    aspect_mask: u32,
+    rect: facet.Rect2D,
+    /// 0xAARRGGBB, the depth 0 to 1, and the stencil.
+    color: u32,
+    depth: f32,
+    stencil: u32,
+    /// Which of the subpass's colour attachments the colour is for.
+    output: u32,
 };
 
 pub const EndRenderPass = extern struct {
@@ -145,6 +223,9 @@ pub const BindDescriptorSets = extern struct {
     head: Head = .{ .op = op },
     first: u32,
     count: u32,
+    /// For compute functions, not for drawing: 1 or 0.
+    compute: u32,
+    pad: u32 = 0,
 };
 
 /// CmdPushConstants, followed by its bytes.
@@ -167,6 +248,28 @@ pub const SetScissor = extern struct {
     scissor: facet.Rect2D,
 };
 
+pub const SetBlendConstants = extern struct {
+    pub const op: _stream.Op = .set_blend_constants;
+    head: Head = .{ .op = op },
+    constants: [4]f32,
+};
+
+pub const SetLineWidth = extern struct {
+    pub const op: _stream.Op = .set_line_width;
+    head: Head = .{ .op = op },
+    width: f32,
+};
+
+pub const SetStencil = extern struct {
+    pub const op: _stream.Op = .set_stencil;
+    head: Head = .{ .op = op },
+    which: Which,
+    face_mask: u32,
+    value: u32,
+
+    pub const Which = enum(u32) { compare, write, reference };
+};
+
 pub const Draw = extern struct {
     pub const op: _stream.Op = .draw;
     head: Head = .{ .op = op },
@@ -174,6 +277,48 @@ pub const Draw = extern struct {
     instance_count: u32,
     first_vertex: u32,
     first_instance: u32,
+};
+
+/// CmdDrawIndirect and CmdDrawIndexedIndirect: their numbers are in the
+/// buffer as the command is played.
+pub const DrawIndirect = extern struct {
+    pub const op: _stream.Op = .draw_indirect;
+    head: Head = .{ .op = op },
+    buffer: *Buffer,
+    offset: u64,
+    count: u32,
+    stride: u32,
+    indexed: bool,
+};
+
+/// CmdBindPipeline with a compute pipeline.
+pub const BindComputePipeline = extern struct {
+    pub const op: _stream.Op = .bind_compute_pipeline;
+    head: Head = .{ .op = op },
+    pipeline: *_pipeline.Pipeline,
+};
+
+pub const Dispatch = extern struct {
+    pub const op: _stream.Op = .dispatch;
+    head: Head = .{ .op = op },
+    count: [3]u32,
+    pad: u32 = 0,
+};
+
+/// Its numbers are in the buffer as the command is played.
+pub const DispatchIndirect = extern struct {
+    pub const op: _stream.Op = .dispatch_indirect;
+    head: Head = .{ .op = op },
+    buffer: *Buffer,
+    offset: u64,
+};
+
+/// CmdExecuteCommands, followed by the command buffers.
+pub const ExecuteCommands = extern struct {
+    pub const op: _stream.Op = .execute_commands;
+    head: Head = .{ .op = op },
+    count: u32,
+    pad: u32 = 0,
 };
 
 pub const DrawIndexed = extern struct {
