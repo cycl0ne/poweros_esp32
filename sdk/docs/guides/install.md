@@ -239,6 +239,14 @@ Where the firmware can be sent to the other of a pair of boot partitions
 for one start, both are made and both are filled, so a machine that does
 not come up on the one can be started from the other.
 
+**A file the firmware wants that this tree does not hold** - a board's
+device tree is one - reaches `SYS:Storage/Boot` only when the build was
+given `-Dboot=[<name>=]<file>`, and a package's `boot/` only then as
+well. An install copies what is there and nothing it has not got, so a
+boot partition written from an image built without it is short of that
+file, and the machine goes on starting from wherever it started before
+until the file is put there.
+
 ## By hand
 
 The same thing line by line is `RDB INIT GPT`, `RDB ADD`, `Format`,
