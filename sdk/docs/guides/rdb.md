@@ -767,6 +767,8 @@ RDB ADD DH2 SIZE 4G DOSTYPE FAT32    ; 4 GiB for FAT32, at the first free cylind
 RDB nvme.device INIT GPT ADDGPT BOOT DOSTYPE FAT32 SIZE 256M
                                      ; a GPT with a FAT partition first, mounted as BOOT:
 RDB sdcard.device ADDGPT Photos DOSTYPE EXFAT   ; FAT over the GPT's largest free run
+RDB nvme.device ADDGPT BOOT DOSTYPE FAT32 SIZE 256M NOMOUNT
+                                     ; ... and no drive for it at a later start
 RDB sdcard.device REMGPT Photos      ; ... and taken out of the GPT
 ```
 
@@ -866,7 +868,11 @@ The container `INIT GPT` makes takes every block the GPT's other
 partitions leave, so a FAT partition goes in with it: `INIT GPT` puts
 `ADDGPT`'s partition in first, at the disk's first MiB, and the
 container over the largest free run after it. `ADDGPT` on a disk whose
-container has the rest says so. Once the partition holds a volume the
+container has the rest says so. `NOMOUNT` marks it not to be mounted when the
+medium comes in - what a partition a firmware reads and nothing here
+works in wants, and what an install does with its boot partitions - and
+the flags column says `nomount` for it; rdb.library still mounts it when
+a program asks. Once the partition holds a volume the
 next start mounts it as the device mounts a GPT's partitions - here
 `NV1:` - and `MOUNT` mounts the GPT's partitions too: those that hold
 a volume, under their entry's name, and a new one, its first block

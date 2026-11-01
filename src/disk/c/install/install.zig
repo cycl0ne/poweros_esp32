@@ -29,7 +29,11 @@
 //!       DH1        posfs, "Work", the rest of the container
 //!
 //! The boot partitions come first because a firmware looks for its files
-//! in the first ones, and the container takes what they leave. How many
+//! in the first ones, and the container takes what they leave. They are
+//! marked not to be mounted when the medium comes in
+//! (`gpt.ATTR_NO_AUTOMOUNT`), since they are the firmware's and nothing
+//! here works in them: this mounts them itself to write them, and an
+//! update asks rdb.library for them by the names install.prefs keeps. How many
 //! there are is the board's own fact (`SYSTAG_BootSlots`): one where the
 //! firmware reads one partition, two where it can be sent to the other
 //! for a single start, and both then hold the same files, so that either
@@ -77,7 +81,7 @@ const files = @import("files.zig");
 const Run = shared.Run;
 
 pub const COMMAND_NAME = shared.COMMAND_NAME;
-const VERSION_STRING = "\x00$VER: Install 1.0 (01.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Install 1.1 (01.11.2026)\r\n";
 
 /// rdb.library is opened at version 1 and its revision asked after: the
 /// GPT calls came with 1.4 and a FAT partition of a GPT, which the boot

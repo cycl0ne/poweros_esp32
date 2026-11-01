@@ -5,7 +5,7 @@
 //!
 //!   RDB DEVICE,UNIT/K/N,FULL/S,INIT/S,FORCE/S,ADD/K,LOW/K/N,HIGH/K/N,
 //!       DOSTYPE/K,BOOTABLE/S,REMOVE/K,CHANGE/K,ADDFS/K,REMFS/K,BOOTPRI/K/N,
-//!       GPT/S,MOUNT/S,ADDGPT/K,REMGPT/K,SIZE/K
+//!       GPT/S,MOUNT/S,ADDGPT/K,REMGPT/K,SIZE/K,NOMOUNT/S
 //!
 //!   RDB                         flash.device unit 0
 //!   RDB sdcard.device UNIT 0    another disk
@@ -40,6 +40,10 @@
 //!                               free run
 //!   RDB sdcard.device REMGPT Photos
 //!                               ... and taken out of the GPT again
+//!   RDB nvme.device ADDGPT BOOT DOSTYPE FAT32 SIZE 256M NOMOUNT
+//!                               a partition no drive is made for when
+//!                               the medium comes in: one a firmware
+//!                               reads and nothing here works in
 //!
 //! The device is an exec device with trackdisk's commands, so anything
 //! that answers TD_GETGEOMETRY and CMD_READ can be read. A change is made
@@ -134,9 +138,9 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "RDB";
-const VERSION_STRING = "\x00$VER: RDB 1.6 (29.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: RDB 1.7 (01.11.2026)\r\n";
 
-const template = "DEVICE,UNIT/K/N,FULL/S,INIT/S,FORCE/S,ADD/K,LOW/K/N,HIGH/K/N,DOSTYPE/K,BOOTABLE/S,REMOVE/K,CHANGE/K,ADDFS/K,REMFS/K,BOOTPRI/K/N,GPT/S,MOUNT/S,ADDGPT/K,REMGPT/K,SIZE/K";
+const template = "DEVICE,UNIT/K/N,FULL/S,INIT/S,FORCE/S,ADD/K,LOW/K/N,HIGH/K/N,DOSTYPE/K,BOOTABLE/S,REMOVE/K,CHANGE/K,ADDFS/K,REMFS/K,BOOTPRI/K/N,GPT/S,MOUNT/S,ADDGPT/K,REMGPT/K,SIZE/K,NOMOUNT/S";
 const arg_device = 0;
 const arg_unit = 1;
 const arg_full = 2;
@@ -157,7 +161,8 @@ const arg_mount = 16;
 const arg_addgpt = 17;
 const arg_remgpt = 18;
 const arg_size = 19;
-const arg_count = 20;
+const arg_nomount = 20;
+const arg_count = 21;
 
 /// The disk this system boots from, when nothing else is named.
 const default_device = "flash.device";
@@ -460,6 +465,10 @@ fn change(run: *Run, argv: *const [arg_count]usize) i32 {
         _ = dl.PutStr("BOOTABLE and BOOTPRI are a table partition's: they go with ADD and CHANGE\n");
         return dos.RETURN_ERROR;
     }
+    if (argv[arg_nomount] != 0 and argv[arg_addgpt] == 0) {
+        _ = dl.PutStr("NOMOUNT is a GPT partition's: it goes with ADDGPT\n");
+        return dos.RETURN_ERROR;
+    }
     if (argv[arg_init] != 0) {
         const rc = initTable(run, argv);
         if (rc != dos.RETURN_OK) return rc;
@@ -679,6 +688,10 @@ fn addGpt(run: *Run, argv: *const [arg_count]usize, name: [*:0]const u8) i32 {
 
     var entry: gpt.Entry = .{ .partition_type_guid = gpt.TYPE_BASIC_DATA };
     gpt.setName(&entry, text);
+    // A partition nothing here works in is better off without a drive
+    // of its own at every start: the medium's own name is still there,
+    // and rdb.library mounts it when it is asked to.
+    if (argv[arg_nomount] != 0) entry.attributes |= gpt.ATTR_NO_AUTOMOUNT;
     const low = rdargs.number(argv[arg_low]);
     const high = rdargs.number(argv[arg_high]);
     if ((low == null) != (high == null) or (low orelse 0) < 0 or (high orelse 0) < 0) {

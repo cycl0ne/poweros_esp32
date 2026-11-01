@@ -107,6 +107,12 @@ fn table(run: *Run, handle: *rdb.RDBHandle) ?i32 {
         var entry: gpt.Entry = .{ .partition_type_guid = gpt.TYPE_BASIC_DATA };
         const text = drive.name[0..shared.length(drive.name)];
         gpt.setName(&entry, text);
+        // What the firmware reads is the firmware's: no drive is made
+        // for it when the medium comes in, so it is not a volume to
+        // work in by accident. The install mounts it itself to write
+        // it, and an update asks rdb.library for it by the name
+        // install.prefs keeps.
+        entry.attributes |= gpt.ATTR_NO_AUTOMOUNT;
         entry.starting_lba = freeBlocks(run, handle, boot_blocks) orelse {
             var wanted_text: [16:0]u8 = @splat(0);
             shared.bytesAsText(&wanted_text, shared.boot_bytes);

@@ -25,7 +25,7 @@ what it writes down about itself, and what the machine then starts from.
 |---|---|
 | block 0 | a protective MBR, so other systems see the disk as taken |
 | block 1 | the GPT |
-| `BOOT` | FAT32, 256 MB: the partition the firmware reads |
+| `BOOT` | FAT32, 256 MB: the partition the firmware reads, not mounted at a later start |
 | `BOOTB` | the second one, where a firmware starts from either |
 | container | the PowerOS container over the rest, with the table in its first block |
 | `DH0` | posfs, `System`, bootable, boot priority 5 |
@@ -33,6 +33,13 @@ what it writes down about itself, and what the machine then starts from.
 
 The boot partitions come first because a firmware looks for its files in
 the first partitions of a disk, and the container takes what they leave.
+They are marked not to be mounted when the medium comes in (the GPT's
+`ATTR_NO_AUTOMOUNT`, which `C:RDB` lists as `nomount` and sets with
+`ADDGPT ... NOMOUNT`): they are the firmware's, nothing here works in
+them, and a drive for each at every start is one more name in `Info` than
+there is a use for. The install mounts them itself to write them, and
+rdb.library mounts one when it is asked to, so an update finds them by
+the names `install.prefs` keeps.
 How many there are is the board's own fact (`SYSTAG_BootSlots`): one
 where the firmware reads one partition, two where it can be sent to the
 other for a single start. Both hold the same files, so either starts the
