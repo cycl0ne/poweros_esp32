@@ -203,6 +203,52 @@ test "a path a manifest may not name" {
     try testing.expectError(error.BadPath, readAll(head ++ "00000000 1 system/../S/Startup-Sequence\n", &read));
 }
 
+test "the board the kernel in it was built for" {
+    // A package with a kernel says the board as well as the chip: two
+    // boards share a chip and every path in the package, and a kernel
+    // belongs on one of them.
+    var line: [manifest.max_header]u8 = undefined;
+    const length = manifest.headerLine(.{
+        .chip = .rv64sbi,
+        .board = "visionfive2",
+        .counts = .{ .drawers = 1, .files = 0, .bytes = 0 },
+    }, &line);
+    try testing.expectEqualStrings("FORMAT=1 CHIP=rv64sbi BOARD=visionfive2 DRAWERS=1 FILES=0 BYTES=0\n", line[0..length]);
+
+    var text: [256]u8 = undefined;
+    @memcpy(text[0..length], line[0..length]);
+    const tail = "drawer system/C\n";
+    @memcpy(text[length..][0..tail.len], tail);
+    var reader = try manifest.Reader.init(text[0 .. length + tail.len]);
+    try testing.expectEqualStrings("visionfive2", reader.header.board);
+    try testing.expectEqualStrings("system/C", (try reader.next()).?.path);
+    try testing.expect(try reader.next() == null);
+
+    // The longest header there can be fits in `max_header`.
+    try testing.expect(manifest.headerLine(.{
+        .chip = .a64psci,
+        .board = "0123456789012345678901234567890"[0..manifest.max_board],
+        .counts = .{ .drawers = 0xFFFF_FFFF, .files = 0xFFFF_FFFF, .bytes = ~@as(u64, 0) },
+    }, &line) <= manifest.max_header);
+
+    // A manifest that names no board - the files alone, no kernel - says
+    // so by having none.
+    var files_only = try manifest.Reader.init("FORMAT=1 CHIP=a64psci DRAWERS=0 FILES=0 BYTES=0\n");
+    try testing.expectEqual(@as(usize, 0), files_only.header.board.len);
+    try testing.expect(try files_only.next() == null);
+
+    // A name that is no board's: it names a directory on a server and is
+    // printed where a machine says what it is installing.
+    var read: [4]manifest.Entry = undefined;
+    try testing.expectError(error.BadHeader, readAll("FORMAT=1 CHIP=rv64sbi BOARD=../etc DRAWERS=0 FILES=0 BYTES=0\n", &read));
+    try testing.expectError(error.BadHeader, readAll("FORMAT=1 CHIP=rv64sbi BOARD=a_very_long_name_for_a_board_here DRAWERS=0 FILES=0 BYTES=0\n", &read));
+    try testing.expect(manifest.boardOk("qemu_virt_a64"));
+    try testing.expect(manifest.boardOk("rpi-cm5"));
+    try testing.expect(!manifest.boardOk(""));
+    try testing.expect(!manifest.boardOk("a board"));
+    try testing.expect(!manifest.boardOk("SYS:board"));
+}
+
 test "the halves of a package" {
     const system = install.halfOf("system/C/List").?;
     try testing.expectEqual(install.Half.system, system.half);

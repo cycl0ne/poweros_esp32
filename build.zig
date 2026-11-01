@@ -874,6 +874,61 @@ pub fn build(b: *std.Build) void {
     // every build, and the two parts must not share the name.
     if (built.flash_part) |part| b.getInstallStep().dependOn(&b.addInstallBinFile(part, "kernel-flash.bin").step);
 
+    // `package` - everything a machine installs from, and is later
+    // brought up to date against, in one directory: the volume's files
+    // under system/, what the board's firmware loads under boot/, and a
+    // manifest over both (tools/mkpackage, sdk.install). It is for the
+    // machines whose disk is in RAM; an ESP32 board's disk is the flash
+    // its kernel is written with, which `flash-disk` writes.
+    const mkpackage = b.addExecutable(.{
+        .name = "mkpackage",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/mkpackage/mkpackage.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseSafe,
+        }),
+    });
+    mkpackage.root_module.addImport("sdk", sdk);
+    const package_step = b.step("package", "Gather a release package for -Dboard= into zig-out/package-<board>/");
+    switch (chipOf(board)) {
+        .esp32s3, .esp32p4 => package_step.dependOn(&b.addFail(
+            "package: this board's disk is the flash its kernel is written with - `flash-disk` writes it. A package is for a machine whose disk is in RAM: -Dboard=visionfive2, rpi_cm5, qemu_virt or qemu_virt_a64.",
+        ).step),
+        .rv64sbi, .a64psci => {
+            const rv64 = chipOf(board) == .rv64sbi;
+            const name = b.fmt("package-{s}", .{@tagName(board)});
+            const make_package = b.addRunArtifact(mkpackage);
+            const gathered = make_package.addPrefixedOutputDirectoryArg("--into=", name);
+            make_package.addArg(b.fmt("--chip={s}", .{@tagName(chipOf(board))}));
+            // The board as well as the chip: two boards share a chip and
+            // every path in the package, and their kernels differ in what
+            // the board has and where it is.
+            make_package.addArg(b.fmt("--board={s}", .{@tagName(board)}));
+            make_package.addPrefixedDirectoryArg("--system=", if (rv64) rv64_tree else a64_tree);
+            make_package.addPrefixedFileArg("boot/kernel.bin=", image);
+            make_package.addPrefixedFileArg(
+                if (rv64) "boot/disk-rv64.bin=" else "boot/disk-a64.bin=",
+                if (rv64) rv64_disk_bin else a64_disk_bin,
+            );
+            // What the firmware of this board reads beside them.
+            if (board == .rpi_cm5) make_package.addPrefixedFileArg("boot/config.txt=", b.path("src/boards/rpi_cm5/config.txt"));
+            for (bootFiles(b)) |file| {
+                make_package.addPrefixedFileArg(b.fmt("boot/{s}=", .{file.name}), .{ .cwd_relative = file.host });
+            }
+            // The package held against the manifest it was just given, so
+            // a package that is installed from is one that was checked.
+            const check_package = b.addRunArtifact(mkpackage);
+            check_package.addArg("--check");
+            check_package.addDirectoryArg(gathered);
+            package_step.dependOn(&check_package.step);
+            package_step.dependOn(&b.addInstallDirectory(.{
+                .source_dir = gathered,
+                .install_dir = .prefix,
+                .install_subdir = name,
+            }).step);
+        },
+    }
+
     // The emulator is a board of its own: the `qemu*` steps run its image,
     // with the same disk.
     const emulated = if (board == .qemu) built else addImage(b, esptool, ressize, addKernel(b, target, optimize, sdk, .qemu, disk_offset, cores, false, memdebug), disk_bin, disk_offset);
@@ -1209,6 +1264,10 @@ pub fn build(b: *std.Build) void {
     _ = try_mkicon.addOutputFileArg("Work.info");
     try_mkicon.addArgs(&.{ "KIND=DRAWER", "AT=20,10", "TOOL=SYS:Programs/MultiView", "TYPE=FILETYPE=text|ascii", "TYPE=DONOTWAIT", "STACK=16384", "WINDOW=40,30,400,200", "SCROLL=0,8", "VIEW=NAME", "SHOW=ALL" });
     test_step.dependOn(&try_mkicon.step);
+    // tools/mkpackage compiles, whichever board is being built: the
+    // `package` step is the only other thing that builds it, and a tool
+    // nothing compiles is a tool that stops compiling.
+    test_step.dependOn(&mkpackage.step);
     // Every program and module on the disk compiles: the disk image is
     // made from all of them. And for the ESP32-P4 too, into load files.
     test_step.dependOn(&make_disk.step);
@@ -1369,6 +1428,36 @@ fn extraFiles(b: *std.Build, made: *std.ArrayList([]const u8)) []const Extra {
         }) catch @panic("OOM");
     }
     return extras.toOwnedSlice(b.allocator) catch @panic("OOM");
+}
+
+/// A file `-Dboot=` puts in a package's `boot/`: the name it is read
+/// under, and the file on the host.
+const BootFile = struct { name: []const u8, host: []const u8 };
+
+/// `-Dboot=[<name>=]<file on the host>`: a file from outside this tree in
+/// a release package's `boot/`, given once per file. It is for what a
+/// board's firmware reads that this tree does not hold - the Compute
+/// Module 5's device tree is Raspberry Pi's
+/// (`-Dboot=/boot/firmware/bcm2712-rpi-cm5-cm5io.dtb`) - and the file
+/// goes into the package's manifest with the rest, so a machine fetches
+/// and checks it like any other. Without a name it keeps the host file's.
+fn bootFiles(b: *std.Build) []const BootFile {
+    const given = b.option(
+        []const []const u8,
+        "boot",
+        "A file from outside this tree in a release package's boot/: [<name>=]<file on the host>, given once per file",
+    ) orelse return &.{};
+
+    var files: std.ArrayList(BootFile) = .empty;
+    for (given) |entry| {
+        const split = std.mem.indexOfScalar(u8, entry, '=');
+        const host = if (split) |at| entry[at + 1 ..] else entry;
+        const name = if (split) |at| entry[0..at] else std.fs.path.basename(host);
+        if (name.len == 0 or host.len == 0)
+            std.debug.panic("-Dboot={s}: it is [<name>=]<file on the host>", .{entry});
+        files.append(b.allocator, .{ .name = name, .host = host }) catch @panic("OOM");
+    }
+    return files.toOwnedSlice(b.allocator) catch @panic("OOM");
 }
 
 /// `Chip`'s names, for a message.

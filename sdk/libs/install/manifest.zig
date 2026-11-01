@@ -8,7 +8,7 @@
 //! A settings line, then a line for each drawer and file:
 //!
 //!     # ... the explanation (`preamble`), passed over as a comment
-//!     FORMAT=1 CHIP=rv64sbi DRAWERS=48 FILES=511 BYTES=11793248
+//!     FORMAT=1 CHIP=rv64sbi BOARD=visionfive2 DRAWERS=48 FILES=511 BYTES=11793248
 //!     drawer system/WBStartup
 //!     7f3a21b0 5120 system/C/List
 //!
@@ -21,6 +21,11 @@
 //!   header is not optional: every machine's package has the same paths
 //!   in it, so without the chip an update would quietly write another
 //!   machine's programs and kernel over a working system.
+//! - **BOARD** is the board the kernel in it was built for, which only a
+//!   package with a kernel says. Two boards share a chip - and share
+//!   every path in the package - while their kernels differ in what the
+//!   board has and where it is, so the chip alone does not say whether a
+//!   kernel belongs on this machine.
 //! - **DRAWERS**, **FILES** and **BYTES** are what follows: the lines of
 //!   each kind, and the file sizes added up. A reader that counts
 //!   something else refuses the manifest, which is what catches a body
@@ -141,6 +146,10 @@ pub const Counts = struct {
 pub const Header = struct {
     /// The chip the files in it are built for.
     chip: Chip,
+    /// The board the kernel in it was built for, empty where the manifest
+    /// names none (`max_board`, `boardOk`). It is in the manifest's own
+    /// text, as a path is.
+    board: []const u8 = &.{},
     /// The lines that follow, which a reader checks against what it reads.
     counts: Counts = .{},
     /// The format the manifest was written in; `format_now` in one this
@@ -177,6 +186,7 @@ pub const Reader = struct {
         } else return error.NotManifest;
         var format: ?u32 = null;
         var chip: ?Chip = null;
+        var board: []const u8 = &.{};
         var counts: Counts = .{};
         var pairs: Pairs = .{ .text = first };
         while (pairs.next()) |pair| {
@@ -184,6 +194,9 @@ pub const Reader = struct {
                 format = @intCast(decimal(pair.value, 0xFFFF_FFFF) orelse return error.BadHeader);
             } else if (style.same(pair.key, "CHIP")) {
                 chip = chipNamed(pair.value) orelse return error.BadHeader;
+            } else if (style.same(pair.key, "BOARD")) {
+                if (!boardOk(pair.value)) return error.BadHeader;
+                board = pair.value;
             } else if (style.same(pair.key, "DRAWERS")) {
                 counts.drawers = @intCast(decimal(pair.value, 0xFFFF_FFFF) orelse return error.BadHeader);
             } else if (style.same(pair.key, "FILES")) {
@@ -195,7 +208,7 @@ pub const Reader = struct {
         }
         if (format == null or chip == null) return error.NotManifest;
         if (format.? > format_now) return error.Format;
-        return .{ .header = .{ .format = format.?, .chip = chip.?, .counts = counts }, .lines = lines };
+        return .{ .header = .{ .format = format.?, .chip = chip.?, .board = board, .counts = counts }, .lines = lines };
     }
 
     /// The next entry, null once the last line is read - and then only if
@@ -238,8 +251,9 @@ fn entryOf(text: []const u8) Error!Entry {
 
 // --- writing ----------------------------------------------------------------
 
-/// The bytes `headerLine` writes at most, newline included.
-pub const max_header: usize = 128;
+/// The bytes `headerLine` writes at most, newline included: every field
+/// at its longest, the board's name among them.
+pub const max_header: usize = 160;
 
 /// `header` written as the settings line into `into` (`max_header` bytes
 /// will do): how many bytes, newline included.
@@ -249,6 +263,10 @@ pub fn headerLine(header: Header, into: []u8) usize {
     at += number(header.format, into[at..]);
     put(into, &at, " CHIP=");
     put(into, &at, @tagName(header.chip));
+    if (header.board.len != 0) {
+        put(into, &at, " BOARD=");
+        put(into, &at, header.board);
+    }
     put(into, &at, " DRAWERS=");
     at += number(header.counts.drawers, into[at..]);
     put(into, &at, " FILES=");
@@ -298,8 +316,8 @@ pub const preamble =
     \\# list a system is installed from and brought up to date against.
     \\# A line for each: `drawer <path>`, or `<crc-32> <length> <path>`,
     \\# sorted by path. The first line that is not a comment says what
-    \\# format this is, which chip the files are for, and how many lines
-    \\# and bytes follow.
+    \\# format this is, which chip and board the files are for, and how
+    \\# many lines and bytes follow.
     \\
 ;
 
@@ -328,6 +346,22 @@ pub fn samePath(a: []const u8, b: []const u8) bool {
 }
 
 /// The longest path a manifest may name, as long as a path anywhere.
+pub const max_board: usize = 31;
+
+/// Whether `name` may be a BOARD: letters, digits, `_` and `-`, at least
+/// one and no more than `max_board`. It names a directory in a package on
+/// a server and is printed where a machine says what it is installing,
+/// and it is checked here so that neither has to.
+pub fn boardOk(name: []const u8) bool {
+    if (name.len == 0 or name.len > max_board) return false;
+    for (name) |byte| {
+        const letter = (byte >= 'a' and byte <= 'z') or (byte >= 'A' and byte <= 'Z');
+        const digit = byte >= '0' and byte <= '9';
+        if (!letter and !digit and byte != '_' and byte != '-') return false;
+    }
+    return true;
+}
+
 pub const max_path: usize = 1024;
 
 /// Whether `path` is one a manifest may name: relative, its parts
