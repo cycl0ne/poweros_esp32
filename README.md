@@ -35,7 +35,7 @@ QEMU and in QEMU's RISC-V 64 `virt` machine.
 |---|---|
 | [Screenshots](docs/screenshots/README.md) | four cores on AArch64, the Player, the shell, Notepad, HDToolBox, CPU load, drawing, a game, fonts, menus, gadgets, on the boards |
 | [What PowerOS is - and what it is not](#what-poweros-is---and-what-it-is-not) | the idea, and what is in it |
-| [Quick start](#quick-start) | boards, building, [QEMU the first time](#first-time-in-qemu), flashing, [the RISC-V machines](#the-risc-v-machines) |
+| [Quick start](#quick-start) | boards, building, [QEMU the first time](#first-time-in-qemu), flashing, [the RISC-V machines](#the-risc-v-machines), [the AArch64 machine](#the-aarch64-machine), [onto a card or an SSD](#onto-a-card-or-an-ssd) |
 | [Writing programs](sdk/docs/guides/programs.md) | examples: hello in the shell, a window, buttons |
 | [Debugging](sdk/docs/guides/debugging.md) | what a failure prints, from an address to a line, the ROM debugger, `s3>`, memory debugging, JTAG |
 | [The SDK](sdk/) | the package a program builds against |
@@ -510,6 +510,50 @@ shows is what dos starts from, while the bootloader still loads
 `kernel.bin`, which holds everything up to posfs, from the eMMC: it
 reads FAT, not posfs.
 
+### Onto a card or an SSD
+
+The 64-bit machines' disk image lives in RAM: what is written to it is
+gone at power off. A microSD card or an NVMe SSD keeps it, and both are
+driven - sdcard.device, nvme.device with pci.library and posfs-handler -
+so a partition on one is where the system starts from and stays.
+
+**From the host.** `system-rv64.bin` and `system-a64.bin` are a whole
+installed disk: a GPT, a PowerOS container with a RigidDiskBlock in its
+first block, and one bootable posfs partition holding the disk's files
+(`tools/mkfs --gpt`). The virt boards' builds install them
+(`-Dboard=qemu_virt`, `-Dboard=qemu_virt_a64`), each 256 MB of which only
+the written blocks take room, and written to a card or an SSD with `dd` it
+is a system to start. It carries the icons and the sound setting of the
+build that made it, so a board gets its own from the second way.
+
+**From the machine.** A machine running from its RAM disk partitions,
+formats and fills the medium itself, in eight lines of shell:
+`RDB INIT GPT`, `RDB ADD`, `Format`, `Copy SYS: TO ... ALL CLONE`, and
+`RDB CHANGE ... BOOTABLE BOOTPRI` for the one to start from - the
+[disks guide](sdk/docs/guides/rdb.md#from-the-shell) has them with what
+each is for, and `SYS:System/HDToolBox` does the table in a window.
+
+**What starts it.** Of the bootable partitions of every disk, dos starts
+from the one with the highest boot priority, and the RAM disk's `DH0` is 0:
+a partition above it wins, and the RAM disk is still there when the medium
+is not - a system to start from with one `BOOTPRI` between them. The
+loader can leave the disk image out altogether, and the machine then
+starts from the medium alone, as QEMU's virt machines do.
+
+**The kernel** is what the firmware loads, from a FAT partition it reads
+itself: on the VisionFive 2 the card's, which the machine writes too
+(sdcard.device and FAT's handler are in its ROM); on the Compute Module 5
+the eMMC's, which no driver here reaches, so its kernel is written from
+another machine. Beside it lies the disk image, which is only the system
+to fall back on once a medium holds one.
+
+**Keeping the files current.** Besides the image, each build writes the
+disk's files as a tree (`zig-out/disk-rv64/`, `zig-out/disk-a64/`) and a
+list of them - CRC-32, size and path per file
+(`zig-out/bin/disk-rv64.manifest`) - for a medium that is `SYS:` to be
+brought up to date file by file. `C:Hash` sums the files on the machine
+the same way (`ALGO=CRC32`), and `Hash CHECK` reads back a list it wrote.
+
 More build steps and options:
 
 | Command | What it does |
@@ -542,7 +586,7 @@ More build steps and options:
 ## Repository layout
 
 ```
-src/arch/      the chips (esp32s3, esp32p4, rv64sbi): boot, exceptions, clock, MMU, memory, interrupts
+src/arch/      the chips (esp32s3, esp32p4, rv64sbi, a64psci): boot, exceptions, clock, MMU, memory, interrupts
 src/rom/       what is in the ROM: libraries, devices, handlers, resources, shell
 src/boards/    one folder per board: its parts and wiring, and its drivers
 src/disk/      what goes on the disk: commands, test programs, disk-loaded
