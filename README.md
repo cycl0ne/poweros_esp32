@@ -1,16 +1,18 @@
 # PowerOS
 
 PowerOS is an operating system for Espressif's ESP32 microcontrollers and
-for 64-bit RISC-V machines, written in Zig. It boots straight from an
-ESP32's ROM loader, or from a RISC-V machine's SBI firmware, and brings up
-a complete little system: a multitasking kernel with libraries and
-devices, a DOS with file systems and a shell, a TCP/IP stack, and a
-windowed desktop on the board's display. Programs are loaded from disk at
-run time and built against a separate SDK.
+for 64-bit RISC-V and AArch64 machines, written in Zig. It boots straight
+from an ESP32's ROM loader, from a RISC-V machine's SBI firmware or from a
+Raspberry Pi's bootloader, and brings up a complete little system: a
+multitasking kernel with libraries and devices, a DOS with file systems
+and a shell, a TCP/IP stack, and a windowed desktop on the board's
+display. Programs are loaded from disk at run time and built against a
+separate SDK.
 
 **Status: release 0.2.** It runs on two ESP32-S3 boards, on two
-ESP32-P4 boards, on StarFive's VisionFive 2 (RISC-V 64), in Espressif's
-QEMU and in QEMU's RISC-V 64 `virt` machine.
+ESP32-P4 boards, on StarFive's VisionFive 2 (RISC-V 64), on a Raspberry Pi
+Compute Module 5 (AArch64), in Espressif's QEMU and in QEMU's RISC-V 64
+and AArch64 `virt` machines.
 
 [![PowerOS in QEMU's AArch64 machine: a textured cube turning in a window, CPU Load with four cores at work, Memory Map and the desktop's About](docs/screenshots/desktop-a64.gif)](docs/screenshots/README.md#four-cores-the-desktop-on-aarch64)
 
@@ -56,11 +58,11 @@ QEMU and in QEMU's RISC-V 64 `virt` machine.
   built from small modules that talk through message ports and jump
   tables; a library or a device can be replaced, loaded from disk or
   patched at run time.
-- **It is** made for the ESP32 family, and runs on 64-bit RISC-V
-  machines under SBI firmware too. It drives the hardware itself,
-  register by register: on an ESP32 everything between power-on and the
-  desktop is in this tree, on a RISC-V machine everything after its
-  firmware hands over.
+- **It is** made for the ESP32 family, and runs on 64-bit RISC-V machines
+  under SBI firmware and on AArch64 machines under PSCI firmware too. It
+  drives the hardware itself, register by register: on an ESP32 everything
+  between power-on and the desktop is in this tree, on the others
+  everything after their firmware hands over.
 - **It is** young. 0.2 works end to end, but the API may change before
   1.0, and not every part has run on every board.
 - **It is not** a Linux, a POSIX system or an RTOS in the usual sense:
@@ -106,6 +108,7 @@ flowchart TB
         m_s3["ESP32-S3"]
         m_p4["ESP32-P4"]
         m_rv64["RISC-V 64<br/>under SBI firmware"]
+        m_a64["AArch64<br/>under PSCI firmware"]
     end
 
     m_intuition --> m_rtg
@@ -124,6 +127,7 @@ flowchart TB
     m_exec ~~~ m_s3
     m_exec ~~~ m_p4
     m_expansion ~~~ m_rv64
+    m_expansion ~~~ m_a64
 
     classDef prog fill:#ede9fe,stroke:#7c3aed,color:#111827
     class m_shell,m_apps prog
@@ -134,7 +138,7 @@ flowchart TB
     classDef key fill:#2563eb,stroke:#1e3a8a,stroke-width:3px,color:#ffffff
     class m_rtg,m_rta key
     classDef chip fill:#e5e7eb,stroke:#6b7280,color:#111827
-    class m_s3,m_p4,m_rv64 chip
+    class m_s3,m_p4,m_rv64,m_a64 chip
     style m_programs fill:none,stroke:#9ca3af
     style m_modules fill:none,stroke:#9ca3af
     style m_kernel fill:none,stroke:#9ca3af
@@ -149,15 +153,16 @@ and plays:
 graphics.library, layers and intuition draw into its buffers without
 knowing what panel is behind them, so one program draws on a 3.5" SPI
 panel and on a 1080p monitor alike. A board's engine takes the fills,
-copies, blends and scales: the ESP32-P4's PPA and 2D-DMA, the
-VisionFive 2's four cores ([displays guide](sdk/docs/guides/rtg.md)).
+copies, blends and scales: the ESP32-P4's PPA and 2D-DMA, the four cores
+of the VisionFive 2 and the Compute Module 5, whose displays read their
+picture out of RAM ([displays guide](sdk/docs/guides/rtg.md)).
 
 | Driver | Display |
 |---|---|
 | `rgb` | the Waveshare 7B's 1024×600 RGB panel |
 | `dcs` on `qspi` | the ES3C35P's 480×320 SPI panel |
 | `dsi` | the ESP32-P4's MIPI DSI panels, and HDMI through the Olimex's LT8912B |
-| `fb` | the VisionFive 2's HDMI at 1920×1080, QEMU virt's virtio GPU (`virtio-gpu-device`, the pointer the host's own) and its `ramfb` |
+| `fb` | the VisionFive 2's HDMI at 1920×1080, the Compute Module 5's first HDMI port in the monitor's own mode, QEMU virt's virtio GPU (`virtio-gpu-device`, the pointer the host's own) and its `ramfb` |
 | `qemu` | Espressif QEMU's display |
 
 **rta.library** keeps the sound outputs and ways in. Each is a sink or a
@@ -184,7 +189,7 @@ file or a station's address in the shell, each title said as it changes
 |---|---|
 | `es8311` | the ES8311 codec, and its microphone input |
 | `i2samp` | I2S amplifiers, as the CrowPanel's two speakers |
-| `hdmi` | the VisionFive 2's HDMI port, 48000 Hz stereo |
+| `hdmi` | the VisionFive 2's and the Compute Module 5's HDMI ports, 48000 Hz stereo |
 | `uac` | USB speakers and headsets (`DEVS:usb/uac.device`) |
 | `file` | a WAV file, written in time |
 | `null` | in the emulators, an output into nothing that keeps time |
@@ -252,6 +257,19 @@ Beside them:
   for Suspend, Kill or Reboot
   ([debugging guide](sdk/docs/guides/debugging.md)).
 
+And under all of it the hardware, driven from this tree register by
+register: a board is data - its parts and their wiring in
+`src/boards/<board>/`, which expansion.library hands out, and the drivers
+it names - so a chip is brought up once and every board of it follows.
+What each board runs is in [Boards](#boards).
+
+| Chip | Machines | Driven here |
+|---|---|---|
+| ESP32-S3, two Xtensa LX7 cores | Waveshare 7B, ES3C35P, Espressif QEMU | the caches and the MMU, flash and PSRAM, the interrupt matrix, GDMA, RGB and QSPI panels, I2S, SPI, I2C, UART, the USB serial port, USB OTG, the SD slot, and the radio with its vendor libraries |
+| ESP32-P4, two RISC-V 32 cores | Olimex ESP32-P4-PC, Elecrow CrowPanel Advanced 10.1", esp-emulator | the same, and MIPI DSI, the PPA and 2D-DMA engines, the JPEG codec, the SDMMC host, 10/100 Ethernet, and USB OTG with the ports behind a hub |
+| RISC-V 64 under SBI firmware, four cores - StarFive's JH7110 | VisionFive 2, QEMU's `virt` | its display controller behind HDMI, PCI Express with an NVMe SSD and the VL805's USB, gigabit Ethernet, the SDMMC host, the random number generator, the video decoder, DMA, the RTC, and sound over HDMI and on the jack |
+| AArch64 under PSCI firmware, four cores - Broadcom's BCM2712 | Compute Module 5, QEMU's `virt` | HDMI 0 - the video scaler, a pixel valve, the HDMI controller, the monitor read and set over DDC/CI - PCI Express with an NVMe SSD, the V3D GPU, the RP1's two USB controllers, Ethernet and UART over its PCI Express link, the radio on the second SD host, the RTC and the core clocks through the VideoCore's firmware, the chip's temperature, and the IO board's fan turned as it asks |
+
 ## Quick start
 
 ### Boards
@@ -275,8 +293,9 @@ devices, ... (`SPEAKS=serial`) - with its units on this board, none of
 them opened or loaded to find out.
 
 You need Linux or macOS, `esptool` (v5) to flash, and for the emulator
-Espressif's QEMU; for the RISC-V machines `qemu-system-riscv64` and, on
-the VisionFive 2, the U-Boot it comes with. Always build with the `./zig`
+Espressif's QEMU; for the 64-bit machines `qemu-system-riscv64` and
+`qemu-system-aarch64`, on the VisionFive 2 the U-Boot it comes with, and
+on the Compute Module 5 its own bootloader or Raspberry Pi's `rpiboot`. Always build with the `./zig`
 wrapper: it fetches the Espressif Zig toolchain (`0.16.0-xtensa`) into
 `toolchain/` on first use.
 
@@ -304,7 +323,9 @@ Fetched once into `toolchain/`, pinned and checked, never committed:
 | `scripts/fetch-aic8800.sh` | the AIC8800 USB Wi-Fi stick's firmware, which `DEVS:usb/aic8800.device` loads into it (the ESP32-P4's disk) |
 | `scripts/fetch-fonts.sh` | the fonts in `FONTS:` (Spleen, Go) |
 | `scripts/fetch-certs.sh` | Mozilla's root certificates, made into the trust store `SYS:Certificates/Roots` |
-| `scripts/fetch-pciids.sh` | the PCI ID Repository's list, `DEVS:pci.ids` on the RISC-V disk, which `C:PCIInfo` names vendors and devices from - the host's copy where it has one, the current list otherwise: not pinned |
+| `scripts/fetch-cyw43455.sh` | the Compute Module 5's radio firmware, which `DEVS:networks/cyw43455.device` loads into it (the AArch64 disk) |
+| `scripts/fetch-vpu.sh` | the JH7110's video decoder firmware, which `videodec.resource` loads (the RISC-V 64 disk) |
+| `scripts/fetch-pciids.sh` | the PCI ID Repository's list, `DEVS:pci.ids` on the RISC-V 64 and AArch64 disks, which `C:PCIInfo` names vendors and devices from - the host's copy where it has one, the current list otherwise: not pinned |
 | `scripts/fetch-icons.sh` | the pictures of the disk's icons (Tango, public domain), drawn at the boards' sizes |
 | `scripts/fetch-esp-emu.sh` | Espressif's esp-emulator, which runs the ESP32-P4: both cores, its interrupt controller, UART0 on the terminal, the system timer, flash, PSRAM, the Ethernet MAC and a GDB stub, from the chip's own ROM; no display. With it the v1.x chips' ROM (Espressif's ROM ELFs), which `./zig build emu` boots |
 
