@@ -889,11 +889,30 @@ pub fn build(b: *std.Build) void {
         }),
     });
     mkpackage.root_module.addImport("sdk", sdk);
+    // tools/serve hands that package out over HTTP, read-only, so a
+    // machine installs itself or brings itself up to date with nothing but
+    // a network - and in QEMU's user network the host is 10.0.2.2, so
+    // either chip proves it without hardware.
+    const serve = b.addExecutable(.{
+        .name = "serve",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/serve/serve.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseSafe,
+        }),
+    });
+    serve.root_module.addImport("sdk", sdk);
+    const serve_port = b.option(u16, "serve-port", "The port `serve` hands a release package out on (default: 8080)") orelse 8080;
     const package_step = b.step("package", "Gather a release package for -Dboard= into zig-out/package-<board>/");
+    const serve_step = b.step("serve", "Gather the release package and hand it out over HTTP (quit with Ctrl-C)");
     switch (chipOf(board)) {
-        .esp32s3, .esp32p4 => package_step.dependOn(&b.addFail(
-            "package: this board's disk is the flash its kernel is written with - `flash-disk` writes it. A package is for a machine whose disk is in RAM: -Dboard=visionfive2, rpi_cm5, qemu_virt or qemu_virt_a64.",
-        ).step),
+        .esp32s3, .esp32p4 => {
+            const no_package = b.addFail(
+                "package: this board's disk is the flash its kernel is written with - `flash-disk` writes it. A package is for a machine whose disk is in RAM: -Dboard=visionfive2, rpi_cm5, qemu_virt or qemu_virt_a64.",
+            );
+            package_step.dependOn(&no_package.step);
+            serve_step.dependOn(&no_package.step);
+        },
         .rv64sbi, .a64psci => {
             const rv64 = chipOf(board) == .rv64sbi;
             const name = b.fmt("package-{s}", .{@tagName(board)});
@@ -926,6 +945,15 @@ pub fn build(b: *std.Build) void {
                 .install_dir = .prefix,
                 .install_subdir = name,
             }).step);
+            // `serve` hands out the package it has just gathered, so one
+            // command is the whole of the host's side.
+            const run_serve = b.addRunArtifact(serve);
+            run_serve.addArg(b.fmt("--port={d}", .{serve_port}));
+            run_serve.addDirectoryArg(gathered);
+            run_serve.stdio = .inherit;
+            run_serve.has_side_effects = true;
+            serve_step.dependOn(&run_serve.step);
+            serve_step.dependOn(package_step);
         },
     }
 
@@ -1264,10 +1292,12 @@ pub fn build(b: *std.Build) void {
     _ = try_mkicon.addOutputFileArg("Work.info");
     try_mkicon.addArgs(&.{ "KIND=DRAWER", "AT=20,10", "TOOL=SYS:Programs/MultiView", "TYPE=FILETYPE=text|ascii", "TYPE=DONOTWAIT", "STACK=16384", "WINDOW=40,30,400,200", "SCROLL=0,8", "VIEW=NAME", "SHOW=ALL" });
     test_step.dependOn(&try_mkicon.step);
-    // tools/mkpackage compiles, whichever board is being built: the
-    // `package` step is the only other thing that builds it, and a tool
-    // nothing compiles is a tool that stops compiling.
+    // tools/mkpackage and tools/serve compile, whichever board is being
+    // built: the `package` and `serve` steps are the only other things
+    // that build them, and a tool nothing compiles is a tool that stops
+    // compiling.
     test_step.dependOn(&mkpackage.step);
+    test_step.dependOn(&serve.step);
     // Every program and module on the disk compiles: the disk image is
     // made from all of them. And for the ESP32-P4 too, into load files.
     test_step.dependOn(&make_disk.step);
