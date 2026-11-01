@@ -7,16 +7,26 @@
 //! may use; and frames, each its header (5.9) and its tiles, in tile
 //! groups. The decoder reads each tile as its tile group comes
 //! (parse.zig) into the frame's blocks and coefficients; once the last is
-//! read, the frame is put together a superblock at a time (recon.zig),
-//! then deblocked, CDEF filtered, upscaled when it was coded narrower
-//! and loop restored (post.zig). The frame goes into the
-//! reference slots its header names, of eight, with what the frames
-//! after it read of it: its CDFs, its motion field and segment map, its
-//! size and settings. A frame shown with film grain is shown as a copy
-//! with the grain added (grain.zig).
+//! read, the frame goes into the reference slots its header names, of
+//! eight, with what the frames after it read of it - its CDFs, its motion
+//! field and segment map, its size and settings - and the rest is a job:
+//! the frame put together a superblock row at a time (recon.zig), and
+//! behind the rows deblocked, CDEF filtered, upscaled when it was coded
+//! narrower and loop restored (post.zig). A frame shown with film grain
+//! is shown as a copy with the grain added (grain.zig), the job's last
+//! part - or a job of its own for a frame shown again.
 //!
 //! Of a temporal unit with several frames shown - the layers of a
 //! scalable stream - the last is handed out, as libaom does by default.
+//!
+//! **The cores**: given workers (`useCores`), the jobs wait in turn for
+//! whichever worker is free, and the decoder goes on reading the next
+//! frames meanwhile - up to twice as many as there are workers, so that
+//! a worker finds the next frame read when it is done with one. A job
+//! counts the lines of its frame that are final (`progress`), and each
+//! read of a reference waits for the lines it reaches, which jobs begun
+//! before it put together. Without workers the decoder runs each job
+//! itself.
 
 const common = @import("common.zig");
 const header = @import("header.zig");
@@ -31,13 +41,101 @@ const Frame = common.Frame;
 const Cores = common.Cores;
 const Cdfs = cdf.Cdfs;
 
-const max_out = 4;
-/// The slots', the frame decoded, the narrower one of a frame coded
-/// with superres, those waiting to be shown and their film grain
-/// copies.
-const max_frames = 8 + 2 + 2 * max_out;
+/// Frames decoded at once at most; it divides 256 (`Decoder.crew`).
+const max_jobs = 8;
+/// Workers used at most.
+const max_workers = 8;
+/// Frames waiting to be shown at most; one more drops the first.
+const max_out = max_jobs + 2;
+/// Frames at most: the eight reference slots; for each job its frame,
+/// the narrower one it is coded in with superres and its copy with film
+/// grain; those waiting to be shown.
+const max_frames = 8 + 3 * max_jobs + max_out;
 
+/// A frame to show and when.
 pub const Shown = struct { frame: *const Frame, time: i64 };
+
+/// What a worker is handed: the decoder whose jobs it runs, and which
+/// worker it is.
+const Hand = struct { dec: *Decoder, who: u32 };
+
+/// A frame put together and filtered, on a worker or by the decoder,
+/// from its blocks as the decoder read them; or a frame shown again
+/// given its film grain.
+const Job = struct {
+    // The decoder's: the cores, the worker that took it, whether it runs
+    // and which began first.
+    cores: ?*const Cores = null,
+    who: u32 = 0,
+    active: bool = false,
+    order: u32 = 0,
+    /// Set by the worker once the frame is done.
+    done: bool = false,
+    /// A frame shown again: decoded by a job before, its copy with film
+    /// grain made once it is done.
+    again: bool = false,
+    /// The frame's sequence and header, its blocks, the references it
+    /// reads (by LAST_FRAME to ALTREF_FRAME, for an inter frame), which
+    /// it holds while it runs; the frame, the narrower one it is coded
+    /// in (else the same) and the copy shown with film grain.
+    seq: header.Sequence = .{},
+    h: header.Frame = .{},
+    out: parse.Out = .{},
+    refs: [8]?*const Frame = @splat(null),
+    cur: *Frame = undefined,
+    coded: *Frame = undefined,
+    grained: ?*Frame = null,
+    rc: recon.Recon = .{},
+    post: post.Scratch = .{},
+    rows: post.Rows = .{},
+    film: grain.Scratch = .{},
+
+    fn decode(j: *Job) void {
+        const wait: ?recon.Wait = if (j.cores) |c| .{ .cores = c, .who = j.who } else null;
+        if (j.again) {
+            if (wait) |w| w.cores.lines(w.who, j.cur, j.cur.height);
+        } else {
+            const sb_rows = j.out.sb_rows;
+            j.rows = .{};
+            for (0..sb_rows) |ru| {
+                const r: u32 = @intCast(ru);
+                j.rc.row(&j.seq, &j.h, &j.out, j.coded, j.refs, wait, r);
+                j.publish(j.cur, post.advance(&j.post, &j.rows, &j.seq, &j.h, &j.out, j.coded, j.cur, r + 1, r + 1 == sb_rows));
+            }
+            j.publish(j.cur, 0xFFFF_FFFF);
+        }
+        if (j.grained) |g| {
+            grain.apply(g, j.cur, &j.h.grain, &j.film);
+            j.publish(g, 0xFFFF_FFFF);
+        }
+    }
+
+    fn publish(j: *Job, f: *Frame, n: u32) void {
+        @atomicStore(u32, &f.progress, n, .seq_cst);
+        if (j.cores) |c| c.wake(c.ctx);
+    }
+
+    /// Its frames and references held, or let go.
+    fn hold(j: *Job, comptime take: bool) void {
+        for (j.refs) |ref| {
+            if (ref) |f| pin(@constCast(f), take);
+        }
+        pin(j.cur, take);
+        pin(j.coded, take);
+        if (j.grained) |g| pin(g, take);
+    }
+
+    fn pin(f: *Frame, comptime take: bool) void {
+        if (take) f.pinned += 1 else f.pinned -= 1;
+    }
+
+    fn deinit(j: *Job, env: Env) void {
+        j.out.free(env);
+        j.rc.deinit(env);
+        j.post.deinit(env);
+        j.film.deinit(env);
+    }
+};
 
 pub const Decoder = struct {
     env: Env,
@@ -53,23 +151,16 @@ pub const Decoder = struct {
     seq: header.Sequence = .{},
     have_seq: bool = false,
     carry: header.Carry = .{},
-    /// The frame whose tiles are read: its header, CDFs, and the CDFs
-    /// of the tile they adapt to.
+    /// The frame whose tiles are read: its header, CDFs, the CDFs of
+    /// the tile they adapt to, and its job.
     h: header.Frame = .{},
     in_frame: bool = false,
     next_tile: u32 = 0,
     cdfs: Cdfs = undefined,
     saved: Cdfs = undefined,
-    out: parse.Out = .{},
+    job: ?*Job = null,
     ps: parse.Parse,
     ref_info: [8]parse.RefInfo = @splat(.{}),
-    /// The frame decoded, and the narrower one it is coded in with
-    /// superres (else the same).
-    cur: ?*Frame = null,
-    coded: ?*Frame = null,
-    rc: recon.Recon = .{},
-    post: post.Scratch = .{},
-    film: grain.Scratch = .{},
     /// Until a key frame: at the start, after an error and a reset.
     need_key: bool = true,
     /// The temporal unit's frame to show.
@@ -79,8 +170,22 @@ pub const Decoder = struct {
     queue: [max_out]Shown = undefined,
     out_first: u32 = 0,
     out_count: u32 = 0,
+    /// The end was sent: a frame still being decoded is waited for.
     flushing: bool = false,
+
+    // --- the other cores ---
     cores: ?*const Cores = null,
+    jobs: [max_jobs]?*Job = @splat(null),
+    job_order: u32 = 0,
+    /// The jobs begun that wait for a worker, in turn from the one at
+    /// the head of `crew`; the next is put at `begun`.
+    waiting: [max_jobs]?*Job = @splat(null),
+    begun: u32 = 0,
+    /// One word, so that a worker stops only while no job waits: a bit
+    /// for each worker that runs jobs (`work`), the number of jobs that
+    /// wait times 0x100, and their head, of 256, times 0x10000.
+    crew: u32 = 0,
+    hands: [max_workers]Hand = undefined,
 
     pub fn create(env: Env) ?*Decoder {
         const bytes = env.alloc(env.ctx, @sizeOf(Decoder), true) orelse return null;
@@ -89,26 +194,30 @@ pub const Decoder = struct {
         return dec;
     }
 
-    /// The other cores (unused yet: every frame is decoded on the
-    /// caller's).
+    /// Frames put together on `cores` from now on, as many at once as it
+    /// has workers, and as many again read ahead.
     pub fn useCores(dec: *Decoder, cores: *const Cores) void {
         dec.cores = cores;
+        for (&dec.hands, 0..) |*h, i| h.* = .{ .dec = dec, .who = @intCast(i) };
     }
 
     pub fn destroy(dec: *Decoder) void {
         const env = dec.env;
+        dec.drain();
+        for (dec.jobs) |slot| {
+            const j = slot orelse continue;
+            j.deinit(env);
+            env.destroy(Job, j);
+        }
         for (&dec.frames) |*f| freeFrameMemory(env, f);
-        dec.out.free(env);
         dec.ps.deinit();
-        dec.rc.deinit(env);
-        dec.post.deinit(env);
-        dec.film.deinit(env);
         env.free(env.ctx, @ptrCast(dec), @sizeOf(Decoder));
     }
 
     /// Everything dropped, for a seek: the next frame decoded is a key
     /// frame.
     pub fn reset(dec: *Decoder) void {
+        dec.drain();
         for (0..8) |i| dec.setSlot(i, null);
         dec.states = @splat(.{});
         while (dec.out_count != 0) dec.release();
@@ -117,10 +226,19 @@ pub const Decoder = struct {
         dec.in_frame = false;
     }
 
-    /// The next frame to show, or null; valid until `release`.
+    /// The next frame to show, or null. It stays valid until `release`.
+    /// While the frames are workers' and a job is free, null: the frames
+    /// after it first, so that the workers have them while the frame is
+    /// shown - as long as no more wait to be shown than there are
+    /// workers. One a worker still decodes is waited for.
     pub fn next(dec: *Decoder) ?Shown {
         if (dec.out_count == 0) return null;
-        return dec.queue[dec.out_first];
+        const s = dec.queue[dec.out_first];
+        if (dec.cores) |c| {
+            if (!dec.flushing and dec.out_count <= c.workers and dec.idle()) return null;
+            c.lines(c.workers, s.frame, s.frame.height);
+        }
+        return s;
     }
 
     pub fn release(dec: *Decoder) void {
@@ -225,7 +343,7 @@ pub const Decoder = struct {
                 }
                 dec.need_key = false;
             } else if (dec.need_key) return;
-            try dec.show(f, &h.grain);
+            try dec.showExisting(f, &h.grain);
             return;
         }
         if (h.frame_type == common.KEY_FRAME and h.show_frame) {
@@ -242,8 +360,8 @@ pub const Decoder = struct {
         dec.next_tile = 0;
     }
 
-    /// The frame set up: its references checked, its frames made, the
-    /// CDFs and maps it starts from.
+    /// The frame set up: its references checked, its job and frames
+    /// made, the CDFs and maps it starts from.
     fn beginFrame(dec: *Decoder) Error!void {
         const h = &dec.h;
         const seq = &dec.seq;
@@ -258,6 +376,7 @@ pub const Decoder = struct {
                     h.frame_width > 16 * r.width or h.frame_height > 16 * r.height) return error.Corrupt;
             }
         }
+        const j = try dec.freeJob();
         const cur = try dec.freeFrame(h.upscaled_width, h.frame_height);
         cur.refs += 1;
         defer cur.refs -= 1;
@@ -265,8 +384,9 @@ pub const Decoder = struct {
         if (h.use_superres) {
             coded = try dec.freeFrame(h.frame_width, h.frame_height);
         }
-        dec.cur = cur;
-        dec.coded = coded;
+        dec.job = j;
+        j.cur = cur;
+        j.coded = coded;
         const n = h.mi_cols * h.mi_rows;
         const n8 = (h.mi_cols >> 1) * (h.mi_rows >> 1);
         if (cur.segs.len != n and !env.resize(u8, &cur.segs, n)) return error.NoMemory;
@@ -311,7 +431,7 @@ pub const Decoder = struct {
             const ri = &dec.ref_info[h.ref_frame_idx[h.primary_ref_frame]];
             if (ri.mi_cols == h.mi_cols and ri.mi_rows == h.mi_rows and ri.segs.len == n) prev_segs = ri.segs;
         }
-        try dec.ps.begin(&dec.out, seq, h, &dec.ref_info, cur.segs, prev_segs);
+        try dec.ps.begin(&j.out, seq, h, &dec.ref_info, cur.segs, prev_segs);
     }
 
     /// tile_group_obu (5.11.1).
@@ -352,30 +472,39 @@ pub const Decoder = struct {
         }
     }
 
-    /// decode_frame_wrapup (7.4): the frame put together and filtered,
-    /// what the frames after it read of it kept, the slots set.
+    /// decode_frame_wrapup (7.4): what the frames after it read of the
+    /// frame kept, the slots set, and the frame put together and
+    /// filtered by its job.
     fn endFrame(dec: *Decoder) Error!void {
         const h = &dec.h;
         const seq = &dec.seq;
-        const cur = dec.cur.?;
-        const coded = dec.coded.?;
+        const env = dec.env;
+        const j = dec.job.?;
+        const cur = j.cur;
+        const coded = j.coded;
         coded.refs += 1;
         defer coded.refs -= 1;
         cur.refs += 1;
         defer cur.refs -= 1;
 
-        // Put together.
-        var refs: [8]?*const Frame = @splat(null);
+        // What the job needs, before anything of the decoder's changes.
+        j.again = false;
+        j.seq = seq.*;
+        j.h = h.*;
+        j.refs = @splat(null);
         if (!h.intra) {
-            for (0..7) |i| refs[i + 1] = dec.slots[h.ref_frame_idx[i]];
+            for (0..7) |i| j.refs[i + 1] = dec.slots[h.ref_frame_idx[i]];
         }
-        try dec.rc.frame(dec.env, seq, h, &dec.out, coded, refs);
-
-        // Filtered (7.14 to 7.17).
-        try post.frame(&dec.post, dec.env, seq, h, &dec.out, coded, cur);
+        try j.rc.prepare(env);
+        try post.prepare(&j.post, env, h, coded, cur);
+        j.grained = null;
+        if (h.show_frame and seq.film_grain_params_present and h.grain.apply_grain) {
+            try grain.prepare(&j.film, env, cur.width);
+            j.grained = try dec.freeFrame(cur.width, cur.height);
+        }
 
         // The motion field (7.19) and the segment map kept.
-        dec.storeMotionField(cur);
+        dec.storeMotionField(cur, &j.out);
         if (h.segmentation_enabled and !h.segmentation_update_map) {
             if (dec.ps.prev_segs.len == cur.segs.len) {
                 @memcpy(cur.segs, dec.ps.prev_segs);
@@ -383,6 +512,12 @@ pub const Decoder = struct {
                 @memset(cur.segs, 0);
             }
         }
+
+        // The rest is the job's.
+        cur.progress = 0;
+        if (j.grained) |g| g.progress = 0;
+        dec.job = null;
+        dec.begin(j);
 
         // The reference update process (7.20).
         for (0..8) |i| {
@@ -414,13 +549,12 @@ pub const Decoder = struct {
             dec.slot_cdfs[i] = dec.cdfs;
             dec.setSlot(i, cur);
         }
-        if (h.show_frame) try dec.show(cur, &h.grain);
+        if (h.show_frame) dec.show(j.grained orelse cur);
     }
 
-    fn storeMotionField(dec: *Decoder, cur: *Frame) void {
+    fn storeMotionField(dec: *Decoder, cur: *Frame, out: *const parse.Out) void {
         const h = &dec.h;
         const seq = &dec.seq;
-        const out = &dec.out;
         const w8 = h.mi_cols >> 1;
         const h8 = h.mi_rows >> 1;
         const limit = (1 << 12) - 1;
@@ -440,23 +574,36 @@ pub const Decoder = struct {
         }
     }
 
+    /// A frame shown again (show_existing_frame): with film grain `g`, a
+    /// copy with the grain added by a job, once the frame is done.
+    fn showExisting(dec: *Decoder, f: *Frame, g: *const header.Grain) Error!void {
+        if (!(dec.seq.film_grain_params_present and g.apply_grain)) return dec.show(f);
+        f.refs += 1;
+        defer f.refs -= 1;
+        const j = try dec.freeJob();
+        const copy = try dec.freeFrame(f.width, f.height);
+        if (copy.memory.len != f.memory.len) return error.Unsupported;
+        try grain.prepare(&j.film, dec.env, f.width);
+        j.again = true;
+        j.h.grain = g.*;
+        j.refs = @splat(null);
+        j.cur = f;
+        j.coded = f;
+        j.grained = copy;
+        copy.progress = 0;
+        dec.begin(j);
+        dec.show(copy);
+    }
+
     /// The output process: `f` handed out at the end of the temporal
-    /// unit - with film grain `g`, as a copy with the grain added.
-    fn show(dec: *Decoder, f: *Frame, g: *const header.Grain) Error!void {
-        var shown = f;
-        if (dec.seq.film_grain_params_present and g.apply_grain) {
-            f.refs += 1;
-            defer f.refs -= 1;
-            const copy = try dec.freeFrame(f.width, f.height);
-            try grain.apply(copy, f, g, &dec.film, dec.env);
-            shown = copy;
-        }
+    /// unit.
+    fn show(dec: *Decoder, f: *Frame) void {
         if (dec.shown) |old| old.queued -= 1;
-        shown.queued += 1;
-        dec.shown = shown;
-        dec.width = shown.width;
-        dec.height = shown.height;
-        dec.bit_depth = shown.bit_depth;
+        f.queued += 1;
+        dec.shown = f;
+        dec.width = f.width;
+        dec.height = f.height;
+        dec.bit_depth = f.bit_depth;
     }
 
     fn enqueue(dec: *Decoder, f: *Frame, time: i64) void {
@@ -472,25 +619,30 @@ pub const Decoder = struct {
         if (f) |new| new.refs += 1;
     }
 
-    /// A frame no slot or queue holds, made for a `w` by `h` frame of the
-    /// sequence's format.
+    /// A frame no slot, job or wait for showing holds, for a `w` by `h`
+    /// frame of the sequence's format: one made for it, or another made
+    /// anew; when every one is held, once the first job is done.
     fn freeFrame(dec: *Decoder, w: u32, h: u32) Error!*Frame {
         const seq = &dec.seq;
         const alloc_w = (w + 127) & ~@as(u32, 127);
         const alloc_h = (h + 127) & ~@as(u32, 127);
         const bytes: u8 = if (seq.bit_depth > 8) 2 else 1;
-        var spare: ?*Frame = null;
-        for (&dec.frames) |*f| {
-            if (f.refs != 0 or f.pinned != 0 or f.queued != 0) continue;
-            if (f.memory.len != 0 and f.alloc_w == alloc_w and f.alloc_h == alloc_h and
-                f.alloc_bytes == bytes and f.ss_x == seq.ss_x and f.ss_y == seq.ss_y)
-            {
-                spare = f;
-                break;
+        const f = while (true) {
+            dec.retire();
+            var spare: ?*Frame = null;
+            for (&dec.frames) |*f| {
+                if (f.refs != 0 or f.pinned != 0 or f.queued != 0) continue;
+                if (f.memory.len != 0 and f.alloc_w == alloc_w and f.alloc_h == alloc_h and
+                    f.alloc_bytes == bytes and f.ss_x == seq.ss_x and f.ss_y == seq.ss_y)
+                {
+                    spare = f;
+                    break;
+                }
+                if (spare == null) spare = f;
             }
-            if (spare == null) spare = f;
-        }
-        const f = spare orelse return error.NoMemory;
+            if (spare) |f| break f;
+            if (!dec.retireOldest()) return error.NoMemory;
+        };
         if (!(f.memory.len != 0 and f.alloc_w == alloc_w and f.alloc_h == alloc_h and
             f.alloc_bytes == bytes and f.ss_x == seq.ss_x and f.ss_y == seq.ss_y))
         {
@@ -521,6 +673,146 @@ pub const Decoder = struct {
         f.full_range = seq.full_range;
         return f;
     }
+
+    // --- the jobs -------------------------------------------------------------
+
+    /// The jobs there may be: twice the workers, one without them.
+    fn jobCount(dec: *const Decoder) usize {
+        const c = dec.cores orelse return 1;
+        return @max(1, @min(2 * @as(usize, c.workers), max_jobs));
+    }
+
+    /// A job not running: made while there are fewer than `jobCount`,
+    /// and when every one runs, the first once it is done.
+    fn freeJob(dec: *Decoder) Error!*Job {
+        const n = dec.jobCount();
+        while (true) {
+            dec.retire();
+            for (dec.jobs[0..n]) |*slot| {
+                if (slot.*) |j| {
+                    if (!j.active) return j;
+                    continue;
+                }
+                const j = dec.env.create(Job) orelse return error.NoMemory;
+                j.* = .{};
+                slot.* = j;
+                return j;
+            }
+            if (!dec.retireOldest()) return error.NoMemory;
+        }
+    }
+
+    /// Job `j` begun, its frames and references held until it is done:
+    /// waiting for a worker, one that runs none sent to run them - or run
+    /// here without workers.
+    fn begin(dec: *Decoder, j: *Job) void {
+        j.hold(true);
+        j.cores = dec.cores;
+        j.done = false;
+        j.active = true;
+        j.order = dec.job_order;
+        dec.job_order +%= 1;
+        const c = dec.cores orelse {
+            j.decode();
+            retireJob(j);
+            return;
+        };
+        @atomicStore(?*Job, &dec.waiting[dec.begun % max_jobs], j, .monotonic);
+        dec.begun +%= 1;
+        var crew = @atomicRmw(u32, &dec.crew, .Add, 0x100, .seq_cst) + 0x100;
+        const all = (@as(u32, 1) << @intCast(@min(c.workers, max_workers))) - 1;
+        while (~crew & all != 0) {
+            const w: u5 = @intCast(@ctz(~crew & all));
+            crew = @cmpxchgWeak(u32, &dec.crew, crew, crew | @as(u32, 1) << w, .seq_cst, .seq_cst) orelse
+                return c.run(c.ctx, w, work, &dec.hands[w]);
+        }
+    }
+
+    /// A worker's: the jobs that wait, in turn, until none does. Each is
+    /// taken by the same change of `crew` that checks it is the head -
+    /// read before - and the worker stops by one that checks none waits,
+    /// its last look at the decoder.
+    fn work(arg: *anyopaque) void {
+        const hand: *const Hand = @ptrCast(@alignCast(arg));
+        const dec = hand.dec;
+        const who = hand.who;
+        const c = dec.cores.?;
+        const bit = @as(u32, 1) << @intCast(who);
+        var crew = @atomicLoad(u32, &dec.crew, .seq_cst);
+        while (true) {
+            if (crew >> 8 & 0xFF == 0) {
+                crew = @cmpxchgWeak(u32, &dec.crew, crew, crew & ~bit, .seq_cst, .seq_cst) orelse break;
+                continue;
+            }
+            const head = crew >> 16;
+            const j = @atomicLoad(?*Job, &dec.waiting[head % max_jobs], .monotonic).?;
+            const taken = ((crew & 0xFFFF) - 0x100) | ((head + 1) & 0xFF) << 16;
+            crew = @cmpxchgWeak(u32, &dec.crew, crew, taken, .seq_cst, .seq_cst) orelse {
+                j.who = who;
+                j.decode();
+                @atomicStore(bool, &j.done, true, .seq_cst);
+                c.wake(c.ctx);
+                crew = @atomicLoad(u32, &dec.crew, .seq_cst);
+                continue;
+            };
+        }
+        c.wake(c.ctx);
+    }
+
+    /// The jobs that are done given back their frames.
+    fn retire(dec: *Decoder) void {
+        for (dec.jobs) |slot| {
+            const j = slot orelse continue;
+            if (j.active and @atomicLoad(bool, &j.done, .acquire)) retireJob(j);
+        }
+    }
+
+    fn retireJob(j: *Job) void {
+        j.hold(false);
+        j.active = false;
+    }
+
+    /// Until the job begun first is done, which is then retired; false
+    /// when none runs.
+    fn retireOldest(dec: *Decoder) bool {
+        var oldest: ?*Job = null;
+        for (dec.jobs) |slot| {
+            const j = slot orelse continue;
+            if (j.active and (oldest == null or j.order -% oldest.?.order > 1 << 31)) oldest = j;
+        }
+        const j = oldest orelse return false;
+        const c = dec.cores.?;
+        while (!@atomicLoad(bool, &j.done, .acquire)) {
+            c.arm(c.ctx, c.workers);
+            if (@atomicLoad(bool, &j.done, .seq_cst)) break;
+            c.sleep(c.ctx, c.workers);
+        }
+        retireJob(j);
+        return true;
+    }
+
+    /// Every job done, and every worker gone from the decoder: it goes
+    /// on alone.
+    fn drain(dec: *Decoder) void {
+        while (dec.retireOldest()) {}
+        const c = dec.cores orelse return;
+        while (@atomicLoad(u32, &dec.crew, .seq_cst) & 0xFF != 0) {
+            c.arm(c.ctx, c.workers);
+            if (@atomicLoad(u32, &dec.crew, .seq_cst) & 0xFF == 0) break;
+            c.sleep(c.ctx, c.workers);
+        }
+    }
+
+    /// Whether a job is free: another frame can be read.
+    fn idle(dec: *Decoder) bool {
+        if (dec.cores == null) return false;
+        dec.retire();
+        for (dec.jobs[0..dec.jobCount()]) |slot| {
+            const j = slot orelse return true;
+            if (!j.active) return true;
+        }
+        return false;
+    }
 };
 
 fn freeFrameMemory(env: Env, f: *Frame) void {
@@ -534,6 +826,40 @@ fn freeFrameMemory(env: Env, f: *Frame) void {
 
 const std = @import("std");
 const testing = std.testing;
+
+/// Workers on threads, waiting by yielding.
+const TestCores = struct {
+    cores: Cores = undefined,
+    jobs: [3]usize = @splat(0),
+    args: [3]usize = @splat(0),
+    threads: [3]std.Thread = undefined,
+    quit: bool = false,
+
+    fn of(ctx: *anyopaque) *TestCores {
+        return @ptrCast(@alignCast(ctx));
+    }
+    fn run(ctx: *anyopaque, worker: u32, job: *const fn (*anyopaque) void, arg: *anyopaque) void {
+        const t = of(ctx);
+        t.args[worker] = @intFromPtr(arg);
+        @atomicStore(usize, &t.jobs[worker], @intFromPtr(job), .seq_cst);
+    }
+    fn arm(_: *anyopaque, _: u32) void {}
+    fn sleep(_: *anyopaque, _: u32) void {
+        std.Thread.yield() catch {};
+    }
+    fn wake(_: *anyopaque) void {}
+    fn work(t: *TestCores, i: usize) void {
+        while (!@atomicLoad(bool, &t.quit, .acquire)) {
+            const job = @atomicRmw(usize, &t.jobs[i], .Xchg, 0, .acq_rel);
+            if (job == 0) {
+                std.Thread.yield() catch {};
+                continue;
+            }
+            const f: *const fn (*anyopaque) void = @ptrFromInt(job);
+            f(@ptrFromInt(t.args[i]));
+        }
+    }
+};
 
 const TestMemory = struct {
     fn alloc(_: *anyopaque, len: usize, clear: bool) ?[*]u8 {
@@ -565,11 +891,12 @@ const Way = struct {
 /// Every frame of an IVF file shown, in a decoder made for it: how many
 /// shown and not right, and FNV-1a of their planes' bytes at the size
 /// shown.
-fn decodeAll(ivf: []const u8, way: Way) !Decoded {
+fn decodeAll(ivf: []const u8, cores: ?*const Cores, way: Way) !Decoded {
     var ctx: u8 = 0;
     const env: Env = .{ .ctx = &ctx, .alloc = TestMemory.alloc, .free = TestMemory.free };
     const dec = Decoder.create(env) orelse return error.OutOfMemory;
     defer dec.destroy();
+    if (cores) |c| dec.useCores(c);
     const start = std.mem.readInt(u16, ivf[6..8], .little);
     var got: Decoded = .{};
     var at: usize = start;
@@ -618,7 +945,14 @@ fn decodeAll(ivf: []const u8, way: Way) !Decoded {
 // frames 192x112 in a sequence that says 192x108 at most, 12 frames.
 // tests/t5.ivf: libaom, film grain (its test table 3), 96x56, 8 frames.
 // The hashes are of dav1d's decode.
-test "frames decoded as dav1d decodes them, after a seek, a close and damaged ones" {
+test "frames decoded as dav1d decodes them, alone and on three workers, after a seek, a close and damaged ones" {
+    var t: TestCores = .{};
+    t.cores = .{ .ctx = &t, .workers = 3, .run = TestCores.run, .arm = TestCores.arm, .sleep = TestCores.sleep, .wake = TestCores.wake };
+    for (&t.threads, 0..) |*th, i| th.* = try std.Thread.spawn(.{}, TestCores.work, .{ &t, i });
+    defer {
+        @atomicStore(bool, &t.quit, true, .seq_cst);
+        for (t.threads) |th| th.join();
+    }
     const streams = [_]struct { ivf: []const u8, expect: Decoded }{
         .{ .ivf = @embedFile("tests/t1.ivf"), .expect = .{ .shown = 24, .hash = 0x4a9ee9e57edf4494 } },
         .{ .ivf = @embedFile("tests/t2.ivf"), .expect = .{ .shown = 6, .hash = 0xef6063783e47e4fd } },
@@ -627,14 +961,16 @@ test "frames decoded as dav1d decodes them, after a seek, a close and damaged on
         .{ .ivf = @embedFile("tests/t5.ivf"), .expect = .{ .shown = 8, .hash = 0xc0e64490c5bfaf5c } },
     };
     for (streams) |s| {
-        try testing.expectEqual(s.expect, try decodeAll(s.ivf, .{}));
-        try testing.expectEqual(s.expect, try decodeAll(s.ivf, .{ .eager = true }));
-        for ([_]u32{ 3, 6 }) |at| {
-            try testing.expectEqual(s.expect, try decodeAll(s.ivf, .{ .reset_after = at }));
-            _ = try decodeAll(s.ivf, .{ .stop_after = at });
+        for ([_]?*const Cores{ null, &t.cores }) |cores| {
+            try testing.expectEqual(s.expect, try decodeAll(s.ivf, cores, .{}));
+            try testing.expectEqual(s.expect, try decodeAll(s.ivf, cores, .{ .eager = true }));
+            for ([_]u32{ 3, 6 }) |at| {
+                try testing.expectEqual(s.expect, try decodeAll(s.ivf, cores, .{ .reset_after = at }));
+                _ = try decodeAll(s.ivf, cores, .{ .stop_after = at });
+            }
+            // Temporal units cut short: some frames come out, wrong;
+            // nothing is caught.
+            for ([_]u32{ 1, 5, 8, 15 }) |cut| _ = try decodeAll(s.ivf, cores, .{ .cut = cut });
         }
-        // Temporal units cut short: some frames come out, wrong; nothing
-        // is caught.
-        for ([_]u32{ 1, 5, 8, 15 }) |cut| _ = try decodeAll(s.ivf, .{ .cut = cut });
     }
 }

@@ -253,7 +253,9 @@ pub const Parse = struct {
     color_map_uv: [64 * 64]u8 = undefined,
     max_luma_w: u32 = 0,
     max_luma_h: u32 = 0,
-    quant: [1024]i32 = undefined,
+    /// The levels of the transform block read, at the stride of its
+    /// width and TX_PAD; all 0 between blocks.
+    levels: [(32 + TX_PAD) * (32 + TX_PAD)]u8 = undefined,
 
     // The vector prediction's (mvpred.zig).
     mv: mvpred.State = .{},
@@ -337,6 +339,8 @@ pub const Parse = struct {
         try ps.size(out, h.mi_cols, h.mi_rows, seq.use_128x128);
         @memset(out.mi, NO_BLOCK);
         @memset(out.cdef_idx, -1);
+        // After a frame that was not right, what it left.
+        @memset(&ps.levels, 0);
         out.nblocks = 0;
         out.ntxbs = 0;
         out.ncoefs = 0;
@@ -2125,9 +2129,7 @@ pub const Parse = struct {
             const tx_class = txClass(tx_type);
             const adj = tables.adjusted_tx_size[txsz];
             const bwl: u5 = @intCast(tables.tx_width_log2[adj]);
-            const tw: u32 = @as(u32, 1) << bwl;
             const th: u32 = tables.tx_height[adj];
-            @memset(ps.quant[0 .. tw * th], 0);
 
             const eob_multisize = @as(u32, @min(tables.tx_width_log2[txsz], 5)) + @min(tables.tx_height_log2[txsz], 5) - 4;
             const ectx: u32 = if (tx_class == TX_CLASS_2D) 0 else 1;
@@ -2150,29 +2152,9 @@ pub const Parse = struct {
                     if (ps.lit(1) == 1) eob += @as(u32, 1) << s;
                 }
             }
-            const quant = &ps.quant;
-            var c: i32 = @as(i32, @intCast(eob)) - 1;
-            while (c >= 0) : (c -= 1) {
-                const cu: u32 = @intCast(c);
-                const pos: u32 = scan[cu];
-                var level: u32 = 0;
-                if (cu == eob - 1) {
-                    const ectx2: u32 = if (cu == 0) 0 else if (cu <= (th << bwl) / 8) 1 else if (cu <= (th << bwl) / 4) 2 else 3;
-                    level = ps.sym(&ps.c.coeff_base_eob[tx_sz_ctx][ptype][ectx2]) + 1;
-                } else {
-                    const bctx = baseCtx(quant, txsz, tx_class, bwl, th, pos);
-                    level = ps.sym(&ps.c.coeff_base[tx_sz_ctx][ptype][bctx]);
-                }
-                if (level > 2) {
-                    const brctx = brCtx(quant, tx_class, bwl, th, pos);
-                    const br = &ps.c.coeff_br[@min(tx_sz_ctx, common.TX_32X32)][ptype][brctx];
-                    for (0..4) |_| {
-                        const k = ps.sym(br);
-                        level += k;
-                        if (k < 3) break;
-                    }
-                }
-                quant[pos] = @intCast(level);
+            switch (tx_class) {
+                inline TX_CLASS_2D, TX_CLASS_HORIZ, TX_CLASS_VERT => |cls| ps.readLevels(cls, scan, eob, txsz, tx_sz_ctx, ptype, bwl, th),
+                else => unreachable,
             }
 
             // Signs, the rest of the big ones and dequantisation.
@@ -2209,7 +2191,9 @@ pub const Parse = struct {
             const lim: i64 = @as(i64, 1) << @intCast(7 + seq.bit_depth);
             for (0..eob) |cu| {
                 const pos: u32 = scan[cu];
-                var v: u32 = @intCast(quant[pos]);
+                const at = pos + (pos >> bwl) * TX_PAD;
+                var v: u32 = ps.levels[at];
+                ps.levels[at] = 0;
                 var sign: u32 = 0;
                 if (v != 0) {
                     if (cu == 0) {
@@ -2233,7 +2217,6 @@ pub const Parse = struct {
                 if (pos == 0 and v > 0) dc_category = if (sign == 1) 1 else 2;
                 v &= 0xFFFFF;
                 cul_level += v;
-                quant[pos] = if (sign == 1) -@as(i32, @intCast(v)) else @intCast(v);
                 // Dequantised (7.12.3).
                 var q: i64 = if (pos == 0) dc_q else ac_q;
                 if (use_qm) q = common.round2_64(q * qm[qm_off + pos], 5);
@@ -2253,6 +2236,59 @@ pub const Parse = struct {
             ps.left_dc[plane][y4 + i] = dc_category;
         }
         return eob;
+    }
+
+    /// The levels of a transform block's coefficients, of class `cls`,
+    /// from the last back to the first, into `levels`: its columns and
+    /// rows beyond the block 0, as the contexts read them (get_coeff_base_ctx
+    /// and get_br_ctx).
+    inline fn readLevels(ps: *Parse, comptime cls: u32, scan: []const u16, eob: u32, txsz: u8, tx_sz_ctx: u32, ptype: u32, bwl: u5, th: u32) void {
+        const lv = &ps.levels;
+        const stride = (@as(u32, 1) << bwl) + TX_PAD;
+        const base_cdfs = &ps.c.coeff_base[tx_sz_ctx][ptype];
+        const br_cdfs = &ps.c.coeff_br[@min(tx_sz_ctx, common.TX_32X32)][ptype];
+        var c = eob;
+        while (c > 0) {
+            c -= 1;
+            const pos: u32 = scan[c];
+            const row = pos >> bwl;
+            const col = pos - (row << bwl);
+            const at = row * stride + col;
+            var level: u32 = undefined;
+            if (c == eob - 1) {
+                const area = th << bwl;
+                const ectx: u32 = if (c == 0) 0 else if (c <= area / 8) 1 else if (c <= area / 4) 2 else 3;
+                level = ps.sym(&ps.c.coeff_base_eob[tx_sz_ctx][ptype][ectx]) + 1;
+            } else {
+                var mag: u32 = 0;
+                inline for (tables.sig_ref_diff_offset[cls]) |o| mag += @min(lv[at + o[0] * stride + o[1]], 3);
+                const ctx = @min((mag + 1) >> 1, 4);
+                const bctx = switch (cls) {
+                    TX_CLASS_2D => if (pos == 0) 0 else ctx + tables.coeff_base_ctx_offset[txsz][@min(row, 4)][@min(col, 4)],
+                    TX_CLASS_VERT => ctx + tables.coeff_base_pos_ctx_offset[@min(row, 2)],
+                    else => ctx + tables.coeff_base_pos_ctx_offset[@min(col, 2)],
+                };
+                level = ps.sym(&base_cdfs[bctx]);
+            }
+            if (level > 2) {
+                // The levels are 15 at most.
+                var mag: u32 = 0;
+                inline for (tables.mag_ref_offset_with_tx_class[cls]) |o| mag += lv[at + o[0] * stride + o[1]];
+                mag = @min((mag + 1) >> 1, 6);
+                const brctx = if (pos == 0) mag else switch (cls) {
+                    TX_CLASS_2D => if (row < 2 and col < 2) mag + 7 else mag + 14,
+                    TX_CLASS_HORIZ => if (col == 0) mag + 7 else mag + 14,
+                    else => if (row == 0) mag + 7 else mag + 14,
+                };
+                const br = &br_cdfs[brctx];
+                for (0..4) |_| {
+                    const k = ps.sym(br);
+                    level += k;
+                    if (k < 3) break;
+                }
+            }
+            lv[at] = @intCast(level);
+        }
     }
 
     fn dcSignCtx(ps: *const Parse, plane: u32, x4: u32, y4: u32, w4: u32, h4: u32, max_x4: u32, max_y4: u32) u32 {
@@ -2380,6 +2416,10 @@ pub const TX_SET_INTER_1 = 1;
 pub const TX_SET_INTER_2 = 2;
 pub const TX_SET_INTER_3 = 3;
 
+/// The columns and rows `levels` has beyond a transform block, which its
+/// contexts reach.
+const TX_PAD = 4;
+
 pub const TX_CLASS_2D = 0;
 pub const TX_CLASS_HORIZ = 1;
 pub const TX_CLASS_VERT = 2;
@@ -2390,42 +2430,6 @@ pub fn txClass(t: u8) u32 {
         common.H_DCT, common.H_ADST, common.H_FLIPADST => TX_CLASS_HORIZ,
         else => TX_CLASS_2D,
     };
-}
-
-fn baseCtx(quant: *const [1024]i32, txsz: u8, tx_class: u32, bwl: u5, height: u32, pos: u32) u32 {
-    const width = @as(u32, 1) << bwl;
-    const row = pos >> bwl;
-    const col = pos - (row << bwl);
-    var mag: u32 = 0;
-    for (tables.sig_ref_diff_offset[tx_class]) |off| {
-        const rr = row + off[0];
-        const cc = col + off[1];
-        if (rr < height and cc < width) mag += @min(@abs(quant[(rr << bwl) + cc]), 3);
-    }
-    const ctx = @min((mag + 1) >> 1, 4);
-    if (tx_class == TX_CLASS_2D) {
-        if (row == 0 and col == 0) return 0;
-        return ctx + tables.coeff_base_ctx_offset[txsz][@min(row, 4)][@min(col, 4)];
-    }
-    const idx = if (tx_class == TX_CLASS_VERT) row else col;
-    return ctx + tables.coeff_base_pos_ctx_offset[@min(idx, 2)];
-}
-
-fn brCtx(quant: *const [1024]i32, tx_class: u32, bwl: u5, txh: u32, pos: u32) u32 {
-    const width = @as(u32, 1) << bwl;
-    const row = pos >> bwl;
-    const col = pos - (row << bwl);
-    var mag: u32 = 0;
-    for (tables.mag_ref_offset_with_tx_class[tx_class]) |off| {
-        const rr = row + off[0];
-        const cc = col + off[1];
-        if (rr < txh and cc < width) mag += @min(@as(u32, @intCast(quant[rr * width + cc])), 15);
-    }
-    mag = @min((mag + 1) >> 1, 6);
-    if (pos == 0) return mag;
-    if (tx_class == TX_CLASS_2D) return if (row < 2 and col < 2) mag + 7 else mag + 14;
-    if (tx_class == TX_CLASS_HORIZ) return if (col == 0) mag + 7 else mag + 14;
-    return if (row == 0) mag + 7 else mag + 14;
 }
 
 /// get_scan (5.11.41).

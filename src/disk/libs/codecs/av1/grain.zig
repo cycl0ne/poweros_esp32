@@ -42,18 +42,22 @@ const Rng = struct {
     }
 };
 
-/// `dst` set to `src` with the grain `g` added (`dst` laid out as `src`).
-pub fn apply(dst: *Frame, src: *const Frame, g: *const Grain, s: *Scratch, env: Env) Error!void {
-    if (dst.memory.len != src.memory.len) return error.Unsupported;
+/// The working memory for frames `width` wide made, before `apply`.
+pub fn prepare(s: *Scratch, env: Env, width: u32) Error!void {
     if (s.noise == null) s.noise = env.create(Noise) orelse return error.NoMemory;
     // Two stripes, three planes, 34 rows, the width and the blocks' reach.
-    const width: usize = src.width + 64;
-    const need = 2 * 3 * 34 * width;
+    const need = 2 * 3 * 34 * (@as(usize, width) + 64);
     if (s.stripes.len < need) {
         env.freeSlice(i16, s.stripes);
         s.stripes = &.{};
         s.stripes = env.slice(i16, need) orelse return error.NoMemory;
     }
+}
+
+/// `dst` set to `src` with the grain `g` added: `dst` laid out as `src`,
+/// `s` prepared for its width.
+pub fn apply(dst: *Frame, src: *const Frame, g: *const Grain, s: *const Scratch) void {
+    const width: usize = src.width + 64;
     @memcpy(dst.memory, src.memory);
     const syn: Synth = .{ .g = g, .n = s.noise.?, .bd = @intCast(src.bit_depth), .ss_x = src.ss_x, .ss_y = src.ss_y, .mono = src.mono, .matrix = src.matrix };
     syn.generate();

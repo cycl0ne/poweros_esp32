@@ -34,9 +34,11 @@ fn brev(comptime bits: u5, x: usize) usize {
 }
 
 /// B(a, b, angle, flip).
-inline fn bf(t: []i32, a: usize, b: usize, angle: i32, flip: bool) void {
-    const x = @as(i64, t[a]) * cos128(angle) - @as(i64, t[b]) * sin128(angle);
-    const y = @as(i64, t[a]) * sin128(angle) + @as(i64, t[b]) * cos128(angle);
+inline fn bf(t: *[64]i32, comptime a: usize, comptime b: usize, comptime angle: i32, comptime flip: bool) void {
+    const c = comptime cos128(angle);
+    const s = comptime sin128(angle);
+    const x = @as(i64, t[a]) * c - @as(i64, t[b]) * s;
+    const y = @as(i64, t[a]) * s + @as(i64, t[b]) * c;
     if (flip) {
         t[a] = round12(y);
         t[b] = round12(x);
@@ -47,7 +49,7 @@ inline fn bf(t: []i32, a: usize, b: usize, angle: i32, flip: bool) void {
 }
 
 /// H(a, b, flip, r).
-inline fn hd(t: []i32, a0: usize, b0: usize, flip: bool, lo: i32, hi: i32) void {
+inline fn hd(t: *[64]i32, comptime a0: usize, comptime b0: usize, comptime flip: bool, lo: i32, hi: i32) void {
     const a = if (flip) b0 else a0;
     const b = if (flip) a0 else b0;
     const x = t[a];
@@ -57,133 +59,134 @@ inline fn hd(t: []i32, a0: usize, b0: usize, flip: bool, lo: i32, hi: i32) void 
 }
 
 /// The inverse DCT (7.13.2.3) of 2^n values, clamped to `r` bits.
-pub fn dct(t: []i32, comptime n: u5, r: u5) void {
+pub fn dct(t: *[64]i32, comptime n: u5, r: u5) void {
+    @setEvalBranchQuota(10000);
     const lo: i32 = -(@as(i32, 1) << (r - 1));
     const hi: i32 = (@as(i32, 1) << (r - 1)) - 1;
     const len = @as(usize, 1) << n;
     var copy: [64]i32 = undefined;
     @memcpy(copy[0..len], t[0..len]);
-    for (0..len) |i| t[i] = copy[brev(n, i)];
+    inline for (0..len) |i| t[i] = copy[comptime brev(n, i)];
     if (n == 6) {
-        for (0..16) |i| bf(t, 32 + i, 63 - i, 63 - 4 * @as(i32, @intCast(brev(4, i))), false);
+        inline for (0..16) |i| bf(t, 32 + i, 63 - i, 63 - 4 * @as(i32, @intCast(brev(4, i))), false);
     }
     if (n >= 5) {
-        for (0..8) |i| bf(t, 16 + i, 31 - i, 6 + (@as(i32, @intCast(brev(3, 7 - i))) << 3), false);
+        inline for (0..8) |i| bf(t, 16 + i, 31 - i, 6 + (@as(i32, @intCast(brev(3, 7 - i))) << 3), false);
     }
     if (n == 6) {
-        for (0..16) |i| hd(t, 32 + i * 2, 33 + i * 2, i & 1 != 0, lo, hi);
+        inline for (0..16) |i| hd(t, 32 + i * 2, 33 + i * 2, i & 1 != 0, lo, hi);
     }
     if (n >= 4) {
-        for (0..4) |i| bf(t, 8 + i, 15 - i, 12 + (@as(i32, @intCast(brev(2, 3 - i))) << 4), false);
+        inline for (0..4) |i| bf(t, 8 + i, 15 - i, 12 + (@as(i32, @intCast(brev(2, 3 - i))) << 4), false);
     }
     if (n >= 5) {
-        for (0..8) |i| hd(t, 16 + 2 * i, 17 + 2 * i, i & 1 != 0, lo, hi);
+        inline for (0..8) |i| hd(t, 16 + 2 * i, 17 + 2 * i, i & 1 != 0, lo, hi);
     }
     if (n == 6) {
-        for (0..4) |i| {
-            for (0..2) |j| bf(t, 62 - i * 4 - j, 33 + i * 4 + j, 60 - 16 * @as(i32, @intCast(brev(2, i))) + 64 * @as(i32, @intCast(j)), true);
+        inline for (0..4) |i| {
+            inline for (0..2) |j| bf(t, 62 - i * 4 - j, 33 + i * 4 + j, 60 - 16 * @as(i32, @intCast(brev(2, i))) + 64 * @as(i32, @intCast(j)), true);
         }
     }
     if (n >= 3) {
-        for (0..2) |i| bf(t, 4 + i, 7 - i, 56 - 32 * @as(i32, @intCast(i)), false);
+        inline for (0..2) |i| bf(t, 4 + i, 7 - i, 56 - 32 * @as(i32, @intCast(i)), false);
     }
     if (n >= 4) {
-        for (0..4) |i| hd(t, 8 + 2 * i, 9 + 2 * i, i & 1 != 0, lo, hi);
+        inline for (0..4) |i| hd(t, 8 + 2 * i, 9 + 2 * i, i & 1 != 0, lo, hi);
     }
     if (n >= 5) {
-        for (0..2) |i| {
-            for (0..2) |j| bf(t, 30 - 4 * i - j, 17 + 4 * i + j, 24 + (@as(i32, @intCast(j)) << 6) + ((1 - @as(i32, @intCast(i))) << 5), true);
+        inline for (0..2) |i| {
+            inline for (0..2) |j| bf(t, 30 - 4 * i - j, 17 + 4 * i + j, 24 + (@as(i32, @intCast(j)) << 6) + ((1 - @as(i32, @intCast(i))) << 5), true);
         }
     }
     if (n == 6) {
-        for (0..8) |i| {
-            for (0..2) |j| hd(t, 32 + i * 4 + j, 35 + i * 4 - j, i & 1 != 0, lo, hi);
+        inline for (0..8) |i| {
+            inline for (0..2) |j| hd(t, 32 + i * 4 + j, 35 + i * 4 - j, i & 1 != 0, lo, hi);
         }
     }
-    for (0..2) |i| bf(t, 2 * i, 2 * i + 1, 32 + 16 * @as(i32, @intCast(i)), i == 0);
+    inline for (0..2) |i| bf(t, 2 * i, 2 * i + 1, 32 + 16 * @as(i32, @intCast(i)), i == 0);
     if (n >= 3) {
-        for (0..2) |i| hd(t, 4 + 2 * i, 5 + 2 * i, i != 0, lo, hi);
+        inline for (0..2) |i| hd(t, 4 + 2 * i, 5 + 2 * i, i != 0, lo, hi);
     }
     if (n >= 4) {
-        for (0..2) |i| bf(t, 14 - i, 9 + i, 48 + 64 * @as(i32, @intCast(i)), true);
+        inline for (0..2) |i| bf(t, 14 - i, 9 + i, 48 + 64 * @as(i32, @intCast(i)), true);
     }
     if (n >= 5) {
-        for (0..4) |i| {
-            for (0..2) |j| hd(t, 16 + 4 * i + j, 19 + 4 * i - j, i & 1 != 0, lo, hi);
+        inline for (0..4) |i| {
+            inline for (0..2) |j| hd(t, 16 + 4 * i + j, 19 + 4 * i - j, i & 1 != 0, lo, hi);
         }
     }
     if (n == 6) {
-        for (0..2) |i| {
-            for (0..4) |j| bf(t, 61 - i * 8 - j, 34 + i * 8 + j, 56 - @as(i32, @intCast(i)) * 32 + @as(i32, @intCast(j >> 1)) * 64, true);
+        inline for (0..2) |i| {
+            inline for (0..4) |j| bf(t, 61 - i * 8 - j, 34 + i * 8 + j, 56 - @as(i32, @intCast(i)) * 32 + @as(i32, @intCast(j >> 1)) * 64, true);
         }
     }
-    for (0..2) |i| hd(t, i, 3 - i, false, lo, hi);
+    inline for (0..2) |i| hd(t, i, 3 - i, false, lo, hi);
     if (n >= 3) bf(t, 6, 5, 32, true);
     if (n >= 4) {
-        for (0..2) |i| {
-            for (0..2) |j| hd(t, 8 + 4 * i + j, 11 + 4 * i - j, i != 0, lo, hi);
+        inline for (0..2) |i| {
+            inline for (0..2) |j| hd(t, 8 + 4 * i + j, 11 + 4 * i - j, i != 0, lo, hi);
         }
     }
     if (n >= 5) {
-        for (0..4) |i| bf(t, 29 - i, 18 + i, 48 + @as(i32, @intCast(i >> 1)) * 64, true);
+        inline for (0..4) |i| bf(t, 29 - i, 18 + i, 48 + @as(i32, @intCast(i >> 1)) * 64, true);
     }
     if (n == 6) {
-        for (0..4) |i| {
-            for (0..4) |j| hd(t, 32 + 8 * i + j, 39 + 8 * i - j, i & 1 != 0, lo, hi);
+        inline for (0..4) |i| {
+            inline for (0..4) |j| hd(t, 32 + 8 * i + j, 39 + 8 * i - j, i & 1 != 0, lo, hi);
         }
     }
     if (n >= 3) {
-        for (0..4) |i| hd(t, i, 7 - i, false, lo, hi);
+        inline for (0..4) |i| hd(t, i, 7 - i, false, lo, hi);
     }
     if (n >= 4) {
-        for (0..2) |i| bf(t, 13 - i, 10 + i, 32, true);
+        inline for (0..2) |i| bf(t, 13 - i, 10 + i, 32, true);
     }
     if (n >= 5) {
-        for (0..2) |i| {
-            for (0..4) |j| hd(t, 16 + i * 8 + j, 23 + i * 8 - j, i != 0, lo, hi);
+        inline for (0..2) |i| {
+            inline for (0..4) |j| hd(t, 16 + i * 8 + j, 23 + i * 8 - j, i != 0, lo, hi);
         }
     }
     if (n == 6) {
-        for (0..8) |i| bf(t, 59 - i, 36 + i, if (i < 4) 48 else 112, true);
+        inline for (0..8) |i| bf(t, 59 - i, 36 + i, if (i < 4) 48 else 112, true);
     }
     if (n >= 4) {
-        for (0..8) |i| hd(t, i, 15 - i, false, lo, hi);
+        inline for (0..8) |i| hd(t, i, 15 - i, false, lo, hi);
     }
     if (n >= 5) {
-        for (0..4) |i| bf(t, 27 - i, 20 + i, 32, true);
+        inline for (0..4) |i| bf(t, 27 - i, 20 + i, 32, true);
     }
     if (n == 6) {
-        for (0..8) |i| {
+        inline for (0..8) |i| {
             hd(t, 32 + i, 47 - i, false, lo, hi);
             hd(t, 48 + i, 63 - i, true, lo, hi);
         }
     }
     if (n >= 5) {
-        for (0..16) |i| hd(t, i, 31 - i, false, lo, hi);
+        inline for (0..16) |i| hd(t, i, 31 - i, false, lo, hi);
     }
     if (n == 6) {
-        for (0..8) |i| bf(t, 55 - i, 40 + i, 32, true);
+        inline for (0..8) |i| bf(t, 55 - i, 40 + i, 32, true);
     }
     if (n == 6) {
-        for (0..32) |i| hd(t, i, 63 - i, false, lo, hi);
+        inline for (0..32) |i| hd(t, i, 63 - i, false, lo, hi);
     }
 }
 
-fn adstIn(t: []i32, comptime n: u5) void {
+fn adstIn(t: *[64]i32, comptime n: u5) void {
     const n0 = @as(usize, 1) << n;
     var copy: [16]i32 = undefined;
     @memcpy(copy[0..n0], t[0..n0]);
-    for (0..n0) |i| {
+    inline for (0..n0) |i| {
         const idx = if (i & 1 != 0) i - 1 else n0 - i - 1;
         t[i] = copy[idx];
     }
 }
 
-fn adstOut(t: []i32, comptime n: u5) void {
+fn adstOut(t: *[64]i32, comptime n: u5) void {
     const n0 = @as(usize, 1) << n;
     var copy: [16]i32 = undefined;
     @memcpy(copy[0..n0], t[0..n0]);
-    for (0..n0) |i| {
+    inline for (0..n0) |i| {
         const a = (i >> 3) & 1;
         const b = ((i >> 2) & 1) ^ ((i >> 3) & 1);
         const c = ((i >> 1) & 1) ^ ((i >> 2) & 1);
@@ -193,7 +196,7 @@ fn adstOut(t: []i32, comptime n: u5) void {
     }
 }
 
-fn adst4(t: []i32) void {
+fn adst4(t: *[64]i32) void {
     var s: [7]i64 = undefined;
     s[0] = SINPI_1_9 * @as(i64, t[0]);
     s[1] = SINPI_2_9 * @as(i64, t[0]);
@@ -221,40 +224,40 @@ fn adst4(t: []i32) void {
     t[3] = round12(x3);
 }
 
-fn adst8(t: []i32, lo: i32, hi: i32) void {
+fn adst8(t: *[64]i32, lo: i32, hi: i32) void {
     adstIn(t, 3);
-    for (0..4) |i| bf(t, 2 * i, 2 * i + 1, 60 - 16 * @as(i32, @intCast(i)), true);
-    for (0..4) |i| hd(t, i, 4 + i, false, lo, hi);
-    for (0..2) |i| bf(t, 4 + 3 * i, 5 + i, 48 - 32 * @as(i32, @intCast(i)), true);
-    for (0..2) |i| {
-        for (0..2) |j| hd(t, 4 * j + i, 2 + 4 * j + i, false, lo, hi);
+    inline for (0..4) |i| bf(t, 2 * i, 2 * i + 1, 60 - 16 * @as(i32, @intCast(i)), true);
+    inline for (0..4) |i| hd(t, i, 4 + i, false, lo, hi);
+    inline for (0..2) |i| bf(t, 4 + 3 * i, 5 + i, 48 - 32 * @as(i32, @intCast(i)), true);
+    inline for (0..2) |i| {
+        inline for (0..2) |j| hd(t, 4 * j + i, 2 + 4 * j + i, false, lo, hi);
     }
-    for (0..2) |i| bf(t, 2 + 4 * i, 3 + 4 * i, 32, true);
+    inline for (0..2) |i| bf(t, 2 + 4 * i, 3 + 4 * i, 32, true);
     adstOut(t, 3);
 }
 
-fn adst16(t: []i32, lo: i32, hi: i32) void {
+fn adst16(t: *[64]i32, lo: i32, hi: i32) void {
     adstIn(t, 4);
-    for (0..8) |i| bf(t, 2 * i, 2 * i + 1, 62 - 8 * @as(i32, @intCast(i)), true);
-    for (0..8) |i| hd(t, i, 8 + i, false, lo, hi);
-    for (0..2) |i| {
+    inline for (0..8) |i| bf(t, 2 * i, 2 * i + 1, 62 - 8 * @as(i32, @intCast(i)), true);
+    inline for (0..8) |i| hd(t, i, 8 + i, false, lo, hi);
+    inline for (0..2) |i| {
         bf(t, 8 + 2 * i, 9 + 2 * i, 56 - 32 * @as(i32, @intCast(i)), true);
         bf(t, 13 + 2 * i, 12 + 2 * i, 8 + 32 * @as(i32, @intCast(i)), true);
     }
-    for (0..4) |i| {
-        for (0..2) |j| hd(t, 8 * j + i, 4 + 8 * j + i, false, lo, hi);
+    inline for (0..4) |i| {
+        inline for (0..2) |j| hd(t, 8 * j + i, 4 + 8 * j + i, false, lo, hi);
     }
-    for (0..2) |i| {
-        for (0..2) |j| bf(t, 4 + 8 * j + 3 * i, 5 + 8 * j + i, 48 - 32 * @as(i32, @intCast(i)), true);
+    inline for (0..2) |i| {
+        inline for (0..2) |j| bf(t, 4 + 8 * j + 3 * i, 5 + 8 * j + i, 48 - 32 * @as(i32, @intCast(i)), true);
     }
-    for (0..2) |i| {
-        for (0..4) |j| hd(t, 4 * j + i, 2 + 4 * j + i, false, lo, hi);
+    inline for (0..2) |i| {
+        inline for (0..4) |j| hd(t, 4 * j + i, 2 + 4 * j + i, false, lo, hi);
     }
-    for (0..4) |i| bf(t, 2 + 4 * i, 3 + 4 * i, 32, true);
+    inline for (0..4) |i| bf(t, 2 + 4 * i, 3 + 4 * i, 32, true);
     adstOut(t, 4);
 }
 
-fn adst(t: []i32, comptime n: u5, r: u5) void {
+fn adst(t: *[64]i32, comptime n: u5, r: u5) void {
     const lo: i32 = -(@as(i32, 1) << (r - 1));
     const hi: i32 = (@as(i32, 1) << (r - 1)) - 1;
     switch (n) {
@@ -264,7 +267,7 @@ fn adst(t: []i32, comptime n: u5, r: u5) void {
     }
 }
 
-fn identity(t: []i32, comptime n: u5) void {
+fn identity(t: *[64]i32, comptime n: u5) void {
     const len = @as(usize, 1) << n;
     for (t[0..len]) |*v| {
         v.* = switch (n) {
@@ -276,7 +279,7 @@ fn identity(t: []i32, comptime n: u5) void {
     }
 }
 
-fn wht(t: []i32, shift: u5) void {
+fn wht(t: *[64]i32, shift: u5) void {
     var a = t[0] >> shift;
     var c = t[1] >> shift;
     var d = t[2] >> shift;
@@ -311,7 +314,7 @@ fn kinds(tx_type: u8) [2]Kind {
     return .{ row, col };
 }
 
-fn run(t: []i32, kind: Kind, n: u5, r: u5) void {
+fn run(t: *[64]i32, kind: Kind, n: u5, r: u5) void {
     switch (kind) {
         .dct => switch (n) {
             2 => dct(t, 2, r),
@@ -345,16 +348,6 @@ pub fn inverse(res: *[64 * 64]i32, coefs: []const i32, scan: []const u16, txsz: 
     const h = @as(usize, 1) << log2h;
     const tw: usize = @min(32, w);
     const th: usize = @min(32, h);
-    // The coefficients in place, and the rows that have any.
-    var dq: [32 * 32]i32 = undefined;
-    @memset(dq[0 .. tw * th], 0);
-    var rows: usize = 0;
-    const bwl: u4 = if (tw == 32) 5 else @intCast(log2w);
-    for (coefs, 0..) |c, i| {
-        const pos = scan[i];
-        dq[pos] = c;
-        rows = @max(rows, (pos >> bwl) + 1);
-    }
     const row_shift: u5 = if (lossless) 0 else @intCast(tables.transform_row_shift[txsz]);
     const col_shift: u5 = if (lossless) 0 else 4;
     const row_r: u5 = @intCast(bit_depth + 8);
@@ -365,6 +358,27 @@ pub fn inverse(res: *[64 * 64]i32, coefs: []const i32, scan: []const u16, txsz: 
     const row_hi: i32 = (@as(i32, 1) << (row_r - 1)) - 1;
     const k = kinds(tx_type);
     const rect = log2w > log2h and log2w - log2h == 1 or log2h > log2w and log2h - log2w == 1;
+    if (!lossless and coefs.len == 1 and k[0] == .dct and k[1] == .dct) {
+        // The DC alone, of a DCT both ways: each pass leaves every value
+        // the same - the DC times cos(pi/4), as the butterfly of the
+        // first two has it, the others adding zeros.
+        var v: i32 = coefs[0];
+        if (rect) v = round12(@as(i64, v) * 2896);
+        v = @max(row_lo, @min(row_hi, v));
+        const u = @max(col_lo, @min(col_hi, common.round2(round12(@as(i64, v) * 2896), row_shift)));
+        @memset(res[0 .. w * h], common.round2(round12(@as(i64, u) * 2896), col_shift));
+        return;
+    }
+    // The coefficients in place, and the rows that have any.
+    var dq: [32 * 32]i32 = undefined;
+    @memset(dq[0 .. tw * th], 0);
+    var rows: usize = 0;
+    const bwl: u4 = if (tw == 32) 5 else @intCast(log2w);
+    for (coefs, 0..) |c, i| {
+        const pos = scan[i];
+        dq[pos] = c;
+        rows = @max(rows, (pos >> bwl) + 1);
+    }
     var t: [64]i32 = undefined;
     for (0..h) |i| {
         const out = res[i * w ..][0..w];

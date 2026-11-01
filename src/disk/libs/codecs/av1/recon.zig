@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
 //! Putting a frame together (7.11 to 7.13): each block predicted - from
 //! the samples around it, its palette, or the references - and its
-//! transform blocks' residuals added, superblock by superblock.
+//! transform blocks' residuals added, superblock by superblock, a row of
+//! superblocks at a time. References still being decoded on other cores
+//! are waited for, before each read, as far down as the read reaches.
 
 const common = @import("common.zig");
 const tables = @import("tables.zig");
@@ -15,6 +17,11 @@ const Frame = common.Frame;
 const Block = parse.Block;
 const Txb = parse.Txb;
 const Mv = common.Mv;
+const Cores = common.Cores;
+
+/// Who waits for the lines of the references: the cores, and which of
+/// them it is.
+pub const Wait = struct { cores: *const Cores, who: u32 };
 
 const MAX_SB = 128;
 /// The edges' arrays start at -16 (AboveRow[ -2 ] and on), and run to
@@ -42,6 +49,9 @@ const Work = struct {
     /// The horizontal filter's output: up to twice the block's height
     /// (a reference twice the size) and the taps.
     mid: [(2 * MAX_SB + 8) * MAX_SB]i32,
+    /// A block's reach of a reference at its edge, the edge repeated:
+    /// the block and the taps around it, of 8 or 16-bit samples.
+    edge: [(MAX_SB + 7) * (MAX_SB + 7)]u16,
 };
 
 pub const Recon = struct {
@@ -55,24 +65,27 @@ pub const Recon = struct {
         rc.* = .{};
     }
 
-    /// Puts the frame `f` together from what the reading left (`out`)
-    /// and the references (by LAST_FRAME to ALTREF_FRAME).
-    pub fn frame(rc: *Recon, env: Env, seq: *const header.Sequence, h: *const header.Frame, out: *const parse.Out, f: *Frame, refs: [8]?*const Frame) Error!void {
+    /// The working memory made, before the first row.
+    pub fn prepare(rc: *Recon, env: Env) Error!void {
         if (rc.work == null) rc.work = env.create(Work) orelse return error.NoMemory;
         if (rc.master == null) {
             const m = env.create([6][64][64]u8) orelse return error.NoMemory;
             initMaster(m);
             rc.master = m;
         }
-        if (!h.intra) {
-            for (refs[1..]) |r| if (r == null) return error.Corrupt;
-        }
+    }
+
+    /// Superblock row `r` of the frame `f` put together from what the
+    /// reading left (`out`) and the references (by LAST_FRAME to
+    /// ALTREF_FRAME, there for an inter frame); with `wait`, each read of
+    /// a reference waits for the lines it reaches.
+    pub fn row(rc: *const Recon, seq: *const header.Sequence, h: *const header.Frame, out: *const parse.Out, f: *Frame, refs: [8]?*const Frame, wait: ?Wait, r: u32) void {
         if (f.alloc_bytes == 2) {
-            var s: Put(u16) = .{ .w = rc.work.?, .master = rc.master.?, .seq = seq, .h = h, .out = out, .f = f, .refs = refs, .bd = @intCast(seq.bit_depth) };
-            s.run();
+            var s: Put(u16) = .{ .w = rc.work.?, .master = rc.master.?, .seq = seq, .h = h, .out = out, .f = f, .refs = refs, .wait = wait, .bd = @intCast(seq.bit_depth) };
+            s.sbRow(r);
         } else {
-            var s: Put(u8) = .{ .w = rc.work.?, .master = rc.master.?, .seq = seq, .h = h, .out = out, .f = f, .refs = refs, .bd = 8 };
-            s.run();
+            var s: Put(u8) = .{ .w = rc.work.?, .master = rc.master.?, .seq = seq, .h = h, .out = out, .f = f, .refs = refs, .wait = wait, .bd = 8 };
+            s.sbRow(r);
         }
     }
 };
@@ -220,6 +233,7 @@ fn Put(comptime P: type) type {
         out: *const parse.Out,
         f: *Frame,
         refs: [8]?*const Frame,
+        wait: ?Wait,
         bd: u5,
         max_luma_w: u32 = 0,
         max_luma_h: u32 = 0,
@@ -259,14 +273,21 @@ fn Put(comptime P: type) type {
             return s.out.block(r, c);
         }
 
-        fn run(s: *S) void {
+        fn sbRow(s: *S, sr: u32) void {
             const out = s.out;
-            for (0..out.sb_rows) |sr| {
-                for (0..out.sb_cols) |sc| {
-                    const i = sr * out.sb_cols + sc;
-                    for (out.blocks[out.sb_first[i]..][0..out.sb_count[i]]) |*b| s.block(b);
-                }
+            for (0..out.sb_cols) |sc| {
+                const i = sr * out.sb_cols + sc;
+                for (out.blocks[out.sb_first[i]..][0..out.sb_count[i]]) |*b| s.block(b);
             }
+        }
+
+        /// Until plane `p` of `ref` is final down to row `last` - none
+        /// of the frame itself, which intra block copy reads.
+        fn need(s: *const S, ref: *const Frame, p: u32, last: i32) void {
+            const wt = s.wait orelse return;
+            if (ref == s.f) return;
+            const n = (@as(u32, @intCast(@max(0, last))) + 1) << s.ssy(p);
+            wt.cores.lines(wt.who, ref, n);
         }
 
         fn block(s: *S, b: *const Block) void {
@@ -867,8 +888,32 @@ fn Put(comptime P: type) type {
             if (h <= 4) {
                 if (fy == common.EIGHTTAP or fy == common.EIGHTTAP_SHARP) fy = 4 else if (fy == common.EIGHTTAP_SMOOTH) fy = 5;
             }
+            s.need(ref, p, @min(last_y, (sc.y >> 10) + @as(i32, @intCast(inter_h)) - 4));
             const plane = ref.plane(P, p);
             const stride = ref.stride[p];
+            if (sc.step_x == 1 << 10 and sc.step_y == 1 << 10) {
+                const x0 = sc.x >> 10;
+                const y0 = sc.y >> 10;
+                const w_: i32 = @intCast(w);
+                const h_: i32 = @intCast(h);
+                const frac_x: usize = @intCast((sc.x >> 6) & 15);
+                const frac_y: usize = @intCast((sc.y >> 6) & 15);
+                if (x0 >= 3 and y0 >= 3 and x0 + w_ + 4 <= last_x + 1 and y0 + h_ + 4 <= last_y + 1) {
+                    return s.blockInterInside(plane + @as(usize, @intCast(y0)) * stride + @as(usize, @intCast(x0)), stride, frac_x, frac_y, fx, fy, w, h, dst, rd);
+                }
+                // At the edge: what the taps reach copied, the edge
+                // repeated as the clipped positions would read it.
+                const edge: [*]P = @ptrCast(&s.w.edge);
+                const ew = w + 7;
+                var cols: [MAX_SB + 7]usize = undefined;
+                for (cols[0..ew], 0..) |*c, i| c.* = @intCast(common.clip3(0, last_x, x0 + @as(i32, @intCast(i)) - 3));
+                for (0..h + 7) |r| {
+                    const ry = common.clip3(0, last_y, y0 + @as(i32, @intCast(r)) - 3);
+                    const src = plane + @as(usize, @intCast(ry)) * stride;
+                    for (edge[r * ew ..][0..ew], cols[0..ew]) |*o, c| o.* = src[c];
+                }
+                return s.blockInterInside(edge + 3 * ew + 3, ew, frac_x, frac_y, fx, fy, w, h, dst, rd);
+            }
             for (0..inter_h) |r| {
                 const ry = common.clip3(0, last_y, (sc.y >> 10) + @as(i32, @intCast(r)) - 3);
                 const src = plane + @as(usize, @intCast(ry)) * stride;
@@ -895,6 +940,60 @@ fn Put(comptime P: type) type {
             }
         }
 
+        /// blockInter for a block at whole steps whose taps all lie in
+        /// the reference, `at` its first sample: the same sums, without a
+        /// clip for each tap, and a filter at position 0 - the sample
+        /// itself, times 128 - taken as the shift it is.
+        fn blockInterInside(s: *S, at: [*]const P, stride: usize, frac_x: usize, frac_y: usize, fx: usize, fy: usize, w: u32, h: u32, dst: []i32, rd: Rounding) void {
+            const mid = &s.w.mid;
+            const up0: u5 = 7 - rd.r0;
+            if (frac_y == 0) {
+                // The rows themselves, filtered across or not.
+                for (0..h) |r| {
+                    const src = at + r * stride;
+                    const o = dst[r * w ..][0..w];
+                    if (frac_x == 0) {
+                        for (o, 0..) |*d, c| d.* = common.round2(@as(i32, src[c]) << (up0 + 7), rd.r1);
+                    } else {
+                        const taps = &tables.subpel_filters[fx][frac_x];
+                        const left = src - 3;
+                        for (o, 0..) |*d, c| {
+                            var sum: i32 = 0;
+                            for (0..8) |t| sum += @as(i32, taps[t]) * @as(i32, left[c + t]);
+                            d.* = common.round2(common.round2(sum, rd.r0) << 7, rd.r1);
+                        }
+                    }
+                }
+                return;
+            }
+            // The rows from 3 above to 4 below, filtered across, then down.
+            const top = at - 3 * stride;
+            for (0..h + 7) |r| {
+                const src = top + r * stride;
+                const m = mid[r * w ..][0..w];
+                if (frac_x == 0) {
+                    for (m, 0..) |*d, c| d.* = @as(i32, src[c]) << up0;
+                } else {
+                    const taps = &tables.subpel_filters[fx][frac_x];
+                    const left = src - 3;
+                    for (m, 0..) |*d, c| {
+                        var sum: i32 = 0;
+                        for (0..8) |t| sum += @as(i32, taps[t]) * @as(i32, left[c + t]);
+                        d.* = common.round2(sum, rd.r0);
+                    }
+                }
+            }
+            const taps = &tables.subpel_filters[fy][frac_y];
+            for (0..h) |r| {
+                const o = dst[r * w ..][0..w];
+                for (o, 0..) |*d, c| {
+                    var sum: i32 = 0;
+                    for (0..8) |t| sum += @as(i32, taps[t]) * mid[(r + t) * w + c];
+                    d.* = common.round2(sum, rd.r1);
+                }
+            }
+        }
+
         /// The block warp process: the 8x8 at i8, j8 of the block of `w`
         /// by `h` at x, y, warped by `params`.
         fn blockWarp(s: *S, p: u32, ref: *const Frame, last_x: i32, last_y: i32, params: *const [6]i32, x: u32, y: u32, bi: u32, bj: u32, w: u32, h: u32, dst: []i32, rd: Rounding) void {
@@ -911,6 +1010,7 @@ fn Put(comptime P: type) type {
             const sx4: i32 = @intCast(x4 & ((1 << warp.PREC_BITS) - 1));
             const iy4: i32 = @intCast(y4 >> warp.PREC_BITS);
             const sy4: i32 = @intCast(y4 & ((1 << warp.PREC_BITS) - 1));
+            s.need(ref, p, @min(last_y, iy4 + 7));
             const plane = ref.plane(P, p);
             const stride = ref.stride[p];
             var mid: [15][8]i32 = undefined;
