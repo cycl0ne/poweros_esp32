@@ -72,7 +72,7 @@ pub const LIBRARY_VERSION = 1;
 /// tiles that part covers whole. They are cleared by the renderer like any
 /// other and drawn over, so what was read for them was thrown away; only the
 /// tiles at the part's edge, which must keep the pixels outside it, are read.
-/// On the V3D a frame of 1920x1080 inside 2560x1440 falls from 5.8 ms to
-/// 4.0, and 1280x720 from 2.5 to 2.0. A window is the normal case on a
-/// desktop, and this is what one costs.
+/// On the V3D a frame of 1920x1080 inside 2560x1440 falls from 5.812 ms to
+/// 4.034, with the whole 2560x1440 unchanged at 4.017. A window is the
+/// normal case on a desktop, and this is what one cost.
 pub const LIBRARY_REVISION = 26;
