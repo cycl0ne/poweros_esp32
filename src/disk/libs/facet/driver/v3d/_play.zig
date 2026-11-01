@@ -11,8 +11,11 @@
 //! their interrupts signal, and hands on to the display what was drawn. The
 //! cores' other work on the frame is only the vertex functions.
 //!
-//! A pass over part of the image loads the tiles it touches, as a tile is
-//! stored whole, and a clear of that part is a rectangle drawn first.
+//! A pass over part of the image loads the tiles at that part's edge, as a
+//! tile is stored whole and those tiles must keep the pixels outside it, and
+//! a clear of the part is a rectangle drawn first. The tiles the part covers
+//! whole are not loaded: they are cleared by the renderer like any other, and
+//! loading them cost 2.5 ms of a 5.8 ms frame of 1920x1080 inside 2560x1440.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -408,6 +411,7 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
         .tile_lists = player.tile_lists.?.address,
         .binned = false,
         .load = !clears or !whole,
+        .clear_inside = clears and !whole,
         .depth = command.parts[part].tests_depth,
         .clear_depth = @as(f32, @floatFromInt(command.clear_depth)) / 65535,
         .stencil = command.parts[part].tests_stencil,
@@ -518,9 +522,18 @@ fn endRenderPass(queue: *Queue) void {
 
     const lists = carve(queue, 4096, 16) orelse return;
     var tile_list = cl.List{ .at = lists.cpu, .address = lists.address };
-    frames.writeTileList(&tile_list, &player.frame);
+    frames.writeTileList(&tile_list, &player.frame, player.frame.load);
+    const tiles = frames.TileList{ .start = tile_list.address, .end = tile_list.here() };
+    // A second list, without the load, for the supertiles the cleared area
+    // covers whole: nothing of the image is wanted under a clear.
+    var inside: ?frames.TileList = null;
+    if (player.frame.clear_inside) {
+        var plain = cl.List{ .at = lists.cpu + 256, .address = lists.address + 256 };
+        frames.writeTileList(&plain, &player.frame, false);
+        inside = .{ .start = plain.address, .end = plain.here() };
+    }
     var render = cl.List{ .at = lists.cpu + 512, .address = lists.address + 512 };
-    frames.writeRender(&render, &player.frame, tile_list.address, tile_list.here());
+    frames.writeRender(&render, &player.frame, tiles, inside);
 
     const space = &hardware.space;
     const image = player.image;

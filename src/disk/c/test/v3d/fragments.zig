@@ -141,6 +141,9 @@ pub const Scene = struct {
         clear_depth: f32 = 1,
         load: bool = false,
         area: ?Area = null,
+        /// With `load` and an `area`: the tiles the area covers whole are
+        /// not loaded, being cleared and wholly drawn over anyway.
+        clear_inside: bool = false,
     };
 
     /// A new frame: nothing of the last but the image.
@@ -157,6 +160,7 @@ pub const Scene = struct {
             .tile_lists = scene.tile_lists.address,
             .binned = true,
             .load = how.load,
+            .clear_inside = how.clear_inside,
             .depth = how.depth,
             .clear_depth = how.clear_depth,
             .area = how.area,
@@ -183,6 +187,10 @@ pub const Scene = struct {
         uniforms: []const u32 = &.{},
         vertices: []const Vertex,
         cfg: cl.Cfg = .{},
+        /// How it is mixed with what the tile holds, for `cfg.blend`. The
+        /// default is `cl.Mixing`'s: one of the source and none of what is
+        /// there, which is what no blending means.
+        mixing: cl.Mixing = .{},
         clip: Area = whole,
     };
 
@@ -220,6 +228,7 @@ pub const Scene = struct {
         v3d.frame.writeDrawState(&scene.bin, &.{
             .clip = how.clip,
             .cfg = how.cfg,
+            .mixing = how.mixing,
             .x = 0,
             .y = 0,
             .width = width,
@@ -233,9 +242,15 @@ pub const Scene = struct {
     fn finish(scene: *Scene) bool {
         v3d.frame.endBin(&scene.bin);
         var tile_list = cl.List{ .at = scene.lists.cpu, .address = scene.lists.address };
-        v3d.frame.writeTileList(&tile_list, &scene.frame);
+        v3d.frame.writeTileList(&tile_list, &scene.frame, scene.frame.load);
+        var inside: ?v3d.frame.TileList = null;
+        if (scene.frame.clear_inside) {
+            var plain = cl.List{ .at = scene.lists.cpu + 512, .address = scene.lists.address + 512 };
+            v3d.frame.writeTileList(&plain, &scene.frame, false);
+            inside = .{ .start = plain.address, .end = plain.here() };
+        }
         var render = cl.List{ .at = scene.lists.cpu + 1024, .address = scene.lists.address + 1024 };
-        v3d.frame.writeRender(&render, &scene.frame, tile_list.address, tile_list.here());
+        v3d.frame.writeRender(&render, &scene.frame, .{ .start = tile_list.address, .end = tile_list.here() }, inside);
         const space = scene.space;
         space.toGpu(&scene.image);
         space.toGpu(&scene.lists);
@@ -282,6 +297,10 @@ fn apart(one: u32, other: u32, colour_only: bool) u32 {
     }
     return most;
 }
+
+/// The hardware's blend factors, as `facet.BlendFactor` numbers them.
+const src_alpha: u32 = @intFromEnum(sdk.facet.BlendFactor.src_alpha);
+const one_minus_src_alpha: u32 = @intFromEnum(sdk.facet.BlendFactor.one_minus_src_alpha);
 
 fn rgba(red: f32, green: f32, blue: f32, alpha: f32) u32 {
     return byteOf(red) | byteOf(green) << 8 | byteOf(blue) << 16 | byteOf(alpha) << 24;
@@ -727,7 +746,11 @@ pub fn blendTest(scene: *Scene) i32 {
     rectangle(&corners, 100, 100, 300, 300, 0.5, Nothing{});
     const half_red = flat(1, 0, 0, 0.5);
     scene.begin(.{ .clear = 0xFFC0_8040 });
-    scene.draw(.{ .fragment = qpu.flat_fragment, .uniforms = &half_red, .vertices = &corners, .cfg = .{ .blend = true } });
+    // Half the red over what is there, which is what `want` below works out:
+    // without the factors said, the hardware takes all of the source and
+    // none of the destination, and blending is switched on to no effect.
+    const over = cl.Mixing{ .src_color = src_alpha, .dst_color = one_minus_src_alpha, .src_alpha = src_alpha, .dst_alpha = one_minus_src_alpha };
+    scene.draw(.{ .fragment = qpu.flat_fragment, .uniforms = &half_red, .vertices = &corners, .cfg = .{ .blend = true }, .mixing = over });
     if (!scene.finish()) return dos.RETURN_FAIL;
     var tally = Tally{};
     const want = rgba((0.5 + 64.0 / 255.0 * 0.5), 128.0 / 255.0 * 0.5, 192.0 / 255.0 * 0.5, 0.75);
@@ -754,4 +777,28 @@ pub fn areaTest(scene: *Scene) i32 {
         tally.check(x, y, scene.pixel(x, y), if (in) a_pixel else backdrop, 0);
     };
     return tally.report(scene.dl, "area", scene.took_us);
+}
+
+/// The same, with the tiles the area covers whole left unloaded: they are
+/// cleared by the renderer and drawn over, so nothing of the image is wanted
+/// under them. The area is on a tile's edge to the left and top and ragged
+/// to the right and bottom, so that both kinds of tile are drawn - 20 of the
+/// 30 here are covered whole, the other 10 must keep what lies outside.
+pub fn insideTest(scene: *Scene) i32 {
+    var corners: [6]Vertex = undefined;
+    scene.begin(.{});
+    if (!scene.finish()) return dos.RETURN_FAIL;
+    rectangle(&corners, 0, 0, width, height, 0.5, Nothing{});
+    const inside = Area{ .left = 128, .top = 128, .right = 500, .bottom = 440 };
+    scene.begin(.{ .clear = 0xFF00_0000, .load = true, .area = inside, .clear_inside = true });
+    scene.draw(.{ .fragment = qpu.flat_fragment, .uniforms = &a_colour, .vertices = &corners, .clip = inside });
+    if (!scene.finish()) return dos.RETURN_FAIL;
+    var tally = Tally{};
+    for (0..height) |row| for (0..width) |column| {
+        const x: u32 = @intCast(column);
+        const y: u32 = @intCast(row);
+        const in = x >= inside.left and x < inside.right and y >= inside.top and y < inside.bottom;
+        tally.check(x, y, scene.pixel(x, y), if (in) a_pixel else backdrop, 0);
+    };
+    return tally.report(scene.dl, "inside", scene.took_us);
 }
