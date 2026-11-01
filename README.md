@@ -312,6 +312,8 @@ wrapper: it fetches the Espressif Zig toolchain (`0.16.0-xtensa`) into
 ./zig build virt64-display   # the same with its display, a USB keyboard, a tablet and network
 ./zig build virt64-ramfb     # the same with the ramfb as its display
 ./zig build flash-all -Dport=/dev/ttyACM0   # kernel and a fresh disk onto a board
+./zig build package -Dboard=visionfive2     # a release package in zig-out/package-visionfive2/
+./zig build serve -Dboard=visionfive2       # hand that package out over HTTP (quit: Ctrl-C)
 ```
 
 Fetched once into `toolchain/`, pinned and checked, never committed:
@@ -566,7 +568,33 @@ itself: on the VisionFive 2 the card's, which the machine writes too
 (sdcard.device and FAT's handler are in its ROM); on the Compute Module 5
 the eMMC's, which no driver here reaches, so its kernel is written from
 another machine. Beside it lies the disk image, which is only the system
-to fall back on once a medium holds one.
+to fall back on once a medium holds one. A machine carries that kernel
+itself, in `SYS:Storage/Boot` with `SYS:Storage/manifest` over it - the
+list says which chip and board the files are for - so a boot partition
+can be written from the running system with nothing else at hand.
+
+**A release package.** `./zig build package -Dboard=<board>` gathers
+everything a machine is installed from into one directory,
+`zig-out/package-<board>/`: the volume's files under `system/`, what that
+board's firmware loads under `boot/` - the kernel, the disk image, the
+board's `config.txt` - and a `manifest` over both halves, a line for each
+drawer and file with the file's length and the CRC-32 of its bytes
+([mkpackage](tools/mkpackage/README.md)). The list says which chip and
+which board the files are for: every machine's package holds the same
+paths, and two boards of one chip share them all while their kernels
+differ in what the board has and where it is. `-Dboot=[<name>=]<file>`
+adds a file this tree does not hold - the Compute Module 5's device tree
+is Raspberry Pi's - and it goes into the manifest with the rest. The same
+tool reads a package back against its own manifest (`--check`), which the
+step does over what it has just gathered.
+
+`./zig build serve -Dboard=<board>` gathers the package and hands it out
+over HTTP ([serve](tools/serve/README.md), `-Dserve-port=`, 8080 by
+default): GET and HEAD and nothing else, no listing of a directory, and
+only the paths a manifest may name. In QEMU's user network the host is
+10.0.2.2, so a machine there reaches `http://10.0.2.2:8080/`. What reads a
+package on the machine - one command to install, one to bring a system up
+to date - is being written.
 
 **Keeping the files current.** Besides the image, each build writes the
 disk's files as a tree (`zig-out/disk-rv64/`, `zig-out/disk-a64/`) and a
@@ -587,6 +615,8 @@ More build steps and options:
 | `./zig build autodoc` | regenerate the SDK's autodocs from the doc comments |
 | `./zig build modchart` | regenerate the charts of which module uses which (`sdk/docs/modules.md`) |
 | `./zig build posfsck -- [--data] flash.bin` | check the posfs volumes of a flash dump or a card's image on the host ([posfs guide](sdk/docs/guides/posfs.md#checking-a-volume)) |
+| `-Dboot=/boot/firmware/bcm2712-rpi-cm5-cm5io.dtb` | a file this tree does not hold in a release package's `boot/` and in `SYS:Storage/Boot`, under its own name or the one before a `=`: what a board's firmware reads besides the kernel |
+| `-Dserve-port=8080` | the port `./zig build serve` hands a package out on |
 | `-Dextra=c/hello=path/to/hello.seg` | put a file built elsewhere on the disk images; with a chip before the path (`rv64sbi:c/hello=...`) on that chip's only, with `virt:` on the virt machines' system disks only - room for files the flash disks cannot hold |
 | `-Dgames` | put what `games/` in the tree's root holds in the `Games` drawer of the virt machines' system disks: `games/x/x.a64psci.seg` is `SYS:Games/x/x` on the AArch64 one's, any other file on both |
 | `-Ddh0-size=8192` | `DH0:` that many KiB, the rest of the flash disk left for partitions made later (HDToolBox, `C:RDB ADD`) |

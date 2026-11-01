@@ -826,6 +826,17 @@ refuses: one name, one drive. The flash disk is still loaded, and
 in it go onto the SSD with `Copy DH0.: TO SYS: ALL CLONE QUIET` and a
 restart.
 
+**Where the files come from.** `Copy SYS:` above fills the new volume
+from the running one, which is the machine's own RAM disk. A release
+package is the other source: one directory holding the volume's files,
+the kernel and what the firmware reads, with a list over all of it
+(`./zig build package`, and `./zig build serve` to hand it out over
+HTTP - the README has both). A machine keeps the boot half of one in
+`SYS:Storage/Boot`, with `SYS:Storage/manifest` over it, so the FAT
+partition below can be written from the running system. The commands that
+read a package - one to install a disk from it, one to bring an installed
+system up to date against it - are being written.
+
 **FAT for other systems.** A FAT partition in the table is one only
 PowerOS sees; one of the GPT's own, beside the container, every system
 sees - a camera's card, a stick for a PC, the partition a firmware
