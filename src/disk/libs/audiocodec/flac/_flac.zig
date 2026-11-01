@@ -82,7 +82,7 @@ pub fn open(stream: *Stream) i32 {
     if (!_stream.same(head, "fLaC")) return if (stream.failed) ac.ACERR_READ else ac.ACERR_CORRUPT;
     _stream.consume(stream, 4);
 
-    const f = begin(stream);
+    const f = begin(stream) orelse return ac.ACERR_NOMEMORY;
     var have_info = false;
     while (true) {
         if (stream.stop - stream.start < 4) _stream.fill(stream);
@@ -122,9 +122,8 @@ pub fn open(stream: *Stream) i32 {
     return ac.ACERR_OK;
 }
 
-fn begin(stream: *Stream) *Flac {
-    stream.codec = .{ .flac = undefined };
-    const f = &stream.codec.flac;
+fn begin(stream: *Stream) ?*Flac {
+    const f = _stream.stateOf(stream, Flac) orelse return null;
     f.* = .{
         .format = .{ .channels = 0, .bits = 0, .rate = 0, .max_block = 0 },
         .min_block = 0,
@@ -167,7 +166,7 @@ fn prepare(stream: *Stream, f: *Flac) i32 {
 /// each with its four bytes of header. STREAMINFO's count of samples
 /// makes the length exact.
 pub fn openTrack(stream: *Stream, track: *const media.MediaTrack) i32 {
-    const f = begin(stream);
+    const f = begin(stream) orelse return ac.ACERR_NOMEMORY;
     const setup = (track.config orelse return ac.ACERR_CORRUPT)[0..track.config_size];
     if (setup.len < 4 + 34 or setup[0] & 0x7F != 0) return ac.ACERR_CORRUPT;
     const length: u32 = @as(u32, setup[1]) << 16 | @as(u32, setup[2]) << 8 | setup[3];

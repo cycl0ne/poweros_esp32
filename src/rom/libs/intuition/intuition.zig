@@ -5257,6 +5257,38 @@ test "a group sized by its window keeps that size when a member joins" {
     try tearDown(ib);
 }
 
+test "a group made with a size keeps it; one made without starts at none" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const gc = intuition.gadgetclass;
+    const it = ib.iface();
+
+    const window_sized = it.NewObjectTagList(null, classusr.GROUPGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_RelWidth, .data = @bitCast(@as(isize, -26)) },
+        .{ .tag = gc.GA_RelHeight, .data = @bitCast(@as(isize, -38)) },
+        .{},
+    }).?;
+    try testing.expectEqual(@as(isize, -26), @as(isize, @bitCast(getAttr(ib, window_sized, gc.GA_RelWidth))));
+    try testing.expectEqual(@as(isize, -38), @as(isize, @bitCast(getAttr(ib, window_sized, gc.GA_RelHeight))));
+    const g = gadgetclass.gadgetOf(ib, window_sized);
+    try testing.expect(g.flags & gadgetclass.GFLG_RELWIDTH != 0 and g.flags & gadgetclass.GFLG_RELHEIGHT != 0);
+
+    // Its own width given, its height not: that one starts at none.
+    const half = it.NewObjectTagList(null, classusr.GROUPGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Width, .data = 120 },
+        .{},
+    }).?;
+    try testing.expectEqual(@as(usize, 120), getAttr(ib, half, gc.GA_Width));
+    try testing.expectEqual(@as(usize, 0), getAttr(ib, half, gc.GA_Height));
+
+    const bare = it.NewObjectTagList(null, classusr.GROUPGCLASS, null).?;
+    try testing.expectEqual(@as(usize, 0), getAttr(ib, bare, gc.GA_Width));
+    try testing.expectEqual(@as(usize, 0), getAttr(ib, bare, gc.GA_Height));
+
+    for ([_]*Object{ window_sized, half, bare }) |group| it.DisposeObject(group);
+    try tearDown(ib);
+}
+
 test "a group tells the member that had the input that it is done, and that the room changed" {
     const ib = try setUp();
     defer kexec.deinit();

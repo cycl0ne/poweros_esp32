@@ -92,16 +92,7 @@ pub fn DecodeAudio(_: *AudioCodecBase, public: *ac.AudioStream, buffer: [*]i16, 
         if (given == frames) return @intCast(given);
         const rest = buffer + @as(usize, given) * stream.info.channels;
         const left = frames - given;
-        const got = switch (stream.codec) {
-            .wav => |*state| wav.decode(stream, state, rest, left),
-            .mp3 => |*state| mp3.decode(stream, state, rest, left),
-            .flac => |*state| flac.decode(stream, state, rest, left),
-            .vorbis => |*state| vorbis.decode(stream, state, rest, left),
-            .aac => |*state| aac.decode(stream, state, rest, left),
-            .ac3 => |*state| ac3.decode(stream, state, rest, left),
-            .opus => |*state| opus.decode(stream, state, rest, left),
-            .none => 0,
-        };
+        const got = _stream.moduleOf(stream).?.DecodeACodec(stream, rest, left);
         // What was handed out now, why the sound stopped the next time.
         if (got < 0) return if (given != 0) @intCast(given) else got;
         given += @intCast(got);

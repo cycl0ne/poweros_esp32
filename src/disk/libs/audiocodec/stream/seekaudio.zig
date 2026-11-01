@@ -76,14 +76,5 @@ pub fn SeekAudio(_: *AudioCodecBase, public: *ac.AudioStream, frame: u32) i32 {
     if (stream.info.seekable == 0) return ac.ACERR_NOSEEK;
     stream.pcm_start = 0;
     stream.pcm_stop = 0;
-    return switch (stream.codec) {
-        .wav => |*state| wav.seek(stream, state, frame),
-        .mp3 => |*state| mp3.seek(stream, state, frame),
-        .flac => |*state| flac.seek(stream, state, frame),
-        .vorbis => |*state| vorbis.seek(stream, state, frame),
-        .aac => |*state| aac.seek(stream, state, frame),
-        .ac3 => |*state| ac3.seek(stream, state, frame),
-        .opus => |*state| opus.seek(stream, state, frame),
-        .none => ac.ACERR_NOSEEK,
-    };
+    return _stream.moduleOf(stream).?.SeekACodec(stream, frame);
 }

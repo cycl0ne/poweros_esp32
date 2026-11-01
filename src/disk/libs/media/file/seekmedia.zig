@@ -5,8 +5,6 @@ const sdk = @import("sdk");
 const media = sdk.media;
 const MediaBase = @import("../media_base.zig").MediaBase;
 const _file = @import("_file.zig");
-const cursor = @import("../mp4/cursor.zig");
-const blocks = @import("../mkv/blocks.zig");
 
 /// Moves a track to the packet a decoder can start at, at or before a
 /// time.
@@ -73,10 +71,5 @@ pub fn SeekMedia(_: *MediaBase, file: *media.MediaFile, track: u32, time: i64) i
     const own = _file.fileOf(file);
     if (track >= own.track_count) return media.MERR_NOTRACK;
     if (!_file.seekable(own)) return media.MERR_NOSEEK;
-    const t = &own.tracks[track];
-    if (own.info.kind == media.MEDIA_MKV) return blocks.seek(own, t, time);
-    const ticks = _file.ticksOf(time - t.empty_us, t.info.timescale) + t.media_start;
-    const sample = cursor.sampleAt(&t.tables, @intCast(@max(ticks, 0)));
-    cursor.moveTo(&t.tables, &t.at, t.tables.keyAtOrBefore(sample));
-    return media.MERR_OK;
+    return _file.moduleOf(own).?.SeekContainer(own, track, time);
 }

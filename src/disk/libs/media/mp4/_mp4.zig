@@ -30,6 +30,7 @@ const be16 = _file.be16;
 const be32 = _file.be32;
 const be64 = _file.be64;
 const cursor = @import("cursor.zig");
+const packets = @import("packets.zig");
 const tags = @import("tags.zig");
 
 /// The largest index read: a film of hours has a few megabytes.
@@ -98,10 +99,42 @@ pub fn identify(bytes: []const u8) bool {
     return opening(be32(bytes[4..8]));
 }
 
+/// What the kind keeps of a track: the sample tables, where they lie in
+/// the index, and where the cursor is in them; where presenting starts in
+/// the track's ticks (its edit), and the microseconds of nothing before
+/// the track begins; the number of the text track that names this one's
+/// chapters (`tref`'s `chap`), 0 for none.
+pub const Own = struct {
+    tables: cursor.Tables,
+    at: cursor.Cursor,
+    media_start: i64,
+    empty_us: i64,
+    chapter_ref: u32,
+};
+
+/// What the kind keeps of a file.
+pub const State = struct {
+    movie_timescale: u32,
+    tracks: [_file.max_tracks]Own,
+};
+
+fn stateOf(file: *File) *State {
+    return @ptrCast(@alignCast(file.state.?));
+}
+
+pub fn own(track: *const Track) *Own {
+    return @ptrCast(@alignCast(track.own.?));
+}
+
+pub const read = packets.read;
+pub const seek = packets.seek;
+
 /// The file's index found and read, its tracks and tags made out of it;
 /// with `check`, MERR_UNKNOWN when its first box is not an MP4's.
 pub fn open(file: *File, check: bool) i32 {
     const sys = file.base.sys_base;
+    const state = _file.stateOf(file, State) orelse return media.MERR_NOMEMORY;
+    for (&file.tracks, &state.tracks) |*track, *mine| track.own = mine;
     var at: u64 = 0;
     var header: [16]u8 = undefined;
     while (file.index == null) {
@@ -151,10 +184,10 @@ fn movie(file: *File) i32 {
     var duration: u64 = 0;
     if (child(index, kind("mvhd"))) |mvhd| {
         if (mvhd.len >= 20 and mvhd[0] == 0) {
-            file.movie_timescale = be32(mvhd[12..16]);
+            stateOf(file).movie_timescale = be32(mvhd[12..16]);
             duration = be32(mvhd[16..20]);
         } else if (mvhd.len >= 32) {
-            file.movie_timescale = be32(mvhd[20..24]);
+            stateOf(file).movie_timescale = be32(mvhd[20..24]);
             duration = be64(mvhd[24..32]);
         }
     }
@@ -169,7 +202,7 @@ fn movie(file: *File) i32 {
     info.kind = media.MEDIA_MP4;
     info.tracks = file.track_count;
     info.seekable = @intFromBool(_file.seekable(file));
-    info.duration = @intCast(@max(0, _file.micros(@intCast(duration), file.movie_timescale)));
+    info.duration = @intCast(@max(0, _file.micros(@intCast(duration), stateOf(file).movie_timescale)));
     for (file.tracks[0..file.track_count], 0..) |*track, n| {
         info.duration = @max(info.duration, track.info.duration);
         if (track.info.kind == media.MTRACK_VIDEO and info.video == ~@as(u32, 0)) info.video = @intCast(n);
@@ -198,7 +231,7 @@ fn makeTrack(file: *File, trak: []const u8, track: *Track) bool {
     }
     if (child(trak, kind("tref"))) |tref| {
         if (child(tref, kind("chap"))) |chap| {
-            if (chap.len >= 4) track.chapter_ref = be32(chap[0..4]);
+            if (chap.len >= 4) own(track).chapter_ref = be32(chap[0..4]);
         }
     }
     const mdia = child(trak, kind("mdia")) orelse return false;
@@ -228,14 +261,14 @@ fn makeTrack(file: *File, trak: []const u8, track: *Track) bool {
     const minf = child(mdia, kind("minf")) orelse return false;
     const stbl = child(minf, kind("stbl")) orelse return false;
     if (child(stbl, kind("stsd"))) |stsd| sampleEntry(track, stsd);
-    readTables(&track.tables, stbl);
-    if (!track.tables.sound()) track.tables = .{};
+    readTables(&own(track).tables, stbl);
+    if (!own(track).tables.sound()) own(track).tables = .{};
 
-    const t = &track.tables;
+    const t = &own(track).tables;
     out.packets = t.samples;
     const total = cursor.totalTicks(t);
     edits(file, trak, track, total);
-    out.duration = @intCast(_file.micros(@intCast(out.length), out.timescale) + track.empty_us);
+    out.duration = @intCast(_file.micros(@intCast(out.length), out.timescale) + own(track).empty_us);
     var bytes: u64 = 0;
     var largest: u32 = 0;
     for (0..t.samples) |n| {
@@ -248,7 +281,7 @@ fn makeTrack(file: *File, trak: []const u8, track: *Track) bool {
         if (out.bitrate == 0) out.bitrate = @intCast(@min(bytes * 8 * out.timescale / total, std.math.maxInt(u32)));
         if (out.kind == media.MTRACK_VIDEO) out.frame_rate = @intCast(@min(@as(u64, t.samples) * 1000 * out.timescale / total, std.math.maxInt(u32)));
     }
-    cursor.reset(t, &track.at);
+    cursor.reset(t, &own(track).at);
     return true;
 }
 
@@ -278,8 +311,8 @@ fn edits(file: *File, trak: []const u8, track: *Track, total: u64) void {
                     continue;
                 }
                 start = time;
-                if (span != 0 and file.movie_timescale != 0) {
-                    length = (span * out.timescale + file.movie_timescale / 2) / file.movie_timescale;
+                if (span != 0 and stateOf(file).movie_timescale != 0) {
+                    length = (span * out.timescale + stateOf(file).movie_timescale / 2) / stateOf(file).movie_timescale;
                 }
                 break;
             }
@@ -292,13 +325,13 @@ fn edits(file: *File, trak: []const u8, track: *Track, total: u64) void {
         }
     }
     if (start < 0) start = 0;
-    track.media_start = start;
-    track.empty_us = _file.micros(@intCast(empty), file.movie_timescale);
+    own(track).media_start = start;
+    own(track).empty_us = _file.micros(@intCast(empty), stateOf(file).movie_timescale);
     out.delay = @intCast(@min(start, std.math.maxInt(u32)));
     // What is left after the start: frames shown after they are decoded
     // (`ctts`) are shown up to the start's ticks later, so for them the
     // decode times' whole length.
-    const rest: u64 = if (track.tables.ctts.len != 0) total else total -| @as(u64, @intCast(start));
+    const rest: u64 = if (own(track).tables.ctts.len != 0) total else total -| @as(u64, @intCast(start));
     out.length = if (length) |presented| @min(presented, rest) else rest;
 }
 

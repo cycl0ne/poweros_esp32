@@ -55,51 +55,9 @@ const utility = sdk.utility;
 const MediaBase = sdk.interface.media.MediaBase;
 const _stream = @import("_stream.zig");
 const Stream = _stream.Stream;
-const aac = @import("../aac/_aac.zig");
-const mp3 = @import("../mp3/_mp3.zig");
-const flac = @import("../flac/_flac.zig");
-const vorbis = @import("../vorbis/_vorbis.zig");
-const ac3 = @import("../ac3/_ac3.zig");
-const opus = @import("../opus/_opus.zig");
 
-pub const Source = struct {
-    /// media.library and the file - the stream's own to close, or the
-    /// program's - while the stream reads a container; null otherwise.
-    base: ?*MediaBase,
-    file: ?*media.MediaFile,
-    owns: bool,
-    track: u32,
-    /// The track's ticks a second, and the sound's frames a second.
-    timescale: u32,
-    rate: u32,
-    /// The frames of priming before the sound.
-    delay: i64,
-    /// The frames the sound has, when the length is `exact`; and whether
-    /// a packet past them has come.
-    exact: bool,
-    total: i64,
-    done: bool,
-    /// After a seek, the frames before this one are passed over.
-    skip_until: i64,
-    /// Where the next packet's sound begins, in frames from the sound's
-    /// first, once a packet has placed it.
-    position: i64,
-    placed: bool,
-    /// Where the sound begins: 0, or later in a Matroska file - its
-    /// priming before it. And the frames of silence to hand out before
-    /// the next decoded ones, up to where it begins.
-    start: i64,
-    gap: i64,
-    /// The packet read to see where the sound begins, or held back after
-    /// a hole, handed out first.
-    held: media.MediaPacket,
-    holding: bool,
-    /// A hole stopped the codec: its silence is handed out, then the
-    /// codec goes on.
-    paused: bool,
-    /// The last packet's ticks: one at the same time is laced to it.
-    last_ticks: u64,
-};
+/// The stream's track, as the library and its module share it.
+pub const Source = sdk.acodec.ACodecSource;
 
 /// Whether the bytes begin a container: an MP4's `ftyp` box, or EBML's
 /// header - a Matroska file.
@@ -207,15 +165,18 @@ fn openTrack(stream: *Stream, mb: *MediaBase, file: *media.MediaFile, owns: bool
     source.timescale = track.timescale;
     if (!hold(stream) and stream.failed) return ac.ACERR_READ;
     const first = source.held.ticks;
-    const result = switch (track.codec) {
-        media.MCODEC_AAC => aac.openTrack(stream, &track),
-        media.MCODEC_MP3 => mp3.openTrack(stream, &track),
-        media.MCODEC_FLAC => flac.openTrack(stream, &track),
-        media.MCODEC_VORBIS => vorbis.openTrack(stream, &track),
-        media.MCODEC_AC3, media.MCODEC_EAC3 => ac3.openTrack(stream, &track),
-        media.MCODEC_OPUS => opus.openTrack(stream, &track),
-        else => ac.ACERR_UNSUPPORTED,
+    const codec: u32 = switch (track.codec) {
+        media.MCODEC_AAC => ac.ACODEC_AAC,
+        media.MCODEC_MP3 => ac.ACODEC_MP3,
+        media.MCODEC_FLAC => ac.ACODEC_FLAC,
+        media.MCODEC_VORBIS => ac.ACODEC_VORBIS,
+        media.MCODEC_AC3 => ac.ACODEC_AC3,
+        media.MCODEC_EAC3 => ac.ACODEC_EAC3,
+        media.MCODEC_OPUS => ac.ACODEC_OPUS,
+        else => return ac.ACERR_UNSUPPORTED,
     };
+    const module = _stream.openModule(stream, codec) orelse return ac.ACERR_UNSUPPORTED;
+    const result = module.OpenACodecTrack(stream, &track);
     if (result != ac.ACERR_OK) return result;
     // The rate the codec decodes at: an HE-AAC track's core is half the
     // rate its container gives.

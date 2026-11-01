@@ -1,0 +1,48 @@
+TABLE OF CONTENTS
+
+mcontainer/CloseContainer
+mcontainer/OpenContainer
+mcontainer/ReadContainerPacket
+mcontainer/SeekContainer
+mcontainer/CloseContainer                            mcontainer/CloseContainer
+
+   NAME
+	CloseContainer -- What the module holds of the file given back, if it made anything: after a failed open too.
+
+   SYNOPSIS
+	    void CloseContainer(*mcontainer.MediaContainerFile file)
+
+   BEHAVIOR
+	The file and its tracks' buffers stay the library's.
+mcontainer/OpenContainer                              mcontainer/OpenContainer
+
+   NAME
+	OpenContainer -- The file's index read, its tracks and tags made out of it, and every track at its first packet: 0, or MERR_*.
+
+   SYNOPSIS
+	    i32 OpenContainer(*mcontainer.MediaContainerFile file, bool check)
+
+   BEHAVIOR
+	With `check`, MERR_UNKNOWN when the bytes are not its kind's. On what
+	opened the file, which it reads.
+mcontainer/ReadContainerPacket                  mcontainer/ReadContainerPacket
+
+   NAME
+	ReadContainerPacket -- The track's next packet into `packet`: 0, MERR_END, or MERR_*.
+
+   SYNOPSIS
+	    i32 ReadContainerPacket(*mcontainer.MediaContainerFile file, u32 track, *media.MediaPacket packet)
+
+   BEHAVIOR
+	Its bytes are in the track's buffer, good until the track's next read or
+	seek.
+mcontainer/SeekContainer                              mcontainer/SeekContainer
+
+   NAME
+	SeekContainer -- The track moved to the key packet at or before `time`, in microseconds: 0, or MERR_*.
+
+   SYNOPSIS
+	    i32 SeekContainer(*mcontainer.MediaContainerFile file, u32 track, i64 time)
+
+   BEHAVIOR
+	The file can seek; `track` is one it has.

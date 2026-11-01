@@ -1221,18 +1221,9 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const p = own(cl, obj);
             p.* = .{};
             p.children.init();
-            // groupgclass starts a group at nothing, to grow round its
-            // members; a layout keeps the size it is given, and one given
-            // none takes its nominal size when it is first laid out.
+            // groupgclass keeps the size it is given; a layout given none
+            // takes its nominal size when it is first laid out.
             const new: *classusr.OpSet = @ptrCast(@alignCast(msg));
-            const ub = ib.utility_base;
-            const g = gadgetclass.gadgetOf(ib, obj);
-            if (ub.FindTagItem(gc.GA_Width, new.attr_list) orelse ub.FindTagItem(gc.GA_RelWidth, new.attr_list)) |item| {
-                g.width = @bitCast(@as(u32, @truncate(item.data)));
-            }
-            if (ub.FindTagItem(gc.GA_Height, new.attr_list) orelse ub.FindTagItem(gc.GA_RelHeight, new.attr_list)) |item| {
-                g.height = @bitCast(@as(u32, @truncate(item.data)));
-            }
             _ = setAttrs(ib, cl, obj, new.attr_list);
             return made;
         },

@@ -13,6 +13,11 @@
 //! holds the rest of the packet's chunk - the packets of one track lie
 //! together in chunks, so a run of small packets of sound costs one read.
 //!
+//! **The kinds are modules** in LIBS:codecs/ (`mp4.zig`, `mkv.zig`,
+//! mcontainer_module.zig, sdk/libs/media/mcontainer.zig): the library finds
+//! out what a file is, opens its kind's module by name and keeps the source
+//! and the tracks as programs see them.
+//!
 //! A Matroska file (`mkv/`) has no tables of its packets: its tracks, its
 //! cues and its tags are read (`mkv/_mkv.zig`, `mkv/tags.zig`), and each
 //! track walks the clusters itself, block by block, through its buffer

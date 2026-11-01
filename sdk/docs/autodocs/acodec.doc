@@ -1,0 +1,55 @@
+TABLE OF CONTENTS
+
+acodec/CloseACodec
+acodec/DecodeACodec
+acodec/OpenACodec
+acodec/OpenACodecTrack
+acodec/SeekACodec
+acodec/CloseACodec                                          acodec/CloseACodec
+
+   NAME
+	CloseACodec -- What the module holds of the stream given back, if it made anything: after a failed open too.
+
+   SYNOPSIS
+	    void CloseACodec(*acodec.ACodecStream stream)
+
+   BEHAVIOR
+	The stream, its file and its tags stay the library's.
+acodec/DecodeACodec                                        acodec/DecodeACodec
+
+   NAME
+	DecodeACodec -- Up to `frames` frames of samples into `out`, the channels interleaved: how many, 0 at the end, ACERR_* below 0.
+
+   SYNOPSIS
+	    i32 DecodeACodec(*acodec.ACodecStream stream, [*]i16 out, u32 frames)
+acodec/OpenACodec                                            acodec/OpenACodec
+
+   NAME
+	OpenACodec -- The stream's source read from where it is: its headers and tags, the info filled in, and the stream at its first sound: 0, or ACERR_* for bytes it cannot decode.
+
+   SYNOPSIS
+	    i32 OpenACodec(*acodec.ACodecStream stream)
+
+   BEHAVIOR
+	On what opened the stream, which it reads.
+acodec/OpenACodecTrack                                  acodec/OpenACodecTrack
+
+   NAME
+	OpenACodecTrack -- A track of the stream's container: the codec's setup from `track`, the info filled in; packets come through `stream.media`.
+
+   SYNOPSIS
+	    i32 OpenACodecTrack(*acodec.ACodecStream stream, *const media.MediaTrack track)
+
+   BEHAVIOR
+	0, or ACERR_*; ACERR_UNSUPPORTED from a kind no container carries.
+	`track` is the caller's for the call alone.
+acodec/SeekACodec                                            acodec/SeekACodec
+
+   NAME
+	SeekACodec -- The stream moved so that the next frame decoded is `frame`: 0, or ACERR_*.
+
+   SYNOPSIS
+	    i32 SeekACodec(*acodec.ACodecStream stream, u32 frame)
+
+   BEHAVIOR
+	What it held decoded is dropped by the library.

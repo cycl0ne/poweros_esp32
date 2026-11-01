@@ -50,6 +50,8 @@ const kexec = host.exec;
 const videocodec_init = @import("../videocodec_init.zig");
 const media_init = @import("../../media/media_init.zig");
 const audiocodec_init = @import("../../audiocodec/audiocodec_init.zig");
+const sound_modules = @import("../../audiocodec/tests/modules.zig");
+const container_modules = @import("../../media/tests/modules.zig");
 const chip_init = @import("../../codecs/chip/chip_init.zig");
 const mjpeg_init = @import("../../codecs/mjpeg/mjpeg_init.zig");
 const h264_init = @import("../../codecs/h264/h264_init.zig");
@@ -126,6 +128,8 @@ const Rig = struct {
     library: *exec.Library = undefined,
     media_library: *exec.Library = undefined,
     audio_library: *exec.Library = undefined,
+    sound_modules: sound_modules.Made = undefined,
+    containers: container_modules.Made = undefined,
     chip_library: *exec.Library = undefined,
     mjpeg_library: *exec.Library = undefined,
     h264_library: *exec.Library = undefined,
@@ -154,6 +158,8 @@ const Rig = struct {
         rig.library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &videocodec_init.videocodec_library_tag, null) orelse return error.NoLibrary));
         rig.media_library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &media_init.media_library_tag, null) orelse return error.NoLibrary));
         rig.audio_library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &audiocodec_init.audiocodec_library_tag, null) orelse return error.NoLibrary));
+        try sound_modules.make(kexec, &rig.sound_modules);
+        try container_modules.make(kexec, &rig.containers);
         rig.chip_library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &chip_init.chip_vcodec_tag.resident, null) orelse return error.NoLibrary));
         rig.mjpeg_library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &mjpeg_init.mjpeg_vcodec_tag.resident, null) orelse return error.NoLibrary));
         rig.h264_library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &h264_init.h264_vcodec_tag.resident, null) orelse return error.NoLibrary));
@@ -178,6 +184,8 @@ const Rig = struct {
         _ = rig.sysLib().RemLibrary(rig.library);
         try testing.expect(kexec.FindName(kexec.SysBase, &kexec.SysBase.lib_list, vc.VIDEOCODECNAME) == null);
         _ = rig.sysLib().RemLibrary(rig.audio_library);
+        sound_modules.take(rig.sysLib(), &rig.sound_modules);
+        container_modules.take(rig.sysLib(), &rig.containers);
         try testing.expect(kexec.FindName(kexec.SysBase, &kexec.SysBase.lib_list, ac.AUDIOCODECNAME) == null);
         _ = rig.sysLib().RemLibrary(rig.media_library);
         try testing.expect(kexec.FindName(kexec.SysBase, &kexec.SysBase.lib_list, media.MEDIANAME) == null);

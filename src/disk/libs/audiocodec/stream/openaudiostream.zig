@@ -39,9 +39,15 @@ const _media = @import("_media.zig");
 /// - `err`: where to say why it failed (ACERR_*), or null.
 ///
 /// RESULT:
-/// The stream, at its first sample; or null, with `err` set.
+/// The stream, at its first sample; or null, with `err` set:
+/// ACERR_UNSUPPORTED too when the disk has no module for the kind
+/// (SINCE 1.10).
 ///
 /// BEHAVIOR:
+/// A kind's code is a module of its own in LIBS:codecs/, opened until
+/// CloseAudioStream (SINCE 1.10): wav.acodec, mp3.acodec, flac.acodec,
+/// vorbis.acodec, aac.acodec, ac3.acodec, opus.acodec.
+///
 /// The stream reads ahead of the decoder into a buffer of its own, and
 /// finds the kind by the first bytes (as `IdentifyAudio`) unless
 /// `ACA_Codec` says - an Ogg stream by its first page all the same, Vorbis
@@ -151,7 +157,8 @@ pub fn OpenAudioStream(base: *AudioCodecBase, tags: ?[*]const utility.TagItem, e
     // Cleared: every field of a stream starts at zero.
     const memory = sys.AllocVec(@sizeOf(Stream), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return failed(err, ac.ACERR_NOMEMORY);
     const stream: *Stream = @ptrCast(@alignCast(memory));
-    stream.base = base;
+    stream.layout = sdk.acodec.ACODEC_LAYOUT;
+    stream.base = .{ .sys_base = sys, .dos_base = dl, .utility_base = ub };
     stream.tags.keep_picture = keep_picture;
 
     if (name) |path| {
@@ -198,16 +205,7 @@ pub fn OpenAudioStream(base: *AudioCodecBase, tags: ?[*]const utility.TagItem, e
         const found = _identify.identify(bytes);
         if (found != ac.ACODEC_UNKNOWN or hint == ac.ACODEC_UNKNOWN) codec = found;
     }
-    const result = if (_media.container(bytes)) _media.open(stream) else switch (codec) {
-        ac.ACODEC_WAV => wav.open(stream),
-        ac.ACODEC_MP3 => mp3.open(stream),
-        ac.ACODEC_FLAC => flac.open(stream),
-        ac.ACODEC_VORBIS => vorbis.open(stream),
-        ac.ACODEC_AAC => aac.open(stream),
-        ac.ACODEC_AC3, ac.ACODEC_EAC3 => ac3.open(stream),
-        ac.ACODEC_OPUS => opus.open(stream),
-        else => if (stream.failed) ac.ACERR_READ else ac.ACERR_UNKNOWN,
-    };
+    const result = if (_media.container(bytes)) _media.open(stream) else openKind(stream, codec);
     if (result != ac.ACERR_OK) {
         _stream.destroy(stream);
         return failed(err, result);
@@ -215,6 +213,14 @@ pub fn OpenAudioStream(base: *AudioCodecBase, tags: ?[*]const utility.TagItem, e
     _stream.nameInfo(stream);
     if (err) |out| out.* = ac.ACERR_OK;
     return _stream.publicOf(stream);
+}
+
+/// The stream's bytes opened by their kind's module: ACERR_UNSUPPORTED
+/// when the disk has none.
+fn openKind(stream: *Stream, codec: u32) i32 {
+    if (sdk.acodec.moduleName(codec) == null) return if (stream.failed) ac.ACERR_READ else ac.ACERR_UNKNOWN;
+    const module = _stream.openModule(stream, codec) orelse return ac.ACERR_UNSUPPORTED;
+    return module.OpenACodec(stream);
 }
 
 fn failed(err: ?*i32, code: i32) ?*ac.AudioStream {

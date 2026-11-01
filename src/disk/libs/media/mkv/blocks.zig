@@ -80,6 +80,21 @@ pub const Cue = struct {
 
 pub const no_relative = std.math.maxInt(u64);
 
+/// What the kind keeps of a file: the segment, and each track.
+pub const State = struct {
+    file: File,
+    tracks: [_file.max_tracks]Track,
+};
+
+pub fn fileOf(file: *_file.File) *File {
+    const state: *State = @ptrCast(@alignCast(file.state.?));
+    return &state.file;
+}
+
+pub fn trackOf(track: *const _file.Track) *Track {
+    return @ptrCast(@alignCast(track.own.?));
+}
+
 pub const Track = struct {
     /// Its number in the blocks; its unique one, which its tags name it
     /// by; how long each of its frames lasts in nanoseconds, 0 when not
@@ -146,8 +161,8 @@ fn code(err: Error) i32 {
 
 /// The walk set at the first cluster, as the file was opened.
 pub fn rewind(file: *_file.File, track: *_file.Track) void {
-    const w = &track.mkv.walk;
-    w.at = file.mkv.first_cluster;
+    const w = &trackOf(track).walk;
+    w.at = fileOf(file).first_cluster;
     w.in_cluster = false;
     w.frames = 0;
     w.next = 0;
@@ -228,8 +243,8 @@ const Found = struct {
 /// time, whether a decoder can start at it. With `load` its frames are
 /// made ready to hand out.
 fn nextBlock(file: *_file.File, track: *_file.Track, load: bool) Error!Found {
-    const w = &track.mkv.walk;
-    const m = &file.mkv;
+    const w = &trackOf(track).walk;
+    const m = fileOf(file);
     while (true) {
         if (w.in_cluster and w.cluster_end != ebml.unknown and w.at >= w.cluster_end) w.in_cluster = false;
         if (w.at >= m.segment_end) return error.End;
@@ -272,7 +287,7 @@ fn nextBlock(file: *_file.File, track: *_file.Track, load: bool) Error!Found {
 /// A block's element: null when it is another track's. Its frames' sizes
 /// are read with `load`, and its bytes are then whole in the buffer.
 fn block(file: *_file.File, track: *_file.Track, at: u64, h: ebml.Head, load: bool) Error!?Found {
-    const own = &track.mkv;
+    const own = trackOf(track);
     const w = &own.walk;
     const body = at + h.length;
     const group = h.id == ebml.BlockGroup;
@@ -322,7 +337,7 @@ fn block(file: *_file.File, track: *_file.Track, at: u64, h: ebml.Head, load: bo
         data_length = @intCast(h.size);
     }
     if (track.info.kind != media.MTRACK_VIDEO) key = true;
-    const m = &file.mkv;
+    const m = fileOf(file);
     const found = Found{
         .at = at,
         .cluster_end = w.cluster_end,
@@ -410,7 +425,7 @@ fn lace(w: *Walk, data: []const u8, lacing: u8) Error!void {
 
 /// The track's next packet into `packet`.
 pub fn read(file: *_file.File, track: *_file.Track, packet: *media.MediaPacket) i32 {
-    const own = &track.mkv;
+    const own = trackOf(track);
     const w = &own.walk;
     if (own.unreadable) return media.MERR_UNSUPPORTED;
     if (w.next >= w.frames) {
@@ -469,9 +484,9 @@ fn join(file: *_file.File, own: *Track, frame: []const u8) ?[*]const u8 {
 /// the blocks' times.
 pub fn seek(file: *_file.File, track: *_file.Track, time: i64) i32 {
     if (!_file.seekable(file)) return media.MERR_NOSEEK;
-    const own = &track.mkv;
+    const own = trackOf(track);
     const w = &own.walk;
-    const m = &file.mkv;
+    const m = fileOf(file);
     const target_ns: i64 = @max(0, (time *| 1000) +| @as(i64, @intCast(own.delay_ns)));
     const target: u64 = @intCast(@divFloor(target_ns, @as(i64, @intCast(m.scale))));
 
