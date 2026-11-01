@@ -1,0 +1,95 @@
+# PowerOS on a 64-bit board
+
+The files in this directory are what the board's firmware loads: the
+system itself, and the disk image it runs from. `machine.conf` names the
+board this package is for.
+
+```sh
+./write.sh /run/media/you/BOOT     # the board's boot partition, mounted
+```
+
+```
+write.sh        copies the files onto a partition you have mounted
+machine.conf    which board it is, which files it loads, and what its console is
+kernel.bin      the system: everything up to the file systems
+disk-rv64.bin   the disk it starts with, 32 MB (disk-a64.bin on an AArch64 board)
+config.txt      on the Compute Module 5: what its bootloader reads
+README.md       this
+```
+
+**The whole system runs from that disk image, in RAM.** The loader puts it
+there beside the kernel, flash.device serves it as `DH0:`, and what is
+written to it is gone when the machine stops. So these two files are a
+system to start and use without touching the machine's own storage. A card
+or an SSD is what keeps anything, and one is partitioned, formatted and
+filled from the running system - the last section here says how.
+
+## A VisionFive 2
+
+Its U-Boot loads the kernel and starts it with `booti`, with the disk
+image as the ramdisk and U-Boot's own device tree; the kernel's image
+carries the header `booti` reads, and its first address is 0x80200000.
+The files go on a FAT partition of the card - `./write.sh` copies them
+there - and the card keeps its PC partition table, so that one FAT volume
+is both U-Boot's and the system's. What the board's U-Boot is told to load
+is its own environment's business; the project's README has the board's
+section.
+
+The console is the debug UART on pins 8 and 10 of the 40-pin header,
+115200 8N1, through a 3.3 V serial adapter.
+
+## A Compute Module 5
+
+Its bootloader reads `config.txt` from the first FAT partition of the
+eMMC - or of a card, on a module without eMMC - and from the same
+partition the kernel, the disk image and Raspberry Pi's device tree for
+the module, `bcm2712-rpi-cm5-cm5io.dtb`. That device tree is Raspberry
+Pi's own file and is not in this package: put it on the partition beside
+the rest. `config.txt` here names what goes where and nothing else is
+needed.
+
+With the IO board's BOOT jumper fitted, Raspberry Pi's `rpiboot` starts
+the same files over USB from a directory holding usbboot's
+`bootfiles.bin`, a `config.txt` saying `boot_ramdisk=1` and the
+partition's image as `boot.img`; its `mass-storage-gadget64` makes the
+eMMC a USB disk to write that partition on.
+
+The console is the RP1's UART0 on pins 8 and 10 of the 40-pin header,
+115200 8N1, on which the bootloader logs too.
+
+## The first start
+
+The console says what the kernel finds and ends at `s3>`, the ROM's own
+debug shell - `help` lists what it takes. **Type `newshell`** there for a
+shell of the system's own:
+
+```
+List SYS:                 what is on the disk
+Info                      the volumes, their sizes and what is free
+Avail                     memory, and the largest block there is
+ShowConfig                what this board has; ShowConfig DEVICES for its devices
+Version                   the system's release; Version dos.library for one module
+Dir C: ALL                every command there is
+```
+
+With a monitor on the board's HDMI the desktop comes up on it, with its
+own shell in `SYS:System/Shell` and the programs in `SYS:Programs`. A USB
+keyboard and mouse are found as they are plugged in.
+
+## Keeping anything
+
+The disk in RAM is gone at power off. A microSD card or an NVMe SSD keeps
+a system, and both are driven: `SYS:System/HDToolBox` partitions a drive
+in a window, `C:RDB` and `C:Format` do it from the shell, and the disks
+guide in the project's documentation has the whole recipe. A partition on
+such a medium that is bootable above the RAM disk's priority is what the
+machine starts from next time, and the RAM disk is still there when the
+medium is not.
+
+## Where this comes from
+
+PowerOS is a kernel and a system written in Zig for ESP32-S3 and ESP32-P4
+boards, for 64-bit RISC-V machines under SBI firmware and for AArch64
+machines under PSCI. The source, the boards and the guides are at
+<https://github.com/cycl0ne/poweros_esp32>, and the same system runs in
+QEMU from an archive of its own.

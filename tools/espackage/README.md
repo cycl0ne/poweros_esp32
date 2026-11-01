@@ -1,9 +1,9 @@
-# esp-package
+# The archive of an ESP32 board
 
-`./zig build esp-package -Dboard=waveshare_7b -Ddisk-tree=false` packs a
-board somebody can write and run without building it: the kernel, the
-flash disk that holds the programs and libraries it was built with, and a
-script that writes both over USB.
+`./zig build archive -Dboard=waveshare_7b -Ddisk-tree=false` packs a board
+somebody can write and run without building it: the kernel, the flash disk
+that holds the programs and libraries it was built with, and a script that
+writes both over USB.
 
 ```
 release/poweros-waveshare_7b.tar.gz    6.2 MB, the download
@@ -16,9 +16,11 @@ release/poweros-waveshare_7b/          the same files, to try before handing out
   README.md       what it is and how it is used (`bundle.md` here)
 ```
 
-It is for the ESP32 boards - the two ESP32-S3 ones and the two ESP32-P4
-ones - and says so for any other board: a machine whose disk is in RAM has
-`package`, and QEMU's two have `qemu-package`.
+This is what `archive` packs for the ESP32 boards - the two ESP32-S3 ones
+and the two ESP32-P4 ones. The other boards get an archive of their own
+kind: QEMU's machines one that starts them
+([qemupackage](../qemupackage/README.md)), the 64-bit boards the files
+their firmware loads ([bootpackage](../bootpackage/README.md)).
 
 **What `flash.sh` runs is what `flash-all` runs.** The disk area is erased,
 then the kernel's parts and the disk are written in one esptool pass, at

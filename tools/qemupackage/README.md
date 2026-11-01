@@ -1,8 +1,8 @@
-# qemu-package
+# The archive of a QEMU machine
 
-`./zig build qemu-package -Dboard=qemu_virt -Ddisk-tree=false` packs a
-machine someone can run without building it: the kernel, the system disk,
-a work disk, and a script that starts QEMU on them.
+`./zig build archive -Dboard=qemu_virt -Ddisk-tree=false` packs a machine
+someone can run without building it: the kernel, the system disk, a work
+disk, and a script that starts QEMU on them.
 
 ```
 release/poweros-qemu_virt.tar.gz    7.4 MB, the download
@@ -19,9 +19,10 @@ It is for QEMU's two `virt` machines - `-Dboard=qemu_virt` (RISC-V 64)
 and `-Dboard=qemu_virt_a64` (AArch64) - whose kernel and disks a plain
 QEMU runs. The ESP32 boards' QEMU is Espressif's own
 (`scripts/build-qemu.sh`), which nobody has by downloading an archive, so
-the step refuses for those boards and says why; a board is packed by
-`esp-package` instead, and `./zig build release` makes every board's
-artifact at once.
+`archive` packs a board as something to write instead
+([espackage](../espackage/README.md)) or as the files its firmware loads
+([bootpackage](../bootpackage/README.md)), and `./zig build release` makes
+every board's at once.
 
 **The files in it are mostly holes, and stay holes.** `tools/mkfs` writes
 only the blocks it touches, so `system.bin` is some 17 MB of its 256 and

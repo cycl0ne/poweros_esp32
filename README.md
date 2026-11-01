@@ -314,7 +314,8 @@ wrapper: it fetches the Espressif Zig toolchain (`0.16.0-xtensa`) into
 ./zig build flash-all -Dport=/dev/ttyACM0   # kernel and a fresh disk onto a board
 ./zig build package -Dboard=visionfive2     # a release package in release/package-visionfive2/
 ./zig build serve -Dboard=visionfive2       # hand that package out over HTTP (quit: Ctrl-C)
-./zig build release -Ddisk-tree=false       # every board's package and archive, in release/
+./zig build archive -Dboard=visionfive2     # what that board is handed over in
+./zig build release -Ddisk-tree=false       # every board's archive and package, in release/
 ```
 
 Fetched once into `toolchain/`, pinned and checked, never committed:
@@ -536,35 +537,45 @@ reads FAT, not posfs.
 
 ### Archives to download, and a release
 
-Three steps pack what somebody needs to run the system without building
-it, each into `release/` - a directory of its own beside `zig-out`, kept
-out of the repository, so that what is uploaded is in one place:
+`./zig build archive -Dboard=<board>` packs what somebody needs to run the
+system on that machine without building it, and `./zig build release`
+packs every board's at once. Both write into `release/` - a directory of
+its own beside `zig-out`, kept out of the repository, so that what is
+uploaded is in one place and nothing else is in it. What an archive holds
+differs with the machine:
 
-| Step | What it packs |
+| For | `release/poweros-<board>.tar.gz` holds |
 |---|---|
-| `./zig build qemu-package -Dboard=qemu_virt` | `release/poweros-qemu_virt.tar.gz`: the kernel, the system disk, a blank work disk and a `run.sh` that starts QEMU on them ([qemu-package](tools/qemupackage/README.md)) |
-| `./zig build esp-package -Dboard=waveshare_7b` | `release/poweros-waveshare_7b.tar.gz`: the kernel, the flash disk and a `flash.sh` that writes both over USB with esptool ([esp-package](tools/espackage/README.md)) |
-| `./zig build release` | every board's artifact in one build: the four packages, the two QEMU archives and the four board archives |
+| QEMU's two `virt` machines | the kernel, the system disk, a blank work disk, and a `run.sh` that starts QEMU on them ([qemupackage](tools/qemupackage/README.md)) |
+| the four ESP32 boards | the kernel, the flash disk, and a `flash.sh` that writes both over USB with esptool ([espackage](tools/espackage/README.md)) |
+| the VisionFive 2 and the Compute Module 5 | the kernel, the disk image the system runs from, `config.txt` where the board reads one, and a `write.sh` that copies them onto the partition its firmware loads from ([bootpackage](tools/bootpackage/README.md)) |
 
-Each archive is 6 to 8 MB. The QEMU one takes 18 MB on a disk unpacked,
+Each archive is 6 to 10 MB. The QEMU one takes 18 MB on a disk unpacked,
 though its two images are 1.3 GB long - `tools/mkfs` writes only the
-blocks it touches, and the archive keeps the holes as holes.
+blocks it touches, and the archive keeps the holes as holes. The two
+emulators have no archive: neither Espressif's QEMU nor esp-emulator is a
+machine anybody has by downloading one.
 
 The scripts in them ask the host what it has rather than assuming:
 `run.sh` a display backend, the virtio GPU or the ramfb, an audio driver
 and QEMU's user-mode network, leaving out what is missing and saying so;
-`flash.sh` esptool under either of its names and the board's port. Each
-has a `--help` and a `--print` that shows the commands without running
-them, and `run.sh --serial` runs the machine with no window.
+`flash.sh` esptool under either of its names and the board's port;
+`write.sh` whether what it was given is a directory it may write to, and
+whether the room is there. Each has a `--help` and a `--print` that shows
+what it would do without doing it, and `run.sh --serial` runs the machine
+with no window.
 
+`./zig build release -Ddisk-tree=false` is a release: an archive for every
+board, and a package for each machine that installs itself onto a medium.
 The `disk/` tree in this root is the builder's own files, and the network
-settings in it hold a passphrase, so all three steps refuse to pack them
-unasked: `-Ddisk-tree=false` leaves that tree off the images for a package
-to hand out, `-Ddisk-tree=true` packs it deliberately. One thing a release
-cannot do for every machine at once: the `SYS:Storage/Boot` of a disk
-image is filled for the board the build was for and empty for the others,
-since one image serves both boards of a chip - build the release with
-`-Dboard=` set to the machine you care about, or once for each.
+settings in it hold a passphrase, so `archive` and `release` refuse to
+pack them unasked: `-Ddisk-tree=false` leaves
+that tree off the images, `-Ddisk-tree=true` packs it deliberately. One
+thing a release cannot do for every machine at once: the
+`SYS:Storage/Boot` of a disk image is filled for the board the build was
+for and empty for the others, since one image serves both boards of a chip
+- build the release with `-Dboard=` set to the machine you care about, or
+once for each.
 
 
 ### Onto a card or an SSD
@@ -648,11 +659,10 @@ More build steps and options:
 | `./zig build fd` | regenerate the SDK's interfaces from its `.fd` files |
 | `./zig build autodoc` | regenerate the SDK's autodocs from the doc comments |
 | `./zig build modchart` | regenerate the charts of which module uses which (`sdk/docs/modules.md`) |
-| `./zig build qemu-package -Dboard=qemu_virt_a64` | an archive to download and run in QEMU, into `release/` |
-| `./zig build esp-package -Dboard=olimex_p4pc` | an archive to download and write to that board, into `release/` |
-| `./zig build release` | every board's package and archive at once, into `release/` |
+| `./zig build archive -Dboard=olimex_p4pc` | what that board is handed over in, into `release/` |
+| `./zig build release` | every board's archive and package at once, into `release/` |
 | `./zig build posfsck -- [--data] flash.bin` | check the posfs volumes of a flash dump or a card's image on the host ([posfs guide](sdk/docs/guides/posfs.md#checking-a-volume)) |
-| `-Ddisk-tree=false` | leave the `disk/` tree in this root off the disk images: what `qemu-package` wants for a package to hand out, since those files are the builder's own |
+| `-Ddisk-tree=false` | leave the `disk/` tree in this root off the disk images: what `archive` and `release` want for something to hand out, since those files are the builder's own |
 | `-Dboot=/boot/firmware/bcm2712-rpi-cm5-cm5io.dtb` | a file this tree does not hold in a release package's `boot/` and in `SYS:Storage/Boot`, under its own name or the one before a `=`: what a board's firmware reads besides the kernel |
 | `-Dserve-port=8080` | the port `./zig build serve` hands a package out on |
 | `-Dextra=c/hello=path/to/hello.seg` | put a file built elsewhere on the disk images; with a chip before the path (`rv64sbi:c/hello=...`) on that chip's only, with `virt:` on the virt machines' system disks only - room for files the flash disks cannot hold |
