@@ -61,7 +61,9 @@ const utility = sdk.utility;
 const host = @import("host_rom");
 const kexec = host.exec;
 const audiocodec_init = @import("../audiocodec_init.zig");
+const sound_modules = @import("modules.zig");
 const media_init = @import("../../media/media_init.zig");
+const container_modules = @import("../../media/tests/modules.zig");
 const media = sdk.media;
 
 const testing = std.testing;
@@ -120,6 +122,8 @@ const Rig = struct {
     saved: ?*kexec.Task = null,
     library: *exec.Library = undefined,
     media_library: *exec.Library = undefined,
+    modules: sound_modules.Made = undefined,
+    containers: container_modules.Made = undefined,
     acb: *AudioCodecBase = undefined,
 
     fn init(rig: *Rig) !void {
@@ -145,6 +149,8 @@ const Rig = struct {
         // media.library, which an MP4 is opened through.
         const media_lib = kexec.InitResident(kexec.SysBase, &media_init.media_library_tag, null) orelse return error.NoLibrary;
         rig.media_library = @ptrCast(@alignCast(media_lib));
+        try sound_modules.make(kexec, &rig.modules);
+        try container_modules.make(kexec, &rig.containers);
         rig.acb = @ptrCast(rig.sysLib().OpenLibrary(ac.AUDIOCODECNAME, 1) orelse return error.NoBase);
     }
 
@@ -163,6 +169,8 @@ const Rig = struct {
         _ = rig.sysLib().RemLibrary(rig.library);
         try testing.expect(kexec.FindName(kexec.SysBase, &kexec.SysBase.lib_list, ac.AUDIOCODECNAME) == null);
         _ = rig.sysLib().RemLibrary(rig.media_library);
+        sound_modules.take(rig.sysLib(), &rig.modules);
+        container_modules.take(rig.sysLib(), &rig.containers);
         try testing.expect(kexec.FindName(kexec.SysBase, &kexec.SysBase.lib_list, media.MEDIANAME) == null);
         Disk.disk.deinit();
         kexec.SysBase.cpu().this_task = rig.saved.?;
@@ -2227,4 +2235,46 @@ fn expectOpusFromStart(acb: *AudioCodecBase, stream: *ac.AudioStream, straight: 
         try testing.expectEqual(@as(i32, 400), acb.DecodeAudio(stream, &some, 400));
         try testing.expectEqualSlices(i16, straight[frame * channels ..][0..count], some[0..count]);
     }
+}
+
+test "a kind with no module on the disk: found out what it is, refused, and played once it is there" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const acb = rig.acb;
+    const module = rig.modules[sound_modules.mp3];
+    const name = module.node.name;
+
+    module.node.name = "gone";
+    try testing.expectEqual(ac.ACODEC_MP3, acb.IdentifyAudio(tone_mp3.ptr, @intCast(tone_mp3.len)));
+    var memory: Memory = .{ .bytes = tone_mp3 };
+    var err: i32 = -99;
+    try testing.expect(openMemory(acb, &memory, &err) == null);
+    try testing.expectEqual(ac.ACERR_UNSUPPORTED, err);
+    module.node.name = name;
+
+    memory = .{ .bytes = tone_mp3 };
+    const stream = openMemory(acb, &memory, &err) orelse return error.NoStream;
+    try testing.expectEqual(@as(@TypeOf(module.open_cnt), 1), module.open_cnt);
+    acb.CloseAudioStream(stream);
+    try testing.expectEqual(@as(@TypeOf(module.open_cnt), 0), module.open_cnt);
+}
+
+test "a sound module refuses a stream of another layout" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const module: *sdk.interface.acodec.ACodecBase = @ptrCast(rig.sysLib().OpenLibrary("codecs/wav.acodec", 1) orelse return error.NoModule);
+    defer rig.sysLib().CloseLibrary(module.lib());
+
+    const Other = struct {
+        var stream: sdk.acodec.ACodecStream = undefined;
+    };
+    @memset(std.mem.asBytes(&Other.stream), 0);
+    Other.stream.layout = sdk.acodec.ACODEC_LAYOUT + 1;
+    try testing.expectEqual(ac.ACERR_UNSUPPORTED, module.OpenACodec(&Other.stream));
+    var track: media.MediaTrack = .{};
+    try testing.expectEqual(ac.ACERR_UNSUPPORTED, module.OpenACodecTrack(&Other.stream, &track));
+    // Nothing made, nothing to give back.
+    module.CloseACodec(&Other.stream);
 }

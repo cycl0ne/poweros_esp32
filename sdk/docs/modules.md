@@ -178,6 +178,8 @@ flowchart TB
 <!-- modchart disk -->
 ```mermaid
 flowchart TB
+    m_aac_acodec["aac.acodec"]
+    m_ac3_acodec["ac3.acodec"]
     m_acm_device["acm.device"]
     m_aic8800_device["aic8800.device"]
     m_anvil_library["anvil.library"]
@@ -207,6 +209,7 @@ flowchart TB
     m_facet_library["facet.library"]
     m_fat_handler["fat-handler"]
     m_filter_library["filter.library"]
+    m_flac_acodec["flac.acodec"]
     m_flash_device["flash.device"]
     m_ftdi_device["ftdi.device"]
     m_gadget_classes["gadget classes"]
@@ -225,9 +228,11 @@ flowchart TB
     m_media_library["media.library"]
     m_modbus_library["modbus.library"]
     m_mouse_device["mouse.device"]
+    m_mp3_acodec["mp3.acodec"]
     m_network_docklet["network.docklet"]
     m_nvme_device["nvme.device"]
     m_openeth_device["openeth.device"]
+    m_opus_acodec["opus.acodec"]
     m_pci_library["pci.library"]
     m_platform_resource["platform.resource"]
     m_posfs_handler["posfs-handler"]
@@ -252,9 +257,13 @@ flowchart TB
     m_v3d_fdriver["v3d.fdriver"]
     m_videocodec_library["videocodec.library"]
     m_videodec_resource["videodec.resource"]
+    m_vorbis_acodec["vorbis.acodec"]
+    m_wav_acodec["wav.acodec"]
     m_wpa_library["wpa.library"]
     m_xhci_device["xhci.device"]
 
+    m_aac_acodec --> m_media_library
+    m_ac3_acodec --> m_media_library
     m_acm_device --> m_timer_device
     m_acm_device --> m_usb_library
     m_aic8800_device --> m_dos_library
@@ -331,6 +340,7 @@ flowchart TB
     m_fat_handler -.-> m_timer_device
     m_filter_library --> m_bsdsocket_library
     m_filter_library --> m_timer_device
+    m_flac_acodec --> m_media_library
     m_ftdi_device --> m_timer_device
     m_ftdi_device --> m_usb_library
     m_hid_device --> m_keyboard_device
@@ -348,12 +358,14 @@ flowchart TB
     m_modbus_library --> m_bsdsocket_library
     m_modbus_library --> m_dos_library
     m_modbus_library --> m_rs485_device
+    m_mp3_acodec --> m_media_library
     m_network_docklet --> m_bsdsocket_library
     m_network_docklet --> m_dos_library
     m_nvme_device --> m_dos_library
     m_nvme_device --> m_pci_library
     m_nvme_device --> m_timer_device
     m_openeth_device --> m_timer_device
+    m_opus_acodec --> m_media_library
     m_pci_library --> m_timer_device
     m_posfs_handler --> m_dos_library
     m_posfs_handler -.-> m_flash_device
@@ -405,12 +417,14 @@ flowchart TB
     m_videocodec_library --> m_audiocodec_library
     m_videocodec_library --> m_dos_library
     m_videocodec_library --> m_media_library
+    m_vorbis_acodec --> m_media_library
+    m_wav_acodec --> m_media_library
     m_wpa_library --> m_crypto_library
     m_xhci_device --> m_pci_library
     m_xhci_device --> m_timer_device
 
     classDef lib fill:#dbeafe,stroke:#2563eb,color:#111827
-    class m_anvil_library,m_asl_library,m_audiocodec_library,m_battery_docklet,m_bsdsocket_library,m_chip_vcodec,m_clock_docklet,m_commodities_library,m_compression_library,m_crypto_library,m_datatypes_library,m_diskfont_library,m_facet_library,m_filter_library,m_http_library,m_icon_library,m_iffparse_library,m_locale_library,m_media_library,m_modbus_library,m_network_docklet,m_pci_library,m_rdb_library,m_tls_library,m_truetype_library,m_usb_library,m_v3d_fdriver,m_videocodec_library,m_wpa_library lib
+    class m_aac_acodec,m_ac3_acodec,m_anvil_library,m_asl_library,m_audiocodec_library,m_battery_docklet,m_bsdsocket_library,m_chip_vcodec,m_clock_docklet,m_commodities_library,m_compression_library,m_crypto_library,m_datatypes_library,m_diskfont_library,m_facet_library,m_filter_library,m_flac_acodec,m_http_library,m_icon_library,m_iffparse_library,m_locale_library,m_media_library,m_modbus_library,m_mp3_acodec,m_network_docklet,m_opus_acodec,m_pci_library,m_rdb_library,m_tls_library,m_truetype_library,m_usb_library,m_v3d_fdriver,m_videocodec_library,m_vorbis_acodec,m_wav_acodec,m_wpa_library lib
     classDef dev fill:#dcfce7,stroke:#16a34a,color:#111827
     class m_acm_device,m_aic8800_device,m_clipboard_device,m_cyw43455_device,m_disk_device,m_ecm_device,m_emac_device,m_esp32s3wifi_device,m_ftdi_device,m_hid_device,m_nvme_device,m_openeth_device,m_rs485_device,m_sdcard_device,m_slip_device,m_ssh_device,m_telnet_device,m_uac_device,m_usbotg_device,m_xhci_device dev
     classDef hand fill:#fce7f3,stroke:#db2777,color:#111827

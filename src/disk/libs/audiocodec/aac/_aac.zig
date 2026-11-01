@@ -86,9 +86,8 @@ pub fn open(stream: *Stream) i32 {
     return openAdts(stream);
 }
 
-fn begin(stream: *Stream) *Aac {
-    stream.codec = .{ .aac = undefined };
-    const a = &stream.codec.aac;
+fn begin(stream: *Stream) ?*Aac {
+    const a = _stream.stateOf(stream, Aac) orelse return null;
     a.* = .{
         .config = .{},
         .pool = null,
@@ -151,7 +150,7 @@ pub fn free(stream: *Stream, a: *Aac) void {
 fn openAdts(stream: *Stream) i32 {
     mp3.skipId3v2(stream);
     _stream.fill(stream);
-    const a = begin(stream);
+    const a = begin(stream) orelse return ac.ACERR_NOMEMORY;
     // The first header the next one agrees with, within 64 KiB.
     const from = _stream.tell(stream);
     while (!framed(stream)) {
@@ -248,7 +247,7 @@ fn endAdtsBlock(stream: *Stream, a: *Aac, bits: *const Bits) void {
 /// A track of a container (`_media.zig`): its config read, the tables and
 /// buffers made.
 pub fn openTrack(stream: *Stream, track: *const media.MediaTrack) i32 {
-    const a = begin(stream);
+    const a = begin(stream) orelse return ac.ACERR_NOMEMORY;
     if (track.config == null) return ac.ACERR_CORRUPT;
     const cfg = config.audioSpecific(track.config.?[0..track.config_size]) catch |e| return switch (e) {
         error.Unsupported => ac.ACERR_UNSUPPORTED,

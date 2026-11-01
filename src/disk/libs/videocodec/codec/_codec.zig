@@ -333,6 +333,7 @@ fn refresh(base: *VideoCodecBase) ?*Table {
     if (!dl.Examine(dir, &fib)) return table;
     while (dl.ExNext(dir, &fib)) {
         if (dos.isDirectory(fib.dir_entry_type)) continue;
+        if (!isVCodec(fileName(&fib))) continue;
         if (fresh.count >= max_modules) break;
         const into = &fresh.list[fresh.count];
         if (!nameOf(into, fileName(&fib))) continue;
@@ -352,6 +353,17 @@ fn fileName(fib: *const dos.FileInfoBlock) []const u8 {
     var length: usize = 0;
     while (length < fib.file_name.len and fib.file_name[length] != 0) length += 1;
     return fib.file_name[0..length];
+}
+
+/// Whether a file of LIBS:codecs/ is a picture decoder's, by its name: the
+/// sound and container modules there have their libraries' own.
+fn isVCodec(file_name: []const u8) bool {
+    const end = ".vcodec";
+    if (file_name.len < end.len) return false;
+    for (file_name[file_name.len - end.len ..], end) |a, b| {
+        if (lower(a) != b) return false;
+    }
+    return true;
 }
 
 /// "codecs/<file>" into `module.name`; false when it does not fit.

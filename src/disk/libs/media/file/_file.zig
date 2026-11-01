@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! A file opened: where its bytes come from, its index in memory, its
-//! tracks - each with its sample tables or its walk through the
-//! clusters, its cursor and its buffer - and its tags.
+//! tracks - each with its buffer, and what its kind keeps of it: sample
+//! tables and a cursor, or a walk through the clusters - and its tags.
 //!
 //! **The source** is a file the library opened, one the program has open,
 //! or the program's read function. A file is read where its bytes lie -
@@ -20,106 +20,51 @@
 //! out points into it. A Matroska track's holds the bytes its walk through
 //! the clusters reads (`mkv/blocks.zig`).
 //!
+//! **A kind's code** is a module (sdk/libs/media/mcontainer.zig): this file
+//! is compiled into the library and into each of them, and the file's
+//! layout is the SDK's. What a kind keeps of a file and its tracks is
+//! memory of its own (`state`, each track's `own`).
+//!
 //! The file is one allocation, cleared; the index (an MP4's `moov`, a
-//! Matroska file's tracks), the cues, the chapters and each track's
-//! buffers are memory of their own, given back with it.
+//! Matroska file's tracks), the chapters and each track's buffers are
+//! memory of their own, given back with it.
 
 const std = @import("std");
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const dos = sdk.dos;
 const media = sdk.media;
-const MediaBase = @import("../media_base.zig").MediaBase;
-const cursor = @import("../mp4/cursor.zig");
-const blocks = @import("../mkv/blocks.zig");
+const mcontainer = sdk.mcontainer;
+const MContainerBase = sdk.interface.mcontainer.MContainerBase;
 
 /// The most tracks a file's are read of; past them, tracks are passed
 /// over.
-pub const max_tracks = 16;
+pub const max_tracks = mcontainer.MCONTAINER_MOST_TRACKS;
 
 /// The longest a name is kept, and a comment.
-pub const name_bytes = 128;
-pub const comment_bytes = 256;
+pub const name_bytes = mcontainer.MCONTAINER_NAME_BYTES;
+pub const comment_bytes = mcontainer.MCONTAINER_COMMENT_BYTES;
 
 /// A track's buffer is at least this large.
 pub const min_buffer = 64 * 1024;
 
-/// What the tags say, at full length, NUL-terminated, Latin-1.
-pub const Tags = struct {
-    title: [name_bytes]u8,
-    artist: [name_bytes]u8,
-    album: [name_bytes]u8,
-    album_artist: [name_bytes]u8,
-    composer: [name_bytes]u8,
-    genre: [64]u8,
-    comment: [comment_bytes]u8,
-    year: u32,
-    track: u32,
-    tracks: u32,
-    keep_picture: bool,
-    has_picture: bool,
-    picture: media.MediaPicture,
-    /// The chapters, in a block of their own, and how many.
-    chapters: ?[*]media.MediaChapter,
-    chapter_count: u32,
-};
+/// A file, a track and its tags, as the library and its module share them.
+pub const Tags = mcontainer.MContainerTags;
+pub const Track = mcontainer.MContainerTrack;
+pub const File = mcontainer.MediaContainerFile;
 
-pub const Track = struct {
-    /// What GetMediaTrack hands out.
-    info: media.MediaTrack,
-    /// The sample tables, where they lie in the index, and where the
-    /// cursor is in them.
-    tables: cursor.Tables,
-    at: cursor.Cursor,
-    /// Where presenting starts in the track's ticks (its edit), and the
-    /// microseconds of nothing before the track begins.
-    media_start: i64,
-    empty_us: i64,
-    /// The number of the text track that names this one's chapters
-    /// (`tref`'s `chap`), 0 for none.
-    chapter_ref: u32,
-    /// Bytes of the file from `cached_at` on, `cached` of them, in a
-    /// buffer `buffer_size` large.
-    buffer: ?[*]u8,
-    buffer_size: u32,
-    cached_at: u64,
-    cached: u32,
-    /// A Matroska track's: what it is in the file, and where its walk is.
-    mkv: blocks.Track,
-};
+/// The file's module, as its calls are made.
+pub fn moduleOf(file: *File) ?*MContainerBase {
+    return @ptrCast(file.module);
+}
 
-pub const File = struct {
-    base: *MediaBase,
-    file: ?*dos.FileHandle,
-    owns_file: bool,
-    read_fn: ?media.ReadFn,
-    read_data: ?*anyopaque,
-    /// How far a read function has read; the size of a file, 0 when not
-    /// known; where in the file the container begins - where a handle
-    /// the program gave was.
-    position: u64,
-    size: u64,
-    origin: u64,
-    /// A read function's bytes kept to be read again, as they lie from
-    /// `kept_at`.
-    kept: [16]u8,
-    kept_at: u64,
-    kept_length: u32,
-    /// Lets one task at a time at the source.
-    lock: exec.SignalSemaphore,
-    info: media.MediaInfo,
-    /// The index, read whole.
-    index: ?[*]u8,
-    index_size: usize,
-    movie_timescale: u32,
-    tracks: [max_tracks]Track,
-    track_count: u32,
-    /// The text track the file marks to be shown, ~0 for none.
-    subtitles: u32,
-    tags: Tags,
-    /// A Matroska file's segment, its clocks and its cues.
-    mkv: blocks.File,
-};
+/// The kind's state, cleared, in memory of its own: made once, and given
+/// back at CloseContainer. Null when there is no memory for it.
+pub fn stateOf(file: *File, comptime T: type) ?*T {
+    const made = file.state orelse file.base.sys_base.AllocVec(@sizeOf(T), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return null;
+    file.state = made;
+    return @ptrCast(@alignCast(made));
+}
 
 pub fn fileOf(public: *media.MediaFile) *File {
     return @ptrCast(@alignCast(public));
@@ -133,16 +78,16 @@ pub fn publicOf(file: *File) *media.MediaFile {
 pub fn destroy(file: *File) void {
     const base = file.base;
     const sys = base.sys_base;
+    if (moduleOf(file)) |module| module.CloseContainer(file);
     for (file.tracks[0..file.track_count]) |*track| {
         if (track.buffer) |buffer| sys.FreeVec(buffer);
-        if (track.mkv.joined) |joined| sys.FreeVec(joined);
     }
-    if (file.mkv.cues) |cues| sys.FreeVec(cues);
     if (file.owns_file) {
         if (file.file) |handle| _ = base.dos_base.Close(handle);
     }
     if (file.index) |index| sys.FreeVec(index);
     if (file.tags.chapters) |list| sys.FreeVec(list);
+    if (moduleOf(file)) |module| sys.CloseLibrary(module.lib());
     sys.FreeVec(file);
 }
 

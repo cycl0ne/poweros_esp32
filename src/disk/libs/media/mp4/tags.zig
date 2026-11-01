@@ -182,13 +182,13 @@ fn trackChapters(file: *File) void {
     if (!_file.seekable(file)) return;
     var wanted: u32 = 0;
     for (file.tracks[0..file.track_count]) |*track| {
-        if (track.chapter_ref != 0) wanted = track.chapter_ref;
+        if (_mp4.own(track).chapter_ref != 0) wanted = _mp4.own(track).chapter_ref;
     }
     if (wanted == 0) return;
     const text = for (file.tracks[0..file.track_count]) |*track| {
         if (track.info.id == wanted and track.info.kind == media.MTRACK_TEXT) break track;
     } else return;
-    const t = &text.tables;
+    const t = &_mp4.own(text).tables;
     const count: usize = @min(t.samples, max_chapters);
     if (count == 0) return;
     const list = chapterBlock(file, count) orelse return;
@@ -197,7 +197,7 @@ fn trackChapters(file: *File) void {
     var buffer: [max_chapter_text]u8 = undefined;
     for (0..count) |n| {
         const size = t.sizeOf(at.sample);
-        const time = _file.micros(@as(i64, @intCast(at.dts)) - text.media_start, text.info.timescale) + text.empty_us;
+        const time = _file.micros(@as(i64, @intCast(at.dts)) - _mp4.own(text).media_start, text.info.timescale) + _mp4.own(text).empty_us;
         list[n].start = @intCast(std.math.clamp(@divFloor(time, 1000), 0, std.math.maxInt(u32)));
         const take = @min(size, buffer.len);
         if (take >= 2 and _file.readAt(file, at.offset, buffer[0..take])) {
@@ -207,7 +207,7 @@ fn trackChapters(file: *File) void {
         cursor.step(t, &at, size);
     }
     // The track is read; its cursor goes back to its start for a reader.
-    cursor.reset(t, &text.at);
+    cursor.reset(t, &_mp4.own(text).at);
     finishChapters(file, list, count);
 }
 

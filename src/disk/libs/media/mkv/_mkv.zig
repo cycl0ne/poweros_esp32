@@ -107,10 +107,25 @@ fn headAt(file: *File, at: u64) ?ebml.Head {
     return ebml.head(bytes[0..got]);
 }
 
-/// The file's header, segment, tracks, cues and tags read.
-pub fn open(file: *File) i32 {
+pub const read = blocks.read;
+pub const seek = blocks.seek;
+
+/// The memory the kind holds of the file given back.
+pub fn free(file: *File) void {
     const sys = file.base.sys_base;
-    const m = &file.mkv;
+    for (file.tracks[0..file.track_count]) |*track| {
+        if (blocks.trackOf(track).joined) |joined| sys.FreeVec(joined);
+    }
+    if (blocks.fileOf(file).cues) |cues| sys.FreeVec(cues);
+}
+
+/// The file's header, segment, tracks, cues and tags read; whether its
+/// first bytes are Matroska's is checked either way.
+pub fn open(file: *File, _: bool) i32 {
+    const sys = file.base.sys_base;
+    const state = _file.stateOf(file, blocks.State) orelse return media.MERR_NOMEMORY;
+    for (&file.tracks, &state.tracks) |*track, *mine| track.own = mine;
+    const m = blocks.fileOf(file);
     m.scale = 1_000_000;
 
     // EBML's header, and what it says the file is.
@@ -173,10 +188,10 @@ pub fn open(file: *File) i32 {
 /// A track of its kind for the info: the first marked to be played,
 /// else the first.
 fn choose(file: *File, chosen: *u32, number: u32) void {
-    const marked = file.tracks[number].mkv.default;
+    const marked = blocks.trackOf(&file.tracks[number]).default;
     if (chosen.* == ~@as(u32, 0)) {
         chosen.* = number;
-    } else if (marked and !file.tracks[chosen.*].mkv.default) {
+    } else if (marked and !blocks.trackOf(&file.tracks[chosen.*]).default) {
         chosen.* = number;
     }
 }
@@ -186,8 +201,8 @@ fn choose(file: *File, chosen: *u32, number: u32) void {
 fn markedText(file: *const File) u32 {
     var marked: u32 = ~@as(u32, 0);
     for (file.tracks[0..file.track_count], 0..) |*track, n| {
-        if (track.info.kind != media.MTRACK_TEXT or !track.mkv.default) continue;
-        if (track.mkv.forced) return @intCast(n);
+        if (track.info.kind != media.MTRACK_TEXT or !blocks.trackOf(track).default) continue;
+        if (blocks.trackOf(track).forced) return @intCast(n);
         if (marked == ~@as(u32, 0)) marked = @intCast(n);
     }
     return marked;
@@ -196,7 +211,7 @@ fn markedText(file: *const File) u32 {
 /// The segment's elements read up to the first cluster, and then those
 /// the seek heads say lie elsewhere, where the file can seek.
 fn gather(file: *File, parts: *Parts) i32 {
-    const m = &file.mkv;
+    const m = blocks.fileOf(file);
     var at = m.segment_at;
     while (at < m.segment_end) {
         const h = headAt(file, at) orelse break;
@@ -272,12 +287,12 @@ fn seekHead(file: *File, parts: *Parts, at: u64, h: ebml.Head) i32 {
     if (result != media.MERR_OK) return result;
     defer file.base.sys_base.FreeVec(part.body.?);
     var seeks = ebml.Elements{ .rest = part.bytes() };
-    while (seeks.next()) |seek| {
-        if (seek.id != ebml.Seek) continue;
-        const id_bytes = ebml.child(seek.body, ebml.SeekID) orelse continue;
-        const position = ebml.child(seek.body, ebml.SeekPosition) orelse continue;
+    while (seeks.next()) |entry| {
+        if (entry.id != ebml.Seek) continue;
+        const id_bytes = ebml.child(entry.body, ebml.SeekID) orelse continue;
+        const position = ebml.child(entry.body, ebml.SeekPosition) orelse continue;
         const id: u32 = @truncate(ebml.uint(id_bytes));
-        const where = file.mkv.segment_at + ebml.uint(position);
+        const where = blocks.fileOf(file).segment_at + ebml.uint(position);
         if (id == ebml.SeekHead) {
             if (where != at and parts.more_seeks == 0) parts.more_seeks = where;
         } else if (parts.of(id)) |named| {
@@ -293,7 +308,7 @@ fn readInfo(file: *File, info: []const u8, duration: *f64, title: *[_file.name_b
     while (elements.next()) |element| switch (element.id) {
         ebml.TimestampScale => {
             const scale = ebml.uint(element.body);
-            if (scale != 0) file.mkv.scale = scale;
+            if (scale != 0) blocks.fileOf(file).scale = scale;
         },
         ebml.Duration => duration.* = ebml.float(element.body),
         ebml.Title => _file.copyUtf8(title, ebml.string(element.body)),
@@ -313,8 +328,8 @@ fn readTracks(file: *File, index: []const u8, duration: f64) void {
 
 /// A track out of its TrackEntry: false for one with no number.
 fn makeTrack(file: *File, entry: []const u8, track: *Track, duration: f64) bool {
-    const m = &file.mkv;
-    const own = &track.mkv;
+    const m = blocks.fileOf(file);
+    const own = blocks.trackOf(track);
     const out = &track.info;
     own.default = true;
     own.forced = false;
@@ -567,7 +582,7 @@ fn aacConfig(track: *Track, id: []const u8) ?[]const u8 {
         if (rate == out.rate) break @intCast(n);
     } else return null;
     const channels: u8 = @intCast(@min(out.channels, 7));
-    const made = &track.mkv.made;
+    const made = &blocks.trackOf(track).made;
     made[0] = object << 3 | index >> 1;
     made[1] = (index & 1) << 7 | channels << 3;
     return made[0..2];
@@ -577,7 +592,7 @@ fn aacConfig(track: *Track, id: []const u8) ?[]const u8 {
 /// without its name.
 fn opusSetup(track: *Track, head: []const u8) ?[]const u8 {
     if (head.len < 19 or !std.mem.eql(u8, head[0..8], "OpusHead")) return null;
-    const made = &track.mkv.made;
+    const made = &blocks.trackOf(track).made;
     const channels = head[9];
     made[0] = 0;
     made[1] = channels;
@@ -633,6 +648,6 @@ fn readCues(file: *File, cues: []const u8) void {
             n += 1;
         }
     }
-    file.mkv.cues = table;
-    file.mkv.cue_count = @intCast(n);
+    blocks.fileOf(file).cues = table;
+    blocks.fileOf(file).cue_count = @intCast(n);
 }

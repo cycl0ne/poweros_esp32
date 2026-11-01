@@ -21,6 +21,12 @@
 //! So a stream can be handed to another task, which goes on with it - its
 //! file is read through dos, which answers any task.
 //!
+//! **The kinds are modules** in LIBS:codecs/ (`<kind>.zig`,
+//! acodec_module.zig, sdk/libs/audiocodec/acodec.zig): the library finds out
+//! what a stream is, opens its kind's module by name and keeps the source,
+//! so a kind is replaced without the library and a machine loads only the
+//! ones it plays.
+//!
 //! The jump table is audiocodec_lvo.zig, the ROM tag, init and expunge
 //! audiocodec_init.zig, the base audiocodec_base.zig. Each call is a file
 //! under its area: `stream/` (opening, decoding, seeking, closing),

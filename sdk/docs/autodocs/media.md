@@ -438,9 +438,13 @@ The file, or null - and `err` says why: MERR_OPEN without a source or
 when the file would not open, MERR_UNKNOWN for bytes that are not a
 container the library knows, MERR_UNSUPPORTED for an MP4 in fragments
 or one whose index lies behind its packets read through a function,
-MERR_READ, MERR_CORRUPT, MERR_NOMEMORY.
+MERR_READ, MERR_CORRUPT, MERR_NOMEMORY. MERR_UNSUPPORTED too when the
+disk has no module for the kind (SINCE 1.5).
 
 **BEHAVIOR**
+
+The kind's code is a module of its own in LIBS:codecs/, opened until
+CloseMedia (SINCE 1.5): mp4.container, mkv.container.
 
 The kind is found by the first bytes: a Matroska file begins with
 EBML's header, an MP4 with a box of the kinds one begins with -

@@ -259,6 +259,13 @@ av1.vcodec and mjpeg.vcodec, and
 module.zig the base, init, Expunge and jump table every module there
 shares.
 
+media.library's containers are modules the same way (1.5):
+`mp4.container` and `mkv.container` in `LIBS:codecs/`, with the calls of
+`sdk.interface.mcontainer` ([md](../autodocs/mcontainer.md)) and the file
+they share, `sdk.mcontainer`; the kind names the file, and without its
+module a file is refused, `MERR_UNSUPPORTED`. audiocodec.library's kinds
+are `.acodec` modules there ([Sound](audio.md)).
+
 ## From the shell
 
 `C:test/Film FILE` decodes a film as fast as it goes, shows nothing and

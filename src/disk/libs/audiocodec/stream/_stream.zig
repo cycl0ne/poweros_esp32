@@ -32,6 +32,10 @@
 //! media.library (`_media.zig`): the stream then holds the file and the
 //! track, and its kind's code decodes the track's packets.
 //!
+//! **A kind's code** is a module (sdk/libs/audiocodec/acodec.zig): this
+//! file is compiled into the library and into each of them, and the
+//! stream's layout is the SDK's. Its state is memory of its own (`state`).
+//!
 //! The stream is one allocation, cleared: every field's starting value is
 //! zero, so nothing large is ever built on a stack. A FLAC's blocks and an
 //! Ogg Vorbis stream's setup are memory of their own, given back with it.
@@ -40,15 +44,9 @@ const sdk = @import("sdk");
 const exec = sdk.exec;
 const dos = sdk.dos;
 const ac = sdk.audiocodec;
-const AudioCodecBase = @import("../audiocodec_base.zig").AudioCodecBase;
-const wav = @import("../wav/_wav.zig");
+const acodec = sdk.acodec;
+const ACodecBase = sdk.interface.acodec.ACodecBase;
 const mp3 = @import("../mp3/_mp3.zig");
-const layer3 = @import("../mp3/layer3.zig");
-const flac = @import("../flac/_flac.zig");
-const vorbis = @import("../vorbis/_vorbis.zig");
-const aac = @import("../aac/_aac.zig");
-const ac3 = @import("../ac3/_ac3.zig");
-const opus = @import("../opus/_opus.zig");
 const _media = @import("_media.zig");
 
 /// How many bytes are read ahead: enough to find an MP3's first frame -
@@ -59,99 +57,18 @@ pub const input_bytes = ac.AUDIO_READ_AHEAD;
 
 /// The longest a name is kept, and a comment; a frame's text read whole,
 /// at most.
-pub const name_bytes = 128;
-pub const comment_bytes = 256;
-pub const frame_text_bytes = 1024;
+pub const name_bytes = acodec.ACODEC_NAME_BYTES;
+pub const comment_bytes = acodec.ACODEC_COMMENT_BYTES;
+pub const frame_text_bytes = acodec.ACODEC_FRAME_TEXT_BYTES;
 
-/// What the tags say, at full length, NUL-terminated.
-pub const Tags = struct {
-    title: [name_bytes]u8,
-    artist: [name_bytes]u8,
-    album: [name_bytes]u8,
-    album_artist: [name_bytes]u8,
-    composer: [name_bytes]u8,
-    genre: [64]u8,
-    comment: [comment_bytes]u8,
-    /// The comment kept has no description of its own - the one a person
-    /// wrote, not one a program keeps for itself.
-    plain_comment: bool,
-    year: u32,
-    track: u32,
-    tracks: u32,
-    /// Whether the program wants the picture; the block the kept one is
-    /// in, null when none is; and what it is.
-    keep_picture: bool,
-    picture_block: ?[*]u8,
-    picture: ac.AudioPicture,
-    /// The block of the link before's picture, given back at the next
-    /// link or with the stream.
-    spent_picture: ?[*]u8,
-    /// The chapters the tags mark, in a block of their own made at the
-    /// first, and how many.
-    chapters: ?[*]ac.AudioChapter,
-    chapter_count: u32,
-    /// A text frame's body, read whole to be looked at.
-    frame_text: [frame_text_bytes]u8,
-};
-
-pub const Codec = union(enum) {
-    none,
-    wav: wav.Wav,
-    mp3: mp3.Mp3,
-    flac: flac.Flac,
-    vorbis: vorbis.Vorbis,
-    aac: aac.Aac,
-    ac3: ac3.Ac3,
-    opus: opus.Opus,
-};
-
-pub const Stream = struct {
-    base: *AudioCodecBase,
-    /// The source: a file - the stream's own to close, or the program's -
-    /// or the program's read function.
-    file: ?*dos.FileHandle,
-    owns_file: bool,
-    read_fn: ?ac.ReadFn,
-    read_data: ?*anyopaque,
-    /// Where in a file the sound ends - its tags after it - and whether
-    /// that is known.
-    end: u64,
-    has_end: bool,
-    /// Where `in[0]` lies in the source.
-    position: u64,
-    in: [input_bytes]u8,
-    start: usize,
-    stop: usize,
-    /// The source has no more; or it failed.
-    eof: bool,
-    failed: bool,
-    info: ac.AudioStreamInfo,
-    tags: Tags,
-    /// The links of a chain begun after the first (`ACA_Link`).
-    links: u32,
-    /// The track of a container to decode (`ACA_MediaTrack`), ~0 for the
-    /// first sound track; the container while one is read.
-    media_track: u32,
-    media: _media.Source,
-    codec: Codec,
-    /// Samples decoded and not handed out yet, the channels interleaved,
-    /// `pcm_start` to `pcm_stop`.
-    pcm: [layer3.max_samples_per_frame]i16,
-    pcm_start: usize,
-    pcm_stop: usize,
-};
+/// A stream and its tags, as the library and its module share them.
+pub const Tags = acodec.ACodecTags;
+pub const Stream = acodec.ACodecStream;
 
 /// The stream given back: the file it opened closed, its memory freed.
 pub fn destroy(stream: *Stream) void {
     const base = stream.base;
-    switch (stream.codec) {
-        .flac => |*state| flac.free(stream, state),
-        .vorbis => |*state| vorbis.free(stream, state),
-        .aac => |*state| aac.free(stream, state),
-        .ac3 => |*state| ac3.free(stream, state),
-        .opus => |*state| opus.free(stream, state),
-        else => {},
-    }
+    if (moduleOf(stream)) |module| module.CloseACodec(stream);
     _media.free(stream);
     if (stream.owns_file) {
         if (stream.file) |file| _ = base.dos_base.Close(file);
@@ -159,7 +76,30 @@ pub fn destroy(stream: *Stream) void {
     if (stream.tags.picture_block) |block| base.sys_base.FreeVec(block);
     if (stream.tags.spent_picture) |block| base.sys_base.FreeVec(block);
     if (stream.tags.chapters) |list| base.sys_base.FreeVec(list);
+    if (moduleOf(stream)) |module| base.sys_base.CloseLibrary(module.lib());
     base.sys_base.FreeVec(stream);
+}
+
+/// The stream's module, as its calls are made.
+pub fn moduleOf(stream: *Stream) ?*ACodecBase {
+    return @ptrCast(stream.module);
+}
+
+/// The module of `codec` opened for the stream, unless it has one: false
+/// when the disk has none.
+pub fn openModule(stream: *Stream, codec: u32) ?*ACodecBase {
+    if (moduleOf(stream)) |module| return module;
+    const name = acodec.moduleName(codec) orelse return null;
+    stream.module = stream.base.sys_base.OpenLibrary(name, 1);
+    return moduleOf(stream);
+}
+
+/// The kind's state, cleared, in memory of its own: made once, and given
+/// back at CloseACodec. Null when there is no memory for it.
+pub fn stateOf(stream: *Stream, comptime T: type) ?*T {
+    const made = stream.state orelse stream.base.sys_base.AllocVec(@sizeOf(T), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return null;
+    stream.state = made;
+    return @ptrCast(@alignCast(made));
 }
 
 /// The tags emptied for the next link of a chain, which brings its own:

@@ -442,6 +442,16 @@ a download, a network stream - and finds the kind by its first bytes.
 `DecodeAudio` then fills a buffer with as many frames as asked for,
 until the end; the file is decoded as it plays, never whole.
 
+Each kind's code is a module of its own in `LIBS:codecs/` (1.10):
+`wav.acodec`, `mp3.acodec`, `flac.acodec`, `vorbis.acodec`, `aac.acodec`,
+`ac3.acodec`, `opus.acodec`, each with the calls of `sdk.interface.acodec`
+([md](../autodocs/acodec.md)) and the stream they share, `sdk.acodec`. The
+codec names the file, and only the module a stream needs is loaded, until
+`Avail FLUSH` or low memory takes it again. Finding out what a file is
+(`IdentifyAudio`) loads nothing. Without its module on the disk a kind is
+refused, `ACERR_UNSUPPORTED`; a new file of that name is taken once the old
+one has gone from memory.
+
 ```zig
 const acb: *sdk.interface.audiocodec.AudioCodecBase = @ptrCast(sys.OpenLibrary(ac.AUDIOCODECNAME, 1) orelse return);
 defer sys.CloseLibrary(@ptrCast(acb));

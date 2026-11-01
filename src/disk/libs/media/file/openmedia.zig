@@ -9,8 +9,6 @@ const utility = sdk.utility;
 const MediaBase = @import("../media_base.zig").MediaBase;
 const _file = @import("_file.zig");
 const File = _file.File;
-const mp4 = @import("../mp4/_mp4.zig");
-const mkv = @import("../mkv/_mkv.zig");
 const ebml = @import("../mkv/ebml.zig");
 
 /// Opens a container file - MP4, Matroska - and reads its index.
@@ -35,9 +33,13 @@ const ebml = @import("../mkv/ebml.zig");
 /// when the file would not open, MERR_UNKNOWN for bytes that are not a
 /// container the library knows, MERR_UNSUPPORTED for an MP4 in fragments
 /// or one whose index lies behind its packets read through a function,
-/// MERR_READ, MERR_CORRUPT, MERR_NOMEMORY.
+/// MERR_READ, MERR_CORRUPT, MERR_NOMEMORY. MERR_UNSUPPORTED too when the
+/// disk has no module for the kind (SINCE 1.5).
 ///
 /// BEHAVIOR:
+/// The kind's code is a module of its own in LIBS:codecs/, opened until
+/// CloseMedia (SINCE 1.5): mp4.container, mkv.container.
+///
 /// The kind is found by the first bytes: a Matroska file begins with
 /// EBML's header, an MP4 with a box of the kinds one begins with -
 /// `ftyp`, or QuickTime's `moov`, `mdat`, `wide`, `free`.
@@ -105,7 +107,8 @@ pub fn OpenMedia(base: *MediaBase, tags: ?[*]const utility.TagItem, err: ?*i32) 
     // Cleared: every field of a file starts at zero.
     const memory = sys.AllocVec(@sizeOf(File), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return failed(err, media.MERR_NOMEMORY);
     const file: *File = @ptrCast(@alignCast(memory));
-    file.base = base;
+    file.layout = sdk.mcontainer.MCONTAINER_LAYOUT;
+    file.base = .{ .sys_base = sys, .dos_base = dl, .utility_base = ub };
     file.info = .{};
     file.tags.keep_picture = ub.GetTagData(media.MDA_KeepPicture, 0, tags) != 0;
     sys.InitSemaphore(&file.lock);
@@ -134,17 +137,22 @@ pub fn OpenMedia(base: *MediaBase, tags: ?[*]const utility.TagItem, err: ?*i32) 
 
     file.subtitles = ~@as(u32, 0);
     const kind = if (hint != media.MEDIA_UNKNOWN) hint else kindOf(file);
-    const result = switch (kind) {
-        media.MEDIA_MP4 => mp4.open(file, hint == media.MEDIA_UNKNOWN),
-        media.MEDIA_MKV => mkv.open(file),
-        else => media.MERR_UNKNOWN,
-    };
+    const result = openKind(file, kind, hint == media.MEDIA_UNKNOWN);
     if (result != media.MERR_OK) {
         _file.destroy(file);
         return failed(err, result);
     }
     if (err) |out| out.* = media.MERR_OK;
     return _file.publicOf(file);
+}
+
+/// The file opened by its kind's module: MERR_UNSUPPORTED when the disk
+/// has none.
+fn openKind(file: *File, kind: u32, check: bool) i32 {
+    const name = sdk.mcontainer.moduleName(kind) orelse return media.MERR_UNKNOWN;
+    file.module = file.base.sys_base.OpenLibrary(name, 1);
+    const module = _file.moduleOf(file) orelse return media.MERR_UNSUPPORTED;
+    return module.OpenContainer(file, check);
 }
 
 /// The kind by the first four bytes - EBML's header, else an MP4's to be

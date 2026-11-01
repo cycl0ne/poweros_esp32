@@ -97,7 +97,8 @@ pub fn open(stream: *Stream) i32 {
     stream.info.codec = ac.ACODEC_WAV;
     stream.info.frames = @intCast(@min(wav.data_bytes / wav.block_align, 0xFFFF_FFFF));
     stream.info.bitrate = stream.info.rate * wav.block_align * 8;
-    stream.codec = .{ .wav = wav };
+    const state = _stream.stateOf(stream, Wav) orelse return ac.ACERR_NOMEMORY;
+    state.* = wav;
     return ac.ACERR_OK;
 }
 

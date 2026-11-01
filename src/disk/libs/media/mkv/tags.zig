@@ -114,7 +114,7 @@ fn number(text: []const u8) u32 {
 /// A track's tag: the numbers its muxer counted.
 fn trackTag(file: *File, uid: u64, name: []const u8, text: []const u8) void {
     const track = for (file.tracks[0..file.track_count]) |*track| {
-        if (track.mkv.uid == uid) break track;
+        if (blocks.trackOf(track).uid == uid) break track;
     } else return;
     const out = &track.info;
     if (same(name, "NUMBER_OF_FRAMES")) {
@@ -123,7 +123,7 @@ fn trackTag(file: *File, uid: u64, name: []const u8, text: []const u8) void {
         out.bitrate = number(text);
     } else if (same(name, "DURATION")) {
         if (durationOf(text)) |nanos| {
-            const presented = nanos -| track.mkv.delay_ns;
+            const presented = nanos -| blocks.trackOf(track).delay_ns;
             out.duration = presented / 1000;
             out.length = blocks.ticksOf(presented, out.timescale);
         }

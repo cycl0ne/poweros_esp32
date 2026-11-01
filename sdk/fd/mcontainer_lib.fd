@@ -1,0 +1,30 @@
+// SPDX-License-Identifier: MIT
+//! A container module's functions (SINCE media 1.5): what media.library
+//! calls a kind of container's code in LIBS:codecs/ with
+//! (sdk/libs/media/mcontainer.zig); the base is the module's, opened with
+//! OpenLibrary("codecs/<kind>.container"). Two tasks may each read a track
+//! of their own at once; `file.lock` lets one at a time at the source. A
+//! module answers MERR_UNSUPPORTED to a file whose layout is not its own.
+##include libs/media/mcontainer as mcontainer
+##include libs/media/media as media
+##interface
+##basetype MContainerBase
+##name mcontainer
+##bias 4
+##public
+/// The file's index read, its tracks and tags made out of it, and every
+/// track at its first packet: 0, or MERR_*. With `check`, MERR_UNKNOWN when
+/// the bytes are not its kind's. On what opened the file, which it reads.
+i32 OpenContainer(*mcontainer.MediaContainerFile file, bool check)
+/// What the module holds of the file given back, if it made anything:
+/// after a failed open too. The file and its tracks' buffers stay the
+/// library's.
+void CloseContainer(*mcontainer.MediaContainerFile file)
+/// The track's next packet into `packet`: 0, MERR_END, or MERR_*. Its
+/// bytes are in the track's buffer, good until the track's next read or
+/// seek.
+i32 ReadContainerPacket(*mcontainer.MediaContainerFile file, u32 track, *media.MediaPacket packet)
+/// The track moved to the key packet at or before `time`, in microseconds:
+/// 0, or MERR_*. The file can seek; `track` is one it has.
+i32 SeekContainer(*mcontainer.MediaContainerFile file, u32 track, i64 time)
+##end

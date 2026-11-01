@@ -475,9 +475,15 @@ fn OpenAudioStream(base: *AudioCodecBase, tags: ?[*]const utility.TagItem, err: 
 
 **RESULT**
 
-The stream, at its first sample; or null, with `err` set.
+The stream, at its first sample; or null, with `err` set:
+ACERR_UNSUPPORTED too when the disk has no module for the kind
+(SINCE 1.10).
 
 **BEHAVIOR**
+
+A kind's code is a module of its own in LIBS:codecs/, opened until
+CloseAudioStream (SINCE 1.10): wav.acodec, mp3.acodec, flac.acodec,
+vorbis.acodec, aac.acodec, ac3.acodec, opus.acodec.
 
 The stream reads ahead of the decoder into a buffer of its own, and
 finds the kind by the first bytes (as `IdentifyAudio`) unless

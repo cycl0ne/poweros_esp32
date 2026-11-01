@@ -65,10 +65,12 @@ pub const Mp3 = struct {
     ticks: u64,
 };
 
-fn begin(stream: *Stream) *Mp3 {
-    stream.codec = .{ .mp3 = undefined };
-    const m = &stream.codec.mp3;
-    // The stream came cleared; what the union put there is set again.
+comptime {
+    if (layer3.max_samples_per_frame != sdk.acodec.ACODEC_MOST_SAMPLES) @compileError("a stream holds an MP3 frame's samples");
+}
+
+fn begin(stream: *Stream) ?*Mp3 {
+    const m = _stream.stateOf(stream, Mp3) orelse return null;
     m.dec = .{};
     m.first_frame = 0;
     m.frame_samples = 0;
@@ -92,7 +94,7 @@ pub fn open(stream: *Stream) i32 {
     skipId3v2(stream);
     if (stream.stop - stream.start < _stream.input_bytes / 2) _stream.fill(stream);
 
-    const m = begin(stream);
+    const m = begin(stream) orelse return ac.ACERR_NOMEMORY;
 
     // The first frame: found, but not decoded.
     var info: layer3.FrameInfo = .{};
@@ -159,7 +161,7 @@ pub fn open(stream: *Stream) i32 {
 /// III, what the stream is - and kept to be decoded first.
 pub fn openTrack(stream: *Stream, track: *const media.MediaTrack) i32 {
     _ = track;
-    const m = begin(stream);
+    const m = begin(stream) orelse return ac.ACERR_NOMEMORY;
     var packet: media.MediaPacket = .{};
     const bytes = _media.next(stream, &packet) orelse return if (stream.failed) ac.ACERR_READ else ac.ACERR_CORRUPT;
     var info: layer3.FrameInfo = .{};

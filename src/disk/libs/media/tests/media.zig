@@ -27,6 +27,7 @@ const utility = sdk.utility;
 const host = @import("host_rom");
 const kexec = host.exec;
 const media_init = @import("../media_init.zig");
+const container_modules = @import("modules.zig");
 
 const testing = std.testing;
 const DosBase = sdk.interface.dos.DosBase;
@@ -81,6 +82,8 @@ const Rig = struct {
     library: *exec.Library = undefined,
     mb: *MediaBase = undefined,
 
+    containers: container_modules.Made = undefined,
+
     fn init(rig: *Rig) !void {
         rig.* = .{ .db = try host.dos.testSetUp() };
         rig.region = rig.sysLib().AddMemList(lent.len, exec.MEMF_ANY, 0, &lent, "lent").?;
@@ -101,6 +104,7 @@ const Rig = struct {
 
         const lib = kexec.InitResident(kexec.SysBase, &media_init.media_library_tag, null) orelse return error.NoLibrary;
         rig.library = @ptrCast(@alignCast(lib));
+        try container_modules.make(kexec, &rig.containers);
         rig.mb = @ptrCast(rig.sysLib().OpenLibrary(media.MEDIANAME, 1) orelse return error.NoBase);
     }
 
@@ -117,6 +121,7 @@ const Rig = struct {
     fn deinit(rig: *Rig) !void {
         rig.sysLib().CloseLibrary(rig.mb.lib());
         _ = rig.sysLib().RemLibrary(rig.library);
+        container_modules.take(rig.sysLib(), &rig.containers);
         try testing.expect(kexec.FindName(kexec.SysBase, &kexec.SysBase.lib_list, media.MEDIANAME) == null);
         Disk.disk.deinit();
         kexec.SysBase.cpu().this_task = rig.saved.?;
@@ -1022,4 +1027,44 @@ test "Matroska by hand: lacing, header stripping, sizes not known, setups made, 
     chapters = 9;
     _ = mb.GetMediaAttrs(read, &[_]utility.TagItem{ .{ .tag = media.MDA_Chapters, .data = @intFromPtr(&chapters) }, .{} });
     try testing.expectEqual(@as(u32, 0), chapters);
+}
+
+test "a kind with no module on the disk: found out what it is, refused, and read once it is there" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const mb = rig.mb;
+    const module = rig.containers[container_modules.mp4];
+    const name = module.node.name;
+
+    module.node.name = "gone";
+    try testing.expectEqual(media.MEDIA_MP4, mb.IdentifyMedia(film_mp4.ptr, @intCast(film_mp4.len)));
+    var memory: Memory = .{ .bytes = film_mp4 };
+    var err: i32 = -99;
+    try testing.expect(openMemory(mb, &memory, &err) == null);
+    try testing.expectEqual(media.MERR_UNSUPPORTED, err);
+    module.node.name = name;
+
+    memory = .{ .bytes = film_mp4 };
+    const film = openMemory(mb, &memory, &err) orelse return error.NoFile;
+    try testing.expectEqual(@as(@TypeOf(module.open_cnt), 1), module.open_cnt);
+    mb.CloseMedia(film);
+    try testing.expectEqual(@as(@TypeOf(module.open_cnt), 0), module.open_cnt);
+}
+
+test "a container module refuses a file of another layout" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const module: *sdk.interface.mcontainer.MContainerBase = @ptrCast(rig.sysLib().OpenLibrary("codecs/mkv.container", 1) orelse return error.NoModule);
+    defer rig.sysLib().CloseLibrary(module.lib());
+
+    const Other = struct {
+        var file: sdk.mcontainer.MediaContainerFile = undefined;
+    };
+    @memset(std.mem.asBytes(&Other.file), 0);
+    Other.file.layout = sdk.mcontainer.MCONTAINER_LAYOUT + 1;
+    try testing.expectEqual(media.MERR_UNSUPPORTED, module.OpenContainer(&Other.file, true));
+    // Nothing made, nothing to give back.
+    module.CloseContainer(&Other.file);
 }

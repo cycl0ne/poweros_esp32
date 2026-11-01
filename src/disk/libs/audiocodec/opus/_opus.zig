@@ -103,9 +103,8 @@ pub const Opus = struct {
     broken: i32,
 };
 
-fn fresh(stream: *Stream) *Opus {
-    stream.codec = .{ .opus = undefined };
-    const o = &stream.codec.opus;
+fn fresh(stream: *Stream) ?*Opus {
+    const o = _stream.stateOf(stream, Opus) orelse return null;
     o.* = .{
         .ogg = undefined,
         .pool = null,
@@ -141,7 +140,7 @@ fn fresh(stream: *Stream) *Opus {
 /// The head and the comments read: the info filled in, the stream at the
 /// first audio packet.
 pub fn open(stream: *Stream) i32 {
-    const o = fresh(stream);
+    const o = fresh(stream) orelse return ac.ACERR_NOMEMORY;
     ogg.begin(&o.ogg, null);
     const result = headers(stream, o);
     if (result != ac.ACERR_OK) return result;
@@ -150,7 +149,7 @@ pub fn open(stream: *Stream) i32 {
 
 /// A track of a container: its `dOps` the head, the info filled in.
 pub fn openTrack(stream: *Stream, track: *const media.MediaTrack) i32 {
-    const o = fresh(stream);
+    const o = fresh(stream) orelse return ac.ACERR_NOMEMORY;
     var head: Head = undefined;
     if (track.config) |config| {
         head = readDops(config[0..track.config_size]) orelse return ac.ACERR_CORRUPT;

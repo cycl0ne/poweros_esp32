@@ -106,16 +106,15 @@ pub const Vorbis = struct {
 /// The headers read: the info filled in, the stream at the first audio
 /// packet.
 pub fn open(stream: *Stream) i32 {
-    const v = fresh(stream);
+    const v = fresh(stream) orelse return ac.ACERR_NOMEMORY;
     ogg.begin(&v.ogg, null);
     const result = headers(stream, v);
     if (result != ac.ACERR_OK) return result;
     return settle(stream, v);
 }
 
-fn fresh(stream: *Stream) *Vorbis {
-    stream.codec = .{ .vorbis = undefined };
-    const v = &stream.codec.vorbis;
+fn fresh(stream: *Stream) ?*Vorbis {
+    const v = _stream.stateOf(stream, Vorbis) orelse return null;
     v.* = .{
         .ogg = undefined,
         .pool = null,
@@ -153,7 +152,7 @@ fn fresh(stream: *Stream) *Vorbis {
 /// is, its comments, which the container's tags stand for, and the setup
 /// - the info filled in.
 pub fn openTrack(stream: *Stream, track: *const media.MediaTrack) i32 {
-    const v = fresh(stream);
+    const v = fresh(stream) orelse return ac.ACERR_NOMEMORY;
     const laced = (track.config orelse return ac.ACERR_CORRUPT)[0..track.config_size];
     // A byte of 2, the first two lengths in bytes of 255 and one less.
     if (laced.len < 1 or laced[0] != 2) return ac.ACERR_CORRUPT;

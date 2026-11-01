@@ -76,9 +76,8 @@ pub const Ac3 = struct {
     resync: bool,
 };
 
-fn begin(stream: *Stream) *Ac3 {
-    stream.codec = .{ .ac3 = undefined };
-    const a = &stream.codec.ac3;
+fn begin(stream: *Stream) ?*Ac3 {
+    const a = _stream.stateOf(stream, Ac3) orelse return null;
     a.* = .{
         .pool = null,
         .decoder = undefined,
@@ -174,7 +173,7 @@ fn startFrame(stream: *Stream, a: *Ac3, peeked: *const header.Header, bytes: []c
 /// The stream's bytes made a stream of syncframes.
 pub fn open(stream: *Stream) i32 {
     _stream.fill(stream);
-    const a = begin(stream);
+    const a = begin(stream) orelse return ac.ACERR_NOMEMORY;
     // The first frame the next one agrees with, within 64 KiB.
     const from = _stream.tell(stream);
     while (!framed(stream, null)) {
@@ -267,7 +266,7 @@ fn nextRawFrame(stream: *Stream, a: *Ac3) bool {
 /// A track of a container (`_media.zig`): what it is by the first
 /// packet's frame - by the track's own word where it has none.
 pub fn openTrack(stream: *Stream, track: *const media.MediaTrack) i32 {
-    const a = begin(stream);
+    const a = begin(stream) orelse return ac.ACERR_NOMEMORY;
     const source = &stream.media;
     var h: header.Header = .{
         .eac3 = track.codec == media.MCODEC_EAC3,

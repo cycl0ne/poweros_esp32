@@ -69,6 +69,12 @@ pub const videocodec = @import("libs/videocodec/videocodec.zig");
 /// A codec module's structures: a decoder of pictures in LIBS:codecs/,
 /// which videocodec.library chooses for a film.
 pub const vcodec = @import("libs/videocodec/vcodec.zig");
+/// A sound module's structures: one kind of sound's code in LIBS:codecs/,
+/// which audiocodec.library opens for a stream.
+pub const acodec = @import("libs/audiocodec/acodec.zig");
+/// A container module's structures: one kind of container's code in
+/// LIBS:codecs/, which media.library opens for a file.
+pub const mcontainer = @import("libs/media/mcontainer.zig");
 /// What the Player that runs plays, asked at its public port.
 pub const player = @import("libs/player/player.zig");
 /// A packet filter on the stack's packet hooks, through filter.library.
