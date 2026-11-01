@@ -998,3 +998,7 @@ several cores.
 `C:test/Cores` sets tasks on each other through all of the above - FREE
 lets them run flat out, PIN shares them out over the cores in turn - and
 checks that nothing overlapped and nothing was lost.
+
+A program with more to do than one core gets through hands some of it to
+the others - a task of its own, a job in parts, a job beside it: [Work on
+more cores](cores.md).

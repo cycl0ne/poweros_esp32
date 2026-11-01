@@ -73,10 +73,12 @@ pub const MCODEC_H265: u32 = 2;
 pub const MCODEC_MJPEG: u32 = 3;
 /// MPEG-4 Part 2 video.
 pub const MCODEC_MPEG4V: u32 = 4;
-/// VP8 and VP9, Google's (SINCE 1.2): no setup.
+/// VP8 and VP9, Google's (SINCE 1.2): no setup. In an MP4 too, its
+/// `vp08` and `vp09` entries (SINCE 1.4).
 pub const MCODEC_VP8: u32 = 5;
 pub const MCODEC_VP9: u32 = 6;
-/// AV1 (SINCE 1.2): the setup is its av1C record.
+/// AV1 (SINCE 1.2): the setup is its av1C record. In an MP4 too, its
+/// `av01` entry (SINCE 1.4).
 pub const MCODEC_AV1: u32 = 7;
 /// AAC: the setup is the AudioSpecificConfig - the object type, the rate,
 /// the channels.

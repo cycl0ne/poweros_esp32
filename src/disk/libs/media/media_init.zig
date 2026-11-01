@@ -12,8 +12,8 @@ const media_lvo = @import("media_lvo.zig");
 
 pub const LIBRARY_NAME = sdk.media.MEDIANAME;
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 3;
-const BUILD_DATE = "30.10.2026";
+pub const LIBRARY_REVISION = 4;
+const BUILD_DATE = "01.11.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

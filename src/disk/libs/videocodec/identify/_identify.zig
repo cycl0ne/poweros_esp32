@@ -6,9 +6,10 @@
 //! is the `moov` box. In it each track is a `trak`, whose `mdia` says
 //! what it holds (`hdlr`: `vide` for pictures) and whose sample table
 //! (`minf`, `stbl`, `stsd`) names the codec by its first entry's four
-//! letters: `avc1` or `avc3` H.264, `hvc1` or `hev1` H.265, `jpeg` and
-//! its kin Motion JPEG. An `mp4v` entry is MPEG-4's, whose descriptor
-//! (`esds`) names the codec by a number: 0x6C JPEG, 0x20 MPEG-4 Part 2.
+//! letters: `avc1` or `avc3` H.264, `hvc1` or `hev1` H.265, `vp08` VP8,
+//! `vp09` VP9, `av01` AV1, `jpeg` and its kin Motion JPEG. An `mp4v`
+//! entry is MPEG-4's, whose descriptor (`esds`) names the codec by a
+//! number: 0x6C JPEG, 0x20 MPEG-4 Part 2.
 //!
 //! A file whose index lies behind the bytes given - at its end, as a film
 //! written in one go has it - says nothing yet. A Matroska file names its
@@ -58,6 +59,9 @@ fn entryCodec(entry: []const u8) u32 {
     const kind = entry[4..8];
     if (same(kind, "avc1") or same(kind, "avc3")) return vc.VCODEC_H264;
     if (same(kind, "hvc1") or same(kind, "hev1")) return vc.VCODEC_H265;
+    if (same(kind, "vp08")) return vc.VCODEC_VP8;
+    if (same(kind, "vp09")) return vc.VCODEC_VP9;
+    if (same(kind, "av01")) return vc.VCODEC_AV1;
     for ([_]*const [4]u8{ "jpeg", "mjpa", "mjpb", "MJPG" }) |name| {
         if (same(kind, name)) return vc.VCODEC_MJPEG;
     }

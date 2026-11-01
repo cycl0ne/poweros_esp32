@@ -31,6 +31,7 @@ comptime {
 /// Libraries: making, adding, opening, patching, expunging (library/, and
 /// the four standard vectors in exec_base.zig).
 const _library = @import("library/_library.zig");
+const _workers = @import("task/_workers.zig");
 const exec_base = @import("exec_base.zig");
 /// Memory regions, pools and the allocation trace (memory/).
 const _memory = @import("memory/_memory.zig");
@@ -162,6 +163,7 @@ pub const SignalWaitable = @import("waitable/signalwaitable.zig").SignalWaitable
 pub const ResetWaitable = @import("waitable/resetwaitable.zig").ResetWaitable;
 pub const WaitForAny = @import("waitable/waitforany.zig").WaitForAny;
 pub const ShareWork = @import("task/sharework.zig").ShareWork;
+pub const PostWork = @import("task/postwork.zig").PostWork;
 pub const CreateTask = @import("task/createtask.zig").CreateTask;
 pub const NewStackRun = @import("task/newstackrun.zig").NewStackRun;
 pub const startMultitasking = _task.startMultitasking;
@@ -3138,6 +3140,89 @@ test "ShareWork: the whole job the caller's, as one part, without workers or whe
     try testing.expectEqual(@as(u32, 1), ShareWork(SysBase, &Calls.work, &calls, 1));
     try testing.expectEqual(@as(u32, 6), calls.count);
     try testing.expectEqual(@as(u32, 1), calls.parts);
+}
+
+/// Posted jobs that count how often they ran, and in what order.
+const Jobs = struct {
+    var order: [8]u8 = @splat(0);
+    var ran: usize = 0;
+    var then: ?*sdk.exec.WorkJob = null;
+
+    fn note(job: *sdk.exec.WorkJob) callconv(.c) void {
+        order[ran] = @truncate(@intFromPtr(job.data));
+        ran += 1;
+    }
+
+    /// A job that posts another.
+    fn postAnother(job: *sdk.exec.WorkJob) callconv(.c) void {
+        note(job);
+        PostWork(SysBase, then.?);
+    }
+};
+
+test "PostWork: run at once and replied with one core; with workers queued by the poster's priority, taken in order, and ShareWork does without a busy worker" {
+    try setUp();
+    defer deinit();
+    Jobs.ran = 0;
+    const port = CreateMsgPort(SysBase).?;
+
+    // One core - the host - and no workers: the poster runs it, and it is
+    // replied before PostWork returns.
+    var alone = sdk.exec.WorkJob{ .message = .{ .reply_port = port }, .work = &Jobs.note, .data = @ptrFromInt(1) };
+    PostWork(SysBase, &alone);
+    try testing.expectEqual(@as(usize, 1), Jobs.ran);
+    try testing.expectEqual(@as(?*sdk.exec.Message, &alone.message), GetMsg(SysBase, port));
+    try testing.expectEqual(NodeType.replymsg, alone.message.node.type);
+
+    // Two workers, both claimed for a part: posted jobs wait in the queue,
+    // the poster's priority first, the order posted among the same.
+    const pool = &SysBase.workers;
+    _workers.initQueue(SysBase);
+    pool.workers[0] = .{ .core = 0, .state = .part };
+    pool.workers[1] = .{ .core = 1, .state = .part };
+    pool.count = 2;
+    defer pool.count = 0;
+    const me = FindTask(SysBase, null).?;
+    const pri = me.node.pri;
+    defer me.node.pri = pri;
+    var jobs: [4]sdk.exec.WorkJob = undefined;
+    for (&jobs, 0..) |*job, i| job.* = .{ .message = .{ .reply_port = port }, .work = &Jobs.note, .data = @ptrFromInt(10 + i) };
+    me.node.pri = 0;
+    PostWork(SysBase, &jobs[0]);
+    me.node.pri = 5;
+    PostWork(SysBase, &jobs[1]);
+    PostWork(SysBase, &jobs[2]);
+    try testing.expectEqual(@as(usize, 1), Jobs.ran);
+    try testing.expectEqual(@as(i8, 5), jobs[2].message.node.pri);
+
+    // A worker claimed for a part takes none; an idle one takes them all.
+    const worker = &pool.workers[1];
+    try testing.expect(_workers.take(SysBase.iface(), pool, worker) == null);
+    worker.state = .idle;
+    const first = _workers.take(SysBase.iface(), pool, worker).?;
+    try testing.expectEqual(&jobs[1], first);
+    try testing.expectEqual(_workers.State.jobs, worker.state);
+
+    // While it runs posted jobs, ShareWork does without it: the job alone.
+    const Nothing = struct {
+        fn work(_: ?*anyopaque, _: u32, _: u32) callconv(.c) void {}
+    };
+    InitSemaphore(SysBase, &pool.lock);
+    pool.workers[0].state = .jobs;
+    try testing.expectEqual(@as(u32, 1), ShareWork(SysBase, &Nothing.work, null, 4));
+
+    // A job that posts a job: the new one queued behind its equals.
+    Jobs.then = &jobs[3];
+    first.work = &Jobs.postAnother;
+    first.work(first);
+    try testing.expectEqual(&jobs[2], _workers.take(SysBase.iface(), pool, worker).?);
+    try testing.expectEqual(&jobs[3], _workers.take(SysBase.iface(), pool, worker).?);
+    try testing.expectEqual(&jobs[0], _workers.take(SysBase.iface(), pool, worker).?);
+    try testing.expect(_workers.take(SysBase.iface(), pool, worker) == null);
+    try testing.expectEqual(_workers.State.idle, worker.state);
+    try testing.expectEqual(@as(u32, 0), pool.job_lock.state);
+    DeleteMsgPort(SysBase, port);
+    try expectNoLeaks();
 }
 
 test "waitables: SignalWaitable, ResetWaitable, WaitForAny's answers, a waiter woken, timed out and withdrawn" {

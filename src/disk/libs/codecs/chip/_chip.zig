@@ -13,6 +13,10 @@
 //! the next frame is taken; another packet sent meanwhile is refused
 //! (VCERR_FULL). A frame is the chip's buffer, lent out as it is; its NV12
 //! planes are the frame's picture.
+//!
+//! A track of a profile the chip has not - H.264 deeper than 8 bits or
+//! with more colour than halved both ways, H.265's range extensions - is
+//! refused when it opens (VCERR_UNSUPPORTED), for the software's module.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -102,6 +106,8 @@ fn open(sys: *ExecBase, params: *const vcodec.VCodecParams, code: *i32) ?*vcodec
     const config: []const u8 = if (params.config) |bytes| bytes[0..params.config_size] else &.{};
     const setup = (if (codec == videodec.VDCODEC_H265) annexb.hevcSetup(config, null) else annexb.avcSetup(config, null)) orelse
         return failed(code, vc.VCERR_CORRUPT);
+    // A profile the chip has not: the software's, at once.
+    if (!annexb.chipTakes(codec == videodec.VDCODEC_H265, config)) return failed(code, vc.VCERR_UNSUPPORTED);
     const memory = sys.AllocVec(@sizeOf(Decoder), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return failed(code, vc.VCERR_NOMEMORY);
     const c: *Decoder = @ptrCast(@alignCast(memory));
     c.* = .{ .sys = sys, .vb = vb, .decoder = undefined, .codec = codec, .length_size = setup.length_size, .held = params.held };
