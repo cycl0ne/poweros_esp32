@@ -141,6 +141,9 @@ pub const Scene = struct {
         clear_depth: f32 = 1,
         load: bool = false,
         area: ?Area = null,
+        /// With `load` and an `area`: the tiles the area covers whole are
+        /// not loaded, being cleared and wholly drawn over anyway.
+        clear_inside: bool = false,
     };
 
     /// A new frame: nothing of the last but the image.
@@ -157,6 +160,7 @@ pub const Scene = struct {
             .tile_lists = scene.tile_lists.address,
             .binned = true,
             .load = how.load,
+            .clear_inside = how.clear_inside,
             .depth = how.depth,
             .clear_depth = how.clear_depth,
             .area = how.area,
@@ -233,9 +237,15 @@ pub const Scene = struct {
     fn finish(scene: *Scene) bool {
         v3d.frame.endBin(&scene.bin);
         var tile_list = cl.List{ .at = scene.lists.cpu, .address = scene.lists.address };
-        v3d.frame.writeTileList(&tile_list, &scene.frame);
+        v3d.frame.writeTileList(&tile_list, &scene.frame, scene.frame.load);
+        var inside: ?v3d.frame.TileList = null;
+        if (scene.frame.clear_inside) {
+            var plain = cl.List{ .at = scene.lists.cpu + 512, .address = scene.lists.address + 512 };
+            v3d.frame.writeTileList(&plain, &scene.frame, false);
+            inside = .{ .start = plain.address, .end = plain.here() };
+        }
         var render = cl.List{ .at = scene.lists.cpu + 1024, .address = scene.lists.address + 1024 };
-        v3d.frame.writeRender(&render, &scene.frame, tile_list.address, tile_list.here());
+        v3d.frame.writeRender(&render, &scene.frame, .{ .start = tile_list.address, .end = tile_list.here() }, inside);
         const space = scene.space;
         space.toGpu(&scene.image);
         space.toGpu(&scene.lists);
@@ -754,4 +764,28 @@ pub fn areaTest(scene: *Scene) i32 {
         tally.check(x, y, scene.pixel(x, y), if (in) a_pixel else backdrop, 0);
     };
     return tally.report(scene.dl, "area", scene.took_us);
+}
+
+/// The same, with the tiles the area covers whole left unloaded: they are
+/// cleared by the renderer and drawn over, so nothing of the image is wanted
+/// under them. The area is on a tile's edge to the left and top and ragged
+/// to the right and bottom, so that both kinds of tile are drawn - 20 of the
+/// 30 here are covered whole, the other 10 must keep what lies outside.
+pub fn insideTest(scene: *Scene) i32 {
+    var corners: [6]Vertex = undefined;
+    scene.begin(.{});
+    if (!scene.finish()) return dos.RETURN_FAIL;
+    rectangle(&corners, 0, 0, width, height, 0.5, Nothing{});
+    const inside = Area{ .left = 128, .top = 128, .right = 500, .bottom = 440 };
+    scene.begin(.{ .clear = 0xFF00_0000, .load = true, .area = inside, .clear_inside = true });
+    scene.draw(.{ .fragment = qpu.flat_fragment, .uniforms = &a_colour, .vertices = &corners, .clip = inside });
+    if (!scene.finish()) return dos.RETURN_FAIL;
+    var tally = Tally{};
+    for (0..height) |row| for (0..width) |column| {
+        const x: u32 = @intCast(column);
+        const y: u32 = @intCast(row);
+        const in = x >= inside.left and x < inside.right and y >= inside.top and y < inside.bottom;
+        tally.check(x, y, scene.pixel(x, y), if (in) a_pixel else backdrop, 0);
+    };
+    return tally.report(scene.dl, "inside", scene.took_us);
 }

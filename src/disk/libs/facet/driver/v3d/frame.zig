@@ -16,6 +16,13 @@ const most_supertiles: u32 = 256;
 /// program here, each a small part of half the VPM.
 const vcm_batches: u32 = 4;
 
+/// Where one tile's list lies: what `writeTileList` wrote, for the frame's
+/// list to branch each tile to.
+pub const TileList = struct {
+    start: u32,
+    end: u32,
+};
+
 /// A rectangle of pixels.
 pub const Area = struct {
     left: u32,
@@ -41,6 +48,12 @@ pub const Frame = struct {
     binned: bool,
     /// The tiles start with what the image holds, not the colour cleared.
     load: bool = false,
+    /// With `load` and an `area`: the area is cleared, so a tile the area
+    /// covers whole is not loaded after all - every pixel of it is either
+    /// the colour cleared or something drawn over it, and reading the image
+    /// for it is work thrown away. Only the tiles at the area's edge, which
+    /// must keep the pixels outside it, are loaded.
+    clear_inside: bool = false,
     /// There is a depth buffer, cleared to this; it stays in the tiles.
     depth: bool = false,
     clear_depth: f32 = 1.0,
@@ -133,10 +146,12 @@ pub fn writeBin(list: *List, frame: *const Frame, record: u32, attributes: u32, 
 }
 
 /// What each tile does, in its own list: `render` branches to it for every
-/// tile.
-pub fn writeTileList(list: *List, frame: *const Frame) void {
+/// tile. `load` is whether this list's tiles read the image first, which is
+/// `frame.load` unless the frame wants a second list for the tiles its
+/// cleared area covers whole.
+pub fn writeTileList(list: *List, frame: *const Frame, load: bool) void {
     list.byte(cl.TILE_COORDINATES_IMPLICIT);
-    if (frame.load) cl.load(list, frame.format, frame.swap_rb, frame.image, frame.stride);
+    if (load) cl.load(list, frame.format, frame.swap_rb, frame.image, frame.stride);
     list.byte(cl.END_OF_LOADS);
     // The binner starts each tile's list assuming triangles.
     cl.primListFormat(list, cl.LIST_TRIANGLES);
@@ -150,8 +165,12 @@ pub fn writeTileList(list: *List, frame: *const Frame) void {
     list.byte(cl.RETURN_FROM_SUB_LIST);
 }
 
-/// The frame's list: `tile_start` to `tile_end` is `writeTileList`'s.
-pub fn writeRender(list: *List, frame: *const Frame, tile_start: u32, tile_end: u32) void {
+/// The frame's list. `tiles` is `writeTileList`'s. `inside`, for a frame
+/// that clears inside an area, is a second one written without the load:
+/// the supertiles the area covers whole are pointed at that instead, which
+/// is what `clear_inside` is for. The renderer is told which list to branch
+/// to as it goes, so a row of supertiles costs at most two of those packets.
+pub fn writeRender(list: *List, frame: *const Frame, tiles: TileList, inside: ?TileList) void {
     const tiles_x = frame.tilesX();
     const tiles_y = frame.tilesY();
     cl.renderingCommon(list, frame.width, frame.height, tile_pixels, frame.depth or frame.stencil);
@@ -183,14 +202,25 @@ pub fn writeRender(list: *List, frame: *const Frame, tile_start: u32, tile_end: 
         list.byte(cl.END_OF_TILE_MARKER);
     }
     list.byte(cl.FLUSH_VCD_CACHE);
-    cl.genericTileList(list, tile_start, tile_end);
+    cl.genericTileList(list, tiles.start, tiles.end);
     const area = frame.area orelse Area{ .left = 0, .top = 0, .right = frame.width, .bottom = frame.height };
     const across = supertile_w * tile_pixels;
     const down = supertile_h * tile_pixels;
+    // Which of the two lists the renderer is on: `tiles`, the one the frame
+    // asked for, until a supertile wholly inside the area wants the other.
+    var pointed = false;
     var row = area.top / down;
     while (row < frame_h and row * down < area.bottom) : (row += 1) {
+        const rows_within = row * down >= area.top and (row + 1) * down <= area.bottom;
         var column = area.left / across;
         while (column < frame_w and column * across < area.right) : (column += 1) {
+            const within = inside != null and rows_within and
+                column * across >= area.left and (column + 1) * across <= area.right;
+            if (within != pointed) {
+                const which = if (within) inside.? else tiles;
+                cl.genericTileList(list, which.start, which.end);
+                pointed = within;
+            }
             cl.supertileCoordinates(list, column, row);
         }
     }

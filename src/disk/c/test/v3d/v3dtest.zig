@@ -2,7 +2,7 @@
 //! V3DTest: the BCM2712's V3D brought up a step at a time.
 //!
 //!   V3DTest UP/S,CLEAR/S,TRIANGLE/S,OVERFLOW/S,FAULT/S,CLOCK/S,SMOOTH/S,CLIP/S,
-//!           TEXTURE/S,MIP/S,FILTER/S,MODULATE/S,DEPTH/S,BLEND/S,AREA/S
+//!           TEXTURE/S,MIP/S,FILTER/S,MODULATE/S,DEPTH/S,BLEND/S,AREA/S,INSIDE/S
 //!
 //! Alone it asks only what is safe with the core off: the firmware's clock
 //! and the power manager's reset word. UP switches the core on and prints
@@ -14,7 +14,7 @@
 //! more. FAULT stores to a page that is not mapped, which the MMU has to
 //! report. CLOCK times the same picture of many layers with the clock as slow
 //! and as fast as it goes, which says what the firmware's figures do not:
-//! whether it runs at what it is set to. SMOOTH to AREA draw with the fragment programs and the state
+//! whether it runs at what it is set to. SMOOTH to INSIDE draw with the fragment programs and the state
 //! a pipeline has, each picture checked against the sum done here
 //! (fragments.zig). The core stays on after any of them. Each step is written to the kernel's log before it
 //! is taken, since a read of a register nothing answers halts the machine
@@ -34,7 +34,7 @@ pub const COMMAND_NAME = "V3DTest";
 const VERSION_STRING = "\x00$VER: V3DTest 0.2 (30.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "UP/S,CLEAR/S,TRIANGLE/S,OVERFLOW/S,FAULT/S,CLOCK/S,SMOOTH/S,CLIP/S,TEXTURE/S,MIP/S,FILTER/S,MODULATE/S,DEPTH/S,BLEND/S,AREA/S";
+const template = "UP/S,CLEAR/S,TRIANGLE/S,OVERFLOW/S,FAULT/S,CLOCK/S,SMOOTH/S,CLIP/S,TEXTURE/S,MIP/S,FILTER/S,MODULATE/S,DEPTH/S,BLEND/S,AREA/S,INSIDE/S";
 
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
     _ = args;
@@ -43,7 +43,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(lib);
     const dl: *DosBase = @ptrCast(lib);
 
-    var argv: [15]usize = @splat(0);
+    var argv: [16]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
@@ -123,7 +123,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const tests = [_]*const fn (*fragments.Scene) i32{
         &fragments.smoothTest, &fragments.clipTest,     &fragments.textureTest, &fragments.mipTest,
         &fragments.filterTest, &fragments.modulateTest, &fragments.depthTest,   &fragments.blendTest,
-        &fragments.areaTest,
+        &fragments.areaTest,   &fragments.insideTest,
     };
     var worst: i32 = dos.RETURN_OK;
     for (tests, argv[6..]) |run, asked| {
@@ -162,9 +162,9 @@ fn clearTest(sys: *ExecBase, dl: *DosBase, space: *v3d.Space, engine: *v3d.Engin
         .binned = false,
     };
     var tile_list = v3d.cl.List{ .at = lists.cpu, .address = lists.address };
-    v3d.frame.writeTileList(&tile_list, &frame);
+    v3d.frame.writeTileList(&tile_list, &frame, frame.load);
     var render_list = v3d.cl.List{ .at = lists.cpu + 1024, .address = lists.address + 1024 };
-    v3d.frame.writeRender(&render_list, &frame, tile_list.address, tile_list.here());
+    v3d.frame.writeRender(&render_list, &frame, .{ .start = tile_list.address, .end = tile_list.here() }, null);
     space.toGpu(&lists);
     if (!space.flush()) {
         _ = Printf(dl, "Its MMU does not flush\n", .{});
@@ -308,9 +308,9 @@ fn triangleTest(sys: *ExecBase, dl: *DosBase, space: *v3d.Space, engine: *v3d.En
         .binned = true,
     };
     var tile_list = v3d.cl.List{ .at = lists.cpu, .address = lists.address };
-    v3d.frame.writeTileList(&tile_list, &frame);
+    v3d.frame.writeTileList(&tile_list, &frame, frame.load);
     var render_list = v3d.cl.List{ .at = lists.cpu + 1024, .address = lists.address + 1024 };
-    v3d.frame.writeRender(&render_list, &frame, tile_list.address, tile_list.here());
+    v3d.frame.writeRender(&render_list, &frame, .{ .start = tile_list.address, .end = tile_list.here() }, null);
     var bin_list = v3d.cl.List{ .at = lists.cpu + 8192, .address = lists.address + 8192 };
     v3d.frame.writeBin(&bin_list, &frame, objects.address + record_at, 2, 3 * how.triangles);
     space.toGpu(&lists);
