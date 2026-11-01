@@ -1,12 +1,13 @@
 # Screenshots
 
 PowerOS 0.2 on the boards, in Espressif's QEMU and in QEMU's AArch64
-machine. Most screenshots
-are QEMU's (`./zig build qemu-display`, with the QEMU from
-`scripts/build-qemu.sh`), on the 1024×600 display the Waveshare 7" board
-has; the Player's were taken on the Olimex with `C:ScreenDump`, and the
-photos are the boards'. Every program shown is on the flash disk and
-runs from there.
+machine. The desktop's are QEMU's AArch64 machine at 1920×1080
+(`./zig build virt64-ramfb`), started from its NVMe system disk; the
+older ones are Espressif's QEMU (`./zig build qemu-display`, with the
+QEMU from `scripts/build-qemu.sh`), on the 1024×600 display the
+Waveshare 7" board has; the Player's were taken on the Olimex with
+`C:ScreenDump`, and the photos are the boards'. Every program shown is
+on the disk and runs from there.
 
 ## Four cores: the desktop on AArch64
 
@@ -94,11 +95,19 @@ is started from the shell with `cd SYS:dm`, `Stack 65536` and
 ![The desktop](desktop.png)
 
 The machine comes up on the desktop: an icon for each disk, the free
-memory in the screen's title, and here the flash disk `System` opened,
-showing its drawers with icons and the Trashcan, and its Programs. A
-double click opens a drawer or starts a program; icons are dragged
-between windows, into drawers and onto programs. See the
-[desktop guide](../../sdk/docs/guides/anvil.md).
+memory in the screen's title, the dock along the bottom edge, and here
+the system disk opened - its drawers with their icons and the Trashcan -
+with `programs` opened in front of it. A double click opens a drawer or
+starts a program; icons are dragged between windows, into drawers and
+onto programs. See the [desktop guide](../../sdk/docs/guides/anvil.md).
+
+![The desktop at work: Notepad, a drawer and a picture](desktop-work.png)
+
+The same desktop at work: `SYS:Programs/Notepad` with the boot script,
+the `programs` drawer behind it, and `SYS:Programs/MultiView` showing a
+PNG through picture.datatype, each in a window of its own on the one
+screen. The screen's title says which program the window in front
+belongs to.
 
 ## Two screens: the desktop in front of `C:test/Styles DARK`
 
@@ -123,11 +132,12 @@ internal SRAM and the 8 MiB of PSRAM. The blue block is the cursor.
 
 ![Notepad with S:Startup-Sequence](notepad.png)
 
-`Notepad S:Startup-Sequence`: the boot script in a window that is all
-textedit.gadget, with line numbers - the cursor's line in black - and the
-scroll bars in the window's border. The menus open and save, undo, cut
-and paste, find and replace; View turns word wrap and the line numbers
-on and off. The mouse wheel scrolls it, a double press selects a word and
+`Notepad S:Startup-Sequence`: the boot script in a window that is a
+ribbon over textedit.gadget, with line numbers - the cursor's line in
+black - and the scroll bars in the window's border. The ribbon's Home
+page holds the clipboard, undo and redo, and find, replace and select
+all; its View page turns word wrap and the line numbers on and off, and
+the menus do the same. The mouse wheel scrolls it, a double press selects a word and
 a third the whole line, and Return keeps a line's indentation.
 
 ## Partitions: `SYS:System/HDToolBox`
