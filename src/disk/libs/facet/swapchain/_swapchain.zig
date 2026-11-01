@@ -185,6 +185,17 @@ pub fn giveBack(swapchain: *Swapchain, sys: *ExecBase, index: u32) void {
 /// On the queue's task: image `index` shown, and the one shown before
 /// it free - or, copied out or not shown at all on a surface lost, free
 /// itself.
+///
+/// Being on that task, a present and the drawing of the next frame do not
+/// overlap: the queue plays a frame, then waits here while the surface
+/// shows it. For a composed window of 1920x1080 on the CM5 that is about
+/// 9 ms drawn and 9.4 ms shown, 48 frames a second where the display
+/// offers 60 (measured 01.11.2026, `C:test/facetwindow WIDTH 1920 HEIGHT
+/// 1080 FRAMES 300 V3D`). Neither half is wasted work - the show is
+/// layers.library's copy on to the display, at the ~1 GB/s this machine
+/// reaches - so what is left is that they are done one after the other.
+/// Overlapping them wants the present off this task, which is a change to
+/// how the queue is built and not a small one.
 pub fn show(swapchain: *Swapchain, sys: *ExecBase, index: u32) void {
     const surface = swapchain.surface;
     const shown = surface.ops.show(surface, &swapchain.pictures[index]);
