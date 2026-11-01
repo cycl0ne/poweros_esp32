@@ -19,6 +19,7 @@ const _host = @import("../host/_host.zig");
 const jh7110 = @import("../host/jh7110.zig");
 const _vectors = @import("../interrupt/_vectors.zig");
 const _state = @import("../host/_state.zig");
+const _resetport = @import("../reset/resetpciport.zig");
 
 const testing = std.testing;
 const Address = scan.Address;
@@ -942,6 +943,46 @@ test "DMA: what a function behind either host bridge moves sees the caches" {
     // measured to on the board.
     try testing.expect(_host.coherent(.ecam));
     try testing.expect(_host.coherent(.jh7110));
+}
+
+// --- a port's reset ---------------------------------------------------------------------
+
+test "a port is reset for its driver alone: claimed, no other driver's function, no bridge behind it" {
+    const owner: [*:0]const u8 = "xhci.device";
+    const other_owner: [*:0]const u8 = "other.device";
+    var port = pci.PCIDevice{ .header_type = pci.PCI_HEADER_BRIDGE };
+    var usb_function = pci.PCIDevice{ .parent = &port, .header_type = pci.PCI_HEADER_NORMAL };
+    var second = pci.PCIDevice{ .parent = &port, .header_type = pci.PCI_HEADER_NORMAL };
+    // Behind another bridge of the machine: nothing to do with this port.
+    var elsewhere_port = pci.PCIDevice{ .segment = 1, .header_type = pci.PCI_HEADER_BRIDGE };
+    var elsewhere = pci.PCIDevice{ .segment = 1, .parent = &elsewhere_port, .header_type = pci.PCI_HEADER_NORMAL, .owner = other_owner };
+    port.next = &usb_function;
+    usb_function.next = &second;
+    second.next = &elsewhere_port;
+    elsewhere_port.next = &elsewhere;
+
+    // Nobody's: not for a caller who has not claimed it.
+    try testing.expect(!_resetport.mayReset(&port, &usb_function));
+    usb_function.owner = owner;
+    try testing.expect(_resetport.mayReset(&port, &usb_function));
+    // The other function: free, or the same driver's, is no matter.
+    second.owner = owner;
+    try testing.expect(_resetport.mayReset(&port, &usb_function));
+    second.owner = other_owner;
+    try testing.expect(!_resetport.mayReset(&port, &usb_function));
+    second.owner = null;
+    // A switch behind the port: what it was set up with is not kept.
+    second.header_type = pci.PCI_HEADER_BRIDGE;
+    try testing.expect(!_resetport.mayReset(&port, &usb_function));
+    second.header_type = pci.PCI_HEADER_NORMAL;
+    // A bridge is not what it is for.
+    try testing.expect(!_resetport.mayReset(&port, &port));
+}
+
+test "a bridge that holds no PERST# has no port to reset" {
+    try testing.expect(!_host.hasLink(&.{ .sys = undefined, .chip = .ecam, .segment = 0 }));
+    try testing.expect(_host.hasLink(&.{ .sys = undefined, .chip = .jh7110, .segment = 0 }));
+    try testing.expect(_host.hasLink(&.{ .sys = undefined, .chip = .bcm2712, .segment = 0 }));
 }
 
 // --- a function reset behind the library's back ------------------------------------------

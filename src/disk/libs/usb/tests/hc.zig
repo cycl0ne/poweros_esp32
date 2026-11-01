@@ -121,6 +121,13 @@ pub const Function = extern struct {
     warm_resets: u32 = 0,
     /// The script: a SuperSpeed link that comes up in SS.Inactive.
     inactive: bool = false,
+    /// The script: it answers nothing, and whether the controller's reset
+    /// brings it back.
+    stuck: bool = false,
+    reset_cures: bool = true,
+    /// The script: a hub's ports, a bit each from bit 1, it says cannot be
+    /// pulled out of (DeviceRemovable).
+    fixed: u8 = 0,
     /// The script: its link's exit latencies from U1 and U2 in µs, in
     /// its BOS - none without - and the device feature it refuses.
     exits: [2]u16 = .{ 0, 0 },
@@ -163,6 +170,8 @@ pub const HC = extern struct {
     /// What the OUT packets brought, one after the other, as much as fits.
     sent: [4096]u8 = @splat(0),
     sent_length: u32 = 0,
+    /// How many times the controller was reset (UHCMD_USBRESET).
+    resets: u32 = 0,
     /// The clock: its unit, and the time asked of it, in microseconds.
     clock_unit: exec.Unit = .{},
     clock: u64 = 0,
@@ -248,6 +257,16 @@ fn serve(hc: *HC, req: *usbhc.IOUsbHC) ?i8 {
         usbhc.UHCMD_ISOXFER => return transfer(hc, req),
         usbhc.UHCMD_CONTROLXFER => return control(hc, req),
         usbhc.UHCMD_INTXFER => return status(hc, req),
+        usbhc.UHCMD_USBRESET => {
+            hc.resets += 1;
+            for (&hc.functions) |*function| {
+                function.address = 0;
+                function.configuration = 0;
+                if (function.reset_cures) function.stuck = false;
+            }
+            hc.at_zero = root;
+            return 0;
+        },
         usbhc.UHCMD_QUERYDEVICE => {
             const info: *usbhc.USBHCInfo = @ptrCast(@alignCast(req.std.data.?));
             info.* = .{ .name = "standin", .speed = usbhc.USB_SPEED_FULL, .channels = 4, .ports = 1, .frame = hc.frame & (usbhc.UHC_FRAMES - 1) };
@@ -461,6 +480,16 @@ fn reached(hc: *HC, address: u8) ?u8 {
     return null;
 }
 
+/// The root hub's held status transfer answered as a controller that
+/// stopped answering answers it.
+pub fn controllerStuck(hc: *HC) void {
+    const function = &hc.functions[root];
+    const held = function.held orelse return;
+    function.held = null;
+    held.std.req.err = usbhc.UHIOERR_HOSTERROR;
+    hc.sys.ReplyMsg(&held.std.req.message);
+}
+
 /// A hub's held status transfer answered, if a port of it changed.
 fn changed(hc: *HC, index: u8) void {
     const function = &hc.functions[index];
@@ -502,6 +531,7 @@ fn status(hc: *HC, req: *usbhc.IOUsbHC) ?i8 {
 fn control(hc: *HC, req: *usbhc.IOUsbHC) i8 {
     const index = reached(hc, req.address) orelse return usbhc.UHIOERR_TIMEOUT;
     const function = &hc.functions[index];
+    if (function.stuck) return usbhc.UHIOERR_NAKTIMEOUT;
     function.transfers += 1;
     function.max_packet0 = req.max_packet;
     defer if (function.transfers == function.pull_after) pull(hc, index);
@@ -540,7 +570,7 @@ fn control(hc: *HC, req: *usbhc.IOUsbHC) i8 {
                 return answer(req, std.mem.asBytes(&hub));
             }
             if (kind != d.USB_DT_HUB) return usbhc.UHIOERR_STALL;
-            const hub = d.HubDescriptor{ .num_ports = function.ports, .power_on_to_good = 50 };
+            const hub = d.HubDescriptor{ .num_ports = function.ports, .power_on_to_good = 50, .removable = function.fixed };
             return answer(req, std.mem.asBytes(&hub));
         },
         d.USB_DIR_OUT | d.USB_RT_HUB => {

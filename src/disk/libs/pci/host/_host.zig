@@ -15,7 +15,8 @@
 //! for every bridge at once - so that the waits PCI Express asks for are
 //! waited once, not once for each: `start` (everything up to PERST#,
 //! which is held), `release` (PERST# let go, 100 ms after `start`), and
-//! `linkUp`, asked from 100 ms after that for up to a second.
+//! `linkUp`, asked from 100 ms after that for up to a second. ResetPCIPort
+//! takes the last of them again for one bridge (`hold`, `release`, `linkUp`).
 //!
 //! **Message-signalled interrupts** are the host bridge's: it takes the
 //! functions' messages at one address on the bus (`msi_address`, 0 for a
@@ -159,6 +160,17 @@ pub fn hasLink(host: *const Host) bool {
         .ecam => false,
         .jh7110, .bcm2712 => true,
     };
+}
+
+/// PERST# held again, on a bridge that is up: nothing behind it is asked
+/// until the link is seen up (`linkUp`).
+pub fn hold(host: *Host) void {
+    host.link_up = false;
+    switch (host.chip) {
+        .ecam => {},
+        .jh7110 => jh7110.hold(host),
+        .bcm2712 => bcm2712.hold(host),
+    }
 }
 
 /// PERST# let go.

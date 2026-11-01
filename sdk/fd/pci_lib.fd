@@ -51,4 +51,8 @@ void RemPCIVectorServer(*pci.PCIDevice device, u32 vector, *exec.Interrupt serve
 /// The function reset on its own (a function level reset), and what the
 /// library set up in it put back; false if it cannot be.
 bool ResetPCIDevice(*pci.PCIDevice device)
+/// What is plugged into the port above the function given its fundamental
+/// reset (PERST#), the link trained again, and what the library set up
+/// put back; false if it was not reset, or did not come back.
+bool ResetPCIPort(*pci.PCIDevice device)
 ##end

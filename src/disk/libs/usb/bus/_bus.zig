@@ -23,6 +23,16 @@
 //! had 100 ms to pass, as Linux does, and what is in the port is found
 //! then; a port whose over-current stays is left off.
 //!
+//! **A device that does not answer** is said so on the debug output. In
+//! a socket it stays as it is: it can be pulled out and plugged in again.
+//! One on a root port that says it cannot be - soldered to the board, the
+//! VL805's own hub on a VisionFive 2, with the sockets and the mouse behind
+//! it - can only come back by the controller's reset (UHCMD_USBRESET): the
+//! bus is let go of, the controller reset, and everything found afresh. So
+//! it is when the controller says it stopped answering (UHIOERR_HOSTERROR on
+//! the root hub's status transfer). A bus does it twice at most, so a thing
+//! that stays broken does not take the rest down with it again and again.
+//!
 //! **A SuperSpeed hub** has a descriptor and a port status of its own:
 //! its descriptor is read as USB_DT_SS_HUB, its depth set before its ports
 //! are powered, and its ports' status turned into the USB 2 form the rest
@@ -120,6 +130,9 @@ pub const Hub = struct {
     /// Whether `status` is out.
     pending: u8 = 0,
     children: [max_ports]?*Device = @splat(null),
+    /// DeviceRemovable: a bit each from bit 1, set for a port whose device
+    /// cannot be pulled out.
+    fixed: u16 = 0,
 };
 
 /// A started bus.
@@ -145,6 +158,10 @@ pub const Bus = struct {
     addresses: [4]u32 = .{ 1, 0, 0, 0 },
     next_address: u8 = 1,
     root: ?*Device = null,
+    /// The controller wants its reset (see the top of the file), and how
+    /// many it had.
+    wants_reset: bool = false,
+    resets: u8 = 0,
     /// input.device, opened by the process the first time a device comes.
     input: automount.Input = .{},
 };
@@ -181,18 +198,44 @@ pub fn busProcess(sys: *ExecBase) callconv(.c) void {
 
     // The root hub, at address 0 until it has one, like any device.
     bus.root = attach(bus, null, 0, usbhc.USB_SPEED_FULL);
+    recover(bus);
 
     const port_mask = bus.port.?.sigMask();
     while (true) {
         const got = sys.Wait(port_mask | bus.stop_signal);
         if (got & bus.stop_signal != 0) break;
         hubsChanged(bus);
+        recover(bus);
     }
 
     if (bus.root) |root| detach(bus, root);
     bus.root = null;
     sys.CloseDevice(&bus.hc_io.std.req);
     finishStart(bus, stop_bit);
+}
+
+/// The most times a bus has its controller reset.
+pub const max_resets = 2;
+
+/// The controller reset if it wants to be (see the top of the file):
+/// everything on the bus let go, and found again. On the process, with no
+/// hub being looked at.
+pub fn recover(bus: *Bus) void {
+    const sys = bus.usb_base.sys_base;
+    while (bus.wants_reset) {
+        bus.wants_reset = false;
+        if (bus.resets >= max_resets) {
+            sdk.exec.kprintf(sys, "%s: bus %d: its controller was reset %d times, and is left as it is\n", .{ usb.USBNAME, bus.number, @as(u32, max_resets) });
+            return;
+        }
+        bus.resets += 1;
+        sdk.exec.kprintf(sys, "%s: bus %d: its controller reset, everything found again\n", .{ usb.USBNAME, bus.number });
+        if (bus.root) |root| detach(bus, root);
+        bus.root = null;
+        bus.hc_io.std.req.command = usbhc.UHCMD_USBRESET;
+        _ = sys.DoIO(&bus.hc_io.std.req);
+        bus.root = attach(bus, null, 0, usbhc.USB_SPEED_FULL);
+    }
 }
 
 /// The process's end: what it opened let go, and whoever waits told.
@@ -781,6 +824,7 @@ fn hubSetUp(bus: *Bus, device: *Device) void {
         if (hubRequest(bus, hub, d.USB_DIR_IN | d.USB_RT_HUB, d.USB_REQ_GET_DESCRIPTOR, @as(u16, d.USB_DT_SS_HUB) << 8, 0, descriptor_bytes, @sizeOf(d.SSHubDescriptor)) != 0) return;
         hub.ports = @min(descriptor.num_ports, max_ports);
         hub.power_ms = @max(@as(u32, descriptor.power_on_to_good) * 2, 20);
+        hub.fixed = descriptor.removable;
         hub.header_latency = descriptor.header_latency;
         hub.hub_delay = descriptor.hub_delay;
         // Its depth, before anything below it is reset: the hubs above it,
@@ -793,6 +837,7 @@ fn hubSetUp(bus: *Bus, device: *Device) void {
         if (hubRequest(bus, hub, d.USB_DIR_IN | d.USB_RT_HUB, d.USB_REQ_GET_DESCRIPTOR, @as(u16, d.USB_DT_HUB) << 8, 0, descriptor_bytes, @sizeOf(d.HubDescriptor)) != 0) return;
         hub.ports = @min(descriptor.num_ports, max_ports);
         hub.power_ms = @max(@as(u32, descriptor.power_on_to_good) * 2, 20);
+        hub.fixed = descriptor.removable;
     }
 
     var port: u8 = 1;
@@ -846,6 +891,11 @@ pub fn hubsChanged(bus: *Bus) void {
 fn hubChanged(bus: *Bus, hub: *Hub) void {
     const err = hub.status.std.req.err;
     if (err == usbhc.UHIOERR_DETACHED or err == exec.IOERR_ABORTED) return;
+    // The root hub is the controller's own: nothing on a wire failed.
+    if (err == usbhc.UHIOERR_HOSTERROR and isRootHub(hub)) {
+        sdk.exec.kprintf(bus.usb_base.sys_base, "%s: bus %d: its controller stopped answering\n", .{ usb.USBNAME, bus.number });
+        bus.wants_reset = true;
+    }
     if (err == 0) {
         var port: u8 = 1;
         while (port <= hub.ports) : (port += 1) {
@@ -935,5 +985,20 @@ fn connect(bus: *Bus, hub: *Hub, port: u8) void {
         usbhc.USB_SPEED_FULL;
     // The device's ten milliseconds to recover from the reset.
     delay(bus, 10);
-    hub.children[port - 1] = attach(bus, hub, port, speed);
+    const device = attach(bus, hub, port, speed);
+    hub.children[port - 1] = device;
+    if (device == null or device.?.public.flags & usb.USBDF_FAILED != 0) notAnswered(bus, hub, port);
+}
+
+/// Whether `hub` is the controller's own.
+fn isRootHub(hub: *const Hub) bool {
+    return hub.device.public.hub == null;
+}
+
+/// A device that was found on a port and did not answer, said so; and on a
+/// root port it cannot be pulled out of, the controller to be reset.
+fn notAnswered(bus: *Bus, hub: *const Hub, port: u8) void {
+    const fixed = isRootHub(hub) and hub.fixed & (@as(u16, 1) << @intCast(port)) != 0;
+    sdk.exec.kprintf(bus.usb_base.sys_base, "%s: bus %d: the device on port %d of the hub at address %d does not answer\n", .{ usb.USBNAME, bus.number, @as(u32, port), @as(u32, hub.device.public.address) });
+    if (fixed) bus.wants_reset = true;
 }

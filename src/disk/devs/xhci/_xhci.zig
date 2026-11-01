@@ -445,6 +445,16 @@ pub inline fn rt(host: *const Host, offset: usize) *volatile u32 {
     return reg(host.rt + offset);
 }
 
+/// The frame count begun again for a controller just reset, whose MFINDEX
+/// starts again from 0 as it runs. The count itself too: a TD's frame is
+/// its low bits, so one left counting from before would ask for a frame
+/// the controller reaches only up to two seconds later.
+pub fn framesFromStart(host: *Host, ms: u32) void {
+    host.frame = 0;
+    host.frame_seen = 0;
+    host.frame_ms = ms;
+}
+
 /// The frames since the controller started: MFINDEX's frame number, its
 /// steps since the last read added (`framesSince`).
 pub fn currentFrame(host: *Host) u32 {

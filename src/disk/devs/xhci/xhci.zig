@@ -14,7 +14,8 @@
 //!                      it, up to four requests on the endpoint's ring
 //!                      at once
 //!   UHCMD_USBRESET     every transfer answered, the controller started
-//!                      afresh
+//!                      afresh; a PCI function's port given its
+//!                      fundamental reset between (pci.library 2.5)
 //!   UHCMD_USBSUSPEND,
 //!   UHCMD_USBRESUME    IOERR_NOCMD
 //!   UHCMD_QUERYDEVICE  what the controller is (`USBHCInfo`)
@@ -55,8 +56,8 @@ const regs = @import("regs.zig");
 
 pub const DEVICE_NAME = _xhci.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 11;
-const BUILD_DATE = "29.10.2026";
+const DEVICE_REVISION = 12;
+const BUILD_DATE = "01.11.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -157,10 +158,16 @@ fn openTimers(host: *Host) bool {
 }
 
 /// The controller up: reset, its interrupt hooked, run. False if any of
-/// it failed; then nothing is left running.
+/// it failed; then nothing is left running. A function whose link did not
+/// come back is not asked: a read of its registers would hold the
+/// processor up each time.
 fn start(host: *Host) bool {
     host.stopped = 0;
     host.root = .{};
+    if (!answers(host)) {
+        sdk.exec.kprintf(host.sys, "%s: unit %d: the controller does not answer on its bus\n", .{ DEVICE_NAME, host.number });
+        return false;
+    }
     if (!controller.bringUp(host)) return false;
     host.int = .{
         .node = .{ .type = .interrupt, .pri = 0, .name = DEVICE_NAME },
@@ -272,12 +279,36 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
 }
 
 /// The controller stopped and started again, every transfer answered.
+/// Its own reset does not reach everything: a VL805 that stopped answering
+/// stays so through it, and comes back from PERST#. So a PCI function's
+/// port is reset between, while nothing asks its registers.
 fn restart(host: *Host) void {
     const sys = host.sys;
     sys.ObtainSemaphore(&host.dev_base.open_lock);
     defer sys.ReleaseSemaphore(&host.dev_base.open_lock);
     _ = command(host);
+    resetPort(host);
     _ = command(host);
+}
+
+/// The port of the controller's PCI function reset, where it has one and
+/// pci.library has the call. One that is not reset is started as it is.
+fn resetPort(host: *Host) void {
+    const function = host.function orelse return;
+    const pb = host.dev_base.pci_base.?;
+    const lib: *exec.Library = @ptrCast(@alignCast(pb));
+    if (lib.revision < 5) return;
+    if (!pb.ResetPCIPort(function)) {
+        sdk.exec.kprintf(host.sys, "%s: unit %d: its port was not reset\n", .{ DEVICE_NAME, host.number });
+    }
+}
+
+/// Whether the controller answers on its bus: a PCI function reads all
+/// ones where it does not. A board's own controller always does.
+fn answers(host: *Host) bool {
+    const function = host.function orelse return true;
+    const pb = host.dev_base.pci_base.?;
+    return pb.ReadPCIConfig(function, pci.PCI_VENDOR_ID, 2) != 0xFFFF;
 }
 
 /// The task told to start the controller if it is stopped, or to stop
@@ -345,7 +376,8 @@ fn close(dev: *exec.Device, io: *exec.IORequest) callconv(.c) ?*anyopaque {
     defer sys.ReleaseSemaphore(&base.open_lock);
     host.unit.open_cnt -= 1;
     dev.open_cnt -= 1;
-    if (host.unit.open_cnt == 0) _ = command(host);
+    // One that did not come back from a restart is stopped already.
+    if (host.unit.open_cnt == 0 and host.ready != 0) _ = command(host);
     io.unit = null;
     return null;
 }

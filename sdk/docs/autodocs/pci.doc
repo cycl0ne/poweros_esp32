@@ -14,6 +14,7 @@ pci.library/ReleasePCIDevice
 pci.library/RemPCIIntServer
 pci.library/RemPCIVectorServer
 pci.library/ResetPCIDevice
+pci.library/ResetPCIPort
 pci.library/WritePCIConfig
 pci.library/AddPCIIntServer                        pci.library/AddPCIIntServer
 
@@ -750,11 +751,81 @@ pci.library/WritePCIConfig
 	the library set up in it.
 
    SEE ALSO
-	`ClaimPCIDevice`, `AllocPCIVectors`
+	`ClaimPCIDevice`, `AllocPCIVectors`, `ResetPCIPort`
 
    EXAMPLES
 	    if (!pb.ResetPCIDevice(function)) return error.NoReset;
 	    try unit.start();
+pci.library/ResetPCIPort                              pci.library/ResetPCIPort
+
+   NAME
+	ResetPCIPort -- What is plugged into the port above a function given its fundamental reset, the link trained again, and what the library set up put back.
+
+   SYNOPSIS
+	    fn ResetPCIPort(base: *PCIBase, device: *pci.PCIDevice) bool
+
+   SINCE
+	2.5. LVO -80.
+
+   INPUTS
+	- `device` - a function the caller has claimed, behind the port.
+
+   RESULT
+	True when the port was reset and the function answers again; false
+	when it was not reset, or the link or a function did not come back.
+
+   BEHAVIOR
+	PERST# is held for 100 ms and let go, as when the library brought the
+	port up; 100 ms later the link is waited for, up to a second, and then
+	each function behind the port, up to a minute. Each function's
+	configuration is kept before - its command, BARs, expansion ROM, cache
+	line, interrupt line, and its PCI Express control - and written back,
+	with its MSI or MSI-X as AllocPCIVectors set it up.
+
+	This is the strongest reset a function can have short of the power,
+	for one that no longer answers its driver and that ResetPCIDevice's
+	ways do not reach - a function that is stuck may not take them, or
+	take them and stay stuck.
+
+	**It is not reset, and false is the answer,** where the bridge holds
+	no PERST# (a board whose PCI is only configuration space, as QEMU's
+	virt machine); for a function that is not claimed; where another
+	driver has a function behind the same port; and where a bridge is
+	behind the port, a switch whose functions the library does not keep
+	the configuration of.
+
+	The bridge's other ports, and what is behind them, see nothing of it.
+
+   CONTEXT
+	- Waits: yes, on timer.device: 200 ms at the least, a second more for
+	  the link, a minute more for each function.
+	- Interrupts: no.
+	- Locks: none taken.
+	- Process: a Task: it waits on a message port of its own.
+
+   OWNERSHIP
+	The function stays the caller's.
+
+   NOTES
+	The caller stops using the function first: a read of its registers
+	while the link is down holds the processor up until the bridge gives
+	up on it. Everything behind the BARs is lost, and is the driver's to
+	set up again; it does best to have given its vectors back first, and
+	to allocate them afresh.
+
+	A link that did not come back leaves the functions behind the port
+	reading all ones through ReadPCIConfig: a driver can tell it so.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`ResetPCIDevice`, `ClaimPCIDevice`
+
+   EXAMPLES
+	    stopController();
+	    _ = pb.ResetPCIPort(function);
+	    if (pb.ReadPCIConfig(function, pci.PCI_VENDOR_ID, 2) != 0xFFFF) startController();
 pci.library/WritePCIConfig                          pci.library/WritePCIConfig
 
    NAME

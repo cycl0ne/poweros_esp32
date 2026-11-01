@@ -27,6 +27,7 @@ const FreePCIVectors = @import("interrupt/freepcivectors.zig").FreePCIVectors;
 const AddPCIVectorServer = @import("interrupt/addpcivectorserver.zig").AddPCIVectorServer;
 const RemPCIVectorServer = @import("interrupt/rempcivectorserver.zig").RemPCIVectorServer;
 const ResetPCIDevice = @import("reset/resetpcidevice.zig").ResetPCIDevice;
+const ResetPCIPort = @import("reset/resetpciport.zig").ResetPCIPort;
 
 /// pci.library's interface, as the SDK generates it from
 /// sdk/fd/pci_lib.fd.
@@ -67,6 +68,7 @@ const contract_files = [_][]const u8{
     @embedFile("interrupt/addpcivectorserver.zig"),
     @embedFile("interrupt/rempcivectorserver.zig"),
     @embedFile("reset/resetpcidevice.zig"),
+    @embedFile("reset/resetpciport.zig"),
 };
 
 fn lvoFindPCIDevice(base: *PCIBase, previous: ?*pci.PCIDevice, vendor: u32, device: u32) callconv(.c) ?*pci.PCIDevice {
@@ -115,6 +117,10 @@ fn lvoResetPCIDevice(base: *PCIBase, device: *pci.PCIDevice) callconv(.c) bool {
     return ResetPCIDevice(base, device);
 }
 
+fn lvoResetPCIPort(base: *PCIBase, device: *pci.PCIDevice) callconv(.c) bool {
+    return ResetPCIPort(base, device);
+}
+
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
 pub const vectors = [_]*const anyopaque{
@@ -137,6 +143,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoAddPCIVectorServer),
     vec(lvoRemPCIVectorServer),
     vec(lvoResetPCIDevice),
+    vec(lvoResetPCIPort),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

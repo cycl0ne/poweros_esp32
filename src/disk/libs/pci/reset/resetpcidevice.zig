@@ -84,7 +84,7 @@ const Delay = @import("../delay.zig").Delay;
 /// the library set up in it.
 ///
 /// SEE ALSO:
-/// `ClaimPCIDevice`, `AllocPCIVectors`
+/// `ClaimPCIDevice`, `AllocPCIVectors`, `ResetPCIPort`
 ///
 /// EXAMPLES:
 /// ```zig
@@ -228,7 +228,7 @@ fn linkBack(port: *Entry, delay: *Delay) bool {
 
 /// Whether the function answers its configuration, within a minute: not
 /// all ones, nor asking to be asked again.
-fn ready(entry: *Entry, delay: *Delay) bool {
+pub fn ready(entry: *Entry, delay: *Delay) bool {
     var waited: u32 = 0;
     while (true) {
         const vendor = read(entry, pci.PCI_VENDOR_ID, 2);

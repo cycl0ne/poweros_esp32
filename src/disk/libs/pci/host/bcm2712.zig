@@ -246,6 +246,12 @@ pub fn release(host: *Host) void {
     if (on_bcm2712) update(host.registers + PCIE_MISC_PCIE_CTRL, PCIE_CTRL_PERSTB, PCIE_CTRL_PERSTB);
 }
 
+/// PERST# held again (`_host.hold`): the bridge itself stays out of its
+/// reset.
+pub fn hold(host: *Host) void {
+    if (on_bcm2712) update(host.registers + PCIE_MISC_PCIE_CTRL, PCIE_CTRL_PERSTB, 0);
+}
+
 /// Whether the link is up, its PHY and its data link layer
 /// (`_host.linkUp`). Once it is, the reference clock is driven for good
 /// and L1 sub-states are not offered.

@@ -103,7 +103,9 @@ pub const UHCMD_INTXFER: u16 = exec.CMD_NONSTD + 2;
 /// controller that has none answers IOERR_NOCMD.
 pub const UHCMD_ISOXFER: u16 = exec.CMD_NONSTD + 3;
 /// The controller started afresh: every transfer answered
-/// UHIOERR_HOSTERROR, the root port powered and empty.
+/// UHIOERR_HOSTERROR, the root port powered and empty. As hard as the
+/// controller can be reset: what runs the bus asks for it when the
+/// controller, or what is soldered to it, stopped answering.
 pub const UHCMD_USBRESET: u16 = exec.CMD_NONSTD + 4;
 /// The bus suspended and resumed: IOERR_NOCMD until a controller does it.
 pub const UHCMD_USBSUSPEND: u16 = exec.CMD_NONSTD + 5;
