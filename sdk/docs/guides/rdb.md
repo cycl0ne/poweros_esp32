@@ -838,32 +838,11 @@ Install nvme.device 1 SIZE 16G FORCE          16 GB for the system, asking nothi
 Install nvme.device 1 FROM NV2: SYSTEM SSD    from a package on a stick
 ```
 
-With no device it lists the machine's block devices with what each unit
-holds, and says which one the running system is on. The drives are `DH0`
-and `DH1` unless `SYSTEM` and `WORK` say otherwise, the volumes `System`
-and `Work` (`NAME` for the system's), and the partition the firmware
-reads is `BOOT`, 256 MB - two of them, `BOOT` and `BOOTB`, where the
-board's firmware can be sent to either for one start. A GPT's partitions
-are mounted under their unit's own name at the next start (`NV0:`,
-`NV0P2:`), whatever the GPT calls them.
-
-**Where the files come from.** Without `FROM` it is the running system:
-`SYS:` for the volume's files and `SYS:Storage/Boot` for what the
-firmware reads, so a machine installs a medium with no network and no
-second machine. `FROM` names a release package instead - one directory
-holding the volume's files, the kernel and what the firmware reads, with
-a list over all of it (`./zig build package`, and `./zig build serve` to
-hand it out over HTTP - the README has both) - and every file is held
-against the sum and the length in that list as it is copied, so a package
-that arrived damaged stops the install on the file that is wrong. A
-package built for the other board of a chip is refused, since its kernel
-would start with no console; `FORCE` installs it all the same.
-
-What the install leaves on the new volume is that list, as
-`SYS:System/manifest`, and `ENVARC:Sys/install.prefs`, which says what
-was installed where and from where. The command that reads them - to
-bring an installed system up to date against a newer package - is being
-written.
+Each of its keywords, the two sources it copies from - the running
+system, or a release package whose every file is held against the length
+and the sum its list gives - what it leaves on the new volume to say what
+was installed from where, and what each board's firmware reads, are in
+the [install guide](install.md).
 
 **FAT for other systems.** A FAT partition in the table is one only
 PowerOS sees; one of the GPT's own, beside the container, every system
