@@ -10,9 +10,10 @@
 //! `GA_Left` and `GA_Top` when it joins are where it sits in the group;
 //! the group adds its own corner to them there and then, so from that
 //! moment the member is a gadget of the window like any other and draws
-//! itself where it is. The group grows to hold it, unless its size is the
-//! window's (`GA_RelWidth`, `GA_RelHeight`), which it keeps. Moving the
-//! group moves every member by the same amount.
+//! itself where it is. The group grows to hold it - from no size at all
+//! when it was made without one - unless its size is the window's
+//! (`GA_RelWidth`, `GA_RelHeight`), which it keeps. Moving the group moves
+//! every member by the same amount.
 //!
 //! What a member does reaches the window in the member's own name: a
 //! member with `GA_RelVerify` let go over itself is the gadget of that
@@ -215,10 +216,14 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             p.members.init();
             // A group is as big as its members make it, and starts with
             // none: not gadgetclass's default box, which would stand round
-            // members smaller than it as room nothing is in.
+            // members smaller than it as room nothing is in. A size it is
+            // given - its own, or the window's less some (`GA_RelWidth`) -
+            // it keeps.
+            const new: *classusr.OpSet = @ptrCast(@alignCast(msg));
+            const ub = ib.utility_base;
             const g = gadgetclass.gadgetOf(ib, @ptrFromInt(made));
-            g.width = 0;
-            g.height = 0;
+            if (ub.FindTagItem(gc.GA_Width, new.attr_list) == null and ub.FindTagItem(gc.GA_RelWidth, new.attr_list) == null) g.width = 0;
+            if (ub.FindTagItem(gc.GA_Height, new.attr_list) == null and ub.FindTagItem(gc.GA_RelHeight, new.attr_list) == null) g.height = 0;
             return made;
         },
         classusr.OM_DISPOSE => {

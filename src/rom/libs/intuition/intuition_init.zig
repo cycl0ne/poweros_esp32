@@ -208,7 +208,9 @@ pub const LIBRARY_VERSION = 0;
 /// layout with less room than its children's least lengths takes the
 /// shortfall off them in proportion rather than letting them stand past
 /// its box.
-pub const LIBRARY_REVISION = 77;
+/// 78: a group made with a size (GA_Width, GA_RelWidth, GA_Height,
+/// GA_RelHeight) keeps it; only one made without starts at none.
+pub const LIBRARY_REVISION = 78;
 const BUILD_DATE = "01.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
