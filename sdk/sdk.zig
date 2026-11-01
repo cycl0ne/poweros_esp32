@@ -90,6 +90,9 @@ pub const facet = @import("libs/facet/facet.zig");
 /// Countries, languages and a program's strings in them, through
 /// locale.library.
 pub const locale = @import("libs/locale/locale.zig");
+/// A release package - the files, the kernel and the list of them - which
+/// a system is installed from and brought up to date against.
+pub const install = @import("libs/install/install.zig");
 pub const interface = @import("interface/interface.zig");
 
 // --- alignment ------------------------------------------------------------
