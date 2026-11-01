@@ -5,8 +5,8 @@ machine someone can run without building it: the kernel, the system disk,
 a work disk, and a script that starts QEMU on them.
 
 ```
-zig-out/poweros-qemu_virt.tar.gz    8.8 MB, the download
-zig-out/poweros-qemu_virt/          the same files, to try before handing out
+release/poweros-qemu_virt.tar.gz    7.4 MB, the download
+release/poweros-qemu_virt/          the same files, to try before handing out
   run.sh          starts QEMU on what is beside it
   machine.conf    which machine it is, and the files below (written by the build)
   kernel.bin      the board's kernel
@@ -19,13 +19,15 @@ It is for QEMU's two `virt` machines - `-Dboard=qemu_virt` (RISC-V 64)
 and `-Dboard=qemu_virt_a64` (AArch64) - whose kernel and disks a plain
 QEMU runs. The ESP32 boards' QEMU is Espressif's own
 (`scripts/build-qemu.sh`), which nobody has by downloading an archive, so
-the step refuses for those boards and says why.
+the step refuses for those boards and says why; a board is packed by
+`esp-package` instead, and `./zig build release` makes every board's
+artifact at once.
 
 **The files in it are mostly holes, and stay holes.** `tools/mkfs` writes
-only the blocks it touches, so `system.bin` is 17 MB of its 256 and
+only the blocks it touches, so `system.bin` is some 17 MB of its 256 and
 `work.bin` 108 KB of its 1 GB; the build's copy keeps the holes,
 `tar -czS` stores them as holes, and tar makes them holes again where the
-archive is unpacked. So the download is 8.8 MB and what it leaves on a
+archive is unpacked. So the download is under 8 MB and what it leaves on a
 disk is 18 MB, though the two images are 1.3 GB long.
 
 **`run.sh` asks QEMU what it has.** A display backend (`gtk`, then `sdl`),

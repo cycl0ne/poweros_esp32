@@ -50,8 +50,17 @@ package copied onto a stick or fetched over the network arrived whole.
 
 The build makes a package for the board it is building
 (`./zig build package -Dboard=visionfive2`, into
-`zig-out/package-visionfive2/`), and `-Dboot=[<name>=]<file>` adds a file
+`release/package-visionfive2/`), and `-Dboot=[<name>=]<file>` adds a file
 to `boot/` that this tree does not hold - the Compute Module 5's device
-tree is Raspberry Pi's. The machines whose disk is in RAM are what a
-package is for; an ESP32 board's disk is the flash its kernel is written
-with, which `flash-disk` writes.
+tree is Raspberry Pi's. `./zig build release` makes every board's at once.
+The machines whose disk is in RAM are what a package is for; an ESP32
+board's disk is the flash its kernel is written with, which `flash-disk`
+writes and `esp-package` packs.
+
+One thing a package made by `release` does not carry: the `SYS:Storage/Boot`
+of the image inside it is filled for the board the build was for
+(`-Dboard=`) and empty for the others, since one disk image serves both
+boards of a chip. It matters only to a machine installing itself from an
+image somebody handed it with no package beside it; installing from the
+package has the same files in `boot/` either way. Build the release with
+`-Dboard=` set to the machine you care about, or once for each.

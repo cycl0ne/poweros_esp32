@@ -20,5 +20,9 @@ CLAUDE.md
 # (see build.zig: virt_work_dir)
 /work/
 
+# What a release is made of: every board's package and archive
+# (see build.zig: release_dir, `./zig build release`)
+/release/
+
 # Work lists, kept locally
 todo/

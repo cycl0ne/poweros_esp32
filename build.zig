@@ -46,6 +46,12 @@ const virt_work_dir = "work";
 /// image: `disk/` in the root of the tree.
 const disk_tree = "disk";
 
+/// Where everything a release is made of is written: `release/` in the
+/// root of the tree, beside zig-out and out of the repository, so that
+/// what is uploaded is in one place and nothing else is in it. It is the
+/// install prefix's neighbour, which is how a build step reaches it.
+const release_dir: std.Build.InstallDir = .{ .custom = "../release" };
+
 /// Where games built elsewhere are put to have them on the virt
 /// machines' system disks with -Dgames: `games/` in the root of the tree,
 /// which is the disks' `Games` drawer.
@@ -922,48 +928,23 @@ pub fn build(b: *std.Build) void {
     });
     serve.root_module.addImport("sdk", sdk);
     const serve_port = b.option(u16, "serve-port", "The port `serve` hands a release package out on (default: 8080)") orelse 8080;
-    const package_step = b.step("package", "Gather a release package for -Dboard= into zig-out/package-<board>/");
+    const package_step = b.step("package", "Gather a release package for -Dboard= into release/package-<board>/");
     const serve_step = b.step("serve", "Gather the release package and hand it out over HTTP (quit with Ctrl-C)");
     switch (chipOf(board)) {
         .esp32s3, .esp32p4 => {
             const no_package = b.addFail(
-                "package: this board's disk is the flash its kernel is written with - `flash-disk` writes it. A package is for a machine whose disk is in RAM: -Dboard=visionfive2, rpi_cm5, qemu_virt or qemu_virt_a64.",
+                "package: this board's disk is the flash its kernel is written with - `flash-disk` writes it, and `esp-package` packs it to be written elsewhere. A package is for a machine whose disk is in RAM: -Dboard=visionfive2, rpi_cm5, qemu_virt or qemu_virt_a64.",
             );
             package_step.dependOn(&no_package.step);
             serve_step.dependOn(&no_package.step);
         },
         .rv64sbi, .a64psci => {
             const rv64 = chipOf(board) == .rv64sbi;
-            const name = b.fmt("package-{s}", .{@tagName(board)});
-            const make_package = b.addRunArtifact(mkpackage);
-            const gathered = make_package.addPrefixedOutputDirectoryArg("--into=", name);
-            make_package.addArg(b.fmt("--chip={s}", .{@tagName(chipOf(board))}));
-            // The board as well as the chip: two boards share a chip and
-            // every path in the package, and their kernels differ in what
-            // the board has and where it is.
-            make_package.addArg(b.fmt("--board={s}", .{@tagName(board)}));
-            make_package.addPrefixedDirectoryArg("--system=", if (rv64) rv64_tree else a64_tree);
-            make_package.addPrefixedFileArg("boot/kernel.bin=", image);
-            make_package.addPrefixedFileArg(
-                if (rv64) "boot/disk-rv64.bin=" else "boot/disk-a64.bin=",
-                if (rv64) rv64_disk_bin else a64_disk_bin,
-            );
-            // What the firmware of this board reads beside them.
-            if (board == .rpi_cm5) make_package.addPrefixedFileArg("boot/config.txt=", b.path("src/boards/rpi_cm5/config.txt"));
-            for (boot_files) |file| {
-                make_package.addPrefixedFileArg(b.fmt("boot/{s}=", .{file.name}), .{ .cwd_relative = file.host });
-            }
-            // The package held against the manifest it was just given, so
-            // a package that is installed from is one that was checked.
-            const check_package = b.addRunArtifact(mkpackage);
-            check_package.addArg("--check");
-            check_package.addDirectoryArg(gathered);
-            package_step.dependOn(&check_package.step);
-            package_step.dependOn(&b.addInstallDirectory(.{
-                .source_dir = gathered,
-                .install_dir = .prefix,
-                .install_subdir = name,
-            }).step);
+            const gathered = addPackage(b, package_step, mkpackage, board, image, .{
+                .tree = if (rv64) rv64_tree else a64_tree,
+                .ram_disk = if (rv64) rv64_disk_bin else a64_disk_bin,
+                .boot_files = boot_files,
+            });
             // `serve` hands out the package it has just gathered, so one
             // command is the whole of the host's side.
             const run_serve = b.addRunArtifact(serve);
@@ -1172,79 +1153,85 @@ pub fn build(b: *std.Build) void {
     run_virt64_el2.stdio = .inherit;
     run_virt64_el2.has_side_effects = true;
     b.step("virt64-el2", "Boot the AArch64 kernel in QEMU's virt machine entered at EL2, PSCI by SMC").dependOn(&run_virt64_el2.step);
-    // `qemu-package` - the kernel, the two disks and a script that starts
-    // QEMU on them, in one archive: for someone who wants to run the
-    // system without building it. `tools/qemupackage/run.sh` goes in as
-    // it is and asks the host's QEMU what it has; `machine.conf` is what
-    // this build knows and that script reads.
-    const qemu_package_step = b.step("qemu-package", "Pack the kernel, the two disks and a run.sh for QEMU into zig-out/poweros-<board>.tar.gz");
+    // An archive somebody downloads and runs, for the machines that are
+    // QEMU's: the kernel, the two disks, and a script that starts QEMU on
+    // them (`tools/qemupackage`). And one for a board, which is written
+    // to its flash instead (`tools/espackage`).
+    const qemu_package_step = b.step("qemu-package", "Pack the kernel, the two disks and a run.sh for QEMU into release/poweros-<board>.tar.gz");
     switch (board) {
         .qemu_virt, .qemu_virt_a64 => {
-            const rv64 = chipOf(board) == .rv64sbi;
-            const name = b.fmt("poweros-{s}", .{@tagName(board)});
-            // The `disk/` tree is the builder's own, and the network
-            // settings in it hold a passphrase: a package to hand out is
-            // built without it, and `-Ddisk-tree=true` says to pack it
-            // anyway.
-            if (disk_tree_option == null and tree.files.len != 0) {
-                qemu_package_step.dependOn(&b.addFail(b.fmt(
-                    "qemu-package: {d} files from the disk/ tree are on this image, and that tree is yours - the network settings in it hold a passphrase. Build with -Ddisk-tree=false for a package to hand out, or -Ddisk-tree=true to pack it as it is.",
-                    .{tree.files.len},
-                )).step);
-            }
-            const bundle = b.addWriteFiles();
-            _ = bundle.addCopyFile(image, b.fmt("{s}/kernel.bin", .{name}));
-            _ = bundle.addCopyFile(if (rv64) rv64_system_disk else a64_system_disk, b.fmt("{s}/system.bin", .{name}));
-            _ = bundle.addCopyFile(blank_work_disk, b.fmt("{s}/work.bin", .{name}));
-            _ = bundle.addCopyFile(b.path("tools/qemupackage/run.sh"), b.fmt("{s}/run.sh", .{name}));
-            _ = bundle.addCopyFile(b.path("tools/qemupackage/bundle.md"), b.fmt("{s}/README.md", .{name}));
-            _ = bundle.add(b.fmt("{s}/machine.conf", .{name}), b.fmt(
-                \\# What ./run.sh starts, and the files it starts it on. The
-                \\# machine's own arguments are QEMU's, as the project's README
-                \\# gives them for this board.
-                \\BOARD={s}
-                \\QEMU={s}
-                \\QEMU_PACKAGE="{s}"
-                \\MACHINE="{s}"
-                \\CPU="{s}"
-                \\MEMORY={s}
-                \\CORES={d}
-                \\SIZE=1280x720
-                \\KERNEL=kernel.bin
-                \\SYSTEM=system.bin
-                \\WORK=work.bin
-                \\
-            , .{
-                @tagName(board),
-                if (rv64) "qemu-system-riscv64" else "qemu-system-aarch64",
-                if (rv64) "QEMU for RISC-V 64 (qemu-system-riscv64)" else "QEMU for AArch64 (qemu-system-aarch64)",
-                if (rv64) "-M virt -bios default" else "-M virt,gic-version=2,highmem=off",
-                if (rv64) "" else "-cpu cortex-a76",
-                "512M",
-                // What the board's system tag list says
-                // (src/boards/<board>/system.zig: SYSTAG_Cores is 4 on
-                // both virt machines), unless -Dcores said otherwise.
-                if (cores == 0) 4 else cores,
-            }));
-            // The disks are mostly holes - 256 MB with a tenth of it
-            // written, a blank 1 GB work disk - so the archive keeps them
-            // as holes (`-S`) and they are holes again where it is
-            // unpacked.
-            const archive = b.addSystemCommand(&.{ "tar", "-czSf" });
-            const packed_file = archive.addOutputFileArg(b.fmt("{s}.tar.gz", .{name}));
-            archive.addArg("-C");
-            archive.addDirectoryArg(bundle.getDirectory());
-            archive.addArg(name);
-            qemu_package_step.dependOn(&b.addInstallFileWithDir(packed_file, .prefix, b.fmt("{s}.tar.gz", .{name})).step);
-            qemu_package_step.dependOn(&b.addInstallDirectory(.{
-                .source_dir = bundle.getDirectory().path(b, name),
-                .install_dir = .prefix,
-                .install_subdir = name,
-            }).step);
+            refusePrivateTree(b, qemu_package_step, disk_tree_option, tree, "qemu-package");
+            addQemuPackage(b, qemu_package_step, board, image, .{
+                .system_disk = if (chipOf(board) == .rv64sbi) rv64_system_disk else a64_system_disk,
+                .work_disk = blank_work_disk,
+                .cores = cores,
+            });
         },
         else => qemu_package_step.dependOn(&b.addFail(
-            "qemu-package: this board is not a QEMU machine of its own - it is for -Dboard=qemu_virt (RISC-V 64) and -Dboard=qemu_virt_a64 (AArch64), whose kernel and disks a plain QEMU runs. The ESP32 boards' QEMU is Espressif's own (scripts/build-qemu.sh), which nobody has by downloading this.",
+            "qemu-package: this board is not a QEMU machine of its own - it is for -Dboard=qemu_virt (RISC-V 64) and -Dboard=qemu_virt_a64 (AArch64), whose kernel and disks a plain QEMU runs. An ESP32 board has `esp-package`, and the ESP32 boards' QEMU is Espressif's own (scripts/build-qemu.sh), which nobody has by downloading an archive.",
         ).step),
+    }
+
+    const esp_package_step = b.step("esp-package", "Pack the kernel, the flash disk and a flash.sh for -Dboard= into release/poweros-<board>.tar.gz");
+    switch (chipOf(board)) {
+        .esp32s3, .esp32p4 => {
+            refusePrivateTree(b, esp_package_step, disk_tree_option, tree, "esp-package");
+            addEspPackage(b, esp_package_step, board, built, .{
+                .disk = if (chipOf(board) == .esp32s3) disk_bin else p4_disk_bin,
+                .disk_offset = disk_offset,
+                .disk_size = disk_size,
+            });
+        },
+        else => esp_package_step.dependOn(&b.addFail(
+            "esp-package: this board has no flash a kernel is written to - it is for the ESP32 boards. A machine whose disk is in RAM has `package`, and QEMU's two have `qemu-package`.",
+        ).step),
+    }
+
+    // `release` - every board's artifact in one build, into release/: the
+    // package of each machine whose disk is in RAM, the archive of each
+    // QEMU machine, and the archive of each board. The two emulators are
+    // left out (`release_boards`).
+    const release_step = b.step("release", "Build every board's release artifact into release/");
+    refusePrivateTree(b, release_step, disk_tree_option, tree, "release");
+    const board_build: BoardBuild = .{
+        .targets = .{ target, p4_target, rv64_target, a64_target },
+        .disks = .{ disk_bin, p4_disk_bin, rv64_disk_bin, a64_disk_bin },
+        .optimize = optimize,
+        .sdk = sdk,
+        .esptool = esptool,
+        .ressize = ressize,
+        .ramimage = ramimage,
+        .disk_offset = disk_offset,
+        .cores = cores,
+        .memdebug = memdebug,
+    };
+    for (release_boards) |one| {
+        // The board this build is for is already built; the rest are
+        // built for the release alone.
+        const one_image = if (one == board) built else addBoardImage(b, board_build, one);
+        switch (chipOf(one)) {
+            .esp32s3, .esp32p4 => addEspPackage(b, release_step, one, one_image, .{
+                .disk = if (chipOf(one) == .esp32s3) disk_bin else p4_disk_bin,
+                .disk_offset = disk_offset,
+                .disk_size = disk_size,
+            }),
+            .rv64sbi, .a64psci => {
+                const rv64 = chipOf(one) == .rv64sbi;
+                _ = addPackage(b, release_step, mkpackage, one, one_image.image, .{
+                    .tree = if (rv64) rv64_tree else a64_tree,
+                    .ram_disk = if (rv64) rv64_disk_bin else a64_disk_bin,
+                    .boot_files = boot_files,
+                });
+                // A QEMU machine is also an archive somebody downloads.
+                if (one == .qemu_virt or one == .qemu_virt_a64) {
+                    addQemuPackage(b, release_step, one, one_image.image, .{
+                        .system_disk = if (rv64) rv64_system_disk else a64_system_disk,
+                        .work_disk = blank_work_disk,
+                        .cores = cores,
+                    });
+                }
+            },
+        }
     }
 
     // Target-independent code, tested on the host.
@@ -1419,11 +1406,14 @@ pub fn build(b: *std.Build) void {
     _ = try_mkicon.addOutputFileArg("Work.info");
     try_mkicon.addArgs(&.{ "KIND=DRAWER", "AT=20,10", "TOOL=SYS:Programs/MultiView", "TYPE=FILETYPE=text|ascii", "TYPE=DONOTWAIT", "STACK=16384", "WINDOW=40,30,400,200", "SCROLL=0,8", "VIEW=NAME", "SHOW=ALL" });
     test_step.dependOn(&try_mkicon.step);
-    // tools/qemupackage/run.sh is read by `sh` and by nothing else here,
-    // so the test step at least asks the shell whether it parses.
-    const check_run_sh = b.addSystemCommand(&.{ "sh", "-n" });
-    check_run_sh.addFileArg(b.path("tools/qemupackage/run.sh"));
-    test_step.dependOn(&check_run_sh.step);
+    // The two scripts a package carries are read by `sh` and by nothing
+    // else here, so the test step at least asks the shell whether they
+    // parse.
+    for ([_][]const u8{ "tools/qemupackage/run.sh", "tools/espackage/flash.sh" }) |script| {
+        const check_script = b.addSystemCommand(&.{ "sh", "-n" });
+        check_script.addFileArg(b.path(script));
+        test_step.dependOn(&check_script.step);
+    }
     // tools/mkpackage and tools/serve compile, whichever board is being
     // built: the `package` and `serve` steps are the only other things
     // that build them, and a tool nothing compiles is a tool that stops
@@ -1620,6 +1610,254 @@ fn bootFiles(b: *std.Build) []const BootFile {
         files.append(b.allocator, .{ .name = name, .host = host }) catch @panic("OOM");
     }
     return files.toOwnedSlice(b.allocator) catch @panic("OOM");
+}
+
+/// The boards a release is made for: every board somebody can have. The
+/// two emulators are not among them - Espressif's QEMU for the ESP32-S3
+/// (`qemu`) and esp-emulator for the ESP32-P4 (`esp32p4_emu`) - since
+/// neither is a machine anybody has by downloading an archive.
+const release_boards = [_]Board{
+    .waveshare_7b, .es3c35p,   .olimex_p4pc, .crowpanel_p4,
+    .visionfive2,  .qemu_virt, .rpi_cm5,     .qemu_virt_a64,
+};
+
+/// A package to hand out must not carry the `disk/` tree unasked: those
+/// are the builder's own files, and the network settings among them hold
+/// a passphrase. Nothing is refused when that tree is empty, or when
+/// `-Ddisk-tree` has said what to do with it either way.
+fn refusePrivateTree(b: *std.Build, step: *std.Build.Step, said: ?bool, tree: Tree, what: []const u8) void {
+    if (said != null or tree.files.len == 0) return;
+    step.dependOn(&b.addFail(b.fmt(
+        "{s}: {d} files from the disk/ tree are on this image, and that tree is yours - the network settings in it hold a passphrase. Build with -Ddisk-tree=false for a package to hand out, or -Ddisk-tree=true to pack it as it is.",
+        .{ what, tree.files.len },
+    )).step);
+}
+
+/// What building another board's kernel takes, so that a release can
+/// build every board's in one go: each chip's target and its disk image,
+/// in `Chip`'s order, and what an image is made with.
+const BoardBuild = struct {
+    targets: [4]std.Build.ResolvedTarget,
+    disks: [4]std.Build.LazyPath,
+    optimize: std.builtin.OptimizeMode,
+    sdk: *std.Build.Module,
+    esptool: []const u8,
+    ressize: *std.Build.Step.Compile,
+    ramimage: *std.Build.Step.Compile,
+    disk_offset: u32,
+    cores: u32,
+    memdebug: bool,
+};
+
+/// `board`'s kernel, and the image of it that board is started from.
+fn addBoardImage(b: *std.Build, with: BoardBuild, board: Board) Image {
+    const chip = chipOf(board);
+    const slot = @intFromEnum(chip);
+    const kernel = addKernel(b, with.targets[slot], with.optimize, with.sdk, board, with.disk_offset, with.cores, false, with.memdebug);
+    return switch (chip) {
+        .esp32s3 => addImage(b, with.esptool, with.ressize, kernel, with.disks[slot], with.disk_offset),
+        .esp32p4 => addP4Image(b, with.esptool, with.ramimage, kernel, with.disks[slot], with.disk_offset),
+        .rv64sbi => addRv64Image(b, kernel),
+        .a64psci => addA64Image(b, kernel),
+    };
+}
+
+/// The name a machine's disk image is read under, which is what its
+/// firmware looks for beside the kernel.
+fn ramDiskName(chip: Chip) []const u8 {
+    return switch (chip) {
+        .rv64sbi => "disk-rv64.bin",
+        .a64psci => "disk-a64.bin",
+        .esp32s3 => "disk.bin",
+        .esp32p4 => "disk-esp32p4.bin",
+    };
+}
+
+/// What a release package holds besides the kernel: the volume's files as
+/// a tree, the disk image the firmware loads beside the kernel, and
+/// whatever `-Dboot=` adds.
+const PackageParts = struct {
+    tree: std.Build.LazyPath,
+    ram_disk: std.Build.LazyPath,
+    boot_files: []const BootFile,
+};
+
+/// A release package for `board` - `system/` the volume, `boot/` what the
+/// firmware loads, a manifest over both - gathered, checked against that
+/// manifest, and installed into the release directory. `step` is what the
+/// two depend on; the answer is the gathered directory, which `serve`
+/// hands out.
+fn addPackage(
+    b: *std.Build,
+    step: *std.Build.Step,
+    mkpackage: *std.Build.Step.Compile,
+    board: Board,
+    kernel_image: std.Build.LazyPath,
+    parts: PackageParts,
+) std.Build.LazyPath {
+    const chip = chipOf(board);
+    const name = b.fmt("package-{s}", .{@tagName(board)});
+    const gather = b.addRunArtifact(mkpackage);
+    const gathered = gather.addPrefixedOutputDirectoryArg("--into=", name);
+    gather.addArg(b.fmt("--chip={s}", .{@tagName(chip)}));
+    // The board as well as the chip: two boards share a chip and every
+    // path in the package, and their kernels differ in what the board has
+    // and where it is.
+    gather.addArg(b.fmt("--board={s}", .{@tagName(board)}));
+    gather.addPrefixedDirectoryArg("--system=", parts.tree);
+    gather.addPrefixedFileArg("boot/kernel.bin=", kernel_image);
+    gather.addPrefixedFileArg(b.fmt("boot/{s}=", .{ramDiskName(chip)}), parts.ram_disk);
+    // What the firmware of this board reads beside them.
+    if (board == .rpi_cm5) gather.addPrefixedFileArg("boot/config.txt=", b.path("src/boards/rpi_cm5/config.txt"));
+    for (parts.boot_files) |file| {
+        gather.addPrefixedFileArg(b.fmt("boot/{s}=", .{file.name}), .{ .cwd_relative = file.host });
+    }
+    // The package held against the manifest it was just given, so that a
+    // package which is installed from is one that was checked.
+    const check = b.addRunArtifact(mkpackage);
+    check.addArg("--check");
+    check.addDirectoryArg(gathered);
+    step.dependOn(&check.step);
+    step.dependOn(&b.addInstallDirectory(.{
+        .source_dir = gathered,
+        .install_dir = release_dir,
+        .install_subdir = name,
+    }).step);
+    return gathered;
+}
+
+/// The disks a QEMU machine's archive holds, and the cores its script
+/// starts the machine with.
+const QemuParts = struct {
+    system_disk: std.Build.LazyPath,
+    work_disk: std.Build.LazyPath,
+    cores: u32,
+};
+
+/// An archive somebody downloads, unpacks and runs: the kernel, the two
+/// disks, `tools/qemupackage/run.sh` as it is, and the `machine.conf`
+/// that script reads. The disks are mostly holes - 256 MB with a tenth of
+/// it written, a blank 1 GB work disk - so the archive keeps them as
+/// holes (`tar -S`) and they are holes again where it is unpacked.
+fn addQemuPackage(b: *std.Build, step: *std.Build.Step, board: Board, kernel_image: std.Build.LazyPath, parts: QemuParts) void {
+    const rv64 = chipOf(board) == .rv64sbi;
+    const name = b.fmt("poweros-{s}", .{@tagName(board)});
+    const bundle = b.addWriteFiles();
+    _ = bundle.addCopyFile(kernel_image, b.fmt("{s}/kernel.bin", .{name}));
+    _ = bundle.addCopyFile(parts.system_disk, b.fmt("{s}/system.bin", .{name}));
+    _ = bundle.addCopyFile(parts.work_disk, b.fmt("{s}/work.bin", .{name}));
+    _ = bundle.addCopyFile(b.path("tools/qemupackage/run.sh"), b.fmt("{s}/run.sh", .{name}));
+    _ = bundle.addCopyFile(b.path("tools/qemupackage/bundle.md"), b.fmt("{s}/README.md", .{name}));
+    _ = bundle.add(b.fmt("{s}/machine.conf", .{name}), b.fmt(
+        \\# What ./run.sh starts, and the files it starts it on. The
+        \\# machine's own arguments are QEMU's, as the project's README
+        \\# gives them for this board.
+        \\BOARD={s}
+        \\QEMU={s}
+        \\QEMU_PACKAGE="{s}"
+        \\MACHINE="{s}"
+        \\CPU="{s}"
+        \\MEMORY={s}
+        \\CORES={d}
+        \\SIZE=1280x720
+        \\KERNEL=kernel.bin
+        \\SYSTEM=system.bin
+        \\WORK=work.bin
+        \\
+    , .{
+        @tagName(board),
+        if (rv64) "qemu-system-riscv64" else "qemu-system-aarch64",
+        if (rv64) "QEMU for RISC-V 64 (qemu-system-riscv64)" else "QEMU for AArch64 (qemu-system-aarch64)",
+        if (rv64) "-M virt -bios default" else "-M virt,gic-version=2,highmem=off",
+        if (rv64) "" else "-cpu cortex-a76",
+        "512M",
+        // What the board's system tag list says
+        // (src/boards/<board>/system.zig: SYSTAG_Cores is 4 on both virt
+        // machines), unless -Dcores said otherwise.
+        if (parts.cores == 0) 4 else parts.cores,
+    }));
+    addArchive(b, step, bundle, name);
+}
+
+/// Where an ESP32 board's flash disk is, and the image of it.
+const EspParts = struct {
+    disk: std.Build.LazyPath,
+    disk_offset: u32,
+    disk_size: u32,
+};
+
+/// An archive somebody downloads, unpacks and writes to a board: the
+/// kernel's parts, the flash disk, `tools/espackage/flash.sh` as it is,
+/// and the `machine.conf` that script reads - the chip, where each piece
+/// goes in the flash, and which port the board's console is.
+fn addEspPackage(b: *std.Build, step: *std.Build.Step, board: Board, image: Image, parts: EspParts) void {
+    const chip = chipOf(board);
+    const name = b.fmt("poweros-{s}", .{@tagName(board)});
+    const disk_name = ramDiskName(chip);
+    const bundle = b.addWriteFiles();
+    _ = bundle.addCopyFile(image.image, b.fmt("{s}/kernel.bin", .{name}));
+    if (image.flash_part) |part| _ = bundle.addCopyFile(part, b.fmt("{s}/kernel-flash.bin", .{name}));
+    _ = bundle.addCopyFile(parts.disk, b.fmt("{s}/{s}", .{ name, disk_name }));
+    _ = bundle.addCopyFile(b.path("tools/espackage/flash.sh"), b.fmt("{s}/flash.sh", .{name}));
+    _ = bundle.addCopyFile(b.path("tools/espackage/bundle.md"), b.fmt("{s}/README.md", .{name}));
+    // The kernel is one piece on the ESP32-S3, written at 0; on the
+    // ESP32-P4 it is two, the part the ROM loads into memory and the part
+    // that runs in place from flash.
+    const kernel_parts = if (image.flash_part == null)
+        "0x0=kernel.bin"
+    else
+        b.fmt("0x2000=kernel.bin 0x{x}=kernel-flash.bin", .{p4_flash_part_offset});
+    _ = bundle.add(b.fmt("{s}/machine.conf", .{name}), b.fmt(
+        \\# What ./flash.sh writes, and where each piece goes in the flash.
+        \\# The offsets are this build's own (-Ddisk-offset).
+        \\BOARD={s}
+        \\CHIP={s}
+        \\KERNEL="{s}"
+        \\DISK="0x{x}={s}"
+        \\DISK_SIZE=0x{x}
+        \\PORT={s}
+        \\BAUD=921600
+        \\CONSOLE="{s}"
+        \\
+    , .{
+        @tagName(board),
+        @tagName(chip),
+        kernel_parts,
+        parts.disk_offset,
+        disk_name,
+        parts.disk_size,
+        "/dev/ttyACM0",
+        boardConsole(board),
+    }));
+    addArchive(b, step, bundle, name);
+}
+
+/// What a board's console is, for the script to say once it has written
+/// the flash (`src/boards/<board>/system.zig` has the lines themselves).
+fn boardConsole(board: Board) []const u8 {
+    return switch (board) {
+        .waveshare_7b, .es3c35p, .qemu => "the chip's own USB port, the board's USB socket, at 115200 8N1",
+        .olimex_p4pc, .esp32p4_emu => "the chip's USB Serial/JTAG port at 115200 8N1",
+        .crowpanel_p4 => "UART0 through the board's CH340K at 115200 8N1",
+        .qemu_virt, .visionfive2, .qemu_virt_a64, .rpi_cm5 => "the board's own serial console",
+    };
+}
+
+/// `bundle`'s directory `name` packed into `release/<name>.tar.gz`, and
+/// left beside it as a directory too, so it can be tried before it is
+/// handed out. Holes are kept as holes (`-S`).
+fn addArchive(b: *std.Build, step: *std.Build.Step, bundle: *std.Build.Step.WriteFile, name: []const u8) void {
+    const archive = b.addSystemCommand(&.{ "tar", "-czSf" });
+    const packed_file = archive.addOutputFileArg(b.fmt("{s}.tar.gz", .{name}));
+    archive.addArg("-C");
+    archive.addDirectoryArg(bundle.getDirectory());
+    archive.addArg(name);
+    step.dependOn(&b.addInstallFileWithDir(packed_file, release_dir, b.fmt("{s}.tar.gz", .{name})).step);
+    step.dependOn(&b.addInstallDirectory(.{
+        .source_dir = bundle.getDirectory().path(b, name),
+        .install_dir = release_dir,
+        .install_subdir = name,
+    }).step);
 }
 
 /// `Chip`'s names, for a message.

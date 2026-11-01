@@ -312,9 +312,9 @@ wrapper: it fetches the Espressif Zig toolchain (`0.16.0-xtensa`) into
 ./zig build virt64-display   # the same with its display, a USB keyboard, a tablet and network
 ./zig build virt64-ramfb     # the same with the ramfb as its display
 ./zig build flash-all -Dport=/dev/ttyACM0   # kernel and a fresh disk onto a board
-./zig build package -Dboard=visionfive2     # a release package in zig-out/package-visionfive2/
+./zig build package -Dboard=visionfive2     # a release package in release/package-visionfive2/
 ./zig build serve -Dboard=visionfive2       # hand that package out over HTTP (quit: Ctrl-C)
-./zig build qemu-package -Dboard=qemu_virt -Ddisk-tree=false   # a machine to download: kernel, two disks, run.sh
+./zig build release -Ddisk-tree=false       # every board's package and archive, in release/
 ```
 
 Fetched once into `toolchain/`, pinned and checked, never committed:
@@ -534,23 +534,38 @@ shows is what dos starts from, while the bootloader still loads
 `kernel.bin`, which holds everything up to posfs, from the eMMC: it
 reads FAT, not posfs.
 
-### A machine in one archive
+### Archives to download, and a release
 
-`./zig build qemu-package -Dboard=qemu_virt -Ddisk-tree=false` packs what
-somebody needs to run the system without building it:
-`zig-out/poweros-qemu_virt.tar.gz`, 8.8 MB, holding the kernel, the
-system disk, a blank work disk and a `run.sh` that starts QEMU on them -
-`-Dboard=qemu_virt_a64` for the AArch64 machine. Unpacked it takes 18 MB
-on a disk, though the two images are 1.3 GB long: `tools/mkfs` writes
-only the blocks it touches, and the archive keeps the holes as holes.
-`run.sh` asks the host's QEMU what it has - a display backend, the virtio
-GPU or the ramfb, an audio driver, the user-mode network - and leaves out
-what is missing, saying so, since many systems package those apart;
-`./run.sh --help` lists what it takes and `--serial` runs it with no
-window. The `disk/` tree in this root is the builder's own files, and the
-network settings in it hold a passphrase, so the step refuses to pack
-them unasked: `-Ddisk-tree=false` leaves that tree off the images
-([qemu-package](tools/qemupackage/README.md)).
+Three steps pack what somebody needs to run the system without building
+it, each into `release/` - a directory of its own beside `zig-out`, kept
+out of the repository, so that what is uploaded is in one place:
+
+| Step | What it packs |
+|---|---|
+| `./zig build qemu-package -Dboard=qemu_virt` | `release/poweros-qemu_virt.tar.gz`: the kernel, the system disk, a blank work disk and a `run.sh` that starts QEMU on them ([qemu-package](tools/qemupackage/README.md)) |
+| `./zig build esp-package -Dboard=waveshare_7b` | `release/poweros-waveshare_7b.tar.gz`: the kernel, the flash disk and a `flash.sh` that writes both over USB with esptool ([esp-package](tools/espackage/README.md)) |
+| `./zig build release` | every board's artifact in one build: the four packages, the two QEMU archives and the four board archives |
+
+Each archive is 6 to 8 MB. The QEMU one takes 18 MB on a disk unpacked,
+though its two images are 1.3 GB long - `tools/mkfs` writes only the
+blocks it touches, and the archive keeps the holes as holes.
+
+The scripts in them ask the host what it has rather than assuming:
+`run.sh` a display backend, the virtio GPU or the ramfb, an audio driver
+and QEMU's user-mode network, leaving out what is missing and saying so;
+`flash.sh` esptool under either of its names and the board's port. Each
+has a `--help` and a `--print` that shows the commands without running
+them, and `run.sh --serial` runs the machine with no window.
+
+The `disk/` tree in this root is the builder's own files, and the network
+settings in it hold a passphrase, so all three steps refuse to pack them
+unasked: `-Ddisk-tree=false` leaves that tree off the images for a package
+to hand out, `-Ddisk-tree=true` packs it deliberately. One thing a release
+cannot do for every machine at once: the `SYS:Storage/Boot` of a disk
+image is filled for the board the build was for and empty for the others,
+since one image serves both boards of a chip - build the release with
+`-Dboard=` set to the machine you care about, or once for each.
+
 
 ### Onto a card or an SSD
 
@@ -594,7 +609,7 @@ can be written from the running system with nothing else at hand.
 
 **A release package.** `./zig build package -Dboard=<board>` gathers
 everything a machine is installed from into one directory,
-`zig-out/package-<board>/`: the volume's files under `system/`, what that
+`release/package-<board>/`: the volume's files under `system/`, what that
 board's firmware loads under `boot/` - the kernel, the disk image, the
 board's `config.txt` - and a `manifest` over both halves, a line for each
 drawer and file with the file's length and the CRC-32 of its bytes
@@ -633,6 +648,9 @@ More build steps and options:
 | `./zig build fd` | regenerate the SDK's interfaces from its `.fd` files |
 | `./zig build autodoc` | regenerate the SDK's autodocs from the doc comments |
 | `./zig build modchart` | regenerate the charts of which module uses which (`sdk/docs/modules.md`) |
+| `./zig build qemu-package -Dboard=qemu_virt_a64` | an archive to download and run in QEMU, into `release/` |
+| `./zig build esp-package -Dboard=olimex_p4pc` | an archive to download and write to that board, into `release/` |
+| `./zig build release` | every board's package and archive at once, into `release/` |
 | `./zig build posfsck -- [--data] flash.bin` | check the posfs volumes of a flash dump or a card's image on the host ([posfs guide](sdk/docs/guides/posfs.md#checking-a-volume)) |
 | `-Ddisk-tree=false` | leave the `disk/` tree in this root off the disk images: what `qemu-package` wants for a package to hand out, since those files are the builder's own |
 | `-Dboot=/boot/firmware/bcm2712-rpi-cm5-cm5io.dtb` | a file this tree does not hold in a release package's `boot/` and in `SYS:Storage/Boot`, under its own name or the one before a `=`: what a board's firmware reads besides the kernel |
@@ -663,7 +681,8 @@ src/boards/    one folder per board: its parts and wiring, and its drivers
 src/disk/      what goes on the disk: commands, test programs, disk-loaded
                libraries, devices and handlers, startup scripts (a package)
 sdk/           the SDK: types, constants, jump tables, autodocs, tools (a package)
-tools/         build helpers: mkfs, ressize, ramimage, padimage, mkicon, the autodocs, the module charts, checks
+tools/         build helpers: mkfs, mkpackage, serve, ressize, ramimage, padimage, mkicon, the autodocs, the module charts, checks
+release/       what a release is made of, written by the packaging steps and kept out of the repository
 scripts/       the QEMU build and its patches, the pinned fetches (Wi-Fi libraries and firmware, fonts, certificates, icons, esp-emulator), a serial terminal
 ```
 
