@@ -2,7 +2,8 @@
 
 Player plays sound files - WAV, MP3, FLAC, Ogg Vorbis, Ogg Opus
 (`.opus`), AAC (`.aac`, and `.m4a` through media.library), AC-3 and
-E-AC-3 (`.ac3`, `.eac3`), and Matroska's `.mka` holding any of them -
+E-AC-3 (`.ac3`, `.eac3`), DTS (`.dts`), and Matroska's `.mka` holding any
+of them -
 and internet stations in a
 window,
 with a picture of the sound under its controls: a plasma, the wave, the
@@ -18,7 +19,7 @@ English otherwise.
 ## Starting it
 
 Double-click its icon, double-click a `.mp3`, `.wav`, `.flac`, `.ogg`,
-`.opus`, `.m4a`, `.aac`, `.ac3`, `.eac3` or `.mka` file - or a list, `.m3u`,
+`.opus`, `.m4a`, `.aac`, `.ac3`, `.eac3`, `.dts` or `.mka` file - or a list, `.m3u`,
 `.m3u8` or `.pls` - or type in a shell:
 
 ```

@@ -51,6 +51,7 @@ fn kindName(codec: u32) [*:0]const u8 {
         ac.ACODEC_AC3 => "AC-3",
         ac.ACODEC_EAC3 => "E-AC-3",
         ac.ACODEC_OPUS => "Ogg Opus",
+        ac.ACODEC_DTS => "DTS",
         else => "sound",
     };
 }

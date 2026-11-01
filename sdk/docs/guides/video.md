@@ -204,9 +204,10 @@ disks nor the speed.
 
 The sound is audiocodec.library's: AAC-LC
 ([AAC and MP4](audio.md#aac-and-mp4)), AC-3 and E-AC-3 mixed into
-stereo ([AC-3 and E-AC-3](audio.md#ac-3-and-e-ac-3)), and in a Matroska
+stereo ([AC-3 and E-AC-3](audio.md#ac-3-and-e-ac-3)), DTS's core
+([DTS](audio.md#dts)) on the 64-bit machines, and in a Matroska
 file MP3, FLAC and Vorbis too ([Matroska](audio.md#matroska)); another
-codec - DTS, Opus - leaves the film without sound. Subtitles (1.3): SubRip,
+codec leaves the film without sound. Subtitles (1.3): SubRip,
 SubStation Alpha (ASS and SSA), MP4's timed text and PGS, read by the
 library.
 

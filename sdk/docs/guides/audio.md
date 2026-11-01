@@ -434,8 +434,9 @@ triggers too. A trigger plays on after its open is closed; the query's
 stream plays: WAV (PCM of 8 to 32 bits, or float), MP3 (MPEG-1, 2 and
 2.5, Layer III), FLAC (4 to 24 bits), Ogg Vorbis, AAC-LC (ADTS, or in
 an MP4), AC-3 and E-AC-3 (bare, or in an MP4), Opus (in Ogg, or in an
-MP4), and the sound of a Matroska file or a WebM in any of them but WAV,
-in one channel or two - AC-3's and Opus's 5.1 mixed into two. `OpenAudioStream` opens a file by name
+MP4), DTS's core (bare, or in an MP4; 1.11), and the sound of a Matroska
+file or a WebM in any of them but WAV,
+in one channel or two - AC-3's, Opus's and DTS's 5.1 mixed into two. `OpenAudioStream` opens a file by name
 (`ACA_Name`), a file the program has open (`ACA_FileHandle`), or bytes a
 function of the program's hands over (`ACA_ReadFunc`, `ACA_ReadData`) -
 a download, a network stream - and finds the kind by its first bytes.
@@ -444,7 +445,7 @@ until the end; the file is decoded as it plays, never whole.
 
 Each kind's code is a module of its own in `LIBS:codecs/` (1.10):
 `wav.acodec`, `mp3.acodec`, `flac.acodec`, `vorbis.acodec`, `aac.acodec`,
-`ac3.acodec`, `opus.acodec`, each with the calls of `sdk.interface.acodec`
+`ac3.acodec`, `opus.acodec`, `dts.acodec`, each with the calls of `sdk.interface.acodec`
 ([md](../autodocs/acodec.md)) and the stream they share, `sdk.acodec`. The
 codec names the file, and only the module a stream needs is loaded, until
 `Avail FLUSH` or low memory takes it again. Finding out what a file is
@@ -544,9 +545,9 @@ container too, and opened the same way, by its first bytes (EBML's
 header) whatever `ACA_Codec` says; `IdentifyAudio` calls it
 ACODEC_UNKNOWN, as its first bytes say nothing of what it holds. Its
 sound track - the one it marks to be played, or the one `ACA_MediaTrack`
-numbers - may be AAC, MP3, FLAC, Vorbis, AC-3, E-AC-3 or Opus, and
-`info.codec` says which; DTS is refused with ACERR_UNSUPPORTED, as is
-MPEG audio of layer II. A read function reads it front to back, and it cannot
+numbers - may be AAC, MP3, FLAC, Vorbis, AC-3, E-AC-3, Opus or DTS, and
+`info.codec` says which; MPEG audio of layer II is refused with
+ACERR_UNSUPPORTED, as is a DTS track with no core. A read function reads it front to back, and it cannot
 seek. Matroska keeps its times in milliseconds, so: the first packet
 says where the sound begins and each after it begins where the one
 before ends; the priming its `CodecDelay` gives is left out; the length
@@ -586,6 +587,26 @@ are within a step of FFmpeg's; the noise the stream asks for in bits it
 codes with none (dither) comes from FFmpeg's generator, so after a seek
 it is other noise and the samples differ by it, except back at frame 0.
 A stream takes about 80 KiB.
+
+### DTS
+
+**DTS** (Coherent Acoustics, ETSI TS 102 114) is a film's sound: bare frames
+in a `.dts` file - sixteen bits to a word or fourteen, either end first - or
+a track of a Matroska file or an MP4. `dts.acodec` decodes the **core**, up
+to 5.1 at up to 48 kHz. A DTS-HD track holds a core and more: its lossless
+or high resolution data (XLL, XBR, X96) and its added channels (XCH, XXCH)
+are passed over, so DTS-HD Master Audio plays as its core, at the core's
+rate; a track with no core - DTS Express - is refused with ACERR_UNSUPPORTED.
+Channels past two are mixed into two as AC-3's are: the centre and surrounds
+at -3 dB, the LFE left out, each side's weights summing to one; the mix a
+stream may carry for the purpose and its dynamic range are not read. The
+samples are within a step of FFmpeg's. A bare file's length comes from the
+frames read ahead and its size, and a seek lands by the same, a frame early;
+in a container both come from its own numbers. A frame that will not decode -
+its check words, DSYNC, not where they belong - is silence for its length. A
+stream takes about 70 KiB, and 16 KiB more for the 14-bit and little-endian
+forms. The module's tables make it large, so it is on the 64-bit machines'
+disks alone.
 
 ### Opus
 
@@ -706,7 +727,7 @@ station's songs by their own tags; it ends when the station ends the
 stream, or says why the connection was lost. `SYS:Programs/Player` does
 it in a window, and is
 what the desktop opens a `.mp3`, `.wav`, `.flac`, `.ogg`, `.m4a`,
-`.aac`, `.ac3`, `.eac3` or `.mka` file with, and a list - `.m3u`,
+`.aac`, `.ac3`, `.eac3`, `.dts` or `.mka` file with, and a list - `.m3u`,
 `.m3u8`, `.pls` (the `MP3`, `WAV`, `FLAC`, `Ogg`, `M4A`, `AAC`, `AC3`,
 `MKA`, `M3U` and `PLS` descriptors in `DEVS:DataTypes`) - with the
 song's cover
