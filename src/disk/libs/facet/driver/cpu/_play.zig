@@ -66,6 +66,8 @@ pub const Player = struct {
     stencil: _vertices.StencilSet = .{},
     /// The colour attachment has no alpha.
     target_opaque: bool = false,
+    /// Something left out for want of room has been reported.
+    told_no_room: bool = false,
     /// The sets and the push constants as bound, and the copy of them in
     /// the frame's memory the draws since they last changed read; null
     /// until a draw makes one.
@@ -98,6 +100,17 @@ pub fn close(queue: *Queue) callconv(.c) void {
     if (player.scratch) |scratch| queue.device.sys.FreeVec(scratch);
     _objects.destroy(queue.device.sys, player);
     queue.driver = null;
+}
+
+/// Something left out of a frame for want of room, said once a queue with
+/// what it was. The program is not told: nothing of a frame being played
+/// reaches it. What can be caught while it is recorded is refused there
+/// instead (`CmdDraw`).
+pub fn noRoom(queue: *Queue, what: [*:0]const u8) void {
+    const player = playerOf(queue);
+    if (player.told_no_room) return;
+    player.told_no_room = true;
+    exec.kprintf(queue.device.sys, "facet.library: %s left out of the frame on the cores; what follows may be too\n", .{what});
 }
 
 pub fn playerOf(queue: *const Queue) *Player {

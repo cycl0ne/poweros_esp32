@@ -32,7 +32,8 @@ const _image = @import("../../image/_image.zig");
 const Image = _image.Image;
 const _pipeline = @import("../../pipeline/_pipeline.zig");
 const Pipeline = _pipeline.Pipeline;
-const max_vertex_input_bindings = @import("../../instance/_instance.zig").max_vertex_input_bindings;
+const _instance = @import("../../instance/_instance.zig");
+const max_vertex_input_bindings = _instance.max_vertex_input_bindings;
 const _vertices = @import("../_vertices.zig");
 const _compute = @import("../_compute.zig");
 const _tessellate = @import("../_tessellate.zig");
@@ -63,8 +64,9 @@ const tile_lists_extra: u32 = 1024 * 1024;
 const tile_list_triangle_bytes: u32 = 16;
 const most_tile_lists_bytes: u32 = 128 * 1024 * 1024;
 const tile_state_bytes: u32 = 256;
-/// The most vertices a draw works: past it, the draw draws nothing.
-const most_vertices = 1 << 20;
+/// The most vertices a draw works, the cores' driver's limit too: past it the
+/// draw is left out and said to be, and a CmdDraw over it never gets this far.
+const most_vertices = _instance.max_draw_vertices;
 /// A vertex's place on screen, in 1/64 of a pixel, held inside this.
 const most_screen: f32 = 1 << 30;
 /// What a sampled texture that is not there reads, as `shader.missing`.
@@ -329,12 +331,15 @@ fn tileListsBytes(tiles: u32, triangles: u64) u32 {
     return @intCast(@min(wanted, most_tile_lists_bytes));
 }
 
-/// A draw left out for want of memory, said once a queue.
-fn noRoom(queue: *Queue) void {
+/// Something left out of a frame for want of room, said once a queue with
+/// what it was. The program is not told: nothing of a frame being played
+/// reaches it, and a frame half drawn is still shown. What can be caught
+/// while it is recorded is refused there instead (`CmdDraw`).
+fn noRoom(queue: *Queue, what: [*:0]const u8) void {
     const player = playerOf(queue);
     if (player.told_no_room) return;
     player.told_no_room = true;
-    exec.kprintf(queue.device.sys, "v3d: a draw of more than there is room for is left out\n", .{});
+    exec.kprintf(queue.device.sys, "v3d: %s left out of the frame for want of room; what follows may be too\n", .{what});
 }
 
 /// Where the V3D has an image, mapped the first time it is asked: 0 where it
@@ -478,8 +483,8 @@ fn clearRectangle(queue: *Queue, clip: frames.Area, color: u32, channels: u32, d
         .width = half_width * 2,
         .height = half_height * 2,
     };
-    const uniforms = carve(queue, 4, 4) orelse return;
-    if (!roomOnList(queue)) return;
+    const uniforms = carve(queue, 4, 4) orelse return noRoom(queue, "a clear with no memory for its uniforms");
+    if (!roomOnList(queue)) return noRoom(queue, "a clear with no memory for the binner's list");
     frames.writeDrawState(&player.bin, &state);
     if (!sendVertices(queue, vertices.address, 4, player.hardware.programs.color, uniforms.address)) return;
     cl.indexBufferSetup(&player.bin, indices.address, @sizeOf(@TypeOf(corners)));
@@ -782,7 +787,7 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
     const state = drawStateOf(player, pipeline, &viewport) orelse return;
     const indices = _vertices.indicesOf(player, pipeline, first, count, vertex_offset) orelse return;
     const lowest, const highest = _vertices.range(indices) orelse return;
-    if (highest - lowest >= most_vertices) return noRoom(queue);
+    if (highest - lowest >= most_vertices) return noRoom(queue, "a draw of more vertices than one works");
     const vertices = highest - lowest + 1;
 
     const locations = pipeline.locations;
@@ -797,7 +802,7 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
     const inputs_bytes = @as(usize, vertices) * locations * @sizeOf([4]f32);
     const outputs_bytes = @as(usize, vertices) * point_stride * @sizeOf(f32);
     const corners_bytes = most_corners * @sizeOf(u32);
-    const scratch = scratchOf(queue, inputs_bytes + outputs_bytes + corners_bytes + wide_vertices_bytes + wide_indices_bytes) orelse return;
+    const scratch = scratchOf(queue, inputs_bytes + outputs_bytes + corners_bytes + wide_vertices_bytes + wide_indices_bytes) orelse return noRoom(queue, "a draw with no memory to work its vertices in");
     const inputs: [*][4]f32 = @ptrCast(@alignCast(scratch));
     const outputs: [*]f32 = @ptrCast(@alignCast(scratch + inputs_bytes));
     const corners: [*]u32 = @ptrCast(@alignCast(scratch + inputs_bytes + outputs_bytes));
@@ -811,7 +816,7 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
     var index_place: Place = undefined;
     var kept: u32 = 0;
     if (!wide and pipeline.tessellated == null) {
-        index_place = carve(queue, @intCast(corner_count * 4), 4) orelse return noRoom(queue);
+        index_place = carve(queue, @intCast(corner_count * 4), 4) orelse return noRoom(queue, "a draw with no memory for its indices");
         const kept_indices: [*]u32 = @ptrCast(@alignCast(index_place.cpu));
         var corner: usize = 0;
         while (corner < corner_count) : (corner += 3) {
@@ -833,7 +838,7 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
         .color => {
             carried = .{ .colors_from = 0 };
             fragment = programs.color;
-            const place = carve(queue, 4, 4) orelse return;
+            const place = carve(queue, 4, 4) orelse return noRoom(queue, "a draw with no memory for its uniforms");
             uniforms = place.address;
         },
         .texture, .texture_color, .texture_array, .texture_cube, .texture_3d => {
@@ -850,7 +855,7 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
                 varyings = 4;
                 carried = .{ .constant = missing_color };
                 fragment = programs.color;
-                const place = carve(queue, 4, 4) orelse return;
+                const place = carve(queue, 4, 4) orelse return noRoom(queue, "a draw with no memory for its uniforms");
                 break :missing place.address;
             };
         },
@@ -864,7 +869,7 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
         .offset = viewport.min_depth,
     };
     const record_bytes = recordStride(varyings);
-    if (!roomOnList(queue)) return;
+    if (!roomOnList(queue)) return noRoom(queue, "a draw with no memory for the binner's list");
     frames.writeDrawState(&player.bin, &state);
     for (0..instances) |k| {
         const instance = first_instance +% @as(u32, @intCast(k));
@@ -888,7 +893,10 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
         var tessellated: ?_tessellate.Made = null;
         defer if (tessellated) |made| made.free(queue.device.sys);
         if (pipeline.tessellated != null) {
-            const made = _tessellate.run(queue.device.sys, pipeline, &player.resources, outputs, corners[0..corner_count], instance, most_vertices) orelse continue;
+            const made = _tessellate.run(queue.device.sys, pipeline, &player.resources, outputs, corners[0..corner_count], instance, most_vertices) orelse {
+                noRoom(queue, "a draw with no memory to tessellate it, or more vertices out of it than one works");
+                continue;
+            };
             tessellated = made;
             drawn = made.vertices;
             drawn_vertices = made.vertex_count;
@@ -897,7 +905,7 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
             into_indices = made.wide_indices;
             if (!wide) {
                 if (made.corner_count == 0) continue;
-                index_place = carve(queue, made.corner_count * 4, 4) orelse return noRoom(queue);
+                index_place = carve(queue, made.corner_count * 4, 4) orelse return noRoom(queue, "a draw with no memory for the indices it tessellated to");
                 @memcpy(@as([*]u32, @ptrCast(@alignCast(index_place.cpu)))[0..made.corner_count], drawn_corners);
                 kept = made.corner_count;
             }
@@ -905,18 +913,19 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
         if (wide) {
             const made = _vertices.widen(pipeline, &viewport, pipeline.line_width orelse player.line_width, drawn, stride, drawn_corners, into_vertices, into_indices);
             if (made.indices == 0) continue;
-            index_place = carve(queue, made.indices * 4, 4) orelse return noRoom(queue);
+            index_place = carve(queue, made.indices * 4, 4) orelse return noRoom(queue, "a draw with no memory for the indices of its lines or points");
             @memcpy(@as([*]u32, @ptrCast(@alignCast(index_place.cpu)))[0..made.indices], into_indices[0..made.indices]);
             kept = made.indices;
             drawn = into_vertices;
             drawn_vertices = made.vertices;
         }
-        const records = carve(queue, std.math.cast(u32, drawn_vertices * record_bytes) orelse return, 4) orelse return noRoom(queue);
+        const records_bytes = std.math.cast(u32, drawn_vertices * record_bytes) orelse return noRoom(queue, "a draw with more vertex records than a frame holds");
+        const records = carve(queue, records_bytes, 4) orelse return noRoom(queue, "a draw with no memory for its vertex records");
         for (0..drawn_vertices) |vertex| {
             writeRecord(records.cpu + vertex * record_bytes, drawn + vertex * stride, &scale, varyings, carried);
         }
-        if (!roomOnList(queue)) return;
-        if (!sendVertices(queue, records.address, varyings, fragment, uniforms)) return;
+        if (!roomOnList(queue)) return noRoom(queue, "a draw with no memory for the binner's list");
+        if (!sendVertices(queue, records.address, varyings, fragment, uniforms)) return noRoom(queue, "a draw with no memory for its shader record");
         cl.indexBufferSetup(&player.bin, index_place.address, kept * 4);
         cl.indexedPrimList(&player.bin, cl.PRIM_TRIANGLES, kept);
         player.binned = true;

@@ -108,6 +108,14 @@ pub const Space = struct {
         const memory_bytes = whole + page_bytes - 1;
         const memory = sys.AllocMem(memory_bytes, exec.MEMF_DMA | exec.MEMF_CLEAR) orelse return null;
         const aligned = (@intFromPtr(memory) + page_bytes - 1) & ~@as(usize, page_bytes - 1);
+        // The lists hold 32-bit addresses while the MMU reports 36 physical
+        // bits: memory past the V3D's reach is given back, not truncated into
+        // an address it would write over. MEMF_DMA answers from the first GiB,
+        // so this is a guard rather than a case that is met.
+        if (aligned + whole > reach_bytes) {
+            sys.FreeMem(memory, memory_bytes);
+            return null;
+        }
         const block = Block{
             .memory = memory,
             .memory_bytes = memory_bytes,

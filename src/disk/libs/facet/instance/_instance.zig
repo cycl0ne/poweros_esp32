@@ -44,6 +44,11 @@ pub const max_image_dimension = 8192;
 pub const max_image_dimension_3d = 256;
 pub const max_image_array_layers = 256;
 
+/// The most vertices a draw works, the lowest it reads to the highest. Both
+/// drivers hold to it: a draw of more is left out of the frame and said to be,
+/// and a CmdDraw whose own count is over it is refused as it is recorded.
+pub const max_draw_vertices = 1 << 20;
+
 /// The physical devices of `instance` described: the cores' first, then each
 /// module's that finds its hardware.
 pub fn describe(base: *FacetBase, instance: *Instance) void {

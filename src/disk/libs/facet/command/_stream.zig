@@ -81,6 +81,9 @@ pub const Stream = struct {
     last: ?*Chunk = null,
     /// A command did not fit in memory: the recording is not whole.
     failed: bool = false,
+    /// A command asked for more than the library draws and was not recorded:
+    /// what EndCommandBuffer answers. `success` while nothing was refused.
+    refusal: facet.Result = .success,
 
     /// Command `command` written, with `carried` after its fields; nothing,
     /// and the recording failed, when memory runs out.
@@ -133,11 +136,12 @@ pub const Stream = struct {
     /// Back to nothing recorded: the chunks kept for the next recording,
     /// or given back with `release`.
     pub fn reset(stream: *Stream, sys: *ExecBase, release: bool) void {
+        stream.failed = false;
+        stream.refusal = .success;
         if (release) return stream.free(sys);
         var chunk = stream.first;
         while (chunk) |each| : (chunk = each.next) each.used = 0;
         stream.last = null;
-        stream.failed = false;
     }
 
     /// Every chunk given back.

@@ -50,4 +50,9 @@ pub const LIBRARY_VERSION = 1;
 /// one after another.
 /// 22: drivers but the cores' are modules in LIBS:facet/, looked for by the
 /// first instance; the V3D's is v3d.fdriver, no longer in the library.
-pub const LIBRARY_REVISION = 22;
+/// 23: a draw of more vertices than the library works is refused as it is
+/// recorded, by `EndCommandBuffer`; whatever is left out of a frame while it
+/// is played says so in the log, on the cores as well as on the V3D, naming
+/// what it was instead of nothing or a line without a cause; memory above
+/// the V3D's 32-bit reach is given back rather than truncated.
+pub const LIBRARY_REVISION = 23;

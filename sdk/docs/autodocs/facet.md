@@ -1406,7 +1406,8 @@ fn CmdDraw(base: *FacetBase, buffer: *facet.CommandBuffer, vertex_count: u32, in
 
 **RESULT**
 
-None.
+None, but a `vertex_count` of more vertices than a draw works is not
+recorded, and `EndCommandBuffer` then answers `error_feature_not_present`.
 
 **BEHAVIOR**
 
@@ -1417,6 +1418,12 @@ triangles are put together from them as the pipeline's topology says,
 clipped, culled and set up, and gathered on the tiles they touch. The
 fragment function colours them as the pass ends. A draw outside a render
 pass, or without a pipeline bound, draws nothing.
+
+A `vertex_count` of more than 1 048 576 is more than either device works,
+and is refused as it is recorded. CmdDrawIndexed cannot be refused the
+same way: what its indices reach is not known until it is played, so a
+draw whose lowest index to highest spans more than that is left out of
+the frame, with a line in the log and nothing said to the program.
 
 **CONTEXT**
 
@@ -4861,8 +4868,10 @@ fn EndCommandBuffer(base: *FacetBase, buffer: *facet.CommandBuffer) facet.Result
 **RESULT**
 
 `success`; `error_out_of_host_memory` when memory ran out for a command
-while it recorded: it cannot be submitted, and is recorded again after
-a reset; `error_initialization_failed` for a buffer not recording.
+while it recorded; `error_feature_not_present` when a command asked for
+more than the library draws, as CmdDraw does of more vertices than a draw
+works. Either way the buffer cannot be submitted, and is recorded again
+after a reset; `error_initialization_failed` for a buffer not recording.
 
 **BEHAVIOR**
 

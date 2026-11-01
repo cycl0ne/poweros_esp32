@@ -27,8 +27,9 @@ const _command = @import("../../command/_command.zig");
 const _play = @import("_play.zig");
 const Player = _play.Player;
 
-/// The most vertices a draw works: past it, the draw draws nothing.
-const most_vertices = 1 << 20;
+/// The most vertices a draw works, the V3D driver's limit too: past it the
+/// draw is left out and said to be, and a CmdDraw over it never gets this far.
+const most_vertices = @import("../../instance/_instance.zig").max_draw_vertices;
 
 /// A pipeline's state in the rasterizer's terms, as this driver keeps it
 /// (Pipeline.driver).
@@ -119,7 +120,7 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
     if (pipeline.draws_nothing or count == 0 or instances == 0) return;
     const indices = _vertices.indicesOf(player, pipeline, first, count, vertex_offset) orelse return;
     const lowest, const highest = _vertices.range(indices) orelse return;
-    if (highest - lowest >= most_vertices) return;
+    if (highest - lowest >= most_vertices) return _play.noRoom(queue, "a draw of more vertices than one works");
     const vertices = highest - lowest + 1;
 
     const locations = pipeline.locations;

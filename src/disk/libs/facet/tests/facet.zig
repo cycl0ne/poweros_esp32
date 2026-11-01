@@ -470,6 +470,42 @@ test "a recording: its commands in order over its chunks; a reset keeps them for
     try testing.expectEqual(free_before, rig.header.free);
 }
 
+test "a draw of more vertices than one works is refused as it is recorded" {
+    const max_draw_vertices = @import("../instance/_instance.zig").max_draw_vertices;
+    var rig = try Rig.up();
+    defer rig.down() catch |err| std.debug.panic("{}", .{err});
+    const instance, const physical = try rig.instance();
+    defer rig.fb.DestroyInstance(instance);
+    const device = try rig.device(physical);
+    defer rig.fb.DestroyDevice(device);
+
+    var pool: ?*facet.CommandPool = null;
+    try testing.expectEqual(facet.Result.success, rig.fb.CreateCommandPool(device, &.{ .flags = facet.COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER }, &pool));
+    defer rig.fb.DestroyCommandPool(device, pool);
+    var commands: [1]?*facet.CommandBuffer = undefined;
+    try testing.expectEqual(facet.Result.success, rig.fb.AllocateCommandBuffers(device, &.{ .command_pool = pool.?, .command_buffer_count = 1 }, &commands));
+    const buffer = commands[0].?;
+
+    // As many as a draw works: recorded.
+    try testing.expectEqual(facet.Result.success, rig.fb.BeginCommandBuffer(buffer, &.{}));
+    rig.fb.CmdDraw(buffer, max_draw_vertices, 1, 0, 0);
+    try testing.expectEqual(facet.Result.success, rig.fb.EndCommandBuffer(buffer));
+
+    // One more than that: not recorded, and said so rather than left out of
+    // the frame later without a word.
+    try testing.expectEqual(facet.Result.success, rig.fb.ResetCommandBuffer(buffer, 0));
+    try testing.expectEqual(facet.Result.success, rig.fb.BeginCommandBuffer(buffer, &.{}));
+    rig.fb.CmdDraw(buffer, max_draw_vertices + 1, 1, 0, 0);
+    try testing.expectEqual(facet.Result.error_feature_not_present, rig.fb.EndCommandBuffer(buffer));
+
+    // Spent: it records again only after a reset, and the refusal is not kept.
+    try testing.expectEqual(facet.Result.error_initialization_failed, rig.fb.EndCommandBuffer(buffer));
+    try testing.expectEqual(facet.Result.success, rig.fb.ResetCommandBuffer(buffer, 0));
+    try testing.expectEqual(facet.Result.success, rig.fb.BeginCommandBuffer(buffer, &.{}));
+    rig.fb.CmdDraw(buffer, 3, 1, 0, 0);
+    try testing.expectEqual(facet.Result.success, rig.fb.EndCommandBuffer(buffer));
+}
+
 /// A buffer of `bytes` bound into memory of its own, mapped.
 pub fn mappedBuffer(rig: *Rig, device: *facet.Device, bytes: u64, usage: u32) !struct { *facet.Buffer, *facet.DeviceMemory, [*]u8 } {
     var buffer: ?*facet.Buffer = null;
