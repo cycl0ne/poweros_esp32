@@ -138,7 +138,7 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "RDB";
-const VERSION_STRING = "\x00$VER: RDB 1.7 (01.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: RDB 1.8 (01.11.2026)\r\n";
 
 const template = "DEVICE,UNIT/K/N,FULL/S,INIT/S,FORCE/S,ADD/K,LOW/K/N,HIGH/K/N,DOSTYPE/K,BOOTABLE/S,REMOVE/K,CHANGE/K,ADDFS/K,REMFS/K,BOOTPRI/K/N,GPT/S,MOUNT/S,ADDGPT/K,REMGPT/K,SIZE/K,NOMOUNT/S,MOUNTGPT/K";
 const arg_device = 0;
