@@ -39,7 +39,9 @@ They are marked not to be mounted when the medium comes in (the GPT's
 them, and a drive for each at every start is one more name in `Info` than
 there is a use for. The install mounts them itself to write them, and
 rdb.library mounts one when it is asked to, so an update finds them by
-the names `install.prefs` keeps.
+the names `install.prefs` keeps; `RDB <device> MOUNTGPT BOOT` gives one a
+drive on the spot, which is how to look inside or put a file there by
+hand.
 How many there are is the board's own fact (`SYSTAG_BootSlots`): one
 where the firmware reads one partition, two where it can be sent to the
 other for a single start. Both hold the same files, so either starts the

@@ -872,7 +872,8 @@ container has the rest says so. `NOMOUNT` marks it not to be mounted when the
 medium comes in - what a partition a firmware reads and nothing here
 works in wants, and what an install does with its boot partitions - and
 the flags column says `nomount` for it; rdb.library still mounts it when
-a program asks. Once the partition holds a volume the
+a program asks, and `MOUNTGPT <name>` gives it a drive on the spot, which
+is how to look into one. Once the partition holds a volume the
 next start mounts it as the device mounts a GPT's partitions - here
 `NV1:` - and `MOUNT` mounts the GPT's partitions too: those that hold
 a volume, under their entry's name, and a new one, its first block
