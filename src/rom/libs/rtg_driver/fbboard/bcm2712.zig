@@ -17,7 +17,9 @@
 //! A register of the HDMI controller read or written while the HSM
 //! clock is stopped - as the firmware leaves it with no monitor at boot -
 //! never answers, and the core waits for it for good: so `wake` sets the
-//! clocks before anything else.
+//! clocks before anything else - the HVS's own (DISP) among them, which
+//! the firmware leaves stopped where no monitor was awake as it started,
+//! and which `startDisp` then asks for rather than give the display up.
 //!
 //! **The display list** is in the HVS's own memory, 0x4000 into its
 //! registers, from word 32 on (the bootloader's are the 32 before): the
@@ -102,6 +104,7 @@ const on_bcm2712 = sdk.hardware.chip == .a64psci;
 const MAILBOX: usize = 0x10_7C01_3880;
 const TAG_NOTIFY_DISPLAY_DONE: u32 = 0x0003_0066;
 const TAG_GET_CLOCK_RATE: u32 = 0x0003_0002;
+const TAG_GET_MAX_CLOCK_RATE: u32 = 0x0003_0004;
 const TAG_SET_CLOCK_RATE: u32 = 0x0003_8002;
 const CLOCK_HSM: u32 = 13;
 const CLOCK_BVB: u32 = 14;
@@ -511,6 +514,27 @@ fn atLeast(sys: *ExecBase, clock: u32, hz: u64) bool {
     return now >= hz or setClock(sys, clock, hz);
 }
 
+/// The fastest the firmware gives for clock `clock`; null when it does
+/// not say.
+fn maxClockRate(sys: *ExecBase, clock: u32) ?u32 {
+    var value = [2]u32{ clock, 0 };
+    if (!ask(sys, TAG_GET_MAX_CLOCK_RATE, &value)) return null;
+    return value[1];
+}
+
+/// The HVS's own clock started where it is stopped, at the fastest rate
+/// the firmware gives for it: the compositor reads and writes memory on
+/// it, and no mode depends on which rate it is. The firmware stops it
+/// where it found no monitor awake as it started - which a machine that
+/// starts from its own medium does in the second after the power comes
+/// on, long before a monitor that was asleep answers - and the display
+/// is then asked for rather than given up on.
+fn startDisp(sys: *ExecBase) bool {
+    const most = maxClockRate(sys, CLOCK_DISP) orelse return false;
+    if (most == 0) return false;
+    return setClock(sys, CLOCK_DISP, most) and (clockRate(sys, CLOCK_DISP) orelse 0) != 0;
+}
+
 /// The HSM's rate for a TMDS clock of `tmds_hz`.
 pub fn hsmHz(tmds_hz: u64) u64 {
     return @max(HSM_MIN_HZ, tmds_hz / 100 * 101);
@@ -545,7 +569,7 @@ pub fn wake(sys: *ExecBase, waiter: anytype) Failure {
     // let go of.
     var none = [0]u32{};
     _ = ask(sys, TAG_NOTIFY_DISPLAY_DONE, &none);
-    if ((clockRate(sys, CLOCK_DISP) orelse 0) == 0) return .firmware;
+    if ((clockRate(sys, CLOCK_DISP) orelse 0) == 0 and !startDisp(sys)) return .firmware;
     if (!atLeast(sys, CLOCK_HSM, hsmHz(0)) or !atLeast(sys, CLOCK_BVB, bvbHz(0))) return .firmware;
     at(DVP_MISC_CONFIG, 0).* &= ~DVP_HDMI0_GATE;
     // The DDC (brcmstb_i2c_set_bsc_reg_defaults): four bytes a data word,
