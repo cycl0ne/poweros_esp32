@@ -1,0 +1,1 @@
+NAME=DTS BASE=audiocodec GROUP=soun ID=DTS PATTERN=#?.dts TYPE=BINARY PRI=5 BROWSE=SYS:Programs/Player

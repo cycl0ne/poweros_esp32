@@ -46,7 +46,8 @@ const _media = @import("_media.zig");
 /// BEHAVIOR:
 /// A kind's code is a module of its own in LIBS:codecs/, opened until
 /// CloseAudioStream (SINCE 1.10): wav.acodec, mp3.acodec, flac.acodec,
-/// vorbis.acodec, aac.acodec, ac3.acodec, opus.acodec.
+/// vorbis.acodec, aac.acodec, ac3.acodec, opus.acodec, dts.acodec (SINCE
+/// 1.11).
 ///
 /// The stream reads ahead of the decoder into a buffer of its own, and
 /// finds the kind by the first bytes (as `IdentifyAudio`) unless

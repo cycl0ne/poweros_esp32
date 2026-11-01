@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! Play: a sound file out of the speaker - WAV, MP3, FLAC, Ogg Vorbis,
 //! Ogg Opus, AAC (an `.aac` file, or an `.m4a` through media.library),
-//! AC-3 or E-AC-3 (`.ac3`, `.eac3`), or the sound of a Matroska file - or a
+//! AC-3 or E-AC-3 (`.ac3`, `.eac3`), DTS (`.dts`), or the sound of a Matroska
+//! file - or a
 //! station, through audiocodec.library and audio.device. Built against
 //! the SDK only.
 //!
@@ -83,6 +84,7 @@ fn kindName(codec: u32) [*:0]const u8 {
         ac.ACODEC_AC3 => "AC-3",
         ac.ACODEC_EAC3 => "E-AC-3",
         ac.ACODEC_OPUS => "Ogg Opus",
+        ac.ACODEC_DTS => "DTS",
         else => "sound",
     };
 }

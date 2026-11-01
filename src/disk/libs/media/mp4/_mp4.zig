@@ -462,6 +462,7 @@ fn soundEntry(out: *media.MediaTrack, format: u32, body: []const u8) void {
         },
         kind("ac-3") => out.codec = media.MCODEC_AC3,
         kind("ec-3") => out.codec = media.MCODEC_EAC3,
+        kind("dtsc"), kind("dtsh"), kind("dtsl") => out.codec = media.MCODEC_DTS,
         kind("Opus") => {
             out.codec = media.MCODEC_OPUS;
             if (child(children, kind("dOps"))) |dops| setup(out, dops, 0);
@@ -542,6 +543,7 @@ fn elementary(out: *media.MediaTrack, esds: []const u8) void {
         0x69, 0x6B => media.MCODEC_MP3,
         0xA5 => media.MCODEC_AC3,
         0xA6 => media.MCODEC_EAC3,
+        0xA9, 0xAA, 0xAB => media.MCODEC_DTS, // DTS, and DTS-HD with a core
         0x20 => media.MCODEC_MPEG4V,
         0x6C => media.MCODEC_MJPEG,
         else => out.codec,

@@ -1751,6 +1751,7 @@ const App = struct {
             ac.ACODEC_AC3 => "AC-3",
             ac.ACODEC_EAC3 => "E-AC-3",
             ac.ACODEC_OPUS => "Opus",
+            ac.ACODEC_DTS => "DTS",
             else => app.text.get(.MSG_SOUND),
         };
         const sides = app.text.get(if (info.channels == 1) .MSG_MONO else .MSG_STEREO);

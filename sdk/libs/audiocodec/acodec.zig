@@ -59,6 +59,7 @@ pub fn moduleName(codec: u32) ?[*:0]const u8 {
         ac.ACODEC_AAC => ACODEC_PREFIX ++ "aac.acodec",
         ac.ACODEC_AC3, ac.ACODEC_EAC3 => ACODEC_PREFIX ++ "ac3.acodec",
         ac.ACODEC_OPUS => ACODEC_PREFIX ++ "opus.acodec",
+        ac.ACODEC_DTS => ACODEC_PREFIX ++ "dts.acodec",
         else => null,
     };
 }

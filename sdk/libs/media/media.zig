@@ -99,7 +99,9 @@ pub const MCODEC_FLAC: u32 = 22;
 /// Xiph laces them - a byte of 2, the lengths of the first two in bytes
 /// of 255 and the byte that ends each, then the three packets.
 pub const MCODEC_VORBIS: u32 = 23;
-/// DTS, and DTS-HD (SINCE 1.2): each packet a frame whole.
+/// DTS, and DTS-HD (SINCE 1.2): each packet a frame whole; an MP4's too,
+/// its `dtsc`, `dtsh` and `dtsl` tracks or an `mp4a` that says so
+/// (mp4.container 1.1).
 pub const MCODEC_DTS: u32 = 24;
 /// Timed text (3GPP, QuickTime's): each packet a length and the text.
 pub const MCODEC_TEXT: u32 = 32;

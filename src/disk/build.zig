@@ -159,6 +159,7 @@ const modules = [_]Program{
     .{ .disk = "libs/codecs/aac.acodec", .source = "libs/audiocodec/aac.zig", .name = "aac.acodec" },
     .{ .disk = "libs/codecs/ac3.acodec", .source = "libs/audiocodec/ac3.zig", .name = "ac3.acodec" },
     .{ .disk = "libs/codecs/opus.acodec", .source = "libs/audiocodec/opus.zig", .name = "opus.acodec" },
+    .{ .disk = "libs/codecs/dts.acodec", .source = "libs/audiocodec/dts.zig", .name = "dts.acodec" },
     .{ .disk = "libs/media.library", .source = "libs/media/media.zig", .name = "media.library" },
     .{ .disk = "libs/codecs/mp4.container", .source = "libs/media/mp4.zig", .name = "mp4.container" },
     .{ .disk = "libs/codecs/mkv.container", .source = "libs/media/mkv.zig", .name = "mkv.container" },
@@ -289,9 +290,10 @@ const esp_only = [_][]const u8{ "usbotg.device", "sdcard.device", "programs/Dock
 /// a card or an SSD for a machine whose firmware loads a kernel from a
 /// partition - an ESP32's kernel is in its flash. And the dock in
 /// SYS:WBStartup, started with the desktop, the test of a chip's video
-/// decoder, and the video codecs in software: the ESP32s have neither the
-/// room for them on their flash disks nor the speed.
-const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device", "nvme.device", "install", "WBStartup/Dock", "videodec", "h264.vcodec", "hevc.vcodec", "vp8.vcodec", "vp9.vcodec", "av1.vcodec" };
+/// decoder, DTS's module with its large tables, and the video codecs in
+/// software: the ESP32s have neither the room for them on their flash
+/// disks nor the speed, and the 64-bit machines' disks are RAM.
+const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device", "nvme.device", "install", "WBStartup/Dock", "videodec", "dts.acodec", "h264.vcodec", "hevc.vcodec", "vp8.vcodec", "vp9.vcodec", "av1.vcodec" };
 /// Drivers of what only the Raspberry Pi CM5 has among the AArch64
 /// machines and no other chip does: its radio, a CYW43455 on the
 /// BCM2712's SD host.
@@ -436,6 +438,7 @@ pub const files = [_]File{
     .{ .disk = "devs/datatypes/AAC", .source = "devs/datatypes/AAC" },
     .{ .disk = "devs/datatypes/M4A", .source = "devs/datatypes/M4A" },
     .{ .disk = "devs/datatypes/AC3", .source = "devs/datatypes/AC3" },
+    .{ .disk = "devs/datatypes/DTS", .source = "devs/datatypes/DTS" },
     .{ .disk = "devs/datatypes/MP4", .source = "devs/datatypes/MP4" },
     .{ .disk = "devs/datatypes/MOV", .source = "devs/datatypes/MOV" },
     .{ .disk = "devs/datatypes/MKV", .source = "devs/datatypes/MKV" },

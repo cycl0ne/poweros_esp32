@@ -12,6 +12,7 @@ const vorbis_init = @import("../vorbis/vorbis_init.zig");
 const aac_init = @import("../aac/aac_init.zig");
 const ac3_init = @import("../ac3/ac3_init.zig");
 const opus_init = @import("../opus/opus_init.zig");
+const dts_init = @import("../dts/dts_init.zig");
 
 const ExecBase = sdk.interface.exec.ExecBase;
 
@@ -23,6 +24,7 @@ const tags = [_]struct { tag: *const exec.Resident, name: [*:0]const u8 }{
     .{ .tag = &aac_init.aac_acodec_tag, .name = "codecs/aac.acodec" },
     .{ .tag = &ac3_init.ac3_acodec_tag, .name = "codecs/ac3.acodec" },
     .{ .tag = &opus_init.opus_acodec_tag, .name = "codecs/opus.acodec" },
+    .{ .tag = &dts_init.dts_acodec_tag, .name = "codecs/dts.acodec" },
 };
 
 pub const Made = [tags.len]*exec.Library;

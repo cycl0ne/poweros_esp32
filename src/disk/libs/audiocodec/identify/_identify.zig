@@ -13,6 +13,7 @@ const _stream = @import("../stream/_stream.zig");
 const layer3 = @import("../mp3/layer3.zig");
 const aac_config = @import("../aac/config.zig");
 const ac3_header = @import("../ac3/header.zig");
+const dts_header = @import("../dts/header.zig");
 
 pub fn identify(bytes: []const u8) u32 {
     if (bytes.len >= 12 and _stream.same(bytes, "RIFF") and _stream.same(bytes[8..], "WAVE")) return ac.ACODEC_WAV;
@@ -21,6 +22,7 @@ pub fn identify(bytes: []const u8) u32 {
     if (bytes.len >= 8 and _stream.same(bytes[4..], "ftyp")) return ac.ACODEC_AAC;
     if (adtsFrames(bytes)) return ac.ACODEC_AAC;
     if (syncFrames(bytes)) |kind| return kind;
+    if (dtsFrames(bytes)) return ac.ACODEC_DTS;
     if (bytes.len >= 10 and _stream.same(bytes, "ID3")) {
         const size = id3Size(bytes);
         if (bytes.len >= size + 4 and _stream.same(bytes[size..], "fLaC")) return ac.ACODEC_FLAC;
@@ -61,6 +63,18 @@ fn syncFrames(bytes: []const u8) ?u32 {
     if (h.size + 8 > bytes.len) return if (h.size >= bytes.len) kind else null;
     const next = ac3_header.peek(bytes[h.size..]) orelse return null;
     return if (next.eac3 == h.eac3 and next.rate == h.rate) kind else null;
+}
+
+/// DTS: a core frame's header at the front, in any of its four forms, and
+/// the next frame's of the same rate or an extension substream - or the
+/// bytes given ending inside the frame.
+fn dtsFrames(bytes: []const u8) bool {
+    const h = dts_header.peek(bytes) orelse return false;
+    if (h.size + 16 > bytes.len) return h.size >= bytes.len;
+    const after = bytes[h.size..];
+    if (dts_header.isExtension(after)) return true;
+    const next = dts_header.peek(after) orelse return false;
+    return next.format == h.format and next.rate == h.rate;
 }
 
 /// An ID3v2 tag's whole length: its header, its body, its footer.

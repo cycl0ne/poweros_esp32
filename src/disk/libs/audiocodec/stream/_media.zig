@@ -173,6 +173,7 @@ fn openTrack(stream: *Stream, mb: *MediaBase, file: *media.MediaFile, owns: bool
         media.MCODEC_AC3 => ac.ACODEC_AC3,
         media.MCODEC_EAC3 => ac.ACODEC_EAC3,
         media.MCODEC_OPUS => ac.ACODEC_OPUS,
+        media.MCODEC_DTS => ac.ACODEC_DTS,
         else => return ac.ACERR_UNSUPPORTED,
     };
     const module = _stream.openModule(stream, codec) orelse return ac.ACERR_UNSUPPORTED;

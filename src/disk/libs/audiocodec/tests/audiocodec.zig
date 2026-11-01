@@ -39,6 +39,9 @@
 //! `opus.mka` 50 ms of stereo Opus, `opus_mka_ref.raw` its frames as
 //! libopus decodes them (through ffmpeg).
 //!
+//! The DTS files are in the DTS section; ffmpeg's encoder made them, but
+//! `syntax.dts`, whose frames a script of random numbers made.
+//!
 //! The Opus files are coded by libopus through ffmpeg: `stereo.opus` a
 //! second of two gliding tones, a click, a high tone and noise, at
 //! 64 kbit/s, titled "Opus Tone" by "PowerOS"; `voice.opus` half a second
@@ -62,6 +65,7 @@ const host = @import("host_rom");
 const kexec = host.exec;
 const audiocodec_init = @import("../audiocodec_init.zig");
 const sound_modules = @import("modules.zig");
+const Bits = @import("../aac/bits.zig").Bits;
 const media_init = @import("../../media/media_init.zig");
 const container_modules = @import("../../media/tests/modules.zig");
 const media = sdk.media;
@@ -79,6 +83,7 @@ test {
     _ = @import("../aac/config.zig");
     _ = @import("../ac3/header.zig");
     _ = @import("../ac3/frame.zig");
+    _ = @import("../dts/header.zig");
 }
 
 const tone_mp3 = @embedFile("tone.mp3");
@@ -2053,6 +2058,200 @@ test "AC-3 mono in an MP4: one channel, ffmpeg's samples to the edit list's leng
     try expectNear(&straight, 0, mono_ac3_ref, 0, 2048, 1);
     for ([_]u32{ 0, 1, 255, 256, 1537, 10000, 24000 - 400 }) |frame| {
         try expectSeekNear(acb, stream, &straight, 1, frame);
+    }
+}
+
+// --- DTS ----------------------------------------------------------------------------
+
+/// A fifth of a second of 5.1 at 768 kbit/s, from ffmpeg's encoder: frames of
+/// 1024 bytes, 512 samples each; ffmpeg's samples of it mixed to stereo as we
+/// mix.
+const six_dts = @embedFile("six.dts");
+const six_dts_ref = @embedFile("six_dts_ref.raw");
+const six_frames = six_dts.len / 1024;
+/// Ten frames of 5.1 of 2048 samples, of random numbers made to use every
+/// branch of the syntax: several subframes and subsubframes, transients,
+/// every code book and quantizer, ADPCM, high frequency vectors, joint
+/// subbands, sums and differences, both filters, lossless steps, CRC words,
+/// DSYNC in either place; ffmpeg's samples, mixed the same.
+const syntax_dts = @embedFile("syntax.dts");
+const syntax_ref = @embedFile("syntax_ref.raw");
+/// Mono at 48 kHz and ffmpeg's samples.
+const mono_dts = @embedFile("mono.dts");
+const mono_dts_ref = @embedFile("mono_dts_ref.raw");
+/// The same stereo frames, a tone in noise at 48 kHz, in Matroska and in an
+/// MP4; ffmpeg's samples. A seek starts the predictors with no history,
+/// which a pure tone's are slow to forget: the sound goes on the same, a
+/// few percent out, for longer than a seek starts early.
+const dts_mka = @embedFile("dts.mka");
+const dts_m4a = @embedFile("dts.m4a");
+const dts_ref = @embedFile("dts_ref.raw");
+
+test "DTS, bare: what it is by its first bytes, ffmpeg's samples, a seek near the frame" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const acb = rig.acb;
+    try testing.expectEqual(ac.ACODEC_DTS, acb.IdentifyAudio(six_dts, ac.AUDIO_IDENTIFY_BYTES));
+    // A sync word with no frame after it is nothing.
+    try testing.expectEqual(ac.ACODEC_UNKNOWN, acb.IdentifyAudio(six_dts[1..], ac.AUDIO_IDENTIFY_BYTES));
+
+    var err: i32 = 0;
+    var info: ac.AudioStreamInfo = .{};
+    try rig.write("WORK:six.dts", &.{six_dts});
+    const stream = openFile(acb, "WORK:six.dts", &err) orelse return error.NoStream;
+    defer acb.CloseAudioStream(stream);
+    acb.GetAudioStreamInfo(stream, &info);
+    try testing.expectEqual(ac.ACODEC_DTS, info.codec);
+    try testing.expectEqual(@as(u32, 48000), info.rate);
+    try testing.expectEqual(@as(u32, 2), info.channels);
+    try testing.expectEqual(@as(u32, 768000), info.bitrate);
+    try testing.expectEqual(@as(u32, six_frames * 512), info.frames);
+    var straight: [six_frames * 512 * 2]i16 = undefined;
+    try testing.expectEqual(@as(u32, six_frames * 512), try decodeAll(acb, stream, 2, 777, &straight));
+    try expectNear(&straight, 0, six_dts_ref, 0, 18 * 512, 2);
+
+    var some: [400 * 2]i16 = undefined;
+    try testing.expectEqual(ac.ACERR_OK, acb.SeekAudio(stream, 0));
+    try testing.expectEqual(@as(i32, 400), acb.DecodeAudio(stream, &some, 400));
+    try testing.expectEqualSlices(i16, straight[0..800], &some);
+    for ([_]u32{ 100, 511, 512, 513, 2000, 5555, six_frames * 512 - 400 }) |frame| {
+        try expectSeekNear(acb, stream, &straight, 2, frame);
+    }
+    try testing.expectEqual(ac.ACERR_OK, acb.SeekAudio(stream, six_frames * 512));
+    try testing.expectEqual(@as(i32, 0), acb.DecodeAudio(stream, &some, 400));
+}
+
+test "DTS: every branch of the syntax as ffmpeg decodes it; mono" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const acb = rig.acb;
+    var err: i32 = 0;
+    var info: ac.AudioStreamInfo = .{};
+
+    var memory: Memory = .{ .bytes = syntax_dts, .piece = 900 };
+    const stream = openMemory(acb, &memory, &err) orelse return error.NoStream;
+    defer acb.CloseAudioStream(stream);
+    var heard: [10 * 2048 * 2]i16 = undefined;
+    try testing.expectEqual(@as(u32, 10 * 2048), try decodeAll(acb, stream, 2, 1000, &heard));
+    try expectNear(&heard, 0, syntax_ref, 0, 10 * 2048, 2);
+
+    var mono_memory: Memory = .{ .bytes = mono_dts };
+    const mono = openMemory(acb, &mono_memory, &err) orelse return error.NoStream;
+    defer acb.CloseAudioStream(mono);
+    acb.GetAudioStreamInfo(mono, &info);
+    try testing.expectEqual(@as(u32, 1), info.channels);
+    const count = mono_dts_ref.len / 2;
+    const samples = try testing.allocator.alloc(i16, count);
+    defer testing.allocator.free(samples);
+    try testing.expectEqual(@as(u32, @intCast(count)), try decodeAll(acb, mono, 1, 500, samples));
+    try expectNear(samples, 0, mono_dts_ref, 0, count, 1);
+}
+
+test "DTS: little end first, fourteen bits to a word, an extension between frames, a frame damaged" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const acb = rig.acb;
+    var err: i32 = 0;
+    var straight: [six_frames * 512 * 2]i16 = undefined;
+    var memory: Memory = .{ .bytes = six_dts };
+    const plain = openMemory(acb, &memory, &err) orelse return error.NoStream;
+    defer acb.CloseAudioStream(plain);
+    try testing.expectEqual(@as(u32, six_frames * 512), try decodeAll(acb, plain, 2, 777, &straight));
+    var heard: [six_frames * 512 * 2]i16 = undefined;
+
+    // The same bytes in pairs swapped.
+    var swapped = six_dts.*;
+    var i: usize = 0;
+    while (i < swapped.len) : (i += 2) {
+        swapped[i] = six_dts[i + 1];
+        swapped[i + 1] = six_dts[i];
+    }
+    try testing.expectEqual(ac.ACODEC_DTS, acb.IdentifyAudio(&swapped, ac.AUDIO_IDENTIFY_BYTES));
+    memory = .{ .bytes = &swapped };
+    const little = openMemory(acb, &memory, &err) orelse return error.NoStream;
+    defer acb.CloseAudioStream(little);
+    try testing.expectEqual(@as(u32, six_frames * 512), try decodeAll(acb, little, 2, 777, &heard));
+    try testing.expectEqualSlices(i16, &straight, &heard);
+
+    // The same bits fourteen to a word, each frame on its own.
+    const frame_bytes = 1024;
+    const packed_frame = (frame_bytes * 8 + 13) / 14 * 2;
+    var fourteen: [six_frames * packed_frame]u8 = undefined;
+    for (0..six_frames) |f| {
+        var bits: Bits = .{ .bytes = six_dts[f * frame_bytes ..][0..frame_bytes] };
+        for (0..packed_frame / 2) |w| {
+            var word = bits.read(14);
+            if (word & 0x2000 != 0) word |= 0xC000; // its sign, as such a stream has
+            fourteen[f * packed_frame + w * 2] = @truncate(word >> 8);
+            fourteen[f * packed_frame + w * 2 + 1] = @truncate(word);
+        }
+    }
+    try testing.expectEqual(ac.ACODEC_DTS, acb.IdentifyAudio(&fourteen, ac.AUDIO_IDENTIFY_BYTES));
+    memory = .{ .bytes = &fourteen };
+    const narrow = openMemory(acb, &memory, &err) orelse return error.NoStream;
+    defer acb.CloseAudioStream(narrow);
+    try testing.expectEqual(@as(u32, six_frames * 512), try decodeAll(acb, narrow, 2, 777, &heard));
+    try testing.expectEqualSlices(i16, &straight, &heard);
+
+    // An extension substream's bytes after each frame are passed over.
+    const extra = 200;
+    var extended: [six_frames * (frame_bytes + extra)]u8 = @splat(0x5A);
+    for (0..six_frames) |f| {
+        const at = f * (frame_bytes + extra);
+        @memcpy(extended[at..][0..frame_bytes], six_dts[f * frame_bytes ..][0..frame_bytes]);
+        @memcpy(extended[at + frame_bytes ..][0..4], &[_]u8{ 0x64, 0x58, 0x20, 0x25 });
+    }
+    try testing.expectEqual(ac.ACODEC_DTS, acb.IdentifyAudio(&extended, ac.AUDIO_IDENTIFY_BYTES));
+    memory = .{ .bytes = &extended };
+    const with_extension = openMemory(acb, &memory, &err) orelse return error.NoStream;
+    defer acb.CloseAudioStream(with_extension);
+    try testing.expectEqual(@as(u32, six_frames * 512), try decodeAll(acb, with_extension, 2, 777, &heard));
+    try testing.expectEqualSlices(i16, &straight, &heard);
+
+    // A frame's audio data zeroed: its DSYNC is not there, its 512 frames
+    // are silence; the frames before it as they were.
+    var damaged = six_dts.*;
+    @memset(damaged[5 * frame_bytes + 40 .. 6 * frame_bytes], 0);
+    memory = .{ .bytes = &damaged };
+    const broken = openMemory(acb, &memory, &err) orelse return error.NoStream;
+    defer acb.CloseAudioStream(broken);
+    try testing.expectEqual(@as(u32, six_frames * 512), try decodeAll(acb, broken, 2, 777, &heard));
+    try testing.expectEqualSlices(i16, straight[0 .. 5 * 512 * 2], heard[0 .. 5 * 512 * 2]);
+    for (heard[5 * 512 * 2 .. 6 * 512 * 2]) |sample| try testing.expectEqual(@as(i16, 0), sample);
+    try testing.expect(squaredDistance(straight[8 * 512 * 2 ..], heard[8 * 512 * 2 ..]) < squaredDistance(straight[8 * 512 * 2 ..], &([_]i16{0} ** ((six_frames - 8) * 512 * 2))) / 1000);
+}
+
+test "DTS in Matroska and in an MP4: ffmpeg's samples, a seek near the frame" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const acb = rig.acb;
+    var err: i32 = 0;
+    var info: ac.AudioStreamInfo = .{};
+    const count = dts_ref.len / 4;
+    const straight = try testing.allocator.alloc(i16, count * 2 + 2048);
+    defer testing.allocator.free(straight);
+    try rig.write("WORK:dts.mka", &.{dts_mka});
+    try rig.write("WORK:dts.m4a", &.{dts_m4a});
+    for ([_][*:0]const u8{ "WORK:dts.mka", "WORK:dts.m4a" }) |name| {
+        const stream = openFile(acb, name, &err) orelse return error.NoStream;
+        defer acb.CloseAudioStream(stream);
+        acb.GetAudioStreamInfo(stream, &info);
+        try testing.expectEqual(ac.ACODEC_DTS, info.codec);
+        try testing.expectEqual(@as(u32, 48000), info.rate);
+        try testing.expectEqual(@as(u32, 2), info.channels);
+        const total = try decodeAll(acb, stream, 2, 777, straight);
+        // As long as the container says, which ffmpeg rounded.
+        try testing.expect(total + 64 >= count);
+        try expectNear(straight, 0, dts_ref, 0, @min(total, count), 2);
+        // Matroska's times are in milliseconds: only an MP4's seek is exact.
+        if (name[10] == 'k') continue;
+        for ([_]u32{ 0, 100, 512, 1000, 5000 }) |frame| {
+            try expectSeekNear(acb, stream, straight[0 .. total * 2], 2, frame);
+        }
     }
 }
 

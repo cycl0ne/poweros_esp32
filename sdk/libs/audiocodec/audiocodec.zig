@@ -76,6 +76,10 @@ pub const ACODEC_EAC3: u32 = 7;
 /// a container, a WebM's, a Matroska file's or an MP4's; at 48 kHz, more
 /// than two channels mixed into stereo (SINCE 1.9).
 pub const ACODEC_OPUS: u32 = 8;
+/// DTS's core: bare frames - a `.dts` file - or a track of a container, a
+/// Matroska file's or an MP4's, DTS-HD's too; more than two channels mixed
+/// into stereo (SINCE 1.11).
+pub const ACODEC_DTS: u32 = 9;
 
 /// How many bytes `IdentifyAudio` wants to be sure: enough for a WAV's
 /// header and for several MP3 frames after a short tag.
