@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.22**, so that a program need not find out by failing. It covers the API.
+1.24**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -22,7 +22,7 @@ BCM2712's V3D, which runs only a fixed handful of fragment forms
 
 | Where | What |
 |---|---|
-| `sdk/fd/facet_lib.fd` | The whole jump table, one line a function: 103 entries |
+| `sdk/fd/facet_lib.fd` | The whole jump table, one line a function: 104 entries |
 | `sdk/libs/facet/facet.zig` | The structures and enumerations a program passes |
 | `sdk/libs/facet/shader.zig` | Shaders as functions: the stages, their inputs, the fixed forms |
 | `sdk/libs/facet/texture.zig` | How a texture is kept and sampled |
@@ -30,9 +30,17 @@ BCM2712's V3D, which runs only a fixed handful of fragment forms
 | `src/disk/libs/facet/driver/cpu/` | The cores' driver: the tiled rasterizer |
 | `src/disk/libs/facet/driver/v3d/` | The V3D's driver, a module in `LIBS:facet/` |
 
-Of Vulkan 1.0's roughly 137 core entry points, facet has 103. Two of the
+Of Vulkan 1.0's roughly 137 core entry points, facet has 104. Two of the
 absent ones, `GetInstanceProcAddr` and `GetDeviceProcAddr`, do not apply to
 a library called through an LVO table.
+
+What a device will and will not do is answered by
+`GetPhysicalDeviceFeatures` (since 1.24), which is Vulkan's call with a
+structure of facet's own: a field wherever a create call can refuse
+something, and no field for what the library has no call for at all. Five of
+its fields differ between the cores and the V3D, which is the reason a
+program that wants the GPU should ask rather than take the first device
+listed.
 
 Nothing below is a defect: every refusal is checked and answered with
 `error_feature_not_present`, and the limits are stated in the
@@ -111,13 +119,6 @@ that lists them is made without them.
 
 ## Device queries that are absent
 
-- **`GetPhysicalDeviceFeatures`.** There is no feature structure at all. A
-  program discovers what a device will not do by being told
-  `error_feature_not_present` when it asks for it. The two devices do
-  differ - 16 sampled images a stage on the cores against 1 on the V3D, and
-  fragment functions of a program's own on the cores only - so what is
-  reported of a device is its properties, its limits, its queue family and
-  its memory, and nothing else.
 - `GetPhysicalDeviceImageFormatProperties`: what an image may be is in
   `CreateImage`'s documentation, and `error_format_not_supported` says when
   it may not.

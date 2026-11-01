@@ -202,6 +202,74 @@ pub const PhysicalDeviceProperties = extern struct {
     limits: PhysicalDeviceLimits,
 };
 
+/// What a physical device does, as GetPhysicalDeviceFeatures answers.
+///
+/// There is a field here where a create call can refuse something: a `false`
+/// is what it would answer `error_feature_not_present` to, so that a program
+/// can ask instead of being told. What the library has no call for at all -
+/// samplers, events, query pools, a pipeline cache, sparse memory - has no
+/// field: its absence is in the jump table, not here.
+///
+/// The first few differ between the devices of one machine; the rest are the
+/// library's and the same on each.
+pub const PhysicalDeviceFeatures = extern struct {
+    /// A pipeline's fragment function may be one the program wrote, any Zig
+    /// function. False where only the fixed forms run and a pipeline with its
+    /// own is refused: `shader.fixedFragment` then says what it may do. The
+    /// cores have it; the BCM2712's V3D has not.
+    own_fragment_functions: bool = false,
+    /// `texture.Sampling.format` is held to. False where the device reads a
+    /// texture's format from its image instead, so a pipeline built for one
+    /// format samples an image of another without a word; the cores paint
+    /// `shader.missing` over such a draw.
+    sampling_format: bool = false,
+    /// Compute functions run on the device itself. False says they run - on
+    /// the cores behind it, whichever device the pipeline was made on.
+    compute_on_device: bool = false,
+    /// Tessellation likewise.
+    tessellation_on_device: bool = false,
+
+    /// Points and lines, and triangles drawn as their edges or corners.
+    points_and_lines: bool = false,
+    depth_test: bool = false,
+    stencil_test: bool = false,
+    /// Any blend factors and operation, the alpha's its own.
+    blending: bool = false,
+    /// `PIPELINE_CREATE_DEPTH_PREPASS`.
+    depth_prepass: bool = false,
+    indirect_draws: bool = false,
+    secondary_command_buffers: bool = false,
+    several_subpasses: bool = false,
+    several_color_attachments: bool = false,
+    texture_arrays: bool = false,
+    cube_maps: bool = false,
+    textures_3d: bool = false,
+    /// BC1, BC2 and BC3, unpacked to 8 bits a channel as they are copied in.
+    compressed_textures: bool = false,
+    /// The float formats, the same way.
+    float_textures: bool = false,
+
+    /// More than one sample a pixel, sample shading, alpha to coverage or to
+    /// one. No device of this library has it.
+    multisampling: bool = false,
+    /// `PipelineColorBlendStateCreateInfo.logic_op_enable`.
+    logic_ops: bool = false,
+    several_viewports: bool = false,
+    depth_bias: bool = false,
+    depth_bounds: bool = false,
+    depth_clamp: bool = false,
+    /// A depth attachment that may `load` or `store`: depth outliving the
+    /// pass it was drawn in, to be read again.
+    stored_depth: bool = false,
+    input_attachments: bool = false,
+    /// `storage_image` descriptors, and the texel buffer kinds.
+    storage_images: bool = false,
+    texel_buffers: bool = false,
+    /// `uniform_buffer_dynamic` and `storage_buffer_dynamic`, which is why
+    /// CmdBindDescriptorSets' `dynamic_offsets` goes unused.
+    dynamic_descriptors: bool = false,
+};
+
 /// QueueFamilyProperties.queue_flags: what a family's queues do.
 pub const QUEUE_GRAPHICS: u32 = 1 << 0;
 pub const QUEUE_COMPUTE: u32 = 1 << 1;

@@ -55,4 +55,7 @@ pub const LIBRARY_VERSION = 1;
 /// is played says so in the log, on the cores as well as on the V3D, naming
 /// what it was instead of nothing or a line without a cause; memory above
 /// the V3D's 32-bit reach is given back rather than truncated.
-pub const LIBRARY_REVISION = 23;
+/// 24: GetPhysicalDeviceFeatures: what a device does, a field for each thing
+/// a create call can refuse, so that a program asks rather than being told
+/// `error_feature_not_present`. The cores and the V3D differ in four of them.
+pub const LIBRARY_REVISION = 24;

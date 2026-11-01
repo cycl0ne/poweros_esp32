@@ -16,6 +16,7 @@ const CreateInstance = @import("instance/createinstance.zig").CreateInstance;
 const DestroyInstance = @import("instance/destroyinstance.zig").DestroyInstance;
 const EnumeratePhysicalDevices = @import("instance/enumeratephysicaldevices.zig").EnumeratePhysicalDevices;
 const GetPhysicalDeviceProperties = @import("instance/getphysicaldeviceproperties.zig").GetPhysicalDeviceProperties;
+const GetPhysicalDeviceFeatures = @import("instance/getphysicaldevicefeatures.zig").GetPhysicalDeviceFeatures;
 const GetPhysicalDeviceQueueFamilyProperties = @import("instance/getphysicaldevicequeuefamilyproperties.zig").GetPhysicalDeviceQueueFamilyProperties;
 const GetPhysicalDeviceMemoryProperties = @import("instance/getphysicaldevicememoryproperties.zig").GetPhysicalDeviceMemoryProperties;
 const CreateDevice = @import("device/createdevice.zig").CreateDevice;
@@ -145,6 +146,7 @@ const contract_files = [_][]const u8{
     @embedFile("instance/destroyinstance.zig"),
     @embedFile("instance/enumeratephysicaldevices.zig"),
     @embedFile("instance/getphysicaldeviceproperties.zig"),
+    @embedFile("instance/getphysicaldevicefeatures.zig"),
     @embedFile("instance/getphysicaldevicequeuefamilyproperties.zig"),
     @embedFile("instance/getphysicaldevicememoryproperties.zig"),
     @embedFile("device/createdevice.zig"),
@@ -257,6 +259,9 @@ fn lvoEnumeratePhysicalDevices(base: *FacetBase, instance: *facet.Instance, coun
 }
 fn lvoGetPhysicalDeviceProperties(base: *FacetBase, physical: *facet.PhysicalDevice, properties: *facet.PhysicalDeviceProperties) callconv(.c) void {
     return GetPhysicalDeviceProperties(base, physical, properties);
+}
+fn lvoGetPhysicalDeviceFeatures(base: *FacetBase, physical: *facet.PhysicalDevice, features: *facet.PhysicalDeviceFeatures) callconv(.c) void {
+    return GetPhysicalDeviceFeatures(base, physical, features);
 }
 fn lvoGetPhysicalDeviceQueueFamilyProperties(base: *FacetBase, physical: *facet.PhysicalDevice, count: *u32, properties: ?[*]facet.QueueFamilyProperties) callconv(.c) void {
     return GetPhysicalDeviceQueueFamilyProperties(base, physical, count, properties);
@@ -666,6 +671,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoCmdDispatch),
     vec(lvoCmdDispatchIndirect),
     vec(lvoCmdNextSubpass),
+    vec(lvoGetPhysicalDeviceFeatures),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

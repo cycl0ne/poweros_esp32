@@ -26,6 +26,7 @@ pub const PhysicalDevice = struct {
     /// Its driver, and what the driver said of it.
     ops: *const _driver.Ops,
     properties: facet.PhysicalDeviceProperties,
+    features: facet.PhysicalDeviceFeatures,
     queue_family: facet.QueueFamilyProperties,
     memory: facet.PhysicalDeviceMemoryProperties,
 };

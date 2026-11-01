@@ -121,6 +121,7 @@ pub const LVO = struct {
     pub const CmdDispatch = libraries.lvo(104);
     pub const CmdDispatchIndirect = libraries.lvo(105);
     pub const CmdNextSubpass = libraries.lvo(106);
+    pub const GetPhysicalDeviceFeatures = libraries.lvo(107);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -229,6 +230,7 @@ pub const Fn = struct {
     pub const CmdDispatch = *const fn (*FacetBase, *facet.CommandBuffer, u32, u32, u32) callconv(.c) void;
     pub const CmdDispatchIndirect = *const fn (*FacetBase, *facet.CommandBuffer, *facet.Buffer, u64) callconv(.c) void;
     pub const CmdNextSubpass = *const fn (*FacetBase, *facet.CommandBuffer, facet.SubpassContents) callconv(.c) void;
+    pub const GetPhysicalDeviceFeatures = *const fn (*FacetBase, *facet.PhysicalDevice, *facet.PhysicalDeviceFeatures) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -768,5 +770,10 @@ pub const FacetBase = opaque {
     /// Recorded: what the subpass drew stored, and the next subpass begun.
     pub fn CmdNextSubpass(self: *FacetBase, buffer: *facet.CommandBuffer, contents: facet.SubpassContents) void {
         return libraries.call(self, LVO.CmdNextSubpass, Fn.CmdNextSubpass, .{ buffer, contents });
+    }
+
+    /// What the physical device does, into `features`.
+    pub fn GetPhysicalDeviceFeatures(self: *FacetBase, physical: *facet.PhysicalDevice, features: *facet.PhysicalDeviceFeatures) void {
+        return libraries.call(self, LVO.GetPhysicalDeviceFeatures, Fn.GetPhysicalDeviceFeatures, .{ physical, features });
     }
 };

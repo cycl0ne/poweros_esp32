@@ -470,6 +470,69 @@ test "a recording: its commands in order over its chunks; a reset keeps them for
     try testing.expectEqual(free_before, rig.header.free);
 }
 
+test "a device says what it does, and a false is what a create call refuses" {
+    var rig = try Rig.up();
+    defer rig.down() catch |err| std.debug.panic("{}", .{err});
+    const instance, const physical = try rig.instance();
+    defer rig.fb.DestroyInstance(instance);
+    const device = try rig.device(physical);
+    defer rig.fb.DestroyDevice(device);
+
+    var features: facet.PhysicalDeviceFeatures = undefined;
+    rig.fb.GetPhysicalDeviceFeatures(physical, &features);
+
+    // The cores: the rasterizer calls whatever function the pipeline carries,
+    // and compute and tessellation are on this device because it is them.
+    try testing.expect(features.own_fragment_functions);
+    try testing.expect(features.sampling_format);
+    try testing.expect(features.compute_on_device);
+    try testing.expect(features.tessellation_on_device);
+    try testing.expect(features.depth_prepass);
+    try testing.expect(features.blending);
+    try testing.expect(features.stencil_test);
+    try testing.expect(features.several_subpasses);
+    try testing.expect(features.cube_maps);
+
+    // And what it says it does not do, it refuses: a false here is worth
+    // having only if the call agrees with it.
+    try testing.expect(!features.input_attachments);
+    try testing.expect(!features.multisampling);
+    try testing.expect(!features.stored_depth);
+
+    const color = facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal };
+    var pass: ?*facet.RenderPass = null;
+
+    // An input attachment, which features deny.
+    {
+        const attachment = facet.AttachmentDescription{ .format = .b8g8r8a8_unorm, .load_op = .clear, .final_layout = .color_attachment_optimal };
+        const subpass = facet.SubpassDescription{
+            .input_attachment_count = 1,
+            .input_attachments = @ptrCast(&color),
+            .color_attachment_count = 1,
+            .color_attachments = @ptrCast(&color),
+        };
+        const info = facet.RenderPassCreateInfo{ .attachment_count = 1, .attachments = @ptrCast(&attachment), .subpass_count = 1, .subpasses = @ptrCast(&subpass) };
+        try testing.expectEqual(facet.Result.error_feature_not_present, rig.fb.CreateRenderPass(device, &info, &pass));
+    }
+
+    // More than one sample, likewise.
+    {
+        const attachment = facet.AttachmentDescription{ .format = .b8g8r8a8_unorm, .samples = 4, .load_op = .clear, .final_layout = .color_attachment_optimal };
+        const subpass = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&color) };
+        const info = facet.RenderPassCreateInfo{ .attachment_count = 1, .attachments = @ptrCast(&attachment), .subpass_count = 1, .subpasses = @ptrCast(&subpass) };
+        try testing.expectEqual(facet.Result.error_feature_not_present, rig.fb.CreateRenderPass(device, &info, &pass));
+    }
+
+    // One sample and no input attachment: the same pass is made.
+    {
+        const attachment = facet.AttachmentDescription{ .format = .b8g8r8a8_unorm, .load_op = .clear, .final_layout = .color_attachment_optimal };
+        const subpass = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&color) };
+        const info = facet.RenderPassCreateInfo{ .attachment_count = 1, .attachments = @ptrCast(&attachment), .subpass_count = 1, .subpasses = @ptrCast(&subpass) };
+        try testing.expectEqual(facet.Result.success, rig.fb.CreateRenderPass(device, &info, &pass));
+        rig.fb.DestroyRenderPass(device, pass);
+    }
+}
+
 test "a draw of more vertices than one works is refused as it is recorded" {
     const max_draw_vertices = @import("../instance/_instance.zig").max_draw_vertices;
     var rig = try Rig.up();

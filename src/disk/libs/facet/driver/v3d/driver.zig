@@ -123,6 +123,31 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
     };
     const name = "VideoCore VII V3D 7.1";
     @memcpy(physical.properties.device_name[0..name.len], name);
+    physical.features = .{
+        // Only the fixed forms have QPU programs; a pipeline with a function
+        // of its own is refused here and runs on the cores instead.
+        .own_fragment_functions = false,
+        // The TMU reads a texture's format from the image it is given.
+        .sampling_format = false,
+        // Both run on the cores, whichever device made the pipeline.
+        .compute_on_device = false,
+        .tessellation_on_device = false,
+        // The depth pre-pass is the rasterizer's (driver/cpu/raster/prepass.zig).
+        .depth_prepass = false,
+        .points_and_lines = true,
+        .depth_test = true,
+        .stencil_test = true,
+        .blending = true,
+        .indirect_draws = true,
+        .secondary_command_buffers = true,
+        .several_subpasses = true,
+        .several_color_attachments = true,
+        .texture_arrays = true,
+        .cube_maps = true,
+        .textures_3d = true,
+        .compressed_textures = true,
+        .float_textures = true,
+    };
     physical.queue_family = .{
         .queue_flags = facet.QUEUE_GRAPHICS | facet.QUEUE_COMPUTE | facet.QUEUE_TRANSFER,
         .queue_count = 1,

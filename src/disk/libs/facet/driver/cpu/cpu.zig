@@ -92,6 +92,28 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
     };
     const shared = physical.properties.limits.cores;
     _ = std.fmt.bufPrint(physical.properties.device_name[0 .. facet.MAX_PHYSICAL_DEVICE_NAME_SIZE - 1], "facet.library rasterizer, {d} core{s}", .{ shared, if (shared == 1) "" else "s" }) catch {};
+    physical.features = .{
+        // The rasterizer calls whatever function the pipeline carries.
+        .own_fragment_functions = true,
+        .sampling_format = true,
+        // This device is the cores, which is where both of these run.
+        .compute_on_device = true,
+        .tessellation_on_device = true,
+        .depth_prepass = true,
+        .points_and_lines = true,
+        .depth_test = true,
+        .stencil_test = true,
+        .blending = true,
+        .indirect_draws = true,
+        .secondary_command_buffers = true,
+        .several_subpasses = true,
+        .several_color_attachments = true,
+        .texture_arrays = true,
+        .cube_maps = true,
+        .textures_3d = true,
+        .compressed_textures = true,
+        .float_textures = true,
+    };
     physical.queue_family = queue_family;
     describeMemory(sys, &physical.memory);
     return true;
