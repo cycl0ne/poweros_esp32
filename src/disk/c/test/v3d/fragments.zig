@@ -187,6 +187,10 @@ pub const Scene = struct {
         uniforms: []const u32 = &.{},
         vertices: []const Vertex,
         cfg: cl.Cfg = .{},
+        /// How it is mixed with what the tile holds, for `cfg.blend`. The
+        /// default is `cl.Mixing`'s: one of the source and none of what is
+        /// there, which is what no blending means.
+        mixing: cl.Mixing = .{},
         clip: Area = whole,
     };
 
@@ -224,6 +228,7 @@ pub const Scene = struct {
         v3d.frame.writeDrawState(&scene.bin, &.{
             .clip = how.clip,
             .cfg = how.cfg,
+            .mixing = how.mixing,
             .x = 0,
             .y = 0,
             .width = width,
@@ -292,6 +297,10 @@ fn apart(one: u32, other: u32, colour_only: bool) u32 {
     }
     return most;
 }
+
+/// The hardware's blend factors, as `facet.BlendFactor` numbers them.
+const src_alpha: u32 = @intFromEnum(sdk.facet.BlendFactor.src_alpha);
+const one_minus_src_alpha: u32 = @intFromEnum(sdk.facet.BlendFactor.one_minus_src_alpha);
 
 fn rgba(red: f32, green: f32, blue: f32, alpha: f32) u32 {
     return byteOf(red) | byteOf(green) << 8 | byteOf(blue) << 16 | byteOf(alpha) << 24;
@@ -737,7 +746,11 @@ pub fn blendTest(scene: *Scene) i32 {
     rectangle(&corners, 100, 100, 300, 300, 0.5, Nothing{});
     const half_red = flat(1, 0, 0, 0.5);
     scene.begin(.{ .clear = 0xFFC0_8040 });
-    scene.draw(.{ .fragment = qpu.flat_fragment, .uniforms = &half_red, .vertices = &corners, .cfg = .{ .blend = true } });
+    // Half the red over what is there, which is what `want` below works out:
+    // without the factors said, the hardware takes all of the source and
+    // none of the destination, and blending is switched on to no effect.
+    const over = cl.Mixing{ .src_color = src_alpha, .dst_color = one_minus_src_alpha, .src_alpha = src_alpha, .dst_alpha = one_minus_src_alpha };
+    scene.draw(.{ .fragment = qpu.flat_fragment, .uniforms = &half_red, .vertices = &corners, .cfg = .{ .blend = true }, .mixing = over });
     if (!scene.finish()) return dos.RETURN_FAIL;
     var tally = Tally{};
     const want = rgba((0.5 + 64.0 / 255.0 * 0.5), 128.0 / 255.0 * 0.5, 192.0 / 255.0 * 0.5, 0.75);
