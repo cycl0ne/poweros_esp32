@@ -271,6 +271,12 @@ pub fn release(host: *Host) void {
     if (on_jh7110) holdPerst(host, false);
 }
 
+/// PERST# held again (`_host.hold`): the bridge itself stays as it is, and
+/// trains the link again once it is let go.
+pub fn hold(host: *Host) void {
+    if (on_jh7110) holdPerst(host, true);
+}
+
 /// Whether the port's data link layer is up (`_host.linkUp`).
 pub fn linkUp(host: *const Host) bool {
     const syscon = STG_SYSCON + syscon_block[host.unit];

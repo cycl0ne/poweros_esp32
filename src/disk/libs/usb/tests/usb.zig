@@ -747,6 +747,86 @@ test "a port whose power an over-current took gets it back, and the mouse in it 
     try rig.deinit();
 }
 
+/// A root hub with a hub on its port 1 and a mouse behind that, the hub
+/// answering nothing: `fixed`, soldered to the board.
+fn stuckHub(hc: *standin.HC, fixed: bool, cured: bool) struct { hub: u8, mouse: u8 } {
+    const root_hub = standin.addRoot(hc, 1);
+    const hub = standin.addHub(hc, standin.root, 1, usbhc.USB_SPEED_HIGH, 4);
+    const mouse = standin.addDevice(hc, hub, 3, usbhc.USB_SPEED_HIGH, 0x3151, 0x5007, d.USB_CLASS_HID, .{ "", "", "" });
+    hc.functions[root_hub].fixed = if (fixed) 1 << 1 else 0;
+    hc.functions[hub].stuck = true;
+    hc.functions[hub].reset_cures = cured;
+    standin.plug(hc, hub);
+    standin.plug(hc, mouse);
+    return .{ .hub = hub, .mouse = mouse };
+}
+
+test "a device soldered to a root port that does not answer: the controller reset, and the mouse behind it found" {
+    var rig: BusRig = undefined;
+    try rig.init();
+    const hc = rig.hc;
+    _ = stuckHub(hc, true, true);
+    const first_root = rig.start();
+    try testing.expect(childOf(first_root, 1) == null);
+    try testing.expect(rig.bus.wants_reset);
+
+    _bus.recover(&rig.bus);
+    try testing.expectEqual(@as(u32, 1), hc.resets);
+    try testing.expect(!rig.bus.wants_reset);
+    const root = rig.bus.root.?;
+    const mouse_device = childOf(childOf(root, 1).?, 3).?;
+    try testing.expectEqual(@as(u16, 0x5007), mouse_device.public.descriptor.product_id);
+    try testing.expect(mouse_device.public.flags & usb.USBDF_CONFIGURED != 0);
+    try testing.expectEqual(@as(u32, 1), rig.driver.binds);
+    try rig.deinit();
+}
+
+test "a device in a socket that does not answer: left alone, what else is on the bus undisturbed" {
+    var rig: BusRig = undefined;
+    try rig.init();
+    const hc = rig.hc;
+    _ = stuckHub(hc, false, true);
+    const root = rig.start();
+    try testing.expect(childOf(root, 1) == null);
+    try testing.expect(!rig.bus.wants_reset);
+    _bus.recover(&rig.bus);
+    try testing.expectEqual(@as(u32, 0), hc.resets);
+    try testing.expect(rig.bus.root.? == root);
+    try rig.deinit();
+}
+
+test "a device soldered to a root port that stays stuck: the controller reset twice, then left" {
+    var rig: BusRig = undefined;
+    try rig.init();
+    const hc = rig.hc;
+    _ = stuckHub(hc, true, false);
+    _ = rig.start();
+    _bus.recover(&rig.bus);
+    try testing.expectEqual(@as(u32, _bus.max_resets), hc.resets);
+    try testing.expect(!rig.bus.wants_reset);
+    // The bus still runs: its root hub is there, with nothing on the port.
+    try testing.expect(childOf(rig.bus.root.?, 1) == null);
+    try rig.deinit();
+}
+
+test "the controller says it stopped answering: reset, and everything found again" {
+    var rig: BusRig = undefined;
+    try rig.init();
+    const hc = rig.hc;
+    _ = standin.addRoot(hc, 1);
+    const hub = standin.addHub(hc, standin.root, 1, usbhc.USB_SPEED_HIGH, 4);
+    standin.plug(hc, hub);
+    const root = rig.start();
+    try testing.expect(childOf(root, 1) != null);
+    standin.controllerStuck(hc);
+    _bus.hubsChanged(&rig.bus);
+    try testing.expect(rig.bus.wants_reset);
+    _bus.recover(&rig.bus);
+    try testing.expectEqual(@as(u32, 1), hc.resets);
+    try testing.expect(childOf(rig.bus.root.?, 1) != null);
+    try rig.deinit();
+}
+
 test "a stalled request: strings left out, a configuration that never comes leaves the device failed" {
     var rig: BusRig = undefined;
     try rig.init();

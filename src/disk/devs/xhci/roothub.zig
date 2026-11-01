@@ -124,6 +124,27 @@ fn portsc(host: *Host, port: u32) *volatile u32 {
     return op(host, regs.portsc(host.port_map[port - 1]));
 }
 
+/// DeviceRemovable: the first seven ports, a bit each from bit 1, set for
+/// one whose device cannot be pulled out (PORTSC's DR): soldered to the
+/// board, as the VL805's own hub is.
+fn fixedPorts(host: *Host) u8 {
+    var fixed: u8 = 0;
+    var port: u32 = 1;
+    while (port <= host.ports and port <= 7) : (port += 1) {
+        if (portsc(host, port).* & regs.PORT_DR != 0) fixed |= @as(u8, 1) << @intCast(port);
+    }
+    return fixed;
+}
+
+/// The held status transfer answered with the controller's error: what
+/// runs the bus learns the controller stopped answering, with nothing
+/// going wrong on any wire it asked about.
+pub fn controllerStuck(host: *Host) void {
+    const req = host.root.waiting orelse return;
+    host.root.waiting = null;
+    _xhci.reply(host, req, usbhc.UHIOERR_HOSTERROR);
+}
+
 /// Whether the hub's port `port` is a USB 3 one.
 fn isSuper(host: *const Host, port: u32) bool {
     return host.super_ports & (@as(u32, 1) << @intCast(port)) != 0;
@@ -179,6 +200,7 @@ fn control(host: *Host, req: *usbhc.IOUsbHC) void {
                     .num_ports = @intCast(host.ports),
                     .characteristics = d.USB_HUB_CHAR_INDIVIDUAL_POWER | d.USB_HUB_CHAR_INDIVIDUAL_OVERCURRENT,
                     .power_on_to_good = 10,
+                    .removable = fixedPorts(host),
                 };
                 give(req, asBytes(&descriptor));
             },

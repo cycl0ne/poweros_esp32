@@ -430,6 +430,21 @@ test "the frame count follows MFINDEX round its 2048, and the clock past them" {
     try testing.expectEqual(@as(u32, 4904 + 96), _xhci.framesSince(0, 904, 5000));
 }
 
+test "a controller reset starts the frame count again, not only its reading of MFINDEX" {
+    var host: _xhci.Host = undefined;
+    // Up for a while: the count's low bits, what a TD asks for, are not 0.
+    host.frame = 5000;
+    host.frame_seen = 904;
+    host.frame_ms = 5000;
+    _xhci.framesFromStart(&host, 7000);
+    try testing.expectEqual(@as(u32, 0), host.frame);
+    try testing.expectEqual(@as(u32, 0), host.frame_seen);
+    try testing.expectEqual(@as(u32, 7000), host.frame_ms);
+    // MFINDEX 10 frames on, the count the same: a TD's frame is the right one.
+    const steps = _xhci.framesSince(host.frame_seen, 10, 10);
+    try testing.expectEqual(@as(u32, 10), (host.frame +% steps) & 0x7FF);
+}
+
 test "a stream follows on, its late packets missed, and starts again after a dry ring" {
     // A new stream: as soon as the controller can.
     var plan = transfer.isoPlan(1000, 3, false, 0, 0, null, 10, 1);

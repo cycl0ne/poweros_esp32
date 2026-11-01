@@ -31,6 +31,7 @@ pub const LVO = struct {
     pub const AddPCIVectorServer = libraries.lvo(16);
     pub const RemPCIVectorServer = libraries.lvo(17);
     pub const ResetPCIDevice = libraries.lvo(18);
+    pub const ResetPCIPort = libraries.lvo(19);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -51,6 +52,7 @@ pub const Fn = struct {
     pub const AddPCIVectorServer = *const fn (*PCIBase, *pci.PCIDevice, u32, *exec.Interrupt) callconv(.c) bool;
     pub const RemPCIVectorServer = *const fn (*PCIBase, *pci.PCIDevice, u32, *exec.Interrupt) callconv(.c) void;
     pub const ResetPCIDevice = *const fn (*PCIBase, *pci.PCIDevice) callconv(.c) bool;
+    pub const ResetPCIPort = *const fn (*PCIBase, *pci.PCIDevice) callconv(.c) bool;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -146,5 +148,12 @@ pub const PCIBase = opaque {
     /// library set up in it put back; false if it cannot be.
     pub fn ResetPCIDevice(self: *PCIBase, device: *pci.PCIDevice) bool {
         return libraries.call(self, LVO.ResetPCIDevice, Fn.ResetPCIDevice, .{device});
+    }
+
+    /// What is plugged into the port above the function given its fundamental
+    /// reset (PERST#), the link trained again, and what the library set up
+    /// put back; false if it was not reset, or did not come back.
+    pub fn ResetPCIPort(self: *PCIBase, device: *pci.PCIDevice) bool {
+        return libraries.call(self, LVO.ResetPCIPort, Fn.ResetPCIPort, .{device});
     }
 };

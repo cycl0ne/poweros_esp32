@@ -119,9 +119,7 @@ pub fn bringUp(host: *Host) bool {
         host.memory_made = true;
     }
     slots.forgetAll(host);
-    // MFINDEX starts again from 0 as the controller runs.
-    host.frame_seen = 0;
-    host.frame_ms = _xhci.now(host);
+    _xhci.framesFromStart(host, _xhci.now(host));
     return true;
 }
 
@@ -358,6 +356,7 @@ pub fn command(host: *Host, trb: Trb) u32 {
         if (waited >= command_ms) {
             sdk.exec.kprintf(host.sys, "%s: unit %d: command %d was not answered\n", .{ _xhci.DEVICE_NAME, host.number, regs.trbType(trb.control) });
             host.command_trb = 0;
+            roothub.controllerStuck(host);
             return 0;
         }
         _xhci.delay(host, 1);
