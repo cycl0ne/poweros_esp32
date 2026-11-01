@@ -7,6 +7,7 @@
 const std = @import("std");
 const sdk = @import("sdk");
 const facet = sdk.facet;
+const texture = facet.texture;
 const _buffer = @import("../buffer/_buffer.zig");
 const _command = @import("../command/_command.zig");
 const _stream = @import("../command/_stream.zig");
@@ -110,6 +111,101 @@ fn mixed(a: u32, b: u32, part: f32) u32 {
 
 /// CmdBlitImage's regions, by way of 0xAARRGGBB: scaled, turned round as the
 /// corners say, and in the destination's format.
+/// CmdClearColorImage: every texel of the levels and layers named set to
+/// the colour. False, and nothing written, for a format whose texel this
+/// cannot write - a compressed one, which Vulkan does not allow here either.
+///
+/// Whole levels are written, so how a level's texels lie does not matter:
+/// each takes the same value, in whatever order they are kept.
+pub fn clearColorImage(command: *const _command.ClearColorImage) bool {
+    const image = command.image;
+    const data = image.data orelse return true;
+    const texel = texelOf(image, command.color) orelse return false;
+    for (_stream.items(_command.ClearColorImage, facet.ImageSubresourceRange, command, command.count)) |range| {
+        const first_level = range.base_mip_level;
+        if (first_level >= image.levels) continue;
+        const levels = if (range.level_count == facet.REMAINING) image.levels - first_level else @min(range.level_count, image.levels - first_level);
+        const first_layer = range.base_array_layer;
+        if (first_layer >= image.layers) continue;
+        const layers = if (range.layer_count == facet.REMAINING) image.layers - first_layer else @min(range.layer_count, image.layers - first_layer);
+        for (first_layer..first_layer + layers) |layer| {
+            const layer_at = @as(usize, @intCast(image.layer_bytes)) * layer;
+            for (first_level..first_level + levels) |level| {
+                const span = spanOf(image, @intCast(level)) orelse continue;
+                if (layer_at + span.at + span.bytes > image.bytes) continue;
+                fill(data + layer_at + span.at, span.bytes, texel);
+            }
+        }
+    }
+    return true;
+}
+
+/// Where a level lies in a layer and how many bytes it is. Null for a level
+/// the image does not keep that way.
+fn spanOf(image: *const Image, level: u32) ?struct { at: usize, bytes: usize } {
+    switch (image.kind) {
+        // One level, rows of `pitch` bytes: the padding at a row's end is
+        // written too, being the image's own memory and read by nothing.
+        .rows => return if (level != 0) null else .{ .at = 0, .bytes = @as(usize, image.pitch) * image.height },
+        .texture => {
+            const texels = &image.texels;
+            if (level >= texels.levels) return null;
+            const at = texels.layout[level].start;
+            const end = if (level + 1 < texels.levels) texels.layout[level + 1].start else @as(u32, @intCast(image.layer_bytes));
+            return if (end <= at) null else .{ .at = at, .bytes = end - at };
+        },
+        .depth => return null,
+    }
+}
+
+/// One texel written over `count` bytes of them.
+fn fill(into: [*]u8, count: usize, texel: Texel) void {
+    switch (texel) {
+        .two => |value| {
+            const halves: [*]align(1) u16 = @ptrCast(into);
+            @memset(halves[0 .. count / 2], value);
+        },
+        .four => |value| {
+            const words: [*]align(1) u32 = @ptrCast(into);
+            @memset(words[0 .. count / 4], value);
+        },
+        .eight => |value| {
+            const pairs: [*]align(1) u64 = @ptrCast(into);
+            @memset(pairs[0 .. count / 8], value);
+        },
+    }
+}
+
+/// A texel as it lies in memory, which is as wide as that memory keeps one.
+const Texel = union(enum) { two: u16, four: u32, eight: u64 };
+
+/// The colour, 0xAARRGGBB, as this image keeps a texel; null for memory
+/// whose texel this cannot write. How wide one is depends on the image's
+/// kind and not only on its format: a `texture` keeps an 8888 texel spread
+/// over 64 bits, ready for the filter to mix, which is what `texture.spread`
+/// makes of it.
+fn texelOf(image: *const Image, color: u32) ?Texel {
+    return switch (image.kind) {
+        .rows => switch (image.format) {
+            .b8g8r8a8_unorm => .{ .four = color },
+            .r8g8b8a8_unorm => .{ .four = color & 0xFF00_FF00 | (color >> 16 & 0xFF) | (color & 0xFF) << 16 },
+            .r5g6b5_unorm_pack16 => .{ .two = narrow(color) },
+            else => null,
+        },
+        .texture => switch (image.texels.format) {
+            .rgba8888 => .{ .eight = texture.spread(color) },
+            .rgb565 => .{ .two = narrow(color) },
+        },
+        // Its pixels live in the tiles; its memory is never read.
+        .depth => null,
+    };
+}
+
+/// A colour, 0xAARRGGBB, as 565.
+fn narrow(color: u32) u16 {
+    return @truncate(color >> 8 & 0xF800 | color >> 5 & 0x07E0 | color >> 3 & 0x001F);
+}
+
 pub fn blitImage(command: *const _command.BlitImage) void {
     const source = command.source;
     const destination = command.destination;

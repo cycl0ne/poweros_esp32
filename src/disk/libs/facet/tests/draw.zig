@@ -14,6 +14,7 @@ const shader = facet.shader;
 const rig_zig = @import("facet.zig");
 const Rig = rig_zig.Rig;
 const scenes = @import("../../../c/test/raster/scenes.zig");
+const _cmdupdate = @import("../command/cmdupdatebuffer.zig");
 const scene = @import("../../../c/test/raster/facetscene.zig");
 const _objects = @import("../_objects.zig");
 const _surface = @import("../surface/_surface.zig");
@@ -1514,6 +1515,86 @@ fn depthsInOrder(flags: u32) !void {
     try testing.expectEqual(colors[1], picture.at(10, 4));
     try testing.expectEqual(@as(u32, 0x1111_1111), picture.at(50, 63));
     try testing.expectEqual(colors[2], picture.at(50, 62));
+}
+
+test "CmdFillBuffer sets a run four bytes at a time, and leaves a run that is not the buffer's alone" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const buffer, const bytes = try bench.buffer(64, facet.BUFFER_USAGE_TRANSFER_DST);
+    @memset(bytes[0..64], 0x11);
+
+    const commands = try bench.record();
+    fb.CmdFillBuffer(commands, buffer, 8, 16, 0xAABB_CCDD);
+    // Past the end: left out, and the buffer untouched by it.
+    fb.CmdFillBuffer(commands, buffer, 56, 16, 0x2222_2222);
+    try bench.submit();
+
+    for (bytes[0..8]) |each| try testing.expectEqual(@as(u8, 0x11), each);
+    const filled: [*]align(1) const u32 = @ptrCast(bytes + 8);
+    for (filled[0..4]) |word| try testing.expectEqual(@as(u32, 0xAABB_CCDD), word);
+    for (bytes[24..64]) |each| try testing.expectEqual(@as(u8, 0x11), each);
+}
+
+test "CmdUpdateBuffer writes bytes it took as it was recorded, not the caller's by then" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const buffer, const bytes = try bench.buffer(64, facet.BUFFER_USAGE_TRANSFER_DST);
+    @memset(bytes[0..64], 0);
+
+    var given: [16]u8 = undefined;
+    for (&given, 0..) |*each, k| each.* = @intCast(k + 1);
+    const commands = try bench.record();
+    fb.CmdUpdateBuffer(commands, buffer, 4, given.len, &given);
+    // The command has its own copy: what the program does with these now
+    // cannot reach the buffer.
+    @memset(&given, 0xEE);
+    // More than one of these writes: nothing recorded at all.
+    var too_many: [4]u8 = @splat(0x55);
+    fb.CmdUpdateBuffer(commands, buffer, 32, _cmdupdate.most_update_bytes + 4, &too_many);
+    try bench.submit();
+
+    for (bytes[0..4]) |each| try testing.expectEqual(@as(u8, 0), each);
+    for (bytes[4..20], 1..) |each, k| try testing.expectEqual(@as(u8, @intCast(k)), each);
+    for (bytes[20..64]) |each| try testing.expectEqual(@as(u8, 0), each);
+}
+
+test "CmdClearColorImage sets every texel of the levels it names, and no others" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const side = 8;
+    const image = try bench.bareImage(.{
+        .format = .b8g8r8a8_unorm,
+        .extent = .{ .width = side, .height = side },
+        .mip_levels = 2,
+        .usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST | facet.IMAGE_USAGE_TRANSFER_SRC,
+    }, false);
+    const out, const read = try bench.buffer(side * side * 4, facet.BUFFER_USAGE_TRANSFER_DST);
+    @memset(read[0 .. side * side * 4], 0);
+
+    // Red, and only the first level of it.
+    const color = facet.ClearColorValue{ .float32 = .{ 1, 0, 0, 1 } };
+    const range = facet.ImageSubresourceRange{ .base_mip_level = 0, .level_count = 1 };
+    const region = facet.BufferImageCopy{ .image_extent = .{ .width = side, .height = side } };
+    const commands = try bench.record();
+    fb.CmdClearColorImage(commands, image, .transfer_dst_optimal, &color, 1, @ptrCast(&range));
+    fb.CmdCopyImageToBuffer(commands, image, .transfer_src_optimal, out, 1, @ptrCast(&region));
+    try bench.submit();
+
+    const texels: [*]align(1) const u32 = @ptrCast(read);
+    for (texels[0 .. side * side]) |texel| try testing.expectEqual(@as(u32, 0xFFFF_0000), texel);
+
+    // The second level was not named, so it keeps whatever it held: cleared
+    // to green on its own, the first level stays red.
+    const green = facet.ClearColorValue{ .float32 = .{ 0, 1, 0, 1 } };
+    const second = facet.ImageSubresourceRange{ .base_mip_level = 1, .level_count = 1 };
+    const again = try bench.record();
+    fb.CmdClearColorImage(again, image, .transfer_dst_optimal, &green, 1, @ptrCast(&second));
+    fb.CmdCopyImageToBuffer(again, image, .transfer_src_optimal, out, 1, @ptrCast(&region));
+    try bench.submit();
+    for (texels[0 .. side * side]) |texel| try testing.expectEqual(@as(u32, 0xFFFF_0000), texel);
 }
 
 /// A cut-out texture drawn over a flat quad behind it: what shows whether a

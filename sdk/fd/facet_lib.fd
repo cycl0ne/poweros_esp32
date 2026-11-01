@@ -234,4 +234,10 @@ void CmdDispatchIndirect(*facet.CommandBuffer buffer, *facet.Buffer numbers, u64
 void CmdNextSubpass(*facet.CommandBuffer buffer, facet.SubpassContents contents)
 /// What the physical device does, into `features`.
 void GetPhysicalDeviceFeatures(*facet.PhysicalDevice physical, *facet.PhysicalDeviceFeatures features)
+/// Recorded: a buffer's bytes set to a value, four at a time.
+void CmdFillBuffer(*facet.CommandBuffer buffer, *facet.Buffer destination, u64 offset, u64 size, u32 data)
+/// Recorded: bytes written into a buffer, kept with the command.
+void CmdUpdateBuffer(*facet.CommandBuffer buffer, *facet.Buffer destination, u64 offset, u64 size, *const anyopaque data)
+/// Recorded: an image's levels and layers set to a colour, outside a pass.
+void CmdClearColorImage(*facet.CommandBuffer buffer, *facet.Image image, facet.ImageLayout layout, *const facet.ClearColorValue color, u32 range_count, [*]const facet.ImageSubresourceRange ranges)
 ##end

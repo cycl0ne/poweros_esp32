@@ -122,6 +122,9 @@ pub const LVO = struct {
     pub const CmdDispatchIndirect = libraries.lvo(105);
     pub const CmdNextSubpass = libraries.lvo(106);
     pub const GetPhysicalDeviceFeatures = libraries.lvo(107);
+    pub const CmdFillBuffer = libraries.lvo(108);
+    pub const CmdUpdateBuffer = libraries.lvo(109);
+    pub const CmdClearColorImage = libraries.lvo(110);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -231,6 +234,9 @@ pub const Fn = struct {
     pub const CmdDispatchIndirect = *const fn (*FacetBase, *facet.CommandBuffer, *facet.Buffer, u64) callconv(.c) void;
     pub const CmdNextSubpass = *const fn (*FacetBase, *facet.CommandBuffer, facet.SubpassContents) callconv(.c) void;
     pub const GetPhysicalDeviceFeatures = *const fn (*FacetBase, *facet.PhysicalDevice, *facet.PhysicalDeviceFeatures) callconv(.c) void;
+    pub const CmdFillBuffer = *const fn (*FacetBase, *facet.CommandBuffer, *facet.Buffer, u64, u64, u32) callconv(.c) void;
+    pub const CmdUpdateBuffer = *const fn (*FacetBase, *facet.CommandBuffer, *facet.Buffer, u64, u64, *const anyopaque) callconv(.c) void;
+    pub const CmdClearColorImage = *const fn (*FacetBase, *facet.CommandBuffer, *facet.Image, facet.ImageLayout, *const facet.ClearColorValue, u32, [*]const facet.ImageSubresourceRange) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -775,5 +781,20 @@ pub const FacetBase = opaque {
     /// What the physical device does, into `features`.
     pub fn GetPhysicalDeviceFeatures(self: *FacetBase, physical: *facet.PhysicalDevice, features: *facet.PhysicalDeviceFeatures) void {
         return libraries.call(self, LVO.GetPhysicalDeviceFeatures, Fn.GetPhysicalDeviceFeatures, .{ physical, features });
+    }
+
+    /// Recorded: a buffer's bytes set to a value, four at a time.
+    pub fn CmdFillBuffer(self: *FacetBase, buffer: *facet.CommandBuffer, destination: *facet.Buffer, offset: u64, size: u64, data: u32) void {
+        return libraries.call(self, LVO.CmdFillBuffer, Fn.CmdFillBuffer, .{ buffer, destination, offset, size, data });
+    }
+
+    /// Recorded: bytes written into a buffer, kept with the command.
+    pub fn CmdUpdateBuffer(self: *FacetBase, buffer: *facet.CommandBuffer, destination: *facet.Buffer, offset: u64, size: u64, data: *const anyopaque) void {
+        return libraries.call(self, LVO.CmdUpdateBuffer, Fn.CmdUpdateBuffer, .{ buffer, destination, offset, size, data });
+    }
+
+    /// Recorded: an image's levels and layers set to a colour, outside a pass.
+    pub fn CmdClearColorImage(self: *FacetBase, buffer: *facet.CommandBuffer, image: *facet.Image, layout: facet.ImageLayout, color: *const facet.ClearColorValue, range_count: u32, ranges: [*]const facet.ImageSubresourceRange) void {
+        return libraries.call(self, LVO.CmdClearColorImage, Fn.CmdClearColorImage, .{ buffer, image, layout, color, range_count, ranges });
     }
 };

@@ -273,6 +273,27 @@ pub fn copyBuffer(command: *const _command.CopyBuffer) void {
     }
 }
 
+/// CmdFillBuffer: a run of a buffer set to one value, four bytes at a time.
+/// False, and nothing written, where the run is not the buffer's.
+pub fn fillBuffer(command: *const _command.FillBuffer) bool {
+    const into = _buffer.bytes(command.destination, command.offset, command.size) orelse return false;
+    // Four bytes at a time, as they lie in memory: the low byte first. The
+    // tail of a run whose length is not a multiple of four cannot arise -
+    // the command rounds both down as it is recorded.
+    const words: [*]align(1) u32 = @ptrCast(into.ptr);
+    @memset(words[0 .. into.len / 4], command.data);
+    return true;
+}
+
+/// CmdUpdateBuffer: the bytes kept with the command written into a buffer.
+/// False, and nothing written, where they are not the buffer's.
+pub fn updateBuffer(command: *const _command.UpdateBuffer) bool {
+    const from = _stream.items(_command.UpdateBuffer, u8, command, @intCast(command.size));
+    const into = _buffer.bytes(command.destination, command.offset, command.size) orelse return false;
+    @memcpy(into, from);
+    return true;
+}
+
 /// The most corners `assemble` makes of `count` indices.
 pub fn mostCorners(topology: facet.PrimitiveTopology, count: u32) usize {
     return switch (topology) {

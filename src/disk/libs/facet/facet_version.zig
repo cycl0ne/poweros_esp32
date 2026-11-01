@@ -75,4 +75,11 @@ pub const LIBRARY_VERSION = 1;
 /// On the V3D a frame of 1920x1080 inside 2560x1440 falls from 5.812 ms to
 /// 4.034, with the whole 2560x1440 unchanged at 4.017. A window is the
 /// normal case on a desktop, and this is what one cost.
-pub const LIBRARY_REVISION = 26;
+/// 27: CmdFillBuffer, CmdUpdateBuffer and CmdClearColorImage, which take a
+/// staging buffer, a map and a submit out of a small write, and let an image
+/// be cleared without a render pass over it. The bytes CmdUpdateBuffer
+/// writes become the command buffer's own as it is recorded, so at most
+/// 65536 of them; the clear writes whole levels, which is right whatever
+/// order a level's texels are kept in - though not how wide one is, an 8888
+/// texel being kept spread over 64 bits in a texture.
+pub const LIBRARY_REVISION = 27;

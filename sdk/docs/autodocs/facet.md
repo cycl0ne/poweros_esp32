@@ -26,6 +26,7 @@ Generated from the source by `./zig build autodoc`.
 - [CmdBindVertexBuffers](#cmdbindvertexbuffers) - Recorded: vertex buffers bound, from binding `first_binding` on.
 - [CmdBlitImage](#cmdblitimage) - Recorded: a rectangle of an image drawn over one of another, scaled.
 - [CmdClearAttachments](#cmdclearattachments) - Recorded: parts of a render pass's attachments cleared, in the middle of it.
+- [CmdClearColorImage](#cmdclearcolorimage) - Recorded: an image's levels and layers set to a colour.
 - [CmdCopyBuffer](#cmdcopybuffer) - Recorded: bytes copied from one buffer to another.
 - [CmdCopyBufferToImage](#cmdcopybuffertoimage) - Recorded: rectangles of texels copied from a buffer into an image.
 - [CmdCopyImage](#cmdcopyimage) - Recorded: a rectangle of texels copied from one image to another, as they are.
@@ -38,6 +39,7 @@ Generated from the source by `./zig build autodoc`.
 - [CmdDrawIndirect](#cmddrawindirect) - Recorded: draws whose numbers, as CmdDraw takes them, are in a buffer.
 - [CmdEndRenderPass](#cmdendrenderpass) - Recorded: the render pass ended, and what it drew stored.
 - [CmdExecuteCommands](#cmdexecutecommands) - Recorded: secondary command buffers played, in the order given.
+- [CmdFillBuffer](#cmdfillbuffer) - Recorded: a run of a buffer set to one value, four bytes at a time.
 - [CmdNextSubpass](#cmdnextsubpass) - Recorded: what the subpass drew stored, and the next subpass begun.
 - [CmdPipelineBarrier](#cmdpipelinebarrier) - Recorded: a barrier between the work before it and the work after.
 - [CmdPushConstants](#cmdpushconstants) - Recorded: bytes of push constants set.
@@ -48,6 +50,7 @@ Generated from the source by `./zig build autodoc`.
 - [CmdSetStencilReference](#cmdsetstencilreference) - Recorded: the stencil test's reference, for a pipeline that leaves it to commands.
 - [CmdSetStencilWriteMask](#cmdsetstencilwritemask) - Recorded: the stencil test's write mask, for a pipeline that leaves it to commands.
 - [CmdSetViewport](#cmdsetviewport) - Recorded: the viewport, for a pipeline that leaves it to commands.
+- [CmdUpdateBuffer](#cmdupdatebuffer) - Recorded: bytes written into a buffer, kept with the command.
 - [CreateBuffer](#createbuffer) - A buffer of so many bytes, for what its usage says.
 - [CreateCommandPool](#createcommandpool) - A pool the device's command buffers are allocated from.
 - [CreateComputePipelines](#createcomputepipelines) - `count` compute pipelines, one for each of `infos`, into `pipelines`.
@@ -1015,6 +1018,79 @@ None known.
 fb.CmdClearAttachments(commands, 1, @ptrCast(&attachment), 1, @ptrCast(&rect));
 ```
 
+## CmdClearColorImage
+
+Recorded: an image's levels and layers set to a colour.
+
+**SYNOPSIS**
+
+```zig
+fn CmdClearColorImage(base: *FacetBase, buffer: *facet.CommandBuffer, image: *facet.Image, layout: facet.ImageLayout, color: *const facet.ClearColorValue, range_count: u32, ranges: [*]const facet.ImageSubresourceRange) void
+```
+
+**SINCE**
+
+1.27. LVO -444.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording.
+- `image` - the image cleared, which is not an attachment of the pass
+  being recorded: this is a transfer, not a draw.
+- `layout` - what the image is in, which this library does not act on.
+- `color` - the colour, 0 to 1 a channel, as `float32`.
+- `range_count`, `ranges` - which levels and layers, by
+  `base_mip_level`, `level_count`, `base_array_layer` and `layer_count`;
+  `facet.REMAINING`, which both counts default to, reaches to the end.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+Every texel of each level and layer named is set to the colour. A level
+or a layer the image does not have is left out. An image whose format
+this cannot write a single texel of - a compressed one, which Vulkan
+does not allow here either - is left out and said to be in the log.
+
+Whole levels are written, so the clear does not care how a level's
+texels are laid out in memory: every one of them takes the same value.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The ranges are copied as the command is recorded. The image has to last
+until the work is done.
+
+**NOTES**
+
+This is how a texture is cleared without a render pass over it, which
+before wanted an attachment, a framebuffer and a pass of its own.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CmdClearAttachments` for an attachment of the pass being drawn,
+`CmdFillBuffer`
+
+**EXAMPLES**
+
+```zig
+const color = facet.ClearColorValue{ .float32 = .{ 0, 0, 0, 1 } };
+const range = facet.ImageSubresourceRange{};
+fb.CmdClearColorImage(commands, texture.?, .transfer_dst_optimal, &color, 1, @ptrCast(&range));
+```
+
 ## CmdCopyBuffer
 
 Recorded: bytes copied from one buffer to another.
@@ -1771,6 +1847,71 @@ None known.
 fb.CmdExecuteCommands(primary, 1, @ptrCast(&secondary));
 ```
 
+## CmdFillBuffer
+
+Recorded: a run of a buffer set to one value, four bytes at a time.
+
+**SYNOPSIS**
+
+```zig
+fn CmdFillBuffer(base: *FacetBase, buffer: *facet.CommandBuffer, destination: *facet.Buffer, offset: u64, size: u64, data: u32) void
+```
+
+**SINCE**
+
+1.27. LVO -436.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording.
+- `destination` - the buffer written.
+- `offset` - where the run starts, a multiple of four.
+- `size` - how many bytes, a multiple of four, or `facet.WHOLE_SIZE`
+  for the rest of the buffer from `offset`.
+- `data` - the four bytes written over and over, as they lie in memory:
+  the low byte first.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+Played, a run that lies past the end of the buffer is left out and said
+to be in the log. An `offset` or a `size` that is not a multiple of four
+is rounded down to one, as Vulkan asks of the program instead.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The buffer has to last until the work is done.
+
+**NOTES**
+
+What `CmdUpdateBuffer` is for one run of bytes, this is for one value
+repeated: neither wants a staging buffer, a map or a submit of its own.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CmdUpdateBuffer`, `CmdCopyBuffer`, `CmdClearColorImage`
+
+**EXAMPLES**
+
+```zig
+// Every index zeroed before the real ones are written.
+fb.CmdFillBuffer(commands, indices.?, 0, facet.WHOLE_SIZE, 0);
+```
+
 ## CmdNextSubpass
 
 Recorded: what the subpass drew stored, and the next subpass begun.
@@ -2374,6 +2515,73 @@ None known.
 
 ```zig
 fb.CmdSetViewport(commands, 0, 1, @ptrCast(&facet.Viewport{ .width = 800, .height = 600 }));
+```
+
+## CmdUpdateBuffer
+
+Recorded: bytes written into a buffer, kept with the command.
+
+**SYNOPSIS**
+
+```zig
+fn CmdUpdateBuffer(base: *FacetBase, buffer: *facet.CommandBuffer, destination: *facet.Buffer, offset: u64, size: u64, data: *const anyopaque) void
+```
+
+**SINCE**
+
+1.27. LVO -440.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording.
+- `destination` - the buffer written.
+- `offset` - where the bytes go, a multiple of four.
+- `size` - how many, a multiple of four and at most 65536
+  (`most_update_bytes`).
+- `data` - the bytes, read as the command is recorded.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+The bytes are copied into the command buffer as this is recorded, so
+what `data` points at may go as soon as it returns. A `size` over
+`most_update_bytes` records nothing. Played, a run that lies past the
+end of the buffer is left out and said to be in the log.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The bytes become the command buffer's own. The destination has to last
+until the work is done.
+
+**NOTES**
+
+For a small write this takes a staging buffer, a map and a submit out of
+the way; the bytes travel in the command buffer instead, which is why
+there is a limit on them.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CmdFillBuffer`, `CmdCopyBuffer`
+
+**EXAMPLES**
+
+```zig
+const matrix: [16]f32 = transform;
+fb.CmdUpdateBuffer(commands, uniforms.?, 0, @sizeOf(@TypeOf(matrix)), &matrix);
 ```
 
 ## CreateBuffer
