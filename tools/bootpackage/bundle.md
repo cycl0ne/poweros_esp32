@@ -79,6 +79,20 @@ the bootloader print each place it tries, on the firmware's own debug
 UART (UART10) - not on the console above, which carries the second stage
 and the system.
 
+They can also be read from the chip itself, which wants nothing on the
+module: `rpiboot -d usbboot/mass-storage-gadget64` starts a small Linux
+on it with the eMMC and the SSD as USB disks and a console of its own
+(`root`, no password), and the EEPROM is on its SPI:
+
+```
+flashrom -p linux_spi:dev=/dev/spidev10.0 -r ee.bin
+strings ee.bin | grep -A3 '^\[all\]'
+```
+
+The settings are plain text in the image, so that prints them as they
+are - a read of the chip rather than of a file that is meant to be on
+it.
+
 ## The first start
 
 The console says what the kernel finds and ends at `s3>`, the ROM's own
