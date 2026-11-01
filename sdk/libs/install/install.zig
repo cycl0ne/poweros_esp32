@@ -33,6 +33,7 @@
 
 pub const manifest = @import("manifest.zig");
 pub const update = @import("update.zig");
+pub const autoboot = @import("autoboot.zig");
 
 /// The two halves of a package.
 pub const Half = enum { system, boot };

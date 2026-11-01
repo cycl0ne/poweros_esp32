@@ -33,6 +33,7 @@ test {
     _ = @import("prefs/tests/prefs.zig");
     _ = @import("install/tests/manifest.zig");
     _ = @import("install/tests/update.zig");
+    _ = @import("install/tests/autoboot.zig");
     _ = @import("devs/sdcard/sdspi.zig");
     _ = @import("devs/networks/tests/api.zig");
     _ = @import("devs/networks/tests/cyw43455.zig");

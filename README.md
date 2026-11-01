@@ -223,7 +223,8 @@ Beside them:
   `SYS:System/HDToolBox` ([disks guide](sdk/docs/guides/rdb.md)); a
   system put onto a card or an SSD by one command, from the running
   system or from a release package (`C:Install`), and brought up to date
-  from a package afterwards, only what differs fetched (`C:Update`).
+  from a package afterwards, only what differs fetched, the kernel with a
+  way back from one that does not come up (`C:Update`, `C:Reboot`).
 - **Devices:** timer, serial, console, input from keyboards, mice and
   touch, flash, SD card, NVMe, I2C, RS-485, clipboard; USB hosts on the
   ESP32s' OTG and on xHCI, there up to SuperSpeed (5 Gbit/s), bulk
@@ -627,14 +628,26 @@ is for, and `SYS:System/HDToolBox` does the table in a window.
 
 **Up to date.** `C:Update` reads a package over a system that is
 installed already - from a stick, a share or an `http://` address - and
-takes from it what differs. Three things are compared for every path:
+takes from it what differs; `BOOT` writes the kernel with it. Three things are compared for every path:
 the list the machine was given, the list in the package, and the file
 itself, so what the build changed is fetched, what it dropped is deleted,
 and what was changed on this machine is kept and said by name rather than
 written over. Where the two lists agree the file is looked for and not
 read, which is why an update over a 50 MB package that differs in two
 files fetches 4.7 KB. `CHECK` says what would happen and writes nothing,
-and its return code tells a script whether there is anything to do.
+and its return code tells a script whether there is anything to do. The
+system volume is given a snapshot before the first file is written.
+
+**A kernel with a way back.** `Update BOOT` writes what the firmware
+reads into the partition it reads it from, after the system volume's
+files. Where the firmware starts from either of a pair of partitions, the
+one not in use is written and `autoboot.txt` points at it for a single
+start: `C:Reboot TRYBOOT` starts the machine on it, a kernel that does
+not come up costs one start, and the system that did come up keeps it
+with `Update CONFIRM`. Where the firmware reads one partition, the file
+being replaced is kept beside the new one as `<name>.old`. `C:Reboot`
+holds every drive a device feeds still before the reset, so that what a
+file system is holding is written out.
 
 **What starts it.** Of the bootable partitions of every disk, dos starts
 from the one with the highest boot priority; an install gives the system
@@ -671,9 +684,9 @@ step does over what it has just gathered.
 over HTTP ([serve](tools/serve/README.md), `-Dserve-port=`, 8080 by
 default): GET and HEAD and nothing else, no listing of a directory, and
 only the paths a manifest may name. In QEMU's user network the host is
-10.0.2.2, so a machine there reaches `http://10.0.2.2:8080/`. What reads a
-package on the machine - one command to install, one to bring a system up
-to date - is being written.
+10.0.2.2, so a machine there reaches `http://10.0.2.2:8080/`. On the
+machine, `C:Install` makes a medium from such a package and `C:Update`
+brings one that is installed already up to date from a later one.
 
 **Keeping the files current.** Besides the image, each build writes the
 disk's files as a tree (`zig-out/disk-rv64/`, `zig-out/disk-a64/`) and a

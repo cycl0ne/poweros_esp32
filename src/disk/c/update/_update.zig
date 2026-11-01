@@ -7,6 +7,8 @@ const dos = sdk.dos;
 const exec = sdk.exec;
 const http = sdk.http;
 const install = sdk.install;
+const prefs = sdk.prefs;
+const posfs = dos.posfs;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const UtilityBase = sdk.interface.utility.UtilityBase;
@@ -30,6 +32,13 @@ pub const max_path = install.manifest.max_path + 256;
 /// to so that the last step is a rename and not a copy.
 pub const part_file = "SYS:System/update.part";
 
+/// The snapshot the system volume is given before the first file is
+/// written, where it is a volume that keeps them: what a system that
+/// comes up and is wrong is put back to. There is one of it, since a
+/// volume is only ever put back to its newest snapshot, and it is made
+/// again each time.
+pub const snapshot_name = "before-update";
+
 /// One run of the command.
 pub const Run = struct {
     sys: *ExecBase,
@@ -51,14 +60,54 @@ pub const Run = struct {
     /// What the package holds, from its list's first line.
     files: u32 = 0,
     bytes: u64 = 0,
+    /// What the install left: where this system came from, which board
+    /// it was built for, and which partition its firmware reads.
+    installed: ?*const prefs.install.Settings = null,
+    /// Whether the files the firmware reads are to be written too.
+    want_boot: bool = false,
+    /// Whether the machine is started again at the end.
+    restart: bool = false,
     /// What this run came to.
     written: u32 = 0,
     written_bytes: u64 = 0,
     deleted: u32 = 0,
     kept: u32 = 0,
     made: u32 = 0,
+    /// What the firmware reads: how many the package holds, and how many
+    /// were written into its partition.
     boot: u32 = 0,
+    boot_written: u32 = 0,
+    /// The partition the firmware was told to try at the next start, 0
+    /// where none was.
+    tried: u32 = 0,
+    /// Whether the system volume has been given its snapshot.
+    snapshotted: bool = false,
 };
+
+/// The system volume given its snapshot, once in a run and before the
+/// first file is written. A volume that keeps no snapshots - the flash
+/// file system, FAT - says so and nothing is lost by it: there was
+/// nothing to put back to.
+pub fn snapshot(run: *Run) void {
+    if (run.snapshotted or run.check) return;
+    run.snapshotted = true;
+    const dl = run.dl;
+    const dp = dl.GetDeviceProc("SYS:", null) orelse return;
+    defer dl.FreeDeviceProc(dp);
+    const port = dp.port orelse return;
+    var info: dos.InfoData = .{};
+    const disk_info = @intFromEnum(dos.ActionCode.disk_info);
+    if (dl.DoPkt(port, disk_info, @bitCast(@intFromPtr(&info)), 0, 0, 0, 0) == dos.DOSFALSE) return;
+    if (info.disk_type != posfs.ID_POSFS_DISK) return;
+    // The one from the update before this is what it replaces.
+    var args: posfs.packets.SnapshotArgs = .{ .name = snapshot_name };
+    _ = dl.DoPkt(port, posfs.packets.ACTION_POSFS_DELETE_SNAPSHOT, @bitCast(@intFromPtr(&args)), 0, 0, 0, 0);
+    if (dl.DoPkt(port, posfs.packets.ACTION_POSFS_MAKE_SNAPSHOT, @bitCast(@intFromPtr(&args)), 0, 0, 0, 0) == dos.DOSFALSE) {
+        _ = Printf(dl, "%s: %s has no snapshot %s to go back to\n", .{ COMMAND_NAME, "SYS:", snapshot_name });
+        return;
+    }
+    say(run, "  %-7s %s\n", .{ "back to", "SYS: before this, as the snapshot " ++ snapshot_name });
+}
 
 /// A line said unless QUIET.
 pub fn say(run: *Run, comptime format: [:0]const u8, args: anytype) void {

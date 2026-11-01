@@ -107,7 +107,7 @@ fn one(run: *Run, path: []const u8, had: ?manifest.Entry, want: ?manifest.Entry,
             run.written += 1;
             run.written_bytes += entry.size;
             if (run.check) return dos.RETURN_OK;
-            if (write(run, path, where.cstr(), entry)) |code| return code;
+            if (write(run, path, entry, .{ .where = where.cstr(), .part = shared.part_file })) |code| return code;
         },
         .kept => {
             run.kept += 1;
@@ -125,26 +125,42 @@ fn one(run: *Run, path: []const u8, had: ?manifest.Entry, want: ?manifest.Entry,
     return dos.RETURN_OK;
 }
 
+/// Where one file is written: the name it ends up under, the name it is
+/// fetched to first - on the same volume, so that the last step is a
+/// rename and not a copy - and, where there is no other partition to
+/// fall back on, the name the one being replaced is kept under.
+pub const Target = struct {
+    where: [*:0]const u8,
+    part: [*:0]const u8,
+    keep: ?[*:0]const u8 = null,
+};
+
 /// One file fetched to a name of its own, held against the list, and
 /// renamed into place. Null when it is there; a return code when it is
-/// not.
-fn write(run: *Run, path: []const u8, where: [*:0]const u8, entry: manifest.Entry) ?i32 {
+/// not. The system volume is given its snapshot before the first of
+/// them, so that there is something to go back to.
+pub fn write(run: *Run, path: []const u8, entry: manifest.Entry, to: Target) ?i32 {
     const dl = run.dl;
+    shared.snapshot(run);
     var sum: u32 = 0;
     var length: u64 = 0;
-    if (source.fetch(run, path, shared.part_file, &sum, &length)) |code| return code;
+    if (source.fetch(run, path, to.part, &sum, &length)) |code| return code;
     if (sum != entry.crc or length != entry.size) {
-        _ = dl.DeleteFile(shared.part_file);
+        _ = dl.DeleteFile(to.part);
         return shared.fail(run, "%s did not arrive whole: the list says %x of %ld bytes, what came is %x of %ld\n", .{
-            where, entry.crc, entry.size, sum, length,
+            to.where, entry.crc, entry.size, sum, length,
         });
     }
-    // The old file goes only once the new one is whole on the volume.
-    _ = dl.DeleteFile(where);
-    if (!dl.Rename(shared.part_file, where)) {
+    // The one being replaced goes only once the new one is whole on the
+    // volume, and where it is kept it is renamed rather than deleted.
+    if (to.keep) |old| {
+        _ = dl.DeleteFile(old);
+        if (dl.Rename(to.where, old)) shared.say(run, row, .{ "kept", old });
+    } else _ = dl.DeleteFile(to.where);
+    if (!dl.Rename(to.part, to.where)) {
         const code = dl.IoErr();
-        _ = dl.DeleteFile(shared.part_file);
-        return shared.failed(run, where, code);
+        _ = dl.DeleteFile(to.part);
+        return shared.failed(run, to.where, code);
     }
     return null;
 }
@@ -211,6 +227,15 @@ fn thereOf(run: *Run, where: [*:0]const u8) rule.Here {
     const lock = run.dl.Lock(where, dos.SHARED_LOCK) orelse return .gone;
     run.dl.UnLock(lock);
     return .unread;
+}
+
+/// Whether the file is there and is what the list says: what the boot
+/// half asks, where there is no list of its own to compare against.
+pub fn sameFile(run: *Run, where: [*:0]const u8, entry: manifest.Entry) bool {
+    var sum: u32 = 0;
+    var length: u64 = 0;
+    if (!sumOf(run, where, &sum, &length)) return false;
+    return sum == entry.crc and length == entry.size;
 }
 
 /// A file's CRC-32 and its length; false when it is not there.

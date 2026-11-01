@@ -3,12 +3,14 @@
 //! package, taking from it exactly what differs and leaving what was
 //! changed here alone. Built against the SDK only.
 //!
-//!   Update FROM/K,CHECK/S,FORCE/S,QUIET/S
+//!   Update FROM/K,CHECK/S,BOOT/S,FORCE/S,QUIET/S,CONFIRM/S,RESTART/S
 //!
 //!   Update                         from where the machine was installed
 //!   Update CHECK                   what would happen, and nothing else
 //!   Update FROM WORK:package       from a package on a volume
 //!   Update FROM http://10.0.2.2:8080/     from one a server hands out
+//!   Update BOOT RESTART            the kernel too, and start on it
+//!   Update CONFIRM                 the kernel that came up, kept
 //!
 //! FROM is a release package - a directory holding `manifest`,
 //! `system/` and `boot/`. An argument with `://` in it is an address,
@@ -56,9 +58,32 @@
 //! ask. A run that did something answers 0, one stopped with Ctrl-C 5,
 //! and one that could not finish 20, with the reason said.
 //!
-//! What the firmware reads - the `boot` half - is counted here and left
-//! alone: writing it into the boot partition, with a way back from a
-//! kernel that does not come up, is the step after this one.
+//! **BOOT** writes the other half as well: the files the firmware reads,
+//! into the partition it reads them from, after the system volume's - a
+//! system whose files are all there is of no use if the machine still
+//! loads the kernel it was installed with, and a kernel written before
+//! them would be the one that came up next to files it has never seen.
+//! That partition is found through rdb.library, by the name
+//! `install.prefs` kept, and `boot.zig` has the whole of it: the slot
+//! not in use written where the firmware starts from either of a pair,
+//! `autoboot.txt` pointed at it for a single start, and the file being
+//! replaced kept as `<name>.old` where there is no second partition.
+//!
+//! **CONFIRM** is what the system that came up on a tried partition runs
+//! to keep it: the two numbers in `autoboot.txt` the other way round, so
+//! that the next start is on this partition with no flag set. A system
+//! that never comes up never runs it, and the start after the tried one
+//! is back on the partition that worked.
+//!
+//! **RESTART** starts the machine again at the end, through `C:Reboot`,
+//! which holds every drive still first; where a partition was written to
+//! be tried it asks the firmware for that one, this once.
+//!
+//! Before the first file is written the system volume is given a
+//! snapshot (`shared.snapshot`), where it is a file system that keeps
+//! them: what a system that comes up and is wrong is put back to. There
+//! is one of it and it is made again each run, since a volume is only
+//! ever put back to its newest snapshot.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -79,18 +104,22 @@ const Printf = dos.stdio.Printf;
 const shared = @import("_update.zig");
 const source = @import("source.zig");
 const compare = @import("compare.zig");
+const boot = @import("boot.zig");
 const Run = shared.Run;
 
 pub const COMMAND_NAME = shared.COMMAND_NAME;
 const VERSION_STRING = "\x00$VER: Update 1.0 (01.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "FROM/K,CHECK/S,FORCE/S,QUIET/S";
+const template = "FROM/K,CHECK/S,BOOT/S,FORCE/S,QUIET/S,CONFIRM/S,RESTART/S";
 const arg_from = 0;
 const arg_check = 1;
-const arg_force = 2;
-const arg_quiet = 3;
-const arg_count = 4;
+const arg_boot = 2;
+const arg_force = 3;
+const arg_quiet = 4;
+const arg_confirm = 5;
+const arg_restart = 6;
+const arg_count = 7;
 
 const utility_version = 0;
 
@@ -119,6 +148,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     run.check = argv[arg_check] != 0;
     run.force = argv[arg_force] != 0;
     run.quiet = argv[arg_quiet] != 0;
+    run.want_boot = argv[arg_boot] != 0;
+    run.restart = argv[arg_restart] != 0;
 
     // What the install left, which says where the files came from and
     // which board they were built for.
@@ -131,6 +162,16 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
                 return shared.fail(&run, "%s: %s\n", .{ prefs.install.ENVARC_FILE, wrong });
             }
         }
+    }
+
+    run.installed = &settings;
+
+    // CONFIRM is the started system's own step and wants no package: it
+    // says the kernel that was tried came up.
+    if (argv[arg_confirm] != 0) {
+        const code = boot.confirm(&run);
+        if (code == dos.RETURN_OK and argv[arg_restart] != 0) restart(&run, false);
+        return code;
     }
 
     if (dos.rdargs.string(argv[arg_from])) |text| {
@@ -211,10 +252,33 @@ fn update(run: *Run, settings: *const prefs.install.Settings) i32 {
     shared.bytesAsText(&size, run.bytes);
     shared.say(run, "%s: %d files, %s\n", .{ run.from, run.files, @as([*:0]const u8, @ptrCast(&size)) });
 
-    const code = compare.walk(run, mine, theirs);
+    var code = compare.walk(run, mine, theirs);
     if (code == dos.RETURN_FAIL) return code;
+
+    // What the firmware reads goes last: a system whose files are all
+    // there is of no use if the machine still loads the kernel it was
+    // installed with, and a kernel written before them would be the one
+    // that came up next to files it has never seen.
+    if (run.want_boot) {
+        const wrote = boot.write(run, theirs);
+        if (wrote == dos.RETURN_FAIL) return wrote;
+        if (code == dos.RETURN_OK) code = wrote;
+        if (run.check and run.boot_written != 0) code = dos.RETURN_WARN;
+    }
     said(run);
+    if (run.restart and !run.check and code != dos.RETURN_FAIL) restart(run, run.tried != 0);
     return code;
+}
+
+/// The machine started again through `C:Reboot`, which holds every drive
+/// still first; `tried` asks the firmware for the partition that was
+/// written, this once.
+fn restart(run: *Run, tried: bool) void {
+    shared.tell(run, "Restarting.\n", .{});
+    const line: [*:0]const u8 = if (tried) "C:Reboot TRYBOOT FORCE" else "C:Reboot FORCE";
+    if (!run.dl.Execute(line, null, null)) {
+        _ = shared.fail(run, "C:Reboot is not there, so nothing was restarted\n", .{});
+    }
 }
 
 /// What the run came to, in one line.
@@ -236,10 +300,12 @@ fn said(run: *Run) void {
     if (run.kept != 0) {
         shared.say(run, "What is kept was changed on this machine; FORCE takes the package's own.\n", .{});
     }
-    if (run.boot != 0) {
-        shared.say(run, "The %d files the firmware reads are in the package too; writing those into the boot partition is its own step.\n", .{run.boot});
+    if (!run.want_boot and run.boot != 0) {
+        shared.say(run, "The %d files the firmware reads are in the package too; BOOT writes them into the partition it reads.\n", .{run.boot});
     }
-    if (!run.check and compare.changed(run)) {
+    if (run.tried != 0) {
+        shared.say(run, "That partition is the one the firmware starts from for a single start, once the machine is restarted with the flag for it set (C:Reboot TRYBOOT, or RESTART here); the start after that is on the partition it starts from now. Update CONFIRM on the system that comes up keeps the new one.\n", .{});
+    } else if (!run.check and compare.changed(run)) {
         shared.say(run, "Restart to run what was written.\n", .{});
     }
 }

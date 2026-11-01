@@ -17,9 +17,10 @@ their flash and is written from the host (`./zig build flash-disk`).
 
 This guide is what an install leaves on the disk, the command and each of
 its keywords, the two sources it copies from, the release package's form,
-what it writes down about itself, what the machine then starts from, and
-how a system that is installed already is brought up to date from a
-later package (`C:Update`).
+what it writes down about itself, what the machine then starts from, how a
+system that is installed already is brought up to date from a later
+package (`C:Update`), and how its kernel is replaced with a way back
+from one that does not come up.
 
 ## What it leaves on the disk
 
@@ -273,7 +274,7 @@ the list added; the library under both is rdb.library.
 takes from it what differs:
 
 ```
-Update FROM/K,CHECK/S,FORCE/S,QUIET/S
+Update FROM/K,CHECK/S,BOOT/S,FORCE/S,QUIET/S,CONFIRM/S,RESTART/S
 ```
 
 ```
@@ -281,6 +282,9 @@ Update                              from where the machine was installed
 Update CHECK                        what would happen, and nothing else
 Update FROM WORK:package            from a package on a volume
 Update FROM http://10.0.2.2:8080/   from one a server hands out
+Update BOOT                         the files the firmware reads as well
+Update BOOT RESTART                 and the machine started on them
+Update CONFIRM                      the kernel that came up, kept
 ```
 
 - **FROM** is the package. An argument with `://` in it is an address,
@@ -288,8 +292,13 @@ Update FROM http://10.0.2.2:8080/   from one a server hands out
   a second disk or a mounted share wants no network and no server.
   Without it the source is the one `install.prefs` kept.
 - **CHECK** says what would happen and writes nothing.
+- **BOOT** writes the package's `boot` half too, into the partition the
+  firmware reads - [the kernel](#the-kernel-and-the-way-back) below.
 - **FORCE** lets the package win over a file that was changed here.
 - **QUIET** leaves out the lines, but not what went wrong.
+- **CONFIRM** keeps the kernel that was tried, which is the started
+  system's own step.
+- **RESTART** starts the machine again at the end, through `C:Reboot`.
 
 The return code is 0 for a run that did something or found nothing to
 do, 5 from `CHECK` where there is something to do and from a run stopped
@@ -320,7 +329,10 @@ A line is said for every path something happens to, the first word
 saying what: `new` for one the build has begun to ship, `newer` for one
 it changed, `again` for one that was not there, `kept` for one changed on
 this machine, `gone` for one the build dropped, `drawer` for a drawer
-made, and `list` for the package's list written as the machine's own:
+made, `list` for the package's list written as the machine's own, and -
+with `BOOT` - `slot` for the partition the firmware reads, `boot` for a
+file written into it, `same` for one already right and `tried` for
+`autoboot.txt`:
 
 ```
   new     SYS:c/Mixer
@@ -344,15 +356,94 @@ A file that was kept is written into that list as the package's, so it is
 named once and then left to the machine; a later package that changes
 that path again names it again.
 
-What the firmware reads - the package's `boot` half - is counted and
-left alone. Writing it into the boot partition, with a way back from a
-kernel that does not come up, is a step of its own.
+Without `BOOT` the files the firmware reads are counted and left alone,
+and the line that says how many of them the package holds says so.
+
+## The kernel and the way back
+
+`Update BOOT` writes the package's `boot` half into the partition the
+firmware reads, after the system volume's files: a system whose files are
+all there is of no use if the machine still loads the kernel it was
+installed with, and a kernel written before them would be the one that
+came up beside files it has never seen.
+
+That partition is not mounted while the machine runs, so it is found the
+way the install left it to be found: `install.prefs` names the device,
+the unit and the partition's name in the GPT, and rdb.library walks the
+table and mounts the entry of that name. Nothing in it is deleted - it is
+the firmware's, and what else is in there is somebody's business - and
+each file is held against the length and the CRC-32 the package's list
+gives, as on the system volume. One that is already what the list says is
+left alone, so writing the partition again costs nothing.
+
+**Where the firmware starts from either of a pair** (`SYSTAG_BootSlots`
+is 2) the one not in use is written and `autoboot.txt` in the first of
+them is pointed at it for a single start:
+
+```
+[all]
+tryboot_a_b=1
+boot_partition=1
+[tryboot]
+boot_partition=2
+```
+
+`[all] boot_partition` is where the firmware starts from, `[tryboot]` the
+one it starts from instead when it was reset with the flag for that set -
+which is `C:Reboot TRYBOOT`, or `RESTART` on the update that wrote the
+partition. The flag goes away by itself: a kernel that does not come up
+costs one start, and the machine is back on the partition that worked. A
+system that did come up keeps the new one with `Update CONFIRM`, which
+writes the two numbers the other way round.
+
+So the whole of it, on a machine with a pair:
+
+```
+Update BOOT RESTART        the files, the kernel, and a start on it
+Update CONFIRM             once it came up: keep it
+```
+
+**Where it reads one partition** the file being replaced is kept beside
+the new one as `<name>.old`, since there is nothing else to fall back on.
+What loads that file then is the firmware's own prompt, over the console
+such a machine has attached: on the VisionFive 2, U-Boot's
+`load mmc 1:1 0x40200000 kernel.bin.old` and `booti`.
+
+**Before the first file is written** the system volume is given a
+snapshot, where it is a file system that keeps them (posfs):
+
+```
+  back to SYS: before this, as the snapshot before-update
+```
+
+There is one of it, made again each run, since a volume is only ever put
+back to its newest snapshot. A system that comes up and is wrong is put
+back with `C:PosFS SYS: ROLLBACK before-update` - from a system that is
+not the one being rolled back, since a volume is not rolled back while it
+is in use, which means a card or a kernel that loads a disk image beside
+the medium.
+
+**The restart itself** is `C:Reboot`:
+
+```
+Reboot                     after one question
+Reboot FORCE               asking nothing
+Reboot TRYBOOT             from the other boot partition, this once
+```
+
+Every drive a device feeds is held still first, so that what its file
+system is holding is written out - a reset writes nothing out - and one
+that will not stop is named, with the restart going ahead all the same.
+`TRYBOOT` sets the firmware's flag for a single start from the other
+partition and says so and does nothing on a board whose firmware has no
+such flag.
 
 ## See also
 
 - [Disks and partitions](rdb.md) - the table, the GPT and the container,
   rdb.library and `C:RDB`.
-- [posfs](posfs.md) - the file system the volumes hold.
+- [posfs](posfs.md) - the file system the volumes hold, its snapshots
+  and the rollback an update's snapshot is for.
 - `sdk/libs/install/` - the package and its list, as the host's tools and
   the machine both read them.
 - `tools/mkpackage/README.md` - the host side of a package.
