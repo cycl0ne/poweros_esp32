@@ -433,9 +433,9 @@ triggers too. A trigger plays on after its open is closed; the query's
 `LIBS:audiocodec.library` turns a sound file into the 16-bit samples a
 stream plays: WAV (PCM of 8 to 32 bits, or float), MP3 (MPEG-1, 2 and
 2.5, Layer III), FLAC (4 to 24 bits), Ogg Vorbis, AAC-LC (ADTS, or in
-an MP4), AC-3 and E-AC-3 (bare, or in an MP4), and the sound of a
-Matroska file in any of them but WAV, in one channel or two - AC-3's
-5.1 mixed into two. `OpenAudioStream` opens a file by name
+an MP4), AC-3 and E-AC-3 (bare, or in an MP4), Opus (in Ogg, or in an
+MP4), and the sound of a Matroska file or a WebM in any of them but WAV,
+in one channel or two - AC-3's and Opus's 5.1 mixed into two. `OpenAudioStream` opens a file by name
 (`ACA_Name`), a file the program has open (`ACA_FileHandle`), or bytes a
 function of the program's hands over (`ACA_ReadFunc`, `ACA_ReadData`) -
 a download, a network stream - and finds the kind by its first bytes.
@@ -534,9 +534,9 @@ container too, and opened the same way, by its first bytes (EBML's
 header) whatever `ACA_Codec` says; `IdentifyAudio` calls it
 ACODEC_UNKNOWN, as its first bytes say nothing of what it holds. Its
 sound track - the one it marks to be played, or the one `ACA_MediaTrack`
-numbers - may be AAC, MP3, FLAC, Vorbis, AC-3 or E-AC-3, and
-`info.codec` says which; Opus and DTS are refused with
-ACERR_UNSUPPORTED, as is MPEG audio of layer II. A read function reads it front to back, and it cannot
+numbers - may be AAC, MP3, FLAC, Vorbis, AC-3, E-AC-3 or Opus, and
+`info.codec` says which; DTS is refused with ACERR_UNSUPPORTED, as is
+MPEG audio of layer II. A read function reads it front to back, and it cannot
 seek. Matroska keeps its times in milliseconds, so: the first packet
 says where the sound begins and each after it begins where the one
 before ends; the priming its `CodecDelay` gives is left out; the length
@@ -576,6 +576,31 @@ are within a step of FFmpeg's; the noise the stream asks for in bits it
 codes with none (dither) comes from FFmpeg's generator, so after a seek
 it is other noise and the samples differ by it, except back at frame 0.
 A stream takes about 80 KiB.
+
+### Opus
+
+**Opus** is a station's, a call's and a WebM film's sound: in Ogg pages
+- an `.opus` file, read like Ogg Vorbis - or a track of a Matroska file,
+a WebM or an MP4. Its packets are SILK (speech), CELT (music) or both,
+changing as the sound does, and always decode at 48 kHz whatever rate
+the head says the sound was recorded at. The samples an encoder's start
+gives before the sound (the head's pre-skip, in a container the track's
+delay) are left out, the head's output gain is applied, and peaks past
+full scale are bent below it rather than cut off, as libopus does. One
+stream of one or two channels plays as it is; up to eight channels in
+Vorbis's order (mapping family 1) - several streams in a packet - are
+mixed into two as AC-3 is: the centre and surrounds at -3 dB, the LFE
+left out, each side's weights summing to one. Ambisonics (families 2
+and 3) and channels with no meaning given (255) are refused. The samples
+are within a step of libopus's. An Ogg Opus file's length is exact, by
+its last page, and so is a seek, by a search halving the file; decoding
+starts 160 ms before the frame asked for, twice what RFC 7845 asks, so
+the decoder has settled by it - a voice's long-term prediction can take
+longer, and a steady hum differs a while after a seek. A packet that
+will not decode is concealed for as long as it plays. A chained Ogg
+Opus stream goes on from link to link as Vorbis does. A stream takes
+about 120 KiB, and 60 KiB more for each stream a packet of more channels
+holds - 370 KiB for 5.1.
 
 A program that has a film open with media.library decodes its sound
 with `ACA_Media`: the stream reads that track's packets itself while

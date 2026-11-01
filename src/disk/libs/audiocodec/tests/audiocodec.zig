@@ -36,7 +36,21 @@
 //! wrote 27 hours); `tone.mka` tone.mp3's frames without its Info frame,
 //! so the encoder's delay is sound; `aac.mka` lossy.m4a's packets, the
 //! priming its CodecDelay. `layer2.mka` is 50 ms of MPEG audio layer II,
-//! `opus.mka` 50 ms of Opus.
+//! `opus.mka` 50 ms of stereo Opus, `opus_mka_ref.raw` its frames as
+//! libopus decodes them (through ffmpeg).
+//!
+//! The Opus files are coded by libopus through ffmpeg: `stereo.opus` a
+//! second of two gliding tones, a click, a high tone and noise, at
+//! 64 kbit/s, titled "Opus Tone" by "PowerOS"; `voice.opus` half a second
+//! of a voice-like hum in mono at 12 kbit/s for speech (SILK) - both in
+//! pages of 100 ms;
+//! `six.opus` 0.3 s of six quiet tones in 5.1 (mapping family 1);
+//! `voice.mp4` voice.opus's packets in an MP4, its pre-skip the edit's
+//! start. `stereo_ref.raw` holds frames 0 and 30000 of stereo.opus as
+//! libopus decodes them, 2048 each; `voice_ref.raw` frames 0 and 12000 of
+//! voice.opus; `six_opus_ref.raw` frames 0 and 8000 of six.opus's channels as
+//! libopus decodes them in float, mixed as audiocodec mixes them and
+//! rounded.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -898,10 +912,10 @@ test "what FLAC and Ogg are, by their first bytes" {
     // FLAC behind an ID3v2 tag of ten bytes' body.
     const tagged = "ID3\x03\x00\x00\x00\x00\x00\x0A" ++ "\x00" ** 10 ++ "fLaC";
     try testing.expectEqual(ac.ACODEC_FLAC, acb.IdentifyAudio(tagged, tagged.len));
-    // An Ogg page whose first packet is Opus's: not a kind it knows.
+    // An Ogg page whose first packet is Opus's (SINCE 1.9).
     var opus = lossy_ogg[0..64].*;
     @memcpy(opus[28..36], "OpusHead");
-    try testing.expectEqual(ac.ACODEC_UNKNOWN, acb.IdentifyAudio(&opus, opus.len));
+    try testing.expectEqual(ac.ACODEC_OPUS, acb.IdentifyAudio(&opus, opus.len));
 }
 
 test "a FLAC through a read function: every sample as coded, its comments, chapters and cover" {
@@ -1744,11 +1758,8 @@ test "Matroska sound on a file: seeks within a millisecond - and FFmpeg's Vorbis
     try expectLandings(acb, lossy, &straight, 44090, &.{ 500, 1024, 10000, 33333 }, 22, false);
     acb.CloseAudioStream(lossy);
 
-    // Layer II is MPEG audio too, but not decoded; Opus is not either.
+    // Layer II is MPEG audio too, but not decoded.
     var memory: Memory = .{ .bytes = layer2_mka };
-    try testing.expect(openMemory(acb, &memory, &err) == null);
-    try testing.expectEqual(ac.ACERR_UNSUPPORTED, err);
-    memory = .{ .bytes = opus_mka };
     try testing.expect(openMemory(acb, &memory, &err) == null);
     try testing.expectEqual(ac.ACERR_UNSUPPORTED, err);
     // The first bytes say nothing of what Matroska holds.
@@ -2034,5 +2045,186 @@ test "AC-3 mono in an MP4: one channel, ffmpeg's samples to the edit list's leng
     try expectNear(&straight, 0, mono_ac3_ref, 0, 2048, 1);
     for ([_]u32{ 0, 1, 255, 256, 1537, 10000, 24000 - 400 }) |frame| {
         try expectSeekNear(acb, stream, &straight, 1, frame);
+    }
+}
+
+// --- Opus ---------------------------------------------------------------------------
+
+const stereo_opus = @embedFile("stereo.opus");
+const stereo_opus_ref = @embedFile("stereo_ref.raw");
+const voice_opus = @embedFile("voice.opus");
+const voice_opus_ref = @embedFile("voice_ref.raw");
+const six_opus = @embedFile("six.opus");
+const six_opus_ref = @embedFile("six_opus_ref.raw");
+const voice_mp4 = @embedFile("voice.mp4");
+const opus_mka_ref = @embedFile("opus_mka_ref.raw");
+const opus_chain = stereo_opus.* ++ voice_opus.*;
+
+test "Ogg Opus through a read function: libopus's samples, the pre-skip left out, its tags" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const acb = rig.acb;
+    var err: i32 = 0;
+    var info: ac.AudioStreamInfo = .{};
+
+    try testing.expectEqual(ac.ACODEC_OPUS, acb.IdentifyAudio(stereo_opus, ac.AUDIO_IDENTIFY_BYTES));
+    var memory: Memory = .{ .bytes = stereo_opus, .piece = 333 };
+    const stream = openMemory(acb, &memory, &err) orelse return error.NoStream;
+    defer acb.CloseAudioStream(stream);
+    acb.GetAudioStreamInfo(stream, &info);
+    try testing.expectEqual(ac.ACODEC_OPUS, info.codec);
+    try testing.expectEqual(@as(u32, 48000), info.rate);
+    try testing.expectEqual(@as(u32, 2), info.channels);
+    try testing.expectEqual(@as(u32, 16), info.bits);
+    try testing.expectEqualStrings("Opus Tone", textOf(&info.title));
+    try testing.expectEqualStrings("PowerOS", textOf(&info.artist));
+    var straight: [48000 * 2]i16 = undefined;
+    try testing.expectEqual(@as(u32, 48000), try decodeAll(acb, stream, 2, 1111, &straight));
+    try expectNear(&straight, 0, stereo_opus_ref, 0, 2048, 2);
+    try expectNear(&straight, 30000, stereo_opus_ref, 2048, 2048, 2);
+}
+
+test "Ogg Opus by name: its length from the last page, seeks exact from the start and near 160 ms on" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const acb = rig.acb;
+    var err: i32 = 0;
+    var info: ac.AudioStreamInfo = .{};
+
+    try rig.write("WORK:stereo.opus", &.{stereo_opus});
+    const stream = openFile(acb, "WORK:stereo.opus", &err) orelse return error.NoStream;
+    defer acb.CloseAudioStream(stream);
+    acb.GetAudioStreamInfo(stream, &info);
+    try testing.expectEqual(@as(u32, 48000), info.frames);
+    try testing.expect(info.bitrate > 90000 and info.bitrate < 130000);
+    var straight: [48000 * 2]i16 = undefined;
+    try testing.expectEqual(@as(u32, 48000), try decodeAll(acb, stream, 2, 2000, &straight));
+    try expectNear(&straight, 30000, stereo_opus_ref, 2048, 2048, 2);
+
+    // Within 160 ms of the start the decoding goes from the first packet,
+    // as it went straight through; past it from a page 160 ms early - of
+    // 100 ms pages - the decoder settled by the frame.
+    try expectOpusFromStart(acb, stream, &straight, 2);
+    for ([_]u32{ 7680, 10000, 24001, 33333, 48000 - 400 }) |frame| {
+        try expectSeekNear(acb, stream, &straight, 2, frame);
+    }
+    var some: [400 * 2]i16 = undefined;
+    try testing.expectEqual(ac.ACERR_OK, acb.SeekAudio(stream, 48000));
+    try testing.expectEqual(@as(i32, 0), acb.DecodeAudio(stream, &some, 400));
+}
+
+test "Ogg Opus in mono, coded for speech (SILK): libopus's samples" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const acb = rig.acb;
+    var err: i32 = 0;
+    var info: ac.AudioStreamInfo = .{};
+
+    try rig.write("WORK:voice.opus", &.{voice_opus});
+    const stream = openFile(acb, "WORK:voice.opus", &err) orelse return error.NoStream;
+    defer acb.CloseAudioStream(stream);
+    acb.GetAudioStreamInfo(stream, &info);
+    try testing.expectEqual(@as(u32, 1), info.channels);
+    try testing.expectEqual(@as(u32, 24000), info.frames);
+    var straight: [24000]i16 = undefined;
+    try testing.expectEqual(@as(u32, 24000), try decodeAll(acb, stream, 1, 1500, &straight));
+    try expectNear(&straight, 0, voice_opus_ref, 0, 2048, 1);
+    try expectNear(&straight, 12000, voice_opus_ref, 2048, 2048, 1);
+    // Within 160 ms of the start, exact; a hum this steady takes SILK's
+    // long-term prediction longer than that to settle after a seek.
+    try expectOpusFromStart(acb, stream, &straight, 1);
+}
+
+test "Ogg Opus in 5.1: its six channels mixed into stereo" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const acb = rig.acb;
+    var err: i32 = 0;
+    var info: ac.AudioStreamInfo = .{};
+
+    var memory: Memory = .{ .bytes = six_opus };
+    const stream = openMemory(acb, &memory, &err) orelse return error.NoStream;
+    defer acb.CloseAudioStream(stream);
+    acb.GetAudioStreamInfo(stream, &info);
+    try testing.expectEqual(ac.ACODEC_OPUS, info.codec);
+    try testing.expectEqual(@as(u32, 2), info.channels);
+    var straight: [14400 * 2]i16 = undefined;
+    try testing.expectEqual(@as(u32, 14400), try decodeAll(acb, stream, 2, 1000, &straight));
+    try expectNear(&straight, 0, six_opus_ref, 0, 2048, 2);
+    try expectNear(&straight, 8000, six_opus_ref, 2048, 2048, 2);
+}
+
+test "a chain of Ogg Opus links: stereo, then mono with no names" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const acb = rig.acb;
+    var err: i32 = 0;
+    var info: ac.AudioStreamInfo = .{};
+
+    var memory: Memory = .{ .bytes = &opus_chain, .piece = 501 };
+    const stream = openMemory(acb, &memory, &err) orelse return error.NoStream;
+    defer acb.CloseAudioStream(stream);
+    try testing.expectEqual(@as(u32, 0), linkOf(acb, stream));
+    var first: [48000 * 2]i16 = undefined;
+    try testing.expectEqual(@as(u32, 48000), try decodeLink(acb, stream, 2, 999, &first));
+    try expectNear(&first, 30000, stereo_opus_ref, 2048, 2048, 2);
+    var later: [24000]i16 = undefined;
+    try testing.expectEqual(@as(u32, 24000), try decodeAll(acb, stream, 1, 999, &later));
+    try testing.expectEqual(@as(u32, 1), linkOf(acb, stream));
+    acb.GetAudioStreamInfo(stream, &info);
+    try testing.expectEqual(@as(u32, 1), info.channels);
+    try testing.expectEqualStrings("", textOf(&info.title));
+    try expectNear(&later, 12000, voice_opus_ref, 2048, 2048, 1);
+}
+
+test "Opus in Matroska and in an MP4: the pre-skip the track's delay, libopus's samples" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const acb = rig.acb;
+    var err: i32 = 0;
+    var info: ac.AudioStreamInfo = .{};
+
+    var memory: Memory = .{ .bytes = opus_mka };
+    const mka = openMemory(acb, &memory, &err) orelse return error.NoStream;
+    acb.GetAudioStreamInfo(mka, &info);
+    try testing.expectEqual(ac.ACODEC_OPUS, info.codec);
+    try testing.expectEqual(@as(u32, 2), info.channels);
+    // Its length from the segment's, to the millisecond and a half: its
+    // first block lies before 0 by the priming, and the padding its last
+    // block says to drop is not read - libopus through ffmpeg gives 2400.
+    var short: [2472 * 2]i16 = undefined;
+    try testing.expectEqual(@as(u32, 2472), try decodeAll(acb, mka, 2, 700, &short));
+    try expectNear(&short, 0, opus_mka_ref, 0, 2400, 2);
+    acb.CloseAudioStream(mka);
+
+    try rig.write("WORK:voice.mp4", &.{voice_mp4});
+    const mp4 = openFile(acb, "WORK:voice.mp4", &err) orelse return error.NoStream;
+    defer acb.CloseAudioStream(mp4);
+    acb.GetAudioStreamInfo(mp4, &info);
+    try testing.expectEqual(ac.ACODEC_OPUS, info.codec);
+    try testing.expectEqual(@as(u32, 1), info.channels);
+    try testing.expectEqual(@as(u32, 24000), info.frames);
+    var straight: [24000]i16 = undefined;
+    try testing.expectEqual(@as(u32, 24000), try decodeAll(acb, mp4, 1, 1234, &straight));
+    try expectNear(&straight, 0, voice_opus_ref, 0, 2048, 1);
+    try expectNear(&straight, 12000, voice_opus_ref, 2048, 2048, 1);
+    try expectOpusFromStart(acb, mp4, &straight, 1);
+}
+
+/// Seeks within 160 ms of the start decode from the first packet: the
+/// samples those decoding straight through gave.
+fn expectOpusFromStart(acb: *AudioCodecBase, stream: *ac.AudioStream, straight: []const i16, channels: usize) !void {
+    var some: [400 * 2]i16 = undefined;
+    const count = 400 * channels;
+    for ([_]u32{ 0, 1, 959, 5000, 7679 }) |frame| {
+        try testing.expectEqual(ac.ACERR_OK, acb.SeekAudio(stream, frame));
+        try testing.expectEqual(@as(i32, 400), acb.DecodeAudio(stream, &some, 400));
+        try testing.expectEqualSlices(i16, straight[frame * channels ..][0..count], some[0..count]);
     }
 }

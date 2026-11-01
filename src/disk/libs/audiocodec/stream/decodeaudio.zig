@@ -12,6 +12,7 @@ const flac = @import("../flac/_flac.zig");
 const vorbis = @import("../vorbis/_vorbis.zig");
 const aac = @import("../aac/_aac.zig");
 const ac3 = @import("../ac3/_ac3.zig");
+const opus = @import("../opus/_opus.zig");
 
 /// Decodes the next frames of a stream.
 ///
@@ -98,6 +99,7 @@ pub fn DecodeAudio(_: *AudioCodecBase, public: *ac.AudioStream, buffer: [*]i16, 
             .vorbis => |*state| vorbis.decode(stream, state, rest, left),
             .aac => |*state| aac.decode(stream, state, rest, left),
             .ac3 => |*state| ac3.decode(stream, state, rest, left),
+            .opus => |*state| opus.decode(stream, state, rest, left),
             .none => 0,
         };
         // What was handed out now, why the sound stopped the next time.

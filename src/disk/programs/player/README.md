@@ -1,8 +1,9 @@
 # Player
 
-Player plays sound files - WAV, MP3, FLAC, Ogg Vorbis, AAC (`.aac`,
-and `.m4a` through media.library), AC-3 and E-AC-3 (`.ac3`, `.eac3`),
-and Matroska's `.mka` holding any of them - and internet stations in a
+Player plays sound files - WAV, MP3, FLAC, Ogg Vorbis, Ogg Opus
+(`.opus`), AAC (`.aac`, and `.m4a` through media.library), AC-3 and
+E-AC-3 (`.ac3`, `.eac3`), and Matroska's `.mka` holding any of them -
+and internet stations in a
 window,
 with a picture of the sound under its controls: a plasma, the wave, the
 spectrum's bars, left against right, or a meter for each side - in the
@@ -17,7 +18,7 @@ English otherwise.
 ## Starting it
 
 Double-click its icon, double-click a `.mp3`, `.wav`, `.flac`, `.ogg`,
-`.m4a`, `.aac`, `.ac3`, `.eac3` or `.mka` file - or a list, `.m3u`,
+`.opus`, `.m4a`, `.aac`, `.ac3`, `.eac3` or `.mka` file - or a list, `.m3u`,
 `.m3u8` or `.pls` - or type in a shell:
 
 ```
@@ -243,7 +244,7 @@ sixteen of the sound's streams are in use.
 ## Stations
 
 An address in the playlist is a station: an internet radio that sends
-MP3 or Ogg Vorbis over `http://` or `https://`. **Project > Open URL...**
+MP3, Ogg Vorbis or Ogg Opus over `http://` or `https://`. **Project > Open URL...**
 asks for one in a small window: Return or **Open** adds it to the list
 and plays it, Esc or **Cancel** closes the window. An address typed
 without `http://` gets it put in front.
