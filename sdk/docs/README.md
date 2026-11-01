@@ -100,8 +100,9 @@ tags and constants, each with its doc comment.
 - [Installing a system](guides/install.md) - a card or an SSD made into
   a system: what `C:Install` leaves on the disk, its keywords, the units
   it can go onto, the running system or a release package as the source,
-  the package's list, what the install writes down about itself, and
-  what the machine starts from then.
+  the package's list, what the install writes down about itself, what
+  the machine starts from then, and `C:Update` over a system that is
+  installed already.
 - [Locale](guides/locale.md) - the default locale and
   `ENV:Sys/locale.prefs`, the country and language files, dates,
   numbers and the order of letters in a program, a program's texts in

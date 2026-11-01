@@ -222,7 +222,8 @@ Beside them:
   partitions from an RDB or a GPT on any drive, laid out in
   `SYS:System/HDToolBox` ([disks guide](sdk/docs/guides/rdb.md)); a
   system put onto a card or an SSD by one command, from the running
-  system or from a release package (`C:Install`).
+  system or from a release package (`C:Install`), and brought up to date
+  from a package afterwards, only what differs fetched (`C:Update`).
 - **Devices:** timer, serial, console, input from keyboards, mice and
   touch, flash, SD card, NVMe, I2C, RS-485, clipboard; USB hosts on the
   ESP32s' OTG and on xHCI, there up to SuperSpeed (5 Gbit/s), bulk
@@ -623,6 +624,17 @@ same thing by hand is eight lines of shell - `RDB INIT GPT`, `RDB ADD`,
 `RDB CHANGE ... BOOTABLE BOOTPRI` - which the
 [disks guide](sdk/docs/guides/rdb.md#from-the-shell) has with what each
 is for, and `SYS:System/HDToolBox` does the table in a window.
+
+**Up to date.** `C:Update` reads a package over a system that is
+installed already - from a stick, a share or an `http://` address - and
+takes from it what differs. Three things are compared for every path:
+the list the machine was given, the list in the package, and the file
+itself, so what the build changed is fetched, what it dropped is deleted,
+and what was changed on this machine is kept and said by name rather than
+written over. Where the two lists agree the file is looked for and not
+read, which is why an update over a 50 MB package that differs in two
+files fetches 4.7 KB. `CHECK` says what would happen and writes nothing,
+and its return code tells a script whether there is anything to do.
 
 **What starts it.** Of the bootable partitions of every disk, dos starts
 from the one with the highest boot priority; an install gives the system

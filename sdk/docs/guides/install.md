@@ -17,7 +17,9 @@ their flash and is written from the host (`./zig build flash-disk`).
 
 This guide is what an install leaves on the disk, the command and each of
 its keywords, the two sources it copies from, the release package's form,
-what it writes down about itself, and what the machine then starts from.
+what it writes down about itself, what the machine then starts from, and
+how a system that is installed already is brought up to date from a
+later package (`C:Update`).
 
 ## What it leaves on the disk
 
@@ -265,8 +267,86 @@ and `SYS:System/HDToolBox` does the table in a window with the partitions
 as a bar that is dragged. `C:Install` is those lines with the checks and
 the list added; the library under both is rdb.library.
 
-What reads a package to bring an installed system up to date, rather than
-making a new one, is being written.
+## Bringing it up to date
+
+`C:Update` reads a package over a system that is installed already and
+takes from it what differs:
+
+```
+Update FROM/K,CHECK/S,FORCE/S,QUIET/S
+```
+
+```
+Update                              from where the machine was installed
+Update CHECK                        what would happen, and nothing else
+Update FROM WORK:package            from a package on a volume
+Update FROM http://10.0.2.2:8080/   from one a server hands out
+```
+
+- **FROM** is the package. An argument with `://` in it is an address,
+  read through `LIBS:http.library`; anything else is a path, so a stick,
+  a second disk or a mounted share wants no network and no server.
+  Without it the source is the one `install.prefs` kept.
+- **CHECK** says what would happen and writes nothing.
+- **FORCE** lets the package win over a file that was changed here.
+- **QUIET** leaves out the lines, but not what went wrong.
+
+The return code is 0 for a run that did something or found nothing to
+do, 5 from `CHECK` where there is something to do and from a run stopped
+with Ctrl-C, and 20 for one that could not finish, with the reason said.
+
+Three things are compared, not two - the list the machine was given
+(`SYS:System/manifest`), the list in the package, and the file itself:
+
+| installed | file | package | what happens |
+|---|---|---|---|
+| = | there | = | nothing; the file is not read |
+| = | gone | = | written again |
+| = | = | differs | fetched and written |
+| = | differs | any | changed here: kept, and said |
+| not in it | - | in it | new: fetched |
+| in it | - | not in it | the build dropped it: deleted |
+| not in it | - | not in it | the machine's own: never touched |
+
+So an edited `ENVARC:Sys/style.prefs` or a `DEVS:NetInterfaces/WLAN0`
+with a passphrase in it lives through every update with no list of
+exceptions, and `FORCE` is how the package wins instead. Where the two
+lists agree about a path the file is looked for and not read, so an
+update costs one name a path for everything the build left as it was -
+over a 50 MB package that differs in two files, 4.7 KB is fetched - and
+a file that went missing comes back.
+
+A line is said for every path something happens to, the first word
+saying what: `new` for one the build has begun to ship, `newer` for one
+it changed, `again` for one that was not there, `kept` for one changed on
+this machine, `gone` for one the build dropped, `drawer` for a drawer
+made, and `list` for the package's list written as the machine's own:
+
+```
+  new     SYS:c/Mixer
+  gone    SYS:programs/Docs/Battery.md
+  kept    SYS:s/startup-sequence
+  list    SYS:System/manifest
+Done: 1 written (39), 1 deleted, 1 kept as they are, 0 drawers made.
+What is kept was changed on this machine; FORCE takes the package's own.
+```
+
+Every file is fetched to a name of its own on the volume, held against
+the length and the CRC-32 the list gives, and renamed into place, so a
+run that is cut leaves either the old file or the new one and never half
+of either. What the build dropped goes last and in reverse, a drawer
+after what was in it. The package's list is written as the machine's own
+at the very end and byte for byte, so a run that never got there looks
+like one that never happened, while every file it did write is already
+what the package says and the next run passes over it.
+
+A file that was kept is written into that list as the package's, so it is
+named once and then left to the machine; a later package that changes
+that path again names it again.
+
+What the firmware reads - the package's `boot` half - is counted and
+left alone. Writing it into the boot partition, with a way back from a
+kernel that does not come up, is a step of its own.
 
 ## See also
 

@@ -32,6 +32,7 @@ test {
     _ = @import("devs/sdcard/card.zig");
     _ = @import("prefs/tests/prefs.zig");
     _ = @import("install/tests/manifest.zig");
+    _ = @import("install/tests/update.zig");
     _ = @import("devs/sdcard/sdspi.zig");
     _ = @import("devs/networks/tests/api.zig");
     _ = @import("devs/networks/tests/cyw43455.zig");

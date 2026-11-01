@@ -32,6 +32,7 @@
 //! and install another machine - with no network and no second machine.
 
 pub const manifest = @import("manifest.zig");
+pub const update = @import("update.zig");
 
 /// The two halves of a package.
 pub const Half = enum { system, boot };
