@@ -612,7 +612,11 @@ framed groups in a window. Along its row or column each child gets its
 smallest size first, then grows towards the size it looks right at as
 far as there is room, and what is left is shared by weight, no child past
 its largest size. Across, a child with a weight fills the layout; one
-with weight 0 keeps its own size.
+with weight 0 keeps its own size. Where there is less room than the
+children's smallest sizes come to, each gives up its share of what is
+missing, along and across: everything stays inside the layout's box,
+each child cutting its own drawing, rather than standing over its
+neighbour and over the window's border.
 
 | Tag | |
 |---|---|
@@ -637,7 +641,10 @@ layout in a layout is `WMHI_GADGETUP` with that button's `GA_ID`. A
 window object sets its layout to fill the window, and the window is never
 made smaller than the layout fits in; a row that wraps once the window is
 narrower needs more height, and the window grows to it - a second
-`IDCMP_NEWSIZE` after the first. In a window from
+`IDCMP_NEWSIZE` after the first. It grows no further than the screen,
+and comes back onto it where growing took it over an edge: on a screen
+smaller than the layout asks for, the window is the screen's size and
+what is in it is squeezed to fit. In a window from
 tags, a layout fills it when it is given `GA_Left` and `GA_Top` at the
 border and `GA_RelWidth` and `GA_RelHeight` less the borders.
 

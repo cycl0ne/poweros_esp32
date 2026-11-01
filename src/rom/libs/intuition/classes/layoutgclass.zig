@@ -8,7 +8,9 @@
 //! left over shared out by weight.
 //!
 //! **How the room is shared.** Along the row or column every child gets its
-//! minimum first. Then each grows towards its nominal size - all of them by
+//! minimum first; where the room does not stretch to even that, each gives
+//! up its share of what is missing, so the children always stand inside the
+//! layout's box. Then each grows towards its nominal size - all of them by
 //! the same fraction of the way when there is not room for all of it. What
 //! is left after that goes by weight to the children with one, none past
 //! its maximum, until it is used up or nobody can take more. Across, a
@@ -804,7 +806,11 @@ pub fn share(items: anytype, spare_in: i32) void {
     var spare = spare_in;
     var x = items.first();
     while (x) |item| : (x = items.after(item)) item.length = item.least;
-    if (spare <= 0) return;
+    if (spare < 0) {
+        squeeze(items, -spare);
+        return;
+    }
+    if (spare == 0) return;
 
     // Towards the nominal lengths: all of the way if there is room, or the
     // same fraction of the way for each.
@@ -857,6 +863,41 @@ pub fn share(items: anytype, spare_in: i32) void {
     }
 }
 
+/// `short` pixels taken off `items` whose least lengths come to more than
+/// the room they are laid out in - a window squeezed onto a screen too
+/// small for what is in it. Each gives up its share of the shortfall, in
+/// proportion to what it asked for, and none goes below nothing; the
+/// pixels rounding leaves over come off them in turn. Everything then
+/// stands inside the room it was given, where each child cuts its own
+/// drawing to its box: without this they would keep their least lengths,
+/// and the ones at the far end would be drawn over their neighbours and
+/// over the window's border.
+fn squeeze(items: anytype, short: i32) void {
+    var total: i64 = 0;
+    var x = items.first();
+    while (x) |item| : (x = items.after(item)) total += @max(item.least, 0);
+    if (total <= 0) return;
+    var taken: i32 = 0;
+    x = items.first();
+    while (x) |item| : (x = items.after(item)) {
+        const cut: i32 = @intCast(@divTrunc(@as(i64, short) * @max(item.least, 0), total));
+        item.length -= cut;
+        taken += cut;
+    }
+    var rest = short - taken;
+    while (rest > 0) {
+        var gave = false;
+        x = items.first();
+        while (x) |item| : (x = items.after(item)) {
+            if (rest == 0 or item.length <= 0) continue;
+            item.length -= 1;
+            rest -= 1;
+            gave = true;
+        }
+        if (!gave) return;
+    }
+}
+
 /// A row's or a column's children, as `share` walks them.
 const Along = struct {
     p: *Data,
@@ -887,7 +928,11 @@ fn weightOf(record: *const Child, horiz: bool) u32 {
 /// less than its least.
 pub fn across(room: i32, need_min: i32, need_nominal: i32, need_max: i32, weight: u32) i32 {
     const wanted = if (weight != 0) @min(room, need_max) else @min(room, need_nominal);
-    return @max(wanted, need_min);
+    // Its least width, but never more than the room across: squeezed onto
+    // a screen with less than it asks for, a child given its least would
+    // stand past the layout's box - drawn over what is beside it and over
+    // the window's border, where nothing erases it again.
+    return @max(@min(@max(wanted, need_min), room), 0);
 }
 
 /// How far into `room` something `size` long starts, by one way of a

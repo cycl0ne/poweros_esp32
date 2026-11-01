@@ -535,17 +535,28 @@ fn textLen(s: [*:0]const u8) u32 {
 /// The window grown to what its layouts said in the last layout pass they
 /// need, when that is more than it has - a row that wraps went deeper as
 /// the window got narrower, or the window was squeezed onto its screen -
-/// as far as its largest size and the screen let it - and no smaller than
-/// that from then on: the smallest size the layout set was the size the
-/// window had. A window that fits is left alone.
+/// and no smaller than that from then on: the smallest size the layout
+/// set was the size the window had. A window that fits is left alone.
+///
+/// It grows no further than the screen, and is moved back onto it where
+/// growing took it over an edge: a layout wider or deeper than the screen
+/// would otherwise put its far side where no pointer reaches it. Such a
+/// layout is laid out in the room there is instead, each child's share of
+/// the shortfall taken off it (`layoutgclass.share`).
 pub fn fitLayout(ib: *IntuitionBase, window: *Window) void {
+    const screen = window.screen;
     const need_width = window.layout_width;
     const need_height = window.layout_height;
-    const width = @max(window.width, need_width);
-    const height = @max(window.height, need_height);
-    if (width == window.width and height == window.height) return;
-    ib.iface().ChangeWindowBox(@ptrCast(window), window.left, window.top, width, height);
-    _ = ib.iface().WindowLimits(@ptrCast(window), @min(need_width, window.width), @min(need_height, window.height), 0, 0);
+    // Never past the screen: what a window hangs over the edge cannot be
+    // reached, and a layout that needs more than the screen has is laid
+    // out in what there is (`share`).
+    const width = @min(@max(window.width, need_width), screen.width);
+    const height = @min(@max(window.height, need_height), screen.height);
+    const place = legalPlace(ib, window, window.left, window.top, width, height);
+    if (width == window.width and height == window.height and
+        place.left == window.left and place.top == window.top) return;
+    ib.iface().ChangeWindowBox(@ptrCast(window), place.left, place.top, width, height);
+    _ = ib.iface().WindowLimits(@ptrCast(window), @min(need_width, width), @min(need_height, height), 0, 0);
 }
 
 pub fn lock(ib: *IntuitionBase) void {

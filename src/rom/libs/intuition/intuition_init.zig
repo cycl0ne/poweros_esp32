@@ -203,8 +203,13 @@ pub const LIBRARY_VERSION = 0;
 /// Shift-Delete take out everything before or after the cursor.
 /// 75: SA_Board - a screen's display, for a video layer - and
 /// windowclass's WMHI_CHANGEWINDOW, the window moved or sized.
-pub const LIBRARY_REVISION = 76;
-const BUILD_DATE = "30.10.2026";
+/// 76: Amiga-M and Amiga-N cycle the screens.
+/// 77: a window grown to its layout stops at the screen's edges, and a
+/// layout with less room than its children's least lengths takes the
+/// shortfall off them in proportion rather than letting them stand past
+/// its box.
+pub const LIBRARY_REVISION = 77;
+const BUILD_DATE = "01.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
