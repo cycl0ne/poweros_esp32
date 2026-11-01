@@ -1516,6 +1516,121 @@ fn depthsInOrder(flags: u32) !void {
     try testing.expectEqual(colors[2], picture.at(50, 62));
 }
 
+/// A cut-out texture drawn over a flat quad behind it: what shows whether a
+/// dropped pixel left its depth behind.
+const CutoutScene = struct {
+    /// A quad filling the picture at z = 0.2, textured from its position.
+    const quad = [4][3]f32{ .{ -1, -1, 0.2 }, .{ 1, -1, 0.2 }, .{ 1, 1, 0.2 }, .{ -1, 1, 0.2 } };
+
+    fn cut(vertices: *const shader.Vertices) callconv(.c) void {
+        for (0..vertices.count) |k| {
+            const p = vertices.input(@intCast(k), 0);
+            vertices.output(@intCast(k))[0..6].* = .{ p[0], p[1], p[2], 1, (p[0] + 1) / 2, (p[1] + 1) / 2 };
+        }
+    }
+
+    const entries = [_]shader.Entry{
+        shader.vertex("cut", &cut, 2),
+        shader.fixedFragment("cut", .{ .kind = .texture_cutout, .sampling = .{ .filter = .nearest } }),
+    };
+    const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
+};
+
+test "a cut-out texture drops its pixels and leaves no depth behind them" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+
+    // The cores hold a dropping form's depths back; this is what says so.
+    var features: facet.PhysicalDeviceFeatures = undefined;
+    fb.GetPhysicalDeviceFeatures(bench.physical, &features);
+    try testing.expect(features.discarding_fragment_forms);
+    try testing.expectEqual(@as(u32, 2), CutoutScene.entries[1].varyingCount());
+
+    // An 8 x 8 texture: its left half clear, its right half opaque red.
+    const texture_image = try bench.bareImage(.{ .format = .r8g8b8a8_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST }, false);
+    const texture_view = try bench.viewOf(.{ .image = texture_image, .format = .r8g8b8a8_unorm });
+    const staging, const staged = try bench.buffer(8 * 8 * 4, facet.BUFFER_USAGE_TRANSFER_SRC);
+    for (0..8) |y| for (0..8) |x| {
+        staged[(y * 8 + x) * 4 ..][0..4].* = if (x < 4) .{ 0, 0, 0, 0 } else .{ 255, 0, 0, 255 };
+    };
+
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .sampled_image, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &set_layout));
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    var pool: ?*facet.DescriptorPool = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool));
+    defer fb.DestroyDescriptorPool(device, pool);
+    var set: [1]?*facet.DescriptorSet = undefined;
+    try testing.expectEqual(facet.Result.success, fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &set));
+    const image_info = facet.DescriptorImageInfo{ .image_view = texture_view };
+    const write = facet.WriteDescriptorSet{ .dst_set = set[0].?, .dst_binding = 0, .descriptor_type = .sampled_image, .image_info = @ptrCast(&image_info) };
+    fb.UpdateDescriptorSets(device, 1, @ptrCast(&write), 0, null);
+
+    const picture = try Picture.of(&bench, 64, 64);
+    _, const depth = try bench.image(.{ .format = .d16_unorm, .extent = .{ .width = 64, .height = 64 }, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT }, true);
+    const pass = try renderPass(&bench, .clear, true);
+    defer fb.DestroyRenderPass(device, pass);
+    const frame = try framebuffer(&bench, pass, &.{ picture.view, depth }, 64, 64);
+    defer fb.DestroyFramebuffer(device, frame);
+
+    const cut_module = try module(&bench, &CutoutScene.code);
+    defer fb.DestroyShaderModule(device, cut_module);
+    const cut_layout = try pipelineLayout(&bench, &.{set_layout.?}, 0);
+    defer fb.DestroyPipelineLayout(device, cut_layout);
+    const tested: facet.PipelineDepthStencilStateCreateInfo = .{ .depth_test_enable = true, .depth_write_enable = true };
+    const cut_result, const cut_pipeline = makePipeline(&bench, .{ .module = cut_module, .name = "cut", .layout = cut_layout, .pass = pass, .depth = tested });
+    try testing.expectEqual(facet.Result.success, cut_result);
+    defer fb.DestroyPipeline(device, cut_pipeline);
+
+    const flat_module = try module(&bench, &Flat.code);
+    defer fb.DestroyShaderModule(device, flat_module);
+    const flat_layout = try pipelineLayout(&bench, &.{}, 4);
+    defer fb.DestroyPipelineLayout(device, flat_layout);
+    const flat_result, const flat_pipeline = makePipeline(&bench, .{ .module = flat_module, .layout = flat_layout, .pass = pass, .depth = tested });
+    try testing.expectEqual(facet.Result.success, flat_result);
+    defer fb.DestroyPipeline(device, flat_pipeline);
+
+    // The cut-out quad near, at 0.2; the flat one behind it, at 0.5.
+    const far = [4][3]f32{ .{ -1, -1, 0.5 }, .{ 1, -1, 0.5 }, .{ 1, 1, 0.5 }, .{ -1, 1, 0.5 } };
+    const vertices = CutoutScene.quad ++ far;
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
+    const indices = scenes.quad_indices;
+    const index_buffer, const index_bytes = try bench.buffer(@sizeOf(@TypeOf(indices)), facet.BUFFER_USAGE_INDEX_BUFFER);
+    @memcpy(index_bytes[0..@sizeOf(@TypeOf(indices))], std.mem.asBytes(&indices));
+
+    const blue: u32 = 0xFF00_00FF;
+    const black = clears(0xFF00_0000);
+    const offset: u64 = 0;
+    const region = facet.BufferImageCopy{ .image_extent = .{ .width = 8, .height = 8 } };
+    const commands = try bench.record();
+    fb.CmdCopyBufferToImage(commands, staging, texture_image, .transfer_dst_optimal, 1, @ptrCast(&region));
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 2, .clear_values = &black }, .@"inline");
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdBindIndexBuffer(commands, index_buffer, 0, .uint16);
+    // Near first, so that the one behind it has to pass a depth the dropped
+    // pixels must not have written.
+    fb.CmdBindDescriptorSets(commands, .graphics, cut_layout, 0, 1, @ptrCast(&set), 0, null);
+    fb.CmdBindPipeline(commands, .graphics, cut_pipeline.?);
+    fb.CmdDrawIndexed(commands, indices.len, 1, 0, 0, 0);
+    fb.CmdBindPipeline(commands, .graphics, flat_pipeline.?);
+    fb.CmdPushConstants(commands, flat_layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &blue);
+    fb.CmdDrawIndexed(commands, indices.len, 1, 0, 4, 0);
+    fb.CmdEndRenderPass(commands);
+    try bench.submit();
+
+    // Where the texture was opaque the near quad stands, and the far one was
+    // held off by its depth. Where it was clear, nothing of the near quad is
+    // left - not its colour and not its depth - so the far one shows through.
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), picture.at(48, 20));
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), picture.at(40, 50));
+    try testing.expectEqual(blue, picture.at(16, 20));
+    try testing.expectEqual(blue, picture.at(4, 50));
+}
+
 /// Quads that fill the picture, at a depth, and what they fill it with.
 const SubpassScene = struct {
     const quad = [6][3]f32{ .{ -1, -1, 0 }, .{ 1, -1, 0 }, .{ -1, 1, 0 }, .{ -1, 1, 0 }, .{ 1, -1, 0 }, .{ 1, 1, 0 } };

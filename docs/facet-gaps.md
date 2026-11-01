@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.24**, so that a program need not find out by failing. It covers the API.
+1.25**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -37,7 +37,7 @@ a library called through an LVO table.
 What a device will and will not do is answered by
 `GetPhysicalDeviceFeatures` (since 1.24), which is Vulkan's call with a
 structure of facet's own: a field wherever a create call can refuse
-something, and no field for what the library has no call for at all. Five of
+something, and no field for what the library has no call for at all. Six of
 its fields differ between the cores and the V3D, which is the reason a
 program that wants the GPU should ask rather than take the first device
 listed.
@@ -147,6 +147,7 @@ These can be asked for and are answered with `error_feature_not_present`.
 | A depth attachment that loads or stores, and its stencil likewise | `render/createrenderpass.zig` |
 | Present modes but `fifo`, though `immediate`, `mailbox` and `fifo_relaxed` are enumerated | `swapchain/createswapchain.zig` |
 | Descriptors but `sampled_image`, `uniform_buffer` and `storage_buffer` | `descriptor/_descriptor.zig` |
+| A fixed fragment form that drops pixels, on the V3D: the QPUs have no program that discards | `driver/v3d/driver.zig` |
 
 Two consequences do not appear in that table:
 
@@ -155,6 +156,13 @@ Two consequences do not appear in that table:
   reads it back, so there are no shadow maps and nothing deferred.
 - **`CmdBindDescriptorSets`' `dynamic_offsets` is never used**, because
   neither dynamic buffer descriptor is taken.
+- **A form that drops pixels cannot also have the depth pre-pass.** The
+  pre-pass settles depth before any fragment function has run, which is the
+  opposite of what a dropping form needs, so `PIPELINE_CREATE_DEPTH_PREPASS`
+  is simply not taken for one rather than refused
+  (`pipeline/creategraphicspipelines.zig`). On the cores such a pipeline has
+  its depth written after its fragment function instead; the V3D orders its
+  own, and refuses the form for want of a program, not for want of ordering.
 
 Three more things cannot be asked for at all, having nothing to ask with:
 

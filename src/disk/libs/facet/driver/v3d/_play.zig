@@ -859,7 +859,9 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
                 break :missing place.address;
             };
         },
-        .none => return,
+        // Refused when the pipeline was made (driver.zig): no program drops
+        // pixels, so neither of these reaches a frame here.
+        .none, .texture_cutout => return,
     }
 
     const scale = ViewportScale{

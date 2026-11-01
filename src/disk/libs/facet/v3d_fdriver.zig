@@ -15,7 +15,7 @@ const facet_version = @import("facet_version.zig");
 const LIBRARY_NAME = "v3d.fdriver";
 const LIBRARY_VERSION = facet_version.LIBRARY_VERSION;
 const LIBRARY_REVISION = facet_version.LIBRARY_REVISION;
-const BUILD_DATE = "31.10.2026";
+const BUILD_DATE = "01.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

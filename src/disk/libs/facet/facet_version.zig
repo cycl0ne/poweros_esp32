@@ -57,5 +57,12 @@ pub const LIBRARY_VERSION = 1;
 /// the V3D's 32-bit reach is given back rather than truncated.
 /// 24: GetPhysicalDeviceFeatures: what a device does, a field for each thing
 /// a create call can refuse, so that a program asks rather than being told
-/// `error_feature_not_present`. The cores and the V3D differ in four of them.
-pub const LIBRARY_REVISION = 24;
+/// `error_feature_not_present`. The cores and the V3D differ in five of them:
+/// the two that say which device the cores are, the two the V3D's fixed forms
+/// and TMU cost it, and the depth pre-pass, which is the rasterizer's alone.
+/// 25: a fragment function of a form that drops pixels clears their bit in
+/// `shader.Quad.kept`, and such a pipeline has its depth written after the
+/// function instead of before it, so that a dropped pixel hides nothing
+/// behind it. The first such form is `texture_cutout`, on the cores; the V3D
+/// refuses it until it has a program for it.
+pub const LIBRARY_REVISION = 25;

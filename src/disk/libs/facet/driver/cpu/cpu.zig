@@ -99,6 +99,8 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // This device is the cores, which is where both of these run.
         .compute_on_device = true,
         .tessellation_on_device = true,
+        // The rasterizer holds a dropping form's depths back until it has run.
+        .discarding_fragment_forms = true,
         .depth_prepass = true,
         .points_and_lines = true,
         .depth_test = true,

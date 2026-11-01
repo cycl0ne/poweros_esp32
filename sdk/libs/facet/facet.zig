@@ -228,6 +228,10 @@ pub const PhysicalDeviceFeatures = extern struct {
     compute_on_device: bool = false,
     /// Tessellation likewise.
     tessellation_on_device: bool = false,
+    /// The fixed forms that drop a pixel rather than colour it run here -
+    /// `shader.FixedKind.texture_cutout`, for cut-out textures. A device
+    /// without it refuses a pipeline that asks for one.
+    discarding_fragment_forms: bool = false,
 
     /// Points and lines, and triangles drawn as their edges or corners.
     points_and_lines: bool = false,
