@@ -15,7 +15,10 @@
 //! units after their lengths - an MP4's, a Matroska track's - is an
 //! access unit, whose picture is whole at its end. A unit that is not
 //! right is passed over: the decoder makes up what it lacked. The end of
-//! the track hands out the pictures held back.
+//! the track hands out the pictures held back. A picture handed out takes
+//! the earliest time of those decoded and not yet shown, as the chip's
+//! decoder gives them: the times rise even where the container wrote each
+//! packet's decoding time (an MP4 without composition offsets).
 //!
 //! **The cores**: with more than one, the decoder has a worker task on
 //! each, a step below the caller's priority - which gets a core at once

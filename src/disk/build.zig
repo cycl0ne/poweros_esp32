@@ -40,8 +40,9 @@ pub const catalogs = [_]Catalog{
 /// per tile - too often to go through a jump table. The baseline JPEG
 /// decoder is jpeg.datatype's, and mjpeg.vcodec's for Motion JPEG. The
 /// H.264 decoder is h264.vcodec's, the VP8 decoder vp8.vcodec's, the VP9
-/// decoder vp9.vcodec's and the AV1 decoder av1.vcodec's, kept apart from
-/// the system so that they are tested on the host as they are.
+/// decoder vp9.vcodec's, the AV1 decoder av1.vcodec's and the H.265
+/// decoder hevc.vcodec's, kept apart from the system so that they are
+/// tested on the host as they are.
 const inner_modules = [_]struct { name: []const u8, source: []const u8 }{
     .{ .name = "raster", .source = "libs/facet/driver/cpu/raster/raster.zig" },
     .{ .name = "v3d", .source = "libs/facet/driver/v3d/v3d.zig" },
@@ -50,6 +51,7 @@ const inner_modules = [_]struct { name: []const u8, source: []const u8 }{
     .{ .name = "vp8core", .source = "libs/codecs/vp8/core.zig" },
     .{ .name = "vp9core", .source = "libs/codecs/vp9/core.zig" },
     .{ .name = "av1core", .source = "libs/codecs/av1/core.zig" },
+    .{ .name = "hevccore", .source = "libs/codecs/hevc/core.zig" },
 };
 
 /// Something copied onto the disk as it is.
@@ -158,6 +160,7 @@ const modules = [_]Program{
     .{ .disk = "libs/codecs/vp8.vcodec", .source = "libs/codecs/vp8.zig", .name = "vp8.vcodec", .imports = &.{"vp8core"} },
     .{ .disk = "libs/codecs/vp9.vcodec", .source = "libs/codecs/vp9.zig", .name = "vp9.vcodec", .imports = &.{"vp9core"} },
     .{ .disk = "libs/codecs/av1.vcodec", .source = "libs/codecs/av1.zig", .name = "av1.vcodec", .imports = &.{"av1core"} },
+    .{ .disk = "libs/codecs/hevc.vcodec", .source = "libs/codecs/hevc.zig", .name = "hevc.vcodec", .imports = &.{"hevccore"} },
     .{ .disk = "libs/filter.library", .source = "libs/filter/filter.zig", .name = "filter.library" },
     .{ .disk = "libs/icon.library", .source = "libs/icon/icon.zig", .name = "icon.library" },
     .{ .disk = "libs/anvil.library", .source = "libs/anvil/anvil.zig", .name = "anvil.library" },
@@ -274,8 +277,10 @@ const esp_only = [_][]const u8{ "usbotg.device", "sdcard.device", "programs/Dock
 /// What a RISC-V 64 machine under SBI and an AArch64 machine under PSCI
 /// have and the ESP32s do not: PCI, the command that lists it, and the
 /// USB controllers and SSDs on it. And the dock in SYS:WBStartup, started
-/// with the desktop, and the test of a chip's video decoder.
-const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device", "nvme.device", "WBStartup/Dock", "videodec" };
+/// with the desktop, the test of a chip's video decoder, and the video
+/// codecs in software: the ESP32s have neither the room for them on their
+/// flash disks nor the speed, and the 64-bit machines' disks are RAM.
+const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device", "nvme.device", "WBStartup/Dock", "videodec", "h264.vcodec", "hevc.vcodec", "vp8.vcodec", "vp9.vcodec", "av1.vcodec" };
 /// Drivers of what only the Raspberry Pi CM5 has among the AArch64
 /// machines and no other chip does: its radio, a CYW43455 on the
 /// BCM2712's SD host.

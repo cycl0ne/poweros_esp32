@@ -357,7 +357,7 @@ them, so QEMU started by hand needs the same option.
 64-bit RISC-V machine under SBI firmware, which enters it in supervisor
 mode: `zig-out/bin/kernel` (the ELF), `kernel.bin` (the same from its
 first address, 0x80200000, with the header U-Boot's `booti` reads) and
-`disk-rv64.bin`, the disk as an image of its whole 14 MB. There is no
+`disk-rv64.bin`, the disk as an image of its whole 32 MB. There is no
 flash: on the VisionFive 2 the loader puts the image in RAM beside the
 kernel and names it in the device tree, flash.device serves it as
 `DH0:`, and what is written to it is gone when the machine stops.
@@ -447,7 +447,7 @@ FAT32 volume can be both U-Boot's and PowerOS's
 PSCI firmware (chip `a64psci`): `zig-out/bin/kernel` (the ELF, for a
 debugger), `kernel.bin` (the same from its first address, 0x40200000,
 with the arm64 `Image` header QEMU and the Pi's firmware read),
-`disk-a64.bin`, the disk as an image of its whole 14 MB for a loader to
+`disk-a64.bin`, the disk as an image of its whole 32 MB for a loader to
 put in RAM as on the VisionFive 2, and `system-a64.bin`, the same files
 as the system disk the `virt64` steps start from. The kernel runs at EL1
 with its MMU on: an identity map, RAM normal cacheable memory, page 0

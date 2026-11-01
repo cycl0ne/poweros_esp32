@@ -49,8 +49,9 @@ const _identify = @import("_identify.zig");
 ///
 /// NOTES:
 /// A codec it names may still be one nothing here decodes: VCODEC_MPEG4V,
-/// for which there is no module; H.265 where no module in LIBS:codecs/
-/// decodes it - chip.vcodec on a board without the chip.
+/// for which there is no module; another where no module in LIBS:codecs/
+/// decodes it - a disk without the software module, on a board without
+/// the chip.
 ///
 /// BUGS:
 /// None known.

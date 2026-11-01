@@ -8,9 +8,9 @@ audio.device. Underneath, media.library reads the container (MP4,
 QuickTime's MOV and Matroska's MKV) and hands out each track's packets,
 a codec module in `LIBS:codecs/` decodes the pictures - chip.vcodec
 H.264 and H.265 on the chip's decoder (videodec.resource, the WAVE511
-on the VisionFive 2), h264.vcodec H.264 in software, vp8.vcodec VP8,
-vp9.vcodec VP9 and av1.vcodec AV1 in software, mjpeg.vcodec Motion JPEG
-in software - and
+on the VisionFive 2), h264.vcodec H.264 in software, hevc.vcodec H.265,
+vp8.vcodec VP8, vp9.vcodec VP9 and av1.vcodec AV1 in software,
+mjpeg.vcodec Motion JPEG in software - and
 audiocodec.library decodes the sound. A display's video layer (rtg's `ShowVideoFrame`)
 shows a frame as it comes out; graphics' `WriteYUVPixelArray` and
 `ScaleYUVPixelArray` put one into a window where there is none.
@@ -190,12 +190,17 @@ colour, a pixel half covered or more is the subtitle's.
 | Pictures | Decoded by | On the VisionFive 2 |
 |---|---|---|
 | H.264 (baseline, main, high), 8-bit; H.265 (main, and main 10 shown in 8 bits) | chip.vcodec: the chip, videodec.resource | 1080p about 145 frames a second, 720p about 300 |
-| H.264, every profile but SVC's and MVC's: up to 4:4:4 and 14 bits, fields, shown in 8 bits; what the chip refuses, and every H.264 where there is no chip | h264.vcodec: software, a worker task on each core, a picture each | 720p High 10 about 32 frames a second, 10 on one core |
+| H.264, every profile but SVC's and MVC's: up to 4:4:4 and 14 bits, fields, shown in 8 bits; what the chip refuses, and every H.264 where there is no chip | h264.vcodec: software, a worker task on each core, a picture each | 720p High 10 about 32 frames a second, 10 on one core; 1080p High about 19, 720p about 52 |
+| H.265: Main, Main 10, Main Still Picture and the range extensions' profiles - grey to 4:4:4, up to 16 bits - shown in 8 bits; the base layer of a stream in layers; what the chip refuses, and every H.265 where there is no chip | hevc.vcodec: software, a worker task on each core, a picture each | 1080p about 13 frames a second, 1080p 4:2:2 in 10 bits about 10 |
 | VP8, every version (WebM, Matroska) | vp8.vcodec: software, a worker task on each core, a frame each | 720p about 84 frames a second, 1080p about 34; 27 and 11 on one core |
 | VP9, every profile: 8, 10 and 12 bits, 4:2:0, 4:2:2, 4:4:0, 4:4:4 (WebM, Matroska), shown in 8 bits | vp9.vcodec: software, a worker task on each core, a frame each | 720p about 53 frames a second, 1080p about 30, 720p in 10 bits about 38; 18, 9 and 12 on one core |
-| AV1, every profile: 8, 10 and 12 bits, grey, 4:2:0, 4:2:2, 4:4:4, film grain (MP4, WebM, Matroska), shown in 8 bits | av1.vcodec: software, a worker task on each core, a frame each | not measured yet |
+| AV1, every profile: 8, 10 and 12 bits, grey, 4:2:0, 4:2:2, 4:4:4, film grain (MP4, WebM, Matroska), shown in 8 bits | av1.vcodec: software, a worker task on each core, a frame each | 1080p about 13 frames a second, 720p about 14, 720p in 10 bits about 13 |
 | Motion JPEG, baseline: grey, 4:2:0, 4:2:2, 4:4:4 | mjpeg.vcodec: software, on the calling task | about a second for a 1080p picture: small pictures only |
 | MPEG-4 Part 2 | nothing | - |
+
+The software modules but mjpeg.vcodec are on the RISC-V 64 and AArch64
+machines' disks alone: the ESP32s have neither the room on their flash
+disks nor the speed.
 
 The sound is audiocodec.library's: AAC-LC
 ([AAC and MP4](audio.md#aac-and-mp4)), AC-3 and E-AC-3 mixed into
@@ -249,8 +254,8 @@ A packet's bytes are videocodec's for the call alone. Its frames are
 on 16 bytes, where a display's video layer reads them and out of the
 caches - its own memory, lent until `ReleaseVCodecFrame`, with
 `private` its own. `FlushVCodec` is a seek. src/disk/libs/codecs/ has
-chip.vcodec, h264.vcodec, vp8.vcodec, vp9.vcodec, av1.vcodec and
-mjpeg.vcodec, and
+chip.vcodec, h264.vcodec, hevc.vcodec, vp8.vcodec, vp9.vcodec,
+av1.vcodec and mjpeg.vcodec, and
 module.zig the base, init, Expunge and jump table every module there
 shares.
 

@@ -206,13 +206,26 @@ pub const Dpb = struct {
 
     /// The picture with the lowest order count of those waiting, put out
     /// to be shown, and its store emptied if it is no reference (C.4.5.3).
+    /// It takes the earliest time of the pictures waiting, as a chip's
+    /// decoder gives them (videodec.resource): the same where the
+    /// container's times are right, and still rising where it wrote each
+    /// packet's decoding time.
     pub fn bump(d: *Dpb) bool {
         var best: ?*Store = null;
+        var earliest: ?*Store = null;
         for (&d.stores) |*s| {
             if (!s.in_use or !s.output_needed) continue;
             if (best == null or s.framePoc() < best.?.framePoc()) best = s;
+            if (!s.non_existing and (earliest == null or s.time < earliest.?.time)) earliest = s;
         }
         const s = best orelse return d.release();
+        if (earliest) |e| {
+            if (!s.non_existing) {
+                const time = s.time;
+                s.time = e.time;
+                e.time = time;
+            }
+        }
         s.output_needed = false;
         if (!s.non_existing and d.out_count < max_stores) {
             d.out[(d.out_head + d.out_count) % max_stores] = s;
@@ -805,3 +818,30 @@ pub const Dpb = struct {
         }
     }
 };
+
+// --- tests (host: ./zig build test) -----------------------------------------
+
+const testing = @import("std").testing;
+
+test "a picture shown takes the earliest time of those waiting: right times kept, decoding times put in order" {
+    // Frames 0, 8 and 4 decoded in that order, their times as shown
+    // (0, 2, 1) and as decoded (0, 1, 2).
+    for ([_][3]i64{ .{ 0, 2, 1 }, .{ 0, 1, 2 } }) |times| {
+        var d: Dpb = .{ .size = 4, .reorder = 1 };
+        for ([_]i32{ 0, 8, 4 }, times, 0..) |poc, time, i| {
+            const s = &d.stores[i];
+            s.in_use = true;
+            s.fields = 3;
+            s.poc = .{ poc, poc };
+            s.time = time;
+            d.store(s);
+        }
+        d.flush();
+        for ([_]i32{ 0, 4, 8 }, 0..) |poc, time| {
+            const s = d.peekOutput().?;
+            try testing.expectEqual(poc, s.framePoc());
+            try testing.expectEqual(@as(i64, @intCast(time)), s.time);
+            d.taken();
+        }
+    }
+}

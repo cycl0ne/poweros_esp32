@@ -52,8 +52,9 @@ const _codec = @import("../codec/_codec.zig");
 /// in LIBS:codecs/ whose tags name its codec (SINCE 1.4): a chip's before
 /// software, the higher priority first; the first that opens a decoder
 /// for the track decodes it - chip.vcodec H.264 and H.265 on the chip
-/// (videodec.resource), reading the track's parameter sets; mjpeg.vcodec
-/// Motion JPEG. Its first track of sound - in a Matroska file the
+/// (videodec.resource), reading the track's parameter sets; h264.vcodec,
+/// hevc.vcodec, vp8.vcodec, vp9.vcodec, av1.vcodec and mjpeg.vcodec in
+/// software. Its first track of sound - in a Matroska file the
 /// marked one, or `VCA_SoundTrack`'s - is opened with audiocodec.library
 /// 1.6 or later, on the same file (`ACA_Media`) - AAC, with 1.7 MP3, FLAC
 /// and Vorbis, with 1.8 AC-3 and E-AC-3 - unless `VCA_Sound` is FALSE or

@@ -62,7 +62,8 @@ pub const VideoStream = opaque {};
 /// Not a codec the library knows, or no pictures.
 pub const VCODEC_UNKNOWN: u32 = 0;
 /// H.264 (AVC) and H.265 (HEVC): chip.vcodec, the chip's decoder through
-/// videodec.resource.
+/// videodec.resource; h264.vcodec and hevc.vcodec in software, for what
+/// the chip refuses and where there is none.
 pub const VCODEC_H264: u32 = 1;
 pub const VCODEC_H265: u32 = 2;
 /// Motion JPEG - each frame a JPEG picture whole - decoded in software
@@ -244,8 +245,8 @@ pub const VCERR_NOSEEK: i32 = -7;
 /// (SINCE 1.3).
 pub const VCERR_END: i32 = -8;
 /// Nothing here decodes the pictures' codec - no module in LIBS:codecs/
-/// opens a decoder for it: H.264 or H.265 on a machine without the chip's
-/// decoder, MPEG-4 Part 2, a codec unknown - or the
+/// opens a decoder for it: MPEG-4 Part 2, a codec unknown, one whose
+/// module is not on the disk - or the
 /// codec of the track SelectVideoTrack is given (SINCE 1.3).
 pub const VCERR_NOCODEC: i32 = -9;
 /// The decoder is busy: as many are open as the chip runs
