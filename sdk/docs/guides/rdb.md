@@ -826,16 +826,44 @@ refuses: one name, one drive. The flash disk is still loaded, and
 in it go onto the SSD with `Copy DH0.: TO SYS: ALL CLONE QUIET` and a
 restart.
 
-**Where the files come from.** `Copy SYS:` above fills the new volume
-from the running one, which is the machine's own RAM disk. A release
-package is the other source: one directory holding the volume's files,
-the kernel and what the firmware reads, with a list over all of it
-(`./zig build package`, and `./zig build serve` to hand it out over
-HTTP - the README has both). A machine keeps the boot half of one in
-`SYS:Storage/Boot`, with `SYS:Storage/manifest` over it, so the FAT
-partition below can be written from the running system. The commands that
-read a package - one to install a disk from it, one to bring an installed
-system up to date against it - are being written.
+**The same thing in one command.** `C:Install` does every line above -
+the GPT, the partition the firmware reads, the container, the two posfs
+partitions, the formats, the files, the boot flag and its priority - and
+leaves a list of what it wrote behind:
+
+```
+Install                          the units it can go onto, and what each holds
+Install nvme.device 1            onto unit 1, after one question
+Install nvme.device 1 SIZE 16G FORCE          16 GB for the system, asking nothing
+Install nvme.device 1 FROM NV2: SYSTEM SSD    from a package on a stick
+```
+
+With no device it lists the machine's block devices with what each unit
+holds, and says which one the running system is on. The drives are `DH0`
+and `DH1` unless `SYSTEM` and `WORK` say otherwise, the volumes `System`
+and `Work` (`NAME` for the system's), and the partition the firmware
+reads is `BOOT`, 256 MB - two of them, `BOOT` and `BOOTB`, where the
+board's firmware can be sent to either for one start. A GPT's partitions
+are mounted under their unit's own name at the next start (`NV0:`,
+`NV0P2:`), whatever the GPT calls them.
+
+**Where the files come from.** Without `FROM` it is the running system:
+`SYS:` for the volume's files and `SYS:Storage/Boot` for what the
+firmware reads, so a machine installs a medium with no network and no
+second machine. `FROM` names a release package instead - one directory
+holding the volume's files, the kernel and what the firmware reads, with
+a list over all of it (`./zig build package`, and `./zig build serve` to
+hand it out over HTTP - the README has both) - and every file is held
+against the sum and the length in that list as it is copied, so a package
+that arrived damaged stops the install on the file that is wrong. A
+package built for the other board of a chip is refused, since its kernel
+would start with no console; `FORCE` installs it all the same.
+
+What the install leaves on the new volume is that list, as
+`SYS:System/manifest`, and `ENVARC:Sys/install.prefs`, which says what
+was installed where and from where. The command that reads them - to
+bring an installed system up to date against a newer package - is being
+written.
 
 **FAT for other systems.** A FAT partition in the table is one only
 PowerOS sees; one of the GPT's own, beside the container, every system

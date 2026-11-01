@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! The system's settings as files in ENV:Sys and ENVARC:Sys: their forms
 //! (`style`, `font`, `intuition`, `palette`, `anvil`, `sound`, `audio`,
-//! `dock`, `locale`) - each read, checked and written back by the one definition
+//! `dock`, `locale`, `install`) - each read, checked and written back by the one definition
 //! every command and editor uses - and reading and writing a whole file
 //! (`loadWhole`, `save`).
 //!
@@ -23,6 +23,7 @@ pub const sound = @import("sound.zig");
 pub const audio = @import("audio.zig");
 pub const dock = @import("dock.zig");
 pub const locale = @import("locale.zig");
+pub const install = @import("install.zig");
 
 const exec = @import("../exec/exec.zig");
 const dos = @import("../dos/dos.zig");

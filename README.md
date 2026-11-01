@@ -220,7 +220,9 @@ Beside them:
   connected again after a server restart (`C:net/MountShare`,
   [network guide](sdk/docs/guides/network.md#a-share-as-a-volume-smb-handler));
   partitions from an RDB or a GPT on any drive, laid out in
-  `SYS:System/HDToolBox` ([disks guide](sdk/docs/guides/rdb.md)).
+  `SYS:System/HDToolBox` ([disks guide](sdk/docs/guides/rdb.md)); a
+  system put onto a card or an SSD by one command, from the running
+  system or from a release package (`C:Install`).
 - **Devices:** timer, serial, console, input from keyboards, mice and
   touch, flash, SD card, NVMe, I2C, RS-485, clipboard; USB hosts on the
   ESP32s' OTG and on xHCI, there up to SuperSpeed (5 Gbit/s), bulk
@@ -594,17 +596,31 @@ the written blocks take room, and written to a card or an SSD with `dd` it
 is a system to start. It carries the icons and the sound setting of the
 build that made it, so a board gets its own from the second way.
 
-**From the machine.** A machine running from its RAM disk partitions,
-formats and fills the medium itself, in eight lines of shell:
-`RDB INIT GPT`, `RDB ADD`, `Format`, `Copy SYS: TO ... ALL CLONE`, and
-`RDB CHANGE ... BOOTABLE BOOTPRI` for the one to start from - the
-[disks guide](sdk/docs/guides/rdb.md#from-the-shell) has them with what
+**From the machine.** `C:Install` does the whole of it in one command,
+on a machine with nothing but a console:
+
+```
+Install                            the units it can go onto, and what each holds
+Install nvme.device                a system onto unit 0 of it, after one question
+Install nvme.device 1 SIZE 16G     unit 1, 16 GB of it for the system
+Install nvme.device FROM WORK:package FORCE    from a release package, asking nothing
+```
+
+It writes a GPT with the partition the firmware reads - two where the
+board's firmware starts from either of a pair - and a PowerOS container
+over the rest with the system and a work partition on posfs in it; gives
+each an empty volume; copies the files, from `SYS:` and `SYS:Storage/Boot`
+or from a package, checking each one against the sum its list gives; and
+leaves `SYS:System/manifest` and `ENVARC:Sys/install.prefs` behind, which
+say what was installed and from where. The same thing by hand is eight
+lines of shell - `RDB INIT GPT`, `RDB ADD`, `Format`,
+`Copy SYS: TO ... ALL CLONE`, `RDB CHANGE ... BOOTABLE BOOTPRI` - which
+the [disks guide](sdk/docs/guides/rdb.md#from-the-shell) has with what
 each is for, and `SYS:System/HDToolBox` does the table in a window.
 
 **What starts it.** Of the bootable partitions of every disk, dos starts
-from the one with the highest boot priority, and the RAM disk's `DH0` is 0:
-a partition above it wins, and the RAM disk is still there when the medium
-is not - a system to start from with one `BOOTPRI` between them. The
+from the one with the highest boot priority; an install gives the system
+partition 5, and a disk image's `DH0` has none, so the medium wins. The
 loader can leave the disk image out altogether, and the machine then
 starts from the medium alone, as QEMU's virt machines do.
 

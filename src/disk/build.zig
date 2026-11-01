@@ -74,7 +74,7 @@ const commands = [_][]const u8{
     "setclock",      "top",         "play",        "screendump",    "memdebug",
     "makelink",      "posfs",       "binddrivers", "pciinfo",       "record",
     "audio",         "temperature", "hash",        "break",         "status",
-    "cpuclock",
+    "cpuclock",      "install",
 };
 const tests = [_][]const u8{
     "hello",       "echoargs",    "testlib",     "gfx",       "anim",
@@ -285,11 +285,13 @@ const mac_only = [_][]const u8{"emac.device"};
 const esp_only = [_][]const u8{ "usbotg.device", "sdcard.device", "programs/Dock" };
 /// What a RISC-V 64 machine under SBI and an AArch64 machine under PSCI
 /// have and the ESP32s do not: PCI, the command that lists it, and the
-/// USB controllers and SSDs on it. And the dock in SYS:WBStartup, started
-/// with the desktop, the test of a chip's video decoder, and the video
-/// codecs in software: the ESP32s have neither the room for them on their
-/// flash disks nor the speed, and the 64-bit machines' disks are RAM.
-const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device", "nvme.device", "WBStartup/Dock", "videodec", "h264.vcodec", "hevc.vcodec", "vp8.vcodec", "vp9.vcodec", "av1.vcodec" };
+/// USB controllers and SSDs on it. The install, which puts a system onto
+/// a card or an SSD for a machine whose firmware loads a kernel from a
+/// partition - an ESP32's kernel is in its flash. And the dock in
+/// SYS:WBStartup, started with the desktop, the test of a chip's video
+/// decoder, and the video codecs in software: the ESP32s have neither the
+/// room for them on their flash disks nor the speed.
+const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device", "nvme.device", "install", "WBStartup/Dock", "videodec", "h264.vcodec", "hevc.vcodec", "vp8.vcodec", "vp9.vcodec", "av1.vcodec" };
 /// Drivers of what only the Raspberry Pi CM5 has among the AArch64
 /// machines and no other chip does: its radio, a CYW43455 on the
 /// BCM2712's SD host.
