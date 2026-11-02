@@ -145,6 +145,10 @@ const mine_rows_shown = 4;
 /// The longest comment shown of a share.
 const comment_max: usize = 64;
 
+/// How many characters wide the fields of the logon window are, in the
+/// screen's font: a name, a password and a domain are typed into them.
+const logon_columns: usize = 28;
+
 const found_columns = [_]lb.Column{
     .{ .title = "Share", .weight = 3 },
     .{ .title = "Kind", .weight = 2 },
@@ -655,17 +659,24 @@ const App = struct {
             pair(cb_class.CHECKBOX_Checked, @intFromBool(app.account.keep)),
             .{},
         });
+        // The fields are given room for a name and a password of the
+        // length people actually use, which neither a label nor an empty
+        // field would ask for on its own.
+        const field_width = fontWidth(app) * logon_columns + 12;
         const fields = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
             pair(lg.LAYOUTA_Orientation, lg.LORIENT_VERT),
             pair(lg.LAYOUTA_Spacing, 4),
             pair(lg.LAYOUTA_AddChild, @intFromPtr(app.user_field orelse return)),
             pair(lg.CHILDA_Label, @intFromPtr("_User")),
+            pair(lg.CHILDA_MinWidth, field_width),
             pair(lg.CHILDA_WeightHeight, 0),
             pair(lg.LAYOUTA_AddChild, @intFromPtr(app.password_field orelse return)),
             pair(lg.CHILDA_Label, @intFromPtr("_Password")),
+            pair(lg.CHILDA_MinWidth, field_width),
             pair(lg.CHILDA_WeightHeight, 0),
             pair(lg.LAYOUTA_AddChild, @intFromPtr(app.domain_field orelse return)),
             pair(lg.CHILDA_Label, @intFromPtr("_Domain")),
+            pair(lg.CHILDA_MinWidth, field_width),
             pair(lg.CHILDA_WeightHeight, 0),
             pair(lg.LAYOUTA_AddChild, @intFromPtr(app.keep_box orelse return)),
             pair(lg.CHILDA_Label, @intFromPtr("_Keep the password")),
@@ -894,6 +905,20 @@ fn buildLayout(app: *App) ?*Object {
         pair(lg.LAYOUTA_AddChild, @intFromPtr(mine_group)),
         .{},
     });
+}
+
+/// How wide a character of the screen's font is, which the fields of the
+/// window that asks for a logon are measured in: a name and a password
+/// are typed into them, so they are given room for one.
+fn fontWidth(app: *App) usize {
+    const screen = app.ib.LockPubScreen(null) orelse return 8;
+    defer app.ib.UnlockPubScreen(null, screen);
+    const info = app.ib.GetScreenDrawInfo(screen);
+    defer app.ib.FreeScreenDrawInfo(screen, info);
+    const font = info.font orelse return 8;
+    var extent = graphics.FontExtent{};
+    app.gb.FontExtent(font, &extent);
+    return @max(@as(usize, @intCast(@max(extent.width, 6))), 6);
 }
 
 /// How tall a row of the screen's font is, which the lists' least heights
