@@ -179,7 +179,7 @@ pub fn OpenAudioStream(base: *AudioCodecBase, tags: ?[*]const utility.TagItem, e
         stream.read_data = read_data;
     } else if (media_file) |file| {
         // A track of a file media.library has open: no bytes of its own.
-        const result = _media.openGiven(stream, file, track);
+        const result = _media.openGiven(base, stream, file, track);
         if (result != ac.ACERR_OK) {
             _stream.destroy(stream);
             return failed(err, result);
@@ -206,7 +206,7 @@ pub fn OpenAudioStream(base: *AudioCodecBase, tags: ?[*]const utility.TagItem, e
         const found = _identify.identify(bytes);
         if (found != ac.ACODEC_UNKNOWN or hint == ac.ACODEC_UNKNOWN) codec = found;
     }
-    const result = if (_media.container(bytes)) _media.open(stream) else openKind(stream, codec);
+    const result = if (_media.container(bytes)) _media.open(base, stream) else openKind(base, stream, codec);
     if (result != ac.ACERR_OK) {
         _stream.destroy(stream);
         return failed(err, result);
@@ -216,11 +216,12 @@ pub fn OpenAudioStream(base: *AudioCodecBase, tags: ?[*]const utility.TagItem, e
     return _stream.publicOf(stream);
 }
 
-/// The stream's bytes opened by their kind's module: ACERR_UNSUPPORTED
-/// when the disk has none.
-fn openKind(stream: *Stream, codec: u32) i32 {
-    if (sdk.acodec.moduleName(codec) == null) return if (stream.failed) ac.ACERR_READ else ac.ACERR_UNKNOWN;
-    const module = _stream.openModule(stream, codec) orelse return ac.ACERR_UNSUPPORTED;
+/// The stream's bytes opened by the module that decodes their kind:
+/// ACERR_UNKNOWN when the bytes are not sound this library knows,
+/// ACERR_UNSUPPORTED when they are a kind no module on this disk decodes.
+fn openKind(base: *AudioCodecBase, stream: *Stream, codec: u32) i32 {
+    if (codec == ac.ACODEC_UNKNOWN) return if (stream.failed) ac.ACERR_READ else ac.ACERR_UNKNOWN;
+    const module = _stream.openModule(base, stream, codec) orelse return ac.ACERR_UNSUPPORTED;
     return module.OpenACodec(stream);
 }
 

@@ -8,6 +8,7 @@ const media = sdk.media;
 const utility = sdk.utility;
 const MediaBase = @import("../media_base.zig").MediaBase;
 const _file = @import("_file.zig");
+const _modules = @import("../modules/_modules.zig");
 const File = _file.File;
 const ebml = @import("../mkv/ebml.zig");
 
@@ -137,7 +138,7 @@ pub fn OpenMedia(base: *MediaBase, tags: ?[*]const utility.TagItem, err: ?*i32) 
 
     file.subtitles = ~@as(u32, 0);
     const kind = if (hint != media.MEDIA_UNKNOWN) hint else kindOf(file);
-    const result = openKind(file, kind, hint == media.MEDIA_UNKNOWN);
+    const result = openKind(base, file, kind, hint == media.MEDIA_UNKNOWN);
     if (result != media.MERR_OK) {
         _file.destroy(file);
         return failed(err, result);
@@ -146,13 +147,19 @@ pub fn OpenMedia(base: *MediaBase, tags: ?[*]const utility.TagItem, err: ?*i32) 
     return _file.publicOf(file);
 }
 
-/// The file opened by its kind's module: MERR_UNSUPPORTED when the disk
-/// has none.
-fn openKind(file: *File, kind: u32, check: bool) i32 {
-    const name = sdk.mcontainer.moduleName(kind) orelse return media.MERR_UNKNOWN;
-    file.module = file.base.sys_base.OpenLibrary(name, 1);
-    const module = _file.moduleOf(file) orelse return media.MERR_UNSUPPORTED;
-    return module.OpenContainer(file, check);
+/// The file opened by the module that reads its kind, from the modules'
+/// own tags (`modules/_modules.zig`) in the order they are tried:
+/// MERR_UNKNOWN when the bytes are not a container this library knows,
+/// MERR_UNSUPPORTED when no module on this disk reads that kind.
+fn openKind(base: *MediaBase, file: *File, kind: u32, check: bool) i32 {
+    if (kind == media.MEDIA_UNKNOWN) return media.MERR_UNKNOWN;
+    const sys = file.base.sys_base;
+    var at: u32 = 0;
+    while (_modules.nth(base, kind, at)) |found| : (at += 1) {
+        file.module = sys.OpenLibrary(@ptrCast(&found.name), 1);
+        if (_file.moduleOf(file)) |module| return module.OpenContainer(file, check);
+    }
+    return media.MERR_UNSUPPORTED;
 }
 
 /// The kind by the first four bytes - EBML's header, else an MP4's to be

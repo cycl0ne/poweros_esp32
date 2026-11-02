@@ -45,6 +45,8 @@ const exec = sdk.exec;
 const dos = sdk.dos;
 const ac = sdk.audiocodec;
 const acodec = sdk.acodec;
+const AudioCodecBase = @import("../audiocodec_base.zig").AudioCodecBase;
+const _modules = @import("../modules/_modules.zig");
 const ACodecBase = sdk.interface.acodec.ACodecBase;
 const mp3 = @import("../mp3/_mp3.zig");
 const _media = @import("_media.zig");
@@ -85,13 +87,30 @@ pub fn moduleOf(stream: *Stream) ?*ACodecBase {
     return @ptrCast(stream.module);
 }
 
-/// The module of `codec` opened for the stream, unless it has one: false
-/// when the disk has none.
-pub fn openModule(stream: *Stream, codec: u32) ?*ACodecBase {
+/// The module of `codec` opened for the stream, unless it has one: null
+/// when no module on the disk decodes it.
+///
+/// Which module that is comes from the modules' own tags
+/// (`modules/_modules.zig`), in the order they are tried; the first that
+/// opens is the stream's. A module that opens and then refuses the stream
+/// is the caller's to answer for - `openNextModule` gives it the next.
+pub fn openModule(base: *AudioCodecBase, stream: *Stream, codec: u32) ?*ACodecBase {
     if (moduleOf(stream)) |module| return module;
-    const name = acodec.moduleName(codec) orelse return null;
-    stream.module = stream.base.sys_base.OpenLibrary(name, 1);
-    return moduleOf(stream);
+    return openNextModule(base, stream, codec, 0);
+}
+
+/// The module after the `tried` before it, opened for the stream, which
+/// must have none: null when there is no further module for `codec`.
+pub fn openNextModule(base: *AudioCodecBase, stream: *Stream, codec: u32, tried: u32) ?*ACodecBase {
+    const sys = base.sys_base;
+    var at = tried;
+    while (_modules.nth(base, codec, at)) |found| : (at += 1) {
+        if (sys.OpenLibrary(@ptrCast(&found.name), 1)) |module| {
+            stream.module = module;
+            return moduleOf(stream);
+        }
+    }
+    return null;
 }
 
 /// The kind's state, cleared, in memory of its own: made once, and given
