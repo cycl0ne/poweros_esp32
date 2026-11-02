@@ -184,6 +184,10 @@ pub const PhysicalDeviceLimits = extern struct {
     /// cores it shares a frame's tiles between.
     tile_size: u32,
     cores: u32,
+    /// The samples a sampler may take along the longer axis
+    /// (`SamplerCreateInfo.max_anisotropy`); 1 where there is no
+    /// anisotropic filtering.
+    max_sampler_anisotropy: u32,
 };
 
 /// The longest name a device has, its NUL included.
@@ -207,10 +211,12 @@ pub const PhysicalDeviceProperties = extern struct {
 /// There is a field here where a create call can refuse something: a `false`
 /// is what it would answer `error_feature_not_present` to, so that a program
 /// can ask instead of being told. What the library has no call for at all -
-/// samplers, events, query pools, a pipeline cache, sparse memory - has no
-/// field: its absence is in the jump table, not here.
+/// events, a pipeline cache, sparse memory - has no field: its absence is in
+/// the jump table, not here.
 ///
-/// The first few differ between the devices of one machine; the rest are the
+/// The first few differ between the devices of one machine, and so do
+/// `samplers` and `sampler_anisotropy` at the end - a field added later goes
+/// there, where it moves nothing a program already reads. The rest are the
 /// library's and the same on each.
 pub const PhysicalDeviceFeatures = extern struct {
     /// A pipeline's fragment function may be one the program wrote, any Zig
@@ -272,6 +278,28 @@ pub const PhysicalDeviceFeatures = extern struct {
     /// `uniform_buffer_dynamic` and `storage_buffer_dynamic`, which is why
     /// CmdBindDescriptorSets' `dynamic_offsets` goes unused.
     dynamic_descriptors: bool = false,
+    /// The fixed forms that sample through the sampler bound beside the
+    /// texture run here - `shader.FixedKind.texture_sampled` and
+    /// `texture_shadow` - and with them everything a sampler says: the two
+    /// levels round a point mixed, a bias on the level and a clamp,
+    /// mirrored and bordered edges, and a comparison with a reference. A
+    /// device without it refuses such a pipeline, as with a dropping form;
+    /// samplers are made and written into sets on either. This one differs
+    /// between the devices of a machine, though it is down here: a field is
+    /// added at the end so that none already there moves.
+    samplers: bool = false,
+    /// A sampler's `max_anisotropy` is taken: several samples along the
+    /// longer axis, up to `PhysicalDeviceLimits.max_sampler_anisotropy`.
+    /// False where one sample is taken whatever a sampler asks for. This
+    /// differs between the devices as well.
+    sampler_anisotropy: bool = false,
+    /// `DescriptorSetLayoutBinding.immutable_samplers`: a sampler the
+    /// layout holds, which a write into the set cannot change. No device of
+    /// this library has it; a sampler is written into the set instead.
+    immutable_samplers: bool = false,
+    /// `SamplerCreateInfo.unnormalized_coordinates`: a sample placed in
+    /// texels rather than 0 to 1 across the texture.
+    unnormalized_coordinates: bool = false,
 };
 
 /// QueueFamilyProperties.queue_flags: what a family's queues do.
@@ -689,6 +717,79 @@ pub const ImageViewCreateInfo = extern struct {
     format: Format,
     components: ComponentMapping = .{},
     subresource_range: ImageSubresourceRange = .{},
+};
+
+// --- samplers ----------------------------------------------------------------
+
+/// How a texture is sampled: a draw binds one beside the image, as a
+/// combined image sampler or beside a sampled image, and the sampling reads
+/// it (CreateSampler, `texture.Sampler`).
+pub const Sampler = opaque {};
+
+/// Whether the two levels a point falls between are mixed, or the nearer
+/// one read alone.
+pub const SamplerMipmapMode = enum(u32) {
+    nearest = 0,
+    linear = 1,
+    _,
+};
+
+/// What a coordinate past the texture's edge reads.
+pub const SamplerAddressMode = enum(u32) {
+    repeat = 0,
+    mirrored_repeat = 1,
+    clamp_to_edge = 2,
+    clamp_to_border = 3,
+    /// Vulkan's VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE: not here.
+    mirror_clamp_to_edge = 4,
+    _,
+};
+
+/// What `clamp_to_border` reads past the edge. The int kinds are the float
+/// kinds here: a texture's texels are read as 0 to 1 whatever their format.
+pub const BorderColor = enum(u32) {
+    float_transparent_black = 0,
+    int_transparent_black = 1,
+    float_opaque_black = 2,
+    int_opaque_black = 3,
+    float_opaque_white = 4,
+    int_opaque_white = 5,
+    _,
+};
+
+/// What a sampler is made with. Vulkan's structure, with the fields the
+/// library has no sampling for left out of it: there is no
+/// `mipLodBias`-less path, so a bias of 0 is what the fixed forms do.
+pub const SamplerCreateInfo = extern struct {
+    flags: u32 = 0,
+    /// Where a texel covers more than a pixel, and where it covers less.
+    mag_filter: Filter = .linear,
+    min_filter: Filter = .linear,
+    mipmap_mode: SamplerMipmapMode = .nearest,
+    /// Past the edges: across, down, and through a 3D texture.
+    address_mode_u: SamplerAddressMode = .repeat,
+    address_mode_v: SamplerAddressMode = .repeat,
+    address_mode_w: SamplerAddressMode = .repeat,
+    /// Added to the level a sample falls on.
+    mip_lod_bias: f32 = 0,
+    /// Several samples along the longer axis, up to `max_anisotropy`:
+    /// `PhysicalDeviceFeatures.sampler_anisotropy` says where that happens,
+    /// and `PhysicalDeviceLimits.max_sampler_anisotropy` how many at most.
+    anisotropy_enable: bool = false,
+    max_anisotropy: f32 = 1,
+    /// A shadow sample: what was read compared with the reference the
+    /// fragment function carries, rather than read as a colour. The red
+    /// channel, 0 to 1, is what is compared.
+    compare_enable: bool = false,
+    compare_op: CompareOp = .never,
+    /// The levels a sample is held to, over and above those the texture has.
+    min_lod: f32 = 0,
+    /// `texture.lod_unclamped` (1000) for the texture's own last level.
+    max_lod: f32 = 0,
+    border_color: BorderColor = .float_transparent_black,
+    /// Coordinates in texels rather than 0 to 1: not here
+    /// (`error_feature_not_present`).
+    unnormalized_coordinates: bool = false,
 };
 
 // --- command buffers --------------------------------------------------------
@@ -1412,9 +1513,9 @@ pub const DescriptorPool = opaque {};
 /// Buffers and images, as a pipeline's shaders read them.
 pub const DescriptorSet = opaque {};
 
-/// A descriptor's kind. facet.library has sampled images - sampled as
-/// the fragment function says, with no sampler - and uniform and storage
-/// buffers.
+/// A descriptor's kind. facet.library has samplers and combined image
+/// samplers (CreateSampler), sampled images - sampled as the fragment
+/// function says - and uniform and storage buffers.
 pub const DescriptorType = enum(u32) {
     sampler = 0,
     combined_image_sampler = 1,
@@ -1437,7 +1538,11 @@ pub const DescriptorSetLayoutBinding = extern struct {
     descriptor_type: DescriptorType,
     descriptor_count: u32 = 1,
     stage_flags: u32 = SHADER_STAGE_ALL_GRAPHICS,
-    immutable_samplers: ?*const anyopaque = null,
+    /// A sampler of the layout's own for each descriptor, which a write
+    /// could not change: not here, and a layout that gives them is refused
+    /// (`PhysicalDeviceFeatures.immutable_samplers`). A sampler is written
+    /// into the set like anything else instead.
+    immutable_samplers: ?[*]const *Sampler = null,
 };
 
 pub const DescriptorSetLayoutCreateInfo = extern struct {
@@ -1484,9 +1589,12 @@ pub const DescriptorSetAllocateInfo = extern struct {
     set_layouts: [*]const *DescriptorSetLayout,
 };
 
-/// A sampled image written into a set.
+/// A sampled image written into a set, with its sampler for a combined
+/// image sampler or a sampler of its own.
 pub const DescriptorImageInfo = extern struct {
-    sampler: ?*const anyopaque = null,
+    /// For `.sampler` and `.combined_image_sampler`; null for the kinds
+    /// that have none.
+    sampler: ?*Sampler = null,
     image_view: ?*ImageView,
     image_layout: ImageLayout = .shader_read_only_optimal,
 };

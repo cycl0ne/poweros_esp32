@@ -5,9 +5,10 @@
 //! descriptor, the elements of a binding's array one after the other, and
 //! where each binding's first is. A buffer's slot holds the address of
 //! its bytes from the offset written and how many there are; a sampled
-//! image's the texture of its view. A slot is read as a draw's shaders
-//! run, so a set written between recording and submitting is drawn with
-//! as written then, as in Vulkan.
+//! image's the texture of its view; a sampler's what the sampler keeps
+//! (`texture.Sampler`), and a combined image sampler's both. A slot is
+//! read as a draw's shaders run, so a set written between recording and
+//! submitting is drawn with as written then, as in Vulkan.
 //!
 //! A pool counts its sets against its most, and keeps them on a list to
 //! give back when it is reset or destroyed; each set is a block of its
@@ -24,7 +25,15 @@ const Device = @import("../device/_device.zig").Device;
 /// The kinds of descriptor facet.library has.
 pub fn known(kind: facet.DescriptorType) bool {
     return switch (kind) {
-        .sampled_image, .uniform_buffer, .storage_buffer => true,
+        .sampler, .combined_image_sampler, .sampled_image, .uniform_buffer, .storage_buffer => true,
+        else => false,
+    };
+}
+
+/// Whether a kind is written from `image_info` rather than `buffer_info`.
+pub fn ofImage(kind: facet.DescriptorType) bool {
+    return switch (kind) {
+        .sampler, .combined_image_sampler, .sampled_image => true,
         else => false,
     };
 }

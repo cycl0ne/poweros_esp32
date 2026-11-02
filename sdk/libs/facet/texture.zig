@@ -24,6 +24,14 @@
 //! far the coordinates move from one pixel of the quad to the next
 //! (`levelFor`), the nearest of the levels the texture has.
 //!
+//! **A sampler is the same settled later** (`Sampler`, CreateSampler): a
+//! draw binds one beside the texture, and `sampleBy` reads it for every
+//! sample. It costs floats where the fixed path costs fixed point, and
+//! gives what that path has no room for - the two levels round a point
+//! mixed, a bias on the level and a clamp, mirrored and bordered edges,
+//! several samples along the longer axis, and a comparison with a
+//! reference instead of a colour.
+//!
 //! Every colour comes out as 0xAARRGGBB, RGB565 with an alpha of 255.
 
 const std = @import("std");
@@ -50,15 +58,17 @@ pub const Format = enum {
 };
 
 /// How a texel is found for a point between texels.
-pub const Filter = enum {
+pub const Filter = enum(u8) {
     /// The one the point lies in.
     nearest,
     /// The four round it, mixed by how near the point is to each.
     bilinear,
 };
 
-/// What a coordinate past the texture's edge reads.
-pub const Address = enum {
+/// What a coordinate past the texture's edge reads, for a fixed form,
+/// whose two the fast path has its bit tricks for (`columns`, `rows`). A
+/// sampler has `Wrap`'s four instead.
+pub const Address = enum(u8) {
     /// The texture again, as tiles.
     wrap,
     /// The edge's texels.
@@ -70,6 +80,112 @@ pub const Sampling = struct {
     format: Format = .rgba8888,
     filter: Filter = .bilinear,
     address: Address = .wrap,
+};
+
+/// How a sampler goes between the two levels a point falls between.
+pub const Mipmap = enum(u8) {
+    /// The nearer level alone, as a fixed form's sample reads it.
+    nearest,
+    /// Both, mixed by how far the point is between them.
+    linear,
+};
+
+/// What a sampler reads past the texture's edge: `Address`'s two, and two
+/// more that only a sampler can ask for.
+pub const Wrap = enum(u8) {
+    /// The texture again, as tiles.
+    repeat,
+    /// The texture again, every other time turned round, so that the edges
+    /// meet.
+    mirrored_repeat,
+    /// The edge's texels.
+    clamp_to_edge,
+    /// `Sampler.border`, and nothing of the texture.
+    clamp_to_border,
+};
+
+/// How a shadow sample compares what it read with the reference it was
+/// given. `none` for an ordinary sample, which reads the colour instead.
+pub const Compare = enum(u8) {
+    none,
+    never,
+    less,
+    equal,
+    less_or_equal,
+    greater,
+    not_equal,
+    greater_or_equal,
+    always,
+
+    /// Whether `value` stands to `reference` as this asks, both 0 to 1.
+    pub inline fn passes(compare: Compare, value: f32, reference: f32) bool {
+        return switch (compare) {
+            .none, .never => false,
+            .less => reference < value,
+            .equal => reference == value,
+            .less_or_equal => reference <= value,
+            .greater => reference > value,
+            .not_equal => reference != value,
+            .greater_or_equal => reference >= value,
+            .always => true,
+        };
+    }
+};
+
+/// The samples a point takes along its longer axis at most, however much
+/// anisotropy it asks for: `PhysicalDeviceLimits.max_sampler_anisotropy`.
+pub const most_taps = 16;
+
+/// A `Sampler.max_lod` held by nothing but the levels the texture has.
+pub const lod_unclamped: f32 = 1000;
+
+/// What a sampler does, as CreateSampler was given it: how a point between
+/// texels is filtered, how its level is chosen and held, what lies past the
+/// edges, and what a shadow sample compares with.
+///
+/// It is read as a sample is taken - by `sampleBy` and `sampleVolumeBy`
+/// here, which a fragment function reaches through
+/// `shader.Resources.samplerOf` - and never written, so one sampler serves
+/// every core at once. Where a fixed form's `Sampling` is settled when the
+/// program is compiled, this is settled when the sampler is made, and a
+/// draw may bind another.
+pub const Sampler = extern struct {
+    /// Where a texel covers more than a pixel: the level is 0 or below.
+    mag_filter: Filter = .bilinear,
+    /// Where it covers less, which is where the levels are of use.
+    min_filter: Filter = .bilinear,
+    mipmap: Mipmap = .nearest,
+    /// Past the edges: across, down, and through a 3D texture.
+    wrap: [3]Wrap = @splat(.repeat),
+    /// 0xAARRGGBB, read where `clamp_to_border` is past the edge.
+    border: u32 = 0,
+    /// Added to the level a point falls on, before it is held.
+    lod_bias: f32 = 0,
+    /// The levels the sample is held to, over and above those the texture
+    /// has.
+    min_lod: f32 = 0,
+    max_lod: f32 = lod_unclamped,
+    /// The samples taken along the longer axis at most: 1 for one, which is
+    /// no anisotropic filtering, up to `most_taps`.
+    anisotropy: f32 = 1,
+    /// What a shadow sample does; `none` for a sample of the colour.
+    compare: Compare = .none,
+};
+
+/// A point in a texture, and how fast its coordinates change round it:
+/// what a sampler is given to choose a level and how many samples to take.
+/// The changes are a pixel's, 0 to 1 across the texture like the point
+/// itself; all 0 asks for level 0, one sample.
+pub const Point = extern struct {
+    u: f32,
+    v: f32,
+    du_dx: f32 = 0,
+    dv_dx: f32 = 0,
+    du_dy: f32 = 0,
+    dv_dy: f32 = 0,
+    /// What a shadow sample compares with, 0 to 1: the red channel's value
+    /// is what it is compared against.
+    reference: f32 = 0,
 };
 
 /// The most levels a texture has: 32768 across, down to 1.
@@ -176,7 +292,7 @@ pub const Texture = struct {
     }
 
     /// A texel of a layer as 0xAARRGGBB, whatever its format.
-    fn colorAt(texture: *const Texture, layer: u32, lod: u32, x: u32, y: u32) u32 {
+    pub fn colorAt(texture: *const Texture, layer: u32, lod: u32, x: u32, y: u32) u32 {
         const texel = texture.peekLayer(layer, lod, x, y);
         return switch (texture.format) {
             .rgba8888 => texel,
@@ -676,4 +792,210 @@ pub inline fn gather(wide: u64) u32 {
 pub inline fn mix(first: u64, second: u64, weight: u32) u64 {
     @setRuntimeSafety(false);
     return (first * (256 - weight) + second * weight) >> 8 & lanes;
+}
+
+// --- sampling through a sampler ---------------------------------------------
+
+/// The level a point falls on, as a float: log2 of the longer of the
+/// distances the coordinates move in texels of level 0. Below 0 where a
+/// texel covers more than a pixel, which is magnification.
+///
+/// `levelFor` is this rounded to a whole level, worked out on the exponent
+/// alone; a sampler needs the fraction, to mix two levels and to spread its
+/// samples along an axis, and so takes the logarithm.
+pub fn levelOf(texture: *const Texture, point: Point) f32 {
+    const sides = sidesOf(texture);
+    const across = axisLength(point.du_dx * sides[0], point.dv_dx * sides[1]);
+    const down = axisLength(point.du_dy * sides[0], point.dv_dy * sides[1]);
+    const longer = @max(across, down);
+    if (!(longer > 0)) return 0; // a NaN as well
+    return @log2(longer);
+}
+
+/// The colour at a point of a layer, as `sampler` says: 0xAARRGGBB. With a
+/// comparison it is how much of the sample passed instead - white where all
+/// of it did, black where none - the alpha opaque.
+///
+/// The level comes from how fast the point's coordinates change
+/// (`levelOf`), with the sampler's bias added and its clamp and the
+/// texture's levels put over it; `mipmap` says whether the nearer level is
+/// read alone or both are mixed. Anisotropy takes up to `anisotropy`
+/// samples along the longer axis, at a level chosen for the shorter, which
+/// is what keeps a surface seen edge-on from blurring into one colour.
+pub fn sampleBy(texture: *const Texture, sampler: *const Sampler, layer: u32, point: Point) u32 {
+    const last: f32 = @floatFromInt(texture.levels - 1);
+    const wanted = levelOf(texture, point);
+    // Vulkan's rule: the level before it is held says which filter it is.
+    const filter = if (wanted + sampler.lod_bias <= 0) sampler.mag_filter else sampler.min_filter;
+    var taps: u32 = 1;
+    var level = wanted;
+    if (sampler.anisotropy > 1 and texture.levels > 0) {
+        const sides = sidesOf(texture);
+        const across = axisLength(point.du_dx * sides[0], point.dv_dx * sides[1]);
+        const down = axisLength(point.du_dy * sides[0], point.dv_dy * sides[1]);
+        const longer = @max(across, down);
+        const shorter = @min(across, down);
+        if (shorter > 0 and longer > shorter) {
+            const wide = @min(sampler.anisotropy, @as(f32, most_taps));
+            const ratio = @min(longer / shorter, wide);
+            taps = @intFromFloat(@ceil(ratio));
+            taps = @min(@max(taps, 1), most_taps);
+            // The samples spread along the longer axis stand for it, so the
+            // level is the shorter axis's: longer / taps, not longer.
+            level = @log2(longer / @as(f32, @floatFromInt(taps)));
+        }
+    }
+    level = held(level + sampler.lod_bias, sampler, last);
+    if (sampler.mipmap == .nearest or texture.levels == 1) {
+        return tapped(texture, sampler, layer, @intFromFloat(@round(level)), point, taps, filter);
+    }
+    const lower = @floor(level);
+    const low: u32 = @intFromFloat(lower);
+    const high: u32 = @intFromFloat(@min(lower + 1, last));
+    const part = level - lower;
+    if (low == high or part <= 0) return tapped(texture, sampler, layer, low, point, taps, filter);
+    return mixColors(
+        tapped(texture, sampler, layer, low, point, taps, filter),
+        tapped(texture, sampler, layer, high, point, taps, filter),
+        part,
+    );
+}
+
+/// A 3D texture's colour at (u, v) of `point` and `r` through it, each 0 to
+/// 1, as `sampler` says: its slices are its layers, read as `wrap[2]` says
+/// and mixed where the filter is bilinear.
+pub fn sampleVolumeBy(texture: *const Texture, sampler: *const Sampler, point: Point, r: f32) u32 {
+    const slices = texture.layer_count;
+    const z = sane(r) * @as(f32, @floatFromInt(slices));
+    if (sampler.min_filter == .nearest and sampler.mag_filter == .nearest) {
+        const slice = slicedIn(sampler, @intFromFloat(@floor(z)), slices) orelse return sampler.border;
+        return sampleBy(texture, sampler, slice, point);
+    }
+    const lower = @floor(z - 0.5);
+    const first: i32 = @intFromFloat(lower);
+    const near = if (slicedIn(sampler, first, slices)) |slice| sampleBy(texture, sampler, slice, point) else sampler.border;
+    const far = if (slicedIn(sampler, first + 1, slices)) |slice| sampleBy(texture, sampler, slice, point) else sampler.border;
+    return mixColors(near, far, z - 0.5 - lower);
+}
+
+/// The texture's level 0 as floats: how many texels a coordinate of 1 is.
+inline fn sidesOf(texture: *const Texture) [2]f32 {
+    return .{ @floatFromInt(texture.width(0)), @floatFromInt(texture.height(0)) };
+}
+
+/// How far a point moves along an axis, in texels: the length of (du, dv).
+inline fn axisLength(du: f32, dv: f32) f32 {
+    return @sqrt(du * du + dv * dv);
+}
+
+/// A level held inside the sampler's clamp and the texture's levels. A NaN
+/// falls to the first level, as `levelFor` has it.
+inline fn held(level: f32, sampler: *const Sampler, last: f32) f32 {
+    const lowest = @max(sampler.min_lod, 0);
+    const highest = @min(sampler.max_lod, last);
+    if (!(level > lowest)) return lowest; // a NaN as well
+    return @min(level, @max(highest, lowest));
+}
+
+/// `taps` samples of a level along the longer axis, averaged: the point's
+/// own where there is one.
+fn tapped(texture: *const Texture, sampler: *const Sampler, layer: u32, lod: u32, point: Point, taps: u32, filter: Filter) u32 {
+    const level = @min(lod, texture.levels - 1);
+    if (taps <= 1) return sampledAt(texture, sampler, layer, level, point.u, point.v, filter, point.reference);
+    const sides = sidesOf(texture);
+    const across = axisLength(point.du_dx * sides[0], point.dv_dx * sides[1]);
+    const down = axisLength(point.du_dy * sides[0], point.dv_dy * sides[1]);
+    // Along the longer of the two, from half a pixel back to half a pixel on.
+    const du = if (across >= down) point.du_dx else point.du_dy;
+    const dv = if (across >= down) point.dv_dx else point.dv_dy;
+    const count: f32 = @floatFromInt(taps);
+    var sums: [4]u32 = @splat(0);
+    for (0..taps) |k| {
+        const at = (@as(f32, @floatFromInt(k)) + 0.5) / count - 0.5;
+        const color = sampledAt(texture, sampler, layer, level, point.u + du * at, point.v + dv * at, filter, point.reference);
+        inline for (&sums, [4]u5{ 0, 8, 16, 24 }) |*sum, shift| sum.* += color >> shift & 0xFF;
+    }
+    var made: u32 = 0;
+    inline for (sums, [4]u5{ 0, 8, 16, 24 }) |sum, shift| made |= ((sum + taps / 2) / taps) << shift;
+    return made;
+}
+
+/// One sample of a level at (u, v), filtered as `filter` says and compared
+/// where the sampler asks for it.
+fn sampledAt(texture: *const Texture, sampler: *const Sampler, layer: u32, lod: u32, u: f32, v: f32, filter: Filter, reference: f32) u32 {
+    const across: f32 = @floatFromInt(texture.width(lod));
+    const down: f32 = @floatFromInt(texture.height(lod));
+    const x = sane(u) * across;
+    const y = sane(v) * down;
+    if (filter == .nearest) {
+        const texel = texelBy(texture, sampler, layer, lod, @intFromFloat(@floor(x)), @intFromFloat(@floor(y)));
+        if (sampler.compare == .none) return texel;
+        return compared(sampler.compare, texel, reference);
+    }
+    const low_x = @floor(x - 0.5);
+    const low_y = @floor(y - 0.5);
+    const left: i32 = @intFromFloat(low_x);
+    const top: i32 = @intFromFloat(low_y);
+    const part_x = x - 0.5 - low_x;
+    const part_y = y - 0.5 - low_y;
+    const corners = [4]u32{
+        texelBy(texture, sampler, layer, lod, left, top),
+        texelBy(texture, sampler, layer, lod, left + 1, top),
+        texelBy(texture, sampler, layer, lod, left, top + 1),
+        texelBy(texture, sampler, layer, lod, left + 1, top + 1),
+    };
+    if (sampler.compare != .none) {
+        // A shadow sample mixes what passed, not what was read: Vulkan's
+        // percentage-closer filtering.
+        var passed: f32 = 0;
+        const weights = [4]f32{ (1 - part_x) * (1 - part_y), part_x * (1 - part_y), (1 - part_x) * part_y, part_x * part_y };
+        inline for (corners, weights) |texel, weight| {
+            if (sampler.compare.passes(@as(f32, @floatFromInt(texel >> 16 & 0xFF)) / 255, reference)) passed += weight;
+        }
+        return greyOf(passed);
+    }
+    const upper = mixColors(corners[0], corners[1], part_x);
+    const lower = mixColors(corners[2], corners[3], part_x);
+    return mixColors(upper, lower, part_y);
+}
+
+/// Texel (x, y) of a level of a layer, whole numbers that may lie past the
+/// level: where they do, what `Sampler.wrap` says, which may be the border.
+fn texelBy(texture: *const Texture, sampler: *const Sampler, layer: u32, lod: u32, x: i32, y: i32) u32 {
+    const column = wrapped(sampler.wrap[0], x, texture.width(lod)) orelse return sampler.border;
+    const row = wrapped(sampler.wrap[1], y, texture.height(lod)) orelse return sampler.border;
+    return texture.colorAt(@min(layer, texture.layer_count - 1), lod, column, row);
+}
+
+/// Where a whole coordinate lands in a side of `size`; null for one past a
+/// bordered edge, which reads the border instead.
+fn wrapped(wrap: Wrap, at: i32, size: u32) ?u32 {
+    const whole: i32 = @intCast(size);
+    return switch (wrap) {
+        .repeat => @intCast(@mod(at, whole)),
+        .mirrored_repeat => mirrored: {
+            const twice = @mod(at, 2 * whole);
+            break :mirrored @intCast(if (twice < whole) twice else 2 * whole - 1 - twice);
+        },
+        .clamp_to_edge => @intCast(std.math.clamp(at, 0, whole - 1)),
+        .clamp_to_border => if (at < 0 or at >= whole) null else @intCast(at),
+    };
+}
+
+/// A 3D texture's slice `at`, as `wrap[2]` says; null past a bordered edge.
+fn slicedIn(sampler: *const Sampler, at: i32, slices: u32) ?u32 {
+    return wrapped(sampler.wrap[2], at, slices);
+}
+
+/// One texel compared with the reference: white where it passed, black
+/// where it did not.
+inline fn compared(compare: Compare, texel: u32, reference: f32) u32 {
+    const value = @as(f32, @floatFromInt(texel >> 16 & 0xFF)) / 255;
+    return greyOf(if (compare.passes(value, reference)) 1 else 0);
+}
+
+/// How much of a shadow sample passed, 0 to 1, as an opaque grey.
+inline fn greyOf(passed: f32) u32 {
+    const value: u32 = @intFromFloat(@min(@max(passed, 0), 1) * 255 + 0.5);
+    return 0xFF00_0000 | value << 16 | value << 8 | value;
 }

@@ -8,6 +8,7 @@ const _objects = @import("../_objects.zig");
 const _descriptor = @import("_descriptor.zig");
 const _buffer = @import("../buffer/_buffer.zig");
 const ImageView = @import("../image/_image.zig").ImageView;
+const Sampler = @import("../sampler/_sampler.zig").Sampler;
 
 /// Descriptors written into sets, and copied from one set to another.
 ///
@@ -21,7 +22,8 @@ const ImageView = @import("../image/_image.zig").ImageView;
 /// INPUTS:
 /// - `device` - the device.
 /// - `write_count`, `writes` - descriptors written: a sampled image's view
-///   from `image_info`, a buffer's range from `buffer_info`, one for each
+///   and a sampler's sampler from `image_info` - a combined image sampler
+///   takes both from it - a buffer's range from `buffer_info`, one for each
 ///   descriptor.
 /// - `copy_count`, `copies` - descriptors copied, after the writes.
 ///
@@ -34,7 +36,10 @@ const ImageView = @import("../image/_image.zig").ImageView;
 /// binding's, or past the set's last, is passed over.
 ///
 /// A sampled image's view has to be of an image made to be sampled; a
-/// buffer's range is what lies inside the buffer, which has to be bound.
+/// buffer's range is what lies inside the buffer, which has to be bound. A
+/// combined image sampler whose `sampler` is null is written with the
+/// texture and no sampler, which the fixed forms that sample through one
+/// paint `shader.missing` for rather than sampling some other way.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -44,8 +49,9 @@ const ImageView = @import("../image/_image.zig").ImageView;
 ///
 /// OWNERSHIP:
 /// The arrays are read during the call alone. What a set holds is the
-/// address of each buffer's range and of each view's texture: the buffers
-/// and views have to last as long as the set is used.
+/// address of each buffer's range, of each view's texture and of what each
+/// sampler keeps: the buffers, the views and the samplers have to last as
+/// long as the set is used.
 ///
 /// NOTES:
 /// A set is read as the draws that bound it run: written before the
@@ -73,11 +79,18 @@ pub fn UpdateDescriptorSets(base: *FacetBase, device: *facet.Device, write_count
             const found = _descriptor.slotAt(set, write.dst_binding, write.dst_array_element + @as(u32, @intCast(k))) orelse break;
             if (found.kind != write.descriptor_type) continue;
             found.slot.* = switch (write.descriptor_type) {
-                .sampled_image => sampled: {
+                .sampled_image, .combined_image_sampler, .sampler => sampled: {
                     const info = (write.image_info orelse break)[k];
-                    const view = _objects.of(ImageView, info.image_view orelse break :sampled .{});
-                    if (view.image.kind != .texture or view.image.data == null) break :sampled .{};
-                    break :sampled .{ .pointer = &view.texels };
+                    // A sampler of its own has no image, and a sampled
+                    // image no sampler; a combined one has both.
+                    const with: ?*const facet.texture.Sampler = if (write.descriptor_type == .sampled_image) null else sampler: {
+                        const with_sampler = info.sampler orelse break :sampler null;
+                        break :sampler &_objects.of(Sampler, with_sampler).kept;
+                    };
+                    if (write.descriptor_type == .sampler) break :sampled .{ .sampler = with };
+                    const view = _objects.of(ImageView, info.image_view orelse break :sampled .{ .sampler = with });
+                    if (view.image.kind != .texture or view.image.data == null) break :sampled .{ .sampler = with };
+                    break :sampled .{ .pointer = &view.texels, .sampler = with };
                 },
                 else => bound: {
                     const info = (write.buffer_info orelse break)[k];

@@ -125,6 +125,8 @@ pub const LVO = struct {
     pub const CmdFillBuffer = libraries.lvo(108);
     pub const CmdUpdateBuffer = libraries.lvo(109);
     pub const CmdClearColorImage = libraries.lvo(110);
+    pub const CreateSampler = libraries.lvo(111);
+    pub const DestroySampler = libraries.lvo(112);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -237,6 +239,8 @@ pub const Fn = struct {
     pub const CmdFillBuffer = *const fn (*FacetBase, *facet.CommandBuffer, *facet.Buffer, u64, u64, u32) callconv(.c) void;
     pub const CmdUpdateBuffer = *const fn (*FacetBase, *facet.CommandBuffer, *facet.Buffer, u64, u64, *const anyopaque) callconv(.c) void;
     pub const CmdClearColorImage = *const fn (*FacetBase, *facet.CommandBuffer, *facet.Image, facet.ImageLayout, *const facet.ClearColorValue, u32, [*]const facet.ImageSubresourceRange) callconv(.c) void;
+    pub const CreateSampler = *const fn (*FacetBase, *facet.Device, *const facet.SamplerCreateInfo, *?*facet.Sampler) callconv(.c) facet.Result;
+    pub const DestroySampler = *const fn (*FacetBase, *facet.Device, ?*facet.Sampler) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -796,5 +800,15 @@ pub const FacetBase = opaque {
     /// Recorded: an image's levels and layers set to a colour, outside a pass.
     pub fn CmdClearColorImage(self: *FacetBase, buffer: *facet.CommandBuffer, image: *facet.Image, layout: facet.ImageLayout, color: *const facet.ClearColorValue, range_count: u32, ranges: [*]const facet.ImageSubresourceRange) void {
         return libraries.call(self, LVO.CmdClearColorImage, Fn.CmdClearColorImage, .{ buffer, image, layout, color, range_count, ranges });
+    }
+
+    /// A sampler, written to `sampler`: how a texture bound beside it is sampled.
+    pub fn CreateSampler(self: *FacetBase, device: *facet.Device, info: *const facet.SamplerCreateInfo, sampler: *?*facet.Sampler) facet.Result {
+        return libraries.call(self, LVO.CreateSampler, Fn.CreateSampler, .{ device, info, sampler });
+    }
+
+    /// The sampler given back: no set that holds it drawn with any more.
+    pub fn DestroySampler(self: *FacetBase, device: *facet.Device, sampler: ?*facet.Sampler) void {
+        return libraries.call(self, LVO.DestroySampler, Fn.DestroySampler, .{ device, sampler });
     }
 };

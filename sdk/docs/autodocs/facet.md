@@ -65,6 +65,7 @@ Generated from the source by `./zig build autodoc`.
 - [CreateInstance](#createinstance) - A program's hold on the library, through which it finds the devices.
 - [CreatePipelineLayout](#createpipelinelayout) - A pipeline layout: the descriptor sets and the push constants a pipeline's shaders read.
 - [CreateRenderPass](#createrenderpass) - A render pass: the attachments it draws into, what each starts with and what is kept of it.
+- [CreateSampler](#createsampler) - A sampler: the filter, the levels, the edges and the comparison a texture bound beside it is sampled with.
 - [CreateScreenSurface](#createscreensurface) - A surface over a screen the program has opened, written to `surface`.
 - [CreateSemaphore](#createsemaphore) - A semaphore: signalled by one submission, waited for by another.
 - [CreateShaderModule](#createshadermodule) - A shader module: the vertex and fragment functions a `shader.Code` names.
@@ -83,6 +84,7 @@ Generated from the source by `./zig build autodoc`.
 - [DestroyPipeline](#destroypipeline) - The pipeline given back: no submission still drawing with it.
 - [DestroyPipelineLayout](#destroypipelinelayout) - The pipeline layout given back.
 - [DestroyRenderPass](#destroyrenderpass) - The render pass given back.
+- [DestroySampler](#destroysampler) - The sampler given back.
 - [DestroySemaphore](#destroysemaphore) - The semaphore given back.
 - [DestroyShaderModule](#destroyshadermodule) - The shader module given back; the pipelines made from it stay.
 - [DestroySurface](#destroysurface) - The surface given back: every swapchain made on it destroyed first.
@@ -2866,16 +2868,18 @@ fn CreateDescriptorSetLayout(base: *FacetBase, device: *facet.Device, info: *con
 **RESULT**
 
 `success`; `error_feature_not_present` for a kind of descriptor
-facet.library does not have, a binding numbered past 255, or more than
-65535 descriptors; `error_initialization_failed` for a binding given
-twice; `error_out_of_host_memory`.
+facet.library does not have, for a binding with samplers of the
+layout's own (`immutable_samplers`), a binding numbered past 255, or
+more than 65535 descriptors; `error_initialization_failed` for a
+binding given twice; `error_out_of_host_memory`.
 
 **BEHAVIOR**
 
-The kinds are sampled_image, uniform_buffer and storage_buffer. A
-binding not given has no descriptors, and neither has one given with a
-count of 0. A binding's descriptors are an array, read by a shader as
-element 0 on (shader.Resources).
+The kinds are sampler, combined_image_sampler, sampled_image,
+uniform_buffer and storage_buffer. A binding not given has no
+descriptors, and neither has one given with a count of 0. A binding's
+descriptors are an array, read by a shader as element 0 on
+(shader.Resources).
 
 **CONTEXT**
 
@@ -2891,10 +2895,13 @@ bindings are read during the call alone.
 
 **NOTES**
 
-There are no samplers: a fragment function samples as it was compiled
-to (sdk.facet.shader.textured), so a sampled image is all a set holds
-of a texture. Stage flags are not looked at: every stage reads every
-binding.
+A fragment function of a fixed form samples either as it was compiled
+to (sdk.facet.shader.textured) or through the sampler bound beside the
+texture (shader.FixedKind.texture_sampled), which is what a combined
+image sampler is for. A sampler of the layout's own is refused rather
+than ignored, so that a program is not left thinking a write of its own
+took: `PhysicalDeviceFeatures.immutable_samplers`. Stage flags are not
+looked at: every stage reads every binding.
 
 **BUGS**
 
@@ -3627,6 +3634,95 @@ const color_ref = facet.AttachmentReference{ .attachment = 0, .layout = .color_a
 const subpass = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&color_ref) };
 var pass: ?*facet.RenderPass = null;
 _ = fb.CreateRenderPass(device, &.{ .attachment_count = 1, .attachments = @ptrCast(&color), .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &pass);
+```
+
+## CreateSampler
+
+A sampler: the filter, the levels, the edges and the comparison a texture bound beside it is sampled with.
+
+**SYNOPSIS**
+
+```zig
+fn CreateSampler(base: *FacetBase, device: *facet.Device, info: *const facet.SamplerCreateInfo, sampler: *?*facet.Sampler) facet.Result
+```
+
+**SINCE**
+
+1.28. LVO -448.
+
+**INPUTS**
+
+- `device` - the device.
+- `info` - the filters, the mipmap mode, the three address modes, the
+  bias and clamp on the level, the anisotropy, the comparison and the
+  border colour.
+- `sampler` - where the sampler is written; null when it fails.
+
+**RESULT**
+
+`success`; `error_feature_not_present` for `unnormalized_coordinates`,
+for `mirror_clamp_to_edge` or another address mode the library has not
+got, or for a filter, mipmap mode, compare operation or border colour
+that is not one of Vulkan's; `error_out_of_host_memory`.
+
+**BEHAVIOR**
+
+The sampler holds what it was given, in the terms the sampling is
+written in (`texture.Sampler`): nothing is worked out again for each
+sample.
+
+`max_anisotropy` is held to `PhysicalDeviceLimits.max_sampler_anisotropy`
+rather than refused above it, and is taken only where
+`PhysicalDeviceFeatures.sampler_anisotropy` says so; without
+`anisotropy_enable` it is 1, one sample. `max_lod` below `min_lod`
+leaves the sample on `min_lod`. `compare_enable` makes every sample
+through it a shadow sample: what is read is compared with the reference
+the fragment function carries, and what comes out is how much of the
+sample passed, not a colour.
+
+A sampler is made on either device, but is read by the sampling the
+cores do: a pipeline whose fragment form samples through one
+(`shader.FixedKind.texture_sampled`, `texture_shadow`) is refused on a
+device whose `PhysicalDeviceFeatures.samplers` is false.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The sampler is the caller's, until DestroySampler. It has to last as
+long as the sets written with it are drawn with: a set holds the
+address of what it keeps.
+
+**NOTES**
+
+The sampler is read by every core that samples through it at once, and
+written by nothing after it is made.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`DestroySampler`, `UpdateDescriptorSets`, `CreateDescriptorSetLayout`
+
+**EXAMPLES**
+
+```zig
+var sampler: ?*facet.Sampler = null;
+_ = fb.CreateSampler(device, &.{
+    .mipmap_mode = .linear,
+    .address_mode_u = .clamp_to_edge,
+    .address_mode_v = .clamp_to_edge,
+    .max_lod = facet.texture.lod_unclamped,
+    .anisotropy_enable = true,
+    .max_anisotropy = 4,
+}, &sampler);
 ```
 
 ## CreateScreenSurface
@@ -4767,6 +4863,64 @@ None known.
 
 ```zig
 fb.DestroyRenderPass(device, pass);
+```
+
+## DestroySampler
+
+The sampler given back.
+
+**SYNOPSIS**
+
+```zig
+fn DestroySampler(base: *FacetBase, device: *facet.Device, sampler: ?*facet.Sampler) void
+```
+
+**SINCE**
+
+1.28. LVO -452.
+
+**INPUTS**
+
+- `device` - the device it was made on.
+- `sampler` - the sampler, or null, which does nothing.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+No set written with it may be drawn with any more, and no command
+buffer that bound such a set may be pending: a set holds the address of
+what the sampler keeps, and the draws read it as they run.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The sampler is gone.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateSampler`
+
+**EXAMPLES**
+
+```zig
+fb.DestroySampler(device, sampler);
 ```
 
 ## DestroySemaphore
@@ -6906,7 +7060,8 @@ fn UpdateDescriptorSets(base: *FacetBase, device: *facet.Device, write_count: u3
 
 - `device` - the device.
 - `write_count`, `writes` - descriptors written: a sampled image's view
-  from `image_info`, a buffer's range from `buffer_info`, one for each
+  and a sampler's sampler from `image_info` - a combined image sampler
+  takes both from it - a buffer's range from `buffer_info`, one for each
   descriptor.
 - `copy_count`, `copies` - descriptors copied, after the writes.
 
@@ -6921,7 +7076,10 @@ on into the bindings after it. A descriptor of another kind than the
 binding's, or past the set's last, is passed over.
 
 A sampled image's view has to be of an image made to be sampled; a
-buffer's range is what lies inside the buffer, which has to be bound.
+buffer's range is what lies inside the buffer, which has to be bound. A
+combined image sampler whose `sampler` is null is written with the
+texture and no sampler, which the fixed forms that sample through one
+paint `shader.missing` for rather than sampling some other way.
 
 **CONTEXT**
 
@@ -6933,8 +7091,9 @@ buffer's range is what lies inside the buffer, which has to be bound.
 **OWNERSHIP**
 
 The arrays are read during the call alone. What a set holds is the
-address of each buffer's range and of each view's texture: the buffers
-and views have to last as long as the set is used.
+address of each buffer's range, of each view's texture and of what each
+sampler keeps: the buffers, the views and the samplers have to last as
+long as the set is used.
 
 **NOTES**
 

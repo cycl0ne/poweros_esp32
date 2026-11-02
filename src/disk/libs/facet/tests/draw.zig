@@ -30,6 +30,7 @@ const CommandBuffer = @import("../command/_command.zig").CommandBuffer;
 const _render = @import("../render/_render.zig");
 const _shader = @import("../shader/_shader.zig");
 const _descriptor = @import("../descriptor/_descriptor.zig");
+const _sampler = @import("../sampler/_sampler.zig");
 const _pipeline = @import("../pipeline/_pipeline.zig");
 const testing = std.testing;
 
@@ -502,8 +503,20 @@ test "descriptor sets: a layout's bindings as slots, written and copied as shade
     try testing.expectEqual(@as(u16, 2), layout_made.bindings()[2].first);
 
     var none: ?*facet.DescriptorSetLayout = null;
-    const sampler = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .combined_image_sampler };
-    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&sampler) }, &none));
+    // Samplers and combined image samplers are kinds a layout may have;
+    // the kinds there are none of, and a sampler the layout would hold
+    // itself, are refused.
+    const combined = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .combined_image_sampler };
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&combined) }, &none));
+    fb.DestroyDescriptorSetLayout(device, none);
+    none = null;
+    const storage_image = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .storage_image };
+    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&storage_image) }, &none));
+    var kept: ?*facet.Sampler = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateSampler(device, &.{}, &kept));
+    defer fb.DestroySampler(device, kept);
+    const held = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .combined_image_sampler, .immutable_samplers = @ptrCast(&kept) };
+    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&held) }, &none));
     const twice = [2]facet.DescriptorSetLayoutBinding{ bindings[0], bindings[0] };
     try testing.expectEqual(facet.Result.error_initialization_failed, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 2, .bindings = &twice }, &none));
 
@@ -1710,6 +1723,222 @@ test "a cut-out texture drops its pixels and leaves no depth behind them" {
     try testing.expectEqual(@as(u32, 0xFFFF_0000), picture.at(40, 50));
     try testing.expectEqual(blue, picture.at(16, 20));
     try testing.expectEqual(blue, picture.at(4, 50));
+}
+
+/// What the sampler tests draw: one quad over the whole picture, with the
+/// set written with the sampler of the moment first, so that one frame a
+/// sampler shows what that sampler does.
+const SamplerFrame = struct {
+    bench: *Bench,
+    set: *facet.DescriptorSet,
+    layout: *facet.PipelineLayout,
+    pass: *facet.RenderPass,
+    frame: *facet.Framebuffer,
+    view: *facet.ImageView,
+    vertices: *facet.Buffer,
+    indices: *facet.Buffer,
+    cleared: *const [2]facet.ClearValue,
+
+    fn draw(frames: SamplerFrame, with: ?*facet.Sampler, pipeline: ?*facet.Pipeline) !void {
+        const fb = frames.bench.rig.fb;
+        const image_info = facet.DescriptorImageInfo{ .sampler = with, .image_view = frames.view };
+        const write = facet.WriteDescriptorSet{ .dst_set = frames.set, .dst_binding = 0, .descriptor_type = .combined_image_sampler, .image_info = @ptrCast(&image_info) };
+        fb.UpdateDescriptorSets(frames.bench.device, 1, @ptrCast(&write), 0, null);
+        const offset: u64 = 0;
+        const commands = try frames.bench.record();
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = frames.pass, .framebuffer = frames.frame, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 1, .clear_values = frames.cleared }, .@"inline");
+        fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&frames.vertices), @ptrCast(&offset));
+        fb.CmdBindIndexBuffer(commands, frames.indices, 0, .uint16);
+        fb.CmdBindDescriptorSets(commands, .graphics, frames.layout, 0, 1, @ptrCast(&frames.set), 0, null);
+        fb.CmdBindPipeline(commands, .graphics, pipeline.?);
+        fb.CmdDrawIndexed(commands, scenes.quad_indices.len, 1, 0, 0, 0);
+        fb.CmdEndRenderPass(commands);
+        try frames.bench.submit();
+    }
+};
+
+/// A quad over the whole picture, for the forms that sample through the
+/// sampler bound beside the texture.
+const SamplerScene = struct {
+    const quad = [4][3]f32{ .{ -1, -1, 0 }, .{ 1, -1, 0 }, .{ 1, 1, 0 }, .{ -1, 1, 0 } };
+
+    /// s and t from -0.5 to 1.5 over it, so that a quarter of the picture
+    /// at each edge lies past the texture: what the wrap puts there is what
+    /// shows.
+    fn wide(vertices: *const shader.Vertices) callconv(.c) void {
+        for (0..vertices.count) |k| {
+            const p = vertices.input(@intCast(k), 0);
+            vertices.output(@intCast(k))[0..6].* = .{ p[0], p[1], p[2], 1, p[0] + 0.5, p[1] + 0.5 };
+        }
+    }
+
+    /// s and t over the texture once, and a half as the reference a shadow
+    /// sample is compared with.
+    fn shadow(vertices: *const shader.Vertices) callconv(.c) void {
+        for (0..vertices.count) |k| {
+            const p = vertices.input(@intCast(k), 0);
+            vertices.output(@intCast(k))[0..7].* = .{ p[0], p[1], p[2], 1, (p[0] + 1) / 2, (p[1] + 1) / 2, 0.5 };
+        }
+    }
+
+    const entries = [_]shader.Entry{
+        shader.vertex("wide", &wide, 2),
+        shader.fixedFragment("wide", .{ .kind = .texture_sampled }),
+        shader.vertex("shadow", &shadow, 3),
+        shader.fixedFragment("shadow", .{ .kind = .texture_shadow }),
+    };
+    const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
+};
+
+test "a sampler bound beside the texture: the wrap and the border it says, and a shadow sample against a reference" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+
+    // The cores do the sampling, so they take everything a sampler says.
+    var features: facet.PhysicalDeviceFeatures = undefined;
+    fb.GetPhysicalDeviceFeatures(bench.physical, &features);
+    try testing.expect(features.samplers);
+    try testing.expect(features.sampler_anisotropy);
+    try testing.expect(!features.immutable_samplers);
+    try testing.expect(!features.unnormalized_coordinates);
+    var properties: facet.PhysicalDeviceProperties = undefined;
+    fb.GetPhysicalDeviceProperties(bench.physical, &properties);
+    try testing.expectEqual(@as(u32, 16), properties.limits.max_sampler_anisotropy);
+
+    // What CreateSampler has not got, and what it holds rather than refuses.
+    var refused: ?*facet.Sampler = null;
+    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateSampler(device, &.{ .unnormalized_coordinates = true }, &refused));
+    try testing.expect(refused == null);
+    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateSampler(device, &.{ .address_mode_u = .mirror_clamp_to_edge }, &refused));
+    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateSampler(device, &.{ .compare_enable = true, .compare_op = @enumFromInt(9) }, &refused));
+    var most: ?*facet.Sampler = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateSampler(device, &.{ .anisotropy_enable = true, .max_anisotropy = 1000 }, &most));
+    try testing.expectEqual(@as(f32, 16), _objects.of(_sampler.Sampler, most.?).kept.anisotropy);
+    // Without anisotropy_enable it is one sample, whatever was asked for.
+    var one: ?*facet.Sampler = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateSampler(device, &.{ .max_anisotropy = 8 }, &one));
+    try testing.expectEqual(@as(f32, 1), _objects.of(_sampler.Sampler, one.?).kept.anisotropy);
+    fb.DestroySampler(device, most);
+    fb.DestroySampler(device, one);
+    fb.DestroySampler(device, null);
+
+    // An 8 x 8 texture, red on the left and blue on the right: the red is
+    // where a shadow sample's depth is 1, the blue where it is 0.
+    const red: u32 = 0xFFFF_0000;
+    const blue: u32 = 0xFF00_00FF;
+    const white: u32 = 0xFFFF_FFFF;
+    const black: u32 = 0xFF00_0000;
+    const texture_image = try bench.bareImage(.{ .format = .r8g8b8a8_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST }, false);
+    const texture_view = try bench.viewOf(.{ .image = texture_image, .format = .r8g8b8a8_unorm });
+    const staging, const staged = try bench.buffer(8 * 8 * 4, facet.BUFFER_USAGE_TRANSFER_SRC);
+    for (0..8) |y| for (0..8) |x| {
+        staged[(y * 8 + x) * 4 ..][0..4].* = if (x < 4) .{ 255, 0, 0, 255 } else .{ 0, 0, 255, 255 };
+    };
+
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .combined_image_sampler, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &set_layout));
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    var pool: ?*facet.DescriptorPool = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool));
+    defer fb.DestroyDescriptorPool(device, pool);
+    var set: [1]?*facet.DescriptorSet = undefined;
+    try testing.expectEqual(facet.Result.success, fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &set));
+
+    const picture = try Picture.of(&bench, 64, 64);
+    const pass = try renderPass(&bench, .clear, false);
+    defer fb.DestroyRenderPass(device, pass);
+    const frame = try framebuffer(&bench, pass, &.{picture.view}, 64, 64);
+    defer fb.DestroyFramebuffer(device, frame);
+    const scene_module = try module(&bench, &SamplerScene.code);
+    defer fb.DestroyShaderModule(device, scene_module);
+    const layout = try pipelineLayout(&bench, &.{set_layout.?}, 0);
+    defer fb.DestroyPipelineLayout(device, layout);
+    const wide_result, const wide_pipeline = makePipeline(&bench, .{ .module = scene_module, .name = "wide", .layout = layout, .pass = pass });
+    try testing.expectEqual(facet.Result.success, wide_result);
+    defer fb.DestroyPipeline(device, wide_pipeline);
+    const shadow_result, const shadow_pipeline = makePipeline(&bench, .{ .module = scene_module, .name = "shadow", .layout = layout, .pass = pass });
+    try testing.expectEqual(facet.Result.success, shadow_result);
+    defer fb.DestroyPipeline(device, shadow_pipeline);
+
+    const vertices = SamplerScene.quad;
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
+    const indices = scenes.quad_indices;
+    const index_buffer, const index_bytes = try bench.buffer(@sizeOf(@TypeOf(indices)), facet.BUFFER_USAGE_INDEX_BUFFER);
+    @memcpy(index_bytes[0..@sizeOf(@TypeOf(indices))], std.mem.asBytes(&indices));
+    const region = facet.BufferImageCopy{ .image_extent = .{ .width = 8, .height = 8 } };
+    const clear = clears(0xFF00_FF00);
+
+    // The texture into the image once, before the frames that read it.
+    {
+        const commands = try bench.record();
+        fb.CmdCopyBufferToImage(commands, staging, texture_image, .transfer_dst_optimal, 1, @ptrCast(&region));
+        try bench.submit();
+    }
+
+    const frames = SamplerFrame{
+        .bench = &bench,
+        .set = set[0].?,
+        .layout = layout,
+        .pass = pass,
+        .frame = frame,
+        .view = texture_view,
+        .vertices = vertex_buffer,
+        .indices = index_buffer,
+        .cleared = &clear,
+    };
+
+    // Each wrap mode, read a quarter of the picture past the texture's left
+    // edge (column 12, where s is about -0.11) and inside it.
+    const Case = struct { mode: facet.SamplerAddressMode, outside: u32 };
+    for ([_]Case{
+        // The texture again: the far side of it, which is blue.
+        .{ .mode = .repeat, .outside = blue },
+        // Turned round, so the near side again: red.
+        .{ .mode = .mirrored_repeat, .outside = red },
+        .{ .mode = .clamp_to_edge, .outside = red },
+        .{ .mode = .clamp_to_border, .outside = white },
+    }) |case| {
+        var sampler: ?*facet.Sampler = null;
+        try testing.expectEqual(facet.Result.success, fb.CreateSampler(device, &.{
+            .mag_filter = .nearest,
+            .min_filter = .nearest,
+            .address_mode_u = case.mode,
+            .address_mode_v = case.mode,
+            .border_color = .float_opaque_white,
+        }, &sampler));
+        defer fb.DestroySampler(device, sampler);
+        try frames.draw(sampler, wide_pipeline);
+        try testing.expectEqual(case.outside, picture.at(12, 32));
+        // Inside it the texture itself, whatever the wrap: its left half
+        // and its right.
+        try testing.expectEqual(red, picture.at(20, 32));
+        try testing.expectEqual(blue, picture.at(44, 32));
+    }
+
+    // A combined image sampler written with no sampler: the form says so
+    // rather than sampling some other way.
+    try frames.draw(null, wide_pipeline);
+    try testing.expectEqual(shader.missing, picture.at(32, 32));
+
+    // The shadow form: the reference is 0.5, and what is compared is the
+    // red channel - 1 on the texture's left half, 0 on its right.
+    var shadow_sampler: ?*facet.Sampler = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateSampler(device, &.{
+        .mag_filter = .nearest,
+        .min_filter = .nearest,
+        .address_mode_u = .clamp_to_edge,
+        .address_mode_v = .clamp_to_edge,
+        .compare_enable = true,
+        .compare_op = .less,
+    }, &shadow_sampler));
+    defer fb.DestroySampler(device, shadow_sampler);
+    try frames.draw(shadow_sampler, shadow_pipeline);
+    try testing.expectEqual(white, picture.at(16, 32));
+    try testing.expectEqual(black, picture.at(48, 32));
 }
 
 /// Quads that fill the picture, at a depth, and what they fill it with.

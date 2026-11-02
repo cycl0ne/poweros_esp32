@@ -82,4 +82,19 @@ pub const LIBRARY_VERSION = 1;
 /// 65536 of them; the clear writes whole levels, which is right whatever
 /// order a level's texels are kept in - though not how wide one is, an 8888
 /// texel being kept spread over 64 bits in a texture.
-pub const LIBRARY_REVISION = 27;
+/// 28: samplers - CreateSampler and DestroySampler, the `sampler` and
+/// `combined_image_sampler` descriptors, and two fixed forms that sample
+/// through the one bound beside the texture rather than as the program was
+/// compiled: `texture_sampled` and `texture_shadow`. A sampler is what the
+/// fixed path has no room for: the two levels round a point mixed, a bias
+/// on the level and a clamp, mirrored and bordered edges, up to 16 samples
+/// along the longer axis, and a comparison with a reference in place of a
+/// colour. It is read for every sample, by floats and a pixel at a time
+/// (`texture.sampleBy`), where a fixed form's sampling is fixed point and a
+/// quad at a time - which is why both are here and the fixed forms are
+/// untouched. No QPU program reads a sampler, so such a pipeline is refused
+/// on the V3D and drawn on the cores, as a dropping form is
+/// (`PhysicalDeviceFeatures.samplers`). A layout's `immutable_samplers` and
+/// a sampler's `unnormalized_coordinates` are refused rather than passed
+/// over, so that no program is left thinking they took.
+pub const LIBRARY_REVISION = 28;
