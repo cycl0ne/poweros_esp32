@@ -122,6 +122,7 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
             // The limit is the library's sampling, not this device's TMU:
             // `sampler_anisotropy` below says who takes it.
             .max_sampler_anisotropy = _instance.max_sampler_anisotropy,
+            .timestamp_period_ns = _instance.timestamp_period_ns,
         },
     };
     const name = "VideoCore VII V3D 7.1";
@@ -142,6 +143,13 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // forms that want one are refused and drawn on the cores.
         .samplers = false,
         .sampler_anisotropy = false,
+        // The hardware's occlusion counter is not read yet, and what the
+        // QPUs were given is not counted either: a pool of either kind is
+        // refused on this device. A timestamp is the library's clock, which
+        // every device has (CmdWriteTimestamp).
+        .occlusion_queries = false,
+        .pipeline_statistics_queries = false,
+        .timestamp_queries = true,
         // The depth pre-pass is the rasterizer's (driver/cpu/raster/prepass.zig).
         .depth_prepass = false,
         .points_and_lines = true,
@@ -161,7 +169,7 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
     physical.queue_family = .{
         .queue_flags = facet.QUEUE_GRAPHICS | facet.QUEUE_COMPUTE | facet.QUEUE_TRANSFER,
         .queue_count = 1,
-        .timestamp_valid_bits = 0,
+        .timestamp_valid_bits = 64,
         .min_image_transfer_granularity = .{ .width = 1, .height = 1, .depth = 1 },
     };
     describeMemory(sys, &physical.memory);

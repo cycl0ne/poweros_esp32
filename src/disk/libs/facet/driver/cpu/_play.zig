@@ -38,6 +38,8 @@ const _vertices = @import("../_vertices.zig");
 const _compute = @import("../_compute.zig");
 const _transfer = @import("../_transfer.zig");
 const _draw = @import("_draw.zig");
+const _queries = @import("../_queries.zig");
+const _query = @import("../../query/_query.zig");
 
 pub const VertexBuffer = _vertices.VertexBuffer;
 
@@ -81,6 +83,9 @@ pub const Player = struct {
     /// Memory a draw's vertices are worked in, kept for the next.
     scratch: ?[*]u8 = null,
     scratch_bytes: usize = 0,
+    /// The query the work is counted into, between CmdBeginQuery and
+    /// CmdEndQuery; null while nothing counts.
+    query: ?_queries.Counting = null,
 };
 
 /// The player a queue keeps while its device lasts: false when there is no
@@ -204,8 +209,38 @@ fn playStream(queue: *Queue, stream: *const _stream.Stream) void {
             }
         },
         .bind_compute_pipeline => player.compute_pipeline = _stream.as(_command.BindComputePipeline, head).pipeline,
-        .dispatch => if (!player.drawing) _compute.dispatch(queue.device.sys, player.compute_pipeline, &player.compute_resources, _stream.as(_command.Dispatch, head).count),
-        .dispatch_indirect => if (!player.drawing) _compute.dispatchIndirect(queue.device.sys, player.compute_pipeline, &player.compute_resources, _stream.as(_command.DispatchIndirect, head)),
+        .dispatch => if (!player.drawing) _compute.dispatch(queue.device.sys, player.compute_pipeline, &player.compute_resources, _stream.as(_command.Dispatch, head).count, countersOf(player)),
+        .dispatch_indirect => if (!player.drawing) _compute.dispatchIndirect(queue.device.sys, player.compute_pipeline, &player.compute_resources, _stream.as(_command.DispatchIndirect, head), countersOf(player)),
+        .begin_query => {
+            const command = _stream.as(_command.BeginQuery, head);
+            // A pool of another kind, or a query past its last, counts
+            // nothing: CmdBeginQuery refuses what it can see while it is
+            // recorded, and the rest is said here.
+            player.query = _queries.begun(command);
+            if (player.query == null and command.query >= command.pool.count) noRoom(queue, "a query begun past the pool's last");
+        },
+        .end_query => {
+            const command = _stream.as(_command.EndQuery, head);
+            _queries.ended(command);
+            if (player.query) |counting| if (counting.pool == command.pool and counting.index == command.query) {
+                player.query = null;
+            };
+        },
+        .reset_query_pool => {
+            const command = _stream.as(_command.ResetQueryPool, head);
+            _query.reset(command.pool, command.first, command.count);
+            if (player.query) |counting| if (counting.pool == command.pool) {
+                player.query = null;
+            };
+        },
+        .write_timestamp => {
+            const command = _stream.as(_command.WriteTimestamp, head);
+            if (!_queries.stamped(queue.device.base, command)) noRoom(queue, "a timestamp a pool of another kind cannot hold");
+        },
+        .copy_query_results => {
+            const command = _stream.as(_command.CopyQueryResults, head);
+            if (!_queries.copied(command)) noRoom(queue, "a copy of query values that are not the buffer's");
+        },
         .execute_commands => {
             const command = _stream.as(_command.ExecuteCommands, head);
             for (_stream.items(_command.ExecuteCommands, *CommandBuffer, command, command.count)) |secondary| playStream(queue, &secondary.stream);
@@ -224,6 +259,12 @@ fn restart(player: *Player) void {
     player.compute_pipeline = null;
     player.compute_resources = .{};
     player.drawn = null;
+    player.query = null;
+}
+
+/// What the work of a command is counted into: the query begun, or nothing.
+fn countersOf(player: *const Player) *const _query.Counters {
+    return if (player.query) |*counting| &counting.counters else &_query.none;
 }
 
 /// The surface a framebuffer's colour attachment is: its image's memory,

@@ -19,6 +19,7 @@ Generated from the source by `./zig build autodoc`.
 - [BeginCommandBuffer](#begincommandbuffer) - The command buffer's recording begun.
 - [BindBufferMemory](#bindbuffermemory) - The buffer bound into a block of memory, at an offset.
 - [BindImageMemory](#bindimagememory) - The image bound into a block of memory, at an offset.
+- [CmdBeginQuery](#cmdbeginquery) - Recorded: query `query` of `pool` begun - what the draws and the dispatches until `CmdEndQuery` come to is counted into it.
 - [CmdBeginRenderPass](#cmdbeginrenderpass) - Recorded: a render pass begun, drawing into a framebuffer.
 - [CmdBindDescriptorSets](#cmdbinddescriptorsets) - Recorded: descriptor sets bound, from set `first_set` on.
 - [CmdBindIndexBuffer](#cmdbindindexbuffer) - Recorded: the index buffer CmdDrawIndexed reads.
@@ -31,18 +32,21 @@ Generated from the source by `./zig build autodoc`.
 - [CmdCopyBufferToImage](#cmdcopybuffertoimage) - Recorded: rectangles of texels copied from a buffer into an image.
 - [CmdCopyImage](#cmdcopyimage) - Recorded: a rectangle of texels copied from one image to another, as they are.
 - [CmdCopyImageToBuffer](#cmdcopyimagetobuffer) - Recorded: a rectangle of texels copied from an image to a buffer.
+- [CmdCopyQueryPoolResults](#cmdcopyquerypoolresults) - Recorded: what `count` queries from `first` counted, written into a buffer as `GetQueryPoolResults` writes it into memory.
 - [CmdDispatch](#cmddispatch) - Recorded: the compute function bound run, for each of the groups.
 - [CmdDispatchIndirect](#cmddispatchindirect) - Recorded: as CmdDispatch, its numbers in a buffer.
 - [CmdDraw](#cmddraw) - Recorded: vertices drawn, in the order they are in the vertex buffers.
 - [CmdDrawIndexed](#cmddrawindexed) - Recorded: vertices drawn in the order the index buffer gives them.
 - [CmdDrawIndexedIndirect](#cmddrawindexedindirect) - Recorded: draws whose numbers, as CmdDrawIndexed takes them, are in a buffer.
 - [CmdDrawIndirect](#cmddrawindirect) - Recorded: draws whose numbers, as CmdDraw takes them, are in a buffer.
+- [CmdEndQuery](#cmdendquery) - Recorded: the query ended - nothing after it is counted into it - and what it counted made available.
 - [CmdEndRenderPass](#cmdendrenderpass) - Recorded: the render pass ended, and what it drew stored.
 - [CmdExecuteCommands](#cmdexecutecommands) - Recorded: secondary command buffers played, in the order given.
 - [CmdFillBuffer](#cmdfillbuffer) - Recorded: a run of a buffer set to one value, four bytes at a time.
 - [CmdNextSubpass](#cmdnextsubpass) - Recorded: what the subpass drew stored, and the next subpass begun.
 - [CmdPipelineBarrier](#cmdpipelinebarrier) - Recorded: a barrier between the work before it and the work after.
 - [CmdPushConstants](#cmdpushconstants) - Recorded: bytes of push constants set.
+- [CmdResetQueryPool](#cmdresetquerypool) - Recorded: `count` queries from `first` set back to nothing counted and not available.
 - [CmdSetBlendConstants](#cmdsetblendconstants) - Recorded: the blend constants, for a pipeline that leaves them to commands.
 - [CmdSetLineWidth](#cmdsetlinewidth) - Recorded: the width of lines, for a pipeline that leaves it to commands.
 - [CmdSetScissor](#cmdsetscissor) - Recorded: the scissor, for a pipeline that leaves it to commands.
@@ -51,6 +55,7 @@ Generated from the source by `./zig build autodoc`.
 - [CmdSetStencilWriteMask](#cmdsetstencilwritemask) - Recorded: the stencil test's write mask, for a pipeline that leaves it to commands.
 - [CmdSetViewport](#cmdsetviewport) - Recorded: the viewport, for a pipeline that leaves it to commands.
 - [CmdUpdateBuffer](#cmdupdatebuffer) - Recorded: bytes written into a buffer, kept with the command.
+- [CmdWriteTimestamp](#cmdwritetimestamp) - Recorded: the clock written into query `query` of `pool` when the command is played.
 - [CreateBuffer](#createbuffer) - A buffer of so many bytes, for what its usage says.
 - [CreateCommandPool](#createcommandpool) - A pool the device's command buffers are allocated from.
 - [CreateComputePipelines](#createcomputepipelines) - `count` compute pipelines, one for each of `infos`, into `pipelines`.
@@ -64,6 +69,7 @@ Generated from the source by `./zig build autodoc`.
 - [CreateImageView](#createimageview) - A view of an image: the levels of it a texture descriptor samples, or what a framebuffer draws into.
 - [CreateInstance](#createinstance) - A program's hold on the library, through which it finds the devices.
 - [CreatePipelineLayout](#createpipelinelayout) - A pipeline layout: the descriptor sets and the push constants a pipeline's shaders read.
+- [CreateQueryPool](#createquerypool) - A query pool: `query_count` queries of one kind, nothing counted yet.
 - [CreateRenderPass](#createrenderpass) - A render pass: the attachments it draws into, what each starts with and what is kept of it.
 - [CreateSampler](#createsampler) - A sampler: the filter, the levels, the edges and the comparison a texture bound beside it is sampled with.
 - [CreateScreenSurface](#createscreensurface) - A surface over a screen the program has opened, written to `surface`.
@@ -83,6 +89,7 @@ Generated from the source by `./zig build autodoc`.
 - [DestroyInstance](#destroyinstance) - The instance given back.
 - [DestroyPipeline](#destroypipeline) - The pipeline given back: no submission still drawing with it.
 - [DestroyPipelineLayout](#destroypipelinelayout) - The pipeline layout given back.
+- [DestroyQueryPool](#destroyquerypool) - The pool given back.
 - [DestroyRenderPass](#destroyrenderpass) - The render pass given back.
 - [DestroySampler](#destroysampler) - The sampler given back.
 - [DestroySemaphore](#destroysemaphore) - The semaphore given back.
@@ -109,6 +116,7 @@ Generated from the source by `./zig build autodoc`.
 - [GetPhysicalDeviceSurfaceFormats](#getphysicaldevicesurfaceformats) - The formats a swapchain on the surface can have into `formats`, at most `count.*` of them, and how many there are into `count`; null for `formats` counts alone.
 - [GetPhysicalDeviceSurfacePresentModes](#getphysicaldevicesurfacepresentmodes) - The present modes of the surface into `modes`, at most `count.*` of them, and how many there are into `count`; null for `modes` counts alone.
 - [GetPhysicalDeviceSurfaceSupport](#getphysicaldevicesurfacesupport) - Whether queue family `family` can present to the surface, into `supported`.
+- [GetQueryPoolResults](#getquerypoolresults) - What `count` queries from `first` counted, written into `data`.
 - [GetSwapchainImages](#getswapchainimages) - The swapchain's images into `images`, at most `count.*` of them, and how many there are into `count`; null for `images` counts alone.
 - [MapMemory](#mapmemory) - The address of a block's memory, from an offset on.
 - [QueuePresent](#queuepresent) - Images handed to the queue to be shown, once the semaphores are signalled.
@@ -575,6 +583,84 @@ None known.
 
 ```zig
 if (fb.BindImageMemory(device, picture, memory, 0) != .success) return error.NoBind;
+```
+
+## CmdBeginQuery
+
+Recorded: query `query` of `pool` begun - what the draws and the dispatches until `CmdEndQuery` come to is counted into it.
+
+**SYNOPSIS**
+
+```zig
+fn CmdBeginQuery(base: *FacetBase, buffer: *facet.CommandBuffer, pool: *facet.QueryPool, query: u32, flags: u32) void
+```
+
+**SINCE**
+
+1.29. LVO -468.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording.
+- `pool` - an occlusion or a statistics pool; a timestamp pool has
+  nothing to begin and the command is left out of the frame, said in
+  the log.
+- `query` - which query of it; one past its last is left out the same
+  way.
+- `flags` - `QUERY_CONTROL_PRECISE`, which changes nothing: every
+  sample is counted either way.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+An occlusion query counts the samples that passed the depth and the
+stencil test and were not dropped by the fragment function; a statistics
+query counts what each stage was given and handed on, one value for each
+statistic the pool was made with.
+
+What is counted is added to what the query holds, so a query begun and
+ended twice over without a reset in between holds the sum. One begun
+while another of the same pool is being counted into takes its place:
+commands are played one after another, and the library counts into one
+query at a time.
+
+The pixels of a render pass are shaded when its tiles are drawn, at the
+end of the pass: a query begun and ended inside a pass counts the draws
+between them, and the count lands when the pass does.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The pool has to last until the work is done.
+
+**NOTES**
+
+Vulkan's rule that a query is reset before it is used holds here too:
+a pool is made counting nothing, and `CmdResetQueryPool` puts it back.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CmdEndQuery`, `CmdResetQueryPool`, `CreateQueryPool`
+
+**EXAMPLES**
+
+```zig
+fb.CmdBeginQuery(commands, counted, 0, 0);
+fb.CmdDrawIndexed(commands, indices.len, 1, 0, 0, 0);
+fb.CmdEndQuery(commands, counted, 0);
 ```
 
 ## CmdBeginRenderPass
@@ -1343,6 +1429,77 @@ None known.
 fb.CmdCopyImageToBuffer(commands, picture.?, .general, readback.?, 1, @ptrCast(&region));
 ```
 
+## CmdCopyQueryPoolResults
+
+Recorded: what `count` queries from `first` counted, written into a buffer as `GetQueryPoolResults` writes it into memory.
+
+**SYNOPSIS**
+
+```zig
+fn CmdCopyQueryPoolResults(base: *FacetBase, buffer: *facet.CommandBuffer, pool: *facet.QueryPool, first: u32, count: u32, destination: *facet.Buffer, offset: u64, stride: u64, flags: u32) void
+```
+
+**SINCE**
+
+1.29. LVO -484.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording.
+- `pool`, `first`, `count` - the queries read.
+- `destination`, `offset` - the buffer written and where in it.
+- `stride` - the bytes from one query's values to the next.
+- `flags` - as `GetQueryPoolResults` takes them, `QUERY_RESULT_WAIT`
+  apart: the commands are played in order, so a query ended before this
+  one is already written.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+Played, a copy whose values would lie past the end of the buffer is left
+out and said to be in the log, as every command that will not fit is.
+A query that is not available writes nothing unless `QUERY_RESULT_PARTIAL`
+says to write what it has counted so far, and
+`QUERY_RESULT_WITH_AVAILABILITY` puts a value after each query's saying
+which it was.
+
+`QUERY_RESULT_WAIT` is passed over: a value this command reads was
+written by a command before it, which is finished by the time this one
+is played.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The pool and the buffer have to last until the work is done.
+
+**NOTES**
+
+This is how a program keeps what a frame counted without waiting for it:
+the values go into a buffer it reads when it pleases.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`GetQueryPoolResults`, `CmdEndQuery`
+
+**EXAMPLES**
+
+```zig
+fb.CmdCopyQueryPoolResults(commands, counted, 0, 1, readings, 0, 8, facet.QUERY_RESULT_64);
+```
+
 ## CmdDispatch
 
 Recorded: the compute function bound run, for each of the groups.
@@ -1732,6 +1889,69 @@ None known.
 fb.CmdDrawIndirect(commands, numbers, 0, 2, @sizeOf(facet.DrawIndirectCommand));
 ```
 
+## CmdEndQuery
+
+Recorded: the query ended - nothing after it is counted into it - and what it counted made available.
+
+**SYNOPSIS**
+
+```zig
+fn CmdEndQuery(base: *FacetBase, buffer: *facet.CommandBuffer, pool: *facet.QueryPool, query: u32) void
+```
+
+**SINCE**
+
+1.29. LVO -472.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording.
+- `pool`, `query` - the query `CmdBeginQuery` begun.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+The query is available from then on, which is what
+`GetQueryPoolResults` answers `success` for. Its value is whole once the
+submission is done: the pixels a pass shaded are counted while its tiles
+are drawn, which is after the command that ended the query if the query
+was ended inside the pass.
+
+An end without a begin, or of another query than the one being counted
+into, makes the query available with what it holds.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The pool has to last until the work is done.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CmdBeginQuery`, `GetQueryPoolResults`
+
+**EXAMPLES**
+
+```zig
+fb.CmdEndQuery(commands, counted, 0);
+```
+
 ## CmdEndRenderPass
 
 Recorded: the render pass ended, and what it drew stored.
@@ -2110,6 +2330,67 @@ None known.
 
 ```zig
 fb.CmdPushConstants(commands, layout.?, facet.SHADER_STAGE_VERTEX, 0, @sizeOf(Matrix), &transform);
+```
+
+## CmdResetQueryPool
+
+Recorded: `count` queries from `first` set back to nothing counted and not available.
+
+**SYNOPSIS**
+
+```zig
+fn CmdResetQueryPool(base: *FacetBase, buffer: *facet.CommandBuffer, pool: *facet.QueryPool, first: u32, count: u32) void
+```
+
+**SINCE**
+
+1.29. LVO -476.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording.
+- `pool` - the pool.
+- `first`, `count` - the queries reset; those past its last are left
+  alone.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+Played in its turn, as every command is: a reset recorded before the
+draws of a frame leaves the queries counting that frame alone, which is
+how a frame loop reads one pool over and over.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The pool has to last until the work is done.
+
+**NOTES**
+
+A pool is made counting nothing, so the first frame needs no reset; the
+ones after it do, and Vulkan asks for one before every use.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CmdBeginQuery`, `CreateQueryPool`
+
+**EXAMPLES**
+
+```zig
+fb.CmdResetQueryPool(commands, counted, 0, 1);
 ```
 
 ## CmdSetBlendConstants
@@ -2584,6 +2865,80 @@ None known.
 ```zig
 const matrix: [16]f32 = transform;
 fb.CmdUpdateBuffer(commands, uniforms.?, 0, @sizeOf(@TypeOf(matrix)), &matrix);
+```
+
+## CmdWriteTimestamp
+
+Recorded: the clock written into query `query` of `pool` when the command is played.
+
+**SYNOPSIS**
+
+```zig
+fn CmdWriteTimestamp(base: *FacetBase, buffer: *facet.CommandBuffer, stage: u32, pool: *facet.QueryPool, query: u32) void
+```
+
+**SINCE**
+
+1.29. LVO -480.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording.
+- `stage` - the `PIPELINE_STAGE_` the time is asked for at; every stage
+  is the same moment here, see below.
+- `pool` - a timestamp pool; one of another kind is left out of the
+  frame and said to be in the log.
+- `query` - which query of it.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+The value is the E-clock in microseconds, which is what
+`PhysicalDeviceLimits.timestamp_period_ns` of 1000 says; the query is
+available from then on.
+
+The commands of a buffer are played one after another, each finished
+before the next starts - on the cores by the queue's task itself, on the
+V3D by waiting for the frame's interrupts - so a timestamp is the moment
+everything recorded before it was done, whatever `stage` asks for. Two
+of them round a render pass measure that pass.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The pool has to last until the work is done.
+
+**NOTES**
+
+Without timer.device there is no clock to read:
+`PhysicalDeviceFeatures.timestamp_queries` is false then and
+CreateQueryPool refuses the kind, so this cannot be reached.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateQueryPool`, `GetQueryPoolResults`
+
+**EXAMPLES**
+
+```zig
+fb.CmdWriteTimestamp(commands, facet.PIPELINE_STAGE_TOP_OF_PIPE, times, 0);
+fb.CmdBeginRenderPass(commands, &begin, .@"inline");
+// ... the frame ...
+fb.CmdEndRenderPass(commands);
+fb.CmdWriteTimestamp(commands, facet.PIPELINE_STAGE_BOTTOM_OF_PIPE, times, 1);
 ```
 
 ## CreateBuffer
@@ -3544,6 +3899,85 @@ None known.
 const push = facet.PushConstantRange{ .stage_flags = facet.SHADER_STAGE_VERTEX, .size = 64 };
 var layout: ?*facet.PipelineLayout = null;
 _ = fb.CreatePipelineLayout(device, &.{ .set_layout_count = 1, .set_layouts = @ptrCast(&set_layout), .push_constant_range_count = 1, .push_constant_ranges = @ptrCast(&push) }, &layout);
+```
+
+## CreateQueryPool
+
+A query pool: `query_count` queries of one kind, nothing counted yet.
+
+**SYNOPSIS**
+
+```zig
+fn CreateQueryPool(base: *FacetBase, device: *facet.Device, info: *const facet.QueryPoolCreateInfo, pool: *?*facet.QueryPool) facet.Result
+```
+
+**SINCE**
+
+1.29. LVO -456.
+
+**INPUTS**
+
+- `device` - the device whose work is counted.
+- `info` - the kind, how many queries, and for `pipeline_statistics`
+  which statistics each one counts.
+- `pool` - where the pool is written; null when it fails.
+
+**RESULT**
+
+`success`; `error_feature_not_present` for a kind this device has not
+got (`PhysicalDeviceFeatures.occlusion_queries`,
+`pipeline_statistics_queries`, `timestamp_queries`), for a statistic
+there is no stage for - either of the geometry shader's - or for a bit
+that is none of Vulkan's; `error_initialization_failed` for no queries
+at all, or a statistics pool that counts nothing;
+`error_out_of_host_memory`.
+
+**BEHAVIOR**
+
+A query holds one value, or for `pipeline_statistics` one for each
+statistic asked for, in the order of their bits. Every query starts not
+available and counting nothing, as `CmdResetQueryPool` leaves it; Vulkan
+asks for a reset before a query is used all the same, and a program that
+means to be read elsewhere should do it.
+
+Which kinds a device has is what it counts with: the occlusion and the
+statistics are counted by the rasterizer and the calls round it, so they
+are the cores'; a timestamp is the E-clock read as the command is
+played, which every device does - where the machine has timer.device, or
+there is no clock to read and the kind is refused.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The pool is the caller's, until DestroyQueryPool. Its values are written
+by the queue's task and by the cores that draw the tiles, so it has to
+last until the work that names it is done.
+
+**NOTES**
+
+There is one pool for each kind, as in Vulkan: a pool of statistics does
+not also count samples.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CmdBeginQuery`, `CmdWriteTimestamp`, `GetQueryPoolResults`,
+`DestroyQueryPool`
+
+**EXAMPLES**
+
+```zig
+var counted: ?*facet.QueryPool = null;
+_ = fb.CreateQueryPool(device, &.{ .query_type = .occlusion, .query_count = 1 }, &counted);
 ```
 
 ## CreateRenderPass
@@ -4805,6 +5239,63 @@ None known.
 
 ```zig
 fb.DestroyPipelineLayout(device, layout);
+```
+
+## DestroyQueryPool
+
+The pool given back.
+
+**SYNOPSIS**
+
+```zig
+fn DestroyQueryPool(base: *FacetBase, device: *facet.Device, pool: ?*facet.QueryPool) void
+```
+
+**SINCE**
+
+1.29. LVO -460.
+
+**INPUTS**
+
+- `device` - the device it was made on.
+- `pool` - the pool, or null, which does nothing.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+No command buffer that names it may be pending: the queue's task and the
+cores that draw the tiles write its values as the work is done.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The pool is gone.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateQueryPool`
+
+**EXAMPLES**
+
+```zig
+fb.DestroyQueryPool(device, counted);
 ```
 
 ## DestroyRenderPass
@@ -6417,6 +6908,87 @@ None known.
 var supported = false;
 _ = fb.GetPhysicalDeviceSurfaceSupport(physical, 0, surface.?, &supported);
 if (!supported) return error.CannotShow;
+```
+
+## GetQueryPoolResults
+
+What `count` queries from `first` counted, written into `data`.
+
+**SYNOPSIS**
+
+```zig
+fn GetQueryPoolResults(base: *FacetBase, device: *facet.Device, pool: *facet.QueryPool, first: u32, count: u32, size: usize, data: *anyopaque, stride: u64, flags: u32) facet.Result
+```
+
+**SINCE**
+
+1.29. LVO -464.
+
+**INPUTS**
+
+- `device` - the device the pool was made on.
+- `pool` - the pool.
+- `first`, `count` - the queries read; those past the pool's last are
+  left out.
+- `size`, `data` - the bytes written into, and how many there are.
+- `stride` - the bytes from one query's values to the next.
+- `flags` - `QUERY_RESULT_64` for values of 8 bytes rather than 4,
+  `QUERY_RESULT_WAIT` to wait for the work rather than answer
+  `not_ready`, `QUERY_RESULT_WITH_AVAILABILITY` for a value after each
+  query's saying whether it is available, `QUERY_RESULT_PARTIAL` to
+  write what a query not available has counted so far.
+
+**RESULT**
+
+`success` where every query read was available; `not_ready` where one
+was not, the others written all the same; `error_device_lost`;
+`error_out_of_host_memory` where `size` is too small for what was asked
+for, nothing written past what fitted.
+
+**BEHAVIOR**
+
+A statistics query writes one value for each statistic it counts, in the
+order of their bits; the other kinds write one. Without
+`QUERY_RESULT_64` a value is 4 bytes and one that will not fit is held
+at 0xFFFFFFFF, where Vulkan leaves it undefined.
+
+`QUERY_RESULT_WAIT` waits for the device's queue to go idle, which is
+when everything recorded before has been played and every value is
+written. Without it the answer is what is there: a query is available
+once the command that ended it was played, and the pixels a pass shaded
+are counted as its tiles are drawn, at the end of the pass - so a
+program that reads values without waiting for the fence of the
+submission that counted them may read a sum still being added to.
+
+**CONTEXT**
+
+- Waits: with `QUERY_RESULT_WAIT`, for the queue.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+`data` is the caller's.
+
+**NOTES**
+
+`CmdCopyQueryPoolResults` writes the same values into a buffer as part
+of a command buffer, which wants no wait at all.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateQueryPool`, `CmdEndQuery`, `CmdCopyQueryPoolResults`
+
+**EXAMPLES**
+
+```zig
+var samples: u64 = 0;
+_ = fb.GetQueryPoolResults(device, counted, 0, 1, @sizeOf(u64), &samples, @sizeOf(u64), facet.QUERY_RESULT_64 | facet.QUERY_RESULT_WAIT);
 ```
 
 ## GetSwapchainImages

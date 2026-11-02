@@ -244,4 +244,20 @@ void CmdClearColorImage(*facet.CommandBuffer buffer, *facet.Image image, facet.I
 facet.Result CreateSampler(*facet.Device device, *const facet.SamplerCreateInfo info, *?*facet.Sampler sampler)
 /// The sampler given back: no set that holds it drawn with any more.
 void DestroySampler(*facet.Device device, ?*facet.Sampler sampler)
+/// A query pool, written to `pool`: where what a frame's work came to is counted.
+facet.Result CreateQueryPool(*facet.Device device, *const facet.QueryPoolCreateInfo info, *?*facet.QueryPool pool)
+/// The pool given back: no command buffer that names it pending any more.
+void DestroyQueryPool(*facet.Device device, ?*facet.QueryPool pool)
+/// `count` queries from `first` into `data`, `stride` bytes apart.
+facet.Result GetQueryPoolResults(*facet.Device device, *facet.QueryPool pool, u32 first, u32 count, usize size, *anyopaque data, u64 stride, u32 flags)
+/// Recorded: query `query` of `pool` begun, counting what follows.
+void CmdBeginQuery(*facet.CommandBuffer buffer, *facet.QueryPool pool, u32 query, u32 flags)
+/// Recorded: the query ended, and what it counted made available.
+void CmdEndQuery(*facet.CommandBuffer buffer, *facet.QueryPool pool, u32 query)
+/// Recorded: `count` queries from `first` set back to nothing counted.
+void CmdResetQueryPool(*facet.CommandBuffer buffer, *facet.QueryPool pool, u32 first, u32 count)
+/// Recorded: the clock written into query `query`, as the command is played.
+void CmdWriteTimestamp(*facet.CommandBuffer buffer, u32 stage, *facet.QueryPool pool, u32 query)
+/// Recorded: the queries' values written into a buffer, as GetQueryPoolResults gives them.
+void CmdCopyQueryPoolResults(*facet.CommandBuffer buffer, *facet.QueryPool pool, u32 first, u32 count, *facet.Buffer destination, u64 offset, u64 stride, u32 flags)
 ##end
