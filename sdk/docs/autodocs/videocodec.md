@@ -474,7 +474,7 @@ language and name. Of the pictures only the track being decoded is
 VTRK_DECODED. A sound track is when the stream has audiocodec.library
 - it was opened with sound, from a file - and the library's version
 decodes its codec: AAC since 1.6, MP3, FLAC and Vorbis since 1.7,
-AC-3 and E-AC-3 since 1.8. Subtitles are when they are SubRip's,
+AC-3 and E-AC-3 since 1.8, Opus since 1.9, DTS since 1.11. Subtitles are when they are SubRip's,
 SubStation Alpha's, timed text or a Blu-ray's pictures (PGS), and the
 stream was opened from a file.
 
