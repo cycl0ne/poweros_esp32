@@ -311,8 +311,8 @@ const Text = sdk.locale.Strings(strings);
 const Id = strings.Id;
 
 pub const COMMAND_NAME = "Player";
-const VERSION = "1.26";
-const DATE = "29.10.2026";
+const VERSION = "1.27";
+const DATE = "02.11.2026";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (" ++ DATE ++ ")\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while the window is active.
@@ -3094,11 +3094,24 @@ const App = struct {
         const engine = app.engine;
         engine.heard(&app.left, &app.right);
         app.visual.draw(pixels, app.width, app.height, app.width, &app.left, &app.right, @max(engine.info.rate, 8000));
+        // Over the whole screen the picture and the title laid over it
+        // are one piece of work. Every drawing call hands what it wrote
+        // to the display as it finishes, so the picture went on its own
+        // and the title's four Text calls - a shadow and itself, for the
+        // artist and for the title - one after another behind it: the
+        // title was on the glass for part of each look and gone from it
+        // for the rest, which is a flicker at the look rate. Gathered
+        // into one batch they reach the display together. The box around
+        // them is the picture's, the whole window, so nothing more is
+        // sent than before.
+        const batched = app.whole != null;
+        if (batched) app.gb.BeginDraw(rp);
         app.gb.WritePixelArray(rp, @ptrCast(pixels), app.width * 4, @intFromEnum(PixelFormat.bgra32), 0, 0, &.{
             .max_x = @intCast(app.width),
             .max_y = @intCast(app.height),
         });
         if (app.whole) |*shown| shown.overlay(app.gb) else app.ib.QueueGadgetRefresh(app.picture);
+        if (batched) app.gb.EndDraw(rp);
     }
 
     /// The picture over the whole screen, the song's title faded in over

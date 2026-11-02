@@ -142,6 +142,12 @@ pub const Whole = struct {
 
     /// The title and the artist over the picture just written, as bright
     /// as this look of their fading has them.
+    ///
+    /// It draws four times - a shadow and the text itself, for each of
+    /// the two lines - so the caller holds it and the picture under it in
+    /// one batch (graphics' `BeginDraw`/`EndDraw`), or the display is
+    /// given the picture without the title and then the title, and the
+    /// title flickers at the look rate.
     pub fn overlay(whole: *Whole, gb: *GraphicsBase) void {
         if (whole.age >= gone) return;
         defer whole.age += 1;
