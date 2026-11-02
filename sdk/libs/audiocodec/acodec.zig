@@ -34,6 +34,40 @@ const interface_media = @import("../../interface/media.zig");
 /// Where the modules are, as OpenLibrary is given it.
 pub const ACODEC_PREFIX = "codecs/";
 
+/// `ResidentACodec.magic`, after a module's library tag: "ACOD".
+pub const ACODEC_MAGIC: u32 = 0x4143_4F44;
+
+/// `ResidentACodec.kind`: a chip's decoder, tried before software.
+pub const ACMOD_CHIP: u32 = 1;
+/// `ResidentACodec.kind`: decoded by the processor.
+pub const ACMOD_SOFTWARE: u32 = 2;
+
+/// A sound module's ROM tag: a library's, with what it decodes after it,
+/// as a picture module's is (`vcodec.ResidentVCodec`) - the two layouts
+/// are the same, so whoever reads one reads the other.
+///
+/// audiocodec.library reads this out of the module's file without loading
+/// it, to know what the disk decodes and which module to open for a kind.
+/// A module whose file holds no such tag is not a sound module to it.
+pub const ResidentACodec = extern struct {
+    resident: exec.Resident,
+    magic: u32 = ACODEC_MAGIC,
+    /// The kinds it decodes, a bit each: `codecBit(ACODEC_DTS)`.
+    /// ac3.acodec has AC-3's and E-AC-3's both.
+    codecs: u32,
+    /// ACMOD_CHIP or ACMOD_SOFTWARE. Nothing is a chip's yet: no board
+    /// here has a decoder for a kind of sound in hardware.
+    kind: u32 = ACMOD_SOFTWARE,
+    /// Among the modules of a kind for one sound kind, the higher is
+    /// tried first.
+    priority: i32 = 0,
+};
+
+/// A kind's bit in `ResidentACodec.codecs`.
+pub fn codecBit(codec: u32) u32 {
+    return if (codec < 32) @as(u32, 1) << @intCast(codec) else 0;
+}
+
 /// `ACodecStream.layout`: which layout the stream has. Raised whenever
 /// the structures here change.
 pub const ACODEC_LAYOUT: u32 = 1;

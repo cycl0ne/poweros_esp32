@@ -32,6 +32,30 @@ const interface_utility = @import("../../interface/utility.zig");
 /// Where the modules are, as OpenLibrary is given it.
 pub const MCONTAINER_PREFIX = "codecs/";
 
+/// `ResidentMContainer.magic`, after a module's library tag: "MCON".
+pub const MCONTAINER_MAGIC: u32 = 0x4D43_4F4E;
+
+/// A container module's ROM tag: a library's, with what it reads after
+/// it, as a sound module's is (`acodec.ResidentACodec`). media.library
+/// reads it out of the module's file without loading it.
+///
+/// There is no chip kind here as sound and pictures have: a container is
+/// read, never decoded, and no part does that in hardware. `priority`
+/// orders two modules that read the same kind.
+pub const ResidentMContainer = extern struct {
+    resident: exec.Resident,
+    magic: u32 = MCONTAINER_MAGIC,
+    /// The kinds it reads, a bit each: `kindBit(MEDIA_MP4)`.
+    kinds: u32,
+    /// Among the modules for one kind, the higher is tried first.
+    priority: i32 = 0,
+};
+
+/// A kind's bit in `ResidentMContainer.kinds`.
+pub fn kindBit(kind: u32) u32 {
+    return if (kind < 32) @as(u32, 1) << @intCast(kind) else 0;
+}
+
 /// `MediaContainerFile.layout`: which layout the file has. Raised whenever
 /// the structures here change.
 pub const MCONTAINER_LAYOUT: u32 = 1;
