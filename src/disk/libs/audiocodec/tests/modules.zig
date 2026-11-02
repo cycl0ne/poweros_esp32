@@ -31,6 +31,9 @@ pub const Made = [tags.len]*exec.Library;
 
 /// MP3's module, among them.
 pub const mp3 = 1;
+/// Opus's: a test that takes its name away has a kind the library knows
+/// and this disk cannot decode, as a board without the module has.
+pub const opus = 6;
 
 pub fn make(kexec: anytype, made: *Made) !void {
     for (tags, made) |entry, *lib| {

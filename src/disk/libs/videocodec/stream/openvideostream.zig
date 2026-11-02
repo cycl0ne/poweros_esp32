@@ -222,6 +222,15 @@ fn openSound(s: *Stream, track: u32) void {
     const acb: *AudioCodecBase = @ptrCast(lib);
     s.sound_lib = lib;
     s.acb = acb;
+    // Which kinds this disk decodes, asked once: the modules of the large
+    // kinds are on the 64-bit disks alone, so the library's version does
+    // not answer it (SINCE audiocodec.library 1.12).
+    if (lib.version > 1 or lib.revision >= 12) {
+        s.sound_kinds_known = acb.GetAudioStreamAttrs(null, &[_]utility.TagItem{
+            .{ .tag = ac.ACA_Codecs, .data = @intFromPtr(&s.sound_kinds) },
+            .{},
+        }) != 0;
+    }
     var info: media.MediaTrack = .{};
     if (track == vc.VIDEO_NO_TRACK or s.mb.GetMediaTrack(s.file, track, &info) != media.MERR_OK or info.kind != media.MTRACK_AUDIO) return;
     var err: i32 = ac.ACERR_OK;

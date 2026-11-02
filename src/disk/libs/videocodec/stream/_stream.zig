@@ -68,6 +68,13 @@ pub const Stream = struct {
     sound: ?*ac.AudioStream,
     sound_info: ac.AudioStreamInfo,
     sound_lock: exec.SignalSemaphore,
+    /// Which kinds of sound the library said this machine decodes, a bit
+    /// per ACODEC_* (audiocodec.library's ACA_Codecs), and whether it
+    /// said: asked once as the film was opened, since the answer is the
+    /// disk's and does not change under a film. A library older than 1.12
+    /// cannot say, and then `soundDecodes` goes by its version instead.
+    sound_kinds: u32,
+    sound_kinds_known: bool,
     /// The tracks chosen: the sound's, the subtitles' - VIDEO_NO_TRACK for
     /// none - and the reader of the subtitles, once there have been any.
     sound_track: u32,
@@ -155,16 +162,28 @@ pub fn decodes(s: *const Stream, number: u32, track: *const media.MediaTrack) bo
     };
 }
 
-/// Whether the stream's audiocodec.library decodes `codec`: AAC since
-/// 1.6, MP3, FLAC and Vorbis since 1.7, AC-3 and E-AC-3 since 1.8, Opus
-/// since 1.9, DTS since 1.11.
+/// Whether the stream's audiocodec.library decodes `codec`.
 ///
-/// A codec the library has gained since must be added here, or a track
-/// of it is listed as nothing decodes (GetVideoTrack's VTRK_DECODED) and
-/// SelectVideoTrack refuses it, although opening it would have played:
-/// openSound asks the library itself and does not come through here.
+/// Since audiocodec.library 1.12 the library itself says which kinds its
+/// disk holds a module for (`ACA_Codecs`, asked as the film was opened),
+/// which is the true answer: the large decoders are on the 64-bit disks
+/// alone, so the same library decodes DTS on a VisionFive 2 and not on an
+/// ESP32-P4.
+///
+/// An older library cannot be asked, and its version is taken instead:
+/// AAC since 1.6, MP3, FLAC and Vorbis since 1.7, AC-3 and E-AC-3 since
+/// 1.8, Opus since 1.9, DTS since 1.11. That is a guess about a disk from
+/// a version number, and a codec the library gains has to be added here
+/// or a track of it is listed as decoded by nothing (GetVideoTrack's
+/// VTRK_DECODED) and SelectVideoTrack refuses it, although opening it
+/// would have played - openSound asks the library and does not come
+/// through here.
 fn soundDecodes(s: *const Stream, codec: u32) bool {
     const lib = s.sound_lib orelse return false;
+    if (s.sound_kinds_known) {
+        const kind = soundKindOf(codec) orelse return false;
+        return s.sound_kinds & (@as(u32, 1) << @intCast(kind)) != 0;
+    }
     const since: u16 = switch (codec) {
         media.MCODEC_AAC => 6,
         media.MCODEC_MP3, media.MCODEC_FLAC, media.MCODEC_VORBIS => 7,
@@ -174,6 +193,22 @@ fn soundDecodes(s: *const Stream, codec: u32) bool {
         else => return false,
     };
     return lib.version > 1 or lib.revision >= since;
+}
+
+/// A container's sound codec as audiocodec.library's kind (ACODEC_*);
+/// null for one it has no kind for.
+pub fn soundKindOf(codec: u32) ?u32 {
+    return switch (codec) {
+        media.MCODEC_AAC => ac.ACODEC_AAC,
+        media.MCODEC_MP3 => ac.ACODEC_MP3,
+        media.MCODEC_FLAC => ac.ACODEC_FLAC,
+        media.MCODEC_VORBIS => ac.ACODEC_VORBIS,
+        media.MCODEC_AC3 => ac.ACODEC_AC3,
+        media.MCODEC_EAC3 => ac.ACODEC_EAC3,
+        media.MCODEC_OPUS => ac.ACODEC_OPUS,
+        media.MCODEC_DTS => ac.ACODEC_DTS,
+        else => null,
+    };
 }
 
 /// A reader of the subtitles on `track`, from `time`.

@@ -315,6 +315,63 @@ fn stereo16(comptime frames: usize) [frames * 4]u8 {
 
 // --- the tests --------------------------------------------------------------------
 
+test "ACA_Codecs: the kinds whose modules are here, with no stream and with one" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const acb = rig.acb;
+
+    // The host test makes every module under the name ramlib would find
+    // it by (tests/modules.zig), so every kind this library knows is
+    // here. A board whose disk holds fewer answers with fewer: that is
+    // the point of the tag, and what its version cannot say.
+    var kinds: u32 = 0;
+    try testing.expectEqual(@as(u32, 1), acb.GetAudioStreamAttrs(null, &[_]utility.TagItem{
+        .{ .tag = ac.ACA_Codecs, .data = @intFromPtr(&kinds) },
+        .{},
+    }));
+    const every = [_]u32{
+        ac.ACODEC_WAV,  ac.ACODEC_MP3,  ac.ACODEC_FLAC, ac.ACODEC_VORBIS,
+        ac.ACODEC_AAC,  ac.ACODEC_AC3,  ac.ACODEC_EAC3, ac.ACODEC_OPUS,
+        ac.ACODEC_DTS,
+    };
+    var wanted: u32 = 0;
+    for (every) |kind| wanted |= @as(u32, 1) << @intCast(kind);
+    try testing.expectEqual(wanted, kinds);
+    // Nothing is said of a kind that is no kind.
+    try testing.expectEqual(@as(u32, 0), kinds & 1);
+
+    // A stream's tags asked with no stream are left as they were and not
+    // counted; the library's own is answered all the same.
+    var title: [*:0]const u8 = "untouched";
+    kinds = 0;
+    try testing.expectEqual(@as(u32, 1), acb.GetAudioStreamAttrs(null, &[_]utility.TagItem{
+        .{ .tag = ac.ACA_Title, .data = @intFromPtr(&title) },
+        .{ .tag = ac.ACA_Codecs, .data = @intFromPtr(&kinds) },
+        .{},
+    }));
+    try testing.expectEqualStrings("untouched", std.mem.span(title));
+    try testing.expectEqual(wanted, kinds);
+
+    // With a stream the one answer is the same, beside the stream's own.
+    const data = stereo16(16);
+    var b: Builder = .{};
+    wavFile(&b, 1, 2, 16, "Name", &data);
+    try rig.write("WORK:kinds.wav", &.{b.slice()});
+    var err: i32 = -99;
+    const stream = openFile(acb, "WORK:kinds.wav", &err) orelse return error.NoStream;
+    defer acb.CloseAudioStream(stream);
+    var with: u32 = 0;
+    var name: [*:0]const u8 = "";
+    try testing.expectEqual(@as(u32, 2), acb.GetAudioStreamAttrs(stream, &[_]utility.TagItem{
+        .{ .tag = ac.ACA_Codecs, .data = @intFromPtr(&with) },
+        .{ .tag = ac.ACA_Title, .data = @intFromPtr(&name) },
+        .{},
+    }));
+    try testing.expectEqual(wanted, with);
+    try testing.expectEqualStrings("Name", std.mem.span(name));
+}
+
 test "what sound is, by its first bytes" {
     var rig: Rig = undefined;
     try rig.init();

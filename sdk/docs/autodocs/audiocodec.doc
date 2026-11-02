@@ -167,23 +167,25 @@ audiocodec.library/SeekAudio
 	GetAudioStreamAttrs -- Says what a stream's tags say, each answer where its tag points.
 
    SYNOPSIS
-	    fn GetAudioStreamAttrs(base: *AudioCodecBase, stream: *ac.AudioStream, tags: ?[*]const utility.TagItem) u32
+	    fn GetAudioStreamAttrs(base: *AudioCodecBase, stream: ?*ac.AudioStream, tags: ?[*]const utility.TagItem) u32
 
    SINCE
 	1.1. LVO -48.
 
    INPUTS
-	- `stream`: an open stream.
+	- `stream`: an open stream, or null to ask only what is the library's
+	  own (`ACA_Codecs`; SINCE 1.12).
 	- `tags`: what is asked, each tag's data the address its answer goes
 	  to: `ACA_Title`, `ACA_Artist`, `ACA_Album`, `ACA_AlbumArtist`,
 	  `ACA_Composer`, `ACA_Genre` and `ACA_Comment` a `*[*:0]const u8`;
-	  `ACA_Year`, `ACA_Track`, `ACA_Tracks`, `ACA_Chapters` and `ACA_Link`
-	  a `*u32`; `ACA_Picture` a `*?*const ac.AudioPicture`;
-	  `ACA_ChapterList` a `*?[*]const ac.AudioChapter`.
+	  `ACA_Year`, `ACA_Track`, `ACA_Tracks`, `ACA_Chapters`, `ACA_Link`
+	  and `ACA_Codecs` a `*u32`; `ACA_Picture` a
+	  `*?*const ac.AudioPicture`; `ACA_ChapterList` a
+	  `*?[*]const ac.AudioChapter`.
 
    RESULT
 	How many of the tags it answered; one it does not know is left as it
-	is and not counted.
+	is and not counted, and so is a stream's tag asked with no stream.
 
    BEHAVIOR
 	The answers are what the stream's tags said when it was opened: an
@@ -203,8 +205,21 @@ audiocodec.library/SeekAudio
 	`ACA_Link` is which link that is, 0 for the first: a program that asks
 	for it after each `DecodeAudio` call knows when they changed.
 
+	`ACA_Codecs` is not a stream's: it says which kinds of sound this
+	machine decodes, a bit per `ACODEC_*`. A kind is in it when its
+	module can be opened here, which is not the same question as the
+	library's version - the large decoders are on the 64-bit disks alone,
+	so audiocodec.library 1.12 on an ESP32-P4 answers without
+	`ACODEC_DTS` although the library knows DTS. It is what a program
+	asks before it offers a track to be picked. Each kind's module is
+	opened and let go again - the same question a stream's own open asks,
+	so the same answer - which costs the module being loaded once if
+	nothing has decoded that kind yet; AC-3 and E-AC-3 are one module and
+	come together.
+
    CONTEXT
-	- Waits: no.
+	- Waits: with `ACA_Codecs`, while a module is loaded from the disk;
+	  otherwise no.
 	- Interrupts: no.
 	- Locks: none.
 	- Process: a task will do.
@@ -226,6 +241,13 @@ audiocodec.library/SeekAudio
 	`OpenAudioStream`, `GetAudioStreamInfo`
 
    EXAMPLES
+	    var kinds: u32 = 0;
+	    _ = acb.GetAudioStreamAttrs(null, &[_]utility.TagItem{
+	        .{ .tag = ac.ACA_Codecs, .data = @intFromPtr(&kinds) },
+	        .{},
+	    });
+	    const dts_here = kinds & (@as(u32, 1) << @intCast(ac.ACODEC_DTS)) != 0;
+
 	    var genre: [*:0]const u8 = "";
 	    var year: u32 = 0;
 	    var cover: ?*const ac.AudioPicture = null;

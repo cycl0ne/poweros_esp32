@@ -163,6 +163,16 @@ pub const ACA_ChapterList = ACA_Dummy + 0x2C;
 /// begins (SINCE 1.5).
 pub const ACA_Link = ACA_Dummy + 0x2D;
 
+/// `*u32`: which kinds of sound can be decoded on this machine, a bit per
+/// kind - `1 << ACODEC_DTS` and so on, `ACODEC_UNKNOWN`'s bit never set.
+/// A kind whose module cannot be opened here is not in it: the software
+/// decoders of the large kinds are on the 64-bit disks alone, so the
+/// answer differs from board to board although the library is the same.
+/// It is the library's own, not a stream's, and is answered with no
+/// stream (`GetAudioStreamAttrs(null, ...)`) as well as with one
+/// (SINCE 1.12).
+pub const ACA_Codecs = ACA_Dummy + 0x2E;
+
 /// A chapter the tags mark: where it starts and ends in the sound, and
 /// its title.
 pub const AudioChapter = extern struct {
