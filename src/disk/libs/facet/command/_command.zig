@@ -353,6 +353,15 @@ pub const SetBlendConstants = extern struct {
     constants: [4]f32,
 };
 
+/// CmdSetDepthBias, for a pipeline whose bias is dynamic.
+pub const SetDepthBias = extern struct {
+    pub const op: _stream.Op = .set_depth_bias;
+    head: Head = .{ .op = op },
+    constant: f32,
+    clamp: f32,
+    slope: f32,
+};
+
 pub const SetLineWidth = extern struct {
     pub const op: _stream.Op = .set_line_width;
     head: Head = .{ .op = op },

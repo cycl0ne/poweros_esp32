@@ -138,6 +138,7 @@ pub const LVO = struct {
     pub const CmdClearDepthStencilImage = libraries.lvo(121);
     pub const CreateBufferView = libraries.lvo(122);
     pub const DestroyBufferView = libraries.lvo(123);
+    pub const CmdSetDepthBias = libraries.lvo(124);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -263,6 +264,7 @@ pub const Fn = struct {
     pub const CmdClearDepthStencilImage = *const fn (*FacetBase, *facet.CommandBuffer, *facet.Image, u32, *const facet.ClearDepthStencilValue, u32, [*]const facet.ImageSubresourceRange) callconv(.c) void;
     pub const CreateBufferView = *const fn (*FacetBase, *facet.Device, *const facet.BufferViewCreateInfo, *?*facet.BufferView) callconv(.c) facet.Result;
     pub const DestroyBufferView = *const fn (*FacetBase, *facet.Device, ?*facet.BufferView) callconv(.c) void;
+    pub const CmdSetDepthBias = *const fn (*FacetBase, *facet.CommandBuffer, f32, f32, f32) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -887,5 +889,10 @@ pub const FacetBase = opaque {
     /// A buffer view given back; null does nothing.
     pub fn DestroyBufferView(self: *FacetBase, device: *facet.Device, view: ?*facet.BufferView) void {
         return libraries.call(self, LVO.DestroyBufferView, Fn.DestroyBufferView, .{ device, view });
+    }
+
+    /// Recorded: what the triangles of the draws after it add to their depth.
+    pub fn CmdSetDepthBias(self: *FacetBase, buffer: *facet.CommandBuffer, constant: f32, clamp: f32, slope: f32) void {
+        return libraries.call(self, LVO.CmdSetDepthBias, Fn.CmdSetDepthBias, .{ buffer, constant, clamp, slope });
     }
 };

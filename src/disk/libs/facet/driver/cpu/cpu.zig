@@ -129,6 +129,9 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // A colour attachment is drawn as a pass of its own, so each
         // takes the mixing asked for it as it is drawn.
         .independent_blend = true,
+        // The depth is a plane the triangle's set-up works out, so a bias
+        // is an offset on it and costs nothing a pixel (raster/setup.zig).
+        .depth_bias = true,
         .depth_prepass = true,
         .points_and_lines = true,
         .depth_test = true,

@@ -2663,6 +2663,222 @@ test "a device that blends every colour attachment the same way: the pipeline wh
     try testing.expectEqual(@as(u32, facet.COLOR_COMPONENT_R), made.mixings[1].mask);
 }
 
+// --- 1.33: the depth bias ----------------------------------------------------
+
+/// One frame of the depth bias tests: `first` drawn green with the depth
+/// written, then `second` drawn red over it with `biased`, whose bias
+/// `set` may give it. What the picture holds after says whether the second
+/// draw's depth won.
+const BiasFrame = struct {
+    pass: *facet.RenderPass,
+    frame: *facet.Framebuffer,
+    layout: *facet.PipelineLayout,
+    buffer: *facet.Buffer,
+    bytes: [*]u8,
+    plain: *facet.Pipeline,
+    biased: *facet.Pipeline,
+    first: *const [6][3]f32,
+    second: *const [6][3]f32,
+    /// What CmdSetDepthBias sets before the second draw, or null for none.
+    set: ?_pipeline.Bias = null,
+};
+
+fn biasedFrame(bench: *Bench, what: BiasFrame) !void {
+    const fb = bench.rig.fb;
+    const green: u32 = 0xFF00_FF00;
+    const red: u32 = 0xFFFF_0000;
+    const quad_bytes = @sizeOf([6][3]f32);
+    @memcpy(what.bytes[0..quad_bytes], std.mem.asBytes(what.first));
+    @memcpy(what.bytes[quad_bytes..][0..quad_bytes], std.mem.asBytes(what.second));
+    const offset: u64 = 0;
+    const clear = clears(0xFF00_00FF);
+    const commands = try bench.record();
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = what.pass, .framebuffer = what.frame, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 2, .clear_values = &clear }, .@"inline");
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&what.buffer), @ptrCast(&offset));
+    fb.CmdBindPipeline(commands, .graphics, what.plain);
+    fb.CmdPushConstants(commands, what.layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &green);
+    fb.CmdDraw(commands, 6, 1, 0, 0);
+    fb.CmdBindPipeline(commands, .graphics, what.biased);
+    fb.CmdPushConstants(commands, what.layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &red);
+    if (what.set) |bias| fb.CmdSetDepthBias(commands, bias.constant, bias.clamp, bias.slope);
+    fb.CmdDraw(commands, 6, 1, 6, 0);
+    fb.CmdEndRenderPass(commands);
+    try bench.submit();
+}
+
+test "a depth bias: the pipeline's and the command's, by the constant and the slope, held inside the clamp" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const picture = try Picture.of(&bench, 64, 64);
+    _, const depth_view = try bench.image(.{
+        .format = .d16_unorm,
+        .extent = .{ .width = 64, .height = 64 },
+        .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT,
+    }, true);
+    const pass = try renderPass(&bench, .clear, true);
+    defer fb.DestroyRenderPass(device, pass);
+    const frame = try framebuffer(&bench, pass, &.{ picture.view, depth_view }, 64, 64);
+    defer fb.DestroyFramebuffer(device, frame);
+    const flat = try module(&bench, &Flat.code);
+    defer fb.DestroyShaderModule(device, flat);
+    const layout = try pipelineLayout(&bench, &.{}, 4);
+    defer fb.DestroyPipelineLayout(device, layout);
+
+    const tested = facet.PipelineDepthStencilStateCreateInfo{ .depth_test_enable = true, .depth_write_enable = true, .depth_compare_op = .less };
+    const base = PipelineState{ .module = flat, .layout = layout, .pass = pass, .depth = tested };
+    const plain_result, const plain = makePipeline(&bench, base);
+    try testing.expectEqual(facet.Result.success, plain_result);
+    defer fb.DestroyPipeline(device, plain);
+    try testing.expect(!_objects.of(_pipeline.Pipeline, plain.?).biased);
+
+    // Three pipelines of the same draw: one lifted towards the eye by
+    // three of the smallest differences the depth holds, one pushed away
+    // by a tenth of the range, and the same held inside a twentieth.
+    var state = base;
+    state.raster = .{ .depth_bias_enable = true, .depth_bias_constant_factor = -3 };
+    const nearer_result, const nearer = makePipeline(&bench, state);
+    try testing.expectEqual(facet.Result.success, nearer_result);
+    defer fb.DestroyPipeline(device, nearer);
+    const made = _objects.of(_pipeline.Pipeline, nearer.?);
+    try testing.expect(made.biased);
+    try testing.expectEqual(@as(f32, -3), made.bias.?.constant);
+    try testing.expectEqual(@as(f32, 0), made.bias.?.clamp);
+    try testing.expectEqual(@as(f32, 0), made.bias.?.slope);
+
+    state.raster = .{ .depth_bias_enable = true, .depth_bias_constant_factor = 0.11 * 65535 };
+    const further_result, const further = makePipeline(&bench, state);
+    try testing.expectEqual(facet.Result.success, further_result);
+    defer fb.DestroyPipeline(device, further);
+
+    state.raster = .{ .depth_bias_enable = true, .depth_bias_constant_factor = 0.11 * 65535, .depth_bias_clamp = 0.05 };
+    const held_result, const held = makePipeline(&bench, state);
+    try testing.expectEqual(facet.Result.success, held_result);
+    defer fb.DestroyPipeline(device, held);
+
+    // The numbers left to a command, and the two slopes.
+    state.raster = .{ .depth_bias_enable = true, .depth_bias_constant_factor = 100 };
+    state.dynamic = &.{.depth_bias};
+    const dynamic_result, const dynamic = makePipeline(&bench, state);
+    try testing.expectEqual(facet.Result.success, dynamic_result);
+    defer fb.DestroyPipeline(device, dynamic);
+    const dynamic_made = _objects.of(_pipeline.Pipeline, dynamic.?);
+    try testing.expect(dynamic_made.biased);
+    try testing.expect(dynamic_made.bias == null);
+
+    state.dynamic = &.{};
+    state.raster = .{ .depth_bias_enable = true, .depth_bias_slope_factor = -1 };
+    const up_result, const up_slope = makePipeline(&bench, state);
+    try testing.expectEqual(facet.Result.success, up_result);
+    defer fb.DestroyPipeline(device, up_slope);
+    state.raster = .{ .depth_bias_enable = true, .depth_bias_slope_factor = 1 };
+    const down_result, const down_slope = makePipeline(&bench, state);
+    try testing.expectEqual(facet.Result.success, down_result);
+    defer fb.DestroyPipeline(device, down_slope);
+
+    // A quad over the whole picture at one depth, another a tenth nearer,
+    // and one sloped from 0.25 at the left to 0.75 at the right.
+    const level = [6][3]f32{ .{ -1, -1, 0.5 }, .{ 1, -1, 0.5 }, .{ -1, 1, 0.5 }, .{ -1, 1, 0.5 }, .{ 1, -1, 0.5 }, .{ 1, 1, 0.5 } };
+    const closer = [6][3]f32{ .{ -1, -1, 0.4 }, .{ 1, -1, 0.4 }, .{ -1, 1, 0.4 }, .{ -1, 1, 0.4 }, .{ 1, -1, 0.4 }, .{ 1, 1, 0.4 } };
+    const sloped = [6][3]f32{ .{ -1, -1, 0.25 }, .{ 1, -1, 0.75 }, .{ -1, 1, 0.25 }, .{ -1, 1, 0.25 }, .{ 1, -1, 0.75 }, .{ 1, 1, 0.75 } };
+    const vertex_buffer, const vertex_bytes = try bench.buffer(2 * @sizeOf([6][3]f32), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    const green: u32 = 0xFF00_FF00;
+    const red: u32 = 0xFFFF_0000;
+    var what = BiasFrame{
+        .pass = pass,
+        .frame = frame,
+        .layout = layout,
+        .buffer = vertex_buffer,
+        .bytes = vertex_bytes,
+        .plain = plain.?,
+        .biased = plain.?,
+        .first = &level,
+        .second = &level,
+    };
+
+    // The same depth drawn twice, tested LESS: without a bias the second
+    // draw is nowhere nearer, so the first still shows.
+    try biasedFrame(&bench, what);
+    try testing.expectEqual(green, picture.at(16, 16));
+    try testing.expectEqual(green, picture.at(48, 48));
+
+    // Lifted by three units it is nearer everywhere.
+    what.biased = nearer.?;
+    try biasedFrame(&bench, what);
+    try testing.expectEqual(red, picture.at(16, 16));
+    try testing.expectEqual(red, picture.at(48, 48));
+
+    // A tenth of the range pushes a draw that was a tenth nearer behind
+    // what is there; held inside a twentieth, it is still in front.
+    what.second = &closer;
+    what.biased = further.?;
+    try biasedFrame(&bench, what);
+    try testing.expectEqual(green, picture.at(16, 16));
+    what.biased = held.?;
+    try biasedFrame(&bench, what);
+    try testing.expectEqual(red, picture.at(16, 16));
+
+    // What the command sets is what a dynamic pipeline uses, and the
+    // pipeline's own 100 units are not.
+    what.second = &level;
+    what.biased = dynamic.?;
+    what.set = .{ .constant = -3 };
+    try biasedFrame(&bench, what);
+    try testing.expectEqual(red, picture.at(16, 16));
+    what.set = .{ .constant = 3 };
+    try biasedFrame(&bench, what);
+    try testing.expectEqual(green, picture.at(16, 16));
+    what.set = null;
+
+    // The slope: the quad falls half the range over 64 pixels, so one of
+    // its slope is 512 units - enough either way.
+    what.first = &sloped;
+    what.second = &sloped;
+    what.biased = up_slope.?;
+    try biasedFrame(&bench, what);
+    try testing.expectEqual(red, picture.at(16, 16));
+    try testing.expectEqual(red, picture.at(48, 48));
+    what.biased = down_slope.?;
+    try biasedFrame(&bench, what);
+    try testing.expectEqual(green, picture.at(16, 16));
+    try testing.expectEqual(green, picture.at(48, 48));
+}
+
+test "a device that moves no depth, as the V3D moves none: the pipeline that asks for a bias is refused" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
+    physical.features.depth_bias = false;
+    defer physical.features.depth_bias = true;
+    var features: facet.PhysicalDeviceFeatures = undefined;
+    fb.GetPhysicalDeviceFeatures(bench.physical, &features);
+    try testing.expect(!features.depth_bias);
+
+    const pass = try renderPass(&bench, .clear, true);
+    defer fb.DestroyRenderPass(device, pass);
+    const flat = try module(&bench, &Flat.code);
+    defer fb.DestroyShaderModule(device, flat);
+    const layout = try pipelineLayout(&bench, &.{}, 4);
+    defer fb.DestroyPipelineLayout(device, layout);
+    var state = PipelineState{ .module = flat, .layout = layout, .pass = pass };
+    state.raster = .{ .depth_bias_enable = true, .depth_bias_constant_factor = -3 };
+    const refused, const none = makePipeline(&bench, state);
+    try testing.expectEqual(facet.Result.error_feature_not_present, refused);
+    try testing.expect(none == null);
+    // Without the bias it is made, and a command that sets one is recorded
+    // whatever the device: nothing of it reaches a pipeline that adds none.
+    state.raster = .{};
+    const result, const pipeline = makePipeline(&bench, state);
+    try testing.expectEqual(facet.Result.success, result);
+    defer fb.DestroyPipeline(device, pipeline);
+    const commands = try bench.record();
+    fb.CmdSetDepthBias(commands, -3, 0, 0);
+    try bench.submit();
+}
+
 // --- query pools --------------------------------------------------------------
 
 /// A pool of `count` queries of `kind`, with `statistics` for a statistics

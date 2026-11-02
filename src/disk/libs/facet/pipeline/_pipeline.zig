@@ -8,8 +8,9 @@
 //! - the vertex function's inputs read from up to four vertex buffers,
 //!   an attribute a location, of floats or of bytes 0 to 1;
 //! - culled by their facing, front or back or both;
-//! - a depth test of any compare, the depth written or not, and a stencil
-//!   test of any compare and operations, a face's own;
+//! - a depth test of any compare, the depth written or not, the triangles'
+//!   depth moved by a bias as asked, and a stencil test of any compare and
+//!   operations, a face's own;
 //! - the colour written, the channels asked for, replacing what is there or
 //!   mixed with it by any blend factors and operation, each colour
 //!   attachment its own way, and no logic op;
@@ -83,6 +84,16 @@ pub const Mixing = struct {
     }
 };
 
+/// What a triangle adds to its depth before it is tested and written, in
+/// the depth attachment's own terms: `constant` smallest differences, and
+/// `slope` of its steepest slope, held inside `clamp` of the depth range
+/// where that is not 0 (a positive one the most, a negative one the least).
+pub const Bias = struct {
+    constant: f32 = 0,
+    clamp: f32 = 0,
+    slope: f32 = 0,
+};
+
 /// A face's stencil test.
 pub const StencilFace = struct {
     fail: facet.StencilOp = .keep,
@@ -140,6 +151,11 @@ pub const Pipeline = struct {
     front: facet.FrontFace,
     depth_test: ?facet.CompareOp,
     depth_write: bool,
+    /// Whether its triangles move their depth before it is tested and
+    /// written (`depth_bias_enable`), and by how much: null where a
+    /// command says (CmdSetDepthBias).
+    biased: bool,
+    bias: ?Bias,
     /// The front's and the back's test, or null for none.
     stencil: ?[2]StencilFace,
     /// What of them commands set (CmdSetStencilCompareMask and the like).

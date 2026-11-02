@@ -269,6 +269,12 @@ pub const PhysicalDeviceFeatures = extern struct {
     /// `PipelineColorBlendStateCreateInfo.logic_op_enable`.
     logic_ops: bool = false,
     several_viewports: bool = false,
+    /// `PipelineRasterizationStateCreateInfo.depth_bias_enable` and
+    /// CmdSetDepthBias: a triangle's depth moved before it is tested and
+    /// written, for the shadow map that would shade itself and the decal
+    /// that would fight the wall it is on. False where a pipeline that asks
+    /// for one is refused. The cores have it since 1.34; the BCM2712's V3D
+    /// has a depth offset of its own that nothing drives yet.
     depth_bias: bool = false,
     depth_bounds: bool = false,
     depth_clamp: bool = false,
@@ -1415,6 +1421,15 @@ pub const PipelineRasterizationStateCreateInfo = extern struct {
     polygon_mode: PolygonMode = .fill,
     cull_mode: u32 = CULL_MODE_NONE,
     front_face: FrontFace = .counter_clockwise,
+    /// A triangle's depth moved before it is tested and written, by
+    /// `depth_bias_slope_factor` times its steepest slope and
+    /// `depth_bias_constant_factor` times the smallest difference the
+    /// depth attachment holds, held inside `depth_bias_clamp` where that
+    /// is not 0 - a positive one the most it may be moved, a negative one
+    /// the least. Since 1.34, on a device whose
+    /// `PhysicalDeviceFeatures.depth_bias` is true; what
+    /// `DynamicState.depth_bias` leaves to CmdSetDepthBias is the three
+    /// numbers, never whether there is a bias at all.
     depth_bias_enable: bool = false,
     depth_bias_constant_factor: f32 = 0,
     depth_bias_clamp: f32 = 0,

@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.33**, so that a program need not find out by failing. It covers the API.
+1.34**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -22,7 +22,7 @@ BCM2712's V3D, which runs only a fixed handful of fragment forms
 
 | Where | What |
 |---|---|
-| `sdk/fd/facet_lib.fd` | The whole jump table, one line a function: 120 entries |
+| `sdk/fd/facet_lib.fd` | The whole jump table, one line a function: 121 entries |
 | `sdk/libs/facet/facet.zig` | The structures and enumerations a program passes |
 | `sdk/libs/facet/shader.zig` | Shaders as functions: the stages, their inputs, the fixed forms |
 | `sdk/libs/facet/texture.zig` | How a texture is kept and sampled, by a fixed form and through a sampler |
@@ -30,7 +30,7 @@ BCM2712's V3D, which runs only a fixed handful of fragment forms
 | `src/disk/libs/facet/driver/cpu/` | The cores' driver: the tiled rasterizer |
 | `src/disk/libs/facet/driver/v3d/` | The V3D's driver, a module in `LIBS:facet/` |
 
-Of Vulkan 1.0's roughly 137 core entry points, facet has 120. Two of the
+Of Vulkan 1.0's roughly 137 core entry points, facet has 121. Two of the
 absent ones, `GetInstanceProcAddr` and `GetDeviceProcAddr`, do not apply to
 a library called through an LVO table.
 
@@ -238,14 +238,35 @@ because there is nothing to compile.
 No `QueueBindSparse`, `GetImageSparseMemoryRequirements` or
 `GetPhysicalDeviceSparseImageFormatProperties`. Memory is bound whole.
 
+## The depth bias, and what it still is not
+
+Since 1.34 a pipeline may move its triangles' depth before it is tested
+and written: `depth_bias_enable` with its constant, slope and clamp, or
+`DynamicState.depth_bias` and `CmdSetDepthBias` to leave the three numbers
+to commands. The constant is in the smallest differences the depth
+attachment holds - 65535ths of the range for `d16_unorm` - and the slope
+is of the triangle's steepest, in depth over a pixel. What is left out:
+
+- **Only the cores move it** (`PhysicalDeviceFeatures.depth_bias`). The
+  V3D has a depth offset of its own, a packet this driver does not write
+  yet, so a pipeline that asks for a bias is refused there.
+- **Only triangles are moved**, as in Vulkan: points and lines, and
+  triangles drawn as their edges or corners, are drawn where they are.
+- The bias is worked out once a triangle, from the depth plane its set-up
+  already had, so it is exact in the depth's own units and costs nothing a
+  pixel - but it is the plane that moves, not each pixel, which is what
+  Vulkan's wording allows.
+- There is still no depth clamp and no depth bounds test, and
+  `DynamicState.depth_bounds` is taken and does nothing.
+
 ## Commands that are absent
 
 - `CmdResolveImage`: there is no multisampling to resolve.
-- `CmdSetDepthBias` and `CmdSetDepthBounds`.
+- `CmdSetDepthBounds`.
 
-`DynamicState` names `depth_bias` and `depth_bounds`, but the pipeline
-takes neither and both features are refused when it is made, so a pipeline
-that lists them is made without them.
+`DynamicState` names `depth_bounds`, but the pipeline takes it and the
+feature is refused when the pipeline is made, so a pipeline that lists it
+is made without it.
 
 ## Device queries that are absent
 
@@ -270,7 +291,8 @@ These can be asked for and are answered with `error_feature_not_present`.
 | Multisampling entirely: `rasterization_samples` above 1, sample shading, alpha-to-coverage, alpha-to-one | `pipeline/creategraphicspipelines.zig` |
 | An attachment of more than one sample | `render/createrenderpass.zig` |
 | Logic operations: `LogicOp` is fully enumerated, `logic_op_enable` is not taken | `pipeline/creategraphicspipelines.zig` |
-| Depth clamp, depth bias, the depth bounds test | `pipeline/creategraphicspipelines.zig` |
+| Depth clamp and the depth bounds test | `pipeline/creategraphicspipelines.zig` |
+| A depth bias, on a device that moves no depth: the V3D (`depth_bias`) | `pipeline/creategraphicspipelines.zig` |
 | More than one viewport or one scissor | `pipeline/creategraphicspipelines.zig` |
 | Colour attachments that differ, on a device that blends them all alike: no device of this library is one (`independent_blend`) | `pipeline/creategraphicspipelines.zig` |
 | Input attachments and resolve attachments in a subpass | `render/createrenderpass.zig` |

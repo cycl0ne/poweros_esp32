@@ -56,6 +56,7 @@ pub const Op = enum(u16) {
     write_timestamp,
     copy_query_results,
     clear_depth_stencil_image,
+    set_depth_bias,
     _,
 };
 

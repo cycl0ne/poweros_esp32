@@ -165,6 +165,10 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // A colour attachment is drawn as a pass of its own, so each
         // takes the mixing asked for it as it is drawn.
         .independent_blend = true,
+        // The hardware has a depth offset of its own, which nothing in
+        // this driver writes yet: a pipeline that asks for a bias is
+        // refused here and the cores draw it.
+        .depth_bias = false,
         // The depth pre-pass is the rasterizer's (driver/cpu/raster/prepass.zig).
         .depth_prepass = false,
         .points_and_lines = true,

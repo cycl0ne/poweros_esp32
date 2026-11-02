@@ -159,4 +159,16 @@ pub const LIBRARY_VERSION = 1;
 /// pipeline's, shared, as Vulkan has them. Every device has it
 /// (`PhysicalDeviceFeatures.independent_blend`), and a device without it
 /// goes on refusing attachments that differ.
-pub const LIBRARY_REVISION = 33;
+/// 34: the depth bias: `depth_bias_enable` and its three numbers taken as
+/// a pipeline is made, `DynamicState.depth_bias` and CmdSetDepthBias
+/// leaving them to commands. A triangle's depth is moved before it is
+/// tested and written - by so many of the smallest difference the depth
+/// holds, and by so much of its steepest slope, held inside a clamp - so
+/// the shadow map need not shade itself and the decal need not fight the
+/// wall it lies on. The rasterizer works it out once a triangle, as an
+/// offset on the depth plane its set-up already had, and nothing is spent
+/// a pixel; only triangles are moved, as in Vulkan. It wants a device
+/// whose `depth_bias` is true: the cores have it, and the V3D's own depth
+/// offset is a packet nothing writes yet, so a pipeline that asks for a
+/// bias is refused there.
+pub const LIBRARY_REVISION = 34;

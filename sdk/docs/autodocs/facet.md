@@ -49,6 +49,7 @@ Generated from the source by `./zig build autodoc`.
 - [CmdPushConstants](#cmdpushconstants) - Recorded: bytes of push constants set.
 - [CmdResetQueryPool](#cmdresetquerypool) - Recorded: `count` queries from `first` set back to nothing counted and not available.
 - [CmdSetBlendConstants](#cmdsetblendconstants) - Recorded: the blend constants, for a pipeline that leaves them to commands.
+- [CmdSetDepthBias](#cmdsetdepthbias) - Recorded: the depth bias, for a pipeline that leaves it to commands.
 - [CmdSetLineWidth](#cmdsetlinewidth) - Recorded: the width of lines, for a pipeline that leaves it to commands.
 - [CmdSetScissor](#cmdsetscissor) - Recorded: the scissor, for a pipeline that leaves it to commands.
 - [CmdSetStencilCompareMask](#cmdsetstencilcomparemask) - Recorded: the stencil test's compare mask, for a pipeline that leaves it to commands.
@@ -2529,6 +2530,76 @@ None known.
 fb.CmdSetBlendConstants(commands, &.{ 1, 0.5, 0.25, 1 });
 ```
 
+## CmdSetDepthBias
+
+Recorded: the depth bias, for a pipeline that leaves it to commands.
+
+**SYNOPSIS**
+
+```zig
+fn CmdSetDepthBias(base: *FacetBase, buffer: *facet.CommandBuffer, constant: f32, clamp: f32, slope: f32) void
+```
+
+**SINCE**
+
+1.34. LVO -500.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording.
+- `constant` - how many of the smallest difference the depth
+  attachment holds are added; 65535ths of the range for `d16_unorm`.
+- `clamp` - the most of the depth range a triangle may be moved by,
+  or the least where it is negative; 0 for no limit.
+- `slope` - how much of the triangle's steepest slope is added, in
+  depth over a pixel.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+The draws after it, with a pipeline whose depth bias is dynamic
+(`DynamicState.depth_bias`) and whose `depth_bias_enable` is true, move
+their triangles' depth by these before it is tested and written. A
+pipeline that gave the numbers itself is not touched by this, and one
+without `depth_bias_enable` adds nothing whatever is set here.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The three numbers are copied as the command is recorded.
+
+**NOTES**
+
+Only triangles are moved, as in Vulkan: points and lines, and triangles
+drawn as their edges or corners, are drawn where they are. The bias is
+worked out once a triangle, from the depth plane the rasterizer set up,
+so it costs nothing a pixel.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateGraphicsPipelines`, `GetPhysicalDeviceFeatures`, `CmdSetBlendConstants`
+
+**EXAMPLES**
+
+```zig
+// The decal lifted off the wall it is on: a unit of depth, and a
+// little more where the wall is seen at an angle.
+fb.CmdSetDepthBias(commands, 1, 0, 1.5);
+```
+
 ## CmdSetLineWidth
 
 Recorded: the width of lines, for a pipeline that leaves it to commands.
@@ -3684,7 +3755,8 @@ and fans, a restart index ending a strip or a fan; triangles filled, or as
 their edges or corners (POLYGON_MODE_LINE, POINT); one sample a pixel,
 triangles culled by facing as asked; lines `line_width` pixels wide, set
 here or by CmdSetLineWidth, and points one pixel; a
-depth test of any compare, written or not, without bounds, bias or clamp;
+depth test of any compare, written or not, with a bias on the triangles'
+depth where the device takes one, and without bounds or clamp;
 a stencil test of any compare and operations, a face's own, the masks and
 the reference given here or set by commands; the channels of the write mask written, replacing what is
 there or mixed with it by any blend factors and operation, the alpha by
@@ -3692,6 +3764,7 @@ its own and each colour attachment of the subpass by its own
 (`color_blend_state.attachments`, one for each), and no logic op; one viewport and one scissor, given here or set
 by CmdSetViewport and CmdSetScissor (DynamicState viewport and scissor;
 blend_constants with CmdSetBlendConstants, line_width with CmdSetLineWidth,
+depth_bias with CmdSetDepthBias,
 the stencil's with CmdSetStencilCompareMask, CmdSetStencilWriteMask and
 CmdSetStencilReference;
 the others are taken and do nothing). A pipeline with the rasterizer
@@ -3730,7 +3803,9 @@ to last as long as it does, as the program's code does.
 
 A depth test on a render pass without depth is no test, as Vulkan has
 it, nor a stencil test on one without stencil. Lines and points use the
-front's stencil test. On an attachment without alpha, R5G6B5, what is there reads as wholly
+front's stencil test, and take no depth bias: only triangles are moved,
+as in Vulkan, and `depth_bias_enable` wants a device whose
+`PhysicalDeviceFeatures.depth_bias` is true (since 1.34). On an attachment without alpha, R5G6B5, what is there reads as wholly
 opaque. `color_blend_state.attachments` holds one state for each colour
 attachment of the subpass, or none for the default over all of them; a
 subpass of several has each blended its own way (since 1.33,

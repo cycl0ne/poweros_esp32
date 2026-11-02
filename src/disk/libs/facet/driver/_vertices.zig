@@ -36,6 +36,7 @@ pub const Bound = struct {
     viewport: facet.Viewport,
     scissor: facet.Rect2D,
     blend_constants: [4]f32,
+    depth_bias: _pipeline.Bias,
     line_width: f32,
     stencil: StencilSet,
     resources: shader.Resources,

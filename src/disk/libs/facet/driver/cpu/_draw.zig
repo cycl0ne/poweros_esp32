@@ -92,6 +92,12 @@ fn maskOf(channels: u32) u32 {
     return mask;
 }
 
+/// A pipeline's depth bias in the rasterizer's terms: the same three
+/// numbers, read there in the depth's own units.
+pub fn biasOf(bias: _pipeline.Bias) raster.batched.Bias {
+    return .{ .constant = bias.constant, .clamp = bias.clamp, .slope = bias.slope };
+}
+
 /// A pipeline's stencil test in the rasterizer's terms: numbered as it is.
 fn stencilFaceOf(face: _pipeline.StencilFace) raster.batched.StencilFace {
     return .{
@@ -188,6 +194,9 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
         .front = translated.front,
         .depth_test = translated.depth_test,
         .depth_write = pipeline.depth_write,
+        // Only triangles are moved: a draw of points or lines, or of
+        // triangles drawn as their edges or corners, takes no bias.
+        .depth_bias = if (pipeline.biased and !wide) biasOf(pipeline.bias orelse player.depth_bias) else null,
         .blend = blend,
         .mixing = mixing,
         .stencil = stencil,

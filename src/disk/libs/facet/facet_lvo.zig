@@ -132,6 +132,7 @@ const CmdCopyQueryPoolResults = @import("command/cmdcopyquerypoolresults.zig").C
 const CmdClearDepthStencilImage = @import("command/cmdcleardepthstencilimage.zig").CmdClearDepthStencilImage;
 const CreateBufferView = @import("buffer/createbufferview.zig").CreateBufferView;
 const DestroyBufferView = @import("buffer/destroybufferview.zig").DestroyBufferView;
+const CmdSetDepthBias = @import("command/cmdsetdepthbias.zig").CmdSetDepthBias;
 
 /// facet.library's interface, as the SDK generates it from
 /// sdk/fd/facet_lib.fd.
@@ -278,6 +279,7 @@ const contract_files = [_][]const u8{
     @embedFile("command/cmdcleardepthstencilimage.zig"),
     @embedFile("buffer/createbufferview.zig"),
     @embedFile("buffer/destroybufferview.zig"),
+    @embedFile("command/cmdsetdepthbias.zig"),
 };
 
 fn lvoCreateInstance(base: *FacetBase, info: *const facet.InstanceCreateInfo, instance: *?*facet.Instance) callconv(.c) facet.Result {
@@ -450,6 +452,10 @@ fn lvoCreateBufferView(base: *FacetBase, device: *facet.Device, info: *const fac
 
 fn lvoDestroyBufferView(base: *FacetBase, device: *facet.Device, view: ?*facet.BufferView) callconv(.c) void {
     return DestroyBufferView(base, device, view);
+}
+
+fn lvoCmdSetDepthBias(base: *FacetBase, buffer: *facet.CommandBuffer, constant: f32, clamp: f32, slope: f32) callconv(.c) void {
+    return CmdSetDepthBias(base, buffer, constant, clamp, slope);
 }
 
 fn lvoCmdCopyBuffer(base: *FacetBase, buffer: *facet.CommandBuffer, source: *facet.Buffer, destination: *facet.Buffer, region_count: u32, regions: [*]const facet.BufferCopy) callconv(.c) void {
@@ -784,6 +790,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoCmdClearDepthStencilImage),
     vec(lvoCreateBufferView),
     vec(lvoDestroyBufferView),
+    vec(lvoCmdSetDepthBias),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

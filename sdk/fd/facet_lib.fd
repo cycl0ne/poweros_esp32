@@ -266,4 +266,6 @@ void CmdClearDepthStencilImage(*facet.CommandBuffer buffer, *facet.Image image, 
 facet.Result CreateBufferView(*facet.Device device, *const facet.BufferViewCreateInfo info, *?*facet.BufferView view)
 /// A buffer view given back; null does nothing.
 void DestroyBufferView(*facet.Device device, ?*facet.BufferView view)
+/// Recorded: what the triangles of the draws after it add to their depth.
+void CmdSetDepthBias(*facet.CommandBuffer buffer, f32 constant, f32 clamp, f32 slope)
 ##end

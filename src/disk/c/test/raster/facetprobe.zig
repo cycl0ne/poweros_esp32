@@ -62,7 +62,7 @@ const Probe = struct {
     frames: [8]?*facet.Framebuffer = @splat(null),
     modules: [2]?*facet.ShaderModule = @splat(null),
     layouts: [2]?*facet.PipelineLayout = @splat(null),
-    pipelines: [4]?*facet.Pipeline = @splat(null),
+    pipelines: [8]?*facet.Pipeline = @splat(null),
     passed: u32 = 0,
     failed: u32 = 0,
 
@@ -278,13 +278,23 @@ const Smooth = struct {
 /// A pipeline of `Flat` over `pass`, depth tested and written, of one
 /// colour attachment mixed the default way.
 fn flatPipeline(probe: *Probe, pass: *facet.RenderPass, module: *facet.ShaderModule, layout: *facet.PipelineLayout) ?*facet.Pipeline {
-    const blends = [1]facet.PipelineColorBlendAttachmentState{.{}};
-    return pipelineOf(probe, pass, module, layout, &blends, true);
+    return pipelineOf(probe, pass, module, layout, .{ .depth_tested = true });
 }
 
-/// A pipeline of `Flat` over `pass`, its colour attachments mixed as
-/// `blends` says - one state for each of them - and the depth tested or not.
-fn pipelineOf(probe: *Probe, pass: *facet.RenderPass, module: *facet.ShaderModule, layout: *facet.PipelineLayout, blends: []const facet.PipelineColorBlendAttachmentState, depth_tested: bool) ?*facet.Pipeline {
+/// What a probe's pipelines differ in: one blend state for each colour
+/// attachment of the subpass, whether the depth is tested and written, the
+/// rasterization state, and what commands set.
+const Shape = struct {
+    blends: []const facet.PipelineColorBlendAttachmentState = &.{.{}},
+    depth_tested: bool = false,
+    raster: facet.PipelineRasterizationStateCreateInfo = .{},
+    dynamic: []const facet.DynamicState = &.{},
+};
+
+/// A pipeline over `pass` of the module's "main", as `shape` says.
+fn pipelineOf(probe: *Probe, pass: *facet.RenderPass, module: *facet.ShaderModule, layout: *facet.PipelineLayout, shape: Shape) ?*facet.Pipeline {
+    const blends = shape.blends;
+    const depth_tested = shape.depth_tested;
     const stages = [2]facet.PipelineShaderStageCreateInfo{
         .{ .stage = facet.SHADER_STAGE_VERTEX, .module = module, .name = "main" },
         .{ .stage = facet.SHADER_STAGE_FRAGMENT, .module = module, .name = "main" },
@@ -301,10 +311,10 @@ fn pipelineOf(probe: *Probe, pass: *facet.RenderPass, module: *facet.ShaderModul
     const viewport = facet.Viewport{ .width = side, .height = side };
     const scissor = facet.Rect2D{ .extent = .{ .width = side, .height = side } };
     const view = facet.PipelineViewportStateCreateInfo{ .viewports = @ptrCast(&viewport), .scissors = @ptrCast(&scissor) };
-    const raster = facet.PipelineRasterizationStateCreateInfo{};
+    const raster = shape.raster;
     const depth = facet.PipelineDepthStencilStateCreateInfo{ .depth_test_enable = depth_tested, .depth_write_enable = depth_tested, .depth_compare_op = .less };
     const blend = facet.PipelineColorBlendStateCreateInfo{ .attachment_count = @intCast(blends.len), .attachments = blends.ptr };
-    const dynamic = facet.PipelineDynamicStateCreateInfo{};
+    const dynamic = facet.PipelineDynamicStateCreateInfo{ .dynamic_state_count = @intCast(shape.dynamic.len), .dynamic_states = shape.dynamic.ptr };
     const info = facet.GraphicsPipelineCreateInfo{
         .stage_count = 2,
         .stages = &stages,
@@ -754,11 +764,11 @@ fn blendChecks(probe: *Probe) void {
     const keeps = facet.PipelineColorBlendAttachmentState{ .blend_enable = true, .src_color_blend_factor = .zero, .dst_color_blend_factor = .one, .src_alpha_blend_factor = .zero, .dst_alpha_blend_factor = .one };
     const takes = facet.PipelineColorBlendAttachmentState{};
     const differing = [2]facet.PipelineColorBlendAttachmentState{ keeps, takes };
-    const each_own = pipelineOf(probe, pass, module.?, layout.?, &differing, false);
+    const each_own = pipelineOf(probe, pass, module.?, layout.?, .{ .blends = &differing });
     if (!probe.features.independent_blend) {
         probe.check(each_own == null, "attachments that differ refused where a device blends them alike");
         const alike = [2]facet.PipelineColorBlendAttachmentState{ keeps, keeps };
-        probe.check(pipelineOf(probe, pass, module.?, layout.?, &alike, false) != null, "the same state for both still taken");
+        probe.check(pipelineOf(probe, pass, module.?, layout.?, .{ .blends = &alike }) != null, "the same state for both still taken");
         return;
     }
     const pipeline = each_own orelse return probe.check(false, "a pipeline whose attachments differ");
@@ -803,6 +813,119 @@ fn blendChecks(probe: *Probe) void {
     probe.checkEqual(white, pixelAt(second_pixels, second_pitch, 40, 52), "and in another tile");
 }
 
+// --- 1.33: the depth bias ----------------------------------------------------
+
+/// A quad over the whole picture at `z`, two triangles of it.
+fn quadAt(z: f32) [6][3]f32 {
+    return .{ .{ -1, -1, z }, .{ 1, -1, z }, .{ -1, 1, z }, .{ -1, 1, z }, .{ 1, -1, z }, .{ 1, 1, z } };
+}
+
+fn biasChecks(probe: *Probe) void {
+    const fb = probe.fb;
+    defer probe.give();
+    const pass = passKeeping(probe, .clear, .clear, .dont_care) orelse return probe.check(false, "a pass of a colour and a depth");
+
+    var module: ?*facet.ShaderModule = null;
+    if (fb.CreateShaderModule(probe.device.?, &.{ .code = &Smooth.code }, &module) != .success) return probe.check(false, "the shader module");
+    _ = Probe.keep(&probe.modules, module);
+    var layout: ?*facet.PipelineLayout = null;
+    if (fb.CreatePipelineLayout(probe.device.?, &.{}, &layout) != .success) return probe.check(false, "the pipeline layout");
+    _ = Probe.keep(&probe.layouts, layout);
+
+    // The first draw writes its depth and no colour at all; the second is
+    // the same quad, lifted towards the eye by three of the smallest
+    // differences the depth holds.
+    const depth_only = [1]facet.PipelineColorBlendAttachmentState{.{ .color_write_mask = 0 }};
+    const nearer = facet.PipelineRasterizationStateCreateInfo{ .depth_bias_enable = true, .depth_bias_constant_factor = -3 };
+    const biased = pipelineOf(probe, pass, module.?, layout.?, .{ .depth_tested = true, .raster = nearer });
+    if (!probe.features.depth_bias) {
+        probe.check(biased == null, "a depth bias refused where the device moves none");
+        probe.check(pipelineOf(probe, pass, module.?, layout.?, .{ .depth_tested = true }) != null, "a pipeline without one is still taken");
+        return;
+    }
+    const lifts = biased orelse return probe.check(false, "a pipeline that lifts its triangles");
+    probe.check(true, "a pipeline that lifts its triangles");
+    const writes_depth = pipelineOf(probe, pass, module.?, layout.?, .{ .depth_tested = true, .blends = &depth_only }) orelse
+        return probe.check(false, "a pipeline that writes the depth alone");
+    // A tenth of the range the other way, and the same held inside a
+    // twentieth of it.
+    const pushes = pipelineOf(probe, pass, module.?, layout.?, .{ .depth_tested = true, .raster = .{ .depth_bias_enable = true, .depth_bias_constant_factor = 0.11 * 65535 } }) orelse
+        return probe.check(false, "a pipeline that pushes them away");
+    const held = pipelineOf(probe, pass, module.?, layout.?, .{ .depth_tested = true, .raster = .{ .depth_bias_enable = true, .depth_bias_constant_factor = 0.11 * 65535, .depth_bias_clamp = 0.05 } }) orelse
+        return probe.check(false, "a pipeline whose bias is held inside a clamp");
+
+    const extent = facet.Extent3D{ .width = side, .height = side };
+    const color = probe.image(.{ .format = .b8g8r8a8_unorm, .extent = extent, .tiling = .linear, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, facet.MEMORY_PROPERTY_HOST_VISIBLE) orelse
+        return probe.check(false, "a picture to draw into");
+    const memory = probe.memories[0].?;
+    const depth = probe.image(.{ .format = .d16_unorm, .extent = extent, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT }, 0) orelse
+        return probe.check(false, "a depth attachment");
+    const frame = probe.framebuffer(pass, &.{ color[1], depth[1] }) orelse return probe.check(false, "a framebuffer over the two");
+    // Mapped the once: memory is mapped once at a time, and what the
+    // frames draw lands in these bytes.
+    const pixels, const pitch = probe.mapped(color[0], memory) orelse return probe.check(false, "the picture read back");
+
+    const level = quadAt(0.5);
+    const closer = quadAt(0.4);
+    const quad_bytes = @sizeOf([6][3]f32);
+    const vertex_buffer, const vertex_bytes = probe.buffer(2 * quad_bytes, facet.BUFFER_USAGE_VERTEX_BUFFER) orelse
+        return probe.check(false, "a vertex buffer");
+
+    const offset: u64 = 0;
+    const white: u32 = 0xFFFF_FFFF;
+    const blue: u32 = 0xFF00_00FF;
+    const clears = [2]facet.ClearValue{ .{ .color = .{ .float32 = .{ 0, 0, 1, 1 } } }, .{ .depth_stencil = .{ .depth = 1 } } };
+    const area = facet.Rect2D{ .extent = .{ .width = side, .height = side } };
+
+    // Each frame: the depth laid down by the first quad, then `second`
+    // drawn white over it by `pipeline`, and the pixel it left.
+    const frames = [4]struct { *facet.Pipeline, *const [6][3]f32, u32, [*:0]const u8 }{
+        .{ lifts, &level, white, "the lifted draw won at the same depth" },
+        .{ pushes, &closer, blue, "the pushed draw lost though it was nearer" },
+        .{ held, &closer, white, "the clamp left it in front" },
+        .{ writes_depth, &level, blue, "a draw of no colour at all leaves the clear" },
+    };
+    for (frames) |one| {
+        const pipeline, const second, const wanted, const name = one;
+        @memcpy(vertex_bytes[0..quad_bytes], std.mem.asBytes(&level));
+        @memcpy(vertex_bytes[quad_bytes..][0..quad_bytes], std.mem.asBytes(second));
+        const commands = probe.record() orelse return probe.check(false, "a command buffer recording");
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame, .render_area = area, .clear_value_count = 2, .clear_values = &clears }, .@"inline");
+        fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+        fb.CmdBindPipeline(commands, .graphics, writes_depth);
+        fb.CmdDraw(commands, 6, 1, 0, 0);
+        fb.CmdBindPipeline(commands, .graphics, pipeline);
+        fb.CmdDraw(commands, 6, 1, 6, 0);
+        fb.CmdEndRenderPass(commands);
+        if (!probe.submit()) return probe.check(false, "the frame submitted");
+        probe.checkEqual(wanted, pixelAt(pixels, pitch, 16, 16), name);
+    }
+
+    // What a command sets is what a dynamic pipeline uses.
+    const dynamic_states = [1]facet.DynamicState{.depth_bias};
+    const dynamic = pipelineOf(probe, pass, module.?, layout.?, .{ .depth_tested = true, .raster = .{ .depth_bias_enable = true, .depth_bias_constant_factor = 100 }, .dynamic = &dynamic_states }) orelse
+        return probe.check(false, "a pipeline whose bias a command sets");
+    for ([2]struct { f32, u32, [*:0]const u8 }{
+        .{ -3, white, "the command's bias lifted the draw" },
+        .{ 3, blue, "and pushed it away the other way" },
+    }) |one| {
+        const constant, const wanted, const name = one;
+        @memcpy(vertex_bytes[0..quad_bytes], std.mem.asBytes(&level));
+        @memcpy(vertex_bytes[quad_bytes..][0..quad_bytes], std.mem.asBytes(&level));
+        const commands = probe.record() orelse return probe.check(false, "a recording for the command's bias");
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame, .render_area = area, .clear_value_count = 2, .clear_values = &clears }, .@"inline");
+        fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+        fb.CmdBindPipeline(commands, .graphics, writes_depth);
+        fb.CmdDraw(commands, 6, 1, 0, 0);
+        fb.CmdBindPipeline(commands, .graphics, dynamic);
+        fb.CmdSetDepthBias(commands, constant, 0, 0);
+        fb.CmdDraw(commands, 6, 1, 6, 0);
+        fb.CmdEndRenderPass(commands);
+        if (!probe.submit()) return probe.check(false, "the frame submitted");
+        probe.checkEqual(wanted, pixelAt(pixels, pitch, 16, 16), name);
+    }
+}
+
 fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical: *facet.PhysicalDevice, quiet: bool) struct { u32, u32 } {
     var properties: facet.PhysicalDeviceProperties = undefined;
     fb.GetPhysicalDeviceProperties(physical, &properties);
@@ -816,6 +939,7 @@ fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical
     storageImageChecks(&probe);
     texelBufferChecks(&probe);
     blendChecks(&probe);
+    biasChecks(&probe);
     return .{ probe.passed, probe.failed };
 }
 

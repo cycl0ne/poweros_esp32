@@ -101,6 +101,8 @@ pub const Player = struct {
     viewport: facet.Viewport = .{ .width = 0, .height = 0 },
     scissor: facet.Rect2D = .{ .extent = .{} },
     blend_constants: [4]f32 = @splat(0),
+    /// What CmdSetDepthBias set, for a pipeline whose bias is dynamic.
+    depth_bias: _pipeline.Bias = .{},
     line_width: f32 = 1,
     stencil: _vertices.StencilSet = .{},
     resources: shader.Resources = .{},
@@ -255,6 +257,10 @@ fn playStream(queue: *Queue, stream: *const _stream.Stream) void {
         .set_viewport => player.viewport = _stream.as(_command.SetViewport, head).viewport,
         .set_scissor => player.scissor = _stream.as(_command.SetScissor, head).scissor,
         .set_blend_constants => player.blend_constants = _stream.as(_command.SetBlendConstants, head).constants,
+        .set_depth_bias => {
+            const command = _stream.as(_command.SetDepthBias, head);
+            player.depth_bias = .{ .constant = command.constant, .clamp = command.clamp, .slope = command.slope };
+        },
         .set_line_width => player.line_width = _stream.as(_command.SetLineWidth, head).width,
         .set_stencil => player.stencil.apply(_stream.as(_command.SetStencil, head)),
         .draw => if (player.drawing) {
