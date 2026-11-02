@@ -18,6 +18,7 @@ tango_sha256=e94004fa9aa6a7250ac4db6180e96f9c147db617c0d8e7fc8c9e2c42924e990c
 pictures="
 devices/drive-harddisk
 places/folder
+places/folder-remote
 places/user-trash
 mimetypes/application-x-executable
 mimetypes/text-x-generic

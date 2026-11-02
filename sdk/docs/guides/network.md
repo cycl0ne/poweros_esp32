@@ -970,7 +970,7 @@ MountShare NAS DISMOUNT
 |---|---|
 | `NAME/M` | the device, `NAS` or `NAS:`; several at once |
 | `ALL/S` | every share in `DEVS:Shares/`, as its file says; with DISMOUNT, every share mounted |
-| `SHARE/K` | `//server/share`, slashes either way: a name or an address, IPv6 in brackets, `:port` when it is not 445 |
+| `SHARE/K` | `//server/share`, slashes either way, or `smb://server/share`: a name or an address, IPv6 in brackets, `:port` when it is not 445 |
 | `USER/K`, `PASSWORD/K`, `DOMAIN/K` | the logon; with neither user nor password it is anonymous, which a server may take as a guest |
 | `VOLUME/K` | the volume's name; the share's without it |
 | `PORT/K/N` | the server's port, as `:port` in SHARE |
@@ -979,6 +979,7 @@ MountShare NAS DISMOUNT
 | `SAVE/S` | once mounted, what it was mounted with written into its share file, and a PASSWORD's NT hash into its password file |
 | `QUIET/S` | nothing said when it mounts, or is mounted already |
 | `DISMOUNT/S` | logs off and takes the device away; not while a lock, an open file or a watch is on it |
+| `LIST/S`, `SERVER/K` | what shares SERVER has, nothing mounted; SERVER is written as SHARE is, with or without a share after it; USER, PASSWORD and DOMAIN say who asks |
 
 MountShare starts the handler at once, and the handler connects, logs on
 and connects to the share before MountShare goes on. A share that cannot
@@ -988,6 +989,27 @@ SMB 2 nor 3, a wrong user or password (or a disabled, locked or expired
 account), no such share or none for this user, encryption that cannot
 be had, or an answer whose signature is wrong. A share mounted already
 is left as it is.
+
+**What a server has** is its own to say, and LIST asks it: the question
+goes to `srvsvc`, the service every SMB server keeps on its `IPC$` pipe
+for what is about the server rather than about one of its shares. A
+server may answer anyone, or only somebody who has logged on.
+
+```
+MountShare LIST SERVER=//nas.lan
+MountShare: SMB 3.1.1, signed
+Share                            Kind     Comment
+public                           Disk     Everyone may read this one
+second                           Disk     The second share
+ADMIN$                           Disk*    Remote Admin
+IPC$                             Pipe     IPC Service (the NAS)
+```
+
+Kind is what the server calls the share: `Disk` holds files and is the
+one kind MountShare mounts, `Printer` a print queue, `Pipe` a pipe the
+server talks over, `Device` something else of the server's. A star means
+the server keeps that name for itself - `ADMIN$`, a drive's `C$` - so it
+is its own workings rather than files to mount.
 
 **A share file** says once what the command line would say each time:
 `DEVS:Shares/<NAME>`, in the keyword format of the interface files, and
@@ -1025,6 +1047,15 @@ MountShare: NAS: saved in DEVS:Shares/NAS, its password's hash in ENVARC:Sys/net
 `S:Network-Startup` runs `MountShare ALL QUIET` once the interfaces are
 up and the clock is set, so every share with a file is there after the
 boot; one whose server cannot be had then is mounted by hand later.
+
+**In a window**, `SYS:System/Shares` does the same from the screen: a
+server typed in and asked what it has, a share picked out of the list and
+mounted under a name it suggests, and everything this machine knows in a
+list of its own to mount, dismount or forget. A server that wants a user
+and a password asks for them in a window of its own, and what is typed
+there is kept as the share files and `ENVARC:Sys/net/shares/` keep it, so
+a share added in the window is one `MountShare ALL` brings back at the
+next start. Its own page is `SYS:System/Docs/Shares.md`.
 
 - **The dialects** 2.0.2, 2.1, 3.0, 3.0.2 and 3.1.1 are offered in one
   negotiation, and the server picks; SMB 1 is not spoken.

@@ -17,6 +17,12 @@
 //! the keymap in force is the one the rest of the machine uses, and a
 //! gadget may name another with `STRINGA_AltKeyMap`.
 //!
+//! `STRINGA_Secret` makes it a password field: an asterisk is drawn for
+//! each character of the text, and where the line scrolls to and what a
+//! press lands on are measured on those asterisks rather than on the
+//! characters they stand for. The buffer holds what was typed as it
+//! always does.
+//!
 //! A key is edited in two steps (`sghooks.zig`): the text is copied into
 //! the work buffer, the global edit hook - `defaultEdit` here, until
 //! `SetEditHook` puts another - makes of the key what it will there, and
@@ -89,7 +95,16 @@ pub const Data = extern struct {
     /// the box's left edge the text began: where a press is measured from.
     disp_count: u32 = 0,
     text_left: i32 = 2,
+    /// `STRINGA_Secret`: what is typed is not shown.
+    secret: u8 = 0,
+    /// What is drawn in its place while it is secret, a `mask_char` for
+    /// each character the buffer holds: the gadget's own, taken when it
+    /// is first drawn.
+    mask: ?[*]u8 = null,
 };
+
+/// What a secret field shows for each character of its text.
+const mask_char: u8 = '*';
 
 /// Make strgclass, from gadgetclass, and put it on the public list.
 pub fn make(ib: *IntuitionBase) ?*Class {
@@ -427,7 +442,7 @@ fn render(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo,
         it.DrawPart(rp, gi_.draw_info, own_style, ic.PART_FIELD, st, style.DPF_CLEAR, &field, null);
     }
 
-    const buffer = p.buffer orelse return;
+    const text = textShown(ib, p) orelse return;
     // The gadget's own font if it has one, otherwise the RastPort's; and
     // a box too short for it takes the 8-row ROM font instead, so the
     // text stays inside the frame rather than spilling over it.
@@ -456,11 +471,11 @@ fn render(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo,
     const space_w = gb.TextLength(rp, " ", 1);
     const past_end = p.buffer_pos >= p.num_chars;
     const extra: i32 = if (past_end) space_w else 0;
-    const shown = scrollTo(gb, rp, p, buffer, inner_w, extra);
+    const shown = scrollTo(gb, rp, p, text, inner_w, extra);
     p.disp_count = shown;
 
     const caret_w: i32 = if (p.active != 0 and past_end) space_w else 0;
-    const text_w: i32 = gb.TextLength(rp, buffer + p.disp_pos, shown) + caret_w;
+    const text_w: i32 = gb.TextLength(rp, text + p.disp_pos, shown) + caret_w;
     const left = switch (p.justification) {
         gc.GACT_STRINGCENTER => b.left + 2 + @divTrunc(inner_w - text_w, 2),
         gc.GACT_STRINGRIGHT => b.left + 2 + inner_w - text_w,
@@ -472,18 +487,18 @@ fn render(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo,
     if (shown > 0) {
         d.pen(gb, rp, ink);
         gb.Move(rp, left, top + @as(i32, @intCast(baseline)));
-        gb.Text(rp, buffer + p.disp_pos, shown);
+        gb.Text(rp, text + p.disp_pos, shown);
     }
     // The cursor, while it is being typed into: the cell the next
     // character goes in, the other way round.
     if (p.active == 0) return;
-    const cursor_x = left + gb.TextLength(rp, buffer + p.disp_pos, p.buffer_pos - p.disp_pos);
-    const cursor_w: i32 = if (past_end) space_w else gb.TextLength(rp, buffer + p.buffer_pos, 1);
+    const cursor_x = left + gb.TextLength(rp, text + p.disp_pos, p.buffer_pos - p.disp_pos);
+    const cursor_w: i32 = if (past_end) space_w else gb.TextLength(rp, text + p.buffer_pos, 1);
     d.box(gb, rp, cursor_x, top, @max(cursor_w, 1), @intCast(height), ink);
     if (p.buffer_pos < p.num_chars) {
         d.pen(gb, rp, paper);
         gb.Move(rp, cursor_x, top + @as(i32, @intCast(baseline)));
-        gb.Text(rp, buffer + p.buffer_pos, 1);
+        gb.Text(rp, text + p.buffer_pos, 1);
     }
 }
 
@@ -593,6 +608,7 @@ fn takeTags(ib: *IntuitionBase, p: *Data, tags: ?[*]const TagItem, at_birth: boo
                 p.font = @ptrFromInt(item.data);
                 changed = true;
             },
+            gc.STRINGA_Secret => p.secret = @intFromBool(item.data != 0),
             gc.STRINGA_ReplaceMode => setMode(p, sg.SGM_REPLACE, item.data != 0),
             gc.STRINGA_FixedFieldMode => setMode(p, sg.SGM_FIXEDFIELD | sg.SGM_REPLACE, item.data != 0),
             gc.STRINGA_NoFilterMode => setMode(p, sg.SGM_NOFILTER, item.data != 0),
@@ -653,7 +669,7 @@ fn takeTags(ib: *IntuitionBase, p: *Data, tags: ?[*]const TagItem, at_birth: boo
 fn cursorTo(ib: *IntuitionBase, p: *Data, gi: ?*classusr.GadgetInfo, x: i32) void {
     const it = ib.iface();
     const gb = ib.graphics_base;
-    const buffer = p.buffer orelse return;
+    const text = textShown(ib, p) orelse return;
     const port = it.ObtainGIRPort(gi) orelse return;
     defer it.ReleaseGIRPort(port);
     if (p.font) |font| graphics.SetFont(gb, port, font);
@@ -661,7 +677,7 @@ fn cursorTo(ib: *IntuitionBase, p: *Data, gi: ?*classusr.GadgetInfo, x: i32) voi
     var index: u32 = 0;
     if (click > 0 and p.num_chars > p.disp_pos) {
         var te: graphics.TextExtent = undefined;
-        index = gb.TextFit(port, buffer + p.disp_pos, p.num_chars - p.disp_pos, &te, null, 1, click, any_height);
+        index = gb.TextFit(port, text + p.disp_pos, p.num_chars - p.disp_pos, &te, null, 1, click, any_height);
         if (p.disp_count > 0 and index >= p.disp_count) {
             index = p.disp_count - 1;
             if (p.disp_pos + index == p.num_chars - 1) index += 1;
@@ -685,9 +701,31 @@ fn freeOwn(ib: *IntuitionBase, p: *Data) void {
     if (p.owns_work != 0) {
         if (p.work) |w| ib.sys_base.FreeVec(w);
     }
+    if (p.mask) |m| ib.sys_base.FreeVec(m);
     p.buffer = null;
     p.undo = null;
     p.work = null;
+    p.mask = null;
+}
+
+/// What is drawn and measured in the text's place: the buffer itself, or
+/// a `mask_char` for each of its characters while the field is secret -
+/// so that where the text scrolls to and what a press lands on are
+/// measured on what is shown, not on what is hidden. Null when the field
+/// is secret and there is no room for the mask, and then nothing of the
+/// text is drawn: an empty field is the one safe thing to show.
+fn textShown(ib: *IntuitionBase, p: *Data) ?[*]const u8 {
+    const buffer = p.buffer orelse return null;
+    if (p.secret == 0) return buffer;
+    if (p.mask == null) {
+        const memory = ib.sys_base.AllocVec(p.max_chars + 1, sdk.exec.MEMF_ANY) orelse return null;
+        p.mask = @ptrCast(memory);
+    }
+    const mask = p.mask.?;
+    const count = @min(p.num_chars, p.max_chars);
+    @memset(mask[0..count], mask_char);
+    mask[count] = 0;
+    return mask;
 }
 
 /// A key edited: the global hook and then the gadget's own on the work,
@@ -822,6 +860,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 gc.STRINGA_DispPos => get.storage.* = p.disp_pos,
                 gc.STRINGA_LongVal => get.storage.* = @bitCast(@as(isize, p.long_val)),
                 gc.STRINGA_Justification => get.storage.* = p.justification,
+                gc.STRINGA_Secret => get.storage.* = @intFromBool(p.secret != 0),
                 gc.STRINGA_ReplaceMode => get.storage.* = @intFromBool(p.modes & sg.SGM_REPLACE != 0),
                 gc.STRINGA_FixedFieldMode => get.storage.* = @intFromBool(p.modes & sg.SGM_FIXEDFIELD != 0),
                 gc.STRINGA_NoFilterMode => get.storage.* = @intFromBool(p.modes & sg.SGM_NOFILTER != 0),

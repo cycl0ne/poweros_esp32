@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! Where a share is, from MountShare's SHARE: `//server/share`, with
 //! forward or back slashes, an IPv6 address in brackets, and a port after
-//! a colon when it is not the default.
+//! a colon when it is not the default. A `smb://` or `cifs://` in front
+//! of it is the same place written as a URL.
 
 /// Where a share is: the server, its port and the share's name, cut out
 /// of `//server[:port]/share`.
@@ -11,10 +12,31 @@ pub const Place = struct {
     share: []const u8,
 };
 
+/// What was typed without the scheme in front of it: `smb://nas/share`
+/// and `cifs://nas/share` are the same place as `//nas/share`, however
+/// they are capitalised. Text with no scheme comes back as it was.
+pub fn withoutScheme(typed: []const u8) []const u8 {
+    for ([_][]const u8{ "smb://", "cifs://" }) |scheme| {
+        if (typed.len > scheme.len and sameFold(typed[0..scheme.len], scheme)) return typed[scheme.len..];
+    }
+    return typed;
+}
+
+/// Two texts the same, upper and lower case counting alike.
+fn sameFold(left: []const u8, right: []const u8) bool {
+    if (left.len != right.len) return false;
+    for (left, right) |one, other| {
+        const up = if (one >= 'A' and one <= 'Z') one + 32 else one;
+        if (up != other) return false;
+    }
+    return true;
+}
+
 /// `//server/share` taken apart: forward or back slashes, an IPv6
-/// address in brackets, a port after a colon; null when it is not one.
+/// address in brackets, a port after a colon, a `smb://` or `cifs://` in
+/// front of it; null when it is not one.
 pub fn placeOf(text: []const u8) ?Place {
-    var rest = text;
+    var rest = withoutScheme(text);
     while (rest.len > 0 and (rest[0] == '/' or rest[0] == '\\')) rest = rest[1..];
     var cut: usize = 0;
     while (cut < rest.len and rest[cut] != '/' and rest[cut] != '\\') cut += 1;
@@ -82,4 +104,20 @@ test "a share's place: names, ports, IPv6 and slashes either way" {
     try testing.expect(placeOf("//nas/a/b") == null);
     try testing.expect(placeOf("//nas:99999/a") == null);
     try testing.expect(placeOf("//:445/a") == null);
+}
+
+test "a share's place written as a URL" {
+    const url = placeOf("smb://nas.lan:4445/public").?;
+    try testing.expectEqualStrings("nas.lan", url.server);
+    try testing.expectEqual(@as(u16, 4445), url.port);
+    try testing.expectEqualStrings("public", url.share);
+    const shouted = placeOf("CIFS://nas/public").?;
+    try testing.expectEqualStrings("nas", shouted.server);
+    try testing.expectEqualStrings("public", shouted.share);
+    try testing.expectEqualStrings("//nas/public", withoutScheme("//nas/public"));
+    // The scheme on its own is no place, and a name that begins with the
+    // letters of one is left alone.
+    try testing.expect(placeOf("smb://") == null);
+    const named = placeOf("//smbserver/public").?;
+    try testing.expectEqualStrings("smbserver", named.server);
 }

@@ -37,7 +37,9 @@ pub const catalogs = [_]Catalog{
 /// Code compiled into each program that imports it, by name, rather than
 /// loaded: a library's inner part that its test programs build in as well.
 /// The rasterizer core is facet.library's, and is called per triangle and
-/// per tile - too often to go through a jump table. The baseline JPEG
+/// per tile - too often to go through a jump table. The SMB client is
+/// the protocol and the share files, which smb-handler, C:net/MountShare
+/// and SYS:System/Shares each need all or part of. The baseline JPEG
 /// decoder is jpeg.datatype's, and mjpeg.vcodec's for Motion JPEG. The
 /// H.264 decoder is h264.vcodec's, the VP8 decoder vp8.vcodec's, the VP9
 /// decoder vp9.vcodec's, the AV1 decoder av1.vcodec's and the H.265
@@ -52,6 +54,7 @@ const inner_modules = [_]struct { name: []const u8, source: []const u8 }{
     .{ .name = "vp9core", .source = "libs/codecs/vp9/core.zig" },
     .{ .name = "av1core", .source = "libs/codecs/av1/core.zig" },
     .{ .name = "hevccore", .source = "libs/codecs/hevc/core.zig" },
+    .{ .name = "smbclient", .source = "libs/smb/smbclient.zig" },
 };
 
 /// Something copied onto the disk as it is.
@@ -92,7 +95,7 @@ const tests = [_][]const u8{
     "glyphs",      "ribbon",      "taskbench",   "videodec",  "audiodec",
     "film",        "commodities",
 };
-const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless", "hostname", "ssh", "scp", "filter", "mountshare", "git" };
+const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless", "hostname", "ssh", "scp", "filter", "git" };
 
 /// Programs with windows, in SYS:Programs and - the system's own tools -
 /// SYS:System, the commodities in SYS:Commodities, and the dock: started
@@ -118,7 +121,13 @@ const window_programs = [_]Program{
     .{ .disk = "System/CPULoad", .source = "system/cpuload/cpuload.zig", .name = "cpuload" },
     .{ .disk = "System/NetLoad", .source = "system/netload/netload.zig", .name = "netload" },
     .{ .disk = "System/MemMap", .source = "system/memmap/memmap.zig", .name = "memmap" },
+    .{ .disk = "System/Shares", .source = "system/shares/shares.zig", .name = "shares", .imports = &.{"smbclient"} },
     .{ .disk = "Commodities/Exchange", .source = "commodities/exchange/exchange.zig", .name = "exchange" },
+};
+
+/// Commands built with an inner module.
+const inner_commands = [_]Program{
+    .{ .disk = "c/net/mountshare", .source = "c/net/mountshare/mountshare.zig", .name = "mountshare", .imports = &.{"smbclient"} },
 };
 
 /// Test programs built with an inner module.
@@ -269,7 +278,7 @@ const modules = [_]Program{
     .{ .disk = "devs/usb/aic8800.device", .source = "devs/usb/aic8800/aic8800.zig", .name = "aic8800.device" },
     .{ .disk = "devs/handlers/fat-handler", .source = "devs/handlers/fat/fat.zig", .name = "fat-handler" },
     .{ .disk = "devs/handlers/posfs-handler", .source = "devs/handlers/posfs/posfs.zig", .name = "posfs-handler" },
-    .{ .disk = "devs/handlers/smb-handler", .source = "devs/handlers/smb/smb.zig", .name = "smb-handler" },
+    .{ .disk = "devs/handlers/smb-handler", .source = "devs/handlers/smb/smb.zig", .name = "smb-handler", .imports = &.{"smbclient"} },
 };
 
 /// Drivers of the ESP32-S3's own hardware, built for it alone: RS-485 on
@@ -348,7 +357,7 @@ pub fn fileFor(file: File, chip: poweros_sdk.Chip) bool {
 }
 
 pub const programs: []const Program = blk: {
-    var list: [commands.len + tests.len + inner_tests.len + net_tools.len + window_programs.len + modules.len]Program = undefined;
+    var list: [commands.len + tests.len + inner_tests.len + inner_commands.len + net_tools.len + window_programs.len + modules.len]Program = undefined;
     var n: usize = 0;
     for (commands) |name| {
         list[n] = .{ .disk = "c/" ++ name, .source = "c/" ++ name ++ "/" ++ name ++ ".zig", .name = name };
@@ -359,6 +368,10 @@ pub const programs: []const Program = blk: {
         n += 1;
     }
     for (inner_tests) |program| {
+        list[n] = program;
+        n += 1;
+    }
+    for (inner_commands) |program| {
         list[n] = program;
         n += 1;
     }
@@ -556,6 +569,7 @@ pub const files = [_]File{
     .{ .disk = "System/Docs/CPULoad.md", .source = "system/cpuload/README.md" },
     .{ .disk = "System/Docs/NetLoad.md", .source = "system/netload/README.md" },
     .{ .disk = "System/Docs/MemMap.md", .source = "system/memmap/README.md" },
+    .{ .disk = "System/Docs/Shares.md", .source = "system/shares/README.md" },
     // SYS:Commodities/Docs - the same for the commodities.
     .{ .disk = "Commodities/Docs/Exchange.md", .source = "commodities/exchange/README.md" },
 };

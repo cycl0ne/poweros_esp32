@@ -22,6 +22,10 @@
 //! strgclass gadget has an edit hook of this class's that turns away any
 //! character but a digit, and a sign at the start, with a flash of the
 //! screen. A program's own `STRINGA_EditHook` takes its place.
+//!
+//! Made with `STRINGA_Secret`, it is a password field: an asterisk is
+//! drawn for each character typed, and what was typed is read from
+//! `STRINGA_TextVal` as in any other.
 
 const sdk = @import("sdk");
 const utility = sdk.utility;
@@ -44,8 +48,8 @@ const TagItem = utility.TagItem;
 pub const Library = gadgets.ClassLibrary(.{
     .name = st.STRING_CLASS,
     .version = 1,
-    .revision = 1,
-    .date = "27.10.2026",
+    .revision = 2,
+    .date = "02.11.2026",
     .super = classusr.GADGETCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -73,7 +77,8 @@ const handed_on = [_]utility.Tag{
     gc.STRINGA_ActivePens,    gc.STRINGA_EditHook,       gc.STRINGA_EditModes,
     gc.STRINGA_ReplaceMode,   gc.STRINGA_FixedFieldMode, gc.STRINGA_NoFilterMode,
     gc.STRINGA_Justification, gc.STRINGA_LongVal,        gc.STRINGA_TextVal,
-    gc.STRINGA_ExitHelp,      gc.GA_Disabled,            utility.TAG_DONE,
+    gc.STRINGA_ExitHelp,      gc.STRINGA_Secret,         gc.GA_Disabled,
+    utility.TAG_DONE,
 };
 
 fn isStringTag(tag: utility.Tag) bool {

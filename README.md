@@ -218,8 +218,10 @@ Beside them:
   on cards and sticks; the flash file system (`DH0:`), `RAM:`, `PIPE:`;
   a share on an SMB 2 or 3 server, read and written as a volume, signed
   and encrypted, mounted at boot from its file in `DEVS:Shares/` and
-  connected again after a server restart (`C:net/MountShare`,
-  [network guide](sdk/docs/guides/network.md#a-share-as-a-volume-smb-handler));
+  connected again after a server restart; a server asked what shares it
+  has and one of them mounted from the screen (`SYS:System/Shares`,
+  `C:net/MountShare`, [network
+  guide](sdk/docs/guides/network.md#a-share-as-a-volume-smb-handler));
   partitions from an RDB or a GPT on any drive, laid out in
   `SYS:System/HDToolBox` ([disks guide](sdk/docs/guides/rdb.md)); a
   system put onto a card or an SSD by one command, from the running
@@ -253,8 +255,8 @@ Beside them:
   ([locale guide](sdk/docs/guides/locale.md)).
 - **Programs:** in `SYS:Programs` MultiView, Notepad, Sheet, Terminal,
   Player, FontView, Battery, Prefs and Volume; in `SYS:System` the Shell,
-  HDToolBox, CPULoad, NetLoad and MemMap; in `SYS:Commodities` Exchange,
-  which lists the commodities running and makes each active or
+  HDToolBox, Shares, CPULoad, NetLoad and MemMap; in `SYS:Commodities`
+  Exchange, which lists the commodities running and makes each active or
   inactive, shows or hides its window, or ends it
   ([commodities guide](sdk/docs/guides/commodities.md)).
 - **When something fails:** a Guru and a ROM debugger on the serial
