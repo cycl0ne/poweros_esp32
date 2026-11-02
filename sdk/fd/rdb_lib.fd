@@ -59,4 +59,7 @@ i32 WriteGPT(*rdb.RDBHandle handle)
 /// The handle's GPT taken out of it, for a table over the whole disk,
 /// which WriteRDB writes and then wipes the disk's GPT.
 void RemGPT(*rdb.RDBHandle handle)
+/// A drive this handle's unit was mounted as taken off dos's list again:
+/// its handler ended and its node freed.
+i32 UnmountPartition(*rdb.RDBHandle handle, [*:0]const u8 name)
 ##end

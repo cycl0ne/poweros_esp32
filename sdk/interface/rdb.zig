@@ -34,6 +34,7 @@ pub const LVO = struct {
     pub const RemGPTPartition = libraries.lvo(20);
     pub const WriteGPT = libraries.lvo(21);
     pub const RemGPT = libraries.lvo(22);
+    pub const UnmountPartition = libraries.lvo(23);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -58,6 +59,7 @@ pub const Fn = struct {
     pub const RemGPTPartition = *const fn (*RDBBase, *rdb.RDBHandle, *rdb.GPTPartition) callconv(.c) void;
     pub const WriteGPT = *const fn (*RDBBase, *rdb.RDBHandle) callconv(.c) i32;
     pub const RemGPT = *const fn (*RDBBase, *rdb.RDBHandle) callconv(.c) void;
+    pub const UnmountPartition = *const fn (*RDBBase, *rdb.RDBHandle, [*:0]const u8) callconv(.c) i32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -175,5 +177,11 @@ pub const RDBBase = opaque {
     /// which WriteRDB writes and then wipes the disk's GPT.
     pub fn RemGPT(self: *RDBBase, handle: *rdb.RDBHandle) void {
         return libraries.call(self, LVO.RemGPT, Fn.RemGPT, .{handle});
+    }
+
+    /// A drive this handle's unit was mounted as taken off dos's list again:
+    /// its handler ended and its node freed.
+    pub fn UnmountPartition(self: *RDBBase, handle: *rdb.RDBHandle, name: [*:0]const u8) i32 {
+        return libraries.call(self, LVO.UnmountPartition, Fn.UnmountPartition, .{ handle, name });
     }
 };

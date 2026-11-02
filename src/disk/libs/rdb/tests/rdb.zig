@@ -1583,6 +1583,50 @@ test "a container's partition mounted at its blocks on the disk, and a GPT parti
     try testing.expectEqual(sdk.dos.posfs.ID_POSFS_DISK, env.dos_type);
 }
 
+test "a drive taken off the list again: the node gone, its blocks free to mount once more, and a name that is not this unit's left alone" {
+    var dos_rig = try DosRig.init();
+    defer dos_rig.deinit() catch unreachable;
+    const rig = &dos_rig.rig;
+    var large = try Large.attach(rig);
+    defer large.detach(rig);
+    const rb = rig.rb;
+    try large.lay(&.{
+        gptEntry(gpt.TYPE_BASIC_DATA, 2048, 3071, "FAT"),
+        gptEntry(gpt.TYPE_CONTAINER, 6144, last_usable, "PowerOS"),
+    });
+    large.fatVolume(2048);
+    {
+        const handle = try rig.open();
+        defer rb.CloseRDB(handle);
+        try testing.expectEqual(rdb.RDBERR_OK, rb.InitRDB(handle));
+        try testing.expectEqual(rdb.RDBERR_OK, rb.AddPartition(handle, "DH1", 16, 100, sdk.dos.posfs.ID_POSFS_DISK));
+        try testing.expectEqual(rdb.RDBERR_OK, rb.WriteRDB(handle));
+    }
+    const handle = try rig.open();
+    defer rb.CloseRDB(handle);
+    const fat_part = rb.NextGPTPartition(handle, null).?;
+    var name: rdb.MountName = undefined;
+    try testing.expectEqual(rdb.RDBERR_OK, rb.MountGPTPartition(handle, fat_part, "SD0", &name, 0));
+    try testing.expectEqual(rdb.RDBERR_OK, rb.MountPartition(handle, rb.FindPartition(handle, "DH1").?, null, 0));
+    try testing.expect(dos_rig.device("SD0") != null);
+
+    // The drive off the list: its blocks are free, so the partition
+    // mounts again, under the name asked for rather than a dotted one.
+    try testing.expectEqual(rdb.RDBERR_OK, rb.UnmountPartition(handle, "SD0"));
+    try testing.expect(dos_rig.device("SD0") == null);
+    try testing.expectEqual(rdb.RDBERR_NOTMOUNTED, rb.UnmountPartition(handle, "SD0"));
+    try testing.expectEqual(rdb.RDBERR_OK, rb.MountGPTPartition(handle, fat_part, "SD0", &name, 0));
+    try testing.expectEqualStrings("SD0", nameText(&name));
+
+    // A name nothing was mounted under, and one dos has from somewhere
+    // else: neither is this unit's to take off.
+    try testing.expectEqual(rdb.RDBERR_NOTMOUNTED, rb.UnmountPartition(handle, "SD9"));
+    try testing.expectEqual(rdb.RDBERR_NOTMOUNTED, rb.UnmountPartition(handle, "RAM"));
+    try testing.expect(dos_rig.device("SD0") != null);
+    try testing.expectEqual(rdb.RDBERR_OK, rb.UnmountPartition(handle, "DH1"));
+    try testing.expect(dos_rig.device("DH1") == null);
+}
+
 test "a new GPT partition mounted for FAT with the format asked for, one with a volume as it holds, and nothing another system put there" {
     var dos_rig = try DosRig.init();
     defer dos_rig.deinit() catch unreachable;

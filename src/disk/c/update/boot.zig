@@ -42,10 +42,13 @@ const compare = @import("compare.zig");
 const Run = shared.Run;
 const Name = shared.Name;
 
-/// The library this wants, and the revision in which a GPT's FAT
-/// partition can be mounted.
+/// The library this wants, the revision in which a GPT's FAT partition
+/// can be mounted, and the one that can take a drive off the list again
+/// - an older library leaves the partition mounted, which is a drive on
+/// the screen until the machine restarts and nothing worse.
 const rdb_version = 1;
 const fat_revision = 7;
+const unmount_revision = 8;
 
 /// What a line says is happening, as the system half says it.
 const row = "  %-7s %s\n";
@@ -63,6 +66,8 @@ const Slot = struct {
     part: *rdb.GPTPartition = undefined,
     number: u32 = 0,
     drive: Name = .{},
+    /// Whether this run mounted it, and so puts it back as it was.
+    ours: bool = false,
 
     fn mounted(slot: *const Slot) bool {
         return slot.drive.text[0] != 0;
@@ -104,6 +109,9 @@ pub fn write(run: *Run, fresh: []const u8) i32 {
     // is the one the firmware looks in for `autoboot.txt`.
     var slots: [2]Slot = .{ .{}, .{} };
     var count: usize = 0;
+    defer {
+        for (slots[0..count]) |*one| unmount(run, rb, handle, one);
+    }
     const boot_b: [*:0]const u8 = @ptrCast(&settings.boot_b);
     for ([_][*:0]const u8{ boot, boot_b }) |name| {
         if (name[0] == 0) continue;
@@ -181,6 +189,7 @@ pub fn confirm(run: *Run) i32 {
     defer rb.CloseRDB(handle);
 
     var first: Slot = .{};
+    defer unmount(run, rb, handle, &first);
     var lowest: u32 = 0;
     for ([_][*:0]const u8{ boot, boot_b }) |name| {
         const part = named(run, rb, handle, name) orelse continue;
@@ -336,7 +345,29 @@ fn mount(run: *Run, rb: *RDBBase, handle: *rdb.RDBHandle, slot: *Slot) ?i32 {
         return shared.fail(run, "%s cannot be mounted: %s\n", .{ wanted, errorText(err) });
     }
     slot.drive = driveOf(@ptrCast(&got));
+    slot.ours = true;
     return null;
+}
+
+/// A slot this run mounted taken off the device list again: the
+/// firmware's partition is not one to leave there, and the install left
+/// it marked not to be mounted when the medium comes in. One that was
+/// already mounted when this began is left as it was.
+fn unmount(run: *Run, rb: *RDBBase, handle: *rdb.RDBHandle, slot: *Slot) void {
+    if (!slot.ours) return;
+    const library = rb.lib();
+    if (library.version == rdb_version and library.revision < unmount_revision) return;
+    var name: Name = .{};
+    const text = slot.drive.text;
+    var at: usize = 0;
+    while (at < text.len and text[at] != 0 and text[at] != ':') : (at += 1) name.text[at] = text[at];
+    name.text[at] = 0;
+    if (rb.UnmountPartition(handle, name.cstr()) == rdb.RDBERR_OK) {
+        slot.ours = false;
+        slot.drive = .{};
+        return;
+    }
+    shared.say(run, "%s is still mounted: something is open on it\n", .{slot.drive.cstr()});
 }
 
 /// Whether dos has a drive of that name already.

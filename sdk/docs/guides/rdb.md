@@ -494,6 +494,34 @@ block for that; what another system put there - an NTFS volume, FAT16
 - is not all zeroes, and stays unmounted. A partition that holds a
 volume is mounted as it holds, the flag aside.
 
+### Letting a drive go again
+
+`UnmountPartition(handle, name)` (1.8) takes a drive this handle's unit
+was mounted as off dos's list again: the handler is sent `ACTION_DIE`, so
+it writes what it holds and lets go of the unit, and the node is removed
+and freed under the list's lock. The name is the one the mounting gave
+back, without a colon - which is not always the one asked for, since a
+taken name gets dots.
+
+```zig
+var name: rdb.MountName = undefined;
+if (rb.MountGPTPartition(handle, part, "BOOT", &name, rdb.RDBMF_START | rdb.RDBMF_FAT) != rdb.RDBERR_OK) return;
+defer _ = rb.UnmountPartition(handle, @ptrCast(&name));
+```
+
+A drive on the list that opens another device or unit is not this
+handle's and is left alone (`RDBERR_NOTMOUNTED`), so naming somebody
+else's drive does nothing. A handler that refuses to end, because a file
+or a lock is open on the drive, leaves everything as it was
+(`RDBERR_INUSE`). The code of a file system the table brought is freed
+with the last node that uses it.
+
+This is for a program that mounts a partition to do one thing with it -
+write the firmware's files into the partition it reads, look at what a
+medium holds - and would otherwise leave a drive on the list for the rest
+of the system's life. A partition the machine goes on using is left
+mounted.
+
 ### Making a GPT
 
 ```zig
@@ -566,6 +594,8 @@ changes nothing when it fails - except `WriteRDB` and `WriteGPT` with
 | `RDBERR_FILESYSTEM` | no handler and no code in the table for the partition's DosType, or one whose file system cannot go there; for `AddFileSystem`, code that is not a handler's load file for this machine; for `MountGPTPartition`, a first block that holds no file system this machine reads, or the container |
 | `RDBERR_GPT` | the call does not go with the disk's GPT: `InitRDB` on a GPT with no container, `WriteRDB` of a table whose container is not on the disk yet, `AddGPTPartition` of a type of all zeroes or of a second container |
 | `RDBERR_NOGPT` | the handle has no sound GPT to change or write, and `InitGPT` has not made one |
+| `RDBERR_NOTMOUNTED` | `UnmountPartition`: dos's list has no drive of that name opening this handle's unit |
+| `RDBERR_INUSE` | `UnmountPartition`: the drive's handler will not end, or something reached the drive while it was ending |
 
 ## When a change is seen
 

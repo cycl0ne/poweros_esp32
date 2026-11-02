@@ -83,7 +83,7 @@ const files = @import("files.zig");
 const Run = shared.Run;
 
 pub const COMMAND_NAME = shared.COMMAND_NAME;
-const VERSION_STRING = "\x00$VER: Install 1.1 (01.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Install 1.2 (02.11.2026)\r\n";
 
 /// rdb.library is opened at version 1 and its revision asked after: the
 /// GPT calls came with 1.4 and a FAT partition of a GPT, which the boot

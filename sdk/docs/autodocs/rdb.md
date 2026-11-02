@@ -25,6 +25,7 @@ Generated from the source by `./zig build autodoc`.
 - [RemGPT](#remgpt) - Takes the GPT out of a handle, so that InitRDB makes a table over the whole disk, and WriteRDB wipes the disk's GPT once it has written it.
 - [RemGPTPartition](#remgptpartition) - Takes a partition off a handle's GPT and frees it.
 - [RemPartition](#rempartition) - Takes a partition off a handle's list and frees it.
+- [UnmountPartition](#unmountpartition) - Takes a drive of this handle's unit off dos's list, ending its handler.
 - [WriteGPT](#writegpt) - Checks a handle's GPT and writes it to the disk: the copy at the end, then the one at the start, then the protective MBR.
 - [WriteRDB](#writerdb) - Checks a handle's table and writes it to the disk: the code of its file systems, a FileSysHeaderBlock per file system, a PartitionBlock per partition, then the RigidDiskBlock.
 
@@ -1304,6 +1305,92 @@ None known.
 ```zig
 if (rb.FindPartition(handle, "DH1")) |part| rb.RemPartition(handle, part);
 _ = rb.WriteRDB(handle);
+```
+
+## UnmountPartition
+
+Takes a drive of this handle's unit off dos's list, ending its handler.
+
+**SYNOPSIS**
+
+```zig
+fn UnmountPartition(base: *RDBBase, handle: *rdb.RDBHandle, name: [*:0]const u8) i32
+```
+
+**SINCE**
+
+1.8. LVO -96.
+
+**INPUTS**
+
+- `handle`: from OpenRDB, open on the device and unit the drive was
+  mounted from.
+- `name`: the drive, without a colon, as MountPartition or
+  MountGPTPartition left it in `name`/`mounted` - which is not always
+  the name asked for, since a taken name gets dots.
+
+**RESULT**
+
+RDBERR_OK, or RDBERR_NOTMOUNTED when no drive of that name opens this
+handle's unit, RDBERR_INUSE when its handler will not end or
+something reached the drive while it was ending, RDBERR_NOMEM when
+dos.library cannot be opened.
+
+**BEHAVIOR**
+
+The drive is looked for on the list by name. One that is there but
+opens another device or unit is not this handle's and is left alone,
+with RDBERR_NOTMOUNTED - a drive is matched the way MountPartition
+matches one, by what the device is called and the unit it opens.
+
+A handler that is running is sent ACTION_DIE, which it answers once
+it has written what it holds and taken its volume off the list; one
+that refuses, because a file or a lock is open on the drive, leaves
+everything as it was and answers RDBERR_INUSE. A node whose handler
+was never started is taken off without a packet.
+
+The node is then removed under the list's lock, so a program that
+reached the drive in between is not left holding a node that is going
+away: a drive that has a task or a user again at that moment answers
+RDBERR_INUSE, and the handler is the next use's to start.
+
+**CONTEXT**
+
+- Waits: yes, for the dos list's lock and for the handler's answer.
+- Interrupts: no.
+- Locks: no spinlock may be held, nor the dos list.
+- Process: a Process, since the handler is sent a packet.
+
+**OWNERSHIP**
+
+The node and the copy of the table's code the mounting made are
+freed; a pointer to either is no use afterwards. The handle stays the
+caller's.
+
+**NOTES**
+
+The library stays in memory once anything has been mounted, since the
+nodes still on the list name their handler by a string it holds.
+
+A drive somebody else mounted from the same unit is taken off as
+readily as one's own: the unit is what is checked, not who asked for
+the mount.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`MountPartition`, `MountGPTPartition`, `OpenRDB`
+
+**EXAMPLES**
+
+```zig
+var name: rdb.MountName = undefined;
+if (rb.MountGPTPartition(handle, part, "BOOT", &name, rdb.RDBMF_START | rdb.RDBMF_FAT) != rdb.RDBERR_OK) return;
+defer _ = rb.UnmountPartition(handle, @ptrCast(&name));
+// ... write the firmware's files into it ...
 ```
 
 ## WriteGPT

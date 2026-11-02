@@ -379,7 +379,11 @@ table and mounts the entry of that name. Nothing in it is deleted - it is
 the firmware's, and what else is in there is somebody's business - and
 each file is held against the length and the CRC-32 the package's list
 gives, as on the system volume. One that is already what the list says is
-left alone, so writing the partition again costs nothing.
+left alone, so writing the partition again costs nothing. The partition
+comes off the list again when the writing is done
+(`rdb.library`'s `UnmountPartition`, 1.8), so it is no more on the screen
+afterwards than it was before; one that was already mounted by hand stays
+as it was.
 
 **Where the firmware starts from either of a pair** (`SYSTAG_BootSlots`
 is 2) the one not in use is written and `autoboot.txt` in the first of

@@ -32,6 +32,7 @@ const AddGPTPartition = @import("gpt/addgptpartition.zig").AddGPTPartition;
 const RemGPTPartition = @import("gpt/remgptpartition.zig").RemGPTPartition;
 const WriteGPT = @import("gpt/writegpt.zig").WriteGPT;
 const RemGPT = @import("gpt/remgpt.zig").RemGPT;
+const UnmountPartition = @import("partition/unmountpartition.zig").UnmountPartition;
 
 /// rdb.library's interface, as the SDK generates it from
 /// sdk/fd/rdb_lib.fd.
@@ -76,6 +77,7 @@ const contract_files = [_][]const u8{
     @embedFile("gpt/remgptpartition.zig"),
     @embedFile("gpt/writegpt.zig"),
     @embedFile("gpt/remgpt.zig"),
+    @embedFile("partition/unmountpartition.zig"),
 };
 
 fn lvoOpenRDB(base: *RDBBase, device: [*:0]const u8, unit: u32, err: ?*i32) callconv(.c) ?*rdb.RDBHandle {
@@ -135,6 +137,9 @@ fn lvoWriteGPT(base: *RDBBase, handle: *rdb.RDBHandle) callconv(.c) i32 {
 fn lvoRemGPT(base: *RDBBase, handle: *rdb.RDBHandle) callconv(.c) void {
     return RemGPT(base, handle);
 }
+fn lvoUnmountPartition(base: *RDBBase, handle: *rdb.RDBHandle, name: [*:0]const u8) callconv(.c) i32 {
+    return UnmountPartition(base, handle, name);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -162,6 +167,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoRemGPTPartition),
     vec(lvoWriteGPT),
     vec(lvoRemGPT),
+    vec(lvoUnmountPartition),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

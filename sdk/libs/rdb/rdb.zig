@@ -104,6 +104,15 @@ pub const RDBERR_GPT: i32 = -12;
 /// The handle holds no GPT to change or write: the disk had none, or
 /// none that is sound, and InitGPT has not made one.
 pub const RDBERR_NOGPT: i32 = -13;
+/// UnmountPartition: dos's list holds no drive of that name that opens
+/// this handle's unit - it was never mounted, it is another unit's, or
+/// something has taken it off the list already.
+pub const RDBERR_NOTMOUNTED: i32 = -14;
+/// UnmountPartition: the drive is in use - its handler will not end
+/// because something is open or locked on it, or a program reached it
+/// between the handler ending and the node coming off the list. Nothing
+/// is changed; the drive is still there.
+pub const RDBERR_INUSE: i32 = -15;
 
 // --- MountPartition -------------------------------------------------------------
 
