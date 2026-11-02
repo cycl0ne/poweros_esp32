@@ -708,6 +708,45 @@ test "a WAV it does not decode, and bytes that are no sound, are refused with wh
     try testing.expectEqual(ac.ACERR_OPEN, err);
 }
 
+test "two modules for one kind: the one that refuses gives way to the next, which is read the sound again" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const acb = rig.acb;
+    // refuse.acodec claims WAV above wav.acodec and takes nothing.
+    try sound_modules.addRefuser(kexec);
+    defer sound_modules.dropRefuser(rig.sysLib());
+
+    const data = stereo16(200);
+    var b: Builder = .{};
+    wavFile(&b, 1, 2, 16, "Twice", &data);
+    try rig.write("WORK:two.wav", &.{b.slice()});
+
+    var err: i32 = -99;
+    const stream = openFile(acb, "WORK:two.wav", &err) orelse return error.NoStream;
+    try testing.expectEqual(ac.ACERR_OK, err);
+    // It was tried first, and the sound is wav.acodec's all the same: the
+    // bytes the one before it read were read again for it.
+    try testing.expectEqual(@as(u32, 1), sound_modules.refused());
+    var info: ac.AudioStreamInfo = .{};
+    acb.GetAudioStreamInfo(stream, &info);
+    try testing.expectEqual(ac.ACODEC_WAV, info.codec);
+    try testing.expectEqual(@as(u32, 200), info.frames);
+    try testing.expectEqualStrings("Twice", textOf(&info.title));
+    var all: [200 * 2]i16 = undefined;
+    try testing.expectEqual(@as(u32, 200), try decodeAll(acb, stream, 2, 64, &all));
+    try testing.expectEqual(@as(i16, 199 * 7), all[199 * 2]);
+    try testing.expectEqual(@as(i16, -199 * 5), all[199 * 2 + 1]);
+    acb.CloseAudioStream(stream);
+
+    // Sound read through a function cannot be read again: the refusal of
+    // the module that read it stands.
+    var memory: Memory = .{ .bytes = b.slice() };
+    try testing.expect(openMemory(acb, &memory, &err) == null);
+    try testing.expectEqual(ac.ACERR_UNSUPPORTED, err);
+    try testing.expectEqual(@as(u32, 2), sound_modules.refused());
+}
+
 test "files: they seek; a tag at the end is no sound and names it; a WAV seeks exactly" {
     var rig: Rig = undefined;
     try rig.init();

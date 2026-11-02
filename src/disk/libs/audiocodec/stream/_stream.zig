@@ -93,24 +93,44 @@ pub fn moduleOf(stream: *Stream) ?*ACodecBase {
 /// Which module that is comes from the modules' own tags
 /// (`modules/_modules.zig`), in the order they are tried; the first that
 /// opens is the stream's. A module that opens and then refuses the stream
-/// is the caller's to answer for - `openNextModule` gives it the next.
+/// is the caller's to answer for - `dropModule` lets it go and
+/// `openNextModule` gives the stream the next.
 pub fn openModule(base: *AudioCodecBase, stream: *Stream, codec: u32) ?*ACodecBase {
     if (moduleOf(stream)) |module| return module;
-    return openNextModule(base, stream, codec, 0);
+    var tried: u32 = 0;
+    return openNextModule(base, stream, codec, &tried);
 }
 
-/// The module after the `tried` before it, opened for the stream, which
-/// must have none: null when there is no further module for `codec`.
-pub fn openNextModule(base: *AudioCodecBase, stream: *Stream, codec: u32, tried: u32) ?*ACodecBase {
+/// The next module for `codec` opened for the stream, which must have
+/// none: `tried` is how many have been passed over, and is left past the
+/// one opened, so calling again gives the one after it. Null when there is
+/// no further module.
+pub fn openNextModule(base: *AudioCodecBase, stream: *Stream, codec: u32, tried: *u32) ?*ACodecBase {
     const sys = base.sys_base;
-    var at = tried;
-    while (_modules.nth(base, codec, at)) |found| : (at += 1) {
+    while (_modules.nth(base, codec, tried.*)) |found| : (tried.* += 1) {
         if (sys.OpenLibrary(@ptrCast(&found.name), 1)) |module| {
+            tried.* += 1;
             stream.module = module;
             return moduleOf(stream);
         }
     }
     return null;
+}
+
+/// The module let go after it refused the stream, so the next can be
+/// given it: what the module made handed back (`CloseACodec` frees its
+/// state), the module closed, and the stream as it was handed to it - the
+/// tags it read dropped, the samples it decoded forgotten, its info put
+/// back to `info`. The bytes are the caller's to wind back (`seekSource`).
+pub fn dropModule(base: *AudioCodecBase, stream: *Stream, info: ac.AudioStreamInfo) void {
+    const module = moduleOf(stream) orelse return;
+    module.CloseACodec(stream);
+    base.sys_base.CloseLibrary(module.lib());
+    stream.module = null;
+    clearTags(stream);
+    stream.pcm_start = 0;
+    stream.pcm_stop = 0;
+    stream.info = info;
 }
 
 /// The kind's state, cleared, in memory of its own: made once, and given

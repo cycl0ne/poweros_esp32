@@ -511,6 +511,16 @@ CloseAudioStream (SINCE 1.10): wav.acodec, mp3.acodec, flac.acodec,
 vorbis.acodec, aac.acodec, ac3.acodec, opus.acodec, dts.acodec (SINCE
 1.11).
 
+Which module decodes a kind comes from the modules' own ROM tags, read
+out of their files without loading them, and not from their names
+(SINCE 1.13): a codec is added to a board by dropping its module in
+LIBS:codecs/. Where a kind has several modules each is tried - a
+board's own decoder before software, the higher priority first - and
+one that opens and then refuses the sound is let go and the next is
+read it from its first byte again (SINCE 1.14); sound read through a
+function cannot be read again, and keeps the refusal of the module
+that read it.
+
 The stream reads ahead of the decoder into a buffer of its own, and
 finds the kind by the first bytes (as `IdentifyAudio`) unless
 `ACA_Codec` says - an Ogg stream by its first page all the same, Vorbis

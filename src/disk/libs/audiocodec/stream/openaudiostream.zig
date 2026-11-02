@@ -49,6 +49,16 @@ const _media = @import("_media.zig");
 /// vorbis.acodec, aac.acodec, ac3.acodec, opus.acodec, dts.acodec (SINCE
 /// 1.11).
 ///
+/// Which module decodes a kind comes from the modules' own ROM tags, read
+/// out of their files without loading them, and not from their names
+/// (SINCE 1.13): a codec is added to a board by dropping its module in
+/// LIBS:codecs/. Where a kind has several modules each is tried - a
+/// board's own decoder before software, the higher priority first - and
+/// one that opens and then refuses the sound is let go and the next is
+/// read it from its first byte again (SINCE 1.14); sound read through a
+/// function cannot be read again, and keeps the refusal of the module
+/// that read it.
+///
 /// The stream reads ahead of the decoder into a buffer of its own, and
 /// finds the kind by the first bytes (as `IdentifyAudio`) unless
 /// `ACA_Codec` says - an Ogg stream by its first page all the same, Vorbis
@@ -219,10 +229,29 @@ pub fn OpenAudioStream(base: *AudioCodecBase, tags: ?[*]const utility.TagItem, e
 /// The stream's bytes opened by the module that decodes their kind:
 /// ACERR_UNKNOWN when the bytes are not sound this library knows,
 /// ACERR_UNSUPPORTED when they are a kind no module on this disk decodes.
+///
+/// Every module of the kind is tried, in the order their tags put them -
+/// a board's own decoder before software, the higher priority first
+/// (SINCE 1.14). A module that opens and then refuses the sound is let go
+/// and the next is given it, from the first byte again; the error answered
+/// is the first that was not plain ACERR_UNSUPPORTED - "not mine". Only a
+/// file can be read again: sound read through a function keeps the refusal
+/// of the module that read it, as a film's pictures do.
 fn openKind(base: *AudioCodecBase, stream: *Stream, codec: u32) i32 {
     if (codec == ac.ACODEC_UNKNOWN) return if (stream.failed) ac.ACERR_READ else ac.ACERR_UNKNOWN;
-    const module = _stream.openModule(base, stream, codec) orelse return ac.ACERR_UNSUPPORTED;
-    return module.OpenACodec(stream);
+    const info = stream.info;
+    const from = _stream.tell(stream);
+    var tried: u32 = 0;
+    var why: i32 = ac.ACERR_UNSUPPORTED;
+    while (_stream.openNextModule(base, stream, codec, &tried)) |module| {
+        const result = module.OpenACodec(stream);
+        if (result == ac.ACERR_OK) return ac.ACERR_OK;
+        if (why == ac.ACERR_UNSUPPORTED) why = result;
+        _stream.dropModule(base, stream, info);
+        if (!_stream.seekSource(stream, from)) return result;
+        _stream.fill(stream);
+    }
+    return why;
 }
 
 fn failed(err: ?*i32, code: i32) ?*ac.AudioStream {
