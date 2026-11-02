@@ -44,7 +44,9 @@ pub const catalogs = [_]Catalog{
 /// H.264 decoder is h264.vcodec's, the VP8 decoder vp8.vcodec's, the VP9
 /// decoder vp9.vcodec's, the AV1 decoder av1.vcodec's and the H.265
 /// decoder hevc.vcodec's, kept apart from the system so that they are
-/// tested on the host as they are.
+/// tested on the host as they are. The commodity frame is where the
+/// settings and the broker loop of every commodity in SYS:Commodities are
+/// written once.
 const inner_modules = [_]struct { name: []const u8, source: []const u8 }{
     .{ .name = "raster", .source = "libs/facet/driver/cpu/raster/raster.zig" },
     .{ .name = "v3d", .source = "libs/facet/driver/v3d/v3d.zig" },
@@ -55,6 +57,7 @@ const inner_modules = [_]struct { name: []const u8, source: []const u8 }{
     .{ .name = "av1core", .source = "libs/codecs/av1/core.zig" },
     .{ .name = "hevccore", .source = "libs/codecs/hevc/core.zig" },
     .{ .name = "smbclient", .source = "libs/smb/smbclient.zig" },
+    .{ .name = "commodity", .source = "commodities/_frame/frame.zig" },
 };
 
 /// Something copied onto the disk as it is.
@@ -123,6 +126,13 @@ const window_programs = [_]Program{
     .{ .disk = "System/MemMap", .source = "system/memmap/memmap.zig", .name = "memmap" },
     .{ .disk = "System/Shares", .source = "system/shares/shares.zig", .name = "shares", .imports = &.{"smbclient"} },
     .{ .disk = "Commodities/Exchange", .source = "commodities/exchange/exchange.zig", .name = "exchange" },
+    .{ .disk = "Commodities/NoCapsLock", .source = "commodities/nocapslock/nocapslock.zig", .name = "nocapslock", .imports = &.{"commodity"} },
+    .{ .disk = "Commodities/NumericPad", .source = "commodities/numericpad/numericpad.zig", .name = "numericpad", .imports = &.{"commodity"} },
+    .{ .disk = "Commodities/MouseBlanker", .source = "commodities/mouseblanker/mouseblanker.zig", .name = "mouseblanker", .imports = &.{"commodity"} },
+    .{ .disk = "Commodities/AutoPoint", .source = "commodities/autopoint/autopoint.zig", .name = "autopoint", .imports = &.{"commodity"} },
+    .{ .disk = "Commodities/ClickToFront", .source = "commodities/clicktofront/clicktofront.zig", .name = "clicktofront", .imports = &.{"commodity"} },
+    .{ .disk = "Commodities/Blanker", .source = "commodities/blanker/blanker.zig", .name = "blanker", .imports = &.{"commodity"} },
+    .{ .disk = "Commodities/FKey", .source = "commodities/fkey/fkey.zig", .name = "fkey", .imports = &.{"commodity"} },
 };
 
 /// Commands built with an inner module.
@@ -572,6 +582,13 @@ pub const files = [_]File{
     .{ .disk = "System/Docs/Shares.md", .source = "system/shares/README.md" },
     // SYS:Commodities/Docs - the same for the commodities.
     .{ .disk = "Commodities/Docs/Exchange.md", .source = "commodities/exchange/README.md" },
+    .{ .disk = "Commodities/Docs/NoCapsLock.md", .source = "commodities/nocapslock/README.md" },
+    .{ .disk = "Commodities/Docs/NumericPad.md", .source = "commodities/numericpad/README.md" },
+    .{ .disk = "Commodities/Docs/MouseBlanker.md", .source = "commodities/mouseblanker/README.md" },
+    .{ .disk = "Commodities/Docs/AutoPoint.md", .source = "commodities/autopoint/README.md" },
+    .{ .disk = "Commodities/Docs/ClickToFront.md", .source = "commodities/clicktofront/README.md" },
+    .{ .disk = "Commodities/Docs/Blanker.md", .source = "commodities/blanker/README.md" },
+    .{ .disk = "Commodities/Docs/FKey.md", .source = "commodities/fkey/README.md" },
 };
 
 pub fn build(b: *std.Build) void {
