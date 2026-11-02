@@ -291,6 +291,16 @@ pub const Texture = struct {
         };
     }
 
+    /// A texel of a layer set from 0xAARRGGBB, whatever its format:
+    /// `colorAt` undone. What a shader function writes through a storage
+    /// image with (`shader.Resources.written`).
+    pub fn setColor(texture: *Texture, layer: u32, lod: u32, x: u32, y: u32, color: u32) void {
+        texture.putLayer(layer, lod, x, y, switch (texture.format) {
+            .rgba8888 => color,
+            .rgb565 => as565(color),
+        });
+    }
+
     /// A texel of a layer as 0xAARRGGBB, whatever its format.
     pub fn colorAt(texture: *const Texture, layer: u32, lod: u32, x: u32, y: u32) u32 {
         const texel = texture.peekLayer(layer, lod, x, y);
@@ -401,6 +411,12 @@ fn placeIn(address: Address, at: i32, size: u32) u32 {
         .wrap => @intCast(@mod(at, whole)),
         .clamp => @intCast(std.math.clamp(at, 0, whole - 1)),
     };
+}
+
+/// 0xAARRGGBB as the 16 bits of 565, each channel's top bits kept:
+/// `expanded565` undone, as far as it goes.
+fn as565(color: u32) u32 {
+    return color >> 8 & 0xF800 | color >> 5 & 0x07E0 | color >> 3 & 0x001F;
 }
 
 /// 16 bits of colour as 0xFFRRGGBB, each channel's top bits over its bottom.

@@ -197,7 +197,9 @@ pub fn shapeOf(device: *Device, info: *const facet.ImageCreateInfo) ?Image {
         return image;
     }
     if (info.usage & facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT != 0) return null;
-    if (info.usage & facet.IMAGE_USAGE_SAMPLED != 0) {
+    // Sampled, written through as a storage image, or both: all one kind,
+    // kept in the layout a sample reads.
+    if (info.usage & (facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_STORAGE) != 0) {
         if (info.tiling != .optimal or info.usage & facet.IMAGE_USAGE_COLOR_ATTACHMENT != 0) return null;
         const kept = textureFormat(kept_format) orelse return null;
         image.kind = .texture;

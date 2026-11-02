@@ -10,13 +10,16 @@ pub fn properties(format: facet.Format) callconv(.c) facet.FormatProperties {
     const transfer = facet.FORMAT_FEATURE_TRANSFER_SRC | facet.FORMAT_FEATURE_TRANSFER_DST;
     const attachment = facet.FORMAT_FEATURE_COLOR_ATTACHMENT | facet.FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND;
     const sampled = facet.FORMAT_FEATURE_SAMPLED_IMAGE | facet.FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR | facet.FORMAT_FEATURE_TRANSFER_DST;
+    // The formats a texture is kept in are the ones a function can write
+    // through as well; the unpacked ones are not, being kept as 8888.
+    const storage = facet.FORMAT_FEATURE_STORAGE_IMAGE;
     return switch (format) {
         .b8g8r8a8_unorm, .r8g8b8a8_unorm => .{
             .linear_tiling_features = attachment | transfer,
-            .optimal_tiling_features = attachment | transfer | sampled,
+            .optimal_tiling_features = attachment | transfer | sampled | storage,
             .buffer_features = facet.FORMAT_FEATURE_VERTEX_BUFFER,
         },
-        .r5g6b5_unorm_pack16 => .{ .linear_tiling_features = attachment | transfer, .optimal_tiling_features = attachment | transfer | sampled, .buffer_features = 0 },
+        .r5g6b5_unorm_pack16 => .{ .linear_tiling_features = attachment | transfer, .optimal_tiling_features = attachment | transfer | sampled | storage, .buffer_features = 0 },
         // A depth attachment, and since 1.30 a transfer as well: a pass
         // that stores its depth writes the image's rows, and a copy reads
         // them (`PhysicalDeviceFeatures.stored_depth`).

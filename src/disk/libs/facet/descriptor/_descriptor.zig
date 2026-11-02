@@ -25,7 +25,7 @@ const Device = @import("../device/_device.zig").Device;
 /// The kinds of descriptor facet.library has.
 pub fn known(kind: facet.DescriptorType) bool {
     return switch (kind) {
-        .sampler, .combined_image_sampler, .sampled_image, .uniform_buffer, .storage_buffer => true,
+        .sampler, .combined_image_sampler, .sampled_image, .storage_image, .uniform_buffer, .storage_buffer => true,
         else => false,
     };
 }
@@ -33,9 +33,15 @@ pub fn known(kind: facet.DescriptorType) bool {
 /// Whether a kind is written from `image_info` rather than `buffer_info`.
 pub fn ofImage(kind: facet.DescriptorType) bool {
     return switch (kind) {
-        .sampler, .combined_image_sampler, .sampled_image => true,
+        .sampler, .combined_image_sampler, .sampled_image, .storage_image => true,
         else => false,
     };
+}
+
+/// Whether a shader function may write through a kind: a storage image, as
+/// a storage buffer is written through (`shader.Slot.writable`).
+pub fn written(kind: facet.DescriptorType) bool {
+    return kind == .storage_image;
 }
 
 /// A binding of a layout: its kind, its first slot and its descriptors.

@@ -79,18 +79,23 @@ pub fn UpdateDescriptorSets(base: *FacetBase, device: *facet.Device, write_count
             const found = _descriptor.slotAt(set, write.dst_binding, write.dst_array_element + @as(u32, @intCast(k))) orelse break;
             if (found.kind != write.descriptor_type) continue;
             found.slot.* = switch (write.descriptor_type) {
-                .sampled_image, .combined_image_sampler, .sampler => sampled: {
+                .sampled_image, .combined_image_sampler, .sampler, .storage_image => sampled: {
                     const info = (write.image_info orelse break)[k];
                     // A sampler of its own has no image, and a sampled
                     // image no sampler; a combined one has both.
-                    const with: ?*const facet.texture.Sampler = if (write.descriptor_type == .sampled_image) null else sampler: {
+                    const with: ?*const facet.texture.Sampler = if (write.descriptor_type == .sampled_image or write.descriptor_type == .storage_image) null else sampler: {
                         const with_sampler = info.sampler orelse break :sampler null;
                         break :sampler &_objects.of(Sampler, with_sampler).kept;
                     };
                     if (write.descriptor_type == .sampler) break :sampled .{ .sampler = with };
                     const view = _objects.of(ImageView, info.image_view orelse break :sampled .{ .sampler = with });
                     if (view.image.kind != .texture or view.image.data == null) break :sampled .{ .sampler = with };
-                    break :sampled .{ .pointer = &view.texels, .sampler = with };
+                    // A storage image is written through, so the image has
+                    // to have been made for it; one that was not is left
+                    // unwritten rather than handed over to be written.
+                    const writable = _descriptor.written(write.descriptor_type);
+                    if (writable and view.image.usage & facet.IMAGE_USAGE_STORAGE == 0) break :sampled .{};
+                    break :sampled .{ .pointer = &view.texels, .sampler = with, .writable = writable };
                 },
                 else => bound: {
                     const info = (write.buffer_info orelse break)[k];

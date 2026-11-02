@@ -126,4 +126,17 @@ pub const LIBRARY_VERSION = 1;
 /// such a pass. The stencil still has no plane of its own, and a transient
 /// depth image still costs no memory traffic at all - which is what every
 /// pass that does not ask for this goes on doing.
-pub const LIBRARY_REVISION = 30;
+/// 31: `storage_image` descriptors - an image a shader function writes
+/// through. A set layout takes the kind, a write takes an image made with
+/// IMAGE_USAGE_STORAGE, and the function reaches it by
+/// `shader.Resources.written`, which gives the texture to write with
+/// `putLayer` or `setColor` and read with `colorAt`; the slot says whether
+/// a write is allowed (`shader.Slot.writable`, in the padding a slot
+/// already had, so a slot is as wide as it was). A compute function and a
+/// fragment function of the program's can both write one, and nothing
+/// orders their writes against each other: a frame is shared between the
+/// cores, as it is in Vulkan. It wants a device whose `storage_images` is
+/// true - the cores, where the texels lie the way the library keeps them -
+/// and not the V3D, whose TMU has a layout of its own. An image written
+/// through may be sampled too, and is read back by a transfer.
+pub const LIBRARY_REVISION = 31;

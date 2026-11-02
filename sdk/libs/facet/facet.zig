@@ -467,6 +467,9 @@ pub const Format = enum(u32) {
 
 /// What a format does: FormatProperties' features.
 pub const FORMAT_FEATURE_SAMPLED_IMAGE: u32 = 1 << 0;
+/// A `storage_image` descriptor of this format may be written through by a
+/// shader function (`shader.Resources.written`).
+pub const FORMAT_FEATURE_STORAGE_IMAGE: u32 = 1 << 1;
 pub const FORMAT_FEATURE_VERTEX_BUFFER: u32 = 1 << 6;
 pub const FORMAT_FEATURE_COLOR_ATTACHMENT: u32 = 1 << 7;
 pub const FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND: u32 = 1 << 8;
@@ -571,6 +574,10 @@ pub const ImageLayout = enum(u32) {
 pub const IMAGE_USAGE_TRANSFER_SRC: u32 = 1 << 0;
 pub const IMAGE_USAGE_TRANSFER_DST: u32 = 1 << 1;
 pub const IMAGE_USAGE_SAMPLED: u32 = 1 << 2;
+/// Written through by a shader function, as a `storage_image` descriptor
+/// (`PhysicalDeviceFeatures.storage_images`). It is kept the way a sampled
+/// image is, so an image may be both.
+pub const IMAGE_USAGE_STORAGE: u32 = 1 << 3;
 pub const IMAGE_USAGE_COLOR_ATTACHMENT: u32 = 1 << 4;
 pub const IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT: u32 = 1 << 5;
 /// Its pixels live in the tiles alone: memory of the lazily allocated

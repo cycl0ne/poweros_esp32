@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.30**, so that a program need not find out by failing. It covers the API.
+1.31**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -37,7 +37,7 @@ a library called through an LVO table.
 What a device will and will not do is answered by
 `GetPhysicalDeviceFeatures` (since 1.24), which is Vulkan's call with a
 structure of facet's own: a field wherever a create call can refuse
-something, and no field for what the library has no call for at all. Eleven
+something, and no field for what the library has no call for at all. Twelve
 of its fields differ between the cores and the V3D, which is the reason a
 program that wants the GPU should ask rather than take the first device
 listed.
@@ -146,6 +146,31 @@ pass's depth. What is left out:
 - Two subpasses still share a depth attachment only one right after the
   other, in the same tiles.
 
+## Images written through, and what they still are not
+
+Since 1.31 a shader function may write an image: an image made with
+`IMAGE_USAGE_STORAGE`, written into a set as a `storage_image`, and reached
+by `shader.Resources.written`, which gives back the texture to set texels
+in (`putLayer`, `setColor`) and read them from (`colorAt`). A compute
+function and a fragment function of the program's can both write one. What
+is left out:
+
+- **Only the cores write one** (`PhysicalDeviceFeatures.storage_images`).
+  The V3D's TMU keeps a texture in a layout of its own, which is not the one
+  the library writes, so a set layout with the kind is refused there.
+- **Nothing orders two writes.** A frame's work is shared between the
+  cores, and groups run in no order, so two functions writing the same texel
+  is for the program to avoid - as it is in Vulkan, there being no barrier
+  and no atomic here either.
+- **The formats are a texture's**: `rgba8888` and `rgb565`. There is no
+  format conversion on a write and no `r32` of any kind, and the compressed
+  and float formats, being unpacked to 8888 as they are copied in, are not
+  written through at all.
+- **The view's first level and layer** are what a function writes: there is
+  no way to name another level from inside the function.
+- A `storage_image` is still not an attachment: an image cannot be drawn
+  into and written through in the same pass.
+
 ## Object kinds that do not exist
 
 ### Events
@@ -211,7 +236,8 @@ These can be asked for and are answered with `error_feature_not_present`.
 | Input attachments and resolve attachments in a subpass | `render/createrenderpass.zig` |
 | A depth attachment's stencil that loads or stores | `render/createrenderpass.zig` |
 | Present modes but `fifo`, though `immediate`, `mailbox` and `fifo_relaxed` are enumerated | `swapchain/createswapchain.zig` |
-| Descriptors but `sampler`, `combined_image_sampler`, `sampled_image`, `uniform_buffer` and `storage_buffer` | `descriptor/_descriptor.zig` |
+| Descriptors but `sampler`, `combined_image_sampler`, `sampled_image`, `storage_image`, `uniform_buffer` and `storage_buffer` | `descriptor/_descriptor.zig` |
+| A `storage_image` layout on the V3D: its TMU keeps a texture its own way | `descriptor/createdescriptorsetlayout.zig` |
 | A fixed fragment form that drops pixels, on the V3D: the QPUs have no program that discards | `driver/v3d/driver.zig` |
 | A fixed fragment form that samples through a sampler, on the V3D: nor one that reads a sampler | `driver/v3d/driver.zig` |
 | An occlusion or a statistics query pool, on the V3D: it counts neither the samples nor the stages | `query/createquerypool.zig` |
@@ -278,9 +304,9 @@ Of textures:
 A compute function is called once for each **workgroup**, not once for each
 invocation (`shader.Groups`). So there is no local invocation number, no
 memory shared within a group, no barrier and no subgroups; a group runs on
-a worker's stack, on any core, in no order. With no `storage_image`
-descriptor it writes storage buffers and nothing else. Compute and
-tessellation run on the cores whichever device the pipeline was made on.
+a worker's stack, on any core, in no order. It writes storage buffers and,
+since 1.31, storage images (below). Compute and tessellation run on the
+cores whichever device the pipeline was made on.
 
 Tessellation divides evenly only, has no point mode, and its control
 function sets nothing but the levels.

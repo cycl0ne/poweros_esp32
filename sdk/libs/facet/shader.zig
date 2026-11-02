@@ -246,6 +246,10 @@ pub const Slot = extern struct {
     pointer: ?*const anyopaque = null,
     /// The bytes of a buffer's range; 0 for an image or a sampler.
     range: u32 = 0,
+    /// Whether a shader function may write through it: a `storage_image`,
+    /// and not a sampled one. It lies in the padding after `range`, so a
+    /// slot is as wide as it always was.
+    writable: bool = false,
     /// What a sampler or a combined image sampler was written with
     /// (CreateSampler); null for every other kind.
     sampler: ?*const texture.Sampler = null,
@@ -294,6 +298,23 @@ pub const Resources = extern struct {
     pub fn sampled(resources: *const Resources, set: u32, binding: u32, element: u32) ?*const texture.Texture {
         const found = resources.slot(set, binding, element) orelse return null;
         return @ptrCast(@alignCast(found.pointer orelse return null));
+    }
+
+    /// Element `element` of binding `binding` of set `set`, a storage
+    /// image, as the texture it is written through: null where it is not
+    /// written, or is not a kind a function may write through.
+    ///
+    /// Its texels are set by `putLayer` in the texture's own format, or by
+    /// `setColor` as 0xAARRGGBB whatever the format, and read by
+    /// `colorAt`. The level and the layer are the view's first, so a
+    /// function writes level 0 of layer 0 unless the view says otherwise.
+    /// Nothing orders one function's writes against another's: a frame's
+    /// work is shared between the cores, so two of them writing the same
+    /// texel is for the program to avoid, as it is in Vulkan.
+    pub fn written(resources: *const Resources, set: u32, binding: u32, element: u32) ?*texture.Texture {
+        const found = resources.slot(set, binding, element) orelse return null;
+        if (!found.writable) return null;
+        return @ptrCast(@alignCast(@constCast(found.pointer orelse return null)));
     }
 
     /// Element `element` of binding `binding` of set `set`, a sampler or a

@@ -435,6 +435,135 @@ fn pixelAt(pixels: [*]const u8, pitch: u32, x: u32, y: u32) u32 {
     return std.mem.readInt(u32, pixels[y * pitch + x * 4 ..][0..4], .little);
 }
 
+// --- 1.31: an image a shader function writes through -------------------------
+
+/// Each group writes one texel: its own numbers, so what is written says
+/// which group wrote it.
+const Paint = struct {
+    fn run(groups: *const facet.shader.Groups) callconv(.c) void {
+        const image = groups.resources.written(0, 0, 0) orelse return;
+        const color = 0xFF00_0000 | groups.group[0] << 16 | groups.group[1] << 8 | groups.resources.constants(u32).*;
+        image.setColor(0, 0, groups.group[0], groups.group[1], color);
+    }
+
+    /// What ran, and whether it found an image to write through: the test
+    /// reads it out of a buffer.
+    fn told(groups: *const facet.shader.Groups) callconv(.c) void {
+        const out = groups.resources.storage(u32, 0, 1) orelse return;
+        out[0] = if (groups.resources.written(0, 0, 0) == null) 0xA11_600D else 0xBAD;
+    }
+
+    const entries = [_]facet.shader.Entry{
+        facet.shader.compute("main", &run),
+        facet.shader.compute("told", &told),
+    };
+    const code = facet.shader.Code{ .entry_count = entries.len, .entries = &entries };
+};
+
+fn storageImageChecks(probe: *Probe) void {
+    const fb = probe.fb;
+    const device = probe.device.?;
+    defer probe.give();
+    const bindings = [2]facet.DescriptorSetLayoutBinding{
+        .{ .binding = 0, .descriptor_type = .storage_image, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+        .{ .binding = 1, .descriptor_type = .storage_buffer, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+    };
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    const made = fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 2, .bindings = &bindings }, &set_layout);
+    if (!probe.features.storage_images) {
+        probe.check(made == .error_feature_not_present, "a storage image refused where the device writes none");
+        probe.check(set_layout == null, "and nothing given back for it");
+        return;
+    }
+    if (made != .success) return probe.check(false, "a set layout with a storage image in it");
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    probe.check(true, "a set layout with a storage image in it");
+
+    var properties: facet.FormatProperties = undefined;
+    fb.GetPhysicalDeviceFormatProperties(probe.physical, .r8g8b8a8_unorm, &properties);
+    probe.check(properties.optimal_tiling_features & facet.FORMAT_FEATURE_STORAGE_IMAGE != 0, "the format says it may be written through");
+
+    const image = probe.image(.{
+        .format = .r8g8b8a8_unorm,
+        .extent = .{ .width = 8, .height = 8 },
+        .usage = facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_SRC,
+    }, 0) orelse return probe.check(false, "an image made to be written through");
+    probe.check(true, "an image made to be written through");
+    const sampled_only = probe.image(.{
+        .format = .r8g8b8a8_unorm,
+        .extent = .{ .width = 8, .height = 8 },
+        .usage = facet.IMAGE_USAGE_SAMPLED,
+    }, 0);
+
+    var module: ?*facet.ShaderModule = null;
+    if (fb.CreateShaderModule(device, &.{ .code = &Paint.code }, &module) != .success) return probe.check(false, "the shader module");
+    _ = Probe.keep(&probe.modules, module);
+    const range = facet.PushConstantRange{ .size = 4 };
+    var layout: ?*facet.PipelineLayout = null;
+    if (fb.CreatePipelineLayout(device, &.{ .set_layout_count = 1, .set_layouts = @ptrCast(&set_layout), .push_constant_range_count = 1, .push_constant_ranges = @ptrCast(&range) }, &layout) != .success)
+        return probe.check(false, "the pipeline layout");
+    _ = Probe.keep(&probe.layouts, layout);
+    var pool: ?*facet.DescriptorPool = null;
+    if (fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool) != .success) return probe.check(false, "a descriptor pool");
+    defer fb.DestroyDescriptorPool(device, pool);
+    var sets: [1]?*facet.DescriptorSet = undefined;
+    if (fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &sets) != .success)
+        return probe.check(false, "a descriptor set");
+    const told_buffer, const told_bytes = probe.buffer(16, facet.BUFFER_USAGE_STORAGE_BUFFER) orelse return probe.check(false, "a buffer the function writes");
+    @memset(told_bytes[0..16], 0);
+
+    const image_info = facet.DescriptorImageInfo{ .image_view = image[1] };
+    const buffer_info = facet.DescriptorBufferInfo{ .buffer = told_buffer, .range = facet.WHOLE_SIZE };
+    const writes = [2]facet.WriteDescriptorSet{
+        .{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .storage_image, .descriptor_count = 1, .image_info = @ptrCast(&image_info) },
+        .{ .dst_set = sets[0].?, .dst_binding = 1, .descriptor_type = .storage_buffer, .descriptor_count = 1, .buffer_info = @ptrCast(&buffer_info) },
+    };
+    fb.UpdateDescriptorSets(device, 2, &writes, 0, null);
+
+    const infos = [2]facet.ComputePipelineCreateInfo{
+        .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.? }, .layout = layout.? },
+        .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.?, .name = "told" }, .layout = layout.? },
+    };
+    var pipelines: [2]?*facet.Pipeline = undefined;
+    if (fb.CreateComputePipelines(device, null, 2, &infos, &pipelines) != .success) return probe.check(false, "the compute pipelines");
+    _ = Probe.keep(&probe.pipelines, pipelines[0]);
+    _ = Probe.keep(&probe.pipelines, pipelines[1]);
+
+    const four: u32 = 4;
+    var commands = probe.record() orelse return probe.check(false, "a recording");
+    fb.CmdBindPipeline(commands, .compute, pipelines[0].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout.?, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdPushConstants(commands, layout.?, facet.SHADER_STAGE_COMPUTE, 0, 4, &four);
+    fb.CmdDispatch(commands, 8, 8, 1);
+    if (!probe.submit()) return probe.check(false, "the dispatch submitted");
+
+    const back, const back_bytes = probe.buffer(8 * 8 * 4, facet.BUFFER_USAGE_TRANSFER_DST) orelse return probe.check(false, "a buffer to read the image into");
+    @memset(back_bytes[0 .. 8 * 8 * 4], 0);
+    const whole = facet.BufferImageCopy{ .image_extent = .{ .width = 8, .height = 8 } };
+    commands = probe.record() orelse return probe.check(false, "a second recording");
+    fb.CmdCopyImageToBuffer(commands, image[0], .general, back, 1, @ptrCast(&whole));
+    if (!probe.submit()) return probe.check(false, "the read-back submitted");
+
+    // r8g8b8a8 in the buffer: the group's x, its y, the push constants,
+    // and opaque.
+    probe.checkEqual(0xFF04_0000, std.mem.readInt(u32, back_bytes[0..4], .little), "the first group's texel");
+    probe.checkEqual(0xFF04_0003, std.mem.readInt(u32, back_bytes[3 * 4 ..][0..4], .little), "the fourth group's texel");
+    probe.checkEqual(0xFF04_0507, std.mem.readInt(u32, back_bytes[(5 * 8 + 7) * 4 ..][0..4], .little), "a texel in the middle of the image");
+
+    // An image that was not made to be written through: the write does not
+    // take, and the function finds nothing.
+    if (sampled_only) |one| {
+        const refused = facet.WriteDescriptorSet{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .storage_image, .descriptor_count = 1, .image_info = @ptrCast(&facet.DescriptorImageInfo{ .image_view = one[1] }) };
+        fb.UpdateDescriptorSets(device, 1, @ptrCast(&refused), 0, null);
+        commands = probe.record() orelse return probe.check(false, "a third recording");
+        fb.CmdBindPipeline(commands, .compute, pipelines[1].?);
+        fb.CmdBindDescriptorSets(commands, .compute, layout.?, 0, 1, @ptrCast(&sets), 0, null);
+        fb.CmdDispatch(commands, 1, 1, 1);
+        if (!probe.submit()) return probe.check(false, "the refused write submitted");
+        probe.checkEqual(0xA11_600D, std.mem.readInt(u32, told_bytes[0..4], .little), "an image not made for it is not written through");
+    }
+}
+
 // --- the run -----------------------------------------------------------------
 
 /// Every check on one device.
@@ -448,6 +577,7 @@ fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical
     };
     defer probe.down();
     depthChecks(&probe);
+    storageImageChecks(&probe);
     return .{ probe.passed, probe.failed };
 }
 

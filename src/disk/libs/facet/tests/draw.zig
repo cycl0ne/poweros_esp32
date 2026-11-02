@@ -527,8 +527,14 @@ test "descriptor sets: a layout's bindings as slots, written and copied as shade
     try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&combined) }, &none));
     fb.DestroyDescriptorSetLayout(device, none);
     none = null;
+    // A storage image is a kind the cores have; one of a kind nothing
+    // writes through at all is refused.
     const storage_image = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .storage_image };
-    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&storage_image) }, &none));
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&storage_image) }, &none));
+    fb.DestroyDescriptorSetLayout(device, none);
+    none = null;
+    const texel_buffer = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .storage_texel_buffer };
+    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&texel_buffer) }, &none));
     var kept: ?*facet.Sampler = null;
     try testing.expectEqual(facet.Result.success, fb.CreateSampler(device, &.{}, &kept));
     defer fb.DestroySampler(device, kept);
@@ -1229,6 +1235,177 @@ test "a compute function writes a buffer, group by group, apart from what draws 
     try bench.submit();
     for (0..10) |k| try testing.expectEqual(@as(u32, @intCast(k)) * 2 + 9, out[k]);
     try testing.expectEqual(@as(u32, 10) * 2 + 7, out[10]);
+}
+
+test "a storage image written through by a compute function and by a fragment function, and read back as a texture" {
+    const Paint = struct {
+        /// Each group writes one texel of the image bound at set 0 binding
+        /// 0: its own numbers, so what is written says which group wrote
+        /// it.
+        fn run(groups: *const shader.Groups) callconv(.c) void {
+            const image = groups.resources.written(0, 0, 0) orelse return;
+            const color = 0xFF00_0000 | groups.group[0] << 16 | groups.group[1] << 8 | groups.resources.constants(u32).*;
+            image.setColor(0, 0, groups.group[0], groups.group[1], color);
+        }
+        /// The same through a sampled image, which may not be written: it
+        /// writes the push constants into the buffer instead, so the test
+        /// can tell it ran and found nothing.
+        fn refused(groups: *const shader.Groups) callconv(.c) void {
+            const out = groups.resources.storage(u32, 0, 1) orelse return;
+            out[0] = if (groups.resources.written(0, 0, 0) == null) 0xA11_600D else 0xBAD;
+        }
+        /// A fragment function that writes the image as well as its pixel:
+        /// one texel for each pixel it colours, so a draw fills both.
+        fn fragment(fragments: *const shader.Fragments) callconv(.c) void {
+            shader.fill(fragments, 0xFF00_FF00);
+            const image = fragments.resources.written(0, 0, 0) orelse return;
+            for (0..fragments.count) |k| {
+                const quad = fragments.quads[k];
+                for (0..4) |i| {
+                    if (quad.kept >> @intCast(i) & 1 == 0) continue;
+                    const x = quad.x + @as(u32, @intCast(i & 1));
+                    const y = quad.y + @as(u32, @intCast(i >> 1));
+                    if (x < 8 and y < 8) image.setColor(0, 0, x, y, 0xFFFF_0000);
+                }
+            }
+        }
+        const entries = [_]shader.Entry{
+            shader.compute("main", &run),
+            shader.compute("refused", &refused),
+            shader.vertex("main", &Flat.vertex, 0),
+            shader.fragment("main", &fragment, 0),
+        };
+        const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
+    };
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    var features: facet.PhysicalDeviceFeatures = undefined;
+    fb.GetPhysicalDeviceFeatures(bench.physical, &features);
+    try testing.expect(features.storage_images);
+    var properties: facet.FormatProperties = undefined;
+    fb.GetPhysicalDeviceFormatProperties(bench.physical, .r8g8b8a8_unorm, &properties);
+    try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_STORAGE_IMAGE != 0);
+
+    // An image made to be written through, and one that was not.
+    const image, const view = try bench.image(.{
+        .format = .r8g8b8a8_unorm,
+        .extent = .{ .width = 8, .height = 8 },
+        .usage = facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_SRC,
+    }, false);
+    _, const sampled_only = try bench.image(.{
+        .format = .r8g8b8a8_unorm,
+        .extent = .{ .width = 8, .height = 8 },
+        .usage = facet.IMAGE_USAGE_SAMPLED,
+    }, false);
+
+    const module_made = try module(&bench, &Paint.code);
+    defer fb.DestroyShaderModule(device, module_made);
+    const bindings = [2]facet.DescriptorSetLayoutBinding{
+        .{ .binding = 0, .descriptor_type = .storage_image, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_COMPUTE | facet.SHADER_STAGE_FRAGMENT },
+        .{ .binding = 1, .descriptor_type = .storage_buffer, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+    };
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 2, .bindings = &bindings }, &set_layout));
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    const layout = try pipelineLayout(&bench, &.{set_layout.?}, 4);
+    defer fb.DestroyPipelineLayout(device, layout);
+    var pool: ?*facet.DescriptorPool = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool));
+    defer fb.DestroyDescriptorPool(device, pool);
+    var sets: [1]?*facet.DescriptorSet = undefined;
+    try testing.expectEqual(facet.Result.success, fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &sets));
+    const told, const told_bytes = try bench.buffer(16, facet.BUFFER_USAGE_STORAGE_BUFFER);
+    @memset(told_bytes[0..16], 0);
+
+    const image_info = facet.DescriptorImageInfo{ .image_view = view };
+    const buffer_info = facet.DescriptorBufferInfo{ .buffer = told, .range = facet.WHOLE_SIZE };
+    const writes = [2]facet.WriteDescriptorSet{
+        .{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .storage_image, .descriptor_count = 1, .image_info = @ptrCast(&image_info) },
+        .{ .dst_set = sets[0].?, .dst_binding = 1, .descriptor_type = .storage_buffer, .descriptor_count = 1, .buffer_info = @ptrCast(&buffer_info) },
+    };
+    fb.UpdateDescriptorSets(device, 2, &writes, 0, null);
+
+    const compute_infos = [2]facet.ComputePipelineCreateInfo{
+        .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module_made }, .layout = layout },
+        .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module_made, .name = "refused" }, .layout = layout },
+    };
+    var computes: [2]?*facet.Pipeline = undefined;
+    try testing.expectEqual(facet.Result.success, fb.CreateComputePipelines(device, null, 2, &compute_infos, &computes));
+    defer fb.DestroyPipeline(device, computes[0]);
+    defer fb.DestroyPipeline(device, computes[1]);
+
+    // A group for each texel of the 8 x 8.
+    const four: u32 = 4;
+    var commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, computes[0].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_COMPUTE, 0, 4, &four);
+    fb.CmdDispatch(commands, 8, 8, 1);
+    try bench.submit();
+
+    // Read back through a buffer, as a transfer reads a texture.
+    const back, const back_bytes = try bench.buffer(8 * 8 * 4, facet.BUFFER_USAGE_TRANSFER_DST);
+    @memset(back_bytes[0 .. 8 * 8 * 4], 0);
+    const whole = facet.BufferImageCopy{ .image_extent = .{ .width = 8, .height = 8 } };
+    commands = try bench.record();
+    fb.CmdCopyImageToBuffer(commands, image, .general, back, 1, @ptrCast(&whole));
+    try bench.submit();
+    // r8g8b8a8 in the buffer, so the bytes are r, g, b, a in order: the
+    // group's x, its y, the push constants, and opaque.
+    try testing.expectEqual(0xFF04_0000, std.mem.readInt(u32, back_bytes[0..4], .little));
+    try testing.expectEqual(0xFF04_0003, std.mem.readInt(u32, back_bytes[3 * 4 ..][0..4], .little));
+    try testing.expectEqual(0xFF04_0507, std.mem.readInt(u32, back_bytes[(5 * 8 + 7) * 4 ..][0..4], .little));
+
+    // The sampled-only image written into the same binding: the write does
+    // not take, so the function finds nothing to write through.
+    const sampled_info = facet.DescriptorImageInfo{ .image_view = sampled_only };
+    const refused_write = facet.WriteDescriptorSet{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .storage_image, .descriptor_count = 1, .image_info = @ptrCast(&sampled_info) };
+    fb.UpdateDescriptorSets(device, 1, @ptrCast(&refused_write), 0, null);
+    commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, computes[1].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    try bench.submit();
+    try testing.expectEqual(0xA11_600D, std.mem.readInt(u32, told_bytes[0..4], .little));
+
+    // A sampled image written as a sampled image is read, not written:
+    // `written` says no, `sampled` says yes.
+    const as_sampled = facet.WriteDescriptorSet{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .sampled_image, .descriptor_count = 1, .image_info = @ptrCast(&sampled_info) };
+    fb.UpdateDescriptorSets(device, 1, @ptrCast(&as_sampled), 0, null);
+    const slot = _descriptor.slotAt(_objects.of(_descriptor.Set, sets[0].?), 0, 0).?;
+    try testing.expect(!slot.slot.writable);
+
+    // The image bound again, and a fragment function writing it while it
+    // draws: the picture takes the fill and the image the other colour.
+    fb.UpdateDescriptorSets(device, 1, @ptrCast(&writes[0]), 0, null);
+    const picture = try Picture.of(&bench, 8, 8);
+    const pass = try renderPass(&bench, .clear, false);
+    defer fb.DestroyRenderPass(device, pass);
+    const frame = try framebuffer(&bench, pass, &.{picture.view}, 8, 8);
+    defer fb.DestroyFramebuffer(device, frame);
+    _, const drawing = makePipeline(&bench, .{ .module = module_made, .layout = layout, .pass = pass, .width = 8, .height = 8 });
+    defer fb.DestroyPipeline(device, drawing);
+    const vertices = [_][3]f32{ .{ -1, -1, 0.5 }, .{ 3, -1, 0.5 }, .{ -1, 3, 0.5 } };
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
+    const offset: u64 = 0;
+    const blue = clears(0xFF00_00FF);
+    commands = try bench.record();
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame, .render_area = .{ .extent = .{ .width = 8, .height = 8 } }, .clear_value_count = 1, .clear_values = &blue }, .@"inline");
+    fb.CmdBindPipeline(commands, .graphics, drawing.?);
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdBindDescriptorSets(commands, .graphics, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDraw(commands, 3, 1, 0, 0);
+    fb.CmdEndRenderPass(commands);
+    fb.CmdCopyImageToBuffer(commands, image, .general, back, 1, @ptrCast(&whole));
+    try bench.submit();
+    try testing.expectEqual(@as(u32, 0xFF00_FF00), picture.at(1, 1));
+    try testing.expectEqual(@as(u32, 0xFF00_FF00), picture.at(7, 7));
+    // 0xFFFF0000 as r8g8b8a8 in a buffer: red, nothing, nothing, opaque.
+    try testing.expectEqual(0xFF00_00FF, std.mem.readInt(u32, back_bytes[0..4], .little));
+    try testing.expectEqual(0xFF00_00FF, std.mem.readInt(u32, back_bytes[(7 * 8 + 7) * 4 ..][0..4], .little));
 }
 
 test "tessellation: patches made into triangles and lines, on the picture where the evaluation function puts them" {

@@ -118,6 +118,9 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // The tiles hold the depth, so they can write it into the image's
         // rows as they are drawn and read it back (raster/target.zig).
         .stored_depth = true,
+        // A function of the program's runs here, and the texels it writes
+        // lie where the library keeps them (`shader.Resources.written`).
+        .storage_images = true,
         .depth_prepass = true,
         .points_and_lines = true,
         .depth_test = true,
