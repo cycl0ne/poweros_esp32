@@ -19,6 +19,7 @@ Generated from the source by `./zig build autodoc`.
 
 - [ActivateGadget](#activategadget) - Gives a gadget the input without it being pressed.
 - [ActivateWindow](#activatewindow) - Makes a window the active one.
+- [ActiveWindow](#activewindow) - The window the keyboard reaches.
 - [AddClass](#addclass) - Makes a class public.
 - [AddGList](#addglist) - Puts gadgets into a window.
 - [AllocScreenBuffer](#allocscreenbuffer) - Makes one more buffer for a screen to show.
@@ -58,6 +59,7 @@ Generated from the source by `./zig build autodoc`.
 - [FreeScreenBuffer](#freescreenbuffer) - Gives back a buffer from `AllocScreenBuffer`.
 - [FreeScreenDrawInfo](#freescreendrawinfo) - Hands back a DrawInfo.
 - [FreeSysRequest](#freesysrequest) - Closes a requester and gives back what was made for it.
+- [FrontScreen](#frontscreen) - The screen in front of the others.
 - [GadgetMouse](#gadgetmouse) - Answers where the pointer is, measured from a gadget's top-left corner.
 - [GadgetStyleState](#gadgetstylestate) - The style state to draw a gadget's part in, with its transition.
 - [GetAttr](#getattr) - Reads one attribute of an object.
@@ -70,6 +72,7 @@ Generated from the source by `./zig build autodoc`.
 - [GetStyleAttr](#getstyleattr) - One property of a part in a state, found as `DrawPart` finds it.
 - [GetWindowAttrs](#getwindowattrs) - Reads a window.
 - [HelpControl](#helpcontrol) - Turns gadget help on or off for a window and its help group.
+- [HidePointer](#hidepointer) - The pointer kept from being shown at all, or shown again.
 - [InitRequester](#initrequester) - Clears a Requester to be filled in.
 - [IntuiTextLength](#intuitextlength) - How wide one run of an IntuiText is, in pixels.
 - [ItemAddress](#itemaddress) - The item a menu number names.
@@ -88,6 +91,7 @@ Generated from the source by `./zig build autodoc`.
 - [NewObjectTagList](#newobjecttaglist) - Makes an object.
 - [NextObject](#nextobject) - Walks a list of objects.
 - [NextPubScreen](#nextpubscreen) - Names the public screen after a given one, going round.
+- [NextWindow](#nextwindow) - The window behind another, for a walk down a screen's depth order.
 - [ObtainGIRPort](#obtaingirport) - The RastPort a gadget draws into, for a moment.
 - [OffGadget](#offgadget) - Keeps a gadget from being pressed, and shows it so.
 - [OffMenu](#offmenu) - Keeps a menu, an item or a subitem from being picked.
@@ -143,6 +147,7 @@ Generated from the source by `./zig build autodoc`.
 - [WindowLimits](#windowlimits) - Sets how small and how large a window may be sized.
 - [WindowToBack](#windowtoback) - Puts a window at the back.
 - [WindowToFront](#windowtofront) - Brings a window to the front.
+- [WindowUnderPointer](#windowunderpointer) - The window the pointer stands over.
 - [ZipWindow](#zipwindow) - Flips a window to its other box and back.
 
 ## ActivateGadget
@@ -278,6 +283,72 @@ None known.
 
 ```zig
 ib.ActivateWindow(window);
+```
+
+## ActiveWindow
+
+The window the keyboard reaches.
+
+**SYNOPSIS**
+
+```zig
+fn ActiveWindow(ib: *IntuitionBase) ?*Window
+```
+
+**SINCE**
+
+0.80. LVO -528.
+
+**INPUTS**
+
+None.
+
+**RESULT**
+
+The active window, or null while none is - no window has been
+activated yet, or the one that was has closed.
+
+**BEHAVIOR**
+
+One window at a time is active, on whichever screen: what a key typed
+now would reach, drawn with its title bar in the active colours. It is
+the window `ActivateWindow` last made active, or the one intuition
+activated when a window was clicked, opened or closed.
+
+**CONTEXT**
+
+- Waits: yes, for the screens' semaphore.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The window is its opener's. It stays open only while the caller holds
+`LockIBase`: without it, the window may close the moment the answer is
+given.
+
+**NOTES**
+
+- A program that acts on the window it is given keeps its number
+  (`WA_Number`) rather than the pointer, and finds it again with
+  `FindWindowNumber`: a pointer kept may by then be another window's.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ActivateWindow`, `WindowUnderPointer`, `NextWindow`,
+`FindWindowNumber`, `LockIBase`
+
+**EXAMPLES**
+
+```zig
+const held = ib.LockIBase(0);
+defer ib.UnlockIBase(held);
+if (ib.ActiveWindow()) |window| ib.ZipWindow(window);
 ```
 
 ## AddClass
@@ -2921,6 +2992,74 @@ None known.
 ib.FreeSysRequest(req);
 ```
 
+## FrontScreen
+
+The screen in front of the others.
+
+**SYNOPSIS**
+
+```zig
+fn FrontScreen(ib: *IntuitionBase) ?*Screen
+```
+
+**SINCE**
+
+0.80. LVO -540.
+
+**INPUTS**
+
+None.
+
+**RESULT**
+
+The frontmost screen, or null while none is open.
+
+**BEHAVIOR**
+
+It is the screen `ScreenToFront` last brought forward, the newest
+screen opened without `SA_Behind`, or what was left in front when one
+closed: the screen whose buffer its display shows from the top down,
+and the one the menu button and a screen's keyboard commands reach.
+With more than one display it is the front of the display that holds
+it; the others' frontmost screens are reached through their windows
+(`WA_Screen`).
+
+**CONTEXT**
+
+- Waits: yes, for the screens' semaphore.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The screen is its opener's. It stays open only while the caller holds
+`LockIBase`: without it, the screen may close the moment the answer is
+given. A public screen is better held with `LockPubScreen`, which
+keeps it open without holding the screens still.
+
+**NOTES**
+
+- Cycling the screens is this screen sent to the back
+  (`ScreenToBack`), which brings the next one forward.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ScreenToFront`, `ScreenToBack`, `LockPubScreen`, `NextWindow`,
+`LockIBase`
+
+**EXAMPLES**
+
+```zig
+const held = ib.LockIBase(0);
+defer ib.UnlockIBase(held);
+if (ib.FrontScreen()) |screen| ib.ScreenToBack(screen);
+```
+
 ## GadgetMouse
 
 Answers where the pointer is, measured from a gadget's top-left corner.
@@ -3725,6 +3864,76 @@ None known.
 
 ```zig
 ib.HelpControl(window, wn.HC_GADGETHELP); // the Help key was pressed
+```
+
+## HidePointer
+
+The pointer kept from being shown at all, or shown again.
+
+**SYNOPSIS**
+
+```zig
+fn HidePointer(ib: *IntuitionBase, hidden: bool) void
+```
+
+**SINCE**
+
+0.80. LVO -544.
+
+**INPUTS**
+
+- `hidden` - true for no pointer on the display, false to show it
+  again.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+The pointer stops being laid over the picture, whatever window is
+active and whatever picture that window asked for: the display is left
+without one until it is shown again. The mouse still moves it, and a
+press still reaches whatever the pointer stands over, so what the
+machine does is unchanged - only the picture of it is not there.
+
+The last call wins; it does not nest. Hidden with no mouse plugged in,
+the pointer stays unseen when one is - showing it again is what brings
+it back.
+
+**CONTEXT**
+
+- Waits: yes, for the screens' semaphore.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing changes hands. Whoever hides the pointer shows it again: a
+program that ends while it is hidden leaves the display without one.
+
+**NOTES**
+
+- A window hides the pointer for itself with `SetWindowPointerA` and
+  `WA_HidePointer`, which is the active window's own business and goes
+  back to normal as soon as another window is active. This is for a
+  program that blanks the pointer across the machine - while the
+  keyboard is being used, say.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`SetWindowPointerA` (`WA_HidePointer`), `ActiveWindow`
+
+**EXAMPLES**
+
+```zig
+ib.HidePointer(true); // a key was typed
+defer ib.HidePointer(false); // and the mouse moved, or the program ends
 ```
 
 ## InitRequester
@@ -4889,6 +5098,77 @@ None known.
 var name: [sc.MAXPUBSCREENNAME + 1]u8 = undefined;
 // A gadget that jumps the window to the next screen.
 if (ib.NextPubScreen(current, &name)) |next| reopenOn(next);
+```
+
+## NextWindow
+
+The window behind another, for a walk down a screen's depth order.
+
+**SYNOPSIS**
+
+```zig
+fn NextWindow(ib: *IntuitionBase, after: ?*Window) ?*Window
+```
+
+**SINCE**
+
+0.80. LVO -536.
+
+**INPUTS**
+
+- `after` - the window to go on from, or null to start at the front.
+
+**RESULT**
+
+The window immediately behind `after` on `after`'s screen, or - for a
+null `after` - the frontmost window of the screen in front. Null past
+the backmost window, and while no screen is open.
+
+**BEHAVIOR**
+
+The screen's depth order is walked, front to back, so a walk from null
+sees every window of that screen once, from the one in front to the
+one at the back. The order is the one a press sees: the window in
+front of another is the one that covers it. A window that stays in
+front (`WA_StayInFront`) comes before the ordinary ones and a backdrop
+window after them all.
+
+**CONTEXT**
+
+- Waits: yes, for the screens' semaphore.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The windows are their openers'. They stay open only while the caller
+holds `LockIBase`, which also keeps the order still: without it the
+window the answer names may close, and the walk may see a window
+twice or not at all.
+
+**NOTES**
+
+- Cycling the windows is the frontmost one sent to the back and the
+  new frontmost activated, rather than a walk: `WindowToBack` changes
+  the order the walk reads.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ActiveWindow`, `WindowToFront`, `WindowToBack`, `FrontScreen`,
+`LockIBase`
+
+**EXAMPLES**
+
+```zig
+const held = ib.LockIBase(0);
+defer ib.UnlockIBase(held);
+var window = ib.NextWindow(null);
+while (window) |w| : (window = ib.NextWindow(w)) count += 1;
 ```
 
 ## ObtainGIRPort
@@ -8555,6 +8835,74 @@ None known.
 
 ```zig
 ib.WindowToFront(window);
+```
+
+## WindowUnderPointer
+
+The window the pointer stands over.
+
+**SYNOPSIS**
+
+```zig
+fn WindowUnderPointer(ib: *IntuitionBase) ?*Window
+```
+
+**SINCE**
+
+0.80. LVO -532.
+
+**INPUTS**
+
+None.
+
+**RESULT**
+
+The window, or null where there is none: over a screen's bar, over a
+panel in front of the windows - a menu, a list a gadget popped up -
+over the screen's ground, or while no screen is open.
+
+**BEHAVIOR**
+
+The screen at the pointer's line of the display is taken, and on it
+the frontmost window whose visible part is under the pointer: what a
+press there would reach. A window covered at that point by another is
+not it, and the border counts as the window.
+
+**CONTEXT**
+
+- Waits: yes, for the screens' semaphore.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The window is its opener's. It stays open only while the caller holds
+`LockIBase`: without it, the window may close the moment the answer is
+given.
+
+**NOTES**
+
+- The pointer has moved on by the time a program acts on the answer.
+  One that wants the window a particular event happened over asks
+  while it handles that event.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ActiveWindow`, `ActivateWindow`, `WindowToFront`, `LockIBase`
+
+**EXAMPLES**
+
+```zig
+const held = ib.LockIBase(0);
+defer ib.UnlockIBase(held);
+if (ib.WindowUnderPointer()) |window| {
+    if (window != ib.ActiveWindow()) ib.ActivateWindow(window);
+}
 ```
 
 ## ZipWindow

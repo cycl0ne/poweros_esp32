@@ -335,6 +335,39 @@ with an edge was are the window's ground afterwards, and its damage: the
 a window whose drawing stays where it is with the size - icons from the
 top left, say - draws only them, between `BeginRefresh` and `EndRefresh`.
 
+### Which window, and where
+
+A program that acts on windows it did not open - one that activates the
+window under the pointer, or brings a window forward - asks intuition
+which window that is:
+
+```zig
+const held = ib.LockIBase(0);
+defer ib.UnlockIBase(held);
+if (ib.WindowUnderPointer()) |under| {
+    if (under != ib.ActiveWindow()) ib.ActivateWindow(under);
+}
+```
+
+- `ActiveWindow` is the window the keyboard goes to, null when none is
+  active.
+- `WindowUnderPointer` is the window the pointer stands over on the
+  screen in front - the one a press would reach - null over a screen's
+  bare ground or its bar.
+- `NextWindow(after)` walks a screen's depth order, front to back: null
+  gives the frontmost window of the screen in front, a window gives the
+  one immediately behind it, and null again ends the walk.
+- `FrontScreen` is the screen in front.
+- `HidePointer(true)` stops the pointer being drawn, wherever it is;
+  `HidePointer(false)` lets it be drawn again. A window of its own that
+  wants no pointer sets `WA_PointerType` instead - this is for a program
+  that takes the pointer away from every screen at once, as a blanker
+  does.
+
+The windows and screens these name are their openers': they stay open,
+and the depth order stays still, only while `LockIBase` is held, so the
+lock goes round the asking and the acting both.
+
 ### Messages
 
 Each thing a window was asked to tell (`WA_IDCMP`, changed later with

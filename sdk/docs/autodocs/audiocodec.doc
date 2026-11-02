@@ -206,19 +206,20 @@ audiocodec.library/SeekAudio
 	for it after each `DecodeAudio` call knows when they changed.
 
 	`ACA_Codecs` is not a stream's: it says which kinds of sound this
-	machine decodes, a bit per `ACODEC_*`. A kind is in it when its
-	module can be opened here, which is not the same question as the
+	machine decodes, a bit per `ACODEC_*`. A kind is in it when a module
+	on this disk says it decodes it, which is not the same question as the
 	library's version - the large decoders are on the 64-bit disks alone,
 	so audiocodec.library 1.12 on an ESP32-P4 answers without
 	`ACODEC_DTS` although the library knows DTS. It is what a program
-	asks before it offers a track to be picked. Each kind's module is
-	opened and let go again - the same question a stream's own open asks,
-	so the same answer - which costs the module being loaded once if
-	nothing has decoded that kind yet; AC-3 and E-AC-3 are one module and
-	come together.
+	asks before it offers a track to be picked. It is answered from the
+	modules' own tags, read out of their files with nothing loaded, so it
+	costs the directory being looked through and, for a module whose file
+	changed, its tag read again. A kind two modules decode is in it once;
+	AC-3 and E-AC-3 are one module and come together because that
+	module's tag names both.
 
    CONTEXT
-	- Waits: with `ACA_Codecs`, while a module is loaded from the disk;
+	- Waits: with `ACA_Codecs`, while `LIBS:codecs/` is looked through;
 	  otherwise no.
 	- Interrupts: no.
 	- Locks: none.

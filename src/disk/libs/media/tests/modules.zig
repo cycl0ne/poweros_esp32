@@ -11,8 +11,8 @@ const mkv_init = @import("../mkv/mkv_init.zig");
 const ExecBase = sdk.interface.exec.ExecBase;
 
 const tags = [_]struct { tag: *const exec.Resident, name: [*:0]const u8 }{
-    .{ .tag = &mp4_init.mp4_container_tag, .name = "codecs/mp4.container" },
-    .{ .tag = &mkv_init.mkv_container_tag, .name = "codecs/mkv.container" },
+    .{ .tag = &mp4_init.mp4_container_tag.resident, .name = "codecs/mp4.container" },
+    .{ .tag = &mkv_init.mkv_container_tag.resident, .name = "codecs/mkv.container" },
 };
 
 pub const Made = [tags.len]*exec.Library;

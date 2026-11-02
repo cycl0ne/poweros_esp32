@@ -293,6 +293,37 @@ Interface, Remove. It is a commodity itself, whose hotkey (`CX_POPKEY`,
 `ctrl alt home` unless given) brings the window up; closing the window
 only hides it. `SYS:Commodities/Docs/Exchange.md` says how it is used.
 
+## The commodities on the disk
+
+`SYS:Commodities` holds the ones that come with the system. Each is a
+program like any other: started from its icon it reads its settings
+from the icon's tool types, started from a shell it reads them from the
+command line, and each has its page in `SYS:Commodities/Docs`.
+
+| Program | What it does | Its own settings |
+|---|---|---|
+| Exchange | lists the commodities and orders them about | - |
+| NoCapsLock | Caps Lock does nothing | - |
+| NumericPad | Caps Lock makes the right of the keyboard a keypad | - |
+| MouseBlanker | the pointer goes while the keyboard is in use | - |
+| AutoPoint | the window under the pointer is the active one | - |
+| ClickToFront | a double click brings a window to the front | `QUALIFIER` |
+| Blanker | the screen darkens when nothing happens | `SECONDS`, `CYCLECOLORS`, `ANIMATION` |
+| FKey | functions on freely chosen keys | the keys, in `ENV:Sys/fkey.keys` |
+
+All of them take `CX_PRIORITY`; the three with a window take `CX_POPKEY`
+and `CX_POPUP` as well. What they have in common - the settings from
+either place, the broker, and the loop that takes the controller's
+commands - is `src/disk/commodities/_frame/frame.zig`, the `commodity`
+module they are all built with.
+
+The ones that act on windows ask intuition which window that is:
+`ActiveWindow`, `WindowUnderPointer`, `NextWindow` for the depth order,
+`FrontScreen`, and `HidePointer` to stop the pointer being drawn.
+A custom object runs on input.device's task and may not wait, so each of
+them decides in the network what should happen and signals its own task,
+which does the part that takes intuition's screens.
+
 ## How it runs
 
 Every call that changes the network takes the network's lock for that

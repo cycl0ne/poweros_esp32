@@ -17,6 +17,12 @@ pub const MediaBase = extern struct {
     seg_list: ?*anyopaque = null,
     dos_base: *DosBase,
     utility_base: *UtilityBase,
+    /// The container modules found in LIBS:codecs/ (modules/_modules.zig's
+    /// Table), read when a file is first opened, and the table the next
+    /// reading is built in; both under `modules_lock`.
+    modules: ?*anyopaque = null,
+    scratch: ?*anyopaque = null,
+    modules_lock: exec.SignalSemaphore = .{},
 };
 
 pub fn mediaBase(lib: *exec.Library) *MediaBase {

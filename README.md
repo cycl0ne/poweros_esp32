@@ -257,7 +257,12 @@ Beside them:
   Player, FontView, Battery, Prefs and Volume; in `SYS:System` the Shell,
   HDToolBox, Shares, CPULoad, NetLoad and MemMap; in `SYS:Commodities`
   Exchange, which lists the commodities running and makes each active or
-  inactive, shows or hides its window, or ends it
+  inactive, shows or hides its window, or ends it, and the commodities
+  themselves - Blanker, a screen that darkens when nothing happens;
+  FKey, functions on freely chosen keys; AutoPoint, the window under the
+  pointer activated; ClickToFront, a double click that brings a window
+  up; MouseBlanker, the pointer out of the way while typing; NoCapsLock;
+  and NumericPad, a keypad on a keyboard that has none
   ([commodities guide](sdk/docs/guides/commodities.md)).
 - **When something fails:** a Guru and a ROM debugger on the serial
   port, memory debugging, the system log, and a program that fails held
