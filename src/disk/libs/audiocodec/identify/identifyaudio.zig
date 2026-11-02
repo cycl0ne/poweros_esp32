@@ -55,7 +55,18 @@ const _identify = @import("_identify.zig");
 /// None.
 ///
 /// NOTES:
-/// None.
+/// The patterns are the library's own, not the modules': what some sound
+/// is, is answered out of the bytes here with nothing loaded, so the kind
+/// of a file whose decoder is not on this disk is named all the same.
+/// Which module decodes a kind does come from the modules' own tags
+/// (SINCE 1.13) - a decoder is added to a board by dropping its file into
+/// LIBS:codecs/ - but what the kinds are does not, and was left here when
+/// the modules began to declare themselves: dispatch needs a name, which
+/// a tag carries, while this needs code - an Ogg page's first packet, an
+/// ADTS or DTS frame walked to the next that agrees with it - which a tag
+/// cannot. A module for a kind the library does not know here is reached
+/// by a container naming its codec, or by `ACA_Codec` given to
+/// `OpenAudioStream`, and not by a bare file's first bytes.
 ///
 /// BUGS:
 /// None known.

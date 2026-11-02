@@ -186,8 +186,17 @@ const image_dirs = [_][]const u8{
 /// An icon the build writes onto the image: where it goes, the picture
 /// scripts/fetch-icons.sh drew for it, its fields as tools/mkicon takes
 /// them, and - for an icon only some disks have - the pointer size of the
-/// chips whose disks have it.
-const DiskIcon = struct { path: []const u8, picture: []const u8, fields: []const []const u8 = &.{}, pointer_bytes: ?u32 = null };
+/// chips whose disks have it, or the chips themselves where the two
+/// chips of a pointer size differ (`src/disk/build.zig`'s lists say which
+/// disk a program is on; an icon without its program is an icon that
+/// starts nothing).
+const DiskIcon = struct {
+    path: []const u8,
+    picture: []const u8,
+    fields: []const []const u8 = &.{},
+    pointer_bytes: ?u32 = null,
+    chips: ?[]const Chip = null,
+};
 
 /// The stack every icon that starts a program asks for: what a command
 /// gets in a shell (`CLI_DEFAULT_STACK`), so a program has the same stack
@@ -253,6 +262,11 @@ const disk_icons = [_]DiskIcon{
     .{ .path = "programs/Terminal.info", .picture = "utilities-terminal", .fields = &.{ "KIND=TOOL", icon_stack } },
     .{ .path = "programs/Player.info", .picture = "multimedia-player", .fields = &.{ "KIND=TOOL", icon_stack } },
     .{ .path = "programs/Volume.info", .picture = "audio-card", .fields = &.{ "KIND=TOOL", icon_stack } },
+    .{ .path = "programs/Movie.info", .picture = "video-x-generic", .fields = &.{ "KIND=TOOL", icon_stack } },
+    // The two that draw in three dimensions are on every disk but the
+    // ESP32-S3's, which has no facet.library.
+    .{ .path = "programs/Boing.info", .picture = "applications-games", .fields = &.{ "KIND=TOOL", icon_stack }, .chips = &.{ .esp32p4, .rv64sbi, .a64psci } },
+    .{ .path = "programs/Cobra.info", .picture = "applications-games", .fields = &.{ "KIND=TOOL", icon_stack }, .chips = &.{ .esp32p4, .rv64sbi, .a64psci } },
     // The dock: on the ESP32s in SYS:Programs, started by hand; on the
     // 64-bit machines in SYS:WBStartup, started with the desktop, which
     // does not wait for it to end.
@@ -261,9 +275,12 @@ const disk_icons = [_]DiskIcon{
     // What each program is, in SYS:Programs/Docs: read in MultiView.
     .{ .path = "programs/Docs.info", .picture = "folder", .fields = &.{"KIND=DRAWER"} },
     .{ .path = "programs/Docs/Battery.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
+    .{ .path = "programs/Docs/Boing.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack }, .chips = &.{ .esp32p4, .rv64sbi, .a64psci } },
+    .{ .path = "programs/Docs/Cobra.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack }, .chips = &.{ .esp32p4, .rv64sbi, .a64psci } },
     .{ .path = "programs/Docs/Dock.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "programs/Docs/FontView.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "programs/Docs/MultiView.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
+    .{ .path = "programs/Docs/Movie.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "programs/Docs/Notepad.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "programs/Docs/Player.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "programs/Docs/Prefs.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
@@ -284,10 +301,26 @@ const disk_icons = [_]DiskIcon{
     .{ .path = "System/Docs/MemMap.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "System/Docs/Shares.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     // The commodities, each icon with the tool types it reads, and what
-    // each is in SYS:Commodities/Docs.
+    // each is in SYS:Commodities/Docs. The pictures are the ones the
+    // fetch drew, so the ones that work on the same thing share a
+    // picture - the name under it says which is which.
     .{ .path = "Commodities/Exchange.info", .picture = "preferences-desktop-keyboard-shortcuts", .fields = &.{ "KIND=TOOL", icon_stack, "TYPE=CX_PRIORITY=0", "TYPE=CX_POPKEY=ctrl alt home", "TYPE=CX_POPUP=YES" } },
+    .{ .path = "Commodities/Blanker.info", .picture = "preferences-desktop", .fields = &.{ "KIND=TOOL", icon_stack, "TYPE=SECONDS=60", "TYPE=CYCLECOLORS=YES", "TYPE=ANIMATION=YES", "TYPE=CX_PRIORITY=0", "TYPE=CX_POPKEY=ctrl alt b", "TYPE=CX_POPUP=YES" } },
+    .{ .path = "Commodities/FKey.info", .picture = "preferences-desktop-keyboard-shortcuts", .fields = &.{ "KIND=TOOL", icon_stack, "TYPE=CX_PRIORITY=0", "TYPE=CX_POPKEY=ctrl alt k", "TYPE=CX_POPUP=YES" } },
+    .{ .path = "Commodities/AutoPoint.info", .picture = "preferences-system", .fields = &.{ "KIND=TOOL", icon_stack, "TYPE=CX_PRIORITY=0" } },
+    .{ .path = "Commodities/ClickToFront.info", .picture = "preferences-system", .fields = &.{ "KIND=TOOL", icon_stack, "TYPE=CX_PRIORITY=0" } },
+    .{ .path = "Commodities/MouseBlanker.info", .picture = "input-keyboard", .fields = &.{ "KIND=TOOL", icon_stack, "TYPE=CX_PRIORITY=0" } },
+    .{ .path = "Commodities/NoCapsLock.info", .picture = "input-keyboard", .fields = &.{ "KIND=TOOL", icon_stack, "TYPE=CX_PRIORITY=0" } },
+    .{ .path = "Commodities/NumericPad.info", .picture = "input-keyboard", .fields = &.{ "KIND=TOOL", icon_stack, "TYPE=CX_PRIORITY=0" } },
     .{ .path = "Commodities/Docs.info", .picture = "folder", .fields = &.{"KIND=DRAWER"} },
     .{ .path = "Commodities/Docs/Exchange.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
+    .{ .path = "Commodities/Docs/AutoPoint.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
+    .{ .path = "Commodities/Docs/Blanker.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
+    .{ .path = "Commodities/Docs/ClickToFront.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
+    .{ .path = "Commodities/Docs/FKey.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
+    .{ .path = "Commodities/Docs/MouseBlanker.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
+    .{ .path = "Commodities/Docs/NoCapsLock.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
+    .{ .path = "Commodities/Docs/NumericPad.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
 };
 
 /// The directories only the machines whose disk is in RAM have:
@@ -758,7 +791,7 @@ pub fn build(b: *std.Build) void {
             const sized = for (one.fields) |field| {
                 if (std.mem.eql(u8, field, icon_stack)) break true;
             } else false;
-            if (!sized and one.pointer_bytes == null) {
+            if (!sized and one.pointer_bytes == null and one.chips == null) {
                 disks.addPrefixedFileArg(prefix, makeIcon(b, mkicon, picture, one, ""));
                 continue;
             }
@@ -766,8 +799,9 @@ pub fn build(b: *std.Build) void {
             // size of pointer, and each disk given its chip's - each disk
             // that has it.
             var by_width: [2]?std.Build.LazyPath = @splat(null);
-            for (disks.runs, DiskImages.pointer_bytes) |run, bytes| {
+            for (disks.runs, DiskImages.pointer_bytes, DiskImages.chips) |run, bytes, chip| {
                 if (one.pointer_bytes) |only| if (only != bytes) continue;
+                if (one.chips) |only| if (std.mem.indexOfScalar(Chip, only, chip) == null) continue;
                 const slot = &by_width[bytes / 8];
                 if (slot.* == null) slot.* = makeIcon(b, mkicon, picture, one, iconStack(b, bytes));
                 run.addPrefixedFileArg(prefix, slot.*.?);

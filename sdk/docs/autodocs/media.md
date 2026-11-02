@@ -337,7 +337,15 @@ None.
 
 **NOTES**
 
-None.
+The patterns are the library's own, not the modules': what a file is,
+is answered out of the bytes here with nothing loaded, so a kind whose
+module is not on this disk is named all the same. Which module reads a
+kind does come from the modules' own tags (SINCE 1.7) - a container is
+added to a board by dropping its file into LIBS:codecs/ - but what the
+kinds are does not, and was left here when the modules began to
+declare themselves: a kind is recognised by code, an EBML header or an
+MP4 box, which a tag cannot carry. A module for a kind the library
+does not know here is reached by `MDA_Kind` given to `OpenMedia`.
 
 **BUGS**
 
@@ -445,6 +453,14 @@ disk has no module for the kind (SINCE 1.5).
 
 The kind's code is a module of its own in LIBS:codecs/, opened until
 CloseMedia (SINCE 1.5): mp4.container, mkv.container.
+
+Which module reads a kind comes from the modules' own ROM tags, read
+out of their files without loading them, and not from their names
+(SINCE 1.7): a container is added to a board by dropping its module in
+LIBS:codecs/. Where a kind has several modules each is tried, the
+higher priority first; one that opens and then refuses the file is let
+go and the next reads the bytes again - which a file read through a
+function cannot, so the refusal of the module that read it stands.
 
 The kind is found by the first bytes: a Matroska file begins with
 EBML's header, an MP4 with a box of the kinds one begins with -

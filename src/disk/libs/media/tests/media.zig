@@ -1052,6 +1052,37 @@ test "a kind with no module on the disk: found out what it is, refused, and read
     try testing.expectEqual(@as(@TypeOf(module.open_cnt), 0), module.open_cnt);
 }
 
+test "two modules for one kind: the one that refuses gives way to the next, which reads the file again" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const mb = rig.mb;
+    // refuse.container claims MP4 above mp4.container and takes nothing.
+    try container_modules.addRefuser(kexec);
+    defer container_modules.dropRefuser(rig.sysLib());
+
+    try rig.write("WORK:film.mp4", film_mp4);
+    var err: i32 = -99;
+    const film = openFile(mb, "WORK:film.mp4", &err) orelse return error.NoFile;
+    try testing.expectEqual(media.MERR_OK, err);
+    // Tried first, and the film mp4.container's all the same.
+    try testing.expectEqual(@as(u32, 1), container_modules.refused());
+    var info: media.MediaInfo = .{};
+    mb.GetMediaInfo(film, &info);
+    try testing.expectEqual(media.MEDIA_MP4, info.kind);
+    try testing.expectEqual(@as(u32, 3), info.tracks);
+    try testing.expectEqual(@as(u64, 800_000), info.duration);
+    try testing.expectEqualStrings("Trip", textOf(&info.title));
+    mb.CloseMedia(film);
+
+    // A file read through a function cannot be read again: the refusal of
+    // the module that read it stands.
+    var memory: Memory = .{ .bytes = film_mp4 };
+    try testing.expect(openMemory(mb, &memory, &err) == null);
+    try testing.expectEqual(media.MERR_UNSUPPORTED, err);
+    try testing.expectEqual(@as(u32, 2), container_modules.refused());
+}
+
 test "a container module refuses a file of another layout" {
     var rig: Rig = undefined;
     try rig.init();

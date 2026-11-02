@@ -491,6 +491,9 @@ fn toggle(app: *App) void {
     const held = ib.LockIBase(0);
     defer ib.UnlockIBase(held);
     const window = ib.ActiveWindow() orelse return;
+    // The ground the others stand on is not a window to resize: the
+    // desktop's covers its whole screen and has no other size.
+    if (windowAttr(ib, window, wn.WA_Flags) & wn.WFLG_BACKDROP != 0) return;
     ib.ZipWindow(window);
 }
 

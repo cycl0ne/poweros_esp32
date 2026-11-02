@@ -101,6 +101,63 @@ fn tableOf(base: *AudioCodecBase, slot: *?*anyopaque) ?*Table {
     return table;
 }
 
+/// The `skip`-th module that decodes `codec`, in the order they are tried
+/// - a chip's before software, the higher priority first, then by name -
+/// or null when there is no such module: `skip` 0 is the first to try,
+/// and a caller whose stream the module refused asks for the next.
+///
+/// Takes `modules_lock` itself, and hands back a copy, so the table may
+/// be read again while the module is opened.
+pub fn nth(base: *AudioCodecBase, codec: u32, skip: u32) ?modtable.Found {
+    const sys = base.sys_base;
+    sys.ObtainSemaphore(&base.modules_lock);
+    defer sys.ReleaseSemaphore(&base.modules_lock);
+    const table = refresh(base) orelse return null;
+    const bit = acodec.codecBit(codec);
+    if (bit == 0) return null;
+    // Selection: the best, then the best after that, `skip` + 1 times.
+    // At most max_modules rows, so counting them again each time costs
+    // nothing worth keeping a list for.
+    var taken: ?modtable.Found = null;
+    var step: u32 = 0;
+    while (step <= skip) : (step += 1) {
+        var best: ?modtable.Found = null;
+        for (table.rows()) |found| {
+            if (codecsOf(&found) & bit == 0) continue;
+            if (taken) |last| {
+                if (!before(last, found)) continue;
+            }
+            if (best) |so_far| {
+                if (!before(found, so_far)) continue;
+            }
+            best = found;
+        }
+        taken = best orelse return null;
+    }
+    return taken;
+}
+
+/// Whether `a` is tried before `b`: a chip's before software, the higher
+/// priority first, then by name. Two modules never share a name - one
+/// file, one name - so this orders them outright.
+fn before(a: modtable.Found, b: modtable.Found) bool {
+    if (rank(kindOf(&a)) != rank(kindOf(&b))) return rank(kindOf(&a)) < rank(kindOf(&b));
+    if (priorityOf(&a) != priorityOf(&b)) return priorityOf(&a) > priorityOf(&b);
+    for (a.name, b.name) |x, y| {
+        if (x != y) return x < y;
+        if (x == 0) break;
+    }
+    return false;
+}
+
+fn rank(kind: u32) u32 {
+    return switch (kind) {
+        acodec.ACMOD_CHIP => 0,
+        acodec.ACMOD_SOFTWARE => 1,
+        else => 2,
+    };
+}
+
 /// What the base holds given back, at the expunge.
 pub fn forget(base: *AudioCodecBase) void {
     for ([_]*?*anyopaque{ &base.modules, &base.scratch }) |slot| {

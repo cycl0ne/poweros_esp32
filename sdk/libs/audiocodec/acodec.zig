@@ -4,11 +4,17 @@
 //! audiocodec.library opens for a stream. The calls every module has are
 //! in `sdk.interface.acodec` (sdk/fd/acodec_lib.fd).
 //!
-//! **Finding one.** The codec names the file: `ACODEC_MP3` is
-//! "codecs/mp3.acodec" (`moduleName`). What some sound is, is found out by
-//! the library from its first bytes (IdentifyAudio), which loads nothing.
-//! A file put in place of a module is taken once the old one has gone from
-//! memory: at `Avail FLUSH`, or when memory runs low.
+//! **Finding one.** Each module says in its own ROM tag which kinds it
+//! decodes (`ResidentACodec`), and the library reads those tags out of
+//! the files of `ACODEC_DIR` without loading anything: there is no list
+//! in the library of the kinds there are, so a module left off a board's
+//! disk is simply not there and one dropped in is found. What some sound
+//! is, is found out by the library from its first bytes (IdentifyAudio),
+//! which loads nothing either: the library recognises the kinds it
+//! shipped with, and a module for a kind it does not is reached by a
+//! container naming its codec. A file put in place of a module is taken
+//! once the old one has gone from memory: at `Avail FLUSH`, or when
+//! memory runs low.
 //!
 //! **What a module does** is all its kind's: finding the frames in a file,
 //! its tags, its seek, and the decoding. The library keeps the source and
@@ -82,31 +88,6 @@ pub const ACODEC_FRAME_TEXT_BYTES = 1024;
 /// frame's in stereo.
 pub const ACODEC_MOST_SAMPLES = 1152 * 2;
 
-/// Every kind that has a module, and the file it is in. A kind is added
-/// here and nowhere else: this is what `moduleName` answers from, and what
-/// a caller walks to go through all the kinds there are without naming the
-/// last of them (audiocodec.library's `ACA_Codecs`). Two kinds one module
-/// decodes name one file, as AC-3 and E-AC-3 do.
-pub const kinds = [_]struct { codec: u32, file: [*:0]const u8 }{
-    .{ .codec = ac.ACODEC_WAV, .file = ACODEC_PREFIX ++ "wav.acodec" },
-    .{ .codec = ac.ACODEC_MP3, .file = ACODEC_PREFIX ++ "mp3.acodec" },
-    .{ .codec = ac.ACODEC_FLAC, .file = ACODEC_PREFIX ++ "flac.acodec" },
-    .{ .codec = ac.ACODEC_VORBIS, .file = ACODEC_PREFIX ++ "vorbis.acodec" },
-    .{ .codec = ac.ACODEC_AAC, .file = ACODEC_PREFIX ++ "aac.acodec" },
-    .{ .codec = ac.ACODEC_AC3, .file = ACODEC_PREFIX ++ "ac3.acodec" },
-    .{ .codec = ac.ACODEC_EAC3, .file = ACODEC_PREFIX ++ "ac3.acodec" },
-    .{ .codec = ac.ACODEC_OPUS, .file = ACODEC_PREFIX ++ "opus.acodec" },
-    .{ .codec = ac.ACODEC_DTS, .file = ACODEC_PREFIX ++ "dts.acodec" },
-};
-
-/// The module's name for a codec, null for one that has none. AC-3 and
-/// E-AC-3 are one module's.
-pub fn moduleName(codec: u32) ?[*:0]const u8 {
-    for (kinds) |kind| {
-        if (kind.codec == codec) return kind.file;
-    }
-    return null;
-}
 
 /// The libraries a stream is read and decoded through.
 pub const ACodecLibs = extern struct {

@@ -4,11 +4,15 @@
 //! media.library opens for a file. The calls every module has are in
 //! `sdk.interface.mcontainer` (sdk/fd/mcontainer_lib.fd).
 //!
-//! **Finding one.** The kind names the file: `MEDIA_MP4` is
-//! "codecs/mp4.container" (`moduleName`). What a file is, is found out by
-//! the library from its first bytes (IdentifyMedia), which loads nothing.
-//! A file put in place of a module is taken once the old one has gone from
-//! memory: at `Avail FLUSH`, or when memory runs low.
+//! **Finding one.** Each module says in its own ROM tag which kinds of
+//! container it reads (`ResidentMContainer`), and the library reads those
+//! tags out of the files of `MCONTAINER_DIR` without loading anything:
+//! there is no list in the library of the kinds there are, so a module
+//! left off a board's disk is not there and one dropped in is found. What
+//! a file is, is found out by the library from its first bytes
+//! (IdentifyMedia), which loads nothing either. A file put in place of a
+//! module is taken once the old one has gone from memory: at
+//! `Avail FLUSH`, or when memory runs low.
 //!
 //! **What a module does** is all its kind's: reading its index, making its
 //! tracks and tags, and finding each track's packets. The library keeps
@@ -72,14 +76,6 @@ pub const MCONTAINER_MOST_TRACKS = 16;
 pub const MCONTAINER_NAME_BYTES = 128;
 pub const MCONTAINER_COMMENT_BYTES = 256;
 
-/// The module's name for a kind of container, null for one that has none.
-pub fn moduleName(kind: u32) ?[*:0]const u8 {
-    return switch (kind) {
-        media.MEDIA_MP4 => MCONTAINER_PREFIX ++ "mp4.container",
-        media.MEDIA_MKV => MCONTAINER_PREFIX ++ "mkv.container",
-        else => null,
-    };
-}
 
 /// The libraries a file is read through.
 pub const MContainerLibs = extern struct {
