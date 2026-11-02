@@ -777,15 +777,17 @@ test "a film's tracks: listed, what decodes them; subtitles of each kind at thei
     defer vcb.CloseVideoStream(film);
 
     // The pictures and the marked sound chosen; of the subtitles the ASS,
-    // marked forced, before the SubRip marked only default. Opus is not
-    // decoded here.
+    // marked forced, before the SubRip marked only default. The film's
+    // three sound tracks are AAC, AC-3 and Opus, and audiocodec.library
+    // decodes all three since 1.9 - so none of them is a track nothing
+    // decodes, and this film no longer covers that answer.
     const decoded: i32 = vc.VTRK_DECODED;
     const both: i32 = vc.VTRK_DECODED | vc.VTRK_CHOSEN;
     const expected = [_]struct { kind: u32, flags: i32 }{
         .{ .kind = media.MTRACK_VIDEO, .flags = both },
         .{ .kind = media.MTRACK_AUDIO, .flags = both },
         .{ .kind = media.MTRACK_AUDIO, .flags = decoded },
-        .{ .kind = media.MTRACK_AUDIO, .flags = 0 },
+        .{ .kind = media.MTRACK_AUDIO, .flags = decoded },
         .{ .kind = media.MTRACK_TEXT, .flags = decoded },
         .{ .kind = media.MTRACK_TEXT, .flags = both },
         .{ .kind = media.MTRACK_TEXT, .flags = decoded },
@@ -842,7 +844,6 @@ test "a film's tracks: listed, what decodes them; subtitles of each kind at thei
     try expectNothing(vcb, film, 300_000);
     try testing.expectEqual(decoded, vcb.GetVideoTrack(film, 6, &track));
     try testing.expectEqual(vc.VCERR_UNSUPPORTED, vcb.SelectVideoTrack(film, 0, 0));
-    try testing.expectEqual(vc.VCERR_NOCODEC, vcb.SelectVideoTrack(film, 3, 0));
     try testing.expectEqual(vc.VCERR_END, vcb.SelectVideoTrack(film, 7, 0));
     try testing.expectEqual(both, vcb.GetVideoTrack(film, 1, &track));
 

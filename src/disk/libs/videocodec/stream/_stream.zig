@@ -156,13 +156,21 @@ pub fn decodes(s: *const Stream, number: u32, track: *const media.MediaTrack) bo
 }
 
 /// Whether the stream's audiocodec.library decodes `codec`: AAC since
-/// 1.6, MP3, FLAC and Vorbis since 1.7, AC-3 and E-AC-3 since 1.8.
+/// 1.6, MP3, FLAC and Vorbis since 1.7, AC-3 and E-AC-3 since 1.8, Opus
+/// since 1.9, DTS since 1.11.
+///
+/// A codec the library has gained since must be added here, or a track
+/// of it is listed as nothing decodes (GetVideoTrack's VTRK_DECODED) and
+/// SelectVideoTrack refuses it, although opening it would have played:
+/// openSound asks the library itself and does not come through here.
 fn soundDecodes(s: *const Stream, codec: u32) bool {
     const lib = s.sound_lib orelse return false;
     const since: u16 = switch (codec) {
         media.MCODEC_AAC => 6,
         media.MCODEC_MP3, media.MCODEC_FLAC, media.MCODEC_VORBIS => 7,
         media.MCODEC_AC3, media.MCODEC_EAC3 => 8,
+        media.MCODEC_OPUS => 9,
+        media.MCODEC_DTS => 11,
         else => return false,
     };
     return lib.version > 1 or lib.revision >= since;

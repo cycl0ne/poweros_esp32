@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! Movie: films played in a window - MP4, QuickTime's MOV and Matroska's
 //! MKV, their pictures in H.264, H.265 or Motion JPEG and their sound in
-//! AAC or AC-3, or in an MKV MP3, FLAC, Vorbis or E-AC-3 too, with their
+//! AAC, AC-3, Opus or DTS, or in an MKV MP3, FLAC, Vorbis or E-AC-3 too,
+//! with their
 //! subtitles - by videocodec.library.
 //!
 //!   Movie FILE,VOLUME/K/N,FULL/S
