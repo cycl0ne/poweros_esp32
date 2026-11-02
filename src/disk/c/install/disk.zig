@@ -25,6 +25,11 @@ const Printf = dos.stdio.Printf;
 /// which has none, so a machine with both starts from the medium.
 const boot_priority: i32 = 5;
 
+/// rdb.library's version, and the revision whose UnmountPartition takes
+/// a drive off the list again.
+const rdb_version = 1;
+const unmount_revision = 8;
+
 /// How long a new volume is waited for after its drive is let go, in
 /// ticks between two looks and in looks.
 const settle_ticks = 15;
@@ -47,12 +52,38 @@ pub fn prepare(run: *Run) i32 {
     return dos.RETURN_OK;
 }
 
-/// The handle given back once the files are on the disk: the partitions
-/// stay mounted, so the install writes to them through dos as to any
-/// other drive.
+/// The handle given back once the files are on the disk: the system and
+/// work drives stay mounted, since the machine goes on using them, and
+/// the firmware's partitions come off the list again - they are marked
+/// not to be mounted when the medium comes in, and the install only had
+/// them to write the boot files into.
 pub fn done(run: *Run) void {
-    if (run.handle) |handle| run.rb.CloseRDB(handle);
+    if (run.handle) |handle| {
+        for (run.boot[0..run.slots]) |*drive| unmountBoot(run, handle, drive);
+        run.rb.CloseRDB(handle);
+    }
     run.handle = null;
+}
+
+/// A boot drive off the device list, its handler ended so that what it
+/// holds is written. A library too old to take a drive off leaves it
+/// mounted, which costs a drive on the screen until the next start and
+/// nothing more.
+fn unmountBoot(run: *Run, handle: *rdb.RDBHandle, drive: *Drive) void {
+    const rb = run.rb;
+    const library = rb.lib();
+    if (library.version == rdb_version and library.revision < unmount_revision) return;
+    if (!drive.there()) return;
+    var name: shared.DriveName = @splat(0);
+    var at: usize = 0;
+    while (at < drive.mounted.len and drive.mounted[at] != 0 and drive.mounted[at] != ':') : (at += 1) name[at] = drive.mounted[at];
+    name[at] = 0;
+    const err = rb.UnmountPartition(handle, @ptrCast(&name));
+    if (err != rdb.RDBERR_OK) {
+        shared.say(run, "  %s is still mounted: %s\n", .{ drive.path(), errorText(err) });
+        return;
+    }
+    drive.mounted = @splat(0);
 }
 
 /// How large the medium in the unit is, for the question before the
