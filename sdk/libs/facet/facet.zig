@@ -321,6 +321,13 @@ pub const PhysicalDeviceFeatures = extern struct {
     /// `SamplerCreateInfo.unnormalized_coordinates`: a sample placed in
     /// texels rather than 0 to 1 across the texture.
     unnormalized_coordinates: bool = false,
+    /// Each colour attachment of a subpass blended its own way:
+    /// `PipelineColorBlendStateCreateInfo.attachments` is taken one by one.
+    /// False where a pipeline whose attachments do not all say the same
+    /// thing is refused. Every device of this library has it since 1.33: a
+    /// colour attachment is drawn as a pass of its own, so each takes its
+    /// own mixing as it is drawn.
+    independent_blend: bool = false,
 };
 
 /// QueueFamilyProperties.queue_flags: what a family's queues do.
@@ -1553,6 +1560,9 @@ pub const PipelineColorBlendStateCreateInfo = extern struct {
     logic_op_enable: bool = false,
     logic_op: LogicOp = .copy,
     attachment_count: u32 = 0,
+    /// One for each colour attachment of the subpass the pipeline is made
+    /// for, or none for the default over all of them. Each is taken on its
+    /// own since 1.33 (`PhysicalDeviceFeatures.independent_blend`).
     attachments: ?[*]const PipelineColorBlendAttachmentState = null,
     blend_constants: [4]f32 = @splat(0),
 };

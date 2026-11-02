@@ -126,6 +126,9 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // reads it is a function of the program's, which on a device
         // without them is its compute functions, run on the cores.
         .texel_buffers = true,
+        // A colour attachment is drawn as a pass of its own, so each
+        // takes the mixing asked for it as it is drawn.
+        .independent_blend = true,
         .depth_prepass = true,
         .points_and_lines = true,
         .depth_test = true,
@@ -226,9 +229,14 @@ fn makePipeline(pipeline: *Pipeline) callconv(.c) facet.Result {
         .front = if (pipeline.front == .clockwise) .clockwise else .counter_clockwise,
         // The rasterizer's compares are numbered as facet.library's are.
         .depth_test = if (pipeline.depth_test) |compare| @enumFromInt(@intFromEnum(compare)) else null,
-        .blend = _draw.blendOf(&pipeline.mixing),
-        .mixing = _draw.mixingOf(&pipeline.mixing),
+        .blend = undefined,
+        .mixing = undefined,
     };
+    // One translated state for each colour attachment of the subpass.
+    for (&pipeline.mixings, &made.blend, &made.mixing) |*mixing, *blend, *translated| {
+        blend.* = _draw.blendOf(mixing);
+        translated.* = _draw.mixingOf(mixing);
+    }
     pipeline.driver = made;
     return .success;
 }

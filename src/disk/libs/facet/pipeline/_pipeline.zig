@@ -11,7 +11,8 @@
 //! - a depth test of any compare, the depth written or not, and a stencil
 //!   test of any compare and operations, a face's own;
 //! - the colour written, the channels asked for, replacing what is there or
-//!   mixed with it by any blend factors and operation, and no logic op;
+//!   mixed with it by any blend factors and operation, each colour
+//!   attachment its own way, and no logic op;
 //! - one viewport and one scissor, given here or set by commands.
 //!
 //! Anything else is refused as the pipeline is made
@@ -23,6 +24,7 @@ const facet = sdk.facet;
 const shader = facet.shader;
 const Device = @import("../device/_device.zig").Device;
 const _instance = @import("../instance/_instance.zig");
+const _render = @import("../render/_render.zig");
 
 pub const PipelineLayout = struct {
     device: *Device,
@@ -146,11 +148,22 @@ pub const Pipeline = struct {
     dynamic_stencil_reference: bool,
     /// PIPELINE_CREATE_DEPTH_PREPASS.
     prepass: bool,
-    mixing: Mixing,
+    /// What each colour attachment of the subpass is mixed with what is
+    /// there by: one for each, `mixingAt` giving the one being drawn
+    /// (`PhysicalDeviceFeatures.independent_blend`, since 1.33). All hold
+    /// the default where the create info gave no attachment state.
+    mixings: [_render.most_colors]Mixing,
     /// The viewport and the scissor, or null where commands set them.
     viewport: ?facet.Viewport,
     scissor: ?facet.Rect2D,
 };
+
+/// How the colour attachment a part draws is mixed with what is there:
+/// `output` is which of the subpass's colour attachments that is
+/// (`shader.Resources.output`), and a pipeline holds one mixing for each.
+pub fn mixingAt(pipeline: *const Pipeline, output: u32) *const Mixing {
+    return &pipeline.mixings[@min(output, _render.most_colors - 1)];
+}
 
 /// The formats an attribute is read in.
 pub fn attributeFormat(format: facet.Format) bool {

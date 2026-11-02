@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.32**, so that a program need not find out by failing. It covers the API.
+1.33**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -193,6 +193,29 @@ What is left out:
 - The offset and the range are a whole number of texels, and a range of no
   texels is refused.
 
+## Colour attachments blended each its own way
+
+Since 1.33 `PipelineColorBlendStateCreateInfo.attachments` is one state for
+each colour attachment of the subpass, taken on its own: one attachment can
+be blended while the next is replaced, each with its own factors, operation
+and write mask. Every device has it
+(`PhysicalDeviceFeatures.independent_blend`), an attachment being drawn as
+a pass of its own either way. What is left out:
+
+- **The blend constants are the pipeline's**, one set shared by all of its
+  attachments, as they are in Vulkan; `CmdSetBlendConstants` sets that one
+  set.
+- **A fragment function still runs once for each attachment**, with
+  `shader.Resources.output` saying which: it writes one colour, never
+  several at once, so a subpass of several has its commands played over
+  again for each rather than drawn once into all of them.
+- Logic operations are still refused, for every attachment
+  (`logic_op_enable`), and there is no dual-source blending: the `SRC1`
+  factors do not exist.
+- `attachment_count` is either none - the default over all of them - or
+  exactly the subpass's colour attachments; anything between is
+  `error_initialization_failed`.
+
 ## Object kinds that do not exist
 
 ### Events
@@ -249,7 +272,7 @@ These can be asked for and are answered with `error_feature_not_present`.
 | Logic operations: `LogicOp` is fully enumerated, `logic_op_enable` is not taken | `pipeline/creategraphicspipelines.zig` |
 | Depth clamp, depth bias, the depth bounds test | `pipeline/creategraphicspipelines.zig` |
 | More than one viewport or one scissor | `pipeline/creategraphicspipelines.zig` |
-| Colour attachments blended each its own way: with several, all must be identical | `pipeline/creategraphicspipelines.zig` |
+| Colour attachments that differ, on a device that blends them all alike: no device of this library is one (`independent_blend`) | `pipeline/creategraphicspipelines.zig` |
 | Input attachments and resolve attachments in a subpass | `render/createrenderpass.zig` |
 | A depth attachment's stencil that loads or stores | `render/createrenderpass.zig` |
 | Present modes but `fifo`, though `immediate`, `mailbox` and `fifo_relaxed` are enumerated | `swapchain/createswapchain.zig` |

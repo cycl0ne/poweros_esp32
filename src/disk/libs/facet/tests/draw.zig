@@ -315,6 +315,9 @@ const PipelineState = struct {
     raster: facet.PipelineRasterizationStateCreateInfo = .{},
     depth: facet.PipelineDepthStencilStateCreateInfo = .{},
     blend: facet.PipelineColorBlendAttachmentState = .{},
+    /// What the subpass's second colour attachment is blended by, where it
+    /// is not the first's (`PhysicalDeviceFeatures.independent_blend`).
+    second_blend: ?facet.PipelineColorBlendAttachmentState = null,
     width: f32 = 64,
     height: f32 = 64,
     dynamic: []const facet.DynamicState = &.{},
@@ -339,7 +342,8 @@ fn makePipeline(bench: *Bench, state: PipelineState) struct { facet.Result, ?*fa
     const viewport = facet.Viewport{ .width = state.width, .height = state.height };
     const scissor = facet.Rect2D{ .extent = .{ .width = @intFromFloat(state.width), .height = @intFromFloat(state.height) } };
     const view = facet.PipelineViewportStateCreateInfo{ .viewports = @ptrCast(&viewport), .scissors = @ptrCast(&scissor) };
-    const blends: [4]facet.PipelineColorBlendAttachmentState = @splat(state.blend);
+    var blends: [4]facet.PipelineColorBlendAttachmentState = @splat(state.blend);
+    if (state.second_blend) |other| blends[1] = other;
     const blend = facet.PipelineColorBlendStateCreateInfo{ .attachment_count = state.blend_count, .attachments = &blends };
     const dynamic = facet.PipelineDynamicStateCreateInfo{ .dynamic_state_count = @intCast(state.dynamic.len), .dynamic_states = state.dynamic.ptr };
     const info = facet.GraphicsPipelineCreateInfo{
@@ -621,8 +625,8 @@ test "a pipeline: its functions and its state settled as it is made; what facet.
     try testing.expectEqual(.greater_or_equal, made.depth_test.?);
     try testing.expect(made.depth_write);
     try testing.expect(!made.prepass);
-    try testing.expect(made.mixing.enabled);
-    try testing.expectEqual(.one_minus_src_alpha, made.mixing.dst_color);
+    try testing.expect(made.mixings[0].enabled);
+    try testing.expectEqual(.one_minus_src_alpha, made.mixings[0].dst_color);
     try testing.expectEqual(@as(f32, 64), made.viewport.?.width);
     try testing.expect(made.scissor == null);
     try testing.expectEqual(@as(u32, 1), made.locations);
@@ -633,7 +637,7 @@ test "a pipeline: its functions and its state settled as it is made; what facet.
     added.blend = .{ .blend_enable = true, .src_color_blend_factor = .src_alpha, .dst_color_blend_factor = .one };
     const added_result, const added_pipeline = makePipeline(&bench, added);
     try testing.expectEqual(facet.Result.success, added_result);
-    try testing.expectEqual(.one, _objects.of(_pipeline.Pipeline, added_pipeline.?).mixing.dst_color);
+    try testing.expectEqual(.one, _objects.of(_pipeline.Pipeline, added_pipeline.?).mixings[0].dst_color);
     fb.DestroyPipeline(device, added_pipeline);
 
     // The rasterizer discarding, or both faces culled: made, draws nothing.
@@ -2540,6 +2544,11 @@ const SubpassScene = struct {
     fn fragmentOutputs(fragments: *const shader.Fragments) callconv(.c) void {
         shader.fill(fragments, if (fragments.resources.output == 0) blue else yellow);
     }
+    /// The same colour into every attachment, so that what differs between
+    /// them is the mixing alone.
+    fn fragmentWhite(fragments: *const shader.Fragments) callconv(.c) void {
+        shader.fill(fragments, 0xFFFF_FFFF);
+    }
     const entries = [_]shader.Entry{
         shader.vertex("red", &vertex, 0),
         shader.fragment("red", &fragmentRed, 0),
@@ -2547,9 +2556,112 @@ const SubpassScene = struct {
         shader.fragment("green", &fragmentGreen, 0),
         shader.vertex("outputs", &vertex, 0),
         shader.fragment("outputs", &fragmentOutputs, 0),
+        shader.vertex("white", &vertex, 0),
+        shader.fragment("white", &fragmentWhite, 0),
     };
     const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
 };
+
+test "a subpass's colour attachments, each blended its own way" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const first = try Picture.of(&bench, 64, 64);
+    const second = try Picture.of(&bench, 64, 64);
+    const attachments = [2]facet.AttachmentDescription{
+        .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general },
+        .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general },
+    };
+    const colors = [2]facet.AttachmentReference{ .{ .attachment = 0, .layout = .general }, .{ .attachment = 1, .layout = .general } };
+    const subpass = facet.SubpassDescription{ .color_attachment_count = 2, .color_attachments = &colors };
+    var pass_made: ?*facet.RenderPass = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &pass_made));
+    defer fb.DestroyRenderPass(device, pass_made);
+    const pass = pass_made.?;
+    const frame = try framebuffer(&bench, pass, &.{ first.view, second.view }, 64, 64);
+    defer fb.DestroyFramebuffer(device, frame);
+    const shaders = try module(&bench, &SubpassScene.code);
+    defer fb.DestroyShaderModule(device, shaders);
+    const layout = try pipelineLayout(&bench, &.{}, 0);
+    defer fb.DestroyPipelineLayout(device, layout);
+
+    // The first attachment takes the red channel alone and keeps the rest
+    // of what is there; the second takes the whole colour, mixed.
+    const red_alone = facet.PipelineColorBlendAttachmentState{ .color_write_mask = facet.COLOR_COMPONENT_R };
+    const whole = facet.PipelineColorBlendAttachmentState{ .blend_enable = true, .src_color_blend_factor = .one, .dst_color_blend_factor = .zero };
+    const result, const pipeline = makePipeline(&bench, .{ .module = shaders, .name = "white", .layout = layout, .pass = pass, .blend = red_alone, .second_blend = whole, .blend_count = 2 });
+    try testing.expectEqual(facet.Result.success, result);
+    defer fb.DestroyPipeline(device, pipeline);
+    const made = _objects.of(_pipeline.Pipeline, pipeline.?);
+    try testing.expectEqual(@as(u32, facet.COLOR_COMPONENT_R), made.mixings[0].mask);
+    try testing.expect(!made.mixings[0].enabled);
+    try testing.expectEqual(@as(u32, facet.COLOR_COMPONENT_ALL), made.mixings[1].mask);
+    try testing.expect(made.mixings[1].enabled);
+    try testing.expectEqual(.zero, made.mixings[1].dst_color);
+    // The ones no attachment of the subpass asked for hold the default.
+    try testing.expect(!made.mixings[2].enabled);
+    try testing.expectEqual(@as(u32, facet.COLOR_COMPONENT_ALL), made.mixings[2].mask);
+
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(SubpassScene.quad)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(SubpassScene.quad))], std.mem.asBytes(&SubpassScene.quad));
+    const clear_values = [2]facet.ClearValue{ .{ .color = .{ .float32 = .{ 0, 0, 1, 1 } } }, .{ .color = .{ .float32 = .{ 0, 0, 1, 1 } } } };
+    const offset: u64 = 0;
+    const commands = try bench.record();
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 2, .clear_values = &clear_values }, .@"inline");
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdBindPipeline(commands, .graphics, pipeline.?);
+    fb.CmdDraw(commands, 6, 1, 0, 0);
+    fb.CmdEndRenderPass(commands);
+    try bench.submit();
+
+    // Both were cleared blue and drawn white over: the first kept the blue
+    // under the red it took, the second is white.
+    try testing.expectEqual(@as(u32, 0xFFFF_00FF), first.at(32, 32));
+    try testing.expectEqual(@as(u32, 0xFFFF_00FF), first.at(1, 62));
+    try testing.expectEqual(@as(u32, 0xFFFF_FFFF), second.at(32, 32));
+    try testing.expectEqual(@as(u32, 0xFFFF_FFFF), second.at(1, 62));
+}
+
+test "a device that blends every colour attachment the same way: the pipeline whose attachments differ is refused" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    // A device as one without the feature describes itself.
+    const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
+    physical.features.independent_blend = false;
+    defer physical.features.independent_blend = true;
+    var features: facet.PhysicalDeviceFeatures = undefined;
+    fb.GetPhysicalDeviceFeatures(bench.physical, &features);
+    try testing.expect(!features.independent_blend);
+
+    const attachments = [2]facet.AttachmentDescription{
+        .{ .format = .b8g8r8a8_unorm, .store_op = .store, .final_layout = .general },
+        .{ .format = .b8g8r8a8_unorm, .store_op = .store, .final_layout = .general },
+    };
+    const colors = [2]facet.AttachmentReference{ .{ .attachment = 0, .layout = .general }, .{ .attachment = 1, .layout = .general } };
+    const subpass = facet.SubpassDescription{ .color_attachment_count = 2, .color_attachments = &colors };
+    var pass_made: ?*facet.RenderPass = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &pass_made));
+    defer fb.DestroyRenderPass(device, pass_made);
+    const pass = pass_made.?;
+    const shaders = try module(&bench, &SubpassScene.code);
+    defer fb.DestroyShaderModule(device, shaders);
+    const layout = try pipelineLayout(&bench, &.{}, 0);
+    defer fb.DestroyPipelineLayout(device, layout);
+
+    const red_alone = facet.PipelineColorBlendAttachmentState{ .color_write_mask = facet.COLOR_COMPONENT_R };
+    const refused, const none = makePipeline(&bench, .{ .module = shaders, .name = "white", .layout = layout, .pass = pass, .blend = red_alone, .second_blend = .{}, .blend_count = 2 });
+    try testing.expectEqual(facet.Result.error_feature_not_present, refused);
+    try testing.expect(none == null);
+    // The same state for both is made, as it was before 1.33.
+    const result, const pipeline = makePipeline(&bench, .{ .module = shaders, .name = "white", .layout = layout, .pass = pass, .blend = red_alone, .blend_count = 2 });
+    try testing.expectEqual(facet.Result.success, result);
+    defer fb.DestroyPipeline(device, pipeline);
+    const made = _objects.of(_pipeline.Pipeline, pipeline.?);
+    try testing.expectEqual(@as(u32, facet.COLOR_COMPONENT_R), made.mixings[1].mask);
+}
 
 // --- query pools --------------------------------------------------------------
 

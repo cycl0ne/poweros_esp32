@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.0 (02.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.1 (03.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -252,8 +252,39 @@ const Flat = struct {
     const code = facet.shader.Code{ .entry_count = entries.len, .entries = &entries };
 };
 
-/// A pipeline of `Flat` over `pass`, depth tested and written.
+
+/// The colour the vertices carry, which is one of the fixed forms every
+/// device draws (`shader.FixedKind.color`): the vertices are three floats
+/// at location 0 and the colour is white at every one of them, so what a
+/// draw leaves behind is the mixing's doing alone.
+const Smooth = struct {
+    fn vertex(vertices: *const facet.shader.Vertices) callconv(.c) void {
+        // A channel of the colour is carried 0 to 255 (`shader.channel`),
+        // not 0 to 1.
+        const full = facet.shader.channel(1);
+        for (0..vertices.count) |k| {
+            const p = vertices.input(@intCast(k), 0);
+            vertices.output(@intCast(k))[0..8].* = .{ p[0], p[1], p[2], 1, full, full, full, full };
+        }
+    }
+
+    const entries = [_]facet.shader.Entry{
+        facet.shader.vertex("main", &vertex, 4),
+        facet.shader.fixedFragment("main", .{ .kind = .color }),
+    };
+    const code = facet.shader.Code{ .entry_count = entries.len, .entries = &entries };
+};
+
+/// A pipeline of `Flat` over `pass`, depth tested and written, of one
+/// colour attachment mixed the default way.
 fn flatPipeline(probe: *Probe, pass: *facet.RenderPass, module: *facet.ShaderModule, layout: *facet.PipelineLayout) ?*facet.Pipeline {
+    const blends = [1]facet.PipelineColorBlendAttachmentState{.{}};
+    return pipelineOf(probe, pass, module, layout, &blends, true);
+}
+
+/// A pipeline of `Flat` over `pass`, its colour attachments mixed as
+/// `blends` says - one state for each of them - and the depth tested or not.
+fn pipelineOf(probe: *Probe, pass: *facet.RenderPass, module: *facet.ShaderModule, layout: *facet.PipelineLayout, blends: []const facet.PipelineColorBlendAttachmentState, depth_tested: bool) ?*facet.Pipeline {
     const stages = [2]facet.PipelineShaderStageCreateInfo{
         .{ .stage = facet.SHADER_STAGE_VERTEX, .module = module, .name = "main" },
         .{ .stage = facet.SHADER_STAGE_FRAGMENT, .module = module, .name = "main" },
@@ -271,9 +302,8 @@ fn flatPipeline(probe: *Probe, pass: *facet.RenderPass, module: *facet.ShaderMod
     const scissor = facet.Rect2D{ .extent = .{ .width = side, .height = side } };
     const view = facet.PipelineViewportStateCreateInfo{ .viewports = @ptrCast(&viewport), .scissors = @ptrCast(&scissor) };
     const raster = facet.PipelineRasterizationStateCreateInfo{};
-    const depth = facet.PipelineDepthStencilStateCreateInfo{ .depth_test_enable = true, .depth_write_enable = true, .depth_compare_op = .less };
-    const blends: [1]facet.PipelineColorBlendAttachmentState = @splat(.{});
-    const blend = facet.PipelineColorBlendStateCreateInfo{ .attachment_count = 1, .attachments = &blends };
+    const depth = facet.PipelineDepthStencilStateCreateInfo{ .depth_test_enable = depth_tested, .depth_write_enable = depth_tested, .depth_compare_op = .less };
+    const blend = facet.PipelineColorBlendStateCreateInfo{ .attachment_count = @intCast(blends.len), .attachments = blends.ptr };
     const dynamic = facet.PipelineDynamicStateCreateInfo{};
     const info = facet.GraphicsPipelineCreateInfo{
         .stage_count = 2,
@@ -694,6 +724,85 @@ fn texelBufferChecks(probe: *Probe) void {
 // --- the run -----------------------------------------------------------------
 
 /// Every check on one device.
+
+// --- 1.33: a colour attachment blended its own way ---------------------------
+
+fn blendChecks(probe: *Probe) void {
+    const fb = probe.fb;
+    defer probe.give();
+    const attachments = [2]facet.AttachmentDescription{
+        .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .color_attachment_optimal },
+        .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .color_attachment_optimal },
+    };
+    const colors = [2]facet.AttachmentReference{ .{ .attachment = 0, .layout = .color_attachment_optimal }, .{ .attachment = 1, .layout = .color_attachment_optimal } };
+    const subpass = facet.SubpassDescription{ .color_attachment_count = 2, .color_attachments = &colors };
+    const pass = probe.renderPass(.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }) orelse
+        return probe.check(false, "a pass of two colour attachments");
+    probe.check(true, "a pass of two colour attachments");
+
+    // The form draws what the vertices carry, which every device draws:
+    // the V3D takes this pipeline as the cores do.
+    var module: ?*facet.ShaderModule = null;
+    if (fb.CreateShaderModule(probe.device.?, &.{ .code = &Smooth.code }, &module) != .success) return probe.check(false, "the shader module");
+    _ = Probe.keep(&probe.modules, module);
+    var layout: ?*facet.PipelineLayout = null;
+    if (fb.CreatePipelineLayout(probe.device.?, &.{}, &layout) != .success) return probe.check(false, "the pipeline layout");
+    _ = Probe.keep(&probe.layouts, layout);
+
+    // The first attachment keeps what is there, the second takes the
+    // colour: the same draw, mixed each its own way.
+    const keeps = facet.PipelineColorBlendAttachmentState{ .blend_enable = true, .src_color_blend_factor = .zero, .dst_color_blend_factor = .one, .src_alpha_blend_factor = .zero, .dst_alpha_blend_factor = .one };
+    const takes = facet.PipelineColorBlendAttachmentState{};
+    const differing = [2]facet.PipelineColorBlendAttachmentState{ keeps, takes };
+    const each_own = pipelineOf(probe, pass, module.?, layout.?, &differing, false);
+    if (!probe.features.independent_blend) {
+        probe.check(each_own == null, "attachments that differ refused where a device blends them alike");
+        const alike = [2]facet.PipelineColorBlendAttachmentState{ keeps, keeps };
+        probe.check(pipelineOf(probe, pass, module.?, layout.?, &alike, false) != null, "the same state for both still taken");
+        return;
+    }
+    const pipeline = each_own orelse return probe.check(false, "a pipeline whose attachments differ");
+    probe.check(true, "a pipeline whose attachments differ");
+
+    const extent = facet.Extent3D{ .width = side, .height = side };
+    const wanted = facet.MEMORY_PROPERTY_HOST_VISIBLE;
+    const info = facet.ImageCreateInfo{ .format = .b8g8r8a8_unorm, .extent = extent, .tiling = .linear, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT };
+    const first = probe.image(info, wanted) orelse return probe.check(false, "the first picture");
+    const first_memory = probe.memories[0].?;
+    const second = probe.image(info, wanted) orelse return probe.check(false, "the second picture");
+    const second_memory = probe.memories[1].?;
+    const frame = probe.framebuffer(pass, &.{ first[1], second[1] }) orelse return probe.check(false, "a framebuffer over the two");
+
+    const vertices = [_][3]f32{
+        .{ -1, -1, 0.5 }, .{ 1, -1, 0.5 }, .{ -1, 1, 0.5 },
+        .{ -1, 1, 0.5 },  .{ 1, -1, 0.5 }, .{ 1, 1, 0.5 },
+    };
+    const vertex_buffer, const vertex_bytes = probe.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER) orelse
+        return probe.check(false, "a vertex buffer");
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
+
+    const offset: u64 = 0;
+    // What the vertices carry, and what the clear left.
+    const white: u32 = 0xFFFF_FFFF;
+    const blue: u32 = 0xFF00_00FF;
+    const clears = [2]facet.ClearValue{ .{ .color = .{ .float32 = .{ 0, 0, 1, 1 } } }, .{ .color = .{ .float32 = .{ 0, 0, 1, 1 } } } };
+    const area = facet.Rect2D{ .extent = .{ .width = side, .height = side } };
+    const commands = probe.record() orelse return probe.check(false, "a command buffer recording");
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame, .render_area = area, .clear_value_count = 2, .clear_values = &clears }, .@"inline");
+    fb.CmdBindPipeline(commands, .graphics, pipeline);
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdDraw(commands, 6, 1, 0, 0);
+    fb.CmdEndRenderPass(commands);
+    if (!probe.submit()) return probe.check(false, "the frame submitted");
+
+    const first_pixels, const first_pitch = probe.mapped(first[0], first_memory) orelse return probe.check(false, "the first picture read back");
+    const second_pixels, const second_pitch = probe.mapped(second[0], second_memory) orelse return probe.check(false, "the second picture read back");
+    probe.checkEqual(blue, pixelAt(first_pixels, first_pitch, 8, 8), "the attachment that keeps what is there kept the clear");
+    probe.checkEqual(blue, pixelAt(first_pixels, first_pitch, 40, 52), "and in another tile");
+    probe.checkEqual(white, pixelAt(second_pixels, second_pitch, 8, 8), "the attachment that takes the colour took it");
+    probe.checkEqual(white, pixelAt(second_pixels, second_pitch, 40, 52), "and in another tile");
+}
+
 fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical: *facet.PhysicalDevice, quiet: bool) struct { u32, u32 } {
     var properties: facet.PhysicalDeviceProperties = undefined;
     fb.GetPhysicalDeviceProperties(physical, &properties);
@@ -706,6 +815,7 @@ fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical
     depthChecks(&probe);
     storageImageChecks(&probe);
     texelBufferChecks(&probe);
+    blendChecks(&probe);
     return .{ probe.passed, probe.failed };
 }
 

@@ -150,4 +150,13 @@ pub const LIBRARY_VERSION = 1;
 /// ones and the floats, those whose `buffer_features` now say
 /// UNIFORM_TEXEL_BUFFER. Every device has them: a view is bytes and a
 /// format, with nothing of a device's own layout in it.
-pub const LIBRARY_REVISION = 32;
+/// 33: a subpass's colour attachments blended each its own way:
+/// `PipelineColorBlendStateCreateInfo.attachments` is one state for each of
+/// them, taken on its own rather than all having to say the same thing. A
+/// pipeline keeps one mixing for each attachment and the draw takes the one
+/// for the attachment it is drawing, which is what an attachment being a
+/// pass of its own already gave both drivers; the blend constants stay the
+/// pipeline's, shared, as Vulkan has them. Every device has it
+/// (`PhysicalDeviceFeatures.independent_blend`), and a device without it
+/// goes on refusing attachments that differ.
+pub const LIBRARY_REVISION = 33;

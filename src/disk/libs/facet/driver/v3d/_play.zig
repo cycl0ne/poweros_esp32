@@ -760,10 +760,12 @@ fn stencilFaceOf(face: _pipeline.StencilFace) cl.StencilFace {
     };
 }
 
-/// A pipeline's mixing in the hardware's terms.
+/// A pipeline's mixing in the hardware's terms: the one for the colour
+/// attachment this part draws.
 fn mixingOf(player: *const Player, pipeline: *const Pipeline) cl.Mixing {
+    const asked = _pipeline.mixingAt(pipeline, player.resources.output);
     // What is there has no alpha: it reads as wholly opaque.
-    const mixing = if (player.frame.format == cl.OUTPUT_BGR565) pipeline.mixing.overOpaque() else pipeline.mixing;
+    const mixing = if (player.frame.format == cl.OUTPUT_BGR565) asked.overOpaque() else asked.*;
     return .{
         .src_color = @intFromEnum(mixing.src_color),
         .dst_color = @intFromEnum(mixing.dst_color),
@@ -801,7 +803,7 @@ fn drawStateOf(player: *const Player, pipeline: *const Pipeline, viewport: *cons
             .compare = if (has_depth) (if (pipeline.depth_test) |compare| @intFromEnum(compare) else cl.COMPARE_ALWAYS) else cl.COMPARE_ALWAYS,
             .depth_write = has_depth and pipeline.depth_test != null and pipeline.depth_write,
             .stencil = stencil != null,
-            .blend = pipeline.mixing.enabled,
+            .blend = _pipeline.mixingAt(pipeline, player.resources.output).enabled,
         },
         .mixing = mixingOf(player, pipeline),
         .stencil = if (stencil) |faces| .{ stencilFaceOf(faces[0]), stencilFaceOf(faces[1]) } else undefined,

@@ -3688,7 +3688,8 @@ depth test of any compare, written or not, without bounds, bias or clamp;
 a stencil test of any compare and operations, a face's own, the masks and
 the reference given here or set by commands; the channels of the write mask written, replacing what is
 there or mixed with it by any blend factors and operation, the alpha by
-its own, and no logic op; one viewport and one scissor, given here or set
+its own and each colour attachment of the subpass by its own
+(`color_blend_state.attachments`, one for each), and no logic op; one viewport and one scissor, given here or set
 by CmdSetViewport and CmdSetScissor (DynamicState viewport and scissor;
 blend_constants with CmdSetBlendConstants, line_width with CmdSetLineWidth,
 the stencil's with CmdSetStencilCompareMask, CmdSetStencilWriteMask and
@@ -3730,7 +3731,11 @@ to last as long as it does, as the program's code does.
 A depth test on a render pass without depth is no test, as Vulkan has
 it, nor a stencil test on one without stencil. Lines and points use the
 front's stencil test. On an attachment without alpha, R5G6B5, what is there reads as wholly
-opaque. On the cores, SRC_ALPHA and ONE_MINUS_SRC_ALPHA or ONE, with
+opaque. `color_blend_state.attachments` holds one state for each colour
+attachment of the subpass, or none for the default over all of them; a
+subpass of several has each blended its own way (since 1.33,
+`PhysicalDeviceFeatures.independent_blend`), the blend constants being
+the pipeline's and shared. On the cores, SRC_ALPHA and ONE_MINUS_SRC_ALPHA or ONE, with
 the alpha's factors the same or ZERO and ONE and the mask whole, cost
 less than any other mixing.
 

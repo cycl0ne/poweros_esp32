@@ -162,6 +162,9 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // reads it is a function of the program's, which on a device
         // without them is its compute functions, run on the cores.
         .texel_buffers = true,
+        // A colour attachment is drawn as a pass of its own, so each
+        // takes the mixing asked for it as it is drawn.
+        .independent_blend = true,
         // The depth pre-pass is the rasterizer's (driver/cpu/raster/prepass.zig).
         .depth_prepass = false,
         .points_and_lines = true,
