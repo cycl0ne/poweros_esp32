@@ -9,7 +9,8 @@ and a shell, a TCP/IP stack, and a windowed desktop on the board's
 display. Programs are loaded from disk at run time and built against a
 separate SDK.
 
-**Status: release 0.2.** It runs on two ESP32-S3 boards, on two
+**Status: release 0.21** ([the archives to
+download](https://github.com/cycl0ne/poweros_esp32/releases/latest)). It runs on two ESP32-S3 boards, on two
 ESP32-P4 boards, on StarFive's VisionFive 2 (RISC-V 64), on a Raspberry Pi
 Compute Module 5 (AArch64), in Espressif's QEMU and in QEMU's RISC-V 64
 and AArch64 `virt` machines.
@@ -63,7 +64,7 @@ and AArch64 `virt` machines.
   drives the hardware itself, register by register: on an ESP32 everything
   between power-on and the desktop is in this tree, on the others
   everything after their firmware hands over.
-- **It is** young. 0.2 works end to end, but the API may change before
+- **It is** young. 0.21 works end to end, but the API may change before
   1.0, and not every part has run on every board.
 - **It is not** a Linux, a POSIX system or an RTOS in the usual sense:
   programs use the system's own API - libraries opened by name, tag lists,
@@ -320,6 +321,7 @@ wrapper: it fetches the Espressif Zig toolchain (`0.16.0-xtensa`) into
 ./zig build serve -Dboard=visionfive2       # hand that package out over HTTP (quit: Ctrl-C)
 ./zig build archive -Dboard=visionfive2     # what that board is handed over in
 ./zig build release -Ddisk-tree=false       # every board's archive and package, in release/
+./zig build sums                            # release/SHA256SUMS over the archives that are there
 ```
 
 Fetched once into `toolchain/`, pinned and checked, never committed:
@@ -563,6 +565,35 @@ blocks it touches, and the archive keeps the holes as holes. The two
 emulators have no archive: neither Espressif's QEMU nor esp-emulator is a
 machine anybody has by downloading one.
 
+**Already built, for the newest release:** each archive is at
+`https://github.com/cycl0ne/poweros_esp32/releases/latest/download/poweros-<board>.tar.gz`,
+with `SHA256SUMS` beside it under the same address, so
+
+```sh
+curl -LO https://github.com/cycl0ne/poweros_esp32/releases/latest/download/poweros-rpi_cm5.tar.gz
+curl -LO https://github.com/cycl0ne/poweros_esp32/releases/latest/download/SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS
+tar -xzf poweros-rpi_cm5.tar.gz && poweros-rpi_cm5/write.sh --help
+```
+
+is the whole of it. On a machine that already runs the system, `C:Hash
+CHECK SHA256SUMS` reads the same list. Two pieces of firmware are not in
+these archives, since passing them on is not ours to do - the CYW43455's,
+which the Compute Module 5's radio runs, and the WAVE511's, which the
+VisionFive 2's video decoder runs (`scripts/fetch-vpu.sh`,
+`scripts/fetch-cyw43455.sh` fetch them from their owners for a build of
+one's own).
+
+`./zig build sums` writes `release/SHA256SUMS` over the archives that are
+in that directory - the digest in lower-case hex, two spaces, the name -
+which is what `sha256sum -c SHA256SUMS` reads, and what the system's own
+`C:Hash CHECK` reads on a machine that has no such command. It sums what
+is there rather than what one build made, because a whole set of archives
+is not one build's: the files a firmware loads go into a disk image's
+`SYS:Storage/Boot` for the machine the build is for, so each 64-bit
+board's archive comes from a build of its own. So it is run last, over the
+finished directory, and it builds and replaces nothing in it.
+
 The scripts in them ask the host what it has rather than assuming:
 `run.sh` a display backend, the virtio GPU or the ramfb, an audio driver
 and QEMU's user-mode network, leaving out what is missing and saying so;
@@ -716,6 +747,7 @@ More build steps and options:
 | `./zig build modchart` | regenerate the charts of which module uses which (`sdk/docs/modules.md`) |
 | `./zig build archive -Dboard=olimex_p4pc` | what that board is handed over in, into `release/` |
 | `./zig build release` | every board's archive and package at once, into `release/` |
+| `./zig build sums` | `release/SHA256SUMS` over the archives in `release/`, in the form `sha256sum -c` and `C:Hash CHECK` read |
 | `./zig build posfsck -- [--data] flash.bin` | check the posfs volumes of a flash dump or a card's image on the host ([posfs guide](sdk/docs/guides/posfs.md#checking-a-volume)) |
 | `-Ddisk-tree=false` | leave the `disk/` tree in this root off the disk images: what `archive` and `release` want for something to hand out, since those files are the builder's own |
 | `-Dboot=/boot/firmware/bcm2712-rpi-cm5-cm5io.dtb` | a file this tree does not hold in a release package's `boot/` and in `SYS:Storage/Boot`, under its own name or the one before a `=`: what a board's firmware reads besides the kernel |

@@ -1212,6 +1212,32 @@ pub fn build(b: *std.Build) void {
         }
     }
 
+    // `sums` - the SHA-256 of every archive in release/, written as
+    // `sha256sum -c` reads it (tools/sums.zig), so that somebody who
+    // downloaded one can hold it against what was built.
+    //
+    // It is a step of its own and not part of `release` on purpose: it
+    // sums what is in the directory, and a whole set of archives is not
+    // one build's. The files a firmware loads are put in a disk image's
+    // `SYS:Storage/Boot` only for the machine the build is for - a kernel
+    // is the board's - so each 64-bit board's archive and package come
+    // from a build of their own, kept in that directory as they are made.
+    // `sums` is what is run over the finished directory, and it never
+    // builds or replaces anything in it.
+    const sums = b.addExecutable(.{
+        .name = "sums",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/sums.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseSafe,
+        }),
+    });
+    const run_sums = b.addRunArtifact(sums);
+    run_sums.addArg(b.pathFromRoot("release"));
+    run_sums.has_side_effects = true;
+    const sums_step = b.step("sums", "Write release/SHA256SUMS over the archives that are there");
+    sums_step.dependOn(&run_sums.step);
+
     // Target-independent code, tested on the host.
     const test_step = b.step("test", "Run the unit tests on the host");
     const test_options = b.addOptions();
