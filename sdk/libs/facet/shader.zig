@@ -139,6 +139,18 @@ pub const FixedKind = enum(u8) {
     /// leaf and the railing and the sprite with a hole in it. Varyings s
     /// and t.
     texture_cutout = 7,
+    /// A texture as the sampler bound beside it says (`texture.Sampler`,
+    /// CreateSampler): binding 0 of set 0, written as a combined image
+    /// sampler. Varyings s and t, as `texture` has them, and `sampling`'s
+    /// filter and address are the sampler's instead - with the levels
+    /// mixed, a bias and a clamp on them, mirrored and bordered edges, and
+    /// anisotropy, none of which the fixed path has.
+    texture_sampled = 8,
+    /// The same compared with a reference rather than read as a colour: a
+    /// shadow sample (`texture.Sampler.compare`). Varyings s, t and the
+    /// reference, and what it writes is how much of the sample passed -
+    /// white for all of it, black for none.
+    texture_shadow = 9,
 };
 
 /// Under this alpha, 0 to 255, `texture_cutout` drops a pixel.
@@ -156,9 +168,20 @@ pub const Fixed = struct {
         return switch (fixed.kind) {
             .none => 0,
             .color => 4,
-            .texture, .texture_cutout => 2,
+            .texture, .texture_cutout, .texture_sampled => 2,
             .texture_color => 6,
-            .texture_array, .texture_cube, .texture_3d => 3,
+            .texture_array, .texture_cube, .texture_3d, .texture_shadow => 3,
+        };
+    }
+
+    /// Whether the form samples through a sampler bound with the texture,
+    /// rather than as `sampling` says. A device whose fragment programs are
+    /// its own has one for each form it can draw, so such a pipeline is
+    /// refused where `PhysicalDeviceFeatures.samplers` is false.
+    pub fn needsSampler(fixed: Fixed) bool {
+        return switch (fixed.kind) {
+            .texture_sampled, .texture_shadow => true,
+            else => false,
         };
     }
 
@@ -196,6 +219,13 @@ pub fn fixedFragment(name: [*:0]const u8, comptime fixed: Fixed) Entry {
                 .texture_cutout => cutout(fixed.sampling, fragments, fragments.resources.sampled(0, 0, 0)),
                 .texture_color => modulated(fixed.sampling, fragments, fragments.resources.sampled(0, 0, 0)),
                 .texture_array, .texture_cube, .texture_3d => layered(fixed.kind, fixed.sampling, fragments, fragments.resources.sampled(0, 0, 0)),
+                .texture_sampled, .texture_shadow => texturedBy(
+                    fixed.kind == .texture_shadow,
+                    fixed.sampling,
+                    fragments,
+                    fragments.resources.sampled(0, 0, 0),
+                    fragments.resources.samplerOf(0, 0, 0),
+                ),
             }
         }
     };
@@ -210,11 +240,15 @@ pub const MAX_SETS = 4;
 pub const MAX_PUSH_CONSTANTS_SIZE = 128;
 
 /// A descriptor as a shader reads it: a uniform or storage buffer's bytes
-/// from the offset written, and how many; a sampled image's texture.
+/// from the offset written, and how many; a sampled image's texture; a
+/// sampler's, and a combined image sampler's both.
 pub const Slot = extern struct {
     pointer: ?*const anyopaque = null,
-    /// The bytes of a buffer's range; 0 for an image.
+    /// The bytes of a buffer's range; 0 for an image or a sampler.
     range: u32 = 0,
+    /// What a sampler or a combined image sampler was written with
+    /// (CreateSampler); null for every other kind.
+    sampler: ?*const texture.Sampler = null,
 };
 
 /// A descriptor set as a shader reads it.
@@ -254,10 +288,20 @@ pub const Resources = extern struct {
     }
 
     /// Element `element` of binding `binding` of set `set`, a sampled
-    /// image: its texture, or null where it is not written.
+    /// image: its texture, or null where it is not written. A combined
+    /// image sampler's texture is read the same way, its sampler by
+    /// `samplerOf`.
     pub fn sampled(resources: *const Resources, set: u32, binding: u32, element: u32) ?*const texture.Texture {
         const found = resources.slot(set, binding, element) orelse return null;
         return @ptrCast(@alignCast(found.pointer orelse return null));
+    }
+
+    /// Element `element` of binding `binding` of set `set`, a sampler or a
+    /// combined image sampler: what it was written with, or null where it
+    /// is not written or is of another kind.
+    pub fn samplerOf(resources: *const Resources, set: u32, binding: u32, element: u32) ?*const texture.Sampler {
+        const found = resources.slot(set, binding, element) orelse return null;
+        return found.sampler;
     }
 
     /// Binding `binding` of set `set`, a buffer written through, as the
@@ -665,6 +709,59 @@ pub fn modulated(comptime sampling: texture.Sampling, fragments: *const Fragment
             mixed |= ((texel * part + @as(@Vector(4, u32), @splat(127))) / @as(@Vector(4, u32), @splat(255))) << shift;
         }
         out.* = mixed;
+    }
+}
+
+/// A texture through the sampler bound beside it (`texture.Sampler`,
+/// CreateSampler), at the coordinates varyings 0 and 1 carry, as `textured`
+/// has them. With `shadow`, varying 2 is the reference the sample is
+/// compared with (`texture.Sampler.compare`), and what is written is how
+/// much of the sample passed rather than a colour.
+///
+/// A pixel at a time and by floats: the sampler is read for every sample,
+/// and what it may ask for - the levels mixed, several samples along an
+/// axis - is work the fixed path has no room for. How fast the coordinates
+/// change is taken from the quad's own pixels, as a GPU takes it, so a
+/// quad's four samples share a level. A texture not written, in another
+/// format, or with no sampler beside it paints every pixel `missing`.
+pub fn texturedBy(
+    comptime shadow: bool,
+    comptime sampling: texture.Sampling,
+    fragments: *const Fragments,
+    picture: ?*const texture.Texture,
+    sampler: ?*const texture.Sampler,
+) void {
+    const given = picture orelse return fill(fragments, missing);
+    if (given.format != sampling.format) return fill(fragments, missing);
+    const with = sampler orelse return fill(fragments, missing);
+    @setRuntimeSafety(false);
+    var rows = Rows(if (shadow) 4 else 3).of(fragments);
+    for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
+        const at = rows.at(quad);
+        const w = @as(Pixels, @splat(1)) / at[0];
+        const u: [4]f32 = at[1] * w;
+        const v: [4]f32 = at[2] * w;
+        const reference: [4]f32 = if (shadow) at[3] * w else @splat(0);
+        // The quad's own steps: across from its left pixel to its right,
+        // down from its top row to its bottom.
+        const du_dx = u[1] - u[0];
+        const du_dy = u[2] - u[0];
+        const dv_dx = v[1] - v[0];
+        const dv_dy = v[2] - v[0];
+        var colors: [4]u32 = @splat(0);
+        for (&colors, 0..) |*color, i| {
+            if (quad.covered >> @intCast(i) & 1 == 0) continue;
+            color.* = texture.sampleBy(given, with, 0, .{
+                .u = u[i],
+                .v = v[i],
+                .du_dx = du_dx,
+                .dv_dx = dv_dx,
+                .du_dy = du_dy,
+                .dv_dy = dv_dy,
+                .reference = reference[i],
+            });
+        }
+        out.* = colors;
     }
 }
 

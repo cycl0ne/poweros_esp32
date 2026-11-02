@@ -119,6 +119,9 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
             .min_memory_map_alignment = _memory.alignment,
             .tile_size = v3d.frame.tile_pixels,
             .cores = 1,
+            // The limit is the library's sampling, not this device's TMU:
+            // `sampler_anisotropy` below says who takes it.
+            .max_sampler_anisotropy = _instance.max_sampler_anisotropy,
         },
     };
     const name = "VideoCore VII V3D 7.1";
@@ -134,6 +137,11 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         .tessellation_on_device = false,
         // No QPU program discards yet, so texture_cutout is refused above.
         .discarding_fragment_forms = false,
+        // The TMU's state is written from the form's own `sampling` as a
+        // draw is played: there is no program that reads a sampler, so the
+        // forms that want one are refused and drawn on the cores.
+        .samplers = false,
+        .sampler_anisotropy = false,
         // The depth pre-pass is the rasterizer's (driver/cpu/raster/prepass.zig).
         .depth_prepass = false,
         .points_and_lines = true,
@@ -312,9 +320,11 @@ fn freeMemory(device: *Device, memory: *DeviceMemory) callconv(.c) void {
 
 fn makePipeline(pipeline: *Pipeline) callconv(.c) facet.Result {
     const fixed = pipeline.fixed;
-    // A form that drops pixels needs a QPU program that discards, and there
-    // is none yet: such a pipeline is refused here and drawn on the cores.
-    if (fixed.kind == .none or fixed.discards() or pipeline.varyings != fixed.varyings()) return .error_feature_not_present;
+    // A form that drops pixels needs a QPU program that discards, and one
+    // that samples through a sampler a program that reads it: there is
+    // neither yet, so such a pipeline is refused here and drawn on the
+    // cores.
+    if (fixed.kind == .none or fixed.discards() or fixed.needsSampler() or pipeline.varyings != fixed.varyings()) return .error_feature_not_present;
     return .success;
 }
 

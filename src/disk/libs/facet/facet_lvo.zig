@@ -119,6 +119,8 @@ const CreateComputePipelines = @import("pipeline/createcomputepipelines.zig").Cr
 const CmdDispatch = @import("command/cmddispatch.zig").CmdDispatch;
 const CmdDispatchIndirect = @import("command/cmddispatchindirect.zig").CmdDispatchIndirect;
 const CmdNextSubpass = @import("command/cmdnextsubpass.zig").CmdNextSubpass;
+const CreateSampler = @import("sampler/createsampler.zig").CreateSampler;
+const DestroySampler = @import("sampler/destroysampler.zig").DestroySampler;
 
 /// facet.library's interface, as the SDK generates it from
 /// sdk/fd/facet_lib.fd.
@@ -252,6 +254,8 @@ const contract_files = [_][]const u8{
     @embedFile("command/cmddispatch.zig"),
     @embedFile("command/cmddispatchindirect.zig"),
     @embedFile("command/cmdnextsubpass.zig"),
+    @embedFile("sampler/createsampler.zig"),
+    @embedFile("sampler/destroysampler.zig"),
 };
 
 fn lvoCreateInstance(base: *FacetBase, info: *const facet.InstanceCreateInfo, instance: *?*facet.Instance) callconv(.c) facet.Result {
@@ -372,6 +376,14 @@ fn lvoCmdUpdateBuffer(base: *FacetBase, buffer: *facet.CommandBuffer, destinatio
 
 fn lvoCmdClearColorImage(base: *FacetBase, buffer: *facet.CommandBuffer, image: *facet.Image, layout: facet.ImageLayout, color: *const facet.ClearColorValue, range_count: u32, ranges: [*]const facet.ImageSubresourceRange) callconv(.c) void {
     return CmdClearColorImage(base, buffer, image, layout, color, range_count, ranges);
+}
+
+fn lvoCreateSampler(base: *FacetBase, device: *facet.Device, info: *const facet.SamplerCreateInfo, sampler: *?*facet.Sampler) callconv(.c) facet.Result {
+    return CreateSampler(base, device, info, sampler);
+}
+
+fn lvoDestroySampler(base: *FacetBase, device: *facet.Device, sampler: ?*facet.Sampler) callconv(.c) void {
+    return DestroySampler(base, device, sampler);
 }
 
 fn lvoCmdCopyBuffer(base: *FacetBase, buffer: *facet.CommandBuffer, source: *facet.Buffer, destination: *facet.Buffer, region_count: u32, regions: [*]const facet.BufferCopy) callconv(.c) void {
@@ -693,6 +705,8 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoCmdFillBuffer),
     vec(lvoCmdUpdateBuffer),
     vec(lvoCmdClearColorImage),
+    vec(lvoCreateSampler),
+    vec(lvoDestroySampler),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

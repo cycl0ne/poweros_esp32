@@ -876,8 +876,9 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
             };
         },
         // Refused when the pipeline was made (driver.zig): no program drops
-        // pixels, so neither of these reaches a frame here.
-        .none, .texture_cutout => return,
+        // pixels, and none reads a sampler, so none of these reaches a
+        // frame here.
+        .none, .texture_cutout, .texture_sampled, .texture_shadow => return,
     }
 
     const scale = ViewportScale{

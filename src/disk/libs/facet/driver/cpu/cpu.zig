@@ -88,6 +88,7 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
             .min_memory_map_alignment = _memory.alignment,
             .tile_size = raster.tile_size,
             .cores = @min(cores, raster.most_parts),
+            .max_sampler_anisotropy = _instance.max_sampler_anisotropy,
         },
     };
     const shared = physical.properties.limits.cores;
@@ -101,6 +102,10 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         .tessellation_on_device = true,
         // The rasterizer holds a dropping form's depths back until it has run.
         .discarding_fragment_forms = true,
+        // The sampling itself is here (sdk.facet.texture.sampleBy), so the
+        // forms that read a sampler run, with everything one may ask for.
+        .samplers = true,
+        .sampler_anisotropy = true,
         .depth_prepass = true,
         .points_and_lines = true,
         .depth_test = true,
