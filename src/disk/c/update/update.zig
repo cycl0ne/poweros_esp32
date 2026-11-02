@@ -105,13 +105,14 @@ const shared = @import("_update.zig");
 const source = @import("source.zig");
 const compare = @import("compare.zig");
 const boot = @import("boot.zig");
+const auto = @import("auto.zig");
 const Run = shared.Run;
 
 pub const COMMAND_NAME = shared.COMMAND_NAME;
 const VERSION_STRING = "\x00$VER: Update 1.0 (01.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "FROM/K,CHECK/S,BOOT/S,FORCE/S,QUIET/S,CONFIRM/S,RESTART/S";
+const template = "FROM/K,CHECK/S,BOOT/S,FORCE/S,QUIET/S,CONFIRM/S,RESTART/S,AUTO/S";
 const arg_from = 0;
 const arg_check = 1;
 const arg_boot = 2;
@@ -119,7 +120,8 @@ const arg_force = 3;
 const arg_quiet = 4;
 const arg_confirm = 5;
 const arg_restart = 6;
-const arg_count = 7;
+const arg_auto = 7;
+const arg_count = 8;
 
 const utility_version = 0;
 
@@ -150,6 +152,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     run.quiet = argv[arg_quiet] != 0;
     run.want_boot = argv[arg_boot] != 0;
     run.restart = argv[arg_restart] != 0;
+    run.auto = argv[arg_auto] != 0;
 
     // What the install left, which says where the files came from and
     // which board they were built for.
@@ -174,12 +177,35 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         return code;
     }
 
+    // What the machine was told to do by itself, which AUTO does and
+    // whose SOURCE is where any run looks when it is told no other.
+    var wanted: prefs.update.Settings = .{};
+    const told = auto.settingsOf(&run, &wanted);
+    if (told == .wrong) return dos.RETURN_FAIL;
+    const asked_for: ?*prefs.update.Settings = switch (told) {
+        .settings => |held| held,
+        else => null,
+    };
+    if (run.auto) {
+        // A machine looks nowhere unless it was told where.
+        const wants = asked_for orelse return dos.RETURN_OK;
+        if (!wants.at_start) return dos.RETURN_OK;
+        // A run of its own has no console: what it finds is said, and
+        // writing it is asked for unless the file says otherwise.
+        run.check = !wants.apply;
+        run.want_boot = run.want_boot or wants.boot;
+    }
+
     if (dos.rdargs.string(argv[arg_from])) |text| {
         run.from = text;
+    } else if (asked_for != null and prefs.update.sourceText(asked_for.?).len != 0) {
+        run.from = @ptrCast(&asked_for.?.source);
     } else {
         const kept: [*:0]const u8 = @ptrCast(&settings.source);
         if (kept[0] == 0) {
-            return shared.fail(&run, "no FROM, and %s says nothing about where this system came from\n", .{prefs.install.ENVARC_FILE});
+            return shared.fail(&run, "no FROM, and neither %s nor %s says where to look\n", .{
+                prefs.update.ENVARC_FILE, prefs.install.ENVARC_FILE,
+            });
         }
         run.from = kept;
     }
@@ -209,9 +235,32 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
             .{},
         }) orelse return shared.fail(&run, "no memory for the HTTP client\n", .{});
         defer hb.DeleteClient(run.client);
-        return update(&run, &settings);
+        return whole(&run, &settings);
     }
-    return update(&run, &settings);
+    return whole(&run, &settings);
+}
+
+/// The run, and what AUTO puts around it: a look first, what it found in
+/// the system log and on the desktop, and the writing once it is asked
+/// for. An ordinary run is the walk alone.
+fn whole(run: *Run, settings: *const prefs.install.Settings) i32 {
+    if (!run.auto) return update(run, settings);
+    const code = update(run, settings);
+    if (code == dos.RETURN_FAIL) return code;
+    if (code != dos.RETURN_WARN) {
+        // Nothing to do, or everything done already because the file
+        // said to write what was found without asking.
+        if (!compare.changed(run)) auto.logged(run, "nothing newer at %s\n", .{run.from});
+        return code;
+    }
+    auto.logged(run, "%ld files to write and %ld to delete at %s\n", .{
+        @as(u64, run.written), @as(u64, run.deleted), run.from,
+    });
+    const now = auto.offer(run) orelse return code;
+    if (!now) return code;
+    run.check = false;
+    run.again();
+    return update(run, settings);
 }
 
 /// The whole of it, once the source is known and the libraries are open.
@@ -266,6 +315,9 @@ fn update(run: *Run, settings: *const prefs.install.Settings) i32 {
         if (run.check and run.boot_written != 0) code = dos.RETURN_WARN;
     }
     said(run);
+    if (run.auto and !run.check and compare.changed(run)) {
+        auto.logged(run, "%ld files written, %ld deleted\n", .{ @as(u64, run.written), @as(u64, run.deleted) });
+    }
     if (run.restart and !run.check and code != dos.RETURN_FAIL) restart(run, run.tried != 0);
     return code;
 }

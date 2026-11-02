@@ -638,6 +638,14 @@ files fetches 4.7 KB. `CHECK` says what would happen and writes nothing,
 and its return code tells a script whether there is anything to do. The
 system volume is given a snapshot before the first file is written.
 
+**By itself.** `ENVARC:Sys/update.prefs` says where a machine looks for
+a newer system, whether it looks at every start, and whether what it
+finds is written without being asked: `C:Update AUTO` runs from
+`S:Network-Startup` once the network is up, puts what it found in the
+system log and offers it in a requester where there is a desktop. Without
+that file nothing looks anywhere. The **Update** page in
+`SYS:Programs/Prefs` writes it.
+
 **A kernel with a way back.** `Update BOOT` writes what the firmware
 reads into the partition it reads it from, after the system volume's
 files. Where the firmware starts from either of a pair of partitions, the

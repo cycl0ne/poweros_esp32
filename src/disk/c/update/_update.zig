@@ -67,6 +67,8 @@ pub const Run = struct {
     want_boot: bool = false,
     /// Whether the machine is started again at the end.
     restart: bool = false,
+    /// Whether this is the run the machine makes by itself.
+    auto: bool = false,
     /// What this run came to.
     written: u32 = 0,
     written_bytes: u64 = 0,
@@ -82,6 +84,20 @@ pub const Run = struct {
     tried: u32 = 0,
     /// Whether the system volume has been given its snapshot.
     snapshotted: bool = false,
+
+    /// What a run came to, cleared: AUTO looks first and writes after,
+    /// and the second walk counts for itself.
+    pub fn again(run: *Run) void {
+        run.written = 0;
+        run.written_bytes = 0;
+        run.deleted = 0;
+        run.kept = 0;
+        run.made = 0;
+        run.boot = 0;
+        run.boot_written = 0;
+        run.tried = 0;
+        run.snapshotted = false;
+    }
 };
 
 /// The system volume given its snapshot, once in a run and before the

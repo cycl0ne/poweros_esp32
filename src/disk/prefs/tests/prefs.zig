@@ -601,6 +601,36 @@ test "dock.items: the entries and docklets read a line at a time, written back; 
     try utilityDown(ub);
 }
 
+test "update.prefs: the line read, its defaults, and written back" {
+    const ub = try utilityUp();
+    defer kexec.deinit();
+
+    // Nothing in the line leaves the defaults: a machine looks at every
+    // start and writes nothing without being asked.
+    var empty: prefs.update.Settings = .{};
+    try testing.expect(prefs.update.parse(ub, "", &empty) == null);
+    try testing.expect(empty.at_start);
+    try testing.expect(!empty.apply);
+    try testing.expect(!empty.boot);
+    try testing.expectEqualStrings("", prefs.update.sourceText(&empty));
+
+    var settings: prefs.update.Settings = .{};
+    try testing.expect(prefs.update.parse(ub, "SOURCE=\"http://poweros.local/qemu virt/\" ATSTART=NO APPLY=YES BOOT=YES", &settings) == null);
+    try testing.expectEqualStrings("http://poweros.local/qemu virt/", prefs.update.sourceText(&settings));
+    try testing.expect(!settings.at_start);
+    try testing.expect(settings.apply);
+    try testing.expect(settings.boot);
+
+    var bytes: [prefs.update.max_line]u8 = undefined;
+    const length = prefs.update.write(&settings, &bytes);
+    try testing.expectEqualStrings("SOURCE=\"http://poweros.local/qemu virt/\" ATSTART=NO APPLY=YES BOOT=YES", bytes[0..length]);
+
+    // What it does not take is said, and a word that is not YES or NO.
+    var again: prefs.update.Settings = .{};
+    try testing.expect(prefs.update.parse(ub, "WHEN=NOW", &again) != null);
+    try testing.expect(prefs.update.parse(ub, "APPLY=SOMETIMES", &again) != null);
+}
+
 test "every form reads its line alike: KEY value, and a value in quotes" {
     const ub = try utilityUp();
     defer kexec.deinit();

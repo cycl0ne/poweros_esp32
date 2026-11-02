@@ -19,8 +19,9 @@ This guide is what an install leaves on the disk, the command and each of
 its keywords, the two sources it copies from, the release package's form,
 what it writes down about itself, what the machine then starts from, how a
 system that is installed already is brought up to date from a later
-package (`C:Update`), and how its kernel is replaced with a way back
-from one that does not come up.
+package (`C:Update`), how its kernel is replaced with a way back from
+one that does not come up, and how a machine looks for a newer system by
+itself.
 
 ## What it leaves on the disk
 
@@ -422,6 +423,41 @@ back with `C:PosFS SYS: ROLLBACK before-update` - from a system that is
 not the one being rolled back, since a volume is not rolled back while it
 is in use, which means a card or a kernel that loads a disk image beside
 the medium.
+
+## By itself, at every start
+
+`ENVARC:Sys/update.prefs` is what a machine was told about newer systems,
+and without that file nothing looks anywhere - a machine says nothing to
+a server it was never told about. One line:
+
+```
+SOURCE="http://poweros.local/rpi_cm5/" ATSTART=YES APPLY=NO BOOT=NO
+```
+
+- **SOURCE** is the package to look at - a path or an address - which any
+  run of `C:Update` uses when it is told no other; empty, the one the
+  install wrote down is used.
+- **ATSTART** is whether to look once at every start.
+- **APPLY** is whether what was found is written without being asked for.
+  `NO` says what there is and waits, which is what a machine does unless
+  it was told otherwise: a build changes daily, and an unproven one
+  should not land on a machine unasked.
+- **BOOT** is whether the files the firmware reads are written with it,
+  where what was found is applied.
+
+`S:Network-Startup` runs `C:Update AUTO` once the network is up, in the
+shell of its own that the start gives that script. AUTO does what the
+file says and nothing where there is no file: it looks, puts what it
+found in the system log (`C:Log`), and, where there is a desktop, offers
+it in a requester - **Update now** writes it there and then, **Later**
+leaves it. With `APPLY=YES` it writes what it finds without asking. A
+machine on a serial console with no screen is left with the line in the
+log, among the start's own words.
+
+The page for all of it is **Update** in `SYS:Programs/Prefs`: where to
+look, and the three switches. Save keeps the file in `ENVARC:Sys` and
+puts it in `ENV:Sys`, so the next start reads it; the page itself looks
+nowhere.
 
 **The restart itself** is `C:Reboot`:
 

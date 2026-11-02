@@ -24,6 +24,7 @@ pub const audio = @import("audio.zig");
 pub const dock = @import("dock.zig");
 pub const locale = @import("locale.zig");
 pub const install = @import("install.zig");
+pub const update = @import("update.zig");
 
 const exec = @import("../exec/exec.zig");
 const dos = @import("../dos/dos.zig");
