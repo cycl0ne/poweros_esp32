@@ -20,6 +20,7 @@ const Image = @import("../image/_image.zig").Image;
 const _render = @import("../render/_render.zig");
 const _pipeline = @import("../pipeline/_pipeline.zig");
 const DescriptorSet = @import("../descriptor/_descriptor.zig").Set;
+const QueryPool = @import("../query/_query.zig").Pool;
 
 pub const CommandPool = struct {
     device: *Device,
@@ -122,6 +123,60 @@ pub const ClearColorImage = extern struct {
     /// 0xAARRGGBB.
     color: u32,
     image: *Image,
+};
+
+/// CmdBeginQuery: what the work after it is counted into.
+pub const BeginQuery = extern struct {
+    pub const op: _stream.Op = .begin_query;
+    head: Head = .{ .op = op },
+    pool: *QueryPool,
+    query: u32,
+    /// QUERY_CONTROL_PRECISE, which this library counts either way.
+    flags: u32,
+};
+
+/// CmdEndQuery: the query made available.
+pub const EndQuery = extern struct {
+    pub const op: _stream.Op = .end_query;
+    head: Head = .{ .op = op },
+    pool: *QueryPool,
+    query: u32,
+    pad: u32 = 0,
+};
+
+/// CmdResetQueryPool: queries set back to nothing counted.
+pub const ResetQueryPool = extern struct {
+    pub const op: _stream.Op = .reset_query_pool;
+    head: Head = .{ .op = op },
+    pool: *QueryPool,
+    first: u32,
+    count: u32,
+};
+
+/// CmdWriteTimestamp: the clock as the command is played.
+pub const WriteTimestamp = extern struct {
+    pub const op: _stream.Op = .write_timestamp;
+    head: Head = .{ .op = op },
+    pool: *QueryPool,
+    query: u32,
+    /// The stage it was asked for at: the commands are played one after
+    /// another and each is finished before the next starts, so every stage
+    /// is the same moment here.
+    stage: u32,
+};
+
+/// CmdCopyQueryPoolResults: the values written into a buffer.
+pub const CopyQueryResults = extern struct {
+    pub const op: _stream.Op = .copy_query_results;
+    head: Head = .{ .op = op },
+    pool: *QueryPool,
+    destination: *Buffer,
+    offset: u64,
+    stride: u64,
+    first: u32,
+    count: u32,
+    flags: u32,
+    pad: u32 = 0,
 };
 
 /// CmdCopyBuffer, followed by its regions.

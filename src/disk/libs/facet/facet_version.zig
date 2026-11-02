@@ -97,4 +97,21 @@ pub const LIBRARY_VERSION = 1;
 /// (`PhysicalDeviceFeatures.samplers`). A layout's `immutable_samplers` and
 /// a sampler's `unnormalized_coordinates` are refused rather than passed
 /// over, so that no program is left thinking they took.
-pub const LIBRARY_REVISION = 28;
+/// 29: query pools - CreateQueryPool, DestroyQueryPool,
+/// GetQueryPoolResults, CmdBeginQuery, CmdEndQuery, CmdResetQueryPool,
+/// CmdWriteTimestamp and CmdCopyQueryPoolResults. An occlusion query counts
+/// the samples that passed the tests, added by the tiles as they are drawn;
+/// a statistics query counts what each stage was given, added where the
+/// work is done - the draw's own numbers as it is played, the triangles
+/// clipping kept from the rasterizer's own count, the pixels the fragment
+/// function was called for from the tiles; and a timestamp is the E-clock as
+/// the command is played, so `timestamp_valid_bits` is 64 and
+/// `timestamp_period_ns` 1000 where the library has timer.device, and all
+/// three are 0 where it has not. A counter is 32 bits wide, because the
+/// library runs on machines with no 64-bit atomic, and is held at its
+/// highest rather than wrapping round. There is no geometry shader, so
+/// neither geometry statistic is counted and a pool that asks for one is
+/// refused. The V3D counts neither samples nor stages - its occlusion
+/// counter is not read and what its QPUs were given is not counted - so
+/// pools of both kinds are refused on it and only timestamps are kept.
+pub const LIBRARY_REVISION = 29;

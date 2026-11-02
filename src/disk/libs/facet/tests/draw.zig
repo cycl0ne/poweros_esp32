@@ -37,6 +37,7 @@ const testing = std.testing;
 test {
     _ = @import("../driver/_tessellate.zig");
     _ = @import("../driver/_driver.zig");
+    _ = @import("../query/_query.zig");
 }
 
 /// What a test draws with: a device and its queue, a command buffer and a
@@ -1976,6 +1977,242 @@ const SubpassScene = struct {
     };
     const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
 };
+
+// --- query pools --------------------------------------------------------------
+
+/// A pool of `count` queries of `kind`, with `statistics` for a statistics
+/// one.
+fn queryPool(bench: *Bench, kind: facet.QueryType, count: u32, statistics: u32) !*facet.QueryPool {
+    var made: ?*facet.QueryPool = null;
+    try testing.expectEqual(facet.Result.success, bench.rig.fb.CreateQueryPool(bench.device, &.{ .query_type = kind, .query_count = count, .pipeline_statistics = statistics }, &made));
+    return made.?;
+}
+
+/// Query `index` of `pool` read as a 64-bit value, waited for.
+fn queryValue(bench: *Bench, pool: *facet.QueryPool, index: u32) !u64 {
+    var value: u64 = 0;
+    try testing.expectEqual(facet.Result.success, bench.rig.fb.GetQueryPoolResults(bench.device, pool, index, 1, @sizeOf(u64), &value, @sizeOf(u64), facet.QUERY_RESULT_64 | facet.QUERY_RESULT_WAIT));
+    return value;
+}
+
+/// The pixels of `picture` that are `color`.
+fn pixelsOf(picture: *const Picture, color: u32) u32 {
+    var found: u32 = 0;
+    for (0..picture.height) |y| {
+        for (0..picture.width) |x| {
+            if (picture.at(@intCast(x), @intCast(y)) == color) found += 1;
+        }
+    }
+    return found;
+}
+
+test "an occlusion query counts the samples that passed, and a statistics query what each stage was given" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const picture = try Picture.of(&bench, 64, 64);
+    const pass = try renderPass(&bench, .clear, false);
+    defer fb.DestroyRenderPass(device, pass);
+    const frame = try framebuffer(&bench, pass, &.{picture.view}, 64, 64);
+    defer fb.DestroyFramebuffer(device, frame);
+    const flat = try module(&bench, &Flat.code);
+    defer fb.DestroyShaderModule(device, flat);
+    const layout = try pipelineLayout(&bench, &.{}, 4);
+    defer fb.DestroyPipelineLayout(device, layout);
+    _, const list = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = pass });
+    defer fb.DestroyPipeline(device, list);
+
+    // The cores count both; a device that counts neither says so instead.
+    var features: facet.PhysicalDeviceFeatures = undefined;
+    fb.GetPhysicalDeviceFeatures(bench.physical, &features);
+    try testing.expect(features.occlusion_queries);
+    try testing.expect(features.pipeline_statistics_queries);
+
+    const occlusion = try queryPool(&bench, .occlusion, 2, 0);
+    defer fb.DestroyQueryPool(device, occlusion);
+    const wanted = facet.QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_VERTICES |
+        facet.QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_PRIMITIVES |
+        facet.QUERY_PIPELINE_STATISTIC_VERTEX_SHADER_INVOCATIONS |
+        facet.QUERY_PIPELINE_STATISTIC_CLIPPING_INVOCATIONS |
+        facet.QUERY_PIPELINE_STATISTIC_CLIPPING_PRIMITIVES |
+        facet.QUERY_PIPELINE_STATISTIC_FRAGMENT_SHADER_INVOCATIONS;
+    const statistics = try queryPool(&bench, .pipeline_statistics, 1, wanted);
+    defer fb.DestroyQueryPool(device, statistics);
+
+    // The top left half of the picture, as its own instance each: the
+    // same triangle twice over, one on top of the other.
+    const vertices = [_][3]f32{ .{ -1, -1, 0.5 }, .{ 1, -1, 0.5 }, .{ -1, 1, 0.5 } };
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
+    const offset: u64 = 0;
+    const green: u32 = 0xFF00_FF00;
+    const blue = clears(0xFF00_00FF);
+
+    // A query read before it was begun is not ready, and nothing was
+    // written where it would have gone.
+    var untouched: u64 = 0xDEAD_BEEF;
+    try testing.expectEqual(facet.Result.not_ready, fb.GetQueryPoolResults(device, occlusion, 0, 1, @sizeOf(u64), &untouched, @sizeOf(u64), facet.QUERY_RESULT_64));
+    try testing.expectEqual(0xDEAD_BEEF, untouched);
+
+    // The query begins before the pass and ends after it: the samples are
+    // counted as the tiles are drawn, which is where the pass ends.
+    var commands = try bench.record();
+    fb.CmdResetQueryPool(commands, occlusion, 0, 2);
+    fb.CmdBeginQuery(commands, occlusion, 0, facet.QUERY_CONTROL_PRECISE);
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 1, .clear_values = &blue }, .@"inline");
+    fb.CmdBindPipeline(commands, .graphics, list.?);
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &green);
+    fb.CmdDraw(commands, 3, 1, 0, 0);
+    fb.CmdEndRenderPass(commands);
+    fb.CmdEndQuery(commands, occlusion, 0);
+    try bench.submit();
+
+    // Every pixel the triangle covered passed the tests, and no other.
+    const drawn = pixelsOf(&picture, green);
+    try testing.expect(drawn > 1000);
+    try testing.expectEqual(drawn, try queryValue(&bench, occlusion, 0));
+    // The one that was reset but never begun is still not ready.
+    try testing.expectEqual(facet.Result.not_ready, fb.GetQueryPoolResults(device, occlusion, 1, 1, @sizeOf(u64), &untouched, @sizeOf(u64), facet.QUERY_RESULT_64));
+
+    // The same draw again, two instances of it, with the statistics
+    // counted instead.
+    commands = try bench.record();
+    fb.CmdResetQueryPool(commands, statistics, 0, 1);
+    fb.CmdBeginQuery(commands, statistics, 0, 0);
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 1, .clear_values = &blue }, .@"inline");
+    fb.CmdBindPipeline(commands, .graphics, list.?);
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &green);
+    fb.CmdDraw(commands, 3, 2, 0, 0);
+    fb.CmdEndRenderPass(commands);
+    fb.CmdEndQuery(commands, statistics, 0);
+    try bench.submit();
+
+    // Six values, in the order of their bits: the vertices and the
+    // triangles input assembly was given, the vertex function's calls,
+    // what clipping was given and what came out of it, and the pixels the
+    // fragment function was called for.
+    var values: [6]u64 = @splat(0);
+    try testing.expectEqual(facet.Result.success, fb.GetQueryPoolResults(device, statistics, 0, 1, @sizeOf(@TypeOf(values)), &values, @sizeOf(@TypeOf(values)), facet.QUERY_RESULT_64 | facet.QUERY_RESULT_WAIT));
+    try testing.expectEqual(6, values[0]);
+    try testing.expectEqual(2, values[1]);
+    try testing.expectEqual(6, values[2]);
+    try testing.expectEqual(2, values[3]);
+    try testing.expectEqual(2, values[4]);
+    // A quad at a time, all four of its pixels as a GPU shades them, and
+    // at least the pixels that were kept of both instances.
+    try testing.expect(values[5] % 4 == 0);
+    try testing.expect(values[5] >= 2 * drawn);
+}
+
+test "query values copied into a buffer: as wide as asked, with availability, and nothing written outside it" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const picture = try Picture.of(&bench, 64, 64);
+    const pass = try renderPass(&bench, .clear, false);
+    defer fb.DestroyRenderPass(device, pass);
+    const frame = try framebuffer(&bench, pass, &.{picture.view}, 64, 64);
+    defer fb.DestroyFramebuffer(device, frame);
+    const flat = try module(&bench, &Flat.code);
+    defer fb.DestroyShaderModule(device, flat);
+    const layout = try pipelineLayout(&bench, &.{}, 4);
+    defer fb.DestroyPipelineLayout(device, layout);
+    _, const list = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = pass });
+    defer fb.DestroyPipeline(device, list);
+    const occlusion = try queryPool(&bench, .occlusion, 2, 0);
+    defer fb.DestroyQueryPool(device, occlusion);
+
+    const vertices = [_][3]f32{ .{ -1, -1, 0.5 }, .{ 1, -1, 0.5 }, .{ -1, 1, 0.5 } };
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
+    const into, const bytes = try bench.buffer(64, facet.BUFFER_USAGE_TRANSFER_DST);
+    @memset(bytes[0..64], 0xAA);
+    const offset: u64 = 0;
+    const green: u32 = 0xFF00_FF00;
+    const blue = clears(0xFF00_00FF);
+
+    var commands = try bench.record();
+    fb.CmdResetQueryPool(commands, occlusion, 0, 2);
+    fb.CmdBeginQuery(commands, occlusion, 0, 0);
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 1, .clear_values = &blue }, .@"inline");
+    fb.CmdBindPipeline(commands, .graphics, list.?);
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &green);
+    fb.CmdDraw(commands, 3, 1, 0, 0);
+    fb.CmdEndRenderPass(commands);
+    fb.CmdEndQuery(commands, occlusion, 0);
+    try bench.submit();
+    const drawn = pixelsOf(&picture, green);
+
+    // Both queries copied into the buffer 8 bytes apart, four bytes of
+    // value and four of availability: the second was never begun.
+    commands = try bench.record();
+    fb.CmdCopyQueryPoolResults(commands, occlusion, 0, 2, into, 16, 8, facet.QUERY_RESULT_WITH_AVAILABILITY);
+    // A copy that would not lie inside the buffer writes nothing of it.
+    fb.CmdCopyQueryPoolResults(commands, occlusion, 0, 2, into, 56, 8, facet.QUERY_RESULT_WITH_AVAILABILITY);
+    try bench.submit();
+
+    try testing.expectEqual(drawn, std.mem.readInt(u32, bytes[16..20], .little));
+    try testing.expectEqual(1, std.mem.readInt(u32, bytes[20..24], .little));
+    // Not available: it says so, and its value was left as it was.
+    try testing.expectEqual(0xAAAA_AAAA, std.mem.readInt(u32, bytes[24..28], .little));
+    try testing.expectEqual(0, std.mem.readInt(u32, bytes[28..32], .little));
+    // Before the offset and where the copy that was too large would have
+    // gone: untouched.
+    try testing.expectEqual(0xAAAA_AAAA, std.mem.readInt(u32, bytes[12..16], .little));
+    try testing.expectEqual(0xAAAA_AAAA, std.mem.readInt(u32, bytes[56..60], .little));
+}
+
+test "a query pool refused: a kind the device does not count, a statistic no stage of the library has, and none at all" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    var made: ?*facet.QueryPool = null;
+
+    // There is no geometry shader, so neither statistic of one is counted.
+    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateQueryPool(device, &.{
+        .query_type = .pipeline_statistics,
+        .query_count = 1,
+        .pipeline_statistics = facet.QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_VERTICES | facet.QUERY_PIPELINE_STATISTIC_GEOMETRY_SHADER_INVOCATIONS,
+    }, &made));
+    try testing.expectEqual(null, made);
+    // A bit that is no statistic at all.
+    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateQueryPool(device, &.{ .query_type = .pipeline_statistics, .query_count = 1, .pipeline_statistics = 1 << 20 }, &made));
+    // A statistics pool that counts nothing, and a pool of no queries.
+    try testing.expectEqual(facet.Result.error_initialization_failed, fb.CreateQueryPool(device, &.{ .query_type = .pipeline_statistics, .query_count = 1 }, &made));
+    try testing.expectEqual(facet.Result.error_initialization_failed, fb.CreateQueryPool(device, &.{ .query_type = .occlusion, .query_count = 0 }, &made));
+    try testing.expectEqual(null, made);
+
+    // A timestamp is the E-clock, which the library opens as timer.device:
+    // the host's ROM has none, so no device of it writes one, and what the
+    // device says of itself says the same.
+    var features: facet.PhysicalDeviceFeatures = undefined;
+    fb.GetPhysicalDeviceFeatures(bench.physical, &features);
+    var properties: facet.PhysicalDeviceProperties = undefined;
+    fb.GetPhysicalDeviceProperties(bench.physical, &properties);
+    var family: facet.QueueFamilyProperties = undefined;
+    var count: u32 = 1;
+    fb.GetPhysicalDeviceQueueFamilyProperties(bench.physical, &count, @ptrCast(&family));
+    if (features.timestamp_queries) {
+        try testing.expect(family.timestamp_valid_bits > 0);
+        try testing.expect(properties.limits.timestamp_period_ns > 0);
+        const pool = try queryPool(&bench, .timestamp, 1, 0);
+        fb.DestroyQueryPool(device, pool);
+    } else {
+        try testing.expectEqual(0, family.timestamp_valid_bits);
+        try testing.expectEqual(0, properties.limits.timestamp_period_ns);
+        try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateQueryPool(device, &.{ .query_type = .timestamp, .query_count = 1 }, &made));
+        try testing.expectEqual(null, made);
+    }
+
+    // Nothing given back for a pool that was never made.
+    fb.DestroyQueryPool(device, null);
+}
 
 test "subpasses one after another, a depth kept only for the same attachments; a subpass's several colour attachments, each with its colour" {
     var bench = try Bench.up();

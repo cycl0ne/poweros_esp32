@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.28**, so that a program need not find out by failing. It covers the API.
+1.29**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -22,7 +22,7 @@ BCM2712's V3D, which runs only a fixed handful of fragment forms
 
 | Where | What |
 |---|---|
-| `sdk/fd/facet_lib.fd` | The whole jump table, one line a function: 109 entries |
+| `sdk/fd/facet_lib.fd` | The whole jump table, one line a function: 117 entries |
 | `sdk/libs/facet/facet.zig` | The structures and enumerations a program passes |
 | `sdk/libs/facet/shader.zig` | Shaders as functions: the stages, their inputs, the fixed forms |
 | `sdk/libs/facet/texture.zig` | How a texture is kept and sampled, by a fixed form and through a sampler |
@@ -30,14 +30,14 @@ BCM2712's V3D, which runs only a fixed handful of fragment forms
 | `src/disk/libs/facet/driver/cpu/` | The cores' driver: the tiled rasterizer |
 | `src/disk/libs/facet/driver/v3d/` | The V3D's driver, a module in `LIBS:facet/` |
 
-Of Vulkan 1.0's roughly 137 core entry points, facet has 109. Two of the
+Of Vulkan 1.0's roughly 137 core entry points, facet has 117. Two of the
 absent ones, `GetInstanceProcAddr` and `GetDeviceProcAddr`, do not apply to
 a library called through an LVO table.
 
 What a device will and will not do is answered by
 `GetPhysicalDeviceFeatures` (since 1.24), which is Vulkan's call with a
 structure of facet's own: a field wherever a create call can refuse
-something, and no field for what the library has no call for at all. Eight
+something, and no field for what the library has no call for at all. Ten
 of its fields differ between the cores and the V3D, which is the reason a
 program that wants the GPU should ask rather than take the first device
 listed.
@@ -84,16 +84,41 @@ The cores and the V3D's texture units still choose a level and its sample
 point differently, which is why `C:test/FacetCube CHECK V3D` allows 5 % of
 pixels to differ where the rest of the checks allow 0.1 %.
 
+## Query pools, and what a query cannot count
+
+Since 1.29 there are query pools: `CreateQueryPool`, `DestroyQueryPool`,
+`GetQueryPoolResults`, `CmdBeginQuery`, `CmdEndQuery`, `CmdResetQueryPool`,
+`CmdWriteTimestamp` and `CmdCopyQueryPoolResults`. An occlusion query counts
+the samples that passed the tests and the fragment function did not drop; a
+statistics query counts what each stage was given; and a timestamp is the
+E-clock as the command is played, in microseconds, so
+`timestamp_valid_bits` is 64 and `timestamp_period_ns` 1000. What is
+counted is added where the work is done, so a frame's cost no longer
+reaches the log alone. What is left out:
+
+- **Only the cores count the work.** The V3D's occlusion counter is not
+  read and what its QPUs were given is not counted, so a pool of either
+  kind is refused on it (`PhysicalDeviceFeatures.occlusion_queries`,
+  `pipeline_statistics_queries`). Timestamps are kept on every device,
+  because the clock is the library's and not a driver's.
+- **Neither geometry statistic.** There is no geometry shader, so
+  `QUERY_PIPELINE_STATISTIC_GEOMETRY_SHADER_INVOCATIONS` and
+  `..._GEOMETRY_SHADER_PRIMITIVES` are refused rather than counted as 0.
+- **A counter is 32 bits wide**, because the library runs on machines with
+  no 64-bit atomic. It is held at its highest rather than wrapping round, so
+  a count that outgrows it is too low and never nonsense. A timestamp is 64
+  bits: one task writes it whole.
+- **Without timer.device there are no timestamps**: a pool of them is
+  refused, and `timestamp_queries`, `timestamp_valid_bits` and
+  `timestamp_period_ns` are all 0. The host tests run that way.
+- `QUERY_CONTROL_PRECISE` changes nothing: an occlusion query counts the
+  samples either way, there being no cheaper answer to give.
+- A query's samples are counted as the tiles are drawn, which is where the
+  render pass ends - after the command that ended the query, though before
+  the submission is done. A program reads the values once its fence is
+  signalled, which is what `QUERY_RESULT_WAIT` waits for.
+
 ## Object kinds that do not exist
-
-### Query pools
-
-No `CreateQueryPool`, `DestroyQueryPool`, `GetQueryPoolResults`,
-`CmdBeginQuery`, `CmdEndQuery`, `CmdResetQueryPool`, `CmdWriteTimestamp` or
-`CmdCopyQueryPoolResults`. Both drivers report `timestamp_valid_bits = 0`.
-So there are no occlusion queries, no pipeline statistics and no
-timestamps; what a frame costs is measured inside the drivers and written
-to the log.
 
 ### Events
 
@@ -165,6 +190,9 @@ These can be asked for and are answered with `error_feature_not_present`.
 | Descriptors but `sampler`, `combined_image_sampler`, `sampled_image`, `uniform_buffer` and `storage_buffer` | `descriptor/_descriptor.zig` |
 | A fixed fragment form that drops pixels, on the V3D: the QPUs have no program that discards | `driver/v3d/driver.zig` |
 | A fixed fragment form that samples through a sampler, on the V3D: nor one that reads a sampler | `driver/v3d/driver.zig` |
+| An occlusion or a statistics query pool, on the V3D: it counts neither the samples nor the stages | `query/createquerypool.zig` |
+| Either geometry statistic, and any bit that is no statistic at all | `query/createquerypool.zig` |
+| A timestamp pool without timer.device: the clock a timestamp is read from | `query/createquerypool.zig` |
 
 Two consequences do not appear in that table:
 
@@ -206,6 +234,8 @@ Three more things cannot be asked for at all, having nothing to ask with:
 | Patch control points | 32 |
 | Swapchain images | 1 to 4 |
 | Samples along a sampler's longer axis | 16 |
+| A query's counter | 32 bits, held there |
+| A timestamp's unit | 1000 ns, 64 bits of it |
 
 Of textures:
 

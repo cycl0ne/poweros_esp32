@@ -127,6 +127,14 @@ pub const LVO = struct {
     pub const CmdClearColorImage = libraries.lvo(110);
     pub const CreateSampler = libraries.lvo(111);
     pub const DestroySampler = libraries.lvo(112);
+    pub const CreateQueryPool = libraries.lvo(113);
+    pub const DestroyQueryPool = libraries.lvo(114);
+    pub const GetQueryPoolResults = libraries.lvo(115);
+    pub const CmdBeginQuery = libraries.lvo(116);
+    pub const CmdEndQuery = libraries.lvo(117);
+    pub const CmdResetQueryPool = libraries.lvo(118);
+    pub const CmdWriteTimestamp = libraries.lvo(119);
+    pub const CmdCopyQueryPoolResults = libraries.lvo(120);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -241,6 +249,14 @@ pub const Fn = struct {
     pub const CmdClearColorImage = *const fn (*FacetBase, *facet.CommandBuffer, *facet.Image, facet.ImageLayout, *const facet.ClearColorValue, u32, [*]const facet.ImageSubresourceRange) callconv(.c) void;
     pub const CreateSampler = *const fn (*FacetBase, *facet.Device, *const facet.SamplerCreateInfo, *?*facet.Sampler) callconv(.c) facet.Result;
     pub const DestroySampler = *const fn (*FacetBase, *facet.Device, ?*facet.Sampler) callconv(.c) void;
+    pub const CreateQueryPool = *const fn (*FacetBase, *facet.Device, *const facet.QueryPoolCreateInfo, *?*facet.QueryPool) callconv(.c) facet.Result;
+    pub const DestroyQueryPool = *const fn (*FacetBase, *facet.Device, ?*facet.QueryPool) callconv(.c) void;
+    pub const GetQueryPoolResults = *const fn (*FacetBase, *facet.Device, *facet.QueryPool, u32, u32, usize, *anyopaque, u64, u32) callconv(.c) facet.Result;
+    pub const CmdBeginQuery = *const fn (*FacetBase, *facet.CommandBuffer, *facet.QueryPool, u32, u32) callconv(.c) void;
+    pub const CmdEndQuery = *const fn (*FacetBase, *facet.CommandBuffer, *facet.QueryPool, u32) callconv(.c) void;
+    pub const CmdResetQueryPool = *const fn (*FacetBase, *facet.CommandBuffer, *facet.QueryPool, u32, u32) callconv(.c) void;
+    pub const CmdWriteTimestamp = *const fn (*FacetBase, *facet.CommandBuffer, u32, *facet.QueryPool, u32) callconv(.c) void;
+    pub const CmdCopyQueryPoolResults = *const fn (*FacetBase, *facet.CommandBuffer, *facet.QueryPool, u32, u32, *facet.Buffer, u64, u64, u32) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -810,5 +826,45 @@ pub const FacetBase = opaque {
     /// The sampler given back: no set that holds it drawn with any more.
     pub fn DestroySampler(self: *FacetBase, device: *facet.Device, sampler: ?*facet.Sampler) void {
         return libraries.call(self, LVO.DestroySampler, Fn.DestroySampler, .{ device, sampler });
+    }
+
+    /// A query pool, written to `pool`: where what a frame's work came to is counted.
+    pub fn CreateQueryPool(self: *FacetBase, device: *facet.Device, info: *const facet.QueryPoolCreateInfo, pool: *?*facet.QueryPool) facet.Result {
+        return libraries.call(self, LVO.CreateQueryPool, Fn.CreateQueryPool, .{ device, info, pool });
+    }
+
+    /// The pool given back: no command buffer that names it pending any more.
+    pub fn DestroyQueryPool(self: *FacetBase, device: *facet.Device, pool: ?*facet.QueryPool) void {
+        return libraries.call(self, LVO.DestroyQueryPool, Fn.DestroyQueryPool, .{ device, pool });
+    }
+
+    /// `count` queries from `first` into `data`, `stride` bytes apart.
+    pub fn GetQueryPoolResults(self: *FacetBase, device: *facet.Device, pool: *facet.QueryPool, first: u32, count: u32, size: usize, data: *anyopaque, stride: u64, flags: u32) facet.Result {
+        return libraries.call(self, LVO.GetQueryPoolResults, Fn.GetQueryPoolResults, .{ device, pool, first, count, size, data, stride, flags });
+    }
+
+    /// Recorded: query `query` of `pool` begun, counting what follows.
+    pub fn CmdBeginQuery(self: *FacetBase, buffer: *facet.CommandBuffer, pool: *facet.QueryPool, query: u32, flags: u32) void {
+        return libraries.call(self, LVO.CmdBeginQuery, Fn.CmdBeginQuery, .{ buffer, pool, query, flags });
+    }
+
+    /// Recorded: the query ended, and what it counted made available.
+    pub fn CmdEndQuery(self: *FacetBase, buffer: *facet.CommandBuffer, pool: *facet.QueryPool, query: u32) void {
+        return libraries.call(self, LVO.CmdEndQuery, Fn.CmdEndQuery, .{ buffer, pool, query });
+    }
+
+    /// Recorded: `count` queries from `first` set back to nothing counted.
+    pub fn CmdResetQueryPool(self: *FacetBase, buffer: *facet.CommandBuffer, pool: *facet.QueryPool, first: u32, count: u32) void {
+        return libraries.call(self, LVO.CmdResetQueryPool, Fn.CmdResetQueryPool, .{ buffer, pool, first, count });
+    }
+
+    /// Recorded: the clock written into query `query`, as the command is played.
+    pub fn CmdWriteTimestamp(self: *FacetBase, buffer: *facet.CommandBuffer, stage: u32, pool: *facet.QueryPool, query: u32) void {
+        return libraries.call(self, LVO.CmdWriteTimestamp, Fn.CmdWriteTimestamp, .{ buffer, stage, pool, query });
+    }
+
+    /// Recorded: the queries' values written into a buffer, as GetQueryPoolResults gives them.
+    pub fn CmdCopyQueryPoolResults(self: *FacetBase, buffer: *facet.CommandBuffer, pool: *facet.QueryPool, first: u32, count: u32, destination: *facet.Buffer, offset: u64, stride: u64, flags: u32) void {
+        return libraries.call(self, LVO.CmdCopyQueryPoolResults, Fn.CmdCopyQueryPoolResults, .{ buffer, pool, first, count, destination, offset, stride, flags });
     }
 };

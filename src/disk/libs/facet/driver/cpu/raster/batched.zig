@@ -29,6 +29,11 @@
 //!
 //! A draw with a stencil test goes by way of its own, a pixel at a time and
 //! asking about everything: the rest pay nothing for it.
+//!
+//! A draw a query is counting (`State.samples`, `State.fragments`) has its
+//! pixels counted once a batch, after the fragment function has run: what
+//! it was called for, and what passed the tests and it did not drop. A draw
+//! nothing is counting pays one branch a batch for it.
 
 const std = @import("std");
 const shader = @import("sdk").facet.shader;
@@ -136,6 +141,13 @@ pub const State = struct {
     discards: bool = false,
     fragment: shader.FragmentFn,
     resources: *const shader.Resources,
+    /// Where the pixels that passed the tests and were not dropped are
+    /// counted - an occlusion query's samples - and where the pixels the
+    /// fragment function was called for are. Null for a draw nothing is
+    /// counting, which is every draw until a query is begun; the tiles are
+    /// drawn on every core at once, so both are added to atomically.
+    samples: ?*u32 = null,
+    fragments: ?*u32 = null,
 };
 
 pub const Error = error{OutOfMemory};
@@ -170,6 +182,9 @@ const Shading = struct {
     stencil: [2]StencilFace,
     /// The fragment function may drop a pixel: its depth waits for it.
     discards: bool,
+    /// What a query counts of the pixels (`State.samples`).
+    samples: ?*u32,
+    fragments: ?*u32,
 };
 
 /// A triangle set up for the tiles: its planes follow it.
@@ -222,6 +237,8 @@ fn setUpAll(target: *Target, state: *const State, vertices: []const f32, stride:
         .has_depth = depth,
         .stencil = stencil orelse undefined,
         .discards = state.discards,
+        .samples = state.samples,
+        .fragments = state.fragments,
     };
     const test_kind: Test = if (stencil != null) .stencil else if (!depth) .off else switch (compare) {
         .less => .less,
@@ -589,11 +606,39 @@ const Batch = struct {
         batch.shading.fragment(&batch.fragments);
         // After it, not before: the quads' `kept` is what the function left.
         if (batch.deferred_depth) batch.putDepths();
+        if (batch.shading.fragments != null or batch.shading.samples != null) batch.countPixels();
         switch (batch.shading.blend) {
             .general => batch.putMixed(),
             inline else => |blend| batch.put(blend),
         }
         batch.count = 0;
+    }
+
+    /// What a query counts of a batch: the pixels the fragment function was
+    /// called for, all four of every quad as a GPU shades them, and those
+    /// that passed the tests and it did not drop. Only for a draw a query
+    /// is counting, and once a batch rather than once a pixel.
+    fn countPixels(batch: *Batch) void {
+        const shading = batch.shading;
+        countUp(shading.fragments, @as(u32, batch.count) * 4);
+        if (shading.samples) |at| {
+            var passed: u32 = 0;
+            for (batch.quads[0..batch.count]) |quad| passed += @popCount(quad.kept);
+            countUp(at, passed);
+        }
+    }
+
+    /// `by` added to one of a query's counters, which several cores add to
+    /// at once: held at the highest it takes rather than wrapping round. It
+    /// is 32 bits wide because a 32-bit machine has no wider atomic.
+    inline fn countUp(counter: ?*u32, by: u32) void {
+        const at = counter orelse return;
+        if (by == 0) return;
+        const most = std.math.maxInt(u32);
+        var have = @atomicLoad(u32, at, .monotonic);
+        while (have != most) {
+            have = @cmpxchgWeak(u32, at, have, have +| by, .monotonic, .monotonic) orelse return;
+        }
     }
 
     /// The depths of the pixels the fragment function left, for a form that

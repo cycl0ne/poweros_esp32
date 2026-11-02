@@ -23,6 +23,7 @@ const _pipeline = @import("../../pipeline/_pipeline.zig");
 const Pipeline = _pipeline.Pipeline;
 const _vertices = @import("../_vertices.zig");
 const _tessellate = @import("../_tessellate.zig");
+const _query = @import("../../query/_query.zig");
 const _command = @import("../../command/_command.zig");
 const _play = @import("_play.zig");
 const Player = _play.Player;
@@ -161,6 +162,9 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
         mixing.constant = constantOf(pipeline.mixing.constants orelse player.blend_constants);
     }
     const stencil: ?[2]raster.batched.StencilFace = if (player.stencil.of(pipeline)) |faces| .{ stencilFaceOf(faces[0]), stencilFaceOf(faces[1]) } else null;
+    // What a query counts of this draw, or nothing where none is being
+    // counted into: the addresses were worked out when it began.
+    const counters: *const _query.Counters = if (player.query) |*counting| &counting.counters else &_query.none;
     const state = raster.batched.State{
         .viewport = .{ .x = viewport.x, .y = viewport.y, .width = viewport.width, .height = viewport.height },
         .min_depth = viewport.min_depth,
@@ -185,6 +189,19 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
         .discards = pipeline.fixed.discards(),
         .fragment = pipeline.fragment,
         .resources = resources,
+        .samples = counters.samples,
+        .fragments = counters.fragment_invocations,
+    };
+
+    // What the stages are given, for a statistics query. The triangles the
+    // rasterizer kept are its own count, taken either side of the draw.
+    const counted_before = target.stats;
+    _query.add(counters.input_vertices, @as(u64, count) * instances);
+    _query.add(counters.vertex_invocations, @as(u64, vertices) * instances);
+    _query.add(counters.input_primitives, @as(u64, corner_count / 3) * instances);
+    defer if (counters.clipping_invocations != null or counters.clipping_primitives != null) {
+        _query.add(counters.clipping_invocations, target.stats.triangles - counted_before.triangles);
+        _query.add(counters.clipping_primitives, target.stats.set_up - counted_before.set_up);
     };
 
     for (0..instances) |k| {
@@ -202,7 +219,7 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
         };
         pipeline.vertex(&batch);
         if (pipeline.tessellated != null) {
-            const made = _tessellate.run(queue.device.sys, pipeline, resources, outputs, corners[0..corner_count], instance, most_vertices) orelse continue;
+            const made = _tessellate.run(queue.device.sys, pipeline, resources, outputs, corners[0..corner_count], instance, most_vertices, counters) orelse continue;
             defer made.free(queue.device.sys);
             if (wide) {
                 const widened = _vertices.widen(pipeline, &viewport, pipeline.line_width orelse player.line_width, made.vertices, stride, made.corners(), made.wide_vertices, made.wide_indices);

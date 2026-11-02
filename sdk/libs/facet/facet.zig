@@ -188,6 +188,10 @@ pub const PhysicalDeviceLimits = extern struct {
     /// (`SamplerCreateInfo.max_anisotropy`); 1 where there is no
     /// anisotropic filtering.
     max_sampler_anisotropy: u32,
+    /// The nanoseconds one step of a timestamp is (CmdWriteTimestamp): a
+    /// difference of two times this many nanoseconds. 0 where the device
+    /// writes no timestamps.
+    timestamp_period_ns: u32,
 };
 
 /// The longest name a device has, its NUL included.
@@ -293,6 +297,19 @@ pub const PhysicalDeviceFeatures = extern struct {
     /// False where one sample is taken whatever a sampler asks for. This
     /// differs between the devices as well.
     sampler_anisotropy: bool = false,
+    /// Occlusion queries: the samples that passed the tests counted where
+    /// this device draws (`QueryType.occlusion`). The counting is the
+    /// rasterizer's, so a device that draws with hardware of its own has
+    /// not got it and CreateQueryPool refuses the kind. Differs between
+    /// the devices of a machine.
+    occlusion_queries: bool = false,
+    /// `QueryType.pipeline_statistics`, the same way: what the stages were
+    /// given is counted where they run.
+    pipeline_statistics_queries: bool = false,
+    /// `QueryType.timestamp` and CmdWriteTimestamp: the clock read as the
+    /// command is played. Every device has it where the machine has
+    /// timer.device.
+    timestamp_queries: bool = false,
     /// `DescriptorSetLayoutBinding.immutable_samplers`: a sampler the
     /// layout holds, which a write into the set cannot change. No device of
     /// this library has it; a sampler is written into the set instead.
@@ -791,6 +808,78 @@ pub const SamplerCreateInfo = extern struct {
     /// (`error_feature_not_present`).
     unnormalized_coordinates: bool = false,
 };
+
+// --- query pools -------------------------------------------------------------
+
+/// Where what a frame's work came to is counted: samples that passed the
+/// tests, what each stage was given, or the clock as a command was played
+/// (CreateQueryPool).
+pub const QueryPool = opaque {};
+
+/// What a pool's queries count.
+pub const QueryType = enum(u32) {
+    /// Samples that passed the depth and stencil tests between the query's
+    /// begin and its end: what says whether anything of a shape is seen.
+    occlusion = 0,
+    /// What the stages were given and what they handed on, one value for
+    /// each of the `QUERY_PIPELINE_STATISTIC_` bits asked for, in that
+    /// order.
+    pipeline_statistics = 1,
+    /// The clock as the command was played (CmdWriteTimestamp), in the
+    /// units `PhysicalDeviceLimits.timestamp_period_ns` gives.
+    timestamp = 2,
+    _,
+};
+
+/// QueryPoolCreateInfo.pipeline_statistics: what a statistics query counts.
+/// A value is written for each of these that is asked for, lowest bit
+/// first.
+pub const QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_VERTICES: u32 = 1 << 0;
+pub const QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_PRIMITIVES: u32 = 1 << 1;
+pub const QUERY_PIPELINE_STATISTIC_VERTEX_SHADER_INVOCATIONS: u32 = 1 << 2;
+/// Geometry shaders: there is no such stage here, and either of these is
+/// refused.
+pub const QUERY_PIPELINE_STATISTIC_GEOMETRY_SHADER_INVOCATIONS: u32 = 1 << 3;
+pub const QUERY_PIPELINE_STATISTIC_GEOMETRY_SHADER_PRIMITIVES: u32 = 1 << 4;
+/// Triangles the rasterizer was given, and those it drew: one that was
+/// wholly outside the view, had no area or faced away is counted in the
+/// first and not the second.
+pub const QUERY_PIPELINE_STATISTIC_CLIPPING_INVOCATIONS: u32 = 1 << 5;
+pub const QUERY_PIPELINE_STATISTIC_CLIPPING_PRIMITIVES: u32 = 1 << 6;
+/// Pixels a fragment function was called for: quads of 2 x 2, all four
+/// whether covered or not, as a GPU shades them.
+pub const QUERY_PIPELINE_STATISTIC_FRAGMENT_SHADER_INVOCATIONS: u32 = 1 << 7;
+pub const QUERY_PIPELINE_STATISTIC_TESSELLATION_CONTROL_SHADER_PATCHES: u32 = 1 << 8;
+pub const QUERY_PIPELINE_STATISTIC_TESSELLATION_EVALUATION_SHADER_INVOCATIONS: u32 = 1 << 9;
+/// Calls of a compute function: one for each workgroup, which is what a
+/// compute function is called with here (`shader.Groups`).
+pub const QUERY_PIPELINE_STATISTIC_COMPUTE_SHADER_INVOCATIONS: u32 = 1 << 10;
+
+/// The statistics there are, which is what CreateQueryPool takes.
+pub const QUERY_PIPELINE_STATISTIC_ALL: u32 = 0x7FF;
+
+pub const QueryPoolCreateInfo = extern struct {
+    flags: u32 = 0,
+    query_type: QueryType,
+    query_count: u32,
+    /// With `pipeline_statistics`, the `QUERY_PIPELINE_STATISTIC_` bits it
+    /// counts; 0 for the other kinds.
+    pipeline_statistics: u32 = 0,
+};
+
+/// CmdBeginQuery's flags: every sample counted, not merely whether any
+/// passed. The library counts them all either way.
+pub const QUERY_CONTROL_PRECISE: u32 = 1 << 0;
+
+/// GetQueryPoolResults' and CmdCopyQueryPoolResults' flags.
+/// Values of 64 bits rather than 32.
+pub const QUERY_RESULT_64: u32 = 1 << 0;
+/// Wait for the queue's work to be done rather than answer `not_ready`.
+pub const QUERY_RESULT_WAIT: u32 = 1 << 1;
+/// A value after each query's own, 0 where it is not available yet.
+pub const QUERY_RESULT_WITH_AVAILABILITY: u32 = 1 << 2;
+/// What a query has counted so far, for one that is not available.
+pub const QUERY_RESULT_PARTIAL: u32 = 1 << 3;
 
 // --- command buffers --------------------------------------------------------
 

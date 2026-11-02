@@ -42,6 +42,8 @@ const _compute = @import("../_compute.zig");
 const _tessellate = @import("../_tessellate.zig");
 const _transfer = @import("../_transfer.zig");
 const driver = @import("driver.zig");
+const _queries = @import("../_queries.zig");
+const _query = @import("../../query/_query.zig");
 const Hardware = driver.Hardware;
 const regs = v3d.regs;
 const cl = v3d.cl;
@@ -270,8 +272,27 @@ fn playStream(queue: *Queue, stream: *const _stream.Stream) void {
             }
         },
         .bind_compute_pipeline => player.compute_pipeline = _stream.as(_command.BindComputePipeline, head).pipeline,
-        .dispatch => if (!player.drawing) _compute.dispatch(queue.device.sys, player.compute_pipeline, &player.compute_resources, _stream.as(_command.Dispatch, head).count),
-        .dispatch_indirect => if (!player.drawing) _compute.dispatchIndirect(queue.device.sys, player.compute_pipeline, &player.compute_resources, _stream.as(_command.DispatchIndirect, head)),
+        .dispatch => if (!player.drawing) _compute.dispatch(queue.device.sys, player.compute_pipeline, &player.compute_resources, _stream.as(_command.Dispatch, head).count, &_query.none),
+        .dispatch_indirect => if (!player.drawing) _compute.dispatchIndirect(queue.device.sys, player.compute_pipeline, &player.compute_resources, _stream.as(_command.DispatchIndirect, head), &_query.none),
+        // The V3D counts nothing of its work: it has neither the occlusion
+        // query nor the statistics (its features say so, and CreateQueryPool
+        // refuses both on it), so only a timestamp pool is ever here. A
+        // query ended is still made available, so that a program waiting
+        // for one does not wait for ever.
+        .begin_query => {},
+        .end_query => _queries.ended(_stream.as(_command.EndQuery, head)),
+        .reset_query_pool => {
+            const command = _stream.as(_command.ResetQueryPool, head);
+            _query.reset(command.pool, command.first, command.count);
+        },
+        .write_timestamp => {
+            const command = _stream.as(_command.WriteTimestamp, head);
+            if (!_queries.stamped(queue.device.base, command)) noRoom(queue, "a timestamp a pool of another kind cannot hold");
+        },
+        .copy_query_results => {
+            const command = _stream.as(_command.CopyQueryResults, head);
+            if (!_queries.copied(command)) noRoom(queue, "a copy of query values that are not the buffer's");
+        },
         .execute_commands => {
             const command = _stream.as(_command.ExecuteCommands, head);
             for (_stream.items(_command.ExecuteCommands, *CommandBuffer, command, command.count)) |secondary| playStream(queue, &secondary.stream);
@@ -912,7 +933,7 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
         var tessellated: ?_tessellate.Made = null;
         defer if (tessellated) |made| made.free(queue.device.sys);
         if (pipeline.tessellated != null) {
-            const made = _tessellate.run(queue.device.sys, pipeline, &player.resources, outputs, corners[0..corner_count], instance, most_vertices) orelse {
+            const made = _tessellate.run(queue.device.sys, pipeline, &player.resources, outputs, corners[0..corner_count], instance, most_vertices, &_query.none) orelse {
                 noRoom(queue, "a draw with no memory to tessellate it, or more vertices out of it than one works");
                 continue;
             };
