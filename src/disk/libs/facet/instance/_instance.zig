@@ -48,6 +48,10 @@ pub const max_image_array_layers = 256;
 /// (`texture.most_taps` is what the sampling itself will do).
 pub const max_sampler_anisotropy = 16;
 
+/// What a timestamp's unit is in nanoseconds: the E-clock as the library
+/// reads it is microseconds (facet_base.now).
+pub const timestamp_period_ns = 1000;
+
 /// The most vertices a draw works, the lowest it reads to the highest. Both
 /// drivers hold to it: a draw of more is left out of the frame and said to be,
 /// and a CmdDraw whose own count is over it is refused as it is recorded.
@@ -60,6 +64,14 @@ pub fn describe(base: *FacetBase, instance: *Instance) void {
     _driver.lookForModules(base);
     describeOne(sys, instance, &cpu.ops);
     for (base.module_ops[0..base.module_count]) |ops| describeOne(sys, instance, @ptrCast(@alignCast(ops.?)));
+    // A timestamp is the E-clock read as a command is played, and the
+    // clock is the library's, not a driver's: without timer.device no
+    // device of this machine writes one (CmdWriteTimestamp).
+    if (!base.clock_open) for (instance.physicals[0..instance.physical_count]) |*physical| {
+        physical.features.timestamp_queries = false;
+        physical.queue_family.timestamp_valid_bits = 0;
+        physical.properties.limits.timestamp_period_ns = 0;
+    };
 }
 
 fn describeOne(sys: *ExecBase, instance: *Instance, ops: *const _driver.Ops) void {

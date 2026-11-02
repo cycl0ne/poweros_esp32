@@ -50,6 +50,11 @@ pub const Op = enum(u16) {
     fill_buffer,
     update_buffer,
     clear_color_image,
+    begin_query,
+    end_query,
+    reset_query_pool,
+    write_timestamp,
+    copy_query_results,
     _,
 };
 

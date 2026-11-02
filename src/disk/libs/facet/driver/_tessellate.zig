@@ -15,6 +15,7 @@ const facet = sdk.facet;
 const shader = facet.shader;
 const ExecBase = sdk.interface.exec.ExecBase;
 const _vertices = @import("_vertices.zig");
+const _query = @import("../query/_query.zig");
 const Pipeline = @import("../pipeline/_pipeline.zig").Pipeline;
 
 /// The highest level there is.
@@ -251,7 +252,7 @@ pub const Made = struct {
 /// `corners` of the vertices in `points`, the vertex function's, as patches
 /// of the pipeline's, made into what is drawn. Null for nothing to draw, more
 /// than `most_vertices`, or no memory.
-pub fn run(sys: *ExecBase, pipeline: *const Pipeline, resources: *const shader.Resources, points: [*]const f32, corners: []const u32, instance: u32, most_vertices: u32) ?Made {
+pub fn run(sys: *ExecBase, pipeline: *const Pipeline, resources: *const shader.Resources, points: [*]const f32, corners: []const u32, instance: u32, most_vertices: u32, counters: *const _query.Counters) ?Made {
     const tessellated = pipeline.tessellated.?;
     const count = corners.len / tessellated.points;
     if (count == 0) return null;
@@ -311,6 +312,11 @@ pub fn run(sys: *ExecBase, pipeline: *const Pipeline, resources: *const shader.R
         };
         tessellated.evaluation(&evaluations);
     }
+    // What a statistics query counts of it: the patches the control function
+    // was given, and the vertices the evaluation function wrote. A draw left
+    // out for want of room has returned by now and counts nothing.
+    _query.add(counters.patches, count);
+    _query.add(counters.evaluations, sink.vertices);
     return .{
         .memory = memory,
         .vertices = vertices,

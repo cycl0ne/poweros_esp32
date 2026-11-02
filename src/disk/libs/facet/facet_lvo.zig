@@ -121,6 +121,14 @@ const CmdDispatchIndirect = @import("command/cmddispatchindirect.zig").CmdDispat
 const CmdNextSubpass = @import("command/cmdnextsubpass.zig").CmdNextSubpass;
 const CreateSampler = @import("sampler/createsampler.zig").CreateSampler;
 const DestroySampler = @import("sampler/destroysampler.zig").DestroySampler;
+const CreateQueryPool = @import("query/createquerypool.zig").CreateQueryPool;
+const DestroyQueryPool = @import("query/destroyquerypool.zig").DestroyQueryPool;
+const GetQueryPoolResults = @import("query/getquerypoolresults.zig").GetQueryPoolResults;
+const CmdBeginQuery = @import("command/cmdbeginquery.zig").CmdBeginQuery;
+const CmdEndQuery = @import("command/cmdendquery.zig").CmdEndQuery;
+const CmdResetQueryPool = @import("command/cmdresetquerypool.zig").CmdResetQueryPool;
+const CmdWriteTimestamp = @import("command/cmdwritetimestamp.zig").CmdWriteTimestamp;
+const CmdCopyQueryPoolResults = @import("command/cmdcopyquerypoolresults.zig").CmdCopyQueryPoolResults;
 
 /// facet.library's interface, as the SDK generates it from
 /// sdk/fd/facet_lib.fd.
@@ -256,6 +264,14 @@ const contract_files = [_][]const u8{
     @embedFile("command/cmdnextsubpass.zig"),
     @embedFile("sampler/createsampler.zig"),
     @embedFile("sampler/destroysampler.zig"),
+    @embedFile("query/createquerypool.zig"),
+    @embedFile("query/destroyquerypool.zig"),
+    @embedFile("query/getquerypoolresults.zig"),
+    @embedFile("command/cmdbeginquery.zig"),
+    @embedFile("command/cmdendquery.zig"),
+    @embedFile("command/cmdresetquerypool.zig"),
+    @embedFile("command/cmdwritetimestamp.zig"),
+    @embedFile("command/cmdcopyquerypoolresults.zig"),
 };
 
 fn lvoCreateInstance(base: *FacetBase, info: *const facet.InstanceCreateInfo, instance: *?*facet.Instance) callconv(.c) facet.Result {
@@ -384,6 +400,38 @@ fn lvoCreateSampler(base: *FacetBase, device: *facet.Device, info: *const facet.
 
 fn lvoDestroySampler(base: *FacetBase, device: *facet.Device, sampler: ?*facet.Sampler) callconv(.c) void {
     return DestroySampler(base, device, sampler);
+}
+
+fn lvoCreateQueryPool(base: *FacetBase, device: *facet.Device, info: *const facet.QueryPoolCreateInfo, pool: *?*facet.QueryPool) callconv(.c) facet.Result {
+    return CreateQueryPool(base, device, info, pool);
+}
+
+fn lvoDestroyQueryPool(base: *FacetBase, device: *facet.Device, pool: ?*facet.QueryPool) callconv(.c) void {
+    return DestroyQueryPool(base, device, pool);
+}
+
+fn lvoGetQueryPoolResults(base: *FacetBase, device: *facet.Device, pool: *facet.QueryPool, first: u32, count: u32, size: usize, data: *anyopaque, stride: u64, flags: u32) callconv(.c) facet.Result {
+    return GetQueryPoolResults(base, device, pool, first, count, size, data, stride, flags);
+}
+
+fn lvoCmdBeginQuery(base: *FacetBase, buffer: *facet.CommandBuffer, pool: *facet.QueryPool, query: u32, flags: u32) callconv(.c) void {
+    return CmdBeginQuery(base, buffer, pool, query, flags);
+}
+
+fn lvoCmdEndQuery(base: *FacetBase, buffer: *facet.CommandBuffer, pool: *facet.QueryPool, query: u32) callconv(.c) void {
+    return CmdEndQuery(base, buffer, pool, query);
+}
+
+fn lvoCmdResetQueryPool(base: *FacetBase, buffer: *facet.CommandBuffer, pool: *facet.QueryPool, first: u32, count: u32) callconv(.c) void {
+    return CmdResetQueryPool(base, buffer, pool, first, count);
+}
+
+fn lvoCmdWriteTimestamp(base: *FacetBase, buffer: *facet.CommandBuffer, stage: u32, pool: *facet.QueryPool, query: u32) callconv(.c) void {
+    return CmdWriteTimestamp(base, buffer, stage, pool, query);
+}
+
+fn lvoCmdCopyQueryPoolResults(base: *FacetBase, buffer: *facet.CommandBuffer, pool: *facet.QueryPool, first: u32, count: u32, destination: *facet.Buffer, offset: u64, stride: u64, flags: u32) callconv(.c) void {
+    return CmdCopyQueryPoolResults(base, buffer, pool, first, count, destination, offset, stride, flags);
 }
 
 fn lvoCmdCopyBuffer(base: *FacetBase, buffer: *facet.CommandBuffer, source: *facet.Buffer, destination: *facet.Buffer, region_count: u32, regions: [*]const facet.BufferCopy) callconv(.c) void {
@@ -707,6 +755,14 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoCmdClearColorImage),
     vec(lvoCreateSampler),
     vec(lvoDestroySampler),
+    vec(lvoCreateQueryPool),
+    vec(lvoDestroyQueryPool),
+    vec(lvoGetQueryPoolResults),
+    vec(lvoCmdBeginQuery),
+    vec(lvoCmdEndQuery),
+    vec(lvoCmdResetQueryPool),
+    vec(lvoCmdWriteTimestamp),
+    vec(lvoCmdCopyQueryPoolResults),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

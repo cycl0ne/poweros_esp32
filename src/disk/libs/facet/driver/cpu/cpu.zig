@@ -57,7 +57,9 @@ pub const ops = Ops{
 const queue_family: facet.QueueFamilyProperties = .{
     .queue_flags = facet.QUEUE_GRAPHICS | facet.QUEUE_COMPUTE | facet.QUEUE_TRANSFER,
     .queue_count = 1,
-    .timestamp_valid_bits = 0,
+    // A timestamp is the E-clock in microseconds, which is 64 bits of it
+    // (facet_base.now); without timer.device the instance clears this.
+    .timestamp_valid_bits = 64,
     .min_image_transfer_granularity = .{ .width = 1, .height = 1, .depth = 1 },
 };
 
@@ -89,6 +91,7 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
             .tile_size = raster.tile_size,
             .cores = @min(cores, raster.most_parts),
             .max_sampler_anisotropy = _instance.max_sampler_anisotropy,
+            .timestamp_period_ns = _instance.timestamp_period_ns,
         },
     };
     const shared = physical.properties.limits.cores;
@@ -106,6 +109,12 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // forms that read a sampler run, with everything one may ask for.
         .samplers = true,
         .sampler_anisotropy = true,
+        // The samples that passed are counted by the tiles as they are
+        // drawn, and what each stage was given as the draw is played
+        // (driver/cpu/_draw.zig, driver/cpu/raster/batched.zig).
+        .occlusion_queries = true,
+        .pipeline_statistics_queries = true,
+        .timestamp_queries = true,
         .depth_prepass = true,
         .points_and_lines = true,
         .depth_test = true,
