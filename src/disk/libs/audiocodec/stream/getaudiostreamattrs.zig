@@ -3,10 +3,10 @@
 
 const sdk = @import("sdk");
 const ac = sdk.audiocodec;
-const acodec = sdk.acodec;
 const utility = sdk.utility;
 const AudioCodecBase = @import("../audiocodec_base.zig").AudioCodecBase;
 const _stream = @import("_stream.zig");
+const _modules = @import("../modules/_modules.zig");
 
 /// Says what a stream's tags say, each answer where its tag points.
 ///
@@ -51,19 +51,20 @@ const _stream = @import("_stream.zig");
 /// for it after each `DecodeAudio` call knows when they changed.
 ///
 /// `ACA_Codecs` is not a stream's: it says which kinds of sound this
-/// machine decodes, a bit per `ACODEC_*`. A kind is in it when its
-/// module can be opened here, which is not the same question as the
+/// machine decodes, a bit per `ACODEC_*`. A kind is in it when a module
+/// on this disk says it decodes it, which is not the same question as the
 /// library's version - the large decoders are on the 64-bit disks alone,
 /// so audiocodec.library 1.12 on an ESP32-P4 answers without
 /// `ACODEC_DTS` although the library knows DTS. It is what a program
-/// asks before it offers a track to be picked. Each kind's module is
-/// opened and let go again - the same question a stream's own open asks,
-/// so the same answer - which costs the module being loaded once if
-/// nothing has decoded that kind yet; AC-3 and E-AC-3 are one module and
-/// come together.
+/// asks before it offers a track to be picked. It is answered from the
+/// modules' own tags, read out of their files with nothing loaded, so it
+/// costs the directory being looked through and, for a module whose file
+/// changed, its tag read again. A kind two modules decode is in it once;
+/// AC-3 and E-AC-3 are one module and come together because that
+/// module's tag names both.
 ///
 /// CONTEXT:
-/// - Waits: with `ACA_Codecs`, while a module is loaded from the disk;
+/// - Waits: with `ACA_Codecs`, while `LIBS:codecs/` is looked through;
 ///   otherwise no.
 /// - Interrupts: no.
 /// - Locks: none.
@@ -150,40 +151,22 @@ pub fn GetAudioStreamAttrs(base: *AudioCodecBase, stream: ?*ac.AudioStream, tags
     return answered;
 }
 
-/// Which kinds this machine decodes: a bit per ACODEC_*, set when the
-/// kind's module can be opened. It is opened and let go again, which is
-/// the same question the stream's own open asks and so the same answer -
-/// a module already resident is found whatever is on the disk now, and
-/// one on no disk is not found however new the library is. A kind nothing
-/// has decoded yet costs its module being loaded once.
+/// Which kinds this machine decodes: a bit per ACODEC_*, set when a
+/// module on the disk says it decodes that kind. The modules are the
+/// table's (`modules/_modules.zig`), which is read from their tags and
+/// loads nothing; a kind two modules decode is in it once.
 ///
-/// The kinds walked are `acodec.kinds`, the one table that says which
-/// file each is in, so a kind the library gains is in the answer without
-/// anything here changing. Kinds that share a file - AC-3 and E-AC-3 -
-/// come together, and it is opened once.
+/// ACODEC_UNKNOWN's bit is cleared whatever a tag says: nothing decodes
+/// "not known what it is".
 fn codecsHere(base: *AudioCodecBase) u32 {
     const sys = base.sys_base;
+    sys.ObtainSemaphore(&base.modules_lock);
+    defer sys.ReleaseSemaphore(&base.modules_lock);
+    const table = _modules.refresh(base) orelse return 0;
     var mask: u32 = 0;
-    for (acodec.kinds) |kind| {
-        const bit = @as(u32, 1) << @intCast(kind.codec);
-        if (mask & bit != 0) continue;
-        const module = sys.OpenLibrary(kind.file, 1) orelse continue;
-        sys.CloseLibrary(module);
-        for (acodec.kinds) |also| {
-            if (same(also.file, kind.file)) mask |= @as(u32, 1) << @intCast(also.codec);
-        }
-    }
-    return mask;
+    for (table.rows()) |*found| mask |= _modules.codecsOf(found);
+    return mask & ~@as(u32, 1);
 }
-
-fn same(a: [*:0]const u8, b: [*:0]const u8) bool {
-    var at: usize = 0;
-    while (a[at] == b[at]) : (at += 1) {
-        if (a[at] == 0) return true;
-    }
-    return false;
-}
-
 fn textInto(storage: usize, text: []const u8) void {
     const answer: *[*:0]const u8 = @ptrFromInt(storage);
     answer.* = @ptrCast(text.ptr);

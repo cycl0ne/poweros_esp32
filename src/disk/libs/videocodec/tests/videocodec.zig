@@ -772,14 +772,11 @@ test "a sound track whose module is not on this disk: listed as decoded by nothi
     defer subtitle.read_inline = false;
     const vcb = rig.vcb;
 
-    // The library knows Opus since 1.9, but opus.acodec is not here: its
-    // name is taken away, so OpenLibrary does not find it, as on a board
-    // whose disk the module was left off. Put back at the end, for the
-    // rig to take the module away as it made it.
-    const opus_module = rig.sound_modules[sound_modules.opus];
-    const opus_name = opus_module.node.name;
-    opus_module.node.name = "codecs/elsewhere.acodec";
-    defer opus_module.node.name = opus_name;
+    // The library knows Opus since 1.9, but opus.acodec is not on this
+    // disk: the table audiocodec.library reads has no row that decodes
+    // Opus, as a board whose disk the module was left off reads none.
+    sound_modules.hide(ac.ACODEC_OPUS);
+    defer sound_modules.showAll();
 
     try rig.write("WORK:subs.mkv", subs_mkv);
     var err: i32 = -99;

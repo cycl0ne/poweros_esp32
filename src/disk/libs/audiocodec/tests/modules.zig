@@ -2,6 +2,12 @@
 //! The sound modules for a host test: each made from its ROM tag, under
 //! the name ramlib finds it by on a disk, as exec's own search looks for
 //! it. Taken away with the library.
+//!
+//! The library would read what each decodes out of the module's file on
+//! the disk; a host test has no such files, so the table it would have
+//! read is handed to it (`sound_table.test_modules`) - made here out of
+//! the very tags the modules carry, so a test sees what a disk of these
+//! modules would say and nothing is written twice.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -15,16 +21,19 @@ const opus_init = @import("../opus/opus_init.zig");
 const dts_init = @import("../dts/dts_init.zig");
 
 const ExecBase = sdk.interface.exec.ExecBase;
+const acodec = sdk.acodec;
+const modtable = sdk.dos.modtable;
+const sound_table = @import("../modules/_modules.zig");
 
-const tags = [_]struct { tag: *const exec.Resident, name: [*:0]const u8 }{
-    .{ .tag = &wav_init.wav_acodec_tag.resident, .name = "codecs/wav.acodec" },
-    .{ .tag = &mp3_init.mp3_acodec_tag.resident, .name = "codecs/mp3.acodec" },
-    .{ .tag = &flac_init.flac_acodec_tag.resident, .name = "codecs/flac.acodec" },
-    .{ .tag = &vorbis_init.vorbis_acodec_tag.resident, .name = "codecs/vorbis.acodec" },
-    .{ .tag = &aac_init.aac_acodec_tag.resident, .name = "codecs/aac.acodec" },
-    .{ .tag = &ac3_init.ac3_acodec_tag.resident, .name = "codecs/ac3.acodec" },
-    .{ .tag = &opus_init.opus_acodec_tag.resident, .name = "codecs/opus.acodec" },
-    .{ .tag = &dts_init.dts_acodec_tag.resident, .name = "codecs/dts.acodec" },
+const tags = [_]struct { tag: *const acodec.ResidentACodec, name: [*:0]const u8 }{
+    .{ .tag = &wav_init.wav_acodec_tag, .name = "codecs/wav.acodec" },
+    .{ .tag = &mp3_init.mp3_acodec_tag, .name = "codecs/mp3.acodec" },
+    .{ .tag = &flac_init.flac_acodec_tag, .name = "codecs/flac.acodec" },
+    .{ .tag = &vorbis_init.vorbis_acodec_tag, .name = "codecs/vorbis.acodec" },
+    .{ .tag = &aac_init.aac_acodec_tag, .name = "codecs/aac.acodec" },
+    .{ .tag = &ac3_init.ac3_acodec_tag, .name = "codecs/ac3.acodec" },
+    .{ .tag = &opus_init.opus_acodec_tag, .name = "codecs/opus.acodec" },
+    .{ .tag = &dts_init.dts_acodec_tag, .name = "codecs/dts.acodec" },
 };
 
 pub const Made = [tags.len]*exec.Library;
@@ -35,14 +44,48 @@ pub const mp3 = 1;
 /// and this disk cannot decode, as a board without the module has.
 pub const opus = 6;
 
+/// The table the library would have read from LIBS:codecs/.
+var rows: [tags.len]modtable.Found = @splat(.{});
+
 pub fn make(kexec: anytype, made: *Made) !void {
-    for (tags, made) |entry, *lib| {
-        const library = kexec.InitResident(kexec.SysBase, entry.tag, null) orelse return error.NoLibrary;
+    for (tags, made, &rows) |entry, *lib, *row| {
+        const library = kexec.InitResident(kexec.SysBase, &entry.tag.resident, null) orelse return error.NoLibrary;
         lib.* = @ptrCast(@alignCast(library));
         lib.*.node.name = entry.name;
+        row.* = sound_table.row(nameOf(entry.name), entry.tag.codecs, entry.tag.kind, entry.tag.priority);
     }
+    sound_table.test_modules = &rows;
+}
+
+/// The table handed to the library as a disk with no module for `codec`
+/// on it would read: every row that decodes it left out. In force until
+/// `showAll` or `take`. What a board whose disk the module was left off
+/// has - the ESP32s and dts.acodec.
+pub fn hide(codec: u32) void {
+    const bit = acodec.codecBit(codec);
+    var count: usize = 0;
+    for (rows) |row| {
+        if (sound_table.codecsOf(&row) & bit != 0) continue;
+        fewer[count] = row;
+        count += 1;
+    }
+    sound_table.test_modules = fewer[0..count];
+}
+
+/// Every module there again.
+pub fn showAll() void {
+    sound_table.test_modules = &rows;
+}
+
+var fewer: [tags.len]modtable.Found = @splat(.{});
+
+fn nameOf(name: [*:0]const u8) []const u8 {
+    var length: usize = 0;
+    while (name[length] != 0) length += 1;
+    return name[0..length];
 }
 
 pub fn take(sys: *ExecBase, made: *const Made) void {
+    sound_table.test_modules = null;
     for (made) |lib| _ = sys.RemLibrary(lib);
 }
