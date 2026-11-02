@@ -275,7 +275,7 @@ the list added; the library under both is rdb.library.
 takes from it what differs:
 
 ```
-Update FROM/K,CHECK/S,BOOT/S,FORCE/S,QUIET/S,CONFIRM/S,RESTART/S
+Update FROM/K,CHECK/S,BOOT/S,FORCE/S,QUIET/S,CONFIRM/S,RESTART/S,AUTO/S
 ```
 
 ```
@@ -286,12 +286,14 @@ Update FROM http://10.0.2.2:8080/   from one a server hands out
 Update BOOT                         the files the firmware reads as well
 Update BOOT RESTART                 and the machine started on them
 Update CONFIRM                      the kernel that came up, kept
+Update AUTO                         what the machine was told to do
 ```
 
 - **FROM** is the package. An argument with `://` in it is an address,
   read through `LIBS:http.library`; anything else is a path, so a stick,
   a second disk or a mounted share wants no network and no server.
-  Without it the source is the one `install.prefs` kept.
+  Without it the source is the one `update.prefs` names, and failing
+  that the one the install wrote down in `install.prefs`.
 - **CHECK** says what would happen and writes nothing.
 - **BOOT** writes the package's `boot` half too, into the partition the
   firmware reads - [the kernel](#the-kernel-and-the-way-back) below.
@@ -300,6 +302,8 @@ Update CONFIRM                      the kernel that came up, kept
 - **CONFIRM** keeps the kernel that was tried, which is the started
   system's own step.
 - **RESTART** starts the machine again at the end, through `C:Reboot`.
+- **AUTO** does what `update.prefs` says - [by itself](#by-itself-at-every-start)
+  below - and nothing at all where there is no such file.
 
 The return code is 0 for a run that did something or found nothing to
 do, 5 from `CHECK` where there is something to do and from a run stopped
@@ -446,7 +450,9 @@ SOURCE="http://poweros.local/rpi_cm5/" ATSTART=YES APPLY=NO BOOT=NO
   where what was found is applied.
 
 `S:Network-Startup` runs `C:Update AUTO` once the network is up, in the
-shell of its own that the start gives that script. AUTO does what the
+shell of its own that the start gives that script. Its return code is 5
+where something was found and not written, and 0 where there was nothing
+or where it was written. AUTO does what the
 file says and nothing where there is no file: it looks, puts what it
 found in the system log (`C:Log`), and, where there is a desktop, offers
 it in a requester - **Update now** writes it there and then, **Later**
