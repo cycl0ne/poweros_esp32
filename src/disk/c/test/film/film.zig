@@ -3,7 +3,8 @@
 //! timed and checked - nothing is shown or played. Built against the SDK
 //! only.
 //!
-//!   Film FILE/A,FRAME/K/N,TO/K,NOSOUND/S,SEEK/K/N,TOGETHER/S
+//!   Film FILE/A,FRAME/K/N,TO/K,NOSOUND/S,SEEK/K/N,TOGETHER/S,TRACKS/S,
+//!        SUBS/K/N,PACKETS/K/N
 //!
 //! What the film is is printed - its pictures' codec, size and rate, its
 //! length, its sound - then every frame is taken and given back: how many
@@ -20,10 +21,23 @@
 //!
 //! SEEK moves the film to that second at the end and says where it
 //! landed, the next frame's time, and how much sound is left from there.
+//!
+//! TRACKS lists every track instead of decoding: its kind, its codec, its
+//! language and name, how long it lasts, and whether something here
+//! decodes it (GetVideoTrack's VTRK_DECODED - what Movie greys an item
+//! out by) and whether it is the one chosen. SUBS is a text track to
+//! show: it is selected at SEEK's second, or the start, and the
+//! subtitles GetVideoSubtitle hands out over the next two minutes of the
+//! film are printed as they come - a line's text, or a picture's size and
+//! place. PACKETS is a track whose packets are read through media.library
+//! itself, from SEEK's second: where each is due, how long it lasts, how
+//! large it is and its first bytes - what a codec is handed. None of the
+//! three decodes a frame.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
 const exec = sdk.exec;
+const media = sdk.media;
 const vc = sdk.videocodec;
 const ac = sdk.audiocodec;
 const rtg = sdk.rtg;
@@ -32,20 +46,33 @@ const TagItem = sdk.utility.TagItem;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const VideoCodecBase = sdk.interface.videocodec.VideoCodecBase;
+const MediaBase = sdk.interface.media.MediaBase;
 const TimerBase = timer.TimerBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Film";
-const VERSION_STRING = "\x00$VER: Film 1.2 (31.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Film 1.3 (02.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "FILE/A,FRAME/K/N,TO/K,NOSOUND/S,SEEK/K/N,TOGETHER/S";
+const template = "FILE/A,FRAME/K/N,TO/K,NOSOUND/S,SEEK/K/N,TOGETHER/S,TRACKS/S,SUBS/K/N,PACKETS/K/N";
 const arg_file = 0;
 const arg_frame = 1;
 const arg_to = 2;
 const arg_nosound = 3;
 const arg_seek = 4;
 const arg_together = 5;
+const arg_tracks = 6;
+const arg_subs = 7;
+const arg_packets = 8;
+
+/// How many packets PACKETS reads, and the bytes of each it shows.
+const packets_read = 12;
+const packet_head = 16;
+
+/// How far into the film SUBS looks for subtitles, and the step it asks
+/// in: a line lasts seconds, a picture longer.
+const subs_window: i64 = 120 * 1_000_000;
+const subs_step: i64 = 250_000;
 
 /// Sound frames a call asks for: 4 KiB of stereo samples, on the stack.
 const piece = 1024;
@@ -83,6 +110,155 @@ fn soundName(codec: u32) [*:0]const u8 {
     };
 }
 
+fn kindName(kind: u32) [*:0]const u8 {
+    return switch (kind) {
+        media.MTRACK_VIDEO => "pictures",
+        media.MTRACK_AUDIO => "sound",
+        media.MTRACK_TEXT => "text",
+        else => "other",
+    };
+}
+
+/// A container's codec by name, whatever kind of track it is on.
+fn trackName(codec: u32) [*:0]const u8 {
+    return switch (codec) {
+        media.MCODEC_H264 => "H.264",
+        media.MCODEC_H265 => "H.265",
+        media.MCODEC_MJPEG => "Motion JPEG",
+        media.MCODEC_MPEG4V => "MPEG-4 Part 2",
+        media.MCODEC_VP8 => "VP8",
+        media.MCODEC_VP9 => "VP9",
+        media.MCODEC_AV1 => "AV1",
+        media.MCODEC_AAC => "AAC",
+        media.MCODEC_MP3 => "MP3",
+        media.MCODEC_ALAC => "ALAC",
+        media.MCODEC_AC3 => "AC-3",
+        media.MCODEC_EAC3 => "E-AC-3",
+        media.MCODEC_OPUS => "Opus",
+        media.MCODEC_FLAC => "FLAC",
+        media.MCODEC_VORBIS => "Vorbis",
+        media.MCODEC_DTS => "DTS",
+        media.MCODEC_TEXT => "plain text",
+        media.MCODEC_SRT => "SubRip",
+        media.MCODEC_ASS => "SubStation Alpha",
+        media.MCODEC_PGS => "Blu-ray pictures (PGS)",
+        else => "a codec it has no name for",
+    };
+}
+
+fn text(name: anytype) [*:0]const u8 {
+    return @ptrCast(name);
+}
+
+/// Every track of the film: what it is, and what videocodec.library makes
+/// of it.
+fn listTracks(dl: *DosBase, vcb: *VideoCodecBase, film: *vc.VideoStream) void {
+    var number: u32 = 0;
+    while (true) : (number += 1) {
+        var track: media.MediaTrack = .{};
+        const flags = vcb.GetVideoTrack(film, number, &track);
+        if (flags < 0) break;
+        const marks: u32 = @intCast(flags);
+        _ = Printf(dl, "track %u: %s, %s, %s \"%s\", %lu ms, %s%s\n", .{
+            number,
+            kindName(track.kind),
+            trackName(track.codec),
+            text(&track.language),
+            text(&track.name),
+            track.duration / 1000,
+            if (marks & vc.VTRK_DECODED != 0) "decoded here" else "nothing here decodes it",
+            if (marks & vc.VTRK_CHOSEN != 0) ", chosen" else "",
+        });
+    }
+}
+
+/// The subtitles of `track` from `from`, as GetVideoSubtitle hands them
+/// out while the film's time goes on.
+fn showSubtitles(sys: *ExecBase, dl: *DosBase, vcb: *VideoCodecBase, film: *vc.VideoStream, track: u32, from: i64) void {
+    const chose = vcb.SelectVideoTrack(film, track, from);
+    _ = Printf(dl, "subtitles on track %u from %lu ms: %s\n", .{ track, @divTrunc(from, 1000), vcb.VideoErrorText(chose) });
+    if (chose != vc.VCERR_OK) return;
+    var at = from;
+    var last: i64 = -1;
+    var count: u32 = 0;
+    while (at < from + subs_window and !stopped(sys)) : (at += subs_step) {
+        var sub: vc.VideoSubtitle = .{};
+        // The reader reads ahead on a process of its own: a moment at each
+        // step is all it needs for a track as sparse as this one.
+        dl.Delay(1);
+        if (vcb.GetVideoSubtitle(film, at, &sub) != vc.VCERR_OK) continue;
+        if (sub.start == last) continue;
+        last = sub.start;
+        count += 1;
+        if (sub.flags & vc.VSUB_BITMAP != 0) {
+            _ = Printf(dl, "%lu to %lu ms: a picture %u x %u at %u, %u\n", .{
+                @divTrunc(sub.start, 1000), @divTrunc(sub.end, 1000), sub.width, sub.height, sub.x, sub.y,
+            });
+        } else {
+            _ = Printf(dl, "%lu to %lu ms: %s\n", .{ @divTrunc(sub.start, 1000), @divTrunc(sub.end, 1000), sub.text });
+        }
+    }
+    _ = Printf(dl, "%u subtitles in %lu s of the film\n", .{ count, @divTrunc(at - from, 1_000_000) });
+}
+
+/// A track's packets as media.library reads them, from `from`: the film
+/// is opened again through media.library alone, as a decoder's module
+/// sees it.
+fn dumpPackets(sys: *ExecBase, dl: *DosBase, name: [*:0]const u8, track: u32, from: i64) void {
+    const lib = sys.OpenLibrary(media.MEDIANAME, 1) orelse {
+        _ = Printf(dl, "No %s\n", .{media.MEDIANAME});
+        return;
+    };
+    defer sys.CloseLibrary(lib);
+    const mb: *MediaBase = @ptrCast(lib);
+    var err: i32 = 0;
+    const file = mb.OpenMedia(&[_]TagItem{
+        .{ .tag = media.MDA_Name, .data = @intFromPtr(name) },
+        .{},
+    }, &err) orelse {
+        _ = Printf(dl, "%s: %s\n", .{ name, mb.MediaErrorText(err) });
+        return;
+    };
+    defer mb.CloseMedia(file);
+    var info: media.MediaTrack = .{};
+    if (mb.GetMediaTrack(file, track, &info) != media.MERR_OK) {
+        _ = Printf(dl, "no track %u\n", .{track});
+        return;
+    }
+    _ = Printf(dl, "track %u: %s, %s, %u ticks a second, %u packets\n", .{
+        track, kindName(info.kind), trackName(info.codec), info.timescale, info.packets,
+    });
+    if (from > 0) {
+        const moved = mb.SeekMedia(file, track, from);
+        _ = Printf(dl, "moved to %lu ms: %s\n", .{ @divTrunc(from, 1000), mb.MediaErrorText(moved) });
+        if (moved != media.MERR_OK) return;
+    }
+    var number: u32 = 0;
+    while (number < packets_read and !stopped(sys)) : (number += 1) {
+        var packet: media.MediaPacket = .{};
+        const got = mb.ReadMediaPacket(file, track, &packet);
+        if (got != media.MERR_OK) {
+            _ = Printf(dl, "after %u packets: %s\n", .{ number, mb.MediaErrorText(got) });
+            return;
+        }
+        var head: [3 * packet_head + 1]u8 = @splat(0);
+        if (packet.data) |data| {
+            for (data[0..@min(packet.size, packet_head)], 0..) |byte, at| {
+                head[at * 3] = hex(byte >> 4);
+                head[at * 3 + 1] = hex(byte & 15);
+                head[at * 3 + 2] = ' ';
+            }
+        }
+        _ = Printf(dl, "%lu ms, %u ms long, %u bytes: %s\n", .{
+            @divTrunc(packet.pts, 1000), packet.duration / 1000, packet.size, text(&head),
+        });
+    }
+}
+
+fn hex(nibble: u8) u8 {
+    return if (nibble < 10) '0' + nibble else 'a' + nibble - 10;
+}
+
 fn stopped(sys: *ExecBase) bool {
     return sys.SetSignal(0, exec.SIGBREAKF_CTRL_C) & exec.SIGBREAKF_CTRL_C != 0;
 }
@@ -93,7 +269,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const lib = sys.OpenLibrary(dos.DOSNAME, 0) orelse return dos.RETURN_FAIL;
     defer sys.CloseLibrary(lib);
     const dl: *DosBase = @ptrCast(lib);
-    var argv: [6]usize = @splat(0);
+    var argv: [9]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_ERROR;
@@ -136,6 +312,19 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     } else {
         _ = Printf(dl, "no sound\n", .{});
     }
+
+    if (argv[arg_packets] != 0) {
+        const track: u32 = @bitCast(@as(*const i32, @ptrFromInt(argv[arg_packets])).*);
+        const second: i64 = if (argv[arg_seek] != 0) @as(*const i32, @ptrFromInt(argv[arg_seek])).* else 0;
+        dumpPackets(sys, dl, name, track, @max(second, 0) * 1_000_000);
+    }
+    if (argv[arg_tracks] != 0) listTracks(dl, vcb, film);
+    if (argv[arg_subs] != 0) {
+        const track: u32 = @bitCast(@as(*const i32, @ptrFromInt(argv[arg_subs])).*);
+        const second: i64 = if (argv[arg_seek] != 0) @as(*const i32, @ptrFromInt(argv[arg_seek])).* else 0;
+        showSubtitles(sys, dl, vcb, film, track, @max(second, 0) * 1_000_000);
+    }
+    if (argv[arg_tracks] != 0 or argv[arg_subs] != 0 or argv[arg_packets] != 0) return dos.RETURN_OK;
 
     // The sound on a process of its own, while the pictures are decoded.
     var job: SoundJob = .{ .vcb = vcb, .film = film };

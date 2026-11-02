@@ -428,8 +428,8 @@ media.library/SeekMedia
 	MERR_OK; MERR_END after the track's last packet; MERR_NOTRACK,
 	MERR_READ, MERR_NOMEMORY, MERR_CORRUPT, MERR_NOSEEK for a packet
 	behind what a read function has read, or MERR_UNSUPPORTED for a
-	Matroska track compressed or encrypted. Only with MERR_OK is `packet`
-	filled in.
+	Matroska track packed in a way the library does not unpack, or
+	encrypted. Only with MERR_OK is `packet` filled in.
 
    BEHAVIOR
 	The packet the track's cursor is at - its first after OpenMedia, the
@@ -447,6 +447,15 @@ media.library/SeekMedia
 	buffer; the frames of a block laced are handed out one at a time, the
 	time of each after the first from how long the track says a frame
 	lasts (SINCE 1.2).
+
+	A track whose frames are packed has them handed out unpacked (SINCE
+	1.8): the bytes each frame begins with put back where the track is
+	stripped of them (ContentCompAlgo 3), and the frame unpacked by
+	compression.library where it is packed with zlib (ContentCompAlgo 0,
+	which mkvmerge has written subtitle tracks with for years, and which
+	a board without compression.library on its disk answers
+	MERR_UNSUPPORTED for). A track packed any other way, or encrypted,
+	answers MERR_UNSUPPORTED before its first packet.
 
    CONTEXT
 	- Waits: yes, on the file, and while another task reads another track

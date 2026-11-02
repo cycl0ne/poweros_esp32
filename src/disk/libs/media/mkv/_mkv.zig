@@ -117,6 +117,7 @@ pub fn free(file: *File) void {
         if (blocks.trackOf(track).joined) |joined| sys.FreeVec(joined);
     }
     if (blocks.fileOf(file).cues) |cues| sys.FreeVec(cues);
+    if (blocks.fileOf(file).packer) |packer| sys.CloseLibrary(packer.lib());
 }
 
 /// The file's header, segment, tracks, cues and tags read; whether its
@@ -429,8 +430,9 @@ fn soundFrame(out: *const media.MediaTrack) u64 {
     return samples * 1_000_000_000 / out.rate;
 }
 
-/// How a track's frames are coded: compressed - only header stripping is
-/// read - or encrypted.
+/// How a track's frames are coded: packed by header stripping (algorithm
+/// 3) or with zlib (0), both of which are read as the frames are handed
+/// out, or packed another way or encrypted, which are not.
 fn encodings(own: *blocks.Track, body: []const u8) void {
     var list = ebml.Elements{ .rest = body };
     while (list.next()) |encoding| {
@@ -451,8 +453,14 @@ fn encodings(own: *blocks.Track, body: []const u8) void {
             },
             else => {},
         };
-        if (kind != 0 or algorithm != 3) {
+        if (kind != 0 or (algorithm != 3 and algorithm != 0)) {
             own.unreadable = true;
+            continue;
+        }
+        if (algorithm == 0) {
+            // zlib: the frames are unpacked by compression.library as
+            // they are read, and the encoding says nothing more.
+            own.inflate = true;
             continue;
         }
         own.strip = settings.ptr;
