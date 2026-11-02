@@ -92,6 +92,48 @@ fn tableOf(base: *MediaBase, slot: *?*anyopaque) ?*Table {
     return table;
 }
 
+/// The `skip`-th module that reads `kind`, in the order they are tried -
+/// the higher priority first, then by name - or null when there is no
+/// such module.
+///
+/// Takes `modules_lock` itself, and hands back a copy.
+pub fn nth(base: *MediaBase, kind: u32, skip: u32) ?modtable.Found {
+    const sys = base.sys_base;
+    sys.ObtainSemaphore(&base.modules_lock);
+    defer sys.ReleaseSemaphore(&base.modules_lock);
+    const table = refresh(base) orelse return null;
+    const bit = mcontainer.kindBit(kind);
+    if (bit == 0) return null;
+    var taken: ?modtable.Found = null;
+    var step: u32 = 0;
+    while (step <= skip) : (step += 1) {
+        var best: ?modtable.Found = null;
+        for (table.rows()) |found| {
+            if (kindsOf(&found) & bit == 0) continue;
+            if (taken) |last| {
+                if (!before(last, found)) continue;
+            }
+            if (best) |so_far| {
+                if (!before(found, so_far)) continue;
+            }
+            best = found;
+        }
+        taken = best orelse return null;
+    }
+    return taken;
+}
+
+/// Whether `a` is tried before `b`: the higher priority first, then by
+/// name.
+fn before(a: modtable.Found, b: modtable.Found) bool {
+    if (priorityOf(&a) != priorityOf(&b)) return priorityOf(&a) > priorityOf(&b);
+    for (a.name, b.name) |x, y| {
+        if (x != y) return x < y;
+        if (x == 0) break;
+    }
+    return false;
+}
+
 /// What the base holds given back, at the expunge.
 pub fn forget(base: *MediaBase) void {
     for ([_]*?*anyopaque{ &base.modules, &base.scratch }) |slot| {
