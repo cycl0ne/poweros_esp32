@@ -32,6 +32,10 @@ const interface_utility = @import("../../interface/utility.zig");
 /// Where the modules are, as OpenLibrary is given it.
 pub const MCONTAINER_PREFIX = "codecs/";
 
+/// Where the container modules are, as dos is given it; the prefix above
+/// is the same place as OpenLibrary is given it.
+pub const MCONTAINER_DIR = "LIBS:codecs";
+
 /// `ResidentMContainer.magic`, after a module's library tag: "MCON".
 pub const MCONTAINER_MAGIC: u32 = 0x4D43_4F4E;
 

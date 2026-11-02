@@ -60,6 +60,10 @@ const sdk = @import("sdk");
 const exec = sdk.exec;
 const dos = sdk.dos;
 const ac = sdk.audiocodec;
+const acodec = sdk.acodec;
+const loadfile = dos.loadfile;
+const modtable = dos.modtable;
+const sound_table = @import("../modules/_modules.zig");
 const utility = sdk.utility;
 const host = @import("host_rom");
 const kexec = host.exec;
@@ -314,6 +318,126 @@ fn stereo16(comptime frames: usize) [frames * 4]u8 {
 }
 
 // --- the tests --------------------------------------------------------------------
+
+/// A sound module's load file, as one is on a disk: a header, one data
+/// segment, and a library tag in it with ACODEC_MAGIC and its words after
+/// the Resident. The layout is a 32-bit file's, which is what
+/// videocodec's own tag test writes.
+fn acodecFile(into: []u8, name: []const u8, id: []const u8, codecs: u32, kind: u32, priority: i32) void {
+    @memset(into, 0);
+    @memcpy(into[0..4], &loadfile.MAGIC);
+    std.mem.writeInt(u16, into[4..6], loadfile.VERSION, .little);
+    std.mem.writeInt(u16, into[6..8], 1, .little);
+    std.mem.writeInt(u16, into[10..12], loadfile.native_machine, .little);
+    into[16] = 4;
+    into[20] = @intFromEnum(loadfile.SegmentKind.data);
+    put32(into, 24, 160);
+    put32(into, 28, 160);
+    const seg = 36;
+    const tag = seg + 32;
+    std.mem.writeInt(u16, into[tag..][0..2], 0x4AFC, .little);
+    put32(into, tag + 4, 32);
+    into[tag + 12] = exec.RTF_AUTOINIT;
+    into[tag + 13] = 1;
+    into[tag + 14] = @intFromEnum(exec.NodeType.library);
+    put32(into, tag + 16, 96);
+    put32(into, tag + 20, 112);
+    put32(into, tag + 28, acodec.ACODEC_MAGIC);
+    put32(into, tag + 32, codecs);
+    put32(into, tag + 36, kind);
+    put32(into, tag + 40, @bitCast(priority));
+    @memcpy(into[seg + 96 ..][0..name.len], name);
+    @memcpy(into[seg + 112 ..][0..id.len], id);
+}
+
+fn put32(into: []u8, at: usize, value: u32) void {
+    std.mem.writeInt(u32, into[at..][0..4], value, .little);
+}
+
+test "the modules of a directory, found by the tag in each file: what they decode, and not read again while their files are as they were" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch {};
+    const dl = rig.dosLib();
+
+    // A directory of modules, as LIBS:codecs/ is: two that are sound
+    // modules, one named otherwise inside than its file (ramlib would not
+    // load it by that name), one whose suffix is another kind's, and one
+    // that is no load file at all.
+    // CreateDir hands back a lock of its own, and it is an exclusive one:
+    // let it go, or nothing can look in the directory afterwards.
+    dl.UnLock(dl.CreateDir("WORK:codecs") orelse return error.NoDirectory);
+    var file: [20 + 16 + 160]u8 = undefined;
+    acodecFile(&file, "one.acodec\x00", "one.acodec 1.3 (02.11.2026)\x00", 0b110, acodec.ACMOD_SOFTWARE, -2);
+    try rig.write("WORK:codecs/one.acodec", &.{&file});
+    acodecFile(&file, "two.acodec\x00", "two.acodec 2.0 (02.11.2026)\x00", 0b1000, acodec.ACMOD_CHIP, 5);
+    try rig.write("WORK:codecs/two.acodec", &.{&file});
+    acodecFile(&file, "elsewhere.acodec\x00", "elsewhere.acodec 1.0 (02.11.2026)\x00", 0b1, acodec.ACMOD_SOFTWARE, 0);
+    try rig.write("WORK:codecs/three.acodec", &.{&file});
+    acodecFile(&file, "four.container\x00", "four.container 1.0 (02.11.2026)\x00", 0b1, acodec.ACMOD_SOFTWARE, 0);
+    try rig.write("WORK:codecs/four.container", &.{&file});
+    try rig.write("WORK:codecs/five.acodec", &.{"not a load file at all"});
+
+    const looking: modtable.Kind = .{
+        .dir = "WORK:codecs",
+        .prefix = "codecs/",
+        .suffix = ".acodec",
+        .magic = acodec.ACODEC_MAGIC,
+        .words = 3,
+    };
+    var table: [8]modtable.Found = @splat(.{});
+    var none: [0]modtable.Found = .{};
+    const count = modtable.scan(dl, looking, &table, &none);
+    try testing.expectEqual(@as(u32, 2), count);
+
+    // Each is named as OpenLibrary is given it, and its words are its
+    // tag's. The order is the directory's, so they are looked for by name.
+    var seen_one = false;
+    var seen_two = false;
+    for (table[0..count]) |*found| {
+        const name = std.mem.sliceTo(&found.name, 0);
+        if (std.mem.eql(u8, name, "codecs/one.acodec")) {
+            seen_one = true;
+            try testing.expectEqual(@as(u32, 0b110), sound_table.codecsOf(found));
+            try testing.expectEqual(acodec.ACMOD_SOFTWARE, sound_table.kindOf(found));
+            try testing.expectEqual(@as(i32, -2), sound_table.priorityOf(found));
+            try testing.expectEqual(@as(u8, 1), found.version);
+            try testing.expectEqual(@as(u16, 3), found.revision);
+        } else if (std.mem.eql(u8, name, "codecs/two.acodec")) {
+            seen_two = true;
+            try testing.expectEqual(@as(u32, 0b1000), sound_table.codecsOf(found));
+            try testing.expectEqual(acodec.ACMOD_CHIP, sound_table.kindOf(found));
+            try testing.expectEqual(@as(i32, 5), sound_table.priorityOf(found));
+            try testing.expectEqual(@as(u16, 0), found.revision);
+        } else {
+            std.debug.panic("a module that should not be there: {s}", .{name});
+        }
+    }
+    try testing.expect(seen_one and seen_two);
+
+    // Read again with the first table as what is known: the same answer,
+    // and this time out of it - the files have not changed.
+    var again: [8]modtable.Found = @splat(.{});
+    try testing.expectEqual(@as(u32, 2), modtable.scan(dl, looking, &again, table[0..count]));
+    for (again[0..2]) |*found| {
+        const was = modtable.known(table[0..count], &found.name, found.date, found.size);
+        try testing.expect(was != null);
+        try testing.expectEqual(sound_table.codecsOf(found), sound_table.codecsOf(&was.?));
+    }
+
+    // A file put in place of a module is read again: its size differs, so
+    // what was known of it is not taken.
+    acodecFile(&file, "one.acodec\x00", "one.acodec 9.9 (02.11.2026)\x00", 0b1_0000, acodec.ACMOD_SOFTWARE, 7);
+    try rig.write("WORK:codecs/one.acodec", &.{ &file, "a tail, so the size differs" });
+    var third: [8]modtable.Found = @splat(.{});
+    try testing.expectEqual(@as(u32, 2), modtable.scan(dl, looking, &third, again[0..2]));
+    for (third[0..2]) |*found| {
+        if (!std.mem.eql(u8, std.mem.sliceTo(&found.name, 0), "codecs/one.acodec")) continue;
+        try testing.expectEqual(@as(u32, 0b1_0000), sound_table.codecsOf(found));
+        try testing.expectEqual(@as(i32, 7), sound_table.priorityOf(found));
+        try testing.expectEqual(@as(u16, 9), found.revision);
+    }
+}
 
 test "ACA_Codecs: the kinds whose modules are here, with no stream and with one" {
     var rig: Rig = undefined;

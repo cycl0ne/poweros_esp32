@@ -173,6 +173,10 @@ pub const ACA_Link = ACA_Dummy + 0x2D;
 /// (SINCE 1.12).
 pub const ACA_Codecs = ACA_Dummy + 0x2E;
 
+/// Where the sound modules are, as dos is given it; `acodec.ACODEC_PREFIX`
+/// is the same place as OpenLibrary is given it.
+pub const ACODEC_DIR = "LIBS:codecs";
+
 /// A chapter the tags mark: where it starts and ends in the sound, and
 /// its title.
 pub const AudioChapter = extern struct {
