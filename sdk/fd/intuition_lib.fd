@@ -420,4 +420,22 @@ bool DoubleTap(*const intuition.Tap first, *const intuition.Tap second)
 /// The open window with a number (WA_Number), or null once it has closed.
 /// The caller holds LockIBase to keep the window open while it uses it.
 ?*intuition.Window FindWindowNumber(u32 number)
+/// The window the keyboard reaches, or null while none is active. The
+/// caller holds LockIBase to keep it open while it uses it.
+?*intuition.Window ActiveWindow()
+/// The window the pointer stands over, or null over a screen's bar, over
+/// a panel in front of the windows, or where no window is. The caller
+/// holds LockIBase to keep it open while it uses it.
+?*intuition.Window WindowUnderPointer()
+/// The window behind `after` on its screen - the frontmost of the screen
+/// in front for null - or null past the last one. The caller holds
+/// LockIBase to walk the order.
+?*intuition.Window NextWindow(?*intuition.Window after)
+/// The screen in front of the others, or null while none is open. The
+/// caller holds LockIBase to keep it open while it uses it.
+?*intuition.Screen FrontScreen()
+/// The pointer not shown at all, whatever window is active, or shown
+/// again; the last call wins. For a program that hides it while the
+/// keyboard is being used.
+void HidePointer(bool hidden)
 ##end

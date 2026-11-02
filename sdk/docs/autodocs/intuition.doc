@@ -2,6 +2,7 @@ TABLE OF CONTENTS
 
 intuition.library/ActivateGadget
 intuition.library/ActivateWindow
+intuition.library/ActiveWindow
 intuition.library/AddClass
 intuition.library/AddGList
 intuition.library/AllocScreenBuffer
@@ -41,6 +42,7 @@ intuition.library/FreeMenus
 intuition.library/FreeScreenBuffer
 intuition.library/FreeScreenDrawInfo
 intuition.library/FreeSysRequest
+intuition.library/FrontScreen
 intuition.library/GadgetMouse
 intuition.library/GadgetStyleState
 intuition.library/GetAttr
@@ -53,6 +55,7 @@ intuition.library/GetScreenDrawInfo
 intuition.library/GetStyleAttr
 intuition.library/GetWindowAttrs
 intuition.library/HelpControl
+intuition.library/HidePointer
 intuition.library/InitRequester
 intuition.library/IntuiTextLength
 intuition.library/ItemAddress
@@ -71,6 +74,7 @@ intuition.library/MoveWindowInFrontOf
 intuition.library/NewObjectTagList
 intuition.library/NextObject
 intuition.library/NextPubScreen
+intuition.library/NextWindow
 intuition.library/ObtainGIRPort
 intuition.library/OffGadget
 intuition.library/OffMenu
@@ -126,6 +130,7 @@ intuition.library/WaitIMsg
 intuition.library/WindowLimits
 intuition.library/WindowToBack
 intuition.library/WindowToFront
+intuition.library/WindowUnderPointer
 intuition.library/ZipWindow
 intuition.library/ActivateGadget              intuition.library/ActivateGadget
 
@@ -232,6 +237,57 @@ intuition.library/ZipWindow
 
    EXAMPLES
 	    ib.ActivateWindow(window);
+intuition.library/ActiveWindow                  intuition.library/ActiveWindow
+
+   NAME
+	ActiveWindow -- The window the keyboard reaches.
+
+   SYNOPSIS
+	    fn ActiveWindow(ib: *IntuitionBase) ?*Window
+
+   SINCE
+	0.80. LVO -528.
+
+   INPUTS
+	None.
+
+   RESULT
+	The active window, or null while none is - no window has been
+	activated yet, or the one that was has closed.
+
+   BEHAVIOR
+	One window at a time is active, on whichever screen: what a key typed
+	now would reach, drawn with its title bar in the active colours. It is
+	the window `ActivateWindow` last made active, or the one intuition
+	activated when a window was clicked, opened or closed.
+
+   CONTEXT
+	- Waits: yes, for the screens' semaphore.
+	- Interrupts: no.
+	- Locks: no spinlock may be held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The window is its opener's. It stays open only while the caller holds
+	`LockIBase`: without it, the window may close the moment the answer is
+	given.
+
+   NOTES
+	- A program that acts on the window it is given keeps its number
+	  (`WA_Number`) rather than the pointer, and finds it again with
+	  `FindWindowNumber`: a pointer kept may by then be another window's.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`ActivateWindow`, `WindowUnderPointer`, `NextWindow`,
+	`FindWindowNumber`, `LockIBase`
+
+   EXAMPLES
+	    const held = ib.LockIBase(0);
+	    defer ib.UnlockIBase(held);
+	    if (ib.ActiveWindow()) |window| ib.ZipWindow(window);
 intuition.library/AddClass                          intuition.library/AddClass
 
    NAME
@@ -2290,6 +2346,59 @@ intuition.library/ZipWindow
 
    EXAMPLES
 	    ib.FreeSysRequest(req);
+intuition.library/FrontScreen                    intuition.library/FrontScreen
+
+   NAME
+	FrontScreen -- The screen in front of the others.
+
+   SYNOPSIS
+	    fn FrontScreen(ib: *IntuitionBase) ?*Screen
+
+   SINCE
+	0.80. LVO -540.
+
+   INPUTS
+	None.
+
+   RESULT
+	The frontmost screen, or null while none is open.
+
+   BEHAVIOR
+	It is the screen `ScreenToFront` last brought forward, the newest
+	screen opened without `SA_Behind`, or what was left in front when one
+	closed: the screen whose buffer its display shows from the top down,
+	and the one the menu button and a screen's keyboard commands reach.
+	With more than one display it is the front of the display that holds
+	it; the others' frontmost screens are reached through their windows
+	(`WA_Screen`).
+
+   CONTEXT
+	- Waits: yes, for the screens' semaphore.
+	- Interrupts: no.
+	- Locks: no spinlock may be held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The screen is its opener's. It stays open only while the caller holds
+	`LockIBase`: without it, the screen may close the moment the answer is
+	given. A public screen is better held with `LockPubScreen`, which
+	keeps it open without holding the screens still.
+
+   NOTES
+	- Cycling the screens is this screen sent to the back
+	  (`ScreenToBack`), which brings the next one forward.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`ScreenToFront`, `ScreenToBack`, `LockPubScreen`, `NextWindow`,
+	`LockIBase`
+
+   EXAMPLES
+	    const held = ib.LockIBase(0);
+	    defer ib.UnlockIBase(held);
+	    if (ib.FrontScreen()) |screen| ib.ScreenToBack(screen);
 intuition.library/GadgetMouse                    intuition.library/GadgetMouse
 
    NAME
@@ -2918,6 +3027,61 @@ intuition.library/ZipWindow
 
    EXAMPLES
 	    ib.HelpControl(window, wn.HC_GADGETHELP); // the Help key was pressed
+intuition.library/HidePointer                    intuition.library/HidePointer
+
+   NAME
+	HidePointer -- The pointer kept from being shown at all, or shown again.
+
+   SYNOPSIS
+	    fn HidePointer(ib: *IntuitionBase, hidden: bool) void
+
+   SINCE
+	0.80. LVO -544.
+
+   INPUTS
+	- `hidden` - true for no pointer on the display, false to show it
+	  again.
+
+   RESULT
+	Nothing.
+
+   BEHAVIOR
+	The pointer stops being laid over the picture, whatever window is
+	active and whatever picture that window asked for: the display is left
+	without one until it is shown again. The mouse still moves it, and a
+	press still reaches whatever the pointer stands over, so what the
+	machine does is unchanged - only the picture of it is not there.
+
+	The last call wins; it does not nest. Hidden with no mouse plugged in,
+	the pointer stays unseen when one is - showing it again is what brings
+	it back.
+
+   CONTEXT
+	- Waits: yes, for the screens' semaphore.
+	- Interrupts: no.
+	- Locks: no spinlock may be held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing changes hands. Whoever hides the pointer shows it again: a
+	program that ends while it is hidden leaves the display without one.
+
+   NOTES
+	- A window hides the pointer for itself with `SetWindowPointerA` and
+	  `WA_HidePointer`, which is the active window's own business and goes
+	  back to normal as soon as another window is active. This is for a
+	  program that blanks the pointer across the machine - while the
+	  keyboard is being used, say.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`SetWindowPointerA` (`WA_HidePointer`), `ActiveWindow`
+
+   EXAMPLES
+	    ib.HidePointer(true); // a key was typed
+	    defer ib.HidePointer(false); // and the mouse moved, or the program ends
 intuition.library/InitRequester                intuition.library/InitRequester
 
    NAME
@@ -3813,6 +3977,62 @@ intuition.library/ZipWindow
 	    var name: [sc.MAXPUBSCREENNAME + 1]u8 = undefined;
 	    // A gadget that jumps the window to the next screen.
 	    if (ib.NextPubScreen(current, &name)) |next| reopenOn(next);
+intuition.library/NextWindow                      intuition.library/NextWindow
+
+   NAME
+	NextWindow -- The window behind another, for a walk down a screen's depth order.
+
+   SYNOPSIS
+	    fn NextWindow(ib: *IntuitionBase, after: ?*Window) ?*Window
+
+   SINCE
+	0.80. LVO -536.
+
+   INPUTS
+	- `after` - the window to go on from, or null to start at the front.
+
+   RESULT
+	The window immediately behind `after` on `after`'s screen, or - for a
+	null `after` - the frontmost window of the screen in front. Null past
+	the backmost window, and while no screen is open.
+
+   BEHAVIOR
+	The screen's depth order is walked, front to back, so a walk from null
+	sees every window of that screen once, from the one in front to the
+	one at the back. The order is the one a press sees: the window in
+	front of another is the one that covers it. A window that stays in
+	front (`WA_StayInFront`) comes before the ordinary ones and a backdrop
+	window after them all.
+
+   CONTEXT
+	- Waits: yes, for the screens' semaphore.
+	- Interrupts: no.
+	- Locks: no spinlock may be held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The windows are their openers'. They stay open only while the caller
+	holds `LockIBase`, which also keeps the order still: without it the
+	window the answer names may close, and the walk may see a window
+	twice or not at all.
+
+   NOTES
+	- Cycling the windows is the frontmost one sent to the back and the
+	  new frontmost activated, rather than a walk: `WindowToBack` changes
+	  the order the walk reads.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`ActiveWindow`, `WindowToFront`, `WindowToBack`, `FrontScreen`,
+	`LockIBase`
+
+   EXAMPLES
+	    const held = ib.LockIBase(0);
+	    defer ib.UnlockIBase(held);
+	    var window = ib.NextWindow(null);
+	    while (window) |w| : (window = ib.NextWindow(w)) count += 1;
 intuition.library/ObtainGIRPort                intuition.library/ObtainGIRPort
 
    NAME
@@ -6658,6 +6878,59 @@ intuition.library/ZipWindow
 
    EXAMPLES
 	    ib.WindowToFront(window);
+intuition.library/WindowUnderPointer      intuition.library/WindowUnderPointer
+
+   NAME
+	WindowUnderPointer -- The window the pointer stands over.
+
+   SYNOPSIS
+	    fn WindowUnderPointer(ib: *IntuitionBase) ?*Window
+
+   SINCE
+	0.80. LVO -532.
+
+   INPUTS
+	None.
+
+   RESULT
+	The window, or null where there is none: over a screen's bar, over a
+	panel in front of the windows - a menu, a list a gadget popped up -
+	over the screen's ground, or while no screen is open.
+
+   BEHAVIOR
+	The screen at the pointer's line of the display is taken, and on it
+	the frontmost window whose visible part is under the pointer: what a
+	press there would reach. A window covered at that point by another is
+	not it, and the border counts as the window.
+
+   CONTEXT
+	- Waits: yes, for the screens' semaphore.
+	- Interrupts: no.
+	- Locks: no spinlock may be held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The window is its opener's. It stays open only while the caller holds
+	`LockIBase`: without it, the window may close the moment the answer is
+	given.
+
+   NOTES
+	- The pointer has moved on by the time a program acts on the answer.
+	  One that wants the window a particular event happened over asks
+	  while it handles that event.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`ActiveWindow`, `ActivateWindow`, `WindowToFront`, `LockIBase`
+
+   EXAMPLES
+	    const held = ib.LockIBase(0);
+	    defer ib.UnlockIBase(held);
+	    if (ib.WindowUnderPointer()) |window| {
+	        if (window != ib.ActiveWindow()) ib.ActivateWindow(window);
+	    }
 intuition.library/ZipWindow                        intuition.library/ZipWindow
 
    NAME
