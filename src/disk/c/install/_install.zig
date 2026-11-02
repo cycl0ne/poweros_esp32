@@ -45,7 +45,7 @@ pub const least_container: u64 = 128 * 1024 * 1024;
 pub const max_slots = 2;
 
 /// A name with its colon, as dos's calls want it.
-pub const DriveName = [dos.MAX_DEVICE_NAME + 2:0]u8;
+pub const DriveName = dos.blockdrives.Name;
 
 /// One drive an install makes.
 pub const Drive = struct {

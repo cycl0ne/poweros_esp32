@@ -74,6 +74,8 @@ const UtilityBase = sdk.interface.utility.UtilityBase;
 const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
+const drives = dos.blockdrives;
+
 const shared = @import("_install.zig");
 const units = @import("units.zig");
 const disk = @import("disk.zig");
@@ -318,40 +320,13 @@ fn plan(run: *Run) ?i32 {
 fn restart(run: *Run) void {
     shared.say(run, "Restarting.\n", .{});
     _ = run.dl.Flush(run.dl.Output());
-    inhibitAll(run);
+    var mounted: drives.List = .{};
+    mounted.gather(run.dl);
+    for (mounted.all()) |*name| {
+        if (drives.hold(run.dl, name)) continue;
+        shared.say(run, "  %s would not stop: what it holds may not be written out\n", .{drives.path(name)});
+    }
     run.sys.ColdReboot();
-}
-
-/// Every drive of a block device held still. The names are taken while
-/// dos's list is locked and the drives held once it is let go: Inhibit
-/// talks to a handler, which may want the list itself.
-fn inhibitAll(run: *Run) void {
-    const dl = run.dl;
-    var names: [64]shared.DriveName = undefined;
-    var count: usize = 0;
-    {
-        const flags = dos.LDF_DEVICES | dos.LDF_READ;
-        const list = dl.LockDosList(flags) orelse return;
-        defer dl.UnLockDosList(flags);
-        var entry = dl.NextDosEntry(list, dos.LDF_DEVICES);
-        while (entry) |node| : (entry = dl.NextDosEntry(node, dos.LDF_DEVICES)) {
-            if (count == names.len) break;
-            if (node.task == null) continue;
-            const startup = dos.filehandler.startupOf(node.misc.handler.startup) orelse continue;
-            if (startup.device == null) continue;
-            names[count] = @splat(0);
-            const text = node.name;
-            const at = shared.copy(&names[count], text[0..shared.length(text)]);
-            names[count][at] = ':';
-            count += 1;
-        }
-    }
-    for (names[0..count]) |*name| {
-        const drive: [*:0]const u8 = @ptrCast(name);
-        if (!dl.Inhibit(drive, true)) {
-            shared.say(run, "  %s would not stop: what it holds may not be written out\n", .{drive});
-        }
-    }
 }
 
 /// The second boot partition's name: the first's with a `B` after it.
