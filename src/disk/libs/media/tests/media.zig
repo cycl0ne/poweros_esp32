@@ -28,6 +28,9 @@ const host = @import("host_rom");
 const kexec = host.exec;
 const media_init = @import("../media_init.zig");
 const container_modules = @import("modules.zig");
+const compression_init = @import("../../compression/compression_init.zig");
+const compression = sdk.compression;
+const CompressionBase = sdk.interface.compression.CompressionBase;
 
 const testing = std.testing;
 const DosBase = sdk.interface.dos.DosBase;
@@ -69,8 +72,10 @@ const Disk = struct {
     }
 };
 
-/// Memory lent to exec.
-var lent: [2 * 1024 * 1024]u8 align(16) = undefined;
+/// Memory lent to exec: a track's buffer is 256 KiB, and a file of the
+/// tests' own has seven tracks - two files of it are open at once, and
+/// compression.library's unpacking takes its own.
+var lent: [4 * 1024 * 1024]u8 align(16) = undefined;
 
 /// exec, utility and dos with memory lent; a process with WORK: behind
 /// it; media.library made and opened.
@@ -80,6 +85,9 @@ const Rig = struct {
     proc: dos.Process = .{},
     saved: ?*kexec.Task = null,
     library: *exec.Library = undefined,
+    /// compression.library, which the Matroska module opens to unpack a
+    /// track's frames.
+    packer: *exec.Library = undefined,
     mb: *MediaBase = undefined,
 
     containers: container_modules.Made = undefined,
@@ -104,6 +112,8 @@ const Rig = struct {
 
         const lib = kexec.InitResident(kexec.SysBase, &media_init.media_library_tag, null) orelse return error.NoLibrary;
         rig.library = @ptrCast(@alignCast(lib));
+        const packer = kexec.InitResident(kexec.SysBase, &compression_init.compression_library_tag, null) orelse return error.NoCompression;
+        rig.packer = @ptrCast(@alignCast(packer));
         try container_modules.make(kexec, &rig.containers);
         rig.mb = @ptrCast(rig.sysLib().OpenLibrary(media.MEDIANAME, 1) orelse return error.NoBase);
     }
@@ -122,6 +132,7 @@ const Rig = struct {
         rig.sysLib().CloseLibrary(rig.mb.lib());
         _ = rig.sysLib().RemLibrary(rig.library);
         container_modules.take(rig.sysLib(), &rig.containers);
+        _ = rig.sysLib().RemLibrary(rig.packer);
         try testing.expect(kexec.FindName(kexec.SysBase, &kexec.SysBase.lib_list, media.MEDIANAME) == null);
         Disk.disk.deinit();
         kexec.SysBase.cpu().this_task = rig.saved.?;
@@ -607,7 +618,7 @@ test "Matroska: a film through a read function - what lies before the clusters, 
 /// A Matroska file built by hand, element by element: a master's size
 /// is eight bytes, filled in when it ends; another element's one or two.
 const Maker = struct {
-    bytes: [4096]u8 = undefined,
+    bytes: [8192]u8 = undefined,
     len: usize = 0,
 
     fn put(m: *Maker, data: []const u8) void {
@@ -719,13 +730,15 @@ const Maker = struct {
         m.end(atom);
     }
 
-    /// The file: six tracks - MP3 its frames' first two bytes left out,
+    /// The file: seven tracks - MP3 its frames' first two bytes left out,
     /// SubRip, AAC named by its profile, Opus with its OpusHead and a
-    /// delay, VP9, ASS compressed by zlib - in a segment and a first
-    /// cluster of sizes not known; blocks laced Xiph's way, EBML's and
-    /// all of a size; groups with a duration and a reference; the cues
-    /// and the chapters behind the clusters, found by the seek head.
-    fn make(m: *Maker) void {
+    /// delay, VP9, ASS packed with zlib (`packed_ass`, which the library
+    /// unpacks), and one packed with bzlib, which it does not read - in a
+    /// segment and a first cluster of sizes not known; blocks laced
+    /// Xiph's way, EBML's and all of a size; groups with a duration and a
+    /// reference; the cues and the chapters behind the clusters, found by
+    /// the seek head.
+    fn make(m: *Maker, packed_ass: []const u8) void {
         const header = m.begin(0x1A45DFA3);
         m.element(0x4282, "matroska");
         m.end(header);
@@ -761,10 +774,10 @@ const Maker = struct {
         m.sound(48000, 2);
         const encodings = m.begin(0x6D80);
         const encoding = m.begin(0x6240);
-        const compression = m.begin(0x5034);
+        const stripping = m.begin(0x5034);
         m.uint(0x4254, 3);
         m.element(0x4255, "\xFF\xFB");
-        m.end(compression);
+        m.end(stripping);
         m.end(encoding);
         m.end(encodings);
         m.end(entry);
@@ -792,12 +805,23 @@ const Maker = struct {
         m.end(entry);
         entry = m.track(6, 0x11, "S_TEXT/ASS");
         m.element(0x63A2, "[Script Info]");
+        // Compression with nothing said of it: zlib, Matroska's default
+        // algorithm, as mkvmerge packs a subtitle track.
         const zlib = m.begin(0x6D80);
         const zlib_encoding = m.begin(0x6240);
         const zlib_compression = m.begin(0x5034);
         m.end(zlib_compression);
         m.end(zlib_encoding);
         m.end(zlib);
+        m.end(entry);
+        entry = m.track(7, 0x11, "S_TEXT/UTF8");
+        const bzlib = m.begin(0x6D80);
+        const bzlib_encoding = m.begin(0x6240);
+        const bzlib_compression = m.begin(0x5034);
+        m.uint(0x4254, 1);
+        m.end(bzlib_compression);
+        m.end(bzlib_encoding);
+        m.end(bzlib);
         m.end(entry);
         m.end(tracks);
 
@@ -834,7 +858,8 @@ const Maker = struct {
         // All of a size: two of four.
         m.block(0xA3, 3, 30, 0x80 | 0x04, "\x01eeeeffff");
         m.block(0xA3, 4, 0, 0x80, "opus0");
-        m.block(0xA3, 6, 0, 0x80, "zz");
+        m.block(0xA3, 6, 0, 0x80, packed_ass);
+        m.block(0xA3, 7, 0, 0x80, "xx");
 
         const second = m.len;
         const cluster = m.begin(0x1F43B675);
@@ -890,13 +915,25 @@ fn expectPacket(mb: *MediaBase, file: *media.MediaFile, track: u32, bytes: []con
     try testing.expectEqual(key, packet.flags & media.MPKT_KEY != 0);
 }
 
-test "Matroska by hand: lacing, header stripping, sizes not known, setups made, tracks it cannot read, cues and chapters" {
+test "Matroska by hand: lacing, header stripping, frames packed with zlib, sizes not known, setups made, a track it cannot read, cues and chapters" {
     var rig: Rig = undefined;
     try rig.init();
     defer rig.deinit() catch {};
     const mb = rig.mb;
+    // The ASS track's frame, packed with zlib as a muxer packs it.
+    const dialogue = "Dialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,Hallo Welt";
+    const cb: *CompressionBase = @ptrCast(rig.sysLib().OpenLibrary(compression.COMPRESSIONNAME, 1) orelse return error.NoCompression);
+    defer rig.sysLib().CloseLibrary(cb.lib());
+    var packed_ass: [256]u8 = undefined;
+    var packing: compression.Stream = .{
+        .next_in = dialogue,
+        .avail_in = dialogue.len,
+        .next_out = &packed_ass,
+        .avail_out = packed_ass.len,
+    };
+    try testing.expectEqual(compression.COMPRESS_OK, cb.Compress(&packing, compression.FORMAT_ZLIB, 6));
     var maker: Maker = .{};
-    maker.make();
+    maker.make(packed_ass[0..@intCast(packing.total_out)]);
     const bytes = maker.bytes[0..maker.len];
     try rig.write("WORK:laced.mka", bytes);
     var err: i32 = -1;
@@ -906,7 +943,7 @@ test "Matroska by hand: lacing, header stripping, sizes not known, setups made, 
 
     var info: media.MediaInfo = .{};
     mb.GetMediaInfo(file, &info);
-    try testing.expectEqual(@as(u32, 6), info.tracks);
+    try testing.expectEqual(@as(u32, 7), info.tracks);
     try testing.expectEqual(@as(u64, 2_100_000), info.duration);
     // The first sound marked to be played - not the first, which is not.
     try testing.expectEqual(@as(u32, 2), info.audio);
@@ -979,7 +1016,12 @@ test "Matroska by hand: lacing, header stripping, sizes not known, setups made, 
     try expectPacket(mb, file, 4, "frame1", 2_000_000, false);
     try expectPacket(mb, file, 4, "frame2", 2_040_000, true);
     try testing.expectEqual(media.MERR_END, mb.ReadMediaPacket(file, 4, &packet));
-    try testing.expectEqual(media.MERR_UNSUPPORTED, mb.ReadMediaPacket(file, 5, &packet));
+    // The ASS track is packed with zlib: its frames are unpacked as they
+    // are handed out. The one packed with bzlib is not read at all.
+    try testing.expectEqual(media.MERR_OK, mb.ReadMediaPacket(file, 5, &packet));
+    try testing.expectEqualStrings(dialogue, packet.data.?[0..packet.size]);
+    try testing.expectEqual(media.MERR_END, mb.ReadMediaPacket(file, 5, &packet));
+    try testing.expectEqual(media.MERR_UNSUPPORTED, mb.ReadMediaPacket(file, 6, &packet));
 
     // Moves: by the pictures' own cues - 2.0 s is frame0's, frame1 at it
     // no key; another track from the cue before the time.

@@ -30,12 +30,19 @@
 //!
 //! The frames of a track whose blocks leave out the bytes each frame
 //! begins with (Matroska's header stripping) are handed out with them put
-//! back, out of a second buffer.
+//! back, out of a second buffer; so are the frames of a track packed with
+//! zlib (ContentCompAlgo 0, which mkvmerge has written subtitle tracks
+//! with for years), unpacked into it by compression.library - opened by
+//! the first frame unpacked and closed with the file. A track packed any
+//! other way, or encrypted, is `unreadable` and answers
+//! MERR_UNSUPPORTED.
 
 const std = @import("std");
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const media = sdk.media;
+const compression = sdk.compression;
+const CompressionBase = sdk.interface.compression.CompressionBase;
 const _file = @import("../file/_file.zig");
 const ebml = @import("ebml.zig");
 
@@ -65,6 +72,11 @@ pub const File = struct {
     /// The cue points, a table of their own, in the file's order.
     cues: ?[*]Cue,
     cue_count: u32,
+    /// compression.library, opened by the first frame unpacked and closed
+    /// with the file; null when it has not been looked for, or is not
+    /// there - then a track whose frames are packed cannot be read.
+    packer: ?*CompressionBase,
+    packer_tried: bool,
 };
 
 /// A cue point: where a track's block at a time lies.
@@ -109,9 +121,11 @@ pub const Track = struct {
     delay_ns: u64,
     default: bool,
     forced: bool,
-    /// Its frames are compressed other than by header stripping, or
+    /// Its frames are compressed in a way that is not read, or
     /// encrypted.
     unreadable: bool,
+    /// Its frames are packed with zlib, unpacked as they are read.
+    inflate: bool,
     /// The bytes each of its frames begins with, left out of them: where
     /// they lie in the index, and how many.
     strip: ?[*]const u8,
@@ -437,7 +451,11 @@ pub fn read(file: *_file.File, track: *_file.Track, packet: *media.MediaPacket) 
     const size = w.sizes[n];
     var data: [*]const u8 = track.buffer.? + @as(usize, @intCast(w.frame_at - track.cached_at));
     var length = size;
-    if (own.strip_length != 0) {
+    if (own.inflate) {
+        const unpacked = expand(file, own, data[0..size], &length);
+        if (unpacked != media.MERR_OK) return unpacked;
+        data = own.joined.?;
+    } else if (own.strip_length != 0) {
         data = join(file, own, data[0..size]) orelse return media.MERR_NOMEMORY;
         length += own.strip_length;
     }
@@ -462,19 +480,71 @@ pub fn read(file: *_file.File, track: *_file.Track, packet: *media.MediaPacket) 
 /// A frame with the bytes left out of it put back, in the track's second
 /// buffer.
 fn join(file: *_file.File, own: *Track, frame: []const u8) ?[*]const u8 {
-    const total = own.strip_length + frame.len;
-    if (own.joined == null or total > own.joined_size) {
-        const sys = file.base.sys_base;
-        if (own.joined) |old| sys.FreeVec(old);
-        own.joined = null;
-        const room: u32 = @intCast(@max(total, 64 * 1024));
-        own.joined = @ptrCast(sys.AllocVec(room, exec.MEMF_ANY) orelse return null);
-        own.joined_size = room;
-    }
-    const into = own.joined.?;
+    const into = second(file, own, own.strip_length + frame.len) orelse return null;
     @memcpy(into[0..own.strip_length], own.strip.?[0..own.strip_length]);
     @memcpy(into[own.strip_length..][0..frame.len], frame);
     return into;
+}
+
+/// The track's second buffer, `want` bytes at least and 64 KiB at least:
+/// the frames put together in it are handed out of it. Null without
+/// memory; what it held before is gone either way.
+fn second(file: *_file.File, own: *Track, want: usize) ?[*]u8 {
+    if (own.joined != null and want <= own.joined_size) return own.joined;
+    const sys = file.base.sys_base;
+    if (own.joined) |old| sys.FreeVec(old);
+    own.joined = null;
+    own.joined_size = 0;
+    const room: u32 = @intCast(@max(want, 64 * 1024));
+    own.joined = @ptrCast(sys.AllocVec(room, exec.MEMF_ANY) orelse return null);
+    own.joined_size = room;
+    return own.joined;
+}
+
+/// How large a frame may come to unpacked: a subtitle's picture is tens of
+/// kilobytes, and no sound or picture track is packed this way.
+const most_unpacked = 4 * 1024 * 1024;
+
+/// A zlib-packed frame unpacked into the track's second buffer - the
+/// bytes it is stripped of in front of it - and `length` set to what it
+/// came to: MERR_OK, MERR_UNSUPPORTED without compression.library,
+/// MERR_CORRUPT for a frame that will not unpack, MERR_NOMEMORY.
+///
+/// The room is guessed from the packed size and doubled while it is too
+/// little, up to `most_unpacked`: zlib does not say what it packed.
+fn expand(file: *_file.File, own: *Track, frame: []const u8, length: *u32) i32 {
+    const packer = packerOf(file) orelse return media.MERR_UNSUPPORTED;
+    var room: usize = @max(own.strip_length + 4 * frame.len, 64 * 1024);
+    while (true) {
+        const into = second(file, own, room) orelse return media.MERR_NOMEMORY;
+        if (own.strip) |strip| @memcpy(into[0..own.strip_length], strip[0..own.strip_length]);
+        var stream: compression.Stream = .{
+            .next_in = frame.ptr,
+            .avail_in = @intCast(frame.len),
+            .next_out = into + own.strip_length,
+            .avail_out = own.joined_size - own.strip_length,
+        };
+        const unpacked = packer.Uncompress(&stream, compression.FORMAT_ZLIB);
+        if (unpacked == compression.COMPRESS_OK) {
+            length.* = own.strip_length + @as(u32, @intCast(stream.total_out));
+            return media.MERR_OK;
+        }
+        if (unpacked != compression.COMPRESSERR_BUFFER) return media.MERR_CORRUPT;
+        if (room >= most_unpacked) return media.MERR_CORRUPT;
+        room = @min(room * 2, most_unpacked);
+    }
+}
+
+/// compression.library, opened by the first frame unpacked and kept until
+/// the file is closed; null when it is not on this disk - looked for
+/// once.
+fn packerOf(file: *_file.File) ?*CompressionBase {
+    const m = fileOf(file);
+    if (m.packer == null and !m.packer_tried) {
+        m.packer_tried = true;
+        if (file.base.sys_base.OpenLibrary(compression.COMPRESSIONNAME, 1)) |lib| m.packer = @ptrCast(lib);
+    }
+    return m.packer;
 }
 
 // --- moving -----------------------------------------------------------------------
