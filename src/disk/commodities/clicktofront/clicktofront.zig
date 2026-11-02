@@ -31,6 +31,8 @@ const sdk = @import("sdk");
 const dos = sdk.dos;
 const exec = sdk.exec;
 const intuition = sdk.intuition;
+const wn = sdk.intuition.windows;
+const TagItem = sdk.utility.TagItem;
 const cx = sdk.commodities;
 const ie = sdk.devices.inputevent;
 const frame = @import("commodity");
@@ -170,9 +172,20 @@ fn toFront(ib: *IntuitionBase) void {
     const held = ib.LockIBase(0);
     defer ib.UnlockIBase(held);
     const window = ib.WindowUnderPointer() orelse return;
+    // A backdrop window is the ground the others stand on - the desktop's
+    // is the whole screen - and brought forward it would cover every one
+    // of them. A double click on the ground means nothing here.
+    if (windowAttr(ib, window, wn.WA_Flags) & wn.WFLG_BACKDROP != 0) return;
     // Already the frontmost: nothing to move.
     if (window == ib.NextWindow(null)) return;
     ib.WindowToFront(window);
+}
+
+/// One attribute of a window, as a number.
+fn windowAttr(ib: *IntuitionBase, window: *intuition.Window, tag: sdk.utility.Tag) usize {
+    var value: usize = 0;
+    ib.GetWindowAttrs(window, &[_]TagItem{ .{ .tag = tag, .data = @intFromPtr(&value) }, .{} });
+    return value;
 }
 
 /// A click counted: the second of a pair wakes the task. On
