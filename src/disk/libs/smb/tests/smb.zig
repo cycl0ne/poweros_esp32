@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-//! Host tests of smb-handler's protocol code that needs crypto.library:
+//! Host tests of the protocol code that needs crypto.library:
 //! NTLMv2 against [MS-NLMP] 4.2.4's worked example, RC4, AES-CMAC against
 //! RFC 4493, the three signatures, SP800-108's KDF and the transform
 //! header against values from another implementation (Python's
@@ -12,13 +12,14 @@ const crypto = sdk.crypto;
 const smb = sdk.dos.smb;
 const ExecBase = sdk.interface.exec.ExecBase;
 const CryptoBase = sdk.interface.crypto.CryptoBase;
-const crypto_init = @import("../../../../libs/crypto/crypto_init.zig");
+const crypto_init = @import("../../crypto/crypto_init.zig");
 const kexec = @import("host_rom").exec;
-const wire = @import("../wire.zig");
-const ntlm = @import("../ntlm.zig");
-const signing = @import("../signing.zig");
-const crypt = @import("../crypt.zig");
-const session_area = @import("../session.zig");
+const client = @import("smbclient");
+const wire = client.wire;
+const ntlm = client.ntlm;
+const signing = client.signing;
+const crypt = client.crypt;
+const session_area = client.session;
 
 const testing = std.testing;
 

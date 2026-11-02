@@ -5,7 +5,7 @@
 //!
 //!   RDB DEVICE,UNIT/K/N,FULL/S,INIT/S,FORCE/S,ADD/K,LOW/K/N,HIGH/K/N,
 //!       DOSTYPE/K,BOOTABLE/S,REMOVE/K,CHANGE/K,ADDFS/K,REMFS/K,BOOTPRI/K/N,
-//!       GPT/S,MOUNT/S,ADDGPT/K,REMGPT/K,SIZE/K
+//!       GPT/S,MOUNT/S,ADDGPT/K,REMGPT/K,SIZE/K,NOMOUNT/S,MOUNTGPT/K
 //!
 //!   RDB                         flash.device unit 0
 //!   RDB sdcard.device UNIT 0    another disk
@@ -40,6 +40,10 @@
 //!                               free run
 //!   RDB sdcard.device REMGPT Photos
 //!                               ... and taken out of the GPT again
+//!   RDB nvme.device ADDGPT BOOT DOSTYPE FAT32 SIZE 256M NOMOUNT
+//!                               a partition no drive is made for when
+//!                               the medium comes in: one a firmware
+//!                               reads and nothing here works in
 //!
 //! The device is an exec device with trackdisk's commands, so anything
 //! that answers TD_GETGEOMETRY and CMD_READ can be read. A change is made
@@ -134,9 +138,9 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "RDB";
-const VERSION_STRING = "\x00$VER: RDB 1.6 (29.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: RDB 1.8 (01.11.2026)\r\n";
 
-const template = "DEVICE,UNIT/K/N,FULL/S,INIT/S,FORCE/S,ADD/K,LOW/K/N,HIGH/K/N,DOSTYPE/K,BOOTABLE/S,REMOVE/K,CHANGE/K,ADDFS/K,REMFS/K,BOOTPRI/K/N,GPT/S,MOUNT/S,ADDGPT/K,REMGPT/K,SIZE/K";
+const template = "DEVICE,UNIT/K/N,FULL/S,INIT/S,FORCE/S,ADD/K,LOW/K/N,HIGH/K/N,DOSTYPE/K,BOOTABLE/S,REMOVE/K,CHANGE/K,ADDFS/K,REMFS/K,BOOTPRI/K/N,GPT/S,MOUNT/S,ADDGPT/K,REMGPT/K,SIZE/K,NOMOUNT/S,MOUNTGPT/K";
 const arg_device = 0;
 const arg_unit = 1;
 const arg_full = 2;
@@ -157,7 +161,9 @@ const arg_mount = 16;
 const arg_addgpt = 17;
 const arg_remgpt = 18;
 const arg_size = 19;
-const arg_count = 20;
+const arg_nomount = 20;
+const arg_mountgpt = 21;
+const arg_count = 22;
 
 /// The disk this system boots from, when nothing else is named.
 const default_device = "flash.device";
@@ -281,8 +287,9 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         } else {
             _ = Printf(dl, MSG_NO_RDB, .{ device, unit, hardblocks.RDB_LOCATION_LIMIT });
         }
+        if (rdargs.string(argv[arg_mountgpt])) |name| changed = @max(changed, mountOne(&run, name));
         if (gpt_disk and argv[arg_mount] != 0) return @max(changed, mountAll(&run));
-        return dos.RETURN_WARN;
+        return @max(changed, dos.RETURN_WARN);
     }
     showRdb(&run, handle.block, &handle.rdb);
     showPartitions(&run);
@@ -291,6 +298,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         _ = dl.PutStr("  (a chain of the table breaks at a block that is not sound: what follows it is not shown)\n");
         return dos.RETURN_ERROR;
     }
+    if (rdargs.string(argv[arg_mountgpt])) |name| changed = @max(changed, mountOne(&run, name));
     if (argv[arg_mount] != 0) return @max(changed, mountAll(&run));
     return changed;
 }
@@ -347,6 +355,39 @@ const Span = struct { first: u64, end: u64 };
 fn gptSpan(run: *Run, part: *const rdb.GPTPartition) Span {
     const bytes = run.handle.geometry.sector_size;
     return .{ .first = part.entry.starting_lba * bytes, .end = (part.entry.ending_lba + 1) * bytes };
+}
+
+/// MOUNTGPT: the GPT partition of that name given a drive now, whatever
+/// its attributes say about coming in with its medium - which is how to
+/// look into a partition a firmware reads and nothing here works in.
+fn mountOne(run: *Run, name: [*:0]const u8) i32 {
+    const dl = run.dl;
+    const rb = run.rb;
+    if (!mountsFat(rb)) {
+        _ = Printf(dl, "MOUNTGPT: %s 1.%d or later mounts a FAT partition of a GPT\n", .{ rdb.RDBNAME, @as(u32, fat_revision) });
+        return dos.RETURN_ERROR;
+    }
+    if (!readsGpt(rb) or run.handle.flags & rdb.RDBF_GPT == 0) {
+        _ = failed(run, "MOUNTGPT", rdb.RDBERR_NOGPT);
+        return dos.RETURN_ERROR;
+    }
+    const part = gptPartitionNamed(run, name) orelse {
+        _ = Printf(dl, "MOUNTGPT: the GPT has no partition %s\n", .{name});
+        return dos.RETURN_ERROR;
+    };
+    if (gpt.isContainer(&part.entry)) {
+        _ = dl.PutStr("MOUNTGPT: the container holds the table, and MOUNT mounts what is in it\n");
+        return dos.RETURN_ERROR;
+    }
+    var drive: [gpt.name_units:0]u8 = @splat(0);
+    if (!driveName(gpt.nameText(&part.entry, &drive))) {
+        _ = Printf(dl, "MOUNTGPT: %s is no drive's name\n", .{name});
+        return dos.RETURN_ERROR;
+    }
+    var got: rdb.MountName = @splat(0);
+    const err = rb.MountGPTPartition(run.handle, part, @ptrCast(&drive), &got, rdb.RDBMF_START | rdb.RDBMF_FAT);
+    if (!mountSaid(run, @ptrCast(&drive), &got, err, gptSpan(run, part), false)) return dos.RETURN_WARN;
+    return dos.RETURN_OK;
 }
 
 /// What a mount of a partition came to, printed - with `quiet_mounted`
@@ -458,6 +499,10 @@ fn change(run: *Run, argv: *const [arg_count]usize) i32 {
     }
     if (argv[arg_addgpt] != 0 and (argv[arg_bootable] != 0 or argv[arg_boot_pri] != 0)) {
         _ = dl.PutStr("BOOTABLE and BOOTPRI are a table partition's: they go with ADD and CHANGE\n");
+        return dos.RETURN_ERROR;
+    }
+    if (argv[arg_nomount] != 0 and argv[arg_addgpt] == 0) {
+        _ = dl.PutStr("NOMOUNT is a GPT partition's: it goes with ADDGPT\n");
         return dos.RETURN_ERROR;
     }
     if (argv[arg_init] != 0) {
@@ -679,6 +724,10 @@ fn addGpt(run: *Run, argv: *const [arg_count]usize, name: [*:0]const u8) i32 {
 
     var entry: gpt.Entry = .{ .partition_type_guid = gpt.TYPE_BASIC_DATA };
     gpt.setName(&entry, text);
+    // A partition nothing here works in is better off without a drive
+    // of its own at every start: the medium's own name is still there,
+    // and rdb.library mounts it when it is asked to.
+    if (argv[arg_nomount] != 0) entry.attributes |= gpt.ATTR_NO_AUTOMOUNT;
     const low = rdargs.number(argv[arg_low]);
     const high = rdargs.number(argv[arg_high]);
     if ((low == null) != (high == null) or (low orelse 0) < 0 or (high orelse 0) < 0) {

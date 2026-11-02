@@ -287,6 +287,10 @@ pub const root = [_]Tag{
     // (clock.zig), as far as config.txt's arm_freq lets it; unasked it
     // leaves them at 1 GHz.
     .value(st.SYSTAG_CpuSpeed, 2400),
+    // The bootloader reads `autoboot.txt` and takes a tryboot flag, so a
+    // new kernel is tried on the second boot partition for one start,
+    // with the one that worked still on the first.
+    .value(st.SYSTAG_BootSlots, 2),
     .pointer(st.SYSTAG_Part, &usb0),
     .pointer(st.SYSTAG_Part, &usb1),
     .pointer(st.SYSTAG_Part, &pcie1),

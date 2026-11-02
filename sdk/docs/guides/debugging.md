@@ -403,6 +403,18 @@ first line of the boot. A CPU exception before exec is up prints
 `*** FATAL EXCEPTION` with the trap frame and halts. In QEMU the same boot
 fails the same way.
 
+**A kernel that was just written does not come up.** On a machine whose
+firmware starts from either of a pair of boot partitions, the new kernel
+is only tried: the flag for that start goes away by itself, so the next
+start is on the partition that worked, and the system that comes up there
+is the one to write another kernel from. Where the firmware reads one
+partition, the kernel being replaced is beside the new one as
+`<name>.old`, and the way back is the firmware's own prompt. A system
+that does come up and is wrong is put back to the snapshot the update
+took: `C:PosFS SYS: ROLLBACK before-update`, from a system that is not
+the one being rolled back. All of it is in the
+[install guide](install.md#the-kernel-and-the-way-back).
+
 ## In an emulator
 
 `./zig build qemu` boots the S3 with the serial console in the terminal,

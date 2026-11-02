@@ -276,11 +276,13 @@ const disk_icons = [_]DiskIcon{
     .{ .path = "System/CPULoad.info", .picture = "utilities-system-monitor", .fields = &.{ "KIND=TOOL", icon_stack } },
     .{ .path = "System/NetLoad.info", .picture = "utilities-system-monitor", .fields = &.{ "KIND=TOOL", icon_stack } },
     .{ .path = "System/MemMap.info", .picture = "computer", .fields = &.{ "KIND=TOOL", icon_stack } },
+    .{ .path = "System/Shares.info", .picture = "folder-remote", .fields = &.{ "KIND=TOOL", icon_stack } },
     .{ .path = "System/Docs.info", .picture = "folder", .fields = &.{"KIND=DRAWER"} },
     .{ .path = "System/Docs/CPULoad.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "System/Docs/NetLoad.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "System/Docs/HDToolBox.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "System/Docs/MemMap.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
+    .{ .path = "System/Docs/Shares.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     // The commodities, each icon with the tool types it reads, and what
     // each is in SYS:Commodities/Docs.
     .{ .path = "Commodities/Exchange.info", .picture = "preferences-desktop-keyboard-shortcuts", .fields = &.{ "KIND=TOOL", icon_stack, "TYPE=CX_PRIORITY=0", "TYPE=CX_POPKEY=ctrl alt home", "TYPE=CX_POPUP=YES" } },
@@ -1212,6 +1214,32 @@ pub fn build(b: *std.Build) void {
         }
     }
 
+    // `sums` - the SHA-256 of every archive in release/, written as
+    // `sha256sum -c` reads it (tools/sums.zig), so that somebody who
+    // downloaded one can hold it against what was built.
+    //
+    // It is a step of its own and not part of `release` on purpose: it
+    // sums what is in the directory, and a whole set of archives is not
+    // one build's. The files a firmware loads are put in a disk image's
+    // `SYS:Storage/Boot` only for the machine the build is for - a kernel
+    // is the board's - so each 64-bit board's archive and package come
+    // from a build of their own, kept in that directory as they are made.
+    // `sums` is what is run over the finished directory, and it never
+    // builds or replaces anything in it.
+    const sums = b.addExecutable(.{
+        .name = "sums",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/sums.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseSafe,
+        }),
+    });
+    const run_sums = b.addRunArtifact(sums);
+    run_sums.addArg(b.pathFromRoot("release"));
+    run_sums.has_side_effects = true;
+    const sums_step = b.step("sums", "Write release/SHA256SUMS over the archives that are there");
+    sums_step.dependOn(&run_sums.step);
+
     // Target-independent code, tested on the host.
     const test_step = b.step("test", "Run the unit tests on the host");
     const test_options = b.addOptions();
@@ -1271,6 +1299,12 @@ pub fn build(b: *std.Build) void {
     const hevccore_mod = b.createModule(.{ .root_source_file = disk_dep.path("libs/codecs/hevc/core.zig"), .target = b.graph.host });
     disk_test_mod.addImport("hevccore", hevccore_mod);
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = hevccore_mod })).step);
+    // The SMB client - the protocol and the share files - which the
+    // handler, MountShare and the Shares tool are each built with.
+    const smbclient_mod = b.createModule(.{ .root_source_file = disk_dep.path("libs/smb/smbclient.zig"), .target = b.graph.host });
+    smbclient_mod.addImport("sdk", sdk);
+    disk_test_mod.addImport("smbclient", smbclient_mod);
+    test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = smbclient_mod })).step);
     disk_test_mod.addOptions("test_options", test_options);
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = disk_test_mod })).step);
     test_step.dependOn(&posfsck.step);

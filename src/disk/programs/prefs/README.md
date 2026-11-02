@@ -13,7 +13,7 @@ which is what **Dock Settings...** in the dock's menu does.
 
 ## The pages
 
-The settings are on nine pages, under tabs:
+The settings are on ten pages, under tabs:
 
 - **Style:** the looks there are to choose from - one style file each in
   SYS:Prefs/Presets/Styles - and a few gadgets drawn in the one chosen.
@@ -77,6 +77,13 @@ The settings are on nine pages, under tabs:
   it and its icon into SYS:WBStartup, or out into SYS:Programs, where
   it is started by hand; Use leaves it where it is. The entries
   themselves are changed on the dock.
+- **Update:** where this machine looks for a newer system - a release
+  package: a path (a stick, a share, a second disk) or an http address;
+  empty, the one it was installed from - whether it looks once at every
+  start, whether what is found is written without being asked for, and
+  whether the files the firmware reads are written with it. The page
+  writes `update.prefs` and nothing else: `C:Update AUTO` is what looks,
+  from the start's own shell, and says what there is on the desktop.
 
 The colour wheel opens in a window of its own over the editor: the wheel,
 its brightness beside it, the colour shown on a button and typed in a

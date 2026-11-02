@@ -695,6 +695,11 @@ pub const STRINGA_LongVal = STRINGA_Dummy + 0x11;
 /// The text itself, as a C string: what a program reads when the gadget
 /// says it has finished.
 pub const STRINGA_TextVal = STRINGA_Dummy + 0x12;
+/// `(bool)` The text is not shown: an asterisk is drawn for each of its
+/// characters, and a press lands where one of those is. What was typed is
+/// in the buffer as it always is - this hides it from whoever is looking
+/// at the screen, nothing more.
+pub const STRINGA_Secret = STRINGA_Dummy + 0x14;
 
 /// The text against the left edge of the box, the middle, or the right.
 pub const GACT_STRINGLEFT: u32 = 0x0000;

@@ -9,7 +9,7 @@
 //! PAGE opens it on a page, named as its tab is - PAGE=DOCK, say - which
 //! is how the dock's menu opens it on the dock's page.
 //!
-//! Nine pages under tabs:
+//! Ten pages under tabs:
 //!
 //! - **Style**: the looks there are to pick from - a style file each in
 //!   SYS:Prefs/Presets/Styles, its first comment saying what it is - and a
@@ -67,6 +67,14 @@
 //!   its icon are moved into SYS:WBStartup, or out of it into
 //!   SYS:Programs, which Save does and Use does not. Its entries are not
 //!   here: they are changed on the dock itself.
+//! - **Update**: where this machine looks for a newer system - a release
+//!   package: a path, or an http address; empty, the one it was installed
+//!   from - whether it looks once at every start, whether what is found
+//!   is written without being asked for, and whether the files the
+//!   firmware reads are written with it. What the page writes is
+//!   `update.prefs`, which `C:Update AUTO` reads from the start's own
+//!   shell; the page itself looks nowhere and writes nothing but that
+//!   file.
 //!
 //! **Save** writes the files to ENV:Sys and ENVARC:Sys, **Use** to
 //! ENV:Sys alone - in force until the machine starts again - and both then
@@ -98,6 +106,7 @@ const intuition_file = prefs.intuition;
 const palette_file = prefs.palette;
 const anvil_file = prefs.anvil;
 const dock_file = prefs.dock;
+const update_file = prefs.update;
 const locale_file = prefs.locale;
 const timezone = dos.timezone;
 const locale = sdk.locale;
@@ -143,8 +152,8 @@ const looks = intuition.style;
 const Pen = graphics.Pen;
 
 pub const COMMAND_NAME = "Prefs";
-const VERSION = "1.22";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (29.10.2026)\r\n";
+const VERSION = "1.23";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (02.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while one of its windows is active.
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
@@ -313,7 +322,7 @@ const joins_labels = [_:null]?[*:0]const u8{ "Default", "None", "Angled" };
 const keyboard_labels = [_:null]?[*:0]const u8{ "When the board has none", "Always", "Never" };
 const place_labels = [_:null]?[*:0]const u8{ "Tiled", "Centred", "Scaled to cover" };
 const view_labels = [_:null]?[*:0]const u8{ "Icons", "Names", "Dates", "Sizes" };
-const tab_names = [_:null]?[*:0]const u8{ "Style", "Advanced", "Colours", "Fonts", "Desktop", "System", "Region", "Sound", "Dock" };
+const tab_names = [_:null]?[*:0]const u8{ "Style", "Advanced", "Colours", "Fonts", "Desktop", "System", "Region", "Sound", "Dock", "Update" };
 const page_style = 0;
 const page_advanced = 1;
 const page_colours = 2;
@@ -323,6 +332,7 @@ const page_system = 5;
 const page_region = 6;
 const page_sound = 7;
 const page_dock = 8;
+const page_update = 9;
 
 const edge_labels = [_:null]?[*:0]const u8{ "Bottom", "Left", "Right", "Top" };
 const dock_label_labels = [_:null]?[*:0]const u8{ "Never", "Under the pointer", "Always" };
@@ -532,6 +542,15 @@ const Editor = struct {
     dock_start: ?*Object = null,
     dock_status: *Object = undefined,
     dock_status_text: [80:0]u8 = @splat(0),
+    /// The update page: where the machine looks for a newer system and
+    /// what it does about one, as `update.prefs` had them and as the
+    /// page has them.
+    update: update_file.Settings = .{},
+    update_source: *Object = undefined,
+    update_source_text: [update_file.source_len + 1:0]u8 = @splat(0),
+    update_at_start: *Object = undefined,
+    update_apply: *Object = undefined,
+    update_boot: *Object = undefined,
     /// The region page: the country and the languages as ENV: had them
     /// and as the page has them, the countries and the languages to pick
     /// from, those picked as their list shows them, the zone's rule, a
@@ -1334,6 +1353,27 @@ const Editor = struct {
         return d;
     }
 
+    // --- the update page --------------------------------------------------
+
+    /// What the update page has, as the file takes it.
+    fn updatePrefs(e: *Editor) update_file.Settings {
+        var u = e.update;
+        var value: usize = 0;
+        _ = e.ib.GetAttr(gc.STRINGA_TextVal, e.update_source, &value);
+        const typed: [*:0]const u8 = @ptrFromInt(value);
+        const source = trimmed(std_span(typed));
+        u.source = @splat(0);
+        const room = @min(source.len, u.source.len);
+        @memcpy(u.source[0..room], source[0..room]);
+        _ = e.ib.GetAttr(cb.CHECKBOX_Checked, e.update_at_start, &value);
+        u.at_start = value != 0;
+        _ = e.ib.GetAttr(cb.CHECKBOX_Checked, e.update_apply, &value);
+        u.apply = value != 0;
+        _ = e.ib.GetAttr(cb.CHECKBOX_Checked, e.update_boot, &value);
+        u.boot = value != 0;
+        return u;
+    }
+
     // --- the region page --------------------------------------------------
 
     fn sayRegion(e: *Editor, text: []const u8) void {
@@ -1588,6 +1628,14 @@ const Editor = struct {
         text[n] = '\n';
         n += 1;
         ok = e.saveBoth(dock_file.ENV_FILE, dock_file.ENVARC_FILE, text[0..n], keep) and ok;
+
+        n = update_file.header.len;
+        @memcpy(text[0..n], update_file.header);
+        const newer = e.updatePrefs();
+        n += update_file.write(&newer, text[n..room]);
+        text[n] = '\n';
+        n += 1;
+        ok = e.saveBoth(update_file.ENV_FILE, update_file.ENVARC_FILE, text[0..n], keep) and ok;
         // Where the dock is is kept on the disk: Save moves it, Use not.
         if (keep) if (e.dock_start) |o| {
             var value: usize = 0;
@@ -2462,6 +2510,7 @@ noinline fn build(e: *Editor) ?*Object {
     pages[page_sound] = column(ib, null, &.{ sound_groups, e.sound_status }, &.{}) orelse return null;
     pages[page_region] = buildRegion(e) orelse return null;
     pages[page_dock] = buildDock(e) orelse return null;
+    pages[page_update] = buildUpdate(e) orelse return null;
 
     e.tabs = ib.NewObjectTagList(null, ct.CLICKTAB_CLASS, &[_]TagItem{
         pair(gc.GA_ID, ID_TABS),
@@ -2552,6 +2601,49 @@ noinline fn buildDock(e: *Editor) ?*Object {
         .{},
     }) orelse return null;
     return column(ib, null, &.{ group, note, e.dock_status }, &.{});
+}
+
+/// The update page, apart from `build` as the dock's is: where a newer
+/// system is looked for, and what is done about one.
+noinline fn buildUpdate(e: *Editor) ?*Object {
+    const ib = e.ib;
+    const source = update_file.sourceText(&e.update);
+    @memcpy(e.update_source_text[0..source.len], source);
+    e.update_source_text[source.len] = 0;
+    e.update_source = ib.NewObjectTagList(null, st.STRING_CLASS, &[_]TagItem{
+        pair(gc.STRINGA_TextVal, @intFromPtr(&e.update_source_text)),
+        pair(gc.STRINGA_MaxChars, e.update_source_text.len - 1),
+        .{},
+    }) orelse return null;
+    e.update_at_start = ib.NewObjectTagList(null, cb.CHECKBOX_CLASS, &[_]TagItem{
+        pair(cb.CHECKBOX_Checked, @intFromBool(e.update.at_start)),
+        .{},
+    }) orelse return null;
+    e.update_apply = ib.NewObjectTagList(null, cb.CHECKBOX_CLASS, &[_]TagItem{
+        pair(cb.CHECKBOX_Checked, @intFromBool(e.update.apply)),
+        .{},
+    }) orelse return null;
+    e.update_boot = ib.NewObjectTagList(null, cb.CHECKBOX_CLASS, &[_]TagItem{
+        pair(cb.CHECKBOX_Checked, @intFromBool(e.update.boot)),
+        .{},
+    }) orelse return null;
+    const group = column(ib, "A newer system", &.{
+        e.update_source,
+        e.update_at_start,
+        e.update_apply,
+        e.update_boot,
+    }, &.{
+        "_Where to look",
+        "_Look at every start",
+        "Write what is found without _asking",
+        "The _kernel with it",
+    }) orelse return null;
+    const note = ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
+        pair(tx.TEXT_Wrap, 1),
+        pair(tx.TEXT_Text, @intFromPtr("Where to look is a release package: a path - a stick, a share, a second disk - or an http address. Empty, the one this system was installed from is used. What is found is said on the desktop; C:Update is what does the work, and what it takes from a package is only what differs.")),
+        .{},
+    }) orelse return null;
+    return column(ib, null, &.{ group, note }, &.{});
 }
 
 /// The region page, apart from `build` as the dock's is: the countries,
@@ -2911,6 +3003,14 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         };
     }
     e.dock_starts = dock_big_machine and exists(dl, dock_places[1][0]);
+
+    if (prefs.loadWhole(sys, dl, update_file.ENV_FILE)) |text| {
+        defer sys.FreeVec(text.ptr);
+        var newer: update_file.Settings = .{};
+        if (prefs.firstLine(text)) |line| if (update_file.parse(e.ub, line, &newer) == null) {
+            e.update = newer;
+        };
+    }
 
     // The system's pens: as intuition has them - the dim text 0 while it
     // is mixed - and as the file says.

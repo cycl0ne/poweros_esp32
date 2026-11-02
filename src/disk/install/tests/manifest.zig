@@ -256,9 +256,18 @@ test "the halves of a package" {
     const boot = install.halfOf("BOOT/kernel.bin").?;
     try testing.expectEqual(install.Half.boot, boot.half);
     try testing.expectEqualStrings("kernel.bin", boot.rest);
-    try testing.expect(install.halfOf("system") == null);
+    // A half's own drawer, which a list over a whole package holds: the
+    // half, with nothing left to make - it stands for the volume itself.
+    const own = install.halfOf("system").?;
+    try testing.expectEqual(install.Half.system, own.half);
+    try testing.expectEqualStrings("", own.rest);
+    const own_boot = install.halfOf("Boot").?;
+    try testing.expectEqual(install.Half.boot, own_boot.half);
+    try testing.expectEqualStrings("", own_boot.rest);
     try testing.expect(install.halfOf("sys/C/List") == null);
     try testing.expect(install.halfOf("C/List") == null);
+    try testing.expect(install.halfOf("systemic/C/List") == null);
+    try testing.expect(install.halfOf("") == null);
 
     var path: [64]u8 = undefined;
     const length = install.join(.system, "C/List", &path);

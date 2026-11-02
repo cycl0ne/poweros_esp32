@@ -17,8 +17,10 @@ initramfs disk-a64.bin 0x04000000
 os_check=0
 
 # The console: the RP1's UART0 on GPIO14 and 15 (header pins 8 and 10),
-# set up by the bootloader - which writes its own log there too - with
-# the RP1 left running for the kernel.
+# set up by the bootloader - whose second stage writes its log there too
+# - with the RP1 left running for the kernel. The bootloader's own log,
+# the one that says which places it tries, goes to the chip's debug UART
+# instead, and only with BOOT_UART=1 in its EEPROM settings.
 enable_rp1_uart=1
 pciex4_reset=0
 uart_2ndstage=1

@@ -767,6 +767,8 @@ RDB ADD DH2 SIZE 4G DOSTYPE FAT32    ; 4 GiB for FAT32, at the first free cylind
 RDB nvme.device INIT GPT ADDGPT BOOT DOSTYPE FAT32 SIZE 256M
                                      ; a GPT with a FAT partition first, mounted as BOOT:
 RDB sdcard.device ADDGPT Photos DOSTYPE EXFAT   ; FAT over the GPT's largest free run
+RDB nvme.device ADDGPT BOOT DOSTYPE FAT32 SIZE 256M NOMOUNT
+                                     ; ... and no drive for it at a later start
 RDB sdcard.device REMGPT Photos      ; ... and taken out of the GPT
 ```
 
@@ -826,16 +828,23 @@ refuses: one name, one drive. The flash disk is still loaded, and
 in it go onto the SSD with `Copy DH0.: TO SYS: ALL CLONE QUIET` and a
 restart.
 
-**Where the files come from.** `Copy SYS:` above fills the new volume
-from the running one, which is the machine's own RAM disk. A release
-package is the other source: one directory holding the volume's files,
-the kernel and what the firmware reads, with a list over all of it
-(`./zig build package`, and `./zig build serve` to hand it out over
-HTTP - the README has both). A machine keeps the boot half of one in
-`SYS:Storage/Boot`, with `SYS:Storage/manifest` over it, so the FAT
-partition below can be written from the running system. The commands that
-read a package - one to install a disk from it, one to bring an installed
-system up to date against it - are being written.
+**The same thing in one command.** `C:Install` does every line above -
+the GPT, the partition the firmware reads, the container, the two posfs
+partitions, the formats, the files, the boot flag and its priority - and
+leaves a list of what it wrote behind:
+
+```
+Install                          the units it can go onto, and what each holds
+Install nvme.device 1            onto unit 1, after one question
+Install nvme.device 1 SIZE 16G FORCE          16 GB for the system, asking nothing
+Install nvme.device 1 FROM NV2: SYSTEM SSD    from a package on a stick
+```
+
+Each of its keywords, the two sources it copies from - the running
+system, or a release package whose every file is held against the length
+and the sum its list gives - what it leaves on the new volume to say what
+was installed from where, and what each board's firmware reads, are in
+the [install guide](install.md).
 
 **FAT for other systems.** A FAT partition in the table is one only
 PowerOS sees; one of the GPT's own, beside the container, every system
@@ -859,7 +868,12 @@ The container `INIT GPT` makes takes every block the GPT's other
 partitions leave, so a FAT partition goes in with it: `INIT GPT` puts
 `ADDGPT`'s partition in first, at the disk's first MiB, and the
 container over the largest free run after it. `ADDGPT` on a disk whose
-container has the rest says so. Once the partition holds a volume the
+container has the rest says so. `NOMOUNT` marks it not to be mounted when the
+medium comes in - what a partition a firmware reads and nothing here
+works in wants, and what an install does with its boot partitions - and
+the flags column says `nomount` for it; rdb.library still mounts it when
+a program asks, and `MOUNTGPT <name>` gives it a drive on the spot, which
+is how to look into one. Once the partition holds a volume the
 next start mounts it as the device mounts a GPT's partitions - here
 `NV1:` - and `MOUNT` mounts the GPT's partitions too: those that hold
 a volume, under their entry's name, and a new one, its first block

@@ -9,7 +9,8 @@ and a shell, a TCP/IP stack, and a windowed desktop on the board's
 display. Programs are loaded from disk at run time and built against a
 separate SDK.
 
-**Status: release 0.2.** It runs on two ESP32-S3 boards, on two
+**Status: release 0.21** ([the archives to
+download](https://github.com/cycl0ne/poweros_esp32/releases/latest)). It runs on two ESP32-S3 boards, on two
 ESP32-P4 boards, on StarFive's VisionFive 2 (RISC-V 64), on a Raspberry Pi
 Compute Module 5 (AArch64), in Espressif's QEMU and in QEMU's RISC-V 64
 and AArch64 `virt` machines.
@@ -42,7 +43,7 @@ and AArch64 `virt` machines.
 | [Debugging](sdk/docs/guides/debugging.md) | what a failure prints, from an address to a line, the ROM debugger, `s3>`, memory debugging, JTAG |
 | [The SDK](sdk/) | the package a program builds against |
 | [Autodocs](sdk/docs/README.md) | every call, and every module by kind |
-| [Guides](sdk/docs/README.md#guides) | how the calls work together: [exec](sdk/docs/guides/exec.md), [dos](sdk/docs/guides/dos.md), [posfs](sdk/docs/guides/posfs.md), [utility](sdk/docs/guides/utility.md), [intuition](sdk/docs/guides/intuition.md), [desktop](sdk/docs/guides/anvil.md), [icons](sdk/docs/guides/icons.md), [fonts](sdk/docs/guides/fonts.md), [styles](sdk/docs/guides/styles.md), [motion](sdk/docs/guides/motion.md), [datatypes](sdk/docs/guides/datatypes.md), [network](sdk/docs/guides/network.md), [USB](sdk/docs/guides/usb.md), [disks](sdk/docs/guides/rdb.md), [Modbus](sdk/docs/guides/modbus.md), [sound](sdk/docs/guides/audio.md), [displays](sdk/docs/guides/rtg.md), [locale](sdk/docs/guides/locale.md), [commodities](sdk/docs/guides/commodities.md) |
+| [Guides](sdk/docs/README.md#guides) | how the calls work together: [exec](sdk/docs/guides/exec.md), [dos](sdk/docs/guides/dos.md), [posfs](sdk/docs/guides/posfs.md), [utility](sdk/docs/guides/utility.md), [intuition](sdk/docs/guides/intuition.md), [desktop](sdk/docs/guides/anvil.md), [icons](sdk/docs/guides/icons.md), [fonts](sdk/docs/guides/fonts.md), [styles](sdk/docs/guides/styles.md), [motion](sdk/docs/guides/motion.md), [datatypes](sdk/docs/guides/datatypes.md), [network](sdk/docs/guides/network.md), [USB](sdk/docs/guides/usb.md), [disks](sdk/docs/guides/rdb.md), [installing](sdk/docs/guides/install.md), [Modbus](sdk/docs/guides/modbus.md), [sound](sdk/docs/guides/audio.md), [displays](sdk/docs/guides/rtg.md), [locale](sdk/docs/guides/locale.md), [commodities](sdk/docs/guides/commodities.md) |
 | [Wi-Fi](docs/esp32s3wifi.md) | the ESP32-S3's radio's device, and how it is built |
 | [USB Wi-Fi](docs/aic8800.md) | the AIC8800 stick's device, and how it is built |
 | [posfs](docs/posfs.md) | the PowerOS file system: its format on the medium, field by field, and how it works |
@@ -63,7 +64,7 @@ and AArch64 `virt` machines.
   drives the hardware itself, register by register: on an ESP32 everything
   between power-on and the desktop is in this tree, on the others
   everything after their firmware hands over.
-- **It is** young. 0.2 works end to end, but the API may change before
+- **It is** young. 0.21 works end to end, but the API may change before
   1.0, and not every part has run on every board.
 - **It is not** a Linux, a POSIX system or an RTOS in the usual sense:
   programs use the system's own API - libraries opened by name, tag lists,
@@ -217,10 +218,16 @@ Beside them:
   on cards and sticks; the flash file system (`DH0:`), `RAM:`, `PIPE:`;
   a share on an SMB 2 or 3 server, read and written as a volume, signed
   and encrypted, mounted at boot from its file in `DEVS:Shares/` and
-  connected again after a server restart (`C:net/MountShare`,
-  [network guide](sdk/docs/guides/network.md#a-share-as-a-volume-smb-handler));
+  connected again after a server restart; a server asked what shares it
+  has and one of them mounted from the screen (`SYS:System/Shares`,
+  `C:net/MountShare`, [network
+  guide](sdk/docs/guides/network.md#a-share-as-a-volume-smb-handler));
   partitions from an RDB or a GPT on any drive, laid out in
-  `SYS:System/HDToolBox` ([disks guide](sdk/docs/guides/rdb.md)).
+  `SYS:System/HDToolBox` ([disks guide](sdk/docs/guides/rdb.md)); a
+  system put onto a card or an SSD by one command, from the running
+  system or from a release package (`C:Install`), and brought up to date
+  from a package afterwards, only what differs fetched, the kernel with a
+  way back from one that does not come up (`C:Update`, `C:Reboot`).
 - **Devices:** timer, serial, console, input from keyboards, mice and
   touch, flash, SD card, NVMe, I2C, RS-485, clipboard; USB hosts on the
   ESP32s' OTG and on xHCI, there up to SuperSpeed (5 Gbit/s), bulk
@@ -248,8 +255,8 @@ Beside them:
   ([locale guide](sdk/docs/guides/locale.md)).
 - **Programs:** in `SYS:Programs` MultiView, Notepad, Sheet, Terminal,
   Player, FontView, Battery, Prefs and Volume; in `SYS:System` the Shell,
-  HDToolBox, CPULoad, NetLoad and MemMap; in `SYS:Commodities` Exchange,
-  which lists the commodities running and makes each active or
+  HDToolBox, Shares, CPULoad, NetLoad and MemMap; in `SYS:Commodities`
+  Exchange, which lists the commodities running and makes each active or
   inactive, shows or hides its window, or ends it
   ([commodities guide](sdk/docs/guides/commodities.md)).
 - **When something fails:** a Guru and a ROM debugger on the serial
@@ -282,10 +289,10 @@ What each board runs is in [Boards](#boards).
 | `esp32p4_emu` | Espressif's esp-emulator running an ESP32-P4 on the boards' v1.x ROM: both cores, UART0, 32 MB PSRAM (`./zig build emu`) | the shell on UART0, dos with the flash disk and its RISC-V commands, a Guru with the ROM debugger; `-Dselftest` checks the chip; no screen |
 | `olimex_p4pc` | Olimex ESP32-P4-PC: ESP32-P4NRW32 (16 MB flash, 32 MB PSRAM), console on the chip's USB port, 10/100 Ethernet (IP101GRR), HDMI, a MIPI-DSI connector (here Olimex's MIPI-LCD2.8, 480×640), four USB host ports, ES8311 audio, microSD | runs: the USB console, Ethernet, the desktop on the DSI panel or over HDMI, in the largest of 1360×768, 1280×720, 1024×768 and 800×600 the monitor names ([photo](docs/screenshots/README.md#on-the-board)), both cores, PSRAM at 200 MHz, the 2D engine and the JPEG codec, USB keyboards, mice and sticks through its hub, the microSD card, sound on the jack (the codec's one output on both sides) - the [Player](docs/screenshots/README.md#music-sysprogramsplayer) on its panel; an AIC8800 USB Wi-Fi stick, joined to WPA2 networks; the battery once its solder jumpers are closed; not yet tried on the board: recording, playing into a file |
 | `crowpanel_p4` | Elecrow CrowPanel Advanced 10.1": ESP32-P4NRW32, console on UART0 through a CH340K, 1024×600 MIPI-DSI panel, GT911 touch, ESP32-C6 for Wi-Fi, two speakers on NS4168 I2S amplifiers, two PDM microphones, SD slot | runs: the shell on UART0, the desktop on its panel with touch, both cores, PSRAM at 200 MHz, the 2D engine and the JPEG codec, stereo on its speakers; not yet tried on the board: audio.device 2's streams, playing into a file, the UART1 and UART3-IN connectors |
-| `qemu_virt` | QEMU's RISC-V 64 `virt` machine under OpenSBI: four harts, 512 MB, a 16550 console; with QEMU's options a 1920×1080 display (`virtio-gpu-device` or `ramfb`), an xHCI controller and NVMe drives on its PCI Express | runs (`./zig build virt`): the shell on the serial console, four cores, dos started from an NVMe SSD, a work disk that keeps what is saved to it beside it; with `-device virtio-gpu-device` or `-device ramfb` the desktop, with `-device qemu-xhci` USB keyboards, mice and sticks, a stick at SuperSpeed, a disk over UAS on streams, with more `nvme` devices more SSDs; sound through QEMU's USB speaker on the host's sound (`-Daudio` names QEMU's backend, `wav,path=out.wav` a file, sample for sample), which every virt step plugs in and its system disk prefers, pulled out and put back as it plays; with `-device usb-net` the network, through `usb/ecm.device` (the display steps plug one in) |
-| `visionfive2` | StarFive VisionFive 2 (v1.3B): JH7110 with four U74 RISC-V cores, 8 GB LPDDR4, HDMI, two gigabit Ethernet ports, four USB-A on a VL805 on PCI Express, an M.2 slot, microSD; started by the board's own OpenSBI and U-Boot | runs: the console on the debug UART, the desktop over HDMI at 1920×1080, four cores, all of its RAM, starting from the microSD card, the first Ethernet port at 1000 Mbit/s, USB keyboards and mice, an NVMe SSD in the M.2 slot, the random number generator, reboot, the four cores as the 2D engine, facet.library's 3D in a window at 60 frames a second, sound over HDMI; not yet tried on the board: sound through a USB speaker or headset, USB 3 devices at SuperSpeed, a disk over UAS; not driven yet: the second Ethernet port, the eMMC socket |
+| `qemu_virt` | QEMU's RISC-V 64 `virt` machine under OpenSBI: four harts, 512 MB, a 16550 console; with QEMU's options a 1920×1080 display (`virtio-gpu-device` or `ramfb`), an xHCI controller and NVMe drives on its PCI Express | runs (`./zig build virt`): the shell on the serial console, four cores, dos started from an NVMe SSD, a work disk that keeps what is saved to it beside it, a whole system installed onto a second SSD in one command (`C:Install`), from the running system or from a release package on a stick; with `-device virtio-gpu-device` or `-device ramfb` the desktop, with `-device qemu-xhci` USB keyboards, mice and sticks, a stick at SuperSpeed, a disk over UAS on streams, with more `nvme` devices more SSDs; sound through QEMU's USB speaker on the host's sound (`-Daudio` names QEMU's backend, `wav,path=out.wav` a file, sample for sample), which every virt step plugs in and its system disk prefers, pulled out and put back as it plays; with `-device usb-net` the network, through `usb/ecm.device` (the display steps plug one in) |
+| `visionfive2` | StarFive VisionFive 2 (v1.3B): JH7110 with four U74 RISC-V cores, 8 GB LPDDR4, HDMI, two gigabit Ethernet ports, four USB-A on a VL805 on PCI Express, an M.2 slot, microSD; started by the board's own OpenSBI and U-Boot | runs: the console on the debug UART, the desktop over HDMI at 1920×1080, four cores, all of its RAM, starting from the microSD card, the first Ethernet port at 1000 Mbit/s, USB keyboards and mice, an NVMe SSD in the M.2 slot, the random number generator, reboot, the four cores as the 2D engine, facet.library's 3D in a window at 60 frames a second, sound over HDMI; not yet tried on the board: a system installed onto its card or an SSD (`C:Install`), sound through a USB speaker or headset, USB 3 devices at SuperSpeed, a disk over UAS; not driven yet: the second Ethernet port, the eMMC socket |
 | `qemu_virt_a64` | QEMU's AArch64 `virt` machine with four Cortex-A76 cores and a GICv2, as the Raspberry Pi CM5's BCM2712 has them, everything below 4 GiB: 512 MB, a PL011 console; with QEMU's options a 1920×1080 display (`virtio-gpu-device` or `ramfb`), an xHCI controller and NVMe drives on its PCI Express | runs (`./zig build virt64`): the shell on the serial console, four cores, dos started from an NVMe SSD, a work disk beside it, the ROM debugger with breakpoints, watchpoints and steps; entered at EL1 or, with `virtualization=on`, at EL2 (`./zig build virt64-el2`); with `-device virtio-gpu-device` or `-device ramfb` the desktop and facet.library's 3D, with `-device qemu-xhci` USB keyboards and tablets, with more `nvme` devices more SSDs, with `-device usb-net` the network, through `usb/ecm.device` (the display steps plug one in); sound through QEMU's USB speaker, as on `qemu_virt`. The CM5 is `rpi_cm5` |
-| `rpi_cm5` | Raspberry Pi Compute Module 5 on its IO board: BCM2712 with four Cortex-A76 cores and a GIC-400, up to 16 GB, eMMC, the console on the RP1's UART0 (pins 8 and 10 of the 40-pin header); started by the bootloader in its EEPROM from the eMMC, or over USB with `rpiboot` | runs: the shell on the console, four cores, all of RAM, dos with the disk image the bootloader loads; the console on its interrupt, an MSI-X message from the RP1 that the board routes to the GIC; USB on the two USB 3 sockets, the RP1's DWC3 controllers through xhci.device (a mouse and a hub found); an NVMe SSD in the M.2 slot, PCI Express port 1 through pci.library, read at 432 MiB/s on its INTx line, dos started from its posfs `DH0:` (System) with `DH1:` (Work) beside it, the kernel still from the eMMC or `rpiboot`; Wi-Fi from the module's CYW43455 (`networks/cyw43455.device`, WPA2, joined at the start); the date from its RTC through the VideoCore's firmware; the cores at 2.4 GHz, asked of the same firmware, on a supply that holds them there - PoE+ here (`CpuClock` says the clock, the chip's temperature and what holds the cores back); the chip's temperature through thermal.resource (`Temperature`), the IO board's fan turned as it asks - in Linux's steps, at speeds this fan turns at; HDMI 0 driven by the kernel - the HVS, a pixel valve and the HDMI controller - in the monitor's mode from its EDID, as HDMI with its infoframes (DVI to a monitor without HDMI's block), 1920×1080 and 2560×1440 at 60 Hz shown, with the pointer and a dragged icon each in a plane of its own, the picture mirrored either way, the monitor put to sleep and woken, and its brightness set over DDC/CI; a monitor plugged in after the start or swapped while it runs; 4K at 60 Hz sent scrambled to a monitor that says it takes it (not tried yet: no such monitor here); the monitor's speakers in stereo at 48 kHz through `rta-hdmi` and audio.device; facet.library's 3D at 60 frames a second, in a window and on a screen of its own - there its pictures read by the display as they were drawn, nothing copied; Ethernet from the RP1's MAC (`networks/emac.device`) at 1000 Mbit/s, 200 MiB read from a NAS at 105 MiB/s and written at 95; not driven yet: the RP1's GPIO, message-signalled interrupts on the M.2 slot, and - much later - HDMI 1 |
+| `rpi_cm5` | Raspberry Pi Compute Module 5 on its IO board: BCM2712 with four Cortex-A76 cores and a GIC-400, up to 16 GB, eMMC, the console on the RP1's UART0 (pins 8 and 10 of the 40-pin header); started by the bootloader in its EEPROM, in the order its `BOOT_ORDER` setting gives - the SSD, the eMMC, or over USB with `rpiboot` | runs: the shell on the console, four cores, all of RAM, dos with the disk image the bootloader loads; the console on its interrupt, an MSI-X message from the RP1 that the board routes to the GIC; USB on the two USB 3 sockets, the RP1's DWC3 controllers through xhci.device (a mouse and a hub found); an NVMe SSD in the M.2 slot, PCI Express port 1 through pci.library, read at 432 MiB/s on its INTx line, dos started from its posfs `DH0:` (System) with `DH1:` (Work) beside it, and the kernel from the SSD's own boot partition, which `C:Install` writes beside them - the whole machine on the one medium, with the eMMC behind it in the boot order as the way back in; Wi-Fi from the module's CYW43455 (`networks/cyw43455.device`, WPA2, joined at the start); the date from its RTC through the VideoCore's firmware; the cores at 2.4 GHz, asked of the same firmware, on a supply that holds them there - PoE+ here (`CpuClock` says the clock, the chip's temperature and what holds the cores back); the chip's temperature through thermal.resource (`Temperature`), the IO board's fan turned as it asks - in Linux's steps, at speeds this fan turns at; HDMI 0 driven by the kernel - the HVS, a pixel valve and the HDMI controller - in the monitor's mode from its EDID, as HDMI with its infoframes (DVI to a monitor without HDMI's block), 1920×1080 and 2560×1440 at 60 Hz shown, and the display brought up where the firmware set none up at all - a machine starting from its own medium reaches the driver in the first second after the power comes on, before the firmware has set up any display, so the driver starts the HVS's clock itself - with the pointer and a dragged icon each in a plane of its own, the picture mirrored either way, the monitor put to sleep and woken, and its brightness set over DDC/CI; a monitor plugged in after the start or swapped while it runs; 4K at 60 Hz sent scrambled to a monitor that says it takes it (not tried yet: no such monitor here); the monitor's speakers in stereo at 48 kHz through `rta-hdmi` and audio.device; facet.library's 3D at 60 frames a second, in a window and on a screen of its own - there its pictures read by the display as they were drawn, nothing copied; Ethernet from the RP1's MAC (`networks/emac.device`) at 1000 Mbit/s, 200 MiB read from a NAS at 105 MiB/s and written at 95; a system installed onto the SSD in one command (`C:Install`), the boot pair on it, and the machine starting from the medium with no host attached; not driven yet: the RP1's GPIO, message-signalled interrupts on the M.2 slot, and - much later - HDMI 1 |
 
 `C:ShowConfig` lists what the running board has, and `ShowConfig DEVICES`
 every device by what it speaks - serial lines, block devices, network
@@ -316,6 +323,7 @@ wrapper: it fetches the Espressif Zig toolchain (`0.16.0-xtensa`) into
 ./zig build serve -Dboard=visionfive2       # hand that package out over HTTP (quit: Ctrl-C)
 ./zig build archive -Dboard=visionfive2     # what that board is handed over in
 ./zig build release -Ddisk-tree=false       # every board's archive and package, in release/
+./zig build sums                            # release/SHA256SUMS over the archives that are there
 ```
 
 Fetched once into `toolchain/`, pinned and checked, never committed:
@@ -509,14 +517,17 @@ wants a FAT partition with `src/boards/rpi_cm5/config.txt` as
 `config.txt`, `kernel.bin`, `disk-a64.bin` and Raspberry Pi's device
 tree for the module, `bcm2712-rpi-cm5-cm5io.dtb`. The bootloader loads
 nothing above RAM's first GiB: it puts `kernel.bin` at 2 MiB, and the
-kernel copies itself up to 0x40200000. With the IO board's BOOT jumper
-fitted, `rpiboot` from Raspberry Pi's
+kernel copies itself up to 0x40200000. With the IO board's nRPIBOOT
+jumper fitted - the module's EMMC-DISABLE line, the chip's GPIO 20,
+pulled low - `rpiboot` from Raspberry Pi's
 [usbboot](https://github.com/raspberrypi/usbboot) starts the same files
 over USB from a directory holding usbboot's `bootfiles.bin`, a
 `config.txt` saying `boot_ramdisk=1`, and the partition's image as
 `boot.img`; its `mass-storage-gadget64` makes the eMMC a USB disk to
 write the partition to. The console is the RP1's UART0 at 115200 8N1,
-on which the bootloader logs too (`uart_2ndstage=1`). The RP1's
+on which the firmware's second stage logs too (`uart_2ndstage=1`); which
+places its bootloader tries before that, and how that order is set, is in
+`tools/bootpackage/bundle.md`. The RP1's
 interrupts come over its PCI Express link as MSI-X messages, which the
 BCM2712's MIP raises on the GIC: `src/boards/rpi_cm5/rp1.zig` sets that
 up as the kernel starts, and RP1 source n is exec interrupt 160 + n -
@@ -556,6 +567,35 @@ blocks it touches, and the archive keeps the holes as holes. The two
 emulators have no archive: neither Espressif's QEMU nor esp-emulator is a
 machine anybody has by downloading one.
 
+**Already built, for the newest release:** each archive is at
+`https://github.com/cycl0ne/poweros_esp32/releases/latest/download/poweros-<board>.tar.gz`,
+with `SHA256SUMS` beside it under the same address, so
+
+```sh
+curl -LO https://github.com/cycl0ne/poweros_esp32/releases/latest/download/poweros-rpi_cm5.tar.gz
+curl -LO https://github.com/cycl0ne/poweros_esp32/releases/latest/download/SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS
+tar -xzf poweros-rpi_cm5.tar.gz && poweros-rpi_cm5/write.sh --help
+```
+
+is the whole of it. On a machine that already runs the system, `C:Hash
+CHECK SHA256SUMS` reads the same list. Two pieces of firmware are not in
+these archives, since passing them on is not ours to do - the CYW43455's,
+which the Compute Module 5's radio runs, and the WAVE511's, which the
+VisionFive 2's video decoder runs (`scripts/fetch-vpu.sh`,
+`scripts/fetch-cyw43455.sh` fetch them from their owners for a build of
+one's own).
+
+`./zig build sums` writes `release/SHA256SUMS` over the archives that are
+in that directory - the digest in lower-case hex, two spaces, the name -
+which is what `sha256sum -c SHA256SUMS` reads, and what the system's own
+`C:Hash CHECK` reads on a machine that has no such command. It sums what
+is there rather than what one build made, because a whole set of archives
+is not one build's: the files a firmware loads go into a disk image's
+`SYS:Storage/Boot` for the machine the build is for, so each 64-bit
+board's archive comes from a build of its own. So it is run last, over the
+finished directory, and it builds and replaces nothing in it.
+
 The scripts in them ask the host what it has rather than assuming:
 `run.sh` a display backend, the virtio GPU or the ramfb, an audio driver
 and QEMU's user-mode network, leaving out what is missing and saying so;
@@ -594,17 +634,65 @@ the written blocks take room, and written to a card or an SSD with `dd` it
 is a system to start. It carries the icons and the sound setting of the
 build that made it, so a board gets its own from the second way.
 
-**From the machine.** A machine running from its RAM disk partitions,
-formats and fills the medium itself, in eight lines of shell:
-`RDB INIT GPT`, `RDB ADD`, `Format`, `Copy SYS: TO ... ALL CLONE`, and
-`RDB CHANGE ... BOOTABLE BOOTPRI` for the one to start from - the
-[disks guide](sdk/docs/guides/rdb.md#from-the-shell) has them with what
-each is for, and `SYS:System/HDToolBox` does the table in a window.
+**From the machine.** `C:Install` does the whole of it in one command,
+on a machine with nothing but a console:
+
+```
+Install                            the units it can go onto, and what each holds
+Install nvme.device                a system onto unit 0 of it, after one question
+Install nvme.device 1 SIZE 16G     unit 1, 16 GB of it for the system
+Install nvme.device FROM WORK:package FORCE    from a release package, asking nothing
+```
+
+It writes a GPT with the partition the firmware reads - two where the
+board's firmware starts from either of a pair - and a PowerOS container
+over the rest with the system and a work partition on posfs in it; gives
+each an empty volume; copies the files, from `SYS:` and `SYS:Storage/Boot`
+or from a package, checking each one against the sum its list gives; and
+leaves `SYS:System/manifest` and `ENVARC:Sys/install.prefs` behind, which
+say what was installed and from where. The
+[install guide](sdk/docs/guides/install.md) has each keyword, both
+sources, the package's list and what each board's firmware reads. The
+same thing by hand is eight lines of shell - `RDB INIT GPT`, `RDB ADD`,
+`Format`, `Copy SYS: TO ... ALL CLONE`,
+`RDB CHANGE ... BOOTABLE BOOTPRI` - which the
+[disks guide](sdk/docs/guides/rdb.md#from-the-shell) has with what each
+is for, and `SYS:System/HDToolBox` does the table in a window.
+
+**Up to date.** `C:Update` reads a package over a system that is
+installed already - from a stick, a share or an `http://` address - and
+takes from it what differs; `BOOT` writes the kernel with it. Three things are compared for every path:
+the list the machine was given, the list in the package, and the file
+itself, so what the build changed is fetched, what it dropped is deleted,
+and what was changed on this machine is kept and said by name rather than
+written over. Where the two lists agree the file is looked for and not
+read, which is why an update over a 50 MB package that differs in two
+files fetches 4.7 KB. `CHECK` says what would happen and writes nothing,
+and its return code tells a script whether there is anything to do. The
+system volume is given a snapshot before the first file is written.
+
+**By itself.** `ENVARC:Sys/update.prefs` says where a machine looks for
+a newer system, whether it looks at every start, and whether what it
+finds is written without being asked: `C:Update AUTO` runs from
+`S:Network-Startup` once the network is up, puts what it found in the
+system log and offers it in a requester where there is a desktop. Without
+that file nothing looks anywhere. The **Update** page in
+`SYS:Programs/Prefs` writes it.
+
+**A kernel with a way back.** `Update BOOT` writes what the firmware
+reads into the partition it reads it from, after the system volume's
+files. Where the firmware starts from either of a pair of partitions, the
+one not in use is written and `autoboot.txt` points at it for a single
+start: `C:Reboot TRYBOOT` starts the machine on it, a kernel that does
+not come up costs one start, and the system that did come up keeps it
+with `Update CONFIRM`. Where the firmware reads one partition, the file
+being replaced is kept beside the new one as `<name>.old`. `C:Reboot`
+holds every drive a device feeds still before the reset, so that what a
+file system is holding is written out.
 
 **What starts it.** Of the bootable partitions of every disk, dos starts
-from the one with the highest boot priority, and the RAM disk's `DH0` is 0:
-a partition above it wins, and the RAM disk is still there when the medium
-is not - a system to start from with one `BOOTPRI` between them. The
+from the one with the highest boot priority; an install gives the system
+partition 5, and a disk image's `DH0` has none, so the medium wins. The
 loader can leave the disk image out altogether, and the machine then
 starts from the medium alone, as QEMU's virt machines do.
 
@@ -637,9 +725,9 @@ step does over what it has just gathered.
 over HTTP ([serve](tools/serve/README.md), `-Dserve-port=`, 8080 by
 default): GET and HEAD and nothing else, no listing of a directory, and
 only the paths a manifest may name. In QEMU's user network the host is
-10.0.2.2, so a machine there reaches `http://10.0.2.2:8080/`. What reads a
-package on the machine - one command to install, one to bring a system up
-to date - is being written.
+10.0.2.2, so a machine there reaches `http://10.0.2.2:8080/`. On the
+machine, `C:Install` makes a medium from such a package and `C:Update`
+brings one that is installed already up to date from a later one.
 
 **Keeping the files current.** Besides the image, each build writes the
 disk's files as a tree (`zig-out/disk-rv64/`, `zig-out/disk-a64/`) and a
@@ -661,6 +749,7 @@ More build steps and options:
 | `./zig build modchart` | regenerate the charts of which module uses which (`sdk/docs/modules.md`) |
 | `./zig build archive -Dboard=olimex_p4pc` | what that board is handed over in, into `release/` |
 | `./zig build release` | every board's archive and package at once, into `release/` |
+| `./zig build sums` | `release/SHA256SUMS` over the archives in `release/`, in the form `sha256sum -c` and `C:Hash CHECK` read |
 | `./zig build posfsck -- [--data] flash.bin` | check the posfs volumes of a flash dump or a card's image on the host ([posfs guide](sdk/docs/guides/posfs.md#checking-a-volume)) |
 | `-Ddisk-tree=false` | leave the `disk/` tree in this root off the disk images: what `archive` and `release` want for something to hand out, since those files are the builder's own |
 | `-Dboot=/boot/firmware/bcm2712-rpi-cm5-cm5io.dtb` | a file this tree does not hold in a release package's `boot/` and in `SYS:Storage/Boot`, under its own name or the one before a `=`: what a board's firmware reads besides the kernel |

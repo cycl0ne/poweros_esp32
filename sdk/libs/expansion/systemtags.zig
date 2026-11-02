@@ -137,6 +137,13 @@ pub const SYSTAG_DmaCoherent = SYSTAG_Dummy + 33;
 /// says (`riscv,ndev`): QEMU's virt 95, the JH7110 136. Only those are
 /// set up and taken. Absent, the most any machine here has.
 pub const SYSTAG_PlicSources = SYSTAG_Dummy + 34;
+/// How many partitions the machine's firmware can be told to start from:
+/// 2 where it has a pair and can be sent to the other one for one start
+/// (the Compute Module 5, whose bootloader reads `autoboot.txt` and takes
+/// a tryboot flag), 1 or absent where it reads one partition. An install
+/// makes that many boot partitions, so that a kernel can be replaced with
+/// a way back to the one that worked.
+pub const SYSTAG_BootSlots = SYSTAG_Dummy + 35;
 
 pub const PSRAM_NONE: usize = 0;
 pub const PSRAM_QUAD: usize = 1;

@@ -42,3 +42,15 @@ EndIf
 If EXISTS ENV:Sys/net/syslog
   Run >NIL: C:Log SYSLOG ${Sys/net/syslog}
 EndIf
+
+; A newer system, where ENVARC:Sys/update.prefs says where to look for
+; one: what there is goes into the system log and, where there is a
+; desktop, into a requester that offers to write it. That file is what
+; says whether to look at all, so a machine without one looks nowhere.
+; Last here, since it is the only part of the start that reads a whole
+; release package.
+If EXISTS C:Update
+  If EXISTS ENV:Sys/update.prefs
+    C:Update AUTO
+  EndIf
+EndIf

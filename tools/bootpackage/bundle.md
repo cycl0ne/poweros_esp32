@@ -48,14 +48,50 @@ Pi's own file and is not in this package: put it on the partition beside
 the rest. `config.txt` here names what goes where and nothing else is
 needed.
 
-With the IO board's BOOT jumper fitted, Raspberry Pi's `rpiboot` starts
+With the IO board's nRPIBOOT jumper fitted - the module's EMMC-DISABLE
+line, the chip's GPIO 20, pulled low - Raspberry Pi's `rpiboot` starts
 the same files over USB from a directory holding usbboot's
 `bootfiles.bin`, a `config.txt` saying `boot_ramdisk=1` and the
 partition's image as `boot.img`; its `mass-storage-gadget64` makes the
 eMMC a USB disk to write that partition on.
 
 The console is the RP1's UART0 on pins 8 and 10 of the 40-pin header,
-115200 8N1, on which the bootloader logs too.
+115200 8N1, on which the firmware's second stage logs too
+(`uart_2ndstage=1` in `config.txt`).
+
+Where the firmware looks for that partition is `BOOT_ORDER` in the
+bootloader's own settings - in the EEPROM, not in `config.txt`. It is a
+hex number read from its lowest digit up, each digit one place to try: 1
+the card or eMMC, 4 a USB mass-storage device, 6 an NVMe SSD, 2 the
+network, 7 HTTP, 3 USB device mode, f start the sequence again, e stop.
+So `0xf16` tries the SSD, then the eMMC, then starts over - the order a
+system on an SSD wants, with the eMMC left as the way back in. Raspberry
+Pi documents `0xf41` as the value used when the setting is empty, and
+documents none for a module as it comes, so a module's own order is read
+off it rather than assumed.
+
+The settings are read and written with Raspberry Pi's
+`rpi-eeprom-config` from a system on the module that has their tools, or
+from a PC with the module in rpiboot mode: `boot.conf` in usbboot's
+`recovery5` directory holds them, `./update-pieeprom.sh` builds the
+image and `../rpiboot -d .` writes it. `BOOT_UART=1` among them makes
+the bootloader print each place it tries, on the firmware's own debug
+UART (UART10) - not on the console above, which carries the second stage
+and the system.
+
+They can also be read from the chip itself, which wants nothing on the
+module: `rpiboot -d usbboot/mass-storage-gadget64` starts a small Linux
+on it with the eMMC and the SSD as USB disks and a console of its own
+(`root`, no password), and the EEPROM is on its SPI:
+
+```
+flashrom -p linux_spi:dev=/dev/spidev10.0 -r ee.bin
+strings ee.bin | grep -A3 '^\[all\]'
+```
+
+The settings are plain text in the image, so that prints them as they
+are - a read of the chip rather than of a file that is meant to be on
+it.
 
 ## The first start
 

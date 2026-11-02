@@ -32,6 +32,8 @@
 //! and install another machine - with no network and no second machine.
 
 pub const manifest = @import("manifest.zig");
+pub const update = @import("update.zig");
+pub const autoboot = @import("autoboot.zig");
 
 /// The two halves of a package.
 pub const Half = enum { system, boot };
@@ -60,15 +62,19 @@ pub const boot_store = "SYS:Storage/Boot";
 pub const boot_manifest = "SYS:Storage/manifest";
 
 /// A path in a package, split into the half it is in and the rest of it:
-/// `system/C/List` is `.system` and `C/List`. Null for a path in neither
-/// half, which is not a package's.
+/// `system/C/List` is `.system` and `C/List`. A half's own drawer - the
+/// line `drawer system`, which a list over a whole package holds - is
+/// that half with nothing left: there is nothing to make for it, since
+/// what it stands for is the volume a half is written to. Null for a path
+/// in neither half, which is not a package's.
 pub const Part = struct { half: Half, rest: []const u8 };
 
 pub fn halfOf(path: []const u8) ?Part {
     for (half_names, 0..) |name, which| {
-        if (path.len <= name.len or path[name.len] != '/') continue;
+        if (path.len < name.len or (path.len > name.len and path[name.len] != '/')) continue;
         if (manifest.samePath(path[0..name.len], name)) {
-            return .{ .half = @enumFromInt(which), .rest = path[name.len + 1 ..] };
+            const rest = if (path.len == name.len) path[path.len..] else path[name.len + 1 ..];
+            return .{ .half = @enumFromInt(which), .rest = rest };
         }
     }
     return null;

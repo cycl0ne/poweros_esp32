@@ -42,6 +42,12 @@
 //! DISMOUNT asks each NAME's handler to log off and end, and takes the
 //! device off the list - not while anything on it is locked, open or
 //! watched; with ALL, every share's.
+//!
+//! **LIST** says what shares a server has, mounting nothing: SERVER names
+//! it - `//nas.lan`, a name or an address, a port after a colon - and
+//! USER, PASSWORD and DOMAIN who asks, anonymously with none of them. It
+//! is the server's own account of itself, which it may refuse to anyone
+//! who has not logged on.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -54,15 +60,19 @@ const DosBase = sdk.interface.dos.DosBase;
 const CryptoBase = sdk.interface.crypto.CryptoBase;
 const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
-const placeOf = @import("place.zig").placeOf;
-const sharefile = @import("sharefile.zig");
+const client = @import("smbclient");
+const placeOf = client.place.placeOf;
+const sharefile = client.sharefile;
+const browse = client.browse;
+const share_area = client.shares;
+const SocketBase = sdk.interface.bsdsocket.SocketBase;
 const ShareFile = sharefile.ShareFile;
 
 pub const COMMAND_NAME = "MountShare";
-const VERSION_STRING = "\x00$VER: MountShare 1.1 (25.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: MountShare 1.2 (02.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "NAME/M,ALL/S,SHARE/K,USER/K,PASSWORD/K,DOMAIN/K,VOLUME/K,PORT/K/N,READONLY/S,ENCRYPT/S,SAVE/S,QUIET/S,DISMOUNT/S";
+const template = "NAME/M,ALL/S,SHARE/K,USER/K,PASSWORD/K,DOMAIN/K,VOLUME/K,PORT/K/N,READONLY/S,ENCRYPT/S,SAVE/S,QUIET/S,DISMOUNT/S,LIST/S,SERVER/K";
 const arg_name = 0;
 const arg_all = 1;
 const arg_share = 2;
@@ -76,7 +86,9 @@ const arg_encrypt = 9;
 const arg_save = 10;
 const arg_quiet = 11;
 const arg_dismount = 12;
-const arg_count = 13;
+const arg_list = 13;
+const arg_server = 14;
+const arg_count = 15;
 
 /// The handler process's stack: a command's, which grows with the
 /// chip's pointers - the logon's work is deeper than a handler's default.
@@ -118,6 +130,14 @@ const MSG_SAVED = "%s: %s: saved in %s\n";
 const MSG_SAVED_HASH = "%s: %s: saved in %s, its password's hash in %s\n";
 const MSG_NOSAVE = "%s: %s could not be written";
 const MSG_UNSAVABLE = "%s: %s: '%s' cannot be saved: it has a quote in it\n";
+const MSG_NOSERVER = "%s: LIST needs SERVER, as //server or an address\n";
+const MSG_BADSERVER = "%s: '%s' is not a server's name\n";
+const MSG_NOSOCKET = "%s: can't open %s\n";
+const MSG_LISTED = "%s: SMB %s%s%s%s\n";
+const MSG_SHARES = "Share                            Kind     Comment\n";
+const MSG_SHARE = "%-32s %-8s %s\n";
+const MSG_MORE = "%s: %u shares of %u - the rest did not fit\n";
+const MSG_NOLIST = "%s: %s\n";
 const MSG_NOMEM = "%s: out of memory\n";
 const MSG_NOCRYPTO = "%s: crypto.library %u.%u is needed for a password\n";
 const MSG_RESOLVE = "%s: %s has no address\n";
@@ -534,76 +554,12 @@ fn mountOne(sys: *ExecBase, dl: *DosBase, name: [*:0]const u8, options: *const G
 
 // --- saving -------------------------------------------------------------------
 
-/// Text gathered for a file.
-const Text = struct {
-    bytes: [1024]u8 = undefined,
-    len: usize = 0,
-
-    fn add(text: *Text, part: []const u8) void {
-        const room = text.bytes.len - text.len;
-        const count = @min(part.len, room);
-        @memcpy(text.bytes[text.len..][0..count], part[0..count]);
-        text.len += count;
-    }
-
-    fn number(text: *Text, value: u32) void {
-        var digits: [10]u8 = undefined;
-        var at: usize = digits.len;
-        var rest = value;
-        while (true) {
-            at -= 1;
-            digits[at] = '0' + @as(u8, @intCast(rest % 10));
-            rest /= 10;
-            if (rest == 0) break;
-        }
-        text.add(digits[at..]);
-    }
-
-    fn keyword(text: *Text, name: []const u8, value: ?[]const u8) void {
-        const quoted = value orelse return;
-        text.add(name);
-        text.add(" = \"");
-        text.add(quoted);
-        text.add("\"\n");
-    }
-};
-
-/// Every directory on `path` that is not there made, from the volume
-/// down: false when one cannot be.
-fn makeDirs(dl: *DosBase, path: [*:0]const u8) bool {
-    var into: Path = @splat(0);
-    const text = span(path);
-    if (text.len >= into.len) return false;
-    var at: usize = 0;
-    while (at < text.len) : (at += 1) {
-        if (text[at] != '/') continue;
-        if (at == 0 or text[at - 1] == ':') continue;
-        @memcpy(into[0..at], text[0..at]);
-        into[at] = 0;
-        if (dl.Lock(&into, dos.ACCESS_READ)) |lock| {
-            dl.UnLock(lock);
-            continue;
-        }
-        const made = dl.CreateDir(&into) orelse return false;
-        dl.UnLock(made);
-    }
-    return true;
-}
-
-/// `bytes` written as the file at `path`, its directories made: false,
-/// and said, when it could not be.
-fn writeFile(dl: *DosBase, path: [*:0]const u8, bytes: []const u8) bool {
-    const written = makeDirs(dl, path) and if (dl.Open(path, dos.MODE_NEWFILE)) |handle| blk: {
-        const count = dl.Write(handle, bytes.ptr, @intCast(bytes.len));
-        const closed = dl.Close(handle);
-        break :blk count == bytes.len and closed;
-    } else false;
-    if (!written) {
-        const reason = dl.IoErr();
-        _ = Printf(dl, MSG_NOSAVE, .{ COMMAND_NAME, path });
-        _ = dl.PrintFault(reason, null);
-    }
-    return written;
+/// A file that could not be written, said with the reason dos gives.
+fn sayNotSaved(dl: *DosBase, path: [*:0]const u8) i32 {
+    const reason = dl.IoErr();
+    _ = Printf(dl, MSG_NOSAVE, .{ COMMAND_NAME, path });
+    _ = dl.PrintFault(reason, null);
+    return dos.RETURN_WARN;
 }
 
 /// Where a password's hash goes, and the hash.
@@ -615,37 +571,22 @@ const HashFile = struct {
 /// SAVE: what the share was mounted with written into its share file,
 /// and a password's NT hash into its password file.
 fn save(dl: *DosBase, device: [*:0]const u8, wanted: *const Wanted, share_path: [*:0]const u8, hash_file: ?HashFile, quiet: bool) i32 {
-    var text: Text = .{};
-    text.add("/* ");
-    text.add(span(share_path));
-    text.add(": the share MountShare mounts as ");
-    text.add(span(device));
-    text.add(": */\n");
-    text.keyword("Share", wanted.share);
-    text.keyword("User", wanted.user);
-    text.keyword("Domain", wanted.domain);
-    text.keyword("Volume", wanted.volume);
-    if (wanted.port) |port| {
-        text.add("Port = ");
-        text.number(port);
-        text.add("\n");
-    }
-    if (wanted.readonly) text.add("ReadOnly = YES\n");
-    if (wanted.encrypt) text.add("Encrypt = YES\n");
-    if (!writeFile(dl, share_path, text.bytes[0..text.len])) return dos.RETURN_WARN;
+    const written = sharefile.writeTo(dl, share_path, span(device), &.{
+        .share = wanted.share,
+        .user = wanted.user,
+        .domain = wanted.domain,
+        .volume = wanted.volume,
+        .port = wanted.port,
+        .readonly = wanted.readonly,
+        .encrypt = wanted.encrypt,
+    });
+    if (!written) return sayNotSaved(dl, share_path);
 
     const saved = hash_file orelse {
         if (!quiet) _ = Printf(dl, MSG_SAVED, .{ COMMAND_NAME, device, share_path });
         return dos.RETURN_OK;
     };
-    const digits = "0123456789abcdef";
-    var line: [33]u8 = undefined;
-    for (saved.hash, 0..) |byte, index| {
-        line[2 * index] = digits[byte >> 4];
-        line[2 * index + 1] = digits[byte & 15];
-    }
-    line[32] = '\n';
-    if (!writeFile(dl, saved.path, &line)) return dos.RETURN_WARN;
+    if (!sharefile.writePassword(dl, saved.path, saved.hash)) return sayNotSaved(dl, saved.path);
     if (!quiet) _ = Printf(dl, MSG_SAVED_HASH, .{ COMMAND_NAME, device, share_path, saved.path });
     return dos.RETURN_OK;
 }
@@ -754,6 +695,199 @@ fn dismountOne(sys: *ExecBase, dl: *DosBase, name: [*:0]const u8, quiet: bool) i
     return dos.RETURN_OK;
 }
 
+/// The buffers one look at a server takes: a session's two, and the one a
+/// listing is gathered in. A question and its answer are small beside
+/// what a mounted share reads and writes.
+const list_send: usize = 8 * 1024;
+const list_gather: usize = 32 * 1024;
+const list_receive: usize = list_gather + 8 * 1024;
+/// The most shares LIST says.
+const list_max: usize = 64;
+
+/// What `onOwnStack` is handed: everything the look needs, and what it
+/// came to.
+const ListWork = struct {
+    sys: *ExecBase,
+    dl: *DosBase,
+    typed: []const u8,
+    options: *const Given,
+};
+
+fn onOwnStack(arg: ?*anyopaque) callconv(.c) i32 {
+    const work: *ListWork = @ptrCast(@alignCast(arg.?));
+    return listShares(work.sys, work.dl, work.typed, work.options);
+}
+
+/// LIST on a stack of its own: a command is run on the shell's stack,
+/// which a logon and a share list together go deeper than.
+fn listOnOwnStack(sys: *ExecBase, dl: *DosBase, typed: []const u8, options: *const Given) i32 {
+    var work: ListWork = .{ .sys = sys, .dl = dl, .typed = typed, .options = options };
+    const rc = sys.NewStackRun(&onOwnStack, &work, client.stack_bytes);
+    if (rc < 0) {
+        _ = Printf(dl, MSG_NOMEM, .{COMMAND_NAME});
+        return dos.RETURN_FAIL;
+    }
+    return rc;
+}
+
+/// Where a server is, from what LIST was given: `//nas`, `\\nas`,
+/// `smb://nas`, a bare name or an address, a port after a colon, an IPv6
+/// address in brackets. A share written after the server is ignored: the
+/// shares are what is being asked for.
+fn serverOf(typed: []const u8, into: *[smb.SMB_SERVER_MAX + 1:0]u8, port: *u16) bool {
+    var rest = client.place.withoutScheme(typed);
+    while (rest.len > 0 and (rest[0] == '/' or rest[0] == '\\')) rest = rest[1..];
+    var cut: usize = 0;
+    while (cut < rest.len and rest[cut] != '/' and rest[cut] != '\\') cut += 1;
+    const host = rest[0..cut];
+    if (host.len == 0 or host.len > smb.SMB_SERVER_MAX) return false;
+    // `placeOf` knows the brackets and the port; it wants a share after
+    // the server, so one is lent to it.
+    var with_share: [smb.SMB_SERVER_MAX + 8]u8 = undefined;
+    @memcpy(with_share[0..2], "//");
+    @memcpy(with_share[2..][0..host.len], host);
+    @memcpy(with_share[2 + host.len ..][0..2], "/x");
+    const place = placeOf(with_share[0 .. 4 + host.len]) orelse return false;
+    if (!copyInto(into, place.server)) return false;
+    port.* = place.port;
+    return true;
+}
+
+/// Why a look at a server came to nothing, in words.
+fn sayLookFailure(dl: *DosBase, result: *const smb.SmbResult, server: [*:0]const u8, port: u16) void {
+    switch (result.stage) {
+        smb.SMBSTAGE_RESOLVE => _ = Printf(dl, MSG_RESOLVE, .{ COMMAND_NAME, server }),
+        smb.SMBSTAGE_CONNECT => if (result.@"error" == bsd.ECONNREFUSED) {
+            _ = Printf(dl, MSG_REFUSED, .{ COMMAND_NAME, server, @as(u32, port) });
+        } else {
+            _ = Printf(dl, MSG_NOANSWER, .{ COMMAND_NAME, server, @as(u32, port) });
+        },
+        smb.SMBSTAGE_NEGOTIATE => _ = Printf(dl, MSG_NEGOTIATE, .{ COMMAND_NAME, server, result.status }),
+        smb.SMBSTAGE_LOGON => if (logonReason(result.status)) |reason| {
+            _ = Printf(dl, MSG_LOGON, .{ COMMAND_NAME, server, reason });
+        } else {
+            _ = Printf(dl, MSG_LOGON_STATUS, .{ COMMAND_NAME, server, result.status });
+        },
+        smb.SMBSTAGE_TREE => _ = Printf(dl, MSG_NOTREE, .{ COMMAND_NAME, server, "IPC$" }),
+        smb.SMBSTAGE_SECURITY => if (result.@"error" == smb.SMBSECURITY_SIGNATURE) {
+            _ = Printf(dl, MSG_FORGED, .{ COMMAND_NAME, server });
+        } else {
+            _ = Printf(dl, MSG_ENCRYPT_REQUIRED, .{ COMMAND_NAME, server });
+        },
+        smb.SMBSTAGE_MEMORY => _ = Printf(dl, MSG_NOMEM, .{COMMAND_NAME}),
+        else => _ = Printf(dl, MSG_NOLIST, .{ COMMAND_NAME, "nothing came of it" }),
+    }
+}
+
+/// LIST: every share a server has, printed, nothing mounted.
+fn listShares(sys: *ExecBase, dl: *DosBase, typed: []const u8, options: *const Given) i32 {
+    var server: [smb.SMB_SERVER_MAX + 1:0]u8 = @splat(0);
+    var port: u16 = 0;
+    if (!serverOf(typed, &server, &port)) {
+        var shown: [smb.SMB_SERVER_MAX + 1]u8 = undefined;
+        _ = copyInto(&shown, typed[0..@min(typed.len, smb.SMB_SERVER_MAX)]);
+        _ = Printf(dl, MSG_BADSERVER, .{ COMMAND_NAME, @as([*:0]const u8, @ptrCast(&shown)) });
+        return dos.RETURN_ERROR;
+    }
+    const name: [*:0]const u8 = @ptrCast(&server);
+
+    const socket_lib = sys.OpenLibrary(bsd.SOCKETNAME, 0) orelse {
+        _ = Printf(dl, MSG_NOSOCKET, .{ COMMAND_NAME, bsd.SOCKETNAME });
+        return dos.RETURN_FAIL;
+    };
+    defer sys.CloseLibrary(socket_lib);
+    const crypto_lib = sys.OpenLibrary(crypto.CRYPTONAME, CRYPTO_VERSION) orelse {
+        _ = Printf(dl, MSG_NOSOCKET, .{ COMMAND_NAME, crypto.CRYPTONAME });
+        return dos.RETURN_FAIL;
+    };
+    defer sys.CloseLibrary(crypto_lib);
+    if (crypto_lib.version == CRYPTO_VERSION and crypto_lib.revision < CRYPTO_REVISION) {
+        _ = Printf(dl, MSG_NOCRYPTO, .{ COMMAND_NAME, @as(u32, CRYPTO_VERSION), @as(u32, CRYPTO_REVISION) });
+        return dos.RETURN_FAIL;
+    }
+    const cb: *CryptoBase = @ptrCast(crypto_lib);
+
+    const memory = sys.AllocVec(list_send + list_receive + list_gather, exec.MEMF_ANY | exec.MEMF_CLEAR) orelse {
+        _ = Printf(dl, MSG_NOMEM, .{COMMAND_NAME});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.FreeVec(memory);
+    const bytes: [*]u8 = @ptrCast(memory);
+    var session = browse.sessionOn(@ptrCast(socket_lib), cb, .{
+        .send = bytes[0..list_send],
+        .receive = bytes[list_send..][0..list_receive],
+    });
+    const gather = bytes[list_send + list_receive ..][0..list_gather];
+
+    var account: browse.Account = .{
+        .user = given(options.user) orelse &.{},
+        .domain = given(options.domain) orelse &.{},
+    };
+    var hash: [16]u8 = undefined;
+    if (given(options.password)) |password| {
+        hash = ntHash(cb, password);
+        account.nt_hash = hash;
+    }
+    var result: smb.SmbResult = .{};
+    if (!browse.open(&session, name, port, &account, &result)) {
+        sayLookFailure(dl, &result, name, if (port == 0) smb.SMB_PORT else port);
+        return dos.RETURN_ERROR;
+    }
+    defer browse.close(&session);
+
+    var shares: [list_max]share_area.Share = @splat(.{});
+    const listing = browse.list(&session, span(name), &shares, gather) catch {
+        _ = Printf(dl, MSG_NOLIST, .{ COMMAND_NAME, "the connection broke while asking" });
+        return dos.RETURN_ERROR;
+    };
+    if (!listing.ok()) {
+        _ = Printf(dl, MSG_NOLIST, .{ COMMAND_NAME, if (listing.refused) "the server has no share list to ask" else "the server would not say what shares it has" });
+        return dos.RETURN_ERROR;
+    }
+    if (!options.quiet) {
+        _ = Printf(dl, MSG_LISTED, .{
+            COMMAND_NAME,
+            dialectName(result.dialect),
+            if (result.signing != smb.SMB2_SIGNING_NONE) ", signed" else "",
+            if (result.cipher != smb.SMB2_CIPHER_NONE) ", encrypted" else "",
+            if (result.session_flags & smb.SMB2_SESSION_FLAG_IS_GUEST != 0) " as a guest" else "",
+        });
+        _ = Printf(dl, MSG_SHARES, .{});
+    }
+    for (shares[0..listing.count]) |*share| {
+        var shown: [client.names.name_max:0]u8 = @splat(0);
+        const share_name = client.names.toDos(share.name, @ptrCast(&shown));
+        shown[share_name.len] = 0;
+        var comment: [80:0]u8 = @splat(0);
+        const units = @min(share.comment.len / 2, comment.len - 1);
+        for (0..units) |index| {
+            const unit = client.names.unitAt(share.comment, index);
+            comment[index] = if (unit >= 0x20 and unit <= 0xFF) @intCast(unit) else '?';
+        }
+        _ = Printf(dl, MSG_SHARE, .{
+            @as([*:0]const u8, @ptrCast(&shown)),
+            kindName(share),
+            @as([*:0]const u8, @ptrCast(&comment)),
+        });
+    }
+    if (listing.total > listing.count) {
+        _ = Printf(dl, MSG_MORE, .{ COMMAND_NAME, @as(u32, @intCast(listing.count)), listing.total });
+        return dos.RETURN_WARN;
+    }
+    return dos.RETURN_OK;
+}
+
+/// What a share's kind is called.
+fn kindName(share: *const share_area.Share) [*:0]const u8 {
+    return switch (share.kind()) {
+        share_area.STYPE_DISKTREE => if (share.isSpecial()) "Disk*" else "Disk",
+        share_area.STYPE_PRINTQ => "Printer",
+        share_area.STYPE_DEVICE => "Device",
+        share_area.STYPE_IPC => "Pipe",
+        else => "?",
+    };
+}
+
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
     _ = args;
     _ = len;
@@ -770,6 +904,22 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 
     const quiet = argv[arg_quiet] != 0;
     const dismount = argv[arg_dismount] != 0;
+    if (argv[arg_list] != 0) {
+        const options: Given = .{
+            .user = rdargs.string(argv[arg_user]),
+            .password = rdargs.string(argv[arg_password]),
+            .domain = rdargs.string(argv[arg_domain]),
+            .quiet = quiet,
+        };
+        // SERVER, or the first NAME where none was given with the keyword.
+        const typed = rdargs.string(argv[arg_server]) orelse blk: {
+            const names = rdargs.multi(argv[arg_name]);
+            if (names.len == 1) break :blk names[0];
+            _ = Printf(dl, MSG_NOSERVER, .{COMMAND_NAME});
+            return dos.RETURN_ERROR;
+        };
+        return listOnOwnStack(sys, dl, span(typed), &options);
+    }
     if (argv[arg_all] != 0) return if (dismount) dismountAll(sys, dl, quiet) else mountAll(sys, dl, quiet);
     const device_names = rdargs.multi(argv[arg_name]);
     if (device_names.len == 0) {

@@ -33,6 +33,7 @@ const sdk = @import("sdk");
 const dos = sdk.dos;
 const smb = dos.smb;
 const keywords = dos.keywords;
+const DosBase = sdk.interface.dos.DosBase;
 const Scanner = keywords.Scanner;
 const placeOf = @import("place.zig").placeOf;
 
@@ -177,8 +178,145 @@ pub fn firstLine(bytes: []const u8) ?[]const u8 {
     return bytes[0..end];
 }
 
-/// A value SAVE can write: one the scanner reads back whole, in quotes -
-/// no quote and no line's end in it.
+// --- writing one --------------------------------------------------------------
+
+/// What a share file is to be written with: the text of each keyword, one
+/// that is null left out.
+pub const Wanted = struct {
+    share: ?[]const u8 = null,
+    user: ?[]const u8 = null,
+    domain: ?[]const u8 = null,
+    volume: ?[]const u8 = null,
+    port: ?u16 = null,
+    readonly: bool = false,
+    encrypt: bool = false,
+};
+
+/// The most a share file written here comes to.
+pub const file_max: usize = 1024;
+
+/// Text gathered for a file, cut short rather than overrun.
+pub const Text = struct {
+    bytes: [file_max]u8 = undefined,
+    len: usize = 0,
+
+    pub fn add(text: *Text, part: []const u8) void {
+        const room = text.bytes.len - text.len;
+        const count = @min(part.len, room);
+        @memcpy(text.bytes[text.len..][0..count], part[0..count]);
+        text.len += count;
+    }
+
+    pub fn number(text: *Text, value: u32) void {
+        var digits: [10]u8 = undefined;
+        var at: usize = digits.len;
+        var rest = value;
+        while (true) {
+            at -= 1;
+            digits[at] = '0' + @as(u8, @intCast(rest % 10));
+            rest /= 10;
+            if (rest == 0) break;
+        }
+        text.add(digits[at..]);
+    }
+
+    /// A keyword and its value in quotes, or nothing when there is no
+    /// value.
+    pub fn keyword(text: *Text, name: []const u8, value: ?[]const u8) void {
+        const quoted = value orelse return;
+        text.add(name);
+        text.add(" = \"");
+        text.add(quoted);
+        text.add("\"\n");
+    }
+
+    pub fn written(text: *const Text) []const u8 {
+        return text.bytes[0..text.len];
+    }
+};
+
+/// A share file's bytes: a comment at the top saying which device the
+/// share is mounted as, and a keyword for everything `wanted` says.
+pub fn write(text: *Text, device: []const u8, wanted: *const Wanted) void {
+    text.add("/* the share mounted as ");
+    text.add(device);
+    text.add(": */\n");
+    text.keyword("Share", wanted.share);
+    text.keyword("User", wanted.user);
+    text.keyword("Domain", wanted.domain);
+    text.keyword("Volume", wanted.volume);
+    if (wanted.port) |port| {
+        text.add("Port = ");
+        text.number(port);
+        text.add("\n");
+    }
+    if (wanted.readonly) text.add("ReadOnly = YES\n");
+    if (wanted.encrypt) text.add("Encrypt = YES\n");
+}
+
+/// The share file for `device` written at `path`, the directories it
+/// needs made: false when it could not be, and then `IoErr` says why.
+pub fn writeTo(dl: *DosBase, path: [*:0]const u8, device: []const u8, wanted: *const Wanted) bool {
+    var text: Text = .{};
+    write(&text, device, wanted);
+    return putFile(dl, path, text.written());
+}
+
+/// A password's NT hash written at `path` as the one line of a password
+/// file, the directories it needs made: false when it could not be.
+pub fn writePassword(dl: *DosBase, path: [*:0]const u8, hash: *const [16]u8) bool {
+    const line = hashLine(hash);
+    return putFile(dl, path, &line);
+}
+
+/// `bytes` written as the file at `path`, every directory on the way to
+/// it made first.
+fn putFile(dl: *DosBase, path: [*:0]const u8, bytes: []const u8) bool {
+    if (!makeDirs(dl, path)) return false;
+    const handle = dl.Open(path, dos.MODE_NEWFILE) orelse return false;
+    const count = dl.Write(handle, bytes.ptr, @intCast(bytes.len));
+    const closed = dl.Close(handle);
+    return count == bytes.len and closed;
+}
+
+/// Every directory on `path` that is not there made, from the volume
+/// down: false when one cannot be.
+pub fn makeDirs(dl: *DosBase, path: [*:0]const u8) bool {
+    var into: [128:0]u8 = @splat(0);
+    var length: usize = 0;
+    while (path[length] != 0) length += 1;
+    if (length >= into.len) return false;
+    var at: usize = 0;
+    while (at < length) : (at += 1) {
+        if (path[at] != '/') continue;
+        if (at == 0 or path[at - 1] == ':') continue;
+        @memcpy(into[0..at], path[0..at]);
+        into[at] = 0;
+        if (dl.Lock(&into, dos.ACCESS_READ)) |lock| {
+            dl.UnLock(lock);
+            continue;
+        }
+        const made = dl.CreateDir(&into) orelse return false;
+        dl.UnLock(made);
+    }
+    return true;
+}
+
+/// A password file's one line: an NT hash in hex, as `hashOf` reads it
+/// back.
+pub fn hashLine(hash: *const [16]u8) [33]u8 {
+    const digits = "0123456789abcdef";
+    var line: [33]u8 = undefined;
+    for (hash, 0..) |byte, index| {
+        line[2 * index] = digits[byte >> 4];
+        line[2 * index + 1] = digits[byte & 15];
+    }
+    line[32] = '\n';
+    return line;
+}
+
+/// A value that can be written: one the scanner reads back whole, in
+/// quotes - no quote and no line's end in it.
 pub fn savable(text: []const u8) bool {
     for (text) |char| {
         if (char == '"' or char == '\n' or char == '\r') return false;
@@ -244,6 +382,27 @@ test "a share file's mistakes, with their places" {
     const missing = readText("User = claus", &file);
     try testing.expectEqual(.missing, missing.kind);
     try testing.expectEqualStrings("Share", std.mem.sliceTo(&missing.token, 0));
+}
+
+test "a share file written is a share file read" {
+    var text: Text = .{};
+    write(&text, "NAS", &.{
+        .share = "//nas.lan/My Files",
+        .user = "claus",
+        .port = 4445,
+        .readonly = true,
+    });
+    var file: ShareFile = .{};
+    const found = readText(text.written(), &file);
+    try testing.expectEqual(.none, found.kind);
+    try testing.expectEqualStrings("//nas.lan/My Files", std.mem.sliceTo(&file.share, 0));
+    try testing.expectEqualStrings("claus", std.mem.sliceTo(&file.user, 0));
+    try testing.expectEqualStrings("", std.mem.sliceTo(&file.domain, 0));
+    try testing.expectEqual(@as(u16, 4445), file.port);
+    try testing.expect(file.readonly and !file.encrypt);
+    const line = hashLine(&[_]u8{ 0x87, 0x8D, 0x80, 0x14, 0x60, 0x6C, 0xDA, 0x29, 0x67, 0x7A, 0x44, 0xEF, 0xA1, 0x35, 0x3F, 0xC7 });
+    try testing.expectEqualStrings("878d8014606cda29677a44efa1353fc7\n", &line);
+    try testing.expect(hashOf(line[0..32]) != null);
 }
 
 test "a password file: its first line, as a password or an NT hash" {

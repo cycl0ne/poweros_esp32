@@ -193,16 +193,34 @@ fn makeKeys(session: *Session, session_key: *const [16]u8, preauth: *const [64]u
     }
 }
 
+/// The kinds of share a TREE_CONNECT may answer with: a disk, or the
+/// pipes of the server's own services on `IPC$`.
+pub const SHARE_TYPE_DISK: u8 = 1;
+pub const SHARE_TYPE_PIPE: u8 = 2;
+
+/// TREE_CONNECT to `\\server\share`, the share to be a disk: see
+/// `connectShare`.
+pub fn connectTree(session: *Session, server: []const u8, share: []const u8) session_area.Error!Outcome {
+    return connectShare(session, server, share, SHARE_TYPE_DISK);
+}
+
+/// TREE_CONNECT to `\\server\IPC$`, where the server's own services
+/// are reached: see `connectShare`.
+pub fn connectPipes(session: *Session, server: []const u8) session_area.Error!Outcome {
+    return connectShare(session, server, "IPC$", SHARE_TYPE_PIPE);
+}
+
 /// TREE_CONNECT to `\\server\share`: the tree's id and flags. A share
 /// that must be encrypted gets its messages encrypted, or `.security`
-/// when the session cannot; one that is not a disk is refused as a share
-/// not found.
+/// when the session cannot; one that is not of the kind wanted is
+/// refused as a share not found.
 ///
 /// INPUTS:
 /// - `session` - logged on.
 /// - `server` - the server's name as the mount gives it, Latin-1.
 /// - `share` - the share's, Latin-1.
-pub fn connectTree(session: *Session, server: []const u8, share: []const u8) session_area.Error!Outcome {
+/// - `want` - SHARE_TYPE_DISK or SHARE_TYPE_PIPE.
+pub fn connectShare(session: *Session, server: []const u8, share: []const u8, want: u8) session_area.Error!Outcome {
     var request = session.begin(.tree_connect);
     request.on_tree = false;
     const writer = &request.writer;
@@ -226,8 +244,9 @@ pub fn connectTree(session: *Session, server: []const u8, share: []const u8) ses
     _ = fields.uint32(); // Capabilities
     session.maximal_access = fields.uint32();
     session.tree_id = reply.header.tree_id;
-    // A disk: not a pipe, not a printer.
-    if (share_type != 1) return .{ .status = smb.STATUS_BAD_NETWORK_NAME };
+    // The kind asked for: not a printer, and not a pipe where a disk is
+    // wanted.
+    if (share_type != want) return .{ .status = smb.STATUS_BAD_NETWORK_NAME };
     if (session.share_flags & SHAREFLAG_ENCRYPT_DATA != 0) {
         if (!session.keys.encrypts()) return .{ .security = smb.SMBSECURITY_ENCRYPTION };
         session.encrypt_tree = true;

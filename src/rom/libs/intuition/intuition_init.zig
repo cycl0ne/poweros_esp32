@@ -210,8 +210,10 @@ pub const LIBRARY_VERSION = 0;
 /// its box.
 /// 78: a group made with a size (GA_Width, GA_RelWidth, GA_Height,
 /// GA_RelHeight) keeps it; only one made without starts at none.
-pub const LIBRARY_REVISION = 78;
-const BUILD_DATE = "01.11.2026";
+/// 79: strgclass's STRINGA_Secret, a line that shows an asterisk for each
+/// character typed into it.
+pub const LIBRARY_REVISION = 79;
+const BUILD_DATE = "02.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
