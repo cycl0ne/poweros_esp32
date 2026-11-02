@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.29**, so that a program need not find out by failing. It covers the API.
+1.30**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -22,7 +22,7 @@ BCM2712's V3D, which runs only a fixed handful of fragment forms
 
 | Where | What |
 |---|---|
-| `sdk/fd/facet_lib.fd` | The whole jump table, one line a function: 117 entries |
+| `sdk/fd/facet_lib.fd` | The whole jump table, one line a function: 118 entries |
 | `sdk/libs/facet/facet.zig` | The structures and enumerations a program passes |
 | `sdk/libs/facet/shader.zig` | Shaders as functions: the stages, their inputs, the fixed forms |
 | `sdk/libs/facet/texture.zig` | How a texture is kept and sampled, by a fixed form and through a sampler |
@@ -30,14 +30,14 @@ BCM2712's V3D, which runs only a fixed handful of fragment forms
 | `src/disk/libs/facet/driver/cpu/` | The cores' driver: the tiled rasterizer |
 | `src/disk/libs/facet/driver/v3d/` | The V3D's driver, a module in `LIBS:facet/` |
 
-Of Vulkan 1.0's roughly 137 core entry points, facet has 117. Two of the
+Of Vulkan 1.0's roughly 137 core entry points, facet has 118. Two of the
 absent ones, `GetInstanceProcAddr` and `GetDeviceProcAddr`, do not apply to
 a library called through an LVO table.
 
 What a device will and will not do is answered by
 `GetPhysicalDeviceFeatures` (since 1.24), which is Vulkan's call with a
 structure of facet's own: a field wherever a create call can refuse
-something, and no field for what the library has no call for at all. Ten
+something, and no field for what the library has no call for at all. Eleven
 of its fields differ between the cores and the V3D, which is the reason a
 program that wants the GPU should ask rather than take the first device
 listed.
@@ -118,6 +118,34 @@ reaches the log alone. What is left out:
   the submission is done. A program reads the values once its fence is
   signalled, which is what `QUERY_RESULT_WAIT` waits for.
 
+## A depth that outlives its pass, and what it still is not
+
+Since 1.30 a depth attachment of `d16_unorm` may keep what was drawn into
+it: with the store op STORE each tile's depth is written into the image's
+memory as the tile is drawn, and with the load op LOAD each tile starts
+from what is there. So depth can be read back - `CmdCopyImageToBuffer`,
+`CmdCopyImage` - written from a buffer, cleared without a pass by
+`CmdClearDepthStencilImage`, and a second pass can test against the first
+pass's depth. What is left out:
+
+- **Only the cores keep it** (`PhysicalDeviceFeatures.stored_depth`). The
+  V3D draws in tiles of its own and nothing stores their depth to memory
+  yet, so a pass that asks for either op is refused there.
+- **`d16_unorm` only.** `s8_uint` and `d16_unorm_s8_uint` have no plane of
+  their own, so a pass that keeps one of those is refused, and so are the
+  stencil's own two ops on any format: a stencil never outlives its pass.
+- **A depth image is not a texture.** `d16_unorm` has
+  `SAMPLED_IMAGE` in neither tiling, because a texture is kept as
+  `rgba8888` or `rgb565` and nothing else (below). A shadow map is made by
+  reading the depth out and writing it into a colour texture, which the
+  shadow samplers of 1.28 then sample; sampling the depth image itself is
+  still to come.
+- **A transient depth image keeps nothing**, having no memory: a pass that
+  stores into one is refused its framebuffer. That is still the cheap way,
+  and what every pass that does not ask for this goes on doing.
+- Two subpasses still share a depth attachment only one right after the
+  other, in the same tiles.
+
 ## Object kinds that do not exist
 
 ### Events
@@ -147,10 +175,6 @@ No `QueueBindSparse`, `GetImageSparseMemoryRequirements` or
 
 ## Commands that are absent
 
-- `CmdClearDepthStencilImage`: a depth attachment's pixels live in the
-  tiles and its memory is never touched, so there is nothing to clear.
-  Colour is cleared by `CmdClearColorImage` (since 1.27), through an
-  attachment's `load_op`, or by `CmdClearAttachments` inside a pass.
 - `CmdResolveImage`: there is no multisampling to resolve.
 - `CmdSetDepthBias` and `CmdSetDepthBounds`.
 
@@ -185,7 +209,7 @@ These can be asked for and are answered with `error_feature_not_present`.
 | More than one viewport or one scissor | `pipeline/creategraphicspipelines.zig` |
 | Colour attachments blended each its own way: with several, all must be identical | `pipeline/creategraphicspipelines.zig` |
 | Input attachments and resolve attachments in a subpass | `render/createrenderpass.zig` |
-| A depth attachment that loads or stores, and its stencil likewise | `render/createrenderpass.zig` |
+| A depth attachment's stencil that loads or stores | `render/createrenderpass.zig` |
 | Present modes but `fifo`, though `immediate`, `mailbox` and `fifo_relaxed` are enumerated | `swapchain/createswapchain.zig` |
 | Descriptors but `sampler`, `combined_image_sampler`, `sampled_image`, `uniform_buffer` and `storage_buffer` | `descriptor/_descriptor.zig` |
 | A fixed fragment form that drops pixels, on the V3D: the QPUs have no program that discards | `driver/v3d/driver.zig` |
@@ -193,12 +217,11 @@ These can be asked for and are answered with `error_feature_not_present`.
 | An occlusion or a statistics query pool, on the V3D: it counts neither the samples nor the stages | `query/createquerypool.zig` |
 | Either geometry statistic, and any bit that is no statistic at all | `query/createquerypool.zig` |
 | A timestamp pool without timer.device: the clock a timestamp is read from | `query/createquerypool.zig` |
+| A depth attachment that loads or stores, on the V3D, or of a format with a stencil in it | `render/createrenderpass.zig` |
+| A depth attachment kept, whose image has no memory behind it | `render/createframebuffer.zig` |
 
 Two consequences do not appear in that table:
 
-- **Depth does not outlive a render pass.** It lives in the tiles, and
-  survives only between subpasses that have the same attachments. Nothing
-  reads it back, so there are no shadow maps and nothing deferred.
 - **`CmdBindDescriptorSets`' `dynamic_offsets` is never used**, because
   neither dynamic buffer descriptor is taken.
 - **A form that drops pixels cannot also have the depth pre-pass.** The

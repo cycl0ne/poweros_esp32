@@ -255,7 +255,13 @@ test "the formats: what each does in each tiling" {
     try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_SAMPLED_IMAGE != 0);
     try testing.expect(properties.linear_tiling_features & facet.FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND != 0);
     try testing.expect(properties.linear_tiling_features & facet.FORMAT_FEATURE_SAMPLED_IMAGE == 0);
+    // A depth attachment, and a transfer since a pass may store its depth;
+    // never sampled, and never linear.
     rig.fb.GetPhysicalDeviceFormatProperties(physical, .d16_unorm, &properties);
+    try testing.expectEqual(facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT | facet.FORMAT_FEATURE_TRANSFER_SRC | facet.FORMAT_FEATURE_TRANSFER_DST, properties.optimal_tiling_features);
+    try testing.expectEqual(0, properties.linear_tiling_features);
+    // One with a stencil has no plane of its own: an attachment only.
+    rig.fb.GetPhysicalDeviceFormatProperties(physical, .d16_unorm_s8_uint, &properties);
     try testing.expectEqual(facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT, properties.optimal_tiling_features);
     rig.fb.GetPhysicalDeviceFormatProperties(physical, .r32g32b32_sfloat, &properties);
     try testing.expectEqual(facet.FORMAT_FEATURE_VERTEX_BUFFER, properties.buffer_features);
@@ -492,12 +498,13 @@ test "a device says what it does, and a false is what a create call refuses" {
     try testing.expect(features.stencil_test);
     try testing.expect(features.several_subpasses);
     try testing.expect(features.cube_maps);
+    // The cores hold the depth in their tiles, so they can keep it.
+    try testing.expect(features.stored_depth);
 
     // And what it says it does not do, it refuses: a false here is worth
     // having only if the call agrees with it.
     try testing.expect(!features.input_attachments);
     try testing.expect(!features.multisampling);
-    try testing.expect(!features.stored_depth);
 
     const color = facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal };
     var pass: ?*facet.RenderPass = null;

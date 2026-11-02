@@ -260,4 +260,6 @@ void CmdResetQueryPool(*facet.CommandBuffer buffer, *facet.QueryPool pool, u32 f
 void CmdWriteTimestamp(*facet.CommandBuffer buffer, u32 stage, *facet.QueryPool pool, u32 query)
 /// Recorded: the queries' values written into a buffer, as GetQueryPoolResults gives them.
 void CmdCopyQueryPoolResults(*facet.CommandBuffer buffer, *facet.QueryPool pool, u32 first, u32 count, *facet.Buffer destination, u64 offset, u64 stride, u32 flags)
+/// Recorded: the levels of a depth image set to a depth and a stencil.
+void CmdClearDepthStencilImage(*facet.CommandBuffer buffer, *facet.Image image, u32 layout, *const facet.ClearDepthStencilValue value, u32 range_count, [*]const facet.ImageSubresourceRange ranges)
 ##end

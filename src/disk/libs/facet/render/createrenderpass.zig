@@ -39,9 +39,18 @@ const _surface = @import("../surface/_surface.zig");
 /// The subpasses are drawn one after another. A colour attachment's load op
 /// CLEAR clears the render area the first time a subpass names it; LOAD,
 /// DONT_CARE and later subpasses keep what the image holds. What is drawn is
-/// stored, whatever its store op. The depth attachment's load op is CLEAR or
-/// DONT_CARE - both clear it - and its store op DONT_CARE: the depth lives in
-/// the rasterizer's tiles alone and is never stored.
+/// stored, whatever its store op.
+///
+/// The depth attachment lives in the rasterizer's tiles, and its load op
+/// CLEAR or DONT_CARE - both clear it - and its store op DONT_CARE leave it
+/// there, costing no memory at all. Since 1.30 it may outlive the pass
+/// instead: with the store op STORE each tile's depth is written into the
+/// image's memory as the tile is drawn, and with the load op LOAD each
+/// tile starts from what is there. Both want `d16_unorm` and a device whose
+/// `stored_depth` is true - the cores, not the V3D - and an image bound to
+/// memory something is behind, which CreateFramebuffer holds to; otherwise
+/// that is `error_feature_not_present`. The stencil has no plane of its
+/// own, so its own two ops are still DONT_CARE.
 ///
 /// So two subpasses share a depth attachment only one right after the other
 /// and with the same colour attachments too, when the second goes on in the
@@ -107,6 +116,8 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
         var depth_index: ?u32 = null;
         var tests_depth = false;
         var tests_stencil = false;
+        var loads_depth = false;
+        var stores_depth = false;
         if (subpass.depth_stencil_attachment) |reference| {
             if (reference.attachment != facet.ATTACHMENT_UNUSED) {
                 if (reference.attachment >= attachments.len) return .error_initialization_failed;
@@ -114,9 +125,20 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                 tests_depth = _image.hasDepth(depth.format);
                 tests_stencil = _image.hasStencil(depth.format);
                 if (!tests_depth and !tests_stencil) return .error_format_not_supported;
-                if (depth.samples != 1 or depth.load_op == .load or depth.store_op == .store) return .error_feature_not_present;
+                if (depth.samples != 1) return .error_feature_not_present;
+                loads_depth = depth.load_op == .load;
+                stores_depth = depth.store_op == .store;
+                if (loads_depth or stores_depth) {
+                    // A depth that outlives the pass is written into the
+                    // image's rows and read back from them, which only a
+                    // device that draws in the rasterizer's tiles can do,
+                    // and only for the format those tiles hold.
+                    if (!owner.physical.features.stored_depth) return .error_feature_not_present;
+                    if (depth.format != .d16_unorm) return .error_feature_not_present;
+                }
+                // The stencil is never kept: it has no plane of its own.
                 if (depth.stencil_load_op == .load or depth.stencil_store_op == .store) return .error_feature_not_present;
-                // It is not stored: a later subpass would find nothing.
+                // Two subpasses share it only in the same tiles.
                 if (depths[reference.attachment]) return .error_feature_not_present;
                 depths[reference.attachment] = true;
                 depth_index = reference.attachment;
@@ -139,6 +161,8 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                 .tests_stencil = tests_stencil,
                 .color_format = color.format,
                 .color_load = if (color.load_op == .clear and !drawn[color_index]) .clear else .keep,
+                .loads_depth = loads_depth,
+                .stores_depth = stores_depth,
             };
             plan.part_count += 1;
         }

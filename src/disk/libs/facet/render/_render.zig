@@ -48,6 +48,12 @@ pub const Part = struct {
     color_format: facet.Format,
     /// What the colour starts with.
     color_load: ColorLoad,
+    /// Whether the depth attachment is read from its image as the part
+    /// starts, and written into it as the part ends: a depth that outlives
+    /// the pass (`PhysicalDeviceFeatures.stored_depth`). Both are false for
+    /// a depth that lives in the tiles alone.
+    loads_depth: bool = false,
+    stores_depth: bool = false,
 };
 
 pub const Subpass = struct {

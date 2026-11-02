@@ -183,12 +183,17 @@ pub fn shapeOf(device: *Device, info: *const facet.ImageCreateInfo) ?Image {
         .kind = .rows,
         .bytes = 0,
     };
-    const depth_usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT;
+    const depth_usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT |
+        facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
     if (hasDepth(info.format) or hasStencil(info.format)) {
         if (info.usage & facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT == 0 or info.usage & ~depth_usage != 0) return null;
         if (info.tiling != .optimal or info.mip_levels != 1) return null;
         image.kind = .depth;
-        image.bytes = @as(u64, extent.width) * extent.height * bytesOf(info.format);
+        // Rows, like a colour attachment's: what a render pass that stores
+        // its depth writes, and what a transfer reads (`readTexel`). A
+        // transient one is never written and takes the same shape.
+        image.pitch = std.mem.alignForward(u32, extent.width * pixel, row_alignment);
+        image.bytes = @as(u64, image.pitch) * extent.height;
         return image;
     }
     if (info.usage & facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT != 0) return null;
@@ -324,7 +329,7 @@ pub fn copyUnpacking(image: *Image, from: []const u8, region: *const facet.Buffe
 /// texture layout for a texture, row by row for rows. The part of the
 /// rectangle outside the image, or past the end of `from`, is left out.
 pub fn copyFromBuffer(image: *Image, from: []const u8, region: *const facet.BufferImageCopy) void {
-    if (image.kind == .depth or image.data == null) return;
+    if (image.data == null) return;
     if (unpacks(image)) return copyUnpacking(image, from, region);
     const level = region.image_subresource.mip_level;
     if (level >= image.levels or region.image_offset.x < 0 or region.image_offset.y < 0) return;
@@ -349,7 +354,7 @@ pub fn copyFromBuffer(image: *Image, from: []const u8, region: *const facet.Buff
             const source = from[at..][0 .. width * pixel];
             const y = top + @as(u32, @intCast(row));
             switch (image.kind) {
-                .rows => {
+                .rows, .depth => {
                     const into = image.data.? + @as(usize, y) * image.pitch + @as(usize, left) * pixel;
                     @memcpy(into[0..source.len], source);
                 },
@@ -357,7 +362,6 @@ pub fn copyFromBuffer(image: *Image, from: []const u8, region: *const facet.Buff
                     const x = left + @as(u32, @intCast(column));
                     image.texels.putLayer(layer, level, x, y, texelOf(image.format, source[column * pixel ..]));
                 },
-                .depth => unreachable,
             }
         }
     }
@@ -387,7 +391,7 @@ fn deviceOffset(image: *const Image, level: u32, layer: u32, x: u32, y: u32) ?us
 /// Whether an image's texels can be read and written: it has memory, and they
 /// are not only in the tiles.
 pub fn readable(image: *const Image) bool {
-    return image.kind != .depth and image.data != null;
+    return image.data != null;
 }
 
 /// A level's width and height.
@@ -398,7 +402,9 @@ pub fn levelSize(image: *const Image, level: u32) [2]u32 {
 /// Texel (x, y) of a level of a layer as a buffer would hold it, in `into`.
 pub fn readTexel(image: *const Image, level: u32, layer: u32, x: u32, y: u32, into: []u8) void {
     switch (image.kind) {
-        .rows => {
+        // A depth image is rows as well, of one level and one layer: what a
+        // pass that stores its depth wrote.
+        .rows, .depth => {
             const pixel = bytesOf(image.format);
             const from = image.data.? + @as(usize, y) * image.pitch + @as(usize, x) * pixel;
             @memcpy(into[0..pixel], from[0..pixel]);
@@ -409,14 +415,13 @@ pub fn readTexel(image: *const Image, level: u32, layer: u32, x: u32, y: u32, in
         } else {
             bytesOfTexel(image.format, image.texels.peekLayer(layer, level, x, y), into);
         },
-        .depth => {},
     }
 }
 
 /// Texel (x, y) of a level of a layer set from what a buffer would hold.
 pub fn writeTexel(image: *Image, level: u32, layer: u32, x: u32, y: u32, from: []const u8) void {
     switch (image.kind) {
-        .rows => {
+        .rows, .depth => {
             const pixel = bytesOf(image.format);
             const into = image.data.? + @as(usize, y) * image.pitch + @as(usize, x) * pixel;
             @memcpy(into[0..pixel], from[0..pixel]);
@@ -427,7 +432,6 @@ pub fn writeTexel(image: *Image, level: u32, layer: u32, x: u32, y: u32, from: [
         } else {
             image.texels.putLayer(layer, level, x, y, texelOf(image.format, from));
         },
-        .depth => {},
     }
 }
 

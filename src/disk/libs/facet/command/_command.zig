@@ -125,6 +125,18 @@ pub const ClearColorImage = extern struct {
     image: *Image,
 };
 
+/// CmdClearDepthStencilImage, followed by its ranges.
+pub const ClearDepthStencilImage = extern struct {
+    pub const op: _stream.Op = .clear_depth_stencil_image;
+    head: Head = .{ .op = op },
+    count: u32,
+    /// The depth as the tiles hold one: 0 nearest, 65535 furthest.
+    depth: u16,
+    stencil: u8,
+    pad: u8 = 0,
+    image: *Image,
+};
+
 /// CmdBeginQuery: what the work after it is counted into.
 pub const BeginQuery = extern struct {
     pub const op: _stream.Op = .begin_query;

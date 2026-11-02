@@ -272,8 +272,12 @@ pub const PhysicalDeviceFeatures = extern struct {
     depth_bias: bool = false,
     depth_bounds: bool = false,
     depth_clamp: bool = false,
-    /// A depth attachment that may `load` or `store`: depth outliving the
-    /// pass it was drawn in, to be read again.
+    /// A depth attachment of `d16_unorm` that may `load` or `store`: depth
+    /// outliving the pass it was drawn in, written into the image's memory
+    /// as each tile is drawn and read back from it, to be copied out or
+    /// made into a shadow map. False where the depth lives in the device's
+    /// tiles alone and CreateRenderPass refuses both ops. The cores have it
+    /// since 1.30; the BCM2712's V3D has not.
     stored_depth: bool = false,
     input_attachments: bool = false,
     /// `storage_image` descriptors, and the texel buffer kinds.

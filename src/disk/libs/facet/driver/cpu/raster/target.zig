@@ -16,7 +16,11 @@
 //! as they are copied, or dithered into its 16 bits (`Packing`), so that
 //! what is drawn, and how it is blended, is the same in every format. The
 //! depth lives only there: it starts cleared with each tile and is gone
-//! when the tile is written back, so it costs no memory traffic at all.
+//! when the tile is written back, so it costs no memory traffic at all -
+//! unless the frame was given a depth plane (`Attachments.Depth.plane`),
+//! when the tile's depth is read from it before it is drawn, or written
+//! back into it after, or both, as the attachment's load and store ops
+//! say. That is what a depth attachment outliving its render pass is.
 //!
 //! The tiles are handed on once all of them are in the surface, in a
 //! second round shared out the same way. On the JH7110 handing on is the
@@ -260,6 +264,22 @@ pub const Attachments = struct {
         /// 0 nearest, set to `clear` as each tile starts.
         used: bool = false,
         clear: u16 = 0xFFFF,
+        /// Where the depth outlives the frame: the image's rows, 16 bits a
+        /// pixel. Null for a depth that lives in the tiles alone, which is
+        /// every frame until a pass asks for it to be kept.
+        plane: ?Plane = null,
+        /// Cleared as each tile starts, or read from the plane.
+        load: Load = .clear,
+        /// Whether each tile's depth is written back into the plane, after
+        /// it is drawn.
+        store: bool = false,
+    };
+
+    /// The rows a depth attachment's image keeps, as the surface keeps a
+    /// colour attachment's.
+    pub const Plane = struct {
+        pixels: [*]u8,
+        pitch: u32,
     };
 
     pub const Stencil = struct {
@@ -498,7 +518,11 @@ pub const Target = struct {
     /// A frame begun: as the attachments say, every tile cleared or every
     /// tile kept, and nothing drawn yet.
     pub fn begin(target: *Target) void {
-        const cleared = target.attachments.color.load == .clear;
+        // A tile nothing draws into is skipped - unless the frame starts
+        // cleared, when every tile has to be written: the colour, or a
+        // depth that is kept and starts cleared.
+        const depth = target.attachments.depth;
+        const cleared = target.attachments.color.load == .clear or (depth.store and depth.load == .clear);
         for (target.tiles) |*state| state.* = .{ .dirty = cleared };
         target.clear_pixel = target.attachments.color.clear;
         target.arena.reset();
@@ -600,7 +624,11 @@ pub const Target = struct {
             .clear => @memset(&buffer.color, target.clear_pixel),
             .keep => target.load(tile),
         }
-        if (target.attachments.depth.used) @memset(&buffer.depth, target.attachments.depth.clear);
+        const depth = &target.attachments.depth;
+        if (depth.used) switch (depth.load) {
+            .clear => @memset(&buffer.depth, depth.clear),
+            .keep => target.loadDepth(tile),
+        };
         if (target.attachments.stencil.used) @memset(&buffer.stencil, target.attachments.stencil.clear);
         const state = &target.tiles[tile.index];
         // The triangles at the head of the list that ask for the depth
@@ -616,6 +644,7 @@ pub const Target = struct {
             }
         }
         target.store(tile);
+        if (depth.store) target.storeDepth(tile);
     }
 
     /// The depth pre-pass's first pass (prepass.zig): the depth of the
@@ -663,6 +692,37 @@ pub const Target = struct {
         while (row < tile.bottom) : (row += 1) {
             packing.store(target.pixelAt(column, tile.y + row), tile.row(row) + tile.left, tile.right - tile.left, column, tile.y + row);
         }
+    }
+
+    /// The depth plane under the tile, into its buffer: what a pass whose
+    /// depth attachment loads starts from.
+    fn loadDepth(target: *Target, tile: *const Tile) void {
+        const plane = target.attachments.depth.plane orelse {
+            @memset(&tile.buffer.depth, target.attachments.depth.clear);
+            return;
+        };
+        var row = tile.top;
+        while (row < tile.bottom) : (row += 1) {
+            const count = tile.right - tile.left;
+            const from = depthAt(plane, tile.x + tile.left, tile.y + row);
+            @memcpy(@as([*]u8, @ptrCast(tile.depthRow(row) + tile.left))[0 .. count * 2], from[0 .. count * 2]);
+        }
+    }
+
+    /// The tile's depth, into the plane: what outlives the frame.
+    fn storeDepth(target: *Target, tile: *const Tile) void {
+        const plane = target.attachments.depth.plane orelse return;
+        var row = tile.top;
+        while (row < tile.bottom) : (row += 1) {
+            const count = tile.right - tile.left;
+            const into = depthAt(plane, tile.x + tile.left, tile.y + row);
+            @memcpy(into[0 .. count * 2], @as([*]const u8, @ptrCast(tile.depthRow(row) + tile.left))[0 .. count * 2]);
+        }
+    }
+
+    /// The plane's depth at column `x` of row `y`.
+    inline fn depthAt(plane: Attachments.Plane, x: u32, y: u32) [*]u8 {
+        return plane.pixels + @as(usize, y) * plane.pitch + @as(usize, x) * 2;
     }
 
     /// The surface's pixel at column `x` of row `y`.
