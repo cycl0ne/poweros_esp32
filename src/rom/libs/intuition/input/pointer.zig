@@ -37,6 +37,11 @@
 //! its outline at every angle. On a screen opened with `SA_Animate` off it
 //! stands still.
 //!
+//! `HidePointer` keeps it from being shown at all, whatever window is
+//! active - what a program that blanks the pointer while the keyboard is
+//! being used sets - and is not a window's business: the picture the board
+//! has is left as it is, and only the showing stops.
+//!
 //! `WA_PointerDelay` puts a change off for three of input.device's ticks,
 //! a tenth of a second each (`tick`), and a change made before then calls
 //! it off: a busy pointer put up for work that ends at once never shows.
@@ -71,7 +76,9 @@ pub const State = extern struct {
     mouse: u8 = 0,
     /// Which of `busy_frames` the board has while it is busy.
     frame: u8 = 0,
-    pad: u8 = 0,
+    /// Whether it is kept from being shown at all, whatever window is
+    /// active (`HidePointer`).
+    blanked: u8 = 0,
 };
 
 /// The pointer's task, in intuition's base beside `State` - which starts
@@ -281,7 +288,7 @@ pub fn update(ib: *IntuitionBase) void {
         if (st.board) |old| {
             if (st.shown != 0) _ = rb.ShowBoardPointer(old, false);
         }
-        st.* = .{ .board = board, .mouse = st.mouse };
+        st.* = .{ .board = board, .mouse = st.mouse, .blanked = st.blanked };
     }
     const now = board orelse return;
     if (now.info.caps & rtg.boards.RTGBC_POINTER == 0) return;
@@ -314,7 +321,7 @@ pub fn update(ib: *IntuitionBase) void {
         st.object = object;
     }
     rb.MoveBoardPointer(now, ib.input.disp_x, ib.input.disp_y);
-    const want: u8 = if (st.mouse != 0 and kind != .hidden) 1 else 0;
+    const want: u8 = if (st.mouse != 0 and kind != .hidden and st.blanked == 0) 1 else 0;
     if (want != st.shown and rb.ShowBoardPointer(now, want != 0) == rtg.errors.RTGERR_OK) st.shown = want;
 }
 

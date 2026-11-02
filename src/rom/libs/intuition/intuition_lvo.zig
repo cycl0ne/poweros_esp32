@@ -150,6 +150,11 @@ const BeginDrag = @import("input/begindrag.zig").BeginDrag;
 const EndDrag = @import("input/enddrag.zig").EndDrag;
 const DoubleTap = @import("input/doubletap.zig").DoubleTap;
 const FindWindowNumber = @import("window/findwindownumber.zig").FindWindowNumber;
+const ActiveWindow = @import("window/activewindow.zig").ActiveWindow;
+const WindowUnderPointer = @import("window/windowunderpointer.zig").WindowUnderPointer;
+const NextWindow = @import("window/nextwindow.zig").NextWindow;
+const FrontScreen = @import("screen/frontscreen.zig").FrontScreen;
+const HidePointer = @import("input/hidepointer.zig").HidePointer;
 
 /// Its functions, as the SDK has them (sdk/fd/intuition_lib.fd).
 const interface = sdk.interface.intuition;
@@ -276,6 +281,12 @@ const contract_files = [_][]const u8{
     @embedFile("input/begindrag.zig"),
     @embedFile("input/enddrag.zig"),
     @embedFile("input/doubletap.zig"),
+    @embedFile("window/findwindownumber.zig"),
+    @embedFile("window/activewindow.zig"),
+    @embedFile("window/windowunderpointer.zig"),
+    @embedFile("window/nextwindow.zig"),
+    @embedFile("screen/frontscreen.zig"),
+    @embedFile("input/hidepointer.zig"),
 };
 
 fn lvoMakeClass(ib: *IntuitionBase, class_id: ?[*:0]const u8, super_id: ?[*:0]const u8, super_class: ?*Class, inst_size: u32) callconv(.c) ?*Class {
@@ -659,6 +670,21 @@ fn lvoDoubleTap(ib: *IntuitionBase, first: *const intuition.Tap, second: *const 
 fn lvoFindWindowNumber(ib: *IntuitionBase, number: u32) callconv(.c) ?*intuition.Window {
     return @ptrCast(FindWindowNumber(ib, number));
 }
+fn lvoActiveWindow(ib: *IntuitionBase) callconv(.c) ?*intuition.Window {
+    return @ptrCast(ActiveWindow(ib));
+}
+fn lvoWindowUnderPointer(ib: *IntuitionBase) callconv(.c) ?*intuition.Window {
+    return @ptrCast(WindowUnderPointer(ib));
+}
+fn lvoNextWindow(ib: *IntuitionBase, after: ?*intuition.Window) callconv(.c) ?*intuition.Window {
+    return @ptrCast(NextWindow(ib, @ptrCast(@alignCast(after))));
+}
+fn lvoFrontScreen(ib: *IntuitionBase) callconv(.c) ?*intuition.Screen {
+    return @ptrCast(FrontScreen(ib));
+}
+fn lvoHidePointer(ib: *IntuitionBase, hidden: bool) callconv(.c) void {
+    HidePointer(ib, hidden);
+}
 
 pub const vectors = [_]*const anyopaque{
     vec(exec.libOpen),
@@ -793,6 +819,11 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoEndDrag),
     vec(lvoDoubleTap),
     vec(lvoFindWindowNumber),
+    vec(lvoActiveWindow),
+    vec(lvoWindowUnderPointer),
+    vec(lvoNextWindow),
+    vec(lvoFrontScreen),
+    vec(lvoHidePointer),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

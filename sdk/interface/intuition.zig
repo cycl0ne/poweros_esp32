@@ -154,6 +154,11 @@ pub const LVO = struct {
     pub const EndDrag = libraries.lvo(128);
     pub const DoubleTap = libraries.lvo(129);
     pub const FindWindowNumber = libraries.lvo(130);
+    pub const ActiveWindow = libraries.lvo(131);
+    pub const WindowUnderPointer = libraries.lvo(132);
+    pub const NextWindow = libraries.lvo(133);
+    pub const FrontScreen = libraries.lvo(134);
+    pub const HidePointer = libraries.lvo(135);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -286,6 +291,11 @@ pub const Fn = struct {
     pub const EndDrag = *const fn (*IntuitionBase, *intuition.Window, u32) callconv(.c) ?*intuition.Window;
     pub const DoubleTap = *const fn (*IntuitionBase, *const intuition.Tap, *const intuition.Tap) callconv(.c) bool;
     pub const FindWindowNumber = *const fn (*IntuitionBase, u32) callconv(.c) ?*intuition.Window;
+    pub const ActiveWindow = *const fn (*IntuitionBase) callconv(.c) ?*intuition.Window;
+    pub const WindowUnderPointer = *const fn (*IntuitionBase) callconv(.c) ?*intuition.Window;
+    pub const NextWindow = *const fn (*IntuitionBase, ?*intuition.Window) callconv(.c) ?*intuition.Window;
+    pub const FrontScreen = *const fn (*IntuitionBase) callconv(.c) ?*intuition.Screen;
+    pub const HidePointer = *const fn (*IntuitionBase, bool) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -1072,5 +1082,38 @@ pub const IntuitionBase = opaque {
     /// The caller holds LockIBase to keep the window open while it uses it.
     pub fn FindWindowNumber(self: *IntuitionBase, number: u32) ?*intuition.Window {
         return libraries.call(self, LVO.FindWindowNumber, Fn.FindWindowNumber, .{number});
+    }
+
+    /// The window the keyboard reaches, or null while none is active. The
+    /// caller holds LockIBase to keep it open while it uses it.
+    pub fn ActiveWindow(self: *IntuitionBase) ?*intuition.Window {
+        return libraries.call(self, LVO.ActiveWindow, Fn.ActiveWindow, .{});
+    }
+
+    /// The window the pointer stands over, or null over a screen's bar, over
+    /// a panel in front of the windows, or where no window is. The caller
+    /// holds LockIBase to keep it open while it uses it.
+    pub fn WindowUnderPointer(self: *IntuitionBase) ?*intuition.Window {
+        return libraries.call(self, LVO.WindowUnderPointer, Fn.WindowUnderPointer, .{});
+    }
+
+    /// The window behind `after` on its screen - the frontmost of the screen
+    /// in front for null - or null past the last one. The caller holds
+    /// LockIBase to walk the order.
+    pub fn NextWindow(self: *IntuitionBase, after: ?*intuition.Window) ?*intuition.Window {
+        return libraries.call(self, LVO.NextWindow, Fn.NextWindow, .{after});
+    }
+
+    /// The screen in front of the others, or null while none is open. The
+    /// caller holds LockIBase to keep it open while it uses it.
+    pub fn FrontScreen(self: *IntuitionBase) ?*intuition.Screen {
+        return libraries.call(self, LVO.FrontScreen, Fn.FrontScreen, .{});
+    }
+
+    /// The pointer not shown at all, whatever window is active, or shown
+    /// again; the last call wins. For a program that hides it while the
+    /// keyboard is being used.
+    pub fn HidePointer(self: *IntuitionBase, hidden: bool) void {
+        return libraries.call(self, LVO.HidePointer, Fn.HidePointer, .{hidden});
     }
 };

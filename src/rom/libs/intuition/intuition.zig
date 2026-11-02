@@ -2275,6 +2275,74 @@ test "windows: a number each, never given again, found while the window is open"
     try tearDown(ib);
 }
 
+test "windows: the active one, the one under the pointer, the depth order, the front screen, the pointer hidden" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const ie = sdk.devices.inputevent;
+    const pointer = @import("input/pointer.zig");
+    const display = try Display.up(ib);
+    const log = &display.state.log;
+    const it = ib.iface();
+    const tags = [_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 0 },
+        .{ .tag = wn.WA_Top, .data = 12 },
+        .{ .tag = wn.WA_Width, .data = 40 },
+        .{ .tag = wn.WA_Height, .data = 20 },
+        .{},
+    };
+    const back = it.OpenWindowTagList(&tags).?;
+    const front = it.OpenWindowTagList(&tags).?;
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, front, wn.WA_Screen));
+    try testing.expectEqual(@as(?*intuition.Screen, screen), it.FrontScreen());
+
+    // Front to back, each window once, and nothing past the last.
+    try testing.expectEqual(@as(?*intuition.Window, front), it.NextWindow(null));
+    try testing.expectEqual(@as(?*intuition.Window, back), it.NextWindow(front));
+    try testing.expectEqual(@as(?*intuition.Window, null), it.NextWindow(back));
+
+    // The window the pointer stands over is the one a press would reach:
+    // the frontmost of the two over the same box, and none over the bar.
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 10, 20);
+    try testing.expectEqual(@as(?*intuition.Window, front), it.WindowUnderPointer());
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 10, 2);
+    try testing.expectEqual(@as(?*intuition.Window, null), it.WindowUnderPointer());
+
+    // The active window is whichever was last activated.
+    it.ActivateWindow(back);
+    try testing.expectEqual(@as(?*intuition.Window, back), it.ActiveWindow());
+    it.ActivateWindow(front);
+    try testing.expectEqual(@as(?*intuition.Window, front), it.ActiveWindow());
+
+    // The order after the front one is sent back: cycling the windows.
+    it.WindowToBack(front);
+    try testing.expectEqual(@as(?*intuition.Window, back), it.NextWindow(null));
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 10, 20);
+    try testing.expectEqual(@as(?*intuition.Window, back), it.WindowUnderPointer());
+
+    // The pointer hidden across the machine, whatever window is active.
+    pointer.mouseSeen(ib);
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 11, 21);
+    try testing.expect(log.pointer_shown);
+    it.HidePointer(true);
+    try testing.expect(!log.pointer_shown);
+    // A window activated, and a move, leave it hidden.
+    it.ActivateWindow(back);
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 12, 22);
+    try testing.expect(!log.pointer_shown);
+    it.HidePointer(false);
+    try testing.expect(log.pointer_shown);
+
+    it.CloseWindow(front);
+    it.CloseWindow(back);
+    try testing.expectEqual(@as(?*intuition.Window, null), it.NextWindow(null));
+    try testing.expectEqual(@as(?*intuition.Window, null), it.ActiveWindow());
+    try testing.expect(it.CloseScreen(screen));
+    try testing.expectEqual(@as(?*intuition.Screen, null), it.FrontScreen());
+    display.down(ib);
+    try tearDown(ib);
+}
+
 test "windows: a border of frame and gadget images, and the screen held open" {
     const ib = try setUp();
     defer kexec.deinit();

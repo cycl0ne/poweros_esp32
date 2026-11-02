@@ -223,6 +223,14 @@ pub fn leave(ib: *IntuitionBase, s: *Screen) void {
     ib.sys_base.Signal(task, @as(u32, 1) << @as(u5, @truncate(psn.sig_bit)));
 }
 
+/// The screen in front of every other, or null while none is open: the
+/// first of the list, which every screen brought to the front becomes.
+pub fn frontmost(ib: *IntuitionBase) ?*Screen {
+    const first = ib.screen_list.head orelse return null;
+    if (first.succ == null) return null;
+    return @ptrCast(@alignCast(first));
+}
+
 /// The frontmost screen of a display, or null when it has none.
 pub fn frontOn(ib: *IntuitionBase, board: *rtg.RtgBoard) ?*Screen {
     var node = ib.screen_list.head;

@@ -632,6 +632,15 @@ fn locate(ib: *IntuitionBase) void {
     st.y = if (st.on) |s| st.disp_y - s.top else st.disp_y;
 }
 
+/// The screen the pointer stands on: the one at its line of the display
+/// the front screen is on, as `locate` finds it, without the screen a
+/// held button began on having its say. Null while no screen is open.
+pub fn screenUnder(ib: *IntuitionBase) ?*Screen {
+    const st = stateOf(ib);
+    const front = _kscreen.frontmost(ib) orelse return null;
+    return _kscreen.screenAtLine(ib, front.board, st.disp_y) orelse front;
+}
+
 /// The pointer's place on `s`, wherever on the display `s` is.
 pub fn pointerOn(ib: *IntuitionBase, s: *const Screen) struct { x: i32, y: i32 } {
     const st = stateOf(ib);
