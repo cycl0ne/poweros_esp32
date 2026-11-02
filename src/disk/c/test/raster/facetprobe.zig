@@ -564,6 +564,133 @@ fn storageImageChecks(probe: *Probe) void {
     }
 }
 
+// --- 1.32: a buffer read as texels of a format -------------------------------
+
+/// Texel k of binding 0 read as a format and written into texel k of
+/// binding 1, which is of another format: what reading by format is for.
+const Swap = struct {
+    fn run(groups: *const facet.shader.Groups) callconv(.c) void {
+        const from = groups.resources.texels(0, 0, 0) orelse return;
+        var into = groups.resources.texels(0, 1, 0) orelse return;
+        const k = groups.group[0];
+        const parts = from.at(k);
+        into.set(k, .{ parts[1], parts[0], parts[2] * 0.5, 1 });
+    }
+
+    /// What the function sees of the two: the counts, and whether each may
+    /// be written.
+    fn told(groups: *const facet.shader.Groups) callconv(.c) void {
+        const out = groups.resources.storage(u32, 0, 2) orelse return;
+        const from = groups.resources.texels(0, 0, 0);
+        const into = groups.resources.texels(0, 1, 0);
+        out[0] = if (from) |one| one.count else 0xFFFF_FFFF;
+        out[1] = if (from) |one| @intFromBool(one.writable) else 0xFFFF_FFFF;
+        out[2] = if (into) |one| one.count else 0xFFFF_FFFF;
+        out[3] = if (into) |one| @intFromBool(one.writable) else 0xFFFF_FFFF;
+        out[4] = if (from) |one| one.colorAt(0) else 0;
+    }
+
+    const entries = [_]facet.shader.Entry{
+        facet.shader.compute("main", &run),
+        facet.shader.compute("told", &told),
+    };
+    const code = facet.shader.Code{ .entry_count = entries.len, .entries = &entries };
+};
+
+fn texelBufferChecks(probe: *Probe) void {
+    const fb = probe.fb;
+    const device = probe.device.?;
+    defer probe.give();
+    const floats, const float_bytes = probe.buffer(4 * 16, facet.BUFFER_USAGE_UNIFORM_TEXEL_BUFFER) orelse return probe.check(false, "a buffer of floats");
+    const colors, const color_bytes = probe.buffer(4 * 4, facet.BUFFER_USAGE_STORAGE_TEXEL_BUFFER) orelse return probe.check(false, "a buffer of colours");
+    const given = [4][4]f32{ .{ 1, 0, 0, 1 }, .{ 0, 1, 0, 1 }, .{ 0, 0, 1, 1 }, .{ 1, 1, 1, 1 } };
+    @memcpy(float_bytes[0..64], std.mem.asBytes(&given));
+    @memset(color_bytes[0..16], 0);
+
+    var reading: ?*facet.BufferView = null;
+    const made = fb.CreateBufferView(device, &.{ .buffer = floats, .format = .r32g32b32a32_sfloat }, &reading);
+    if (!probe.features.texel_buffers) {
+        probe.check(made == .error_feature_not_present, "a buffer view refused where the device has none");
+        return;
+    }
+    if (made != .success) return probe.check(false, "a view of a buffer of floats");
+    defer fb.DestroyBufferView(device, reading);
+    probe.check(true, "a view of a buffer of floats");
+    var writing: ?*facet.BufferView = null;
+    if (fb.CreateBufferView(device, &.{ .buffer = colors, .format = .r8g8b8a8_unorm }, &writing) != .success) return probe.check(false, "a view written through");
+    defer fb.DestroyBufferView(device, writing);
+
+    // Refused: a format no view takes, and an offset that is not a texel's.
+    var none: ?*facet.BufferView = null;
+    probe.check(fb.CreateBufferView(device, &.{ .buffer = floats, .format = .d16_unorm }, &none) == .error_format_not_supported, "a format no view takes refused");
+    probe.check(fb.CreateBufferView(device, &.{ .buffer = floats, .format = .r32g32b32a32_sfloat, .offset = 4 }, &none) == .error_initialization_failed, "an offset that is not a texel's refused");
+    probe.check(none == null, "and nothing given back for either");
+
+    var module: ?*facet.ShaderModule = null;
+    if (fb.CreateShaderModule(device, &.{ .code = &Swap.code }, &module) != .success) return probe.check(false, "the shader module");
+    _ = Probe.keep(&probe.modules, module);
+    const bindings = [3]facet.DescriptorSetLayoutBinding{
+        .{ .binding = 0, .descriptor_type = .uniform_texel_buffer, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+        .{ .binding = 1, .descriptor_type = .storage_texel_buffer, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+        .{ .binding = 2, .descriptor_type = .storage_buffer, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+    };
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    if (fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 3, .bindings = &bindings }, &set_layout) != .success) return probe.check(false, "a set layout of the two kinds");
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    probe.check(true, "a set layout of the two kinds");
+    var layout: ?*facet.PipelineLayout = null;
+    if (fb.CreatePipelineLayout(device, &.{ .set_layout_count = 1, .set_layouts = @ptrCast(&set_layout) }, &layout) != .success) return probe.check(false, "the pipeline layout");
+    _ = Probe.keep(&probe.layouts, layout);
+    var pool: ?*facet.DescriptorPool = null;
+    if (fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool) != .success) return probe.check(false, "a descriptor pool");
+    defer fb.DestroyDescriptorPool(device, pool);
+    var sets: [1]?*facet.DescriptorSet = undefined;
+    if (fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &sets) != .success) return probe.check(false, "a descriptor set");
+    const told_buffer, const told_bytes = probe.buffer(32, facet.BUFFER_USAGE_STORAGE_BUFFER) orelse return probe.check(false, "a buffer the function writes");
+    @memset(told_bytes[0..32], 0);
+    const told_info = facet.DescriptorBufferInfo{ .buffer = told_buffer, .range = facet.WHOLE_SIZE };
+    const writes = [3]facet.WriteDescriptorSet{
+        .{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .uniform_texel_buffer, .descriptor_count = 1, .texel_buffer_view = @ptrCast(&reading) },
+        .{ .dst_set = sets[0].?, .dst_binding = 1, .descriptor_type = .storage_texel_buffer, .descriptor_count = 1, .texel_buffer_view = @ptrCast(&writing) },
+        .{ .dst_set = sets[0].?, .dst_binding = 2, .descriptor_type = .storage_buffer, .descriptor_count = 1, .buffer_info = @ptrCast(&told_info) },
+    };
+    fb.UpdateDescriptorSets(device, 3, &writes, 0, null);
+
+    const infos = [2]facet.ComputePipelineCreateInfo{
+        .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.? }, .layout = layout.? },
+        .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.?, .name = "told" }, .layout = layout.? },
+    };
+    var pipelines: [2]?*facet.Pipeline = undefined;
+    if (fb.CreateComputePipelines(device, null, 2, &infos, &pipelines) != .success) return probe.check(false, "the compute pipelines");
+    _ = Probe.keep(&probe.pipelines, pipelines[0]);
+    _ = Probe.keep(&probe.pipelines, pipelines[1]);
+
+    var commands = probe.record() orelse return probe.check(false, "a recording");
+    fb.CmdBindPipeline(commands, .compute, pipelines[0].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout.?, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 4, 1, 1);
+    if (!probe.submit()) return probe.check(false, "the dispatch submitted");
+
+    // Read as floats and written as 8888, red and green swapped and blue
+    // halved: r, g, b, a in the buffer's bytes.
+    probe.checkEqual(0xFF00_FF00, std.mem.readInt(u32, color_bytes[0..4], .little), "a float texel read and a colour texel written");
+    probe.checkEqual(0xFF00_00FF, std.mem.readInt(u32, color_bytes[4..8], .little), "the second of them");
+    probe.checkEqual(0xFF80_0000, std.mem.readInt(u32, color_bytes[8..12], .little), "a part halved on the way");
+    probe.checkEqual(0xFF80_FFFF, std.mem.readInt(u32, color_bytes[12..16], .little), "the last of them");
+
+    commands = probe.record() orelse return probe.check(false, "a second recording");
+    fb.CmdBindPipeline(commands, .compute, pipelines[1].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout.?, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    if (!probe.submit()) return probe.check(false, "the second dispatch submitted");
+    const out: [*]const u32 = @ptrCast(@alignCast(told_bytes));
+    probe.checkEqual(4, out[0], "the texels a uniform view holds");
+    probe.checkEqual(0, out[1], "a uniform view is not written through");
+    probe.checkEqual(4, out[2], "the texels a storage view holds");
+    probe.checkEqual(1, out[3], "a storage view is");
+    probe.checkEqual(0xFFFF_0000, out[4], "a float texel read as a colour");
+}
+
 // --- the run -----------------------------------------------------------------
 
 /// Every check on one device.
@@ -578,6 +705,7 @@ fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical
     defer probe.down();
     depthChecks(&probe);
     storageImageChecks(&probe);
+    texelBufferChecks(&probe);
     return .{ probe.passed, probe.failed };
 }
 

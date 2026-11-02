@@ -470,6 +470,10 @@ pub const FORMAT_FEATURE_SAMPLED_IMAGE: u32 = 1 << 0;
 /// A `storage_image` descriptor of this format may be written through by a
 /// shader function (`shader.Resources.written`).
 pub const FORMAT_FEATURE_STORAGE_IMAGE: u32 = 1 << 1;
+/// A BufferView of this format may be read by a shader function, and with
+/// `STORAGE_TEXEL_BUFFER` written through as well.
+pub const FORMAT_FEATURE_UNIFORM_TEXEL_BUFFER: u32 = 1 << 3;
+pub const FORMAT_FEATURE_STORAGE_TEXEL_BUFFER: u32 = 1 << 4;
 pub const FORMAT_FEATURE_VERTEX_BUFFER: u32 = 1 << 6;
 pub const FORMAT_FEATURE_COLOR_ATTACHMENT: u32 = 1 << 7;
 pub const FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND: u32 = 1 << 8;
@@ -491,9 +495,31 @@ pub const FormatProperties = extern struct {
 /// what a copy moves.
 pub const Buffer = opaque {};
 
+/// A range of a buffer read as texels of a format, which a shader function
+/// reaches through a `uniform_texel_buffer` or `storage_texel_buffer`
+/// descriptor (CreateBufferView, `shader.Resources.texels`).
+pub const BufferView = opaque {};
+
+/// What a BufferView is made of.
+pub const BufferViewCreateInfo = extern struct {
+    buffer: *Buffer,
+    /// How its bytes are read: one of the formats whose `buffer_features`
+    /// say `UNIFORM_TEXEL_BUFFER` (GetPhysicalDeviceFormatProperties).
+    format: Format,
+    /// Where the texels start in the buffer, a multiple of the format's
+    /// size, and how many bytes of them; `WHOLE_SIZE` reaches the end.
+    offset: u64 align(4) = 0,
+    range: u64 align(4) = WHOLE_SIZE,
+};
+
 /// BufferCreateInfo.usage: what a buffer is for.
 pub const BUFFER_USAGE_TRANSFER_SRC: u32 = 1 << 0;
 pub const BUFFER_USAGE_TRANSFER_DST: u32 = 1 << 1;
+/// Read by a shader function as texels of a format, through a BufferView
+/// (`shader.Resources.texels`).
+pub const BUFFER_USAGE_UNIFORM_TEXEL_BUFFER: u32 = 1 << 2;
+/// The same, and written through as well.
+pub const BUFFER_USAGE_STORAGE_TEXEL_BUFFER: u32 = 1 << 3;
 pub const BUFFER_USAGE_UNIFORM_BUFFER: u32 = 1 << 4;
 pub const BUFFER_USAGE_STORAGE_BUFFER: u32 = 1 << 5;
 pub const BUFFER_USAGE_INDEX_BUFFER: u32 = 1 << 6;
@@ -1717,7 +1743,9 @@ pub const WriteDescriptorSet = extern struct {
     descriptor_type: DescriptorType,
     image_info: ?[*]const DescriptorImageInfo = null,
     buffer_info: ?[*]const DescriptorBufferInfo = null,
-    texel_buffer_view: ?*const anyopaque = null,
+    /// For `uniform_texel_buffer` and `storage_texel_buffer`: a view for
+    /// each descriptor written (CreateBufferView).
+    texel_buffer_view: ?[*]const *BufferView = null,
 };
 
 /// Descriptors copied from one set to another.

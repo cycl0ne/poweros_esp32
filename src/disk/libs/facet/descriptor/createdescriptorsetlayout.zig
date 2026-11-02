@@ -77,7 +77,8 @@ pub fn CreateDescriptorSetLayout(base: *FacetBase, device: *facet.Device, info: 
         if (!_descriptor.known(binding.descriptor_type) or binding.binding > 255) return .error_feature_not_present;
         // A storage image is written through the texture the library keeps,
         // which a device with a layout of its own does not use.
-        if (_descriptor.written(binding.descriptor_type) and !owner.physical.features.storage_images) return .error_feature_not_present;
+        if (binding.descriptor_type == .storage_image and !owner.physical.features.storage_images) return .error_feature_not_present;
+        if (_descriptor.ofTexels(binding.descriptor_type) and !owner.physical.features.texel_buffers) return .error_feature_not_present;
         // A sampler the layout holds, which a write could not change.
         if (binding.immutable_samplers != null and binding.descriptor_count != 0) return .error_feature_not_present;
         binding_count = @max(binding_count, binding.binding + 1);

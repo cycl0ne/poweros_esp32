@@ -130,6 +130,8 @@ const CmdResetQueryPool = @import("command/cmdresetquerypool.zig").CmdResetQuery
 const CmdWriteTimestamp = @import("command/cmdwritetimestamp.zig").CmdWriteTimestamp;
 const CmdCopyQueryPoolResults = @import("command/cmdcopyquerypoolresults.zig").CmdCopyQueryPoolResults;
 const CmdClearDepthStencilImage = @import("command/cmdcleardepthstencilimage.zig").CmdClearDepthStencilImage;
+const CreateBufferView = @import("buffer/createbufferview.zig").CreateBufferView;
+const DestroyBufferView = @import("buffer/destroybufferview.zig").DestroyBufferView;
 
 /// facet.library's interface, as the SDK generates it from
 /// sdk/fd/facet_lib.fd.
@@ -274,6 +276,8 @@ const contract_files = [_][]const u8{
     @embedFile("command/cmdwritetimestamp.zig"),
     @embedFile("command/cmdcopyquerypoolresults.zig"),
     @embedFile("command/cmdcleardepthstencilimage.zig"),
+    @embedFile("buffer/createbufferview.zig"),
+    @embedFile("buffer/destroybufferview.zig"),
 };
 
 fn lvoCreateInstance(base: *FacetBase, info: *const facet.InstanceCreateInfo, instance: *?*facet.Instance) callconv(.c) facet.Result {
@@ -438,6 +442,14 @@ fn lvoCmdCopyQueryPoolResults(base: *FacetBase, buffer: *facet.CommandBuffer, po
 
 fn lvoCmdClearDepthStencilImage(base: *FacetBase, buffer: *facet.CommandBuffer, image: *facet.Image, layout: u32, value: *const facet.ClearDepthStencilValue, range_count: u32, ranges: [*]const facet.ImageSubresourceRange) callconv(.c) void {
     return CmdClearDepthStencilImage(base, buffer, image, layout, value, range_count, ranges);
+}
+
+fn lvoCreateBufferView(base: *FacetBase, device: *facet.Device, info: *const facet.BufferViewCreateInfo, view: *?*facet.BufferView) callconv(.c) facet.Result {
+    return CreateBufferView(base, device, info, view);
+}
+
+fn lvoDestroyBufferView(base: *FacetBase, device: *facet.Device, view: ?*facet.BufferView) callconv(.c) void {
+    return DestroyBufferView(base, device, view);
 }
 
 fn lvoCmdCopyBuffer(base: *FacetBase, buffer: *facet.CommandBuffer, source: *facet.Buffer, destination: *facet.Buffer, region_count: u32, regions: [*]const facet.BufferCopy) callconv(.c) void {
@@ -770,6 +782,8 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoCmdWriteTimestamp),
     vec(lvoCmdCopyQueryPoolResults),
     vec(lvoCmdClearDepthStencilImage),
+    vec(lvoCreateBufferView),
+    vec(lvoDestroyBufferView),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

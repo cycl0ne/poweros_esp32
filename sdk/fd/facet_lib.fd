@@ -262,4 +262,8 @@ void CmdWriteTimestamp(*facet.CommandBuffer buffer, u32 stage, *facet.QueryPool 
 void CmdCopyQueryPoolResults(*facet.CommandBuffer buffer, *facet.QueryPool pool, u32 first, u32 count, *facet.Buffer destination, u64 offset, u64 stride, u32 flags)
 /// Recorded: the levels of a depth image set to a depth and a stencil.
 void CmdClearDepthStencilImage(*facet.CommandBuffer buffer, *facet.Image image, u32 layout, *const facet.ClearDepthStencilValue value, u32 range_count, [*]const facet.ImageSubresourceRange ranges)
+/// A range of a buffer read as texels of a format.
+facet.Result CreateBufferView(*facet.Device device, *const facet.BufferViewCreateInfo info, *?*facet.BufferView view)
+/// A buffer view given back; null does nothing.
+void DestroyBufferView(*facet.Device device, ?*facet.BufferView view)
 ##end

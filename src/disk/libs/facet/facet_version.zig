@@ -139,4 +139,15 @@ pub const LIBRARY_VERSION = 1;
 /// true - the cores, where the texels lie the way the library keeps them -
 /// and not the V3D, whose TMU has a layout of its own. An image written
 /// through may be sampled too, and is read back by a transfer.
-pub const LIBRARY_REVISION = 31;
+/// 32: buffer views - CreateBufferView and DestroyBufferView, and the
+/// `uniform_texel_buffer` and `storage_texel_buffer` descriptors. A view is
+/// a range of a buffer read as texels of a format, which a function reaches
+/// by `shader.Resources.texels`: `shader.Texels.at` reads a texel as four
+/// floats and `colorAt` as 0xAARRGGBB whatever the format, and a storage
+/// one is set by `set` or `setColor`. It is the library's one way of giving
+/// a function bytes read as a format rather than as a Zig type, which is
+/// what a file or another machine hands over; the formats are the colour
+/// ones and the floats, those whose `buffer_features` now say
+/// UNIFORM_TEXEL_BUFFER. Every device has them: a view is bytes and a
+/// format, with nothing of a device's own layout in it.
+pub const LIBRARY_REVISION = 32;

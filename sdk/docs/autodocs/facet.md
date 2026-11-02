@@ -58,6 +58,7 @@ Generated from the source by `./zig build autodoc`.
 - [CmdUpdateBuffer](#cmdupdatebuffer) - Recorded: bytes written into a buffer, kept with the command.
 - [CmdWriteTimestamp](#cmdwritetimestamp) - Recorded: the clock written into query `query` of `pool` when the command is played.
 - [CreateBuffer](#createbuffer) - A buffer of so many bytes, for what its usage says.
+- [CreateBufferView](#createbufferview) - A range of a buffer read as texels of a format, for a texel buffer descriptor.
 - [CreateCommandPool](#createcommandpool) - A pool the device's command buffers are allocated from.
 - [CreateComputePipelines](#createcomputepipelines) - `count` compute pipelines, one for each of `infos`, into `pipelines`.
 - [CreateDescriptorPool](#createdescriptorpool) - A descriptor pool: the most sets it gives out at once.
@@ -79,6 +80,7 @@ Generated from the source by `./zig build autodoc`.
 - [CreateSwapchain](#createswapchain) - A swapchain on a surface, written to `swapchain`.
 - [CreateWindowSurface](#createwindowsurface) - A surface over the inside of a window the program has opened, written to `surface`.
 - [DestroyBuffer](#destroybuffer) - The buffer given back.
+- [DestroyBufferView](#destroybufferview) - A buffer view given back.
 - [DestroyCommandPool](#destroycommandpool) - The pool given back, and every command buffer allocated from it.
 - [DestroyDescriptorPool](#destroydescriptorpool) - The descriptor pool given back, and every set allocated from it.
 - [DestroyDescriptorSetLayout](#destroydescriptorsetlayout) - The descriptor set layout given back; the sets allocated with it stay.
@@ -3081,6 +3083,91 @@ const info = facet.BufferCreateInfo{ .size = @sizeOf(@TypeOf(cube)), .usage = fa
 if (fb.CreateBuffer(device, &info, &vertices) != .success) return error.NoBuffer;
 ```
 
+## CreateBufferView
+
+A range of a buffer read as texels of a format, for a texel buffer descriptor.
+
+**SYNOPSIS**
+
+```zig
+fn CreateBufferView(base: *FacetBase, device: *facet.Device, info: *const facet.BufferViewCreateInfo, view: *?*facet.BufferView) facet.Result
+```
+
+**SINCE**
+
+1.32. LVO -492.
+
+**INPUTS**
+
+- `device` - the device whose buffer it is.
+- `info.buffer` - a buffer made with `BUFFER_USAGE_UNIFORM_TEXEL_BUFFER`,
+  or `BUFFER_USAGE_STORAGE_TEXEL_BUFFER` for one a function writes
+  through, and bound to memory.
+- `info.format` - how the bytes are read: `r8g8b8a8_unorm`,
+  `b8g8r8a8_unorm`, `r5g6b5_unorm_pack16`, `r32_sfloat`,
+  `r32g32_sfloat`, `r32g32b32_sfloat` or `r32g32b32a32_sfloat`, which
+  are those whose `buffer_features` say `UNIFORM_TEXEL_BUFFER`.
+- `info.offset` - the first byte of the texels, a multiple of the
+  format's size.
+- `info.range` - how many bytes of them, a multiple of the format's
+  size; `facet.WHOLE_SIZE` reaches the end of the buffer.
+- `view` - where the view goes.
+
+**RESULT**
+
+`success`; `error_format_not_supported` for a format no view takes;
+`error_feature_not_present` where the device has no texel buffers, or
+the buffer was not made for them; `error_initialization_failed` for an
+offset or a range that is not the format's size, or a range of no
+texels, or a buffer with no memory; `error_out_of_host_memory`.
+
+**BEHAVIOR**
+
+The view holds the buffer, the format and the range, and nothing of the
+bytes: they are read where they lie, as the buffer's memory holds them.
+So a program writing the buffer through its mapped memory is seen by
+the next function that reads the view, with no copy anywhere.
+
+The range is held to the buffer: a range reaching past its end is cut
+to it, and what is left has to be a texel at least.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The view is the caller's, given back by `DestroyBufferView`. The buffer
+has to outlive it, and the view has to outlive every set it is written
+into and every submission reading one.
+
+**NOTES**
+
+This is how a function reads bytes as a format rather than as a Zig
+type: a storage buffer wants the program and the data to agree on a
+struct, where a texel buffer reads what a file or another machine
+handed over. `shader.Resources.texels` gives the function a
+`shader.Texels`, whose `at` reads a texel as four floats and `colorAt`
+as 0xAARRGGBB, whatever the format.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`DestroyBufferView`, `UpdateDescriptorSets`, `CreateDescriptorSetLayout`
+
+**EXAMPLES**
+
+```zig
+var view: ?*facet.BufferView = null;
+_ = fb.CreateBufferView(device, &.{ .buffer = buffer.?, .format = .r32g32b32a32_sfloat }, &view);
+```
+
 ## CreateCommandPool
 
 A pool the device's command buffers are allocated from.
@@ -4694,6 +4781,67 @@ None known.
 
 ```zig
 fb.DestroyBuffer(device, vertices);
+```
+
+## DestroyBufferView
+
+A buffer view given back.
+
+**SYNOPSIS**
+
+```zig
+fn DestroyBufferView(base: *FacetBase, device: *facet.Device, view: ?*facet.BufferView) void
+```
+
+**SINCE**
+
+1.32. LVO -496.
+
+**INPUTS**
+
+- `device` - the device it was made on.
+- `view` - the view, or null, which does nothing.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+The view's memory is given back. The buffer it was made of is untouched:
+a view holds none of its bytes.
+
+A set a destroyed view was written into reads bytes that are no longer
+a view's, as Vulkan has it: the program writes the set again, or does
+not submit work that reads it.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The view is gone; nothing of the buffer is.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateBufferView`
+
+**EXAMPLES**
+
+```zig
+fb.DestroyBufferView(device, view);
 ```
 
 ## DestroyCommandPool

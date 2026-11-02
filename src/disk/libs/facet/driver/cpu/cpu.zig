@@ -121,6 +121,11 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // A function of the program's runs here, and the texels it writes
         // lie where the library keeps them (`shader.Resources.written`).
         .storage_images = true,
+        // A texel buffer is a buffer's bytes and a format: nothing of a
+        // device's own layout is in it, so every device takes one. What
+        // reads it is a function of the program's, which on a device
+        // without them is its compute functions, run on the cores.
+        .texel_buffers = true,
         .depth_prepass = true,
         .points_and_lines = true,
         .depth_test = true,

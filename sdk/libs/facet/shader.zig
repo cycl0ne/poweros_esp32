@@ -36,6 +36,7 @@
 //! made on it. A vertex function is always the program's, and always runs
 //! on the cores, and so do tessellation's and compute functions.
 
+const std = @import("std");
 const facet = @import("facet.zig");
 const texture = @import("texture.zig");
 
@@ -246,13 +247,149 @@ pub const Slot = extern struct {
     pointer: ?*const anyopaque = null,
     /// The bytes of a buffer's range; 0 for an image or a sampler.
     range: u32 = 0,
-    /// Whether a shader function may write through it: a `storage_image`,
-    /// and not a sampled one. It lies in the padding after `range`, so a
-    /// slot is as wide as it always was.
+    /// Whether a shader function may write through it: a `storage_image`
+    /// or a `storage_texel_buffer`, and not one that is only read. It lies
+    /// in the padding after `range`, so a slot is as wide as it always was.
     writable: bool = false,
+    /// How the bytes are read where the slot is a texel buffer; `.none`
+    /// for every other kind. In that same padding.
+    texels: TexelFormat = .none,
     /// What a sampler or a combined image sampler was written with
     /// (CreateSampler); null for every other kind.
     sampler: ?*const texture.Sampler = null,
+};
+
+/// How a texel buffer's bytes are read: the formats a BufferView takes,
+/// numbered for this library alone and not as `facet.Format` numbers them.
+pub const TexelFormat = enum(u8) {
+    none = 0,
+    /// 8 bits a channel, red first in memory, as `r8g8b8a8_unorm`.
+    rgba8888 = 1,
+    /// The same, blue first: `b8g8r8a8_unorm`.
+    bgra8888 = 2,
+    /// 16 bits, `r5g6b5_unorm_pack16`.
+    rgb565 = 3,
+    /// One float to four, `r32_sfloat` to `r32g32b32a32_sfloat`.
+    r32f = 4,
+    rg32f = 5,
+    rgb32f = 6,
+    rgba32f = 7,
+
+    /// The bytes one texel takes; 0 for `.none`.
+    pub fn bytes(format: TexelFormat) u32 {
+        return switch (format) {
+            .none => 0,
+            .rgb565 => 2,
+            .rgba8888, .bgra8888, .r32f => 4,
+            .rg32f => 8,
+            .rgb32f => 12,
+            .rgba32f => 16,
+        };
+    }
+
+    /// How many of the four parts the format holds; the rest read as 0,
+    /// and alpha as 1.
+    pub fn parts(format: TexelFormat) u32 {
+        return switch (format) {
+            .none => 0,
+            .r32f => 1,
+            .rg32f => 2,
+            .rgb565, .rgb32f => 3,
+            .rgba8888, .bgra8888, .rgba32f => 4,
+        };
+    }
+};
+
+/// A texel buffer as a shader function reads it: `count` texels of
+/// `format`, one after another from `bytes`. What `Resources.texels`
+/// gives back.
+///
+/// A texel is read as four floats by `at` or as a colour by `colorAt`,
+/// whatever the format, and set the same way where `writable` says so - a
+/// `storage_texel_buffer` and not a uniform one. Nothing orders one
+/// function's writes against another's.
+pub const Texels = struct {
+    bytes: [*]u8,
+    count: u32,
+    format: TexelFormat,
+    writable: bool,
+
+    /// Texel `index` as x, y, z and w: a colour format's channels are 0 to
+    /// 1, and what the format does not hold reads as 0, w as 1. All zero
+    /// past the last texel.
+    pub fn at(texels: *const Texels, index: u32) [4]f32 {
+        if (index >= texels.count) return .{ 0, 0, 0, 0 };
+        const from = texels.bytes + @as(usize, index) * texels.format.bytes();
+        var made = [4]f32{ 0, 0, 0, 1 };
+        switch (texels.format) {
+            .none => {},
+            .rgba8888, .bgra8888 => {
+                const packed_texel = std.mem.readInt(u32, from[0..4], .little);
+                const order: [4]u5 = if (texels.format == .rgba8888) .{ 0, 8, 16, 24 } else .{ 16, 8, 0, 24 };
+                for (&made, order) |*part, shift| part.* = @as(f32, @floatFromInt(packed_texel >> shift & 0xFF)) / 255;
+            },
+            .rgb565 => {
+                const packed_texel = std.mem.readInt(u16, from[0..2], .little);
+                made[0] = @as(f32, @floatFromInt(packed_texel >> 11 & 0x1F)) / 31;
+                made[1] = @as(f32, @floatFromInt(packed_texel >> 5 & 0x3F)) / 63;
+                made[2] = @as(f32, @floatFromInt(packed_texel & 0x1F)) / 31;
+            },
+            .r32f, .rg32f, .rgb32f, .rgba32f => {
+                const floats: [*]align(1) const f32 = @ptrCast(from);
+                for (0..texels.format.parts()) |k| made[k] = floats[k];
+            },
+        }
+        return made;
+    }
+
+    /// Texel `index` as 0xAARRGGBB: a float format's parts held to 0 to 1
+    /// first. Transparent black past the last texel.
+    pub fn colorAt(texels: *const Texels, index: u32) u32 {
+        const parts = texels.at(index);
+        var made: u32 = 0;
+        for (parts, [4]u5{ 16, 8, 0, 24 }) |part, shift| {
+            made |= @as(u32, @intFromFloat(@round(held(part) * 255))) << shift;
+        }
+        return made;
+    }
+
+    /// Texel `index` set from x, y, z and w; nothing where the slot is only
+    /// read, or past the last texel. A colour format takes 0 to 1.
+    pub fn set(texels: *Texels, index: u32, parts: [4]f32) void {
+        if (!texels.writable or index >= texels.count) return;
+        const into = texels.bytes + @as(usize, index) * texels.format.bytes();
+        switch (texels.format) {
+            .none => {},
+            .rgba8888, .bgra8888 => {
+                const order: [4]u5 = if (texels.format == .rgba8888) .{ 0, 8, 16, 24 } else .{ 16, 8, 0, 24 };
+                var made: u32 = 0;
+                for (parts, order) |part, shift| made |= @as(u32, @intFromFloat(@round(held(part) * 255))) << shift;
+                std.mem.writeInt(u32, into[0..4], made, .little);
+            },
+            .rgb565 => {
+                const r: u32 = @intFromFloat(@round(held(parts[0]) * 31));
+                const g: u32 = @intFromFloat(@round(held(parts[1]) * 63));
+                const b: u32 = @intFromFloat(@round(held(parts[2]) * 31));
+                std.mem.writeInt(u16, into[0..2], @intCast(r << 11 | g << 5 | b), .little);
+            },
+            .r32f, .rg32f, .rgb32f, .rgba32f => {
+                const floats: [*]align(1) f32 = @ptrCast(into);
+                for (0..texels.format.parts()) |k| floats[k] = parts[k];
+            },
+        }
+    }
+
+    /// Texel `index` set from 0xAARRGGBB.
+    pub fn setColor(texels: *Texels, index: u32, color: u32) void {
+        var parts: [4]f32 = undefined;
+        for (&parts, [4]u5{ 16, 8, 0, 24 }) |*part, shift| part.* = @as(f32, @floatFromInt(color >> shift & 0xFF)) / 255;
+        texels.set(index, parts);
+    }
+
+    /// 0 to 1, a NaN as 0.
+    fn held(part: f32) f32 {
+        return if (part >= 0) @min(part, 1) else 0;
+    }
 };
 
 /// A descriptor set as a shader reads it.
@@ -315,6 +452,22 @@ pub const Resources = extern struct {
         const found = resources.slot(set, binding, element) orelse return null;
         if (!found.writable) return null;
         return @ptrCast(@alignCast(@constCast(found.pointer orelse return null)));
+    }
+
+    /// Element `element` of binding `binding` of set `set`, a texel
+    /// buffer: its texels, or null where it is not written or is of
+    /// another kind. A `storage_texel_buffer`'s may be set as well as
+    /// read, a `uniform_texel_buffer`'s only read.
+    pub fn texels(resources: *const Resources, set: u32, binding: u32, element: u32) ?Texels {
+        const found = resources.slot(set, binding, element) orelse return null;
+        if (found.texels == .none) return null;
+        const bytes: [*]u8 = @ptrCast(@constCast(found.pointer orelse return null));
+        return .{
+            .bytes = bytes,
+            .count = found.range / found.texels.bytes(),
+            .format = found.texels,
+            .writable = found.writable,
+        };
     }
 
     /// Element `element` of binding `binding` of set `set`, a sampler or a

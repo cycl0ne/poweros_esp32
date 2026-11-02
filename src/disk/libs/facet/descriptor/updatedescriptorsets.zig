@@ -9,6 +9,7 @@ const _descriptor = @import("_descriptor.zig");
 const _buffer = @import("../buffer/_buffer.zig");
 const ImageView = @import("../image/_image.zig").ImageView;
 const Sampler = @import("../sampler/_sampler.zig").Sampler;
+const BufferView = @import("../buffer/_bufferview.zig").BufferView;
 
 /// Descriptors written into sets, and copied from one set to another.
 ///
@@ -96,6 +97,17 @@ pub fn UpdateDescriptorSets(base: *FacetBase, device: *facet.Device, write_count
                     const writable = _descriptor.written(write.descriptor_type);
                     if (writable and view.image.usage & facet.IMAGE_USAGE_STORAGE == 0) break :sampled .{};
                     break :sampled .{ .pointer = &view.texels, .sampler = with, .writable = writable };
+                },
+                .uniform_texel_buffer, .storage_texel_buffer => texels: {
+                    const views = write.texel_buffer_view orelse break;
+                    const view = _objects.of(BufferView, views[k]);
+                    const bytes = _buffer.bytes(view.buffer, view.offset, view.bytes) orelse break :texels .{};
+                    break :texels .{
+                        .pointer = bytes.ptr,
+                        .range = @intCast(@min(bytes.len - bytes.len % view.texels.bytes(), 0xFFFF_FFFF)),
+                        .texels = view.texels,
+                        .writable = write.descriptor_type == .storage_texel_buffer,
+                    };
                 },
                 else => bound: {
                     const info = (write.buffer_info orelse break)[k];

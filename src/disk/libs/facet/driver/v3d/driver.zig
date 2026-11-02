@@ -157,6 +157,11 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // layout the library writes (`texture_offset`), so a storage image
         // is refused on this device and the set layout says so.
         .storage_images = false,
+        // A texel buffer is a buffer's bytes and a format: nothing of a
+        // device's own layout is in it, so every device takes one. What
+        // reads it is a function of the program's, which on a device
+        // without them is its compute functions, run on the cores.
+        .texel_buffers = true,
         // The depth pre-pass is the rasterizer's (driver/cpu/raster/prepass.zig).
         .depth_prepass = false,
         .points_and_lines = true,

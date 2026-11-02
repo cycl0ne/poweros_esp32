@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.31**, so that a program need not find out by failing. It covers the API.
+1.32**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -22,7 +22,7 @@ BCM2712's V3D, which runs only a fixed handful of fragment forms
 
 | Where | What |
 |---|---|
-| `sdk/fd/facet_lib.fd` | The whole jump table, one line a function: 118 entries |
+| `sdk/fd/facet_lib.fd` | The whole jump table, one line a function: 120 entries |
 | `sdk/libs/facet/facet.zig` | The structures and enumerations a program passes |
 | `sdk/libs/facet/shader.zig` | Shaders as functions: the stages, their inputs, the fixed forms |
 | `sdk/libs/facet/texture.zig` | How a texture is kept and sampled, by a fixed form and through a sampler |
@@ -30,7 +30,7 @@ BCM2712's V3D, which runs only a fixed handful of fragment forms
 | `src/disk/libs/facet/driver/cpu/` | The cores' driver: the tiled rasterizer |
 | `src/disk/libs/facet/driver/v3d/` | The V3D's driver, a module in `LIBS:facet/` |
 
-Of Vulkan 1.0's roughly 137 core entry points, facet has 118. Two of the
+Of Vulkan 1.0's roughly 137 core entry points, facet has 120. Two of the
 absent ones, `GetInstanceProcAddr` and `GetDeviceProcAddr`, do not apply to
 a library called through an LVO table.
 
@@ -171,6 +171,28 @@ is left out:
 - A `storage_image` is still not an attachment: an image cannot be drawn
   into and written through in the same pass.
 
+## Texel buffers, and the formats they read
+
+Since 1.32 a buffer's bytes may be read as texels of a format:
+`CreateBufferView` makes a view of a range, a `uniform_texel_buffer` or
+`storage_texel_buffer` descriptor carries it, and
+`shader.Resources.texels` gives the function a `shader.Texels` whose `at`
+reads a texel as four floats and `colorAt` as 0xAARRGGBB, whatever the
+format. A storage one is written through as well. Every device has them.
+What is left out:
+
+- **Seven formats**: `r8g8b8a8_unorm`, `b8g8r8a8_unorm`,
+  `r5g6b5_unorm_pack16`, and `r32_sfloat` to `r32g32b32a32_sfloat`. No
+  integer texel formats, nothing of 16 bits a channel, and none of the
+  compressed ones.
+- **A view holds no bytes of its own**: it reads the buffer where it lies,
+  so a destroyed view leaves a set pointing at bytes that are no longer a
+  view's, as it does in Vulkan.
+- Nothing orders two writes through a storage one, there being no barrier
+  and no atomic.
+- The offset and the range are a whole number of texels, and a range of no
+  texels is refused.
+
 ## Object kinds that do not exist
 
 ### Events
@@ -187,11 +209,6 @@ makes one: there is no `CreatePipelineCache`, `DestroyPipelineCache`,
 `GetPipelineCacheData` or `MergePipelineCaches`. The parameter is there for
 the shape of the call and is ignored. Pipelines are cheap to make here,
 because there is nothing to compile.
-
-### Buffer views
-
-No `CreateBufferView` and no `DestroyBufferView`; the
-`uniform_texel_buffer` and `storage_texel_buffer` descriptors are refused.
 
 ### Sparse resources
 
@@ -236,7 +253,7 @@ These can be asked for and are answered with `error_feature_not_present`.
 | Input attachments and resolve attachments in a subpass | `render/createrenderpass.zig` |
 | A depth attachment's stencil that loads or stores | `render/createrenderpass.zig` |
 | Present modes but `fifo`, though `immediate`, `mailbox` and `fifo_relaxed` are enumerated | `swapchain/createswapchain.zig` |
-| Descriptors but `sampler`, `combined_image_sampler`, `sampled_image`, `storage_image`, `uniform_buffer` and `storage_buffer` | `descriptor/_descriptor.zig` |
+| Descriptors but `sampler`, `combined_image_sampler`, `sampled_image`, `storage_image`, `uniform_buffer`, `storage_buffer` and the two texel buffers | `descriptor/_descriptor.zig` |
 | A `storage_image` layout on the V3D: its TMU keeps a texture its own way | `descriptor/createdescriptorsetlayout.zig` |
 | A fixed fragment form that drops pixels, on the V3D: the QPUs have no program that discards | `driver/v3d/driver.zig` |
 | A fixed fragment form that samples through a sampler, on the V3D: nor one that reads a sampler | `driver/v3d/driver.zig` |

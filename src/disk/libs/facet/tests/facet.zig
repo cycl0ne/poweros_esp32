@@ -263,8 +263,9 @@ test "the formats: what each does in each tiling" {
     // One with a stencil has no plane of its own: an attachment only.
     rig.fb.GetPhysicalDeviceFormatProperties(physical, .d16_unorm_s8_uint, &properties);
     try testing.expectEqual(facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT, properties.optimal_tiling_features);
+    // A vertex format, and texels a BufferView reads as well.
     rig.fb.GetPhysicalDeviceFormatProperties(physical, .r32g32b32_sfloat, &properties);
-    try testing.expectEqual(facet.FORMAT_FEATURE_VERTEX_BUFFER, properties.buffer_features);
+    try testing.expectEqual(facet.FORMAT_FEATURE_VERTEX_BUFFER | facet.FORMAT_FEATURE_UNIFORM_TEXEL_BUFFER | facet.FORMAT_FEATURE_STORAGE_TEXEL_BUFFER, properties.buffer_features);
     rig.fb.GetPhysicalDeviceFormatProperties(physical, @enumFromInt(1234), &properties);
     try testing.expectEqual(@as(u32, 0), properties.optimal_tiling_features | properties.linear_tiling_features | properties.buffer_features);
 }
