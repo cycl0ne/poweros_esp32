@@ -129,6 +129,7 @@ const CmdEndQuery = @import("command/cmdendquery.zig").CmdEndQuery;
 const CmdResetQueryPool = @import("command/cmdresetquerypool.zig").CmdResetQueryPool;
 const CmdWriteTimestamp = @import("command/cmdwritetimestamp.zig").CmdWriteTimestamp;
 const CmdCopyQueryPoolResults = @import("command/cmdcopyquerypoolresults.zig").CmdCopyQueryPoolResults;
+const CmdClearDepthStencilImage = @import("command/cmdcleardepthstencilimage.zig").CmdClearDepthStencilImage;
 
 /// facet.library's interface, as the SDK generates it from
 /// sdk/fd/facet_lib.fd.
@@ -272,6 +273,7 @@ const contract_files = [_][]const u8{
     @embedFile("command/cmdresetquerypool.zig"),
     @embedFile("command/cmdwritetimestamp.zig"),
     @embedFile("command/cmdcopyquerypoolresults.zig"),
+    @embedFile("command/cmdcleardepthstencilimage.zig"),
 };
 
 fn lvoCreateInstance(base: *FacetBase, info: *const facet.InstanceCreateInfo, instance: *?*facet.Instance) callconv(.c) facet.Result {
@@ -432,6 +434,10 @@ fn lvoCmdWriteTimestamp(base: *FacetBase, buffer: *facet.CommandBuffer, stage: u
 
 fn lvoCmdCopyQueryPoolResults(base: *FacetBase, buffer: *facet.CommandBuffer, pool: *facet.QueryPool, first: u32, count: u32, destination: *facet.Buffer, offset: u64, stride: u64, flags: u32) callconv(.c) void {
     return CmdCopyQueryPoolResults(base, buffer, pool, first, count, destination, offset, stride, flags);
+}
+
+fn lvoCmdClearDepthStencilImage(base: *FacetBase, buffer: *facet.CommandBuffer, image: *facet.Image, layout: u32, value: *const facet.ClearDepthStencilValue, range_count: u32, ranges: [*]const facet.ImageSubresourceRange) callconv(.c) void {
+    return CmdClearDepthStencilImage(base, buffer, image, layout, value, range_count, ranges);
 }
 
 fn lvoCmdCopyBuffer(base: *FacetBase, buffer: *facet.CommandBuffer, source: *facet.Buffer, destination: *facet.Buffer, region_count: u32, regions: [*]const facet.BufferCopy) callconv(.c) void {
@@ -763,6 +769,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoCmdResetQueryPool),
     vec(lvoCmdWriteTimestamp),
     vec(lvoCmdCopyQueryPoolResults),
+    vec(lvoCmdClearDepthStencilImage),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

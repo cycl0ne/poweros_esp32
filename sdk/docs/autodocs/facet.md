@@ -28,6 +28,7 @@ Generated from the source by `./zig build autodoc`.
 - [CmdBlitImage](#cmdblitimage) - Recorded: a rectangle of an image drawn over one of another, scaled.
 - [CmdClearAttachments](#cmdclearattachments) - Recorded: parts of a render pass's attachments cleared, in the middle of it.
 - [CmdClearColorImage](#cmdclearcolorimage) - Recorded: an image's levels and layers set to a colour.
+- [CmdClearDepthStencilImage](#cmdcleardepthstencilimage) - Recorded: a depth image's pixels set to a depth.
 - [CmdCopyBuffer](#cmdcopybuffer) - Recorded: bytes copied from one buffer to another.
 - [CmdCopyBufferToImage](#cmdcopybuffertoimage) - Recorded: rectangles of texels copied from a buffer into an image.
 - [CmdCopyImage](#cmdcopyimage) - Recorded: a rectangle of texels copied from one image to another, as they are.
@@ -1177,6 +1178,82 @@ None known.
 const color = facet.ClearColorValue{ .float32 = .{ 0, 0, 0, 1 } };
 const range = facet.ImageSubresourceRange{};
 fb.CmdClearColorImage(commands, texture.?, .transfer_dst_optimal, &color, 1, @ptrCast(&range));
+```
+
+## CmdClearDepthStencilImage
+
+Recorded: a depth image's pixels set to a depth.
+
+**SYNOPSIS**
+
+```zig
+fn CmdClearDepthStencilImage(base: *FacetBase, buffer: *facet.CommandBuffer, image: *facet.Image, layout: u32, value: *const facet.ClearDepthStencilValue, range_count: u32, ranges: [*]const facet.ImageSubresourceRange) void
+```
+
+**SINCE**
+
+1.30. LVO -488.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording.
+- `image` - the image cleared, of `d16_unorm`, which is not an
+  attachment of the pass being recorded: this is a transfer, not a draw.
+- `layout` - what the image is in, which this library does not act on.
+- `value` - the depth, 0 to 1, as the tiles hold one: 0 nearest. Its
+  `stencil` is kept and not written, there being no stencil plane.
+- `range_count`, `ranges` - which levels and layers, by
+  `base_mip_level`, `level_count`, `base_array_layer` and `layer_count`.
+  A depth image has one of each, so a range past them is left out.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+Every pixel of the image is set to the depth. An image this cannot
+write - one that is not a depth image, or one of `s8_uint` or
+`d16_unorm_s8_uint`, which have no plane of their own - is left out of
+the frame and said to be in the log.
+
+A transient depth image is left alone: its pixels live in the tiles and
+there is nothing in memory to clear, which the render pass does as each
+tile starts. It is not an error.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The ranges are copied as the command is recorded. The image has to last
+until the work is done.
+
+**NOTES**
+
+This is for a depth image a render pass stores into
+(`PhysicalDeviceFeatures.stored_depth`): it is how one is put back to
+the furthest depth without a pass over it. Where the pass clears its
+depth attachment itself there is nothing for this to do.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CmdClearColorImage`, `CmdClearAttachments`, `CreateRenderPass`
+
+**EXAMPLES**
+
+```zig
+const value = facet.ClearDepthStencilValue{ .depth = 1 };
+const range = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH };
+fb.CmdClearDepthStencilImage(commands, depth.?, 0, &value, 1, @ptrCast(&range));
 ```
 
 ## CmdCopyBuffer
@@ -4017,9 +4094,18 @@ or d16_unorm_s8_uint. No input, resolve or multisampled attachments.
 The subpasses are drawn one after another. A colour attachment's load op
 CLEAR clears the render area the first time a subpass names it; LOAD,
 DONT_CARE and later subpasses keep what the image holds. What is drawn is
-stored, whatever its store op. The depth attachment's load op is CLEAR or
-DONT_CARE - both clear it - and its store op DONT_CARE: the depth lives in
-the rasterizer's tiles alone and is never stored.
+stored, whatever its store op.
+
+The depth attachment lives in the rasterizer's tiles, and its load op
+CLEAR or DONT_CARE - both clear it - and its store op DONT_CARE leave it
+there, costing no memory at all. Since 1.30 it may outlive the pass
+instead: with the store op STORE each tile's depth is written into the
+image's memory as the tile is drawn, and with the load op LOAD each
+tile starts from what is there. Both want `d16_unorm` and a device whose
+`stored_depth` is true - the cores, not the V3D - and an image bound to
+memory something is behind, which CreateFramebuffer holds to; otherwise
+that is `error_feature_not_present`. The stencil has no plane of its
+own, so its own two ops are still DONT_CARE.
 
 So two subpasses share a depth attachment only one right after the other
 and with the same colour attachments too, when the second goes on in the

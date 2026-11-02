@@ -114,4 +114,16 @@ pub const LIBRARY_VERSION = 1;
 /// refused. The V3D counts neither samples nor stages - its occlusion
 /// counter is not read and what its QPUs were given is not counted - so
 /// pools of both kinds are refused on it and only timestamps are kept.
-pub const LIBRARY_REVISION = 29;
+/// 30: a depth attachment that outlives its render pass. With the store op
+/// STORE each tile's depth is written into the image's memory as the tile
+/// is drawn, and with the load op LOAD each tile starts from what is there,
+/// so depth can be read back - CmdCopyImageToBuffer, CmdCopyImage - and a
+/// shadow map made from it. A depth image is rows like a colour
+/// attachment's, takes TRANSFER_SRC and TRANSFER_DST, and is cleared
+/// without a pass by CmdClearDepthStencilImage. Both want `d16_unorm` and a
+/// device whose `stored_depth` is true: the cores hold the depth in their
+/// tiles and can write it out, the V3D has no such path yet and refuses
+/// such a pass. The stencil still has no plane of its own, and a transient
+/// depth image still costs no memory traffic at all - which is what every
+/// pass that does not ask for this goes on doing.
+pub const LIBRARY_REVISION = 30;

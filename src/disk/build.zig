@@ -148,6 +148,7 @@ const inner_tests = [_]Program{
     .{ .disk = "c/test/facetwindow", .source = "c/test/raster/facetwindow.zig", .name = "facetwindow", .imports = &.{"raster"} },
     .{ .disk = "c/test/facetmany", .source = "c/test/raster/facetmany.zig", .name = "facetmany", .imports = &.{"raster"} },
     .{ .disk = "c/test/facetboth", .source = "c/test/raster/facetboth.zig", .name = "facetboth" },
+    .{ .disk = "c/test/facetprobe", .source = "c/test/raster/facetprobe.zig", .name = "facetprobe" },
     .{ .disk = "c/test/v3dtest", .source = "c/test/v3d/v3dtest.zig", .name = "v3dtest", .imports = &.{"v3d"} },
     .{ .disk = "c/test/locale", .source = "c/test/locale/locale.zig", .name = "locale", .strings = "c/test/locale/locale.cd" },
 };
@@ -324,7 +325,7 @@ const a64_only = [_][]const u8{ "cyw43455.device", "v3dtest", "facetboth", "v3d.
 /// file. Together they are 2 MB of load files on a flash disk that has
 /// 14 MB for everything, and that board's own room goes to the rest of
 /// the system.
-const no_3d = [_][]const u8{ "facet.library", "raster", "cube", "facetcube", "facetwindow", "facetmany", "model.datatype", "obj.datatype", "boing", "cobra" };
+const no_3d = [_][]const u8{ "facet.library", "raster", "cube", "facetcube", "facetwindow", "facetmany", "facetprobe", "model.datatype", "obj.datatype", "boing", "cobra" };
 
 /// The files that go with them: the models in SYS:Tests/datatypes, the
 /// datatype descriptor that names obj.datatype, and what the two

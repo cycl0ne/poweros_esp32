@@ -150,6 +150,9 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         .occlusion_queries = false,
         .pipeline_statistics_queries = false,
         .timestamp_queries = true,
+        // The V3D's own tiles hold the depth and nothing stores it to
+        // memory yet, so a pass that keeps its depth is refused here.
+        .stored_depth = false,
         // The depth pre-pass is the rasterizer's (driver/cpu/raster/prepass.zig).
         .depth_prepass = false,
         .points_and_lines = true,

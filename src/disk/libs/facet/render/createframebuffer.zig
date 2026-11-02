@@ -7,7 +7,8 @@ const FacetBase = @import("../facet_base.zig").FacetBase;
 const _objects = @import("../_objects.zig");
 const Device = @import("../device/_device.zig").Device;
 const _render = @import("_render.zig");
-const ImageView = @import("../image/_image.zig").ImageView;
+const _image = @import("../image/_image.zig");
+const ImageView = _image.ImageView;
 
 /// A framebuffer: an image view for each of a render pass's attachments.
 ///
@@ -74,6 +75,10 @@ pub fn CreateFramebuffer(base: *FacetBase, device: *facet.Device, info: *const f
         const depth: ?*ImageView = if (part.depth) |index| depth: {
             const view = _objects.of(ImageView, views[index]);
             if (view.image.kind != .depth or view.image.width < info.width or view.image.height < info.height) return .error_initialization_failed;
+            // A depth the pass keeps is written into the image's memory, so
+            // the image wants memory something is behind: a lazily
+            // allocated one has none (`readable`).
+            if ((part.stores_depth or part.loads_depth) and !_image.readable(view.image)) return .error_feature_not_present;
             break :depth view;
         } else null;
         target.* = .{ .width = info.width, .height = info.height, .color = color, .depth = depth };

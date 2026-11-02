@@ -144,6 +144,7 @@ fn playStream(queue: *Queue, stream: *const _stream.Stream) void {
         .fill_buffer => if (!_vertices.fillBuffer(_stream.as(_command.FillBuffer, head))) noRoom(queue, "a fill of bytes that are not the buffer's"),
         .update_buffer => if (!_vertices.updateBuffer(_stream.as(_command.UpdateBuffer, head))) noRoom(queue, "an update of bytes that are not the buffer's"),
         .clear_color_image => if (!_transfer.clearColorImage(_stream.as(_command.ClearColorImage, head))) noRoom(queue, "a clear of an image whose format it cannot write"),
+        .clear_depth_stencil_image => if (!_transfer.clearDepthImage(_stream.as(_command.ClearDepthStencilImage, head))) noRoom(queue, "a clear of a depth image whose pixels it cannot write"),
         .copy_image => _transfer.copyImage(_stream.as(_command.CopyImage, head)),
         .blit_image => _transfer.blitImage(_stream.as(_command.BlitImage, head)),
         .copy_image_to_buffer => _transfer.copyImageToBuffer(_stream.as(_command.CopyImageToBuffer, head)),
@@ -300,9 +301,22 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, outp
     const right: u32 = @intCast(std.math.clamp(@as(i64, offset.x) + command.area.extent.width, left, framebuffer.width));
     const bottom: u32 = @intCast(std.math.clamp(@as(i64, offset.y) + command.area.extent.height, top, framebuffer.height));
     const area = raster.Rect{ .x = left, .y = top, .width = right - left, .height = bottom - top };
+    // Where the pass keeps its depth, the image's rows are the plane the
+    // tiles read from and write back into; a transient image has none, and
+    // CreateFramebuffer has already refused that pass.
+    const plane: ?raster.Attachments.Plane = if (render_pass.stores_depth or render_pass.loads_depth) plane: {
+        const view = framebuffer.depth orelse break :plane null;
+        break :plane .{ .pixels = view.image.data orelse break :plane null, .pitch = view.image.pitch };
+    } else null;
     const attachments = raster.Attachments{
         .color = .{ .load = if (render_pass.color_load == .clear) .clear else .keep, .clear = command.clear_colors[output] },
-        .depth = .{ .used = render_pass.tests_depth, .clear = @intCast(command.clear_depth) },
+        .depth = .{
+            .used = render_pass.tests_depth,
+            .clear = @intCast(command.clear_depth),
+            .plane = plane,
+            .load = if (render_pass.loads_depth and plane != null) .keep else .clear,
+            .store = render_pass.stores_depth and plane != null,
+        },
         .stencil = .{ .used = render_pass.tests_stencil, .clear = @intCast(command.clear_stencil) },
     };
     player.display = framebuffer.color.image.display;

@@ -115,6 +115,9 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         .occlusion_queries = true,
         .pipeline_statistics_queries = true,
         .timestamp_queries = true,
+        // The tiles hold the depth, so they can write it into the image's
+        // rows as they are drawn and read it back (raster/target.zig).
+        .stored_depth = true,
         .depth_prepass = true,
         .points_and_lines = true,
         .depth_test = true,

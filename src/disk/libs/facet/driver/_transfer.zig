@@ -140,6 +140,28 @@ pub fn clearColorImage(command: *const _command.ClearColorImage) bool {
     return true;
 }
 
+/// CmdClearDepthStencilImage's ranges: a depth image's rows set to the
+/// depth given, the padding at a row's end with them, being the image's own
+/// memory and read by nothing. False, and nothing written, for an image
+/// whose depth this cannot write - one with a stencil, which has no plane
+/// of its own.
+///
+/// An image with no memory behind it - a transient attachment, whose pixels
+/// live in the tiles - is left alone and answers true: there is nothing
+/// there to clear, and the pass clears the tiles as they start.
+pub fn clearDepthImage(command: *const _command.ClearDepthStencilImage) bool {
+    const image = command.image;
+    if (image.kind != .depth or image.format != .d16_unorm) return false;
+    const data = image.data orelse return true;
+    for (_stream.items(_command.ClearDepthStencilImage, facet.ImageSubresourceRange, command, command.count)) |range| {
+        // One level and one layer: a depth image has no others.
+        if (range.base_mip_level != 0 or range.base_array_layer != 0) continue;
+        if (range.level_count == 0 or range.layer_count == 0) continue;
+        fill(data, @as(usize, image.pitch) * image.height, .{ .two = command.depth });
+    }
+    return true;
+}
+
 /// Where a level lies in a layer and how many bytes it is. Null for a level
 /// the image does not keep that way.
 fn spanOf(image: *const Image, level: u32) ?struct { at: usize, bytes: usize } {

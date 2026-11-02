@@ -135,6 +135,7 @@ pub const LVO = struct {
     pub const CmdResetQueryPool = libraries.lvo(118);
     pub const CmdWriteTimestamp = libraries.lvo(119);
     pub const CmdCopyQueryPoolResults = libraries.lvo(120);
+    pub const CmdClearDepthStencilImage = libraries.lvo(121);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -257,6 +258,7 @@ pub const Fn = struct {
     pub const CmdResetQueryPool = *const fn (*FacetBase, *facet.CommandBuffer, *facet.QueryPool, u32, u32) callconv(.c) void;
     pub const CmdWriteTimestamp = *const fn (*FacetBase, *facet.CommandBuffer, u32, *facet.QueryPool, u32) callconv(.c) void;
     pub const CmdCopyQueryPoolResults = *const fn (*FacetBase, *facet.CommandBuffer, *facet.QueryPool, u32, u32, *facet.Buffer, u64, u64, u32) callconv(.c) void;
+    pub const CmdClearDepthStencilImage = *const fn (*FacetBase, *facet.CommandBuffer, *facet.Image, u32, *const facet.ClearDepthStencilValue, u32, [*]const facet.ImageSubresourceRange) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -866,5 +868,10 @@ pub const FacetBase = opaque {
     /// Recorded: the queries' values written into a buffer, as GetQueryPoolResults gives them.
     pub fn CmdCopyQueryPoolResults(self: *FacetBase, buffer: *facet.CommandBuffer, pool: *facet.QueryPool, first: u32, count: u32, destination: *facet.Buffer, offset: u64, stride: u64, flags: u32) void {
         return libraries.call(self, LVO.CmdCopyQueryPoolResults, Fn.CmdCopyQueryPoolResults, .{ buffer, pool, first, count, destination, offset, stride, flags });
+    }
+
+    /// Recorded: the levels of a depth image set to a depth and a stencil.
+    pub fn CmdClearDepthStencilImage(self: *FacetBase, buffer: *facet.CommandBuffer, image: *facet.Image, layout: u32, value: *const facet.ClearDepthStencilValue, range_count: u32, ranges: [*]const facet.ImageSubresourceRange) void {
+        return libraries.call(self, LVO.CmdClearDepthStencilImage, Fn.CmdClearDepthStencilImage, .{ buffer, image, layout, value, range_count, ranges });
     }
 };
