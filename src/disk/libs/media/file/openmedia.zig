@@ -41,6 +41,14 @@ const ebml = @import("../mkv/ebml.zig");
 /// The kind's code is a module of its own in LIBS:codecs/, opened until
 /// CloseMedia (SINCE 1.5): mp4.container, mkv.container.
 ///
+/// Which module reads a kind comes from the modules' own ROM tags, read
+/// out of their files without loading them, and not from their names
+/// (SINCE 1.7): a container is added to a board by dropping its module in
+/// LIBS:codecs/. Where a kind has several modules each is tried, the
+/// higher priority first; one that opens and then refuses the file is let
+/// go and the next reads the bytes again - which a file read through a
+/// function cannot, so the refusal of the module that read it stands.
+///
 /// The kind is found by the first bytes: a Matroska file begins with
 /// EBML's header, an MP4 with a box of the kinds one begins with -
 /// `ftyp`, or QuickTime's `moov`, `mdat`, `wide`, `free`.
@@ -151,15 +159,29 @@ pub fn OpenMedia(base: *MediaBase, tags: ?[*]const utility.TagItem, err: ?*i32) 
 /// own tags (`modules/_modules.zig`) in the order they are tried:
 /// MERR_UNKNOWN when the bytes are not a container this library knows,
 /// MERR_UNSUPPORTED when no module on this disk reads that kind.
+///
+/// Every module of the kind is tried, the higher priority first (SINCE
+/// 1.7): one that
+/// opens and then refuses the file is let go and the next is given it,
+/// reading the bytes again where they lie; the error answered is the first
+/// that was not plain MERR_UNSUPPORTED - "not mine". A file read through a
+/// function cannot be read again, and keeps the refusal of the module that
+/// read it.
 fn openKind(base: *MediaBase, file: *File, kind: u32, check: bool) i32 {
     if (kind == media.MEDIA_UNKNOWN) return media.MERR_UNKNOWN;
     const sys = file.base.sys_base;
     var at: u32 = 0;
+    var why: i32 = media.MERR_UNSUPPORTED;
     while (_modules.nth(base, kind, at)) |found| : (at += 1) {
         file.module = sys.OpenLibrary(@ptrCast(&found.name), 1);
-        if (_file.moduleOf(file)) |module| return module.OpenContainer(file, check);
+        const module = _file.moduleOf(file) orelse continue;
+        const result = module.OpenContainer(file, check);
+        if (result == media.MERR_OK) return media.MERR_OK;
+        if (why == media.MERR_UNSUPPORTED) why = result;
+        _file.dropModule(file);
+        if (file.file == null) return result;
     }
-    return media.MERR_UNSUPPORTED;
+    return why;
 }
 
 /// The kind by the first four bytes - EBML's header, else an MP4's to be

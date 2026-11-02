@@ -177,9 +177,21 @@ fn openTrack(base: *AudioCodecBase, stream: *Stream, mb: *MediaBase, file: *medi
         media.MCODEC_DTS => ac.ACODEC_DTS,
         else => return ac.ACERR_UNSUPPORTED,
     };
-    const module = _stream.openModule(base, stream, codec) orelse return ac.ACERR_UNSUPPORTED;
-    const result = module.OpenACodecTrack(stream, &track);
-    if (result != ac.ACERR_OK) return result;
+    // Every module of the kind, in the order their tags put them (SINCE
+    // 1.14): one that opens and then refuses the track is let go and the
+    // next is read the same packets, from the track's start again. Only a
+    // track that can be moved back is read again; a container read
+    // through a function keeps the refusal.
+    const was = stream.info;
+    var tried: u32 = 0;
+    var why: i32 = ac.ACERR_UNSUPPORTED;
+    while (_stream.openNextModule(base, stream, codec, &tried)) |module| {
+        const result = module.OpenACodecTrack(stream, &track);
+        if (result == ac.ACERR_OK) break;
+        if (why == ac.ACERR_UNSUPPORTED) why = result;
+        _stream.dropModule(base, stream, was);
+        if (!restart(stream)) return result;
+    } else return why;
     // The rate the codec decodes at: an HE-AAC track's core is half the
     // rate its container gives.
     source.rate = stream.info.rate;
@@ -288,6 +300,32 @@ pub fn goOn(stream: *Stream) bool {
     if (!source.paused) return false;
     source.paused = false;
     return true;
+}
+
+/// The track read from its start again, for the next module to be given
+/// the same packets: what was worked out from them forgotten and its
+/// first packet held once more. False for a track that cannot be moved
+/// back, and for one whose file then fails.
+fn restart(stream: *Stream) bool {
+    const source = &stream.media;
+    const mb = source.base orelse return false;
+    const file = source.file orelse return false;
+    if (mb.SeekMedia(file, source.track, 0) != media.MERR_OK) return false;
+    source.rate = 0;
+    source.delay = 0;
+    source.exact = false;
+    source.total = 0;
+    source.done = false;
+    source.skip_until = 0;
+    source.position = 0;
+    source.placed = false;
+    source.start = 0;
+    source.gap = 0;
+    source.held = .{};
+    source.holding = false;
+    source.paused = false;
+    source.last_ticks = 0;
+    return hold(stream) or !stream.failed;
 }
 
 /// The track's next packet read into `held`, for `next` to hand out;

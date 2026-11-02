@@ -75,6 +75,34 @@ pub fn publicOf(file: *File) *media.MediaFile {
 }
 
 /// The file given back: the file it opened closed, its memory freed.
+/// The module let go after it refused the file, so the next can be given
+/// it: what the module made handed back (`CloseContainer` frees its state
+/// and each track's own), the module closed, and the file as it was
+/// handed to it - the tracks it found, an index, the chapters and the tags
+/// it read all gone. Its bytes are read again where they lie, which only a
+/// file can do.
+pub fn dropModule(file: *File) void {
+    const sys = file.base.sys_base;
+    const module = moduleOf(file) orelse return;
+    module.CloseContainer(file);
+    sys.CloseLibrary(module.lib());
+    file.module = null;
+    for (file.tracks[0..file.track_count]) |*track| {
+        if (track.buffer) |buffer| sys.FreeVec(buffer);
+    }
+    @memset(std.mem.asBytes(&file.tracks), 0);
+    file.track_count = 0;
+    file.subtitles = ~@as(u32, 0);
+    if (file.index) |index| sys.FreeVec(index);
+    file.index = null;
+    file.index_size = 0;
+    if (file.tags.chapters) |list| sys.FreeVec(list);
+    const keep_picture = file.tags.keep_picture;
+    @memset(std.mem.asBytes(&file.tags), 0);
+    file.tags.keep_picture = keep_picture;
+    file.info = .{};
+}
+
 pub fn destroy(file: *File) void {
     const base = file.base;
     const sys = base.sys_base;

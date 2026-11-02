@@ -17,6 +17,7 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const mcontainer = sdk.mcontainer;
 const modtable = sdk.dos.modtable;
 const container_table = @import("../modules/_modules.zig");
+const refuser = @import("refuser.zig");
 
 const tags = [_]struct { tag: *const mcontainer.ResidentMContainer, name: [*:0]const u8 }{
     .{ .tag = &mp4_init.mp4_container_tag, .name = "codecs/mp4.container" },
@@ -60,6 +61,38 @@ pub fn showAll() void {
 }
 
 var fewer: [tags.len]modtable.Found = @splat(.{});
+
+/// A module that claims MP4 above mp4.container and refuses every file of
+/// it, made and put at the head of the table: a kind with two modules,
+/// the first of which does not take the file. In force until
+/// `dropRefuser`.
+pub fn addRefuser(kexec: anytype) !void {
+    const tag = &refuser.refuse_container_tag;
+    const library = kexec.InitResident(kexec.SysBase, &tag.resident, null) orelse return error.NoLibrary;
+    const lib: *exec.Library = @ptrCast(@alignCast(library));
+    lib.node.name = refuser_name;
+    refuser_lib = lib;
+    refuser.asked = 0;
+    more[0] = container_table.row(refuser_name, tag.kinds, tag.priority);
+    for (rows, more[1..]) |row, *into| into.* = row;
+    container_table.test_modules = &more;
+}
+
+/// How often the refusing module was asked to open a file.
+pub fn refused() u32 {
+    return refuser.asked;
+}
+
+/// The refusing module taken away and the table as it was.
+pub fn dropRefuser(sys: *ExecBase) void {
+    container_table.test_modules = &rows;
+    if (refuser_lib) |lib| _ = sys.RemLibrary(lib);
+    refuser_lib = null;
+}
+
+const refuser_name = "codecs/refuse.container";
+var refuser_lib: ?*exec.Library = null;
+var more: [tags.len + 1]modtable.Found = @splat(.{});
 
 fn nameOf(name: [*:0]const u8) []const u8 {
     var length: usize = 0;

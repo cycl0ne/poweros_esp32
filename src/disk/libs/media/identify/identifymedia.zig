@@ -41,7 +41,15 @@ const mkv = @import("../mkv/_mkv.zig");
 /// None.
 ///
 /// NOTES:
-/// None.
+/// The patterns are the library's own, not the modules': what a file is,
+/// is answered out of the bytes here with nothing loaded, so a kind whose
+/// module is not on this disk is named all the same. Which module reads a
+/// kind does come from the modules' own tags (SINCE 1.7) - a container is
+/// added to a board by dropping its file into LIBS:codecs/ - but what the
+/// kinds are does not, and was left here when the modules began to
+/// declare themselves: a kind is recognised by code, an EBML header or an
+/// MP4 box, which a tag cannot carry. A module for a kind the library
+/// does not know here is reached by `MDA_Kind` given to `OpenMedia`.
 ///
 /// BUGS:
 /// None known.
