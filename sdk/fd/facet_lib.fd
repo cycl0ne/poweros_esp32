@@ -240,4 +240,8 @@ void CmdFillBuffer(*facet.CommandBuffer buffer, *facet.Buffer destination, u64 o
 void CmdUpdateBuffer(*facet.CommandBuffer buffer, *facet.Buffer destination, u64 offset, u64 size, *const anyopaque data)
 /// Recorded: an image's levels and layers set to a colour, outside a pass.
 void CmdClearColorImage(*facet.CommandBuffer buffer, *facet.Image image, facet.ImageLayout layout, *const facet.ClearColorValue color, u32 range_count, [*]const facet.ImageSubresourceRange ranges)
+/// A sampler, written to `sampler`: how a texture bound beside it is sampled.
+facet.Result CreateSampler(*facet.Device device, *const facet.SamplerCreateInfo info, *?*facet.Sampler sampler)
+/// The sampler given back: no set that holds it drawn with any more.
+void DestroySampler(*facet.Device device, ?*facet.Sampler sampler)
 ##end

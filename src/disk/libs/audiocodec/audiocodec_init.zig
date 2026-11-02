@@ -7,12 +7,13 @@ const sdk = @import("sdk");
 const exec = sdk.exec;
 const ExecBase = sdk.interface.exec.ExecBase;
 const _base = @import("audiocodec_base.zig");
+const _modules = @import("modules/_modules.zig");
 const AudioCodecBase = _base.AudioCodecBase;
 const audiocodec_lvo = @import("audiocodec_lvo.zig");
 
 pub const LIBRARY_NAME = sdk.audiocodec.AUDIOCODECNAME;
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 11;
+pub const LIBRARY_REVISION = 12;
 const BUILD_DATE = "01.11.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
@@ -50,6 +51,8 @@ fn expunge(lib: *exec.Library) callconv(.c) ?*anyopaque {
     const base = _base.audioCodecBase(lib);
     const sys = base.sys_base;
     const seg_list = base.seg_list;
+    // The table of the modules on the disk, if one was ever read.
+    _modules.forget(base);
     sys.CloseLibrary(@ptrCast(@alignCast(base.dos_base)));
     sys.CloseLibrary(@ptrCast(@alignCast(base.utility_base)));
     sys.DetachLibrary(lib);

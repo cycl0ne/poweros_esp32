@@ -34,6 +34,40 @@ const interface_media = @import("../../interface/media.zig");
 /// Where the modules are, as OpenLibrary is given it.
 pub const ACODEC_PREFIX = "codecs/";
 
+/// `ResidentACodec.magic`, after a module's library tag: "ACOD".
+pub const ACODEC_MAGIC: u32 = 0x4143_4F44;
+
+/// `ResidentACodec.kind`: a chip's decoder, tried before software.
+pub const ACMOD_CHIP: u32 = 1;
+/// `ResidentACodec.kind`: decoded by the processor.
+pub const ACMOD_SOFTWARE: u32 = 2;
+
+/// A sound module's ROM tag: a library's, with what it decodes after it,
+/// as a picture module's is (`vcodec.ResidentVCodec`) - the two layouts
+/// are the same, so whoever reads one reads the other.
+///
+/// audiocodec.library reads this out of the module's file without loading
+/// it, to know what the disk decodes and which module to open for a kind.
+/// A module whose file holds no such tag is not a sound module to it.
+pub const ResidentACodec = extern struct {
+    resident: exec.Resident,
+    magic: u32 = ACODEC_MAGIC,
+    /// The kinds it decodes, a bit each: `codecBit(ACODEC_DTS)`.
+    /// ac3.acodec has AC-3's and E-AC-3's both.
+    codecs: u32,
+    /// ACMOD_CHIP or ACMOD_SOFTWARE. Nothing is a chip's yet: no board
+    /// here has a decoder for a kind of sound in hardware.
+    kind: u32 = ACMOD_SOFTWARE,
+    /// Among the modules of a kind for one sound kind, the higher is
+    /// tried first.
+    priority: i32 = 0,
+};
+
+/// A kind's bit in `ResidentACodec.codecs`.
+pub fn codecBit(codec: u32) u32 {
+    return if (codec < 32) @as(u32, 1) << @intCast(codec) else 0;
+}
+
 /// `ACodecStream.layout`: which layout the stream has. Raised whenever
 /// the structures here change.
 pub const ACODEC_LAYOUT: u32 = 1;
@@ -48,20 +82,30 @@ pub const ACODEC_FRAME_TEXT_BYTES = 1024;
 /// frame's in stereo.
 pub const ACODEC_MOST_SAMPLES = 1152 * 2;
 
+/// Every kind that has a module, and the file it is in. A kind is added
+/// here and nowhere else: this is what `moduleName` answers from, and what
+/// a caller walks to go through all the kinds there are without naming the
+/// last of them (audiocodec.library's `ACA_Codecs`). Two kinds one module
+/// decodes name one file, as AC-3 and E-AC-3 do.
+pub const kinds = [_]struct { codec: u32, file: [*:0]const u8 }{
+    .{ .codec = ac.ACODEC_WAV, .file = ACODEC_PREFIX ++ "wav.acodec" },
+    .{ .codec = ac.ACODEC_MP3, .file = ACODEC_PREFIX ++ "mp3.acodec" },
+    .{ .codec = ac.ACODEC_FLAC, .file = ACODEC_PREFIX ++ "flac.acodec" },
+    .{ .codec = ac.ACODEC_VORBIS, .file = ACODEC_PREFIX ++ "vorbis.acodec" },
+    .{ .codec = ac.ACODEC_AAC, .file = ACODEC_PREFIX ++ "aac.acodec" },
+    .{ .codec = ac.ACODEC_AC3, .file = ACODEC_PREFIX ++ "ac3.acodec" },
+    .{ .codec = ac.ACODEC_EAC3, .file = ACODEC_PREFIX ++ "ac3.acodec" },
+    .{ .codec = ac.ACODEC_OPUS, .file = ACODEC_PREFIX ++ "opus.acodec" },
+    .{ .codec = ac.ACODEC_DTS, .file = ACODEC_PREFIX ++ "dts.acodec" },
+};
+
 /// The module's name for a codec, null for one that has none. AC-3 and
 /// E-AC-3 are one module's.
 pub fn moduleName(codec: u32) ?[*:0]const u8 {
-    return switch (codec) {
-        ac.ACODEC_WAV => ACODEC_PREFIX ++ "wav.acodec",
-        ac.ACODEC_MP3 => ACODEC_PREFIX ++ "mp3.acodec",
-        ac.ACODEC_FLAC => ACODEC_PREFIX ++ "flac.acodec",
-        ac.ACODEC_VORBIS => ACODEC_PREFIX ++ "vorbis.acodec",
-        ac.ACODEC_AAC => ACODEC_PREFIX ++ "aac.acodec",
-        ac.ACODEC_AC3, ac.ACODEC_EAC3 => ACODEC_PREFIX ++ "ac3.acodec",
-        ac.ACODEC_OPUS => ACODEC_PREFIX ++ "opus.acodec",
-        ac.ACODEC_DTS => ACODEC_PREFIX ++ "dts.acodec",
-        else => null,
-    };
+    for (kinds) |kind| {
+        if (kind.codec == codec) return kind.file;
+    }
+    return null;
 }
 
 /// The libraries a stream is read and decoded through.

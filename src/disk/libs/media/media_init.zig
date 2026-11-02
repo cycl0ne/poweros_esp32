@@ -7,6 +7,7 @@ const sdk = @import("sdk");
 const exec = sdk.exec;
 const ExecBase = sdk.interface.exec.ExecBase;
 const _base = @import("media_base.zig");
+const _modules = @import("modules/_modules.zig");
 const MediaBase = _base.MediaBase;
 const media_lvo = @import("media_lvo.zig");
 
@@ -50,6 +51,8 @@ fn expunge(lib: *exec.Library) callconv(.c) ?*anyopaque {
     const base = _base.mediaBase(lib);
     const sys = base.sys_base;
     const seg_list = base.seg_list;
+    // The table of the modules on the disk, if one was ever read.
+    _modules.forget(base);
     sys.CloseLibrary(@ptrCast(@alignCast(base.dos_base)));
     sys.CloseLibrary(@ptrCast(@alignCast(base.utility_base)));
     sys.DetachLibrary(lib);

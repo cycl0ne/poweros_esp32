@@ -77,7 +77,7 @@ fn lvoIdentifyAudio(base: *AudioCodecBase, bytes: [*]const u8, length: u32) call
 fn lvoAudioErrorText(base: *AudioCodecBase, code: i32) callconv(.c) [*:0]const u8 {
     return AudioErrorText(base, code);
 }
-fn lvoGetAudioStreamAttrs(base: *AudioCodecBase, stream: *ac.AudioStream, tags: ?[*]const utility.TagItem) callconv(.c) u32 {
+fn lvoGetAudioStreamAttrs(base: *AudioCodecBase, stream: ?*ac.AudioStream, tags: ?[*]const utility.TagItem) callconv(.c) u32 {
     return GetAudioStreamAttrs(base, stream, tags);
 }
 

@@ -18,6 +18,7 @@ pub const stdio = @import("stdio.zig");
 pub const rdargs = @import("rdargs.zig");
 pub const vars = @import("var.zig");
 pub const loadfile = @import("loadfile.zig");
+pub const modtable = @import("modtable.zig");
 pub const filehandler = @import("filehandler.zig");
 /// The drives a device feeds, held still before a reset.
 pub const blockdrives = @import("blockdrives.zig");

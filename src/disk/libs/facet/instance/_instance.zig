@@ -44,6 +44,9 @@ pub const max_bound_descriptor_sets = 4;
 pub const max_image_dimension = 8192;
 pub const max_image_dimension_3d = 256;
 pub const max_image_array_layers = 256;
+/// The samples a sampler takes along the longer axis at most
+/// (`texture.most_taps` is what the sampling itself will do).
+pub const max_sampler_anisotropy = 16;
 
 /// The most vertices a draw works, the lowest it reads to the highest. Both
 /// drivers hold to it: a draw of more is left out of the frame and said to be,

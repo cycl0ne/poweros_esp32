@@ -763,6 +763,44 @@ fn expectNothing(vcb: *VideoCodecBase, film: *vc.VideoStream, time: i64) !void {
     try testing.expectEqual(@as(u32, 0), shown.flags);
 }
 
+test "a sound track whose module is not on this disk: listed as decoded by nothing, and refused" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch |e| std.debug.panic("deinit: {}", .{e});
+    // The host's exec runs no processes: the subtitles are read in line.
+    subtitle.read_inline = true;
+    defer subtitle.read_inline = false;
+    const vcb = rig.vcb;
+
+    // The library knows Opus since 1.9, but opus.acodec is not here: its
+    // name is taken away, so OpenLibrary does not find it, as on a board
+    // whose disk the module was left off. Put back at the end, for the
+    // rig to take the module away as it made it.
+    const opus_module = rig.sound_modules[sound_modules.opus];
+    const opus_name = opus_module.node.name;
+    opus_module.node.name = "codecs/elsewhere.acodec";
+    defer opus_module.node.name = opus_name;
+
+    try rig.write("WORK:subs.mkv", subs_mkv);
+    var err: i32 = -99;
+    const film = rig.open("WORK:subs.mkv", &err) orelse return error.NoStream;
+    defer vcb.CloseVideoStream(film);
+
+    // The AAC and the AC-3 are decoded; the Opus is not, although the
+    // library is new enough to say it decodes Opus - it answers from the
+    // modules it can open (ACA_Codecs), not from its version.
+    const decoded: i32 = vc.VTRK_DECODED;
+    const both: i32 = vc.VTRK_DECODED | vc.VTRK_CHOSEN;
+    var track: media.MediaTrack = .{};
+    try testing.expectEqual(both, vcb.GetVideoTrack(film, 1, &track));
+    try testing.expectEqual(decoded, vcb.GetVideoTrack(film, 2, &track));
+    try testing.expectEqual(@as(i32, 0), vcb.GetVideoTrack(film, 3, &track));
+    try testing.expectEqual(media.MCODEC_OPUS, track.codec);
+    // And it cannot be picked.
+    try testing.expectEqual(vc.VCERR_NOCODEC, vcb.SelectVideoTrack(film, 3, 0));
+    try testing.expectEqual(both, vcb.GetVideoTrack(film, 1, &track));
+}
+
 test "a film's tracks: listed, what decodes them; subtitles of each kind at their times; another sound, another track" {
     var rig: Rig = undefined;
     try rig.init();

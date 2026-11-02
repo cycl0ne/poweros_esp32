@@ -25,15 +25,17 @@ const _descriptor = @import("_descriptor.zig");
 ///
 /// RESULT:
 /// `success`; `error_feature_not_present` for a kind of descriptor
-/// facet.library does not have, a binding numbered past 255, or more than
-/// 65535 descriptors; `error_initialization_failed` for a binding given
-/// twice; `error_out_of_host_memory`.
+/// facet.library does not have, for a binding with samplers of the
+/// layout's own (`immutable_samplers`), a binding numbered past 255, or
+/// more than 65535 descriptors; `error_initialization_failed` for a
+/// binding given twice; `error_out_of_host_memory`.
 ///
 /// BEHAVIOR:
-/// The kinds are sampled_image, uniform_buffer and storage_buffer. A
-/// binding not given has no descriptors, and neither has one given with a
-/// count of 0. A binding's descriptors are an array, read by a shader as
-/// element 0 on (shader.Resources).
+/// The kinds are sampler, combined_image_sampler, sampled_image,
+/// uniform_buffer and storage_buffer. A binding not given has no
+/// descriptors, and neither has one given with a count of 0. A binding's
+/// descriptors are an array, read by a shader as element 0 on
+/// (shader.Resources).
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -46,10 +48,13 @@ const _descriptor = @import("_descriptor.zig");
 /// bindings are read during the call alone.
 ///
 /// NOTES:
-/// There are no samplers: a fragment function samples as it was compiled
-/// to (sdk.facet.shader.textured), so a sampled image is all a set holds
-/// of a texture. Stage flags are not looked at: every stage reads every
-/// binding.
+/// A fragment function of a fixed form samples either as it was compiled
+/// to (sdk.facet.shader.textured) or through the sampler bound beside the
+/// texture (shader.FixedKind.texture_sampled), which is what a combined
+/// image sampler is for. A sampler of the layout's own is refused rather
+/// than ignored, so that a program is not left thinking a write of its own
+/// took: `PhysicalDeviceFeatures.immutable_samplers`. Stage flags are not
+/// looked at: every stage reads every binding.
 ///
 /// BUGS:
 /// None known.
@@ -70,6 +75,8 @@ pub fn CreateDescriptorSetLayout(base: *FacetBase, device: *facet.Device, info: 
     var binding_count: u32 = 0;
     for (given) |binding| {
         if (!_descriptor.known(binding.descriptor_type) or binding.binding > 255) return .error_feature_not_present;
+        // A sampler the layout holds, which a write could not change.
+        if (binding.immutable_samplers != null and binding.descriptor_count != 0) return .error_feature_not_present;
         binding_count = @max(binding_count, binding.binding + 1);
     }
     const memory = base.sys_base.AllocVec(@sizeOf(_descriptor.SetLayout) + binding_count * @sizeOf(_descriptor.Binding), exec.MEMF_CLEAR) orelse return .error_out_of_host_memory;

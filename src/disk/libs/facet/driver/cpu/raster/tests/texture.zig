@@ -137,3 +137,130 @@ test "the level is the one whose texels are as large as a pixel's step" {
     try testing.expectEqual(@as(u32, 3), texture.levelFor(&made, std.math.nan(f32), 0, 0, 0));
     try testing.expectEqual(@as(u32, 3), texture.levelFor(&made, std.math.inf(f32), 0, 0, 0));
 }
+
+// --- sampling through a sampler ---------------------------------------------
+
+const Sampler = texture.Sampler;
+const Point = texture.Point;
+
+/// A texture of `levels` levels, every texel of each one colour: what the
+/// level a sample falls on can be read off from.
+fn levelled(memory: []u64, side: u32, levels: u32, colors: []const u32) !Texture {
+    var made = try Texture.init(.rgba8888, side, side, levels, @ptrCast(memory.ptr));
+    for (colors, 0..) |color, lod| {
+        for (0..made.height(@intCast(lod))) |y| for (0..made.width(@intCast(lod))) |x| {
+            made.put(@intCast(lod), @intCast(x), @intCast(y), color);
+        };
+    }
+    return made;
+}
+
+test "a sampler reads past the edges as each of its wraps says" {
+    const side = 4;
+    var memory: [side * side]u64 = undefined;
+    var made = try Texture.init(.rgba8888, side, side, 1, @ptrCast(&memory));
+    for (0..side) |y| for (0..side) |x| {
+        made.put(0, @intCast(x), @intCast(y), texelAt(@intCast(x), @intCast(y)));
+    };
+    // Half a texel to the left of the first column, and in the first row:
+    // whatever the wrap puts there.
+    const point = Point{ .u = -0.1, .v = 0.1 };
+    const Case = struct { wrap: texture.Wrap, texel: u32 };
+    for ([_]Case{
+        .{ .wrap = .repeat, .texel = texelAt(side - 1, 0) },
+        .{ .wrap = .mirrored_repeat, .texel = texelAt(0, 0) },
+        .{ .wrap = .clamp_to_edge, .texel = texelAt(0, 0) },
+        .{ .wrap = .clamp_to_border, .texel = 0xFF00_FF00 },
+    }) |case| {
+        const sampler = Sampler{ .mag_filter = .nearest, .min_filter = .nearest, .wrap = @splat(case.wrap), .border = 0xFF00_FF00 };
+        try testing.expectEqual(case.texel, texture.sampleBy(&made, &sampler, 0, point));
+    }
+    // Mirrored: the texture again turned round, so the column two to the
+    // left of the first is the second.
+    const mirror = Sampler{ .mag_filter = .nearest, .min_filter = .nearest, .wrap = @splat(.mirrored_repeat) };
+    try testing.expectEqual(texelAt(1, 0), texture.sampleBy(&made, &mirror, 0, .{ .u = -0.4, .v = 0.1 }));
+    // And at the far side, the last column again.
+    try testing.expectEqual(texelAt(side - 1, 0), texture.sampleBy(&made, &mirror, 0, .{ .u = 1.1, .v = 0.1 }));
+}
+
+test "a sampler's level: the nearest, or the two round it mixed, with the bias and the clamp it was given" {
+    const side = 4;
+    const red: u32 = 0xFFFF_0000;
+    const blue: u32 = 0xFF00_00FF;
+    const green: u32 = 0xFF00_FF00;
+    // A level smaller than a block of 4 x 4 takes a whole one all the same.
+    var memory: [3 * 4 * 4]u64 = undefined;
+    const made = try levelled(&memory, side, 3, &.{ red, blue, green });
+    // A step of the root of two texels is level 0.5, halfway between the
+    // first level and the second.
+    const half = Point{ .u = 0.5, .v = 0.5, .du_dx = @sqrt(2.0) / @as(f32, side), .dv_dy = 0 };
+    try testing.expectApproxEqAbs(@as(f32, 0.5), texture.levelOf(&made, half), 1e-5);
+
+    const nearest = Sampler{ .mag_filter = .nearest, .min_filter = .nearest };
+    try testing.expectEqual(blue, texture.sampleBy(&made, &nearest, 0, half));
+    var linear = nearest;
+    linear.mipmap = .linear;
+    // Red and blue, half of each.
+    try testing.expectEqual(@as(u32, 0xFF80_0080), texture.sampleBy(&made, &linear, 0, half));
+
+    // The bias moves the level; the clamp holds it.
+    var biased = nearest;
+    biased.lod_bias = 1;
+    try testing.expectEqual(green, texture.sampleBy(&made, &biased, 0, half));
+    var held = biased;
+    held.max_lod = 0;
+    try testing.expectEqual(red, texture.sampleBy(&made, &held, 0, half));
+    var least = nearest;
+    least.min_lod = 2;
+    try testing.expectEqual(green, texture.sampleBy(&made, &least, 0, .{ .u = 0.5, .v = 0.5 }));
+    // Without a step there is no level: the first, and the magnifying
+    // filter.
+    try testing.expectEqual(red, texture.sampleBy(&made, &linear, 0, .{ .u = 0.5, .v = 0.5 }));
+}
+
+test "anisotropy spreads its samples along the longer axis, at the shorter one's level" {
+    const side = 8;
+    var memory: [side * side]u64 = undefined;
+    var made = try Texture.init(.rgba8888, side, side, 1, @ptrCast(&memory));
+    const black: u32 = 0xFF00_0000;
+    const white: u32 = 0xFFFF_FFFF;
+    for (0..side) |y| for (0..side) |x| {
+        made.put(0, @intCast(x), @intCast(y), if (x < side / 2) black else white);
+    };
+    // A pixel that covers the whole texture across and one texel down.
+    const point = Point{ .u = 0.5, .v = 0.5, .du_dx = 1, .dv_dy = 1.0 / @as(f32, side) };
+    const one = Sampler{ .mag_filter = .nearest, .min_filter = .nearest };
+    // One sample at the middle, in the white half, whatever the level.
+    try testing.expectEqual(white, texture.sampleBy(&made, &one, 0, point));
+    var wide = one;
+    wide.anisotropy = 8;
+    // Eight samples across the row: four black, four white.
+    try testing.expectEqual(@as(u32, 0xFF80_8080), texture.sampleBy(&made, &wide, 0, point));
+    // More than the texture asks for is held to what the axes say.
+    wide.anisotropy = texture.most_taps;
+    try testing.expectEqual(@as(u32, 0xFF80_8080), texture.sampleBy(&made, &wide, 0, point));
+}
+
+test "a shadow sample compares what it read with its reference, and mixes what passed" {
+    const side = 4;
+    var memory: [side * side]u64 = undefined;
+    var made = try Texture.init(.rgba8888, side, side, 1, @ptrCast(&memory));
+    // The red channel is what is compared: 0 on the left, 1 on the right.
+    for (0..side) |y| for (0..side) |x| {
+        made.put(0, @intCast(x), @intCast(y), if (x < side / 2) 0xFF00_0000 else 0xFFFF_0000);
+    };
+    const white: u32 = 0xFFFF_FFFF;
+    const black: u32 = 0xFF00_0000;
+    var sampler = Sampler{ .mag_filter = .nearest, .min_filter = .nearest, .compare = .less };
+    // 0.5 is nearer than 1 and farther than 0.
+    try testing.expectEqual(white, texture.sampleBy(&made, &sampler, 0, .{ .u = 0.8, .v = 0.5, .reference = 0.5 }));
+    try testing.expectEqual(black, texture.sampleBy(&made, &sampler, 0, .{ .u = 0.2, .v = 0.5, .reference = 0.5 }));
+    sampler.compare = .greater;
+    try testing.expectEqual(black, texture.sampleBy(&made, &sampler, 0, .{ .u = 0.8, .v = 0.5, .reference = 0.5 }));
+    // Filtered, what is mixed is what passed, not what was read: two of
+    // the four texels round the point are nearer than the reference.
+    sampler.compare = .less;
+    sampler.mag_filter = .bilinear;
+    sampler.wrap = @splat(.clamp_to_edge);
+    try testing.expectEqual(@as(u32, 0xFF80_8080), texture.sampleBy(&made, &sampler, 0, .{ .u = 0.5, .v = 0.125, .reference = 0.5 }));
+}

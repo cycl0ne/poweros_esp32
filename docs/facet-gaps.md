@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.27**, so that a program need not find out by failing. It covers the API.
+1.28**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -22,23 +22,23 @@ BCM2712's V3D, which runs only a fixed handful of fragment forms
 
 | Where | What |
 |---|---|
-| `sdk/fd/facet_lib.fd` | The whole jump table, one line a function: 107 entries |
+| `sdk/fd/facet_lib.fd` | The whole jump table, one line a function: 109 entries |
 | `sdk/libs/facet/facet.zig` | The structures and enumerations a program passes |
 | `sdk/libs/facet/shader.zig` | Shaders as functions: the stages, their inputs, the fixed forms |
-| `sdk/libs/facet/texture.zig` | How a texture is kept and sampled |
+| `sdk/libs/facet/texture.zig` | How a texture is kept and sampled, by a fixed form and through a sampler |
 | `src/disk/libs/facet/` | The library: one file a call, its limits in its own documentation |
 | `src/disk/libs/facet/driver/cpu/` | The cores' driver: the tiled rasterizer |
 | `src/disk/libs/facet/driver/v3d/` | The V3D's driver, a module in `LIBS:facet/` |
 
-Of Vulkan 1.0's roughly 137 core entry points, facet has 107. Two of the
+Of Vulkan 1.0's roughly 137 core entry points, facet has 109. Two of the
 absent ones, `GetInstanceProcAddr` and `GetDeviceProcAddr`, do not apply to
 a library called through an LVO table.
 
 What a device will and will not do is answered by
 `GetPhysicalDeviceFeatures` (since 1.24), which is Vulkan's call with a
 structure of facet's own: a field wherever a create call can refuse
-something, and no field for what the library has no call for at all. Six of
-its fields differ between the cores and the V3D, which is the reason a
+something, and no field for what the library has no call for at all. Eight
+of its fields differ between the cores and the V3D, which is the reason a
 program that wants the GPU should ask rather than take the first device
 listed.
 
@@ -46,28 +46,45 @@ Nothing below is a defect: every refusal is checked and answered with
 `error_feature_not_present`, and the limits are stated in the
 documentation of the call that enforces them.
 
+## Samplers, and what a sampler still cannot ask for
+
+Since 1.28 there are samplers: `CreateSampler`, `DestroySampler`, the
+`sampler` and `combined_image_sampler` descriptors, and two fixed forms
+that read the sampler bound beside the texture rather than what the program
+was compiled with - `shader.FixedKind.texture_sampled` and
+`texture_shadow`. Through one a sample has what a fixed form's has not: the
+two levels round a point mixed, a bias on the level and a clamp, mirrored
+and bordered edges, up to `max_sampler_anisotropy` samples along the longer
+axis, and a comparison with a reference in place of a colour.
+
+A fixed form's own sampling is still a choice made at compile time
+(`texture.Sampling`: the format, `nearest` or `bilinear`, `wrap` or
+`clamp`), and the forms that have one are untouched - that path is fixed
+point and a quad at a time, where a sampler's is floats and a pixel at a
+time. What is left out:
+
+- **Only the cores sample through a sampler.** The V3D's fragment programs
+  are fixed, and none of them reads one, so a pipeline whose form wants a
+  sampler is refused there and drawn on the cores
+  (`PhysicalDeviceFeatures.samplers`), as a dropping form is. On the V3D
+  the TMU is still set from the form's `sampling`.
+- The fixed forms that sample through a sampler are 2D. A texture of
+  layers, a cube map and a 3D texture have forms of their own, which sample
+  as they were compiled to; a program's own fragment function can sample
+  any of them through a sampler (`texture.sampleBy`, `sampleVolumeBy`).
+- No `mirror_clamp_to_edge`, and no border colour but transparent black,
+  opaque black and opaque white: Vulkan's int and float border colours are
+  the same here, a texel being read as 0 to 1 whatever its format.
+- `SamplerCreateInfo.unnormalized_coordinates` is refused: coordinates are
+  0 to 1 across the texture.
+- `DescriptorSetLayoutBinding.immutable_samplers` is refused rather than
+  passed over, so that no program is left thinking its write took.
+
+The cores and the V3D's texture units still choose a level and its sample
+point differently, which is why `C:test/FacetCube CHECK V3D` allows 5 % of
+pixels to differ where the rest of the checks allow 0.1 %.
+
 ## Object kinds that do not exist
-
-### Samplers
-
-There is no `CreateSampler`, no `DestroySampler`, and no sampler object of
-any kind. A texture's filter, its address mode and the format it is kept in
-belong to the **pipeline**, fixed when the program is compiled
-(`texture.Sampling`), not to an object bound beside the image. What follows:
-
-- No anisotropic filtering.
-- No LOD bias and no LOD clamp.
-- Only `wrap` and `clamp` past the edges: no mirror, no border colour.
-- No filtering between mip levels. The level is "the nearest of the levels
-  the texture has" (`sdk/libs/facet/texture.zig`), never two mixed. The
-  cores and the V3D's texture units also choose that level and its sample
-  point differently, which is why `C:test/FacetCube CHECK V3D` allows 5 %
-  of pixels to differ where the rest of the checks allow 0.1 %.
-- No comparison or shadow samplers.
-- `.sampler` and `.combined_image_sampler` descriptors are refused.
-
-This is the largest single hole in the API: the one place where Vulkan's
-object model is replaced by a choice made at compile time.
 
 ### Query pools
 
@@ -145,8 +162,9 @@ These can be asked for and are answered with `error_feature_not_present`.
 | Input attachments and resolve attachments in a subpass | `render/createrenderpass.zig` |
 | A depth attachment that loads or stores, and its stencil likewise | `render/createrenderpass.zig` |
 | Present modes but `fifo`, though `immediate`, `mailbox` and `fifo_relaxed` are enumerated | `swapchain/createswapchain.zig` |
-| Descriptors but `sampled_image`, `uniform_buffer` and `storage_buffer` | `descriptor/_descriptor.zig` |
+| Descriptors but `sampler`, `combined_image_sampler`, `sampled_image`, `uniform_buffer` and `storage_buffer` | `descriptor/_descriptor.zig` |
 | A fixed fragment form that drops pixels, on the V3D: the QPUs have no program that discards | `driver/v3d/driver.zig` |
+| A fixed fragment form that samples through a sampler, on the V3D: nor one that reads a sampler | `driver/v3d/driver.zig` |
 
 Two consequences do not appear in that table:
 
@@ -187,6 +205,7 @@ Three more things cannot be asked for at all, having nothing to ask with:
 | Attachments, subpasses, colour attachments | 8, 4, 4 |
 | Patch control points | 32 |
 | Swapchain images | 1 to 4 |
+| Samples along a sampler's longer axis | 16 |
 
 Of textures:
 
