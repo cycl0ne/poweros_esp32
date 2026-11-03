@@ -131,6 +131,14 @@ pub const Watchers = struct {
         w.reply_port = null;
     }
 
+    /// Whether anyone watches anything here, a message sent and not
+    /// replied yet counting as a watch: a handler asked to end while a
+    /// program waits to hear about a name would leave that program
+    /// waiting for good.
+    pub fn any(w: *Watchers) bool {
+        return w.watches.first() != null or w.sent.first() != null;
+    }
+
     /// The signal of the port the replies come to, for the handler's Wait.
     pub fn signals(w: *Watchers) u32 {
         const port = w.reply_port orelse return 0;

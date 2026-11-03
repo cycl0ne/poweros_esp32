@@ -597,6 +597,12 @@ pub fn FileSystem(comptime Media: type) type {
             return count;
         }
 
+        /// Whether a lock or an open file of this body is out at all:
+        /// what makes a drive in use when it is asked to end.
+        pub fn anyLock(fs: *const Fs) bool {
+            return fs.locks != null;
+        }
+
         /// Whether a file on the volume is open and has been written to,
         /// or opened to be written: what ACTION_INHIBIT is refused for,
         /// since that file's writes would have nowhere to go.
@@ -1751,7 +1757,6 @@ pub fn FileSystem(comptime Media: type) type {
                     return yes();
                 },
                 .is_filesystem => return yes(),
-                .die => return no(error.InUse),
                 else => return .{ .res1 = dos.DOSFALSE, .res2 = dos.ERROR_ACTION_NOT_KNOWN },
             }
         }
