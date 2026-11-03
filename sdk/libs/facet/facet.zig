@@ -305,6 +305,16 @@ pub const PhysicalDeviceFeatures = extern struct {
     /// 1.38; the V3D stores neither depth nor stencil, and a pass that
     /// asks for either op is refused there.
     stored_stencil: bool = false,
+    /// A depth attachment's image may be sampled where it lies: an image
+    /// of `d16_unorm` with IMAGE_USAGE_SAMPLED, kept in rows as a depth
+    /// attachment is, sampled through a sampler
+    /// (`combined_image_sampler`, `sampled_image`), and compared with a
+    /// reference at all 16 bits where the sampler asks for it
+    /// (`CompareOp`). So a shadow map is drawn into an image and sampled
+    /// out of it with nothing copied. The cores have it since 1.39; the
+    /// V3D's texture unit keeps a texture its own way and knows no depth
+    /// format, so there it is refused.
+    sampled_depth: bool = false,
     /// `storage_image` descriptors, and the texel buffer kinds.
     storage_images: bool = false,
     texel_buffers: bool = false,

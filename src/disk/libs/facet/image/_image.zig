@@ -175,8 +175,17 @@ pub fn textureFormat(format: facet.Format) ?texture.Format {
     return switch (format) {
         .b8g8r8a8_unorm, .r8g8b8a8_unorm => .rgba8888,
         .r5g6b5_unorm_pack16 => .rgb565,
+        // A depth sampled where it lies, in rows
+        // (`PhysicalDeviceFeatures.sampled_depth`).
+        .d16_unorm => .d16,
         else => null,
     };
+}
+
+/// Whether an image is a depth attachment's that may also be sampled: its
+/// rows are the texture, so nothing is copied and nothing kept twice.
+pub fn sampledDepth(image: *const Image) bool {
+    return image.kind == .depth and image.usage & facet.IMAGE_USAGE_SAMPLED != 0;
 }
 
 /// An image as `info` asks for it, not yet bound; null for one
@@ -224,7 +233,17 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
     const depth_usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT |
         facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
     if (hasDepth(info.format) or hasStencil(info.format)) {
-        if (info.usage & facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT == 0 or info.usage & ~depth_usage != 0) return null;
+        // Sampled as well, since 1.39: its rows are the texture, so it is
+        // a depth alone - there is no stencil texel - and it wants memory
+        // behind it, which `requirements` holds to.
+        const sampled = info.usage & facet.IMAGE_USAGE_SAMPLED != 0;
+        if (sampled) {
+            if (!physical.features.sampled_depth) return null;
+            if (info.format != .d16_unorm) return null;
+            if (info.usage & facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT != 0) return null;
+        }
+        const allowed = if (sampled) depth_usage | facet.IMAGE_USAGE_SAMPLED else depth_usage;
+        if (info.usage & facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT == 0 or info.usage & ~allowed != 0) return null;
         if (info.tiling != .optimal or info.mip_levels != 1) return null;
         image.kind = .depth;
         // Rows, like a colour attachment's: what a render pass that stores
@@ -270,7 +289,10 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
 }
 
 /// A texture image's levels and layers as a sample reads them, over `memory`.
+/// A depth image's rows are the texture themselves: one level, of whatever
+/// size the image is (`texture.Texture.linear`).
 pub fn texelsOver(image: *const Image, memory: [*]u8) texture.Texture.Error!texture.Texture {
+    if (image.kind == .depth) return texture.Texture.linear(.d16, image.width, image.height, image.pitch, memory);
     var made = try texture.Texture.init(textureFormat(image.format).?, image.width, image.height, image.levels, memory);
     made.layer_count = image.layers;
     made.layer_bytes = @intCast(image.layer_bytes);
@@ -278,13 +300,15 @@ pub fn texelsOver(image: *const Image, memory: [*]u8) texture.Texture.Error!text
 }
 
 /// What an image needs of its memory: a depth attachment any type, the
-/// lazily allocated one too; the rest a type with something behind it.
+/// lazily allocated one too; the rest a type with something behind it - a
+/// depth one that is sampled among them, its rows being read.
 pub fn requirements(image: *const Image) facet.MemoryRequirements {
     const properties = &image.device.physical.memory;
+    const anywhere = image.kind == .depth and !sampledDepth(image);
     return .{
         .size = image.bytes,
         .alignment = image.alignment,
-        .memory_type_bits = if (image.kind == .depth) _memory.allTypes(properties) else _memory.backedTypes(properties),
+        .memory_type_bits = if (anywhere) _memory.allTypes(properties) else _memory.backedTypes(properties),
     };
 }
 

@@ -33,6 +33,16 @@
 //! reference instead of a colour.
 //!
 //! Every colour comes out as 0xAARRGGBB, RGB565 with an alpha of 255.
+//!
+//! **A depth is sampled too** (`Format.d16`, since 1.39): 16 bits a texel,
+//! and kept in rows rather than blocks, because that is how a render pass
+//! stores a depth attachment - so a shadow map is drawn into an image and
+//! sampled out of it with nothing copied. Such a texture carries the bytes
+//! from one row to the next (`Texture.pitch`), has one level, and is
+//! sampled by `sampleBy` alone: the fixed forms' fast path is built for
+//! blocks and samples it as `shader.missing`. A shadow sample compares the
+//! depth at all 16 bits (`valueOf`); a sample of the colour reads the
+//! depth as a grey, its top 8 bits.
 
 const std = @import("std");
 
@@ -42,6 +52,10 @@ pub const Format = enum {
     rgba8888,
     /// 16 bits, red in the top 5, green in the middle 6, blue in the low 5.
     rgb565,
+    /// 16 bits of depth, 0 nearest, as a depth attachment holds one: a
+    /// texture of this is kept in rows (`Texture.pitch`) and sampled by
+    /// `sampleBy` alone.
+    d16,
 
     /// The bytes a texel is kept in.
     pub fn bytes(format: Format) u32 {
@@ -52,8 +66,15 @@ pub const Format = enum {
     pub fn shift(format: Format) u5 {
         return switch (format) {
             .rgba8888 => 3,
-            .rgb565 => 1,
+            .rgb565, .d16 => 1,
         };
+    }
+
+    /// Whether a texture of this holds a depth rather than a colour: read
+    /// at all 16 bits by a shadow sample, and as a grey by one of the
+    /// colour.
+    pub fn depth(format: Format) bool {
+        return format == .d16;
     }
 };
 
@@ -199,6 +220,10 @@ pub const Texture = struct {
     width_log2: u5,
     height_log2: u5,
     levels: u32,
+    /// The bytes from one row to the next, for a texture kept in rows
+    /// rather than blocks: a depth attachment's image, sampled where it
+    /// lies (`linear`). 0 for the blocks every other texture is kept in.
+    pitch: u32 = 0,
     /// Each level as a sample reads it, worked out once; those past
     /// `levels` undefined.
     layout: [most_levels]Level,
@@ -217,6 +242,38 @@ pub const Texture = struct {
         var texels: usize = 0;
         for (0..levels) |lod| texels += sizes.texels(@intCast(lod));
         return texels * format.bytes();
+    }
+
+    /// A texture of one level over rows of `pitch` bytes: how a depth
+    /// attachment's image is sampled, where it lies, with no copy and no
+    /// second layout. Its sides are whatever the image's are, powers of
+    /// two or not, and only `sampleBy` reads it.
+    pub fn linear(format: Format, across: u32, down: u32, pitch: u32, memory: [*]u8) Texture {
+        var made = Texture{
+            .format = format,
+            .width_log2 = 0,
+            .height_log2 = 0,
+            .levels = 1,
+            .pitch = pitch,
+            .layout = undefined,
+            .memory = memory,
+        };
+        made.layout[0] = .{
+            .start = 0,
+            .width = across,
+            .height = down,
+            .across = @floatFromInt(across * 256),
+            .down = @floatFromInt(down * 256),
+            .last_column = 0,
+            .last_row = 0,
+            .column_low = 0,
+            .column_high = 0,
+            .row_low = 0,
+            .row_high = 0,
+            .blocks_shift = 0,
+            .row_gap = 0,
+        };
+        return made;
     }
 
     /// A texture over `memory`, at least `bytes` long and aligned for a
@@ -241,53 +298,56 @@ pub const Texture = struct {
         return texture;
     }
 
-    /// A level's width and height.
+    /// A level's width and height. One kept in rows has the one level,
+    /// of whatever size the image is.
     pub inline fn width(texture: *const Texture, lod: u32) u32 {
+        if (texture.pitch != 0) return texture.layout[0].width;
         return @as(u32, 1) << @intCast(texture.width_log2 -| lod);
     }
 
     pub inline fn height(texture: *const Texture, lod: u32) u32 {
+        if (texture.pitch != 0) return texture.layout[0].height;
         return @as(u32, 1) << @intCast(texture.height_log2 -| lod);
+    }
+
+    /// Where texel (x, y) of a level of a layer lies, in bytes from the
+    /// texture's memory: its row and column for one kept in rows, and the
+    /// level's own spread places for one kept in blocks.
+    inline fn placeOf(texture: *const Texture, layer: u32, lod: u32, x: u32, y: u32) usize {
+        if (texture.pitch != 0) return @as(usize, y) * texture.pitch + @as(usize, x) * texture.format.bytes();
+        return @as(usize, layer) * texture.layer_bytes + texture.layout[lod].offset(texture.format, x, y);
     }
 
     /// Where texel (x, y) of a level is kept, in texels from `memory`.
     pub fn index(texture: *const Texture, lod: u32, x: u32, y: u32) u32 {
-        return texture.layout[lod].offset(texture.format, x, y) / texture.format.bytes();
+        return @intCast(texture.placeOf(0, lod, x, y) / texture.format.bytes());
     }
 
     /// Texel (x, y) of a level set, in the texture's format.
     pub fn put(texture: *Texture, lod: u32, x: u32, y: u32, texel: u32) void {
-        const at = texture.memory + texture.layout[lod].offset(texture.format, x, y);
-        switch (texture.format) {
-            .rgba8888 => @as(*u64, @ptrCast(@alignCast(at))).* = spread(texel),
-            .rgb565 => @as(*u16, @ptrCast(@alignCast(at))).* = @truncate(texel),
-        }
+        texture.putLayer(0, lod, x, y, texel);
     }
 
     /// Texel (x, y) of a level, as `put` was given it.
     pub fn peek(texture: *const Texture, lod: u32, x: u32, y: u32) u32 {
-        const at = texture.memory + texture.layout[lod].offset(texture.format, x, y);
-        return switch (texture.format) {
-            .rgba8888 => gather(@as(*const u64, @ptrCast(@alignCast(at))).*),
-            .rgb565 => @as(*const u16, @ptrCast(@alignCast(at))).*,
-        };
+        return texture.peekLayer(0, lod, x, y);
     }
 
     /// Texel (x, y) of a level of a layer set, in the texture's format.
     pub fn putLayer(texture: *Texture, layer: u32, lod: u32, x: u32, y: u32, texel: u32) void {
-        const at = texture.memory + @as(usize, layer) * texture.layer_bytes + texture.layout[lod].offset(texture.format, x, y);
+        const at = texture.memory + texture.placeOf(layer, lod, x, y);
         switch (texture.format) {
             .rgba8888 => @as(*u64, @ptrCast(@alignCast(at))).* = spread(texel),
-            .rgb565 => @as(*u16, @ptrCast(@alignCast(at))).* = @truncate(texel),
+            .rgb565, .d16 => @as(*u16, @ptrCast(@alignCast(at))).* = @truncate(texel),
         }
     }
 
     /// Texel (x, y) of a level of a layer, as `putLayer` was given it.
     pub fn peekLayer(texture: *const Texture, layer: u32, lod: u32, x: u32, y: u32) u32 {
-        const at = texture.memory + @as(usize, layer) * texture.layer_bytes + texture.layout[lod].offset(texture.format, x, y);
+        const at = texture.memory + texture.placeOf(layer, lod, x, y);
         return switch (texture.format) {
             .rgba8888 => gather(@as(*const u64, @ptrCast(@alignCast(at))).*),
-            .rgb565 => @as(*const u16, @ptrCast(@alignCast(at))).*,
+            .rgb565, .d16 => @as(*const u16, @ptrCast(@alignCast(at))).*,
         };
     }
 
@@ -298,6 +358,8 @@ pub const Texture = struct {
         texture.putLayer(layer, lod, x, y, switch (texture.format) {
             .rgba8888 => color,
             .rgb565 => as565(color),
+            // The red channel as a depth, its 8 bits in the top of the 16.
+            .d16 => (color >> 16 & 0xFF) * 0x101,
         });
     }
 
@@ -307,6 +369,8 @@ pub const Texture = struct {
         return switch (texture.format) {
             .rgba8888 => texel,
             .rgb565 => expanded565(texel),
+            // A depth as an opaque grey: its top 8 bits.
+            .d16 => greyOf8(@truncate(texel >> 8)),
         };
     }
 
@@ -389,7 +453,7 @@ pub const Texture = struct {
             for (0..texture.width(lod)) |x| {
                 const texel: u32 = switch (texture.format) {
                     .rgba8888 => std.mem.readInt(u32, row[x * 4 ..][0..4], .little),
-                    .rgb565 => std.mem.readInt(u16, row[x * 2 ..][0..2], .little),
+                    .rgb565, .d16 => std.mem.readInt(u16, row[x * 2 ..][0..2], .little),
                 };
                 texture.put(lod, @intCast(x), @intCast(y), texel);
             }
@@ -767,6 +831,9 @@ inline fn fetch(comptime format: Format, at: [*]const u8) u32 {
     return switch (format) {
         .rgba8888 => gather(fetchSpread(format, at)),
         .rgb565 => widen(@as(*const u16, @ptrCast(@alignCast(at))).*),
+        // A depth as a grey, as `Texture.colorAt` reads one: the fast path
+        // is built for blocks and never reads a texture of this.
+        .d16 => greyOf8(@truncate(@as(*const u16, @ptrCast(@alignCast(at))).* >> 8)),
     };
 }
 
@@ -775,7 +842,7 @@ inline fn fetchSpread(comptime format: Format, at: [*]const u8) u64 {
     @setRuntimeSafety(false);
     return switch (format) {
         .rgba8888 => @as(*const u64, @ptrCast(@alignCast(at))).*,
-        .rgb565 => spread(fetch(format, at)),
+        .rgb565, .d16 => spread(fetch(format, at)),
     };
 }
 
@@ -944,9 +1011,11 @@ fn sampledAt(texture: *const Texture, sampler: *const Sampler, layer: u32, lod: 
     const x = sane(u) * across;
     const y = sane(v) * down;
     if (filter == .nearest) {
-        const texel = texelBy(texture, sampler, layer, lod, @intFromFloat(@floor(x)), @intFromFloat(@floor(y)));
-        if (sampler.compare == .none) return texel;
-        return compared(sampler.compare, texel, reference);
+        const left: i32 = @intFromFloat(@floor(x));
+        const top: i32 = @intFromFloat(@floor(y));
+        if (sampler.compare == .none) return texelBy(texture, sampler, layer, lod, left, top);
+        const value = valueBy(texture, sampler, layer, lod, left, top);
+        return greyOf(if (sampler.compare.passes(value, reference)) 1 else 0);
     }
     const low_x = @floor(x - 0.5);
     const low_y = @floor(y - 0.5);
@@ -962,11 +1031,13 @@ fn sampledAt(texture: *const Texture, sampler: *const Sampler, layer: u32, lod: 
     };
     if (sampler.compare != .none) {
         // A shadow sample mixes what passed, not what was read: Vulkan's
-        // percentage-closer filtering.
+        // percentage-closer filtering. Each corner is read as a value, so
+        // a depth texture is compared at all 16 bits of it.
         var passed: f32 = 0;
         const weights = [4]f32{ (1 - part_x) * (1 - part_y), part_x * (1 - part_y), (1 - part_x) * part_y, part_x * part_y };
-        inline for (corners, weights) |texel, weight| {
-            if (sampler.compare.passes(@as(f32, @floatFromInt(texel >> 16 & 0xFF)) / 255, reference)) passed += weight;
+        const places = [4][2]i32{ .{ left, top }, .{ left + 1, top }, .{ left, top + 1 }, .{ left + 1, top + 1 } };
+        inline for (places, weights) |place_at, weight| {
+            if (sampler.compare.passes(valueBy(texture, sampler, layer, lod, place_at[0], place_at[1]), reference)) passed += weight;
         }
         return greyOf(passed);
     }
@@ -981,6 +1052,21 @@ fn texelBy(texture: *const Texture, sampler: *const Sampler, layer: u32, lod: u3
     const column = wrapped(sampler.wrap[0], x, texture.width(lod)) orelse return sampler.border;
     const row = wrapped(sampler.wrap[1], y, texture.height(lod)) orelse return sampler.border;
     return texture.colorAt(@min(layer, texture.layer_count - 1), lod, column, row);
+}
+
+/// What a shadow sample compares with the reference, 0 to 1: the depth of
+/// a depth texture, at all 16 bits of it, and the red channel of any
+/// other. Past a bordered edge the border's own red channel.
+fn valueBy(texture: *const Texture, sampler: *const Sampler, layer: u32, lod: u32, x: i32, y: i32) f32 {
+    const border = @as(f32, @floatFromInt(sampler.border >> 16 & 0xFF)) / 255;
+    const column = wrapped(sampler.wrap[0], x, texture.width(lod)) orelse return border;
+    const row = wrapped(sampler.wrap[1], y, texture.height(lod)) orelse return border;
+    const at = @min(layer, texture.layer_count - 1);
+    if (texture.format.depth()) {
+        const kept = texture.peekLayer(at, lod, column, row);
+        return @as(f32, @floatFromInt(kept & 0xFFFF)) / 65535;
+    }
+    return @as(f32, @floatFromInt(texture.colorAt(at, lod, column, row) >> 16 & 0xFF)) / 255;
 }
 
 /// Where a whole coordinate lands in a side of `size`; null for one past a
@@ -1003,15 +1089,14 @@ fn slicedIn(sampler: *const Sampler, at: i32, slices: u32) ?u32 {
     return wrapped(sampler.wrap[2], at, slices);
 }
 
-/// One texel compared with the reference: white where it passed, black
-/// where it did not.
-inline fn compared(compare: Compare, texel: u32, reference: f32) u32 {
-    const value = @as(f32, @floatFromInt(texel >> 16 & 0xFF)) / 255;
-    return greyOf(if (compare.passes(value, reference)) 1 else 0);
-}
-
 /// How much of a shadow sample passed, 0 to 1, as an opaque grey.
 inline fn greyOf(passed: f32) u32 {
     const value: u32 = @intFromFloat(@min(@max(passed, 0), 1) * 255 + 0.5);
     return 0xFF00_0000 | value << 16 | value << 8 | value;
+}
+
+/// A channel as an opaque grey of it.
+pub inline fn greyOf8(value: u8) u32 {
+    const part: u32 = value;
+    return 0xFF00_0000 | part << 16 | part << 8 | part;
 }

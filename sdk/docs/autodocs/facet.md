@@ -3917,7 +3917,13 @@ What it is for decides how it lies in its memory:
   R5G6B5 is dithered into it (CmdBeginRenderPass).
 - D16_UNORM with DEPTH_STENCIL_ATTACHMENT, optimal, one level: a depth
   that lives in the tiles alone, never stored, whose memory may be of
-  the lazily allocated type.
+  the lazily allocated type. With a load or a store op it is kept in
+  rows instead (CreateRenderPass), and with SAMPLED as well those rows
+  are the texture a sampler reads: a shadow map drawn into and sampled
+  out of with nothing copied (`PhysicalDeviceFeatures.sampled_depth`,
+  since 1.39). One sampled wants memory something is behind, is of
+  D16_UNORM alone - a stencil has no texel - and is not written
+  through as a storage image.
 - INPUT_ATTACHMENT, of B8G8R8A8, R8G8B8A8 or R5G6B5, in either
   tiling: rows, which a later subpass reads pixel by pixel
   (CreateRenderPass). It goes with COLOR_ATTACHMENT and the transfers,

@@ -88,6 +88,9 @@ pub fn CreateImageView(base: *FacetBase, device: *facet.Device, info: *const fac
     const made = _objects.create(base.sys_base, ImageView) orelse return .error_out_of_host_memory;
     made.* = .{ .image = image, .base_level = range.base_mip_level, .level_count = count, .base_layer = range.base_array_layer, .layer_count = layers };
     if (image.kind == .texture) made.texels = _image.levelsFrom(image, range.base_mip_level, count, range.base_array_layer, layers);
+    // A depth attachment sampled where it lies: its rows are the one
+    // level, and a view of it takes them as they are.
+    if (_image.sampledDepth(image)) made.texels = image.texels;
     // Its pixels, for a later subpass to read as an input attachment.
     if (image.kind == .rows) made.rows = .{
         .bytes = image.data,

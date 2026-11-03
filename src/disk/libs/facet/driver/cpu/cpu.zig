@@ -122,6 +122,9 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // The tiles hold a byte of stencil a pixel, written into the
         // image's rows as each tile is drawn, as the depth is.
         .stored_stencil = true,
+        // A depth image's rows are sampled where they lie: the one texel
+        // decoder reads a depth as well (`texture.Format.d16`).
+        .sampled_depth = true,
         // A function of the program's runs here, and the texels it writes
         // lie where the library keeps them (`shader.Resources.written`).
         .storage_images = true,

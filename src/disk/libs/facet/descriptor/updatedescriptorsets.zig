@@ -7,6 +7,7 @@ const FacetBase = @import("../facet_base.zig").FacetBase;
 const _objects = @import("../_objects.zig");
 const _descriptor = @import("_descriptor.zig");
 const _buffer = @import("../buffer/_buffer.zig");
+const _image = @import("../image/_image.zig");
 const ImageView = @import("../image/_image.zig").ImageView;
 const Sampler = @import("../sampler/_sampler.zig").Sampler;
 const BufferView = @import("../buffer/_bufferview.zig").BufferView;
@@ -112,12 +113,17 @@ pub fn UpdateDescriptorSets(base: *FacetBase, device: *facet.Device, write_count
                     };
                     if (write.descriptor_type == .sampler) break :sampled .{ .sampler = with };
                     const view = _objects.of(ImageView, info.image_view orelse break :sampled .{ .sampler = with });
-                    if (view.image.kind != .texture or view.image.data == null) break :sampled .{ .sampler = with };
+                    // A texture, or a depth attachment sampled where it
+                    // lies (`_image.sampledDepth`, since 1.39).
+                    const kept = view.image.kind == .texture or _image.sampledDepth(view.image);
+                    if (!kept or view.image.data == null) break :sampled .{ .sampler = with };
                     // A storage image is written through, so the image has
                     // to have been made for it; one that was not is left
                     // unwritten rather than handed over to be written.
                     const writable = _descriptor.written(write.descriptor_type);
                     if (writable and view.image.usage & facet.IMAGE_USAGE_STORAGE == 0) break :sampled .{};
+                    // A depth texture is read, never written through.
+                    if (writable and _image.sampledDepth(view.image)) break :sampled .{};
                     break :sampled .{ .pointer = &view.texels, .sampler = with, .writable = writable };
                 },
                 .uniform_texel_buffer, .storage_texel_buffer => texels: {

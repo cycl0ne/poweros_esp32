@@ -242,8 +242,12 @@ fn texelOf(image: *const Image, color: u32) ?Texel {
         .texture => switch (image.texels.format) {
             .rgba8888 => .{ .eight = texture.spread(color) },
             .rgb565 => .{ .two = narrow(color) },
+            // A clear of a colour is not for a depth texture:
+            // CmdClearDepthStencilImage writes that one.
+            .d16 => null,
         },
-        // Its pixels live in the tiles; its memory is never read.
+        // Its pixels are rows of depth, which a clear of a colour does
+        // not write; a transient one's live in the tiles.
         .depth => null,
     };
 }

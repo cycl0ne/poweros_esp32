@@ -155,6 +155,9 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // memory yet, so a pass that keeps its depth is refused here.
         .stored_depth = false,
         .stored_stencil = false,
+        // Its texture unit keeps a texture its own way, and knows no
+        // depth format: a sampled depth image is refused.
+        .sampled_depth = false,
         // A V3D texture lies the way its TMU reads it, which is not the
         // layout the library writes (`texture_offset`), so a storage image
         // is refused on this device and the set layout says so.

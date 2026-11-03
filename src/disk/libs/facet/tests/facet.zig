@@ -258,7 +258,11 @@ test "the formats: what each does in each tiling" {
     // A depth attachment, and a transfer since a pass may store its depth;
     // never sampled, and never linear.
     rig.fb.GetPhysicalDeviceFormatProperties(physical, .d16_unorm, &properties);
-    try testing.expectEqual(facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT | facet.FORMAT_FEATURE_TRANSFER_SRC | facet.FORMAT_FEATURE_TRANSFER_DST, properties.optimal_tiling_features);
+    try testing.expectEqual(
+        facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT | facet.FORMAT_FEATURE_TRANSFER_SRC | facet.FORMAT_FEATURE_TRANSFER_DST |
+            facet.FORMAT_FEATURE_SAMPLED_IMAGE | facet.FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR,
+        properties.optimal_tiling_features,
+    );
     try testing.expectEqual(0, properties.linear_tiling_features);
     // Since 1.38 one with a stencil keeps it the same way, so it too is
     // transferred: a copy reads or writes each pixel's depth and stencil

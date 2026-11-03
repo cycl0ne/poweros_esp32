@@ -221,4 +221,20 @@ pub const LIBRARY_VERSION = 1;
 /// CmdCopyBufferToImage, and CmdClearDepthStencilImage clears either
 /// plane by the range's aspects. The cores keep it; the V3D stores
 /// neither.
-pub const LIBRARY_REVISION = 38;
+/// 39: a depth image sampled where it lies
+/// (`PhysicalDeviceFeatures.sampled_depth`): `d16_unorm` with
+/// IMAGE_USAGE_SAMPLED, its rows both what a pass stores its depth into
+/// and the texture a sampler reads (`texture.Format.d16`, a texture of
+/// one level kept in rows rather than blocks, `texture.Texture.linear`).
+/// So a shadow map is drawn into an image and sampled out of it with
+/// nothing copied and nothing kept twice. A shadow sample compares the
+/// depth at all 16 bits of it, where a colour texture's red channel gives
+/// 8; a sample of the colour reads a depth as a grey of its top 8 bits,
+/// and the fixed forms' fast path, which is built for blocks, paints
+/// `shader.missing` unless the form was compiled for `.d16`. The cores
+/// have it; the V3D's texture unit knows no depth format.
+/// `texture.Texture` grew a field for it, so every program that samples
+/// a texture has to be replaced along with the library, as a driver has:
+/// the struct is laid out by the compiler, and an old binary reads a new
+/// one through the old offsets without a word.
+pub const LIBRARY_REVISION = 39;

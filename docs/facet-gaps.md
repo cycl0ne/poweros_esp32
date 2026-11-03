@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.38**, so that a program need not find out by failing. It covers the API.
+1.39**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -137,12 +137,15 @@ pass's depth. What is left out:
   pixel's depth, and the four ops are taken on their own - a pass may keep
   the stencil and leave the depth in the tiles. An op for a plane the
   format has not is refused.
-- **A depth image is not a texture.** `d16_unorm` has
-  `SAMPLED_IMAGE` in neither tiling, because a texture is kept as
-  `rgba8888` or `rgb565` and nothing else (below). A shadow map is made by
-  reading the depth out and writing it into a colour texture, which the
-  shadow samplers of 1.28 then sample; sampling the depth image itself is
-  still to come.
+- **A depth image is a texture since 1.39** (`sampled_depth`): `d16_unorm`
+  with `SAMPLED` is sampled out of the very rows the pass stored it into,
+  through a sampler, and a shadow sample compares it at all 16 bits. What
+  is left out: it is sampled by a sampler alone - the fixed forms' fast
+  path is built for blocks, so a form not compiled for `texture.Format.d16`
+  paints `shader.missing` - it has one level, no layers and no mipmaps,
+  and a sample of the colour rather than a comparison reads the depth as a
+  grey of its top 8 bits. A format with a stencil is not sampled at all,
+  there being no stencil texel.
 - **A transient depth image keeps nothing**, having no memory: a pass that
   stores into one is refused its framebuffer. That is still the cheap way,
   and what every pass that does not ask for this goes on doing.
@@ -383,6 +386,7 @@ These can be asked for and are answered with `error_feature_not_present`.
 | A timestamp pool without timer.device: the clock a timestamp is read from | `query/createquerypool.zig` |
 | A depth or stencil attachment that loads or stores, on the V3D | `render/createrenderpass.zig` |
 | A depth attachment kept, whose image has no memory behind it | `render/createframebuffer.zig` |
+| A sampled depth image on a device that samples none: the V3D (`sampled_depth`); one with a stencil in it, a transient one, or one written through as a storage image | `image/createimage.zig` |
 
 One consequence does not appear in that table:
 

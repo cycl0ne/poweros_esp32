@@ -27,7 +27,14 @@ pub fn properties(format: facet.Format) callconv(.c) facet.FormatProperties {
         // A depth attachment, and since 1.30 a transfer as well: a pass
         // that stores its depth writes the image's rows, and a copy reads
         // them (`PhysicalDeviceFeatures.stored_depth`).
-        .d16_unorm => .{ .linear_tiling_features = 0, .optimal_tiling_features = facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT | transfer, .buffer_features = 0 },
+        // Sampled as well since 1.39, where the device has it
+        // (`PhysicalDeviceFeatures.sampled_depth`): a shadow map drawn
+        // into and sampled out of without a copy.
+        .d16_unorm => .{
+            .linear_tiling_features = 0,
+            .optimal_tiling_features = facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT | transfer | facet.FORMAT_FEATURE_SAMPLED_IMAGE | facet.FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR,
+            .buffer_features = 0,
+        },
         // Since 1.38 these two keep their stencil the same way, each
         // pixel's depth and stencil beside each other in the rows
         // (`PhysicalDeviceFeatures.stored_stencil`), and a copy reads or
