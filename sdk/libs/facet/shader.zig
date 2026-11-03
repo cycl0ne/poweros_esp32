@@ -1010,8 +1010,10 @@ inline fn bytesOf(at: Pixels) @Vector(4, u32) {
 
 /// A texture, `picture`, at the coordinates the vertex function writes as
 /// varyings 0 and 1: 0 to 1 across it and down. Its format, its filter
-/// and what it does past its edges are `sampling`'s; a texture not
-/// written, or in another format, paints every pixel `missing`.
+/// and what it does past its edges are `sampling`'s; a texture not written
+/// paints every pixel `missing`. One of another format than the form says
+/// is drawn through the run-time sampler instead, a pixel at a time
+/// (since 1.44): correct, and far slower than the form it matches.
 ///
 /// Where w changes slowly enough, each quad takes its coordinates at its
 /// centre - one division - and how fast they change there, and its pixels
@@ -1033,15 +1035,45 @@ pub fn cutout(comptime sampling: texture.Sampling, fragments: *const Fragments, 
 
 pub fn textured(comptime sampling: texture.Sampling, fragments: *const Fragments, picture: ?*const texture.Texture) void {
     const given = picture orelse return fill(fragments, missing);
-    if (given.format != sampling.format) return fill(fragments, missing);
+    // A texture of another format than the form was built for - a
+    // compressed one on a device that keeps its blocks, say, where the
+    // form says 8888 - is drawn all the same, through the sampler that
+    // reads whatever a texture holds. A pixel at a time: slow, and the
+    // form to declare is the texture's own format.
+    if (given.format != sampling.format) return texturedOther(sampling, fragments, given);
     if (fragments.exact) texturedQuads(sampling, true, fragments, given) else texturedQuads(sampling, false, fragments, given);
+}
+
+/// `textured` where the texture's format is not the form's: the colours
+/// come from `Texture.sampleLayer`, which reads any format at run time,
+/// a pixel at a time. The level is the quad's own steps', as a GPU takes
+/// it. (Since 1.44.)
+fn texturedOther(comptime sampling: texture.Sampling, fragments: *const Fragments, given: *const texture.Texture) void {
+    @setRuntimeSafety(false);
+    const texels = [2]f32{ @floatFromInt(given.width(0)), @floatFromInt(given.height(0)) };
+    var rows = Rows(3).of(fragments);
+    for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
+        const at = rows.at(quad);
+        const w = @as(Pixels, @splat(1)) / at[0];
+        const u: [4]f32 = at[1] * w;
+        const v: [4]f32 = at[2] * w;
+        const lod = if (given.levels == 1) 0 else texture.levelFor(given, (u[1] - u[0]) * texels[0], (v[1] - v[0]) * texels[1], (u[2] - u[0]) * texels[0], (v[2] - v[0]) * texels[1]);
+        var colors: [4]u32 = @splat(0);
+        for (&colors, 0..) |*color, i| {
+            if (quad.covered >> @intCast(i) & 1 == 0) continue;
+            color.* = given.sampleLayer(sampling, 0, lod, u[i], v[i]);
+        }
+        out.* = colors;
+    }
 }
 
 /// A texture of layers, `picture`, at the three coordinates its `kind` takes,
 /// varyings 0 to 2. A pixel at a time: much slower than `textured`.
 pub fn layered(comptime kind: FixedKind, comptime sampling: texture.Sampling, fragments: *const Fragments, picture: ?*const texture.Texture) void {
+    // Whatever format the texture holds: the samples are read through
+    // `Texture.sampleLayer` and the like, which take it from the texture
+    // rather than from the form (since 1.44).
     const given = picture orelse return fill(fragments, missing);
-    if (given.format != sampling.format) return fill(fragments, missing);
     const texels = [2]f32{ @floatFromInt(given.width(0)), @floatFromInt(given.height(0)) };
     var rows = Rows(4).of(fragments);
     for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
@@ -1109,8 +1141,10 @@ pub fn modulated(comptime sampling: texture.Sampling, fragments: *const Fragment
 /// and what it may ask for - the levels mixed, several samples along an
 /// axis - is work the fixed path has no room for. How fast the coordinates
 /// change is taken from the quad's own pixels, as a GPU takes it, so a
-/// quad's four samples share a level. A texture not written, in another
-/// format, or with no sampler beside it paints every pixel `missing`.
+/// quad's four samples share a level. A texture not written, or with no
+/// sampler beside it, paints every pixel `missing`; one of another format
+/// than the form says is read all the same, the sampler taking the format
+/// from the texture.
 pub fn texturedBy(
     comptime shadow: bool,
     comptime sampling: texture.Sampling,
@@ -1119,8 +1153,10 @@ pub fn texturedBy(
     sampler: ?*const texture.Sampler,
 ) void {
     const given = picture orelse return fill(fragments, missing);
-    if (given.format != sampling.format) return fill(fragments, missing);
     const with = sampler orelse return fill(fragments, missing);
+    // Everything the form's `sampling` would say - the filter, the edges,
+    // the format - the sampler says instead, or the texture itself.
+    _ = sampling;
     @setRuntimeSafety(false);
     var rows = Rows(if (shadow) 4 else 3).of(fragments);
     for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {

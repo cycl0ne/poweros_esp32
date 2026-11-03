@@ -54,9 +54,19 @@
 //! sampled out of it with nothing copied. Such a texture carries the bytes
 //! from one row to the next (`Texture.pitch`), has one level, and is
 //! sampled by `sampleBy` alone: the fixed forms' fast path is built for
-//! blocks and samples it as `shader.missing`. A shadow sample compares the
-//! depth at all 16 bits (`valueOf`); a sample of the colour reads the
-//! depth as a grey, its top 8 bits.
+//! blocks, so a form handed one reads it through the run-time sampler
+//! instead. A shadow sample compares the depth at all 16 bits (`valueOf`);
+//! a sample of the colour reads the depth as a grey, its top 8 bits.
+//!
+//! **A compressed texture is kept in its blocks** (`Format.bc1`, `bc1_rgb`,
+//! `bc2`, `bc3`, since 1.44): 8 bytes to a block of 4 x 4 texels for BC1
+//! and 16 for the others, where the same texels unpacked take 128, and a
+//! sample decodes the block it reads (`blockOf`) - once for the four texels
+//! a bilinear filter mixes, where they share a block. The decoding is some
+//! twenty cycles a block against a load, which is the trade: a quarter to
+//! an eighth of the memory and of the cache it fills. Nothing writes a
+//! texel of one (`putLayer` leaves it be): the blocks are copied in whole
+//! (`putBlock`).
 
 const std = @import("std");
 
@@ -70,17 +80,63 @@ pub const Format = enum {
     /// texture of this is kept in rows (`Texture.pitch`) and sampled by
     /// `sampleBy` alone.
     d16,
+    /// BC1 as it lies: a block of 4 x 4 texels in 8 bytes, two endpoint
+    /// colours of 565 and two bits a texel. Where the first endpoint is
+    /// not above the second, the third colour is the two mixed evenly and
+    /// the fourth is clear - DXT1's punch-through alpha. (Since 1.44.)
+    bc1,
+    /// The same, read as wholly opaque: Vulkan's BC1_RGB, whose alpha is
+    /// 1 whatever the block says. (Since 1.44.)
+    bc1_rgb,
+    /// BC2: 16 bytes a block, four bits of alpha a texel and then BC1's
+    /// colours, always the four of them. (Since 1.44.)
+    bc2,
+    /// BC3: 16 bytes a block, two endpoint alphas with three bits a texel
+    /// between them, and then BC1's colours. (Since 1.44.)
+    bc3,
 
-    /// The bytes a texel is kept in.
+    /// The bytes a texel is kept in; 0 for a compressed format, whose
+    /// texels have no size of their own (`blockLog2`).
     pub fn bytes(format: Format) u32 {
+        if (format.compressed()) return 0;
         return @as(u32, 1) << format.shift();
     }
 
-    /// The same, as a power of two.
+    /// The same, as a power of two. Nothing for a compressed format: the
+    /// block is what is addressed there.
     pub fn shift(format: Format) u5 {
         return switch (format) {
             .rgba8888 => 3,
             .rgb565, .d16 => 1,
+            .bc1, .bc1_rgb, .bc2, .bc3 => 0,
+        };
+    }
+
+    /// The bytes a block of 4 x 4 texels takes, as a power of two: what one
+    /// level's row of blocks counts in, whether the texels lie in it one by
+    /// one or compressed together.
+    pub fn blockLog2(format: Format) u5 {
+        return switch (format) {
+            // 16 texels of 8 bytes, and of 2.
+            .rgba8888 => 7,
+            .rgb565, .d16 => 5,
+            .bc1, .bc1_rgb => 3,
+            .bc2, .bc3 => 4,
+        };
+    }
+
+    /// The bytes a block takes.
+    pub fn blockBytes(format: Format) u32 {
+        return @as(u32, 1) << format.blockLog2();
+    }
+
+    /// Whether the texels of a block lie compressed together, so that a
+    /// sample decodes the block rather than reading a texel
+    /// (`blockOf`). (Since 1.44.)
+    pub fn compressed(format: Format) bool {
+        return switch (format) {
+            .bc1, .bc1_rgb, .bc2, .bc3 => true,
+            .rgba8888, .rgb565, .d16 => false,
         };
     }
 
@@ -260,9 +316,9 @@ pub const Texture = struct {
     /// levels: what `init` is given.
     pub fn bytes(format: Format, across: u32, down: u32, levels: u32) Error!usize {
         const sizes = try Sizes.of(across, down, levels);
-        var texels: usize = 0;
-        for (0..levels) |lod| texels += sizes.texels(@intCast(lod));
-        return texels * format.bytes();
+        var blocks: usize = 0;
+        for (0..levels) |lod| blocks += sizes.blocks(@intCast(lod));
+        return blocks * format.blockBytes();
     }
 
     /// A texture of one level over rows of `pitch` bytes: how a depth
@@ -317,7 +373,7 @@ pub const Texture = struct {
         var at: u32 = 0;
         for (0..levels) |lod| {
             texture.layout[lod] = .of(format, sizes, @intCast(lod), at);
-            at += sizes.texels(@intCast(lod)) * format.bytes();
+            at += sizes.blocks(@intCast(lod)) * format.blockBytes();
         }
         return texture;
     }
@@ -361,9 +417,18 @@ pub const Texture = struct {
         return @as(usize, layer) * texture.layer_bytes + texture.layout[lod].offset(texture.format, x, y);
     }
 
-    /// Where texel (x, y) of a level is kept, in texels from `memory`.
+    /// Where texel (x, y) of a level is kept, in texels from `memory`; 0 for
+    /// a compressed format, whose texels are not addressed one by one.
     pub fn index(texture: *const Texture, lod: u32, x: u32, y: u32) u32 {
+        if (texture.format.compressed()) return 0;
         return @intCast(texture.placeOf(0, lod, x, y) / texture.format.bytes());
+    }
+
+    /// Where the block holding texel (x, y) of a level of a layer lies, in
+    /// bytes from `memory`: `blockBytes` of them, as a copy of a compressed
+    /// image moves them. (Since 1.44.)
+    pub fn blockPlace(texture: *const Texture, layer: u32, lod: u32, x: u32, y: u32) usize {
+        return texture.placeOf(layer, lod, x & ~@as(u32, block - 1), y & ~@as(u32, block - 1));
     }
 
     /// Texel (x, y) of a level set, in the texture's format.
@@ -377,21 +442,48 @@ pub const Texture = struct {
     }
 
     /// Texel (x, y) of a level of a layer set, in the texture's format.
+    /// Nothing of a compressed format: its texels are not written one at a
+    /// time, only block by block (`putBlock`).
     pub fn putLayer(texture: *Texture, layer: u32, lod: u32, x: u32, y: u32, texel: u32) void {
         const at = texture.memory + texture.placeOf(layer, lod, x, y);
         switch (texture.format) {
             .rgba8888 => @as(*u64, @ptrCast(@alignCast(at))).* = spread(texel),
             .rgb565, .d16 => @as(*u16, @ptrCast(@alignCast(at))).* = @truncate(texel),
+            .bc1, .bc1_rgb, .bc2, .bc3 => {},
         }
     }
 
-    /// Texel (x, y) of a level of a layer, as `putLayer` was given it.
+    /// Texel (x, y) of a level of a layer, as `putLayer` was given it; a
+    /// compressed texture's texel as `colorAt` reads it, there being no
+    /// texel of its own to give back.
     pub fn peekLayer(texture: *const Texture, layer: u32, lod: u32, x: u32, y: u32) u32 {
         const at = texture.memory + texture.placeOf(layer, lod, x, y);
         return switch (texture.format) {
             .rgba8888 => gather(@as(*const u64, @ptrCast(@alignCast(at))).*),
             .rgb565, .d16 => @as(*const u16, @ptrCast(@alignCast(at))).*,
+            inline .bc1, .bc1_rgb, .bc2, .bc3 => |kept| blockOf(kept, at)[(y % block) * block + (x % block)],
         };
+    }
+
+    /// The bytes of the block holding texel (x, y) of a level of a layer
+    /// set, `format.blockBytes()` of them: how a copy into a compressed
+    /// image moves it, the texels staying as they lie. Nothing of a format
+    /// that is not compressed. (Since 1.44.)
+    pub fn putBlock(texture: *Texture, layer: u32, lod: u32, x: u32, y: u32, given: []const u8) void {
+        if (!texture.format.compressed()) return;
+        const wide = texture.format.blockBytes();
+        if (given.len < wide) return;
+        const at = texture.memory + texture.blockPlace(layer, lod, x, y);
+        @memcpy(at[0..wide], given[0..wide]);
+    }
+
+    /// The same read back, into `into`. (Since 1.44.)
+    pub fn blockBytesAt(texture: *const Texture, layer: u32, lod: u32, x: u32, y: u32, into: []u8) void {
+        if (!texture.format.compressed()) return;
+        const wide = texture.format.blockBytes();
+        if (into.len < wide) return;
+        const at = texture.memory + texture.blockPlace(layer, lod, x, y);
+        @memcpy(into[0..wide], at[0..wide]);
     }
 
     /// A texel of a layer set from 0xAARRGGBB, whatever its format:
@@ -403,6 +495,9 @@ pub const Texture = struct {
             .rgb565 => as565(color),
             // The red channel as a depth, its 8 bits in the top of the 16.
             .d16 => (color >> 16 & 0xFF) * 0x101,
+            // Nothing is written through a compressed texture: `putLayer`
+            // leaves it as it lies.
+            .bc1, .bc1_rgb, .bc2, .bc3 => 0,
         });
     }
 
@@ -414,6 +509,8 @@ pub const Texture = struct {
             .rgb565 => expanded565(texel),
             // A depth as an opaque grey: its top 8 bits.
             .d16 => greyOf8(@truncate(texel >> 8)),
+            // Decoded already: `peekLayer` read it out of its block.
+            .bc1, .bc1_rgb, .bc2, .bc3 => texel,
         };
     }
 
@@ -489,14 +586,17 @@ pub const Texture = struct {
     }
 
     /// A level from a picture kept row by row, `pitch` bytes from one row
-    /// to the next, in the texture's format.
+    /// to the next, in the texture's format. Nothing of a compressed
+    /// texture, whose rows are blocks: `putBlock` writes those.
     pub fn load(texture: *Texture, lod: u32, pixels: [*]const u8, pitch: usize) void {
+        if (texture.format.compressed()) return;
         for (0..texture.height(lod)) |y| {
             const row = pixels + y * pitch;
             for (0..texture.width(lod)) |x| {
                 const texel: u32 = switch (texture.format) {
                     .rgba8888 => std.mem.readInt(u32, row[x * 4 ..][0..4], .little),
                     .rgb565, .d16 => std.mem.readInt(u16, row[x * 2 ..][0..2], .little),
+                    .bc1, .bc1_rgb, .bc2, .bc3 => unreachable,
                 };
                 texture.put(lod, @intCast(x), @intCast(y), texel);
             }
@@ -628,12 +728,12 @@ const Sizes = struct {
         return sizes.width_log2 -| lod;
     }
 
-    /// The texels a level keeps: its blocks, whole, as wide as the layout
-    /// goes by and as deep as the level is.
-    fn texels(sizes: Sizes, level: u5) u32 {
+    /// The blocks of 4 x 4 texels a level keeps, whole: as wide as the
+    /// layout goes by and as deep as the level is.
+    fn blocks(sizes: Sizes, level: u5) u32 {
         const across = ((@as(u32, 1) << sizes.pitchLog2At(level)) + block - 1) / block;
         const down = (sizes.heightAt(level) + block - 1) / block;
-        return across * down * block * block;
+        return across * down;
     }
 };
 
@@ -759,7 +859,7 @@ pub const Level = struct {
             .column_high = undefined,
             .row_low = undefined,
             .row_high = undefined,
-            .blocks_shift = (sizes.pitchLog2At(lod) -| 2) + 4 + texel,
+            .blocks_shift = (sizes.pitchLog2At(lod) -| 2) + format.blockLog2(),
             .row_gap = undefined,
             .tiles = std.math.isPowerOfTwo(width) and std.math.isPowerOfTwo(height),
         };
@@ -773,9 +873,19 @@ pub const Level = struct {
         return level;
     }
 
-    /// Texel (x, y)'s place, in bytes from the level's start.
+    /// Texel (x, y)'s place, in bytes from the texture's memory - the place
+    /// of the block it lies in, for a compressed format, whose texels are
+    /// read by decoding that block.
     fn offset(level: Level, format: Format, x: u32, y: u32) u32 {
+        if (format.compressed()) return level.start + level.blockAt(format, x, y);
         return level.start + level.rowAt(format.shift(), y) + columnAt(format.shift(), x);
+    }
+
+    /// Where the block holding texel (x, y) lies, in bytes from the level's
+    /// start.
+    pub inline fn blockAt(level: Level, format: Format, x: u32, y: u32) u32 {
+        @setRuntimeSafety(false);
+        return ((y / block) << level.blocks_shift) + ((x / block) << format.blockLog2());
     }
 
     /// Row `y`'s place, for texels of 2 to the `texel` bytes.
@@ -790,6 +900,142 @@ pub const Level = struct {
         return @bitCast((127 + exponent) << 23);
     }
 };
+
+// --- the compressed blocks --------------------------------------------------
+
+/// The sixteen texels of one compressed block at `at`, in rows, each
+/// 0xAARRGGBB. BC1 reads 8 bytes and the rest 16; nothing is read past
+/// them.
+///
+/// The block holds two endpoint colours of 565 and two bits for each texel,
+/// which pick one of four: the endpoints and two between them. Where the
+/// format punches through - BC1 - and the first endpoint is not above the
+/// second, there are three colours and the fourth is clear. BC2 holds four
+/// bits of alpha for each texel before the colours, and BC3 two endpoint
+/// alphas with three bits for each texel between them. (Since 1.44.)
+pub fn blockOf(comptime format: Format, at: [*]const u8) [16]u32 {
+    @setRuntimeSafety(false);
+    const colors_at = comptime if (format.blockBytes() == 16) 8 else 0;
+    const colors = at + colors_at;
+    const low = readLittle(u16, colors);
+    const high = readLittle(u16, colors + 2);
+    const table = endpoints(format == .bc1 or format == .bc1_rgb, low, high);
+    const picks = readLittle(u32, colors + 4);
+    var made: [16]u32 = undefined;
+    for (&made, 0..) |*texel, k| texel.* = table[picks >> @intCast(k * 2) & 3];
+    switch (format) {
+        // Whatever the block says, such a texture is opaque.
+        .bc1_rgb => for (&made) |*texel| {
+            texel.* |= 0xFF00_0000;
+        },
+        // Four bits a texel, the low ones first.
+        .bc2 => {
+            const bits = readLittle(u64, at);
+            for (&made, 0..) |*texel, k| {
+                const alpha: u32 = @intCast(bits >> @intCast(k * 4) & 15);
+                texel.* = texel.* & 0x00FF_FFFF | (alpha << 4 | alpha) << 24;
+            }
+        },
+        // Two endpoints and three bits a texel between them.
+        .bc3 => {
+            const values = blockAlphas(at);
+            for (&made, values) |*texel, alpha| texel.* = texel.* & 0x00FF_FFFF | @as(u32, alpha) << 24;
+        },
+        else => {},
+    }
+    return made;
+}
+
+/// The four colours a block's two endpoints make, 0xAARRGGBB, the first
+/// three opaque; the fourth is clear where the format punches through and
+/// the endpoints are in that order.
+inline fn endpoints(comptime punches: bool, low: u16, high: u16) [4]u32 {
+    @setRuntimeSafety(false);
+    const first = channels565(low);
+    const second = channels565(high);
+    var made: [4]u32 = undefined;
+    made[0] = opaqueOf(first);
+    made[1] = opaqueOf(second);
+    if (punches and low <= high) {
+        var middle: [3]u32 = undefined;
+        inline for (&middle, first, second) |*channel, a, b| channel.* = (a + b + 1) / 2;
+        made[2] = opaqueOf(middle);
+        // Clear, and black with it: what a GPU reads there.
+        made[3] = 0;
+        return made;
+    }
+    var third: [3]u32 = undefined;
+    var fourth: [3]u32 = undefined;
+    // Rounded, as an unpacking copy rounds it (`image/_decode.zig`): the
+    // texel a sample reads is the one that copy would have written.
+    inline for (&third, &fourth, first, second) |*one, *other, a, b| {
+        one.* = (2 * a + b + 1) / 3;
+        other.* = (a + 2 * b + 1) / 3;
+    }
+    made[2] = opaqueOf(third);
+    made[3] = opaqueOf(fourth);
+    return made;
+}
+
+/// A 565 colour's red, green and blue, each to 8 bits: the bits repeated
+/// into the low ones, which is `channel * 255 / 31` (or 63) to the nearest.
+inline fn channels565(color: u16) [3]u32 {
+    const r: u32 = color >> 11 & 0x1F;
+    const g: u32 = color >> 5 & 0x3F;
+    const b: u32 = color & 0x1F;
+    return .{ r << 3 | r >> 2, g << 2 | g >> 4, b << 3 | b >> 2 };
+}
+
+/// Red, green and blue as an opaque 0xAARRGGBB.
+inline fn opaqueOf(channels: [3]u32) u32 {
+    return 0xFF00_0000 | channels[0] << 16 | channels[1] << 8 | channels[2];
+}
+
+/// A BC3 block's sixteen alphas: two endpoints, and three bits for each
+/// texel choosing between them - six values between, or four and the two
+/// ends, as the endpoints' order says.
+inline fn blockAlphas(at: [*]const u8) [16]u8 {
+    @setRuntimeSafety(false);
+    const first: u32 = at[0];
+    const second: u32 = at[1];
+    var table: [8]u8 = undefined;
+    table[0] = @intCast(first);
+    table[1] = @intCast(second);
+    if (first > second) {
+        inline for (2..8) |k| table[k] = @intCast(((8 - k) * first + (k - 1) * second + 3) / 7);
+    } else {
+        inline for (2..6) |k| table[k] = @intCast(((6 - k) * first + (k - 1) * second + 2) / 5);
+        table[6] = 0;
+        table[7] = 255;
+    }
+    var bits: u64 = 0;
+    for (0..6) |k| bits |= @as(u64, at[2 + k]) << @intCast(k * 8);
+    var made: [16]u8 = undefined;
+    for (&made, 0..) |*alpha, k| alpha.* = table[@intCast(bits >> @intCast(k * 3) & 7)];
+    return made;
+}
+
+/// `T` read from `at`, least significant byte first, whatever the alignment.
+inline fn readLittle(comptime T: type, at: [*]const u8) T {
+    @setRuntimeSafety(false);
+    var made: T = 0;
+    inline for (0..@sizeOf(T)) |k| made |= @as(T, at[k]) << @intCast(k * 8);
+    return made;
+}
+
+/// Texel (x, y) of a level of a compressed texture, 0xAARRGGBB: its block
+/// decoded, and the one of its sixteen picked out. (Since 1.44.)
+pub inline fn texelIn(comptime format: Format, texture: *const Texture, level: *const Level, x: u32, y: u32) u32 {
+    @setRuntimeSafety(false);
+    const texels = blockIn(format, texture, level, x, y);
+    return texels[(y % block) * block + (x % block)];
+}
+
+/// The sixteen texels of the block holding (x, y), in rows. (Since 1.44.)
+pub inline fn blockIn(comptime format: Format, texture: *const Texture, level: *const Level, x: u32, y: u32) [16]u32 {
+    @setRuntimeSafety(false);
+    return blockOf(format, texture.memory + level.start + level.blockAt(format, x, y));
+}
 
 /// Column `x`'s place, for texels of 2 to the `texel` bytes.
 inline fn columnAt(texel: u5, x: u32) u32 {
@@ -827,6 +1073,7 @@ pub inline fn sampleAt(comptime sampling: Sampling, texture: *const Texture, lev
     // This runs for every pixel; what it works out is held inside the
     // level, and checks would cost more than the work.
     @setRuntimeSafety(false);
+    if (comptime sampling.format.compressed()) return sampleBlocked(sampling, texture, level, s, t);
     const base = texture.memory + level.start;
     const left, const right = columns(sampling, level, s);
     const top, const bottom = rows(sampling, level, t);
@@ -842,6 +1089,90 @@ pub inline fn sampleAt(comptime sampling: Sampling, texture: *const Texture, lev
                 fetchSpread(sampling.format, base + bottom + left) * (down - both) +
                 fetchSpread(sampling.format, base + bottom + right) * both;
             return gather(sum >> 8 & lanes);
+        },
+    }
+}
+
+/// A sample of a texture whose texels lie compressed: the block the point
+/// falls in decoded, and the texels picked out of it. One block for a
+/// `nearest` sample, one for a `bilinear` sample whose four texels lie in
+/// the same block - which three pixels in four do - and up to four where
+/// they do not. (Since 1.44.)
+inline fn sampleBlocked(comptime sampling: Sampling, texture: *const Texture, level: *const Level, s: i32, t: i32) u32 {
+    @setRuntimeSafety(false);
+    const left, const right = texelColumns(sampling, level, s);
+    const top, const bottom = texelRows(sampling, level, t);
+    if (comptime sampling.filter == .nearest) return texelIn(sampling.format, texture, level, left, top);
+    // The four texels round the point, from as few blocks as they lie in.
+    var corners: [4]u32 = undefined;
+    if (left / block == right / block and top / block == bottom / block) {
+        const texels = blockIn(sampling.format, texture, level, left, top);
+        const row = (top % block) * block;
+        const under = (bottom % block) * block;
+        corners = .{
+            texels[row + left % block],
+            texels[row + right % block],
+            texels[under + left % block],
+            texels[under + right % block],
+        };
+    } else {
+        corners = .{
+            texelIn(sampling.format, texture, level, left, top),
+            texelIn(sampling.format, texture, level, right, top),
+            texelIn(sampling.format, texture, level, left, bottom),
+            texelIn(sampling.format, texture, level, right, bottom),
+        };
+    }
+    // Mixed as `sampleAt` mixes its four: weights of 256 that add up to it.
+    const across: u64 = @as(u32, @bitCast(s)) & 0xFF;
+    const down: u64 = @as(u32, @bitCast(t)) & 0xFF;
+    const both = across * down >> 8;
+    const sum = spread(corners[0]) * (256 + both - across - down) +
+        spread(corners[1]) * (across - both) +
+        spread(corners[2]) * (down - both) +
+        spread(corners[3]) * both;
+    return gather(sum >> 8 & lanes);
+}
+
+/// Texel column s / 256 and the next one, held inside the level as
+/// `sampling.address` says. (Since 1.44.)
+inline fn texelColumns(comptime sampling: Sampling, level: *const Level, s: i32) [2]u32 {
+    @setRuntimeSafety(false);
+    const x = s >> 8;
+    switch (sampling.address) {
+        .wrap => {
+            if (level.tiles) {
+                const last = level.width - 1;
+                const inside = @as(u32, @bitCast(x)) & last;
+                return .{ inside, (inside + 1) & last };
+            }
+            const inside: u32 = @intCast(@mod(x, @as(i32, @intCast(level.width))));
+            return .{ inside, if (inside + 1 == level.width) 0 else inside + 1 };
+        },
+        .clamp => {
+            const last: i32 = @intCast(level.width - 1);
+            return .{ @intCast(std.math.clamp(x, 0, last)), @intCast(std.math.clamp(x +% 1, 0, last)) };
+        },
+    }
+}
+
+/// Texel row t / 256 and the next one, the same way. (Since 1.44.)
+inline fn texelRows(comptime sampling: Sampling, level: *const Level, t: i32) [2]u32 {
+    @setRuntimeSafety(false);
+    const y = t >> 8;
+    switch (sampling.address) {
+        .wrap => {
+            if (level.tiles) {
+                const last = level.height - 1;
+                const inside = @as(u32, @bitCast(y)) & last;
+                return .{ inside, (inside + 1) & last };
+            }
+            const inside: u32 = @intCast(@mod(y, @as(i32, @intCast(level.height))));
+            return .{ inside, if (inside + 1 == level.height) 0 else inside + 1 };
+        },
+        .clamp => {
+            const last: i32 = @intCast(level.height - 1);
+            return .{ @intCast(std.math.clamp(y, 0, last)), @intCast(std.math.clamp(y +% 1, 0, last)) };
         },
     }
 }
@@ -924,6 +1255,8 @@ inline fn fetch(comptime format: Format, at: [*]const u8) u32 {
         // A depth as a grey, as `Texture.colorAt` reads one: the fast path
         // is built for blocks and never reads a texture of this.
         .d16 => greyOf8(@truncate(@as(*const u16, @ptrCast(@alignCast(at))).* >> 8)),
+        // Never read a texel at a time: `sampleBlocked` has the block.
+        .bc1, .bc1_rgb, .bc2, .bc3 => missing_texel,
     };
 }
 
@@ -932,9 +1265,13 @@ inline fn fetchSpread(comptime format: Format, at: [*]const u8) u64 {
     @setRuntimeSafety(false);
     return switch (format) {
         .rgba8888 => @as(*const u64, @ptrCast(@alignCast(at))).*,
-        .rgb565, .d16 => spread(fetch(format, at)),
+        .rgb565, .d16, .bc1, .bc1_rgb, .bc2, .bc3 => spread(fetch(format, at)),
     };
 }
+
+/// What a texel of a compressed format reads as where something asks for one
+/// a texel at a time: a sample of such a texture decodes its block instead.
+pub const missing_texel: u32 = 0xFFFF_00FF;
 
 /// RGB565 as 0xAARRGGBB: each channel's top bits again below, so that the
 /// largest value of 5 or 6 bits is 255.

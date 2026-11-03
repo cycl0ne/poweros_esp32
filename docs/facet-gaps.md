@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.43**, so that a program need not find out by failing. It covers the API.
+1.44**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -171,9 +171,11 @@ is left out:
   is for the program to avoid - as it is in Vulkan, there being no barrier
   and no atomic here either.
 - **The formats are a texture's**: `rgba8888` and `rgb565`. There is no
-  format conversion on a write and no `r32` of any kind, and the compressed
-  and float formats, being unpacked to 8888 as they are copied in, are not
-  written through at all.
+  format conversion on a write and no `r32` of any kind. A float image is
+  unpacked to 8888 as it is copied in and is not written through at all; a
+  compressed one asked for as a storage image is unpacked the same way,
+  whatever the device keeps for a sampled one, since nothing here writes a
+  texel into a block.
 - **The view's first level and layer** are what a function writes: there is
   no way to name another level from inside the function.
 - A `storage_image` is still not an attachment: an image cannot be drawn
@@ -465,15 +467,33 @@ Of textures:
   height. Past the width nothing is read. `wrap` round a side that is not
   a power of two costs a division a sample instead of a mask; `clamp`
   costs the same whatever the size.
-- A texel is kept as `rgba8888` or `rgb565`, and nothing else. An 8888
-  texel takes 64 bits, each channel in 16 of them, so that the four texels
-  of a bilinear sample come out of memory ready to mix.
-- BC1, BC2, BC3 and the float formats are unpacked to 8 bits a channel as
-  they are copied in: no memory is saved, what is above 1 or below 0 in a
-  float image is lost, and such an image cannot be copied out of, nor
-  another image into it.
+- A texel is kept as `rgba8888`, `rgb565` or, since 1.44, the blocks of
+  BC1, BC2 or BC3. An 8888 texel takes 64 bits, each channel in 16 of
+  them, so that the four texels of a bilinear sample come out of memory
+  ready to mix.
+- A compressed image is kept in its blocks on a device that samples them
+  (`PhysicalDeviceFeatures.kept_compressed`, the cores since 1.44): an
+  eighth to a quarter of the memory - 16 x 16 of BC1 is 128 bytes against
+  1024 - and the block a sample reads is decoded as it is read, once for
+  the four texels where they share one. The blocks are copied in and out
+  as they lie, their offsets on a multiple of 4. The V3D has not got it:
+  its TMU is fed unpacked texels, so there such an image is unpacked into
+  8888 as before, cannot be copied out of, and takes the memory.
+- The float formats are still unpacked to 8 bits a channel as they are
+  copied in: no memory is saved, what is above 1 or below 0 is lost, and
+  such an image cannot be copied out of, nor another image into it.
+- A fixed form says the format it samples (`texture.Sampling.format`), and
+  that is the one its fast path reads. Since 1.44 a texture of another
+  format is drawn all the same, through the run-time sampler, a pixel at a
+  time: correct, and slower than the form that matches - so a program that
+  wants the fast path asks the device what it keeps and compiles the form
+  for it. Before 1.44 such a draw was painted `shader.missing`.
 - A 3D texture has one level and a depth that is a power of two. There are
   no cube arrays and no ETC.
+- The compressed formats are the four BC ones: no BC4 to BC7, no BC1 with
+  1-bit alpha told apart from the opaque one past the punch-through rule,
+  and nothing compresses - a blit or a copy into a compressed image from
+  an uncompressed one takes nothing.
 
 ## Compute, as it stands
 

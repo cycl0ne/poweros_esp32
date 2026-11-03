@@ -1041,6 +1041,10 @@ Outside a render pass. Colours go by way of 8 bits a channel, and are
 rounded into the destination's format, not dithered. What falls outside
 the destination is left out, and the source's edge is read beyond it.
 
+A source kept in its blocks is read out of them, texel by texel (since
+1.44). Nothing here compresses, so a destination that keeps its blocks
+takes nothing, as Vulkan does not allow one either.
+
 **CONTEXT**
 
 - Waits: no.
@@ -1382,6 +1386,13 @@ one put in the order the rasterizer keeps colours in - and in rows,
 copied as it is. What lies outside the level, or past the end of the
 buffer, is left out. A depth attachment takes nothing.
 
+An image of a compressed format kept in its blocks
+(`PhysicalDeviceFeatures.kept_compressed`, since 1.44) takes them as
+they lie, nothing decoded: the buffer holds a row of blocks every
+`buffer_row_length` texels, as Vulkan counts them, and the offsets are
+on a multiple of 4 or the region is left out. One that is unpacked
+instead takes the texels decoded, as a float image's are.
+
 **CONTEXT**
 
 - Waits: no.
@@ -1444,6 +1455,11 @@ None.
 Outside a render pass. The part of a rectangle outside either image is
 left out, and so are images of depth or stencil, which live in the tiles.
 
+Two images that keep their blocks, of the one format, are copied block by
+block (`PhysicalDeviceFeatures.kept_compressed`, since 1.44), their
+offsets on a multiple of 4; a compressed image and an uncompressed one,
+either way round, take nothing.
+
 **CONTEXT**
 
 - Waits: no.
@@ -1505,6 +1521,12 @@ None.
 Outside a render pass. In the buffer the texels are in rows, in the image's
 format. The part of a rectangle outside the image, or past the buffer's
 end, is left out.
+
+An image kept in its blocks gives them back as they lie, a row of them
+every `buffer_row_length` texels, its offsets on a multiple of 4
+(`PhysicalDeviceFeatures.kept_compressed`, since 1.44). One that was
+unpacked as it was copied in has nothing of its format to give and
+takes nothing.
 
 **CONTEXT**
 
@@ -4059,9 +4081,19 @@ more.
 
 A SAMPLED image may be of BC1, BC2, BC3, R16G16B16A16_SFLOAT,
 R32G32B32A32_SFLOAT, B10G11R11_UFLOAT or E5B9G9R9_UFLOAT, in optimal tiling.
-It is kept as R8G8B8A8, unpacked as it is copied in: it takes that one's
-memory, and what is in a float image above 1 or below 0 is lost. There is no
-copying such an image out, nor another image into it, by CmdCopyImage.
+A float one is kept as R8G8B8A8, unpacked as it is copied in: it takes that
+one's memory, what is above 1 or below 0 is lost, and there is no copying
+it out, nor another image into it, by CmdCopyImage.
+
+A compressed one - BC1, BC2, BC3 - is kept in its blocks on a device that
+samples them (`PhysicalDeviceFeatures.kept_compressed`, since 1.44): an
+eighth to a quarter of that memory, and the blocks are copied in and out
+as they lie, by CmdCopyBufferToImage, CmdCopyImageToBuffer and CmdCopyImage
+between two images of the one format, their offsets and extents on a
+multiple of 4 as Vulkan asks. GetImageMemoryRequirements says which was
+done. A device without the feature unpacks it as a float image is unpacked.
+A STORAGE image is written texel by texel, so a compressed one is unpacked
+there whatever the device.
 
 **CONTEXT**
 

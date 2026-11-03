@@ -31,6 +31,11 @@ const Image = @import("../image/_image.zig").Image;
 /// Outside a render pass. The part of a rectangle outside either image is
 /// left out, and so are images of depth or stencil, which live in the tiles.
 ///
+/// Two images that keep their blocks, of the one format, are copied block by
+/// block (`PhysicalDeviceFeatures.kept_compressed`, since 1.44), their
+/// offsets on a multiple of 4; a compressed image and an uncompressed one,
+/// either way round, take nothing.
+///
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no.

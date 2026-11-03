@@ -1,16 +1,20 @@
 // SPDX-License-Identifier: MIT
 //! Texels of a format an image does not keep: a compressed one (BC1, BC2,
 //! BC3) or a float one, unpacked as they come in by CmdCopyBufferToImage into
-//! the 8 bits a channel the image is kept in, whichever device samples it.
+//! the 8 bits a channel the image is kept in.
 //!
-//! Neither keeps what it would on a GPU with such textures. A compressed image
-//! takes the memory of an uncompressed one. What is above 1 in a float image
-//! is cut to 1, and below 0 to 0: the rasterizer's tiles and the formats
-//! facet.library draws into have 8 bits a channel, or fewer.
+//! A compressed image is unpacked here only on a device that samples texels
+//! rather than blocks (`PhysicalDeviceFeatures.kept_compressed`, false on the
+//! V3D): it then takes the memory of an uncompressed one, and holds what
+//! sampling the blocks would have read, the one decoder being the SDK's
+//! (`texture.blockOf`). What is above 1 in a float image is cut to 1, and
+//! below 0 to 0: the rasterizer's tiles and the formats facet.library draws
+//! into have 8 bits a channel, or fewer.
 
 const std = @import("std");
 const sdk = @import("sdk");
 const facet = sdk.facet;
+const texture = facet.texture;
 
 /// Whether an image of `format` is kept as 8 bits a channel.
 pub fn unpacks(format: facet.Format) bool {
@@ -39,88 +43,33 @@ pub fn texelBytes(format: facet.Format) u32 {
 /// Red, green, blue and alpha of 8 bits.
 pub const Rgba = [4]u8;
 
-/// A 16-bit colour's channels, each to 8 bits.
-fn expanded(color: u16) [3]u32 {
-    const r: u32 = color >> 11 & 0x1F;
-    const g: u32 = color >> 5 & 0x3F;
-    const b: u32 = color & 0x1F;
-    return .{ r << 3 | r >> 2, g << 2 | g >> 4, b << 3 | b >> 2 };
+/// Which texture format keeps a compressed one's blocks, for the decoder
+/// the sampler uses as well (`texture.blockOf`).
+fn keptBlocks(format: facet.Format) ?texture.Format {
+    return switch (format) {
+        .bc1_rgb_unorm_block => .bc1_rgb,
+        .bc1_rgba_unorm_block => .bc1,
+        .bc2_unorm_block => .bc2,
+        .bc3_unorm_block => .bc3,
+        else => null,
+    };
 }
 
-fn between(a: u32, b: u32, a_parts: u32, b_parts: u32) u8 {
-    return @intCast((a * a_parts + b * b_parts + (a_parts + b_parts) / 2) / (a_parts + b_parts));
-}
-
-/// The four colours of a colour block. `with_clear`: where the first number
-/// is not above the second, the third is halfway and the last clear black.
-fn palette(block: []const u8, with_clear: bool) [4]Rgba {
-    const first = std.mem.readInt(u16, block[0..2], .little);
-    const second = std.mem.readInt(u16, block[2..4], .little);
-    const a = expanded(first);
-    const b = expanded(second);
-    var made: [4]Rgba = undefined;
-    made[0] = .{ @intCast(a[0]), @intCast(a[1]), @intCast(a[2]), 255 };
-    made[1] = .{ @intCast(b[0]), @intCast(b[1]), @intCast(b[2]), 255 };
-    if (with_clear and first <= second) {
-        made[2] = .{ between(a[0], b[0], 1, 1), between(a[1], b[1], 1, 1), between(a[2], b[2], 1, 1), 255 };
-        made[3] = .{ 0, 0, 0, 0 };
-    } else {
-        made[2] = .{ between(a[0], b[0], 2, 1), between(a[1], b[1], 2, 1), between(a[2], b[2], 2, 1), 255 };
-        made[3] = .{ between(a[0], b[0], 1, 2), between(a[1], b[1], 1, 2), between(a[2], b[2], 1, 2), 255 };
-    }
-    return made;
-}
-
-/// The alphas of a BC3 block's first eight bytes, for texels 0 to 15.
-fn alphas(block: []const u8) [16]u8 {
-    const a: u32 = block[0];
-    const b: u32 = block[1];
-    var values: [8]u8 = undefined;
-    values[0] = block[0];
-    values[1] = block[1];
-    if (a > b) {
-        for (2..8) |k| {
-            const parts: u32 = @intCast(k - 1);
-            values[k] = between(a, b, 7 - parts, parts);
-        }
-    } else {
-        for (2..6) |k| {
-            const parts: u32 = @intCast(k - 1);
-            values[k] = between(a, b, 5 - parts, parts);
-        }
-        values[6] = 0;
-        values[7] = 255;
-    }
-    var bits: u64 = 0;
-    for (block[2..8], 0..) |byte, k| bits |= @as(u64, byte) << @intCast(k * 8);
-    var made: [16]u8 = undefined;
-    for (&made, 0..) |*alpha, k| alpha.* = values[@intCast(bits >> @intCast(k * 3) & 7)];
-    return made;
-}
-
-/// A block's 16 texels, in rows.
+/// A block's 16 texels, in rows: the SDK's decoder, which is the one a
+/// sample of a kept block reads through, so an image unpacked as it is
+/// copied in holds what sampling the blocks would have read.
 pub fn block16(format: facet.Format, block: []const u8) [16]Rgba {
-    const colors_at: usize = if (blockBytes(format) == 16) 8 else 0;
-    const colors = block[colors_at..];
-    const table = palette(colors, format == .bc1_rgb_unorm_block or format == .bc1_rgba_unorm_block);
-    const indices = std.mem.readInt(u32, colors[4..8], .little);
-    var made: [16]Rgba = undefined;
-    for (&made, 0..) |*each, k| each.* = table[indices >> @intCast(k * 2) & 3];
-    switch (format) {
-        // No alpha to speak of: what is clear is black.
-        .bc1_rgb_unorm_block => for (&made) |*each| {
-            each[3] = 255;
-        },
-        .bc2_unorm_block => {
-            const bits = std.mem.readInt(u64, block[0..8], .little);
-            for (&made, 0..) |*each, k| {
-                const alpha: u8 = @intCast(bits >> @intCast(k * 4) & 15);
-                each[3] = alpha << 4 | alpha;
-            }
-        },
-        .bc3_unorm_block => {
-            const values = alphas(block);
-            for (&made, values) |*each, alpha| each[3] = alpha;
+    var made: [16]Rgba = .{.{ 0, 0, 0, 0 }} ** 16;
+    const kept = keptBlocks(format) orelse return made;
+    switch (kept) {
+        inline .bc1, .bc1_rgb, .bc2, .bc3 => |one| {
+            const texels = texture.blockOf(one, block.ptr);
+            for (&made, texels) |*each, color| each.* = .{
+                @intCast(color >> 16 & 0xFF),
+                @intCast(color >> 8 & 0xFF),
+                @intCast(color & 0xFF),
+                @intCast(color >> 24),
+            };
         },
         else => {},
     }

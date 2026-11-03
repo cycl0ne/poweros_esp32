@@ -175,6 +175,12 @@ pub fn textureFormat(format: facet.Format) ?texture.Format {
     return switch (format) {
         .b8g8r8a8_unorm, .r8g8b8a8_unorm => .rgba8888,
         .r5g6b5_unorm_pack16 => .rgb565,
+        // Kept in their blocks and decoded as they are sampled, on a
+        // device that says so (`PhysicalDeviceFeatures.kept_compressed`).
+        .bc1_rgba_unorm_block => .bc1,
+        .bc1_rgb_unorm_block => .bc1_rgb,
+        .bc2_unorm_block => .bc2,
+        .bc3_unorm_block => .bc3,
         // A depth sampled where it lies, in rows
         // (`PhysicalDeviceFeatures.sampled_depth`).
         .d16_unorm => .d16,
@@ -211,10 +217,19 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
     if (cube and (volume or layers < 6 or extent.width != extent.height)) return null;
     // Layers are for sampling: an attachment or rows have one.
     if ((layers > 1 or _decode.unpacks(info.format)) and (info.usage & facet.IMAGE_USAGE_SAMPLED == 0 or info.tiling != .optimal)) return null;
-    const kept_format: facet.Format = if (_decode.unpacks(info.format)) .r8g8b8a8_unorm else info.format;
+    // A compressed image is kept in its blocks where this device samples
+    // them (`PhysicalDeviceFeatures.kept_compressed`), and unpacked into 8
+    // bits a channel where it does not. A storage image is written texel
+    // by texel, which no compressed format takes.
+    const keeps_blocks = physical.features.kept_compressed and _decode.blockBytes(info.format) != 0 and
+        info.usage & facet.IMAGE_USAGE_STORAGE == 0;
+    const kept_format: facet.Format = if (_decode.unpacks(info.format) and !keeps_blocks) .r8g8b8a8_unorm else info.format;
     if (extent.width == 0 or extent.height == 0 or extent.width > max_image_dimension or extent.height > max_image_dimension) return null;
     if (info.mip_levels == 0) return null;
-    const pixel = bytesOf(kept_format);
+    // A block's bytes stand in for a texel's where the blocks are kept:
+    // what rows would take is never asked of such an image, which is
+    // sampled and nothing else.
+    const pixel = if (keeps_blocks) _decode.blockBytes(info.format) else bytesOf(kept_format);
     if (pixel == 0) return null;
     var image = Image{
         .device = undefined,
@@ -347,6 +362,70 @@ pub fn unpacks(image: *const Image) bool {
     return image.given_format != image.format;
 }
 
+/// Whether an image's texels lie compressed where they were copied in, in
+/// blocks of 4 x 4 texels (`PhysicalDeviceFeatures.kept_compressed`): a
+/// sample decodes the block it reads, and a copy moves whole blocks.
+pub fn blocked(image: *const Image) bool {
+    return _decode.blockBytes(image.format) != 0;
+}
+
+/// The bytes of one of a blocked image's blocks; 0 for another image.
+pub fn blockBytes(image: *const Image) u32 {
+    return _decode.blockBytes(image.format);
+}
+
+/// The block holding texel (x, y) of a level of a layer, into `into`;
+/// nothing where the image is not blocked.
+pub fn readBlock(image: *const Image, level: u32, layer: u32, x: u32, y: u32, into: []u8) void {
+    image.texels.blockBytesAt(layer, level, x, y, into);
+}
+
+/// The same written, as a copy into a compressed image moves it.
+pub fn writeBlock(image: *Image, level: u32, layer: u32, x: u32, y: u32, from: []const u8) void {
+    image.texels.putBlock(layer, level, x, y, from);
+}
+
+/// The colour of texel (x, y), 0xAARRGGBB, decoded out of the block it
+/// lies in: what a blit reads of a compressed image, there being no texel
+/// of its own in memory.
+pub fn blockColor(image: *const Image, level: u32, layer: u32, x: u32, y: u32) u32 {
+    return image.texels.peekLayer(layer, level, x, y);
+}
+
+/// Blocks of a compressed format from a buffer's bytes into a level of an
+/// image that keeps them, as they lie: the part of the rectangle outside
+/// the image, or past the end of `from`, left out. Blocks start on a
+/// multiple of 4, as Vulkan asks.
+pub fn copyBlocks(image: *Image, from: []const u8, region: *const facet.BufferImageCopy) void {
+    if (image.data == null) return;
+    const level = region.image_subresource.mip_level;
+    if (level >= image.levels or region.image_offset.x < 0 or region.image_offset.y < 0) return;
+    const size = levelSize(image, level);
+    const left: u32 = @intCast(region.image_offset.x);
+    const top: u32 = @intCast(region.image_offset.y);
+    if (left >= size[0] or top >= size[1]) return;
+    if (left % 4 != 0 or top % 4 != 0) return;
+    const width = @min(region.image_extent.width, size[0] - left);
+    const height = @min(region.image_extent.height, size[1] - top);
+    const range = layersOf(image, region.image_subresource, region.image_offset.z, region.image_extent.depth) orelse return;
+    // A buffer holds a compressed image in blocks: a row of them is
+    // `buffer_row_length` texels across, which is what Vulkan counts here.
+    const row_length = if (region.buffer_row_length != 0) region.buffer_row_length else region.image_extent.width;
+    const slice_height = if (region.buffer_image_height != 0) region.buffer_image_height else region.image_extent.height;
+    const start = std.math.cast(usize, region.buffer_offset) orelse return;
+    const wide = blockBytes(image);
+    const pitch = @as(usize, (row_length + 3) / 4) * wide;
+    for (0..range.count) |slice| {
+        const layer = range.first + @as(u32, @intCast(slice));
+        const slice_at = start + slice * @as(usize, (slice_height + 3) / 4) * pitch;
+        for (0..(height + 3) / 4) |row| for (0..(width + 3) / 4) |column| {
+            const at = slice_at + row * pitch + column * wide;
+            if (at + wide > from.len) return;
+            writeBlock(image, level, layer, left + @as(u32, @intCast(column * 4)), top + @as(u32, @intCast(row * 4)), from[at..][0..wide]);
+        };
+    }
+}
+
 /// A rectangle of a compressed or a float format from a buffer's bytes into
 /// a level of an image, unpacked; the part of it outside the image, or past
 /// the end of `from`, left out. Blocks start on a multiple of 4.
@@ -402,6 +481,7 @@ pub fn copyUnpacking(image: *Image, from: []const u8, region: *const facet.Buffe
 pub fn copyFromBuffer(image: *Image, from: []const u8, region: *const facet.BufferImageCopy) void {
     if (image.data == null) return;
     if (unpacks(image)) return copyUnpacking(image, from, region);
+    if (blocked(image)) return copyBlocks(image, from, region);
     const level = region.image_subresource.mip_level;
     if (level >= image.levels or region.image_offset.x < 0 or region.image_offset.y < 0) return;
     const range = layersOf(image, region.image_subresource, region.image_offset.z, region.image_extent.depth) orelse return;

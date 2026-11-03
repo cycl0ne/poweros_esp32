@@ -43,7 +43,7 @@ const _draw = @import("_draw.zig");
 
 pub const ops = Ops{
     .describe = &describe,
-    .format_properties = &_format.properties,
+    .format_properties = &_format.keptProperties,
     .allocate_memory = &allocateMemory,
     .free_memory = &freeMemory,
     .make_pipeline = &makePipeline,
@@ -129,6 +129,9 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // A depth image's rows are sampled where they lie: the one texel
         // decoder reads a depth as well (`texture.Format.d16`).
         .sampled_depth = true,
+        // A compressed image is sampled out of its blocks: the one texel
+        // decoder reads a BC block as well (`texture.Format.blockOf`).
+        .kept_compressed = true,
         // Both go by the pixel at a time way the stencil test goes by:
         // the clamp holds a pixel's depth inside the viewport's range,
         // and the bounds test reads the depth already there.

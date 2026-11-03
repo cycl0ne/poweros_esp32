@@ -372,3 +372,89 @@ test "a shadow sample compares what it read with its reference, and mixes what p
     sampler.wrap = @splat(.clamp_to_edge);
     try testing.expectEqual(@as(u32, 0xFF80_8080), texture.sampleBy(&made, &sampler, 0, .{ .u = 0.5, .v = 0.125, .reference = 0.5 }));
 }
+
+/// A BC1 block: two endpoint colours of 565 and two bits for each of the
+/// sixteen texels, the first texel's lowest.
+fn bc1Block(low: u16, high: u16, picks: u32) [8]u8 {
+    var made: [8]u8 = undefined;
+    std.mem.writeInt(u16, made[0..2], low, .little);
+    std.mem.writeInt(u16, made[2..4], high, .little);
+    std.mem.writeInt(u32, made[4..8], picks, .little);
+    return made;
+}
+
+test "a compressed texture is kept in its blocks and decoded as it is sampled" {
+    // A block is 8 bytes of BC1 and 16 of the rest, whatever a texel of
+    // 8888 would take: 8 x 8 is four blocks.
+    try testing.expectEqual(@as(usize, 4 * 8), try Texture.bytes(.bc1, 8, 8, 1));
+    try testing.expectEqual(@as(usize, 4 * 16), try Texture.bytes(.bc3, 8, 8, 1));
+    try testing.expect(texture.Format.bc2.compressed());
+    try testing.expect(!texture.Format.rgba8888.compressed());
+
+    var memory: [16]u64 = undefined;
+    var made = try Texture.init(.bc1, 8, 8, 1, @ptrCast(&memory));
+    const red: u16 = 0xF800;
+    const blue: u16 = 0x001F;
+    // The top left block: red and blue its endpoints, its first texel the
+    // one and its second the other, the rest red.
+    made.putBlock(0, 0, 0, 0, &bc1Block(red, blue, 1 << 2));
+    // Blue all over, and white all over, from endpoints of one colour.
+    made.putBlock(0, 0, 4, 0, &bc1Block(blue, blue, 0));
+    made.putBlock(0, 0, 0, 4, &bc1Block(0xFFFF, 0xFFFF, 0));
+    // Black and white in that order punch through: the third colour is
+    // halfway and the fourth clear, which every texel here picks.
+    made.putBlock(0, 0, 4, 4, &bc1Block(0x0000, 0xFFFF, 0xFFFF_FFFF));
+
+    // A texel at a time, out of the block it lies in.
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), made.colorAt(0, 0, 0, 0));
+    try testing.expectEqual(@as(u32, 0xFF00_00FF), made.colorAt(0, 0, 1, 0));
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), made.colorAt(0, 0, 3, 3));
+    try testing.expectEqual(@as(u32, 0xFF00_00FF), made.colorAt(0, 0, 4, 0));
+    try testing.expectEqual(@as(u32, 0xFFFF_FFFF), made.colorAt(0, 0, 0, 4));
+    // Clear, and black with it: what a GPU reads of a punched-through texel.
+    try testing.expectEqual(@as(u32, 0), made.colorAt(0, 0, 5, 5));
+
+    const nearest = texture.Sampling{ .format = .bc1, .filter = .nearest };
+    const clamp = texture.Sampling{ .format = .bc1, .filter = .bilinear, .address = .clamp };
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), sampleAt(nearest, &made, 0, 1.0 / 16.0, 1.0 / 16.0));
+    try testing.expectEqual(@as(u32, 0xFF00_00FF), sampleAt(nearest, &made, 0, 3.0 / 16.0, 1.0 / 16.0));
+    try testing.expectEqual(@as(u32, 0xFFFF_FFFF), sampleAt(nearest, &made, 0, 1.0 / 16.0, 9.0 / 16.0));
+    // Two texels of one block mixed: the block is decoded once.
+    try testing.expectEqual(@as(u32, 0xFF7F_007F), sampleAt(clamp, &made, 0, 1.0 / 8.0, 1.0 / 16.0));
+    // Two texels in blocks beside each other, which takes both blocks:
+    // the red of the first and the blue of the second.
+    try testing.expectEqual(@as(u32, 0xFF7F_007F), sampleAt(clamp, &made, 0, 0.5, 1.0 / 16.0));
+}
+
+test "a BC2 block's four bits of alpha and a BC3 block's ramp of it" {
+    var memory: [16]u64 = undefined;
+    var two = try Texture.init(.bc2, 4, 4, 1, @ptrCast(&memory));
+    var block: [16]u8 = undefined;
+    // Four bits a texel, the first texel's lowest: 0, 1, ... up the block.
+    var alphas: u64 = 0;
+    for (0..16) |k| alphas |= @as(u64, @intCast(k)) << @intCast(k * 4);
+    std.mem.writeInt(u64, block[0..8], alphas, .little);
+    block[8..16].* = bc1Block(0xF800, 0xF800, 0);
+    two.putBlock(0, 0, 0, 0, &block);
+    // 0 to 15 of 15, each repeated into its low bits: 0x00, 0x11, ... 0xFF.
+    for (0..4) |y| for (0..4) |x| {
+        const k = y * 4 + x;
+        const alpha: u32 = @intCast(k * 0x11);
+        try testing.expectEqual(alpha << 24 | 0x00FF_0000, two.colorAt(0, 0, @intCast(x), @intCast(y)));
+    };
+
+    var three = try Texture.init(.bc3, 4, 4, 1, @ptrCast(&memory));
+    // Endpoints 240 and 60 in that order: six values between them, three
+    // bits picking one. Texel 0 takes the first, texel 1 the second, texel
+    // 2 the first value between.
+    block[0] = 240;
+    block[1] = 60;
+    var picks: u64 = 1 << 3 | @as(u64, 2) << 6;
+    for (0..6) |k| block[2 + k] = @intCast(picks >> @intCast(k * 8) & 0xFF);
+    picks = 0;
+    three.putBlock(0, 0, 0, 0, &block);
+    try testing.expectEqual(@as(u32, 0xF0FF_0000), three.colorAt(0, 0, 0, 0));
+    try testing.expectEqual(@as(u32, 0x3CFF_0000), three.colorAt(0, 0, 1, 0));
+    // (6 x 240 + 1 x 60 + 3) / 7 = 214.
+    try testing.expectEqual(@as(u32, 0xD6FF_0000), three.colorAt(0, 0, 2, 0));
+}

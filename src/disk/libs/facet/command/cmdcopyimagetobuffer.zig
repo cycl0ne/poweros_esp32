@@ -33,6 +33,12 @@ const Buffer = @import("../buffer/_buffer.zig").Buffer;
 /// format. The part of a rectangle outside the image, or past the buffer's
 /// end, is left out.
 ///
+/// An image kept in its blocks gives them back as they lie, a row of them
+/// every `buffer_row_length` texels, its offsets on a multiple of 4
+/// (`PhysicalDeviceFeatures.kept_compressed`, since 1.44). One that was
+/// unpacked as it was copied in has nothing of its format to give and
+/// takes nothing.
+///
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no.
