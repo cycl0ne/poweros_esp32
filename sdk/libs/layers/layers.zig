@@ -82,6 +82,11 @@ pub const LAYERBACKDROP: u32 = 0x40;
 /// Something was uncovered that this layer has to draw again. The damage
 /// says what.
 pub const LAYERREFRESH: u32 = 0x80;
+/// The layer is there but not shown: it covers nothing, is hit by
+/// nothing and nothing of it reaches the display, while its RastPort,
+/// its regions and - for a smart or super layer, or a composed one - its
+/// pixels stay as they were. `HideLayer` and `ShowLayer`.
+pub const LAYERHIDDEN: u32 = 0x100;
 
 // --- making one ------------------------------------------------------------
 

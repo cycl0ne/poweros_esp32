@@ -70,6 +70,9 @@ pub fn WhichLayer(lb: *LayersBase, info: *LayerInfo, x: i32, y: i32) ?*Layer {
     var it = info.layers.iterator();
     while (it.next()) |node| {
         const layer: *Layer = @fieldParentPtr("node", node);
+        // Nothing of a hidden layer is on the display, so nothing of it
+        // is under the pointer either.
+        if (layer.flags & layers.LAYERHIDDEN != 0) continue;
         if (layer.ghost) {
             if (on_display and effects.holds(layer, x, y)) through = true;
             continue;

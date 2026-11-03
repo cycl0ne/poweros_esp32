@@ -83,11 +83,12 @@ pub const GA_Highlight = GA_Dummy + 0x0D;
 /// reports the mouse otherwise.
 pub const GA_FollowMouse = GA_Dummy + 0x17;
 /// True, with `GA_SysGType`: the gadget does what one of the window's own
-/// does - drags the window, sizes it, closes it, changes its depth or
-/// zooms it - wherever it is placed.
+/// does - drags the window, sizes it, closes it, changes its depth, zooms
+/// it or puts it away - wherever it is placed.
 pub const GA_SysGadget = GA_Dummy + 0x1D;
 /// Which of the window's own gadgets it stands for: `GTYP_WDRAGGING`,
-/// `GTYP_SIZING`, `GTYP_CLOSE`, `GTYP_WDEPTH` or `GTYP_WZOOM`.
+/// `GTYP_SIZING`, `GTYP_CLOSE`, `GTYP_WDEPTH`, `GTYP_WZOOM` or
+/// `GTYP_WHIDE`.
 pub const GA_SysGType = GA_Dummy + 0x1E;
 /// The gadget that comes after this one in its list.
 pub const GA_Next = GA_Dummy + 0x20;
@@ -113,6 +114,7 @@ pub const GTYP_WDRAGGING: u32 = 0x0020;
 pub const GTYP_WDEPTH: u32 = 0x0040;
 pub const GTYP_WZOOM: u32 = 0x0060;
 pub const GTYP_CLOSE: u32 = 0x0080;
+pub const GTYP_WHIDE: u32 = 0x00A0;
 
 /// A box, x/y/width/height.
 pub const Box = extern struct { left: i32 = 0, top: i32 = 0, width: i32 = 0, height: i32 = 0 };

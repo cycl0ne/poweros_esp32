@@ -159,6 +159,9 @@ pub const LVO = struct {
     pub const NextWindow = libraries.lvo(133);
     pub const FrontScreen = libraries.lvo(134);
     pub const HidePointer = libraries.lvo(135);
+    pub const HideWindow = libraries.lvo(136);
+    pub const ShowWindow = libraries.lvo(137);
+    pub const HideControl = libraries.lvo(138);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -296,6 +299,9 @@ pub const Fn = struct {
     pub const NextWindow = *const fn (*IntuitionBase, ?*intuition.Window) callconv(.c) ?*intuition.Window;
     pub const FrontScreen = *const fn (*IntuitionBase) callconv(.c) ?*intuition.Screen;
     pub const HidePointer = *const fn (*IntuitionBase, bool) callconv(.c) void;
+    pub const HideWindow = *const fn (*IntuitionBase, *intuition.Window) callconv(.c) void;
+    pub const ShowWindow = *const fn (*IntuitionBase, *intuition.Window) callconv(.c) void;
+    pub const HideControl = *const fn (*IntuitionBase, *intuition.Window, bool) callconv(.c) bool;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -1115,5 +1121,28 @@ pub const IntuitionBase = opaque {
     /// keyboard is being used.
     pub fn HidePointer(self: *IntuitionBase, hidden: bool) void {
         return libraries.call(self, LVO.HidePointer, Fn.HidePointer, .{hidden});
+    }
+
+    /// Put a window away without closing it: nothing of it is on the display
+    /// and nothing of the input reaches it, while it stays open with its
+    /// number, its port and its pixels, and `WA_Hidden` says so. The
+    /// activation goes where it would have gone had the window closed.
+    pub fn HideWindow(self: *IntuitionBase, window: *intuition.Window) void {
+        return libraries.call(self, LVO.HideWindow, Fn.HideWindow, .{window});
+    }
+
+    /// Bring a window put away back on to its screen, where it was and as
+    /// far in front as it was. It is not brought to the front and not made
+    /// active: `WindowToFront` and `ActivateWindow` do that.
+    pub fn ShowWindow(self: *IntuitionBase, window: *intuition.Window) void {
+        return libraries.call(self, LVO.ShowWindow, Fn.ShowWindow, .{window});
+    }
+
+    /// A window takes in the hidden windows of its screen, or gives that up:
+    /// while it does, the screen's other windows carry a hide gadget, and the
+    /// window closing brings every hidden window back. False when another
+    /// window of the screen already takes them.
+    pub fn HideControl(self: *IntuitionBase, window: *intuition.Window, on: bool) bool {
+        return libraries.call(self, LVO.HideControl, Fn.HideControl, .{ window, on });
     }
 };

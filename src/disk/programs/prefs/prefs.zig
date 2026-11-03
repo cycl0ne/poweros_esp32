@@ -60,9 +60,10 @@
 //!   and a length, or a sound file - with a button that plays it as the
 //!   page has it.
 //! - **Dock**: the edge of the screen the dock lies along, the most pixels
-//!   its pictures are shown at, when an entry's name is shown, and
-//!   whether the dock goes when the pointer leaves it. On the 64-bit
-//!   machines also whether - and to how many pixels - the entry under the
+//!   its pictures are shown at, when an entry's name is shown, whether
+//!   the dock goes when the pointer leaves it, and whether the windows
+//!   open are listed on it after its entries. On the 64-bit machines also
+//!   whether - and to how many pixels - the entry under the
 //!   pointer grows, and whether the dock starts with the desktop: it and
 //!   its icon are moved into SYS:WBStartup, or out of it into
 //!   SYS:Programs, which Save does and Use does not. Its entries are not
@@ -152,8 +153,8 @@ const looks = intuition.style;
 const Pen = graphics.Pen;
 
 pub const COMMAND_NAME = "Prefs";
-const VERSION = "1.23";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (02.11.2026)\r\n";
+const VERSION = "1.24";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (03.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while one of its windows is active.
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
@@ -534,6 +535,7 @@ const Editor = struct {
     dock_size: *Object = undefined,
     dock_labels: *Object = undefined,
     dock_hide: *Object = undefined,
+    dock_windows: *Object = undefined,
     dock_magnify: ?*Object = null,
     dock_grow: ?*Object = null,
     /// Whether the dock is in SYS:WBStartup, as the page opened or Save
@@ -1341,6 +1343,8 @@ const Editor = struct {
         d.icon_size = @intCast(@min(@max(@as(isize, @bitCast(value)), dock_file.icon_size_min), dock_file.icon_size_max));
         _ = e.ib.GetAttr(ch.CHOOSER_Active, e.dock_labels, &value);
         d.labels = @enumFromInt(@min(value, dock_file.label_names.len - 1));
+        _ = e.ib.GetAttr(cb.CHECKBOX_Checked, e.dock_windows, &value);
+        d.windows = value != 0;
         _ = e.ib.GetAttr(cb.CHECKBOX_Checked, e.dock_hide, &value);
         d.hide = value != 0;
         const magnify = e.dock_magnify orelse return d;
@@ -2564,9 +2568,13 @@ noinline fn buildDock(e: *Editor) ?*Object {
         pair(cb.CHECKBOX_Checked, @intFromBool(e.dock.hide)),
         .{},
     }) orelse return null;
-    var gadgets: [7]?*Object = .{ e.dock_edge, e.dock_size, e.dock_labels, e.dock_hide, null, null, null };
-    var labels: [7]?[*:0]const u8 = .{ "_Edge", "Icon si_ze", "_Names", "_Hide when the pointer leaves", null, null, null };
-    var count: usize = 4;
+    e.dock_windows = ib.NewObjectTagList(null, cb.CHECKBOX_CLASS, &[_]TagItem{
+        pair(cb.CHECKBOX_Checked, @intFromBool(e.dock.windows)),
+        .{},
+    }) orelse return null;
+    var gadgets: [8]?*Object = .{ e.dock_edge, e.dock_size, e.dock_labels, e.dock_hide, e.dock_windows, null, null, null };
+    var labels: [8]?[*:0]const u8 = .{ "_Edge", "Icon si_ze", "_Names", "_Hide when the pointer leaves", "Show the open _windows", null, null, null };
+    var count: usize = 5;
     if (dock_big_machine) {
         e.dock_magnify = ib.NewObjectTagList(null, cb.CHECKBOX_CLASS, &[_]TagItem{
             pair(cb.CHECKBOX_Checked, @intFromBool(e.dock.magnify != 0)),
@@ -2585,9 +2593,9 @@ noinline fn buildDock(e: *Editor) ?*Object {
             pair(cb.CHECKBOX_Checked, @intFromBool(e.dock_starts)),
             .{},
         }) orelse return null;
-        gadgets[4..7].* = .{ e.dock_magnify, e.dock_grow, e.dock_start };
-        labels[4..7].* = .{ "_Magnify under the pointer", "Magnified _to", "Start with the des_ktop" };
-        count = 7;
+        gadgets[5..8].* = .{ e.dock_magnify, e.dock_grow, e.dock_start };
+        labels[5..8].* = .{ "_Magnify under the pointer", "Magnified _to", "Start with the des_ktop" };
+        count = 8;
     }
     const group = column(ib, "Dock", gadgets[0..count], labels[0..count]) orelse return null;
     const note = ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{

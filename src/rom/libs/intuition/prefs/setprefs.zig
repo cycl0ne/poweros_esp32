@@ -263,7 +263,7 @@ fn reshape(ib: *IntuitionBase) void {
 
 /// The title bars' gadgets made wide (`wide` 1) or narrow (0) on every
 /// screen and window, and the bars drawn again: a screen's depth gadget,
-/// a window's close, depth and zoom gadgets. The setting changes under
+/// a window's close, depth, zoom and hide gadgets. The setting changes under
 /// the screen list's lock, so nothing draws a bar between the new width
 /// and its images. An image draws itself afresh at its new size, so
 /// nothing is made or freed.
@@ -287,6 +287,7 @@ fn refit(ib: *IntuitionBase, wide: u32) void {
             if (w.close_image) |image| setWidth(ib, image, _window.closeWidthOf(w));
             if (w.depth_image) |image| setWidth(ib, image, _window.depthWidthOf(w));
             if (w.zoom_image) |image| setWidth(ib, image, _window.depthWidthOf(w));
+            if (w.hide_image) |image| setWidth(ib, image, _window.depthWidthOf(w));
             _window.drawBorder(ib, w);
         }
     }

@@ -319,7 +319,7 @@ fn decodePacket(stream: *Stream, a: *Aac) bool {
             reset(a);
             continue;
         };
-        const span = _media.window(&stream.media, start, frame_samples) orelse continue;
+        const span = _media.window(&stream.media, start, frame_samples, 0) orelse continue;
         toSamples(stream, a, got, span.first, span.last);
         return true;
     }

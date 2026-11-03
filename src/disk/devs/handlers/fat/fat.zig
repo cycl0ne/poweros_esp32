@@ -37,8 +37,8 @@
 //! (`renewVolume`). The same card back - the volume's serial number the
 //! same - makes its locks good again: each body takes up the keys it had
 //! on that volume whose entries are still where they were and still the
-//! same objects, so a lock or an open file goes on where it was, as on an
-//! Amiga when the disk it asked for is put back. A handler nobody asks anything hears of a change by
+//! same objects, so a lock or an open file goes on where it was once the
+//! card it asked for is back in. A handler nobody asks anything hears of a change by
 //! its change interrupt (TD_ADDCHANGEINT), which the device causes when a
 //! card goes in or out: it looks at once, and then tells input
 //! (IECLASS_DISKINSERTED, IECLASS_DISKREMOVED), so a window showing the
@@ -47,6 +47,19 @@
 //! error, and is only asked before each packet. A handler started with no card, or with a card it
 //! cannot read, stays and answers ERROR_NO_DISK or ERROR_NOT_A_DOS_DISK
 //! until there is one.
+//!
+//! **The handler ends** when it is asked to (ACTION_DIE), which is what
+//! taking a partition off the device list comes down to
+//! (`rdb.library`'s `UnmountPartition`): with nothing of the drive out -
+//! no lock, no open file, no range held through one, no watch, and no
+//! volume node that locks still point at - it writes back what it holds,
+//! takes the drive and the volume off the list, gives back the device,
+//! the libraries, the ports and its own memory, and answers the packet
+//! last of all, so the program that asked hears only once nothing of the
+//! drive is left. Anything that arrives in between is answered with
+//! ERROR_DEVICE_NOT_MOUNTED rather than left lying. Anything out, or the
+//! drive inhibited, and the drive stays as it was
+//! (ERROR_OBJECT_IN_USE).
 //!
 //! A volume that goes while locks are held on it keeps its node on the
 //! device list with no handler behind it, which is what dos calls not
@@ -142,8 +155,8 @@ const cache_area = @import("cache.zig");
 
 pub const HANDLER_NAME = "fat-handler";
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 12;
-const BUILD_DATE = "29.10.2026";
+const HANDLER_REVISION = 13;
+const BUILD_DATE = "03.11.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ HANDLER_VERSION, HANDLER_REVISION }) ++
@@ -448,6 +461,18 @@ const Bodies = struct {
         bodies.fat32.records = records;
         bodies.exfat.records = records;
     }
+
+    /// Whether either body has a lock or an open file out.
+    fn anyLock(bodies: *const Bodies) bool {
+        return bodies.fat32.anyLock() or bodies.exfat.anyLock();
+    }
+
+    /// Both bodies given up for good, what the volume holds written back
+    /// and every block they hold freed: for the handler that is ending.
+    fn deinit(bodies: *Bodies) void {
+        bodies.fat32.deinit();
+        bodies.exfat.deinit();
+    }
 };
 
 /// Everything the process keeps, in one allocation.
@@ -489,6 +514,9 @@ const State = struct {
     change_port: ?*MsgPort = null,
     change_mask: u32 = 0,
     process: ?*exec.Task = null,
+    /// ACTION_DIE's packet while the handler ends: answered last of all,
+    /// once nothing of the drive is left.
+    dying: ?*DosPacket = null,
     /// input.device, for telling it a disk came or went.
     input: Input = .{},
 };
@@ -575,6 +603,14 @@ const Input = struct {
         input.io.data = @ptrCast(&input.event);
         _ = sys.DoIO(&input.io.req);
     }
+
+    /// The device and the port given back, for a handler that ends.
+    fn close(input: *Input, sys: *ExecBase) void {
+        if (input.open) sys.CloseDevice(&input.io.req);
+        input.open = false;
+        if (input.port) |port| sys.DeleteMsgPort(port);
+        input.port = null;
+    }
 };
 
 /// How often the volume node is tried for, a tick apart, before the next
@@ -635,8 +671,75 @@ pub fn fsHandler(sys: *ExecBase) callconv(.c) void {
         if (st.watching) st.watchers.collect();
         st.records.collect();
         while (sys.GetMsg(packets)) |message| handle(dl, st, DosPacket.fromMessage(message), packets);
+        if (st.dying != null) break;
         const got = sys.Wait(packets.sigMask() | replies | st.change_mask);
         if (got & st.change_mask != 0) mediumChanged(sys, dl, st, packets);
+    }
+    ending(sys, dl, st, node, packets);
+}
+
+/// The handler's last act, once ACTION_DIE has been taken: the drive off
+/// the device list, what it holds written back, everything it was given
+/// given back, and the packet that asked answered after all of it.
+///
+/// The list comes first, so that no Open can find this process from here
+/// on, and it is only tried for - a program holding the list may be
+/// waiting on this very handler for an answer - and tried again a tick
+/// later. Anything that arrives from the moment the drive is going is
+/// answered where it stands: a packet left lying would leave its program
+/// waiting for good, and a new lock would make a drive that is going busy
+/// again.
+fn ending(sys: *ExecBase, dl: *DosBase, st: *State, node: ?*dos.DosList, port: *MsgPort) void {
+    const asking = st.dying;
+    const flags = dos.LDF_ALL | dos.LDF_ENTRY | dos.LDF_DELETE | dos.LDF_WRITE;
+    while (true) {
+        if (dl.AttemptLockDosList(flags) != null) {
+            if (node) |device_node| if (device_node.task == port) {
+                device_node.task = null;
+            };
+            partVolume(dl, st);
+            sweepGone(dl, st);
+            dl.UnLockDosList(flags);
+            break;
+        }
+        refuseRest(sys, dl, port);
+        dl.Delay(1);
+    }
+    refuseRest(sys, dl, port);
+    st.bodies.deinit();
+    // The change interrupt given back: the device finds the request it
+    // kept by its own address and answers that one, so the port it came
+    // to and the signal it gave go with it.
+    if (st.change_port) |change_port| {
+        st.change_io.req.command = trackdisk.TD_REMCHANGEINT;
+        _ = sys.DoIO(&st.change_io.req);
+        sys.DeleteMsgPort(change_port);
+        st.change_port = null;
+    }
+    if (st.change_mask != 0) {
+        sys.FreeSignal(@intCast(@ctz(st.change_mask)));
+        st.change_mask = 0;
+    }
+    if (st.watching) st.watchers.deinit();
+    st.records.deinit();
+    st.input.close(sys);
+    sys.CloseDevice(&st.io.req);
+    // The state's own block last, and what is still needed out of it
+    // first: the port the device answered on, and utility.library.
+    const device_port = st.io.req.message.reply_port;
+    const utility = st.ub.lib();
+    sys.FreeVec(st);
+    if (device_port) |one| sys.DeleteMsgPort(one);
+    sys.CloseLibrary(utility);
+    if (asking) |pkt| dl.ReplyPkt(pkt, dos.DOSTRUE, 0);
+}
+
+/// Every packet on the port answered with the drive not being there: for
+/// the handler that is ending, where serving one would give out something
+/// of a drive that is going.
+fn refuseRest(sys: *ExecBase, dl: *DosBase, port: *MsgPort) void {
+    while (sys.GetMsg(port)) |message| {
+        dl.ReplyPkt(DosPacket.fromMessage(message), dos.DOSFALSE, dos.ERROR_DEVICE_NOT_MOUNTED);
     }
 }
 
@@ -722,6 +825,9 @@ fn serve(st: *State, pkt: *DosPacket) _fat.Answer {
         .more_cache => return moreCache(st, pkt.args.raw[0]),
         .inhibit => return inhibit(st, pkt.args.raw[0] != dos.DOSFALSE),
         .format => return formatDrive(st, pkt),
+        // The whole handler's to answer, whichever body has the card -
+        // or neither.
+        .die => return dying(st, pkt),
         else => {},
     }
     if (st.bodies.bodyFor(pkt)) |which| return switch (which) {
@@ -750,7 +856,6 @@ fn serve(st: *State, pkt: *DosPacket) _fat.Answer {
             return _fat.yes();
         },
         .is_filesystem => return _fat.yes(),
-        .die => return _fat.no(dos.ERROR_OBJECT_IN_USE),
         // A name watched with no volume waits for the card that has it.
         .add_notify => {
             const request: ?*dos.notify.NotifyRequest = @ptrFromInt(@as(usize, @bitCast(pkt.args.raw[0])));
@@ -767,6 +872,30 @@ fn serve(st: *State, pkt: *DosPacket) _fat.Answer {
         },
         else => return _fat.no(if (card_in) dos.ERROR_NOT_A_DOS_DISK else dos.ERROR_NO_DISK),
     }
+}
+
+/// ACTION_DIE: the handler ends, and the drive goes off the device list
+/// with it - what `UnmountPartition` asks for when a partition is taken
+/// off again.
+///
+/// Refused with ERROR_OBJECT_IN_USE while anything of the drive is out: a
+/// lock, an open file, a range held through one, a watch on a name, or a
+/// volume node whose card has gone that locks still point at. It is
+/// refused while the drive is inhibited too - whoever inhibited it is
+/// waiting for the card to be read again, not for the drive to go.
+///
+/// With nothing out the packet is held and not answered: the process
+/// writes back what it holds, takes the drive off the list, gives back
+/// everything it was given, and answers this packet as its last act, so
+/// that the program which asked hears only once nothing of the drive is
+/// left anywhere.
+fn dying(st: *State, pkt: *DosPacket) _fat.Answer {
+    if (st.inhibited != 0) return _fat.no(dos.ERROR_OBJECT_IN_USE);
+    if (st.bodies.anyLock() or anyGone(st)) return _fat.no(dos.ERROR_OBJECT_IN_USE);
+    if (st.records.heldCount() != 0) return _fat.no(dos.ERROR_OBJECT_IN_USE);
+    if (st.watching and st.watchers.any()) return _fat.no(dos.ERROR_OBJECT_IN_USE);
+    st.dying = pkt;
+    return .{ .res1 = dos.DOSTRUE, .res2 = 0, .held = true };
 }
 
 /// ACTION_INHIBIT: on, the volume put away as for a card taken out -

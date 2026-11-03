@@ -274,7 +274,7 @@ fn decodePacket(stream: *Stream, m: *Mp3) bool {
         // there yet: nothing to hand out.
         if (samples == 0) continue;
         if (info.channels != channels) toChannels(stream, samples, info.channels);
-        const span = _media.window(&stream.media, start, samples) orelse continue;
+        const span = _media.window(&stream.media, start, samples, 0) orelse continue;
         stream.pcm_start = span.first * channels;
         stream.pcm_stop = span.last * channels;
         return true;

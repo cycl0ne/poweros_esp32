@@ -41,6 +41,11 @@ const unlock = _window.unlock;
 /// a public screen by name, or on the default one, ends its visit, which
 /// may be the last the screen's owner is waiting for.
 ///
+/// A window that took in the hidden windows of its screen
+/// (`HideControl`) is the way back for them, so closing it brings every
+/// one of them back where it stood and takes the hide gadgets off the
+/// screen's windows.
+///
 /// CONTEXT:
 /// - Waits: for the screen list's semaphore, and the layers' locks.
 /// - Interrupts: no.
@@ -59,7 +64,7 @@ const unlock = _window.unlock;
 /// None known.
 ///
 /// SEE ALSO:
-/// `OpenWindowTagList`
+/// `OpenWindowTagList`, `HideControl`
 ///
 /// EXAMPLES:
 /// ```zig
@@ -70,6 +75,9 @@ pub fn CloseWindow(ib: *IntuitionBase, window: ?*Window) void {
     const s = w.screen;
     lock(ib);
     defer unlock(ib);
+    // The windows it took in come back first: the way back closes with
+    // it, and one of them may be the window the activation goes to.
+    if (w.more_flags & _window.WMF_HIDEHOST != 0) @import("_hide.zig").release(ib, s);
     const was_active = ib.active_window == w;
     if (was_active) {
         ib.active_window = null;
@@ -106,19 +114,6 @@ pub fn CloseWindow(ib: *IntuitionBase, window: ?*Window) void {
     ib.sys_base.FreeMem(w, @sizeOf(Window));
     repairScreen(ib, s);
     // The activation back where it was before: drawn once the screen is.
-    if (was_active) if (latest(s)) |before| _window.activate(ib, before);
+    if (was_active) if (_window.latest(s)) |before| _window.activate(ib, before);
     if (visitor) _screen.leave(ib, s);
-}
-
-/// The window on `s` that was made active most recently, if any was.
-fn latest(s: *Screen) ?*Window {
-    var found: ?*Window = null;
-    var node = s.windows.head;
-    while (node) |n| : (node = n.succ) {
-        if (n.succ == null) break;
-        const each: *Window = @ptrCast(@alignCast(n));
-        if (each.activated == 0) continue;
-        if (found == null or each.activated -% found.?.activated < 0x8000_0000) found = each;
-    }
-    return found;
 }

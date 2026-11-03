@@ -58,8 +58,9 @@ patterns too, and without one the patterns are not asked. The object
 reads the bytes while it is made: when the call returns they are the
 program's again. JPEG, PNG, GIF, BMP, ICO, text, models, Markdown and
 Lottie read from memory; ILBM, 8SVX and a codec's sound read a file as they go,
-and a font's sizes are files beside its contents file, so these refuse
-bytes in memory with `DTERROR_COULDNT_OPEN`.
+a film is read as it is played, and a font's sizes are files beside its
+contents file, so these refuse bytes in memory with
+`DTERROR_COULDNT_OPEN`.
 
 ## What a file is
 
@@ -362,6 +363,69 @@ only a descriptor naming `BASE=audiocodec`. `8svx.datatype` reads an
 IFF 8SVX sound whole - Fibonacci-delta coded or not, one channel or two
 - with its NAME, AUTH and ANNO.
 
+## Films
+
+Every film is a `videocodec.datatype` object
+(`sdk.datatypes.movieclass`), in the group `movi`: an MP4, QuickTime's
+MOV, Matroska's MKV or a WebM, its pictures in H.264, H.265, Motion
+JPEG, VP8, VP9 or AV1 and its sound in whatever audiocodec.library
+decodes. **One class reads every one of them**, because media.library
+knows the containers and videocodec.library finds the decoders, so a
+kind of film the system learns needs only a descriptor naming
+`BASE=videocodec` - as a kind of sound needs one naming
+`BASE=audiocodec`. There is no format class under it to write, and no
+superclass over it: what such a superclass would hold,
+videocodec.library already is.
+
+The object plays the film on a process of its own from the moment it is
+laid out: that process decodes the pictures, keeps the film's sound fed
+through audio.device - the same process Movie plays its sound with - and
+puts each picture up when what is heard has come to its time, less the
+output's latency. A picture late by more than a frame is given back
+unshown, up to four in a row, so a machine too slow for the film still
+shows some of it; a film with no sound, or whose sound has played out
+before its pictures, is kept in time by timer.device. `GM_RENDER` does
+nothing but put the picture that is up into the window, which is why a
+film in a window costs the program nothing and waits for no decoder.
+
+**It takes the room it is given**, as a model does: the picture is drawn
+as large as fits with its shape kept, in the middle, black where it does
+not reach, and there is nothing outside the room to scroll to. The
+film's own size is what the object asks for, so a window opened for it
+opens at that size. The picture goes down through graphics.library -
+`WriteYUVPixelArray` at its own size, `ScaleYUVPixelArray` at any other
+- and not through a display's video layer: a layer lies under the whole
+screen's picture, and a window's object cannot have one without covering
+the windows in front of it. `SYS:Programs/Movie`, which owns its window,
+uses one, and plays a film with less of the machine than MultiView does.
+
+```zig
+const film = dt.NewDTObjectA("MEDIA:Films/Charlotte.mkv", &.{
+    .{ .tag = dtc.DTA_GroupID, .data = datatypes.GID_MOVIE },
+    .{ .tag = dtc.DTA_Immediate, .data = 1 },
+    .{},
+}) orelse return;
+```
+
+`DTA_Immediate` plays it as soon as it is laid out - what MultiView asks
+for - `DTA_Repeat` plays it again when it ends, and `DTM_TRIGGER` drives
+it as it drives a sound: `STM_PLAY`, `STM_PAUSE` (which turns over),
+`STM_STOP`, `STM_LOCATE` with a time in milliseconds,
+`STM_FASTFORWARD` and `STM_REWIND` ten seconds. A press on the picture
+pauses it and a second goes on. `VDTA_Width`, `VDTA_Height`,
+`VDTA_FramesPerSecond`, `VDTA_Duration` (in milliseconds),
+`VDTA_Codec`, `VDTA_SoundCodec`, `VDTA_SoundRate` and
+`VDTA_SoundChannels` say what the film is, `VDTA_Position` where it is -
+set, it moves there - `VDTA_Playing` whether it plays, `VDTA_Seekable`
+whether it can be moved at all, and `VDTA_Volume` how loud it is, in
+percent of as recorded.
+
+A film is read as it is played and never held whole, so bytes in memory
+and the clipboard are no source for one. The tracks it plays are the
+ones it marks: a program that wants to choose among several sound
+tracks, or to show subtitles, opens videocodec.library on the file
+itself.
+
 ## Models
 
 Every model in three dimensions is a `model.datatype` object
@@ -410,6 +474,7 @@ MultiView CLIP 0                what is on the clipboard
 MultiView <file> SCALE          a picture at the size of the window
 MultiView SYS:Tests/datatypes/Spinner.json    an animation, played
 MultiView SYS:Tests/datatypes/Torus.obj       a model, turned by the pointer
+MultiView MEDIA:Films/Charlotte.mkv           a film, played with its sound
 ```
 
 It knows no formats. It opens the file through the library, puts the

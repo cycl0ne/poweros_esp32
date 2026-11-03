@@ -165,6 +165,9 @@ pub const Window = extern struct {
     depth_image: ?*Object = null,
     zoom_image: ?*Object = null,
     size_image: ?*Object = null,
+    /// The hide gadget, there only while the screen has a window taking
+    /// its hidden windows (`HideControl`) and this window may have one.
+    hide_image: ?*Object = null,
     /// Its gadgets, linked through each gadget's `next`.
     gadgets: ?*Object = null,
     /// How many IDCMP_MOUSEMOVE messages are out unreplied, and how many
@@ -396,6 +399,20 @@ pub const WMF_STAYINFRONT: u32 = 1 << 5;
 /// It is intuition's own and in front even of the windows that stay in
 /// front: the on-screen keyboard (`WA_Above`).
 pub const WMF_ABOVE: u32 = 1 << 6;
+/// It is open but not shown: `HideWindow` put it away and `ShowWindow`
+/// brings it back. Nothing of it is on the display, nothing reaches it
+/// from the input, and it cannot be the active window - but it is still
+/// on its screen's list, keeps its number, its port, its layer and its
+/// pixels, and a program listing the windows still finds it
+/// (`WA_Hidden`).
+pub const WMF_HIDDEN: u32 = 1 << 7;
+/// `WA_HideGadget` was false: the window would rather not be put away, so
+/// it is given no hide gadget however its screen stands.
+pub const WMF_NOHIDE: u32 = 1 << 8;
+/// It is its screen's hide host (`HideControl`): the window the hidden
+/// windows of the screen go to, which is also the window that never
+/// carries a hide gadget itself.
+pub const WMF_HIDEHOST: u32 = 1 << 9;
 
 /// intuition.library's own tag, not in the SDK: true opens a window in
 /// front of every other, those that stay in front included, and keeps it
@@ -492,6 +509,28 @@ pub fn zoomLeft(w: *const Window) i32 {
     const right = if (w.flags & WF_DEPTH != 0) depthLeft(w) else w.width;
     return right - depthWidthOf(w) + 1;
 }
+
+/// Where the hide gadget sits: left of the zoom gadget, or of the depth
+/// gadget without one, or at the right edge with neither, the same width
+/// as those two and overlapping its neighbour's groove as they do.
+pub fn hideLeft(w: *const Window) i32 {
+    const right = if (w.flags & WF_HASZOOM != 0)
+        zoomLeft(w)
+    else if (w.flags & WF_DEPTH != 0)
+        depthLeft(w)
+    else
+        w.width;
+    return right - depthWidthOf(w) + 1;
+}
+
+/// Whether a window has a title bar: the top border is the bar's height
+/// and the gadgets drawn in it have their row. A window with neither a
+/// title nor one of those flags has only a thin border all round.
+pub fn hasBar(w: *const Window) bool {
+    if (w.flags & WF_BORDERLESS != 0) return false;
+    return w.title != null or w.flags & (WF_CLOSE | WF_DEPTH | WF_DRAG | WF_HASZOOM) != 0;
+}
+
 pub const side_border = 4;
 pub const bottom_border = 2;
 
@@ -748,6 +787,7 @@ pub fn paintBorder(ib: *IntuitionBase, w: *Window, rp: *graphics.RastPort) void 
     if (w.close_image) |image| it.DrawImageState(rp, image, 0, 0, state, dri);
     if (w.depth_image) |image| it.DrawImageState(rp, image, depthLeft(w), 0, state, dri);
     if (w.zoom_image) |image| it.DrawImageState(rp, image, zoomLeft(w), 0, state, dri);
+    if (w.hide_image) |image| it.DrawImageState(rp, image, hideLeft(w), 0, state, dri);
     if (w.size_image) |image| {
         const box = sizeBoxOf(w);
         it.DrawImageState(rp, image, w.width - box.width, w.height - box.height, state, dri);
@@ -976,7 +1016,7 @@ pub fn groupHasHelp(ib: *IntuitionBase, group: u32) bool {
 }
 
 /// The border gadgets, for `drawGadget`.
-pub const Gadget = enum { close, depth, zoom, size };
+pub const Gadget = enum { close, depth, zoom, hide, size };
 
 /// One border gadget drawn pressed or not, where it sits.
 pub fn drawGadget(ib: *IntuitionBase, w: *Window, which: Gadget, pressed: bool) void {
@@ -984,12 +1024,14 @@ pub fn drawGadget(ib: *IntuitionBase, w: *Window, which: Gadget, pressed: bool) 
         .close => w.close_image,
         .depth => w.depth_image,
         .zoom => w.zoom_image,
+        .hide => w.hide_image,
         .size => w.size_image,
     } orelse return;
     const x: i32 = switch (which) {
         .close => 0,
         .depth => depthLeft(w),
         .zoom => zoomLeft(w),
+        .hide => hideLeft(w),
         .size => w.width - sizeBoxOf(w).width,
     };
     const y: i32 = if (which == .size) w.height - sizeBoxOf(w).height else 0;
@@ -1120,6 +1162,7 @@ pub fn disposeParts(ib: *IntuitionBase, w: *Window) void {
     it.DisposeObject(w.close_image);
     it.DisposeObject(w.depth_image);
     it.DisposeObject(w.zoom_image);
+    it.DisposeObject(w.hide_image);
     it.DisposeObject(w.size_image);
 }
 
@@ -1238,6 +1281,21 @@ pub fn layerInFront(ib: *IntuitionBase, layer: *layers.Layer) ?*layers.Layer {
     return @ptrFromInt(next);
 }
 
+/// The window on `s` that was made active most recently and can take the
+/// activation now - a hidden one cannot - if there is one. Under the
+/// screen semaphore.
+pub fn latest(s: *Screen) ?*Window {
+    var found: ?*Window = null;
+    var node = s.windows.head;
+    while (node) |n| : (node = n.succ) {
+        if (n.succ == null) break;
+        const each: *Window = @ptrCast(@alignCast(n));
+        if (each.activated == 0 or each.more_flags & WMF_HIDDEN != 0) continue;
+        if (found == null or each.activated -% found.?.activated < 0x8000_0000) found = each;
+    }
+    return found;
+}
+
 /// The window on `s` a layer is part of: its own, its interior, or one of
 /// its requesters'. Null for a layer of no window - the screen's bar and
 /// ground, a menu, a gadget's list popped up.
@@ -1251,11 +1309,41 @@ pub fn windowOfLayer(s: *Screen, layer: *layers.Layer) ?*Window {
     return null;
 }
 
+/// Hide or show every layer a window is drawn in: its own, its interior
+/// (`WA_GimmeZeroZero`) and the ones its requesters are in. Under the
+/// screen semaphore.
+pub fn hideLayers(ib: *IntuitionBase, w: *Window, hide: bool) void {
+    const lb = ib.layers_base;
+    var req = w.first_request;
+    while (req) |r| : (req = r.older) {
+        const layer = r.layer orelse continue;
+        _ = if (hide) lb.HideLayer(layer) else lb.ShowLayer(layer);
+    }
+    if (w.inner_layer) |inner| _ = if (hide) lb.HideLayer(inner) else lb.ShowLayer(inner);
+    _ = if (hide) lb.HideLayer(w.layer) else lb.ShowLayer(w.layer);
+}
+
+/// A window that stops being the active one: its popup goes, its border
+/// is drawn the way an inactive window's is, and it is told. The caller
+/// has already taken the activation off it (`ib.active_window`).
+pub fn deactivate(ib: *IntuitionBase, o: *Window) void {
+    const requests = @import("../requester/_requester.zig");
+    // A popup goes when its window stops being the active one.
+    if (requests.popupOf(o)) |popup| _ = requests.take(ib, o, popup, true, sdk.intuition.gadgetclass.POPDOWN_DISMISSED);
+    o.flags &= ~WF_ACTIVE;
+    drawBorder(ib, o);
+    send(ib, o, wn.IDCMP_INACTIVEWINDOW, 0);
+    @import("../input/_input.zig").windowEvent(ib, o, ie.IECLASS_INACTIVEWINDOW, 0);
+}
+
 pub fn activate(ib: *IntuitionBase, w: *Window) void {
     const old = ib.active_window;
     if (old == w) return;
     // A window that never takes the activation (`WA_NoActivate`).
     if (w.flags & WF_NOACTIVATE != 0) return;
+    // Nothing of a hidden window is on the display: the keyboard would
+    // go somewhere nobody can see. `ShowWindow` first.
+    if (w.more_flags & WMF_HIDDEN != 0) return;
     ib.active_window = w;
     ib.activations +%= 1;
     w.activated = ib.activations;
@@ -1273,15 +1361,7 @@ pub fn activate(ib: *IntuitionBase, w: *Window) void {
         w.screen.title = w.screen_title;
         _screen.drawBar(ib, w.screen);
     }
-    if (old) |o| {
-        // A popup goes when its window stops being the active one.
-        const requests = @import("../requester/_requester.zig");
-        if (requests.popupOf(o)) |popup| _ = requests.take(ib, o, popup, true, sdk.intuition.gadgetclass.POPDOWN_DISMISSED);
-        o.flags &= ~WF_ACTIVE;
-        drawBorder(ib, o);
-        send(ib, o, wn.IDCMP_INACTIVEWINDOW, 0);
-        @import("../input/_input.zig").windowEvent(ib, o, ie.IECLASS_INACTIVEWINDOW, 0);
-    }
+    if (old) |o| deactivate(ib, o);
     w.flags |= WF_ACTIVE;
     drawBorder(ib, w);
     @import("../input/pointer.zig").update(ib);

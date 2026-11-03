@@ -195,6 +195,13 @@ pub const MediaPacket = extern struct {
     /// file's start, as it says when the packet is due: exact, where
     /// microseconds are rounded.
     ticks: u64 align(4) = 0,
+    /// What of the sound this packet decodes to is not presented, in
+    /// nanoseconds as the file says it (SINCE 1.9): at its end for a
+    /// positive value - the tail of a last frame an encoder filled up -
+    /// and at its front for a negative one, which is Matroska's
+    /// `DiscardPadding`. 0 where the container says nothing of it, which
+    /// an MP4 always does; and 0 for a track of pictures.
+    padding_ns: i64 align(4) = 0,
 };
 
 /// MediaPacket.flags: a decoder can start at it - a picture that needs no

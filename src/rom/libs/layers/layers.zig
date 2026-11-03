@@ -2309,6 +2309,127 @@ fn greedyBackFill(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque
     return 0;
 }
 
+test "hidden: a layer out of what is shown covers nothing and is hit by nothing, and comes back as it was" {
+    const lb = try setUp();
+    defer kexec.deinit();
+    var surface: rtg.Surface = undefined;
+    var pixels: [32 * 16 * 2]u8 = @splat(0);
+    const screen, const info = try scene(lb, &surface, &pixels);
+
+    const all = Rect{ .max_x = 32, .max_y = 16 };
+    const under = try layerAt(lb, info, &all, layers.LAYERSMART);
+    fill(lb, under, graphics.penRGB(255, 0, 0), all);
+    const where = Rect{ .min_x = 8, .min_y = 2, .max_x = 20, .max_y = 8 };
+    const front = try layerAt(lb, info, &where, layers.LAYERSMART);
+    fill(lb, front, graphics.penRGB(0, 255, 0), .{ .max_x = 12, .max_y = 6 });
+    try testing.expectEqual(green, pixelAt(&surface, 9, 3));
+    try testing.expectEqual(front, base(lb).WhichLayer(info, 9, 3).?);
+
+    // Hidden, it is as if it had gone: the layer behind has its pixels
+    // back and owns the point, and the flags say what became of it.
+    try testing.expect(base(lb).HideLayer(front));
+    try testing.expectEqual(red, pixelAt(&surface, 9, 3));
+    try testing.expectEqual(under, base(lb).WhichLayer(info, 9, 3).?);
+    var flags: u32 = 0;
+    const ask = [_]TagItem{ .{ .tag = layers.LATAG_GetFlags, .data = @intFromPtr(&flags) }, .{} };
+    base(lb).GetLayerAttrs(front, &ask);
+    try testing.expect(flags & layers.LAYERHIDDEN != 0);
+    // Hiding it twice is hiding it once.
+    try testing.expect(base(lb).HideLayer(front));
+
+    // Shown again: where it was, with the pixels it had - a smart layer
+    // keeps them while it is away - and the point is its own again.
+    try testing.expect(base(lb).ShowLayer(front));
+    base(lb).GetLayerAttrs(front, &ask);
+    try testing.expect(flags & layers.LAYERHIDDEN == 0);
+    try testing.expectEqual(green, pixelAt(&surface, 9, 3));
+    try testing.expectEqual(front, base(lb).WhichLayer(info, 9, 3).?);
+    try testing.expectEqual(red, pixelAt(&surface, 25, 3));
+
+    // Drawing into it while it is away reaches nothing on the display,
+    // and a smart layer's keeping takes it as it takes what is drawn
+    // into a covered one: it comes back as it was last drawn.
+    try testing.expect(base(lb).HideLayer(front));
+    fill(lb, front, graphics.penRGB(0, 0, 255), .{ .max_x = 12, .max_y = 6 });
+    try testing.expectEqual(red, pixelAt(&surface, 9, 3));
+    try testing.expect(base(lb).ShowLayer(front));
+    try testing.expectEqual(blue, pixelAt(&surface, 9, 3));
+
+    // A simple layer has nothing kept: it is owed all of itself when it
+    // comes back, as it would be after being uncovered.
+    fill(lb, front, graphics.penRGB(0, 255, 0), .{ .max_x = 12, .max_y = 6 });
+    const simple = try layerAt(lb, info, &where, layers.LAYERSIMPLE);
+    fill(lb, simple, graphics.penRGB(0, 0, 255), .{ .max_x = 12, .max_y = 6 });
+    try testing.expectEqual(blue, pixelAt(&surface, 9, 3));
+    try testing.expect(base(lb).HideLayer(simple));
+    try testing.expectEqual(green, pixelAt(&surface, 9, 3));
+    try testing.expect(base(lb).ShowLayer(simple));
+    try testing.expectEqual(layers.LAYERREFRESH, owed(lb, simple));
+
+    base(lb).DeleteLayer(simple);
+    base(lb).DeleteLayer(front);
+    base(lb).DeleteLayer(under);
+    base(lb).DisposeLayerInfo(info);
+    gbase(lb).FreeRastPort(screen);
+    try tearDown(lb);
+}
+
+test "FlyLayer: a hidden layer's picture stretched on to the display, and nothing of it left when the flight ends" {
+    const lb = try setUp();
+    defer kexec.deinit();
+    const c = try Composed.make(lb);
+
+    const all = Rect{ .max_x = 32, .max_y = 16 };
+    const under = try layerAt(lb, c.info, &all, layers.LAYERSIMPLE);
+    fill(lb, under, graphics.penRGB(255, 0, 0), all);
+    const where = Rect{ .min_x = 16, .min_y = 0, .max_x = 32, .max_y = 8 };
+    const front = try layerAt(lb, c.info, &where, layers.LAYERSIMPLE);
+    fill(lb, front, graphics.penRGB(0, 255, 0), .{ .max_x = 16, .max_y = 8 });
+    try testing.expectEqual(green, c.at(20, 2));
+
+    // A layer that is shown is where the arrangement puts it: a picture
+    // of it somewhere else as well would be the window twice over.
+    const box = Rect{ .min_x = 0, .min_y = 8, .max_x = 8, .max_y = 12 };
+    try testing.expect(!base(lb).FlyLayer(front, &box));
+
+    // Hidden, the layer behind has what it covered, and its own pixels
+    // fly: stretched into the box, whatever size that is.
+    try testing.expect(base(lb).HideLayer(front));
+    try testing.expectEqual(red, c.at(20, 2));
+    try testing.expect(base(lb).FlyLayer(front, &box));
+    try testing.expectEqual(green, c.at(4, 10));
+    try testing.expectEqual(red, c.at(20, 2));
+    // It is a picture on the display and no part of the arrangement:
+    // what is hit there is the layer that is really there.
+    try testing.expectEqual(under, base(lb).WhichLayer(c.info, 4, 10).?);
+
+    // The next box leaves nothing of the one before it.
+    const nearer = Rect{ .min_x = 8, .min_y = 8, .max_x = 24, .max_y = 16 };
+    try testing.expect(base(lb).FlyLayer(front, &nearer));
+    try testing.expectEqual(red, c.at(4, 10));
+    try testing.expectEqual(green, c.at(16, 12));
+
+    // Ended, the display is as the layers have it, and the layer is a
+    // plain hidden one: shown again, it is where it always was.
+    try testing.expect(base(lb).FlyLayer(front, &Rect{}));
+    try testing.expectEqual(red, c.at(16, 12));
+    try testing.expectEqual(red, c.at(20, 2));
+    try testing.expect(base(lb).ShowLayer(front));
+    try testing.expectEqual(green, c.at(20, 2));
+
+    // A layer taken away while its picture is still flying takes the
+    // picture with it.
+    try testing.expect(base(lb).HideLayer(front));
+    try testing.expect(base(lb).FlyLayer(front, &box));
+    try testing.expectEqual(green, c.at(4, 10));
+    base(lb).DeleteLayer(front);
+    try testing.expectEqual(red, c.at(4, 10));
+
+    base(lb).DeleteLayer(under);
+    c.done(lb);
+    try tearDown(lb);
+}
+
 test "backfill: a hook draws only in the area it is called for, and the RastPort's clip is as it was after" {
     const lb = try setUp();
     defer kexec.deinit();

@@ -41,6 +41,8 @@ pub const catalogs = [_]Catalog{
 /// the protocol and the share files, which smb-handler, C:net/MountShare
 /// and SYS:System/Shares each need all or part of. The baseline JPEG
 /// decoder is jpeg.datatype's, and mjpeg.vcodec's for Motion JPEG. The
+/// film's sound is the process Movie and videocodec.datatype both play one
+/// with. The
 /// H.264 decoder is h264.vcodec's, the VP8 decoder vp8.vcodec's, the VP9
 /// decoder vp9.vcodec's, the AV1 decoder av1.vcodec's and the H.265
 /// decoder hevc.vcodec's, kept apart from the system so that they are
@@ -51,6 +53,7 @@ const inner_modules = [_]struct { name: []const u8, source: []const u8 }{
     .{ .name = "raster", .source = "libs/facet/driver/cpu/raster/raster.zig" },
     .{ .name = "v3d", .source = "libs/facet/driver/v3d/v3d.zig" },
     .{ .name = "jpegdecode", .source = "classes/datatypes/jpeg/decode.zig" },
+    .{ .name = "filmsound", .source = "libs/videocodec/filmsound.zig" },
     .{ .name = "h264core", .source = "libs/codecs/h264/core.zig" },
     .{ .name = "vp8core", .source = "libs/codecs/vp8/core.zig" },
     .{ .name = "vp9core", .source = "libs/codecs/vp9/core.zig" },
@@ -112,7 +115,7 @@ const window_programs = [_]Program{
     .{ .disk = "programs/Sheet", .source = "programs/sheet/sheet.zig", .name = "sheet", .strings = "programs/sheet/sheet.cd" },
     .{ .disk = "programs/Terminal", .source = "programs/terminal/terminal.zig", .name = "terminal" },
     .{ .disk = "programs/Player", .source = "programs/player/player.zig", .name = "player", .strings = "programs/player/player.cd" },
-    .{ .disk = "programs/Movie", .source = "programs/movie/movie.zig", .name = "movie", .strings = "programs/movie/movie.cd" },
+    .{ .disk = "programs/Movie", .source = "programs/movie/movie.zig", .name = "movie", .imports = &.{"filmsound"}, .strings = "programs/movie/movie.cd" },
     .{ .disk = "programs/Volume", .source = "programs/volume/volume.zig", .name = "volume" },
     .{ .disk = "programs/Boing", .source = "programs/boing/boing.zig", .name = "boing" },
     .{ .disk = "programs/Cobra", .source = "programs/cobra/cobra.zig", .name = "cobra" },
@@ -255,6 +258,7 @@ const modules = [_]Program{
     .{ .disk = "classes/datatypes/obj.datatype", .source = "classes/datatypes/obj/obj.zig", .name = "obj.datatype" },
     .{ .disk = "classes/datatypes/sound.datatype", .source = "classes/datatypes/sound/sound.zig", .name = "sound.datatype" },
     .{ .disk = "classes/datatypes/audiocodec.datatype", .source = "classes/datatypes/audiocodec/audiocodec.zig", .name = "audiocodec.datatype" },
+    .{ .disk = "classes/datatypes/videocodec.datatype", .source = "classes/datatypes/videocodec/videocodec.zig", .name = "videocodec.datatype", .imports = &.{"filmsound"} },
     .{ .disk = "classes/datatypes/8svx.datatype", .source = "classes/datatypes/8svx/8svx.zig", .name = "8svx.datatype" },
     .{ .disk = "classes/datatypes/bmp.datatype", .source = "classes/datatypes/bmp/bmp.zig", .name = "bmp.datatype" },
     .{ .disk = "classes/datatypes/ico.datatype", .source = "classes/datatypes/bmp/ico.zig", .name = "ico.datatype" },
@@ -466,6 +470,7 @@ pub const files = [_]File{
     .{ .disk = "devs/datatypes/MP4", .source = "devs/datatypes/MP4" },
     .{ .disk = "devs/datatypes/MOV", .source = "devs/datatypes/MOV" },
     .{ .disk = "devs/datatypes/MKV", .source = "devs/datatypes/MKV" },
+    .{ .disk = "devs/datatypes/WebM", .source = "devs/datatypes/WebM" },
     .{ .disk = "devs/datatypes/MKA", .source = "devs/datatypes/MKA" },
     .{ .disk = "devs/datatypes/M3U", .source = "devs/datatypes/M3U" },
     .{ .disk = "devs/datatypes/PLS", .source = "devs/datatypes/PLS" },

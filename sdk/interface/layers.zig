@@ -52,6 +52,9 @@ pub const LVO = struct {
     pub const ShowLayerPicture = libraries.lvo(31);
     pub const SetLayerAttrsTagList = libraries.lvo(32);
     pub const RefillLayer = libraries.lvo(33);
+    pub const HideLayer = libraries.lvo(34);
+    pub const ShowLayer = libraries.lvo(35);
+    pub const FlyLayer = libraries.lvo(36);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -87,6 +90,9 @@ pub const Fn = struct {
     pub const ShowLayerPicture = *const fn (*LayersBase, *layers.Layer, ?*const rtg.Surface, ?*const graphics.Rect) callconv(.c) bool;
     pub const SetLayerAttrsTagList = *const fn (*LayersBase, *layers.Layer, ?[*]const utility.TagItem) callconv(.c) bool;
     pub const RefillLayer = *const fn (*LayersBase, *layers.Layer, *const graphics.Rect) callconv(.c) void;
+    pub const HideLayer = *const fn (*LayersBase, *layers.Layer) callconv(.c) bool;
+    pub const ShowLayer = *const fn (*LayersBase, *layers.Layer) callconv(.c) bool;
+    pub const FlyLayer = *const fn (*LayersBase, *layers.Layer, *const graphics.Rect) callconv(.c) bool;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -295,5 +301,36 @@ pub const LayersBase = opaque {
     /// its RastPort.
     pub fn RefillLayer(self: *LayersBase, layer: *layers.Layer, area: *const graphics.Rect) void {
         return libraries.call(self, LVO.RefillLayer, Fn.RefillLayer, .{ layer, area });
+    }
+
+    /// Take a layer out of what is shown without taking it away: it covers
+    /// nothing, is hit by nothing and nothing of it reaches the display,
+    /// while its RastPort, its regions and its pixels stay. What was behind
+    /// it is uncovered as if it had gone (`DeleteLayer`). True, or false
+    /// with `LERR_NO_MEMORY` in the layer if the tiling could not be worked
+    /// out; a layer already hidden is left as it is and answers true.
+    pub fn HideLayer(self: *LayersBase, layer: *layers.Layer) bool {
+        return libraries.call(self, LVO.HideLayer, Fn.HideLayer, .{layer});
+    }
+
+    /// Show a hidden layer again, where it was and as far in front as it
+    /// was. A smart or super layer has its pixels back from its keeping and
+    /// a composed one from its own buffer; a simple one is owed them as
+    /// damage and its program gets a refresh. True, or false with
+    /// `LERR_NO_MEMORY`; a layer that was not hidden answers true.
+    pub fn ShowLayer(self: *LayersBase, layer: *layers.Layer) bool {
+        return libraries.call(self, LVO.ShowLayer, Fn.ShowLayer, .{layer});
+    }
+
+    /// Show a hidden layer's picture on the display, stretched into `area` -
+    /// a window flying into the window that takes the put-away ones in: the
+    /// buffer it was last drawn with, smoothly scaled, with the layers that
+    /// move with it inside it, and the display shown again where the flight
+    /// before it was. It covers nothing and is hit by nothing: whatever is
+    /// shown over it covers it, and the next call draws it again. An empty
+    /// rectangle ends it. False, and nothing shown, for a layer that is not
+    /// composed, a super layer, or one that is not hidden.
+    pub fn FlyLayer(self: *LayersBase, layer: *layers.Layer, area: *const graphics.Rect) bool {
+        return libraries.call(self, LVO.FlyLayer, Fn.FlyLayer, .{ layer, area });
     }
 };

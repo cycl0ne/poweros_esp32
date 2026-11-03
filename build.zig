@@ -396,6 +396,7 @@ pub fn build(b: *std.Build) void {
     const usb_devices = b.option([]const u8, "usb", "Plug these QEMU USB devices into the qemu steps' USB port, comma-separated (usb-hub,usb-kbd,usb-mouse); an item with '=' is a property of the device before it (usb-kbd,port=1,id=kbd)");
     const virt_speaker = virtSpeaker(b, b.option([]const u8, "audio", "The virt and virt64 steps' USB speaker on this QEMU audio backend - an -audiodev's driver and options: pa, pipewire, alsa, sdl, none, wav,path=out.wav (default: QEMU's own choice among the backends it has)"));
     const virt_ui = b.option([]const u8, "virt-ui", "QEMU's -display for the virt and virt64 display steps (default: gtk,show-cursor=off,zoom-to-fit=off - GTK's window at the picture's size, 1:1; default,show-cursor=off takes SDL, or VNC, where there is no GTK)") orelse "gtk,show-cursor=off,zoom-to-fit=off";
+    const virt_monitor = virtMonitor(b, b.option([]const u8, "virt-qmp", "Open a QMP monitor on this Unix socket in the virt and virt64 display steps, which scripts/qemu-shot.py takes the running machine's picture through (such as /tmp/poweros.qmp)"));
     const usb_disk = b.option([]const u8, "usb-disk", "Plug a USB stick into the qemu steps' USB port whose blocks are this raw image file (-snapshot runs keep it unchanged)");
     const usb = qemuUsb(b, usb_devices, usb_disk);
     // The display is the one a person sits at: `telnet localhost 2323`
@@ -1120,6 +1121,7 @@ pub fn build(b: *std.Build) void {
         });
         run_virt_display.addArgs(virt_network);
         run_virt_display.addArgs(virt_speaker);
+        run_virt_display.addArgs(virt_monitor);
         virt_disks.addTo(run_virt_display);
         run_virt_display.addArg("-kernel");
         run_virt_display.addArtifactArg(virt_kernel);
@@ -1165,6 +1167,7 @@ pub fn build(b: *std.Build) void {
         });
         run_virt64_display.addArgs(virt_network);
         run_virt64_display.addArgs(virt_speaker);
+        run_virt64_display.addArgs(virt_monitor);
         virt64_disks.addTo(run_virt64_display);
         run_virt64_display.addArg("-kernel");
         run_virt64_display.addFileArg(virt64_kernel.image);
@@ -2709,6 +2712,16 @@ fn virtNetwork(b: *std.Build, net: ?[]const u8, dump: ?[]const u8, telnet: ?u16,
 fn virtSpeaker(b: *std.Build, backend: ?[]const u8) []const []const u8 {
     const named = backend orelse return b.dupeStrings(&.{ "-device", "usb-audio,id=speaker" });
     return b.dupeStrings(&.{ "-audiodev", b.fmt("{s},id=sound", .{named}), "-device", "usb-audio,id=speaker,audiodev=sound" });
+}
+
+/// QEMU's QMP monitor on a Unix socket, which a program connects to while
+/// the machine runs - to take its picture (`screendump`) or to move its
+/// pointer and press its buttons (`input-send-event`), as
+/// `scripts/qemu-shot.py` does. QEMU makes the socket itself and does not
+/// wait for anyone (`server,nowait`); without the option there is none.
+fn virtMonitor(b: *std.Build, socket: ?[]const u8) []const []const u8 {
+    const path = socket orelse return &.{};
+    return b.dupeStrings(&.{ "-qmp", b.fmt("unix:{s},server,nowait", .{path}) });
 }
 
 /// The user network's port forwards, as a backend's options: `telnet` to

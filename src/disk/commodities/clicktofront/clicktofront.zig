@@ -43,8 +43,8 @@ const CxBase = sdk.interface.commodities.CxBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "ClickToFront";
-const VERSION = "1.0";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (02.11.2026)\r\n";
+const VERSION = "1.1";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (03.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CX_PRIORITY/K/N,QUALIFIER/K";
@@ -176,8 +176,14 @@ fn toFront(ib: *IntuitionBase) void {
     // is the whole screen - and brought forward it would cover every one
     // of them. A double click on the ground means nothing here.
     if (windowAttr(ib, window, wn.WA_Flags) & wn.WFLG_BACKDROP != 0) return;
-    // Already the frontmost: nothing to move.
-    if (window == ib.NextWindow(null)) return;
+    // Already the frontmost of those on the display: nothing to move. A
+    // window put away keeps its place in the list, so the one in front of
+    // it is the front window as far as a click is concerned.
+    var front = ib.NextWindow(null);
+    while (front) |above| : (front = ib.NextWindow(above)) {
+        if (windowAttr(ib, above, wn.WA_Hidden) == 0) break;
+    }
+    if (window == front) return;
     ib.WindowToFront(window);
 }
 

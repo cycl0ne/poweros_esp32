@@ -215,8 +215,27 @@ pub const LIBRARY_VERSION = 0;
 /// 80: ActiveWindow, WindowUnderPointer, NextWindow, FrontScreen and
 /// HidePointer - what a program that acts on the windows and the pointer
 /// of the whole machine has to be able to ask.
-pub const LIBRARY_REVISION = 80;
-const BUILD_DATE = "02.11.2026";
+/// 81: WA_Task - the task that opened a window, so a program listing the
+/// windows can tell which program each belongs to.
+/// 82: HideWindow and ShowWindow - a window put away without being
+/// closed, nothing of it on the display and nothing of the input
+/// reaching it, open all the while (WA_Hidden); layers 15's hidden layer
+/// under it.
+/// 83: HideControl and the hide gadget - a window takes in the hidden
+/// windows of its screen, and while one does, the screen's other windows
+/// carry a fourth gadget in the title bar that puts them away
+/// (HIDEIMAGE, GTYP_WHIDE, WA_HideGadget); the host closing brings them
+/// all back.
+/// 84: a window put away fades out and the fade hides it, and one
+/// brought back is shown unseen and fades in (IPREFS_WindowFade), on a
+/// screen whose windows are composed; turned round where it is when it
+/// is asked for the other way round while it fades.
+/// 85: a window put away into a window that takes the hidden ones in
+/// flies there instead of fading - a picture of its pixels stretched into
+/// a box walking to the taker's own, the dock's row (layers 16's
+/// FlyLayer) - and grows back out of it when it is brought back.
+pub const LIBRARY_REVISION = 85;
+const BUILD_DATE = "03.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

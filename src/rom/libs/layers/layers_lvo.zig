@@ -50,6 +50,9 @@ const DamageLayer = @import("damage/damagelayer.zig").DamageLayer;
 const ShowLayerPicture = @import("compose/showlayerpicture.zig").ShowLayerPicture;
 const SetLayerAttrsTagList = @import("compose/setlayerattrstaglist.zig").SetLayerAttrsTagList;
 const RefillLayer = @import("backfill/refilllayer.zig").RefillLayer;
+const HideLayer = @import("layer/hidelayer.zig").HideLayer;
+const ShowLayer = @import("layer/showlayer.zig").ShowLayer;
+const FlyLayer = @import("compose/flylayer.zig").FlyLayer;
 
 /// Its functions, as the SDK has them (sdk/fd/layers_lib.fd).
 const interface = sdk.interface.layers;
@@ -107,6 +110,9 @@ const contract_files = [_][]const u8{
     @embedFile("damage/damagelayer.zig"),
     @embedFile("layerinfo/newlayerinfotaglist.zig"),
     @embedFile("backfill/refilllayer.zig"),
+    @embedFile("layer/hidelayer.zig"),
+    @embedFile("layer/showlayer.zig"),
+    @embedFile("compose/flylayer.zig"),
 };
 
 fn lvoNewLayerInfo(lb: *LayersBase, rp: *graphics.RastPort) callconv(.c) ?*layers.LayerInfo {
@@ -200,6 +206,17 @@ fn lvoRefillLayer(lb: *LayersBase, layer: *layers.Layer, area: *const graphics.R
     RefillLayer(lb, @ptrCast(@alignCast(layer)), area);
 }
 
+fn lvoHideLayer(lb: *LayersBase, layer: *layers.Layer) callconv(.c) bool {
+    return HideLayer(lb, @ptrCast(@alignCast(layer)));
+}
+
+fn lvoShowLayer(lb: *LayersBase, layer: *layers.Layer) callconv(.c) bool {
+    return ShowLayer(lb, @ptrCast(@alignCast(layer)));
+}
+fn lvoFlyLayer(lb: *LayersBase, layer: *layers.Layer, area: *const graphics.Rect) callconv(.c) bool {
+    return FlyLayer(lb, @ptrCast(@alignCast(layer)), area);
+}
+
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
 pub const vectors = [_]*const anyopaque{
@@ -237,6 +254,9 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoShowLayerPicture),
     vec(lvoSetLayerAttrsTagList),
     vec(lvoRefillLayer),
+    vec(lvoHideLayer),
+    vec(lvoShowLayer),
+    vec(lvoFlyLayer),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------
@@ -244,7 +264,7 @@ pub const vectors = [_]*const anyopaque{
 const testing = std.testing;
 
 test "the jump table: the standard four, then this library's own" {
-    try testing.expectEqual(@as(usize, 34), vectors.len);
+    try testing.expectEqual(@as(usize, 37), vectors.len);
     inline for (@typeInfo(LVO).@"struct".decls) |d| {
         const index: usize = @intCast(@divExact(-@field(LVO, d.name), exec.slot_size) - 1);
         try testing.expectEqual(vec(@field(@This(), "lvo" ++ d.name)), vectors[index]);

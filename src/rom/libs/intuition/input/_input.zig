@@ -94,7 +94,7 @@ const Mode = enum(u32) { none, inside, gadget, drag, size, active, verify, scree
 pub const TOUCH_SLOP = 8;
 
 /// Where on a window a point is.
-pub const Part = enum(u32) { none, inside, border, drag, close, depth, zoom, size };
+pub const Part = enum(u32) { none, inside, border, drag, close, depth, zoom, hide, size };
 
 /// intuition.library's input state, in its base.
 pub const State = extern struct {
@@ -594,6 +594,10 @@ pub fn partAt(w: *const Window, x: i32, y: i32) Part {
             const left = _window.zoomLeft(w);
             if (x >= left and x < left + _window.depthWidthOf(w) - 1) return .zoom;
         }
+        if (w.hide_image != null) {
+            const left = _window.hideLeft(w);
+            if (x >= left and x < left + _window.depthWidthOf(w) - 1) return .hide;
+        }
         return if (w.flags & _window.WF_DRAG != 0) .drag else .border;
     }
     if (w.flags & _window.WF_SIZE != 0) {
@@ -686,7 +690,12 @@ fn wheel(ib: *IntuitionBase, e: *const InputEvent) void {
 /// The frontmost window at (x, y) on `s`, if a window is there.
 pub fn windowAt(ib: *IntuitionBase, s: *Screen, x: i32, y: i32) ?*Window {
     const layer = ib.layers_base.WhichLayer(s.layer_info, x, y) orelse return null;
-    return windowOfLayer(s, layer);
+    const w = windowOfLayer(s, layer) orelse return null;
+    // A window put away is away from the moment it is asked for, and
+    // nothing of the input reaches it - not even while its picture is
+    // still fading out on a composed screen.
+    if (w.more_flags & _window.WMF_HIDDEN != 0) return null;
+    return w;
 }
 
 /// Whether the point is over a layer no window owns: a panel something
@@ -1163,9 +1172,11 @@ fn press(ib: *IntuitionBase, e: *const InputEvent) void {
     if (ib.active_window != w) ib.iface().ActivateWindow(@ptrCast(w));
     const part = partAt(w, st.x - w.left, st.y - w.top);
     // A requester up in it: its gadgets, and the window's drag bar, depth,
-    // zoom and size gadgets, are all a press may reach.
+    // zoom, hide and size gadgets, are all a press may reach - the
+    // furniture that moves the window about, which the requester goes
+    // with.
     if (w.first_request) |req| switch (part) {
-        .drag, .depth, .zoom, .size => {},
+        .drag, .depth, .zoom, .hide, .size => {},
         else => return pressRequester(ib, w, req, part, e),
     };
     // The window's own gadgets are asked first, the drag bar's row
@@ -1195,7 +1206,7 @@ fn press(ib: *IntuitionBase, e: *const InputEvent) void {
     st.box_width = w.width;
     st.box_height = w.height;
     switch (part) {
-        .close, .depth, .zoom => {
+        .close, .depth, .zoom, .hide => {
             st.mode = .gadget;
             st.over = 1;
             _window.drawGadget(ib, w, gadgetOf(part), true);
@@ -1246,6 +1257,7 @@ fn gadgetOf(part: Part) _window.Gadget {
         .close => .close,
         .depth => .depth,
         .zoom => .zoom,
+        .hide => .hide,
         else => .size,
     };
 }
@@ -1782,6 +1794,7 @@ fn release(ib: *IntuitionBase) void {
                     st.window = w;
                     verify.start(ib, w, wn.IDCMP_SIZEVERIFY, 0, .zoom);
                 },
+                .hide => ib.iface().HideWindow(@ptrCast(w)),
                 else => {},
             }
         },
@@ -1837,6 +1850,7 @@ fn sysPartOf(ib: *IntuitionBase, o: *Object) ?Part {
         gc.GTYP_CLOSE => .close,
         gc.GTYP_WDEPTH => .depth,
         gc.GTYP_WZOOM => .zoom,
+        gc.GTYP_WHIDE => .hide,
         else => null,
     };
 }
@@ -1888,6 +1902,7 @@ fn releaseSysGadget(ib: *IntuitionBase, w: *Window) void {
         .close => _window.send(ib, w, wn.IDCMP_CLOSEWINDOW, 0),
         .depth => depthToggle(ib, w),
         .zoom => ib.iface().ZipWindow(@ptrCast(w)),
+        .hide => ib.iface().HideWindow(@ptrCast(w)),
         else => {},
     }
 }

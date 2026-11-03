@@ -152,6 +152,7 @@ gadgets and hands its messages over as words.
 | `WA_PubScreen`, `WA_PubScreenName`, `WA_CustomScreen` | the screen; the default public one without any |
 | `WA_Title`, `WA_ScreenTitle` | its title, not copied, and the screen bar's while it is active |
 | `WA_CloseGadget`, `WA_DragBar`, `WA_DepthGadget`, `WA_SizeGadget` | its border gadgets |
+| `WA_HideGadget` | false keeps the hide gadget off a window that would rather not be put away |
 | `WA_Activate` | made the active window as it opens |
 | `WA_SimpleRefresh`, `WA_GimmeZeroZero`, `WA_Borderless`, `WA_Backdrop` | what kind of window |
 | `WA_StayInFront` | in front of every ordinary window, as a dock is |
@@ -161,8 +162,8 @@ gadgets and hands its messages over as words.
 
 A window is opaque too, read with `GetWindowAttrs` and the same tags, and
 a few that are read only: `WA_RastPort`, `WA_Layer`, `WA_UserPort`,
-`WA_Screen`, `WA_Active`, and the border's widths `WA_BorderLeft`,
-`WA_BorderTop`, `WA_BorderRight` and `WA_BorderBottom`.
+`WA_Screen`, `WA_Active`, `WA_Task`, `WA_Hidden`, and the border's widths
+`WA_BorderLeft`, `WA_BorderTop`, `WA_BorderRight` and `WA_BorderBottom`.
 `SetWindowTitles` changes the title (`wn.TITLE_UNCHANGED` leaves one as
 it is); `ChangeWindowBox`, `MoveWindow`, `SizeWindow`, `WindowLimits`,
 `ZipWindow`, `WindowToFront` and `ActivateWindow` move, size and order
@@ -358,6 +359,42 @@ if (ib.WindowUnderPointer()) |under| {
   gives the frontmost window of the screen in front, a window gives the
   one immediately behind it, and null again ends the walk.
 - `FrontScreen` is the screen in front.
+- `WA_Task` is the task that opened a window, read with `GetWindowAttrs`:
+  which program a window belongs to. A `dos.Process` says so in its node
+  (`.process`), and its CLI names the command it runs
+  (`cli_CommandName`) - how the dock finds the icon to stand for a
+  window in its taskbar. It is 0 for a window opened as the system's.
+- `HideWindow` puts a window away without closing it: nothing of it is
+  on the display and nothing of the input reaches it, while it stays
+  open with its number, its port, its menus and its pixels, and
+  `WA_Hidden` says so. What it covered is uncovered as if it had closed,
+  and the activation goes where it would have gone then.
+  `ShowWindow` brings it back where it was; `WindowToFront` and
+  `ActivateWindow` after it, where it should come back to the front as
+  well. A window nobody can bring back is a window gone, so this is for
+  a program that keeps the way back - the dock's row of windows, where a
+  window put away keeps its cell. On a screen whose windows are composed
+  it fades out as it goes and fades in as it comes back
+  (`IPREFS_WindowFade`) - or, where a window takes the hidden ones in
+  (`HideControl` below), **flies** into that window's box instead, a
+  picture of its pixels shrinking into the dock's row, and grows back out
+  of it when it is fetched. Either way it is away from the moment
+  `HideWindow` is called, whatever its picture is still doing, and asked
+  for the other way round while it is on its way it turns round where it
+  is.
+- `HideControl(window, true)` says that window takes in the hidden
+  windows of its screen; the dock calls it for its own window. While a
+  screen has such a window, every other window of it that can have one
+  carries a **hide gadget** - the fourth gadget in the title bar, left of
+  the zoom and depth gadgets - and pressing that gadget is `HideWindow`.
+  Without such a window there is no gadget, since nothing would answer
+  it: a program with a screen of its own gets none unless it makes one of
+  its own windows the host. The host is the way back, so it is the end of
+  it too: `HideControl(window, false)`, closing the window, or the task
+  ending brings every hidden window of the screen back and takes the
+  gadgets off. It answers false when another window of the screen already
+  takes them in. A window says `WA_HideGadget` false at `OpenWindow` to
+  go without the gadget; it can still put itself away with `HideWindow`.
 - `HidePointer(true)` stops the pointer being drawn, wherever it is;
   `HidePointer(false)` lets it be drawn again. A window of its own that
   wants no pointer sets `WA_PointerType` instead - this is for a program

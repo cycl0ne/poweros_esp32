@@ -178,7 +178,12 @@ bytes of the frames handed out and `AUDIO_READ_AHEAD` more at most
 (SINCE 1.4 said). A container's sound that begins after the file's
 start - a Matroska film's after its first picture - begins with
 silence up to there (SINCE 1.7), and a hole in its times is filled
-with silence: its frames are the film's time.
+with silence: its frames are the film's time. What a container says
+of a packet is not presented is left out of it (SINCE 1.15): a
+Matroska block's DiscardPadding, the tail of a last frame an encoder
+filled up or the overlap where two streams were cut together, so the
+sound of such a file ends exactly where it stops rather than within a
+millisecond of it.
 
 **CONTEXT**
 

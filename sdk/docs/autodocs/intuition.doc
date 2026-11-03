@@ -55,7 +55,9 @@ intuition.library/GetScreenDrawInfo
 intuition.library/GetStyleAttr
 intuition.library/GetWindowAttrs
 intuition.library/HelpControl
+intuition.library/HideControl
 intuition.library/HidePointer
+intuition.library/HideWindow
 intuition.library/InitRequester
 intuition.library/IntuiTextLength
 intuition.library/ItemAddress
@@ -118,6 +120,7 @@ intuition.library/SetSystemFonts
 intuition.library/SetWindowPointerA
 intuition.library/SetWindowTitles
 intuition.library/ShowTitle
+intuition.library/ShowWindow
 intuition.library/SizeWindow
 intuition.library/StylePens
 intuition.library/SysReqHandler
@@ -1046,6 +1049,11 @@ intuition.library/ZipWindow
 	a public screen by name, or on the default one, ends its visit, which
 	may be the last the screen's owner is waiting for.
 
+	A window that took in the hidden windows of its screen
+	(`HideControl`) is the way back for them, so closing it brings every
+	one of them back where it stood and takes the hide gadgets off the
+	screen's windows.
+
    CONTEXT
 	- Waits: for the screen list's semaphore, and the layers' locks.
 	- Interrupts: no.
@@ -1064,7 +1072,7 @@ intuition.library/ZipWindow
 	None known.
 
    SEE ALSO
-	`OpenWindowTagList`
+	`OpenWindowTagList`, `HideControl`
 
    EXAMPLES
 	    ib.CloseWindow(window);
@@ -2946,7 +2954,9 @@ intuition.library/ZipWindow
 	  `WA_Active`, `WA_SimpleRefresh`, `WA_Backdrop`, `WA_Checkmark`,
 	  `WA_AmigaKey`, `WA_MenuHelp`, `WA_Number`, `WA_PixelFormat` (since
 	  0.49, its screen's `SA_PixelFormat`), `WA_StayInFront` (since
-	  0.57). `WA_Left` and `WA_Top`
+	  0.57), `WA_Task` (since 0.81, the task that opened it),
+	  `WA_Hidden` (since 0.82, put away with `HideWindow`).
+	  `WA_Left` and `WA_Top`
 	  are signed, written by their bits: a window past the screen's left
 	  edge (`IPREFS_OffScreen`) has a negative left.
 
@@ -3027,6 +3037,75 @@ intuition.library/ZipWindow
 
    EXAMPLES
 	    ib.HelpControl(window, wn.HC_GADGETHELP); // the Help key was pressed
+intuition.library/HideControl                    intuition.library/HideControl
+
+   NAME
+	HideControl -- A window takes in the hidden windows of its screen, or gives that up.
+
+   SYNOPSIS
+	    fn HideControl(ib: *IntuitionBase, window: *Window, on: bool) bool
+
+   SINCE
+	0.83. LVO -556.
+
+   INPUTS
+	- `window` - the window that takes them in: the dock's own window,
+	  where there is a dock.
+	- `on` - true to take them in, false to give that up again.
+
+   RESULT
+	True when the screen stands as asked. False only for `on` with another
+	window of the screen already taking them in: there is one host to a
+	screen, so a second dock does not quietly take the first one's place.
+
+   BEHAVIOR
+	While a screen has such a window, every other window of it that can
+	have one is given a hide gadget - the fourth gadget in the title bar,
+	left of the zoom and depth gadgets - and pressing that gadget puts the
+	window away (`HideWindow`). A window whose title bar has no room for
+	one more gadget, one opened with `WA_HideGadget` false - a system
+	requester says that of itself - and the on-screen keyboard are left
+	without; so is the host itself, since a window that took the way back
+	with it would be a window gone. Windows opening later are given the
+	gadget as they open.
+
+	The host is the way back, so it is also the end of it: giving this up,
+	closing the window, or the task ending with it brings every hidden
+	window of the screen back where it stood and takes the gadgets off
+	again. A program that puts windows away without being a host - calling
+	`HideWindow` itself - is on its own for the way back, as it always was.
+
+	Nothing here hides a window or shows one: it says who answers for the
+	ones that are hidden.
+
+   CONTEXT
+	- Waits: for the screen list's semaphore, and the layers' locks while
+	  the borders are drawn.
+	- Interrupts: no. It may wait, and it allocates the gadgets' images.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing changes hands. The gadgets are intuition's, made and freed
+	with the hosting.
+
+   NOTES
+	A screen of a program's own has no host unless the program makes one
+	of its windows into one. That is on purpose: the gadget is there only
+	where something shows the way back.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`HideWindow`, `ShowWindow`, `NextWindow`, `GetWindowAttrs`
+	(`WA_Hidden`), `OpenWindowTagList` (`WA_HideGadget`)
+
+   EXAMPLES
+	    // The dock's window takes the hidden windows of the desktop screen.
+	    if (!ib.HideControl(dock_window, true)) {
+	        // Another dock is already showing them.
+	    }
 intuition.library/HidePointer                    intuition.library/HidePointer
 
    NAME
@@ -3082,6 +3161,72 @@ intuition.library/ZipWindow
    EXAMPLES
 	    ib.HidePointer(true); // a key was typed
 	    defer ib.HidePointer(false); // and the mouse moved, or the program ends
+intuition.library/HideWindow                      intuition.library/HideWindow
+
+   NAME
+	HideWindow -- Puts a window away without closing it.
+
+   SYNOPSIS
+	    fn HideWindow(ib: *IntuitionBase, window: *Window) void
+
+   SINCE
+	0.82. LVO -548.
+
+   INPUTS
+	- `window` - the window. One already away is left as it is.
+
+   RESULT
+	Nothing.
+
+   BEHAVIOR
+	Nothing of the window is on the display any more - its interior and
+	the requesters up in it with it - and nothing of the input reaches it:
+	it is not under the pointer, it cannot be clicked, and it cannot be
+	the active window. What it covered is uncovered as if it had closed,
+	and if it was the active window the activation goes where it would
+	have gone had it closed: to the window on the screen that was active
+	most recently and is not away itself.
+
+	On a screen whose windows are composed it fades out as a window
+	closing does (`IPREFS_WindowFade`) - or, where a window has taken the
+	screen's hidden windows in (`HideControl`), flies into that window's
+	box instead: a picture of its pixels, shrinking as it goes, which is
+	the way into the dock's row. Either way it is away from the moment it
+	is asked for: the activation has already gone, and nothing of the
+	input reaches it while its picture is still on its way.
+
+	Everything else about it stays. It is still open and still on its
+	screen's list in the place it had, with its number, its port, its
+	menus, its gadgets, its layer and its pixels; `NextWindow` still walks
+	over it and `WA_Hidden` says how it is, so a program showing the
+	windows of a screen - the dock's row of them - can list it and bring
+	it back with `ShowWindow`. Its program goes on running and may draw
+	into it, move it, size it and close it as before; a window that asked
+	to hear about its depth (`WA_NotifyDepth`) is told.
+
+   CONTEXT
+	- Waits: for the screen list's semaphore, and the layers' locks.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing changes hands. The window stays its program's, to show again
+	or to close.
+
+   NOTES
+	A window nobody can bring back is a window gone: it is for a program
+	that puts the way back somewhere - the dock lists it - or that shows
+	the window again itself.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`ShowWindow`, `GetWindowAttrs`, `NextWindow`, `CloseWindow`
+
+   EXAMPLES
+	    ib.HideWindow(window);
 intuition.library/InitRequester                intuition.library/InitRequester
 
    NAME
@@ -6288,6 +6433,64 @@ intuition.library/ZipWindow
 
    EXAMPLES
 	    ib.ShowTitle(screen, false);
+intuition.library/ShowWindow                      intuition.library/ShowWindow
+
+   NAME
+	ShowWindow -- Brings a window put away back on to its screen.
+
+   SYNOPSIS
+	    fn ShowWindow(ib: *IntuitionBase, window: *Window) void
+
+   SINCE
+	0.82. LVO -552.
+
+   INPUTS
+	- `window` - the window. One that is not away is left as it is.
+
+   RESULT
+	Nothing.
+
+   BEHAVIOR
+	The window is where it was, in the depth order it was in, with its
+	interior and its requesters, and the input reaches it again. A
+	smart-refresh window has its pixels back; a simple-refresh one is owed
+	them and gets an `IDCMP_REFRESHWINDOW` as it would after being
+	uncovered, its border and its gadgets drawn again by intuition. A
+	window that asked to hear about its depth (`WA_NotifyDepth`) is told.
+
+	On a screen whose windows are composed it is shown unseen and fades
+	in (`IPREFS_WindowFade`), or grows back out of the box of the window
+	that took it in (`HideControl`), which is how it went there; one
+	still on its way away is turned round where it is and comes back from
+	there, so a window put away and fetched again at once never leaves
+	the display.
+
+	It is not brought to the front and it is not made active: a program
+	that wants both calls `WindowToFront` and `ActivateWindow` after this,
+	which is what the dock does when a window's cell is clicked.
+
+   CONTEXT
+	- Waits: for the screen list's semaphore, and the layers' locks.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing changes hands.
+
+   NOTES
+	None.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`HideWindow`, `WindowToFront`, `ActivateWindow`
+
+   EXAMPLES
+	    ib.ShowWindow(window);
+	    ib.WindowToFront(window);
+	    ib.ActivateWindow(window);
 intuition.library/SizeWindow                      intuition.library/SizeWindow
 
    NAME

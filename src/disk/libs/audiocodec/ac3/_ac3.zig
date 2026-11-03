@@ -374,7 +374,8 @@ fn decodeNext(stream: *Stream, a: *Ac3) bool {
         var first: usize = 0;
         var last: usize = block_samples;
         if (in_track) {
-            const span = _media.window(&stream.media, start, block_samples) orelse continue;
+            const left = (a.blocks - a.block) * block_samples;
+            const span = _media.window(&stream.media, start, block_samples, left) orelse continue;
             first = span.first;
             last = span.last;
         } else {

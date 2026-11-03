@@ -14,7 +14,10 @@
 # MAGNIFY   0 for entries that keep their size under the pointer,
 #           else the pixels the one under it grows to, more than
 #           ICONSIZE and at most 128.
+# WINDOWS   YES for the windows open on the dock's screen shown
+#           after the entries, a cell each, NO for the entries
+#           alone.
 #
 # One left out keeps the dock's own. These are its own:
 #
-# EDGE=BOTTOM ICONSIZE=48 LABELS=POINTER HIDE=NO KEEPCLEAR=YES MAGNIFY=0
+# EDGE=BOTTOM ICONSIZE=48 LABELS=POINTER HIDE=NO KEEPCLEAR=YES MAGNIFY=0 WINDOWS=YES

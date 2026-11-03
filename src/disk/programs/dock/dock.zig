@@ -18,7 +18,9 @@
 //!
 //! **What a hand does with it:**
 //! - A click opens the entry as a double click on its icon does
-//!   (anvil.library's `OpenObject`).
+//!   (anvil.library's `OpenObject`); a click on a window's cell brings
+//!   that window to the front, or sends the one in front behind the
+//!   others.
 //! - Files let go on an entry are opened with it; let go in the room
 //!   between two pictures, on a separator or at an end of the dock, they
 //!   are put in as entries there.
@@ -40,6 +42,24 @@
 //!   and a click on it runs its program.
 //!
 //! **What it shows on its own:**
+//! - WINDOWS=YES: the windows open on the desktop's screen - the public
+//!   screen the dock itself is on, and no other: a program that opens a
+//!   screen of its own is its own master there, and neither the desktop
+//!   nor the dock has anything to say on it. They come after the entries
+//!   and a separator - a cell each, the window's title for its name and
+//!   the icon of the program its task runs (`WA_Task`, and the task's
+//!   CLI name) for its picture - with a plate under the one in front.
+//!   They are looked up ten times a second (`NextWindow` under
+//!   `LockIBase`), in the order they opened, as many as there is room
+//!   for; a cell's menu brings its window to the front or sends it to
+//!   the back. While it shows them, the dock's own window takes in the
+//!   screen's hidden windows (intuition's `HideControl`): every window
+//!   of the screen then carries a hide gadget in its title bar, and a
+//!   window put away keeps its cell - drawn matt - which brings it back
+//!   (`ShowWindow`). A click on the cell of the window in front puts
+//!   that window away; its menu still sends it behind the others. With
+//!   WINDOWS=NO nobody would show the way back, so there is no gadget
+//!   either, and the dock ending brings every window it took in back.
 //! - A dot under an entry whose program, started from the dock, still
 //!   runs (anvil.library's `ANVO_EndMsg`).
 //! - Files dragged over it from anywhere (intuition's `SA_Dragging`): the
@@ -93,7 +113,7 @@ const DiskfontBase = sdk.interface.diskfont.DiskfontBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Dock";
-const VERSION_STRING = "\x00$VER: Dock 1.3 (27.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Dock 1.7 (03.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "QUIT/S";
@@ -114,6 +134,15 @@ const composed = @sizeOf(usize) == 8;
 
 /// The most entries a dock holds.
 const entries_max = 48;
+/// How many of the windows open the dock lists at most, and how many
+/// cells - entries, the separator before the windows, and the windows -
+/// its row holds together.
+const windows_max = 16;
+const cells_max = entries_max + 1 + windows_max;
+/// The most of a command's name a window's cell keeps, the program whose
+/// icon stands for the window: a CLI's name is no longer
+/// (`cli_CommandName`).
+const command_max = dos.CLI_MAX_COMMAND_NAME - 1;
 /// The longest name shown for an entry.
 const label_max = 31;
 /// Room round a picture in its cell, and at either end of the row.
@@ -194,6 +223,18 @@ const Entry = struct {
     docklet_lib: ?*exec.Library = null,
     every: u32 = 1,
     due: u32 = 1,
+    /// A cell for a window open on the dock's screen - the taskbar, after
+    /// the entries - its number while the window is open (`WA_Number`),
+    /// and whether it is the active window. `label` is the window's
+    /// title and `path` the program its task runs, whose icon stands for
+    /// it; such a cell is the dock's own doing and is never written to
+    /// dock.items.
+    is_window: bool = false,
+    /// A window's cell whose window is put away (`WA_Hidden`): drawn
+    /// matt, and a click on it brings the window back.
+    hidden: bool = false,
+    window: u32 = 0,
+    active: bool = false,
     /// Its cell along the dock, where it starts and how long it is - now,
     /// and at rest - and its picture's size now.
     start: i32 = 0,
@@ -207,6 +248,27 @@ const Entry = struct {
         if (e.is_docklet) return .{ .docklet = sliceOf(path) };
         return .{ .path = sliceOf(path) };
     }
+
+    /// Whether the cell is a separator - the line between entries, and
+    /// the one the dock puts before the windows it lists.
+    fn isSeparator(e: *const Entry) bool {
+        return e.path == null and !e.is_window;
+    }
+};
+
+/// A window the dock lists, as a look at the screen found it: its number
+/// while it is open (`WA_Number`), whether it is the active one, whether
+/// it is put away (`WA_Hidden`), its title, and the command its task runs
+/// (`WA_Task`, and the task's CLI name) - the program whose icon stands
+/// for it.
+const Listed = struct {
+    number: u32 = 0,
+    active: bool = false,
+    hidden: bool = false,
+    title: [label_max + 1]u8 = @splat(0),
+    title_len: u32 = 0,
+    command: [command_max + 1]u8 = @splat(0),
+    command_len: u32 = 0,
 };
 
 /// How the dock is drawn: the names' font, the pictures' size, and the
@@ -282,8 +344,8 @@ const Stack = struct {
 };
 
 /// What the entry menu offers.
-const Choice = enum { open, information, remove, separator, docklets, settings, quit };
-const choice_names = [_][*:0]const u8{ "Open", "Information", "Remove from Dock", "Insert Separator", "Add Docklet...", "Dock Settings...", "Quit Dock" };
+const Choice = enum { open, information, remove, separator, docklets, settings, quit, front, back };
+const choice_names = [_][*:0]const u8{ "Open", "Information", "Remove from Dock", "Insert Separator", "Add Docklet...", "Dock Settings...", "Quit Dock", "Bring to Front", "Send to Back" };
 
 /// What Dock Settings runs: Prefs, on the dock's page.
 const SETTINGS_COMMAND = "SYS:Programs/Prefs PAGE=DOCK";
@@ -332,8 +394,17 @@ const App = struct {
     /// The names' font when it is font.prefs' and not the screen's: the
     /// dock's to close.
     own_font: ?*graphics.TextFont = null,
-    entries: [entries_max]Entry = @splat(.{}),
+    entries: [cells_max]Entry = @splat(.{}),
     count: usize = 0,
+    /// The cells of the windows the dock lists, which follow the entries
+    /// with a separator before them: how many there are, that separator
+    /// counted, and what a look at the screen last found.
+    window_count: usize = 0,
+    listed: [windows_max]Listed = @splat(.{}),
+    listed_count: usize = 0,
+    /// Whether the dock's own window takes in the screen's hidden
+    /// windows now (`hostWindows`).
+    hosting: bool = false,
 
     window: ?*intuition.Window = null,
     rp: *graphics.RastPort = undefined,
@@ -364,6 +435,14 @@ const App = struct {
     drop_target: ?usize = null,
     drop_gap: ?usize = null,
     press: Press = .{},
+    /// When the message being served happened, as it says itself.
+    event_seconds: u32 = 0,
+    event_micros: u32 = 0,
+    /// The window whose cell was clicked last, and when: the second
+    /// click of a double click on it is no second order.
+    clicked_window: ?u32 = null,
+    clicked_seconds: u32 = 0,
+    clicked_micros: u32 = 0,
     menu: Menu = .{},
     stack: Stack = .{},
     /// The name by the entry under the pointer, which entry, and its box.
@@ -547,22 +626,41 @@ const App = struct {
         e.* = .{};
     }
 
-    /// `item` put in at `at`; whether there was room.
-    fn insert(app: *App, at: usize, item: dock_prefs.Item) bool {
-        if (app.count == entries_max) return false;
-        const made = app.makeEntry(item) orelse return false;
-        var i = app.count;
+    /// Every cell along the dock: the entries, and the windows listed
+    /// after them.
+    fn cellCount(app: *const App) usize {
+        return app.count + app.window_count;
+    }
+
+    /// `made` put in as the cell at `at`, the cells from there on moved
+    /// along; there must be room for one more (`cells_max`).
+    fn placeCell(app: *App, at: usize, made: Entry) void {
+        var i = app.cellCount();
         while (i > at) : (i -= 1) app.entries[i] = app.entries[i - 1];
         app.entries[at] = made;
+    }
+
+    /// The cell at `at` freed and taken out of the row, the cells after
+    /// it moved up; the caller counts it off.
+    fn takeOut(app: *App, at: usize) void {
+        app.freeEntry(&app.entries[at]);
+        const last = app.cellCount() - 1;
+        for (at..last) |i| app.entries[i] = app.entries[i + 1];
+        app.entries[last] = .{};
+    }
+
+    /// `item` put in at `at`; whether there was room.
+    fn insert(app: *App, at: usize, item: dock_prefs.Item) bool {
+        if (app.count == entries_max or app.cellCount() == cells_max) return false;
+        const made = app.makeEntry(item) orelse return false;
+        app.placeCell(at, made);
         app.count += 1;
         return true;
     }
 
     fn remove(app: *App, at: usize) void {
-        app.freeEntry(&app.entries[at]);
-        for (at..app.count - 1) |i| app.entries[i] = app.entries[i + 1];
+        app.takeOut(at);
         app.count -= 1;
-        app.entries[app.count] = .{};
     }
 
     /// The entry at `from` moved to stand before the one now at `to`
@@ -579,7 +677,10 @@ const App = struct {
         }
     }
 
+    /// Every cell taken off: the entries, and the windows listed after
+    /// them - whose cells the next look makes again.
     fn removeAll(app: *App) void {
+        app.dropWindows();
         while (app.count > 0) app.remove(app.count - 1);
     }
 
@@ -747,16 +848,16 @@ const App = struct {
     fn layout(app: *App) void {
         const span = app.restSpan();
         var along: i32 = end_pad;
-        for (app.entries[0..app.count]) |*e| {
+        for (app.entries[0..app.cellCount()]) |*e| {
             e.rest_start = along;
-            e.rest_span = if (e.path == null) separator_span else span;
+            e.rest_span = if (e.isSeparator()) separator_span else span;
             e.start = e.rest_start;
             e.span = e.rest_span;
             e.size = app.look.size;
             along += e.rest_span;
         }
         // An empty dock keeps a cell's room, to let files go on.
-        if (app.count == 0) along += span;
+        if (app.cellCount() == 0) along += span;
         along += end_pad;
         const room = app.roomAlong();
         app.length = @min(along, room.size);
@@ -772,13 +873,13 @@ const App = struct {
     /// pointer is on at rest stays under it, the rest moved aside, and
     /// the dock is as long and as broad as they make it.
     fn grow(app: *App) void {
-        if (!app.magnifies() or app.count == 0) return;
+        if (!app.magnifies() or app.cellCount() == 0) return;
         const big = app.bigSize();
         const extra = big - app.look.size;
         const reach = @max(1, @divTrunc(app.restSpan() * grow_reach, 10));
         const at = app.pointed - app.rest_lead;
-        for (app.entries[0..app.count]) |*e| {
-            if (e.path == null) continue;
+        for (app.entries[0..app.cellCount()]) |*e| {
+            if (e.isSeparator()) continue;
             var off = at - (e.rest_start + @divTrunc(e.rest_span, 2));
             if (off < 0) off = -off;
             // (1 - t*t)^2, in 256ths: round by the pointer, falling away
@@ -791,8 +892,8 @@ const App = struct {
             e.span = e.rest_span + delta;
             if (!app.upright() and app.settings.labels == .always) e.span += @divTrunc(delta, 2);
         }
-        var k: usize = app.count - 1;
-        for (app.entries[0..app.count], 0..) |*e, i| {
+        var k: usize = app.cellCount() - 1;
+        for (app.entries[0..app.cellCount()], 0..) |*e, i| {
             if (at < e.rest_start + e.rest_span) {
                 k = i;
                 break;
@@ -803,11 +904,12 @@ const App = struct {
         anchor.start = at - @divTrunc(into * anchor.span, anchor.rest_span);
         var i = k;
         while (i > 0) : (i -= 1) app.entries[i - 1].start = app.entries[i].start - app.entries[i - 1].span;
-        for (k + 1..app.count) |j| app.entries[j].start = app.entries[j - 1].start + app.entries[j - 1].span;
+        for (k + 1..app.cellCount()) |j| app.entries[j].start = app.entries[j - 1].start + app.entries[j - 1].span;
         // Counted from the dock's new start, which is kept on the screen.
         const first = app.entries[0].start - end_pad;
-        const last = app.entries[app.count - 1].start + app.entries[app.count - 1].span + end_pad;
-        for (app.entries[0..app.count]) |*e| e.start -= first;
+        const cells = app.cellCount();
+        const last = app.entries[cells - 1].start + app.entries[cells - 1].span + end_pad;
+        for (app.entries[0..cells]) |*e| e.start -= first;
         const room = app.roomAlong();
         app.length = @min(last - first, room.size);
         app.lead = @max(room.start, @min(app.rest_lead + first, room.start + room.size - app.length));
@@ -873,7 +975,7 @@ const App = struct {
         app.readSettings();
         app.makeLook();
         if (app.window != null) app.setFont(app.rp);
-        for (app.entries[0..app.count]) |*e| app.takePicture(e);
+        for (app.entries[0..app.cellCount()]) |*e| app.takePicture(e);
         app.reshape();
     }
 
@@ -907,6 +1009,18 @@ const App = struct {
 
     fn fill(app: *App, rp: *graphics.RastPort, colour: Pen, area: Rect) void {
         app.pen(rp, colour);
+        app.gb.RectFill(rp, &area);
+    }
+
+    /// A veil of `colour` over `area`: laid over what is there by the
+    /// colour's own coverage (`DRMD_BLEND`) rather than written over it,
+    /// which is how a cell is drawn matt.
+    fn veil(app: *App, rp: *graphics.RastPort, colour: Pen, area: Rect) void {
+        app.gb.SetRPAttrs(rp, &[_]TagItem{
+            pair(graphics.RPTAG_APen, colour),
+            pair(graphics.RPTAG_DrMd, graphics.DRMD_JAM1 | graphics.DRMD_BLEND),
+            .{},
+        });
         app.gb.RectFill(rp, &area);
     }
 
@@ -973,7 +1087,7 @@ const App = struct {
         app.gb.BeginDraw(app.rp);
         app.fill(app.rp, app.look.ground, whole);
         app.bevel(app.rp, whole);
-        for (0..app.count) |i| app.drawEntry(i);
+        for (0..app.cellCount()) |i| app.drawEntry(i);
         // Where files dragged over it would be put in: a bar across.
         if (app.drop_gap) |gap| {
             const at = if (gap < app.count)
@@ -991,10 +1105,11 @@ const App = struct {
         app.gb.EndDraw(app.rp);
     }
 
-    /// One entry drawn on the ground: a separator's line, or the picture -
-    /// on the fill pen's plate while it is held, or files dragged over it
-    /// would open with it - with a dot by it while what it started runs,
-    /// and the name when the names are always shown.
+    /// One cell drawn on the ground: a separator's line, or the picture -
+    /// on the fill pen's plate while it is held, while it is the window
+    /// in front, or while files dragged over it would open with it - with
+    /// a dot by it while what it started runs, and the name when the
+    /// names are always shown.
     fn drawEntry(app: *App, index: usize) void {
         const rp = app.rp;
         const e = &app.entries[index];
@@ -1008,7 +1123,7 @@ const App = struct {
             cell.max_y -= 1;
         }
         app.fill(rp, app.look.ground, cell);
-        if (e.path == null) {
+        if (e.isSeparator()) {
             const line = if (app.upright())
                 Rect{ .min_x = cell.min_x + pad, .min_y = cell.min_y + @divTrunc(e.span, 2) - 1, .max_x = cell.max_x - pad, .max_y = cell.min_y + @divTrunc(e.span, 2) }
             else
@@ -1022,6 +1137,9 @@ const App = struct {
             return;
         }
         const held = app.press.held and app.press.index == index and !app.press.dragging and !app.press.spent;
+        // A plate under the picture: the entry held, or the window in
+        // front, which is the active one.
+        const lit = held or (e.is_window and e.active);
         // Files that would open with it light the whole cell: the picture
         // dragged over it covers its own.
         if (app.drop_target == index) {
@@ -1030,12 +1148,16 @@ const App = struct {
             app.gb.FillRoundRect(rp, &plate, 6);
         }
         if (app.pictureOf(e)) |area| {
-            if (held) {
+            if (lit) {
                 const plate = Rect{ .min_x = area.min_x - 3, .min_y = area.min_y - 3, .max_x = area.max_x + 3, .max_y = area.max_y + 3 };
                 app.pen(rp, (app.look.fill & 0x00FF_FFFF) | 0x8000_0000);
                 app.gb.FillRoundRect(rp, &plate, 6);
             }
             if (e.docklet) |docklet| app.drawDocklet(docklet, rp, area) else app.drawPicture(e, area);
+            // A window put away is matt: its picture veiled in the
+            // dock's own ground, so its cell shows at a glance that it
+            // is a way back and not a window on the screen.
+            if (e.hidden) app.veil(rp, (app.look.ground & 0x00FF_FFFF) | 0xA000_0000, area);
         }
         if (app.isRunning(e)) app.drawDot(e, cell);
         if (app.settings.labels != .always) return;
@@ -1114,7 +1236,7 @@ const App = struct {
     fn entryAt(app: *const App, x: i32, y: i32) ?usize {
         if (x < 0 or y < 0 or x >= app.box.max_x - app.box.min_x or y >= app.box.max_y - app.box.min_y) return null;
         const along = if (app.upright()) y else x;
-        for (app.entries[0..app.count], 0..) |*e, i| {
+        for (app.entries[0..app.cellCount()], 0..) |*e, i| {
             if (along >= e.start and along < e.start + e.span) return i;
         }
         return null;
@@ -1137,7 +1259,7 @@ const App = struct {
     fn targetAt(app: *const App, x: i32, y: i32) ?usize {
         const index = app.entryAt(x, y) orelse return null;
         const e = &app.entries[index];
-        if (e.path == null or e.is_docklet) return null;
+        if (e.path == null or e.is_docklet or e.is_window) return null;
         const along = if (app.upright()) y else x;
         if (along < e.start + pad or along >= e.start + e.span - pad) return null;
         return index;
@@ -1169,10 +1291,15 @@ const App = struct {
 
     // --- what the entries do --------------------------------------------------
 
-    /// A click on an entry: a drawer or a disk lists what is in it, the
-    /// rest open - a docklet's program, for a docklet.
+    /// A click on a cell: a drawer or a disk lists what is in it, the
+    /// rest open - a docklet's program, for a docklet. A window's cell
+    /// brings its window to the front, or - the one in front already -
+    /// puts it away, the dock being what shows the way back; its menu
+    /// still sends it behind the others.
     fn activate(app: *App, index: usize) void {
-        if (app.entries[index].stacks) return app.openStack(index);
+        const e = &app.entries[index];
+        if (e.is_window) return app.windowCell(index);
+        if (e.stacks) return app.openStack(index);
         app.openEntry(index, &.{});
     }
 
@@ -1260,7 +1387,7 @@ const App = struct {
 
     /// Whether something started from an entry for the same name runs.
     fn isRunning(app: *const App, e: *const Entry) bool {
-        if (app.run_count == 0) return false;
+        if (e.is_window or app.run_count == 0) return false;
         const path = sliceOf(app.openPath(e) orelse return false);
         for (app.runs) |slot| if (slot) |run| {
             if (sameText(sliceOf(run.path), path)) return true;
@@ -1280,6 +1407,370 @@ const App = struct {
         if (place == at) return;
         app.save();
         app.reshape();
+    }
+
+    // --- the windows listed ---------------------------------------------------
+
+    /// Whether nothing is being done with the cells themselves: no press
+    /// held, no menu and no stack open. The cells of the windows are made
+    /// again only then, so that none moves out from under a press or a
+    /// menu that was opened for it.
+    fn steady(app: *const App) bool {
+        return !app.press.held and app.menu.window == null and app.stack.window == null;
+    }
+
+    /// Whether a separator stands before the windows listed: one is there
+    /// while the dock has entries of its own and a window to show.
+    fn separatorCells(app: *const App) usize {
+        return @intFromBool(app.listed_count > 0 and app.count > 0);
+    }
+
+    /// Whether the cell after the entries is that separator.
+    fn hasSeparator(app: *const App) bool {
+        return app.window_count > 0 and app.entries[app.count].isSeparator();
+    }
+
+    /// Where the cells of the windows start, past that separator.
+    fn firstWindow(app: *const App) usize {
+        return app.count + @intFromBool(app.hasSeparator());
+    }
+
+    /// How many window cells there is room for along the dock's edge
+    /// beside the entries, at most `windows_max`.
+    fn windowRoom(app: *const App) usize {
+        const span = app.restSpan();
+        if (span <= 0) return 0;
+        var along: i32 = 2 * end_pad;
+        for (app.entries[0..app.count]) |*e| along += if (e.isSeparator()) separator_span else span;
+        if (app.count > 0) along += separator_span;
+        const left = app.roomAlong().size - along;
+        if (left < span) return 0;
+        const fits: usize = @intCast(@divTrunc(left, span));
+        return @min(@min(windows_max, cells_max - app.count - 1), fits);
+    }
+
+    /// The windows open on the dock's own screen looked at - the
+    /// desktop's, and no other: `NextWindow` walks the screen of the
+    /// window it is given, and the dock hands it its own. A program with
+    /// a screen of its own keeps its windows to itself; the dock and the
+    /// desktop share the one screen and nothing beyond it.
+    ///
+    /// The walk starts at the dock's own window, which is enough for all
+    /// of them: the dock stays in front of every ordinary window
+    /// (`WA_StayInFront`), so every window that could be listed is
+    /// behind it. Those with no title, the dock's own, a backdrop window
+    /// and another window that stays in front are passed over; as many
+    /// are taken as there is room for, the ones in front first come.
+    ///
+    /// What is wanted of each is taken while the screens are held still,
+    /// so that none can close under the look; nothing is read from a disk
+    /// and no memory asked for until the lock is given back.
+    fn scanWindows(app: *App) void {
+        app.listed_count = 0;
+        const own = app.window orelse return;
+        const room = app.windowRoom();
+        if (room == 0) return;
+        const mine = app.sys.FindTask(null);
+        const held = app.ib.LockIBase(0);
+        defer app.ib.UnlockIBase(held);
+        var at = app.ib.NextWindow(own);
+        while (at) |w| : (at = app.ib.NextWindow(w)) {
+            if (app.listed_count == room) break;
+            var number: usize = 0;
+            var title: usize = 0;
+            var active: usize = 0;
+            var away: usize = 0;
+            var backdrop: usize = 0;
+            var front: usize = 0;
+            var task: usize = 0;
+            app.ib.GetWindowAttrs(w, &[_]TagItem{
+                pair(wn.WA_Number, @intFromPtr(&number)),
+                pair(wn.WA_Title, @intFromPtr(&title)),
+                pair(wn.WA_Active, @intFromPtr(&active)),
+                pair(wn.WA_Hidden, @intFromPtr(&away)),
+                pair(wn.WA_Backdrop, @intFromPtr(&backdrop)),
+                pair(wn.WA_StayInFront, @intFromPtr(&front)),
+                pair(wn.WA_Task, @intFromPtr(&task)),
+                .{},
+            });
+            // The dock's own - its menu, a stack, a name by the pointer -
+            // the desktop's ground, and another dock are not listed; nor
+            // is a window with no title, which has no name to show.
+            if (task == @intFromPtr(mine) or backdrop != 0 or front != 0) continue;
+            const words: ?[*:0]const u8 = @ptrFromInt(title);
+            const named = if (words) |text| sliceOf(text) else continue;
+            if (named.len == 0) continue;
+            app.noteWindow(@intCast(number), active != 0, away != 0, named, @ptrFromInt(task));
+        }
+    }
+
+    /// A window noted among those listed, in the order they opened - by
+    /// its number, which rises with each window. Its title is kept as the
+    /// cell's name, and the command its task runs with it: a process's
+    /// CLI names what it runs (`cli_CommandName`), and that program's
+    /// icon is what stands for the window.
+    fn noteWindow(app: *App, number: u32, active: bool, hidden: bool, title: []const u8, task: ?*exec.Task) void {
+        var at = app.listed_count;
+        while (at > 0 and app.listed[at - 1].number > number) at -= 1;
+        var i = app.listed_count;
+        while (i > at) : (i -= 1) app.listed[i] = app.listed[i - 1];
+        app.listed_count += 1;
+        const shown = &app.listed[at];
+        shown.* = .{ .number = number, .active = active, .hidden = hidden };
+        const length = @min(title.len, label_max);
+        @memcpy(shown.title[0..length], title[0..length]);
+        shown.title_len = @intCast(length);
+        const command = commandOf(task) orelse return;
+        const n = @min(command.len, command_max);
+        @memcpy(shown.command[0..n], command[0..n]);
+        shown.command_len = @intCast(n);
+    }
+
+    /// Ten times a second, with the rest of the look: the windows open on
+    /// the dock's screen listed after its entries. The same windows as
+    /// last time, and only their titles and which of them is in front are
+    /// taken again; another set of them, and the cells are made anew.
+    fn syncWindows(app: *App) void {
+        // Only while it shows them does the dock take in the windows put
+        // away: with the row off, nobody would show the way back, and
+        // intuition leaves the hide gadget off the screen's windows.
+        app.hostWindows(app.settings.windows);
+        if (!app.settings.windows) {
+            if (app.window_count == 0 or !app.steady()) return;
+            app.dropWindows();
+            return app.reshape();
+        }
+        app.scanWindows();
+        if (app.sameWindows()) return app.freshenWindows();
+        if (!app.steady()) return;
+        app.makeWindows();
+        app.reshape();
+    }
+
+    /// Whether the cells the dock has are those of the windows the look
+    /// found, in the same order.
+    fn sameWindows(app: *const App) bool {
+        if (app.window_count != app.listed_count + app.separatorCells()) return false;
+        const first = app.firstWindow();
+        for (app.listed[0..app.listed_count], 0..) |*shown, i| {
+            if (app.entries[first + i].window != shown.number) return false;
+        }
+        return true;
+    }
+
+    /// What the cells of the windows say taken again: a title changed
+    /// (`SetWindowTitles`), the window that is now in front, and which
+    /// windows are put away; each cell
+    /// that is not as it was is drawn again, and the name by the pointer
+    /// with it.
+    fn freshenWindows(app: *App) void {
+        const first = app.firstWindow();
+        const shown_count = @min(app.listed_count, app.cellCount() - first);
+        for (app.listed[0..shown_count], 0..) |*shown, i| {
+            const e = &app.entries[first + i];
+            const words = shown.title[0..shown.title_len];
+            if (e.active == shown.active and e.hidden == shown.hidden and sameText(e.label[0..e.label_len], words)) continue;
+            setLabel(e, words);
+            e.active = shown.active;
+            e.hidden = shown.hidden;
+            app.redrawEntry(first + i);
+            if (app.tip_index == first + i) {
+                app.closeTip();
+                app.openTip(first + i);
+            }
+        }
+    }
+
+    /// The cells made to be the windows the look found: the separator
+    /// before them put in or taken off as the entries and the windows
+    /// ask, the cell of a window that has closed freed, and a cell made
+    /// for a window that has none. Both lists run by the number a window
+    /// is given as it opens, which only rises, so one walk down them
+    /// settles it - and a window that keeps its cell keeps the icon and
+    /// picture it holds.
+    fn makeWindows(app: *App) void {
+        // The name by the pointer stands by a cell that may move.
+        if (app.tip_index) |shown| if (shown >= app.count) app.closeTip();
+        const want = app.separatorCells() == 1;
+        if (want and !app.hasSeparator()) {
+            app.placeCell(app.count, .{});
+            app.window_count += 1;
+        } else if (!want and app.hasSeparator()) {
+            app.takeOut(app.count);
+            app.window_count -= 1;
+        }
+        const first = app.firstWindow();
+        var at = first;
+        var k: usize = 0;
+        while (at < app.cellCount()) {
+            const number = app.entries[at].window;
+            while (k < app.listed_count and app.listed[k].number < number) k += 1;
+            if (k < app.listed_count and app.listed[k].number == number) {
+                at += 1;
+                k += 1;
+                continue;
+            }
+            app.takeOut(at);
+            app.window_count -= 1;
+        }
+        at = first;
+        for (app.listed[0..app.listed_count]) |*shown| {
+            if (at < app.cellCount() and app.entries[at].window == shown.number) {
+                at += 1;
+                continue;
+            }
+            if (app.cellCount() == cells_max) break;
+            app.placeCell(at, app.makeWindowCell(shown));
+            app.window_count += 1;
+            at += 1;
+        }
+        // Had the row run out of cells, the windows that got none are no
+        // longer listed - so the next look finds its cells right and does
+        // not try again every tenth of a second.
+        const made = app.cellCount() - app.firstWindow();
+        if (made < app.listed_count) app.listed_count = made;
+        app.freshenWindows();
+    }
+
+    /// A cell for a window: its title as the name, and for its picture
+    /// the icon of the program its task runs - that program's own, or the
+    /// default tool's when it has none and when no program was named.
+    fn makeWindowCell(app: *App, shown: *const Listed) Entry {
+        var e = Entry{ .is_window = true, .window = shown.number, .active = shown.active, .hidden = shown.hidden };
+        setLabel(&e, shown.title[0..shown.title_len]);
+        if (shown.command_len > 0) {
+            const command = shown.command[0..shown.command_len];
+            if (app.sys.AllocVec(command.len + 1, exec.MEMF_ANY)) |memory| {
+                const copy: [*]u8 = @ptrCast(memory);
+                @memcpy(copy[0..command.len], command);
+                copy[command.len] = 0;
+                e.path = @ptrCast(copy);
+                e.object = app.iconOf(e.path.?);
+            }
+        }
+        if (e.object == null) e.object = app.icons.GetDefDiskObject(icon.WBTOOL);
+        app.takePicture(&e);
+        return e;
+    }
+
+    /// The dock's own window takes in the hidden windows of its screen,
+    /// or gives that up (intuition's `HideControl`): while it does, the
+    /// screen's windows carry a hide gadget, and giving it up - or the
+    /// dock ending - brings every window it took in back. Another dock
+    /// already holding it says no; this is asked again with every look,
+    /// so the first dock to end leaves it to the next.
+    fn hostWindows(app: *App, on: bool) void {
+        if (app.hosting == on) return;
+        const window = app.window orelse return;
+        if (!app.ib.HideControl(window, on)) return;
+        app.hosting = on;
+    }
+
+    /// The cells of the windows taken off: the dock shows its entries
+    /// alone.
+    fn dropWindows(app: *App) void {
+        if (app.tip_index) |shown| if (shown >= app.count) app.closeTip();
+        while (app.window_count > 0) {
+            app.takeOut(app.cellCount() - 1);
+            app.window_count -= 1;
+        }
+    }
+
+    /// The window a cell stands for brought to the front and made the
+    /// active one, or - `back` - sent behind the others; one put away
+    /// (`WA_Hidden`) is brought back whatever `back` says, since that is
+    /// all its cell can mean. It may have
+    /// closed since the look that listed it, so it is found by its number
+    /// while the screens are held still, which keeps it open until the
+    /// depth is changed; one that is gone leaves a flash, and its cell
+    /// goes with the next look.
+    fn orderWindow(app: *App, index: usize, back: bool) void {
+        const number = app.entries[index].window;
+        var found = false;
+        {
+            const held = app.ib.LockIBase(0);
+            defer app.ib.UnlockIBase(held);
+            if (app.ib.FindWindowNumber(number)) |window| {
+                found = true;
+                // A window put away has only one thing its cell can
+                // mean: bring it back, to the front and active.
+                if (windowAttr(app.ib, window, wn.WA_Hidden) != 0) {
+                    app.ib.ShowWindow(window);
+                    app.ib.WindowToFront(window);
+                    app.ib.ActivateWindow(window);
+                } else if (back) {
+                    app.ib.WindowToBack(window);
+                } else {
+                    app.ib.WindowToFront(window);
+                    app.ib.ActivateWindow(window);
+                }
+            }
+        }
+        if (!found) app.ib.DisplayBeep(app.screen);
+    }
+
+    /// A click on the cell of a window: the window put away
+    /// (`HideWindow`) if it is the one in front - its cell stays, drawn
+    /// matt - brought back if it is away, and brought forward and given
+    /// the keyboard if it is neither.
+    ///
+    /// Whether it is away is read from the window itself, not from what
+    /// the last look saw: a look is ten times a second, and a click in
+    /// between would otherwise put away a window that is away already,
+    /// which is nothing at all - the click that was to bring it back.
+    /// Whether it is the window in front is the look's to say, since a
+    /// click on the dock gives the dock's own window the keyboard: asked
+    /// here, no other window is ever the active one, and no cell could
+    /// put its window away.
+    ///
+    /// The second click of a double click on the same cell does nothing.
+    /// A cell is one click to one thing, and double-clicking an icon is
+    /// what opens everything else here: the window the first click
+    /// brought back would be put away again by the second, and all that
+    /// would be seen of it is a blink.
+    ///
+    /// The window may have closed since the look that listed it, so it
+    /// is found by its number while the screens are held still, which
+    /// keeps it open until this is done; one that is gone leaves a
+    /// flash, and its cell goes with the next look.
+    fn windowCell(app: *App, index: usize) void {
+        const e = &app.entries[index];
+        const number = e.window;
+        const in_front = e.active and !e.hidden;
+        if (app.clickedAgain(number)) return;
+        var found = false;
+        {
+            const held = app.ib.LockIBase(0);
+            defer app.ib.UnlockIBase(held);
+            if (app.ib.FindWindowNumber(number)) |window| {
+                found = true;
+                if (windowAttr(app.ib, window, wn.WA_Hidden) != 0) {
+                    app.ib.ShowWindow(window);
+                    app.ib.WindowToFront(window);
+                    app.ib.ActivateWindow(window);
+                } else if (in_front) {
+                    app.ib.HideWindow(window);
+                } else {
+                    app.ib.WindowToFront(window);
+                    app.ib.ActivateWindow(window);
+                }
+            }
+        }
+        if (!found) app.ib.DisplayBeep(app.screen);
+    }
+
+    /// Whether this click on a window's cell follows one on the same
+    /// window inside the double-click time, which the Input settings
+    /// hold.
+    fn clickedAgain(app: *App, number: u32) bool {
+        const seconds = app.event_seconds;
+        const micros = app.event_micros;
+        const again = app.clicked_window == number and
+            app.ib.DoubleClick(app.clicked_seconds, app.clicked_micros, seconds, micros);
+        app.clicked_window = number;
+        app.clicked_seconds = seconds;
+        app.clicked_micros = micros;
+        return again;
     }
 
     // --- the dock's window ----------------------------------------------------
@@ -1321,6 +1812,9 @@ const App = struct {
     fn pressMoved(app: *App, x: i32, y: i32) void {
         if (!app.press.held or app.press.dragging or app.press.spent) return;
         const index = app.press.index orelse return;
+        // A window's cell is the dock's own doing: it is not moved, and
+        // dragging it off would take nothing off.
+        if (app.entries[index].is_window) return;
         if (@abs(x - app.press.x) < drag_after and @abs(y - app.press.y) < drag_after) return;
         const e = &app.entries[index];
         const area = app.pictureOf(e) orelse return;
@@ -1407,7 +1901,7 @@ const App = struct {
     }
 
     fn redrawEntry(app: *App, index: usize) void {
-        if (app.window == null or index >= app.count) return;
+        if (app.window == null or index >= app.cellCount()) return;
         app.gb.BeginDraw(app.rp);
         app.drawEntry(index);
         app.gb.EndDraw(app.rp);
@@ -1415,12 +1909,14 @@ const App = struct {
 
     // --- the pointer looked at ------------------------------------------------
 
-    /// Ten times a second: the desktop tried again while it is not
-    /// joined, a held press timed and followed, files dragged over shown
-    /// where they go, a dock that hides sent or brought back, the
-    /// pictures set growing, and the name by the pointer shown.
+    /// Ten times a second: the windows open listed after the entries, the
+    /// desktop tried again while it is not joined, a held press timed and
+    /// followed, files dragged over shown where they go, a dock that
+    /// hides sent or brought back, the pictures set growing, and the name
+    /// by the pointer shown.
     fn ticked(app: *App) void {
         app.lookDocklets();
+        app.syncWindows();
         if (app.app_window == null or app.app_item == null) {
             app.desktop_looks += 1;
             if (app.desktop_looks >= desktop_every) {
@@ -1452,7 +1948,7 @@ const App = struct {
         }
         if (app.settings.labels == .pointer and !app.press.held and app.menu.window == null and app.stack.window == null and !app.hiding) {
             const index = app.entryAt(x, y);
-            const named = if (index) |i| (if (app.entries[i].path != null) i else null) else null;
+            const named = if (index) |i| (if (app.entries[i].isSeparator()) null else i) else null;
             if (named != app.tip_index) {
                 app.closeTip();
                 if (named) |i| app.openTip(i);
@@ -1712,7 +2208,7 @@ const App = struct {
     fn placeTip(app: *App) void {
         const tip = app.tip orelse return;
         const index = app.tip_index orelse return;
-        if (index >= app.count) return app.closeTip();
+        if (index >= app.cellCount()) return app.closeTip();
         const where = app.tipPlace(index);
         if (where.x == app.tip_x and where.y == app.tip_y) return;
         app.tip_x = where.x;
@@ -1737,10 +2233,13 @@ const App = struct {
         app.closeStack();
         var m = Menu{ .index = index, .x = x, .y = y };
         const e: ?*const Entry = if (index) |i| &app.entries[i] else null;
-        const is_entry = if (e) |shown| shown.path != null else false;
+        const is_window = if (e) |shown| shown.is_window else false;
+        const is_entry = if (e) |shown| shown.path != null and !shown.is_window else false;
         const is_docklet = if (e) |shown| shown.is_docklet else false;
         const runs = if (e) |shown| app.openPath(shown) != null else false;
-        const choices: []const Choice = if (is_docklet and runs)
+        const choices: []const Choice = if (is_window)
+            &.{ .front, .back, .settings, .quit }
+        else if (is_docklet and runs)
             &.{ .open, .remove, .separator, .docklets, .settings, .quit }
         else if (is_docklet)
             &.{ .remove, .separator, .docklets, .settings, .quit }
@@ -1760,7 +2259,7 @@ const App = struct {
             const name = choice_names[@intFromEnum(choice)];
             widest = @max(widest, app.gb.TextLength(app.rp, name, @intCast(sliceOf(name).len)));
         }
-        if (is_entry) {
+        if (is_entry or is_window) {
             widest = @max(widest, app.gb.TextLength(app.rp, &e.?.label, e.?.label_len));
             m.title_height = m.row_height + 2;
         }
@@ -1903,7 +2402,7 @@ const App = struct {
         const x = app.menu.x;
         const y = app.menu.y;
         app.closeMenu();
-        if (index) |i| if (i >= app.count) return;
+        if (index) |i| if (i >= app.cellCount()) return;
         switch (choice) {
             .open => app.openEntry(index.?, &.{}),
             .information => if (app.entries[index.?].path) |path| {
@@ -1920,9 +2419,11 @@ const App = struct {
                 app.save();
                 app.reshape();
             },
-            .docklets => app.openDocklets(if (index) |i| i + 1 else app.count, x, y),
+            .docklets => app.openDocklets(if (index) |i| @min(i + 1, app.count) else app.count, x, y),
             .settings => app.openSettings(),
             .quit => app.running = false,
+            .front => app.orderWindow(index.?, false),
+            .back => app.orderWindow(index.?, true),
         }
     }
 
@@ -2263,6 +2764,25 @@ fn setLabel(e: *Entry, label: []const u8) void {
     e.label_len = @intCast(length);
 }
 
+/// The command a task runs, from its CLI (`cli_CommandName`): the
+/// program a window belongs to, by the name it was started with. Null for
+/// a task that is no process, one with no CLI, and one between commands -
+/// the shell empties the name then.
+///
+/// Read while the screens are held still and a window of the task is
+/// open: a process, its name and its CLI are one block, which exec frees
+/// only once the task's end hooks have run - and intuition's hook closes
+/// the windows a task leaves open there - so the block is still there to
+/// read while the window is.
+fn commandOf(task: ?*exec.Task) ?[]const u8 {
+    const running = task orelse return null;
+    if (running.node.type != .process) return null;
+    const proc: *dos.Process = @ptrCast(@alignCast(running));
+    const cli = proc.cli orelse return null;
+    const text = sliceOf(cli.command_name orelse return null);
+    return if (text.len == 0) null else text;
+}
+
 /// An object's attribute, 0 when it has none.
 fn attrOf(ib: *IntuitionBase, object: *intuition.Object, tag: utility.Tag) usize {
     var value: usize = 0;
@@ -2355,12 +2875,20 @@ fn portMask(ib: *IntuitionBase, window: ?*intuition.Window) u32 {
     return if (port) |p| p.sigMask() else 0;
 }
 
-/// An IntuiMessage's fields, read before it goes back.
-const Input = struct { class: u32, code: u32, x: i32, y: i32 };
+/// An IntuiMessage's fields, read before it goes back: when it happened
+/// among them, which is what a double click is told by.
+const Input = struct { class: u32, code: u32, x: i32, y: i32, seconds: u32, micros: u32 };
 
 fn take(ib: *IntuitionBase, window: *intuition.Window) ?Input {
     const message = ib.GetIMsg(window) orelse return null;
-    const input = Input{ .class = message.class, .code = message.code, .x = message.mouse_x, .y = message.mouse_y };
+    const input = Input{
+        .class = message.class,
+        .code = message.code,
+        .x = message.mouse_x,
+        .y = message.mouse_y,
+        .seconds = message.seconds,
+        .micros = message.micros,
+    };
     ib.ReplyIMsg(message);
     return input;
 }
@@ -2597,7 +3125,11 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         if (got & tick_mask != 0) app.ticked();
         if (got & quick_mask != 0) app.grown();
         if (got & slide_mask != 0) app.slid();
-        while (take(ib, window)) |input| app.dockInput(input.class, input.code, input.x, input.y);
+        while (take(ib, window)) |input| {
+            app.event_seconds = input.seconds;
+            app.event_micros = input.micros;
+            app.dockInput(input.class, input.code, input.x, input.y);
+        }
         while (app.menu.window) |shown| {
             const input = take(ib, shown) orelse break;
             app.menuInput(input.class, input.code, input.x, input.y);

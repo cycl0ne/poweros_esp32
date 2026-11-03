@@ -58,6 +58,35 @@ pub fn insert(sys: *ExecBase, info: *LayerInfo, layer: *Layer, behind: bool) voi
     sys.AddTail(&info.layers, &layer.node);
 }
 
+/// Hide a layer or show it again, and work the tiling out again. Hidden,
+/// it covers nothing and is hit by nothing: the tiling leaves it nothing
+/// to see, which keeps its pixels where they are kept - its own buffer
+/// when it is composed, its keeping when it is smart or super - and owes
+/// a simple one its damage when it is shown again.
+///
+/// INPUTS:
+/// - `lb` - the library.
+/// - `layer` - the layer.
+/// - `hidden` - out of what is shown, or back into it.
+///
+/// RESULT:
+/// False, with `LERR_NO_MEMORY` in the layer, if the tiling could not be
+/// worked out. A layer that is already that way is left alone.
+pub fn setHidden(lb: *LayersBase, layer: *Layer, hidden: bool) bool {
+    if ((layer.flags & layers.LAYERHIDDEN != 0) == hidden) return true;
+    if (hidden) {
+        layer.flags |= layers.LAYERHIDDEN;
+    } else {
+        layer.flags &= ~layers.LAYERHIDDEN;
+    }
+    const ok = tile.retile(lb, layer.info);
+    // Where it was, shadow and all: uncovered by hiding it, covered again
+    // by showing it.
+    compose.show(lb, layer.info, effects.reach(layer));
+    layer.last_error = if (ok) layers.LERR_OK else layers.LERR_NO_MEMORY;
+    return ok;
+}
+
 /// Move a layer in the order and work the tiling out again. Composed,
 /// what it covers or uncovers by it - all inside its own rectangle - is
 /// copied on to the display.

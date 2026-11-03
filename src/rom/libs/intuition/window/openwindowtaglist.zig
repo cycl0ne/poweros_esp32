@@ -14,6 +14,7 @@ const ic = intuition.imageclass;
 const TagItem = utility.TagItem;
 const IntuitionBase = @import("../intuition.zig").IntuitionBase;
 const _gadget = @import("../gadget/_gadget.zig");
+const _hide = @import("_hide.zig");
 const _window = @import("_window.zig");
 const WF_BACKDROP = _window.WF_BACKDROP;
 const WF_BORDERLESS = _window.WF_BORDERLESS;
@@ -190,6 +191,8 @@ pub fn OpenWindowTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Window {
     var more_flags: u32 = if (ub.GetTagData(wn.WA_MenuHelp, 0, tags) != 0) _window.WMF_MENUHELP else 0;
     more_flags |= flagIf(ub, wn.WA_StayInFront, tags, _window.WMF_STAYINFRONT);
     more_flags |= flagIf(ub, _window.WA_Above, tags, _window.WMF_ABOVE);
+    // `WA_HideGadget` false: no hide gadget, whatever its screen holds.
+    if (ub.GetTagData(wn.WA_HideGadget, 1, tags) == 0) more_flags |= _window.WMF_NOHIDE;
     // A window with one of a higher rank on its screen - one that stays in
     // front, the keyboard - is made behind the ordinary ones and then put
     // just behind those, never once in front of them.
@@ -494,6 +497,12 @@ pub fn OpenWindowTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Window {
             const box = _window.sizeBoxOf(w);
             w.size_image = gadgetImage(ib, s, ic.SIZEIMAGE, box.width, box.height);
             if (w.size_image == null) ok = false;
+        }
+        // The fourth gadget, on a screen whose hidden windows a window
+        // takes in (`HideControl`) and in a window that may have it.
+        if (_hide.mayCarry(w)) {
+            w.hide_image = gadgetImage(ib, s, ic.HIDEIMAGE, depthWidthOf(w), bt);
+            if (w.hide_image == null) ok = false;
         }
     }
     if (ub.GetTagData(wn.WA_UserPort, 0, tags) != 0) {

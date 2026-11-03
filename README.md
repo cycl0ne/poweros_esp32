@@ -344,6 +344,7 @@ Fetched once into `toolchain/`, pinned and checked, never committed:
 | `scripts/fetch-vpu.sh` | the JH7110's video decoder firmware, which `videodec.resource` loads (the RISC-V 64 disk) |
 | `scripts/fetch-pciids.sh` | the PCI ID Repository's list, `DEVS:pci.ids` on the RISC-V 64 and AArch64 disks, which `C:PCIInfo` names vendors and devices from - the host's copy where it has one, the current list otherwise: not pinned |
 | `scripts/fetch-icons.sh` | the pictures of the disk's icons (Tango, public domain), drawn at the boards' sizes |
+| `scripts/fetch-novnc.sh` | noVNC, the VNC client that runs in a browser, which `scripts/qemu-web.sh` serves beside a QEMU machine to show its display in a browser tab |
 | `scripts/fetch-esp-emu.sh` | Espressif's esp-emulator, which runs the ESP32-P4: both cores, its interrupt controller, UART0 on the terminal, the system timer, flash, PSRAM, the Ethernet MAC and a GDB stub, from the chip's own ROM; no display. With it the v1.x chips' ROM (Espressif's ROM ELFs), which `./zig build emu` boots |
 
 Without them the disk has everything but that part. On an ESP32 board
@@ -467,6 +468,29 @@ goes on a USB 3 port and runs at SuperSpeed; its image holds a partition
 table with a FAT32 or exFAT partition, as a stick is sold
 ([USB guide](sdk/docs/guides/usb.md)). `-device usb-uas,id=uas -device
 scsi-hd,bus=uas.0,drive=...` is a disk over UAS, on streams.
+
+A host with no screen of its own - one developed on over the network -
+shows the display in a browser instead. `scripts/qemu-web.sh` boots a
+display step with `-Dvirt-ui="vnc=localhost:0,websocket=on"`, so QEMU
+serves the picture over VNC and over VNC in a WebSocket beside it, which
+is what a browser speaks, and serves noVNC - the client that runs in the
+browser, fetched by `scripts/fetch-novnc.sh` - from a Python web server
+next to it; it prints the address to open, and the console stays on this
+terminal. All three ports listen on the loopback alone, as the display
+takes no password: reach them from elsewhere through an SSH tunnel (`ssh
+-L 6080:localhost:6080 -L 5700:localhost:5700 host`), or, under
+code-server, through its own proxy, whose address the script prints as
+well. Every display step takes `-Dvirt-qmp=<socket>` for QEMU's QMP
+monitor, which `scripts/qemu-shot.py` writes a PNG of the running
+machine through - and clicks and types into it first when asked, so a
+machine nobody sits at can still be driven and shown:
+
+```sh
+scripts/qemu-web.sh                     # the AArch64 machine in a browser tab
+scripts/qemu-web.sh virt-display        # the RISC-V one
+scripts/qemu-shot.py desktop.png        # what is on its display now
+scripts/qemu-shot.py --click 832,1057 --settle 2 dock.png
+```
 
 On the VisionFive 2, U-Boot loads `kernel.bin` and starts it with
 `booti`, with `disk-rv64.bin` as its ramdisk and U-Boot's device tree.
@@ -787,7 +811,7 @@ src/disk/      what goes on the disk: commands, test programs, disk-loaded
 sdk/           the SDK: types, constants, jump tables, autodocs, tools (a package)
 tools/         build helpers: mkfs, mkpackage, serve, ressize, ramimage, padimage, mkicon, the autodocs, the module charts, checks
 release/       what a release is made of, written by the packaging steps and kept out of the repository
-scripts/       the QEMU build and its patches, the pinned fetches (Wi-Fi libraries and firmware, fonts, certificates, icons, esp-emulator), a serial terminal
+scripts/       the QEMU build and its patches, the pinned fetches (Wi-Fi libraries and firmware, fonts, certificates, icons, esp-emulator, noVNC), a serial terminal, the display in a browser and pictures of it
 ```
 
 ## License

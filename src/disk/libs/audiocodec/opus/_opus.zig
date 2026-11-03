@@ -623,7 +623,7 @@ fn nextPacket(stream: *Stream, o: *Opus) bool {
     if (count == 0) return true;
     const start = _media.place(&stream.media, info.ticks);
     _media.advance(&stream.media, count);
-    const span = _media.window(&stream.media, start, count) orelse return true;
+    const span = _media.window(&stream.media, start, count, 0) orelse return true;
     o.ready_start = span.first;
     o.ready = span.last;
     return true;

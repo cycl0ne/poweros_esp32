@@ -232,6 +232,9 @@ pub fn BuildEasyRequestArgs(ib: *IntuitionBase, window: ?*Window, easy_struct: *
         .{ .tag = wn.WA_DepthGadget, .data = 1 },
         .{ .tag = wn.WA_Activate, .data = 1 },
         .{ .tag = wn.WA_RMBTrap, .data = 1 },
+        // It is what the program is waiting on: put away, it would wait
+        // for an answer nobody can give it.
+        .{ .tag = wn.WA_HideGadget, .data = 0 },
         .{ .tag = wn.WA_IDCMP, .data = idcmp | wn.IDCMP_GADGETUP | wn.IDCMP_VANILLAKEY },
         .{},
     }) orelse return failRequest(ib, request);

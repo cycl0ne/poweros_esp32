@@ -20,8 +20,9 @@
 //! volume, F - or a double-click on the picture - shows the film over the
 //! whole screen, which F, Esc or a click leaves again.
 //!
-//! **The sound sets the time.** It plays on a process of its own
-//! (sound.zig), which keeps audio.device fed; the window decodes the
+//! **The sound sets the time.** It plays on a process of its own (the
+//! module `filmsound`, which videocodec.datatype plays a film's sound
+//! with too), which keeps audio.device fed; the window decodes the
 //! pictures and shows each when what is heard has come to its time -
 //! audio.device's position, less the output's latency. A picture whose
 //! time is past by more than a frame is given back unshown, up to a few
@@ -30,10 +31,20 @@
 //! messages answered meanwhile. A film without sound - or whose sound has
 //! played out before its pictures - keeps time by the timer instead.
 //!
-//! **Moving** - the slider let go, the keys, the deck - goes to the key
-//! frame at or before the time asked for, where a decoder can start, and
-//! the clock starts there: the sound is halted, the film moved and the
-//! sound started again from the same place.
+//! **Moving** - the slider, the keys, the deck - goes to the key frame at
+//! or before the time asked for, where a decoder can start, and the clock
+//! starts there: the sound is halted, the film moved and the sound started
+//! again from the same place.
+//!
+//! **The slider dragged** shows the film as it is dragged (since 1.2): the
+//! film is held where the slider is taken hold of, and each move of the
+//! knob puts the picture of that place on the screen - the key frame
+//! there, silent, since the sound of a place passed through in a moment
+//! is noise. The slider says where it is on every mouse move, while a
+//! picture is a seek and a frame decoded, so one picture is shown per
+//! `scrub_wait` of quiet and the time beside the slider follows every
+//! move; the place it is let go on is always shown, and a film that was
+//! playing plays on from there.
 //!
 //! **The picture** is handed as it is to a video layer where the
 //! screen's display has one (rtg's `OpenVideoLayer`): the display's
@@ -96,7 +107,7 @@ const cv = sdk.gadgets.canvas;
 const strings = @import("strings");
 const Text = sdk.locale.Strings(strings);
 const Id = strings.Id;
-const Sound = @import("sound.zig").Sound;
+const Sound = @import("filmsound").Sound;
 const Whole = @import("whole.zig").Whole;
 const subtitles = @import("subtitles.zig");
 const Subtitles = subtitles.Subtitles;
@@ -105,8 +116,8 @@ const diskfont = sdk.diskfont;
 const DiskfontBase = sdk.interface.diskfont.DiskfontBase;
 
 pub const COMMAND_NAME = "Movie";
-const VERSION = "1.1";
-const DATE = "30.10.2026";
+const VERSION = "1.2";
+const DATE = "03.11.2026";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (" ++ DATE ++ ")\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while the window is active.
@@ -139,6 +150,8 @@ const menu_room = 6 + 1 + most_listed + 2 + most_listed + 1;
 
 /// The files the requester shows.
 const open_pattern = "#?.(mp4|m4v|mov|mkv)";
+/// What the sound's process is called, for Top to name it.
+const sound_process = "Movie sound";
 /// How far the keys and the deck's wind buttons move.
 const jump_seconds = 10;
 /// The volume's steps on the keys, and most.
@@ -155,6 +168,13 @@ const most_corrupt = 16;
 /// The window's picture at most this part of the screen, at the start.
 const start_part_num = 2;
 const start_part_den = 3;
+/// How long the picture shown while the slider is dragged stands before
+/// another is decoded, counted from the last one shown. A mouse move in
+/// between moves only the time beside the slider: a picture costs a seek
+/// and a key frame, which on a software decoder is tens of milliseconds,
+/// and a drag is not worth more of the machine than that.
+const scrub_wait: u64 = 150_000;
+
 /// What the time beside the slider needs room for.
 const room_short: [*:0]const u8 = "00:00 / 00:00";
 const room_long: [*:0]const u8 = "0:00:00 / 0:00:00";
@@ -300,6 +320,14 @@ const App = struct {
     long: bool = false,
     /// The slider is being dragged: the time follows it, not the film.
     dragging: bool = false,
+    /// While it is dragged: the film was playing and plays on when the
+    /// slider is let go, when the last picture of the drag was shown (0
+    /// before the first) - `scrub_wait` is counted from it - and the
+    /// second that picture is of, so that a knob held still is not
+    /// decoded again and again.
+    drag_played: bool = false,
+    drag_shown: u64 = 0,
+    drag_second: u32 = 0,
     /// The first press of a double-click on the picture.
     pressed: bool = false,
     pressed_seconds: u32 = 0,
@@ -374,7 +402,7 @@ const App = struct {
         var length: usize = 0;
         while (path[length] != 0 and length < app.name.len) : (length += 1) app.name[length] = path[length];
         app.name[length] = 0;
-        if (app.info.sound_codec != 0) app.sound = Sound.create(app.sys, app.dl, app.vcb, film, &app.info, app.level);
+        if (app.info.sound_codec != 0) app.sound = Sound.create(app.sys, app.dl, app.vcb, film, &app.info, app.level, sound_process);
         app.pictures_ended = false;
         app.fresh = true;
         app.dropped_in_row = 0;
@@ -474,6 +502,45 @@ const App = struct {
             // The picture follows the slider while the film stands.
             if (app.decodeNext()) app.showWaiting();
         } else app.arm(0);
+    }
+
+    /// The slider taken hold of: the film is held where it stands - the
+    /// sound stops, since what a drag passes through is noise - and plays
+    /// on from where the slider is let go if it was playing.
+    fn dragBegan(app: *App) void {
+        app.dragging = true;
+        app.drag_played = app.state == .playing;
+        app.drag_shown = 0;
+        // Where the film is: the knob starts there, so taking hold of it
+        // and letting it go again moves nothing.
+        app.drag_second = app.secondOf(app.now());
+        if (app.drag_played) app.pause();
+    }
+
+    /// While the slider is dragged: the film moved to `seconds` and the
+    /// picture there shown, so that the picture is where the knob is. One
+    /// in `scrub_wait` of quiet, since the slider says where it is on
+    /// every mouse move; the rest move the time beside it alone, and the
+    /// place the slider is let go on is shown by `gadgetUp` whatever this
+    /// dropped.
+    fn scrubTo(app: *App, seconds: u32) void {
+        if (app.film == null or app.info.seekable == 0) return;
+        if (seconds == app.drag_second) return;
+        if (app.drag_shown != 0 and app.uptime() - app.drag_shown < scrub_wait) return;
+        app.drag_second = seconds;
+        app.moveTo(@as(i64, seconds) * 1_000_000);
+        // After the work, not before it: a slow seek and decode space
+        // themselves out rather than queue up behind the mouse.
+        app.drag_shown = @max(app.uptime(), 1);
+    }
+
+    /// The slider let go, or the drag given up on: the film plays on if
+    /// it was playing when the knob was taken hold of.
+    fn dragEnded(app: *App) void {
+        const play_on = app.drag_played;
+        app.dragging = false;
+        app.drag_played = false;
+        if (play_on) app.play();
     }
 
     /// `by` seconds back or on from what is heard now.
@@ -795,9 +862,14 @@ const App = struct {
 
     /// The slider and the time brought to `time`, when it has moved on a
     /// second - and not while the slider is held.
+    /// A film time in whole seconds, as the slider counts them.
+    fn secondOf(_: *App, time: i64) u32 {
+        return @intCast(@min(@divTrunc(@max(time, 0), 1_000_000), 0xFFFF_FFFF));
+    }
+
     fn showTime(app: *App, time: i64) void {
         if (app.dragging) return;
-        const seconds: u32 = @intCast(@min(@divTrunc(@max(time, 0), 1_000_000), 0xFFFF_FFFF));
+        const seconds = app.secondOf(time);
         if (seconds == app.shown_second) return;
         app.shown_second = seconds;
         app.set(app.position, &.{ pair(sl.SLIDER_Level, seconds), .{} });
@@ -859,9 +931,12 @@ const App = struct {
         switch (id) {
             ID_DECK => app.decked(code),
             ID_POSITION => {
+                // The place it was let go on, whether or not the drag's
+                // own pictures kept up with it; and on again if it played.
                 app.dragging = false;
                 const level: i32 = @bitCast(code);
                 app.moveTo(@as(i64, @max(level, 0)) * 1_000_000);
+                app.dragEnded();
             },
             ID_VOLUME => app.volumeTo(code),
             ID_PICTURE => app.picturePressed(),
@@ -879,9 +954,11 @@ const App = struct {
         switch (id) {
             ID_POSITION => {
                 if (qualifier & ie.IEQUALIFIER_REPEAT == 0) return;
-                app.dragging = true;
+                if (!app.dragging) app.dragBegan();
                 _ = app.ib.GetAttr(sl.SLIDER_Level, app.position, &value);
-                app.writeClock(@intCast(@max(@as(i32, @bitCast(@as(u32, @truncate(value)))), 0)));
+                const seconds: u32 = @intCast(@max(@as(i32, @bitCast(@as(u32, @truncate(value)))), 0));
+                app.writeClock(seconds);
+                app.scrubTo(seconds);
             },
             ID_VOLUME => {
                 _ = app.ib.GetAttr(sl.SLIDER_Level, app.volume, &value);
@@ -947,7 +1024,7 @@ const App = struct {
         app.sound = null;
         _ = app.vcb.SelectVideoTrack(film, track, at);
         app.vcb.GetVideoStreamInfo(film, &app.info);
-        if (app.info.sound_codec != 0) app.sound = Sound.create(app.sys, app.dl, app.vcb, film, &app.info, app.level);
+        if (app.info.sound_codec != 0) app.sound = Sound.create(app.sys, app.dl, app.vcb, film, &app.info, app.level, sound_process);
         if (app.sound) |sound| sound.start(at, held);
         app.timer_clock = !app.soundKeepsTime();
         app.setClock(at);
@@ -1197,7 +1274,14 @@ const App = struct {
         while (true) {
             const word = app.ib.SendMessage(app.object, @ptrCast(&handle));
             if (word == wc.WMHI_LASTMSG) break;
-            switch (word & wc.WMHI_CLASSMASK) {
+            const what = word & wc.WMHI_CLASSMASK;
+            // A drag ends with the slider let go (WMHI_GADGETUP). Should
+            // the gadget ever go inactive without one - the window
+            // deactivated under it - the next thing the user does ends
+            // it, so the film is not left standing on a drag nobody
+            // finished.
+            if (app.dragging and what != wc.WMHI_IDCMPUPDATE and what != wc.WMHI_GADGETUP) app.dragEnded();
+            switch (what) {
                 wc.WMHI_CLOSEWINDOW => return false,
                 wc.WMHI_GADGETUP => app.gadgetUp(word & wc.WMHI_GADGETMASK, code),
                 wc.WMHI_MENUPICK => {
