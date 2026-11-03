@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.2 (03.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.3 (03.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -1039,6 +1039,80 @@ fn dynamicChecks(probe: *Probe) void {
     probe.checkEqual(in[0], out[0], "a bind without offsets shifts nothing");
 }
 
+// --- 1.36: the three device queries ------------------------------------------
+
+fn queryChecks(probe: *Probe) void {
+    const fb = probe.fb;
+    const device = probe.device.?;
+    defer probe.give();
+    var properties: facet.PhysicalDeviceProperties = undefined;
+    fb.GetPhysicalDeviceProperties(probe.physical, &properties);
+    const limits = &properties.limits;
+
+    // A sampled image: the largest, its levels and its layers, as the
+    // device's own limits say.
+    var shape: facet.ImageFormatProperties = undefined;
+    const sampled = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST;
+    if (fb.GetPhysicalDeviceImageFormatProperties(probe.physical, .b8g8r8a8_unorm, .@"2d", .optimal, sampled, 0, &shape) != .success) {
+        return probe.check(false, "the largest sampled image");
+    }
+    probe.check(true, "the largest sampled image");
+    probe.checkEqual(limits.max_image_dimension_2d, shape.max_extent.width, "as wide as the device's limit says");
+    probe.checkEqual(1, shape.max_extent.depth, "and one deep");
+    probe.checkEqual(limits.max_image_array_layers, shape.max_array_layers, "the layers of an array");
+    probe.checkEqual(1, shape.sample_counts, "one sample a pixel");
+    probe.check(shape.max_mip_levels > 1, "the levels of the largest");
+    probe.check(shape.max_resource_size != 0, "the bytes an image may take");
+
+    // An attachment is one level and one layer; a 3D image is as deep as
+    // it is wide.
+    if (fb.GetPhysicalDeviceImageFormatProperties(probe.physical, .b8g8r8a8_unorm, .@"2d", .linear, facet.IMAGE_USAGE_COLOR_ATTACHMENT, 0, &shape) != .success) {
+        return probe.check(false, "the largest colour attachment");
+    }
+    probe.checkEqual(1, shape.max_mip_levels, "an attachment has one level");
+    probe.checkEqual(1, shape.max_array_layers, "and one layer");
+    const widest = shape.max_extent.width;
+    if (fb.GetPhysicalDeviceImageFormatProperties(probe.physical, .b8g8r8a8_unorm, .@"3d", .optimal, sampled, 0, &shape) != .success) {
+        return probe.check(false, "the largest 3D image");
+    }
+    probe.checkEqual(limits.max_image_dimension_3d, shape.max_extent.depth, "a 3D image is as deep as the limit says");
+
+    // Shapes there is no image of at all.
+    probe.check(fb.GetPhysicalDeviceImageFormatProperties(probe.physical, .d16_unorm, .@"2d", .linear, facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT, 0, &shape) == .error_format_not_supported, "a depth image in rows refused");
+    probe.checkEqual(0, shape.max_mip_levels, "and nothing written for it");
+    probe.check(fb.GetPhysicalDeviceImageFormatProperties(probe.physical, .b8g8r8a8_unorm, .@"1d", .optimal, sampled, 0, &shape) == .error_format_not_supported, "a 1D image refused");
+    probe.check(fb.GetPhysicalDeviceImageFormatProperties(probe.physical, .b8g8r8a8_unorm, .@"2d", .optimal, sampled | facet.IMAGE_USAGE_COLOR_ATTACHMENT, 0, &shape) == .error_format_not_supported, "an attachment that is sampled too refused");
+
+    // What the query says is what CreateImage does.
+    var image: ?*facet.Image = null;
+    const made = fb.CreateImage(device, &.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = widest, .height = 1 }, .tiling = .linear, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, &image);
+    probe.check(made == .success, "an image of the widest extent made");
+    fb.DestroyImage(device, image);
+    image = null;
+    const over = fb.CreateImage(device, &.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = widest + 1, .height = 1 }, .tiling = .linear, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, &image);
+    probe.check(over == .error_format_not_supported and image == null, "one texel wider refused");
+
+    // The render area's granularity is the device's tile.
+    const pass = passKeeping(probe, .clear, .clear, .dont_care) orelse return probe.check(false, "a pass to ask about");
+    var granularity: facet.Extent2D = undefined;
+    fb.GetRenderAreaGranularity(device, pass, &granularity);
+    probe.checkEqual(limits.tile_size, granularity.width, "the render area's granularity is the tile");
+    probe.checkEqual(limits.tile_size, granularity.height, "square");
+
+    // What a block has behind it: all of a plain one, none of a lazily
+    // allocated one.
+    var needs = facet.MemoryRequirements{ .size = 4096, .alignment = 64, .memory_type_bits = 0xFFFF_FFFF };
+    const block = probe.block(needs, facet.MEMORY_PROPERTY_HOST_VISIBLE) orelse return probe.check(false, "a block of memory");
+    var bytes: u64 = 0xFFFF;
+    fb.GetDeviceMemoryCommitment(device, block, &bytes);
+    probe.checkEqual(4096, bytes, "a plain block is there whole");
+    needs.size = 4 << 20;
+    if (probe.block(needs, facet.MEMORY_PROPERTY_LAZILY_ALLOCATED)) |lazy| {
+        fb.GetDeviceMemoryCommitment(device, lazy, &bytes);
+        probe.checkEqual(0, bytes, "a lazily allocated block has nothing behind it");
+    }
+}
+
 fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical: *facet.PhysicalDevice, quiet: bool) struct { u32, u32 } {
     var properties: facet.PhysicalDeviceProperties = undefined;
     fb.GetPhysicalDeviceProperties(physical, &properties);
@@ -1054,6 +1128,7 @@ fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical
     blendChecks(&probe);
     biasChecks(&probe);
     dynamicChecks(&probe);
+    queryChecks(&probe);
     return .{ probe.passed, probe.failed };
 }
 

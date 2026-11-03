@@ -186,4 +186,14 @@ pub const LIBRARY_VERSION = 1;
 /// CreateDescriptorSetLayout refuses more. Every device has them: a
 /// dynamic descriptor is a pointer and a range, and what reads it is a
 /// function of the program's.
-pub const LIBRARY_REVISION = 35;
+/// 36: the three device queries Vulkan has and this library had not:
+/// GetPhysicalDeviceImageFormatProperties, which answers the largest
+/// image of a format, type, tiling and usage - and refuses a shape there
+/// is no image of at all - by asking CreateImage's own rules
+/// (`_image.shapeFor`), so the two cannot drift apart;
+/// GetRenderAreaGranularity, which is the device's tile, the frame being
+/// drawn tile by tile either way; and GetDeviceMemoryCommitment, which is
+/// a block's whole size, or 0 for the lazily allocated type, whose
+/// transient attachments live in the tiles and never in memory. Nothing
+/// of what the library does changes: these only say what it already did.
+pub const LIBRARY_REVISION = 36;

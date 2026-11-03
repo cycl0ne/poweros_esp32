@@ -139,6 +139,9 @@ pub const LVO = struct {
     pub const CreateBufferView = libraries.lvo(122);
     pub const DestroyBufferView = libraries.lvo(123);
     pub const CmdSetDepthBias = libraries.lvo(124);
+    pub const GetPhysicalDeviceImageFormatProperties = libraries.lvo(125);
+    pub const GetRenderAreaGranularity = libraries.lvo(126);
+    pub const GetDeviceMemoryCommitment = libraries.lvo(127);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -265,6 +268,9 @@ pub const Fn = struct {
     pub const CreateBufferView = *const fn (*FacetBase, *facet.Device, *const facet.BufferViewCreateInfo, *?*facet.BufferView) callconv(.c) facet.Result;
     pub const DestroyBufferView = *const fn (*FacetBase, *facet.Device, ?*facet.BufferView) callconv(.c) void;
     pub const CmdSetDepthBias = *const fn (*FacetBase, *facet.CommandBuffer, f32, f32, f32) callconv(.c) void;
+    pub const GetPhysicalDeviceImageFormatProperties = *const fn (*FacetBase, *facet.PhysicalDevice, facet.Format, facet.ImageType, facet.ImageTiling, u32, u32, *facet.ImageFormatProperties) callconv(.c) facet.Result;
+    pub const GetRenderAreaGranularity = *const fn (*FacetBase, *facet.Device, *facet.RenderPass, *facet.Extent2D) callconv(.c) void;
+    pub const GetDeviceMemoryCommitment = *const fn (*FacetBase, *facet.Device, *facet.DeviceMemory, *u64) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -894,5 +900,22 @@ pub const FacetBase = opaque {
     /// Recorded: what the triangles of the draws after it add to their depth.
     pub fn CmdSetDepthBias(self: *FacetBase, buffer: *facet.CommandBuffer, constant: f32, clamp: f32, slope: f32) void {
         return libraries.call(self, LVO.CmdSetDepthBias, Fn.CmdSetDepthBias, .{ buffer, constant, clamp, slope });
+    }
+
+    /// The largest image of a format, type, tiling and usage, into
+    /// `properties`; `error_format_not_supported` where there is no such
+    /// image at all.
+    pub fn GetPhysicalDeviceImageFormatProperties(self: *FacetBase, physical: *facet.PhysicalDevice, format: facet.Format, image_type: facet.ImageType, tiling: facet.ImageTiling, usage: u32, flags: u32, properties: *facet.ImageFormatProperties) facet.Result {
+        return libraries.call(self, LVO.GetPhysicalDeviceImageFormatProperties, Fn.GetPhysicalDeviceImageFormatProperties, .{ physical, format, image_type, tiling, usage, flags, properties });
+    }
+
+    /// The render area the device draws whole, into `granularity`.
+    pub fn GetRenderAreaGranularity(self: *FacetBase, device: *facet.Device, pass: *facet.RenderPass, granularity: *facet.Extent2D) void {
+        return libraries.call(self, LVO.GetRenderAreaGranularity, Fn.GetRenderAreaGranularity, .{ device, pass, granularity });
+    }
+
+    /// The bytes of a block that are really there, into `bytes`.
+    pub fn GetDeviceMemoryCommitment(self: *FacetBase, device: *facet.Device, memory: *facet.DeviceMemory, bytes: *u64) void {
+        return libraries.call(self, LVO.GetDeviceMemoryCommitment, Fn.GetDeviceMemoryCommitment, .{ device, memory, bytes });
     }
 };

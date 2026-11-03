@@ -107,12 +107,14 @@ Generated from the source by `./zig build autodoc`.
 - [FreeDescriptorSets](#freedescriptorsets) - `count` descriptor sets given back to the pool they came from.
 - [FreeMemory](#freememory) - The block given back.
 - [GetBufferMemoryRequirements](#getbuffermemoryrequirements) - What the buffer needs of the memory it is bound into.
+- [GetDeviceMemoryCommitment](#getdevicememorycommitment) - How many bytes of a block the device has really put behind it.
 - [GetDeviceQueue](#getdevicequeue) - A queue the device was made with.
 - [GetFenceStatus](#getfencestatus) - Whether a fence is signalled, without waiting.
 - [GetImageMemoryRequirements](#getimagememoryrequirements) - What the image needs of the memory it is bound into.
 - [GetImageSubresourceLayout](#getimagesubresourcelayout) - Where a level of an image lies in its memory, and how its rows do.
 - [GetPhysicalDeviceFeatures](#getphysicaldevicefeatures) - What a physical device does, so that a program may ask before it is refused.
 - [GetPhysicalDeviceFormatProperties](#getphysicaldeviceformatproperties) - What the device does with a format, in each tiling and in a buffer.
+- [GetPhysicalDeviceImageFormatProperties](#getphysicaldeviceimageformatproperties) - The largest image of a format, type, tiling and usage, or `error_format_not_supported` where there is no such image at all.
 - [GetPhysicalDeviceMemoryProperties](#getphysicaldevicememoryproperties) - The physical device's memory types and heaps.
 - [GetPhysicalDeviceProperties](#getphysicaldeviceproperties) - What a physical device is, and the most it does.
 - [GetPhysicalDeviceQueueFamilyProperties](#getphysicaldevicequeuefamilyproperties) - The physical device's queue families.
@@ -121,6 +123,7 @@ Generated from the source by `./zig build autodoc`.
 - [GetPhysicalDeviceSurfacePresentModes](#getphysicaldevicesurfacepresentmodes) - The present modes of the surface into `modes`, at most `count.*` of them, and how many there are into `count`; null for `modes` counts alone.
 - [GetPhysicalDeviceSurfaceSupport](#getphysicaldevicesurfacesupport) - Whether queue family `family` can present to the surface, into `supported`.
 - [GetQueryPoolResults](#getquerypoolresults) - What `count` queries from `first` counted, written into `data`.
+- [GetRenderAreaGranularity](#getrenderareagranularity) - The granularity of a render area on this device: the tile it draws in.
 - [GetSwapchainImages](#getswapchainimages) - The swapchain's images into `images`, at most `count.*` of them, and how many there are into `count`; null for `images` counts alone.
 - [MapMemory](#mapmemory) - The address of a block's memory, from an offset on.
 - [QueuePresent](#queuepresent) - Images handed to the queue to be shown, once the semaphores are signalled.
@@ -6388,6 +6391,70 @@ var needs: facet.MemoryRequirements = undefined;
 fb.GetBufferMemoryRequirements(device, vertices, &needs);
 ```
 
+## GetDeviceMemoryCommitment
+
+How many bytes of a block the device has really put behind it.
+
+**SYNOPSIS**
+
+```zig
+fn GetDeviceMemoryCommitment(base: *FacetBase, device: *facet.Device, memory: *facet.DeviceMemory, bytes: *u64) void
+```
+
+**SINCE**
+
+1.36. LVO -512.
+
+**INPUTS**
+
+- `device` - the device the block was allocated on.
+- `memory` - a block AllocateMemory gave.
+- `bytes` - where the answer is written.
+
+**BEHAVIOR**
+
+A block of the lazily allocated type has nothing behind it at all, so
+0 is its answer however much was asked for: the transient attachments
+bound into it live in the device's tiles and never in memory. Every
+other block is whole from the moment it is allocated, so its answer is
+its `allocation_size`, as AllocateMemory was given it.
+
+**RESULT**
+
+None.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+`bytes` is the caller's.
+
+**NOTES**
+
+Vulkan asks this of lazily allocated memory alone, and leaves the rest
+undefined; here every block answers.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`AllocateMemory`, `GetPhysicalDeviceMemoryProperties`, `CreateImage`
+
+**EXAMPLES**
+
+```zig
+var bytes: u64 = 0;
+fb.GetDeviceMemoryCommitment(device, block.?, &bytes);
+// 0 for the lazily allocated type: nothing is behind it.
+```
+
 ## GetDeviceQueue
 
 A queue the device was made with.
@@ -6783,6 +6850,97 @@ None known.
 var properties: facet.FormatProperties = undefined;
 fb.GetPhysicalDeviceFormatProperties(physical, .r5g6b5_unorm_pack16, &properties);
 const can_sample = properties.optimal_tiling_features & facet.FORMAT_FEATURE_SAMPLED_IMAGE != 0;
+```
+
+## GetPhysicalDeviceImageFormatProperties
+
+The largest image of a format, type, tiling and usage, or `error_format_not_supported` where there is no such image at all.
+
+**SYNOPSIS**
+
+```zig
+fn GetPhysicalDeviceImageFormatProperties(base: *FacetBase, physical: *facet.PhysicalDevice, format: facet.Format, image_type: facet.ImageType, tiling: facet.ImageTiling, usage: u32, flags: u32, properties: *facet.ImageFormatProperties) facet.Result
+```
+
+**SINCE**
+
+1.36. LVO -504.
+
+**INPUTS**
+
+- `physical` - a physical device EnumeratePhysicalDevices listed.
+- `format` - the format the image would be made with.
+- `image_type` - `2d` or `3d`; `1d` has no images.
+- `tiling` - `optimal` or `linear`.
+- `usage` - the IMAGE_USAGE_* bits it would be made with.
+- `flags` - the IMAGE_CREATE_* flags, CUBE_COMPATIBLE among them.
+- `properties` - where the answer is written; zeroed where there is
+  no such image.
+
+**RESULT**
+
+`success`, or `error_format_not_supported` where CreateImage would
+refuse every image of that shape, whatever its extent.
+
+**BEHAVIOR**
+
+The question is asked of the same rules CreateImage keeps, so an
+extent inside what is answered here is made and one outside it is
+refused - with one exception: an image of the largest extent and the
+most layers at once may want more memory than a heap holds, which
+`max_resource_size` says and AllocateMemory finds out.
+
+What is answered, from the device's own limits
+(GetPhysicalDeviceProperties):
+- `max_extent`: `max_image_dimension_2d` square for a 2D image -
+  8192 on this machine's devices - `max_image_dimension_3d` cubed for
+  a 3D one, 256, and 1 deep for every other.
+- `max_mip_levels`: the levels of `max_extent` where the shape takes
+  levels - a sampled image or one written through - and 1 where it
+  does not, which is an attachment, rows, a depth image and a 3D one.
+- `max_array_layers`: `max_image_array_layers` for a sampled image,
+  256, and 1 for every other shape, layers being for sampling.
+- `sample_counts`: 1, one sample a pixel.
+- `max_resource_size`: the largest heap's bytes.
+
+An image to be sampled has sides that are powers of two, which this
+does not say: it is in CreateImage's documentation.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+`properties` is the caller's.
+
+**NOTES**
+
+A format may be sampled and drawn into without one image being both:
+the two lie differently in memory, so the usages are asked about one
+at a time, as CreateImage takes them.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateImage`, `GetPhysicalDeviceFormatProperties`, `GetPhysicalDeviceProperties`
+
+**EXAMPLES**
+
+```zig
+var properties: facet.ImageFormatProperties = undefined;
+const answer = fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"2d", .optimal, facet.IMAGE_USAGE_SAMPLED, 0, &properties);
+if (answer == .success) {
+    // 8192 x 8192, 14 levels, 256 layers.
+    const side = properties.max_extent.width;
+    _ = side;
+}
 ```
 
 ## GetPhysicalDeviceMemoryProperties
@@ -7319,6 +7477,77 @@ None known.
 ```zig
 var samples: u64 = 0;
 _ = fb.GetQueryPoolResults(device, counted, 0, 1, @sizeOf(u64), &samples, @sizeOf(u64), facet.QUERY_RESULT_64 | facet.QUERY_RESULT_WAIT);
+```
+
+## GetRenderAreaGranularity
+
+The granularity of a render area on this device: the tile it draws in.
+
+**SYNOPSIS**
+
+```zig
+fn GetRenderAreaGranularity(base: *FacetBase, device: *facet.Device, pass: *facet.RenderPass, granularity: *facet.Extent2D) void
+```
+
+**SINCE**
+
+1.36. LVO -508.
+
+**INPUTS**
+
+- `device` - the device the pass is drawn on.
+- `pass` - a render pass. Every pass of a device has the same answer.
+- `granularity` - where the width and the height are written.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+A render area whose offset is a multiple of this and whose extent is
+too - or which reaches the framebuffer's edge - costs nothing that a
+whole-framebuffer area would not: the device draws in tiles of this
+size, and a tile the area touches at all is drawn. An area inside one
+tile is as dear as that whole tile.
+
+It is the device's tile, `PhysicalDeviceLimits.tile_size` square: the
+cores' rasterizer and the V3D both draw a frame tile by tile. The
+render pass makes no difference to it, and is asked for because
+Vulkan asks for it.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+`granularity` is the caller's.
+
+**NOTES**
+
+What a render area narrower than the framebuffer does save is the
+pixels drawn, and the tiles it does not touch at all.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CmdBeginRenderPass`, `GetPhysicalDeviceProperties`
+
+**EXAMPLES**
+
+```zig
+var granularity: facet.Extent2D = undefined;
+fb.GetRenderAreaGranularity(device, pass.?, &granularity);
+// The area rounded out to whole tiles.
+const left = x / granularity.width * granularity.width;
+_ = left;
 ```
 
 ## GetSwapchainImages

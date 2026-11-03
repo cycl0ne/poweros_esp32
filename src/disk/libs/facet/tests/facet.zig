@@ -430,6 +430,92 @@ test "a copy into a texture: each texel where the texture layout keeps it, as 0x
 const _stream = @import("../command/_stream.zig");
 const _command = @import("../command/_command.zig");
 
+test "the three device queries: the largest image of a shape, the render area's granularity, and what a block has behind it" {
+    var rig = try Rig.up();
+    defer rig.down() catch |err| std.debug.panic("{}", .{err});
+    const instance, const physical = try rig.instance();
+    defer rig.fb.DestroyInstance(instance);
+    const device = try rig.device(physical);
+    defer rig.fb.DestroyDevice(device);
+    const fb = rig.fb;
+
+    // A sampled image: the levels and the layers of the largest.
+    var properties: facet.ImageFormatProperties = undefined;
+    const sampled = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST;
+    try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"2d", .optimal, sampled, 0, &properties));
+    try testing.expectEqual(@as(u32, 8192), properties.max_extent.width);
+    try testing.expectEqual(@as(u32, 8192), properties.max_extent.height);
+    try testing.expectEqual(@as(u32, 1), properties.max_extent.depth);
+    try testing.expectEqual(@as(u32, 14), properties.max_mip_levels);
+    try testing.expectEqual(@as(u32, 256), properties.max_array_layers);
+    try testing.expectEqual(@as(u32, 1), properties.sample_counts);
+    try testing.expect(properties.max_resource_size != 0);
+
+    // A colour attachment is one level and one layer, in either tiling.
+    try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"2d", .linear, facet.IMAGE_USAGE_COLOR_ATTACHMENT, 0, &properties));
+    try testing.expectEqual(@as(u32, 1), properties.max_mip_levels);
+    try testing.expectEqual(@as(u32, 1), properties.max_array_layers);
+    // A depth image, the same way; and a 3D one is 256 cubed.
+    try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, .d16_unorm, .@"2d", .optimal, facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT, 0, &properties));
+    try testing.expectEqual(@as(u32, 1), properties.max_mip_levels);
+    try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"3d", .optimal, sampled, 0, &properties));
+    try testing.expectEqual(@as(u32, 256), properties.max_extent.depth);
+    try testing.expectEqual(@as(u32, 1), properties.max_mip_levels);
+    try testing.expectEqual(@as(u32, 1), properties.max_array_layers);
+    // A cube's six layers are there to be had.
+    try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"2d", .optimal, sampled, facet.IMAGE_CREATE_CUBE_COMPATIBLE, &properties));
+    try testing.expectEqual(@as(u32, 256), properties.max_array_layers);
+
+    // Shapes there is no image of at all, and nothing written for them.
+    properties = .{ .max_mip_levels = 9 };
+    try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(physical, .d16_unorm, .@"2d", .linear, facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT, 0, &properties));
+    try testing.expectEqual(@as(u32, 0), properties.max_mip_levels);
+    try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"1d", .optimal, sampled, 0, &properties));
+    // A colour attachment that is sampled as well is no image here.
+    try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"2d", .optimal, sampled | facet.IMAGE_USAGE_COLOR_ATTACHMENT, 0, &properties));
+    // And a format nothing is made of.
+    try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(physical, .undefined, .@"2d", .optimal, sampled, 0, &properties));
+
+    // What the query answers is what CreateImage does: the largest
+    // extent of a shape is made, and one texel over it is refused.
+    var image: ?*facet.Image = null;
+    try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"2d", .linear, facet.IMAGE_USAGE_COLOR_ATTACHMENT, 0, &properties));
+    const widest = properties.max_extent.width;
+    try testing.expectEqual(facet.Result.success, fb.CreateImage(device, &.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = widest, .height = 1 }, .tiling = .linear, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, &image));
+    fb.DestroyImage(device, image);
+    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = widest + 1, .height = 1 }, .tiling = .linear, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, &image));
+    try testing.expect(image == null);
+
+    // The render area's granularity is the device's tile, whatever the
+    // pass.
+    const attachment = facet.AttachmentDescription{ .format = .b8g8r8a8_unorm, .store_op = .store, .final_layout = .color_attachment_optimal };
+    const color = facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal };
+    const subpass = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&color) };
+    var pass: ?*facet.RenderPass = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 1, .attachments = @ptrCast(&attachment), .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &pass));
+    defer fb.DestroyRenderPass(device, pass);
+    var device_properties: facet.PhysicalDeviceProperties = undefined;
+    fb.GetPhysicalDeviceProperties(physical, &device_properties);
+    var granularity: facet.Extent2D = undefined;
+    fb.GetRenderAreaGranularity(device, pass.?, &granularity);
+    try testing.expectEqual(device_properties.limits.tile_size, granularity.width);
+    try testing.expectEqual(device_properties.limits.tile_size, granularity.height);
+    try testing.expect(granularity.width != 0);
+
+    // What a block has behind it: all of a plain one, none of a lazily
+    // allocated one.
+    const block = try allocate(&rig, device, 4096);
+    var bytes: u64 = 0xFFFF;
+    fb.GetDeviceMemoryCommitment(device, block, &bytes);
+    try testing.expectEqual(@as(u64, 4096), bytes);
+    var lazy: ?*facet.DeviceMemory = null;
+    try testing.expectEqual(facet.Result.success, fb.AllocateMemory(device, &.{ .allocation_size = 4 << 20, .memory_type_index = 2 }, &lazy));
+    fb.GetDeviceMemoryCommitment(device, lazy.?, &bytes);
+    try testing.expectEqual(@as(u64, 0), bytes);
+    fb.FreeMemory(device, lazy);
+    fb.FreeMemory(device, block);
+}
+
 test "a recording: its commands in order over its chunks; a reset keeps them for the next, or gives them back" {
     var rig = try Rig.up();
     defer rig.down() catch |err| std.debug.panic("{}", .{err});

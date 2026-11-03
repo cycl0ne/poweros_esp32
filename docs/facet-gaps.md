@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.35**, so that a program need not find out by failing. It covers the API.
+1.36**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -22,7 +22,7 @@ BCM2712's V3D, which runs only a fixed handful of fragment forms
 
 | Where | What |
 |---|---|
-| `sdk/fd/facet_lib.fd` | The whole jump table, one line a function: 121 entries |
+| `sdk/fd/facet_lib.fd` | The whole jump table, one line a function: 124 entries |
 | `sdk/libs/facet/facet.zig` | The structures and enumerations a program passes |
 | `sdk/libs/facet/shader.zig` | Shaders as functions: the stages, their inputs, the fixed forms |
 | `sdk/libs/facet/texture.zig` | How a texture is kept and sampled, by a fixed form and through a sampler |
@@ -30,7 +30,7 @@ BCM2712's V3D, which runs only a fixed handful of fragment forms
 | `src/disk/libs/facet/driver/cpu/` | The cores' driver: the tiled rasterizer |
 | `src/disk/libs/facet/driver/v3d/` | The V3D's driver, a module in `LIBS:facet/` |
 
-Of Vulkan 1.0's roughly 137 core entry points, facet has 121. Two of the
+Of Vulkan 1.0's roughly 137 core entry points, facet has 124. Two of the
 absent ones, `GetInstanceProcAddr` and `GetDeviceProcAddr`, do not apply to
 a library called through an LVO table.
 
@@ -295,17 +295,26 @@ is made without it.
 
 ## Device queries that are absent
 
-- `GetPhysicalDeviceImageFormatProperties`: what an image may be is in
-  `CreateImage`'s documentation, and `error_format_not_supported` says when
-  it may not.
-- `GetRenderAreaGranularity`.
+Since 1.36 the three that were missing are there:
+`GetPhysicalDeviceImageFormatProperties` answers the largest image of a
+format, type, tiling and usage - and `error_format_not_supported` for a
+shape there is no image of at all - by asking the rules `CreateImage`
+keeps, so the two cannot drift apart; `GetRenderAreaGranularity` is the
+device's tile; and `GetDeviceMemoryCommitment` is a block's whole size, or
+0 for the lazily allocated type. What is left:
+
 - `FlushMappedMemoryRanges` and `InvalidateMappedMemoryRanges`: no
   non-coherent host memory is offered, so there is nothing to flush.
-- `GetDeviceMemoryCommitment`.
 - `EnumerateInstanceExtensionProperties` and the other three: there is no
   extension and no layer mechanism. Surfaces and swapchains are simply part
   of the table, not behind an extension, and `CreateScreenSurface` and
   `CreateWindowSurface` take the place of a platform's own.
+
+`GetPhysicalDeviceImageFormatProperties` says nothing about the sides of a
+sampled image being powers of two, nor about the memory an image of the
+largest extent and the most layers at once would want: the first is in
+`CreateImage`'s documentation and the second is `max_resource_size` and
+what `AllocateMemory` answers.
 
 ## In the structures, refused by the implementation
 

@@ -133,6 +133,9 @@ const CmdClearDepthStencilImage = @import("command/cmdcleardepthstencilimage.zig
 const CreateBufferView = @import("buffer/createbufferview.zig").CreateBufferView;
 const DestroyBufferView = @import("buffer/destroybufferview.zig").DestroyBufferView;
 const CmdSetDepthBias = @import("command/cmdsetdepthbias.zig").CmdSetDepthBias;
+const GetPhysicalDeviceImageFormatProperties = @import("instance/getphysicaldeviceimageformatproperties.zig").GetPhysicalDeviceImageFormatProperties;
+const GetRenderAreaGranularity = @import("render/getrenderareagranularity.zig").GetRenderAreaGranularity;
+const GetDeviceMemoryCommitment = @import("memory/getdevicememorycommitment.zig").GetDeviceMemoryCommitment;
 
 /// facet.library's interface, as the SDK generates it from
 /// sdk/fd/facet_lib.fd.
@@ -280,6 +283,9 @@ const contract_files = [_][]const u8{
     @embedFile("buffer/createbufferview.zig"),
     @embedFile("buffer/destroybufferview.zig"),
     @embedFile("command/cmdsetdepthbias.zig"),
+    @embedFile("instance/getphysicaldeviceimageformatproperties.zig"),
+    @embedFile("render/getrenderareagranularity.zig"),
+    @embedFile("memory/getdevicememorycommitment.zig"),
 };
 
 fn lvoCreateInstance(base: *FacetBase, info: *const facet.InstanceCreateInfo, instance: *?*facet.Instance) callconv(.c) facet.Result {
@@ -456,6 +462,18 @@ fn lvoDestroyBufferView(base: *FacetBase, device: *facet.Device, view: ?*facet.B
 
 fn lvoCmdSetDepthBias(base: *FacetBase, buffer: *facet.CommandBuffer, constant: f32, clamp: f32, slope: f32) callconv(.c) void {
     return CmdSetDepthBias(base, buffer, constant, clamp, slope);
+}
+
+fn lvoGetPhysicalDeviceImageFormatProperties(base: *FacetBase, physical: *facet.PhysicalDevice, format: facet.Format, image_type: facet.ImageType, tiling: facet.ImageTiling, usage: u32, flags: u32, properties: *facet.ImageFormatProperties) callconv(.c) facet.Result {
+    return GetPhysicalDeviceImageFormatProperties(base, physical, format, image_type, tiling, usage, flags, properties);
+}
+
+fn lvoGetRenderAreaGranularity(base: *FacetBase, device: *facet.Device, pass: *facet.RenderPass, granularity: *facet.Extent2D) callconv(.c) void {
+    return GetRenderAreaGranularity(base, device, pass, granularity);
+}
+
+fn lvoGetDeviceMemoryCommitment(base: *FacetBase, device: *facet.Device, memory: *facet.DeviceMemory, bytes: *u64) callconv(.c) void {
+    return GetDeviceMemoryCommitment(base, device, memory, bytes);
 }
 
 fn lvoCmdCopyBuffer(base: *FacetBase, buffer: *facet.CommandBuffer, source: *facet.Buffer, destination: *facet.Buffer, region_count: u32, regions: [*]const facet.BufferCopy) callconv(.c) void {
@@ -791,6 +809,9 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoCreateBufferView),
     vec(lvoDestroyBufferView),
     vec(lvoCmdSetDepthBias),
+    vec(lvoGetPhysicalDeviceImageFormatProperties),
+    vec(lvoGetRenderAreaGranularity),
+    vec(lvoGetDeviceMemoryCommitment),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

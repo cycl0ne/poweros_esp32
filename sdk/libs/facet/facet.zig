@@ -356,6 +356,23 @@ pub const Extent3D = extern struct {
     depth: u32 = 1,
 };
 
+/// What GetPhysicalDeviceImageFormatProperties answers: the largest image
+/// of the format, type, tiling and usage it was asked about.
+pub const ImageFormatProperties = extern struct {
+    /// The largest extent, in texels. `depth` is 1 but for a 3D image.
+    max_extent: Extent3D = .{ .depth = 1 },
+    /// The levels an image of `max_extent` may have, and the layers of an
+    /// array; 1 for a shape that takes no levels or no layers.
+    max_mip_levels: u32 = 0,
+    max_array_layers: u32 = 0,
+    /// The sample counts as bits, as Vulkan has them: always 1, one
+    /// sample a pixel, there being no multisampling here.
+    sample_counts: u32 = 0,
+    /// The bytes an image of this shape may take, which is the largest
+    /// heap's size.
+    max_resource_size: u64 align(4) = 0,
+};
+
 /// A width and a height.
 pub const Extent2D = extern struct {
     width: u32 = 0,

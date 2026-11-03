@@ -153,6 +153,15 @@ pub fn textureFormat(format: facet.Format) ?texture.Format {
 /// An image as `info` asks for it, not yet bound; null for one
 /// facet.library does not make.
 pub fn shapeOf(device: *Device, info: *const facet.ImageCreateInfo) ?Image {
+    var made = shapeFor(device.physical, info) orelse return null;
+    made.device = device;
+    return made;
+}
+
+/// The same, for a physical device that no Device was made from yet: what
+/// GetPhysicalDeviceImageFormatProperties asks of a shape. The image's
+/// `device` is not filled in.
+pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCreateInfo) ?Image {
     const extent = info.extent;
     const volume = info.image_type == .@"3d";
     if ((info.image_type != .@"2d" and !volume) or info.samples != 1) return null;
@@ -170,7 +179,7 @@ pub fn shapeOf(device: *Device, info: *const facet.ImageCreateInfo) ?Image {
     const pixel = bytesOf(kept_format);
     if (pixel == 0) return null;
     var image = Image{
-        .device = device,
+        .device = undefined,
         .format = kept_format,
         .given_format = info.format,
         .layers = layers,
@@ -205,7 +214,7 @@ pub fn shapeOf(device: *Device, info: *const facet.ImageCreateInfo) ?Image {
         image.kind = .texture;
         var one_layer: u64 = texture.Texture.bytes(kept, extent.width, extent.height, info.mip_levels) catch return null;
         one_layer = std.mem.alignForward(u64, one_layer, row_alignment);
-        if (device.physical.ops.texture_memory) |own| {
+        if (physical.ops.texture_memory) |own| {
             const memory = own(kept_format, extent.width, extent.height, info.mip_levels);
             one_layer = std.mem.alignForward(u64, memory.bytes, memory.alignment);
             image.alignment = memory.alignment;
