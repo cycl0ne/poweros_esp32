@@ -469,7 +469,7 @@ test "dock.prefs: a line read and written back; what it does not take is told" {
     const ub = try utilityUp();
     defer kexec.deinit();
     var settings: prefs.dock.Settings = .{};
-    try testing.expect(prefs.dock.parse(ub, "edge=left ICONSIZE=32 LABELS=always HIDE=auto KEEPCLEAR=no MAGNIFY=64", &settings) == null);
+    try testing.expect(prefs.dock.parse(ub, "edge=left ICONSIZE=32 LABELS=always HIDE=auto KEEPCLEAR=no MAGNIFY=64 WINDOWS=no", &settings) == null);
     try testing.expectEqual(prefs.dock.Edge.left, settings.edge);
     try testing.expect(settings.upright());
     try testing.expectEqual(@as(u32, 32), settings.icon_size);
@@ -477,10 +477,11 @@ test "dock.prefs: a line read and written back; what it does not take is told" {
     try testing.expect(settings.hide);
     try testing.expect(!settings.keep_clear);
     try testing.expectEqual(@as(u32, 64), settings.magnify);
+    try testing.expect(!settings.windows);
 
     var text: [96]u8 = undefined;
     const written = text[0..prefs.dock.write(&settings, &text)];
-    try testing.expectEqualStrings("EDGE=LEFT ICONSIZE=32 LABELS=ALWAYS HIDE=AUTO KEEPCLEAR=NO MAGNIFY=64", written);
+    try testing.expectEqualStrings("EDGE=LEFT ICONSIZE=32 LABELS=ALWAYS HIDE=AUTO KEEPCLEAR=NO MAGNIFY=64 WINDOWS=NO", written);
     var again: prefs.dock.Settings = .{};
     try testing.expect(prefs.dock.parse(ub, written, &again) == null);
     try testing.expectEqual(settings, again);
@@ -506,6 +507,7 @@ test "dock.prefs: a line read and written back; what it does not take is told" {
     try testing.expect(prefs.dock.parse(ub, "HIDE=YES", &bad) != null);
     try testing.expect(prefs.dock.parse(ub, "KEEPCLEAR=MAYBE", &bad) != null);
     try testing.expect(prefs.dock.parse(ub, "MAGNIFY=200", &bad) != null);
+    try testing.expect(prefs.dock.parse(ub, "WINDOWS=SOME", &bad) != null);
     try testing.expect(prefs.dock.parse(ub, "WIDTH=3", &bad) != null);
     try testing.expectEqualStrings(prefs.Pairs.quote_not_closed, std.mem.span(prefs.dock.parse(ub, "EDGE=\"LEFT", &bad).?));
     try utilityDown(ub);

@@ -3759,7 +3759,8 @@ fn GetWindowAttrs(ib: *IntuitionBase, window: *Window,
   `WA_Active`, `WA_SimpleRefresh`, `WA_Backdrop`, `WA_Checkmark`,
   `WA_AmigaKey`, `WA_MenuHelp`, `WA_Number`, `WA_PixelFormat` (since
   0.49, its screen's `SA_PixelFormat`), `WA_StayInFront` (since
-  0.57). `WA_Left` and `WA_Top`
+  0.57), `WA_Task` (since 0.81, the task that opened it).
+  `WA_Left` and `WA_Top`
   are signed, written by their bits: a window past the screen's left
   edge (`IPREFS_OffScreen`) has a negative left.
 

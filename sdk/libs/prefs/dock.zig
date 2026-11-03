@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! dock.prefs: the dock's look and what it does, as a file - one line:
 //!
-//!     EDGE=BOTTOM ICONSIZE=48 LABELS=POINTER HIDE=NO KEEPCLEAR=YES MAGNIFY=0
+//!     EDGE=BOTTOM ICONSIZE=48 LABELS=POINTER HIDE=NO KEEPCLEAR=YES MAGNIFY=0 WINDOWS=YES
 //!
 //! - EDGE: the edge of the screen the dock lies along - BOTTOM, LEFT,
 //!   RIGHT or TOP.
@@ -17,6 +17,9 @@
 //! - MAGNIFY: 0 for entries that stay their size under the pointer, else
 //!   the pixels the one under it grows to, more than ICONSIZE and at most
 //!   128.
+//! - WINDOWS: YES for the windows open on the dock's own screen - the
+//!   desktop's - shown after the entries, a cell each, NO for the
+//!   entries alone. Windows on another screen are never shown.
 //!
 //! One left out keeps the value it has. `parse` reads the line into
 //! `Settings`, `write` writes them as the line, and `header` is the
@@ -65,6 +68,9 @@ pub const Settings = struct {
     keep_clear: bool = true,
     /// The pixels the entry under the pointer grows to; 0 for none.
     magnify: u32 = 0,
+    /// Whether the windows open on the dock's screen are shown after the
+    /// entries, a cell each - the taskbar.
+    windows: bool = true,
 
     /// Whether the dock lies along the left or the right edge, its entries
     /// one under the other.
@@ -102,7 +108,9 @@ pub fn parse(ub: *UtilityBase, text: []const u8, settings: *Settings) ?[*:0]cons
             const pixels = style.decimal(value) orelse return "MAGNIFY is 0, or pixels up to 128";
             if (pixels > icon_size_max) return "MAGNIFY is 0, or pixels up to 128";
             settings.magnify = pixels;
-        } else return "not in the form EDGE=BOTTOM ICONSIZE=48 LABELS=POINTER HIDE=NO KEEPCLEAR=YES MAGNIFY=0";
+        } else if (style.same(word, "WINDOWS")) {
+            settings.windows = prefs.yesOrNo(value) orelse return "WINDOWS is YES or NO";
+        } else return "not in the form EDGE=BOTTOM ICONSIZE=48 LABELS=POINTER HIDE=NO KEEPCLEAR=YES MAGNIFY=0 WINDOWS=YES";
     }
     // Checked once the whole line is read: ICONSIZE may come after it.
     if (settings.magnify != 0 and settings.magnify <= settings.icon_size) return "MAGNIFY is 0, or more pixels than ICONSIZE";
@@ -131,6 +139,8 @@ pub fn write(settings: *const Settings, into: []u8) usize {
     put(into, &n, prefs.yes_no[@intFromBool(settings.keep_clear)]);
     put(into, &n, " MAGNIFY=");
     n += prefs.number(settings.magnify, into[n..]);
+    put(into, &n, " WINDOWS=");
+    put(into, &n, prefs.yes_no[@intFromBool(settings.windows)]);
     return n;
 }
 
@@ -152,10 +162,13 @@ pub const header =
     \\# MAGNIFY   0 for entries that keep their size under the pointer,
     \\#           else the pixels the one under it grows to, more than
     \\#           ICONSIZE and at most 128.
+    \\# WINDOWS   YES for the windows open on the dock's screen shown
+    \\#           after the entries, a cell each, NO for the entries
+    \\#           alone.
     \\#
     \\# One left out keeps the dock's own. These are its own:
     \\#
-    \\# EDGE=BOTTOM ICONSIZE=48 LABELS=POINTER HIDE=NO KEEPCLEAR=YES MAGNIFY=0
+    \\# EDGE=BOTTOM ICONSIZE=48 LABELS=POINTER HIDE=NO KEEPCLEAR=YES MAGNIFY=0 WINDOWS=YES
     \\
 ;
 

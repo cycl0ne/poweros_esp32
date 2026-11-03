@@ -24,6 +24,9 @@ start meanwhile.
 
 - **A click** on an entry opens it, as a double click on its icon would:
   a program starts, a file opens in its program.
+- **A click on a window** listed after the entries brings that window to
+  the front and gives it the keyboard; a click on the one that is in
+  front already sends it behind the other windows.
 - **A click on a drawer or a disk** lists what is in it by the entry, a
   stack: drawers first, then the rest, each by name, as many as there is
   room for. A click on one opens it; the last row, **Open Drawer** or
@@ -36,6 +39,8 @@ start meanwhile.
   in the dock there.
 - **An entry dragged** along the dock moves there; dragged off the dock
   and let go anywhere else, it is taken off.
+- **The menu of a window** offers **Bring to Front** and **Send to
+  Back**, under its title.
 - **The menu** of an entry opens when it is held still for a moment, or -
   while the dock is the active window - with the right button. It shows
   the entry's name and offers **Open** (a drawer's or a disk's window,
@@ -73,6 +78,17 @@ own icon's tool types, changed with Information.
     and dim while no Player runs; its words are the song, its artist
     and how far it is. A click brings the Player's window to the front,
     or starts the Player.
+- **The windows open** on the desktop's screen, after the entries and a
+  separator (WINDOWS=YES): a cell for each, in the order they opened,
+  with the window's title for its name and the icon of the program it
+  belongs to for its picture - the default tool's icon where that program
+  has none. The window in front stands on a plate. A window that opens,
+  closes or is renamed shows within a tenth of a second; as many windows
+  are listed as there is room for beside the entries, up to sixteen, the
+  ones in front first. The dock's own windows, the desktop's ground and
+  other docks are not listed, nor is a window without a title - and
+  neither are the windows on another screen: a program that opens a
+  screen of its own is its own master there.
 - **A dot** by an entry whose program, started from the dock, still
   runs.
 - **Where dragged files would go**, while they are dragged over the
@@ -100,7 +116,7 @@ each: `ITEM="SYS:Programs/Notepad"`, `SEPARATOR`, or
 `DOCKLET="clock.docklet"`. How it looks
 is in `ENVARC:Sys/dock.prefs`, one line:
 
-    EDGE=BOTTOM ICONSIZE=48 LABELS=POINTER HIDE=NO KEEPCLEAR=YES MAGNIFY=0
+    EDGE=BOTTOM ICONSIZE=48 LABELS=POINTER HIDE=NO KEEPCLEAR=YES MAGNIFY=0 WINDOWS=YES
 
 - **EDGE** is the edge of the screen it lies along: BOTTOM, LEFT, RIGHT
   or TOP.
@@ -112,6 +128,8 @@ is in `ENVARC:Sys/dock.prefs`, one line:
   for one that stays.
 - **MAGNIFY** is 0, or the pixels the entry under the pointer grows to:
   more than ICONSIZE, and no more than a quarter of the screen.
+- **WINDOWS** is YES for the windows open on the dock's screen listed
+  after its entries, NO for the entries alone.
 
 KEEPCLEAR is read but not acted on yet. Prefs changes all of it on its
 Dock page. The dock follows both files while it runs: a change to

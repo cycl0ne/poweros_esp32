@@ -215,8 +215,10 @@ pub const LIBRARY_VERSION = 0;
 /// 80: ActiveWindow, WindowUnderPointer, NextWindow, FrontScreen and
 /// HidePointer - what a program that acts on the windows and the pointer
 /// of the whole machine has to be able to ask.
-pub const LIBRARY_REVISION = 80;
-const BUILD_DATE = "02.11.2026";
+/// 81: WA_Task - the task that opened a window, so a program listing the
+/// windows can tell which program each belongs to.
+pub const LIBRARY_REVISION = 81;
+const BUILD_DATE = "03.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

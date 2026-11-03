@@ -2275,6 +2275,28 @@ test "windows: a number each, never given again, found while the window is open"
     try tearDown(ib);
 }
 
+test "windows: the task that opened one, read back (WA_Task)" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const display = try Display.up(ib);
+    const it = ib.iface();
+    const tags = [_]TagItem{
+        .{ .tag = wn.WA_Width, .data = 40 },
+        .{ .tag = wn.WA_Height, .data = 30 },
+        .{},
+    };
+    const window = it.OpenWindowTagList(&tags).?;
+    // The task that opened it: this one, which closes it when it ends.
+    const mine = kexec.FindTask(kexec.SysBase, null).?;
+    try testing.expectEqual(@intFromPtr(mine), windowAttr(ib, window, wn.WA_Task));
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, window, wn.WA_Screen));
+    it.CloseWindow(window);
+    try testing.expect(it.CloseScreen(screen));
+    display.down(ib);
+    try tearDown(ib);
+}
+
 test "windows: the active one, the one under the pointer, the depth order, the front screen, the pointer hidden" {
     const ib = try setUp();
     defer kexec.deinit();

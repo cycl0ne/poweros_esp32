@@ -161,8 +161,8 @@ gadgets and hands its messages over as words.
 
 A window is opaque too, read with `GetWindowAttrs` and the same tags, and
 a few that are read only: `WA_RastPort`, `WA_Layer`, `WA_UserPort`,
-`WA_Screen`, `WA_Active`, and the border's widths `WA_BorderLeft`,
-`WA_BorderTop`, `WA_BorderRight` and `WA_BorderBottom`.
+`WA_Screen`, `WA_Active`, `WA_Task`, and the border's widths
+`WA_BorderLeft`, `WA_BorderTop`, `WA_BorderRight` and `WA_BorderBottom`.
 `SetWindowTitles` changes the title (`wn.TITLE_UNCHANGED` leaves one as
 it is); `ChangeWindowBox`, `MoveWindow`, `SizeWindow`, `WindowLimits`,
 `ZipWindow`, `WindowToFront` and `ActivateWindow` move, size and order
@@ -358,6 +358,11 @@ if (ib.WindowUnderPointer()) |under| {
   gives the frontmost window of the screen in front, a window gives the
   one immediately behind it, and null again ends the walk.
 - `FrontScreen` is the screen in front.
+- `WA_Task` is the task that opened a window, read with `GetWindowAttrs`:
+  which program a window belongs to. A `dos.Process` says so in its node
+  (`.process`), and its CLI names the command it runs
+  (`cli_CommandName`) - how the dock finds the icon to stand for a
+  window in its taskbar. It is 0 for a window opened as the system's.
 - `HidePointer(true)` stops the pointer being drawn, wherever it is;
   `HidePointer(false)` lets it be drawn again. A window of its own that
   wants no pointer sets `WA_PointerType` instead - this is for a program

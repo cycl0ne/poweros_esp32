@@ -70,8 +70,9 @@ The settings are on ten pages, under tabs:
   the bottom says what came of it.
 - **Dock:** the edge of the screen the dock lies along, the most pixels
   its pictures are shown at, when the entries' names are shown - never,
-  by the one under the pointer, or always - and whether the dock goes
-  when the pointer leaves it. On the 64-bit machines also whether the
+  by the one under the pointer, or always - whether the dock goes
+  when the pointer leaves it, and whether the windows open are listed on
+  it after its entries. On the 64-bit machines also whether the
   entries near the pointer grow, and to how many pixels - more than the
   icon size - and whether the dock starts with the desktop: Save moves
   it and its icon into SYS:WBStartup, or out into SYS:Programs, where

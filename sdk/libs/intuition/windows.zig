@@ -367,6 +367,15 @@ pub const WA_NoBuffer = WA_Dummy + 0x110;
 /// keyboard come in front of them all the same. A backdrop window
 /// ignores it. `OpenWindowTagList`, and read back with `GetWindowAttrs`.
 pub const WA_StayInFront = WA_Dummy + 0x111;
+/// Read only: the task that opened the window, an `exec.Task` - a
+/// `dos.Process` where its node says so (`.process`) - and 0 for a window
+/// opened as the system's (`BeginSystemMemory`) or with no memory to note
+/// it. A program that lists the machine's windows learns this way which
+/// program a window belongs to: a process's CLI names what it runs
+/// (`cli_CommandName`), and that program's icon can stand for the window.
+/// The task is good only while the window is open, which `LockIBase`
+/// holds still. `GetWindowAttrs` only.
+pub const WA_Task = WA_Dummy + 0x112;
 
 /// `WA_Position`'s values.
 pub const WPOS_CENTERSCREEN: u32 = 1;
