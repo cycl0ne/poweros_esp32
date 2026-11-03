@@ -226,7 +226,11 @@ pub const LIBRARY_VERSION = 0;
 /// carry a fourth gadget in the title bar that puts them away
 /// (HIDEIMAGE, GTYP_WHIDE, WA_HideGadget); the host closing brings them
 /// all back.
-pub const LIBRARY_REVISION = 83;
+/// 84: a window put away fades out and the fade hides it, and one
+/// brought back is shown unseen and fades in (IPREFS_WindowFade), on a
+/// screen whose windows are composed; turned round where it is when it
+/// is asked for the other way round while it fades.
+pub const LIBRARY_REVISION = 84;
 const BUILD_DATE = "03.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

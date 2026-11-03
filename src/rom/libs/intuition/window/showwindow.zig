@@ -32,6 +32,11 @@ const unlock = _window.unlock;
 /// uncovered, its border and its gadgets drawn again by intuition. A
 /// window that asked to hear about its depth (`WA_NotifyDepth`) is told.
 ///
+/// On a screen whose windows are composed it is shown unseen and fades
+/// in (`IPREFS_WindowFade`); a window still fading away is turned round
+/// where it is and comes back from there, so a window put away and
+/// fetched again at once never leaves the display.
+///
 /// It is not brought to the front and it is not made active: a program
 /// that wants both calls `WindowToFront` and `ActivateWindow` after this,
 /// which is what the dock does when a window's cell is clicked.
@@ -66,9 +71,17 @@ pub fn ShowWindow(ib: *IntuitionBase, window: *Window) void {
     defer unlock(ib);
     if (w.more_flags & _window.WMF_HIDDEN == 0) return;
     w.more_flags &= ~_window.WMF_HIDDEN;
-    _window.hideLayers(ib, w, false);
-    // Its own damage among the rest: its border and its gadgets drawn
+    // A window still fading away is turned round where it is and keeps
+    // the layers it never lost; one that is away is shown unseen and
+    // fades in, or shown as it is where nothing fades. Either way its
+    // own damage is among the rest: its border and its gadgets drawn
     // again, and its program told what it owes.
-    repairScreen(ib, w.screen);
+    switch (@import("_fade.zig").showing(ib, w)) {
+        .turned => {},
+        .fades, .at_once => {
+            _window.hideLayers(ib, w, false);
+            repairScreen(ib, w.screen);
+        },
+    }
     depthChanged(ib, w);
 }

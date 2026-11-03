@@ -373,7 +373,11 @@ if (ib.WindowUnderPointer()) |under| {
   `ActivateWindow` after it, where it should come back to the front as
   well. A window nobody can bring back is a window gone, so this is for
   a program that keeps the way back - the dock's row of windows, where a
-  window put away keeps its cell.
+  window put away keeps its cell. On a screen whose windows are composed
+  it fades out as it goes and fades in as it comes back
+  (`IPREFS_WindowFade`); it is away from the moment `HideWindow` is
+  called, whatever its picture is still doing, and fetched again while it
+  fades it turns round where it is.
 - `HideControl(window, true)` says that window takes in the hidden
   windows of its screen; the dock calls it for its own window. While a
   screen has such a window, every other window of it that can have one

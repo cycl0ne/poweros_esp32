@@ -23,6 +23,17 @@
 //! there for the pointer - and deleted by the input task when the fade
 //! ends. A screen that closes takes its ghosts with it.
 //!
+//! **A window put away** (`HideWindow`) fades out the same way, and the
+//! fade hides its layers at the end rather than deleting them; brought
+//! back (`ShowWindow`) it is shown unseen and fades in. It is away from
+//! the moment it is asked for, whatever its picture is still doing: it
+//! is not the active window, and nothing of the input reaches it while
+//! it fades (`windowAt`). Its layers are not made a ghost, unlike a
+//! closed window's: a ghost is out of the walk of the depth order, and
+//! that walk is how a program lists a window that is away to bring it
+//! back. Asked for the other way round while a fade runs, the fade
+//! turns round where it is.
+//!
 //! Everything here is under the screen list's lock (`_window.lock`).
 
 const sdk = @import("sdk");
@@ -107,6 +118,10 @@ pub const Fade = struct {
     to: u8,
     /// It has turned since its animation was made: closed while it came.
     turned: bool = false,
+    /// What the end of a fade out means: the layers hidden, the window
+    /// being put away (`HideWindow`), or deleted, the window having
+    /// closed.
+    hides: bool = false,
     /// Its screen closed: the layers went with it, and only the
     /// animation is left to end.
     gone: bool = false,
@@ -138,6 +153,9 @@ pub fn fadeIn(ib: *IntuitionBase, w: *Window) void {
 pub fn fadeOut(ib: *IntuitionBase, w: *Window) bool {
     const sys = ib.sys_base;
     const fade: *Fade = w.fade orelse made: {
+        // A window that is away is not seen: there is nothing to fade,
+        // and its layers go at once.
+        if (w.more_flags & _window.WMF_HIDDEN != 0) return false;
         if (!fades(ib, w.flags) or !composed(ib, w.layer)) return false;
         const memory = sys.AllocVec(@sizeOf(Fade), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return false;
         _ = sys.SetMemOwner(memory, null);
@@ -149,6 +167,7 @@ pub fn fadeOut(ib: *IntuitionBase, w: *Window) bool {
     w.fade = null;
     fade.window = null;
     fade.to = 0;
+    fade.hides = false;
     fade.turned = fade.animation != null;
     // Nothing is meant for it any more; and it paints nothing, its window
     // being gone with the hook that painted it.
@@ -158,6 +177,65 @@ pub fn fadeOut(ib: *IntuitionBase, w: *Window) bool {
     if (w.inner_layer) |inner| _ = lb.InstallLayerHook(inner, layers.LAYERS_NOBACKFILL);
     _input.wakeFades(ib);
     return true;
+}
+
+/// A window being put away (`HideWindow`): its layers fade out, and the
+/// fade hides them when it ends. True when that is under way and the
+/// caller leaves the layers to the fade; false when the window does not
+/// fade - the caller hides them itself, as it always did.
+pub fn hiding(ib: *IntuitionBase, w: *Window) bool {
+    const sys = ib.sys_base;
+    const fade: *Fade = w.fade orelse made: {
+        if (!fades(ib, w.flags) or !composed(ib, w.layer)) return false;
+        const memory = sys.AllocVec(@sizeOf(Fade), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return false;
+        // The system's: it may outlive the program that opened the window.
+        _ = sys.SetMemOwner(memory, null);
+        const made: *Fade = @ptrCast(@alignCast(memory));
+        made.* = .{ .screen = w.screen, .layer = w.layer, .inner = w.inner_layer, .window = w, .now = 255, .to = 255 };
+        w.fade = made;
+        sys.AddTail(@ptrCast(&ib.fades), @ptrCast(&made.node));
+        break :made made;
+    };
+    fade.to = 0;
+    fade.hides = true;
+    fade.turned = fade.animation != null;
+    // Its layers are not made a ghost: a ghost is out of the walk of the
+    // depth order (`LATAG_GetInFront`), and that walk is how a program
+    // lists a window that is away in order to bring it back. Seen and
+    // out of reach is intuition's own doing - `windowAt` passes over a
+    // window that is away, whatever its picture is still doing.
+    _input.wakeFades(ib);
+    return true;
+}
+
+/// What `ShowWindow` has left to do, a window being brought back:
+/// `turned` - a fade was putting it away and is turned round where it is,
+/// its layers never having been hidden, so there is nothing more to do;
+/// `fades` - its layers are to be shown by the caller and are unseen, a
+/// fade in under way; `at_once` - shown as they always were.
+pub const Showing = enum { turned, fades, at_once };
+
+pub fn showing(ib: *IntuitionBase, w: *Window) Showing {
+    const sys = ib.sys_base;
+    if (w.fade) |fade| {
+        if (!fade.hides) return .at_once;
+        fade.hides = false;
+        fade.to = 255;
+        fade.turned = fade.animation != null;
+        _input.wakeFades(ib);
+        return .turned;
+    }
+    if (!fades(ib, w.flags) or !composed(ib, w.layer)) return .at_once;
+    const memory = sys.AllocVec(@sizeOf(Fade), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return .at_once;
+    _ = sys.SetMemOwner(memory, null);
+    const fade: *Fade = @ptrCast(@alignCast(memory));
+    fade.* = .{ .screen = w.screen, .layer = w.layer, .inner = w.inner_layer, .window = w, .now = 0, .to = 255 };
+    w.fade = fade;
+    sys.AddTail(@ptrCast(&ib.fades), @ptrCast(&fade.node));
+    // Unseen before it is shown, so nothing of it flashes up at once.
+    setOpacity(ib, w.layer, 0);
+    _input.wakeFades(ib);
+    return .fades;
 }
 
 /// A screen closing: its ghosts go with its LayerInfo, and their fades
@@ -180,6 +258,15 @@ fn finish(ib: *IntuitionBase, fade: *Fade) void {
         if (fade.to == 255) {
             if (fade.now != 255) setOpacity(ib, fade.layer, 255);
             if (fade.window) |w| w.fade = null;
+        } else if (fade.hides) {
+            // Put away: the layers are hidden rather than deleted, and
+            // left at full cover, which is how they come back.
+            if (fade.window) |w| {
+                w.fade = null;
+                _window.hideLayers(ib, w, true);
+                setOpacity(ib, fade.layer, 255);
+                _window.repairScreen(ib, w.screen);
+            }
         } else {
             if (fade.inner) |inner| ib.layers_base.DeleteLayer(inner);
             ib.layers_base.DeleteLayer(fade.layer);

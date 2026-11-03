@@ -4062,6 +4062,11 @@ and if it was the active window the activation goes where it would
 have gone had it closed: to the window on the screen that was active
 most recently and is not away itself.
 
+On a screen whose windows are composed it fades out as a window
+closing does (`IPREFS_WindowFade`), and it is away from the moment it
+is asked for: the activation has already gone, and nothing of the
+input reaches it while its picture fades.
+
 Everything else about it stays. It is still open and still on its
 screen's list in the place it had, with its number, its port, its
 menus, its gadgets, its layer and its pixels; `NextWindow` still walks
@@ -8264,6 +8269,11 @@ smart-refresh window has its pixels back; a simple-refresh one is owed
 them and gets an `IDCMP_REFRESHWINDOW` as it would after being
 uncovered, its border and its gadgets drawn again by intuition. A
 window that asked to hear about its depth (`WA_NotifyDepth`) is told.
+
+On a screen whose windows are composed it is shown unseen and fades
+in (`IPREFS_WindowFade`); a window still fading away is turned round
+where it is and comes back from there, so a window put away and
+fetched again at once never leaves the display.
 
 It is not brought to the front and it is not made active: a program
 that wants both calls `WindowToFront` and `ActivateWindow` after this,

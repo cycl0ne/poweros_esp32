@@ -690,7 +690,12 @@ fn wheel(ib: *IntuitionBase, e: *const InputEvent) void {
 /// The frontmost window at (x, y) on `s`, if a window is there.
 pub fn windowAt(ib: *IntuitionBase, s: *Screen, x: i32, y: i32) ?*Window {
     const layer = ib.layers_base.WhichLayer(s.layer_info, x, y) orelse return null;
-    return windowOfLayer(s, layer);
+    const w = windowOfLayer(s, layer) orelse return null;
+    // A window put away is away from the moment it is asked for, and
+    // nothing of the input reaches it - not even while its picture is
+    // still fading out on a composed screen.
+    if (w.more_flags & _window.WMF_HIDDEN != 0) return null;
+    return w;
 }
 
 /// Whether the point is over a layer no window owns: a panel something

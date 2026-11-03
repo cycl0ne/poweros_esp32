@@ -55,10 +55,11 @@
 //!   the back. While it shows them, the dock's own window takes in the
 //!   screen's hidden windows (intuition's `HideControl`): every window
 //!   of the screen then carries a hide gadget in its title bar, and a
-//!   window put away keeps its cell, which brings it back
-//!   (`ShowWindow`). With WINDOWS=NO nobody would show the way back, so
-//!   there is no gadget either, and the dock ending brings every window
-//!   it took in back.
+//!   window put away keeps its cell - drawn matt - which brings it back
+//!   (`ShowWindow`). A click on the cell of the window in front puts
+//!   that window away; its menu still sends it behind the others. With
+//!   WINDOWS=NO nobody would show the way back, so there is no gadget
+//!   either, and the dock ending brings every window it took in back.
 //! - A dot under an entry whose program, started from the dock, still
 //!   runs (anvil.library's `ANVO_EndMsg`).
 //! - Files dragged over it from anywhere (intuition's `SA_Dragging`): the
@@ -112,7 +113,7 @@ const DiskfontBase = sdk.interface.diskfont.DiskfontBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Dock";
-const VERSION_STRING = "\x00$VER: Dock 1.5 (03.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Dock 1.6 (03.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "QUIT/S";
@@ -229,6 +230,9 @@ const Entry = struct {
     /// it; such a cell is the dock's own doing and is never written to
     /// dock.items.
     is_window: bool = false,
+    /// A window's cell whose window is put away (`WA_Hidden`): drawn
+    /// matt, and a click on it brings the window back.
+    hidden: bool = false,
     window: u32 = 0,
     active: bool = false,
     /// Its cell along the dock, where it starts and how long it is - now,
@@ -253,12 +257,14 @@ const Entry = struct {
 };
 
 /// A window the dock lists, as a look at the screen found it: its number
-/// while it is open (`WA_Number`), whether it is the active one, its
-/// title, and the command its task runs (`WA_Task`, and the task's CLI
-/// name) - the program whose icon stands for it.
+/// while it is open (`WA_Number`), whether it is the active one, whether
+/// it is put away (`WA_Hidden`), its title, and the command its task runs
+/// (`WA_Task`, and the task's CLI name) - the program whose icon stands
+/// for it.
 const Listed = struct {
     number: u32 = 0,
     active: bool = false,
+    hidden: bool = false,
     title: [label_max + 1]u8 = @splat(0),
     title_len: u32 = 0,
     command: [command_max + 1]u8 = @splat(0),
@@ -998,6 +1004,18 @@ const App = struct {
         app.gb.RectFill(rp, &area);
     }
 
+    /// A veil of `colour` over `area`: laid over what is there by the
+    /// colour's own coverage (`DRMD_BLEND`) rather than written over it,
+    /// which is how a cell is drawn matt.
+    fn veil(app: *App, rp: *graphics.RastPort, colour: Pen, area: Rect) void {
+        app.gb.SetRPAttrs(rp, &[_]TagItem{
+            pair(graphics.RPTAG_APen, colour),
+            pair(graphics.RPTAG_DrMd, graphics.DRMD_JAM1 | graphics.DRMD_BLEND),
+            .{},
+        });
+        app.gb.RectFill(rp, &area);
+    }
+
     /// A light line along the top and left of `area`, a dark one along
     /// its bottom and right.
     fn bevel(app: *App, rp: *graphics.RastPort, area: Rect) void {
@@ -1128,6 +1146,10 @@ const App = struct {
                 app.gb.FillRoundRect(rp, &plate, 6);
             }
             if (e.docklet) |docklet| app.drawDocklet(docklet, rp, area) else app.drawPicture(e, area);
+            // A window put away is matt: its picture veiled in the
+            // dock's own ground, so its cell shows at a glance that it
+            // is a way back and not a window on the screen.
+            if (e.hidden) app.veil(rp, (app.look.ground & 0x00FF_FFFF) | 0xA000_0000, area);
         }
         if (app.isRunning(e)) app.drawDot(e, cell);
         if (app.settings.labels != .always) return;
@@ -1264,10 +1286,11 @@ const App = struct {
     /// A click on a cell: a drawer or a disk lists what is in it, the
     /// rest open - a docklet's program, for a docklet. A window's cell
     /// brings its window to the front, or - the one in front already -
-    /// sends it behind the others.
+    /// puts it away, the dock being what shows the way back; its menu
+    /// still sends it behind the others.
     fn activate(app: *App, index: usize) void {
         const e = &app.entries[index];
-        if (e.is_window) return app.orderWindow(index, e.active);
+        if (e.is_window) return if (e.active) app.awayWindow(index) else app.orderWindow(index, false);
         if (e.stacks) return app.openStack(index);
         app.openEntry(index, &.{});
     }
@@ -1448,6 +1471,7 @@ const App = struct {
             var number: usize = 0;
             var title: usize = 0;
             var active: usize = 0;
+            var away: usize = 0;
             var backdrop: usize = 0;
             var front: usize = 0;
             var task: usize = 0;
@@ -1455,6 +1479,7 @@ const App = struct {
                 pair(wn.WA_Number, @intFromPtr(&number)),
                 pair(wn.WA_Title, @intFromPtr(&title)),
                 pair(wn.WA_Active, @intFromPtr(&active)),
+                pair(wn.WA_Hidden, @intFromPtr(&away)),
                 pair(wn.WA_Backdrop, @intFromPtr(&backdrop)),
                 pair(wn.WA_StayInFront, @intFromPtr(&front)),
                 pair(wn.WA_Task, @intFromPtr(&task)),
@@ -1467,7 +1492,7 @@ const App = struct {
             const words: ?[*:0]const u8 = @ptrFromInt(title);
             const named = if (words) |text| sliceOf(text) else continue;
             if (named.len == 0) continue;
-            app.noteWindow(@intCast(number), active != 0, named, @ptrFromInt(task));
+            app.noteWindow(@intCast(number), active != 0, away != 0, named, @ptrFromInt(task));
         }
     }
 
@@ -1476,14 +1501,14 @@ const App = struct {
     /// cell's name, and the command its task runs with it: a process's
     /// CLI names what it runs (`cli_CommandName`), and that program's
     /// icon is what stands for the window.
-    fn noteWindow(app: *App, number: u32, active: bool, title: []const u8, task: ?*exec.Task) void {
+    fn noteWindow(app: *App, number: u32, active: bool, hidden: bool, title: []const u8, task: ?*exec.Task) void {
         var at = app.listed_count;
         while (at > 0 and app.listed[at - 1].number > number) at -= 1;
         var i = app.listed_count;
         while (i > at) : (i -= 1) app.listed[i] = app.listed[i - 1];
         app.listed_count += 1;
         const shown = &app.listed[at];
-        shown.* = .{ .number = number, .active = active };
+        shown.* = .{ .number = number, .active = active, .hidden = hidden };
         const length = @min(title.len, label_max);
         @memcpy(shown.title[0..length], title[0..length]);
         shown.title_len = @intCast(length);
@@ -1526,7 +1551,8 @@ const App = struct {
     }
 
     /// What the cells of the windows say taken again: a title changed
-    /// (`SetWindowTitles`) and the window that is now in front; each cell
+    /// (`SetWindowTitles`), the window that is now in front, and which
+    /// windows are put away; each cell
     /// that is not as it was is drawn again, and the name by the pointer
     /// with it.
     fn freshenWindows(app: *App) void {
@@ -1535,9 +1561,10 @@ const App = struct {
         for (app.listed[0..shown_count], 0..) |*shown, i| {
             const e = &app.entries[first + i];
             const words = shown.title[0..shown.title_len];
-            if (e.active == shown.active and sameText(e.label[0..e.label_len], words)) continue;
+            if (e.active == shown.active and e.hidden == shown.hidden and sameText(e.label[0..e.label_len], words)) continue;
             setLabel(e, words);
             e.active = shown.active;
+            e.hidden = shown.hidden;
             app.redrawEntry(first + i);
             if (app.tip_index == first + i) {
                 app.closeTip();
@@ -1601,7 +1628,7 @@ const App = struct {
     /// the icon of the program its task runs - that program's own, or the
     /// default tool's when it has none and when no program was named.
     fn makeWindowCell(app: *App, shown: *const Listed) Entry {
-        var e = Entry{ .is_window = true, .window = shown.number, .active = shown.active };
+        var e = Entry{ .is_window = true, .window = shown.number, .active = shown.active, .hidden = shown.hidden };
         setLabel(&e, shown.title[0..shown.title_len]);
         if (shown.command_len > 0) {
             const command = shown.command[0..shown.command_len];
@@ -1669,6 +1696,24 @@ const App = struct {
                     app.ib.WindowToFront(window);
                     app.ib.ActivateWindow(window);
                 }
+            }
+        }
+        if (!found) app.ib.DisplayBeep(app.screen);
+    }
+
+    /// The window a cell stands for put away (`HideWindow`): its cell
+    /// stays, drawn matt, and a click on that cell brings the window
+    /// back. Found by its number as `orderWindow` finds it, and for the
+    /// same reason.
+    fn awayWindow(app: *App, index: usize) void {
+        const number = app.entries[index].window;
+        var found = false;
+        {
+            const held = app.ib.LockIBase(0);
+            defer app.ib.UnlockIBase(held);
+            if (app.ib.FindWindowNumber(number)) |window| {
+                found = true;
+                app.ib.HideWindow(window);
             }
         }
         if (!found) app.ib.DisplayBeep(app.screen);

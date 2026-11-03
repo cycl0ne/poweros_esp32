@@ -34,6 +34,11 @@ const unlock = _window.unlock;
 /// have gone had it closed: to the window on the screen that was active
 /// most recently and is not away itself.
 ///
+/// On a screen whose windows are composed it fades out as a window
+/// closing does (`IPREFS_WindowFade`), and it is away from the moment it
+/// is asked for: the activation has already gone, and nothing of the
+/// input reaches it while its picture fades.
+///
 /// Everything else about it stays. It is still open and still on its
 /// screen's list in the place it had, with its number, its port, its
 /// menus, its gadgets, its layer and its pixels; `NextWindow` still walks
@@ -92,8 +97,12 @@ pub fn HideWindow(ib: *IntuitionBase, window: *Window) void {
     @import("../input/_input.zig").forget(ib, w);
     @import("../input/drag.zig").forget(ib, w);
     w.more_flags |= _window.WMF_HIDDEN;
-    _window.hideLayers(ib, w, true);
-    repairScreen(ib, s);
+    // On a composed screen it fades out, and the fade hides its layers
+    // and repairs the screen when it ends; elsewhere it goes at once.
+    if (!@import("_fade.zig").hiding(ib, w)) {
+        _window.hideLayers(ib, w, true);
+        repairScreen(ib, s);
+    }
     // Where the activation would have gone had it closed. A screen with
     // nothing left to activate keeps the default pointer.
     if (was_active) {

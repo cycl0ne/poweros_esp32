@@ -26,9 +26,9 @@ start meanwhile.
   a program starts, a file opens in its program.
 - **A click on a window** listed after the entries brings that window to
   the front and gives it the keyboard; a click on the one that is in
-  front already sends it behind the other windows. A window that was put
-  away with its hide gadget keeps its cell, and the click brings it
-  back.
+  front already puts it away, as its hide gadget would. A window that is
+  away keeps its cell, drawn matt, and a click on that brings it back.
+  Its menu still sends a window behind the others.
 - **A click on a drawer or a disk** lists what is in it by the entry, a
   stack: drawers first, then the rest, each by name, as many as there is
   room for. A click on one opens it; the last row, **Open Drawer** or
@@ -97,9 +97,11 @@ own icon's tool types, changed with Information.
   title bar - a bar lying in a box, left of the zoom and depth gadgets -
   and pressing it puts the window away. Nothing of it is on the display
   then and nothing of the input reaches it, but it stays open and keeps
-  its cell in the dock, which brings it back. With WINDOWS=NO there is
-  no such gadget, since nobody would show the way back; and a dock that
-  ends brings every window it took in back first.
+  its cell in the dock, drawn matt, which brings it back. On a screen
+  whose windows are composed it fades out as it goes and in as it comes
+  back. With WINDOWS=NO there is no such gadget, since nobody would show
+  the way back; and a dock that ends brings every window it took in back
+  first.
 - **A dot** by an entry whose program, started from the dock, still
   runs.
 - **Where dragged files would go**, while they are dragged over the
