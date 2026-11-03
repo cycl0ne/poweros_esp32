@@ -67,9 +67,19 @@ const _image = @import("_image.zig");
 ///
 /// A SAMPLED image may be of BC1, BC2, BC3, R16G16B16A16_SFLOAT,
 /// R32G32B32A32_SFLOAT, B10G11R11_UFLOAT or E5B9G9R9_UFLOAT, in optimal tiling.
-/// It is kept as R8G8B8A8, unpacked as it is copied in: it takes that one's
-/// memory, and what is in a float image above 1 or below 0 is lost. There is no
-/// copying such an image out, nor another image into it, by CmdCopyImage.
+/// A float one is kept as R8G8B8A8, unpacked as it is copied in: it takes that
+/// one's memory, what is above 1 or below 0 is lost, and there is no copying
+/// it out, nor another image into it, by CmdCopyImage.
+///
+/// A compressed one - BC1, BC2, BC3 - is kept in its blocks on a device that
+/// samples them (`PhysicalDeviceFeatures.kept_compressed`, since 1.44): an
+/// eighth to a quarter of that memory, and the blocks are copied in and out
+/// as they lie, by CmdCopyBufferToImage, CmdCopyImageToBuffer and CmdCopyImage
+/// between two images of the one format, their offsets and extents on a
+/// multiple of 4 as Vulkan asks. GetImageMemoryRequirements says which was
+/// done. A device without the feature unpacks it as a float image is unpacked.
+/// A STORAGE image is written texel by texel, so a compressed one is unpacked
+/// there whatever the device.
 ///
 /// CONTEXT:
 /// - Waits: no.

@@ -21,6 +21,12 @@ pub fn copyImage(command: *const _command.CopyImage) void {
     const destination = command.destination;
     if (!_image.readable(source) or !_image.readable(destination)) return;
     if (_image.unpacks(source) or _image.unpacks(destination)) return;
+    // Both keeping their blocks, of the one format: the blocks go as they
+    // lie, nothing decoded (`PhysicalDeviceFeatures.kept_compressed`).
+    if (_image.blocked(source) or _image.blocked(destination)) {
+        if (source.format == destination.format) copyBlocks(command);
+        return;
+    }
     const pixel = _image.bytesOf(source.format);
     if (pixel != _image.bytesOf(destination.format)) return;
     for (_stream.items(_command.CopyImage, facet.ImageCopy, command, command.count)) |*region| {
@@ -50,12 +56,51 @@ pub fn copyImage(command: *const _command.CopyImage) void {
     }
 }
 
+/// CmdCopyImage between two images that keep their blocks, of the one
+/// format: block by block, the offsets and the extent on a multiple of 4 as
+/// Vulkan asks of a compressed image. A region whose offsets are not is
+/// left out.
+fn copyBlocks(command: *const _command.CopyImage) void {
+    const source = command.source;
+    const destination = command.destination;
+    const wide = _image.blockBytes(source);
+    for (_stream.items(_command.CopyImage, facet.ImageCopy, command, command.count)) |*region| {
+        const from_level = region.src_subresource.mip_level;
+        const to_level = region.dst_subresource.mip_level;
+        if (from_level >= source.levels or to_level >= destination.levels) continue;
+        if (region.src_offset.x < 0 or region.src_offset.y < 0 or region.dst_offset.x < 0 or region.dst_offset.y < 0) continue;
+        const from_size = _image.levelSize(source, from_level);
+        const to_size = _image.levelSize(destination, to_level);
+        const from_x: u32 = @intCast(region.src_offset.x);
+        const from_y: u32 = @intCast(region.src_offset.y);
+        const to_x: u32 = @intCast(region.dst_offset.x);
+        const to_y: u32 = @intCast(region.dst_offset.y);
+        if (from_x % 4 != 0 or from_y % 4 != 0 or to_x % 4 != 0 or to_y % 4 != 0) continue;
+        if (from_x >= from_size[0] or from_y >= from_size[1] or to_x >= to_size[0] or to_y >= to_size[1]) continue;
+        const width = @min(region.extent.width, from_size[0] - from_x, to_size[0] - to_x);
+        const height = @min(region.extent.height, from_size[1] - from_y, to_size[1] - to_y);
+        const from_layers = _image.layersOf(source, region.src_subresource, region.src_offset.z, region.extent.depth) orelse continue;
+        const to_layers = _image.layersOf(destination, region.dst_subresource, region.dst_offset.z, region.extent.depth) orelse continue;
+        var block: [16]u8 = undefined;
+        for (0..@min(from_layers.count, to_layers.count)) |layer_number| {
+            const layer: u32 = @intCast(layer_number);
+            for (0..(height + 3) / 4) |row| for (0..(width + 3) / 4) |column| {
+                const across: u32 = @intCast(column * 4);
+                const down: u32 = @intCast(row * 4);
+                _image.readBlock(source, from_level, from_layers.first + layer, from_x + across, from_y + down, block[0..wide]);
+                _image.writeBlock(destination, to_level, to_layers.first + layer, to_x + across, to_y + down, block[0..wide]);
+            };
+        }
+    }
+}
+
 /// CmdCopyImageToBuffer's regions: the part of each inside the image, as far
 /// as the buffer goes.
 pub fn copyImageToBuffer(command: *const _command.CopyImageToBuffer) void {
     const image = command.image;
     if (!_image.readable(image) or _image.unpacks(image)) return;
     const into = _buffer.bytes(command.destination, 0, facet.WHOLE_SIZE) orelse return;
+    if (_image.blocked(image)) return blocksToBuffer(command, into);
     const pixel = _image.bytesOf(image.format);
     for (_stream.items(_command.CopyImageToBuffer, facet.BufferImageCopy, command, command.count)) |*region| {
         const level = region.image_subresource.mip_level;
@@ -81,8 +126,40 @@ pub fn copyImageToBuffer(command: *const _command.CopyImageToBuffer) void {
     }
 }
 
+/// CmdCopyImageToBuffer of an image that keeps its blocks: the blocks as
+/// they lie, a row of them `buffer_row_length` texels across, the offsets
+/// on a multiple of 4.
+fn blocksToBuffer(command: *const _command.CopyImageToBuffer, into: []u8) void {
+    const image = command.image;
+    const wide = _image.blockBytes(image);
+    for (_stream.items(_command.CopyImageToBuffer, facet.BufferImageCopy, command, command.count)) |*region| {
+        const level = region.image_subresource.mip_level;
+        if (level >= image.levels or region.image_offset.x < 0 or region.image_offset.y < 0) continue;
+        const size = _image.levelSize(image, level);
+        const left: u32 = @intCast(region.image_offset.x);
+        const top: u32 = @intCast(region.image_offset.y);
+        if (left % 4 != 0 or top % 4 != 0) continue;
+        if (left >= size[0] or top >= size[1]) continue;
+        const width = @min(region.image_extent.width, size[0] - left);
+        const height = @min(region.image_extent.height, size[1] - top);
+        const row_length = if (region.buffer_row_length != 0) region.buffer_row_length else region.image_extent.width;
+        const pitch = @as(usize, (row_length + 3) / 4) * wide;
+        const start = std.math.cast(usize, region.buffer_offset) orelse continue;
+        const layers = _image.layersOf(image, region.image_subresource, region.image_offset.z, region.image_extent.depth) orelse continue;
+        const slice_height = if (region.buffer_image_height != 0) region.buffer_image_height else region.image_extent.height;
+        for (0..layers.count) |slice| for (0..(height + 3) / 4) |row| for (0..(width + 3) / 4) |column| {
+            const at = start + slice * @as(usize, (slice_height + 3) / 4) * pitch + row * pitch + column * wide;
+            if (at + wide > into.len) return;
+            _image.readBlock(image, level, layers.first + @as(u32, @intCast(slice)), left + @as(u32, @intCast(column * 4)), top + @as(u32, @intCast(row * 4)), into[at..][0..wide]);
+        };
+    }
+}
+
 /// The colours of a level read by way of 0xAARRGGBB.
 fn colorAt(image: *const Image, level: u32, layer: u32, x: u32, y: u32) u32 {
+    // A compressed image has no texel of its own in memory: the one it
+    // holds is decoded out of the block it lies in.
+    if (_image.blocked(image)) return _image.blockColor(image, level, layer, x, y);
     var texel: [4]u8 = undefined;
     _image.readTexel(image, level, layer, x, y, &texel);
     return _image.colorOfBytes(image.format, &texel);
@@ -243,8 +320,9 @@ fn texelOf(image: *const Image, color: u32) ?Texel {
             .rgba8888 => .{ .eight = texture.spread(color) },
             .rgb565 => .{ .two = narrow(color) },
             // A clear of a colour is not for a depth texture:
-            // CmdClearDepthStencilImage writes that one.
-            .d16 => null,
+            // CmdClearDepthStencilImage writes that one. Nor for a
+            // compressed one, whose texels are written as blocks alone.
+            .d16, .bc1, .bc1_rgb, .bc2, .bc3 => null,
         },
         // Its pixels are rows of depth, which a clear of a colour does
         // not write; a transient one's live in the tiles.
@@ -261,6 +339,10 @@ pub fn blitImage(command: *const _command.BlitImage) void {
     const source = command.source;
     const destination = command.destination;
     if (!_image.readable(source) or !_image.readable(destination)) return;
+    // A compressed source is read block by block and scaled like any
+    // other; nothing here compresses, so a destination that keeps its
+    // blocks is left alone, as Vulkan does not allow one either.
+    if (_image.blocked(destination)) return;
     for (_stream.items(_command.BlitImage, facet.ImageBlit, command, command.count)) |*region| {
         const from_level = region.src_subresource.mip_level;
         const to_level = region.dst_subresource.mip_level;

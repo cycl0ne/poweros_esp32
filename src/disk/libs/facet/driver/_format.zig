@@ -5,8 +5,20 @@
 const sdk = @import("sdk");
 const facet = sdk.facet;
 
-/// What `format` does.
+/// What `format` does on a device that unpacks a compressed image as it is
+/// copied in: it can be written and sampled, and not read back.
 pub fn properties(format: facet.Format) callconv(.c) facet.FormatProperties {
+    return describe(format, false);
+}
+
+/// The same on a device that keeps a compressed image in its blocks
+/// (`PhysicalDeviceFeatures.kept_compressed`): the blocks lie as they were
+/// given, so a copy out of such an image reads them back as well.
+pub fn keptProperties(format: facet.Format) callconv(.c) facet.FormatProperties {
+    return describe(format, true);
+}
+
+fn describe(format: facet.Format, keeps_blocks: bool) facet.FormatProperties {
     const transfer = facet.FORMAT_FEATURE_TRANSFER_SRC | facet.FORMAT_FEATURE_TRANSFER_DST;
     const attachment = facet.FORMAT_FEATURE_COLOR_ATTACHMENT | facet.FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND;
     const sampled = facet.FORMAT_FEATURE_SAMPLED_IMAGE | facet.FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR | facet.FORMAT_FEATURE_TRANSFER_DST;
@@ -40,7 +52,15 @@ pub fn properties(format: facet.Format) callconv(.c) facet.FormatProperties {
         // (`PhysicalDeviceFeatures.stored_stencil`), and a copy reads or
         // writes both at once, 1 byte a pixel or 4.
         .s8_uint, .d16_unorm_s8_uint => .{ .linear_tiling_features = 0, .optimal_tiling_features = facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT | transfer, .buffer_features = 0 },
-        .bc1_rgb_unorm_block, .bc1_rgba_unorm_block, .bc2_unorm_block, .bc3_unorm_block, .r16g16b16a16_sfloat, .b10g11r11_ufloat_pack32, .e5b9g9r9_ufloat_pack32 => .{
+        // Compressed: sampled and written, and read back as well where the
+        // blocks are kept, there being something of the format to read.
+        .bc1_rgb_unorm_block, .bc1_rgba_unorm_block, .bc2_unorm_block, .bc3_unorm_block => .{
+            .linear_tiling_features = 0,
+            .optimal_tiling_features = sampled | facet.FORMAT_FEATURE_TRANSFER_DST |
+                if (keeps_blocks) facet.FORMAT_FEATURE_TRANSFER_SRC else 0,
+            .buffer_features = 0,
+        },
+        .r16g16b16a16_sfloat, .b10g11r11_ufloat_pack32, .e5b9g9r9_ufloat_pack32 => .{
             .linear_tiling_features = 0,
             .optimal_tiling_features = sampled | facet.FORMAT_FEATURE_TRANSFER_DST,
             .buffer_features = 0,

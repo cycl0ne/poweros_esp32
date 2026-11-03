@@ -241,10 +241,13 @@ pub const PhysicalDeviceFeatures = extern struct {
     /// own is refused: `shader.fixedFragment` then says what it may do. The
     /// cores have it; the BCM2712's V3D has not.
     own_fragment_functions: bool = false,
-    /// `texture.Sampling.format` is held to. False where the device reads a
-    /// texture's format from its image instead, so a pipeline built for one
-    /// format samples an image of another without a word; the cores paint
-    /// `shader.missing` over such a draw.
+    /// `texture.Sampling.format` is the format the fast path reads. False
+    /// where the device reads a texture's format from its image instead, so
+    /// a pipeline built for one format samples an image of another at full
+    /// speed. Either way the picture is drawn: since 1.44 a texture whose
+    /// format is not the form's goes through the run-time sampler here, a
+    /// pixel at a time, rather than painting `shader.missing` as it did
+    /// before. So this says what a form costs, not what it may sample.
     sampling_format: bool = false,
     /// Compute functions run on the device itself. False says they run - on
     /// the cores behind it, whichever device the pipeline was made on.
@@ -271,7 +274,9 @@ pub const PhysicalDeviceFeatures = extern struct {
     texture_arrays: bool = false,
     cube_maps: bool = false,
     textures_3d: bool = false,
-    /// BC1, BC2 and BC3, unpacked to 8 bits a channel as they are copied in.
+    /// BC1, BC2 and BC3 are taken: unpacked to 8 bits a channel as they
+    /// are copied in, or kept in their blocks where `kept_compressed`
+    /// says so.
     compressed_textures: bool = false,
     /// The float formats, the same way.
     float_textures: bool = false,
@@ -386,6 +391,18 @@ pub const PhysicalDeviceFeatures = extern struct {
     /// colour attachment is drawn as a pass of its own, so each takes its
     /// own mixing as it is drawn.
     independent_blend: bool = false,
+    /// A compressed image is kept in its blocks and decoded as it is
+    /// sampled, nothing unpacked: `bc1_rgb_unorm_block`,
+    /// `bc1_rgba_unorm_block`, `bc2_unorm_block` and `bc3_unorm_block`
+    /// lie as they were copied in, an eighth to a quarter of the memory
+    /// the unpacked texels take, and the four texels a sample mixes come
+    /// out of the one block where they share it. False where such an
+    /// image is unpacked into `r8g8b8a8_unorm` on the copy
+    /// (`compressed_textures` alone), which reads the same and costs the
+    /// memory. GetImageMemoryRequirements says which was done. The cores
+    /// have it since 1.44; the V3D's texture unit is fed unpacked texels
+    /// here, so there an image is unpacked as before.
+    kept_compressed: bool = false,
 };
 
 /// QueueFamilyProperties.queue_flags: what a family's queues do.

@@ -162,6 +162,9 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // Its texture unit keeps a texture its own way, and knows no
         // depth format: a sampled depth image is refused.
         .sampled_depth = false,
+        // Its TMU is fed texels the library unpacked, so a compressed
+        // image is unpacked on the copy here as before.
+        .kept_compressed = false,
         // Its control lists clip in their own way, and it has no depth
         // bounds test: a pipeline that asks for either is refused.
         .depth_clamp = false,

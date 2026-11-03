@@ -33,6 +33,10 @@ const Image = @import("../image/_image.zig").Image;
 /// rounded into the destination's format, not dithered. What falls outside
 /// the destination is left out, and the source's edge is read beyond it.
 ///
+/// A source kept in its blocks is read out of them, texel by texel (since
+/// 1.44). Nothing here compresses, so a destination that keeps its blocks
+/// takes nothing, as Vulkan does not allow one either.
+///
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no.

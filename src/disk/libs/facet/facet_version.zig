@@ -313,9 +313,27 @@ pub const LIBRARY_VERSION = 1;
 /// two gave, the offsets being copied with what a draw was bound with - so
 /// the limit stays where it is, with the numbers now written down beside
 /// it.
+/// 44: compressed textures kept compressed. A sampled image of BC1, BC2 or
+/// BC3 lies in its blocks as it was copied in on a device that samples them
+/// (`PhysicalDeviceFeatures.kept_compressed`, the cores; the V3D is fed
+/// unpacked texels and unpacks as before): an eighth to a quarter of the
+/// memory the texels take - 16 x 16 of BC1 is 128 bytes against 1024 - and
+/// a sample decodes the block it reads, the four texels it mixes coming out
+/// of one block where they share it. The blocks are copied in and out as
+/// they lie, by CmdCopyBufferToImage, CmdCopyImageToBuffer and CmdCopyImage
+/// between two images of the one format, their offsets on a multiple of 4;
+/// BC now says TRANSFER_SRC in GetPhysicalDeviceFormatProperties there.
+/// `texture.Format` grew the four formats and `Sampling.format` takes them,
+/// so a program samples a kept image through a form that says so
+/// (`shader.fixedFragment`). A form built for another format than the
+/// texture holds no longer paints `shader.missing`: it is drawn through the
+/// run-time sampler, a pixel at a time, which reads whatever a texture
+/// holds - correct, and slower than the form that matches. The one decoder
+/// is the SDK's (`texture.blockOf`), which the unpacking copy uses as well,
+/// so both paths read the same colours.
 /// What stays: `fifo` is the one present mode, there being no way to ask a
 /// display to show a buffer before its next frame; one queue family of one
 /// queue; a counter of 32 bits, for want of a 64-bit atomic on every
 /// machine the library runs on; and no point mode in tessellation, there
 /// being no point rasterization at all.
-pub const LIBRARY_REVISION = 43;
+pub const LIBRARY_REVISION = 44;
