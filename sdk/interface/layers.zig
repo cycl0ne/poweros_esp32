@@ -54,6 +54,7 @@ pub const LVO = struct {
     pub const RefillLayer = libraries.lvo(33);
     pub const HideLayer = libraries.lvo(34);
     pub const ShowLayer = libraries.lvo(35);
+    pub const FlyLayer = libraries.lvo(36);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -91,6 +92,7 @@ pub const Fn = struct {
     pub const RefillLayer = *const fn (*LayersBase, *layers.Layer, *const graphics.Rect) callconv(.c) void;
     pub const HideLayer = *const fn (*LayersBase, *layers.Layer) callconv(.c) bool;
     pub const ShowLayer = *const fn (*LayersBase, *layers.Layer) callconv(.c) bool;
+    pub const FlyLayer = *const fn (*LayersBase, *layers.Layer, *const graphics.Rect) callconv(.c) bool;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -318,5 +320,17 @@ pub const LayersBase = opaque {
     /// `LERR_NO_MEMORY`; a layer that was not hidden answers true.
     pub fn ShowLayer(self: *LayersBase, layer: *layers.Layer) bool {
         return libraries.call(self, LVO.ShowLayer, Fn.ShowLayer, .{layer});
+    }
+
+    /// Show a hidden layer's picture on the display, stretched into `area` -
+    /// a window flying into the window that takes the put-away ones in: the
+    /// buffer it was last drawn with, smoothly scaled, with the layers that
+    /// move with it inside it, and the display shown again where the flight
+    /// before it was. It covers nothing and is hit by nothing: whatever is
+    /// shown over it covers it, and the next call draws it again. An empty
+    /// rectangle ends it. False, and nothing shown, for a layer that is not
+    /// composed, a super layer, or one that is not hidden.
+    pub fn FlyLayer(self: *LayersBase, layer: *layers.Layer, area: *const graphics.Rect) bool {
+        return libraries.call(self, LVO.FlyLayer, Fn.FlyLayer, .{ layer, area });
     }
 };

@@ -35,9 +35,12 @@ const unlock = _window.unlock;
 /// most recently and is not away itself.
 ///
 /// On a screen whose windows are composed it fades out as a window
-/// closing does (`IPREFS_WindowFade`), and it is away from the moment it
+/// closing does (`IPREFS_WindowFade`) - or, where a window has taken the
+/// screen's hidden windows in (`HideControl`), flies into that window's
+/// box instead: a picture of its pixels, shrinking as it goes, which is
+/// the way into the dock's row. Either way it is away from the moment it
 /// is asked for: the activation has already gone, and nothing of the
-/// input reaches it while its picture fades.
+/// input reaches it while its picture is still on its way.
 ///
 /// Everything else about it stays. It is still open and still on its
 /// screen's list in the place it had, with its number, its port, its

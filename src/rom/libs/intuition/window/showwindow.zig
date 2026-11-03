@@ -33,9 +33,11 @@ const unlock = _window.unlock;
 /// window that asked to hear about its depth (`WA_NotifyDepth`) is told.
 ///
 /// On a screen whose windows are composed it is shown unseen and fades
-/// in (`IPREFS_WindowFade`); a window still fading away is turned round
-/// where it is and comes back from there, so a window put away and
-/// fetched again at once never leaves the display.
+/// in (`IPREFS_WindowFade`), or grows back out of the box of the window
+/// that took it in (`HideControl`), which is how it went there; one
+/// still on its way away is turned round where it is and comes back from
+/// there, so a window put away and fetched again at once never leaves
+/// the display.
 ///
 /// It is not brought to the front and it is not made active: a program
 /// that wants both calls `WindowToFront` and `ActivateWindow` after this,

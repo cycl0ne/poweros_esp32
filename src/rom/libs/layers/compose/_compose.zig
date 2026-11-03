@@ -28,6 +28,14 @@
 //! the layer is: a swapchain's image shown in a window, without a copy
 //! into the window first.
 //!
+//! A hidden layer's picture shown somewhere else, scaled (`FlyLayer`), is
+//! a window on its way into the window that takes the put-away ones in:
+//! the buffer stretched on to the display at the rectangle it is given,
+//! and the display shown again where the one before it was. It is a
+//! picture on the display and not part of the arrangement - whatever is
+//! shown over it covers it, and the next step draws it again - which is
+//! all an animation of a fifth of a second needs.
+//!
 //! A layer that is nothing but its backfill - a screen's ground, which a
 //! buffer would cost the size of the display - can have none
 //! (`LATAG_NoBuffer`). Where it is seen it is painted on to the display by
@@ -291,6 +299,76 @@ pub fn keepPicture(lb: *LayersBase, layer: *Layer) void {
     const from_x = area.min_x - layer.picture_area.min_x;
     const from_y = area.min_y - layer.picture_area.min_y;
     _ = lb.graphics_base.BltBitMap(picture, from_x, from_y, @ptrCast(own.bitmap), area.min_x, area.min_y, area.width(), area.height());
+}
+
+/// A hidden layer's picture shown on the display, stretched into `area`,
+/// and with it the layers that move with it (`LATAG_MovesWith`), each at
+/// the same scale: a window flying into the window that takes the
+/// put-away ones in. What the flight before it covered is shown again
+/// first, from the layers, so the picture leaves nothing behind it; an
+/// empty `area` ends the flight and leaves the display as the layers
+/// have it.
+///
+/// What the layer shows a picture over (`ShowLayerPicture`) is not in
+/// this: the flight is the buffer, which holds what the layer itself was
+/// drawn with.
+///
+/// The caller holds every layer.
+///
+/// INPUTS:
+/// - `lb` - the library.
+/// - `layer` - the layer, composed, hidden and with a buffer.
+/// - `area` - where on the display, or empty to end the flight.
+pub fn fly(lb: *LayersBase, layer: *Layer, area: Rect) void {
+    const info = layer.info;
+    const was = layer.flight;
+    layer.flight = Rect.intersect(area, info.bounds);
+    var gather = Gather{};
+    if (!was.isEmpty()) showInto(lb, info, was, &gather);
+    if (!layer.flight.isEmpty()) {
+        stretch(lb, layer, area);
+        var it = info.layers.iterator();
+        while (it.next()) |node| {
+            const other: *Layer = @fieldParentPtr("node", node);
+            if (other.moves_with != layer) continue;
+            stretch(lb, other, mapped(layer.bounds, area, other.bounds));
+        }
+    }
+    gather.handOn(lb, info);
+}
+
+/// Where `what` lands when `from` is stretched on to `to`. Empty for a
+/// `from` with no size, or a `what` that comes out thinner than a pixel.
+fn mapped(from: Rect, to: Rect, what: Rect) Rect {
+    const width = from.width();
+    const height = from.height();
+    if (width <= 0 or height <= 0) return .{};
+    const to_width = to.width();
+    const to_height = to.height();
+    return .{
+        .min_x = to.min_x + @divTrunc((what.min_x - from.min_x) * to_width, width),
+        .min_y = to.min_y + @divTrunc((what.min_y - from.min_y) * to_height, height),
+        .max_x = to.min_x + @divTrunc((what.max_x - from.min_x) * to_width, width),
+        .max_y = to.min_y + @divTrunc((what.max_y - from.min_y) * to_height, height),
+    };
+}
+
+/// A layer's buffer stretched on to the display at `area`, smoothly -
+/// every pixel the mean of what it covers, which is what the board's
+/// engine does where it takes the job. It goes through this library's own
+/// RastPort on the display, so it is cut to the display and handed on to
+/// the board with the rest of the step, and nothing is drawn where the
+/// layer has no buffer.
+fn stretch(lb: *LayersBase, layer: *const Layer, area: Rect) void {
+    if (area.isEmpty()) return;
+    const own = layer.own orelse return;
+    const rp = layer.info.display_rp orelse return;
+    const gb = lb.graphics_base;
+    const from: *const rtg.Surface = @ptrCast(own.bitmap);
+    const whole = Rect{ .max_x = @intCast(own.bitmap.width), .max_y = @intCast(own.bitmap.height) };
+    gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_Smooth, .data = 1 }, .{} });
+    gb.BitMapScale(from, &whole, rp, &area);
+    gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_Smooth, .data = 0 }, .{} });
 }
 
 /// A layer that changes size takes the memory of `fresh`, a buffer of the

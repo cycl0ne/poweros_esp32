@@ -375,9 +375,13 @@ if (ib.WindowUnderPointer()) |under| {
   a program that keeps the way back - the dock's row of windows, where a
   window put away keeps its cell. On a screen whose windows are composed
   it fades out as it goes and fades in as it comes back
-  (`IPREFS_WindowFade`); it is away from the moment `HideWindow` is
-  called, whatever its picture is still doing, and fetched again while it
-  fades it turns round where it is.
+  (`IPREFS_WindowFade`) - or, where a window takes the hidden ones in
+  (`HideControl` below), **flies** into that window's box instead, a
+  picture of its pixels shrinking into the dock's row, and grows back out
+  of it when it is fetched. Either way it is away from the moment
+  `HideWindow` is called, whatever its picture is still doing, and asked
+  for the other way round while it is on its way it turns round where it
+  is.
 - `HideControl(window, true)` says that window takes in the hidden
   windows of its screen; the dock calls it for its own window. While a
   screen has such a window, every other window of it that can have one
