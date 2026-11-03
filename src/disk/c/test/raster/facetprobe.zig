@@ -2191,9 +2191,12 @@ fn blockChecks(probe: *Probe) void {
     const texture = probe.image(.{ .format = .bc1_rgba_unorm_block, .extent = .{ .width = across, .height = across }, .usage = sampled }, 0) orelse
         return probe.check(false, "a texture of 16 by 16 of BC1");
     // An eighth of what the texels take unpacked: 16 blocks of 8 bytes.
+    // Unpacked it is 1024 at least - a device with a layout of its own
+    // takes more, the V3D 4096 for a tile it can read.
     var needs: facet.MemoryRequirements = undefined;
     fb.GetImageMemoryRequirements(device, texture[0], &needs);
-    probe.checkEqual(if (kept) 128 else 1024, needs.size, "its memory is its blocks' where they are kept, its texels' where they are not");
+    const sized = if (kept) needs.size == 128 else needs.size >= 1024;
+    if (sized) probe.check(true, "its memory is its blocks' where they are kept, the texels' or more where they are not") else probe.checkEqual(if (kept) 128 else 1024, needs.size, "its memory is its blocks' where they are kept, the texels' or more where they are not");
 
     // Which slot the picture's own memory lands in: the texture's took one.
     var slot: usize = 0;
