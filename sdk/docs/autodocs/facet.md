@@ -789,9 +789,10 @@ when the draws run. Sets past the fourth are not bound.
 A `uniform_buffer_dynamic` or a `storage_buffer_dynamic` reads its
 buffer from the offset given here, past the one its write gave, and
 what is left of the range from there is what a function may read
-(`shader.Resources.buffer`). The offsets are the binding's, not the
-set's: binding the same set again with others is how one set serves
-draw after draw, each with a range of its own.
+(`shader.Resources.buffer`, and `bufferAt` for an element past the
+first). The offsets are the binding's, not the set's: binding the same
+set again with others is how one set serves draw after draw, each with
+a range of its own.
 
 **CONTEXT**
 
@@ -4332,11 +4333,12 @@ fn CreateQueryPool(base: *FacetBase, device: *facet.Device, info: *const facet.Q
 
 `success`; `error_feature_not_present` for a kind this device has not
 got (`PhysicalDeviceFeatures.occlusion_queries`,
-`pipeline_statistics_queries`, `timestamp_queries`), for a statistic
-there is no stage for - either of the geometry shader's - or for a bit
-that is none of Vulkan's; `error_initialization_failed` for no queries
-at all, or a statistics pool that counts nothing;
-`error_out_of_host_memory`.
+`pipeline_statistics_queries`, `timestamp_queries`), or for a bit that
+is none of Vulkan's; `error_initialization_failed` for no queries at
+all, or a statistics pool that counts nothing;
+`error_out_of_host_memory`. A geometry shader's two statistics may be
+asked for since 1.43, there being no such stage to count: they read 0,
+which is what Vulkan has a statistic of a stage that never ran hold.
 
 **BEHAVIOR**
 
@@ -4852,6 +4854,14 @@ starts; the rest are new buffers, black, made as AllocScreenBuffer makes
 them. Each is an image of `rows`, bound already, its pixels the
 buffer's: what is drawn into it is handed on to the display tile by tile
 as the render pass ends.
+
+`image_usage` may be COLOR_ATTACHMENT, TRANSFER_SRC and TRANSFER_DST,
+in any mix (since 1.43): an image is drawn into through a render pass,
+copied out of - a picture of the frame, taken with CmdCopyImageToBuffer
+- and copied into. SAMPLED is not among them: a texture is kept in
+blocks of texels, which a display's buffer is not. `present_mode` has
+to be `fifo`: a buffer is shown from the display's next frame on, and
+there is no way to ask a display for anything else.
 
 `old_swapchain` is handed on: it hands out no more images
 (AcquireNextImage answers `error_out_of_date`), and what it was given to
@@ -7345,6 +7355,7 @@ A swapchain on a screen is the screen's size, which is its display's,
 and has from one image to as many pictures as the display's memory
 holds, four at most. One on a window is the size inside the window's
 border now, and has from one image to four. Its images are drawn into,
+copied out of and copied into (`supported_usage_flags`, since 1.43),
 and shown as they are drawn: no transform, no alpha.
 
 **CONTEXT**

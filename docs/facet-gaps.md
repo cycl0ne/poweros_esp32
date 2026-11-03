@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.42**, so that a program need not find out by failing. It covers the API.
+1.43**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -101,9 +101,11 @@ reaches the log alone. What is left out:
   kind is refused on it (`PhysicalDeviceFeatures.occlusion_queries`,
   `pipeline_statistics_queries`). Timestamps are kept on every device,
   because the clock is the library's and not a driver's.
-- **Neither geometry statistic.** There is no geometry shader, so
-  `QUERY_PIPELINE_STATISTIC_GEOMETRY_SHADER_INVOCATIONS` and
-  `..._GEOMETRY_SHADER_PRIMITIVES` are refused rather than counted as 0.
+- **Neither geometry statistic counts anything.** There is no geometry
+  shader, so `QUERY_PIPELINE_STATISTIC_GEOMETRY_SHADER_INVOCATIONS` and
+  `..._GEOMETRY_SHADER_PRIMITIVES` read 0 - which is what Vulkan has a
+  statistic of a stage that never ran hold. Until 1.43 a pool that asked
+  for either was refused.
 - **A counter is 32 bits wide**, because the library runs on machines with
   no 64-bit atomic. It is held at its highest rather than wrapping round, so
   a count that outgrows it is too low and never nonsense. A timestamp is 64
@@ -267,15 +269,17 @@ instead of a set for each. Every device has them
 (`PhysicalDeviceFeatures.dynamic_descriptors`). What is left out:
 
 - **A set holds `max_descriptor_set_dynamic_buffers` of them**, two -
-  eight across the four sets - and a layout that asks for more is refused.
-  Vulkan counts them per pipeline layout and guarantees more. The number
-  is low on purpose: the offsets are part of what a draw was bound with,
-  which is copied for every draw that changed it, so each one costs a
-  little of the rasterizer's throughput.
-- **A function reaches element 0 of a binding alone**
-  (`shader.Resources.buffer`, `storage`), as it does for any buffer, so a
-  binding that is an array of dynamic buffers has only its first readable
-  - though every element of it still takes an offset, as Vulkan has them.
+  eight across the four sets, which is Vulkan's guarantee for the uniform
+  ones of a pipeline layout - and a layout that asks for more is refused.
+  The number is low on purpose, and was measured again for 1.43: the
+  offsets are part of what a draw was bound with, which is copied for every
+  draw that changed it, and with four a set FacetMany drew a frame in
+  11.61 ms against 11.18 to 11.58 with two - above every reading two gave,
+  by about 2 per cent of the mean.
+- A function reaches every element of such a binding since 1.43
+  (`shader.Resources.bufferAt`, `storageAt`), as it always could for a
+  sampled image or a texel buffer; `buffer` and `storage` still read the
+  first.
 - The offsets are not checked against the buffer: one past the range
   leaves nothing to read, and a function finds no `T` there rather than
   reading another buffer's bytes.
@@ -399,14 +403,15 @@ These can be asked for and are answered with `error_feature_not_present`.
 | An input attachment of a format whose pixels are not kept in rows, a depth attachment among them | `render/createrenderpass.zig` |
 | An image both INPUT_ATTACHMENT and SAMPLED, STORAGE or TRANSIENT_ATTACHMENT | `image/createimage.zig` |
 | A depth or stencil op for a plane the format has not, or on a device that keeps neither (`stored_depth`, `stored_stencil`) | `render/createrenderpass.zig` |
-| Present modes but `fifo`, though `immediate`, `mailbox` and `fifo_relaxed` are enumerated | `swapchain/createswapchain.zig` |
+| Present modes but `fifo`, though `immediate`, `mailbox` and `fifo_relaxed` are enumerated: a display shows a buffer from its next frame on, and there is no way to ask it for anything else | `swapchain/createswapchain.zig` |
+| A swapchain whose images would be SAMPLED: they are drawn into, copied out of and copied into (since 1.43), their pixels being rows and not blocks of texels | `swapchain/createswapchain.zig` |
 | An `input_attachment` layout on a device that reads none: the V3D (`input_attachments`) | `descriptor/createdescriptorsetlayout.zig` |
 | More dynamic buffer descriptors in one set than `max_descriptor_set_dynamic_buffers` | `descriptor/createdescriptorsetlayout.zig` |
 | A `storage_image` layout on the V3D: its TMU keeps a texture its own way | `descriptor/createdescriptorsetlayout.zig` |
 | A fixed fragment form that drops pixels, on the V3D: the QPUs have no program that discards | `driver/v3d/driver.zig` |
 | A fixed fragment form that samples through a sampler, on the V3D: nor one that reads a sampler | `driver/v3d/driver.zig` |
 | An occlusion or a statistics query pool, on the V3D: it counts neither the samples nor the stages | `query/createquerypool.zig` |
-| Either geometry statistic, and any bit that is no statistic at all | `query/createquerypool.zig` |
+| A bit that is no statistic at all. Both of a geometry shader's may be asked for since 1.43 and read 0, there being no such stage to count | `query/createquerypool.zig` |
 | A timestamp pool without timer.device: the clock a timestamp is read from | `query/createquerypool.zig` |
 | A depth or stencil attachment that loads or stores, on the V3D | `render/createrenderpass.zig` |
 | A depth attachment kept, whose image has no memory behind it | `render/createframebuffer.zig` |
@@ -425,11 +430,15 @@ One consequence does not appear in that table:
 Three more things cannot be asked for at all, having nothing to ask with:
 
 - No geometry shader stage: there is no such bit among `SHADER_STAGE_*`.
+  Its two statistics can be counted - as 0 - since 1.43; the stage itself
+  cannot be written.
 - One queue family with one queue, on both devices, which makes
-  `SharingMode` nominal.
-- A swapchain's images are colour attachments and nothing else, with one
-  array layer and one to four images, so they can be neither sampled nor
-  copied from.
+  `SharingMode` nominal. There is nothing to share between: one task plays
+  what is submitted, in the order it was.
+- A swapchain's images have one array layer, and a swapchain one to four
+  images. Since 1.43 an image may be copied out of and into as well as
+  drawn into, so a picture of the frame is taken with
+  CmdCopyImageToBuffer; it still cannot be sampled.
 
 ## The limits
 
@@ -505,8 +514,9 @@ A group runs on a worker's stack, so keep what it puts there small. It
 writes storage buffers and, since 1.31, storage images (below). Compute and
 tessellation run on the cores whichever device the pipeline was made on.
 
-Tessellation divides evenly only, has no point mode, and its control
-function sets nothing but the levels.
+Tessellation divides evenly only, has no point mode - there is no point
+rasterization at all, in any pipeline - and its control function sets
+nothing but the levels.
 
 ## Left out on purpose
 

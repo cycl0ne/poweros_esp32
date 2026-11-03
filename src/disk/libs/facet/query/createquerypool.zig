@@ -26,11 +26,12 @@ const _query = @import("_query.zig");
 /// RESULT:
 /// `success`; `error_feature_not_present` for a kind this device has not
 /// got (`PhysicalDeviceFeatures.occlusion_queries`,
-/// `pipeline_statistics_queries`, `timestamp_queries`), for a statistic
-/// there is no stage for - either of the geometry shader's - or for a bit
-/// that is none of Vulkan's; `error_initialization_failed` for no queries
-/// at all, or a statistics pool that counts nothing;
-/// `error_out_of_host_memory`.
+/// `pipeline_statistics_queries`, `timestamp_queries`), or for a bit that
+/// is none of Vulkan's; `error_initialization_failed` for no queries at
+/// all, or a statistics pool that counts nothing;
+/// `error_out_of_host_memory`. A geometry shader's two statistics may be
+/// asked for since 1.43, there being no such stage to count: they read 0,
+/// which is what Vulkan has a statistic of a stage that never ran hold.
 ///
 /// BEHAVIOR:
 /// A query holds one value, or for `pipeline_statistics` one for each
@@ -81,7 +82,6 @@ pub fn CreateQueryPool(base: *FacetBase, device: *facet.Device, info: *const fac
         .pipeline_statistics => {
             if (!features.pipeline_statistics_queries) return .error_feature_not_present;
             if (info.pipeline_statistics & ~facet.QUERY_PIPELINE_STATISTIC_ALL != 0) return .error_feature_not_present;
-            if (info.pipeline_statistics & _query.no_statistics != 0) return .error_feature_not_present;
             if (info.pipeline_statistics == 0) return .error_initialization_failed;
         },
         .timestamp => if (!features.timestamp_queries) return .error_feature_not_present,

@@ -3632,6 +3632,95 @@ test "a device that reads no attachment, as the V3D reads none: the subpass and 
     fb.DestroyRenderPass(device, made);
 }
 
+test "a buffer binding that is an array: every element reached, each dynamic one shifted its own way" {
+    const Pick = struct {
+        /// Element by element through `bufferAt` and `storageAt`, which a
+        /// binding of more than one buffer needs (since 1.43).
+        fn run(groups: *const shader.Groups) callconv(.c) void {
+            const out = groups.resources.storage(u32, 0, 1) orelse return;
+            if (out.len < 8) return;
+            inline for (0..4) |k| {
+                const one = groups.resources.bufferAt(u32, 0, 0, k);
+                out[k] = if (one) |value| value.* else 0xDEAD;
+            }
+            if (groups.resources.storageAt(u32, 0, 1, 1)) |second| {
+                if (second.len > 0) second[0] = 0x5151;
+                out[4] = @intCast(second.len);
+            }
+            // Past the binding's last element: nothing there.
+            out[5] = if (groups.resources.bufferAt(u32, 0, 0, 4) == null) 1 else 0;
+            // And its first, which `buffer` reaches as it always did.
+            out[6] = if (groups.resources.buffer(u32, 0, 0)) |first| first.* else 0xDEAD;
+        }
+        const entries = [_]shader.Entry{shader.compute("main", &run)};
+        const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
+    };
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+
+    const picker = try module(&bench, &Pick.code);
+    defer fb.DestroyShaderModule(device, picker);
+    // Four dynamic buffers in one binding, which is all a set holds, and
+    // two plain ones in the next.
+    const bindings = [2]facet.DescriptorSetLayoutBinding{
+        .{ .binding = 0, .descriptor_type = .uniform_buffer_dynamic, .descriptor_count = shader.MAX_DYNAMIC_OFFSETS, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+        .{ .binding = 1, .descriptor_type = .storage_buffer, .descriptor_count = 2, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+    };
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = bindings.len, .bindings = &bindings }, &set_layout));
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    const layout = try pipelineLayout(&bench, &.{set_layout.?}, 0);
+    defer fb.DestroyPipelineLayout(device, layout);
+    var pool: ?*facet.DescriptorPool = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool));
+    defer fb.DestroyDescriptorPool(device, pool);
+    var sets: [1]?*facet.DescriptorSet = undefined;
+    try testing.expectEqual(facet.Result.success, fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &sets));
+
+    // Each of the four reads a range of its own, and each has an offset of
+    // its own: byte 16k + 4k of the uniform buffer, which holds its own
+    // number of four at every one.
+    const uniform, const uniform_bytes = try bench.buffer(256, facet.BUFFER_USAGE_UNIFORM_BUFFER);
+    const out_buffer, const out_bytes = try bench.buffer(256, facet.BUFFER_USAGE_STORAGE_BUFFER);
+    const in: [*]u32 = @ptrCast(@alignCast(uniform_bytes));
+    const out: [*]u32 = @ptrCast(@alignCast(out_bytes));
+    for (0..64) |k| in[k] = @intCast(k);
+    @memset(out[0..64], 0);
+    var uniforms: [shader.MAX_DYNAMIC_OFFSETS]facet.DescriptorBufferInfo = undefined;
+    for (&uniforms, 0..) |*info, k| info.* = .{ .buffer = uniform, .offset = k * 16, .range = 16 };
+    const storages = [2]facet.DescriptorBufferInfo{
+        .{ .buffer = out_buffer, .offset = 0, .range = 64 },
+        .{ .buffer = out_buffer, .offset = 128, .range = 32 },
+    };
+    const writes = [2]facet.WriteDescriptorSet{
+        .{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .uniform_buffer_dynamic, .descriptor_count = uniforms.len, .buffer_info = &uniforms },
+        .{ .dst_set = sets[0].?, .dst_binding = 1, .descriptor_type = .storage_buffer, .descriptor_count = storages.len, .buffer_info = &storages },
+    };
+    fb.UpdateDescriptorSets(device, writes.len, &writes, 0, null);
+
+    const info = facet.ComputePipelineCreateInfo{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = picker }, .layout = layout };
+    var pipelines: [1]?*facet.Pipeline = undefined;
+    try testing.expectEqual(facet.Result.success, fb.CreateComputePipelines(device, null, 1, @ptrCast(&info), &pipelines));
+    defer fb.DestroyPipeline(device, pipelines[0]);
+
+    var offsets: [shader.MAX_DYNAMIC_OFFSETS]u32 = undefined;
+    for (&offsets, 0..) |*shift, k| shift.* = @intCast(k * 4);
+    const commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, pipelines[0].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), offsets.len, &offsets);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    try bench.submit();
+
+    // Element k read byte 16k + 4k, which holds 4k + k.
+    for (0..shader.MAX_DYNAMIC_OFFSETS) |k| try testing.expectEqual(@as(u32, @intCast(k * 5)), out[k]);
+    try testing.expectEqual(@as(u32, 8), out[4]);
+    try testing.expectEqual(@as(u32, 1), out[5]);
+    try testing.expectEqual(@as(u32, 0), out[6]);
+    try testing.expectEqual(@as(u32, 0x5151), out[32]);
+}
+
 test "dynamic buffer descriptors: one set read from where the bind says, draw after draw" {
     const Reader = struct {
         /// What it was given of the uniform's range, into the storage
@@ -4205,13 +4294,30 @@ test "a query pool refused: a kind the device does not count, a statistic no sta
     const device = bench.device;
     var made: ?*facet.QueryPool = null;
 
-    // There is no geometry shader, so neither statistic of one is counted.
-    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateQueryPool(device, &.{
+    // There is no geometry shader, so neither statistic of one is counted:
+    // since 1.43 a pool may ask for them all the same, and they read 0, as
+    // Vulkan has a statistic of a stage that never ran.
+    try testing.expectEqual(facet.Result.success, fb.CreateQueryPool(device, &.{
         .query_type = .pipeline_statistics,
         .query_count = 1,
-        .pipeline_statistics = facet.QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_VERTICES | facet.QUERY_PIPELINE_STATISTIC_GEOMETRY_SHADER_INVOCATIONS,
+        .pipeline_statistics = facet.QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_VERTICES | facet.QUERY_PIPELINE_STATISTIC_GEOMETRY_SHADER_INVOCATIONS | facet.QUERY_PIPELINE_STATISTIC_GEOMETRY_SHADER_PRIMITIVES,
     }, &made));
-    try testing.expectEqual(null, made);
+    try testing.expect(made != null);
+    {
+        // Nothing drawn between the query's begin and its end, so every
+        // one of the three is 0; the two of a geometry shader stay 0
+        // whatever runs.
+        const commands = try bench.record();
+        fb.CmdResetQueryPool(commands, made.?, 0, 1);
+        fb.CmdBeginQuery(commands, made.?, 0, 0);
+        fb.CmdEndQuery(commands, made.?, 0);
+        try bench.submit();
+        var values: [3]u64 = @splat(0xDEAD);
+        try testing.expectEqual(facet.Result.success, fb.GetQueryPoolResults(device, made.?, 0, 1, @sizeOf(@TypeOf(values)), &values, @sizeOf(@TypeOf(values)), facet.QUERY_RESULT_64 | facet.QUERY_RESULT_WAIT));
+        try testing.expectEqual([3]u64{ 0, 0, 0 }, values);
+    }
+    fb.DestroyQueryPool(device, made);
+    made = null;
     // A bit that is no statistic at all.
     try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateQueryPool(device, &.{ .query_type = .pipeline_statistics, .query_count = 1, .pipeline_statistics = 1 << 20 }, &made));
     // A statistics pool that counts nothing, and a pool of no queries.

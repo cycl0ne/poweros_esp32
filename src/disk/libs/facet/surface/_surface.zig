@@ -90,5 +90,8 @@ pub fn formatOf(pixels: PixelFormat) facet.Format {
     };
 }
 
-/// What a swapchain's images can be used for: drawn into.
-pub const usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT;
+/// What a swapchain's images can be used for: drawn into, and copied from
+/// or into as well (since 1.43) - their pixels are rows, which is what a
+/// copy reads and writes. Not sampled: a texture is kept in blocks, which
+/// a display's buffer is not.
+pub const usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;

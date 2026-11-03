@@ -40,9 +40,10 @@ const Set = @import("../descriptor/_descriptor.zig").Set;
 /// A `uniform_buffer_dynamic` or a `storage_buffer_dynamic` reads its
 /// buffer from the offset given here, past the one its write gave, and
 /// what is left of the range from there is what a function may read
-/// (`shader.Resources.buffer`). The offsets are the binding's, not the
-/// set's: binding the same set again with others is how one set serves
-/// draw after draw, each with a range of its own.
+/// (`shader.Resources.buffer`, and `bufferAt` for an element past the
+/// first). The offsets are the binding's, not the set's: binding the same
+/// set again with others is how one set serves draw after draw, each with
+/// a range of its own.
 ///
 /// CONTEXT:
 /// - Waits: no.

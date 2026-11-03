@@ -109,6 +109,9 @@ const Bench = struct {
     device: *facet.Device,
     queue: *facet.Queue,
     surface: *facet.Surface,
+    /// The command pools `played` made, given back by `down`.
+    pools: [4]?*facet.CommandPool = @splat(null),
+    pool_count: u32 = 0,
 
     fn up(fake: *Fake) !Bench {
         var rig = try Rig.up();
@@ -126,6 +129,7 @@ const Bench = struct {
 
     fn down(bench: *Bench) void {
         const fb = bench.rig.fb;
+        for (bench.pools[0..bench.pool_count]) |pool| fb.DestroyCommandPool(bench.device, pool);
         fb.DestroySurface(bench.instance, bench.surface);
         fb.DestroyDevice(bench.device);
         fb.DestroyInstance(bench.instance);
@@ -180,7 +184,8 @@ test "a surface: its size, one format, fifo, and as many images as it has room f
     try testing.expectEqual(@as(u32, 3), capabilities.max_image_count);
     try testing.expectEqual(facet.Extent2D{ .width = width, .height = height }, capabilities.current_extent);
     try testing.expectEqual(capabilities.current_extent, capabilities.max_image_extent);
-    try testing.expectEqual(facet.IMAGE_USAGE_COLOR_ATTACHMENT, capabilities.supported_usage_flags);
+    // Drawn into, and copied from or into: not sampled (since 1.43).
+    try testing.expectEqual(facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST, capabilities.supported_usage_flags);
 
     var count: u32 = 0;
     try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceSurfaceFormats(bench.physical, bench.surface, &count, null));
@@ -498,6 +503,98 @@ test "a surface is kept while a swapchain on it is left" {
     bench.rig.fb.DestroySurface(bench.instance, bench.surface);
     try testing.expect(!fake.closed);
     bench.rig.fb.DestroySwapchain(bench.device, swapchain);
+}
+
+test "a swapchain's image copied out of and into, since 1.43" {
+    var fake = Fake{};
+    var bench = try Bench.up(&fake);
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+
+    // Copying is what a swapchain's images may be used for besides being
+    // drawn into; sampling is not, their pixels being rows.
+    const copies = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
+    var refused: ?*facet.Swapchain = null;
+    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateSwapchain(device, &.{
+        .surface = bench.surface,
+        .min_image_count = 2,
+        .image_format = .b8g8r8a8_unorm,
+        .image_extent = .{ .width = width, .height = height },
+        .image_usage = copies | facet.IMAGE_USAGE_SAMPLED,
+    }, &refused));
+    try testing.expectEqual(null, refused);
+
+    var chain: ?*facet.Swapchain = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateSwapchain(device, &.{
+        .surface = bench.surface,
+        .min_image_count = 2,
+        .image_format = .b8g8r8a8_unorm,
+        .image_extent = .{ .width = width, .height = height },
+        .image_usage = copies,
+    }, &chain));
+    defer fb.DestroySwapchain(device, chain);
+    var count: u32 = 2;
+    var images: [2]*facet.Image = undefined;
+    try testing.expectEqual(facet.Result.success, fb.GetSwapchainImages(device, chain.?, &count, &images));
+    const acquired, const index = bench.acquire(chain.?, facet.WAIT_FOREVER_NS);
+    try testing.expectEqual(facet.Result.success, acquired);
+    try drawRed(&bench, images[index]);
+
+    const bytes = width * height * 4;
+    var buffer: ?*facet.Buffer = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateBuffer(device, &.{ .size = bytes, .usage = facet.BUFFER_USAGE_TRANSFER_SRC | facet.BUFFER_USAGE_TRANSFER_DST }, &buffer));
+    defer fb.DestroyBuffer(device, buffer);
+    var needs: facet.MemoryRequirements = undefined;
+    fb.GetBufferMemoryRequirements(device, buffer.?, &needs);
+    const block = try rig_zig.allocate(&bench.rig, device, needs.size);
+    defer fb.FreeMemory(device, block);
+    try testing.expectEqual(facet.Result.success, fb.BindBufferMemory(device, buffer.?, block, 0));
+    var data: ?*anyopaque = null;
+    try testing.expectEqual(facet.Result.success, fb.MapMemory(device, block, 0, facet.WHOLE_SIZE, 0, &data));
+    const kept: [*]u32 = @ptrCast(@alignCast(data.?));
+    @memset(kept[0 .. bytes / 4], 0);
+
+    // Copied out: what the draw left in the display's buffer.
+    const whole = facet.BufferImageCopy{ .image_extent = .{ .width = width, .height = height } };
+    var commands = try played(&bench);
+    fb.CmdCopyImageToBuffer(commands, images[index], .transfer_src_optimal, buffer.?, 1, @ptrCast(&whole));
+    try finish(&bench, commands);
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), kept[0]);
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), kept[width * height - 1]);
+
+    // And copied in: the display's buffer holds what the buffer held.
+    for (0..bytes / 4) |k| kept[k] = 0xFF00_FF00;
+    commands = try played(&bench);
+    fb.CmdCopyBufferToImage(commands, buffer.?, images[index], .transfer_dst_optimal, 1, @ptrCast(&whole));
+    try finish(&bench, commands);
+    try testing.expectEqual(@as(u32, 0xFF00_FF00), fake.pixel(index, 0, 0));
+    try testing.expectEqual(@as(u32, 0xFF00_FF00), fake.pixel(index, width - 1, height - 1));
+    // The image is still the surface's buffer: presenting it shows that.
+    try testing.expectEqual(facet.Result.success, bench.present(chain.?, index));
+}
+
+/// A command buffer of its own, begun: the pool is the device's and goes
+/// with it.
+fn played(bench: *Bench) !*facet.CommandBuffer {
+    const fb = bench.rig.fb;
+    var pool: ?*facet.CommandPool = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateCommandPool(bench.device, &.{}, &pool));
+    var commands: [1]?*facet.CommandBuffer = undefined;
+    try testing.expectEqual(facet.Result.success, fb.AllocateCommandBuffers(bench.device, &.{ .command_pool = pool.?, .command_buffer_count = 1 }, &commands));
+    try testing.expectEqual(facet.Result.success, fb.BeginCommandBuffer(commands[0].?, &.{}));
+    bench.pools[bench.pool_count] = pool;
+    bench.pool_count += 1;
+    return commands[0].?;
+}
+
+/// The commands ended, submitted and waited for.
+fn finish(bench: *Bench, commands: *facet.CommandBuffer) !void {
+    const fb = bench.rig.fb;
+    try testing.expectEqual(facet.Result.success, fb.EndCommandBuffer(commands));
+    const submit = facet.SubmitInfo{ .command_buffer_count = 1, .command_buffers = @ptrCast(&commands) };
+    try testing.expectEqual(facet.Result.success, fb.QueueSubmit(bench.queue, 1, @ptrCast(&submit), null));
+    try testing.expectEqual(facet.Result.success, fb.QueueWaitIdle(bench.queue));
 }
 
 /// `image` cleared to red by a render pass over the whole of it.

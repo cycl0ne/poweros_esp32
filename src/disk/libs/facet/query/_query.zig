@@ -54,8 +54,9 @@ pub const Statistic = enum(u5) {
     }
 };
 
-/// The statistics no stage of this library has, and which CreateQueryPool
-/// refuses: there is no geometry shader.
+/// The statistics no stage of this library has: there is no geometry
+/// shader, so a pool may ask for these two and they read 0, which is what
+/// Vulkan says a statistic of a stage that never ran holds (since 1.43).
 pub const no_statistics: u32 = Statistic.geometry_invocations.bit() | Statistic.geometry_primitives.bit();
 
 pub const Pool = struct {

@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.9 (03.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.10 (03.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -2029,6 +2029,115 @@ fn sizeChecks(probe: *Probe) void {
     }
 }
 
+// --- 1.43: the smaller edges -------------------------------------------------
+
+/// Every element of a binding that is an array of buffers, which
+/// `bufferAt` and `storageAt` reach.
+const Elements = struct {
+    fn run(groups: *const facet.shader.Groups) callconv(.c) void {
+        const out = groups.resources.storage(u32, 0, 1) orelse return;
+        if (out.len < 8) return;
+        inline for (0..3) |k| {
+            const one = groups.resources.bufferAt(u32, 0, 0, k);
+            out[k] = if (one) |value| value.* else 0xDEAD;
+        }
+        if (groups.resources.storageAt(u32, 0, 1, 1)) |second| {
+            if (second.len > 0) second[0] = 0x5151;
+            out[3] = @intCast(second.len);
+        }
+        out[4] = if (groups.resources.bufferAt(u32, 0, 0, 3) == null) 1 else 0;
+    }
+
+    const entries = [_]facet.shader.Entry{facet.shader.compute("main", &run)};
+    const code = facet.shader.Code{ .entry_count = entries.len, .entries = &entries };
+};
+
+fn edgeChecks(probe: *Probe) void {
+    const fb = probe.fb;
+    const device = probe.device.?;
+    defer probe.give();
+
+    // Both statistics of a geometry shader may be asked for, since 1.43,
+    // and read 0: there is no such stage to count. A device that counts no
+    // statistics at all refuses the pool, as it always did.
+    const wanted = facet.QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_VERTICES |
+        facet.QUERY_PIPELINE_STATISTIC_GEOMETRY_SHADER_INVOCATIONS |
+        facet.QUERY_PIPELINE_STATISTIC_GEOMETRY_SHADER_PRIMITIVES;
+    var pool: ?*facet.QueryPool = null;
+    const asked = fb.CreateQueryPool(device, &.{ .query_type = .pipeline_statistics, .query_count = 1, .pipeline_statistics = wanted }, &pool);
+    if (!probe.features.pipeline_statistics_queries) {
+        probe.check(asked != .success and pool == null, "a statistics pool refused where the device counts none");
+    } else if (asked != .success or pool == null) {
+        probe.check(false, "a statistics pool that counts a geometry shader's two");
+    } else {
+        probe.check(true, "a statistics pool that counts a geometry shader's two");
+        const commands = probe.record() orelse return probe.check(false, "a recording");
+        fb.CmdResetQueryPool(commands, pool.?, 0, 1);
+        fb.CmdBeginQuery(commands, pool.?, 0, 0);
+        fb.CmdEndQuery(commands, pool.?, 0);
+        if (!probe.submit()) return probe.check(false, "the query submitted");
+        var values: [3]u64 = @splat(0xDEAD);
+        const read = fb.GetQueryPoolResults(device, pool.?, 0, 1, @sizeOf(@TypeOf(values)), &values, @sizeOf(@TypeOf(values)), facet.QUERY_RESULT_64 | facet.QUERY_RESULT_WAIT);
+        probe.check(read == .success, "its three values read");
+        probe.checkEqual(0, values[0] + values[1] + values[2], "nothing drawn, and a geometry shader's two 0 whatever runs");
+        fb.DestroyQueryPool(device, pool);
+    }
+
+    // A binding that is an array of buffers, read element by element.
+    var module: ?*facet.ShaderModule = null;
+    if (fb.CreateShaderModule(device, &.{ .code = &Elements.code }, &module) != .success) return probe.check(false, "the shader module");
+    _ = Probe.keep(&probe.modules, module);
+    const bindings = [2]facet.DescriptorSetLayoutBinding{
+        .{ .binding = 0, .descriptor_type = .uniform_buffer, .descriptor_count = 3, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+        .{ .binding = 1, .descriptor_type = .storage_buffer, .descriptor_count = 2, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+    };
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    if (fb.CreateDescriptorSetLayout(device, &.{ .binding_count = bindings.len, .bindings = &bindings }, &set_layout) != .success) return probe.check(false, "a set layout of two arrays of buffers");
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    var layout: ?*facet.PipelineLayout = null;
+    if (fb.CreatePipelineLayout(device, &.{ .set_layout_count = 1, .set_layouts = @ptrCast(&set_layout) }, &layout) != .success) return probe.check(false, "the pipeline layout");
+    _ = Probe.keep(&probe.layouts, layout);
+    var pools: ?*facet.DescriptorPool = null;
+    if (fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pools) != .success) return probe.check(false, "a descriptor pool");
+    defer fb.DestroyDescriptorPool(device, pools);
+    var sets: [1]?*facet.DescriptorSet = undefined;
+    if (fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pools.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &sets) != .success) return probe.check(false, "a descriptor set");
+
+    const uniform, const uniform_bytes = probe.buffer(256, facet.BUFFER_USAGE_UNIFORM_BUFFER) orelse return probe.check(false, "a uniform buffer");
+    const storage, const storage_bytes = probe.buffer(256, facet.BUFFER_USAGE_STORAGE_BUFFER) orelse return probe.check(false, "a buffer the function writes");
+    const in: [*]u32 = @ptrCast(@alignCast(uniform_bytes));
+    const out: [*]u32 = @ptrCast(@alignCast(storage_bytes));
+    for (0..64) |k| in[k] = @intCast(k);
+    @memset(out[0..64], 0);
+    var uniforms: [3]facet.DescriptorBufferInfo = undefined;
+    for (&uniforms, 0..) |*info, k| info.* = .{ .buffer = uniform, .offset = k * 16, .range = 16 };
+    const storages = [2]facet.DescriptorBufferInfo{
+        .{ .buffer = storage, .offset = 0, .range = 64 },
+        .{ .buffer = storage, .offset = 128, .range = 32 },
+    };
+    const writes = [2]facet.WriteDescriptorSet{
+        .{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .uniform_buffer, .descriptor_count = uniforms.len, .buffer_info = &uniforms },
+        .{ .dst_set = sets[0].?, .dst_binding = 1, .descriptor_type = .storage_buffer, .descriptor_count = storages.len, .buffer_info = &storages },
+    };
+    fb.UpdateDescriptorSets(device, writes.len, &writes, 0, null);
+
+    const info = facet.ComputePipelineCreateInfo{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.? }, .layout = layout.? };
+    var pipelines: [1]?*facet.Pipeline = undefined;
+    if (fb.CreateComputePipelines(device, null, 1, @ptrCast(&info), &pipelines) != .success) return probe.check(false, "the compute pipeline");
+    _ = Probe.keep(&probe.pipelines, pipelines[0]);
+    const commands = probe.record() orelse return probe.check(false, "a second recording");
+    fb.CmdBindPipeline(commands, .compute, pipelines[0].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout.?, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    if (!probe.submit()) return probe.check(false, "the dispatch submitted");
+    var right = true;
+    for (0..3) |k| right = right and out[k] == k * 4;
+    probe.check(right, "every element of a binding of buffers read, not its first alone");
+    probe.checkEqual(8, out[3], "an element written through, its own range long");
+    probe.checkEqual(1, out[4], "and nothing past the binding's last");
+    probe.checkEqual(0x5151, out[32], "what it wrote where its range says");
+}
+
 fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical: *facet.PhysicalDevice, quiet: bool) struct { u32, u32 } {
     var properties: facet.PhysicalDeviceProperties = undefined;
     fb.GetPhysicalDeviceProperties(physical, &properties);
@@ -2051,6 +2160,7 @@ fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical
     boundsChecks(&probe);
     groupChecks(&probe);
     sizeChecks(&probe);
+    edgeChecks(&probe);
     return .{ probe.passed, probe.failed };
 }
 

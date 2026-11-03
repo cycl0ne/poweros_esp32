@@ -295,4 +295,27 @@ pub const LIBRARY_VERSION = 1;
 /// was given. `texture.Level` grew a field for all this, so every program
 /// that samples a texture has to be replaced along with the library, as a
 /// driver has.
-pub const LIBRARY_REVISION = 42;
+/// 43: the smaller edges, four of them. A swapchain's images may be
+/// copied out of and into as well as drawn into - TRANSFER_SRC and
+/// TRANSFER_DST in `SwapchainCreateInfo.image_usage`, which
+/// `supported_usage_flags` now says - so a picture of the frame is taken
+/// with CmdCopyImageToBuffer and nothing has to be drawn twice; sampling
+/// one is still refused, a display's buffer being rows and not blocks of
+/// texels. A statistics query pool may ask for a geometry shader's two
+/// statistics, which read 0, as Vulkan has a statistic of a stage that
+/// never ran, rather than being refused. A shader function reaches every
+/// element of a binding that is an array of buffers
+/// (`shader.Resources.bufferAt`, `storageAt`), not its first alone, as it
+/// always could for images and texel buffers. A set still holds two
+/// dynamic buffer descriptors (`shader.MAX_DYNAMIC_OFFSETS`): four were
+/// built and measured, and FacetMany drew a frame in 11.61 ms with them
+/// against 11.18 to 11.58 over seven runs with two - above every reading
+/// two gave, the offsets being copied with what a draw was bound with - so
+/// the limit stays where it is, with the numbers now written down beside
+/// it.
+/// What stays: `fifo` is the one present mode, there being no way to ask a
+/// display to show a buffer before its next frame; one queue family of one
+/// queue; a counter of 32 bits, for want of a 64-bit atomic on every
+/// machine the library runs on; and no point mode in tessellation, there
+/// being no point rasterization at all.
+pub const LIBRARY_REVISION = 43;

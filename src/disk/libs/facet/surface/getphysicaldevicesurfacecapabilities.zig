@@ -32,6 +32,7 @@ const max_images = @import("../swapchain/_swapchain.zig").max_images;
 /// and has from one image to as many pictures as the display's memory
 /// holds, four at most. One on a window is the size inside the window's
 /// border now, and has from one image to four. Its images are drawn into,
+/// copied out of and copied into (`supported_usage_flags`, since 1.43),
 /// and shown as they are drawn: no transform, no alpha.
 ///
 /// CONTEXT:

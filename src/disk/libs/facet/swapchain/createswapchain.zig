@@ -46,6 +46,14 @@ const Surface = _surface.Surface;
 /// buffer's: what is drawn into it is handed on to the display tile by tile
 /// as the render pass ends.
 ///
+/// `image_usage` may be COLOR_ATTACHMENT, TRANSFER_SRC and TRANSFER_DST,
+/// in any mix (since 1.43): an image is drawn into through a render pass,
+/// copied out of - a picture of the frame, taken with CmdCopyImageToBuffer
+/// - and copied into. SAMPLED is not among them: a texture is kept in
+/// blocks of texels, which a display's buffer is not. `present_mode` has
+/// to be `fifo`: a buffer is shown from the display's next frame on, and
+/// there is no way to ask a display for anything else.
+///
 /// `old_swapchain` is handed on: it hands out no more images
 /// (AcquireNextImage answers `error_out_of_date`), and what it was given to
 /// present is still shown. It is destroyed with DestroySwapchain as before.

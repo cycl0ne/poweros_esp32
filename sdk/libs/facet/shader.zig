@@ -284,10 +284,16 @@ pub fn fixedFragment(name: [*:0]const u8, comptime fixed: Fixed) Entry {
 pub const MAX_SETS = 4;
 /// The dynamic buffer descriptors one set may hold: each takes an offset
 /// from CmdBindDescriptorSets (`Resources.offsets`), so two of them is
-/// eight across the four sets. It is low because the offsets are part of
-/// what a draw was bound with, which is copied for every draw that
-/// changed it: four a set cost a measurable part of the rasterizer's
-/// throughput, and two cost none.
+/// eight across the four sets - which is Vulkan's guarantee for the
+/// uniform ones of a pipeline layout, and twice it for the storage ones.
+/// It is low because the offsets are part of what a draw was bound with,
+/// which is copied for every draw that changed it. Four a set were tried
+/// again for 1.43: FacetMany drew a frame in 11.61 and 11.62 ms with them,
+/// and in 11.18 to 11.58 ms with two over seven runs - above every reading
+/// two gave, by about 2 per cent of the mean, though by less than that
+/// test drifts from batch to batch. Two is kept: nothing has asked for
+/// more, and a program that wants eight ranges can bind eight offsets
+/// across the four sets.
 pub const MAX_DYNAMIC_OFFSETS = 2;
 pub const MAX_PUSH_CONSTANTS_SIZE = 128;
 
@@ -528,13 +534,21 @@ pub const Resources = extern struct {
     }
 
     /// Binding `binding` of set `set`, a buffer, as a `T`: null where it
-    /// is not written, or shorter than a `T`.
+    /// is not written, or shorter than a `T`. Its first element;
+    /// `bufferAt` reaches the others.
     ///
     /// A dynamic buffer descriptor is read from the offset
     /// CmdBindDescriptorSets gave for it, and what is left of the range
     /// from there has to hold a `T`.
     pub fn buffer(resources: *const Resources, comptime T: type, set: u32, binding: u32) ?*const T {
-        const found = resources.slot(set, binding, 0) orelse return null;
+        return resources.bufferAt(T, set, binding, 0);
+    }
+
+    /// Element `element` of binding `binding` of set `set`, a buffer, as a
+    /// `T`: a binding that is an array of buffers read element by element,
+    /// as `sampled` and `texels` are read. (Since 1.43.)
+    pub fn bufferAt(resources: *const Resources, comptime T: type, set: u32, binding: u32, element: u32) ?*const T {
+        const found = resources.slot(set, binding, element) orelse return null;
         const shift = resources.shiftOf(set, found);
         if (found.range -| shift < @sizeOf(T)) return null;
         const bytes: [*]const u8 = @ptrCast(found.pointer orelse return null);
@@ -602,10 +616,17 @@ pub const Resources = extern struct {
     }
 
     /// Binding `binding` of set `set`, a buffer written through, as the
-    /// `T`s it has room for: null where it is not written. A dynamic one
-    /// starts where CmdBindDescriptorSets said.
+    /// `T`s it has room for: null where it is not written. Its first
+    /// element; `storageAt` reaches the others. A dynamic one starts where
+    /// CmdBindDescriptorSets said.
     pub fn storage(resources: *const Resources, comptime T: type, set: u32, binding: u32) ?[]T {
-        const found = resources.slot(set, binding, 0) orelse return null;
+        return resources.storageAt(T, set, binding, 0);
+    }
+
+    /// Element `element` of binding `binding` of set `set`, a buffer
+    /// written through, as the `T`s it has room for. (Since 1.43.)
+    pub fn storageAt(resources: *const Resources, comptime T: type, set: u32, binding: u32, element: u32) ?[]T {
+        const found = resources.slot(set, binding, element) orelse return null;
         // A dynamic one starts where the bind said, and what is left of
         // the range from there is how many a function may reach.
         const shift = resources.shiftOf(set, found);
