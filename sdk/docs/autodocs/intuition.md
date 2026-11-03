@@ -4063,9 +4063,12 @@ have gone had it closed: to the window on the screen that was active
 most recently and is not away itself.
 
 On a screen whose windows are composed it fades out as a window
-closing does (`IPREFS_WindowFade`), and it is away from the moment it
+closing does (`IPREFS_WindowFade`) - or, where a window has taken the
+screen's hidden windows in (`HideControl`), flies into that window's
+box instead: a picture of its pixels, shrinking as it goes, which is
+the way into the dock's row. Either way it is away from the moment it
 is asked for: the activation has already gone, and nothing of the
-input reaches it while its picture fades.
+input reaches it while its picture is still on its way.
 
 Everything else about it stays. It is still open and still on its
 screen's list in the place it had, with its number, its port, its
@@ -8271,9 +8274,11 @@ uncovered, its border and its gadgets drawn again by intuition. A
 window that asked to hear about its depth (`WA_NotifyDepth`) is told.
 
 On a screen whose windows are composed it is shown unseen and fades
-in (`IPREFS_WindowFade`); a window still fading away is turned round
-where it is and comes back from there, so a window put away and
-fetched again at once never leaves the display.
+in (`IPREFS_WindowFade`), or grows back out of the box of the window
+that took it in (`HideControl`), which is how it went there; one
+still on its way away is turned round where it is and comes back from
+there, so a window put away and fetched again at once never leaves
+the display.
 
 It is not brought to the front and it is not made active: a program
 that wants both calls `WindowToFront` and `ActivateWindow` after this,

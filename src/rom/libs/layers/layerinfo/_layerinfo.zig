@@ -186,6 +186,11 @@ pub const Layer = struct {
     /// or null.
     picture: ?*const rtg.Surface = null,
     picture_area: Rect = .{},
+    /// Where its picture is shown on the display, scaled, while it is
+    /// hidden and on its way somewhere (`FlyLayer`): a window flying into
+    /// the window that takes the put-away ones in. Empty when it is not
+    /// flying, which is nearly always.
+    flight: Rect = .{},
     /// Composed, what it looks like: the radius of its corners, the size
     /// of its shadow, how much it covers (255, all), and whether it counts
     /// (`LATAG_Corners`, `LATAG_Shadow`, `LATAG_Opacity`, `LATAG_Ghost`).

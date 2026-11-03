@@ -230,7 +230,11 @@ pub const LIBRARY_VERSION = 0;
 /// brought back is shown unseen and fades in (IPREFS_WindowFade), on a
 /// screen whose windows are composed; turned round where it is when it
 /// is asked for the other way round while it fades.
-pub const LIBRARY_REVISION = 84;
+/// 85: a window put away into a window that takes the hidden ones in
+/// flies there instead of fading - a picture of its pixels stretched into
+/// a box walking to the taker's own, the dock's row (layers 16's
+/// FlyLayer) - and grows back out of it when it is brought back.
+pub const LIBRARY_REVISION = 85;
 const BUILD_DATE = "03.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
