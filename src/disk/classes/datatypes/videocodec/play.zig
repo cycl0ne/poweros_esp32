@@ -317,7 +317,16 @@ const Player = struct {
     fn pictures(p: *Player) void {
         while (true) {
             if (!p.decodeNext()) return p.picturesOver();
-            const frame = p.waiting.?;
+            // Decoding one picture takes as long as it takes - on a
+            // machine a film is too much for, a third of a second - so
+            // what the object asked for meanwhile is done before the
+            // picture goes up: a pause holds it back until the film plays
+            // on, and a move throws it away. Without this, a film the
+            // machine cannot keep up with would answer a pause a picture
+            // or two later, and a stop with the time it was stopped at.
+            p.orders();
+            if (!p.playing) return;
+            const frame = p.waiting orelse continue;
             const at = p.now();
             if (!p.fresh and frame.time > at) return p.arm(frame.time - at);
             if (!p.fresh and at - frame.time > p.own.frame_us and p.dropped_in_row < most_dropped) {
