@@ -76,7 +76,7 @@ pub fn codecBit(codec: u32) u32 {
 
 /// `ACodecStream.layout`: which layout the stream has. Raised whenever
 /// the structures here change.
-pub const ACODEC_LAYOUT: u32 = 1;
+pub const ACODEC_LAYOUT: u32 = 2;
 
 /// The longest a name is kept, and a comment; a frame's text read whole,
 /// at most.
@@ -166,6 +166,11 @@ pub const ACodecSource = extern struct {
     paused: bool,
     /// The last packet's ticks: one at the same time is laced to it.
     last_ticks: u64 align(4),
+    /// What the packet being decoded says is not presented of its end,
+    /// in frames of sound: Matroska's DiscardPadding, the tail of a last
+    /// frame an encoder filled up. 0 for a packet presented whole, which
+    /// is every packet of a file that says nothing of it.
+    pad: i64 align(4),
 };
 
 /// A stream, as the library and its module share it.

@@ -467,7 +467,7 @@ fn nextPacket(stream: *Stream, v: *Vorbis) bool {
     v.seeking = false;
     const start = _media.place(&stream.media, packet_info.ticks);
     _media.advance(&stream.media, v.ready);
-    const span = _media.window(&stream.media, start, v.ready) orelse {
+    const span = _media.window(&stream.media, start, v.ready, 0) orelse {
         v.ready_start = v.ready;
         return true;
     };

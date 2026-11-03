@@ -857,7 +857,12 @@ const Maker = struct {
         m.block(0xA3, 5, 20, 0x80, "frame0");
         // All of a size: two of four.
         m.block(0xA3, 3, 30, 0x80 | 0x04, "\x01eeeeffff");
-        m.block(0xA3, 4, 0, 0x80, "opus0");
+        // Opus in a group that says 1.5 ms of its sound are not presented:
+        // the tail of a frame its encoder filled up.
+        const padded = m.begin(0xA0);
+        m.block(0xA1, 4, 0, 0, "opus0");
+        m.element(0x75A2, "\x16\xE3\x60");
+        m.end(padded);
         m.block(0xA3, 6, 0, 0x80, packed_ass);
         m.block(0xA3, 7, 0, 0x80, "xx");
 
@@ -871,6 +876,12 @@ const Maker = struct {
         m.element(0xFB, "\xD8");
         m.end(referring);
         m.block(0xA3, 1, 0, 0x80, "DDD");
+        // Two frames laced into a group whose DiscardPadding is negative -
+        // padding at the front, 2 ms - which belongs to the last of them.
+        const fronted = m.begin(0xA0);
+        m.block(0xA1, 1, 20, 0x02, "\x01" ++ "\x02" ++ "EE" ++ "FFF");
+        m.element(0x75A2, "\xFF\xE1\x7B\x80");
+        m.end(fronted);
         const frame2 = m.len - second_body;
         m.block(0xA3, 5, 40, 0x80, "frame2");
         m.end(cluster);
@@ -935,6 +946,7 @@ test "Matroska by hand: lacing, header stripping, frames packed with zlib, sizes
     var maker: Maker = .{};
     maker.make(packed_ass[0..@intCast(packing.total_out)]);
     const bytes = maker.bytes[0..maker.len];
+
     try rig.write("WORK:laced.mka", bytes);
     var err: i32 = -1;
     const file = openFile(mb, "WORK:laced.mka", &err) orelse return error.NoFile;
@@ -989,7 +1001,15 @@ test "Matroska by hand: lacing, header stripping, frames packed with zlib, sizes
     try expectPacket(mb, file, 0, "\xFF\xFBBB", 1_024_000, true);
     try expectPacket(mb, file, 0, "\xFF\xFBCCCCC", 1_048_000, true);
     try expectPacket(mb, file, 0, "\xFF\xFBDDD", 2_000_000, true);
+    // The frames of a laced block in a group: its DiscardPadding is the
+    // last frame's, and negative - 2 ms at the front.
     var packet: media.MediaPacket = .{};
+    try testing.expectEqual(media.MERR_OK, mb.ReadMediaPacket(file, 0, &packet));
+    try testing.expectEqualStrings("\xFF\xFBEE", packet.data.?[0..packet.size]);
+    try testing.expectEqual(@as(i64, 0), packet.padding_ns);
+    try testing.expectEqual(media.MERR_OK, mb.ReadMediaPacket(file, 0, &packet));
+    try testing.expectEqualStrings("\xFF\xFBFFF", packet.data.?[0..packet.size]);
+    try testing.expectEqual(@as(i64, -2_000_000), packet.padding_ns);
     try testing.expectEqual(media.MERR_END, mb.ReadMediaPacket(file, 0, &packet));
 
     // A group's: how long it lasts.
@@ -1008,8 +1028,13 @@ test "Matroska by hand: lacing, header stripping, frames packed with zlib, sizes
     try expectPacket(mb, file, 2, "ffff", 1_053_219, true);
     try testing.expectEqual(media.MERR_END, mb.ReadMediaPacket(file, 2, &packet));
 
-    // Opus: due its delay before its block's time.
-    try expectPacket(mb, file, 3, "opus0", 993_500, true);
+    // Opus: due its delay before its block's time, and 1.5 ms of it at
+    // the end not presented.
+    try testing.expectEqual(media.MERR_OK, mb.ReadMediaPacket(file, 3, &packet));
+    try testing.expectEqualStrings("opus0", packet.data.?[0..packet.size]);
+    try testing.expectEqual(@as(i64, 993_500), packet.pts);
+    try testing.expectEqual(@as(i64, 1_500_000), packet.padding_ns);
+    try testing.expectEqual(media.MERR_END, mb.ReadMediaPacket(file, 3, &packet));
 
     // Pictures: a group with a reference is no key.
     try expectPacket(mb, file, 4, "frame0", 1_020_000, true);
@@ -1034,7 +1059,12 @@ test "Matroska by hand: lacing, header stripping, frames packed with zlib, sizes
     try testing.expectEqual(media.MERR_OK, mb.SeekMedia(file, 0, 1_030_000));
     try expectPacket(mb, file, 0, "\xFF\xFB" ++ "A" ** 300, 1_000_000, true);
     try testing.expectEqual(media.MERR_OK, mb.SeekMedia(file, 0, 5_000_000));
-    try expectPacket(mb, file, 0, "\xFF\xFBDDD", 2_000_000, true);
+    try expectPacket(mb, file, 0, "\xFF\xFBEE", 2_020_000, true);
+    // Read again, the last frame of the last block says the same of its
+    // front as it did the first time.
+    try testing.expectEqual(media.MERR_OK, mb.ReadMediaPacket(file, 0, &packet));
+    try testing.expectEqualStrings("\xFF\xFBFFF", packet.data.?[0..packet.size]);
+    try testing.expectEqual(@as(i64, -2_000_000), packet.padding_ns);
 
     // The default edition's chapters, the hidden one passed over: the
     // first ends where the next begins, the second where it says. The

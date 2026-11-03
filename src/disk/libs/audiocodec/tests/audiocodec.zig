@@ -1907,7 +1907,10 @@ test "Matroska sound through a read function: Vorbis, MP3 with its encoder's del
     var err: i32 = 0;
     var info: ac.AudioStreamInfo = .{};
 
-    // Matroska says how long to the millisecond: 102 ms are 4498 frames.
+    // Matroska says how long to the millisecond: 102 ms are 4498 frames,
+    // and the last block's DiscardPadding (5351474 ns, 236 frames) cuts
+    // the sound to 4480 - ffmpeg's 4608 less the 128 frames of half a
+    // short block its Vorbis times run late (the test below).
     var memory: Memory = .{ .bytes = vorbis_mka, .piece = 501 };
     const vorbis = openMemory(acb, &memory, &err) orelse return error.NoStream;
     acb.GetAudioStreamInfo(vorbis, &info);
@@ -1917,7 +1920,7 @@ test "Matroska sound through a read function: Vorbis, MP3 with its encoder's del
     try testing.expectEqual(@as(u32, 4498), info.frames);
     try testing.expectEqual(@as(u32, 0), info.seekable);
     var head: [1024 * 2]i16 = undefined;
-    try testing.expectEqual(@as(u32, 4498), try decodeAll(acb, vorbis, 2, 999, &head));
+    try testing.expectEqual(@as(u32, 4480), try decodeAll(acb, vorbis, 2, 999, &head));
     const vorbis_ref: []align(1) const i16 = std.mem.bytesAsSlice(i16, lossy_head);
     for (head, vorbis_ref) |ours, theirs| {
         try testing.expect(@abs(@as(i32, ours) - theirs) <= 1);
@@ -1925,8 +1928,10 @@ test "Matroska sound through a read function: Vorbis, MP3 with its encoder's del
     try testing.expectEqual(ac.ACERR_NOSEEK, acb.SeekAudio(vorbis, 0));
     acb.CloseAudioStream(vorbis);
 
-    // No CodecDelay: the encoder's 1105 frames are sound, as for ffmpeg;
-    // its padding is cut where the segment ends, 339 ms in.
+    // No CodecDelay: the encoder's 1105 frames are sound, as for ffmpeg.
+    // The segment ends 339 ms in, 14949 frames; the last block's
+    // DiscardPadding (14535147 ns, 641 frames of the last of its 13
+    // frames) cuts the sound to ffmpeg's 14335.
     memory = .{ .bytes = tone_mka, .piece = 333 };
     const tone = openMemory(acb, &memory, &err) orelse return error.NoStream;
     acb.GetAudioStreamInfo(tone, &info);
@@ -1935,7 +1940,7 @@ test "Matroska sound through a read function: Vorbis, MP3 with its encoder's del
     try testing.expectEqual(@as(u32, 2), info.channels);
     try testing.expectEqual(@as(u32, 14949), info.frames);
     var tone_all: [14949 * 2]i16 = undefined;
-    try testing.expectEqual(@as(u32, 14949), try decodeAll(acb, tone, 2, 1000, &tone_all));
+    try testing.expectEqual(@as(u32, 14335), try decodeAll(acb, tone, 2, 1000, &tone_all));
     const tone_ref: []align(1) const i16 = std.mem.bytesAsSlice(i16, tone_head);
     for (tone_all[1105 * 2 ..][0..2048], tone_ref) |ours, theirs| {
         try testing.expect(@abs(@as(i32, ours) - theirs) <= 1);
@@ -1966,7 +1971,7 @@ test "Matroska sound on a file: seeks within a millisecond - and FFmpeg's Vorbis
     try rig.write("WORK:vorbis.mka", &.{vorbis_mka});
     const vorbis = openFile(acb, "WORK:vorbis.mka", &err) orelse return error.NoStream;
     var vorbis_all: [4498 * 2]i16 = undefined;
-    try testing.expectEqual(@as(u32, 4498), try decodeAll(acb, vorbis, 2, 999, &vorbis_all));
+    try testing.expectEqual(@as(u32, 4480), try decodeAll(acb, vorbis, 2, 999, &vorbis_all));
     // FFmpeg's times for Vorbis run half a short block late: 128 frames.
     try expectLandings(acb, vorbis, &vorbis_all, 4498, &.{ 3000, 77, 2048, 4000, 4498 }, 22 + 128, true);
     acb.CloseAudioStream(vorbis);
@@ -1974,7 +1979,7 @@ test "Matroska sound on a file: seeks within a millisecond - and FFmpeg's Vorbis
     try rig.write("WORK:tone.mka", &.{tone_mka});
     const tone = openFile(acb, "WORK:tone.mka", &err) orelse return error.NoStream;
     var tone_all: [14949 * 2]i16 = undefined;
-    try testing.expectEqual(@as(u32, 14949), try decodeAll(acb, tone, 2, 1000, &tone_all));
+    try testing.expectEqual(@as(u32, 14335), try decodeAll(acb, tone, 2, 1000, &tone_all));
     try expectLandings(acb, tone, &tone_all, 14949, &.{ 0, 1105, 7000, 12345, 14949 }, 22, true);
     acb.CloseAudioStream(tone);
 
@@ -2116,10 +2121,16 @@ test "a hole in a film's sound: silence for it, the sound after it as before, th
     try testing.expect(after > count - hole_at - 50);
     try testing.expectEqualSlices(i16, whole[hole_at..][0..after], holed[hole_at + quiet ..][0..after]);
 
-    // A seek past the hole counts it: a frame of the film's time.
+    // A seek past the hole counts it: a frame of the film's time. The end
+    // is the last block's, less what its DiscardPadding says is not
+    // presented, and a seek places the blocks after it again to the
+    // millisecond, so it falls within one of where the straight read put
+    // it (18 frames, 0.4 ms).
     try testing.expectEqual(ac.ACERR_OK, acb.SeekAudio(stream, @intCast(hole_at + quiet + 4000)));
     var moved: [20000]i16 = undefined;
-    try testing.expectEqual(frames - (hole_at + quiet + 4000), try decodeAll(acb, stream, 1, 1000, &moved));
+    const rest = try decodeAll(acb, stream, 1, 1000, &moved);
+    const straight = frames - @as(u32, @intCast(hole_at + quiet + 4000));
+    try testing.expect(rest <= straight and rest + 44 >= straight);
 }
 
 // --- AC-3 and E-AC-3 ------------------------------------------------------------
@@ -2234,12 +2245,13 @@ test "E-AC-3 in Matroska: ffmpeg's samples, the encoder's delay left out; the sa
     try testing.expectEqual(ac.ACODEC_EAC3, info.codec);
     try testing.expectEqual(@as(u32, 44100), info.rate);
     try testing.expectEqual(@as(u32, 2), info.channels);
-    // The segment's 506 ms, less the delay: past ffmpeg's 22050, which
-    // the last block's DiscardPadding cuts.
+    // The segment's 506 ms, less the delay: 22058, eight frames past
+    // ffmpeg's 22050 - which the last block's DiscardPadding (16643991
+    // ns, 734 frames of its last) cuts the sound back to.
     try testing.expectEqual(@as(u32, 22058), info.frames);
     var film: [22058 * 2]i16 = undefined;
     const length = try decodeAll(acb, track, 2, 999, &film);
-    try testing.expectEqual(@as(u32, 22058), length);
+    try testing.expectEqual(@as(u32, 22050), length);
     try expectNear(&film, 0, eac3_ref, 0, 2048, 2);
 
     // Bare, the delay is sound: 256 frames more in front, every one after
@@ -2622,11 +2634,12 @@ test "Opus in Matroska and in an MP4: the pre-skip the track's delay, libopus's 
     acb.GetAudioStreamInfo(mka, &info);
     try testing.expectEqual(ac.ACODEC_OPUS, info.codec);
     try testing.expectEqual(@as(u32, 2), info.channels);
-    // Its length from the segment's, to the millisecond and a half: its
-    // first block lies before 0 by the priming, and the padding its last
-    // block says to drop is not read - libopus through ffmpeg gives 2400.
+    // Its length from the segment's is 2472, to the millisecond and a
+    // half: its first block lies before 0 by the priming. The last
+    // block's DiscardPadding (3500000 ns, 168 frames) cuts it to the
+    // 2400 libopus through ffmpeg gives.
     var short: [2472 * 2]i16 = undefined;
-    try testing.expectEqual(@as(u32, 2472), try decodeAll(acb, mka, 2, 700, &short));
+    try testing.expectEqual(@as(u32, 2400), try decodeAll(acb, mka, 2, 700, &short));
     try expectNear(&short, 0, opus_mka_ref, 0, 2400, 2);
     acb.CloseAudioStream(mka);
 

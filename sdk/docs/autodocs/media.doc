@@ -437,8 +437,9 @@ media.library/SeekMedia
 	the order they are decoded. Its bytes, its size, whether a decoder can
 	start at it (MPKT_KEY), when it is due and when it is decoded in
 	microseconds from the start of what the file presents - below 0 for
-	priming - how long it lasts, its number in the track, and its decode
-	time in the track's own ticks. The bytes are read with the rest of
+	priming - how long it lasts, its number in the track, its decode
+	time in the track's own ticks, and what of its sound is not
+	presented. The bytes are read with the rest of
 	their chunk, as far as the track's buffer holds them, so the packets
 	after it come out of the buffer.
 
@@ -447,6 +448,14 @@ media.library/SeekMedia
 	buffer; the frames of a block laced are handed out one at a time, the
 	time of each after the first from how long the track says a frame
 	lasts (SINCE 1.2).
+
+	What of a packet's sound is not presented is said in `padding_ns`
+	(SINCE 1.9): a Matroska block's DiscardPadding, positive for the tail
+	of a last frame an encoder filled up and negative for padding at the
+	front, which is what makes a Matroska file's sound end exactly where
+	it stops - the file's own length being only to the millisecond. Where
+	several frames are laced into one block it is the last frame's. An
+	MP4 says nothing of it, and so is always 0.
 
 	A track whose frames are packed has them handed out unpacked (SINCE
 	1.8): the bytes each frame begins with put back where the track is

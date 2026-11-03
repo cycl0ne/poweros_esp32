@@ -190,6 +190,7 @@ pub const BlockGroup: u32 = 0xA0;
 pub const Block: u32 = 0xA1;
 pub const BlockDuration: u32 = 0x9B;
 pub const ReferenceBlock: u32 = 0xFB;
+pub const DiscardPadding: u32 = 0x75A2;
 
 pub const Cues: u32 = 0x1C53BB6B;
 pub const CuePoint: u32 = 0xBB;
