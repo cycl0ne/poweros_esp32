@@ -383,6 +383,15 @@ pub const WA_Task = WA_Dummy + 0x112;
 /// it. `ShowWindow` brings it back. `GetWindowAttrs` only.
 pub const WA_Hidden = WA_Dummy + 0x113;
 
+/// False keeps the hide gadget off the window's title bar: the program
+/// says it would rather not be put away, and intuition leaves the fourth
+/// system gadget out even on a screen whose windows can be hidden
+/// (`HideControl`). True is the default and means nothing on a screen
+/// with no window taking the hidden ones. `OpenWindow` only; a program
+/// that wants to put its own window away calls `HideWindow` whatever it
+/// said here.
+pub const WA_HideGadget = WA_Dummy + 0x114;
+
 /// `WA_Position`'s values.
 pub const WPOS_CENTERSCREEN: u32 = 1;
 pub const WPOS_CENTERMOUSE: u32 = 2;

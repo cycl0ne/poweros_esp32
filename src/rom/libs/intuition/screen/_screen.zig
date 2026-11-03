@@ -52,6 +52,7 @@ const ic = intuition.imageclass;
 const TagItem = utility.TagItem;
 const Pen = graphics.Pen;
 const IntuitionBase = @import("../intuition.zig").IntuitionBase;
+const Window = @import("../window/_window.zig").Window;
 
 /// What a screen is, behind the opaque `sdk.intuition.Screen`.
 pub const Screen = extern struct {
@@ -119,6 +120,13 @@ pub const Screen = extern struct {
     pub_node: sc.PubScreenNode,
     /// Its windows, oldest first. It cannot close while it has any.
     windows: exec.MinList = .{},
+    /// The window that takes in this screen's hidden windows
+    /// (`HideControl`) - the dock's own window, where there is a dock.
+    /// While there is one, every other window of the screen that may have
+    /// it carries a hide gadget, and the host closing brings every hidden
+    /// window back. Null when nobody takes them: the gadget is then not
+    /// there, since nothing would answer it.
+    hide_host: ?*Window = null,
     /// How far down its display its top edge is.
     top: i32 = 0,
     /// Whether its bar drags it and MoveScreen moves it (`SA_Draggable`).

@@ -165,6 +165,9 @@ pub const Window = extern struct {
     depth_image: ?*Object = null,
     zoom_image: ?*Object = null,
     size_image: ?*Object = null,
+    /// The hide gadget, there only while the screen has a window taking
+    /// its hidden windows (`HideControl`) and this window may have one.
+    hide_image: ?*Object = null,
     /// Its gadgets, linked through each gadget's `next`.
     gadgets: ?*Object = null,
     /// How many IDCMP_MOUSEMOVE messages are out unreplied, and how many
@@ -403,6 +406,13 @@ pub const WMF_ABOVE: u32 = 1 << 6;
 /// pixels, and a program listing the windows still finds it
 /// (`WA_Hidden`).
 pub const WMF_HIDDEN: u32 = 1 << 7;
+/// `WA_HideGadget` was false: the window would rather not be put away, so
+/// it is given no hide gadget however its screen stands.
+pub const WMF_NOHIDE: u32 = 1 << 8;
+/// It is its screen's hide host (`HideControl`): the window the hidden
+/// windows of the screen go to, which is also the window that never
+/// carries a hide gadget itself.
+pub const WMF_HIDEHOST: u32 = 1 << 9;
 
 /// intuition.library's own tag, not in the SDK: true opens a window in
 /// front of every other, those that stay in front included, and keeps it
@@ -499,6 +509,28 @@ pub fn zoomLeft(w: *const Window) i32 {
     const right = if (w.flags & WF_DEPTH != 0) depthLeft(w) else w.width;
     return right - depthWidthOf(w) + 1;
 }
+
+/// Where the hide gadget sits: left of the zoom gadget, or of the depth
+/// gadget without one, or at the right edge with neither, the same width
+/// as those two and overlapping its neighbour's groove as they do.
+pub fn hideLeft(w: *const Window) i32 {
+    const right = if (w.flags & WF_HASZOOM != 0)
+        zoomLeft(w)
+    else if (w.flags & WF_DEPTH != 0)
+        depthLeft(w)
+    else
+        w.width;
+    return right - depthWidthOf(w) + 1;
+}
+
+/// Whether a window has a title bar: the top border is the bar's height
+/// and the gadgets drawn in it have their row. A window with neither a
+/// title nor one of those flags has only a thin border all round.
+pub fn hasBar(w: *const Window) bool {
+    if (w.flags & WF_BORDERLESS != 0) return false;
+    return w.title != null or w.flags & (WF_CLOSE | WF_DEPTH | WF_DRAG | WF_HASZOOM) != 0;
+}
+
 pub const side_border = 4;
 pub const bottom_border = 2;
 
@@ -755,6 +787,7 @@ pub fn paintBorder(ib: *IntuitionBase, w: *Window, rp: *graphics.RastPort) void 
     if (w.close_image) |image| it.DrawImageState(rp, image, 0, 0, state, dri);
     if (w.depth_image) |image| it.DrawImageState(rp, image, depthLeft(w), 0, state, dri);
     if (w.zoom_image) |image| it.DrawImageState(rp, image, zoomLeft(w), 0, state, dri);
+    if (w.hide_image) |image| it.DrawImageState(rp, image, hideLeft(w), 0, state, dri);
     if (w.size_image) |image| {
         const box = sizeBoxOf(w);
         it.DrawImageState(rp, image, w.width - box.width, w.height - box.height, state, dri);
@@ -983,7 +1016,7 @@ pub fn groupHasHelp(ib: *IntuitionBase, group: u32) bool {
 }
 
 /// The border gadgets, for `drawGadget`.
-pub const Gadget = enum { close, depth, zoom, size };
+pub const Gadget = enum { close, depth, zoom, hide, size };
 
 /// One border gadget drawn pressed or not, where it sits.
 pub fn drawGadget(ib: *IntuitionBase, w: *Window, which: Gadget, pressed: bool) void {
@@ -991,12 +1024,14 @@ pub fn drawGadget(ib: *IntuitionBase, w: *Window, which: Gadget, pressed: bool) 
         .close => w.close_image,
         .depth => w.depth_image,
         .zoom => w.zoom_image,
+        .hide => w.hide_image,
         .size => w.size_image,
     } orelse return;
     const x: i32 = switch (which) {
         .close => 0,
         .depth => depthLeft(w),
         .zoom => zoomLeft(w),
+        .hide => hideLeft(w),
         .size => w.width - sizeBoxOf(w).width,
     };
     const y: i32 = if (which == .size) w.height - sizeBoxOf(w).height else 0;
@@ -1127,6 +1162,7 @@ pub fn disposeParts(ib: *IntuitionBase, w: *Window) void {
     it.DisposeObject(w.close_image);
     it.DisposeObject(w.depth_image);
     it.DisposeObject(w.zoom_image);
+    it.DisposeObject(w.hide_image);
     it.DisposeObject(w.size_image);
 }
 

@@ -2365,6 +2365,99 @@ test "windows: one put away and brought back (HideWindow, ShowWindow, WA_Hidden)
     try tearDown(ib);
 }
 
+test "windows: the hide gadget, and the window taking the hidden ones in (HideControl)" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const display = try Display.sized(ib, 128, 60, .rgb565);
+    const it = ib.iface();
+    var tags = [_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 4 },
+        .{ .tag = wn.WA_Top, .data = 12 },
+        .{ .tag = wn.WA_Width, .data = 56 },
+        .{ .tag = wn.WA_Height, .data = 20 },
+        .{ .tag = wn.WA_CloseGadget, .data = 1 },
+        .{ .tag = wn.WA_DepthGadget, .data = 1 },
+        .{ .tag = wn.WA_DragBar, .data = 1 },
+        .{ .tag = wn.WA_HideGadget, .data = 1 },
+        .{},
+    };
+    const w = it.OpenWindowTagList(&tags).?;
+    const win: *_window.Window = @ptrCast(@alignCast(w));
+    it.ActivateWindow(w);
+    // Where the fourth gadget goes - left of the depth gadget - and where
+    // a press lands on it: over the middle of its drawing.
+    const gadget_x = _window.hideLeft(win);
+    const at_x: i32 = 4 + gadget_x + 8;
+    const at_y: i32 = 12 + 6;
+
+    // No window of the screen takes the hidden ones in, so there is no
+    // gadget there: the press reaches the bar and drags the window.
+    try testing.expect(display.pixel(@intCast(at_x), @intCast(at_y)) != 0xFFFF);
+    click(ib, at_x, at_y);
+    try testing.expectEqual(@as(usize, 0), windowAttr(ib, w, wn.WA_Hidden));
+
+    // The dock's own window takes them in: the gadget is drawn on the
+    // window that may have one - the shine of its box, in a window that
+    // is active - and the dock's own window goes without, since a window
+    // that took the way back with it would be a window gone.
+    tags[1].data = 36;
+    const dock = it.OpenWindowTagList(&tags).?;
+    const dock_win: *_window.Window = @ptrCast(@alignCast(dock));
+    try testing.expect(it.HideControl(dock, true));
+    try testing.expectEqual(@as(u16, 0xFFFF), display.pixel(@intCast(at_x), @intCast(at_y)));
+    try testing.expect(win.hide_image != null);
+    try testing.expect(dock_win.hide_image == null);
+
+    // A window opened while there is a host is given the gadget as it
+    // opens; one that would rather not be put away is not.
+    tags[0].data = 68;
+    tags[1].data = 12;
+    const late = it.OpenWindowTagList(&tags).?;
+    const late_win: *_window.Window = @ptrCast(@alignCast(late));
+    tags[1].data = 36;
+    tags[7].data = 0;
+    const shy = it.OpenWindowTagList(&tags).?;
+    const shy_win: *_window.Window = @ptrCast(@alignCast(shy));
+    try testing.expect(late_win.hide_image != null);
+    try testing.expect(shy_win.hide_image == null);
+    // There is one host to a screen: a second one hears so, and the one
+    // that holds it hears that it holds it.
+    try testing.expect(!it.HideControl(late, true));
+    try testing.expect(it.HideControl(dock, true));
+
+    // Pressing the gadget puts the window away.
+    click(ib, at_x, at_y);
+    try testing.expectEqual(@as(usize, 1), windowAttr(ib, w, wn.WA_Hidden));
+    // Where a window has no gadget, that part of the bar is bar again.
+    click(ib, 68 + gadget_x + 8, 36 + 6);
+    try testing.expectEqual(@as(usize, 0), windowAttr(ib, shy, wn.WA_Hidden));
+
+    // The host closing is the end of the way back: every window it took
+    // in comes back where it stood, and the gadgets go with it.
+    it.CloseWindow(dock);
+    try testing.expectEqual(@as(usize, 0), windowAttr(ib, w, wn.WA_Hidden));
+    try testing.expect(win.hide_image == null);
+    try testing.expect(late_win.hide_image == null);
+    click(ib, at_x, at_y);
+    try testing.expectEqual(@as(usize, 0), windowAttr(ib, w, wn.WA_Hidden));
+
+    // Given up without the window closing: the same again.
+    try testing.expect(it.HideControl(late, true));
+    it.HideWindow(w);
+    try testing.expect(it.HideControl(late, false));
+    try testing.expectEqual(@as(usize, 0), windowAttr(ib, w, wn.WA_Hidden));
+    try testing.expect(win.hide_image == null);
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    it.CloseWindow(shy);
+    it.CloseWindow(late);
+    it.CloseWindow(w);
+    try testing.expect(it.CloseScreen(screen));
+    display.down(ib);
+    try tearDown(ib);
+}
+
 test "windows: the active one, the one under the pointer, the depth order, the front screen, the pointer hidden" {
     const ib = try setUp();
     defer kexec.deinit();

@@ -72,6 +72,7 @@ Generated from the source by `./zig build autodoc`.
 - [GetStyleAttr](#getstyleattr) - One property of a part in a state, found as `DrawPart` finds it.
 - [GetWindowAttrs](#getwindowattrs) - Reads a window.
 - [HelpControl](#helpcontrol) - Turns gadget help on or off for a window and its help group.
+- [HideControl](#hidecontrol) - A window takes in the hidden windows of its screen, or gives that up.
 - [HidePointer](#hidepointer) - The pointer kept from being shown at all, or shown again.
 - [HideWindow](#hidewindow) - Puts a window away without closing it.
 - [InitRequester](#initrequester) - Clears a Requester to be filled in.
@@ -1312,6 +1313,11 @@ that screen, no window is. A window opened on
 a public screen by name, or on the default one, ends its visit, which
 may be the last the screen's owner is waiting for.
 
+A window that took in the hidden windows of its screen
+(`HideControl`) is the way back for them, so closing it brings every
+one of them back where it stood and takes the hide gadgets off the
+screen's windows.
+
 **CONTEXT**
 
 - Waits: for the screen list's semaphore, and the layers' locks.
@@ -1335,7 +1341,7 @@ None known.
 
 **SEE ALSO**
 
-`OpenWindowTagList`
+`OpenWindowTagList`, `HideControl`
 
 **EXAMPLES**
 
@@ -3868,6 +3874,90 @@ None known.
 
 ```zig
 ib.HelpControl(window, wn.HC_GADGETHELP); // the Help key was pressed
+```
+
+## HideControl
+
+A window takes in the hidden windows of its screen, or gives that up.
+
+**SYNOPSIS**
+
+```zig
+fn HideControl(ib: *IntuitionBase, window: *Window, on: bool) bool
+```
+
+**SINCE**
+
+0.83. LVO -556.
+
+**INPUTS**
+
+- `window` - the window that takes them in: the dock's own window,
+  where there is a dock.
+- `on` - true to take them in, false to give that up again.
+
+**RESULT**
+
+True when the screen stands as asked. False only for `on` with another
+window of the screen already taking them in: there is one host to a
+screen, so a second dock does not quietly take the first one's place.
+
+**BEHAVIOR**
+
+While a screen has such a window, every other window of it that can
+have one is given a hide gadget - the fourth gadget in the title bar,
+left of the zoom and depth gadgets - and pressing that gadget puts the
+window away (`HideWindow`). A window whose title bar has no room for
+one more gadget, one opened with `WA_HideGadget` false - a system
+requester says that of itself - and the on-screen keyboard are left
+without; so is the host itself, since a window that took the way back
+with it would be a window gone. Windows opening later are given the
+gadget as they open.
+
+The host is the way back, so it is also the end of it: giving this up,
+closing the window, or the task ending with it brings every hidden
+window of the screen back where it stood and takes the gadgets off
+again. A program that puts windows away without being a host - calling
+`HideWindow` itself - is on its own for the way back, as it always was.
+
+Nothing here hides a window or shows one: it says who answers for the
+ones that are hidden.
+
+**CONTEXT**
+
+- Waits: for the screen list's semaphore, and the layers' locks while
+  the borders are drawn.
+- Interrupts: no. It may wait, and it allocates the gadgets' images.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing changes hands. The gadgets are intuition's, made and freed
+with the hosting.
+
+**NOTES**
+
+A screen of a program's own has no host unless the program makes one
+of its windows into one. That is on purpose: the gadget is there only
+where something shows the way back.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`HideWindow`, `ShowWindow`, `NextWindow`, `GetWindowAttrs`
+(`WA_Hidden`), `OpenWindowTagList` (`WA_HideGadget`)
+
+**EXAMPLES**
+
+```zig
+// The dock's window takes the hidden windows of the desktop screen.
+if (!ib.HideControl(dock_window, true)) {
+    // Another dock is already showing them.
+}
 ```
 
 ## HidePointer

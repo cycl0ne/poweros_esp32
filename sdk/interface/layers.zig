@@ -312,10 +312,10 @@ pub const LayersBase = opaque {
     }
 
     /// Show a hidden layer again, where it was and as far in front as it
-    /// was. A smart or super layer, and a composed one, has its pixels back
-    /// from its keeping; a simple one is owed them as damage and its program
-    /// gets a refresh. True, or false with `LERR_NO_MEMORY`; a layer that
-    /// was not hidden answers true.
+    /// was. A smart or super layer has its pixels back from its keeping and
+    /// a composed one from its own buffer; a simple one is owed them as
+    /// damage and its program gets a refresh. True, or false with
+    /// `LERR_NO_MEMORY`; a layer that was not hidden answers true.
     pub fn ShowLayer(self: *LayersBase, layer: *layers.Layer) bool {
         return libraries.call(self, LVO.ShowLayer, Fn.ShowLayer, .{layer});
     }

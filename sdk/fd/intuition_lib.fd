@@ -447,4 +447,9 @@ void HideWindow(*intuition.Window window)
 /// far in front as it was. It is not brought to the front and not made
 /// active: `WindowToFront` and `ActivateWindow` do that.
 void ShowWindow(*intuition.Window window)
+/// A window takes in the hidden windows of its screen, or gives that up:
+/// while it does, the screen's other windows carry a hide gadget, and the
+/// window closing brings every hidden window back. False when another
+/// window of the screen already takes them.
+bool HideControl(*intuition.Window window, bool on)
 ##end

@@ -221,7 +221,12 @@ pub const LIBRARY_VERSION = 0;
 /// closed, nothing of it on the display and nothing of the input
 /// reaching it, open all the while (WA_Hidden); layers 15's hidden layer
 /// under it.
-pub const LIBRARY_REVISION = 82;
+/// 83: HideControl and the hide gadget - a window takes in the hidden
+/// windows of its screen, and while one does, the screen's other windows
+/// carry a fourth gadget in the title bar that puts them away
+/// (HIDEIMAGE, GTYP_WHIDE, WA_HideGadget); the host closing brings them
+/// all back.
+pub const LIBRARY_REVISION = 83;
 const BUILD_DATE = "03.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

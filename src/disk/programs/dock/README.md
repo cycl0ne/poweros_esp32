@@ -26,7 +26,9 @@ start meanwhile.
   a program starts, a file opens in its program.
 - **A click on a window** listed after the entries brings that window to
   the front and gives it the keyboard; a click on the one that is in
-  front already sends it behind the other windows.
+  front already sends it behind the other windows. A window that was put
+  away with its hide gadget keeps its cell, and the click brings it
+  back.
 - **A click on a drawer or a disk** lists what is in it by the entry, a
   stack: drawers first, then the rest, each by name, as many as there is
   room for. A click on one opens it; the last row, **Open Drawer** or
@@ -89,6 +91,15 @@ own icon's tool types, changed with Information.
   other docks are not listed, nor is a window without a title - and
   neither are the windows on another screen: a program that opens a
   screen of its own is its own master there.
+
+  While the dock shows the windows, it also takes in the ones **put
+  away**: every window of its screen then has a fourth gadget in its
+  title bar - a bar lying in a box, left of the zoom and depth gadgets -
+  and pressing it puts the window away. Nothing of it is on the display
+  then and nothing of the input reaches it, but it stays open and keeps
+  its cell in the dock, which brings it back. With WINDOWS=NO there is
+  no such gadget, since nobody would show the way back; and a dock that
+  ends brings every window it took in back first.
 - **A dot** by an entry whose program, started from the dock, still
   runs.
 - **Where dragged files would go**, while they are dragged over the
@@ -129,7 +140,8 @@ is in `ENVARC:Sys/dock.prefs`, one line:
 - **MAGNIFY** is 0, or the pixels the entry under the pointer grows to:
   more than ICONSIZE, and no more than a quarter of the screen.
 - **WINDOWS** is YES for the windows open on the dock's screen listed
-  after its entries, NO for the entries alone.
+  after its entries, NO for the entries alone. YES is also what puts the
+  hide gadget on the screen's windows.
 
 KEEPCLEAR is read but not acted on yet. Prefs changes all of it on its
 Dock page. The dock follows both files while it runs: a change to

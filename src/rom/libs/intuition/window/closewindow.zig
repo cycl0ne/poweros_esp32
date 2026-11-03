@@ -41,6 +41,11 @@ const unlock = _window.unlock;
 /// a public screen by name, or on the default one, ends its visit, which
 /// may be the last the screen's owner is waiting for.
 ///
+/// A window that took in the hidden windows of its screen
+/// (`HideControl`) is the way back for them, so closing it brings every
+/// one of them back where it stood and takes the hide gadgets off the
+/// screen's windows.
+///
 /// CONTEXT:
 /// - Waits: for the screen list's semaphore, and the layers' locks.
 /// - Interrupts: no.
@@ -59,7 +64,7 @@ const unlock = _window.unlock;
 /// None known.
 ///
 /// SEE ALSO:
-/// `OpenWindowTagList`
+/// `OpenWindowTagList`, `HideControl`
 ///
 /// EXAMPLES:
 /// ```zig
@@ -70,6 +75,9 @@ pub fn CloseWindow(ib: *IntuitionBase, window: ?*Window) void {
     const s = w.screen;
     lock(ib);
     defer unlock(ib);
+    // The windows it took in come back first: the way back closes with
+    // it, and one of them may be the window the activation goes to.
+    if (w.more_flags & _window.WMF_HIDEHOST != 0) @import("_hide.zig").release(ib, s);
     const was_active = ib.active_window == w;
     if (was_active) {
         ib.active_window = null;

@@ -152,6 +152,7 @@ gadgets and hands its messages over as words.
 | `WA_PubScreen`, `WA_PubScreenName`, `WA_CustomScreen` | the screen; the default public one without any |
 | `WA_Title`, `WA_ScreenTitle` | its title, not copied, and the screen bar's while it is active |
 | `WA_CloseGadget`, `WA_DragBar`, `WA_DepthGadget`, `WA_SizeGadget` | its border gadgets |
+| `WA_HideGadget` | false keeps the hide gadget off a window that would rather not be put away |
 | `WA_Activate` | made the active window as it opens |
 | `WA_SimpleRefresh`, `WA_GimmeZeroZero`, `WA_Borderless`, `WA_Backdrop` | what kind of window |
 | `WA_StayInFront` | in front of every ordinary window, as a dock is |
@@ -373,6 +374,19 @@ if (ib.WindowUnderPointer()) |under| {
   well. A window nobody can bring back is a window gone, so this is for
   a program that keeps the way back - the dock's row of windows, where a
   window put away keeps its cell.
+- `HideControl(window, true)` says that window takes in the hidden
+  windows of its screen; the dock calls it for its own window. While a
+  screen has such a window, every other window of it that can have one
+  carries a **hide gadget** - the fourth gadget in the title bar, left of
+  the zoom and depth gadgets - and pressing that gadget is `HideWindow`.
+  Without such a window there is no gadget, since nothing would answer
+  it: a program with a screen of its own gets none unless it makes one of
+  its own windows the host. The host is the way back, so it is the end of
+  it too: `HideControl(window, false)`, closing the window, or the task
+  ending brings every hidden window of the screen back and takes the
+  gadgets off. It answers false when another window of the screen already
+  takes them in. A window says `WA_HideGadget` false at `OpenWindow` to
+  go without the gadget; it can still put itself away with `HideWindow`.
 - `HidePointer(true)` stops the pointer being drawn, wherever it is;
   `HidePointer(false)` lets it be drawn again. A window of its own that
   wants no pointer sets `WA_PointerType` instead - this is for a program

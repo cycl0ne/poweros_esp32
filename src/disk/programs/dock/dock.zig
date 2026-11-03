@@ -52,7 +52,13 @@
 //!   They are looked up ten times a second (`NextWindow` under
 //!   `LockIBase`), in the order they opened, as many as there is room
 //!   for; a cell's menu brings its window to the front or sends it to
-//!   the back.
+//!   the back. While it shows them, the dock's own window takes in the
+//!   screen's hidden windows (intuition's `HideControl`): every window
+//!   of the screen then carries a hide gadget in its title bar, and a
+//!   window put away keeps its cell, which brings it back
+//!   (`ShowWindow`). With WINDOWS=NO nobody would show the way back, so
+//!   there is no gadget either, and the dock ending brings every window
+//!   it took in back.
 //! - A dot under an entry whose program, started from the dock, still
 //!   runs (anvil.library's `ANVO_EndMsg`).
 //! - Files dragged over it from anywhere (intuition's `SA_Dragging`): the
@@ -106,7 +112,7 @@ const DiskfontBase = sdk.interface.diskfont.DiskfontBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Dock";
-const VERSION_STRING = "\x00$VER: Dock 1.4 (03.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Dock 1.5 (03.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "QUIT/S";
@@ -390,6 +396,9 @@ const App = struct {
     window_count: usize = 0,
     listed: [windows_max]Listed = @splat(.{}),
     listed_count: usize = 0,
+    /// Whether the dock's own window takes in the screen's hidden
+    /// windows now (`hostWindows`).
+    hosting: bool = false,
 
     window: ?*intuition.Window = null,
     rp: *graphics.RastPort = undefined,
@@ -1489,6 +1498,10 @@ const App = struct {
     /// last time, and only their titles and which of them is in front are
     /// taken again; another set of them, and the cells are made anew.
     fn syncWindows(app: *App) void {
+        // Only while it shows them does the dock take in the windows put
+        // away: with the row off, nobody would show the way back, and
+        // intuition leaves the hide gadget off the screen's windows.
+        app.hostWindows(app.settings.windows);
         if (!app.settings.windows) {
             if (app.window_count == 0 or !app.steady()) return;
             app.dropWindows();
@@ -1605,6 +1618,19 @@ const App = struct {
         return e;
     }
 
+    /// The dock's own window takes in the hidden windows of its screen,
+    /// or gives that up (intuition's `HideControl`): while it does, the
+    /// screen's windows carry a hide gadget, and giving it up - or the
+    /// dock ending - brings every window it took in back. Another dock
+    /// already holding it says no; this is asked again with every look,
+    /// so the first dock to end leaves it to the next.
+    fn hostWindows(app: *App, on: bool) void {
+        if (app.hosting == on) return;
+        const window = app.window orelse return;
+        if (!app.ib.HideControl(window, on)) return;
+        app.hosting = on;
+    }
+
     /// The cells of the windows taken off: the dock shows its entries
     /// alone.
     fn dropWindows(app: *App) void {
@@ -1616,7 +1642,9 @@ const App = struct {
     }
 
     /// The window a cell stands for brought to the front and made the
-    /// active one, or - `back` - sent behind the others. It may have
+    /// active one, or - `back` - sent behind the others; one put away
+    /// (`WA_Hidden`) is brought back whatever `back` says, since that is
+    /// all its cell can mean. It may have
     /// closed since the look that listed it, so it is found by its number
     /// while the screens are held still, which keeps it open until the
     /// depth is changed; one that is gone leaves a flash, and its cell
@@ -1629,7 +1657,13 @@ const App = struct {
             defer app.ib.UnlockIBase(held);
             if (app.ib.FindWindowNumber(number)) |window| {
                 found = true;
-                if (back) {
+                // A window put away has only one thing its cell can
+                // mean: bring it back, to the front and active.
+                if (windowAttr(app.ib, window, wn.WA_Hidden) != 0) {
+                    app.ib.ShowWindow(window);
+                    app.ib.WindowToFront(window);
+                    app.ib.ActivateWindow(window);
+                } else if (back) {
                     app.ib.WindowToBack(window);
                 } else {
                     app.ib.WindowToFront(window);

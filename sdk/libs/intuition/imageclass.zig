@@ -144,7 +144,8 @@ pub const PART_TOOL: u32 = style.classPart(style.PART_MAIN, 6);
 // --- sysiclass: the system's own images ---------------------------------------
 
 /// Which image: `DEPTHIMAGE`, `ZOOMIMAGE`, `SIZEIMAGE`, `CLOSEIMAGE`,
-/// `SDEPTHIMAGE`, `CHECKIMAGE`, `MXIMAGE`, `MENUCHECK` or `AMIGAKEY`.
+/// `HIDEIMAGE`, `SDEPTHIMAGE`, `CHECKIMAGE`, `MXIMAGE`, `MENUCHECK` or
+/// `AMIGAKEY`.
 pub const SYSIA_Which = IA_Dummy + 0x0D;
 /// The screen's DrawInfo, whose pens it is drawn in. Without one it uses
 /// the default pens.
@@ -157,6 +158,9 @@ pub const ZOOMIMAGE: u32 = 0x01;
 pub const SIZEIMAGE: u32 = 0x02;
 /// A dot in a box: the close gadget.
 pub const CLOSEIMAGE: u32 = 0x03;
+/// A bar across the lower half of a box: the hide gadget, which puts a
+/// window away (`HideWindow`).
+pub const HIDEIMAGE: u32 = 0x04;
 /// Two screens, one over the other: a screen's depth gadget, at the right
 /// end of its title bar.
 pub const SDEPTHIMAGE: u32 = 0x05;

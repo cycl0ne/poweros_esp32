@@ -5,9 +5,9 @@
 //! Each image is a list of vectors - filled and outlined rectangles and
 //! polygons, each in one of the screen's pens and for some of the three
 //! states (normal, selected, in an inactive window) - on a design grid:
-//! close 20 by 11, depth and zoom 24 by 11, size 18 by 10. The vectors are
-//! scaled to the size the image is asked to be, so the gadgets fit a
-//! border whatever height a font makes it.
+//! close 20 by 11, depth, zoom and hide 24 by 11, size 18 by 10. The
+//! vectors are scaled to the size the image is asked to be, so the
+//! gadgets fit a border whatever height a font makes it.
 //!
 //! An image is drawn once per state into a bitmap of its own - the ground
 //! (the fill pen in an active border, the background pen in an inactive
@@ -32,8 +32,8 @@
 //! The edge follows where the image sits: raised on its own for the size
 //! gadget in the corner; for close, at the left of the title bar, raised
 //! with a line of shine down its right side where the bar begins; for
-//! depth and zoom, at the right, with a line of shadow down its left side,
-//! and placed one pixel into the bar's groove.
+//! depth, zoom and hide, at the right, with a line of shadow down its
+//! left side, and placed one pixel into the bar's groove.
 //!
 //! **The colours are the style's** (`style.zig`), the shapes the vectors'
 //! own. Each pen that stands for part of a look is taken from the part the
@@ -109,6 +109,7 @@ const wdepth3 = [_]u8{ 9, 4, 19, 8 };
 const wzoom1 = [_]u8{ 7, 2, 11, 5 };
 const wzoom2 = [_]u8{ 6, 2, 18, 8, 6, 2, 12, 5, 7, 2, 11, 5 };
 const wclose1 = [_]u8{ 7, 3, 11, 7 };
+const whide1 = [_]u8{ 6, 5, 17, 7 };
 const sdepth1 = [_]u8{ 4, 2, 14, 6 };
 const sdepth2 = [_]u8{ 4, 2, 14, 2, 14, 4, 8, 4, 8, 6, 4, 6, 4, 2 };
 const sdepth3 = [_]u8{ 8, 4, 18, 8 };
@@ -149,6 +150,15 @@ const close_design = Design{ .width = 20, .height = 11, .edge = .left_of_bar, .v
     .{ .shape = .fill_rect, .pen = sc.SHINEPEN, .states = S_N, .points = &wclose1 },
     .{ .shape = .fill_rect, .pen = sc.BACKGROUNDPEN, .states = S_S, .points = &wclose1 },
     .{ .shape = .line_rect, .pen = sc.SHADOWPEN, .states = S_N | S_S | S_I, .points = &wclose1 },
+} };
+// The hide gadget: a bar lying in the lower half of the gadget, where a
+// window put away comes to rest. It is the close gadget's scheme - a box
+// of shine outlined in shadow, the shine going to the background when it
+// is pressed - in a shape of its own.
+const hide_design = Design{ .width = 24, .height = 11, .edge = .right_of_bar, .vectors = &.{
+    .{ .shape = .fill_rect, .pen = sc.SHINEPEN, .states = S_N, .points = &whide1 },
+    .{ .shape = .fill_rect, .pen = sc.BACKGROUNDPEN, .states = S_S, .points = &whide1 },
+    .{ .shape = .line_rect, .pen = sc.SHADOWPEN, .states = S_N | S_S | S_I, .points = &whide1 },
 } };
 const size_design = Design{ .width = 18, .height = 10, .edge = .corner, .vectors = &.{
     .{ .shape = .fill_poly, .pen = sc.SHINEPEN, .states = S_N | S_S, .points = &wsize1 },
@@ -193,6 +203,7 @@ fn designOf(which: u32) ?*const Design {
         ic.ZOOMIMAGE => &zoom_design,
         ic.SIZEIMAGE => &size_design,
         ic.CLOSEIMAGE => &close_design,
+        ic.HIDEIMAGE => &hide_design,
         ic.SDEPTHIMAGE => &sdepth_design,
         ic.MENUCHECK => &menucheck_design,
         ic.AMIGAKEY => &amigakey_design,
@@ -530,8 +541,9 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const ub = ib.utility_base;
             if (ub.FindTagItem(ic.IA_Width, new.attr_list) == null) im.width = if (design.natural_width != 0) design.natural_width else design.width;
             if (ub.FindTagItem(ic.IA_Height, new.attr_list) == null) im.height = if (design.natural_height != 0) design.natural_height else design.height;
-            // Depth and zoom reach one pixel into the title bar's groove.
-            if (sd.which == ic.DEPTHIMAGE or sd.which == ic.ZOOMIMAGE) im.left = -1;
+            // Depth, zoom and hide reach one pixel into the title bar's
+            // groove.
+            if (sd.which == ic.DEPTHIMAGE or sd.which == ic.ZOOMIMAGE or sd.which == ic.HIDEIMAGE) im.left = -1;
             return made;
         },
         classusr.OM_SET => {
