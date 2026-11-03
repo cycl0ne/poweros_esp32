@@ -20,8 +20,9 @@
 //! volume, F - or a double-click on the picture - shows the film over the
 //! whole screen, which F, Esc or a click leaves again.
 //!
-//! **The sound sets the time.** It plays on a process of its own
-//! (sound.zig), which keeps audio.device fed; the window decodes the
+//! **The sound sets the time.** It plays on a process of its own (the
+//! module `filmsound`, which videocodec.datatype plays a film's sound
+//! with too), which keeps audio.device fed; the window decodes the
 //! pictures and shows each when what is heard has come to its time -
 //! audio.device's position, less the output's latency. A picture whose
 //! time is past by more than a frame is given back unshown, up to a few
@@ -106,7 +107,7 @@ const cv = sdk.gadgets.canvas;
 const strings = @import("strings");
 const Text = sdk.locale.Strings(strings);
 const Id = strings.Id;
-const Sound = @import("sound.zig").Sound;
+const Sound = @import("filmsound").Sound;
 const Whole = @import("whole.zig").Whole;
 const subtitles = @import("subtitles.zig");
 const Subtitles = subtitles.Subtitles;
@@ -149,6 +150,8 @@ const menu_room = 6 + 1 + most_listed + 2 + most_listed + 1;
 
 /// The files the requester shows.
 const open_pattern = "#?.(mp4|m4v|mov|mkv)";
+/// What the sound's process is called, for Top to name it.
+const sound_process = "Movie sound";
 /// How far the keys and the deck's wind buttons move.
 const jump_seconds = 10;
 /// The volume's steps on the keys, and most.
@@ -399,7 +402,7 @@ const App = struct {
         var length: usize = 0;
         while (path[length] != 0 and length < app.name.len) : (length += 1) app.name[length] = path[length];
         app.name[length] = 0;
-        if (app.info.sound_codec != 0) app.sound = Sound.create(app.sys, app.dl, app.vcb, film, &app.info, app.level);
+        if (app.info.sound_codec != 0) app.sound = Sound.create(app.sys, app.dl, app.vcb, film, &app.info, app.level, sound_process);
         app.pictures_ended = false;
         app.fresh = true;
         app.dropped_in_row = 0;
@@ -1021,7 +1024,7 @@ const App = struct {
         app.sound = null;
         _ = app.vcb.SelectVideoTrack(film, track, at);
         app.vcb.GetVideoStreamInfo(film, &app.info);
-        if (app.info.sound_codec != 0) app.sound = Sound.create(app.sys, app.dl, app.vcb, film, &app.info, app.level);
+        if (app.info.sound_codec != 0) app.sound = Sound.create(app.sys, app.dl, app.vcb, film, &app.info, app.level, sound_process);
         if (app.sound) |sound| sound.start(at, held);
         app.timer_clock = !app.soundKeepsTime();
         app.setClock(at);
