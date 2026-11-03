@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.30**, so that a program need not find out by failing. It covers the API.
+1.36**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -22,7 +22,7 @@ BCM2712's V3D, which runs only a fixed handful of fragment forms
 
 | Where | What |
 |---|---|
-| `sdk/fd/facet_lib.fd` | The whole jump table, one line a function: 118 entries |
+| `sdk/fd/facet_lib.fd` | The whole jump table, one line a function: 124 entries |
 | `sdk/libs/facet/facet.zig` | The structures and enumerations a program passes |
 | `sdk/libs/facet/shader.zig` | Shaders as functions: the stages, their inputs, the fixed forms |
 | `sdk/libs/facet/texture.zig` | How a texture is kept and sampled, by a fixed form and through a sampler |
@@ -30,17 +30,17 @@ BCM2712's V3D, which runs only a fixed handful of fragment forms
 | `src/disk/libs/facet/driver/cpu/` | The cores' driver: the tiled rasterizer |
 | `src/disk/libs/facet/driver/v3d/` | The V3D's driver, a module in `LIBS:facet/` |
 
-Of Vulkan 1.0's roughly 137 core entry points, facet has 118. Two of the
+Of Vulkan 1.0's roughly 137 core entry points, facet has 124. Two of the
 absent ones, `GetInstanceProcAddr` and `GetDeviceProcAddr`, do not apply to
 a library called through an LVO table.
 
 What a device will and will not do is answered by
 `GetPhysicalDeviceFeatures` (since 1.24), which is Vulkan's call with a
 structure of facet's own: a field wherever a create call can refuse
-something, and no field for what the library has no call for at all. Eleven
-of its fields differ between the cores and the V3D, which is the reason a
-program that wants the GPU should ask rather than take the first device
-listed.
+something, and no field for what the library has no call for at all.
+Thirteen of its fields differ between the cores and the V3D, which is the
+reason a program that wants the GPU should ask rather than take the first
+device listed.
 
 Nothing below is a defect: every refusal is checked and answered with
 `error_feature_not_present`, and the limits are stated in the
@@ -146,6 +146,101 @@ pass's depth. What is left out:
 - Two subpasses still share a depth attachment only one right after the
   other, in the same tiles.
 
+## Images written through, and what they still are not
+
+Since 1.31 a shader function may write an image: an image made with
+`IMAGE_USAGE_STORAGE`, written into a set as a `storage_image`, and reached
+by `shader.Resources.written`, which gives back the texture to set texels
+in (`putLayer`, `setColor`) and read them from (`colorAt`). A compute
+function and a fragment function of the program's can both write one. What
+is left out:
+
+- **Only the cores write one** (`PhysicalDeviceFeatures.storage_images`).
+  The V3D's TMU keeps a texture in a layout of its own, which is not the one
+  the library writes, so a set layout with the kind is refused there.
+- **Nothing orders two writes.** A frame's work is shared between the
+  cores, and groups run in no order, so two functions writing the same texel
+  is for the program to avoid - as it is in Vulkan, there being no barrier
+  and no atomic here either.
+- **The formats are a texture's**: `rgba8888` and `rgb565`. There is no
+  format conversion on a write and no `r32` of any kind, and the compressed
+  and float formats, being unpacked to 8888 as they are copied in, are not
+  written through at all.
+- **The view's first level and layer** are what a function writes: there is
+  no way to name another level from inside the function.
+- A `storage_image` is still not an attachment: an image cannot be drawn
+  into and written through in the same pass.
+
+## Texel buffers, and the formats they read
+
+Since 1.32 a buffer's bytes may be read as texels of a format:
+`CreateBufferView` makes a view of a range, a `uniform_texel_buffer` or
+`storage_texel_buffer` descriptor carries it, and
+`shader.Resources.texels` gives the function a `shader.Texels` whose `at`
+reads a texel as four floats and `colorAt` as 0xAARRGGBB, whatever the
+format. A storage one is written through as well. Every device has them.
+What is left out:
+
+- **Seven formats**: `r8g8b8a8_unorm`, `b8g8r8a8_unorm`,
+  `r5g6b5_unorm_pack16`, and `r32_sfloat` to `r32g32b32a32_sfloat`. No
+  integer texel formats, nothing of 16 bits a channel, and none of the
+  compressed ones.
+- **A view holds no bytes of its own**: it reads the buffer where it lies,
+  so a destroyed view leaves a set pointing at bytes that are no longer a
+  view's, as it does in Vulkan.
+- Nothing orders two writes through a storage one, there being no barrier
+  and no atomic.
+- The offset and the range are a whole number of texels, and a range of no
+  texels is refused.
+
+## Colour attachments blended each its own way
+
+Since 1.33 `PipelineColorBlendStateCreateInfo.attachments` is one state for
+each colour attachment of the subpass, taken on its own: one attachment can
+be blended while the next is replaced, each with its own factors, operation
+and write mask. Every device has it
+(`PhysicalDeviceFeatures.independent_blend`), an attachment being drawn as
+a pass of its own either way. What is left out:
+
+- **The blend constants are the pipeline's**, one set shared by all of its
+  attachments, as they are in Vulkan; `CmdSetBlendConstants` sets that one
+  set.
+- **A fragment function still runs once for each attachment**, with
+  `shader.Resources.output` saying which: it writes one colour, never
+  several at once, so a subpass of several has its commands played over
+  again for each rather than drawn once into all of them.
+- Logic operations are still refused, for every attachment
+  (`logic_op_enable`), and there is no dual-source blending: the `SRC1`
+  factors do not exist.
+- `attachment_count` is either none - the default over all of them - or
+  exactly the subpass's colour attachments; anything between is
+  `error_initialization_failed`.
+
+## Dynamic buffer descriptors, and what they still are not
+
+Since 1.35 `uniform_buffer_dynamic` and `storage_buffer_dynamic` are
+kinds a set layout takes: the descriptor's bytes start where
+`CmdBindDescriptorSets`' `dynamic_offsets` says, past where the write put
+them, so one set serves draw after draw with a range of its own for each
+instead of a set for each. Every device has them
+(`PhysicalDeviceFeatures.dynamic_descriptors`). What is left out:
+
+- **A set holds `max_descriptor_set_dynamic_buffers` of them**, two -
+  eight across the four sets - and a layout that asks for more is refused.
+  Vulkan counts them per pipeline layout and guarantees more. The number
+  is low on purpose: the offsets are part of what a draw was bound with,
+  which is copied for every draw that changed it, so each one costs a
+  little of the rasterizer's throughput.
+- **A function reaches element 0 of a binding alone**
+  (`shader.Resources.buffer`, `storage`), as it does for any buffer, so a
+  binding that is an array of dynamic buffers has only its first readable
+  - though every element of it still takes an offset, as Vulkan has them.
+- The offsets are not checked against the buffer: one past the range
+  leaves nothing to read, and a function finds no `T` there rather than
+  reading another buffer's bytes.
+- An offset is in bytes and is not rounded: it is for the program to keep
+  it aligned for what it reads there.
+
 ## Object kinds that do not exist
 
 ### Events
@@ -163,38 +258,63 @@ makes one: there is no `CreatePipelineCache`, `DestroyPipelineCache`,
 the shape of the call and is ignored. Pipelines are cheap to make here,
 because there is nothing to compile.
 
-### Buffer views
-
-No `CreateBufferView` and no `DestroyBufferView`; the
-`uniform_texel_buffer` and `storage_texel_buffer` descriptors are refused.
-
 ### Sparse resources
 
 No `QueueBindSparse`, `GetImageSparseMemoryRequirements` or
 `GetPhysicalDeviceSparseImageFormatProperties`. Memory is bound whole.
 
+## The depth bias, and what it still is not
+
+Since 1.34 a pipeline may move its triangles' depth before it is tested
+and written: `depth_bias_enable` with its constant, slope and clamp, or
+`DynamicState.depth_bias` and `CmdSetDepthBias` to leave the three numbers
+to commands. The constant is in the smallest differences the depth
+attachment holds - 65535ths of the range for `d16_unorm` - and the slope
+is of the triangle's steepest, in depth over a pixel. What is left out:
+
+- **Only the cores move it** (`PhysicalDeviceFeatures.depth_bias`). The
+  V3D has a depth offset of its own, a packet this driver does not write
+  yet, so a pipeline that asks for a bias is refused there.
+- **Only triangles are moved**, as in Vulkan: points and lines, and
+  triangles drawn as their edges or corners, are drawn where they are.
+- The bias is worked out once a triangle, from the depth plane its set-up
+  already had, so it is exact in the depth's own units and costs nothing a
+  pixel - but it is the plane that moves, not each pixel, which is what
+  Vulkan's wording allows.
+- There is still no depth clamp and no depth bounds test, and
+  `DynamicState.depth_bounds` is taken and does nothing.
+
 ## Commands that are absent
 
 - `CmdResolveImage`: there is no multisampling to resolve.
-- `CmdSetDepthBias` and `CmdSetDepthBounds`.
+- `CmdSetDepthBounds`.
 
-`DynamicState` names `depth_bias` and `depth_bounds`, but the pipeline
-takes neither and both features are refused when it is made, so a pipeline
-that lists them is made without them.
+`DynamicState` names `depth_bounds`, but the pipeline takes it and the
+feature is refused when the pipeline is made, so a pipeline that lists it
+is made without it.
 
 ## Device queries that are absent
 
-- `GetPhysicalDeviceImageFormatProperties`: what an image may be is in
-  `CreateImage`'s documentation, and `error_format_not_supported` says when
-  it may not.
-- `GetRenderAreaGranularity`.
+Since 1.36 the three that were missing are there:
+`GetPhysicalDeviceImageFormatProperties` answers the largest image of a
+format, type, tiling and usage - and `error_format_not_supported` for a
+shape there is no image of at all - by asking the rules `CreateImage`
+keeps, so the two cannot drift apart; `GetRenderAreaGranularity` is the
+device's tile; and `GetDeviceMemoryCommitment` is a block's whole size, or
+0 for the lazily allocated type. What is left:
+
 - `FlushMappedMemoryRanges` and `InvalidateMappedMemoryRanges`: no
   non-coherent host memory is offered, so there is nothing to flush.
-- `GetDeviceMemoryCommitment`.
 - `EnumerateInstanceExtensionProperties` and the other three: there is no
   extension and no layer mechanism. Surfaces and swapchains are simply part
   of the table, not behind an extension, and `CreateScreenSurface` and
   `CreateWindowSurface` take the place of a platform's own.
+
+`GetPhysicalDeviceImageFormatProperties` says nothing about the sides of a
+sampled image being powers of two, nor about the memory an image of the
+largest extent and the most layers at once would want: the first is in
+`CreateImage`'s documentation and the second is `max_resource_size` and
+what `AllocateMemory` answers.
 
 ## In the structures, refused by the implementation
 
@@ -205,13 +325,16 @@ These can be asked for and are answered with `error_feature_not_present`.
 | Multisampling entirely: `rasterization_samples` above 1, sample shading, alpha-to-coverage, alpha-to-one | `pipeline/creategraphicspipelines.zig` |
 | An attachment of more than one sample | `render/createrenderpass.zig` |
 | Logic operations: `LogicOp` is fully enumerated, `logic_op_enable` is not taken | `pipeline/creategraphicspipelines.zig` |
-| Depth clamp, depth bias, the depth bounds test | `pipeline/creategraphicspipelines.zig` |
+| Depth clamp and the depth bounds test | `pipeline/creategraphicspipelines.zig` |
+| A depth bias, on a device that moves no depth: the V3D (`depth_bias`) | `pipeline/creategraphicspipelines.zig` |
 | More than one viewport or one scissor | `pipeline/creategraphicspipelines.zig` |
-| Colour attachments blended each its own way: with several, all must be identical | `pipeline/creategraphicspipelines.zig` |
+| Colour attachments that differ, on a device that blends them all alike: no device of this library is one (`independent_blend`) | `pipeline/creategraphicspipelines.zig` |
 | Input attachments and resolve attachments in a subpass | `render/createrenderpass.zig` |
 | A depth attachment's stencil that loads or stores | `render/createrenderpass.zig` |
 | Present modes but `fifo`, though `immediate`, `mailbox` and `fifo_relaxed` are enumerated | `swapchain/createswapchain.zig` |
-| Descriptors but `sampler`, `combined_image_sampler`, `sampled_image`, `uniform_buffer` and `storage_buffer` | `descriptor/_descriptor.zig` |
+| Descriptors but `sampler`, `combined_image_sampler`, `sampled_image`, `storage_image`, `uniform_buffer`, `storage_buffer`, the two texel buffers and the two dynamic ones | `descriptor/_descriptor.zig` |
+| More dynamic buffer descriptors in one set than `max_descriptor_set_dynamic_buffers` | `descriptor/createdescriptorsetlayout.zig` |
+| A `storage_image` layout on the V3D: its TMU keeps a texture its own way | `descriptor/createdescriptorsetlayout.zig` |
 | A fixed fragment form that drops pixels, on the V3D: the QPUs have no program that discards | `driver/v3d/driver.zig` |
 | A fixed fragment form that samples through a sampler, on the V3D: nor one that reads a sampler | `driver/v3d/driver.zig` |
 | An occlusion or a statistics query pool, on the V3D: it counts neither the samples nor the stages | `query/createquerypool.zig` |
@@ -220,10 +343,8 @@ These can be asked for and are answered with `error_feature_not_present`.
 | A depth attachment that loads or stores, on the V3D, or of a format with a stencil in it | `render/createrenderpass.zig` |
 | A depth attachment kept, whose image has no memory behind it | `render/createframebuffer.zig` |
 
-Two consequences do not appear in that table:
+One consequence does not appear in that table:
 
-- **`CmdBindDescriptorSets`' `dynamic_offsets` is never used**, because
-  neither dynamic buffer descriptor is taken.
 - **A form that drops pixels cannot also have the depth pre-pass.** The
   pre-pass settles depth before any fragment function has run, which is the
   opposite of what a dropping form needs, so `PIPELINE_CREATE_DEPTH_PREPASS`
@@ -278,9 +399,9 @@ Of textures:
 A compute function is called once for each **workgroup**, not once for each
 invocation (`shader.Groups`). So there is no local invocation number, no
 memory shared within a group, no barrier and no subgroups; a group runs on
-a worker's stack, on any core, in no order. With no `storage_image`
-descriptor it writes storage buffers and nothing else. Compute and
-tessellation run on the cores whichever device the pipeline was made on.
+a worker's stack, on any core, in no order. It writes storage buffers and,
+since 1.31, storage images (below). Compute and tessellation run on the
+cores whichever device the pipeline was made on.
 
 Tessellation divides evenly only, has no point mode, and its control
 function sets nothing but the levels.

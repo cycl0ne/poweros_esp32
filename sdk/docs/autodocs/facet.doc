@@ -37,6 +37,7 @@ facet.library/CmdPipelineBarrier
 facet.library/CmdPushConstants
 facet.library/CmdResetQueryPool
 facet.library/CmdSetBlendConstants
+facet.library/CmdSetDepthBias
 facet.library/CmdSetLineWidth
 facet.library/CmdSetScissor
 facet.library/CmdSetStencilCompareMask
@@ -46,6 +47,7 @@ facet.library/CmdSetViewport
 facet.library/CmdUpdateBuffer
 facet.library/CmdWriteTimestamp
 facet.library/CreateBuffer
+facet.library/CreateBufferView
 facet.library/CreateCommandPool
 facet.library/CreateComputePipelines
 facet.library/CreateDescriptorPool
@@ -67,6 +69,7 @@ facet.library/CreateShaderModule
 facet.library/CreateSwapchain
 facet.library/CreateWindowSurface
 facet.library/DestroyBuffer
+facet.library/DestroyBufferView
 facet.library/DestroyCommandPool
 facet.library/DestroyDescriptorPool
 facet.library/DestroyDescriptorSetLayout
@@ -92,12 +95,14 @@ facet.library/FreeCommandBuffers
 facet.library/FreeDescriptorSets
 facet.library/FreeMemory
 facet.library/GetBufferMemoryRequirements
+facet.library/GetDeviceMemoryCommitment
 facet.library/GetDeviceQueue
 facet.library/GetFenceStatus
 facet.library/GetImageMemoryRequirements
 facet.library/GetImageSubresourceLayout
 facet.library/GetPhysicalDeviceFeatures
 facet.library/GetPhysicalDeviceFormatProperties
+facet.library/GetPhysicalDeviceImageFormatProperties
 facet.library/GetPhysicalDeviceMemoryProperties
 facet.library/GetPhysicalDeviceProperties
 facet.library/GetPhysicalDeviceQueueFamilyProperties
@@ -106,6 +111,7 @@ facet.library/GetPhysicalDeviceSurfaceFormats
 facet.library/GetPhysicalDeviceSurfacePresentModes
 facet.library/GetPhysicalDeviceSurfaceSupport
 facet.library/GetQueryPoolResults
+facet.library/GetRenderAreaGranularity
 facet.library/GetSwapchainImages
 facet.library/MapMemory
 facet.library/QueuePresent
@@ -611,8 +617,12 @@ facet.library/WaitForFences
 	- `bind_point` - `graphics`; nothing is recorded for another.
 	- `layout` - the pipeline layout the sets are bound for.
 	- `first_set`, `count`, `sets` - the sets, from set `first_set` on.
-	- `dynamic_offset_count`, `dynamic_offsets` - none: facet.library has no
-	  dynamic descriptors.
+	- `dynamic_offset_count`, `dynamic_offsets` - one offset in bytes for
+	  each dynamic buffer descriptor of the sets bound, in the order the
+	  sets, their bindings and the elements of each run; null and 0 where
+	  there is none. Offsets past what the sets want are left alone, and a
+	  descriptor whose offset is missing is read from where it was written
+	  (since 1.35, `PhysicalDeviceFeatures.dynamic_descriptors`).
 
    RESULT
 	None.
@@ -620,6 +630,13 @@ facet.library/WaitForFences
    BEHAVIOR
 	The draws after it read the sets as `Resources.sets`, as they hold them
 	when the draws run. Sets past the fourth are not bound.
+
+	A `uniform_buffer_dynamic` or a `storage_buffer_dynamic` reads its
+	buffer from the offset given here, past the one its write gave, and
+	what is left of the range from there is what a function may read
+	(`shader.Resources.buffer`). The offsets are the binding's, not the
+	set's: binding the same set again with others is how one set serves
+	draw after draw, each with a range of its own.
 
    CONTEXT
 	- Waits: no.
@@ -632,7 +649,9 @@ facet.library/WaitForFences
 
    NOTES
 	Every pipeline layout reads set `n` the same way, so a set stays bound
-	across pipelines.
+	across pipelines. A set holds at most
+	`PhysicalDeviceLimits.max_descriptor_set_dynamic_buffers` dynamic
+	buffer descriptors, which CreateDescriptorSetLayout holds it to.
 
    BUGS
 	None known.
@@ -642,6 +661,9 @@ facet.library/WaitForFences
 
    EXAMPLES
 	    fb.CmdBindDescriptorSets(commands, .graphics, layout.?, 0, 1, @ptrCast(&set), 0, null);
+	    // The same set again, its one dynamic buffer read from 256 bytes in:
+	    const offsets = [1]u32{256};
+	    fb.CmdBindDescriptorSets(commands, .graphics, layout.?, 0, 1, @ptrCast(&set), 1, &offsets);
 facet.library/CmdBindIndexBuffer              facet.library/CmdBindIndexBuffer
 
    NAME
@@ -1959,6 +1981,61 @@ facet.library/WaitForFences
 
    EXAMPLES
 	    fb.CmdSetBlendConstants(commands, &.{ 1, 0.5, 0.25, 1 });
+facet.library/CmdSetDepthBias                    facet.library/CmdSetDepthBias
+
+   NAME
+	CmdSetDepthBias -- Recorded: the depth bias, for a pipeline that leaves it to commands.
+
+   SYNOPSIS
+	    fn CmdSetDepthBias(base: *FacetBase, buffer: *facet.CommandBuffer, constant: f32, clamp: f32, slope: f32) void
+
+   SINCE
+	1.34. LVO -500.
+
+   INPUTS
+	- `buffer` - a command buffer recording.
+	- `constant` - how many of the smallest difference the depth
+	  attachment holds are added; 65535ths of the range for `d16_unorm`.
+	- `clamp` - the most of the depth range a triangle may be moved by,
+	  or the least where it is negative; 0 for no limit.
+	- `slope` - how much of the triangle's steepest slope is added, in
+	  depth over a pixel.
+
+   RESULT
+	None.
+
+   BEHAVIOR
+	The draws after it, with a pipeline whose depth bias is dynamic
+	(`DynamicState.depth_bias`) and whose `depth_bias_enable` is true, move
+	their triangles' depth by these before it is tested and written. A
+	pipeline that gave the numbers itself is not touched by this, and one
+	without `depth_bias_enable` adds nothing whatever is set here.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The three numbers are copied as the command is recorded.
+
+   NOTES
+	Only triangles are moved, as in Vulkan: points and lines, and triangles
+	drawn as their edges or corners, are drawn where they are. The bias is
+	worked out once a triangle, from the depth plane the rasterizer set up,
+	so it costs nothing a pixel.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`CreateGraphicsPipelines`, `GetPhysicalDeviceFeatures`, `CmdSetBlendConstants`
+
+   EXAMPLES
+	    // The decal lifted off the wall it is on: a unit of depth, and a
+	    // little more where the wall is seen at an angle.
+	    fb.CmdSetDepthBias(commands, 1, 0, 1.5);
 facet.library/CmdSetLineWidth                    facet.library/CmdSetLineWidth
 
    NAME
@@ -2378,6 +2455,76 @@ facet.library/WaitForFences
 	    var vertices: ?*facet.Buffer = null;
 	    const info = facet.BufferCreateInfo{ .size = @sizeOf(@TypeOf(cube)), .usage = facet.BUFFER_USAGE_VERTEX_BUFFER };
 	    if (fb.CreateBuffer(device, &info, &vertices) != .success) return error.NoBuffer;
+facet.library/CreateBufferView                  facet.library/CreateBufferView
+
+   NAME
+	CreateBufferView -- A range of a buffer read as texels of a format, for a texel buffer descriptor.
+
+   SYNOPSIS
+	    fn CreateBufferView(base: *FacetBase, device: *facet.Device, info: *const facet.BufferViewCreateInfo, view: *?*facet.BufferView) facet.Result
+
+   SINCE
+	1.32. LVO -492.
+
+   INPUTS
+	- `device` - the device whose buffer it is.
+	- `info.buffer` - a buffer made with `BUFFER_USAGE_UNIFORM_TEXEL_BUFFER`,
+	  or `BUFFER_USAGE_STORAGE_TEXEL_BUFFER` for one a function writes
+	  through, and bound to memory.
+	- `info.format` - how the bytes are read: `r8g8b8a8_unorm`,
+	  `b8g8r8a8_unorm`, `r5g6b5_unorm_pack16`, `r32_sfloat`,
+	  `r32g32_sfloat`, `r32g32b32_sfloat` or `r32g32b32a32_sfloat`, which
+	  are those whose `buffer_features` say `UNIFORM_TEXEL_BUFFER`.
+	- `info.offset` - the first byte of the texels, a multiple of the
+	  format's size.
+	- `info.range` - how many bytes of them, a multiple of the format's
+	  size; `facet.WHOLE_SIZE` reaches the end of the buffer.
+	- `view` - where the view goes.
+
+   RESULT
+	`success`; `error_format_not_supported` for a format no view takes;
+	`error_feature_not_present` where the device has no texel buffers, or
+	the buffer was not made for them; `error_initialization_failed` for an
+	offset or a range that is not the format's size, or a range of no
+	texels, or a buffer with no memory; `error_out_of_host_memory`.
+
+   BEHAVIOR
+	The view holds the buffer, the format and the range, and nothing of the
+	bytes: they are read where they lie, as the buffer's memory holds them.
+	So a program writing the buffer through its mapped memory is seen by
+	the next function that reads the view, with no copy anywhere.
+
+	The range is held to the buffer: a range reaching past its end is cut
+	to it, and what is left has to be a texel at least.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The view is the caller's, given back by `DestroyBufferView`. The buffer
+	has to outlive it, and the view has to outlive every set it is written
+	into and every submission reading one.
+
+   NOTES
+	This is how a function reads bytes as a format rather than as a Zig
+	type: a storage buffer wants the program and the data to agree on a
+	struct, where a texel buffer reads what a file or another machine
+	handed over. `shader.Resources.texels` gives the function a
+	`shader.Texels`, whose `at` reads a texel as four floats and `colorAt`
+	as 0xAARRGGBB, whatever the format.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`DestroyBufferView`, `UpdateDescriptorSets`, `CreateDescriptorSetLayout`
+
+   EXAMPLES
+	    var view: ?*facet.BufferView = null;
+	    _ = fb.CreateBufferView(device, &.{ .buffer = buffer.?, .format = .r32g32b32a32_sfloat }, &view);
 facet.library/CreateCommandPool                facet.library/CreateCommandPool
 
    NAME
@@ -2783,13 +2930,16 @@ facet.library/WaitForFences
 	their edges or corners (POLYGON_MODE_LINE, POINT); one sample a pixel,
 	triangles culled by facing as asked; lines `line_width` pixels wide, set
 	here or by CmdSetLineWidth, and points one pixel; a
-	depth test of any compare, written or not, without bounds, bias or clamp;
+	depth test of any compare, written or not, with a bias on the triangles'
+	depth where the device takes one, and without bounds or clamp;
 	a stencil test of any compare and operations, a face's own, the masks and
 	the reference given here or set by commands; the channels of the write mask written, replacing what is
 	there or mixed with it by any blend factors and operation, the alpha by
-	its own, and no logic op; one viewport and one scissor, given here or set
+	its own and each colour attachment of the subpass by its own
+	(`color_blend_state.attachments`, one for each), and no logic op; one viewport and one scissor, given here or set
 	by CmdSetViewport and CmdSetScissor (DynamicState viewport and scissor;
 	blend_constants with CmdSetBlendConstants, line_width with CmdSetLineWidth,
+	depth_bias with CmdSetDepthBias,
 	the stencil's with CmdSetStencilCompareMask, CmdSetStencilWriteMask and
 	CmdSetStencilReference;
 	the others are taken and do nothing). A pipeline with the rasterizer
@@ -2825,8 +2975,14 @@ facet.library/WaitForFences
    NOTES
 	A depth test on a render pass without depth is no test, as Vulkan has
 	it, nor a stencil test on one without stencil. Lines and points use the
-	front's stencil test. On an attachment without alpha, R5G6B5, what is there reads as wholly
-	opaque. On the cores, SRC_ALPHA and ONE_MINUS_SRC_ALPHA or ONE, with
+	front's stencil test, and take no depth bias: only triangles are moved,
+	as in Vulkan, and `depth_bias_enable` wants a device whose
+	`PhysicalDeviceFeatures.depth_bias` is true (since 1.34). On an attachment without alpha, R5G6B5, what is there reads as wholly
+	opaque. `color_blend_state.attachments` holds one state for each colour
+	attachment of the subpass, or none for the default over all of them; a
+	subpass of several has each blended its own way (since 1.33,
+	`PhysicalDeviceFeatures.independent_blend`), the blend constants being
+	the pipeline's and shared. On the cores, SRC_ALPHA and ONE_MINUS_SRC_ALPHA or ONE, with
 	the alpha's factors the same or ZERO and ONE and the mask whole, cost
 	less than any other mixing.
 
@@ -3678,6 +3834,52 @@ facet.library/WaitForFences
 
    EXAMPLES
 	    fb.DestroyBuffer(device, vertices);
+facet.library/DestroyBufferView                facet.library/DestroyBufferView
+
+   NAME
+	DestroyBufferView -- A buffer view given back.
+
+   SYNOPSIS
+	    fn DestroyBufferView(base: *FacetBase, device: *facet.Device, view: ?*facet.BufferView) void
+
+   SINCE
+	1.32. LVO -496.
+
+   INPUTS
+	- `device` - the device it was made on.
+	- `view` - the view, or null, which does nothing.
+
+   RESULT
+	None.
+
+   BEHAVIOR
+	The view's memory is given back. The buffer it was made of is untouched:
+	a view holds none of its bytes.
+
+	A set a destroyed view was written into reads bytes that are no longer
+	a view's, as Vulkan has it: the program writes the set again, or does
+	not submit work that reads it.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The view is gone; nothing of the buffer is.
+
+   NOTES
+	None.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`CreateBufferView`
+
+   EXAMPLES
+	    fb.DestroyBufferView(device, view);
 facet.library/DestroyCommandPool              facet.library/DestroyCommandPool
 
    NAME
@@ -4751,6 +4953,55 @@ facet.library/WaitForFences
    EXAMPLES
 	    var needs: facet.MemoryRequirements = undefined;
 	    fb.GetBufferMemoryRequirements(device, vertices, &needs);
+facet.library/GetDeviceMemoryCommitment facet.library/GetDeviceMemoryCommitment
+
+   NAME
+	GetDeviceMemoryCommitment -- How many bytes of a block the device has really put behind it.
+
+   SYNOPSIS
+	    fn GetDeviceMemoryCommitment(base: *FacetBase, device: *facet.Device, memory: *facet.DeviceMemory, bytes: *u64) void
+
+   SINCE
+	1.36. LVO -512.
+
+   INPUTS
+	- `device` - the device the block was allocated on.
+	- `memory` - a block AllocateMemory gave.
+	- `bytes` - where the answer is written.
+
+   BEHAVIOR
+	A block of the lazily allocated type has nothing behind it at all, so
+	0 is its answer however much was asked for: the transient attachments
+	bound into it live in the device's tiles and never in memory. Every
+	other block is whole from the moment it is allocated, so its answer is
+	its `allocation_size`, as AllocateMemory was given it.
+
+   RESULT
+	None.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	`bytes` is the caller's.
+
+   NOTES
+	Vulkan asks this of lazily allocated memory alone, and leaves the rest
+	undefined; here every block answers.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`AllocateMemory`, `GetPhysicalDeviceMemoryProperties`, `CreateImage`
+
+   EXAMPLES
+	    var bytes: u64 = 0;
+	    fb.GetDeviceMemoryCommitment(device, block.?, &bytes);
+	    // 0 for the lazily allocated type: nothing is behind it.
 facet.library/GetDeviceQueue                      facet.library/GetDeviceQueue
 
    NAME
@@ -5058,6 +5309,82 @@ facet.library/WaitForFences
 	    var properties: facet.FormatProperties = undefined;
 	    fb.GetPhysicalDeviceFormatProperties(physical, .r5g6b5_unorm_pack16, &properties);
 	    const can_sample = properties.optimal_tiling_features & facet.FORMAT_FEATURE_SAMPLED_IMAGE != 0;
+facet.library/GetPhysicalDeviceImageFormatProperties facet.library/GetPhysicalDeviceImageFormatProperties
+
+   NAME
+	GetPhysicalDeviceImageFormatProperties -- The largest image of a format, type, tiling and usage, or `error_format_not_supported` where there is no such image at all.
+
+   SYNOPSIS
+	    fn GetPhysicalDeviceImageFormatProperties(base: *FacetBase, physical: *facet.PhysicalDevice, format: facet.Format, image_type: facet.ImageType, tiling: facet.ImageTiling, usage: u32, flags: u32, properties: *facet.ImageFormatProperties) facet.Result
+
+   SINCE
+	1.36. LVO -504.
+
+   INPUTS
+	- `physical` - a physical device EnumeratePhysicalDevices listed.
+	- `format` - the format the image would be made with.
+	- `image_type` - `2d` or `3d`; `1d` has no images.
+	- `tiling` - `optimal` or `linear`.
+	- `usage` - the IMAGE_USAGE_* bits it would be made with.
+	- `flags` - the IMAGE_CREATE_* flags, CUBE_COMPATIBLE among them.
+	- `properties` - where the answer is written; zeroed where there is
+	  no such image.
+
+   RESULT
+	`success`, or `error_format_not_supported` where CreateImage would
+	refuse every image of that shape, whatever its extent.
+
+   BEHAVIOR
+	The question is asked of the same rules CreateImage keeps, so an
+	extent inside what is answered here is made and one outside it is
+	refused - with one exception: an image of the largest extent and the
+	most layers at once may want more memory than a heap holds, which
+	`max_resource_size` says and AllocateMemory finds out.
+
+	What is answered, from the device's own limits
+	(GetPhysicalDeviceProperties):
+	- `max_extent`: `max_image_dimension_2d` square for a 2D image -
+	  8192 on this machine's devices - `max_image_dimension_3d` cubed for
+	  a 3D one, 256, and 1 deep for every other.
+	- `max_mip_levels`: the levels of `max_extent` where the shape takes
+	  levels - a sampled image or one written through - and 1 where it
+	  does not, which is an attachment, rows, a depth image and a 3D one.
+	- `max_array_layers`: `max_image_array_layers` for a sampled image,
+	  256, and 1 for every other shape, layers being for sampling.
+	- `sample_counts`: 1, one sample a pixel.
+	- `max_resource_size`: the largest heap's bytes.
+
+	An image to be sampled has sides that are powers of two, which this
+	does not say: it is in CreateImage's documentation.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	`properties` is the caller's.
+
+   NOTES
+	A format may be sampled and drawn into without one image being both:
+	the two lie differently in memory, so the usages are asked about one
+	at a time, as CreateImage takes them.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`CreateImage`, `GetPhysicalDeviceFormatProperties`, `GetPhysicalDeviceProperties`
+
+   EXAMPLES
+	    var properties: facet.ImageFormatProperties = undefined;
+	    const answer = fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"2d", .optimal, facet.IMAGE_USAGE_SAMPLED, 0, &properties);
+	    if (answer == .success) {
+	        // 8192 x 8192, 14 levels, 256 layers.
+	        const side = properties.max_extent.width;
+	        _ = side;
+	    }
 facet.library/GetPhysicalDeviceMemoryProperties facet.library/GetPhysicalDeviceMemoryProperties
 
    NAME
@@ -5474,6 +5801,62 @@ facet.library/WaitForFences
    EXAMPLES
 	    var samples: u64 = 0;
 	    _ = fb.GetQueryPoolResults(device, counted, 0, 1, @sizeOf(u64), &samples, @sizeOf(u64), facet.QUERY_RESULT_64 | facet.QUERY_RESULT_WAIT);
+facet.library/GetRenderAreaGranularity  facet.library/GetRenderAreaGranularity
+
+   NAME
+	GetRenderAreaGranularity -- The granularity of a render area on this device: the tile it draws in.
+
+   SYNOPSIS
+	    fn GetRenderAreaGranularity(base: *FacetBase, device: *facet.Device, pass: *facet.RenderPass, granularity: *facet.Extent2D) void
+
+   SINCE
+	1.36. LVO -508.
+
+   INPUTS
+	- `device` - the device the pass is drawn on.
+	- `pass` - a render pass. Every pass of a device has the same answer.
+	- `granularity` - where the width and the height are written.
+
+   RESULT
+	None.
+
+   BEHAVIOR
+	A render area whose offset is a multiple of this and whose extent is
+	too - or which reaches the framebuffer's edge - costs nothing that a
+	whole-framebuffer area would not: the device draws in tiles of this
+	size, and a tile the area touches at all is drawn. An area inside one
+	tile is as dear as that whole tile.
+
+	It is the device's tile, `PhysicalDeviceLimits.tile_size` square: the
+	cores' rasterizer and the V3D both draw a frame tile by tile. The
+	render pass makes no difference to it, and is asked for because
+	Vulkan asks for it.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	`granularity` is the caller's.
+
+   NOTES
+	What a render area narrower than the framebuffer does save is the
+	pixels drawn, and the tiles it does not touch at all.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`CmdBeginRenderPass`, `GetPhysicalDeviceProperties`
+
+   EXAMPLES
+	    var granularity: facet.Extent2D = undefined;
+	    fb.GetRenderAreaGranularity(device, pass.?, &granularity);
+	    // The area rounded out to whole tiles.
+	    const left = x / granularity.width * granularity.width;
+	    _ = left;
 facet.library/GetSwapchainImages              facet.library/GetSwapchainImages
 
    NAME

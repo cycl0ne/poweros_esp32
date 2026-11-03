@@ -126,4 +126,74 @@ pub const LIBRARY_VERSION = 1;
 /// such a pass. The stencil still has no plane of its own, and a transient
 /// depth image still costs no memory traffic at all - which is what every
 /// pass that does not ask for this goes on doing.
-pub const LIBRARY_REVISION = 30;
+/// 31: `storage_image` descriptors - an image a shader function writes
+/// through. A set layout takes the kind, a write takes an image made with
+/// IMAGE_USAGE_STORAGE, and the function reaches it by
+/// `shader.Resources.written`, which gives the texture to write with
+/// `putLayer` or `setColor` and read with `colorAt`; the slot says whether
+/// a write is allowed (`shader.Slot.writable`, in the padding a slot
+/// already had, so a slot is as wide as it was). A compute function and a
+/// fragment function of the program's can both write one, and nothing
+/// orders their writes against each other: a frame is shared between the
+/// cores, as it is in Vulkan. It wants a device whose `storage_images` is
+/// true - the cores, where the texels lie the way the library keeps them -
+/// and not the V3D, whose TMU has a layout of its own. An image written
+/// through may be sampled too, and is read back by a transfer.
+/// 32: buffer views - CreateBufferView and DestroyBufferView, and the
+/// `uniform_texel_buffer` and `storage_texel_buffer` descriptors. A view is
+/// a range of a buffer read as texels of a format, which a function reaches
+/// by `shader.Resources.texels`: `shader.Texels.at` reads a texel as four
+/// floats and `colorAt` as 0xAARRGGBB whatever the format, and a storage
+/// one is set by `set` or `setColor`. It is the library's one way of giving
+/// a function bytes read as a format rather than as a Zig type, which is
+/// what a file or another machine hands over; the formats are the colour
+/// ones and the floats, those whose `buffer_features` now say
+/// UNIFORM_TEXEL_BUFFER. Every device has them: a view is bytes and a
+/// format, with nothing of a device's own layout in it.
+/// 33: a subpass's colour attachments blended each its own way:
+/// `PipelineColorBlendStateCreateInfo.attachments` is one state for each of
+/// them, taken on its own rather than all having to say the same thing. A
+/// pipeline keeps one mixing for each attachment and the draw takes the one
+/// for the attachment it is drawing, which is what an attachment being a
+/// pass of its own already gave both drivers; the blend constants stay the
+/// pipeline's, shared, as Vulkan has them. Every device has it
+/// (`PhysicalDeviceFeatures.independent_blend`), and a device without it
+/// goes on refusing attachments that differ.
+/// 34: the depth bias: `depth_bias_enable` and its three numbers taken as
+/// a pipeline is made, `DynamicState.depth_bias` and CmdSetDepthBias
+/// leaving them to commands. A triangle's depth is moved before it is
+/// tested and written - by so many of the smallest difference the depth
+/// holds, and by so much of its steepest slope, held inside a clamp - so
+/// the shadow map need not shade itself and the decal need not fight the
+/// wall it lies on. The rasterizer works it out once a triangle, as an
+/// offset on the depth plane its set-up already had, and nothing is spent
+/// a pixel; only triangles are moved, as in Vulkan. It wants a device
+/// whose `depth_bias` is true: the cores have it, and the V3D's own depth
+/// offset is a packet nothing writes yet, so a pipeline that asks for a
+/// bias is refused there.
+/// 35: dynamic buffer descriptors: `uniform_buffer_dynamic` and
+/// `storage_buffer_dynamic`, whose bytes start where
+/// CmdBindDescriptorSets' `dynamic_offsets` says rather than where the
+/// write did. One set then serves draw after draw - or dispatch after
+/// dispatch - each with a range of its own, instead of a set for each.
+/// The set says which of its offsets shifts a slot as it is made
+/// (`shader.Slot.dynamic`, in the padding a slot already had), the bind
+/// hands the offsets to what the draws read (`shader.Resources.offsets`),
+/// and `buffer` and `storage` add it, holding what is left of the range
+/// from there. A set holds
+/// `PhysicalDeviceLimits.max_descriptor_set_dynamic_buffers` of them -
+/// two, the offsets being copied with what a draw was bound with - and
+/// CreateDescriptorSetLayout refuses more. Every device has them: a
+/// dynamic descriptor is a pointer and a range, and what reads it is a
+/// function of the program's.
+/// 36: the three device queries Vulkan has and this library had not:
+/// GetPhysicalDeviceImageFormatProperties, which answers the largest
+/// image of a format, type, tiling and usage - and refuses a shape there
+/// is no image of at all - by asking CreateImage's own rules
+/// (`_image.shapeFor`), so the two cannot drift apart;
+/// GetRenderAreaGranularity, which is the device's tile, the frame being
+/// drawn tile by tile either way; and GetDeviceMemoryCommitment, which is
+/// a block's whole size, or 0 for the lazily allocated type, whose
+/// transient attachments live in the tiles and never in memory. Nothing
+/// of what the library does changes: these only say what it already did.
+pub const LIBRARY_REVISION = 36;

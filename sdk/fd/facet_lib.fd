@@ -262,4 +262,18 @@ void CmdWriteTimestamp(*facet.CommandBuffer buffer, u32 stage, *facet.QueryPool 
 void CmdCopyQueryPoolResults(*facet.CommandBuffer buffer, *facet.QueryPool pool, u32 first, u32 count, *facet.Buffer destination, u64 offset, u64 stride, u32 flags)
 /// Recorded: the levels of a depth image set to a depth and a stencil.
 void CmdClearDepthStencilImage(*facet.CommandBuffer buffer, *facet.Image image, u32 layout, *const facet.ClearDepthStencilValue value, u32 range_count, [*]const facet.ImageSubresourceRange ranges)
+/// A range of a buffer read as texels of a format.
+facet.Result CreateBufferView(*facet.Device device, *const facet.BufferViewCreateInfo info, *?*facet.BufferView view)
+/// A buffer view given back; null does nothing.
+void DestroyBufferView(*facet.Device device, ?*facet.BufferView view)
+/// Recorded: what the triangles of the draws after it add to their depth.
+void CmdSetDepthBias(*facet.CommandBuffer buffer, f32 constant, f32 clamp, f32 slope)
+/// The largest image of a format, type, tiling and usage, into
+/// `properties`; `error_format_not_supported` where there is no such
+/// image at all.
+facet.Result GetPhysicalDeviceImageFormatProperties(*facet.PhysicalDevice physical, facet.Format format, facet.ImageType image_type, facet.ImageTiling tiling, u32 usage, u32 flags, *facet.ImageFormatProperties properties)
+/// The render area the device draws whole, into `granularity`.
+void GetRenderAreaGranularity(*facet.Device device, *facet.RenderPass pass, *facet.Extent2D granularity)
+/// The bytes of a block that are really there, into `bytes`.
+void GetDeviceMemoryCommitment(*facet.Device device, *facet.DeviceMemory memory, *u64 bytes)
 ##end

@@ -4,7 +4,9 @@
 //! A set is what its shaders read it as (`shader.Set`): a slot for each
 //! descriptor, the elements of a binding's array one after the other, and
 //! where each binding's first is. A buffer's slot holds the address of
-//! its bytes from the offset written and how many there are; a sampled
+//! its bytes from the offset written and how many there are - a dynamic
+//! one's are read from further in still, by what CmdBindDescriptorSets
+//! gave for it (`shader.Slot.dynamic`); a sampled
 //! image's the texture of its view; a sampler's what the sampler keeps
 //! (`texture.Sampler`), and a combined image sampler's both. A slot is
 //! read as a draw's shaders run, so a set written between recording and
@@ -25,17 +27,38 @@ const Device = @import("../device/_device.zig").Device;
 /// The kinds of descriptor facet.library has.
 pub fn known(kind: facet.DescriptorType) bool {
     return switch (kind) {
-        .sampler, .combined_image_sampler, .sampled_image, .uniform_buffer, .storage_buffer => true,
+        .sampler, .combined_image_sampler, .sampled_image, .storage_image => true,
+        .uniform_buffer, .storage_buffer, .uniform_texel_buffer, .storage_texel_buffer => true,
+        .uniform_buffer_dynamic, .storage_buffer_dynamic => true,
         else => false,
     };
+}
+
+/// Whether a kind's bytes start where CmdBindDescriptorSets says rather
+/// than where the write did: a dynamic buffer descriptor
+/// (`shader.Slot.dynamic`, `shader.Resources.offsets`).
+pub fn ofDynamic(kind: facet.DescriptorType) bool {
+    return kind == .uniform_buffer_dynamic or kind == .storage_buffer_dynamic;
 }
 
 /// Whether a kind is written from `image_info` rather than `buffer_info`.
 pub fn ofImage(kind: facet.DescriptorType) bool {
     return switch (kind) {
-        .sampler, .combined_image_sampler, .sampled_image => true,
+        .sampler, .combined_image_sampler, .sampled_image, .storage_image => true,
         else => false,
     };
+}
+
+/// Whether a shader function may write through a kind: a storage image, as
+/// a storage buffer is written through (`shader.Slot.writable`).
+pub fn written(kind: facet.DescriptorType) bool {
+    return kind == .storage_image or kind == .storage_texel_buffer;
+}
+
+/// Whether a kind is written from `texel_buffer_view`: a texel buffer, of
+/// either kind.
+pub fn ofTexels(kind: facet.DescriptorType) bool {
+    return kind == .uniform_texel_buffer or kind == .storage_texel_buffer;
 }
 
 /// A binding of a layout: its kind, its first slot and its descriptors.
@@ -76,6 +99,10 @@ pub const Set = struct {
     view: shader.Set,
     /// Each binding's kind.
     kinds: [*]facet.DescriptorType,
+    /// Its dynamic buffer descriptors, which is how many offsets it takes
+    /// of CmdBindDescriptorSets'. Its layout held them inside
+    /// `shader.MAX_DYNAMIC_OFFSETS`.
+    dynamic_count: u32 = 0,
 };
 
 /// A set of `layout`'s from `pool`, its slots empty; null when memory ran
@@ -92,15 +119,26 @@ pub fn makeSet(sys: *ExecBase, pool: *Pool, layout: *const SetLayout) ?*Set {
     const slots: [*]shader.Slot = @ptrFromInt(@intFromPtr(memory) + @sizeOf(Set));
     const kinds: [*]facet.DescriptorType = @ptrFromInt(@intFromPtr(slots) + slots_bytes);
     const firsts: [*]u16 = @ptrFromInt(@intFromPtr(kinds) + kinds_bytes);
+    // Each dynamic buffer descriptor is told which of the set's offsets
+    // shifts it, in the order the bindings and their elements run, as
+    // CmdBindDescriptorSets hands them over. The memory came cleared, so
+    // every other slot says none (`shader.Slot.dynamic` 0).
+    var dynamic: u32 = 0;
     for (bindings, 0..) |binding, k| {
         kinds[k] = binding.kind;
         firsts[k] = binding.first;
+        if (!ofDynamic(binding.kind)) continue;
+        for (0..binding.count) |element| {
+            if (dynamic < shader.MAX_DYNAMIC_OFFSETS) slots[binding.first + element].dynamic = @intCast(dynamic + 1);
+            dynamic += 1;
+        }
     }
     firsts[layout.binding_count] = @intCast(layout.slot_count);
     set.* = .{
         .pool = pool,
         .view = .{ .first = firsts, .binding_count = layout.binding_count, .slots = slots },
         .kinds = kinds,
+        .dynamic_count = dynamic,
     };
     return set;
 }

@@ -59,6 +59,9 @@ pub const batch_quads = 64;
 /// How a depth is compared with the one kept: the pixel passes where it
 /// is so to it. The numbers are a mask - 1 less, 2 equal, 4 greater - and
 /// Vulkan's.
+/// What a triangle adds to its depth (`State.depth_bias`).
+pub const Bias = setup.Bias;
+
 pub const Compare = enum(u3) {
     never = 0,
     less = 1,
@@ -125,6 +128,10 @@ pub const State = struct {
     /// neither tested nor written.
     depth_test: ?Compare = null,
     depth_write: bool = false,
+    /// What its triangles add to their depth before it is tested and
+    /// written, or null where they add nothing. Points and lines take
+    /// none, as Vulkan has it, so a draw of them leaves this null.
+    depth_bias: ?Bias = null,
     blend: pipeline.Blend = .off,
     /// How it mixes, with `.general`.
     mixing: pipeline.Mixing = .{},
@@ -377,7 +384,8 @@ fn depthOf(made: *const setup.Triangle, projected: [3]setup.Projected, state: *c
     if (state.min_depth != 0 or state.max_depth != 1) {
         for (&ranged) |*vertex| vertex.z = std.math.clamp(state.min_depth + vertex.z * (state.max_depth - state.min_depth), 0, 1);
     }
-    return .of(made, &ranged);
+    const depth: setup.Depth = .of(made, &ranged);
+    return if (state.depth_bias) |bias| depth.biased(bias) else depth;
 }
 
 /// The planes of a triangle: 1 / w, then each varying over w.

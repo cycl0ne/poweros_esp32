@@ -314,6 +314,17 @@ pub const Plane = struct {
 /// from a pixel to the next, as large as it can be between two pixels
 /// inside: a triangle that changes faster has one pixel a row at most, and
 /// never steps.
+/// What a triangle adds to its depth before it is tested and written:
+/// `constant` of the smallest difference the depth holds - one unit of
+/// 65535 - and `slope` of its steepest slope, held inside `clamp` of the
+/// whole range where that is not 0 (a positive one the most it may be
+/// moved, a negative one the least). Vulkan's depth bias, in its terms.
+pub const Bias = struct {
+    constant: f32 = 0,
+    clamp: f32 = 0,
+    slope: f32 = 0,
+};
+
 pub const Depth = struct {
     plane: Linear,
     step: i64,
@@ -333,6 +344,21 @@ pub const Depth = struct {
             .plane = plane,
             .step = @intFromFloat(std.math.clamp(plane.dx * (1 << fraction), -most_step, most_step)),
         };
+    }
+
+    /// The same moved by `bias`: the depth plane's steepest slope is its
+    /// larger step, and one unit is the smallest difference the depth
+    /// holds, so the whole of the bias is an offset on the plane and
+    /// nothing a pixel costs. `at` holds what comes of it inside the
+    /// range, as it does any other depth.
+    pub fn biased(depth: Depth, bias: Bias) Depth {
+        const steepest = @max(@abs(depth.plane.dx), @abs(depth.plane.dy));
+        var offset = steepest * bias.slope + @as(f64, bias.constant);
+        const limit = @as(f64, bias.clamp) * units;
+        if (bias.clamp > 0) offset = @min(offset, limit) else if (bias.clamp < 0) offset = @max(offset, limit);
+        var made = depth;
+        made.plane.origin += offset;
+        return made;
     }
 
     /// At pixel (x, y)'s centre, in 1/2^24ths of a unit: its whole units,

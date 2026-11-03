@@ -87,6 +87,7 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
             .max_bound_descriptor_sets = _instance.max_bound_descriptor_sets,
             .max_per_stage_descriptor_sampled_images = 16,
             .max_per_stage_descriptor_uniform_buffers = 12,
+            .max_descriptor_set_dynamic_buffers = facet.shader.MAX_DYNAMIC_OFFSETS,
             .min_memory_map_alignment = _memory.alignment,
             .tile_size = raster.tile_size,
             .cores = @min(cores, raster.most_parts),
@@ -118,6 +119,24 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // The tiles hold the depth, so they can write it into the image's
         // rows as they are drawn and read it back (raster/target.zig).
         .stored_depth = true,
+        // A function of the program's runs here, and the texels it writes
+        // lie where the library keeps them (`shader.Resources.written`).
+        .storage_images = true,
+        // A texel buffer is a buffer's bytes and a format: nothing of a
+        // device's own layout is in it, so every device takes one. What
+        // reads it is a function of the program's, which on a device
+        // without them is its compute functions, run on the cores.
+        .texel_buffers = true,
+        // A dynamic buffer descriptor is a pointer and a range, shifted
+        // by what the bind gave: the function that reads it is the
+        // program's, so every device takes one.
+        .dynamic_descriptors = true,
+        // A colour attachment is drawn as a pass of its own, so each
+        // takes the mixing asked for it as it is drawn.
+        .independent_blend = true,
+        // The depth is a plane the triangle's set-up works out, so a bias
+        // is an offset on it and costs nothing a pixel (raster/setup.zig).
+        .depth_bias = true,
         .depth_prepass = true,
         .points_and_lines = true,
         .depth_test = true,
@@ -218,9 +237,14 @@ fn makePipeline(pipeline: *Pipeline) callconv(.c) facet.Result {
         .front = if (pipeline.front == .clockwise) .clockwise else .counter_clockwise,
         // The rasterizer's compares are numbered as facet.library's are.
         .depth_test = if (pipeline.depth_test) |compare| @enumFromInt(@intFromEnum(compare)) else null,
-        .blend = _draw.blendOf(&pipeline.mixing),
-        .mixing = _draw.mixingOf(&pipeline.mixing),
+        .blend = undefined,
+        .mixing = undefined,
     };
+    // One translated state for each colour attachment of the subpass.
+    for (&pipeline.mixings, &made.blend, &made.mixing) |*mixing, *blend, *translated| {
+        blend.* = _draw.blendOf(mixing);
+        translated.* = _draw.mixingOf(mixing);
+    }
     pipeline.driver = made;
     return .success;
 }

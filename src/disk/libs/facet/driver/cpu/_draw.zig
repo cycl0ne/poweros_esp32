@@ -25,6 +25,7 @@ const _vertices = @import("../_vertices.zig");
 const _tessellate = @import("../_tessellate.zig");
 const _query = @import("../../query/_query.zig");
 const _command = @import("../../command/_command.zig");
+const _render = @import("../../render/_render.zig");
 const _play = @import("_play.zig");
 const Player = _play.Player;
 
@@ -38,8 +39,10 @@ pub const RasterState = struct {
     cull: raster.Cull,
     front: raster.Winding,
     depth_test: ?raster.batched.Compare,
-    blend: raster.Blend,
-    mixing: raster.Mixing,
+    /// One for each colour attachment of the subpass, the draw taking the
+    /// one for the attachment being drawn (`shader.Resources.output`).
+    blend: [_render.most_colors]raster.Blend,
+    mixing: [_render.most_colors]raster.Mixing,
 };
 
 /// The quickest way the rasterizer has of doing as a pipeline says.
@@ -87,6 +90,12 @@ fn maskOf(channels: u32) u32 {
     if (channels & facet.COLOR_COMPONENT_B != 0) mask |= 0x0000_00FF;
     if (channels & facet.COLOR_COMPONENT_A != 0) mask |= 0xFF00_0000;
     return mask;
+}
+
+/// A pipeline's depth bias in the rasterizer's terms: the same three
+/// numbers, read there in the depth's own units.
+pub fn biasOf(bias: _pipeline.Bias) raster.batched.Bias {
+    return .{ .constant = bias.constant, .clamp = bias.clamp, .slope = bias.slope };
 }
 
 /// A pipeline's stencil test in the rasterizer's terms: numbered as it is.
@@ -154,12 +163,16 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
     const viewport = pipeline.viewport orelse player.viewport;
     const scissor = pipeline.scissor orelse player.scissor;
     const translated: *const RasterState = @ptrCast(@alignCast(pipeline.driver.?));
-    var mixing = translated.mixing;
-    if (translated.blend == .general) {
+    // The colour attachment being drawn has a mixing of its own.
+    const output = @min(resources.output, _render.most_colors - 1);
+    const asked = _pipeline.mixingAt(pipeline, output);
+    const blend = translated.blend[output];
+    var mixing = translated.mixing[output];
+    if (blend == .general) {
         // What is there has no alpha: it reads as wholly opaque.
-        const made = if (player.target_opaque) mixingOf(&pipeline.mixing.overOpaque()) else mixing;
+        const made = if (player.target_opaque) mixingOf(&asked.overOpaque()) else mixing;
         mixing = made;
-        mixing.constant = constantOf(pipeline.mixing.constants orelse player.blend_constants);
+        mixing.constant = constantOf(asked.constants orelse player.blend_constants);
     }
     const stencil: ?[2]raster.batched.StencilFace = if (player.stencil.of(pipeline)) |faces| .{ stencilFaceOf(faces[0]), stencilFaceOf(faces[1]) } else null;
     // What a query counts of this draw, or nothing where none is being
@@ -181,7 +194,10 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
         .front = translated.front,
         .depth_test = translated.depth_test,
         .depth_write = pipeline.depth_write,
-        .blend = translated.blend,
+        // Only triangles are moved: a draw of points or lines, or of
+        // triangles drawn as their edges or corners, takes no bias.
+        .depth_bias = if (pipeline.biased and !wide) biasOf(pipeline.bias orelse player.depth_bias) else null,
+        .blend = blend,
         .mixing = mixing,
         .stencil = stencil,
         .prepass = pipeline.prepass and stencil == null,

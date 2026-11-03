@@ -316,7 +316,8 @@ pub const BindIndexBuffer = extern struct {
     pad: u32 = 0,
 };
 
-/// CmdBindDescriptorSets, followed by its sets.
+/// CmdBindDescriptorSets, followed by the offsets its dynamic buffer
+/// descriptors are shifted by.
 pub const BindDescriptorSets = extern struct {
     pub const op: _stream.Op = .bind_descriptor_sets;
     head: Head = .{ .op = op },
@@ -324,7 +325,12 @@ pub const BindDescriptorSets = extern struct {
     count: u32,
     /// For compute functions, not for drawing: 1 or 0.
     compute: u32,
-    pad: u32 = 0,
+    /// The offsets after it: one for each dynamic buffer descriptor of
+    /// the sets, in the order the sets, their bindings and the elements
+    /// of each run (`dynamic_offsets`).
+    offset_count: u32,
+    /// The sets bound, `count` of them from `first`.
+    sets: [facet.shader.MAX_SETS]?*DescriptorSet,
 };
 
 /// CmdPushConstants, followed by its bytes.
@@ -351,6 +357,15 @@ pub const SetBlendConstants = extern struct {
     pub const op: _stream.Op = .set_blend_constants;
     head: Head = .{ .op = op },
     constants: [4]f32,
+};
+
+/// CmdSetDepthBias, for a pipeline whose bias is dynamic.
+pub const SetDepthBias = extern struct {
+    pub const op: _stream.Op = .set_depth_bias;
+    head: Head = .{ .op = op },
+    constant: f32,
+    clamp: f32,
+    slope: f32,
 };
 
 pub const SetLineWidth = extern struct {

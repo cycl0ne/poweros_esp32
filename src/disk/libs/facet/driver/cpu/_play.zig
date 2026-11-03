@@ -32,7 +32,8 @@ const _buffer = @import("../../buffer/_buffer.zig");
 const Buffer = _buffer.Buffer;
 const _image = @import("../../image/_image.zig");
 const _render = @import("../../render/_render.zig");
-const Pipeline = @import("../../pipeline/_pipeline.zig").Pipeline;
+const _pipeline = @import("../../pipeline/_pipeline.zig");
+const Pipeline = _pipeline.Pipeline;
 const max_vertex_input_bindings = @import("../../instance/_instance.zig").max_vertex_input_bindings;
 const _vertices = @import("../_vertices.zig");
 const _compute = @import("../_compute.zig");
@@ -64,6 +65,8 @@ pub const Player = struct {
     viewport: facet.Viewport = .{ .width = 0, .height = 0 },
     scissor: facet.Rect2D = .{ .extent = .{} },
     blend_constants: [4]f32 = @splat(0),
+    /// What CmdSetDepthBias set, for a pipeline whose bias is dynamic.
+    depth_bias: _pipeline.Bias = .{},
     line_width: f32 = 1,
     stencil: _vertices.StencilSet = .{},
     /// The colour attachment has no alpha.
@@ -192,6 +195,10 @@ fn playStream(queue: *Queue, stream: *const _stream.Stream) void {
         .set_viewport => player.viewport = _stream.as(_command.SetViewport, head).viewport,
         .set_scissor => player.scissor = _stream.as(_command.SetScissor, head).scissor,
         .set_blend_constants => player.blend_constants = _stream.as(_command.SetBlendConstants, head).constants,
+        .set_depth_bias => {
+            const command = _stream.as(_command.SetDepthBias, head);
+            player.depth_bias = .{ .constant = command.constant, .clamp = command.clamp, .slope = command.slope };
+        },
         .set_line_width => player.line_width = _stream.as(_command.SetLineWidth, head).width,
         .set_stencil => player.stencil.apply(_stream.as(_command.SetStencil, head)),
         .draw => if (player.drawing) {

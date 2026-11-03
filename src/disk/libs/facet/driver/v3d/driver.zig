@@ -116,6 +116,7 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
             .max_bound_descriptor_sets = _instance.max_bound_descriptor_sets,
             .max_per_stage_descriptor_sampled_images = 1,
             .max_per_stage_descriptor_uniform_buffers = 12,
+            .max_descriptor_set_dynamic_buffers = facet.shader.MAX_DYNAMIC_OFFSETS,
             .min_memory_map_alignment = _memory.alignment,
             .tile_size = v3d.frame.tile_pixels,
             .cores = 1,
@@ -153,6 +154,26 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // The V3D's own tiles hold the depth and nothing stores it to
         // memory yet, so a pass that keeps its depth is refused here.
         .stored_depth = false,
+        // A V3D texture lies the way its TMU reads it, which is not the
+        // layout the library writes (`texture_offset`), so a storage image
+        // is refused on this device and the set layout says so.
+        .storage_images = false,
+        // A texel buffer is a buffer's bytes and a format: nothing of a
+        // device's own layout is in it, so every device takes one. What
+        // reads it is a function of the program's, which on a device
+        // without them is its compute functions, run on the cores.
+        .texel_buffers = true,
+        // A dynamic buffer descriptor is a pointer and a range, shifted
+        // by what the bind gave: the function that reads it is the
+        // program's, so every device takes one.
+        .dynamic_descriptors = true,
+        // A colour attachment is drawn as a pass of its own, so each
+        // takes the mixing asked for it as it is drawn.
+        .independent_blend = true,
+        // The hardware has a depth offset of its own, which nothing in
+        // this driver writes yet: a pipeline that asks for a bias is
+        // refused here and the cores draw it.
+        .depth_bias = false,
         // The depth pre-pass is the rasterizer's (driver/cpu/raster/prepass.zig).
         .depth_prepass = false,
         .points_and_lines = true,
