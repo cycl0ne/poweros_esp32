@@ -64,7 +64,9 @@ pub const VDTA_Frames = VDTA_Dummy + 4;
 pub const VDTA_Duration = VDTA_Dummy + 5;
 /// u32: where it is, in milliseconds from the start of what it presents.
 /// Set, the film moves to the key frame at or before that time, as
-/// `STM_LOCATE` does; read, it is the time of the picture that is up.
+/// `STM_LOCATE` does; read, it is the time of the picture that is up -
+/// which on a machine the film is too much for lags behind what is
+/// heard, the pictures being what it counts.
 pub const VDTA_Position = VDTA_Dummy + 6;
 /// u32 (get): the pictures' codec, `videocodec`'s `VCODEC_*`.
 pub const VDTA_Codec = VDTA_Dummy + 7;
