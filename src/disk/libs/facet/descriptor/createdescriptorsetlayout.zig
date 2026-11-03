@@ -3,6 +3,7 @@
 
 const sdk = @import("sdk");
 const facet = sdk.facet;
+const shader = facet.shader;
 const FacetBase = @import("../facet_base.zig").FacetBase;
 const exec = sdk.exec;
 const _objects = @import("../_objects.zig");
@@ -73,15 +74,23 @@ pub fn CreateDescriptorSetLayout(base: *FacetBase, device: *facet.Device, info: 
     const owner = _objects.of(Device, device);
     const given: []const facet.DescriptorSetLayoutBinding = if (info.bindings) |bindings| bindings[0..info.binding_count] else &.{};
     var binding_count: u32 = 0;
+    var dynamic: u32 = 0;
     for (given) |binding| {
         if (!_descriptor.known(binding.descriptor_type) or binding.binding > 255) return .error_feature_not_present;
         // A storage image is written through the texture the library keeps,
         // which a device with a layout of its own does not use.
         if (binding.descriptor_type == .storage_image and !owner.physical.features.storage_images) return .error_feature_not_present;
         if (_descriptor.ofTexels(binding.descriptor_type) and !owner.physical.features.texel_buffers) return .error_feature_not_present;
+        if (_descriptor.ofDynamic(binding.descriptor_type) and !owner.physical.features.dynamic_descriptors) return .error_feature_not_present;
         // A sampler the layout holds, which a write could not change.
         if (binding.immutable_samplers != null and binding.descriptor_count != 0) return .error_feature_not_present;
         binding_count = @max(binding_count, binding.binding + 1);
+        // Each dynamic buffer descriptor takes one of the set's offsets,
+        // and there are only so many of those.
+        if (_descriptor.ofDynamic(binding.descriptor_type)) {
+            dynamic += binding.descriptor_count;
+            if (dynamic > shader.MAX_DYNAMIC_OFFSETS) return .error_feature_not_present;
+        }
     }
     const memory = base.sys_base.AllocVec(@sizeOf(_descriptor.SetLayout) + binding_count * @sizeOf(_descriptor.Binding), exec.MEMF_CLEAR) orelse return .error_out_of_host_memory;
     const made: *_descriptor.SetLayout = @ptrCast(@alignCast(memory));

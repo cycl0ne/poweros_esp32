@@ -238,6 +238,13 @@ pub fn fixedFragment(name: [*:0]const u8, comptime fixed: Fixed) Entry {
 /// The descriptor sets a pipeline layout binds at once, and the bytes of
 /// push constants.
 pub const MAX_SETS = 4;
+/// The dynamic buffer descriptors one set may hold: each takes an offset
+/// from CmdBindDescriptorSets (`Resources.offsets`), so two of them is
+/// eight across the four sets. It is low because the offsets are part of
+/// what a draw was bound with, which is copied for every draw that
+/// changed it: four a set cost a measurable part of the rasterizer's
+/// throughput, and two cost none.
+pub const MAX_DYNAMIC_OFFSETS = 2;
 pub const MAX_PUSH_CONSTANTS_SIZE = 128;
 
 /// A descriptor as a shader reads it: a uniform or storage buffer's bytes
@@ -254,6 +261,11 @@ pub const Slot = extern struct {
     /// How the bytes are read where the slot is a texel buffer; `.none`
     /// for every other kind. In that same padding.
     texels: TexelFormat = .none,
+    /// Which of the set's dynamic offsets shifts this slot's bytes, and
+    /// one: 0 where none does, which is every kind but the two dynamic
+    /// buffer descriptors (`Resources.offsets`). In that padding as well,
+    /// so a slot is as wide as it always was.
+    dynamic: u8 = 0,
     /// What a sampler or a combined image sampler was written with
     /// (CreateSampler); null for every other kind.
     sampler: ?*const texture.Sampler = null,
@@ -408,6 +420,11 @@ pub const Resources = extern struct {
     /// A fragment function's colour attachment: which of the subpass's is being
     /// drawn, each in turn (`CreateRenderPass`).
     output: u32 = 0,
+    /// What each set's dynamic buffer descriptors are shifted by, as
+    /// CmdBindDescriptorSets gave them: `offsets[set][slot.dynamic - 1]`
+    /// is a slot's own, and `buffer` adds it. The sets' other slots are
+    /// not shifted (`Slot.dynamic` is 0 for them).
+    offsets: [MAX_SETS][MAX_DYNAMIC_OFFSETS]u32 = @splat(@splat(0)),
 
     /// Element `element` of binding `binding` in set `set`, or null where
     /// there is none.
@@ -422,10 +439,26 @@ pub const Resources = extern struct {
 
     /// Binding `binding` of set `set`, a buffer, as a `T`: null where it
     /// is not written, or shorter than a `T`.
+    ///
+    /// A dynamic buffer descriptor is read from the offset
+    /// CmdBindDescriptorSets gave for it, and what is left of the range
+    /// from there has to hold a `T`.
     pub fn buffer(resources: *const Resources, comptime T: type, set: u32, binding: u32) ?*const T {
         const found = resources.slot(set, binding, 0) orelse return null;
-        if (found.range < @sizeOf(T)) return null;
-        return @ptrCast(@alignCast(found.pointer orelse return null));
+        const shift = resources.shiftOf(set, found);
+        if (found.range -| shift < @sizeOf(T)) return null;
+        const bytes: [*]const u8 = @ptrCast(found.pointer orelse return null);
+        return @ptrCast(@alignCast(bytes + shift));
+    }
+
+    /// What `found`, a slot of set `set`, has its bytes shifted by: the
+    /// offset CmdBindDescriptorSets gave for it where it is a dynamic
+    /// buffer descriptor, and 0 for every other kind.
+    pub fn shiftOf(resources: *const Resources, set: u32, found: *const Slot) u32 {
+        if (found.dynamic == 0 or set >= MAX_SETS) return 0;
+        const at = found.dynamic - 1;
+        if (at >= MAX_DYNAMIC_OFFSETS) return 0;
+        return resources.offsets[set][at];
     }
 
     /// Element `element` of binding `binding` of set `set`, a sampled
@@ -479,11 +512,16 @@ pub const Resources = extern struct {
     }
 
     /// Binding `binding` of set `set`, a buffer written through, as the
-    /// `T`s it has room for: null where it is not written.
+    /// `T`s it has room for: null where it is not written. A dynamic one
+    /// starts where CmdBindDescriptorSets said.
     pub fn storage(resources: *const Resources, comptime T: type, set: u32, binding: u32) ?[]T {
         const found = resources.slot(set, binding, 0) orelse return null;
-        const first: [*]T = @ptrCast(@alignCast(@constCast(found.pointer orelse return null)));
-        return first[0 .. found.range / @sizeOf(T)];
+        // A dynamic one starts where the bind said, and what is left of
+        // the range from there is how many a function may reach.
+        const shift = resources.shiftOf(set, found);
+        const bytes: [*]u8 = @ptrCast(@constCast(found.pointer orelse return null));
+        const first: [*]T = @ptrCast(@alignCast(bytes + shift));
+        return first[0 .. (found.range -| shift) / @sizeOf(T)];
     }
 
     /// The push constants as a `T`.

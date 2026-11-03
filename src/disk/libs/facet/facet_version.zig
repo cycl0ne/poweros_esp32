@@ -171,4 +171,19 @@ pub const LIBRARY_VERSION = 1;
 /// whose `depth_bias` is true: the cores have it, and the V3D's own depth
 /// offset is a packet nothing writes yet, so a pipeline that asks for a
 /// bias is refused there.
-pub const LIBRARY_REVISION = 34;
+/// 35: dynamic buffer descriptors: `uniform_buffer_dynamic` and
+/// `storage_buffer_dynamic`, whose bytes start where
+/// CmdBindDescriptorSets' `dynamic_offsets` says rather than where the
+/// write did. One set then serves draw after draw - or dispatch after
+/// dispatch - each with a range of its own, instead of a set for each.
+/// The set says which of its offsets shifts a slot as it is made
+/// (`shader.Slot.dynamic`, in the padding a slot already had), the bind
+/// hands the offsets to what the draws read (`shader.Resources.offsets`),
+/// and `buffer` and `storage` add it, holding what is left of the range
+/// from there. A set holds
+/// `PhysicalDeviceLimits.max_descriptor_set_dynamic_buffers` of them -
+/// two, the offsets being copied with what a draw was bound with - and
+/// CreateDescriptorSetLayout refuses more. Every device has them: a
+/// dynamic descriptor is a pointer and a range, and what reads it is a
+/// function of the program's.
+pub const LIBRARY_REVISION = 35;

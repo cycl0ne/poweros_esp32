@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.34**, so that a program need not find out by failing. It covers the API.
+1.35**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -216,6 +216,31 @@ a pass of its own either way. What is left out:
   exactly the subpass's colour attachments; anything between is
   `error_initialization_failed`.
 
+## Dynamic buffer descriptors, and what they still are not
+
+Since 1.35 `uniform_buffer_dynamic` and `storage_buffer_dynamic` are
+kinds a set layout takes: the descriptor's bytes start where
+`CmdBindDescriptorSets`' `dynamic_offsets` says, past where the write put
+them, so one set serves draw after draw with a range of its own for each
+instead of a set for each. Every device has them
+(`PhysicalDeviceFeatures.dynamic_descriptors`). What is left out:
+
+- **A set holds `max_descriptor_set_dynamic_buffers` of them**, two -
+  eight across the four sets - and a layout that asks for more is refused.
+  Vulkan counts them per pipeline layout and guarantees more. The number
+  is low on purpose: the offsets are part of what a draw was bound with,
+  which is copied for every draw that changed it, so each one costs a
+  little of the rasterizer's throughput.
+- **A function reaches element 0 of a binding alone**
+  (`shader.Resources.buffer`, `storage`), as it does for any buffer, so a
+  binding that is an array of dynamic buffers has only its first readable
+  - though every element of it still takes an offset, as Vulkan has them.
+- The offsets are not checked against the buffer: one past the range
+  leaves nothing to read, and a function finds no `T` there rather than
+  reading another buffer's bytes.
+- An offset is in bytes and is not rounded: it is for the program to keep
+  it aligned for what it reads there.
+
 ## Object kinds that do not exist
 
 ### Events
@@ -298,7 +323,8 @@ These can be asked for and are answered with `error_feature_not_present`.
 | Input attachments and resolve attachments in a subpass | `render/createrenderpass.zig` |
 | A depth attachment's stencil that loads or stores | `render/createrenderpass.zig` |
 | Present modes but `fifo`, though `immediate`, `mailbox` and `fifo_relaxed` are enumerated | `swapchain/createswapchain.zig` |
-| Descriptors but `sampler`, `combined_image_sampler`, `sampled_image`, `storage_image`, `uniform_buffer`, `storage_buffer` and the two texel buffers | `descriptor/_descriptor.zig` |
+| Descriptors but `sampler`, `combined_image_sampler`, `sampled_image`, `storage_image`, `uniform_buffer`, `storage_buffer`, the two texel buffers and the two dynamic ones | `descriptor/_descriptor.zig` |
+| More dynamic buffer descriptors in one set than `max_descriptor_set_dynamic_buffers` | `descriptor/createdescriptorsetlayout.zig` |
 | A `storage_image` layout on the V3D: its TMU keeps a texture its own way | `descriptor/createdescriptorsetlayout.zig` |
 | A fixed fragment form that drops pixels, on the V3D: the QPUs have no program that discards | `driver/v3d/driver.zig` |
 | A fixed fragment form that samples through a sampler, on the V3D: nor one that reads a sampler | `driver/v3d/driver.zig` |
@@ -308,10 +334,8 @@ These can be asked for and are answered with `error_feature_not_present`.
 | A depth attachment that loads or stores, on the V3D, or of a format with a stencil in it | `render/createrenderpass.zig` |
 | A depth attachment kept, whose image has no memory behind it | `render/createframebuffer.zig` |
 
-Two consequences do not appear in that table:
+One consequence does not appear in that table:
 
-- **`CmdBindDescriptorSets`' `dynamic_offsets` is never used**, because
-  neither dynamic buffer descriptor is taken.
 - **A form that drops pixels cannot also have the depth pre-pass.** The
   pre-pass settles depth before any fragment function has run, which is the
   opposite of what a dropping form needs, so `PIPELINE_CREATE_DEPTH_PREPASS`

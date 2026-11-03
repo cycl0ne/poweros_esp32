@@ -192,6 +192,11 @@ pub const PhysicalDeviceLimits = extern struct {
     /// difference of two times this many nanoseconds. 0 where the device
     /// writes no timestamps.
     timestamp_period_ns: u32,
+    /// The dynamic buffer descriptors one set layout may hold, each
+    /// taking an offset from CmdBindDescriptorSets; 0 where the device
+    /// has none (`PhysicalDeviceFeatures.dynamic_descriptors`). A field
+    /// added at the end, so that none already there moves.
+    max_descriptor_set_dynamic_buffers: u32 = 0,
 };
 
 /// The longest name a device has, its NUL included.
@@ -289,8 +294,11 @@ pub const PhysicalDeviceFeatures = extern struct {
     /// `storage_image` descriptors, and the texel buffer kinds.
     storage_images: bool = false,
     texel_buffers: bool = false,
-    /// `uniform_buffer_dynamic` and `storage_buffer_dynamic`, which is why
-    /// CmdBindDescriptorSets' `dynamic_offsets` goes unused.
+    /// `uniform_buffer_dynamic` and `storage_buffer_dynamic`: a buffer
+    /// descriptor whose bytes start where CmdBindDescriptorSets'
+    /// `dynamic_offsets` says, so one set serves draw after draw with a
+    /// range of its own for each. Every device has it since 1.35; false
+    /// where a set layout with either kind is refused.
     dynamic_descriptors: bool = false,
     /// The fixed forms that sample through the sampler bound beside the
     /// texture run here - `shader.FixedKind.texture_sampled` and

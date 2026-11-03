@@ -79,6 +79,9 @@ pub fn UpdateDescriptorSets(base: *FacetBase, device: *facet.Device, write_count
         for (0..write.descriptor_count) |k| {
             const found = _descriptor.slotAt(set, write.dst_binding, write.dst_array_element + @as(u32, @intCast(k))) orelse break;
             if (found.kind != write.descriptor_type) continue;
+            // Which of the set's offsets shifts the slot is the set's own
+            // doing, not the write's: it stays as the set was made.
+            const dynamic = found.slot.dynamic;
             found.slot.* = switch (write.descriptor_type) {
                 .sampled_image, .combined_image_sampler, .sampler, .storage_image => sampled: {
                     const info = (write.image_info orelse break)[k];
@@ -116,6 +119,7 @@ pub fn UpdateDescriptorSets(base: *FacetBase, device: *facet.Device, write_count
                     break :bound .{ .pointer = bytes.ptr, .range = @intCast(@min(bytes.len, 0xFFFF_FFFF)) };
                 },
             };
+            found.slot.dynamic = dynamic;
         }
     };
     if (copies) |given| for (given[0..copy_count]) |copy| {
@@ -126,7 +130,9 @@ pub fn UpdateDescriptorSets(base: *FacetBase, device: *facet.Device, write_count
             const source = _descriptor.slotAt(from, copy.src_binding, copy.src_array_element + step) orelse break;
             const target = _descriptor.slotAt(into, copy.dst_binding, copy.dst_array_element + step) orelse break;
             if (source.kind != target.kind) continue;
+            const dynamic = target.slot.dynamic;
             target.slot.* = source.slot.*;
+            target.slot.dynamic = dynamic;
         }
     };
 }

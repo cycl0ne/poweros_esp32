@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.1 (03.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.2 (03.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -926,6 +926,119 @@ fn biasChecks(probe: *Probe) void {
     }
 }
 
+// --- 1.35: dynamic buffer descriptors ----------------------------------------
+
+/// What it was given of a dynamic uniform's range copied into a dynamic
+/// storage buffer's: both are read from where the bind said, so what
+/// lands where says the offsets were taken.
+const Shift = struct {
+    fn run(groups: *const facet.shader.Groups) callconv(.c) void {
+        const from = groups.resources.buffer([4]u32, 0, 0) orelse return;
+        const into = groups.resources.storage(u32, 0, 1) orelse return;
+        if (into.len < 4) return;
+        into[0..4].* = from.*;
+        if (into.len > 4) into[4] = @intCast(into.len);
+    }
+
+    const entries = [_]facet.shader.Entry{facet.shader.compute("main", &run)};
+    const code = facet.shader.Code{ .entry_count = entries.len, .entries = &entries };
+};
+
+fn dynamicChecks(probe: *Probe) void {
+    const fb = probe.fb;
+    const device = probe.device.?;
+    defer probe.give();
+    const bindings = [2]facet.DescriptorSetLayoutBinding{
+        .{ .binding = 0, .descriptor_type = .uniform_buffer_dynamic, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+        .{ .binding = 1, .descriptor_type = .storage_buffer_dynamic, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+    };
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    const made = fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 2, .bindings = &bindings }, &set_layout);
+    if (!probe.features.dynamic_descriptors) {
+        probe.check(made == .error_feature_not_present, "a dynamic buffer descriptor refused where the device has none");
+        probe.check(set_layout == null, "and nothing given back for it");
+        return;
+    }
+    if (made != .success) return probe.check(false, "a set layout of the two dynamic kinds");
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    probe.check(true, "a set layout of the two dynamic kinds");
+
+    // A set holds only so many of them, as the limit says.
+    var properties: facet.PhysicalDeviceProperties = undefined;
+    fb.GetPhysicalDeviceProperties(probe.physical, &properties);
+    const most = properties.limits.max_descriptor_set_dynamic_buffers;
+    probe.check(most != 0, "the limit says how many a set holds");
+    var none: ?*facet.DescriptorSetLayout = null;
+    const too_many = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .uniform_buffer_dynamic, .descriptor_count = most + 1 };
+    probe.check(fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&too_many) }, &none) == .error_feature_not_present, "a set of more than the limit refused");
+    probe.check(none == null, "and nothing given back for that either");
+
+    var module: ?*facet.ShaderModule = null;
+    if (fb.CreateShaderModule(device, &.{ .code = &Shift.code }, &module) != .success) return probe.check(false, "the shader module");
+    _ = Probe.keep(&probe.modules, module);
+    var layout: ?*facet.PipelineLayout = null;
+    if (fb.CreatePipelineLayout(device, &.{ .set_layout_count = 1, .set_layouts = @ptrCast(&set_layout) }, &layout) != .success) return probe.check(false, "the pipeline layout");
+    _ = Probe.keep(&probe.layouts, layout);
+    var pool: ?*facet.DescriptorPool = null;
+    if (fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool) != .success) return probe.check(false, "a descriptor pool");
+    defer fb.DestroyDescriptorPool(device, pool);
+    var sets: [1]?*facet.DescriptorSet = undefined;
+    if (fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &sets) != .success) return probe.check(false, "a descriptor set");
+
+    const uniform, const uniform_bytes = probe.buffer(256, facet.BUFFER_USAGE_UNIFORM_BUFFER) orelse return probe.check(false, "a uniform buffer");
+    const storage, const storage_bytes = probe.buffer(256, facet.BUFFER_USAGE_STORAGE_BUFFER) orelse return probe.check(false, "a buffer the function writes");
+    const in: [*]u32 = @ptrCast(@alignCast(uniform_bytes));
+    const out: [*]u32 = @ptrCast(@alignCast(storage_bytes));
+    for (0..64) |k| in[k] = @intCast(100 + k);
+    const infos = [2]facet.DescriptorBufferInfo{
+        .{ .buffer = uniform, .range = 128 },
+        .{ .buffer = storage, .range = 128 },
+    };
+    const writes = [2]facet.WriteDescriptorSet{
+        .{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .uniform_buffer_dynamic, .descriptor_count = 1, .buffer_info = @ptrCast(&infos[0]) },
+        .{ .dst_set = sets[0].?, .dst_binding = 1, .descriptor_type = .storage_buffer_dynamic, .descriptor_count = 1, .buffer_info = @ptrCast(&infos[1]) },
+    };
+    fb.UpdateDescriptorSets(device, 2, &writes, 0, null);
+
+    const info = facet.ComputePipelineCreateInfo{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.? }, .layout = layout.? };
+    var pipelines: [1]?*facet.Pipeline = undefined;
+    if (fb.CreateComputePipelines(device, null, 1, @ptrCast(&info), &pipelines) != .success) return probe.check(false, "the compute pipeline");
+    _ = Probe.keep(&probe.pipelines, pipelines[0]);
+
+    // The same set, bound again with offsets of its own each time.
+    for ([3]struct { [2]u32, [*:0]const u8 }{
+        .{ .{ 0, 0 }, "the set read and written where it was written" },
+        .{ .{ 16, 32 }, "the same set shifted both ways by the bind" },
+        .{ .{ 64, 4 }, "and shifted again, by other offsets" },
+    }) |one| {
+        const offsets, const name = one;
+        @memset(storage_bytes[0..256], 0);
+        const commands = probe.record() orelse return probe.check(false, "a recording");
+        fb.CmdBindPipeline(commands, .compute, pipelines[0].?);
+        fb.CmdBindDescriptorSets(commands, .compute, layout.?, 0, 1, @ptrCast(&sets), 2, &offsets);
+        fb.CmdDispatch(commands, 1, 1, 1);
+        if (!probe.submit()) return probe.check(false, "the dispatch submitted");
+        const from = offsets[0] / 4;
+        const into = offsets[1] / 4;
+        var right = true;
+        for (0..4) |k| right = right and out[into + k] == in[from + k];
+        if (into > 0) right = right and out[into - 1] == 0;
+        probe.check(right, name);
+        // What is left of the range from the offset is what the function
+        // reaches: 128 bytes less the offset, in numbers of four.
+        probe.checkEqual((128 - offsets[1]) / 4, out[into + 4], "what was left of the range from there");
+    }
+
+    // Offsets left out are 0: read and written where the writes left them.
+    @memset(storage_bytes[0..256], 0);
+    const commands = probe.record() orelse return probe.check(false, "a last recording");
+    fb.CmdBindPipeline(commands, .compute, pipelines[0].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout.?, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    if (!probe.submit()) return probe.check(false, "the dispatch submitted");
+    probe.checkEqual(in[0], out[0], "a bind without offsets shifts nothing");
+}
+
 fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical: *facet.PhysicalDevice, quiet: bool) struct { u32, u32 } {
     var properties: facet.PhysicalDeviceProperties = undefined;
     fb.GetPhysicalDeviceProperties(physical, &properties);
@@ -940,6 +1053,7 @@ fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical
     texelBufferChecks(&probe);
     blendChecks(&probe);
     biasChecks(&probe);
+    dynamicChecks(&probe);
     return .{ probe.passed, probe.failed };
 }
 

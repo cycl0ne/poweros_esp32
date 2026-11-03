@@ -2663,6 +2663,167 @@ test "a device that blends every colour attachment the same way: the pipeline wh
     try testing.expectEqual(@as(u32, facet.COLOR_COMPONENT_R), made.mixings[1].mask);
 }
 
+test "dynamic buffer descriptors: one set read from where the bind says, draw after draw" {
+    const Reader = struct {
+        /// What it was given of the uniform's range, into the storage
+        /// buffer's own: both dynamic, so both are the bind's doing.
+        fn run(groups: *const shader.Groups) callconv(.c) void {
+            const from = groups.resources.buffer([4]u32, 0, 0) orelse return;
+            const into = groups.resources.storage(u32, 0, 1) orelse return;
+            if (into.len < 4) return;
+            into[0..4].* = from.*;
+        }
+        /// How many of each a function may reach, to say what the shift
+        /// left of the ranges.
+        fn counted(groups: *const shader.Groups) callconv(.c) void {
+            const into = groups.resources.storage(u32, 0, 1) orelse return;
+            if (into.len < 2) return;
+            into[0] = @intCast(into.len);
+            into[1] = if (groups.resources.buffer([32]u32, 0, 0) == null) 0 else 1;
+        }
+        const entries = [_]shader.Entry{ shader.compute("main", &run), shader.compute("counted", &counted) };
+        const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
+    };
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    var features: facet.PhysicalDeviceFeatures = undefined;
+    fb.GetPhysicalDeviceFeatures(bench.physical, &features);
+    try testing.expect(features.dynamic_descriptors);
+    var properties: facet.PhysicalDeviceProperties = undefined;
+    fb.GetPhysicalDeviceProperties(bench.physical, &properties);
+    try testing.expectEqual(@as(u32, shader.MAX_DYNAMIC_OFFSETS), properties.limits.max_descriptor_set_dynamic_buffers);
+
+    const reader = try module(&bench, &Reader.code);
+    defer fb.DestroyShaderModule(device, reader);
+    const bindings = [2]facet.DescriptorSetLayoutBinding{
+        .{ .binding = 0, .descriptor_type = .uniform_buffer_dynamic, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+        .{ .binding = 1, .descriptor_type = .storage_buffer_dynamic, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+    };
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = bindings.len, .bindings = &bindings }, &set_layout));
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+
+    // A set holds only so many of them.
+    var none: ?*facet.DescriptorSetLayout = null;
+    const too_many = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .uniform_buffer_dynamic, .descriptor_count = shader.MAX_DYNAMIC_OFFSETS + 1 };
+    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&too_many) }, &none));
+    try testing.expect(none == null);
+
+    const layout = try pipelineLayout(&bench, &.{set_layout.?}, 0);
+    defer fb.DestroyPipelineLayout(device, layout);
+    var pool: ?*facet.DescriptorPool = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool));
+    defer fb.DestroyDescriptorPool(device, pool);
+    var sets: [1]?*facet.DescriptorSet = undefined;
+    try testing.expectEqual(facet.Result.success, fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &sets));
+    const set = sets[0].?;
+
+    // Each dynamic descriptor was told which of the set's offsets shifts
+    // it, in the order the bindings run.
+    const made = _objects.of(_descriptor.Set, set);
+    try testing.expectEqual(@as(u32, 2), made.dynamic_count);
+    try testing.expectEqual(@as(u8, 1), made.view.slots[0].dynamic);
+    try testing.expectEqual(@as(u8, 2), made.view.slots[1].dynamic);
+
+    const uniform, const uniform_bytes = try bench.buffer(256, facet.BUFFER_USAGE_UNIFORM_BUFFER);
+    const out_buffer, const out_bytes = try bench.buffer(256, facet.BUFFER_USAGE_STORAGE_BUFFER);
+    const in: [*]u32 = @ptrCast(@alignCast(uniform_bytes));
+    const out: [*]u32 = @ptrCast(@alignCast(out_bytes));
+    for (0..64) |k| in[k] = @intCast(100 + k);
+    @memset(out[0..64], 0);
+    const infos = [2]facet.DescriptorBufferInfo{
+        .{ .buffer = uniform, .range = 128 },
+        .{ .buffer = out_buffer, .range = 128 },
+    };
+    const writes = [2]facet.WriteDescriptorSet{
+        .{ .dst_set = set, .dst_binding = 0, .descriptor_type = .uniform_buffer_dynamic, .buffer_info = @ptrCast(&infos[0]) },
+        .{ .dst_set = set, .dst_binding = 1, .descriptor_type = .storage_buffer_dynamic, .buffer_info = @ptrCast(&infos[1]) },
+    };
+    fb.UpdateDescriptorSets(device, writes.len, &writes, 0, null);
+    // The write left the slots where they were in the order.
+    try testing.expectEqual(@as(u8, 1), made.view.slots[0].dynamic);
+    try testing.expectEqual(@as(u8, 2), made.view.slots[1].dynamic);
+
+    const info = facet.ComputePipelineCreateInfo{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = reader }, .layout = layout };
+    var pipelines: [1]?*facet.Pipeline = undefined;
+    try testing.expectEqual(facet.Result.success, fb.CreateComputePipelines(device, null, 1, @ptrCast(&info), &pipelines));
+    defer fb.DestroyPipeline(device, pipelines[0]);
+    const counting = facet.ComputePipelineCreateInfo{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = reader, .name = "counted" }, .layout = layout };
+    var counters: [1]?*facet.Pipeline = undefined;
+    try testing.expectEqual(facet.Result.success, fb.CreateComputePipelines(device, null, 1, @ptrCast(&counting), &counters));
+    defer fb.DestroyPipeline(device, counters[0]);
+
+    // The same set three times over, each bind with offsets of its own:
+    // the uniform read from there, and written there in the output.
+    const cases = [3][2]u32{ .{ 0, 0 }, .{ 16, 32 }, .{ 64, 4 } };
+    for (cases) |offsets| {
+        @memset(out[0..64], 0);
+        const commands = try bench.record();
+        fb.CmdBindPipeline(commands, .compute, pipelines[0].?);
+        fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 2, &offsets);
+        fb.CmdDispatch(commands, 1, 1, 1);
+        try bench.submit();
+        const from = offsets[0] / 4;
+        const into = offsets[1] / 4;
+        for (0..4) |k| try testing.expectEqual(in[from + k], out[into + k]);
+        if (into > 0) try testing.expectEqual(@as(u32, 0), out[into - 1]);
+    }
+
+    // What is left of a range from the offset is what a function reaches:
+    // 128 bytes shifted by 64 leaves 16 of its 32 numbers, and the whole
+    // 32 of the uniform's range no longer fit in what is left of it.
+    @memset(out[0..64], 0);
+    var commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, counters[0].?);
+    const far = [2]u32{ 64, 0 };
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 2, &far);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    try bench.submit();
+    try testing.expectEqual(@as(u32, 32), out[0]);
+    try testing.expectEqual(@as(u32, 0), out[1]);
+    @memset(out[0..64], 0);
+    commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, counters[0].?);
+    const near = [2]u32{ 0, 64 };
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 2, &near);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    try bench.submit();
+    try testing.expectEqual(@as(u32, 16), out[16]);
+    try testing.expectEqual(@as(u32, 1), out[17]);
+
+    // Offsets left out are 0: the descriptors are read from where their
+    // writes left them.
+    @memset(out[0..64], 0);
+    commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, pipelines[0].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    try bench.submit();
+    for (0..4) |k| try testing.expectEqual(in[k], out[k]);
+}
+
+test "a device without dynamic buffer descriptors: the set layout that asks for one is refused" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
+    physical.features.dynamic_descriptors = false;
+    defer physical.features.dynamic_descriptors = true;
+    var none: ?*facet.DescriptorSetLayout = null;
+    for ([2]facet.DescriptorType{ .uniform_buffer_dynamic, .storage_buffer_dynamic }) |kind| {
+        const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = kind };
+        try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &none));
+        try testing.expect(none == null);
+    }
+    // The kinds that are not dynamic are made as they were.
+    const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .uniform_buffer };
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &none));
+    fb.DestroyDescriptorSetLayout(device, none);
+}
+
 // --- 1.33: the depth bias ----------------------------------------------------
 
 /// One frame of the depth bias tests: `first` drawn green with the depth

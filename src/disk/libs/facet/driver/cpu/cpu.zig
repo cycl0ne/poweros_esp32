@@ -87,6 +87,7 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
             .max_bound_descriptor_sets = _instance.max_bound_descriptor_sets,
             .max_per_stage_descriptor_sampled_images = 16,
             .max_per_stage_descriptor_uniform_buffers = 12,
+            .max_descriptor_set_dynamic_buffers = facet.shader.MAX_DYNAMIC_OFFSETS,
             .min_memory_map_alignment = _memory.alignment,
             .tile_size = raster.tile_size,
             .cores = @min(cores, raster.most_parts),
@@ -126,6 +127,10 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // reads it is a function of the program's, which on a device
         // without them is its compute functions, run on the cores.
         .texel_buffers = true,
+        // A dynamic buffer descriptor is a pointer and a range, shifted
+        // by what the bind gave: the function that reads it is the
+        // program's, so every device takes one.
+        .dynamic_descriptors = true,
         // A colour attachment is drawn as a pass of its own, so each
         // takes the mixing asked for it as it is drawn.
         .independent_blend = true,
