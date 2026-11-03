@@ -42,8 +42,12 @@ screen when it is larger. The window's title is the file's name.
 
 - **The tape deck**: back ten seconds, play and pause, on ten seconds,
   stop - back to the start.
-- **The slider** is the place in the film. Dragged, the time beside it
-  follows; let go, the film goes there.
+- **The slider** is the place in the film. Dragged, the picture follows
+  the knob: the film is held where it is taken hold of, and the place
+  under the knob is shown - without sound, which a drag would only make
+  noise of - a few times a second, as fast as the machine decodes a key
+  frame; a mouse move in between moves the time beside the slider alone.
+  Let go, the film goes there, and plays on from there if it was playing.
 - **The time**: where the film is, and how long it lasts.
 - **The volume**, in percent.
 
@@ -89,7 +93,8 @@ pictures, keeps time by the clock.
 
 Moving - the slider, the keys, the deck - goes to the key frame at or
 before the time asked for, where a decoder can start: in most films
-they are a second or two apart.
+they are a second or two apart. That is as near as a drag can show
+too, so the picture under the knob can stand a moment behind it.
 
 ## How the picture is shown
 

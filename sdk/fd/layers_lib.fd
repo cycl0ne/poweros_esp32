@@ -138,4 +138,13 @@ bool HideLayer(*layers.Layer layer)
 /// damage and its program gets a refresh. True, or false with
 /// `LERR_NO_MEMORY`; a layer that was not hidden answers true.
 bool ShowLayer(*layers.Layer layer)
+/// Show a hidden layer's picture on the display, stretched into `area` -
+/// a window flying into the window that takes the put-away ones in: the
+/// buffer it was last drawn with, smoothly scaled, with the layers that
+/// move with it inside it, and the display shown again where the flight
+/// before it was. It covers nothing and is hit by nothing: whatever is
+/// shown over it covers it, and the next call draws it again. An empty
+/// rectangle ends it. False, and nothing shown, for a layer that is not
+/// composed, a super layer, or one that is not hidden.
+bool FlyLayer(*layers.Layer layer, *const graphics.Rect area)
 ##end

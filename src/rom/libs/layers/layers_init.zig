@@ -53,7 +53,10 @@ pub const LIBRARY_VERSION = 0;
 /// 15: a layer taken out of what is shown and put back without being
 /// taken away - HideLayer, ShowLayer, LAYERHIDDEN - what a window put
 /// away into the dock rests on.
-pub const LIBRARY_REVISION = 15;
+/// 16: a hidden layer's picture shown somewhere else on the display,
+/// stretched into a rectangle of its own - FlyLayer - which is a window
+/// flying into the window that takes the put-away ones in.
+pub const LIBRARY_REVISION = 16;
 
 /// dd.mm.yyyy, the form every module's `$VER:` string uses.
 const BUILD_DATE = "03.11.2026";

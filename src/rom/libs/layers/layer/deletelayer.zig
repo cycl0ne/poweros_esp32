@@ -94,8 +94,9 @@ pub fn DeleteLayer(lb: *LayersBase, layer: ?*Layer) void {
     gb.FreeRastPort(gone.rp);
     compose.drop(lb, gone);
     effects.dropShade(gb, gone);
-    // With all a size left to a batch that has not ended touched.
-    const was = effects.reach(gone).unionWith(gone.unshown);
+    // With all a size left to a batch that has not ended touched, and
+    // where a flight of it was still showing (`FlyLayer`).
+    const was = effects.reach(gone).unionWith(gone.unshown).unionWith(gone.flight);
     sys.FreeVec(gone);
 
     // What was behind it can see more now.
