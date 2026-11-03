@@ -31,6 +31,12 @@ const _handle = @import("../handle/_handle.zig");
 /// The list locked for the check and the removal as one.
 const list_lock = dos.LDF_DEVICES | dos.LDF_WRITE;
 
+/// How long the node is waited for after the handler has answered, a
+/// tick at a time. A handler answers ACTION_DIE as the last thing its
+/// code does, so dos counts the code's user down a moment later, when
+/// the process has really ended - and only then is the node free to go.
+const ending_ticks = 50;
+
 /// Takes a drive of this handle's unit off dos's list, ending its
 /// handler.
 ///
@@ -70,6 +76,13 @@ const list_lock = dos.LDF_DEVICES | dos.LDF_WRITE;
 /// reached the drive in between is not left holding a node that is going
 /// away: a drive that has a task or a user again at that moment answers
 /// RDBERR_INUSE, and the handler is the next use's to start.
+///
+/// A handler answers that packet as the last thing its code does, so for
+/// a moment after the answer its process is still running the code dos
+/// loaded and the node still counts it as a user. The node is waited for
+/// over that moment, a tick at a time and half a second at most, rather
+/// than called in use: what the answer promised has happened, and only
+/// the ending itself is still in the way.
 ///
 /// CONTEXT:
 /// - Waits: yes, for the dos list's lock and for the handler's answer.
@@ -126,6 +139,14 @@ pub fn UnmountPartition(base: *RDBBase, handle: *rdb.RDBHandle, name: [*:0]const
     if (port) |handler| {
         if (dl.DoPkt(handler, @intFromEnum(dos.ActionCode.die), 0, 0, 0, 0, 0) == dos.DOSFALSE)
             return rdb.RDBERR_INUSE;
+        // Its process is ending now; the node is taken as soon as it has.
+        var waited: u32 = 0;
+        while (true) {
+            const code = take(sys, dl, name, device, private.unit);
+            if (code != rdb.RDBERR_INUSE or waited >= ending_ticks) return code;
+            waited += 1;
+            dl.Delay(1);
+        }
     }
     return take(sys, dl, name, device, private.unit);
 }

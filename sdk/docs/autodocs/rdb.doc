@@ -1084,6 +1084,13 @@ rdb.library/WriteRDB
 	away: a drive that has a task or a user again at that moment answers
 	RDBERR_INUSE, and the handler is the next use's to start.
 
+	A handler answers that packet as the last thing its code does, so for
+	a moment after the answer its process is still running the code dos
+	loaded and the node still counts it as a user. The node is waited for
+	over that moment, a tick at a time and half a second at most, rather
+	than called in use: what the answer promised has happened, and only
+	the ending itself is still in the way.
+
    CONTEXT
 	- Waits: yes, for the dos list's lock and for the handler's answer.
 	- Interrupts: no.

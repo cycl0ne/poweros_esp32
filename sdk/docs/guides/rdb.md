@@ -503,6 +503,12 @@ and freed under the list's lock. The name is the one the mounting gave
 back, without a colon - which is not always the one asked for, since a
 taken name gets dots.
 
+A handler answers that packet as the last thing its code does, so its
+process is still ending when the answer arrives, and dos still counts it
+as a user of the code it loaded. The call waits that moment out, a tick
+at a time and half a second at most (1.9), instead of calling the drive
+in use.
+
 ```zig
 var name: rdb.MountName = undefined;
 if (rb.MountGPTPartition(handle, part, "BOOT", &name, rdb.RDBMF_START | rdb.RDBMF_FAT) != rdb.RDBERR_OK) return;
@@ -515,6 +521,12 @@ else's drive does nothing. A handler that refuses to end, because a file
 or a lock is open on the drive, leaves everything as it was
 (`RDBERR_INUSE`). The code of a file system the table brought is freed
 with the last node that uses it.
+
+Whether a handler ends at all is its own: `fat-handler` does, so a
+partition mounted to write a few files into can be let go again, while
+`posfs-handler`, the flash file system and `RAM:` keep their drives for
+as long as the machine runs and answer `RDBERR_INUSE` however little is
+open on them. A drive of theirs is one to mount, not to borrow.
 
 This is for a program that mounts a partition to do one thing with it -
 write the firmware's files into the partition it reads, look at what a

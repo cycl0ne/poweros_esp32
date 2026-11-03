@@ -32,6 +32,11 @@ The window is the one the pointer stands over as the second click
 lands, so a double click whose two halves are in different windows
 brings the second one forward. Caps Lock never counts either way.
 
+Two clicks on the ground move nothing: the desktop's window lies under
+all the others and covers the whole screen, and in front it would hide
+every one of them. A window put away counts for nothing either, so a
+double click in the window at the front still has nothing to do.
+
 ## Stopping it
 
 It has no window. The controller (SYS:Commodities/Exchange) can make it
