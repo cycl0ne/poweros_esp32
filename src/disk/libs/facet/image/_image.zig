@@ -130,6 +130,18 @@ pub fn hasStencil(format: facet.Format) bool {
     return format == .s8_uint or format == .d16_unorm_s8_uint;
 }
 
+/// Where a pixel's depth lies in its bytes, and where its stencil does:
+/// `d16_unorm_s8_uint` holds the depth first and the stencil after it, and
+/// a format of one alone holds it at the pixel's first byte.
+pub fn depthOffset(format: facet.Format) u32 {
+    _ = format;
+    return 0;
+}
+
+pub fn stencilOffset(format: facet.Format) u32 {
+    return if (hasDepth(format)) 2 else 0;
+}
+
 /// How a fragment function reads the pixels of an image kept in rows;
 /// `.none` for a format rows are not kept in, a depth among them
 /// (`shader.Attachment`).

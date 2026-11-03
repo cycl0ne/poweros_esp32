@@ -54,6 +54,11 @@ pub const Part = struct {
     /// a depth that lives in the tiles alone.
     loads_depth: bool = false,
     stores_depth: bool = false,
+    /// The same for its stencil, which has its own two ops and its own
+    /// plane in the image's rows
+    /// (`PhysicalDeviceFeatures.stored_stencil`).
+    loads_stencil: bool = false,
+    stores_stencil: bool = false,
 };
 
 pub const Subpass = struct {

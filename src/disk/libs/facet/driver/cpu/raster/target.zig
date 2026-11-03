@@ -20,7 +20,11 @@
 //! unless the frame was given a depth plane (`Attachments.Depth.plane`),
 //! when the tile's depth is read from it before it is drawn, or written
 //! back into it after, or both, as the attachment's load and store ops
-//! say. That is what a depth attachment outliving its render pass is.
+//! say. That is what a depth attachment outliving its render pass is. The
+//! stencil is the same, a byte a pixel, with a plane of its own
+//! (`Attachments.Stencil.plane`): the two may lie in one image's rows,
+//! each pixel's depth and stencil beside each other, which the planes'
+//! `stride` says.
 //!
 //! The tiles are handed on once all of them are in the surface, in a
 //! second round shared out the same way. On the JH7110 handing on is the
@@ -275,11 +279,16 @@ pub const Attachments = struct {
         store: bool = false,
     };
 
-    /// The rows a depth attachment's image keeps, as the surface keeps a
-    /// colour attachment's.
+    /// The rows a depth or stencil attachment's image keeps, as the
+    /// surface keeps a colour attachment's: `pixels` is the first pixel's
+    /// own bytes, `pitch` the bytes from one row to the next and `stride`
+    /// those from one pixel to the next - 2 for a plane of depth alone, 1
+    /// for one of stencil alone, and 4 for either of a format that holds
+    /// both, the depth of a pixel first and its stencil after.
     pub const Plane = struct {
         pixels: [*]u8,
         pitch: u32,
+        stride: u32,
     };
 
     pub const Stencil = struct {
@@ -287,6 +296,14 @@ pub const Attachments = struct {
         /// tile starts.
         used: bool = false,
         clear: u8 = 0,
+        /// Where the stencil outlives the frame: the image's rows, a byte a
+        /// pixel. Null for a stencil that lives in the tiles alone.
+        plane: ?Plane = null,
+        /// Cleared as each tile starts, or read from the plane.
+        load: Load = .clear,
+        /// Whether each tile's stencil is written back into the plane,
+        /// after it is drawn.
+        store: bool = false,
     };
 
     pub const Load = enum { clear, keep };
@@ -522,7 +539,10 @@ pub const Target = struct {
         // cleared, when every tile has to be written: the colour, or a
         // depth that is kept and starts cleared.
         const depth = target.attachments.depth;
-        const cleared = target.attachments.color.load == .clear or (depth.store and depth.load == .clear);
+        const stencil = target.attachments.stencil;
+        const cleared = target.attachments.color.load == .clear or
+            (depth.store and depth.load == .clear) or
+            (stencil.store and stencil.load == .clear);
         for (target.tiles) |*state| state.* = .{ .dirty = cleared };
         target.clear_pixel = target.attachments.color.clear;
         target.arena.reset();
@@ -629,7 +649,11 @@ pub const Target = struct {
             .clear => @memset(&buffer.depth, depth.clear),
             .keep => target.loadDepth(tile),
         };
-        if (target.attachments.stencil.used) @memset(&buffer.stencil, target.attachments.stencil.clear);
+        const stencil = &target.attachments.stencil;
+        if (stencil.used) switch (stencil.load) {
+            .clear => @memset(&buffer.stencil, stencil.clear),
+            .keep => target.loadStencil(tile),
+        };
         const state = &target.tiles[tile.index];
         // The triangles at the head of the list that ask for the depth
         // pre-pass are shaded where their depth was left, the rest as
@@ -645,6 +669,7 @@ pub const Target = struct {
         }
         target.store(tile);
         if (depth.store) target.storeDepth(tile);
+        if (stencil.store) target.storeStencil(tile);
     }
 
     /// The depth pre-pass's first pass (prepass.zig): the depth of the
@@ -704,8 +729,16 @@ pub const Target = struct {
         var row = tile.top;
         while (row < tile.bottom) : (row += 1) {
             const count = tile.right - tile.left;
-            const from = depthAt(plane, tile.x + tile.left, tile.y + row);
-            @memcpy(@as([*]u8, @ptrCast(tile.depthRow(row) + tile.left))[0 .. count * 2], from[0 .. count * 2]);
+            const from = pixelOf(plane, tile.x + tile.left, tile.y + row);
+            const into = tile.depthRow(row) + tile.left;
+            // Depth alone lies as the tile's own does, so a row is one
+            // copy; beside a stencil it is every other pixel.
+            if (plane.stride == 2) {
+                @memcpy(@as([*]u8, @ptrCast(into))[0 .. count * 2], from[0 .. count * 2]);
+            } else for (0..count) |k| {
+                const at = from + k * plane.stride;
+                into[k] = @as(u16, at[0]) | @as(u16, at[1]) << 8;
+            }
         }
     }
 
@@ -715,14 +748,58 @@ pub const Target = struct {
         var row = tile.top;
         while (row < tile.bottom) : (row += 1) {
             const count = tile.right - tile.left;
-            const into = depthAt(plane, tile.x + tile.left, tile.y + row);
-            @memcpy(into[0 .. count * 2], @as([*]const u8, @ptrCast(tile.depthRow(row) + tile.left))[0 .. count * 2]);
+            const into = pixelOf(plane, tile.x + tile.left, tile.y + row);
+            const from = tile.depthRow(row) + tile.left;
+            if (plane.stride == 2) {
+                @memcpy(into[0 .. count * 2], @as([*]const u8, @ptrCast(from))[0 .. count * 2]);
+            } else for (0..count) |k| {
+                const at = into + k * plane.stride;
+                at[0] = @truncate(from[k]);
+                at[1] = @truncate(from[k] >> 8);
+            }
         }
     }
 
-    /// The plane's depth at column `x` of row `y`.
-    inline fn depthAt(plane: Attachments.Plane, x: u32, y: u32) [*]u8 {
-        return plane.pixels + @as(usize, y) * plane.pitch + @as(usize, x) * 2;
+    /// The stencil plane under the tile, into its buffer: a byte a pixel,
+    /// what a pass whose stencil loads starts from.
+    fn loadStencil(target: *Target, tile: *const Tile) void {
+        const plane = target.attachments.stencil.plane orelse {
+            @memset(&tile.buffer.stencil, target.attachments.stencil.clear);
+            return;
+        };
+        var row = tile.top;
+        while (row < tile.bottom) : (row += 1) {
+            const count = tile.right - tile.left;
+            const from = pixelOf(plane, tile.x + tile.left, tile.y + row);
+            const into = tile.stencilRow(row) + tile.left;
+            if (plane.stride == 1) {
+                @memcpy(into[0..count], from[0..count]);
+            } else for (0..count) |k| {
+                into[k] = from[k * plane.stride];
+            }
+        }
+    }
+
+    /// The tile's stencil, into the plane: what outlives the frame.
+    fn storeStencil(target: *Target, tile: *const Tile) void {
+        const plane = target.attachments.stencil.plane orelse return;
+        var row = tile.top;
+        while (row < tile.bottom) : (row += 1) {
+            const count = tile.right - tile.left;
+            const into = pixelOf(plane, tile.x + tile.left, tile.y + row);
+            const from = tile.stencilRow(row) + tile.left;
+            if (plane.stride == 1) {
+                @memcpy(into[0..count], from[0..count]);
+            } else for (0..count) |k| {
+                into[k * plane.stride] = from[k];
+            }
+        }
+    }
+
+    /// The plane's pixel at column `x` of row `y`: its own bytes, the
+    /// plane's first byte being the first pixel's.
+    inline fn pixelOf(plane: Attachments.Plane, x: u32, y: u32) [*]u8 {
+        return plane.pixels + @as(usize, y) * plane.pitch + @as(usize, x) * plane.stride;
     }
 
     /// The surface's pixel at column `x` of row `y`.

@@ -260,9 +260,14 @@ test "the formats: what each does in each tiling" {
     rig.fb.GetPhysicalDeviceFormatProperties(physical, .d16_unorm, &properties);
     try testing.expectEqual(facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT | facet.FORMAT_FEATURE_TRANSFER_SRC | facet.FORMAT_FEATURE_TRANSFER_DST, properties.optimal_tiling_features);
     try testing.expectEqual(0, properties.linear_tiling_features);
-    // One with a stencil has no plane of its own: an attachment only.
+    // Since 1.38 one with a stencil keeps it the same way, so it too is
+    // transferred: a copy reads or writes each pixel's depth and stencil
+    // at once.
     rig.fb.GetPhysicalDeviceFormatProperties(physical, .d16_unorm_s8_uint, &properties);
-    try testing.expectEqual(facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT, properties.optimal_tiling_features);
+    try testing.expectEqual(facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT | facet.FORMAT_FEATURE_TRANSFER_SRC | facet.FORMAT_FEATURE_TRANSFER_DST, properties.optimal_tiling_features);
+    try testing.expectEqual(0, properties.linear_tiling_features);
+    rig.fb.GetPhysicalDeviceFormatProperties(physical, .s8_uint, &properties);
+    try testing.expectEqual(facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT | facet.FORMAT_FEATURE_TRANSFER_SRC | facet.FORMAT_FEATURE_TRANSFER_DST, properties.optimal_tiling_features);
     // A vertex format, and texels a BufferView reads as well.
     rig.fb.GetPhysicalDeviceFormatProperties(physical, .r32g32b32_sfloat, &properties);
     try testing.expectEqual(facet.FORMAT_FEATURE_VERTEX_BUFFER | facet.FORMAT_FEATURE_UNIFORM_TEXEL_BUFFER | facet.FORMAT_FEATURE_STORAGE_TEXEL_BUFFER, properties.buffer_features);

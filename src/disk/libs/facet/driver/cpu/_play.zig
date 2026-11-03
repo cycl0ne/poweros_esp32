@@ -293,6 +293,23 @@ fn surfaceOf(framebuffer: *const _render.Target) ?raster.Surface {
     };
 }
 
+/// A depth attachment's rows as one of the plane's: the depth of each
+/// pixel, or its stencil, wherever that lies in the pixel's bytes
+/// (`_image.stencilOffset`). Null where there is nothing in memory to read
+/// or write.
+fn planeOf(view: ?*const _image.ImageView, which: enum { depth, stencil }) ?raster.Attachments.Plane {
+    const image = (view orelse return null).image;
+    const format = image.format;
+    const stride = _image.bytesOf(format);
+    const at = switch (which) {
+        .depth => if (_image.hasDepth(format)) _image.depthOffset(format) else return null,
+        .stencil => if (_image.hasStencil(format)) _image.stencilOffset(format) else return null,
+    };
+    if (stride == 0 or at >= stride) return null;
+    const data = image.data orelse return null;
+    return .{ .pixels = data + at, .pitch = image.pitch, .stride = stride };
+}
+
 fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, output: u32) void {
     const player = playerOf(queue);
     endRenderPass(player);
@@ -308,13 +325,15 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, outp
     const right: u32 = @intCast(std.math.clamp(@as(i64, offset.x) + command.area.extent.width, left, framebuffer.width));
     const bottom: u32 = @intCast(std.math.clamp(@as(i64, offset.y) + command.area.extent.height, top, framebuffer.height));
     const area = raster.Rect{ .x = left, .y = top, .width = right - left, .height = bottom - top };
-    // Where the pass keeps its depth, the image's rows are the plane the
-    // tiles read from and write back into; a transient image has none, and
-    // CreateFramebuffer has already refused that pass.
-    const plane: ?raster.Attachments.Plane = if (render_pass.stores_depth or render_pass.loads_depth) plane: {
-        const view = framebuffer.depth orelse break :plane null;
-        break :plane .{ .pixels = view.image.data orelse break :plane null, .pitch = view.image.pitch };
-    } else null;
+    // Where the pass keeps its depth or its stencil, the image's rows are
+    // the plane the tiles read from and write back into; a transient image
+    // has none, and CreateFramebuffer has already refused that pass. A
+    // format that holds both keeps each pixel's depth and its stencil
+    // beside each other, which is what the stride is for.
+    const keeps_depth = render_pass.stores_depth or render_pass.loads_depth;
+    const keeps_stencil = render_pass.stores_stencil or render_pass.loads_stencil;
+    const plane: ?raster.Attachments.Plane = if (keeps_depth) planeOf(framebuffer.depth, .depth) else null;
+    const stencil_plane: ?raster.Attachments.Plane = if (keeps_stencil) planeOf(framebuffer.depth, .stencil) else null;
     const attachments = raster.Attachments{
         .color = .{ .load = if (render_pass.color_load == .clear) .clear else .keep, .clear = command.clear_colors[output] },
         .depth = .{
@@ -324,7 +343,13 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, outp
             .load = if (render_pass.loads_depth and plane != null) .keep else .clear,
             .store = render_pass.stores_depth and plane != null,
         },
-        .stencil = .{ .used = render_pass.tests_stencil, .clear = @intCast(command.clear_stencil) },
+        .stencil = .{
+            .used = render_pass.tests_stencil,
+            .clear = @intCast(command.clear_stencil),
+            .plane = stencil_plane,
+            .load = if (render_pass.loads_stencil and stencil_plane != null) .keep else .clear,
+            .store = render_pass.stores_stencil and stencil_plane != null,
+        },
     };
     player.display = framebuffer.color.image.display;
     if (player.target) |*target| {

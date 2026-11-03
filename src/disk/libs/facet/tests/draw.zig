@@ -405,12 +405,10 @@ test "a render pass: one subpass, a colour attachment and perhaps a depth one; w
     const depth = facet.AttachmentReference{ .attachment = 1, .layout = .depth_stencil_attachment_optimal };
     const subpass = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&color), .depth_stencil_attachment = &depth };
     const refused = [_]struct { facet.Result, [2]facet.AttachmentDescription }{
-        // A depth kept, of a format with a stencil in it: that has no
-        // plane of its own.
-        .{ .error_feature_not_present, .{ .{ .format = .b8g8r8a8_unorm, .final_layout = .general }, .{ .format = .d16_unorm_s8_uint, .store_op = .store, .final_layout = .general } } },
+        // A depth kept, of a format with no depth in it, and a stencil
+        // kept of one with no stencil: each op wants its own plane.
         .{ .error_feature_not_present, .{ .{ .format = .b8g8r8a8_unorm, .final_layout = .general }, .{ .format = .s8_uint, .load_op = .load, .final_layout = .general } } },
-        // The stencil's own ops, which are never kept.
-        .{ .error_feature_not_present, .{ .{ .format = .b8g8r8a8_unorm, .final_layout = .general }, .{ .format = .d16_unorm_s8_uint, .stencil_store_op = .store, .final_layout = .general } } },
+        .{ .error_feature_not_present, .{ .{ .format = .b8g8r8a8_unorm, .final_layout = .general }, .{ .format = .d16_unorm, .stencil_store_op = .store, .final_layout = .general } } },
         // A colour attachment of a float, a depth one of 32 bits.
         .{ .error_format_not_supported, .{ .{ .format = .r32_sfloat, .final_layout = .general }, .{ .format = .d16_unorm, .final_layout = .general } } },
         .{ .error_format_not_supported, .{ .{ .format = .b8g8r8a8_unorm, .final_layout = .general }, .{ .format = .r32_sfloat, .final_layout = .general } } },
@@ -443,7 +441,46 @@ test "a render pass: one subpass, a colour attachment and perhaps a depth one; w
     const plan = _objects.of(_render.RenderPass, keeping.?);
     try testing.expect(plan.parts[0].loads_depth);
     try testing.expect(plan.parts[0].stores_depth);
+    try testing.expect(!plan.parts[0].loads_stencil);
+    try testing.expect(!plan.parts[0].stores_stencil);
     fb.DestroyRenderPass(device, keeping);
+
+    // Since 1.38 the stencil keeps its own as well, in its own plane of
+    // the same rows: a format that holds both, with all four ops.
+    const both = [2]facet.AttachmentDescription{
+        .{ .format = .b8g8r8a8_unorm, .final_layout = .general },
+        .{ .format = .d16_unorm_s8_uint, .load_op = .load, .store_op = .store, .stencil_load_op = .load, .stencil_store_op = .store, .final_layout = .general },
+    };
+    var keeping_both: ?*facet.RenderPass = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &both, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &keeping_both));
+    const four = _objects.of(_render.RenderPass, keeping_both.?);
+    try testing.expect(four.parts[0].loads_depth and four.parts[0].stores_depth);
+    try testing.expect(four.parts[0].loads_stencil and four.parts[0].stores_stencil);
+    fb.DestroyRenderPass(device, keeping_both);
+
+    // A stencil alone, of s8_uint: no depth to keep, and its own two ops.
+    const stencil_only = [2]facet.AttachmentDescription{
+        .{ .format = .b8g8r8a8_unorm, .final_layout = .general },
+        .{ .format = .s8_uint, .stencil_load_op = .load, .stencil_store_op = .store, .final_layout = .general },
+    };
+    var keeping_stencil: ?*facet.RenderPass = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &stencil_only, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &keeping_stencil));
+    const alone = _objects.of(_render.RenderPass, keeping_stencil.?);
+    try testing.expect(!alone.parts[0].loads_depth and !alone.parts[0].stores_depth);
+    try testing.expect(alone.parts[0].loads_stencil and alone.parts[0].stores_stencil);
+    fb.DestroyRenderPass(device, keeping_stencil);
+
+    // A device that keeps no stencil refuses either of its ops, and keeps
+    // taking the depth's.
+    const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
+    physical.features.stored_stencil = false;
+    defer physical.features.stored_stencil = true;
+    var refused_stencil: ?*facet.RenderPass = null;
+    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &stencil_only, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &refused_stencil));
+    try testing.expect(refused_stencil == null);
+    var still: ?*facet.RenderPass = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &kept, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &still));
+    fb.DestroyRenderPass(device, still);
 }
 
 test "a framebuffer: a view for each attachment, of images that fit the pass" {
@@ -1980,6 +2017,163 @@ test "a depth attachment that outlives its pass: stored as the tiles are drawn, 
 /// A depth read back into a buffer, 64 pixels a row, 16 bits each.
 fn depthAt(bytes: [*]const u8, x: u32, y: u32) u16 {
     return std.mem.readInt(u16, bytes[(y * 64 + x) * 2 ..][0..2], .little);
+}
+
+/// A render pass whose stencil attachment is kept: a colour attachment of
+/// 8888 and a depth one of `format`, with all four of its ops given.
+fn stencilPass(bench: *Bench, format: facet.Format, color_load: facet.AttachmentLoadOp, ops: [4]u8) !*facet.RenderPass {
+    const load: [2]facet.AttachmentLoadOp = .{ if (ops[0] == 'l') .load else .clear, if (ops[2] == 'l') .load else .clear };
+    const store: [2]facet.AttachmentStoreOp = .{ if (ops[1] == 's') .store else .dont_care, if (ops[3] == 's') .store else .dont_care };
+    const attachments = [2]facet.AttachmentDescription{
+        .{ .format = .b8g8r8a8_unorm, .load_op = color_load, .store_op = .store, .final_layout = .color_attachment_optimal },
+        .{
+            .format = format,
+            .load_op = load[0],
+            .store_op = store[0],
+            .stencil_load_op = load[1],
+            .stencil_store_op = store[1],
+            .final_layout = .depth_stencil_attachment_optimal,
+        },
+    };
+    const color = facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal };
+    const depth = facet.AttachmentReference{ .attachment = 1, .layout = .depth_stencil_attachment_optimal };
+    const subpass = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&color), .depth_stencil_attachment = &depth };
+    var made: ?*facet.RenderPass = null;
+    try testing.expectEqual(facet.Result.success, bench.rig.fb.CreateRenderPass(bench.device, &.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &made));
+    return made.?;
+}
+
+test "a stencil attachment that outlives its pass: stored as the tiles are drawn, loaded by the next pass, read back and cleared" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const flat = try module(&bench, &Flat.code);
+    defer fb.DestroyShaderModule(device, flat);
+    const layout = try pipelineLayout(&bench, &.{}, 4);
+    defer fb.DestroyPipelineLayout(device, layout);
+    // All of the picture, then its left half.
+    const vertices = [_][3]f32{
+        .{ -1, -1, 0.5 }, .{ 1, -1, 0.5 },  .{ -1, 1, 0.5 },
+        .{ -1, 1, 0.5 },  .{ 1, -1, 0.5 },  .{ 1, 1, 0.5 },
+        .{ -1, -1, 0.5 }, .{ 0, -1, 0.5 },  .{ -1, 1, 0.5 },
+        .{ -1, 1, 0.5 },  .{ 0, -1, 0.5 },  .{ 0, 1, 0.5 },
+    };
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
+    const offset: u64 = 0;
+    const red: u32 = 0xFFFF_0000;
+    const green: u32 = 0xFF00_FF00;
+    const clear: u32 = 0xFF00_00FF;
+    const values = clears(clear);
+    const area = facet.Rect2D{ .extent = .{ .width = 64, .height = 64 } };
+    const marked: u8 = 5;
+
+    // Both formats that hold a stencil: one of stencil alone, a byte a
+    // pixel, and one that holds a depth beside it, four.
+    for ([2]facet.Format{ .s8_uint, .d16_unorm_s8_uint }) |format| {
+        const picture = try Picture.of(&bench, 64, 64);
+        const stencil_image, const stencil_view = try bench.image(.{
+            .format = format,
+            .extent = .{ .width = 64, .height = 64 },
+            .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST,
+        }, false);
+        const kept = _objects.of(@import("../image/_image.zig").Image, stencil_image);
+        const stride: usize = if (format == .s8_uint) 1 else 4;
+        const stencilAt = struct {
+            fn of(image: anytype, step: usize, x: u32, y: u32) u8 {
+                // The stencil of a pixel is its last byte but one where a
+                // depth lies before it, and its only byte otherwise.
+                const inside: usize = if (step == 1) 0 else 2;
+                const at = @as(usize, y) * image.pitch + @as(usize, x) * step + inside;
+                return image.data.?[at];
+            }
+        }.of;
+
+        // The first pass marks the left half and stores the stencil.
+        const storing = try stencilPass(&bench, format, .clear, "dcds".*);
+        defer fb.DestroyRenderPass(device, storing);
+        const frame = try framebuffer(&bench, storing, &.{ picture.view, stencil_view }, 64, 64);
+        defer fb.DestroyFramebuffer(device, frame);
+        const marks = facet.StencilOpState{ .pass_op = .replace, .compare_op = .always, .compare_mask = 0xFF, .write_mask = 0xFF, .reference = marked };
+        const mark_result, const mark = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = storing, .depth = .{ .stencil_test_enable = true, .front = marks, .back = marks } });
+        try testing.expectEqual(facet.Result.success, mark_result);
+        defer fb.DestroyPipeline(device, mark);
+
+        var commands = try bench.record();
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = storing, .framebuffer = frame, .render_area = area, .clear_value_count = 2, .clear_values = &values }, .@"inline");
+        fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+        fb.CmdBindPipeline(commands, .graphics, mark.?);
+        fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &red);
+        fb.CmdDraw(commands, 6, 1, 6, 0);
+        fb.CmdEndRenderPass(commands);
+        try bench.submit();
+
+        // What the tiles wrote into the image: the reference where it was
+        // drawn, the clear's 0 where it was not, in more than one tile.
+        try testing.expectEqual(marked, stencilAt(kept, stride, 16, 8));
+        try testing.expectEqual(marked, stencilAt(kept, stride, 16, 40));
+        try testing.expectEqual(@as(u8, 0), stencilAt(kept, stride, 48, 8));
+        try testing.expectEqual(@as(u8, 0), stencilAt(kept, stride, 48, 40));
+
+        // The second pass loads it and draws over the whole picture where
+        // the stencil is the reference: the half the first pass marked.
+        const loading = try stencilPass(&bench, format, .clear, "dcld".*);
+        defer fb.DestroyRenderPass(device, loading);
+        const again = try framebuffer(&bench, loading, &.{ picture.view, stencil_view }, 64, 64);
+        defer fb.DestroyFramebuffer(device, again);
+        const equal = facet.StencilOpState{ .compare_op = .equal, .compare_mask = 0xFF, .reference = marked };
+        const draw_result, const draw = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = loading, .depth = .{ .stencil_test_enable = true, .front = equal, .back = equal } });
+        try testing.expectEqual(facet.Result.success, draw_result);
+        defer fb.DestroyPipeline(device, draw);
+        commands = try bench.record();
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = loading, .framebuffer = again, .render_area = area, .clear_value_count = 2, .clear_values = &values }, .@"inline");
+        fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+        fb.CmdBindPipeline(commands, .graphics, draw.?);
+        fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &green);
+        fb.CmdDraw(commands, 6, 1, 0, 0);
+        fb.CmdEndRenderPass(commands);
+        try bench.submit();
+        try testing.expectEqual(green, picture.at(16, 8));
+        try testing.expectEqual(green, picture.at(16, 40));
+        try testing.expectEqual(clear, picture.at(48, 8));
+        try testing.expectEqual(clear, picture.at(48, 40));
+
+        // Read into a buffer, a pixel's whole bytes at a time, and cleared
+        // without a pass over it.
+        const pixels = 64 * 64 * stride;
+        const read_back, const back_bytes = try bench.buffer(pixels, facet.BUFFER_USAGE_TRANSFER_DST);
+        @memset(back_bytes[0..pixels], 0xAA);
+        const whole = facet.BufferImageCopy{ .image_extent = .{ .width = 64, .height = 64 }, .image_subresource = .{ .aspect_mask = facet.IMAGE_ASPECT_STENCIL } };
+        commands = try bench.record();
+        fb.CmdCopyImageToBuffer(commands, stencil_image, .general, read_back, 1, @ptrCast(&whole));
+        try bench.submit();
+        const stencil_byte = if (stride == 1) @as(usize, 0) else 2;
+        try testing.expectEqual(marked, back_bytes[(8 * 64 + 16) * stride + stencil_byte]);
+        try testing.expectEqual(@as(u8, 0), back_bytes[(8 * 64 + 48) * stride + stencil_byte]);
+
+        const depth_word = @as(usize, 8) * kept.pitch + @as(usize, 16) * stride;
+        const depth_was = kept.data.?[depth_word];
+        const value = facet.ClearDepthStencilValue{ .depth = 1, .stencil = 9 };
+        const range = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_STENCIL };
+        commands = try bench.record();
+        fb.CmdClearDepthStencilImage(commands, stencil_image, 0, &value, 1, @ptrCast(&range));
+        try bench.submit();
+        try testing.expectEqual(@as(u8, 9), stencilAt(kept, stride, 16, 8));
+        try testing.expectEqual(@as(u8, 9), stencilAt(kept, stride, 48, 40));
+        // The depth of a format that holds one is left as it was: the
+        // stencil aspect alone was asked for.
+        if (stride == 4) try testing.expectEqual(depth_was, kept.data.?[depth_word]);
+
+        // Both aspects at once: the depth too, 1 being the furthest.
+        const both_aspects = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH | facet.IMAGE_ASPECT_STENCIL };
+        const other = facet.ClearDepthStencilValue{ .depth = 1, .stencil = 3 };
+        commands = try bench.record();
+        fb.CmdClearDepthStencilImage(commands, stencil_image, 0, &other, 1, @ptrCast(&both_aspects));
+        try bench.submit();
+        try testing.expectEqual(@as(u8, 3), stencilAt(kept, stride, 16, 8));
+        if (stride == 4) try testing.expectEqual(@as(u8, 0xFF), kept.data.?[depth_word]);
+    }
 }
 
 test "a depth kept wants memory behind it: a transient image is refused the framebuffer, and a pass is refused the device that has no plane" {

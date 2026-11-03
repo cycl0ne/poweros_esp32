@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.4 (03.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.5 (03.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -293,6 +293,9 @@ const Shape = struct {
     /// module it is: both stages take the same name.
     subpass: u32 = 0,
     name: [*:0]const u8 = "main",
+    /// The stencil test, the front's and the back's; none where it is
+    /// null.
+    stencil: ?[2]facet.StencilOpState = null,
 };
 
 /// A pipeline over `pass` of the module's "main", as `shape` says.
@@ -316,7 +319,14 @@ fn pipelineOf(probe: *Probe, pass: *facet.RenderPass, module: *facet.ShaderModul
     const scissor = facet.Rect2D{ .extent = .{ .width = side, .height = side } };
     const view = facet.PipelineViewportStateCreateInfo{ .viewports = @ptrCast(&viewport), .scissors = @ptrCast(&scissor) };
     const raster = shape.raster;
-    const depth = facet.PipelineDepthStencilStateCreateInfo{ .depth_test_enable = depth_tested, .depth_write_enable = depth_tested, .depth_compare_op = .less };
+    const depth = facet.PipelineDepthStencilStateCreateInfo{
+        .depth_test_enable = depth_tested,
+        .depth_write_enable = depth_tested,
+        .depth_compare_op = .less,
+        .stencil_test_enable = shape.stencil != null,
+        .front = if (shape.stencil) |faces| faces[0] else .{},
+        .back = if (shape.stencil) |faces| faces[1] else .{},
+    };
     const blend = facet.PipelineColorBlendStateCreateInfo{ .attachment_count = @intCast(blends.len), .attachments = blends.ptr };
     const dynamic = facet.PipelineDynamicStateCreateInfo{ .dynamic_state_count = @intCast(shape.dynamic.len), .dynamic_states = shape.dynamic.ptr };
     const info = facet.GraphicsPipelineCreateInfo{
@@ -1287,6 +1297,148 @@ fn inputChecks(probe: *Probe) void {
     }
 }
 
+// --- 1.38: a stencil that outlives its pass ----------------------------------
+
+/// A pass of a colour attachment and a depth one of `format`, the four ops
+/// as given: 'l' or 'c' for each load, 's' or 'd' for each store, the
+/// depth's two first and the stencil's after.
+fn passStenciling(probe: *Probe, format: facet.Format, ops: *const [4:0]u8) ?*facet.RenderPass {
+    const attachments = [2]facet.AttachmentDescription{
+        .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .color_attachment_optimal },
+        .{
+            .format = format,
+            .load_op = if (ops[0] == 'l') .load else .clear,
+            .store_op = if (ops[1] == 's') .store else .dont_care,
+            .stencil_load_op = if (ops[2] == 'l') .load else .clear,
+            .stencil_store_op = if (ops[3] == 's') .store else .dont_care,
+            .final_layout = .depth_stencil_attachment_optimal,
+        },
+    };
+    const color = facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal };
+    const depth = facet.AttachmentReference{ .attachment = 1, .layout = .depth_stencil_attachment_optimal };
+    const subpass = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&color), .depth_stencil_attachment = &depth };
+    return probe.renderPass(.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&subpass) });
+}
+
+fn stencilChecks(probe: *Probe) void {
+    const fb = probe.fb;
+    defer probe.give();
+    if (!probe.features.stored_stencil) {
+        probe.check(passStenciling(probe, .s8_uint, "cdcs") == null, "a stored stencil refused where the device keeps none");
+        probe.check(passStenciling(probe, .d16_unorm_s8_uint, "cdld") == null, "a loaded stencil refused the same way");
+        probe.check(passStenciling(probe, .s8_uint, "cdcd") != null, "a stencil that stays in the tiles is still taken");
+        return;
+    }
+    // An op for a plane the format has not.
+    probe.check(passStenciling(probe, .d16_unorm, "cdcs") == null, "a stencil op refused for a format with no stencil");
+
+    const extent = facet.Extent3D{ .width = side, .height = side };
+    const marked: u8 = 5;
+    const green: u32 = 0xFF00_FF00;
+    const red: u32 = 0xFFFF_0000;
+    const blue: u32 = 0xFF00_00FF;
+    const clears = [2]facet.ClearValue{ .{ .color = .{ .float32 = .{ 0, 0, 1, 1 } } }, .{ .depth_stencil = .{ .depth = 1, .stencil = 0 } } };
+    const area = facet.Rect2D{ .extent = .{ .width = side, .height = side } };
+    const marks = facet.StencilOpState{ .pass_op = .replace, .compare_op = .always, .compare_mask = 0xFF, .write_mask = 0xFF, .reference = marked };
+    const equal = facet.StencilOpState{ .compare_op = .equal, .compare_mask = 0xFF, .reference = marked };
+
+    var module: ?*facet.ShaderModule = null;
+    if (fb.CreateShaderModule(probe.device.?, &.{ .code = &Flat.code }, &module) != .success) return probe.check(false, "the shader module");
+    _ = Probe.keep(&probe.modules, module);
+    const range = facet.PushConstantRange{ .size = 4 };
+    var layout: ?*facet.PipelineLayout = null;
+    if (fb.CreatePipelineLayout(probe.device.?, &.{ .push_constant_range_count = 1, .push_constant_ranges = @ptrCast(&range) }, &layout) != .success) return probe.check(false, "the pipeline layout");
+    _ = Probe.keep(&probe.layouts, layout);
+
+    // All of the picture, then its left half.
+    const vertices = [_][3]f32{
+        .{ -1, -1, 0.5 }, .{ 1, -1, 0.5 }, .{ -1, 1, 0.5 },
+        .{ -1, 1, 0.5 },  .{ 1, -1, 0.5 }, .{ 1, 1, 0.5 },
+        .{ -1, -1, 0.5 }, .{ 0, -1, 0.5 }, .{ -1, 1, 0.5 },
+        .{ -1, 1, 0.5 },  .{ 0, -1, 0.5 }, .{ 0, 1, 0.5 },
+    };
+    const vertex_buffer, const vertex_bytes = probe.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER) orelse
+        return probe.check(false, "a vertex buffer");
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
+    const offset: u64 = 0;
+
+    // One format of stencil alone, and one that holds a depth beside it.
+    for ([2]facet.Format{ .s8_uint, .d16_unorm_s8_uint }) |format| {
+        const stride: u32 = if (format == .s8_uint) 1 else 4;
+        const inside: u32 = if (stride == 1) 0 else 2;
+        const storing = passStenciling(probe, format, "cdcs") orelse return probe.check(false, "a pass that stores its stencil");
+        probe.check(true, "a pass that stores its stencil");
+        const loading = passStenciling(probe, format, "cdld") orelse return probe.check(false, "a pass that loads its stencil");
+        probe.check(true, "a pass that loads its stencil");
+
+        // Which block the picture's memory will be: the vertex buffer took
+        // one before the loop, and the first format's images before this.
+        var slot: usize = 0;
+        while (slot < probe.memories.len and probe.memories[slot] != null) slot += 1;
+        const color = probe.image(.{ .format = .b8g8r8a8_unorm, .extent = extent, .tiling = .linear, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, facet.MEMORY_PROPERTY_HOST_VISIBLE) orelse
+            return probe.check(false, "a picture to draw into");
+        const color_memory = probe.memories[slot].?;
+        const stencil = probe.image(.{ .format = format, .extent = extent, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_SRC }, 0) orelse
+            return probe.check(false, "a stencil image with memory behind it");
+        probe.check(true, "a stencil image with memory behind it");
+        const frame = probe.framebuffer(storing, &.{ color[1], stencil[1] }) orelse return probe.check(false, "a framebuffer over the two");
+        const after = probe.framebuffer(loading, &.{ color[1], stencil[1] }) orelse return probe.check(false, "a framebuffer for the second pass");
+
+        const mark = pipelineOf(probe, storing, module.?, layout.?, .{ .stencil = .{ marks, marks } }) orelse return probe.check(false, "a pipeline that marks");
+        const draw = pipelineOf(probe, loading, module.?, layout.?, .{ .stencil = .{ equal, equal } }) orelse return probe.check(false, "a pipeline that draws where marked");
+
+        const bytes = side * side * stride;
+        const read_back, const back_bytes = probe.buffer(bytes, facet.BUFFER_USAGE_TRANSFER_DST) orelse
+            return probe.check(false, "a buffer to read the stencil into");
+        @memset(back_bytes[0..bytes], 0xAA);
+        const whole = facet.BufferImageCopy{ .image_extent = extent, .image_subresource = .{ .aspect_mask = facet.IMAGE_ASPECT_STENCIL } };
+
+        // The left half marked, the stencil stored, and read back.
+        var commands = probe.record() orelse return probe.check(false, "a command buffer recording");
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = storing, .framebuffer = frame, .render_area = area, .clear_value_count = 2, .clear_values = &clears }, .@"inline");
+        fb.CmdBindPipeline(commands, .graphics, mark);
+        fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+        fb.CmdPushConstants(commands, layout.?, facet.SHADER_STAGE_FRAGMENT, 0, 4, &red);
+        fb.CmdDraw(commands, 6, 1, 6, 0);
+        fb.CmdEndRenderPass(commands);
+        fb.CmdCopyImageToBuffer(commands, stencil[0], .general, read_back, 1, @ptrCast(&whole));
+        if (!probe.submit()) return probe.check(false, "the frame submitted");
+
+        probe.checkEqual(marked, back_bytes[(8 * side + 16) * stride + inside], "the marked half's stencil stored");
+        probe.checkEqual(0, back_bytes[(8 * side + 48) * stride + inside], "and the clear's where nothing marked");
+        // Another tile down: the tiles are written back one at a time.
+        probe.checkEqual(marked, back_bytes[(40 * side + 16) * stride + inside], "the same in another tile");
+        probe.checkEqual(0, back_bytes[(40 * side + 48) * stride + inside], "and the clear's there too");
+
+        // The second pass loads it and draws over all of the picture: only
+        // the marked half takes the colour.
+        commands = probe.record() orelse return probe.check(false, "a second recording");
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = loading, .framebuffer = after, .render_area = area, .clear_value_count = 2, .clear_values = &clears }, .@"inline");
+        fb.CmdBindPipeline(commands, .graphics, draw);
+        fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+        fb.CmdPushConstants(commands, layout.?, facet.SHADER_STAGE_FRAGMENT, 0, 4, &green);
+        fb.CmdDraw(commands, 6, 1, 0, 0);
+        fb.CmdEndRenderPass(commands);
+        if (!probe.submit()) return probe.check(false, "the second frame submitted");
+        const pixels, const pitch = probe.mapped(color[0], color_memory) orelse return probe.check(false, "the picture read back");
+        probe.checkEqual(green, pixelAt(pixels, pitch, 16, 8), "drawn where the stored stencil says");
+        probe.checkEqual(blue, pixelAt(pixels, pitch, 48, 8), "and left where it does not");
+        probe.checkEqual(green, pixelAt(pixels, pitch, 16, 40), "the same in another tile");
+        probe.checkEqual(blue, pixelAt(pixels, pitch, 48, 40), "and left there too");
+
+        // Cleared without a pass over it, the stencil aspect alone.
+        const value = facet.ClearDepthStencilValue{ .depth = 1, .stencil = 9 };
+        const only_stencil = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_STENCIL };
+        @memset(back_bytes[0..bytes], 0xAA);
+        commands = probe.record() orelse return probe.check(false, "a third recording");
+        fb.CmdClearDepthStencilImage(commands, stencil[0], 0, &value, 1, @ptrCast(&only_stencil));
+        fb.CmdCopyImageToBuffer(commands, stencil[0], .general, read_back, 1, @ptrCast(&whole));
+        if (!probe.submit()) return probe.check(false, "the clear submitted");
+        probe.checkEqual(9, back_bytes[(8 * side + 16) * stride + inside], "cleared without a pass over it");
+        probe.checkEqual(9, back_bytes[(40 * side + 48) * stride + inside], "in every tile of it");
+    }
+}
+
 fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical: *facet.PhysicalDevice, quiet: bool) struct { u32, u32 } {
     var properties: facet.PhysicalDeviceProperties = undefined;
     fb.GetPhysicalDeviceProperties(physical, &properties);
@@ -1304,6 +1456,7 @@ fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical
     dynamicChecks(&probe);
     queryChecks(&probe);
     inputChecks(&probe);
+    stencilChecks(&probe);
     return .{ probe.passed, probe.failed };
 }
 

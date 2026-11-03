@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.37**, so that a program need not find out by failing. It covers the API.
+1.38**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -131,9 +131,12 @@ pass's depth. What is left out:
 - **Only the cores keep it** (`PhysicalDeviceFeatures.stored_depth`). The
   V3D draws in tiles of its own and nothing stores their depth to memory
   yet, so a pass that asks for either op is refused there.
-- **`d16_unorm` only.** `s8_uint` and `d16_unorm_s8_uint` have no plane of
-  their own, so a pass that keeps one of those is refused, and so are the
-  stencil's own two ops on any format: a stencil never outlives its pass.
+- **The stencil keeps its own since 1.38** (`stored_stencil`), by its own
+  two ops: a byte a pixel, in its own plane of the same rows. `s8_uint`
+  holds it at each pixel's only byte and `d16_unorm_s8_uint` after that
+  pixel's depth, and the four ops are taken on their own - a pass may keep
+  the stencil and leave the depth in the tiles. An op for a plane the
+  format has not is refused.
 - **A depth image is not a texture.** `d16_unorm` has
   `SAMPLED_IMAGE` in neither tiling, because a texture is kept as
   `rgba8888` or `rgb565` and nothing else (below). A shadow map is made by
@@ -368,7 +371,7 @@ These can be asked for and are answered with `error_feature_not_present`.
 | An input attachment on a device that reads none: the V3D (`input_attachments`) | `render/createrenderpass.zig` |
 | An input attachment of a format whose pixels are not kept in rows, a depth attachment among them | `render/createrenderpass.zig` |
 | An image both INPUT_ATTACHMENT and SAMPLED, STORAGE or TRANSIENT_ATTACHMENT | `image/createimage.zig` |
-| A depth attachment's stencil that loads or stores | `render/createrenderpass.zig` |
+| A depth or stencil op for a plane the format has not, or on a device that keeps neither (`stored_depth`, `stored_stencil`) | `render/createrenderpass.zig` |
 | Present modes but `fifo`, though `immediate`, `mailbox` and `fifo_relaxed` are enumerated | `swapchain/createswapchain.zig` |
 | An `input_attachment` layout on a device that reads none: the V3D (`input_attachments`) | `descriptor/createdescriptorsetlayout.zig` |
 | More dynamic buffer descriptors in one set than `max_descriptor_set_dynamic_buffers` | `descriptor/createdescriptorsetlayout.zig` |
@@ -378,7 +381,7 @@ These can be asked for and are answered with `error_feature_not_present`.
 | An occlusion or a statistics query pool, on the V3D: it counts neither the samples nor the stages | `query/createquerypool.zig` |
 | Either geometry statistic, and any bit that is no statistic at all | `query/createquerypool.zig` |
 | A timestamp pool without timer.device: the clock a timestamp is read from | `query/createquerypool.zig` |
-| A depth attachment that loads or stores, on the V3D, or of a format with a stencil in it | `render/createrenderpass.zig` |
+| A depth or stencil attachment that loads or stores, on the V3D | `render/createrenderpass.zig` |
 | A depth attachment kept, whose image has no memory behind it | `render/createframebuffer.zig` |
 
 One consequence does not appear in that table:

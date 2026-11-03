@@ -48,11 +48,22 @@ const _surface = @import("../surface/_surface.zig");
 /// there, costing no memory at all. Since 1.30 it may outlive the pass
 /// instead: with the store op STORE each tile's depth is written into the
 /// image's memory as the tile is drawn, and with the load op LOAD each
-/// tile starts from what is there. Both want `d16_unorm` and a device whose
-/// `stored_depth` is true - the cores, not the V3D - and an image bound to
-/// memory something is behind, which CreateFramebuffer holds to; otherwise
-/// that is `error_feature_not_present`. The stencil has no plane of its
-/// own, so its own two ops are still DONT_CARE.
+/// tile starts from what is there. Both want a format that holds a depth
+/// and a device whose `stored_depth` is true - the cores, not the V3D -
+/// and an image bound to memory something is behind, which
+/// CreateFramebuffer holds to; otherwise that is
+/// `error_feature_not_present`.
+///
+/// Since 1.38 the stencil keeps its own the same way, by its own two ops:
+/// with `stencil_store_op` STORE each tile's stencil, a byte a pixel, is
+/// written into its own plane of the image's rows, and with
+/// `stencil_load_op` LOAD each tile starts from what is there. That wants
+/// a format that holds a stencil - `s8_uint` or `d16_unorm_s8_uint` - and
+/// a device whose `stored_stencil` is true, the cores again. A format
+/// that holds both keeps each pixel's depth and its stencil beside each
+/// other, so the four ops are taken on their own: a pass may store the
+/// stencil and leave the depth in the tiles, or the other way round. An
+/// op for a plane the format has not is `error_feature_not_present`.
 ///
 /// So two subpasses share a depth attachment only one right after the other
 /// and with the same colour attachments too, when the second goes on in the
@@ -161,6 +172,8 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
         var tests_stencil = false;
         var loads_depth = false;
         var stores_depth = false;
+        var loads_stencil = false;
+        var stores_stencil = false;
         if (subpass.depth_stencil_attachment) |reference| {
             if (reference.attachment != facet.ATTACHMENT_UNUSED) {
                 if (reference.attachment >= attachments.len) return .error_initialization_failed;
@@ -171,16 +184,22 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                 if (depth.samples != 1) return .error_feature_not_present;
                 loads_depth = depth.load_op == .load;
                 stores_depth = depth.store_op == .store;
+                loads_stencil = depth.stencil_load_op == .load;
+                stores_stencil = depth.stencil_store_op == .store;
                 if (loads_depth or stores_depth) {
                     // A depth that outlives the pass is written into the
                     // image's rows and read back from them, which only a
                     // device that draws in the rasterizer's tiles can do,
-                    // and only for the format those tiles hold.
+                    // and only for a format whose rows hold a depth.
                     if (!owner.physical.features.stored_depth) return .error_feature_not_present;
-                    if (depth.format != .d16_unorm) return .error_feature_not_present;
+                    if (!tests_depth) return .error_feature_not_present;
                 }
-                // The stencil is never kept: it has no plane of its own.
-                if (depth.stencil_load_op == .load or depth.stencil_store_op == .store) return .error_feature_not_present;
+                // The stencil keeps its own, in its own plane of those
+                // rows, by its own two ops (1.38).
+                if (loads_stencil or stores_stencil) {
+                    if (!owner.physical.features.stored_stencil) return .error_feature_not_present;
+                    if (!tests_stencil) return .error_feature_not_present;
+                }
                 // Two subpasses share it only in the same tiles.
                 if (depths[reference.attachment]) return .error_feature_not_present;
                 depths[reference.attachment] = true;
@@ -206,6 +225,8 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                 .color_load = if (color.load_op == .clear and !drawn[color_index]) .clear else .keep,
                 .loads_depth = loads_depth,
                 .stores_depth = stores_depth,
+                .loads_stencil = loads_stencil,
+                .stores_stencil = stores_stencil,
             };
             plan.part_count += 1;
         }

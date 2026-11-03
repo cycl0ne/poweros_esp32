@@ -209,4 +209,16 @@ pub const LIBRARY_VERSION = 1;
 /// be a loop. All eleven of Vulkan's descriptor kinds are there now. The
 /// cores read them; on the V3D no fragment program of its own runs, so
 /// its `input_attachments` is false.
-pub const LIBRARY_REVISION = 37;
+/// 38: a stencil that outlives its pass: `stencil_load_op` LOAD and
+/// `stencil_store_op` STORE, a byte a pixel read into each tile before it
+/// is drawn and written back after, as 1.30's depth is
+/// (`PhysicalDeviceFeatures.stored_stencil`). `s8_uint` keeps it at each
+/// pixel's only byte and `d16_unorm_s8_uint` after that pixel's depth,
+/// which is what the planes' stride is for, so the four ops are taken on
+/// their own: a pass may keep the stencil and leave the depth in the
+/// tiles, or the other way round. Both formats are transferred now, so a
+/// stencil is read back and written by CmdCopyImageToBuffer and
+/// CmdCopyBufferToImage, and CmdClearDepthStencilImage clears either
+/// plane by the range's aspects. The cores keep it; the V3D stores
+/// neither.
+pub const LIBRARY_REVISION = 38;

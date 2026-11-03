@@ -119,6 +119,9 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // The tiles hold the depth, so they can write it into the image's
         // rows as they are drawn and read it back (raster/target.zig).
         .stored_depth = true,
+        // The tiles hold a byte of stencil a pixel, written into the
+        // image's rows as each tile is drawn, as the depth is.
+        .stored_stencil = true,
         // A function of the program's runs here, and the texels it writes
         // lie where the library keeps them (`shader.Resources.written`).
         .storage_images = true,

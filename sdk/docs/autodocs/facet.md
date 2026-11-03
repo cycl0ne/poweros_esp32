@@ -1219,14 +1219,17 @@ fn CmdClearDepthStencilImage(base: *FacetBase, buffer: *facet.CommandBuffer, ima
 **INPUTS**
 
 - `buffer` - a command buffer recording.
-- `image` - the image cleared, of `d16_unorm`, which is not an
-  attachment of the pass being recorded: this is a transfer, not a draw.
+- `image` - the image cleared, a depth attachment's of `d16_unorm`,
+  `s8_uint` or `d16_unorm_s8_uint`, which is not an attachment of the
+  pass being recorded: this is a transfer, not a draw.
 - `layout` - what the image is in, which this library does not act on.
-- `value` - the depth, 0 to 1, as the tiles hold one: 0 nearest. Its
-  `stencil` is kept and not written, there being no stencil plane.
+- `value` - the depth, 0 to 1, as the tiles hold one: 0 nearest, and
+  the stencil, a byte, for a format that holds one (since 1.38).
 - `range_count`, `ranges` - which levels and layers, by
-  `base_mip_level`, `level_count`, `base_array_layer` and `layer_count`.
-  A depth image has one of each, so a range past them is left out.
+  `base_mip_level`, `level_count`, `base_array_layer` and `layer_count`,
+  and which of the two the range's `aspect_mask` asks for: a format
+  that holds both has each cleared on its own. A depth image has one
+  level and one layer, so a range past them is left out.
 
 **RESULT**
 
@@ -1234,10 +1237,12 @@ None.
 
 **BEHAVIOR**
 
-Every pixel of the image is set to the depth. An image this cannot
-write - one that is not a depth image, or one of `s8_uint` or
-`d16_unorm_s8_uint`, which have no plane of their own - is left out of
-the frame and said to be in the log.
+Every pixel of the image is set to the depth, to the stencil, or to
+both, as the range's aspects say and as the format holds. What the
+aspects leave out is left as it is: the depth of a `d16_unorm_s8_uint`
+image whose stencil alone was cleared still says what the pass stored.
+An image this cannot write - one that is not a depth attachment's - is
+left out of the frame and said to be in the log.
 
 A transient depth image is left alone: its pixels live in the tiles and
 there is nothing in memory to clear, which the render pass does as each
@@ -1257,10 +1262,11 @@ until the work is done.
 
 **NOTES**
 
-This is for a depth image a render pass stores into
-(`PhysicalDeviceFeatures.stored_depth`): it is how one is put back to
-the furthest depth without a pass over it. Where the pass clears its
-depth attachment itself there is nothing for this to do.
+This is for a depth or stencil image a render pass stores into
+(`PhysicalDeviceFeatures.stored_depth`, `stored_stencil`): it is how
+one is put back to the furthest depth, or to a stencil of its own,
+without a pass over it. Where the pass clears its attachment itself
+there is nothing for this to do.
 
 **BUGS**
 
@@ -4304,11 +4310,22 @@ CLEAR or DONT_CARE - both clear it - and its store op DONT_CARE leave it
 there, costing no memory at all. Since 1.30 it may outlive the pass
 instead: with the store op STORE each tile's depth is written into the
 image's memory as the tile is drawn, and with the load op LOAD each
-tile starts from what is there. Both want `d16_unorm` and a device whose
-`stored_depth` is true - the cores, not the V3D - and an image bound to
-memory something is behind, which CreateFramebuffer holds to; otherwise
-that is `error_feature_not_present`. The stencil has no plane of its
-own, so its own two ops are still DONT_CARE.
+tile starts from what is there. Both want a format that holds a depth
+and a device whose `stored_depth` is true - the cores, not the V3D -
+and an image bound to memory something is behind, which
+CreateFramebuffer holds to; otherwise that is
+`error_feature_not_present`.
+
+Since 1.38 the stencil keeps its own the same way, by its own two ops:
+with `stencil_store_op` STORE each tile's stencil, a byte a pixel, is
+written into its own plane of the image's rows, and with
+`stencil_load_op` LOAD each tile starts from what is there. That wants
+a format that holds a stencil - `s8_uint` or `d16_unorm_s8_uint` - and
+a device whose `stored_stencil` is true, the cores again. A format
+that holds both keeps each pixel's depth and its stencil beside each
+other, so the four ops are taken on their own: a pass may store the
+stencil and leave the depth in the tiles, or the other way round. An
+op for a plane the format has not is `error_feature_not_present`.
 
 So two subpasses share a depth attachment only one right after the other
 and with the same colour attachments too, when the second goes on in the

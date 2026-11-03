@@ -141,23 +141,47 @@ pub fn clearColorImage(command: *const _command.ClearColorImage) bool {
 }
 
 /// CmdClearDepthStencilImage's ranges: a depth image's rows set to the
-/// depth given, the padding at a row's end with them, being the image's own
-/// memory and read by nothing. False, and nothing written, for an image
-/// whose depth this cannot write - one with a stencil, which has no plane
-/// of its own.
+/// depth given, its stencil's to the stencil, each range's aspects alone.
+/// The padding at a row's end goes with them where a whole row is one
+/// value, being the image's own memory and read by nothing. False, and
+/// nothing written, for an image this cannot write at all.
 ///
 /// An image with no memory behind it - a transient attachment, whose pixels
 /// live in the tiles - is left alone and answers true: there is nothing
 /// there to clear, and the pass clears the tiles as they start.
 pub fn clearDepthImage(command: *const _command.ClearDepthStencilImage) bool {
     const image = command.image;
-    if (image.kind != .depth or image.format != .d16_unorm) return false;
+    if (image.kind != .depth) return false;
     const data = image.data orelse return true;
+    const stride = _image.bytesOf(image.format);
+    const depth_there = _image.hasDepth(image.format);
+    const stencil_there = _image.hasStencil(image.format);
     for (_stream.items(_command.ClearDepthStencilImage, facet.ImageSubresourceRange, command, command.count)) |range| {
         // One level and one layer: a depth image has no others.
         if (range.base_mip_level != 0 or range.base_array_layer != 0) continue;
         if (range.level_count == 0 or range.layer_count == 0) continue;
-        fill(data, @as(usize, image.pitch) * image.height, .{ .two = command.depth });
+        const clears_depth = depth_there and range.aspect_mask & facet.IMAGE_ASPECT_DEPTH != 0;
+        const clears_stencil = stencil_there and range.aspect_mask & facet.IMAGE_ASPECT_STENCIL != 0;
+        // A format of depth alone or stencil alone, both aspects asked
+        // for: every byte of every row is the one value.
+        if (clears_depth and stride == 2) {
+            fill(data, @as(usize, image.pitch) * image.height, .{ .two = command.depth });
+        } else if (clears_stencil and stride == 1) {
+            fill(data, @as(usize, image.pitch) * image.height, .{ .one = command.stencil });
+        }
+        // A format that holds both: each pixel's own bytes, the padding at
+        // a row's end left as it is.
+        if (stride == 4) for (0..image.height) |row| {
+            const into = data + row * image.pitch;
+            for (0..image.width) |column| {
+                const pixel = into + column * stride;
+                if (clears_depth) {
+                    pixel[0] = @truncate(command.depth);
+                    pixel[1] = @truncate(command.depth >> 8);
+                }
+                if (clears_stencil) pixel[2] = command.stencil;
+            }
+        };
     }
     return true;
 }
@@ -183,6 +207,7 @@ fn spanOf(image: *const Image, level: u32) ?struct { at: usize, bytes: usize } {
 /// One texel written over `count` bytes of them.
 fn fill(into: [*]u8, count: usize, texel: Texel) void {
     switch (texel) {
+        .one => |value| @memset(into[0..count], value),
         .two => |value| {
             const halves: [*]align(1) u16 = @ptrCast(into);
             @memset(halves[0 .. count / 2], value);
@@ -199,7 +224,7 @@ fn fill(into: [*]u8, count: usize, texel: Texel) void {
 }
 
 /// A texel as it lies in memory, which is as wide as that memory keeps one.
-const Texel = union(enum) { two: u16, four: u32, eight: u64 };
+const Texel = union(enum) { one: u8, two: u16, four: u32, eight: u64 };
 
 /// The colour, 0xAARRGGBB, as this image keeps a texel; null for memory
 /// whose texel this cannot write. How wide one is depends on the image's

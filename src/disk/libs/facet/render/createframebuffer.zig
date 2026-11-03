@@ -78,7 +78,8 @@ pub fn CreateFramebuffer(base: *FacetBase, device: *facet.Device, info: *const f
             // A depth the pass keeps is written into the image's memory, so
             // the image wants memory something is behind: a lazily
             // allocated one has none (`readable`).
-            if ((part.stores_depth or part.loads_depth) and !_image.readable(view.image)) return .error_feature_not_present;
+            const kept = part.stores_depth or part.loads_depth or part.stores_stencil or part.loads_stencil;
+            if (kept and !_image.readable(view.image)) return .error_feature_not_present;
             break :depth view;
         } else null;
         target.* = .{ .width = info.width, .height = info.height, .color = color, .depth = depth };

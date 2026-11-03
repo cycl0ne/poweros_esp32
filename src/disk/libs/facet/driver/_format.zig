@@ -28,7 +28,11 @@ pub fn properties(format: facet.Format) callconv(.c) facet.FormatProperties {
         // that stores its depth writes the image's rows, and a copy reads
         // them (`PhysicalDeviceFeatures.stored_depth`).
         .d16_unorm => .{ .linear_tiling_features = 0, .optimal_tiling_features = facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT | transfer, .buffer_features = 0 },
-        .s8_uint, .d16_unorm_s8_uint => .{ .linear_tiling_features = 0, .optimal_tiling_features = facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT, .buffer_features = 0 },
+        // Since 1.38 these two keep their stencil the same way, each
+        // pixel's depth and stencil beside each other in the rows
+        // (`PhysicalDeviceFeatures.stored_stencil`), and a copy reads or
+        // writes both at once, 1 byte a pixel or 4.
+        .s8_uint, .d16_unorm_s8_uint => .{ .linear_tiling_features = 0, .optimal_tiling_features = facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT | transfer, .buffer_features = 0 },
         .bc1_rgb_unorm_block, .bc1_rgba_unorm_block, .bc2_unorm_block, .bc3_unorm_block, .r16g16b16a16_sfloat, .b10g11r11_ufloat_pack32, .e5b9g9r9_ufloat_pack32 => .{
             .linear_tiling_features = 0,
             .optimal_tiling_features = sampled | facet.FORMAT_FEATURE_TRANSFER_DST,

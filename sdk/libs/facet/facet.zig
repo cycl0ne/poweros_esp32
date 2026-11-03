@@ -298,6 +298,13 @@ pub const PhysicalDeviceFeatures = extern struct {
     /// attachments, are both refused. The cores have it since 1.37; on
     /// the V3D no fragment program reads one.
     input_attachments: bool = false,
+    /// Whether a render pass may keep its stencil attachment: the stencil
+    /// load and store ops, a plane of the image's rows beside the depth's
+    /// (`s8_uint`, `d16_unorm_s8_uint`), so a stencil outlives its pass
+    /// and can be read back, written and cleared. The cores have it since
+    /// 1.38; the V3D stores neither depth nor stencil, and a pass that
+    /// asks for either op is refused there.
+    stored_stencil: bool = false,
     /// `storage_image` descriptors, and the texel buffer kinds.
     storage_images: bool = false,
     texel_buffers: bool = false,
