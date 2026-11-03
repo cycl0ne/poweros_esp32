@@ -276,4 +276,6 @@ facet.Result GetPhysicalDeviceImageFormatProperties(*facet.PhysicalDevice physic
 void GetRenderAreaGranularity(*facet.Device device, *facet.RenderPass pass, *facet.Extent2D granularity)
 /// The bytes of a block that are really there, into `bytes`.
 void GetDeviceMemoryCommitment(*facet.Device device, *facet.DeviceMemory memory, *u64 bytes)
+/// The depths a pixel's stored depth has to lie between to be drawn.
+void CmdSetDepthBounds(*facet.CommandBuffer buffer, f32 min, f32 max)
 ##end

@@ -281,7 +281,19 @@ pub const PhysicalDeviceFeatures = extern struct {
     /// for one is refused. The cores have it since 1.34; the BCM2712's V3D
     /// has a depth offset of its own that nothing drives yet.
     depth_bias: bool = false,
+    /// `PipelineDepthStencilStateCreateInfo.depth_bounds_test_enable`,
+    /// `min_depth_bounds`, `max_depth_bounds` and CmdSetDepthBounds: a
+    /// pixel is drawn only where the depth already there lies between the
+    /// two, whatever the depth being drawn. False where a pipeline that
+    /// asks for it is refused. The cores have it since 1.40; the V3D has
+    /// no such test.
     depth_bounds: bool = false,
+    /// `PipelineRasterizationStateCreateInfo.depth_clamp_enable`: what
+    /// lies past the near plane is drawn all the same, each pixel's depth
+    /// held inside the viewport's `min_depth` and `max_depth`, rather than
+    /// cut away - which is what a shadow volume wants. False where a
+    /// pipeline that asks for it is refused. The cores have it since 1.40;
+    /// the V3D clips in its own way.
     depth_clamp: bool = false,
     /// A depth attachment of `d16_unorm` that may `load` or `store`: depth
     /// outliving the pass it was drawn in, written into the image's memory

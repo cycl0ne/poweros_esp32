@@ -63,7 +63,9 @@ const _instance = @import("../instance/_instance.zig");
 /// triangles culled by facing as asked; lines `line_width` pixels wide, set
 /// here or by CmdSetLineWidth, and points one pixel; a
 /// depth test of any compare, written or not, with a bias on the triangles'
-/// depth where the device takes one, and without bounds or clamp;
+/// depth where the device takes one, held inside the viewport's range
+/// where it clamps (`depth_clamp_enable`) and kept only between two
+/// bounds where it tests them (`depth_bounds_test_enable`, since 1.40);
 /// a stencil test of any compare and operations, a face's own, the masks and
 /// the reference given here or set by commands; the channels of the write mask written, replacing what is
 /// there or mixed with it by any blend factors and operation, the alpha by
@@ -71,7 +73,7 @@ const _instance = @import("../instance/_instance.zig");
 /// (`color_blend_state.attachments`, one for each), and no logic op; one viewport and one scissor, given here or set
 /// by CmdSetViewport and CmdSetScissor (DynamicState viewport and scissor;
 /// blend_constants with CmdSetBlendConstants, line_width with CmdSetLineWidth,
-/// depth_bias with CmdSetDepthBias,
+/// depth_bias with CmdSetDepthBias, depth_bounds with CmdSetDepthBounds,
 /// the stencil's with CmdSetStencilCompareMask, CmdSetStencilWriteMask and
 /// CmdSetStencilReference;
 /// the others are taken and do nothing). A pipeline with the rasterizer
@@ -109,7 +111,21 @@ const _instance = @import("../instance/_instance.zig");
 /// it, nor a stencil test on one without stencil. Lines and points use the
 /// front's stencil test, and take no depth bias: only triangles are moved,
 /// as in Vulkan, and `depth_bias_enable` wants a device whose
-/// `PhysicalDeviceFeatures.depth_bias` is true (since 1.34). On an attachment without alpha, R5G6B5, what is there reads as wholly
+/// `PhysicalDeviceFeatures.depth_bias` is true (since 1.34).
+///
+/// `depth_clamp_enable` draws what lies past the near plane instead of
+/// cutting it away, each pixel's depth held inside the viewport's
+/// `min_depth` and `max_depth` - which is what a shadow volume wants - and
+/// `depth_bounds_test_enable` draws a pixel only where the depth
+/// **already** in the attachment lies between `min_depth_bounds` and
+/// `max_depth_bounds`, whatever the depth being drawn; `DynamicState`'s
+/// `depth_bounds` leaves the two to CmdSetDepthBounds. Both want a device
+/// whose `PhysicalDeviceFeatures.depth_clamp` or `depth_bounds` is true -
+/// the cores, not the V3D - and both have a draw's pixels walked one at a
+/// time, as a stencil test does, so they cost more than the quads the fast
+/// paths walk.
+///
+/// On an attachment without alpha, R5G6B5, what is there reads as wholly
 /// opaque. `color_blend_state.attachments` holds one state for each colour
 /// attachment of the subpass, or none for the default over all of them; a
 /// subpass of several has each blended its own way (since 1.33,
@@ -272,7 +288,10 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
 
     // The rasterization.
     const rasterization = info.rasterization_state;
-    if (rasterization.depth_clamp_enable) return .error_feature_not_present;
+    if (rasterization.depth_clamp_enable) {
+        if (!device.physical.features.depth_clamp) return .error_feature_not_present;
+        made.clamped = true;
+    }
     if (rasterization.depth_bias_enable) {
         if (!device.physical.features.depth_bias) return .error_feature_not_present;
         made.biased = true;
@@ -299,7 +318,11 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         if (multisample.rasterization_samples > 1 or multisample.sample_shading_enable or multisample.alpha_to_coverage_enable or multisample.alpha_to_one_enable) return .error_feature_not_present;
     }
     if (info.depth_stencil_state) |depth| {
-        if (depth.depth_bounds_test_enable) return .error_feature_not_present;
+        if (depth.depth_bounds_test_enable) {
+            if (!device.physical.features.depth_bounds) return .error_feature_not_present;
+            made.bounded = true;
+            made.bounds = .{ depth.min_depth_bounds, depth.max_depth_bounds };
+        }
         if (depth.stencil_test_enable) {
             var faces: [2]_pipeline.StencilFace = undefined;
             for ([2]facet.StencilOpState{ depth.front, depth.back }, &faces) |state, *face| {
@@ -369,6 +392,7 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
             },
             .line_width => made.line_width = null,
             .depth_bias => made.bias = null,
+            .depth_bounds => made.bounds = null,
             .stencil_compare_mask => made.dynamic_stencil_compare = true,
             .stencil_write_mask => made.dynamic_stencil_write = true,
             .stencil_reference => made.dynamic_stencil_reference = true,

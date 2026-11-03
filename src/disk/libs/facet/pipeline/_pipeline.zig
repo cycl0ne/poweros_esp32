@@ -156,6 +156,15 @@ pub const Pipeline = struct {
     /// command says (CmdSetDepthBias).
     biased: bool,
     bias: ?Bias,
+    /// Whether what lies past the near plane is drawn all the same, its
+    /// depth held inside the viewport's range a pixel at a time
+    /// (`depth_clamp_enable`, `PhysicalDeviceFeatures.depth_clamp`).
+    clamped: bool = false,
+    /// Whether a pixel is drawn only where the depth already there lies
+    /// between two bounds (`depth_bounds_test_enable`), and which: null
+    /// where a command says (CmdSetDepthBounds).
+    bounded: bool = false,
+    bounds: ?[2]f32 = .{ 0, 1 },
     /// The front's and the back's test, or null for none.
     stencil: ?[2]StencilFace,
     /// What of them commands set (CmdSetStencilCompareMask and the like).

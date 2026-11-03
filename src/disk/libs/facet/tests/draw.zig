@@ -321,6 +321,9 @@ const PipelineState = struct {
     second_blend: ?facet.PipelineColorBlendAttachmentState = null,
     width: f32 = 64,
     height: f32 = 64,
+    /// Where z = 0 and z = 1 land in the depth.
+    min_depth: f32 = 0,
+    max_depth: f32 = 1,
     dynamic: []const facet.DynamicState = &.{},
     flags: u32 = 0,
     subpass: u32 = 0,
@@ -340,7 +343,7 @@ fn makePipeline(bench: *Bench, state: PipelineState) struct { facet.Result, ?*fa
         .vertex_attribute_descriptions = state.attributes.ptr,
     };
     const assembly = facet.PipelineInputAssemblyStateCreateInfo{ .topology = state.topology, .primitive_restart_enable = state.restart };
-    const viewport = facet.Viewport{ .width = state.width, .height = state.height };
+    const viewport = facet.Viewport{ .width = state.width, .height = state.height, .min_depth = state.min_depth, .max_depth = state.max_depth };
     const scissor = facet.Rect2D{ .extent = .{ .width = @intFromFloat(state.width), .height = @intFromFloat(state.height) } };
     const view = facet.PipelineViewportStateCreateInfo{ .viewports = @ptrCast(&viewport), .scissors = @ptrCast(&scissor) };
     var blends: [4]facet.PipelineColorBlendAttachmentState = @splat(state.blend);
@@ -726,8 +729,9 @@ test "a pipeline: its functions and its state settled as it is made; what facet.
     var changes: [9]Change = @splat(.{ .success, base });
     changes[0][0] = .error_feature_not_present;
     changes[0][1].topology = @enumFromInt(11);
+    // A vertex binding whose stride is past the most.
     changes[1][0] = .error_feature_not_present;
-    changes[1][1].depth = .{ .depth_bounds_test_enable = true };
+    changes[1][1].stride = 4096;
     changes[2][0] = .error_feature_not_present;
     changes[2][1].blend = .{ .blend_enable = true, .src_color_blend_factor = @enumFromInt(15), .dst_color_blend_factor = .one };
     changes[3][0] = .error_feature_not_present;
@@ -2018,6 +2022,203 @@ test "a depth attachment that outlives its pass: stored as the tiles are drawn, 
 /// A depth read back into a buffer, 64 pixels a row, 16 bits each.
 fn depthAt(bytes: [*]const u8, x: u32, y: u32) u16 {
     return std.mem.readInt(u16, bytes[(y * 64 + x) * 2 ..][0..2], .little);
+}
+
+// --- 1.40: the depth clamp and the depth bounds test ------------------------
+
+test "the depth bounds test: a pixel drawn only where the depth already there lies between them, as the pipeline or a command says" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const picture = try Picture.of(&bench, 64, 64);
+    const flat = try module(&bench, &Flat.code);
+    defer fb.DestroyShaderModule(device, flat);
+    const layout = try pipelineLayout(&bench, &.{}, 4);
+    defer fb.DestroyPipelineLayout(device, layout);
+    const pass = try renderPass(&bench, .clear, true);
+    defer fb.DestroyRenderPass(device, pass);
+    _, const depth_view = try bench.image(.{
+        .format = .d16_unorm,
+        .extent = .{ .width = 64, .height = 64 },
+        .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT,
+    }, true);
+    const frame = try framebuffer(&bench, pass, &.{ picture.view, depth_view }, 64, 64);
+    defer fb.DestroyFramebuffer(device, frame);
+
+    // The left half at 0.25, written; then all of it, tested against the
+    // bounds alone.
+    const vertices = [_][3]f32{
+        .{ -1, -1, 0.25 }, .{ 0, -1, 0.25 }, .{ -1, 1, 0.25 },
+        .{ -1, 1, 0.25 },  .{ 0, -1, 0.25 }, .{ 0, 1, 0.25 },
+        .{ -1, -1, 0.5 },  .{ 1, -1, 0.5 },  .{ -1, 1, 0.5 },
+        .{ -1, 1, 0.5 },   .{ 1, -1, 0.5 },  .{ 1, 1, 0.5 },
+    };
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
+    const offset: u64 = 0;
+    const red: u32 = 0xFFFF_0000;
+    const green: u32 = 0xFF00_FF00;
+    const clear: u32 = 0xFF00_00FF;
+    const values = clears(clear);
+    const area = facet.Rect2D{ .extent = .{ .width = 64, .height = 64 } };
+
+    const writes = facet.PipelineDepthStencilStateCreateInfo{ .depth_test_enable = true, .depth_write_enable = true, .depth_compare_op = .less };
+    const marks_result, const marks = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = pass, .depth = writes });
+    try testing.expectEqual(facet.Result.success, marks_result);
+    defer fb.DestroyPipeline(device, marks);
+
+    // Three pipelines: the nearer half, the further half, and the bounds
+    // a command sets.
+    const Case = struct { facet.PipelineDepthStencilStateCreateInfo, []const facet.DynamicState, ?[2]f32, u32, u32, []const u8 };
+    const cases = [4]Case{
+        .{ .{ .depth_bounds_test_enable = true, .min_depth_bounds = 0, .max_depth_bounds = 0.5 }, &.{}, null, green, clear, "the nearer bounds" },
+        .{ .{ .depth_bounds_test_enable = true, .min_depth_bounds = 0.6, .max_depth_bounds = 1 }, &.{}, null, red, green, "the further bounds" },
+        .{ .{ .depth_bounds_test_enable = true }, &.{.depth_bounds}, .{ 0, 0.5 }, green, clear, "what a command set" },
+        // The bounds the wrong way round keep nothing, as in Vulkan.
+        .{ .{ .depth_bounds_test_enable = true, .min_depth_bounds = 0.9, .max_depth_bounds = 0.1 }, &.{}, null, red, clear, "bounds the wrong way round" },
+    };
+    for (cases) |one| {
+        const depth_state, const dynamic, const set, const wanted_left, const wanted_right, const name = one;
+        _ = name;
+        const result, const bounded = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = pass, .depth = depth_state, .dynamic = dynamic });
+        try testing.expectEqual(facet.Result.success, result);
+        defer fb.DestroyPipeline(device, bounded);
+        const commands = try bench.record();
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame, .render_area = area, .clear_value_count = 2, .clear_values = &values }, .@"inline");
+        fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+        // The left half's depth, in red.
+        fb.CmdBindPipeline(commands, .graphics, marks.?);
+        fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &red);
+        fb.CmdDraw(commands, 6, 1, 0, 0);
+        // Then all of it, in green, where the bounds allow.
+        fb.CmdBindPipeline(commands, .graphics, bounded.?);
+        if (set) |asked| fb.CmdSetDepthBounds(commands, asked[0], asked[1]);
+        fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &green);
+        fb.CmdDraw(commands, 6, 1, 6, 0);
+        fb.CmdEndRenderPass(commands);
+        try bench.submit();
+        try testing.expectEqual(wanted_left, picture.at(16, 8));
+        try testing.expectEqual(wanted_left, picture.at(16, 40));
+        try testing.expectEqual(wanted_right, picture.at(48, 8));
+        try testing.expectEqual(wanted_right, picture.at(48, 40));
+    }
+
+    // A device that has no such test refuses the pipeline.
+    const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
+    physical.features.depth_bounds = false;
+    defer physical.features.depth_bounds = true;
+    const refused, const none = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = pass, .depth = .{ .depth_bounds_test_enable = true } });
+    try testing.expectEqual(facet.Result.error_feature_not_present, refused);
+    try testing.expect(none == null);
+}
+
+test "the depth clamp: what lies past the near plane is drawn all the same, its depth held inside the viewport's range" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const picture = try Picture.of(&bench, 64, 64);
+    const flat = try module(&bench, &Flat.code);
+    defer fb.DestroyShaderModule(device, flat);
+    const layout = try pipelineLayout(&bench, &.{}, 4);
+    defer fb.DestroyPipelineLayout(device, layout);
+    // The depth kept, so what the clamp left can be read back.
+    const depth_image, const depth_view = try bench.image(.{
+        .format = .d16_unorm,
+        .extent = .{ .width = 64, .height = 64 },
+        .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_SRC,
+    }, false);
+    const kept = _objects.of(@import("../image/_image.zig").Image, depth_image);
+    const pass = try keepingPass(&bench, .clear, .clear, .store);
+    defer fb.DestroyRenderPass(device, pass);
+    const frame = try framebuffer(&bench, pass, &.{ picture.view, depth_view }, 64, 64);
+    defer fb.DestroyFramebuffer(device, frame);
+
+    // Wholly behind the near plane, wholly past the far one, and across
+    // the near plane from behind it to in front.
+    const vertices = [_][3]f32{
+        .{ -1, -1, -0.5 }, .{ 1, -1, -0.5 }, .{ -1, 1, -0.5 },
+        .{ -1, 1, -0.5 },  .{ 1, -1, -0.5 }, .{ 1, 1, -0.5 },
+        .{ -1, -1, 2 },    .{ 1, -1, 2 },    .{ -1, 1, 2 },
+        .{ -1, 1, 2 },     .{ 1, -1, 2 },    .{ 1, 1, 2 },
+        .{ -1, -1, -1 },   .{ 1, -1, 1 },    .{ -1, 1, -1 },
+    };
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
+    const red: u32 = 0xFFFF_0000;
+    const clear: u32 = 0xFF00_00FF;
+    const writes = facet.PipelineDepthStencilStateCreateInfo{ .depth_test_enable = true, .depth_write_enable = true, .depth_compare_op = .always };
+
+    // The viewport's range, so what the clamp holds a depth to is its own
+    // and not the whole of it.
+    const low: f32 = 0.25;
+    const high: f32 = 0.75;
+    const shape = PipelineState{ .module = flat, .layout = layout, .pass = pass, .depth = writes, .min_depth = low, .max_depth = high };
+    const plain_result, const plain = makePipeline(&bench, shape);
+    try testing.expectEqual(facet.Result.success, plain_result);
+    defer fb.DestroyPipeline(device, plain);
+    var clamping = shape;
+    clamping.raster = .{ .depth_clamp_enable = true };
+    const clamped_result, const clamped = makePipeline(&bench, clamping);
+    try testing.expectEqual(facet.Result.success, clamped_result);
+    defer fb.DestroyPipeline(device, clamped);
+
+    const run = struct {
+        fn of(on: *Bench, into: *facet.RenderPass, onto: *facet.Framebuffer, by: *facet.PipelineLayout, pipeline: ?*facet.Pipeline, buffer: *facet.Buffer, first: u32, count: u32, color: u32) !void {
+            const fb_of = on.rig.fb;
+            const at: u64 = 0;
+            const painted = clears(0xFF00_00FF);
+            const commands = try on.record();
+            fb_of.CmdBeginRenderPass(commands, &.{ .render_pass = into, .framebuffer = onto, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 2, .clear_values = &painted }, .@"inline");
+            fb_of.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&buffer), @ptrCast(&at));
+            fb_of.CmdBindPipeline(commands, .graphics, pipeline.?);
+            fb_of.CmdPushConstants(commands, by, facet.SHADER_STAGE_FRAGMENT, 0, 4, &color);
+            fb_of.CmdDraw(commands, count, 1, first, 0);
+            fb_of.CmdEndRenderPass(commands);
+            try on.submit();
+        }
+    }.of;
+    const depthAtOf = struct {
+        fn of(image: anytype, x: u32, y: u32) u16 {
+            return std.mem.readInt(u16, image.data.?[@as(usize, y) * image.pitch + @as(usize, x) * 2 ..][0..2], .little);
+        }
+    }.of;
+
+    // Behind the near plane: cut away without the clamp, drawn with it,
+    // its depth held at the viewport's nearest.
+    try run(&bench, pass, frame, layout, plain, vertex_buffer, 0, 6, red);
+    try testing.expectEqual(clear, picture.at(16, 8));
+    try run(&bench, pass, frame, layout, clamped, vertex_buffer, 0, 6, red);
+    try testing.expectEqual(red, picture.at(16, 8));
+    try testing.expectEqual(red, picture.at(48, 40));
+    const nearest: u16 = @intFromFloat(@round(low * 65535));
+    const furthest: u16 = @intFromFloat(@round(high * 65535));
+    try testing.expectEqual(nearest, depthAtOf(kept, 16, 8));
+
+    // Past the far plane: the same, held at the viewport's furthest.
+    try run(&bench, pass, frame, layout, plain, vertex_buffer, 6, 6, red);
+    try testing.expectEqual(clear, picture.at(16, 8));
+    try run(&bench, pass, frame, layout, clamped, vertex_buffer, 6, 6, red);
+    try testing.expectEqual(red, picture.at(16, 8));
+    try testing.expectEqual(furthest, depthAtOf(kept, 16, 8));
+
+    // Across the near plane: the part in front is drawn either way, and
+    // the part behind only with the clamp.
+    try run(&bench, pass, frame, layout, plain, vertex_buffer, 12, 3, red);
+    const front_plain = picture.at(56, 4);
+    try run(&bench, pass, frame, layout, clamped, vertex_buffer, 12, 3, red);
+    try testing.expectEqual(front_plain, picture.at(56, 4));
+    try testing.expectEqual(red, picture.at(2, 2));
+    try testing.expectEqual(nearest, depthAtOf(kept, 2, 2));
+
+    // A device that does not clamp refuses the pipeline.
+    const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
+    physical.features.depth_clamp = false;
+    defer physical.features.depth_clamp = true;
+    const refused, const none = makePipeline(&bench, clamping);
+    try testing.expectEqual(facet.Result.error_feature_not_present, refused);
+    try testing.expect(none == null);
 }
 
 // --- 1.39: a depth image sampled where it lies ------------------------------

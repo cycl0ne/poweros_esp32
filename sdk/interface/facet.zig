@@ -142,6 +142,7 @@ pub const LVO = struct {
     pub const GetPhysicalDeviceImageFormatProperties = libraries.lvo(125);
     pub const GetRenderAreaGranularity = libraries.lvo(126);
     pub const GetDeviceMemoryCommitment = libraries.lvo(127);
+    pub const CmdSetDepthBounds = libraries.lvo(128);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -271,6 +272,7 @@ pub const Fn = struct {
     pub const GetPhysicalDeviceImageFormatProperties = *const fn (*FacetBase, *facet.PhysicalDevice, facet.Format, facet.ImageType, facet.ImageTiling, u32, u32, *facet.ImageFormatProperties) callconv(.c) facet.Result;
     pub const GetRenderAreaGranularity = *const fn (*FacetBase, *facet.Device, *facet.RenderPass, *facet.Extent2D) callconv(.c) void;
     pub const GetDeviceMemoryCommitment = *const fn (*FacetBase, *facet.Device, *facet.DeviceMemory, *u64) callconv(.c) void;
+    pub const CmdSetDepthBounds = *const fn (*FacetBase, *facet.CommandBuffer, f32, f32) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -917,5 +919,10 @@ pub const FacetBase = opaque {
     /// The bytes of a block that are really there, into `bytes`.
     pub fn GetDeviceMemoryCommitment(self: *FacetBase, device: *facet.Device, memory: *facet.DeviceMemory, bytes: *u64) void {
         return libraries.call(self, LVO.GetDeviceMemoryCommitment, Fn.GetDeviceMemoryCommitment, .{ device, memory, bytes });
+    }
+
+    /// The depths a pixel's stored depth has to lie between to be drawn.
+    pub fn CmdSetDepthBounds(self: *FacetBase, buffer: *facet.CommandBuffer, min: f32, max: f32) void {
+        return libraries.call(self, LVO.CmdSetDepthBounds, Fn.CmdSetDepthBounds, .{ buffer, min, max });
     }
 };

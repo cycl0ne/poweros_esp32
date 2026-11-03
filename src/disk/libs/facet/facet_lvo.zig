@@ -136,6 +136,7 @@ const CmdSetDepthBias = @import("command/cmdsetdepthbias.zig").CmdSetDepthBias;
 const GetPhysicalDeviceImageFormatProperties = @import("instance/getphysicaldeviceimageformatproperties.zig").GetPhysicalDeviceImageFormatProperties;
 const GetRenderAreaGranularity = @import("render/getrenderareagranularity.zig").GetRenderAreaGranularity;
 const GetDeviceMemoryCommitment = @import("memory/getdevicememorycommitment.zig").GetDeviceMemoryCommitment;
+const CmdSetDepthBounds = @import("command/cmdsetdepthbounds.zig").CmdSetDepthBounds;
 
 /// facet.library's interface, as the SDK generates it from
 /// sdk/fd/facet_lib.fd.
@@ -283,6 +284,7 @@ const contract_files = [_][]const u8{
     @embedFile("buffer/createbufferview.zig"),
     @embedFile("buffer/destroybufferview.zig"),
     @embedFile("command/cmdsetdepthbias.zig"),
+    @embedFile("command/cmdsetdepthbounds.zig"),
     @embedFile("instance/getphysicaldeviceimageformatproperties.zig"),
     @embedFile("render/getrenderareagranularity.zig"),
     @embedFile("memory/getdevicememorycommitment.zig"),
@@ -474,6 +476,10 @@ fn lvoGetRenderAreaGranularity(base: *FacetBase, device: *facet.Device, pass: *f
 
 fn lvoGetDeviceMemoryCommitment(base: *FacetBase, device: *facet.Device, memory: *facet.DeviceMemory, bytes: *u64) callconv(.c) void {
     return GetDeviceMemoryCommitment(base, device, memory, bytes);
+}
+
+fn lvoCmdSetDepthBounds(base: *FacetBase, buffer: *facet.CommandBuffer, min: f32, max: f32) callconv(.c) void {
+    return CmdSetDepthBounds(base, buffer, min, max);
 }
 
 fn lvoCmdCopyBuffer(base: *FacetBase, buffer: *facet.CommandBuffer, source: *facet.Buffer, destination: *facet.Buffer, region_count: u32, regions: [*]const facet.BufferCopy) callconv(.c) void {
@@ -812,6 +818,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoGetPhysicalDeviceImageFormatProperties),
     vec(lvoGetRenderAreaGranularity),
     vec(lvoGetDeviceMemoryCommitment),
+    vec(lvoCmdSetDepthBounds),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

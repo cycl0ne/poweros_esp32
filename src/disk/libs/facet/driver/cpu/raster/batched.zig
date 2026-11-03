@@ -107,6 +107,27 @@ pub const StencilFace = struct {
     }
 };
 
+/// A stencil test that passes and writes nothing: what a draw that goes
+/// by the pixel for another reason - the depth clamp, the depth bounds -
+/// is given in place of a test of its own.
+const keeping = StencilFace{ .compare = .always, .compare_mask = 0, .write_mask = 0 };
+
+/// Two depths, 0 to 1, in the units the depth attachment holds: what the
+/// walk compares a pixel's with. Held inside the range, and the wrong way
+/// round where the two are, which then keeps nothing.
+fn boundsOf(asked: [2]f32) [2]u64 {
+    const whole: f32 = 65535;
+    const low = @round(std.math.clamp(asked[0], 0, 1) * whole);
+    const high = @round(std.math.clamp(asked[1], 0, 1) * whole);
+    return .{ @intFromFloat(low), @intFromFloat(high) };
+}
+
+/// Whether a stored depth lies between the bounds; nothing lies between
+/// them where they are the wrong way round, as in Vulkan.
+inline fn within(there: u16, bounds: [2]u64) bool {
+    return there >= bounds[0] and there <= bounds[1];
+}
+
 /// Whether `near` is as `compare` asks to `kept`.
 inline fn byOrder(compare: Compare, near: anytype, kept: anytype) bool {
     // 0 less, 1 equal, 2 greater.
@@ -132,6 +153,14 @@ pub const State = struct {
     /// written, or null where they add nothing. Points and lines take
     /// none, as Vulkan has it, so a draw of them leaves this null.
     depth_bias: ?Bias = null,
+    /// Whether what lies past the near plane is drawn all the same, each
+    /// pixel's depth held inside `min_depth` and `max_depth`, rather than
+    /// cut away (`depth_clamp_enable`).
+    depth_clamp: bool = false,
+    /// The depths a pixel's **stored** depth has to lie between for it to
+    /// be drawn, 0 to 1; null for a draw that tests no bounds
+    /// (`depth_bounds_test_enable`).
+    depth_bounds: ?[2]f32 = null,
     blend: pipeline.Blend = .off,
     /// How it mixes, with `.general`.
     mixing: pipeline.Mixing = .{},
@@ -187,6 +216,13 @@ const Shading = struct {
     /// The depth is tested, with a stencil test.
     has_depth: bool,
     stencil: [2]StencilFace,
+    /// Where each pixel's depth is held, in the depth's own units: the
+    /// viewport's range for a draw that clamps, and the whole of it
+    /// otherwise.
+    clamp: ?[2]u64,
+    /// The stored depth a pixel has to lie between, in those units; null
+    /// for a draw that tests no bounds.
+    bounds: ?[2]u64,
     /// The fragment function may drop a pixel: its depth waits for it.
     discards: bool,
     /// What a query counts of the pixels (`State.samples`).
@@ -232,6 +268,18 @@ fn setUpAll(target: *Target, state: *const State, vertices: []const f32, stride:
     if (compare == .never and !(target.attachments.stencil.used and state.stencil != null)) return;
     const area = scissored(target.areaBounds(), state.scissor) orelse return;
     const stencil = if (target.attachments.stencil.used) state.stencil else null;
+    // The depth bounds test is of the depth already there, so it wants a
+    // depth to look at; a draw that clamps holds each pixel's depth inside
+    // the viewport's range. Either goes by the pixel at a time way, as a
+    // stencil test does, and a draw with none of the three keeps its fast
+    // path untouched.
+    const bounds: ?[2]u64 = if (state.depth_bounds) |asked| boundsOf(asked) else null;
+    const clamp: ?[2]u64 = if (state.depth_clamp) boundsOf(.{ state.min_depth, state.max_depth }) else null;
+    // The bounds test is of the depth already there, which a pass with a
+    // depth attachment has whether this draw tests it or not, as in
+    // Vulkan.
+    const has_plane = target.attachments.depth.used;
+    const by_pixel = stencil != null or clamp != null or (bounds != null and has_plane);
     const shading = target.arena.create(Shading) orelse return error.OutOfMemory;
     shading.* = .{
         .fragment = state.fragment,
@@ -242,12 +290,16 @@ fn setUpAll(target: *Target, state: *const State, vertices: []const f32, stride:
         .blend = state.blend,
         .mixing = state.mixing,
         .has_depth = depth,
-        .stencil = stencil orelse undefined,
+        // A draw that goes by pixel without a stencil test of its own has
+        // a test that passes and writes nothing.
+        .stencil = stencil orelse [2]StencilFace{ keeping, keeping },
+        .clamp = clamp,
+        .bounds = if (has_plane) bounds else null,
         .discards = state.discards,
         .samples = state.samples,
         .fragments = state.fragments,
     };
-    const test_kind: Test = if (stencil != null) .stencil else if (!depth) .off else switch (compare) {
+    const test_kind: Test = if (by_pixel) .stencil else if (!depth) .off else switch (compare) {
         .less => .less,
         .less_or_equal => .less_or_equal,
         else => .masked,
@@ -264,6 +316,8 @@ fn setUpAll(target: *Target, state: *const State, vertices: []const f32, stride:
     };
     const codes = target.arena.alloc(u8, count) orelse return error.OutOfMemory;
     const guard = setup.Guard.of(state.viewport);
+    const outside: u8 = if (state.depth_clamp) setup.outside_clamped else setup.outside_all;
+    const cut_bits: u8 = if (state.depth_clamp) setup.must_cut_clamped else setup.must_cut;
     for (codes, 0..) |*code, k| code.* = setup.outcode(position(vertices, stride, k).*, guard);
 
     const set: SetUp = .{ .target = target, .state = state, .shading = shading, .raster = raster, .prepass = passes, .area = area, .depth = depth };
@@ -273,12 +327,13 @@ fn setUpAll(target: *Target, state: *const State, vertices: []const f32, stride:
         const which = [3]usize{ indices[at], indices[at + 1], indices[at + 2] };
         if (which[0] >= count or which[1] >= count or which[2] >= count) continue;
         const code = [3]u8{ codes[which[0]], codes[which[1]], codes[which[2]] };
-        // Wholly outside one side of the view.
-        if (code[0] & code[1] & code[2] & 63 != 0) {
+        // Wholly outside one side of the view: for a draw that clamps,
+        // the depth planes do not count among the sides.
+        if (code[0] & code[1] & code[2] & outside != 0) {
             target.stats.dropped += 1;
             continue;
         }
-        if ((code[0] | code[1] | code[2]) & setup.must_cut == 0) {
+        if ((code[0] | code[1] | code[2]) & cut_bits == 0) {
             var positions: [3]*const [4]f32 = undefined;
             var carried: [3][*]const f32 = undefined;
             for (which, &positions, &carried) |k, *p, *c| {
@@ -296,7 +351,7 @@ fn setUpAll(target: *Target, state: *const State, vertices: []const f32, stride:
             @memcpy(corner.values[0..state.varyings], vertices[k * stride + 4 ..][0..state.varyings]);
         }
         var polygon: [setup.most_cut]Clip = undefined;
-        const made = setup.cut(Clip, corners, guard, &polygon);
+        const made = setup.cut(Clip, corners, guard, state.depth_clamp, &polygon);
         if (made < 3) continue;
         for (1..made - 1) |k| {
             const three = [3]*const Clip{ &polygon[0], &polygon[k], &polygon[k + 1] };
@@ -336,7 +391,13 @@ const SetUp = struct {
         const target = set.target;
         const state = set.state;
         var projected: [3]setup.Projected = undefined;
-        for (&projected, positions) |*into, p| into.* = setup.project(p.*, state.viewport);
+        // One branch a triangle, not one a vertex: a draw that clamps
+        // leaves its vertices' depth as it comes.
+        if (state.depth_clamp) {
+            for (&projected, positions) |*into, p| into.* = setup.projectFree(p.*, state.viewport);
+        } else {
+            for (&projected, positions) |*into, p| into.* = setup.project(p.*, state.viewport);
+        }
         const made = switch (state.cull) {
             inline else => |cull| switch (state.front) {
                 inline else => |front| setup.onSurface(projected, cull, front, set.area),
@@ -382,7 +443,13 @@ fn faceOf(p: *const [3]setup.Projected, front: setup.Winding) u8 {
 fn depthOf(made: *const setup.Triangle, projected: [3]setup.Projected, state: *const State) setup.Depth {
     var ranged = projected;
     if (state.min_depth != 0 or state.max_depth != 1) {
-        for (&ranged) |*vertex| vertex.z = std.math.clamp(state.min_depth + vertex.z * (state.max_depth - state.min_depth), 0, 1);
+        // A draw that clamps keeps the triangle's own plane: what lies
+        // outside the range is held pixel by pixel as it is read, not
+        // bent at the vertices.
+        for (&ranged) |*vertex| {
+            const moved = state.min_depth + vertex.z * (state.max_depth - state.min_depth);
+            vertex.z = if (state.depth_clamp) moved else std.math.clamp(moved, 0, 1);
+        }
     }
     const depth: setup.Depth = .of(made, &ranged);
     return if (state.depth_bias) |bias| depth.biased(bias) else depth;
@@ -425,7 +492,10 @@ fn Rasterize(comptime kind: Test) type {
             // drop one has its depths held back until it has run.
             const tested_here = if (kind == .stencil) triangle.shading.has_depth else kind != .off;
             const second_here = kind == .second or kind == .second_or_equal;
-            batch.deferred_depth = triangle.shading.discards and tested_here and !second_here and triangle.shading.depth_write;
+            // The pixel at a time way writes each depth as it tests it, so
+            // there is none held back for the fragment function to drop:
+            // holding them back there would write what was never gathered.
+            batch.deferred_depth = kind != .stencil and triangle.shading.discards and tested_here and !second_here and triangle.shading.depth_write;
             walk.quads(tile, header, Walker{ .tile = tile, .batch = &batch, .depth = triangle.depth, .shading = triangle.shading, .face = triangle.face }, Walker.run);
             batch.flush();
         }
@@ -451,8 +521,9 @@ fn Rasterize(comptime kind: Test) type {
                 var x = first & ~@as(u32, 1);
                 const tested = if (kind == .stencil) walker.shading.has_depth else kind != .off;
                 const step = if (tested) walker.depth.step else 0;
-                var z_upper: i64 = if (tested) walker.rowDepth(upper, x, y) else 0;
-                var z_lower: i64 = if (tested) walker.rowDepth(lower, x, y + 1) else 0;
+                const free = kind == .stencil and walker.shading.clamp != null;
+                var z_upper: i64 = if (tested) walker.rowDepth(upper, x, y, free) else 0;
+                var z_lower: i64 = if (tested) walker.rowDepth(lower, x, y + 1, free) else 0;
                 const depths = walker.tile.depthRow(y);
                 const second = kind == .second or kind == .second_or_equal;
                 const write = tested and !second and walker.shading.depth_write;
@@ -471,7 +542,17 @@ fn Rasterize(comptime kind: Test) type {
                         @as(u4, @intFromBool(lower.holds(x))) << 2 | @as(u4, @intFromBool(lower.holds(x + 1))) << 3;
                     var kept = covered;
                     if (kind == .stencil) {
-                        const near = if (tested) [4]u64{ units(z_upper), units(z_upper +% step), units(z_lower), units(z_lower +% step) } else [4]u64{ 0, 0, 0, 0 };
+                        // A draw that clamps walks the triangle's own
+                        // plane and holds each pixel's depth inside the
+                        // viewport's range as it reads it; one that cuts
+                        // at the near plane never had a depth outside the
+                        // range to hold.
+                        const near = if (!tested) [4]u64{ 0, 0, 0, 0 } else if (walker.shading.clamp) |range| [4]u64{
+                            held(z_upper, range),
+                            held(z_upper +% step, range),
+                            held(z_lower, range),
+                            held(z_lower +% step, range),
+                        } else [4]u64{ units(z_upper), units(z_upper +% step), units(z_lower), units(z_lower +% step) };
                         kept = walker.stenciled(x, y, covered, near, depths);
                     } else if (tested) {
                         const near = [4]u64{ units(z_upper), units(z_upper +% step), units(z_lower), units(z_lower +% step) };
@@ -500,11 +581,16 @@ fn Rasterize(comptime kind: Test) type {
             }
 
             /// A row's depth at column `x`: from where its run starts,
-            /// stepped back. 0 for a row with nothing in it.
-            inline fn rowDepth(walker: Walker, span: Span, x: u32, y: u32) i64 {
+            /// stepped back. 0 for a row with nothing in it. `free` leaves
+            /// it outside the depth's range, for a draw that holds each
+            /// pixel's own inside the viewport's.
+            inline fn rowDepth(walker: Walker, span: Span, x: u32, y: u32, free: bool) i64 {
                 if (span.empty()) return 0;
                 const tile = walker.tile;
-                return walker.depth.at(tile.x + span.left, tile.y + y) -% @as(i64, span.left - x) *% walker.depth.step;
+                const column = tile.x + span.left;
+                const row = tile.y + y;
+                const start = if (free) walker.depth.atFree(column, row) else walker.depth.at(column, row);
+                return start -% @as(i64, span.left - x) *% walker.depth.step;
             }
 
             inline fn passes(walker: Walker, near: u64, kept: u16) bool {
@@ -527,7 +613,13 @@ fn Rasterize(comptime kind: Test) type {
                 inline for (0..4) |i| {
                     if (covered >> i & 1 != 0) {
                         const value = &values[offset(i) + x];
-                        if (!face.passes(value.*)) {
+                        // The depth bounds test is of the depth already
+                        // there and comes before the stencil's, so a pixel
+                        // it drops leaves the stencil as it is.
+                        const in_bounds = if (shading.bounds) |bounds| within(depths[offset(i) + x], bounds) else true;
+                        if (!in_bounds) {
+                            // Dropped, and nothing written.
+                        } else if (!face.passes(value.*)) {
                             value.* = face.after(face.fail, value.*);
                         } else if (shading.has_depth and !byOrder(shading.compare, near[i], depths[offset(i) + x])) {
                             value.* = face.after(face.depth_fail, value.*);
@@ -546,6 +638,17 @@ fn Rasterize(comptime kind: Test) type {
 
 inline fn units(z: i64) u64 {
     return @as(u64, @bitCast(z)) >> setup.Depth.fraction;
+}
+
+/// A depth walked outside the range held inside `range`, in whole units:
+/// what a draw that clamps reads at a pixel. The shift is signed, so a
+/// depth in front of the viewport's nearest is below it and comes out as
+/// the nearest rather than wrapping round.
+inline fn held(z: i64, range: [2]u64) u64 {
+    const whole = z >> setup.Depth.fraction;
+    const low: i64 = @intCast(range[0]);
+    const high: i64 = @intCast(range[1]);
+    return @intCast(@min(@max(whole, low), high));
 }
 
 /// Pixel `i` of a quad - left, right, then the same a row down - from its

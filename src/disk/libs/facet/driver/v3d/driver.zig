@@ -158,6 +158,10 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // Its texture unit keeps a texture its own way, and knows no
         // depth format: a sampled depth image is refused.
         .sampled_depth = false,
+        // Its control lists clip in their own way, and it has no depth
+        // bounds test: a pipeline that asks for either is refused.
+        .depth_clamp = false,
+        .depth_bounds = false,
         // A V3D texture lies the way its TMU reads it, which is not the
         // layout the library writes (`texture_offset`), so a storage image
         // is refused on this device and the set layout says so.

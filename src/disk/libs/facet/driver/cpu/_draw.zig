@@ -197,6 +197,11 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
         // Only triangles are moved: a draw of points or lines, or of
         // triangles drawn as their edges or corners, takes no bias.
         .depth_bias = if (pipeline.biased and !wide) biasOf(pipeline.bias orelse player.depth_bias) else null,
+        // What lies past the near plane drawn all the same, its depth held
+        // inside the viewport's range; and the stored depth a pixel has to
+        // lie between to be drawn at all.
+        .depth_clamp = pipeline.clamped,
+        .depth_bounds = if (pipeline.bounded) pipeline.bounds orelse player.depth_bounds else null,
         .blend = blend,
         .mixing = mixing,
         .stencil = stencil,

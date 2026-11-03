@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.39**, so that a program need not find out by failing. It covers the API.
+1.40**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -304,6 +304,30 @@ because there is nothing to compile.
 No `QueueBindSparse`, `GetImageSparseMemoryRequirements` or
 `GetPhysicalDeviceSparseImageFormatProperties`. Memory is bound whole.
 
+## The depth clamp and the depth bounds test
+
+Since 1.40 the last two pieces of depth state Vulkan has are there
+(`PhysicalDeviceFeatures.depth_clamp`, `depth_bounds`):
+`depth_clamp_enable` draws what lies past the near plane instead of
+cutting it away, each pixel's depth held inside the viewport's
+`min_depth` and `max_depth`, and `depth_bounds_test_enable` with
+`min_depth_bounds`, `max_depth_bounds` and `CmdSetDepthBounds`
+(`DynamicState.depth_bounds`) draws a pixel only where the depth already
+in the attachment lies between the two. What is left out:
+
+- **Only the cores have them.** The V3D's control lists clip in their own
+  way and it has no depth bounds test, so a pipeline that asks for either
+  is refused there.
+- **A draw with either is walked a pixel at a time**, the way a draw with
+  a stencil test is, so it costs more than the quads the fast paths walk.
+  Nothing a draw without them costs changes.
+- A clamped draw is still cut just in front of the eye, where the
+  projection stops holding, so geometry that reaches behind the eye is
+  cut there rather than drawn from behind - which is what every
+  rasterizer with a guard band does.
+- The bounds are the pipeline's or a command's, never a range for each
+  viewport: there is one viewport.
+
 ## The depth bias, and what it still is not
 
 Since 1.34 a pipeline may move its triangles' depth before it is tested
@@ -366,7 +390,7 @@ These can be asked for and are answered with `error_feature_not_present`.
 | Multisampling entirely: `rasterization_samples` above 1, sample shading, alpha-to-coverage, alpha-to-one | `pipeline/creategraphicspipelines.zig` |
 | An attachment of more than one sample | `render/createrenderpass.zig` |
 | Logic operations: `LogicOp` is fully enumerated, `logic_op_enable` is not taken | `pipeline/creategraphicspipelines.zig` |
-| Depth clamp and the depth bounds test | `pipeline/creategraphicspipelines.zig` |
+| Depth clamp or the depth bounds test on a device that has neither: the V3D (`depth_clamp`, `depth_bounds`) | `pipeline/creategraphicspipelines.zig` |
 | A depth bias, on a device that moves no depth: the V3D (`depth_bias`) | `pipeline/creategraphicspipelines.zig` |
 | More than one viewport or one scissor | `pipeline/creategraphicspipelines.zig` |
 | Colour attachments that differ, on a device that blends them all alike: no device of this library is one (`independent_blend`) | `pipeline/creategraphicspipelines.zig` |

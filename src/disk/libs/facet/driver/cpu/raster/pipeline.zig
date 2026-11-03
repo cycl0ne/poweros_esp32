@@ -253,7 +253,7 @@ pub fn Pipeline(comptime config: Config) type {
                 }
                 target.stats.cut += 1;
                 var polygon: [setup.most_cut]Clip = undefined;
-                const count = setup.cut(Clip, corners, guard, &polygon);
+                const count = setup.cut(Clip, corners, guard, false, &polygon);
                 if (count < 3) continue;
                 for (1..count - 1) |k| try pipeline.setUp(target, .{ polygon[0], polygon[k], polygon[k + 1] }, color, texture);
             }

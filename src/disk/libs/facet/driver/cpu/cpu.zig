@@ -125,6 +125,11 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // A depth image's rows are sampled where they lie: the one texel
         // decoder reads a depth as well (`texture.Format.d16`).
         .sampled_depth = true,
+        // Both go by the pixel at a time way the stencil test goes by:
+        // the clamp holds a pixel's depth inside the viewport's range,
+        // and the bounds test reads the depth already there.
+        .depth_clamp = true,
+        .depth_bounds = true,
         // A function of the program's runs here, and the texels it writes
         // lie where the library keeps them (`shader.Resources.written`).
         .storage_images = true,

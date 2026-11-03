@@ -103,6 +103,9 @@ pub const Player = struct {
     blend_constants: [4]f32 = @splat(0),
     /// What CmdSetDepthBias set, for a pipeline whose bias is dynamic.
     depth_bias: _pipeline.Bias = .{},
+    /// What CmdSetDepthBounds last set, for a pipeline whose bounds are
+    /// dynamic.
+    depth_bounds: [2]f32 = .{ 0, 1 },
     line_width: f32 = 1,
     stencil: _vertices.StencilSet = .{},
     resources: shader.Resources = .{},
@@ -260,6 +263,10 @@ fn playStream(queue: *Queue, stream: *const _stream.Stream) void {
         .set_depth_bias => {
             const command = _stream.as(_command.SetDepthBias, head);
             player.depth_bias = .{ .constant = command.constant, .clamp = command.clamp, .slope = command.slope };
+        },
+        .set_depth_bounds => {
+            const command = _stream.as(_command.SetDepthBounds, head);
+            player.depth_bounds = .{ command.min, command.max };
         },
         .set_line_width => player.line_width = _stream.as(_command.SetLineWidth, head).width,
         .set_stencil => player.stencil.apply(_stream.as(_command.SetStencil, head)),

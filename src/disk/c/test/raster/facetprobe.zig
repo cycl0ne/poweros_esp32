@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.6 (03.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.7 (03.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -299,6 +299,11 @@ const Shape = struct {
     /// What the vertices carry past their place, and how wide one is.
     attributes: []const facet.VertexInputAttributeDescription = &.{.{ .location = 0, .binding = 0, .format = .r32g32b32_sfloat }},
     stride: u32 = 12,
+    /// The whole depth state, where `depth_tested` is not enough.
+    depth_state: ?facet.PipelineDepthStencilStateCreateInfo = null,
+    /// Where z = 0 and z = 1 land in the depth.
+    min_depth: f32 = 0,
+    max_depth: f32 = 1,
 };
 
 /// A pipeline over `pass` of the module's "main", as `shape` says.
@@ -317,11 +322,11 @@ fn pipelineOf(probe: *Probe, pass: *facet.RenderPass, module: *facet.ShaderModul
         .vertex_attribute_descriptions = shape.attributes.ptr,
     };
     const assembly = facet.PipelineInputAssemblyStateCreateInfo{ .topology = .triangle_list };
-    const viewport = facet.Viewport{ .width = side, .height = side };
+    const viewport = facet.Viewport{ .width = side, .height = side, .min_depth = shape.min_depth, .max_depth = shape.max_depth };
     const scissor = facet.Rect2D{ .extent = .{ .width = side, .height = side } };
     const view = facet.PipelineViewportStateCreateInfo{ .viewports = @ptrCast(&viewport), .scissors = @ptrCast(&scissor) };
     const raster = shape.raster;
-    const depth = facet.PipelineDepthStencilStateCreateInfo{
+    const depth = shape.depth_state orelse facet.PipelineDepthStencilStateCreateInfo{
         .depth_test_enable = depth_tested,
         .depth_write_enable = depth_tested,
         .depth_compare_op = .less,
@@ -1610,6 +1615,139 @@ fn sampledDepthChecks(probe: *Probe) void {
     }
 }
 
+// --- 1.40: the depth clamp and the depth bounds test -------------------------
+
+fn boundsChecks(probe: *Probe) void {
+    const fb = probe.fb;
+    defer probe.give();
+    const extent = facet.Extent3D{ .width = side, .height = side };
+    const bounded = facet.PipelineDepthStencilStateCreateInfo{ .depth_bounds_test_enable = true, .min_depth_bounds = 0, .max_depth_bounds = 0.5 };
+    const clamping = facet.PipelineRasterizationStateCreateInfo{ .depth_clamp_enable = true };
+
+    // The depth stored where the device keeps one, so that what the clamp
+    // left can be read back; in the tiles alone otherwise, which is all
+    // the bounds test needs.
+    const stores = probe.features.stored_depth;
+    const pass = passKeeping(probe, .clear, .clear, if (stores) .store else .dont_care) orelse
+        return probe.check(false, "a pass of a colour and a depth");
+    var module: ?*facet.ShaderModule = null;
+    if (fb.CreateShaderModule(probe.device.?, &.{ .code = &Flat.code }, &module) != .success) return probe.check(false, "the shader module");
+    _ = Probe.keep(&probe.modules, module);
+    const range = facet.PushConstantRange{ .size = 4 };
+    var layout: ?*facet.PipelineLayout = null;
+    if (fb.CreatePipelineLayout(probe.device.?, &.{ .push_constant_range_count = 1, .push_constant_ranges = @ptrCast(&range) }, &layout) != .success) return probe.check(false, "the pipeline layout");
+    _ = Probe.keep(&probe.layouts, layout);
+
+    if (!probe.features.depth_bounds) {
+        probe.check(pipelineOf(probe, pass, module.?, layout.?, .{ .depth_state = bounded }) == null, "a depth bounds test refused where the device has none");
+    }
+    if (!probe.features.depth_clamp) {
+        probe.check(pipelineOf(probe, pass, module.?, layout.?, .{ .raster = clamping }) == null, "a depth clamp refused where the device has none");
+    }
+    if (!probe.features.depth_bounds and !probe.features.depth_clamp) return;
+
+    const color = probe.image(.{ .format = .b8g8r8a8_unorm, .extent = extent, .tiling = .linear, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, facet.MEMORY_PROPERTY_HOST_VISIBLE) orelse
+        return probe.check(false, "a picture to draw into");
+    const color_memory = probe.memories[0].?;
+    const depth = probe.image(.{ .format = .d16_unorm, .extent = extent, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_SRC }, 0) orelse
+        return probe.check(false, "a depth image with memory behind it");
+    const frame = probe.framebuffer(pass, &.{ color[1], depth[1] }) orelse return probe.check(false, "a framebuffer over the two");
+    const read_back, const back_bytes = probe.buffer(side * side * 2, facet.BUFFER_USAGE_TRANSFER_DST) orelse
+        return probe.check(false, "a buffer to read the depth into");
+    const whole = facet.BufferImageCopy{ .image_extent = extent, .image_subresource = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH } };
+
+    // The left half at 0.25, then all of it where the bounds allow.
+    const vertices = [_][3]f32{
+        .{ -1, -1, 0.25 }, .{ 0, -1, 0.25 }, .{ -1, 1, 0.25 },
+        .{ -1, 1, 0.25 },  .{ 0, -1, 0.25 }, .{ 0, 1, 0.25 },
+        .{ -1, -1, 0.5 },  .{ 1, -1, 0.5 },  .{ -1, 1, 0.5 },
+        .{ -1, 1, 0.5 },   .{ 1, -1, 0.5 },  .{ 1, 1, 0.5 },
+        // Wholly behind the near plane.
+        .{ -1, -1, -0.5 }, .{ 1, -1, -0.5 }, .{ -1, 1, -0.5 },
+        .{ -1, 1, -0.5 },  .{ 1, -1, -0.5 }, .{ 1, 1, -0.5 },
+    };
+    const vertex_buffer, const vertex_bytes = probe.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER) orelse
+        return probe.check(false, "a vertex buffer");
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
+    const offset: u64 = 0;
+    const red: u32 = 0xFFFF_0000;
+    const green: u32 = 0xFF00_FF00;
+    const blue: u32 = 0xFF00_00FF;
+    const clears = [2]facet.ClearValue{ .{ .color = .{ .float32 = .{ 0, 0, 1, 1 } } }, .{ .depth_stencil = .{ .depth = 1 } } };
+    const area = facet.Rect2D{ .extent = .{ .width = side, .height = side } };
+    const pixels, const pitch = probe.mapped(color[0], color_memory) orelse return probe.check(false, "the picture read back");
+
+    if (probe.features.depth_bounds) {
+        const marks = flatPipeline(probe, pass, module.?, layout.?) orelse return probe.check(false, "a pipeline that writes the depth");
+        const in_bounds = pipelineOf(probe, pass, module.?, layout.?, .{ .depth_state = bounded }) orelse
+            return probe.check(false, "a pipeline whose bounds are tested");
+        probe.check(true, "a pipeline whose bounds are tested");
+        const dynamic_states = [1]facet.DynamicState{.depth_bounds};
+        const by_command = pipelineOf(probe, pass, module.?, layout.?, .{ .depth_state = .{ .depth_bounds_test_enable = true }, .dynamic = &dynamic_states }) orelse
+            return probe.check(false, "a pipeline whose bounds a command sets");
+
+        for ([3]struct { ?*facet.Pipeline, ?[2]f32, u32, u32, [*:0]const u8 }{
+            .{ in_bounds, null, green, blue, "drawn where the depth already there is inside the bounds" },
+            .{ by_command, .{ 0, 0.5 }, green, blue, "the same bounds set by a command" },
+            .{ by_command, .{ 0.6, 1 }, red, green, "and the further half with other bounds" },
+        }) |one| {
+            const pipeline, const set, const wanted_left, const wanted_right, const name = one;
+            const commands = probe.record() orelse return probe.check(false, "a recording");
+            fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame, .render_area = area, .clear_value_count = 2, .clear_values = &clears }, .@"inline");
+            fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+            fb.CmdBindPipeline(commands, .graphics, marks);
+            fb.CmdPushConstants(commands, layout.?, facet.SHADER_STAGE_FRAGMENT, 0, 4, &red);
+            fb.CmdDraw(commands, 6, 1, 0, 0);
+            fb.CmdBindPipeline(commands, .graphics, pipeline.?);
+            if (set) |asked| fb.CmdSetDepthBounds(commands, asked[0], asked[1]);
+            fb.CmdPushConstants(commands, layout.?, facet.SHADER_STAGE_FRAGMENT, 0, 4, &green);
+            fb.CmdDraw(commands, 6, 1, 6, 0);
+            fb.CmdEndRenderPass(commands);
+            if (!probe.submit()) return probe.check(false, "the frame submitted");
+            probe.checkEqual(wanted_left, pixelAt(pixels, pitch, 16, 8), name);
+            probe.checkEqual(wanted_right, pixelAt(pixels, pitch, 48, 40), "and the other half of it");
+        }
+    }
+
+    if (probe.features.depth_clamp) {
+        // The viewport's own range, so what a clamped depth is held at is
+        // not the whole of it.
+        const low: f32 = 0.25;
+        const writes = facet.PipelineDepthStencilStateCreateInfo{ .depth_test_enable = true, .depth_write_enable = true, .depth_compare_op = .always };
+        const plain = pipelineOf(probe, pass, module.?, layout.?, .{ .depth_state = writes, .min_depth = low, .max_depth = 0.75 }) orelse
+            return probe.check(false, "a pipeline that cuts at the near plane");
+        const clamped = pipelineOf(probe, pass, module.?, layout.?, .{ .depth_state = writes, .raster = clamping, .min_depth = low, .max_depth = 0.75 }) orelse
+            return probe.check(false, "a pipeline that clamps its depth");
+        probe.check(true, "a pipeline that clamps its depth");
+        for ([2]struct { ?*facet.Pipeline, u32, [*:0]const u8 }{
+            .{ plain, blue, "what lies behind the near plane is cut away without the clamp" },
+            .{ clamped, red, "and drawn with it" },
+        }) |one| {
+            const pipeline, const wanted, const name = one;
+            @memset(back_bytes[0 .. side * side * 2], 0xAA);
+            const commands = probe.record() orelse return probe.check(false, "a recording for the clamp");
+            fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame, .render_area = area, .clear_value_count = 2, .clear_values = &clears }, .@"inline");
+            fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+            fb.CmdBindPipeline(commands, .graphics, pipeline.?);
+            fb.CmdPushConstants(commands, layout.?, facet.SHADER_STAGE_FRAGMENT, 0, 4, &red);
+            fb.CmdDraw(commands, 6, 1, 12, 0);
+            fb.CmdEndRenderPass(commands);
+            if (stores) fb.CmdCopyImageToBuffer(commands, depth[0], .general, read_back, 1, @ptrCast(&whole));
+            if (!probe.submit()) return probe.check(false, "the clamping frame submitted");
+            probe.checkEqual(wanted, pixelAt(pixels, pitch, 16, 8), name);
+            probe.checkEqual(wanted, pixelAt(pixels, pitch, 48, 40), "the same in another tile");
+            // Its depth held at the viewport's nearest where it was
+            // drawn, and the clear's where it was not - on a device that
+            // keeps a depth to read back at all.
+            if (stores) {
+                const nearest: u16 = @intFromFloat(@round(low * 65535));
+                const wanted_depth: u16 = if (wanted == red) nearest else 0xFFFF;
+                probe.checkEqual(wanted_depth, depthAt(back_bytes, 16, 8), "and the depth it left");
+            }
+        }
+    }
+}
+
 fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical: *facet.PhysicalDevice, quiet: bool) struct { u32, u32 } {
     var properties: facet.PhysicalDeviceProperties = undefined;
     fb.GetPhysicalDeviceProperties(physical, &properties);
@@ -1629,6 +1767,7 @@ fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical
     inputChecks(&probe);
     stencilChecks(&probe);
     sampledDepthChecks(&probe);
+    boundsChecks(&probe);
     return .{ probe.passed, probe.failed };
 }
 

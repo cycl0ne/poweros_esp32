@@ -237,4 +237,22 @@ pub const LIBRARY_VERSION = 1;
 /// a texture has to be replaced along with the library, as a driver has:
 /// the struct is laid out by the compiler, and an old binary reads a new
 /// one through the old offsets without a word.
-pub const LIBRARY_REVISION = 39;
+/// 40: the depth clamp and the depth bounds test, the last two of
+/// `PipelineRasterizationStateCreateInfo` and
+/// `PipelineDepthStencilStateCreateInfo` that were refused
+/// (`PhysicalDeviceFeatures.depth_clamp`, `depth_bounds`), with
+/// CmdSetDepthBounds and `DynamicState.depth_bounds` for the two numbers.
+/// A draw that clamps is cut just in front of the eye rather than at the
+/// near plane (`setup.ClipPlane.ahead`), keeps the triangle's own depth
+/// plane - the vertices' depth is no longer bent to 0 to 1
+/// (`setup.project`'s `free`) - and holds each pixel's own inside the
+/// viewport's range as it reads it, so a shadow volume reaching behind the
+/// eye is drawn whole. A draw that tests bounds drops a pixel whose
+/// attachment already holds a depth outside them, before the stencil test
+/// as in Vulkan, and wants only a pass with a depth attachment, not a
+/// depth test of its own. Both go by the way a stencil test goes by, a
+/// pixel at a time, so the fast quad paths are untouched and nothing a
+/// draw without them costs changes. On the way: a draw with a stencil test
+/// whose fragment form may drop a pixel no longer writes the depths it
+/// never gathered.
+pub const LIBRARY_REVISION = 40;

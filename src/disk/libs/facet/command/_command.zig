@@ -368,6 +368,14 @@ pub const SetDepthBias = extern struct {
     slope: f32,
 };
 
+/// CmdSetDepthBounds, for a pipeline whose bounds are dynamic.
+pub const SetDepthBounds = extern struct {
+    pub const op: _stream.Op = .set_depth_bounds;
+    head: Head = .{ .op = op },
+    min: f32,
+    max: f32,
+};
+
 pub const SetLineWidth = extern struct {
     pub const op: _stream.Op = .set_line_width;
     head: Head = .{ .op = op },

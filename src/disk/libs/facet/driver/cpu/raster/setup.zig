@@ -66,6 +66,10 @@ pub fn ClipVertex(comptime count: usize) type {
 /// more is in.
 const ClipPlane = enum(u3) {
     near,
+    /// What the near plane is for a draw that clamps its depth instead of
+    /// cutting at it: far enough in front of the eye for the projection to
+    /// hold, and nothing more (`cut`).
+    ahead,
     left,
     right,
     top,
@@ -74,6 +78,7 @@ const ClipPlane = enum(u3) {
     fn distance(plane: ClipPlane, p: [4]f32, guard: Guard) f32 {
         return switch (plane) {
             .near => p[2],
+            .ahead => p[3] - least_w,
             .left => p[0] - guard.left * p[3],
             .right => guard.right * p[3] - p[0],
             .top => p[1] - guard.top * p[3],
@@ -116,16 +121,33 @@ pub fn outcode(p: [4]f32, guard: Guard) u8 {
 /// The bits of `outcode` that say a vertex has to be cut.
 pub const must_cut: u8 = 16 | 64;
 
+/// The same for a draw that clamps its depth: what lies past the near
+/// plane is drawn, so only the guard band and a w too small make it cut.
+pub const must_cut_clamped: u8 = 64;
+
+/// The bits that, where all three vertices have one of them, say a
+/// triangle is wholly outside and not drawn: the sides of the view and
+/// the two depth planes, or the sides alone where the depth is clamped.
+pub const outside_all: u8 = 63;
+pub const outside_clamped: u8 = 15;
+
 /// The most vertices a triangle cut by every plane can have.
 pub const most_cut = 3 + 5;
 
 /// A triangle cut by the near plane and the guard band: the polygon left,
 /// its vertices into `out`, how many. Fewer than 3 is nothing left.
-pub fn cut(comptime V: type, triangle: [3]V, guard: Guard, out: *[most_cut]V) usize {
+pub fn cut(comptime V: type, triangle: [3]V, guard: Guard, clamped: bool, out: *[most_cut]V) usize {
     var polygon: [most_cut]V = undefined;
     @memcpy(polygon[0..3], &triangle);
     var count: usize = 3;
-    for ([_]ClipPlane{ .near, .left, .right, .top, .bottom }) |plane| {
+    // A draw that clamps its depth is not cut at the near plane: it is cut
+    // just in front of the eye instead, which is as far as the projection
+    // holds, and each pixel's depth is held inside the viewport's range.
+    const planes: [5]ClipPlane = if (clamped)
+        .{ .ahead, .left, .right, .top, .bottom }
+    else
+        .{ .near, .left, .right, .top, .bottom };
+    for (planes) |plane| {
         var kept: [most_cut]V = undefined;
         var made: usize = 0;
         for (0..count) |i| {
@@ -160,13 +182,27 @@ pub const Projected = struct {
 };
 
 pub fn project(p: [4]f32, viewport: Viewport) Projected {
+    return projected(p, viewport, false);
+}
+
+/// The same with the depth left as it comes rather than held to 0 to 1:
+/// what a draw that clamps its depth needs, so that the depth plane is
+/// the triangle's own and each pixel's value is held where it is read
+/// (`Depth.atFree`). A draw of its own, so that the draws that cut at the
+/// near plane - every other one - project without a word of this.
+pub fn projectFree(p: [4]f32, viewport: Viewport) Projected {
+    return projected(p, viewport, true);
+}
+
+inline fn projected(p: [4]f32, viewport: Viewport, comptime free: bool) Projected {
     const inverse_w = 1 / @max(p[3], least_w);
     const x = viewport.x + (p[0] * inverse_w + 1) * viewport.width / 2;
     const y = viewport.y + (p[1] * inverse_w + 1) * viewport.height / 2;
+    const z = p[2] * inverse_w;
     return .{
         .x = @intFromFloat(@round(x * 256)),
         .y = @intFromFloat(@round(y * 256)),
-        .z = std.math.clamp(p[2] * inverse_w, 0, 1),
+        .z = if (free) std.math.clamp(z, -4, 4) else std.math.clamp(z, 0, 1),
         .inverse_w = inverse_w,
     };
 }
@@ -366,5 +402,14 @@ pub const Depth = struct {
     pub inline fn at(depth: Depth, x: u32, y: u32) i64 {
         const value = depth.plane.at(@floatFromInt(x), @floatFromInt(y));
         return @intFromFloat(std.math.clamp(value, 0, units + 0.5) * (1 << fraction));
+    }
+
+    /// The same without holding it inside the depth's range: what a draw
+    /// that clamps its depth walks, each pixel's own value held inside the
+    /// viewport's range instead, where it is read. Held wide enough for the
+    /// walk's fixed point to stay well inside 64 bits.
+    pub inline fn atFree(depth: Depth, x: u32, y: u32) i64 {
+        const value = depth.plane.at(@floatFromInt(x), @floatFromInt(y));
+        return @intFromFloat(std.math.clamp(value, -4 * units, 4 * units) * (1 << fraction));
     }
 };
