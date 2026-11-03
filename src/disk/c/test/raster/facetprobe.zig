@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.7 (03.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.8 (03.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -1748,6 +1748,126 @@ fn boundsChecks(probe: *Probe) void {
     }
 }
 
+// --- 1.41: a compute group of many invocations -------------------------------
+
+/// A group of sixteen invocations: each writes its own number in the group
+/// into the memory they share, and then - where a barrier would stand,
+/// between the two loops of the one call the group gets - each is copied out
+/// to where its number in the dispatch says.
+const Grouped = struct {
+    fn run(groups: *const facet.shader.Groups) callconv(.c) void {
+        const out = groups.resources.storage(u32, 0, 0) orelse return;
+        const held = groups.sharedAs(u32, 64) orelse return;
+        for (0..groups.local[1]) |y| for (0..groups.local[0]) |x| {
+            const local = [3]u32{ @intCast(x), @intCast(y), 0 };
+            held[groups.localIndex(local)] = groups.localIndex(local) + 1;
+        };
+        for (0..groups.local[1]) |y| for (0..groups.local[0]) |x| {
+            const local = [3]u32{ @intCast(x), @intCast(y), 0 };
+            const at = groups.globalInvocation(local);
+            const where = at[0] + at[1] * groups.local[0] * groups.count[0];
+            if (where < out.len) out[where] = held[groups.localIndex(local)] + groups.invocations() * 100;
+        };
+    }
+
+    /// An entry that asked for neither: one invocation a group, and no
+    /// shared memory to be had.
+    fn alone(groups: *const facet.shader.Groups) callconv(.c) void {
+        const out = groups.resources.storage(u32, 0, 0) orelse return;
+        if (out.len < 52) return;
+        out[48] = groups.invocations();
+        out[49] = groups.shared_bytes;
+        out[50] = if (groups.sharedAs(u32, 1) == null) 1 else 0;
+        out[51] = groups.localIndex(.{ 0, 0, 0 }) + 1;
+    }
+
+    const entries = [_]facet.shader.Entry{
+        facet.shader.computeGroup("main", &run, .{ 8, 2, 1 }, 256),
+        facet.shader.compute("alone", &alone),
+        // Refused: more invocations a group than the device holds, and more
+        // shared memory than it has.
+        facet.shader.computeGroup("crowd", &run, .{ 64, 64, 1 }, 0),
+        facet.shader.computeGroup("greedy", &run, .{ 1, 1, 1 }, 60 * 1024),
+    };
+    const code = facet.shader.Code{ .entry_count = entries.len, .entries = &entries };
+};
+
+fn groupChecks(probe: *Probe) void {
+    const fb = probe.fb;
+    const device = probe.device.?;
+    defer probe.give();
+
+    // What the entry carries is what the library goes by.
+    probe.checkEqual(8, Grouped.entries[0].localSize()[0], "the entry carries its group's size");
+    probe.checkEqual(1024, Grouped.entries[0].sharedBytes(), "and the bytes it shares, a whole KiB of them");
+    probe.checkEqual(1, Grouped.entries[1].localSize()[1], "an entry that asked for nothing holds one invocation");
+
+    var properties: facet.PhysicalDeviceProperties = undefined;
+    fb.GetPhysicalDeviceProperties(probe.physical, &properties);
+    const limits = &properties.limits;
+    probe.check(limits.max_compute_work_group_size[0] >= 8 and limits.max_compute_work_group_size[1] >= 2, "the limits say how large a group may be");
+    probe.check(limits.max_compute_work_group_invocations >= 16, "and how many invocations it may hold");
+    probe.check(limits.max_compute_shared_memory_size >= 1024, "and how much they may share");
+
+    var module: ?*facet.ShaderModule = null;
+    if (fb.CreateShaderModule(device, &.{ .code = &Grouped.code }, &module) != .success) return probe.check(false, "the shader module");
+    _ = Probe.keep(&probe.modules, module);
+    const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .storage_buffer, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_COMPUTE };
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    if (fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &set_layout) != .success) return probe.check(false, "a set layout of a storage buffer");
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    var layout: ?*facet.PipelineLayout = null;
+    if (fb.CreatePipelineLayout(device, &.{ .set_layout_count = 1, .set_layouts = @ptrCast(&set_layout) }, &layout) != .success) return probe.check(false, "the pipeline layout");
+    _ = Probe.keep(&probe.layouts, layout);
+    var pool: ?*facet.DescriptorPool = null;
+    if (fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool) != .success) return probe.check(false, "a descriptor pool");
+    defer fb.DestroyDescriptorPool(device, pool);
+    var sets: [1]?*facet.DescriptorSet = undefined;
+    if (fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &sets) != .success) return probe.check(false, "a descriptor set");
+    const storage, const storage_bytes = probe.buffer(256, facet.BUFFER_USAGE_STORAGE_BUFFER) orelse return probe.check(false, "a buffer the function writes");
+    const buffer_info = facet.DescriptorBufferInfo{ .buffer = storage, .range = facet.WHOLE_SIZE };
+    const write = facet.WriteDescriptorSet{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .storage_buffer, .descriptor_count = 1, .buffer_info = @ptrCast(&buffer_info) };
+    fb.UpdateDescriptorSets(device, 1, @ptrCast(&write), 0, null);
+    const out: [*]u32 = @ptrCast(@alignCast(storage_bytes));
+
+    const names = [2][*:0]const u8{ "main", "alone" };
+    var infos: [names.len]facet.ComputePipelineCreateInfo = undefined;
+    for (&infos, names) |*info, name| info.* = .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.?, .name = name }, .layout = layout.? };
+    var pipelines: [names.len]?*facet.Pipeline = undefined;
+    if (fb.CreateComputePipelines(device, null, names.len, &infos, &pipelines) != .success) return probe.check(false, "the compute pipelines");
+    for (pipelines) |made| _ = Probe.keep(&probe.pipelines, made);
+
+    // A group over the device's limits is refused, not cut to what fits.
+    for ([2][*:0]const u8{ "crowd", "greedy" }) |name| {
+        var refused: [1]?*facet.Pipeline = undefined;
+        const over = facet.ComputePipelineCreateInfo{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.?, .name = name }, .layout = layout.? };
+        probe.check(fb.CreateComputePipelines(device, null, 1, @ptrCast(&over), &refused) == .error_feature_not_present, "a group over the limits refused");
+        probe.check(refused[0] == null, "and nothing given back for it");
+    }
+
+    // Two groups of sixteen invocations: thirty-two in all, each writing
+    // where its own number in the dispatch says.
+    @memset(storage_bytes[0..256], 0);
+    const commands = probe.record() orelse return probe.check(false, "a recording");
+    fb.CmdBindPipeline(commands, .compute, pipelines[0].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout.?, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 2, 1, 1);
+    fb.CmdBindPipeline(commands, .compute, pipelines[1].?);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    if (!probe.submit()) return probe.check(false, "the dispatches submitted");
+    var right = true;
+    for (0..2) |y| for (0..16) |x| {
+        const wanted: u32 = @intCast(x % 8 + 8 * y + 1 + 1600);
+        right = right and out[x + 16 * y] == wanted;
+    };
+    probe.check(right, "every invocation of every group ran, through the memory they share");
+    probe.checkEqual(0, out[32], "and none wrote past them");
+    probe.checkEqual(1, out[48], "an entry that asked for nothing is one invocation a group");
+    probe.checkEqual(0, out[49], "with nothing shared");
+    probe.checkEqual(1, out[50], "and nothing to be had where none was asked for");
+    probe.checkEqual(1, out[51], "its one invocation is the group's first");
+}
+
 fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical: *facet.PhysicalDevice, quiet: bool) struct { u32, u32 } {
     var properties: facet.PhysicalDeviceProperties = undefined;
     fb.GetPhysicalDeviceProperties(physical, &properties);
@@ -1768,6 +1888,7 @@ fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical
     stencilChecks(&probe);
     sampledDepthChecks(&probe);
     boundsChecks(&probe);
+    groupChecks(&probe);
     return .{ probe.passed, probe.failed };
 }
 

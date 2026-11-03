@@ -120,8 +120,8 @@ pub const Pipeline = struct {
     device: *Device,
     /// What its driver made of it (make_pipeline).
     driver: ?*anyopaque = null,
-    /// A compute pipeline: nothing else here but `device` and `driver` is
-    /// set, and no driver makes anything of it.
+    /// A compute pipeline: nothing else here but `device`, `driver`,
+    /// `local` and `shared` is set, and no driver makes anything of it.
     compute: ?shader.ComputeFn = null,
     tessellated: ?Tessellated = null,
     vertex: shader.VertexFn,
@@ -181,6 +181,12 @@ pub const Pipeline = struct {
     /// The viewport and the scissor, or null where commands set them.
     viewport: ?facet.Viewport,
     scissor: ?facet.Rect2D,
+    /// A compute pipeline's workgroup, as its entry declared it: the
+    /// invocations a group holds and the bytes they share
+    /// (`shader.computeGroup`). At the end, where it is out of the way of
+    /// what a draw reads.
+    local: [3]u32 = .{ 1, 1, 1 },
+    shared: u32 = 0,
 };
 
 /// How the colour attachment a part draws is mixed with what is there:

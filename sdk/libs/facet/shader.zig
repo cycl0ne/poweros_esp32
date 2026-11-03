@@ -59,7 +59,9 @@ pub const Entry = extern struct {
     /// comes to the fragment function has to agree with it. Above them, a
     /// fragment function's fixed form, if it has one (`Fixed`): 0 for one of
     /// the program's own; or an evaluation function's way of tessellating
-    /// (`Tessellation`).
+    /// (`Tessellation`). A compute function's whole word is its workgroup
+    /// instead (`localSize`, `sharedBytes`): 0 for one invocation a group
+    /// and nothing shared, which is what `shader.compute` makes.
     varyings: u32,
 
     /// The floats it hands on, or takes.
@@ -75,6 +77,23 @@ pub const Entry = extern struct {
     /// An evaluation function's way of tessellating.
     pub fn tessellation(entry: *const Entry) Tessellation {
         return .{ .domain = @enumFromInt((entry.varyings >> 8) & 3), .clockwise = entry.varyings & (1 << 10) != 0 };
+    }
+
+    /// A compute function's invocations along each axis, which is what
+    /// `Groups.local` hands it: 1, 1, 1 for a `shader.compute` entry.
+    /// (Since 1.41.)
+    pub fn localSize(entry: *const Entry) [3]u32 {
+        return .{
+            (entry.varyings & 0x3FF) + 1,
+            ((entry.varyings >> 10) & 0x3FF) + 1,
+            ((entry.varyings >> 20) & 0x3F) + 1,
+        };
+    }
+
+    /// The bytes a compute function's group shares between its invocations
+    /// (`Groups.shared`), a whole KiB; 0 where it shares none. (Since 1.41.)
+    pub fn sharedBytes(entry: *const Entry) u32 {
+        return ((entry.varyings >> 26) & 0x3F) * 1024;
     }
 };
 
@@ -110,9 +129,34 @@ pub fn evaluation(name: [*:0]const u8, function: EvaluationFn, varyings: u32, wa
     };
 }
 
-/// An entry for a compute function.
+/// An entry for a compute function, of one invocation a group and nothing
+/// shared: `computeGroup` is the one for a group of more.
 pub fn compute(name: [*:0]const u8, function: ComputeFn) Entry {
     return .{ .name = name, .stage = facet.SHADER_STAGE_COMPUTE, .function = function, .varyings = 0 };
+}
+
+/// An entry for a compute function of `local` invocations a group - along x,
+/// y and z - which share `shared` bytes of memory: what `Groups.local` and
+/// `Groups.shared` give it as it runs. The function makes the invocations
+/// itself, in the one call it gets for the group.
+///
+/// An axis under 1 counts as 1; one over what the entry holds - 1024, 1024,
+/// 64 - and bytes over 64512 come out as the most it holds, and the bytes are
+/// rounded up to a whole KiB. A pipeline refuses a group over the device's
+/// limits (`PhysicalDeviceLimits.max_compute_work_group_size`,
+/// `max_compute_work_group_invocations`,
+/// `max_compute_shared_memory_size`). (Since 1.41.)
+pub fn computeGroup(name: [*:0]const u8, function: ComputeFn, local: [3]u32, shared: u32) Entry {
+    const x: u32 = @min(@max(local[0], 1), 1024) - 1;
+    const y: u32 = @min(@max(local[1], 1), 1024) - 1;
+    const z: u32 = @min(@max(local[2], 1), 64) - 1;
+    const blocks: u32 = @min((shared + 1023) / 1024, 63);
+    return .{
+        .name = name,
+        .stage = facet.SHADER_STAGE_COMPUTE,
+        .function = function,
+        .varyings = x | (y << 10) | (z << 20) | (blocks << 26),
+    };
 }
 
 /// What a fixed form of fragment function does.
@@ -703,16 +747,66 @@ pub const EvaluationFn = *const fn (evaluations: *const Evaluations) callconv(.c
 
 // --- the compute function ---------------------------------------------------
 
-/// What a compute function is given: a group, of as many invocations as it
-/// makes of it. It is called once for each group, the groups in no order and
-/// on any of the cores at once, so no two may write the same memory, and on a
-/// worker's stack: keep what it puts there small.
+/// What a compute function is given: one group, which it makes as many
+/// invocations of as `local` says. It is called once for each group, the
+/// groups in no order and on any of the cores at once, so no two groups may
+/// write the same memory, and on a worker's stack: keep what it puts there
+/// small, and what the invocations share in `shared`.
+///
+/// There is nothing between the invocations of a group but the order the
+/// function runs them in: a barrier is the point between two loops over them
+/// inside the one call, and there are no subgroups.
 pub const Groups = extern struct {
     /// This group's number along each axis.
     group: [3]u32,
     /// How many groups the dispatch has along each.
     count: [3]u32,
     resources: *const Resources,
+    /// The memory this group's invocations share, `shared_bytes` of it, for
+    /// this call alone: null where the function's entry asked for none, or
+    /// where the library could not get it. It is this worker's own, so no
+    /// other group is in it while this one runs; it is cleared before the
+    /// dispatch's first group on that worker, and after that it holds what
+    /// the group before it left. `sharedAs` is how to read it as values.
+    /// (Since 1.41.)
+    shared: ?[*]u8 = null,
+    /// The invocations this group holds along each axis, as the function's
+    /// entry declared them (`shader.computeGroup`): 1, 1, 1 for a
+    /// `shader.compute` entry. (Since 1.41.)
+    local: [3]u32 = .{ 1, 1, 1 },
+    /// The bytes `shared` holds. (Since 1.41.)
+    shared_bytes: u32 = 0,
+
+    /// The invocations the group holds: `local` multiplied out. (Since 1.41.)
+    pub inline fn invocations(groups: *const Groups) u32 {
+        return groups.local[0] * groups.local[1] * groups.local[2];
+    }
+
+    /// Invocation `local`'s number in its group, x fastest, as GLSL's
+    /// gl_LocalInvocationIndex. (Since 1.41.)
+    pub inline fn localIndex(groups: *const Groups, local: [3]u32) u32 {
+        return local[0] + groups.local[0] * (local[1] + groups.local[1] * local[2]);
+    }
+
+    /// Invocation `local`'s number in the dispatch, as GLSL's
+    /// gl_GlobalInvocationID: the group's own number times the group's size,
+    /// plus the invocation's. (Since 1.41.)
+    pub inline fn globalInvocation(groups: *const Groups, local: [3]u32) [3]u32 {
+        var out: [3]u32 = undefined;
+        inline for (&out, 0..) |*o, k| o.* = groups.group[k] * groups.local[k] + local[k];
+        return out;
+    }
+
+    /// `count` values of T in the group's shared memory: null where there is
+    /// none, where it has not got room for them, or where it is not aligned
+    /// for T, which it is for anything of up to 16 bytes. (Since 1.41.)
+    pub inline fn sharedAs(groups: *const Groups, comptime T: type, count: usize) ?[]T {
+        const bytes = groups.shared orelse return null;
+        if (count * @sizeOf(T) > groups.shared_bytes) return null;
+        if (@intFromPtr(bytes) % @alignOf(T) != 0) return null;
+        const values: [*]T = @ptrCast(@alignCast(bytes));
+        return values[0..count];
+    }
 };
 
 pub const ComputeFn = *const fn (groups: *const Groups) callconv(.c) void;

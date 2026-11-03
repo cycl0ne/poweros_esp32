@@ -1293,6 +1293,170 @@ test "a compute function writes a buffer, group by group, apart from what draws 
     try testing.expectEqual(@as(u32, 10) * 2 + 7, out[10]);
 }
 
+test "a compute group of many invocations, which share memory" {
+    const Reduce = struct {
+        /// A group of eight invocations, each squaring its own number in the
+        /// dispatch: the squares go into the memory the group shares, and
+        /// then - where a barrier would stand, between the two loops of the
+        /// one call - they are added up.
+        fn run(groups: *const shader.Groups) callconv(.c) void {
+            const out = groups.resources.storage(u32, 0, 0).?;
+            const held = groups.sharedAs(u32, 8) orelse return;
+            for (0..groups.local[0]) |k| {
+                const at = groups.globalInvocation(.{ @intCast(k), 0, 0 });
+                held[groups.localIndex(.{ @intCast(k), 0, 0 })] = at[0] * at[0];
+            }
+            var sum: u32 = 0;
+            for (held[0..groups.local[0]]) |value| sum += value;
+            out[groups.group[0]] = sum;
+            out[16 + groups.group[0]] = groups.invocations();
+        }
+
+        /// An entry that asked for nothing: one invocation a group, and no
+        /// shared memory to be had.
+        fn alone(groups: *const shader.Groups) callconv(.c) void {
+            const out = groups.resources.storage(u32, 0, 0).?;
+            out[32] = groups.invocations();
+            out[33] = groups.shared_bytes;
+            out[34] = if (groups.sharedAs(u32, 1) == null) 1 else 0;
+            out[35] = groups.localIndex(.{ 0, 0, 0 }) + 1;
+        }
+
+        /// What the shared memory holds before anything wrote it, and how far
+        /// it goes. One group a dispatch, so what it finds is what the
+        /// dispatch began with and not another group's leavings.
+        fn peek(groups: *const shader.Groups) callconv(.c) void {
+            const out = groups.resources.storage(u32, 0, 0).?;
+            const held = groups.sharedAs(u32, 256) orelse return;
+            var sum: u32 = 0;
+            for (held) |value| sum += value;
+            out[48] = sum + 1;
+            out[49] = if (groups.sharedAs(u32, 257) == null) 1 else 0;
+            held[0] = 0xDEAD;
+        }
+
+        const entries = [_]shader.Entry{
+            shader.computeGroup("main", &run, .{ 8, 1, 1 }, 32),
+            shader.compute("alone", &alone),
+            shader.computeGroup("peek", &peek, .{ 1, 1, 1 }, 1024),
+            // Refused: more invocations a group than the device holds, and
+            // more shared memory than it has.
+            shader.computeGroup("crowd", &run, .{ 1024, 1024, 64 }, 0),
+            shader.computeGroup("greedy", &run, .{ 1, 1, 1 }, 32 * 1024),
+        };
+        const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
+    };
+
+    // What the entry carries, which is all the library has to go by.
+    try testing.expectEqual([3]u32{ 8, 1, 1 }, Reduce.entries[0].localSize());
+    try testing.expectEqual(@as(u32, 1024), Reduce.entries[0].sharedBytes());
+    try testing.expectEqual([3]u32{ 1, 1, 1 }, Reduce.entries[1].localSize());
+    try testing.expectEqual(@as(u32, 0), Reduce.entries[1].sharedBytes());
+    try testing.expectEqual([3]u32{ 1024, 1024, 64 }, Reduce.entries[3].localSize());
+    try testing.expectEqual(@as(u32, 32 * 1024), Reduce.entries[4].sharedBytes());
+    // An axis under one is one, and one over what it holds is what it holds.
+    const cut = shader.computeGroup("cut", &Reduce.alone, .{ 0, 4096, 4096 }, 1);
+    try testing.expectEqual([3]u32{ 1, 1024, 64 }, cut.localSize());
+    try testing.expectEqual(@as(u32, 1024), cut.sharedBytes());
+
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+
+    var properties: facet.PhysicalDeviceProperties = undefined;
+    fb.GetPhysicalDeviceProperties(bench.physical, &properties);
+    try testing.expectEqual([3]u32{ 1024, 1024, 64 }, properties.limits.max_compute_work_group_size);
+    try testing.expectEqual(@as(u32, 1024), properties.limits.max_compute_work_group_invocations);
+    try testing.expectEqual(@as(u32, 16 * 1024), properties.limits.max_compute_shared_memory_size);
+
+    const code = try module(&bench, &Reduce.code);
+    defer fb.DestroyShaderModule(device, code);
+    const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .storage_buffer, .stage_flags = facet.SHADER_STAGE_COMPUTE };
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &set_layout));
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    const layout = try pipelineLayout(&bench, &.{set_layout.?}, 0);
+    defer fb.DestroyPipelineLayout(device, layout);
+    var pool: ?*facet.DescriptorPool = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool));
+    defer fb.DestroyDescriptorPool(device, pool);
+    var sets: [1]?*facet.DescriptorSet = undefined;
+    try testing.expectEqual(facet.Result.success, fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &sets));
+    const out_buffer, const out_bytes = try bench.buffer(64 * @sizeOf(u32), facet.BUFFER_USAGE_STORAGE_BUFFER);
+    const buffer_info = facet.DescriptorBufferInfo{ .buffer = out_buffer, .range = facet.WHOLE_SIZE };
+    const write = facet.WriteDescriptorSet{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .storage_buffer, .descriptor_count = 1, .buffer_info = @ptrCast(&buffer_info) };
+    fb.UpdateDescriptorSets(device, 1, @ptrCast(&write), 0, null);
+    const out: [*]u32 = @ptrCast(@alignCast(out_bytes));
+    @memset(out[0..64], 0);
+
+    const names = [_][*:0]const u8{ "main", "alone", "peek" };
+    var infos: [names.len]facet.ComputePipelineCreateInfo = undefined;
+    for (&infos, names) |*info, name| info.* = .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = code, .name = name }, .layout = layout };
+    var pipelines: [names.len]?*facet.Pipeline = undefined;
+    try testing.expectEqual(facet.Result.success, fb.CreateComputePipelines(device, null, names.len, &infos, &pipelines));
+    defer for (pipelines) |made| fb.DestroyPipeline(device, made);
+
+    // A group over the device's limits is refused rather than cut to it.
+    var refused: [1]?*facet.Pipeline = undefined;
+    for ([_][*:0]const u8{ "crowd", "greedy" }) |name| {
+        const over = facet.ComputePipelineCreateInfo{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = code, .name = name }, .layout = layout };
+        try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateComputePipelines(device, null, 1, @ptrCast(&over), &refused));
+        try testing.expectEqual(@as(?*facet.Pipeline, null), refused[0]);
+    }
+
+    // Two groups of eight invocations, and what a statistics query counts is
+    // the invocations: the groups times what each holds.
+    const statistics = try queryPool(&bench, .pipeline_statistics, 1, facet.QUERY_PIPELINE_STATISTIC_COMPUTE_SHADER_INVOCATIONS);
+    defer fb.DestroyQueryPool(device, statistics);
+    var commands = try bench.record();
+    fb.CmdResetQueryPool(commands, statistics, 0, 1);
+    fb.CmdBeginQuery(commands, statistics, 0, 0);
+    fb.CmdBindPipeline(commands, .compute, pipelines[0].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 2, 1, 1);
+    fb.CmdEndQuery(commands, statistics, 0);
+    try bench.submit();
+    // 0 to 7 squared and added up, then 8 to 15.
+    try testing.expectEqual(@as(u32, 140), out[0]);
+    try testing.expectEqual(@as(u32, 1100), out[1]);
+    try testing.expectEqual(@as(u32, 0), out[2]);
+    try testing.expectEqual(@as(u32, 8), out[16]);
+    try testing.expectEqual(@as(u32, 8), out[17]);
+    try testing.expectEqual(@as(u64, 16), try queryValue(&bench, statistics, 0));
+
+    // An entry that asked for nothing: one invocation, nothing shared.
+    commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, pipelines[1].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    try bench.submit();
+    try testing.expectEqual(@as(u32, 1), out[32]);
+    try testing.expectEqual(@as(u32, 0), out[33]);
+    try testing.expectEqual(@as(u32, 1), out[34]);
+    try testing.expectEqual(@as(u32, 1), out[35]);
+
+    // The shared memory a dispatch starts with is cleared, and it goes as far
+    // as the entry asked and no further.
+    commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, pipelines[2].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    try bench.submit();
+    try testing.expectEqual(@as(u32, 1), out[48]);
+    try testing.expectEqual(@as(u32, 1), out[49]);
+
+    // And the dispatch after it starts with it cleared again, whatever the
+    // one before left in it.
+    out[48] = 0;
+    commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, pipelines[2].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    try bench.submit();
+    try testing.expectEqual(@as(u32, 1), out[48]);
+}
+
 test "a storage image written through by a compute function and by a fragment function, and read back as a texture" {
     const Paint = struct {
         /// Each group writes one texel of the image bound at set 0 binding

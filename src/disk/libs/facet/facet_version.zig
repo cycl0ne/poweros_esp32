@@ -255,4 +255,24 @@ pub const LIBRARY_VERSION = 1;
 /// draw without them costs changes. On the way: a draw with a stencil test
 /// whose fragment form may drop a pixel no longer writes the depths it
 /// never gathered.
-pub const LIBRARY_REVISION = 40;
+/// 41: a compute group of many invocations, which share memory. A compute
+/// entry declares its workgroup (`shader.computeGroup`): the invocations
+/// along each axis and the bytes they share, in the word a vertex entry
+/// keeps its varyings in, so no struct moved. The call gets them as
+/// `shader.Groups.local` and `shader.Groups.shared`, with
+/// `localIndex`, `globalInvocation`, `invocations` and `sharedAs` to read
+/// them by. A group is still one call of the function, which makes the
+/// invocations itself: a barrier is the point between two loops over them
+/// inside that call, and there are no subgroups. The shared memory is a
+/// block for each worker of the dispatch, found as it starts and given
+/// back as it ends, cleared for the first group a worker takes; a group
+/// has it to itself while it runs. The limits say what a group may hold -
+/// 1024 by 1024 by 64, 1024 invocations in all, 16 KiB shared
+/// (`PhysicalDeviceLimits.max_compute_work_group_size`,
+/// `max_compute_work_group_invocations`,
+/// `max_compute_shared_memory_size`) - and a pipeline of a group over them
+/// is refused rather than cut to fit. A statistics query now counts the
+/// invocations rather than the groups, which for a `shader.compute` entry
+/// is the same number. Both devices have it: a compute function has always
+/// run on the cores.
+pub const LIBRARY_REVISION = 41;

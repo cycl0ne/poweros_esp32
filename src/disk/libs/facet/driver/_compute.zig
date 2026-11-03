@@ -4,6 +4,7 @@
 
 const std = @import("std");
 const sdk = @import("sdk");
+const exec = sdk.exec;
 const facet = sdk.facet;
 const shader = facet.shader;
 const ExecBase = sdk.interface.exec.ExecBase;
@@ -18,14 +19,26 @@ const most_parts = 16;
 const Job = struct {
     function: shader.ComputeFn,
     count: [3]u32,
+    /// The invocations a group holds, as the pipeline's entry declared them:
+    /// the function makes them itself, in the one call it gets.
+    local: [3]u32,
     total: u64,
     resources: *const shader.Resources,
+    /// What a group's invocations share: `shared_bytes` for each worker, one
+    /// after the other. Null where the function shares nothing, or where the
+    /// memory could not be found.
+    shared: ?[*]u8 = null,
+    shared_bytes: u32 = 0,
 };
 
 fn part(data: ?*anyopaque, number: u32, parts: u32) callconv(.c) void {
     const job: *const Job = @ptrCast(@alignCast(data.?));
     var at = job.total * number / parts;
     const end = job.total * (number + 1) / parts;
+    // This worker's own shared memory: no other worker is in it, so a group
+    // finds what the group before it on this worker left, and the first
+    // finds it cleared.
+    const shared = if (job.shared) |block| block + number * job.shared_bytes else null;
     while (at < end) : (at += 1) {
         const plane = @as(u64, job.count[0]) * job.count[1];
         const in_plane = at % plane;
@@ -33,6 +46,9 @@ fn part(data: ?*anyopaque, number: u32, parts: u32) callconv(.c) void {
             .group = .{ @intCast(in_plane % job.count[0]), @intCast(in_plane / job.count[0]), @intCast(at / plane) },
             .count = job.count,
             .resources = job.resources,
+            .shared = shared,
+            .local = job.local,
+            .shared_bytes = if (shared == null) 0 else job.shared_bytes,
         };
         job.function(&groups);
     }
@@ -41,14 +57,28 @@ fn part(data: ?*anyopaque, number: u32, parts: u32) callconv(.c) void {
 /// The groups `count` says, of `pipeline`'s function; nothing if there is no
 /// pipeline, or none along an axis. Back once all have run.
 pub fn dispatch(sys: *ExecBase, pipeline: ?*const Pipeline, resources: *const shader.Resources, count: [3]u32, counters: *const _query.Counters) void {
-    const function = (pipeline orelse return).compute orelse return;
+    const made = pipeline orelse return;
+    const function = made.compute orelse return;
     const total = @as(u64, count[0]) * count[1] * count[2];
     if (total == 0) return;
-    // A compute function is called once for each group, so the calls a
-    // statistics query counts are the groups.
-    _query.add(counters.compute_invocations, total);
-    var job = Job{ .function = function, .count = count, .total = total, .resources = resources };
-    _ = sys.ShareWork(&part, &job, @intCast(@min(total, most_parts)));
+    const parts: u32 = @intCast(@min(total, most_parts));
+    // A compute function is called once for each group, whatever a group
+    // holds; what a statistics query counts is the invocations, which is the
+    // groups times what each holds.
+    const holds = @as(u64, made.local[0]) * made.local[1] * made.local[2];
+    _query.add(counters.compute_invocations, total * holds);
+    var job = Job{ .function = function, .count = count, .local = made.local, .total = total, .resources = resources };
+    // The memory a group's invocations share: a block for each worker, given
+    // back as the dispatch ends. Memory that could not be found leaves the
+    // groups to run with none rather than not at all.
+    if (made.shared > 0) {
+        if (sys.AllocVec(@as(usize, made.shared) * parts, exec.MEMF_CLEAR)) |block| {
+            job.shared = @ptrCast(block);
+            job.shared_bytes = made.shared;
+        }
+    }
+    defer if (job.shared) |block| sys.FreeVec(block);
+    _ = sys.ShareWork(&part, &job, parts);
 }
 
 /// A dispatch whose numbers are in a buffer: none where it ends before them.

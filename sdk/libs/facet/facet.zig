@@ -197,6 +197,14 @@ pub const PhysicalDeviceLimits = extern struct {
     /// has none (`PhysicalDeviceFeatures.dynamic_descriptors`). A field
     /// added at the end, so that none already there moves.
     max_descriptor_set_dynamic_buffers: u32 = 0,
+    /// A compute workgroup: the invocations a compute function's entry may
+    /// declare along each axis (`shader.computeGroup`), the invocations a
+    /// group may hold in all, and the bytes its invocations may share
+    /// (`shader.Groups.shared`). All zero where the device runs no compute
+    /// function. Fields added at the end, so that none already there moves.
+    max_compute_work_group_size: [3]u32 = .{ 0, 0, 0 },
+    max_compute_work_group_invocations: u32 = 0,
+    max_compute_shared_memory_size: u32 = 0,
 };
 
 /// The longest name a device has, its NUL included.
@@ -967,7 +975,9 @@ pub const QUERY_PIPELINE_STATISTIC_CLIPPING_PRIMITIVES: u32 = 1 << 6;
 pub const QUERY_PIPELINE_STATISTIC_FRAGMENT_SHADER_INVOCATIONS: u32 = 1 << 7;
 pub const QUERY_PIPELINE_STATISTIC_TESSELLATION_CONTROL_SHADER_PATCHES: u32 = 1 << 8;
 pub const QUERY_PIPELINE_STATISTIC_TESSELLATION_EVALUATION_SHADER_INVOCATIONS: u32 = 1 << 9;
-/// Calls of a compute function: one for each workgroup, which is what a
+/// Invocations of a compute function: the dispatch's workgroups times the
+/// invocations each holds (`shader.Groups.invocations`), which for a
+/// `shader.compute` entry is one for each workgroup, since that is what a
 /// compute function is called with here (`shader.Groups`).
 pub const QUERY_PIPELINE_STATISTIC_COMPUTE_SHADER_INVOCATIONS: u32 = 1 << 10;
 

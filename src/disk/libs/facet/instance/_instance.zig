@@ -48,6 +48,15 @@ pub const max_image_array_layers = 256;
 /// (`texture.most_taps` is what the sampling itself will do).
 pub const max_sampler_anisotropy = 16;
 
+/// A compute workgroup, which is what a compute function's entry holds room
+/// for: the invocations it may declare along each axis, the invocations of a
+/// group in all - a group runs on one core, one call of the function, so this
+/// is how long a loop it is - and the bytes a group's invocations share,
+/// which the library finds for each worker of a dispatch.
+pub const max_compute_work_group_size = [3]u32{ 1024, 1024, 64 };
+pub const max_compute_work_group_invocations = 1024;
+pub const max_compute_shared_memory_size = 16 * 1024;
+
 /// What a timestamp's unit is in nanoseconds: the E-clock as the library
 /// reads it is microseconds (facet_base.now).
 pub const timestamp_period_ns = 1000;

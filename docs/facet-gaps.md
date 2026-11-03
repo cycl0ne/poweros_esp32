@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.40**, so that a program need not find out by failing. It covers the API.
+1.41**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -466,11 +466,38 @@ Of textures:
 ## Compute, as it stands
 
 A compute function is called once for each **workgroup**, not once for each
-invocation (`shader.Groups`). So there is no local invocation number, no
-memory shared within a group, no barrier and no subgroups; a group runs on
-a worker's stack, on any core, in no order. It writes storage buffers and,
-since 1.31, storage images (below). Compute and tessellation run on the
-cores whichever device the pipeline was made on.
+invocation (`shader.Groups`). Since 1.41 a group holds as many invocations
+as the function's entry declares - `shader.computeGroup(name, function,
+local, shared)` - and the call is given them to make itself: `Groups.local`
+is the group's size, with `localIndex`, `globalInvocation` and
+`invocations` to number them by, and `Groups.shared` the bytes they share,
+read as values by `sharedAs`. So a reduction over a group, or a tile held
+in shared memory, is written the way it is in GLSL, as a loop.
+
+What that does not bring:
+
+- **No barrier.** The invocations of a group run in whatever order the
+  function loops over them, one after the other in the one call, so a
+  barrier is the point *between two loops* inside that call. There is no
+  `CmdPipelineBarrier` equivalent for them, and none is needed.
+- **No subgroups**: no ballot, no shuffle, no subgroup size. A group is a
+  loop on one core, not a warp.
+- **Nothing shared between groups.** The shared block is a worker's own:
+  cleared for the first group a worker takes and holding what the group
+  before it left after that, so a group that reads what it has not written
+  reads leavings. Groups still run in no order, on any core, and no two may
+  write the same memory.
+- **The limits are small by Vulkan's standards**: 1024 by 1024 by 64
+  invocations along the axes, 1024 in a group, and 16 KiB shared
+  (`PhysicalDeviceLimits.max_compute_work_group_size`,
+  `max_compute_work_group_invocations`,
+  `max_compute_shared_memory_size`). A group of more is refused as the
+  pipeline is made (`error_feature_not_present`). The group count a
+  dispatch asks for is not bounded.
+
+A group runs on a worker's stack, so keep what it puts there small. It
+writes storage buffers and, since 1.31, storage images (below). Compute and
+tessellation run on the cores whichever device the pipeline was made on.
 
 Tessellation divides evenly only, has no point mode, and its control
 function sets nothing but the levels.

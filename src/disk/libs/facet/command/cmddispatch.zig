@@ -29,6 +29,16 @@ const _command = @import("_command.zig");
 /// runs on the cores, the groups in no order and shared between them; the
 /// dispatch ends when all are done. In a render pass it does nothing.
 ///
+/// A group holds as many invocations as the function's entry declared
+/// (`shader.computeGroup`), which the call is given in
+/// `shader.Groups.local`: the function makes them itself, so one call runs
+/// them all, one after the other, in whatever order it chooses. What they
+/// share is `shader.Groups.shared`, as many bytes as the entry asked for,
+/// found once for each worker of the dispatch and given back as it ends: a
+/// group has it to itself while it runs, cleared for the first group a worker
+/// takes and holding what the group before it left after that. Memory the
+/// library could not find leaves `shared` null.
+///
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no.
@@ -45,7 +55,8 @@ const _command = @import("_command.zig");
 /// None known.
 ///
 /// SEE ALSO:
-/// `CreateComputePipelines`, `CmdDispatchIndirect`, `CmdBindDescriptorSets`
+/// `CreateComputePipelines`, `CmdDispatchIndirect`, `CmdBindDescriptorSets`,
+/// `shader.computeGroup`
 ///
 /// EXAMPLES:
 /// ```zig

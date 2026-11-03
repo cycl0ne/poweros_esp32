@@ -29,7 +29,9 @@ const max_vertex_output_components = @import("../instance/_instance.zig").max_ve
 /// `success`; `error_invalid_shader_nv` for code that is not a
 /// shader.Code - SPIR-V among it - or an entry of a stage that is neither
 /// vertex nor fragment, or with more varyings than a vertex carries;
-/// `error_out_of_host_memory`.
+/// `error_out_of_host_memory`. A compute entry carries a workgroup where
+/// the others carry varyings (`shader.computeGroup`), and what it may hold
+/// is CreateComputePipelines' to say.
 ///
 /// BEHAVIOR:
 /// The entries are copied. The functions they name are the program's
@@ -80,7 +82,10 @@ pub fn CreateShaderModule(base: *FacetBase, device: *facet.Device, info: *const 
             facet.SHADER_STAGE_VERTEX, facet.SHADER_STAGE_TESSELLATION_CONTROL, facet.SHADER_STAGE_TESSELLATION_EVALUATION, facet.SHADER_STAGE_FRAGMENT, facet.SHADER_STAGE_COMPUTE => {},
             else => return .error_invalid_shader_nv,
         }
-        if (entry.varyingCount() > max_vertex_output_components) return .error_invalid_shader_nv;
+        // A compute entry's word is its workgroup, not varyings: the
+        // device's compute limits are what bounds it, which the pipeline
+        // sees to (CreateComputePipelines).
+        if (entry.stage != facet.SHADER_STAGE_COMPUTE and entry.varyingCount() > max_vertex_output_components) return .error_invalid_shader_nv;
     }
     const memory = base.sys_base.AllocVec(@sizeOf(ShaderModule) + entries.len * @sizeOf(shader.Entry), exec.MEMF_CLEAR) orelse return .error_out_of_host_memory;
     const made: *ShaderModule = @ptrCast(@alignCast(memory));

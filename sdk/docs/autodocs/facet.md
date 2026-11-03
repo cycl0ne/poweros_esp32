@@ -1637,6 +1637,16 @@ the push constants. What it writes is there for the commands after it. It
 runs on the cores, the groups in no order and shared between them; the
 dispatch ends when all are done. In a render pass it does nothing.
 
+A group holds as many invocations as the function's entry declared
+(`shader.computeGroup`), which the call is given in
+`shader.Groups.local`: the function makes them itself, so one call runs
+them all, one after the other, in whatever order it chooses. What they
+share is `shader.Groups.shared`, as many bytes as the entry asked for,
+found once for each worker of the dispatch and given back as it ends: a
+group has it to itself while it runs, cleared for the first group a worker
+takes and holding what the group before it left after that. Memory the
+library could not find leaves `shared` null.
+
 **CONTEXT**
 
 - Waits: no.
@@ -1658,7 +1668,8 @@ None known.
 
 **SEE ALSO**
 
-`CreateComputePipelines`, `CmdDispatchIndirect`, `CmdBindDescriptorSets`
+`CreateComputePipelines`, `CmdDispatchIndirect`, `CmdBindDescriptorSets`,
+`shader.computeGroup`
 
 **EXAMPLES**
 
@@ -3419,7 +3430,9 @@ fn CreateComputePipelines(base: *FacetBase, device: *facet.Device, cache: ?*face
 - `device` - the device.
 - `cache` - null: facet.library has no pipeline caches.
 - `count`, `infos` - each pipeline's function, of stage
-  SHADER_STAGE_COMPUTE, and layout.
+  SHADER_STAGE_COMPUTE, and layout. The function's own entry says what a
+  group of it holds: its invocations and the bytes they share
+  (`shader.computeGroup`).
 - `pipelines` - where each is written; null for one that could not be
   made.
 
@@ -3427,13 +3440,24 @@ fn CreateComputePipelines(base: *FacetBase, device: *facet.Device, cache: ?*face
 
 `success`; else what the first that could not be made came to:
 `error_invalid_shader_nv` for a stage that is not of a compute function
-the module has; `error_out_of_host_memory`. Those made are made either
+the module has; `error_feature_not_present` for a workgroup over the
+device's limits; `error_out_of_host_memory`. Those made are made either
 way.
 
 **BEHAVIOR**
 
 A compute function runs on the cores, whichever device it was made on: a
 CM5's V3D runs no program of the library's but its fragment programs.
+
+A group of more than one invocation is still one call of the function:
+what the pipeline carries from the entry is the group's size and the bytes
+its invocations share, which CmdDispatch hands the function
+(`shader.Groups.local`, `shader.Groups.shared`) for it to make the
+invocations itself. A group over `PhysicalDeviceLimits`'
+`max_compute_work_group_size` along an axis, or holding more invocations
+than `max_compute_work_group_invocations`, or sharing more than
+`max_compute_shared_memory_size` bytes, is refused here rather than cut
+to what fits.
 
 **CONTEXT**
 
@@ -3457,7 +3481,7 @@ None known.
 
 **SEE ALSO**
 
-`CmdDispatch`, `CmdBindPipeline`, `shader.compute`
+`CmdDispatch`, `CmdBindPipeline`, `shader.compute`, `shader.computeGroup`
 
 **EXAMPLES**
 
@@ -4733,7 +4757,9 @@ fn CreateShaderModule(base: *FacetBase, device: *facet.Device, info: *const face
 `success`; `error_invalid_shader_nv` for code that is not a
 shader.Code - SPIR-V among it - or an entry of a stage that is neither
 vertex nor fragment, or with more varyings than a vertex carries;
-`error_out_of_host_memory`.
+`error_out_of_host_memory`. A compute entry carries a workgroup where
+the others carry varyings (`shader.computeGroup`), and what it may hold
+is CreateComputePipelines' to say.
 
 **BEHAVIOR**
 
