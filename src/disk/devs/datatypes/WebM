@@ -1,0 +1,1 @@
+NAME=WebM BASE=videocodec GROUP=movi ID=WEBM MASK=\x1a\x45\xdf\xa3 PATTERN=#?.webm TYPE=BINARY PRI=5 BROWSE=SYS:Programs/Movie
