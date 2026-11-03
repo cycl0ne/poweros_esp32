@@ -30,6 +30,7 @@ pub fn known(kind: facet.DescriptorType) bool {
         .sampler, .combined_image_sampler, .sampled_image, .storage_image => true,
         .uniform_buffer, .storage_buffer, .uniform_texel_buffer, .storage_texel_buffer => true,
         .uniform_buffer_dynamic, .storage_buffer_dynamic => true,
+        .input_attachment => true,
         else => false,
     };
 }
@@ -44,7 +45,7 @@ pub fn ofDynamic(kind: facet.DescriptorType) bool {
 /// Whether a kind is written from `image_info` rather than `buffer_info`.
 pub fn ofImage(kind: facet.DescriptorType) bool {
     return switch (kind) {
-        .sampler, .combined_image_sampler, .sampled_image, .storage_image => true,
+        .sampler, .combined_image_sampler, .sampled_image, .storage_image, .input_attachment => true,
         else => false,
     };
 }

@@ -541,9 +541,14 @@ test "descriptor sets: a layout's bindings as slots, written and copied as shade
     try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&texel_buffer) }, &none));
     fb.DestroyDescriptorSetLayout(device, none);
     none = null;
-    // An input attachment is a kind there are none of at all.
+    // An input attachment is a kind the cores have, since 1.37; a kind
+    // Vulkan has not got at all is refused.
     const input = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .input_attachment };
-    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&input) }, &none));
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&input) }, &none));
+    fb.DestroyDescriptorSetLayout(device, none);
+    none = null;
+    const nothing = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = @enumFromInt(11) };
+    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&nothing) }, &none));
     var kept: ?*facet.Sampler = null;
     try testing.expectEqual(facet.Result.success, fb.CreateSampler(device, &.{}, &kept));
     defer fb.DestroySampler(device, kept);
@@ -2661,6 +2666,220 @@ test "a device that blends every colour attachment the same way: the pipeline wh
     defer fb.DestroyPipeline(device, pipeline);
     const made = _objects.of(_pipeline.Pipeline, pipeline.?);
     try testing.expectEqual(@as(u32, facet.COLOR_COMPONENT_R), made.mixings[1].mask);
+}
+
+// --- 1.37: input attachments -------------------------------------------------
+
+/// Two subpasses: the first writes a colour, the second reads the pixel it
+/// wrote at the same place and writes it with green and blue swapped, so
+/// the picture says which pixel was read.
+const Deferred = struct {
+    const quad = [6][3]f32{ .{ -1, -1, 0.5 }, .{ 1, -1, 0.5 }, .{ -1, 1, 0.5 }, .{ -1, 1, 0.5 }, .{ 1, -1, 0.5 }, .{ 1, 1, 0.5 } };
+    const written: u32 = 0xFF11_2233;
+    const swapped: u32 = 0xFF11_3322;
+    /// What it draws where it finds no attachment to read.
+    const missing: u32 = 0xFF00_0000;
+
+    fn vertex(vertices: *const shader.Vertices) callconv(.c) void {
+        for (0..vertices.count) |k| {
+            const p = vertices.input(@intCast(k), 0);
+            vertices.output(@intCast(k))[0..4].* = .{ p[0], p[1], p[2], 1 };
+        }
+    }
+
+    fn write(fragments: *const shader.Fragments) callconv(.c) void {
+        shader.fill(fragments, written);
+    }
+
+    /// What the attachment holds at this very pixel, its green and blue
+    /// the other way round; `missing` where there is nothing to read.
+    fn read(fragments: *const shader.Fragments) callconv(.c) void {
+        const from = fragments.resources.input(0, 0, 0) orelse return shader.fill(fragments, missing);
+        for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |spot, *out| {
+            inline for (0..4) |i| {
+                const x = fragments.x + @as(u32, spot.x) + @as(u32, i & 1);
+                const y = fragments.y + @as(u32, spot.y) + @as(u32, i >> 1);
+                const color = from.colorAt(x, y);
+                const green = (color >> 8) & 0xFF;
+                const blue = color & 0xFF;
+                out[i] = (color & 0xFFFF_0000) | (blue << 8) | green;
+            }
+        }
+    }
+
+    const entries = [_]shader.Entry{
+        shader.vertex("write", &vertex, 0),
+        shader.fragment("write", &write, 0),
+        shader.vertex("read", &vertex, 0),
+        shader.fragment("read", &read, 0),
+    };
+    const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
+};
+
+test "an input attachment: what one subpass drew read pixel by pixel by the next" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+
+    // The first attachment is drawn and then read; the second is only
+    // drawn into.
+    const first_image, const first_view = try bench.image(.{
+        .format = .b8g8r8a8_unorm,
+        .extent = .{ .width = 64, .height = 64 },
+        .tiling = .linear,
+        .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT,
+    }, false);
+    const second = try Picture.of(&bench, 64, 64);
+
+    // An image made without the usage, and ones the usage cannot go with.
+    var none: ?*facet.Image = null;
+    const plain_image, const plain_view = try bench.image(.{
+        .format = .b8g8r8a8_unorm,
+        .extent = .{ .width = 64, .height = 64 },
+        .tiling = .linear,
+        .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT,
+    }, false);
+    _ = plain_image;
+    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = facet.IMAGE_USAGE_INPUT_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED }, &none));
+    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = facet.IMAGE_USAGE_INPUT_ATTACHMENT | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT }, &none));
+    try testing.expect(none == null);
+
+    const attachments = [2]facet.AttachmentDescription{
+        .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general },
+        .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general },
+    };
+    const to_first = [1]facet.AttachmentReference{.{ .attachment = 0, .layout = .general }};
+    const to_second = [1]facet.AttachmentReference{.{ .attachment = 1, .layout = .general }};
+    const subpasses = [2]facet.SubpassDescription{
+        .{ .color_attachment_count = 1, .color_attachments = &to_first },
+        .{ .input_attachment_count = 1, .input_attachments = &to_first, .color_attachment_count = 1, .color_attachments = &to_second },
+    };
+    var pass_made: ?*facet.RenderPass = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 2, .subpasses = &subpasses }, &pass_made));
+    defer fb.DestroyRenderPass(device, pass_made);
+    const pass = pass_made.?;
+
+    // A depth attachment read as an input attachment, and one of a format
+    // no pixels are kept in: refused.
+    var refused: ?*facet.RenderPass = null;
+    const depth_formats = [2]facet.AttachmentDescription{
+        .{ .format = .d16_unorm, .final_layout = .general },
+        .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general },
+    };
+    const of_depth = [1]facet.AttachmentReference{.{ .attachment = 0, .layout = .general }};
+    const reads_depth = facet.SubpassDescription{ .input_attachment_count = 1, .input_attachments = &of_depth, .color_attachment_count = 1, .color_attachments = &to_second };
+    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &depth_formats, .subpass_count = 1, .subpasses = @ptrCast(&reads_depth) }, &refused));
+    try testing.expect(refused == null);
+
+    const frame = try framebuffer(&bench, pass, &.{ first_view, second.view }, 64, 64);
+    defer fb.DestroyFramebuffer(device, frame);
+    const shaders = try module(&bench, &Deferred.code);
+    defer fb.DestroyShaderModule(device, shaders);
+
+    const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .input_attachment, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &set_layout));
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    const layout = try pipelineLayout(&bench, &.{set_layout.?}, 0);
+    defer fb.DestroyPipelineLayout(device, layout);
+    var pool: ?*facet.DescriptorPool = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorPool(device, &.{ .max_sets = 2 }, &pool));
+    defer fb.DestroyDescriptorPool(device, pool);
+    const layouts = [2]*facet.DescriptorSetLayout{ set_layout.?, set_layout.? };
+    var sets: [2]?*facet.DescriptorSet = undefined;
+    try testing.expectEqual(facet.Result.success, fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 2, .set_layouts = &layouts }, &sets));
+    // The one that is made to be read, and one that is not: the second
+    // write is left out, so its slot stays empty.
+    const infos = [2]facet.DescriptorImageInfo{ .{ .image_view = first_view }, .{ .image_view = plain_view } };
+    const writes = [2]facet.WriteDescriptorSet{
+        .{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .input_attachment, .image_info = @ptrCast(&infos[0]) },
+        .{ .dst_set = sets[1].?, .dst_binding = 0, .descriptor_type = .input_attachment, .image_info = @ptrCast(&infos[1]) },
+    };
+    fb.UpdateDescriptorSets(device, writes.len, &writes, 0, null);
+    const read_slot = _objects.of(_descriptor.Set, sets[0].?).view.slots[0];
+    try testing.expect(read_slot.pointer != null);
+    try testing.expect(_objects.of(_descriptor.Set, sets[1].?).view.slots[0].pointer == null);
+
+    const writer_result, const writer = makePipeline(&bench, .{ .module = shaders, .name = "write", .layout = layout, .pass = pass });
+    try testing.expectEqual(facet.Result.success, writer_result);
+    defer fb.DestroyPipeline(device, writer);
+    const reader_result, const reader = makePipeline(&bench, .{ .module = shaders, .name = "read", .layout = layout, .pass = pass, .subpass = 1 });
+    try testing.expectEqual(facet.Result.success, reader_result);
+    defer fb.DestroyPipeline(device, reader);
+
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(Deferred.quad)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(Deferred.quad))], std.mem.asBytes(&Deferred.quad));
+    const values = clears(0xFF00_00FF);
+    const offset: u64 = 0;
+    const area = facet.Rect2D{ .extent = .{ .width = 64, .height = 64 } };
+
+    var commands = try bench.record();
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame, .render_area = area, .clear_value_count = 2, .clear_values = &values }, .@"inline");
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdBindPipeline(commands, .graphics, writer.?);
+    fb.CmdDraw(commands, 6, 1, 0, 0);
+    fb.CmdNextSubpass(commands, .@"inline");
+    fb.CmdBindPipeline(commands, .graphics, reader.?);
+    fb.CmdBindDescriptorSets(commands, .graphics, layout, 0, 1, @ptrCast(&sets[0]), 0, null);
+    fb.CmdDraw(commands, 6, 1, 0, 0);
+    fb.CmdEndRenderPass(commands);
+    try bench.submit();
+
+    // What the first subpass drew, and what the second read of it.
+    const first = _objects.of(@import("../image/_image.zig").Image, first_image);
+    const pitch = first.pitch;
+    const pixels = first.data.?;
+    try testing.expectEqual(Deferred.written, std.mem.readInt(u32, pixels[8 * pitch + 8 * 4 ..][0..4], .little));
+    try testing.expectEqual(Deferred.swapped, second.at(8, 8));
+    try testing.expectEqual(Deferred.swapped, second.at(63, 63));
+    try testing.expectEqual(Deferred.swapped, second.at(40, 20));
+
+    // The set whose image was not made to be read leaves its slot empty:
+    // the function finds nothing and says so.
+    commands = try bench.record();
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame, .render_area = area, .clear_value_count = 2, .clear_values = &values }, .@"inline");
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdBindPipeline(commands, .graphics, writer.?);
+    fb.CmdDraw(commands, 6, 1, 0, 0);
+    fb.CmdNextSubpass(commands, .@"inline");
+    fb.CmdBindPipeline(commands, .graphics, reader.?);
+    fb.CmdBindDescriptorSets(commands, .graphics, layout, 0, 1, @ptrCast(&sets[1]), 0, null);
+    fb.CmdDraw(commands, 6, 1, 0, 0);
+    fb.CmdEndRenderPass(commands);
+    try bench.submit();
+    try testing.expectEqual(Deferred.missing, second.at(8, 8));
+}
+
+test "a device that reads no attachment, as the V3D reads none: the subpass and the set layout are refused" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
+    physical.features.input_attachments = false;
+    defer physical.features.input_attachments = true;
+
+    const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .input_attachment };
+    var none: ?*facet.DescriptorSetLayout = null;
+    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &none));
+    try testing.expect(none == null);
+
+    const attachments = [2]facet.AttachmentDescription{
+        .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general },
+        .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general },
+    };
+    const to_first = [1]facet.AttachmentReference{.{ .attachment = 0, .layout = .general }};
+    const to_second = [1]facet.AttachmentReference{.{ .attachment = 1, .layout = .general }};
+    const reads = facet.SubpassDescription{ .input_attachment_count = 1, .input_attachments = &to_first, .color_attachment_count = 1, .color_attachments = &to_second };
+    var refused: ?*facet.RenderPass = null;
+    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&reads) }, &refused));
+    try testing.expect(refused == null);
+    // A subpass that reads none is made as it was.
+    const draws = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = &to_first };
+    var made: ?*facet.RenderPass = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&draws) }, &made));
+    fb.DestroyRenderPass(device, made);
 }
 
 test "dynamic buffer descriptors: one set read from where the bind says, draw after draw" {

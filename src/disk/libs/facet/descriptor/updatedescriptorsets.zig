@@ -42,6 +42,15 @@ const BufferView = @import("../buffer/_bufferview.zig").BufferView;
 /// texture and no sampler, which the fixed forms that sample through one
 /// paint `shader.missing` for rather than sampling some other way.
 ///
+/// An input attachment is written from `image_info` too, and its view has
+/// to be of an image made with IMAGE_USAGE_INPUT_ATTACHMENT, of a format
+/// whose pixels are kept in rows; anything else leaves the descriptor
+/// empty, and a fragment function then finds nothing
+/// (`shader.Resources.input` answers null). What the set holds is the
+/// view's rows, so the attachment is read wherever the image's memory
+/// stands when the draw runs - which is what the subpass before it drew
+/// (CreateRenderPass).
+///
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no.
@@ -83,6 +92,16 @@ pub fn UpdateDescriptorSets(base: *FacetBase, device: *facet.Device, write_count
             // doing, not the write's: it stays as the set was made.
             const dynamic = found.slot.dynamic;
             found.slot.* = switch (write.descriptor_type) {
+                .input_attachment => attachment: {
+                    const info = (write.image_info orelse break)[k];
+                    const view = _objects.of(ImageView, info.image_view orelse break :attachment .{});
+                    // Rows in memory, made to be read as one: an image of
+                    // another kind is left unwritten rather than handed
+                    // over to be read as pixels it has not got.
+                    if (view.image.kind != .rows or view.image.usage & facet.IMAGE_USAGE_INPUT_ATTACHMENT == 0) break :attachment .{};
+                    if (view.rows.format == .none or view.rows.bytes == null) break :attachment .{};
+                    break :attachment .{ .pointer = &view.rows, .range = @intCast(@min(view.image.bytes, 0xFFFF_FFFF)) };
+                },
                 .sampled_image, .combined_image_sampler, .sampler, .storage_image => sampled: {
                     const info = (write.image_info orelse break)[k];
                     // A sampler of its own has no image, and a sampled

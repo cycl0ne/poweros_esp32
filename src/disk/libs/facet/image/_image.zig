@@ -35,6 +35,7 @@ const std = @import("std");
 const sdk = @import("sdk");
 const facet = sdk.facet;
 const texture = facet.texture;
+const shader = facet.shader;
 const Device = @import("../device/_device.zig").Device;
 const _memory = @import("../memory/_memory.zig");
 const DeviceMemory = _memory.DeviceMemory;
@@ -110,6 +111,10 @@ pub const ImageView = struct {
     layer_count: u32 = 1,
     /// `texture`: the levels it takes, as a sample reads them.
     texels: texture.Texture = undefined,
+    /// `rows`: its pixels, for a fragment function of a later subpass to
+    /// read (`IMAGE_USAGE_INPUT_ATTACHMENT`, `shader.Resources.input`).
+    /// Nothing to read where the image is of another kind.
+    rows: shader.Attachment = .{},
 };
 
 /// How a row of an image starts: on a cache line.
@@ -123,6 +128,18 @@ pub fn hasDepth(format: facet.Format) bool {
 /// Whether a format of an attachment has a stencil.
 pub fn hasStencil(format: facet.Format) bool {
     return format == .s8_uint or format == .d16_unorm_s8_uint;
+}
+
+/// How a fragment function reads the pixels of an image kept in rows;
+/// `.none` for a format rows are not kept in, a depth among them
+/// (`shader.Attachment`).
+pub fn rowFormat(format: facet.Format) shader.TexelFormat {
+    return switch (format) {
+        .b8g8r8a8_unorm => .bgra8888,
+        .r8g8b8a8_unorm => .rgba8888,
+        .r5g6b5_unorm_pack16 => .rgb565,
+        else => .none,
+    };
 }
 
 /// The bytes a texel, a pixel or a vertex's value of `format` takes; 0
@@ -206,6 +223,13 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
         return image;
     }
     if (info.usage & facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT != 0) return null;
+    // Read as an input attachment: its pixels are read out of its rows,
+    // so not in a texture's layout and not a transient attachment, which
+    // has no memory at all.
+    if (info.usage & facet.IMAGE_USAGE_INPUT_ATTACHMENT != 0) {
+        const not_rows = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT;
+        if (info.usage & not_rows != 0) return null;
+    }
     // Sampled, written through as a storage image, or both: all one kind,
     // kept in the layout a sample reads.
     if (info.usage & (facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_STORAGE) != 0) {

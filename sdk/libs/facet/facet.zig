@@ -290,6 +290,13 @@ pub const PhysicalDeviceFeatures = extern struct {
     /// tiles alone and CreateRenderPass refuses both ops. The cores have it
     /// since 1.30; the BCM2712's V3D has not.
     stored_depth: bool = false,
+    /// `input_attachment` descriptors and `SubpassDescription`'s
+    /// `input_attachments`: an attachment a later subpass reads pixel by
+    /// pixel, out of the image's memory, which is how a deferred pass
+    /// reads what the pass before it drew (`shader.Resources.input`).
+    /// False where a set layout with the kind, and a subpass with input
+    /// attachments, are both refused. The cores have it since 1.37; on
+    /// the V3D no fragment program reads one.
     input_attachments: bool = false,
     /// `storage_image` descriptors, and the texel buffer kinds.
     storage_images: bool = false,
@@ -647,6 +654,11 @@ pub const IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT: u32 = 1 << 5;
 /// Its pixels live in the tiles alone: memory of the lazily allocated
 /// type will do.
 pub const IMAGE_USAGE_TRANSIENT_ATTACHMENT: u32 = 1 << 6;
+/// Read pixel by pixel by a fragment function of a later subpass, as an
+/// `input_attachment` descriptor (`shader.Attachment`, since 1.37). Rows
+/// in memory, so not with SAMPLED, STORAGE or TRANSIENT, and not a depth
+/// attachment's.
+pub const IMAGE_USAGE_INPUT_ATTACHMENT: u32 = 1 << 7;
 
 /// What an image is made with.
 /// ImageCreateInfo.flags: a view of type cube may be made of it.

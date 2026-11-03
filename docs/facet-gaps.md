@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.36**, so that a program need not find out by failing. It covers the API.
+1.37**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -216,6 +216,41 @@ a pass of its own either way. What is left out:
   exactly the subpass's colour attachments; anything between is
   `error_initialization_failed`.
 
+## Input attachments, and what they still are not
+
+Since 1.37 a subpass reads attachments as well as draws into them:
+`SubpassDescription.input_attachments` names them, an `input_attachment`
+descriptor says which one a fragment function reads, and the function
+reads it pixel by pixel at its own place
+(`shader.Resources.input`, `shader.Attachment.colorAt`, `.at`). An image
+made with `IMAGE_USAGE_INPUT_ATTACHMENT` keeps its pixels in rows, as a
+colour attachment does, and a view of it holds those rows for the set to
+point at, so deferred shading, a pass over what was drawn, and reading
+one's own G-buffer are all there. All eleven of Vulkan's descriptor kinds
+exist now. What is left out:
+
+- **The cores alone read them** (`PhysicalDeviceFeatures.input_attachments`):
+  on the V3D no fragment program of the library's is run at all, only the
+  fixed forms, and none of those reads an attachment.
+- **An attachment is read out of the image's memory, not out of the
+  tile.** So it is read where the image stands - what the subpass before
+  it drew and stored - and a subpass cannot read the attachment it is
+  drawing into, which would be a loop: that is
+  `error_initialization_failed`. Vulkan allows exactly that for the
+  fragment's own pixel, which is what `VK_EXT_shader_framebuffer_fetch`
+  and the subpass self-dependency are for.
+- **A depth attachment is not readable**, because it lives in the
+  rasterizer's tiles and has no rows: an input attachment is of
+  b8g8r8a8_unorm, r8g8b8a8_unorm or r5g6b5_unorm_pack16. A shadow pass
+  that wants the depth still copies it out (`CmdCopyImageToBuffer`).
+- **Nothing is checked against the layout**: `AttachmentReference.layout`
+  is taken as it is, as every other layout is, and a program that reads
+  an attachment an earlier subpass did not draw gets whatever the load op
+  left there.
+- `input_attachment_index` does not exist: which attachment a function
+  reads is the descriptor it reads it through, not a number in the
+  subpass.
+
 ## Dynamic buffer descriptors, and what they still are not
 
 Since 1.35 `uniform_buffer_dynamic` and `storage_buffer_dynamic` are
@@ -329,10 +364,13 @@ These can be asked for and are answered with `error_feature_not_present`.
 | A depth bias, on a device that moves no depth: the V3D (`depth_bias`) | `pipeline/creategraphicspipelines.zig` |
 | More than one viewport or one scissor | `pipeline/creategraphicspipelines.zig` |
 | Colour attachments that differ, on a device that blends them all alike: no device of this library is one (`independent_blend`) | `pipeline/creategraphicspipelines.zig` |
-| Input attachments and resolve attachments in a subpass | `render/createrenderpass.zig` |
+| Resolve attachments in a subpass | `render/createrenderpass.zig` |
+| An input attachment on a device that reads none: the V3D (`input_attachments`) | `render/createrenderpass.zig` |
+| An input attachment of a format whose pixels are not kept in rows, a depth attachment among them | `render/createrenderpass.zig` |
+| An image both INPUT_ATTACHMENT and SAMPLED, STORAGE or TRANSIENT_ATTACHMENT | `image/createimage.zig` |
 | A depth attachment's stencil that loads or stores | `render/createrenderpass.zig` |
 | Present modes but `fifo`, though `immediate`, `mailbox` and `fifo_relaxed` are enumerated | `swapchain/createswapchain.zig` |
-| Descriptors but `sampler`, `combined_image_sampler`, `sampled_image`, `storage_image`, `uniform_buffer`, `storage_buffer`, the two texel buffers and the two dynamic ones | `descriptor/_descriptor.zig` |
+| An `input_attachment` layout on a device that reads none: the V3D (`input_attachments`) | `descriptor/createdescriptorsetlayout.zig` |
 | More dynamic buffer descriptors in one set than `max_descriptor_set_dynamic_buffers` | `descriptor/createdescriptorsetlayout.zig` |
 | A `storage_image` layout on the V3D: its TMU keeps a texture its own way | `descriptor/createdescriptorsetlayout.zig` |
 | A fixed fragment form that drops pixels, on the V3D: the QPUs have no program that discards | `driver/v3d/driver.zig` |

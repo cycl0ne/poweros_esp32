@@ -163,6 +163,10 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // reads it is a function of the program's, which on a device
         // without them is its compute functions, run on the cores.
         .texel_buffers = true,
+        // No fragment program of the QPUs reads an attachment's pixels,
+        // so a set layout with the kind is refused here, as is a subpass
+        // with input attachments.
+        .input_attachments = false,
         // A dynamic buffer descriptor is a pointer and a range, shifted
         // by what the bind gave: the function that reads it is the
         // program's, so every device takes one.

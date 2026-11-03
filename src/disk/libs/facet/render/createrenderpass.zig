@@ -27,14 +27,16 @@ const _surface = @import("../surface/_surface.zig");
 /// RESULT:
 /// `success`; `error_feature_not_present` for a pass facet.library does
 /// not draw (BEHAVIOR); `error_format_not_supported` for an attachment in
-/// a format it cannot draw into; `error_initialization_failed` for a
-/// subpass that names an attachment there is not; `error_out_of_host_memory`.
+/// a format it cannot draw into, or read as an input attachment;
+/// `error_initialization_failed` for a subpass that names an attachment
+/// there is not, or reads one it draws into itself;
+/// `error_out_of_host_memory`.
 ///
 /// BEHAVIOR:
 /// The pass has up to 4 subpasses and up to 8 attachments. A subpass draws
 /// into 1 to 4 colour attachments - b8g8r8a8_unorm or r8g8b8a8_unorm - 8 in all
 /// the subpasses, and may test against a depth attachment, d16_unorm, s8_uint
-/// or d16_unorm_s8_uint. No input, resolve or multisampled attachments.
+/// or d16_unorm_s8_uint. No resolve or multisampled attachments.
 ///
 /// The subpasses are drawn one after another. A colour attachment's load op
 /// CLEAR clears the render area the first time a subpass names it; LOAD,
@@ -55,6 +57,23 @@ const _surface = @import("../surface/_surface.zig");
 /// So two subpasses share a depth attachment only one right after the other
 /// and with the same colour attachments too, when the second goes on in the
 /// tiles of the first; otherwise that is `error_feature_not_present`.
+///
+/// Since 1.37 a subpass may read attachments as well as draw into them:
+/// up to 8 `input_attachments`, each read pixel by pixel at the
+/// fragment's own place (`shader.Resources.input`, `shader.Attachment`).
+/// Such an attachment is read out of the image's memory, so its format is
+/// one whose pixels are kept in rows - b8g8r8a8_unorm, r8g8b8a8_unorm or
+/// r5g6b5_unorm_pack16, anything else being
+/// `error_format_not_supported` - and what it holds is what an earlier
+/// subpass drew, or what its load op left there. A depth attachment is
+/// not read that way: it lives in the tiles. Drawing into an attachment
+/// and reading it in the same subpass is a loop, which is
+/// `error_initialization_failed`, and only a device whose
+/// `input_attachments` is true reads any - the cores, not the V3D -
+/// others answering `error_feature_not_present`. The pass does not say
+/// which descriptor a subpass reads one through: the set written with the
+/// `input_attachment` descriptor does (UpdateDescriptorSets), and the
+/// image wants IMAGE_USAGE_INPUT_ATTACHMENT (CreateImage).
 ///
 /// A subpass of several colour attachments is drawn once for each, its commands
 /// played over, so it costs that much more: its fragment function is called for
@@ -105,7 +124,31 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
     var depths: [_render.most_attachments]bool = @splat(false);
     for (info.subpasses[0..info.subpass_count], 0..) |subpass, number| {
         if (subpass.pipeline_bind_point != .graphics) return .error_feature_not_present;
-        if (subpass.input_attachment_count != 0 or subpass.resolve_attachments != null) return .error_feature_not_present;
+        // A resolve attachment is multisampling's, which there is none of.
+        if (subpass.resolve_attachments != null) return .error_feature_not_present;
+        if (subpass.input_attachment_count != 0) {
+            if (!owner.physical.features.input_attachments) return .error_feature_not_present;
+            if (subpass.input_attachment_count > _render.most_attachments) return .error_feature_not_present;
+            const inputs = subpass.input_attachments orelse return .error_initialization_failed;
+            for (inputs[0..subpass.input_attachment_count]) |reference| {
+                if (reference.attachment == facet.ATTACHMENT_UNUSED) continue;
+                if (reference.attachment >= attachments.len) return .error_initialization_failed;
+                const read = attachments[reference.attachment];
+                // Read out of the image's memory, pixel by pixel, so it
+                // is a colour format kept in rows and an earlier subpass
+                // has to have drawn it (or it holds what was loaded).
+                if (_image.rowFormat(read.format) == .none) return .error_format_not_supported;
+                if (read.samples != 1) return .error_feature_not_present;
+                // Drawn and read in the same subpass is a loop: the
+                // pixels being read are the ones being written.
+                if (subpass.color_attachments) |colors| {
+                    for (colors[0..subpass.color_attachment_count]) |drawn_now| {
+                        if (drawn_now.attachment == reference.attachment) return .error_initialization_failed;
+                    }
+                }
+                if (subpass.depth_stencil_attachment) |depth| if (depth.attachment == reference.attachment) return .error_initialization_failed;
+            }
+        }
         if (subpass.color_attachment_count == 0 or subpass.color_attachment_count > _render.most_colors) return .error_feature_not_present;
         const colors = subpass.color_attachments.?[0..subpass.color_attachment_count];
         if (number > 0 and sameTargets(info.subpasses[number - 1], subpass)) {

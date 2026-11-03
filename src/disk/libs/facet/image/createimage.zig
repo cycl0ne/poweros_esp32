@@ -39,6 +39,11 @@ const _image = @import("_image.zig");
 /// - D16_UNORM with DEPTH_STENCIL_ATTACHMENT, optimal, one level: a depth
 ///   that lives in the tiles alone, never stored, whose memory may be of
 ///   the lazily allocated type.
+/// - INPUT_ATTACHMENT, of B8G8R8A8, R8G8B8A8 or R5G6B5, in either
+///   tiling: rows, which a later subpass reads pixel by pixel
+///   (CreateRenderPass). It goes with COLOR_ATTACHMENT and the transfers,
+///   not with SAMPLED, STORAGE or TRANSIENT_ATTACHMENT, which lie
+///   otherwise or nowhere.
 /// - Anything else of a colour format, one level: rows.
 ///
 /// Images have one sample a pixel, and are up to 8192 wide and high. One both

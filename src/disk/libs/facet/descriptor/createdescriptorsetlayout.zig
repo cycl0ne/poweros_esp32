@@ -33,10 +33,20 @@ const _descriptor = @import("_descriptor.zig");
 ///
 /// BEHAVIOR:
 /// The kinds are sampler, combined_image_sampler, sampled_image,
-/// uniform_buffer and storage_buffer. A binding not given has no
-/// descriptors, and neither has one given with a count of 0. A binding's
-/// descriptors are an array, read by a shader as element 0 on
-/// (shader.Resources).
+/// storage_image, uniform_buffer, storage_buffer, uniform_texel_buffer,
+/// storage_texel_buffer, uniform_buffer_dynamic, storage_buffer_dynamic
+/// and, since 1.37, input_attachment: all eleven of Vulkan's. A binding
+/// not given has no descriptors, and neither has one given with a count
+/// of 0. A binding's descriptors are an array, read by a shader as
+/// element 0 on (shader.Resources).
+///
+/// Some kinds want a device that has them, others answering
+/// `error_feature_not_present`: a storage image `storage_images`, a texel
+/// buffer `texel_buffers`, a dynamic buffer `dynamic_descriptors` (and no
+/// more of them in one set than
+/// `PhysicalDeviceLimits.max_descriptor_set_dynamic_buffers`), and an
+/// input attachment `input_attachments` - the cores, not the V3D, whose
+/// fragment functions are of fixed forms and read none.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -82,6 +92,9 @@ pub fn CreateDescriptorSetLayout(base: *FacetBase, device: *facet.Device, info: 
         if (binding.descriptor_type == .storage_image and !owner.physical.features.storage_images) return .error_feature_not_present;
         if (_descriptor.ofTexels(binding.descriptor_type) and !owner.physical.features.texel_buffers) return .error_feature_not_present;
         if (_descriptor.ofDynamic(binding.descriptor_type) and !owner.physical.features.dynamic_descriptors) return .error_feature_not_present;
+        // An input attachment is read by a fragment function of the
+        // program's, which a device with programs of its own has not got.
+        if (binding.descriptor_type == .input_attachment and !owner.physical.features.input_attachments) return .error_feature_not_present;
         // A sampler the layout holds, which a write could not change.
         if (binding.immutable_samplers != null and binding.descriptor_count != 0) return .error_feature_not_present;
         binding_count = @max(binding_count, binding.binding + 1);

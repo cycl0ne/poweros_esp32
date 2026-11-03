@@ -404,6 +404,52 @@ pub const Texels = struct {
     }
 };
 
+/// An attachment read pixel by pixel: what an `input_attachment`
+/// descriptor gives a fragment function (`Resources.input`) - the pixels
+/// a subpass before it drew, still in the image's memory.
+///
+/// Vulkan's `subpassLoad` reads the fragment's own pixel; here the whole
+/// attachment is there to be read, the function working out where it is
+/// from the tile's corner and the quad's place in it (`Fragments.x`,
+/// `Fragments.y`, `Quad.x`, `Quad.y`). Reading another pixel is the
+/// function's own doing, and what is outside reads as transparent black.
+pub const Attachment = extern struct {
+    /// Its first pixel, or null where nothing was written into the slot.
+    bytes: ?[*]const u8 = null,
+    /// The bytes from one row of pixels to the next.
+    pitch: u32 = 0,
+    width: u32 = 0,
+    height: u32 = 0,
+    /// How a pixel is read, which is the attachment's own format.
+    format: TexelFormat = .none,
+
+    /// The pixel at (x, y) as 0xAARRGGBB; transparent black outside it.
+    pub fn colorAt(attachment: *const Attachment, x: u32, y: u32) u32 {
+        const row = attachment.rowAt(y) orelse return 0;
+        return row.colorAt(x);
+    }
+
+    /// The same as x, y, z and w: the channels 0 to 1, what the format
+    /// does not hold as 0 and w as 1. All zero outside it.
+    pub fn at(attachment: *const Attachment, x: u32, y: u32) [4]f32 {
+        const row = attachment.rowAt(y) orelse return .{ 0, 0, 0, 0 };
+        return row.at(x);
+    }
+
+    /// Row `y` as texels, the pixels of one row: null past the last row,
+    /// or where there is nothing to read.
+    fn rowAt(attachment: *const Attachment, y: u32) ?Texels {
+        const bytes = attachment.bytes orelse return null;
+        if (y >= attachment.height or attachment.format == .none) return null;
+        return .{
+            .bytes = @constCast(bytes) + @as(usize, y) * attachment.pitch,
+            .count = attachment.width,
+            .format = attachment.format,
+            .writable = false,
+        };
+    }
+};
+
 /// A descriptor set as a shader reads it.
 pub const Set = extern struct {
     /// For each binding, its first slot; the elements of an array follow
@@ -522,6 +568,20 @@ pub const Resources = extern struct {
         const bytes: [*]u8 = @ptrCast(@constCast(found.pointer orelse return null));
         const first: [*]T = @ptrCast(@alignCast(bytes + shift));
         return first[0 .. (found.range -| shift) / @sizeOf(T)];
+    }
+
+    /// Element `element` of binding `binding` of set `set`, an input
+    /// attachment: its pixels, or null where it is not written. What
+    /// another subpass drew, read from the image's memory
+    /// (`PhysicalDeviceFeatures.input_attachments`).
+    ///
+    /// Asking this of a binding of another kind gives back whatever that
+    /// kind's slot holds, read as an attachment: the layout says what a
+    /// binding is, and a function has to ask for what is there, as it
+    /// does for `sampled` and `texels`.
+    pub fn input(resources: *const Resources, set: u32, binding: u32, element: u32) ?*const Attachment {
+        const found = resources.slot(set, binding, element) orelse return null;
+        return @ptrCast(@alignCast(found.pointer orelse return null));
     }
 
     /// The push constants as a `T`.

@@ -196,4 +196,17 @@ pub const LIBRARY_VERSION = 1;
 /// a block's whole size, or 0 for the lazily allocated type, whose
 /// transient attachments live in the tiles and never in memory. Nothing
 /// of what the library does changes: these only say what it already did.
-pub const LIBRARY_REVISION = 36;
+/// 37: input attachments: a subpass reads what an earlier one drew,
+/// pixel by pixel at the fragment's own place
+/// (`SubpassDescription.input_attachments`, the `input_attachment`
+/// descriptor, `shader.Resources.input`, `shader.Attachment`). An image
+/// made with IMAGE_USAGE_INPUT_ATTACHMENT keeps its pixels in rows, as a
+/// colour attachment does, and a view of it holds those rows for a set to
+/// point at (`ImageView.rows`), so the one texel decoder reads them a row
+/// at a time and nothing is copied or kept twice. CreateRenderPass holds
+/// the pass to what can be read: a format whose pixels are in rows, one
+/// sample, and not an attachment the same subpass draws into, which would
+/// be a loop. All eleven of Vulkan's descriptor kinds are there now. The
+/// cores read them; on the V3D no fragment program of its own runs, so
+/// its `input_attachments` is false.
+pub const LIBRARY_REVISION = 37;

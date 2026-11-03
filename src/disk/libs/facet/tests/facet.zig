@@ -587,16 +587,19 @@ test "a device says what it does, and a false is what a create call refuses" {
     try testing.expect(features.cube_maps);
     // The cores hold the depth in their tiles, so they can keep it.
     try testing.expect(features.stored_depth);
+    // A fragment function of the program's can read an attachment's rows.
+    try testing.expect(features.input_attachments);
 
     // And what it says it does not do, it refuses: a false here is worth
     // having only if the call agrees with it.
-    try testing.expect(!features.input_attachments);
     try testing.expect(!features.multisampling);
+    try testing.expect(!features.logic_ops);
 
     const color = facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal };
     var pass: ?*facet.RenderPass = null;
 
-    // An input attachment, which features deny.
+    // An input attachment that is drawn in the same subpass is a loop,
+    // whatever the feature says.
     {
         const attachment = facet.AttachmentDescription{ .format = .b8g8r8a8_unorm, .load_op = .clear, .final_layout = .color_attachment_optimal };
         const subpass = facet.SubpassDescription{
@@ -606,7 +609,12 @@ test "a device says what it does, and a false is what a create call refuses" {
             .color_attachments = @ptrCast(&color),
         };
         const info = facet.RenderPassCreateInfo{ .attachment_count = 1, .attachments = @ptrCast(&attachment), .subpass_count = 1, .subpasses = @ptrCast(&subpass) };
-        try testing.expectEqual(facet.Result.error_feature_not_present, rig.fb.CreateRenderPass(device, &info, &pass));
+        try testing.expectEqual(facet.Result.error_initialization_failed, rig.fb.CreateRenderPass(device, &info, &pass));
+    }
+
+    // Logic operations, which features deny.
+    {
+        try testing.expect(!features.logic_ops);
     }
 
     // More than one sample, likewise.
