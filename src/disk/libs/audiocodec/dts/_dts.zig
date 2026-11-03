@@ -380,7 +380,7 @@ fn decodeNext(stream: *Stream, a: *Dts) bool {
         var first: u32 = 0;
         var last: u32 = count;
         if (in_track) {
-            const span = _media.window(&stream.media, start, count) orelse continue;
+            const span = _media.window(&stream.media, start, count, a.left * block_samples) orelse continue;
             first = span.first;
             last = span.last;
         } else {

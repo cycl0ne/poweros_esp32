@@ -18,8 +18,20 @@
 //! frames are exact. The track's priming (`delay`) counts before the
 //! sound's first frame and is left out, as is what lies past the track's
 //! length when the file says it. An MP4's edit says the length exactly; a
-//! Matroska file to the millisecond - so its sound ends within one of
-//! where it stops - but a FLAC's STREAMINFO exactly again.
+//! Matroska file to the millisecond - so its sound would end within one
+//! of where it stops - but a FLAC's STREAMINFO exactly again.
+//!
+//! **What a packet says of its own end** is left out of it too (SINCE
+//! 1.15): a Matroska block's DiscardPadding, which an encoder writes for
+//! the tail of a last frame it filled up, or for the overlap where two
+//! streams were cut together - the packet's `padding_ns`. Where it is
+//! positive, so many frames are cut from the end of what the packet
+//! decodes to (`pad`), counted there because only the codec knows how
+//! many frames that is - a block's own duration may already be the
+//! trimmed one; where it is negative - padding at the front - they are
+//! passed over as a seek's are. That is what makes a Matroska file's
+//! sound end exactly where it stops, the file's own length being only to
+//! the millisecond.
 //!
 //! **A sound that begins late**: a Matroska file counts from its start,
 //! and a film's sound may begin after its first picture - its first
@@ -154,6 +166,7 @@ fn openTrack(base: *AudioCodecBase, stream: *Stream, mb: *MediaBase, file: *medi
         .holding = false,
         .paused = false,
         .last_ticks = 0,
+        .pad = 0,
     };
     var info: media.MediaInfo = .{};
     mb.GetMediaInfo(file, &info);
@@ -264,8 +277,34 @@ pub fn next(stream: *Stream, packet: *media.MediaPacket) ?[]const u8 {
         if (hole(stream, packet)) return null;
     }
     source.last_ticks = packet.ticks;
+    cutFor(source, packet);
     if (packet.size == 0) return &.{};
     return packet.data.?[0..packet.size];
+}
+
+/// What the packet says is not presented of it (`padding_ns`): `pad`
+/// frames off the end of what it decodes to - counted there, since only
+/// its codec knows how many frames that is - or, for padding at its
+/// front, so many frames passed over as a seek's are.
+fn cutFor(source: *Source, packet: *const media.MediaPacket) void {
+    source.pad = 0;
+    if (packet.padding_ns == 0 or source.rate == 0 or source.timescale == 0) return;
+    if (packet.padding_ns > 0) {
+        source.pad = nanosOf(source, packet.padding_ns);
+        return;
+    }
+    // Where it begins, as `place` will give it to the codec.
+    const begins = if (source.placed)
+        source.position
+    else
+        framesOf(source, @intCast(@min(packet.ticks, std.math.maxInt(i64)))) - source.delay;
+    source.skip_until = @max(source.skip_until, begins + nanosOf(source, -packet.padding_ns));
+}
+
+/// `ns` of sound in frames, rounded to the nearest: 23219955 ns are 1024
+/// frames at 44.1 kHz.
+fn nanosOf(source: *const Source, ns: i64) i64 {
+    return @intCast(@divFloor(@as(i128, ns) * source.rate + 500_000_000, 1_000_000_000));
 }
 
 /// Whether the packet comes after a hole in the track's times: then it is
@@ -315,6 +354,7 @@ fn restart(stream: *Stream) bool {
     source.delay = 0;
     source.exact = false;
     source.total = 0;
+    source.pad = 0;
     source.done = false;
     source.skip_until = 0;
     source.position = 0;
@@ -364,14 +404,19 @@ pub fn silence(stream: *Stream, buffer: [*]i16, frames: u32) u32 {
 }
 
 /// Of `count` frames a packet decoded, which begin at frame `start` of
-/// the sound, the ones handed out: those before a seek's frame passed
-/// over, those past the length cut. Null for none.
-pub fn window(source: *Source, start: i64, count: u32) ?Span {
+/// the sound and have `left` of the same packet's still to come after
+/// them, the ones handed out: those before a seek's frame passed over,
+/// those past the length cut, and those the packet says are not
+/// presented at its end (`pad`). Null for none.
+pub fn window(source: *Source, start: i64, count: u32, left: u32) ?Span {
     var last: i64 = count;
     if (source.exact) {
         if (start + count >= source.total) source.done = true;
         last = @min(last, source.total - start);
     }
+    // The padding at the packet's end reaches back into these frames
+    // once fewer than `pad` of them come after.
+    if (source.pad > left) last = @min(last, @as(i64, count) - (source.pad - left));
     const first: i64 = @max(0, source.skip_until - start);
     if (first >= last) return null;
     return .{ .first = @intCast(first), .last = @intCast(last) };

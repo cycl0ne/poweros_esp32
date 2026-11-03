@@ -66,7 +66,7 @@ pub fn kindBit(kind: u32) u32 {
 
 /// `MediaContainerFile.layout`: which layout the file has. Raised whenever
 /// the structures here change.
-pub const MCONTAINER_LAYOUT: u32 = 1;
+pub const MCONTAINER_LAYOUT: u32 = 2;
 
 /// The most tracks a file's are read of; past them, tracks are passed
 /// over.

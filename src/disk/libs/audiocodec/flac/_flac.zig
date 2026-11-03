@@ -300,7 +300,7 @@ fn nextPacket(stream: *Stream, f: *Flac) bool {
         if (!frame.decodePacket(bytes, &f.format, f.samples, &header)) continue;
         const start = _media.place(&stream.media, packet.ticks);
         _media.advance(&stream.media, header.blocksize);
-        const span = _media.window(&stream.media, start, header.blocksize) orelse continue;
+        const span = _media.window(&stream.media, start, header.blocksize, 0) orelse continue;
         f.given = span.first;
         f.block = span.last;
         return true;

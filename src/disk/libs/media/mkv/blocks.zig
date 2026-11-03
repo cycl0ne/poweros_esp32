@@ -4,10 +4,13 @@
 //!
 //! **The clusters** hold the packets of every track side by side, in the
 //! order they are decoded: each cluster its time and its blocks - a
-//! SimpleBlock, or a BlockGroup of a Block and what is said of it. A
-//! block names its track by number and its time from the cluster's; it
-//! holds one frame, or several laced together - their sizes Xiph's way,
-//! EBML's, or all the same.
+//! SimpleBlock, or a BlockGroup of a Block and what is said of it: how
+//! long it lasts, whether it needs another block, and what of its sound
+//! is not presented (DiscardPadding, handed out as the packet's
+//! `padding_ns` - the last frame's where several are laced into one
+//! block). A block names its track by number and its time from the
+//! cluster's; it holds one frame, or several laced together - their
+//! sizes Xiph's way, EBML's, or all the same.
 //!
 //! **Each track walks on its own.** ReadMediaPacket on a track reads the
 //! elements after the last block it handed out, passes over the other
@@ -157,6 +160,11 @@ pub const Walk = struct {
     time_ns: i64,
     key: bool,
     each_ns: u64,
+    /// What of the block's sound is not presented, in nanoseconds: its
+    /// DiscardPadding, which belongs to the last of its frames. Positive
+    /// at the end, negative at the front; 0 for a block that says
+    /// nothing of it, which a SimpleBlock always does.
+    padding_ns: i64,
     /// Packets handed out since the track last moved.
     index: u32,
 };
@@ -334,16 +342,19 @@ fn block(file: *_file.File, track: *_file.Track, at: u64, h: ebml.Head, load: bo
 
     var key = flags & 0x80 != 0;
     var duration: ?u64 = null;
+    var padding_ns: i64 = 0;
     var data_length: usize = 0;
     if (group) {
-        // What is said of the block: how long it lasts, and the blocks it
-        // needs - none for a key frame.
+        // What is said of the block: how long it lasts, what of its sound
+        // is not presented, and the blocks it needs - none for a key
+        // frame.
         bytes = try bytesAt(file, track, body, @intCast(h.size));
         var elements = ebml.Elements{ .rest = bytes[0..@intCast(h.size)] };
         key = true;
         while (elements.next()) |element| switch (element.id) {
             ebml.Block => data_length = element.body.len,
             ebml.BlockDuration => duration = ebml.uint(element.body),
+            ebml.DiscardPadding => padding_ns = ebml.int(element.body),
             ebml.ReferenceBlock => key = false,
             else => {},
         };
@@ -368,6 +379,7 @@ fn block(file: *_file.File, track: *_file.Track, at: u64, h: ebml.Head, load: bo
     w.next = 0;
     w.time_ns = found.time_ns;
     w.key = key;
+    w.padding_ns = padding_ns;
     w.each_ns = own.frame_ns;
     if (duration) |ticks| w.each_ns = @min(ticks, max_ticks) * m.scale / w.frames;
     return found;
@@ -470,6 +482,9 @@ pub fn read(file: *_file.File, track: *_file.Track, packet: *media.MediaPacket) 
         .duration = @intCast(@min(w.each_ns / 1000, std.math.maxInt(u32))),
         .index = w.index,
         .ticks = ticksOf(@intCast(@max(0, time_ns)), track.info.timescale),
+        // A block's DiscardPadding is its last frame's: the others are
+        // whole frames before it.
+        .padding_ns = if (n + 1 == w.frames) w.padding_ns else 0,
     };
     w.frame_at += size;
     w.next += 1;
