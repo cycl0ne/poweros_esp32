@@ -62,13 +62,16 @@ const _instance = @import("../instance/_instance.zig");
 /// their edges or corners (POLYGON_MODE_LINE, POINT); one sample a pixel,
 /// triangles culled by facing as asked; lines `line_width` pixels wide, set
 /// here or by CmdSetLineWidth, and points one pixel; a
-/// depth test of any compare, written or not, without bounds, bias or clamp;
+/// depth test of any compare, written or not, with a bias on the triangles'
+/// depth where the device takes one, and without bounds or clamp;
 /// a stencil test of any compare and operations, a face's own, the masks and
 /// the reference given here or set by commands; the channels of the write mask written, replacing what is
 /// there or mixed with it by any blend factors and operation, the alpha by
-/// its own, and no logic op; one viewport and one scissor, given here or set
+/// its own and each colour attachment of the subpass by its own
+/// (`color_blend_state.attachments`, one for each), and no logic op; one viewport and one scissor, given here or set
 /// by CmdSetViewport and CmdSetScissor (DynamicState viewport and scissor;
 /// blend_constants with CmdSetBlendConstants, line_width with CmdSetLineWidth,
+/// depth_bias with CmdSetDepthBias,
 /// the stencil's with CmdSetStencilCompareMask, CmdSetStencilWriteMask and
 /// CmdSetStencilReference;
 /// the others are taken and do nothing). A pipeline with the rasterizer
@@ -104,8 +107,14 @@ const _instance = @import("../instance/_instance.zig");
 /// NOTES:
 /// A depth test on a render pass without depth is no test, as Vulkan has
 /// it, nor a stencil test on one without stencil. Lines and points use the
-/// front's stencil test. On an attachment without alpha, R5G6B5, what is there reads as wholly
-/// opaque. On the cores, SRC_ALPHA and ONE_MINUS_SRC_ALPHA or ONE, with
+/// front's stencil test, and take no depth bias: only triangles are moved,
+/// as in Vulkan, and `depth_bias_enable` wants a device whose
+/// `PhysicalDeviceFeatures.depth_bias` is true (since 1.34). On an attachment without alpha, R5G6B5, what is there reads as wholly
+/// opaque. `color_blend_state.attachments` holds one state for each colour
+/// attachment of the subpass, or none for the default over all of them; a
+/// subpass of several has each blended its own way (since 1.33,
+/// `PhysicalDeviceFeatures.independent_blend`), the blend constants being
+/// the pipeline's and shared. On the cores, SRC_ALPHA and ONE_MINUS_SRC_ALPHA or ONE, with
 /// the alpha's factors the same or ZERO and ONE and the mask whole, cost
 /// less than any other mixing.
 ///
@@ -207,6 +216,8 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         .front = .counter_clockwise,
         .depth_test = null,
         .depth_write = false,
+        .biased = false,
+        .bias = null,
         .prepass = info.flags & facet.PIPELINE_CREATE_DEPTH_PREPASS != 0 and !fragment_entry.fixed().discards(),
         .stencil = null,
         .dynamic_stencil_compare = false,
@@ -214,7 +225,7 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         .dynamic_stencil_reference = false,
         .polygon_mode = .fill,
         .line_width = 1,
-        .mixing = .{},
+        .mixings = @splat(.{}),
         .viewport = null,
         .scissor = null,
     };
@@ -261,7 +272,16 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
 
     // The rasterization.
     const rasterization = info.rasterization_state;
-    if (rasterization.depth_clamp_enable or rasterization.depth_bias_enable) return .error_feature_not_present;
+    if (rasterization.depth_clamp_enable) return .error_feature_not_present;
+    if (rasterization.depth_bias_enable) {
+        if (!device.physical.features.depth_bias) return .error_feature_not_present;
+        made.biased = true;
+        made.bias = .{
+            .constant = rasterization.depth_bias_constant_factor,
+            .clamp = rasterization.depth_bias_clamp,
+            .slope = rasterization.depth_bias_slope_factor,
+        };
+    }
     switch (rasterization.polygon_mode) {
         .fill, .line, .point => made.polygon_mode = rasterization.polygon_mode,
         else => return .error_feature_not_present,
@@ -308,27 +328,33 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
     if (info.color_blend_state) |blend| {
         if (blend.logic_op_enable) return .error_feature_not_present;
         if (blend.attachment_count != 0 and blend.attachment_count != colors) return .error_initialization_failed;
-        // One way of mixing for all: they are drawn the same way, in turn.
-        if (blend.attachment_count > 1) for (blend.attachments.?[1..blend.attachment_count]) |other| {
-            if (!std.mem.eql(u8, std.mem.asBytes(&other), std.mem.asBytes(&blend.attachments.?[0]))) return .error_feature_not_present;
-        };
-        if (blend.attachment_count != 0) {
-            const attachment = blend.attachments.?[0];
-            made.mixing.mask = attachment.color_write_mask & facet.COLOR_COMPONENT_ALL;
+        // A device without `independent_blend` wants them all alike, and
+        // says so rather than drawing what was not asked for.
+        if (blend.attachment_count > 1 and !device.physical.features.independent_blend) {
+            for (blend.attachments.?[1..blend.attachment_count]) |other| {
+                if (!std.mem.eql(u8, std.mem.asBytes(&other), std.mem.asBytes(&blend.attachments.?[0]))) return .error_feature_not_present;
+            }
+        }
+        // One for each colour attachment of the subpass, each its own way:
+        // an attachment is a pass of its own, drawn with its own mixing.
+        if (blend.attachment_count != 0) for (blend.attachments.?[0..blend.attachment_count], 0..) |attachment, index| {
+            const mixing = &made.mixings[index];
+            mixing.mask = attachment.color_write_mask & facet.COLOR_COMPONENT_ALL;
             if (attachment.blend_enable) {
                 const factors = [4]facet.BlendFactor{ attachment.src_color_blend_factor, attachment.dst_color_blend_factor, attachment.src_alpha_blend_factor, attachment.dst_alpha_blend_factor };
                 for (factors) |factor| if (@intFromEnum(factor) > @intFromEnum(facet.BlendFactor.src_alpha_saturate)) return .error_feature_not_present;
                 if (@intFromEnum(attachment.color_blend_op) > @intFromEnum(facet.BlendOp.max) or @intFromEnum(attachment.alpha_blend_op) > @intFromEnum(facet.BlendOp.max)) return .error_feature_not_present;
-                made.mixing.enabled = true;
-                made.mixing.src_color = factors[0];
-                made.mixing.dst_color = factors[1];
-                made.mixing.color_op = attachment.color_blend_op;
-                made.mixing.src_alpha = factors[2];
-                made.mixing.dst_alpha = factors[3];
-                made.mixing.alpha_op = attachment.alpha_blend_op;
+                mixing.enabled = true;
+                mixing.src_color = factors[0];
+                mixing.dst_color = factors[1];
+                mixing.color_op = attachment.color_blend_op;
+                mixing.src_alpha = factors[2];
+                mixing.dst_alpha = factors[3];
+                mixing.alpha_op = attachment.alpha_blend_op;
             }
-        }
-        made.mixing.constants = blend.blend_constants;
+        };
+        // The constants are the pipeline's, shared by all of them.
+        for (&made.mixings) |*mixing| mixing.constants = blend.blend_constants;
     }
 
     // The viewport and the scissor, unless commands set them.
@@ -338,8 +364,11 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         if (dynamic.dynamic_states) |states| for (states[0..dynamic.dynamic_state_count]) |state| switch (state) {
             .viewport => dynamic_viewport = true,
             .scissor => dynamic_scissor = true,
-            .blend_constants => made.mixing.constants = null,
+            .blend_constants => for (&made.mixings) |*mixing| {
+                mixing.constants = null;
+            },
             .line_width => made.line_width = null,
+            .depth_bias => made.bias = null,
             .stencil_compare_mask => made.dynamic_stencil_compare = true,
             .stencil_write_mask => made.dynamic_stencil_write = true,
             .stencil_reference => made.dynamic_stencil_reference = true,

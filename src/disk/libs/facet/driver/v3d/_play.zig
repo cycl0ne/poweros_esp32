@@ -101,6 +101,8 @@ pub const Player = struct {
     viewport: facet.Viewport = .{ .width = 0, .height = 0 },
     scissor: facet.Rect2D = .{ .extent = .{} },
     blend_constants: [4]f32 = @splat(0),
+    /// What CmdSetDepthBias set, for a pipeline whose bias is dynamic.
+    depth_bias: _pipeline.Bias = .{},
     line_width: f32 = 1,
     stencil: _vertices.StencilSet = .{},
     resources: shader.Resources = .{},
@@ -255,6 +257,10 @@ fn playStream(queue: *Queue, stream: *const _stream.Stream) void {
         .set_viewport => player.viewport = _stream.as(_command.SetViewport, head).viewport,
         .set_scissor => player.scissor = _stream.as(_command.SetScissor, head).scissor,
         .set_blend_constants => player.blend_constants = _stream.as(_command.SetBlendConstants, head).constants,
+        .set_depth_bias => {
+            const command = _stream.as(_command.SetDepthBias, head);
+            player.depth_bias = .{ .constant = command.constant, .clamp = command.clamp, .slope = command.slope };
+        },
         .set_line_width => player.line_width = _stream.as(_command.SetLineWidth, head).width,
         .set_stencil => player.stencil.apply(_stream.as(_command.SetStencil, head)),
         .draw => if (player.drawing) {
@@ -760,10 +766,12 @@ fn stencilFaceOf(face: _pipeline.StencilFace) cl.StencilFace {
     };
 }
 
-/// A pipeline's mixing in the hardware's terms.
+/// A pipeline's mixing in the hardware's terms: the one for the colour
+/// attachment this part draws.
 fn mixingOf(player: *const Player, pipeline: *const Pipeline) cl.Mixing {
+    const asked = _pipeline.mixingAt(pipeline, player.resources.output);
     // What is there has no alpha: it reads as wholly opaque.
-    const mixing = if (player.frame.format == cl.OUTPUT_BGR565) pipeline.mixing.overOpaque() else pipeline.mixing;
+    const mixing = if (player.frame.format == cl.OUTPUT_BGR565) asked.overOpaque() else asked.*;
     return .{
         .src_color = @intFromEnum(mixing.src_color),
         .dst_color = @intFromEnum(mixing.dst_color),
@@ -801,7 +809,7 @@ fn drawStateOf(player: *const Player, pipeline: *const Pipeline, viewport: *cons
             .compare = if (has_depth) (if (pipeline.depth_test) |compare| @intFromEnum(compare) else cl.COMPARE_ALWAYS) else cl.COMPARE_ALWAYS,
             .depth_write = has_depth and pipeline.depth_test != null and pipeline.depth_write,
             .stencil = stencil != null,
-            .blend = pipeline.mixing.enabled,
+            .blend = _pipeline.mixingAt(pipeline, player.resources.output).enabled,
         },
         .mixing = mixingOf(player, pipeline),
         .stencil = if (stencil) |faces| .{ stencilFaceOf(faces[0]), stencilFaceOf(faces[1]) } else undefined,

@@ -9,6 +9,7 @@ const _descriptor = @import("_descriptor.zig");
 const _buffer = @import("../buffer/_buffer.zig");
 const ImageView = @import("../image/_image.zig").ImageView;
 const Sampler = @import("../sampler/_sampler.zig").Sampler;
+const BufferView = @import("../buffer/_bufferview.zig").BufferView;
 
 /// Descriptors written into sets, and copied from one set to another.
 ///
@@ -78,19 +79,38 @@ pub fn UpdateDescriptorSets(base: *FacetBase, device: *facet.Device, write_count
         for (0..write.descriptor_count) |k| {
             const found = _descriptor.slotAt(set, write.dst_binding, write.dst_array_element + @as(u32, @intCast(k))) orelse break;
             if (found.kind != write.descriptor_type) continue;
+            // Which of the set's offsets shifts the slot is the set's own
+            // doing, not the write's: it stays as the set was made.
+            const dynamic = found.slot.dynamic;
             found.slot.* = switch (write.descriptor_type) {
-                .sampled_image, .combined_image_sampler, .sampler => sampled: {
+                .sampled_image, .combined_image_sampler, .sampler, .storage_image => sampled: {
                     const info = (write.image_info orelse break)[k];
                     // A sampler of its own has no image, and a sampled
                     // image no sampler; a combined one has both.
-                    const with: ?*const facet.texture.Sampler = if (write.descriptor_type == .sampled_image) null else sampler: {
+                    const with: ?*const facet.texture.Sampler = if (write.descriptor_type == .sampled_image or write.descriptor_type == .storage_image) null else sampler: {
                         const with_sampler = info.sampler orelse break :sampler null;
                         break :sampler &_objects.of(Sampler, with_sampler).kept;
                     };
                     if (write.descriptor_type == .sampler) break :sampled .{ .sampler = with };
                     const view = _objects.of(ImageView, info.image_view orelse break :sampled .{ .sampler = with });
                     if (view.image.kind != .texture or view.image.data == null) break :sampled .{ .sampler = with };
-                    break :sampled .{ .pointer = &view.texels, .sampler = with };
+                    // A storage image is written through, so the image has
+                    // to have been made for it; one that was not is left
+                    // unwritten rather than handed over to be written.
+                    const writable = _descriptor.written(write.descriptor_type);
+                    if (writable and view.image.usage & facet.IMAGE_USAGE_STORAGE == 0) break :sampled .{};
+                    break :sampled .{ .pointer = &view.texels, .sampler = with, .writable = writable };
+                },
+                .uniform_texel_buffer, .storage_texel_buffer => texels: {
+                    const views = write.texel_buffer_view orelse break;
+                    const view = _objects.of(BufferView, views[k]);
+                    const bytes = _buffer.bytes(view.buffer, view.offset, view.bytes) orelse break :texels .{};
+                    break :texels .{
+                        .pointer = bytes.ptr,
+                        .range = @intCast(@min(bytes.len - bytes.len % view.texels.bytes(), 0xFFFF_FFFF)),
+                        .texels = view.texels,
+                        .writable = write.descriptor_type == .storage_texel_buffer,
+                    };
                 },
                 else => bound: {
                     const info = (write.buffer_info orelse break)[k];
@@ -99,6 +119,7 @@ pub fn UpdateDescriptorSets(base: *FacetBase, device: *facet.Device, write_count
                     break :bound .{ .pointer = bytes.ptr, .range = @intCast(@min(bytes.len, 0xFFFF_FFFF)) };
                 },
             };
+            found.slot.dynamic = dynamic;
         }
     };
     if (copies) |given| for (given[0..copy_count]) |copy| {
@@ -109,7 +130,9 @@ pub fn UpdateDescriptorSets(base: *FacetBase, device: *facet.Device, write_count
             const source = _descriptor.slotAt(from, copy.src_binding, copy.src_array_element + step) orelse break;
             const target = _descriptor.slotAt(into, copy.dst_binding, copy.dst_array_element + step) orelse break;
             if (source.kind != target.kind) continue;
+            const dynamic = target.slot.dynamic;
             target.slot.* = source.slot.*;
+            target.slot.dynamic = dynamic;
         }
     };
 }

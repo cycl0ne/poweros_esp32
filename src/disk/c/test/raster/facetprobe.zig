@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.0 (02.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.3 (03.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -62,7 +62,7 @@ const Probe = struct {
     frames: [8]?*facet.Framebuffer = @splat(null),
     modules: [2]?*facet.ShaderModule = @splat(null),
     layouts: [2]?*facet.PipelineLayout = @splat(null),
-    pipelines: [4]?*facet.Pipeline = @splat(null),
+    pipelines: [8]?*facet.Pipeline = @splat(null),
     passed: u32 = 0,
     failed: u32 = 0,
 
@@ -252,8 +252,49 @@ const Flat = struct {
     const code = facet.shader.Code{ .entry_count = entries.len, .entries = &entries };
 };
 
-/// A pipeline of `Flat` over `pass`, depth tested and written.
+
+/// The colour the vertices carry, which is one of the fixed forms every
+/// device draws (`shader.FixedKind.color`): the vertices are three floats
+/// at location 0 and the colour is white at every one of them, so what a
+/// draw leaves behind is the mixing's doing alone.
+const Smooth = struct {
+    fn vertex(vertices: *const facet.shader.Vertices) callconv(.c) void {
+        // A channel of the colour is carried 0 to 255 (`shader.channel`),
+        // not 0 to 1.
+        const full = facet.shader.channel(1);
+        for (0..vertices.count) |k| {
+            const p = vertices.input(@intCast(k), 0);
+            vertices.output(@intCast(k))[0..8].* = .{ p[0], p[1], p[2], 1, full, full, full, full };
+        }
+    }
+
+    const entries = [_]facet.shader.Entry{
+        facet.shader.vertex("main", &vertex, 4),
+        facet.shader.fixedFragment("main", .{ .kind = .color }),
+    };
+    const code = facet.shader.Code{ .entry_count = entries.len, .entries = &entries };
+};
+
+/// A pipeline of `Flat` over `pass`, depth tested and written, of one
+/// colour attachment mixed the default way.
 fn flatPipeline(probe: *Probe, pass: *facet.RenderPass, module: *facet.ShaderModule, layout: *facet.PipelineLayout) ?*facet.Pipeline {
+    return pipelineOf(probe, pass, module, layout, .{ .depth_tested = true });
+}
+
+/// What a probe's pipelines differ in: one blend state for each colour
+/// attachment of the subpass, whether the depth is tested and written, the
+/// rasterization state, and what commands set.
+const Shape = struct {
+    blends: []const facet.PipelineColorBlendAttachmentState = &.{.{}},
+    depth_tested: bool = false,
+    raster: facet.PipelineRasterizationStateCreateInfo = .{},
+    dynamic: []const facet.DynamicState = &.{},
+};
+
+/// A pipeline over `pass` of the module's "main", as `shape` says.
+fn pipelineOf(probe: *Probe, pass: *facet.RenderPass, module: *facet.ShaderModule, layout: *facet.PipelineLayout, shape: Shape) ?*facet.Pipeline {
+    const blends = shape.blends;
+    const depth_tested = shape.depth_tested;
     const stages = [2]facet.PipelineShaderStageCreateInfo{
         .{ .stage = facet.SHADER_STAGE_VERTEX, .module = module, .name = "main" },
         .{ .stage = facet.SHADER_STAGE_FRAGMENT, .module = module, .name = "main" },
@@ -270,11 +311,10 @@ fn flatPipeline(probe: *Probe, pass: *facet.RenderPass, module: *facet.ShaderMod
     const viewport = facet.Viewport{ .width = side, .height = side };
     const scissor = facet.Rect2D{ .extent = .{ .width = side, .height = side } };
     const view = facet.PipelineViewportStateCreateInfo{ .viewports = @ptrCast(&viewport), .scissors = @ptrCast(&scissor) };
-    const raster = facet.PipelineRasterizationStateCreateInfo{};
-    const depth = facet.PipelineDepthStencilStateCreateInfo{ .depth_test_enable = true, .depth_write_enable = true, .depth_compare_op = .less };
-    const blends: [1]facet.PipelineColorBlendAttachmentState = @splat(.{});
-    const blend = facet.PipelineColorBlendStateCreateInfo{ .attachment_count = 1, .attachments = &blends };
-    const dynamic = facet.PipelineDynamicStateCreateInfo{};
+    const raster = shape.raster;
+    const depth = facet.PipelineDepthStencilStateCreateInfo{ .depth_test_enable = depth_tested, .depth_write_enable = depth_tested, .depth_compare_op = .less };
+    const blend = facet.PipelineColorBlendStateCreateInfo{ .attachment_count = @intCast(blends.len), .attachments = blends.ptr };
+    const dynamic = facet.PipelineDynamicStateCreateInfo{ .dynamic_state_count = @intCast(shape.dynamic.len), .dynamic_states = shape.dynamic.ptr };
     const info = facet.GraphicsPipelineCreateInfo{
         .stage_count = 2,
         .stages = &stages,
@@ -435,9 +475,644 @@ fn pixelAt(pixels: [*]const u8, pitch: u32, x: u32, y: u32) u32 {
     return std.mem.readInt(u32, pixels[y * pitch + x * 4 ..][0..4], .little);
 }
 
+// --- 1.31: an image a shader function writes through -------------------------
+
+/// Each group writes one texel: its own numbers, so what is written says
+/// which group wrote it.
+const Paint = struct {
+    fn run(groups: *const facet.shader.Groups) callconv(.c) void {
+        const image = groups.resources.written(0, 0, 0) orelse return;
+        const color = 0xFF00_0000 | groups.group[0] << 16 | groups.group[1] << 8 | groups.resources.constants(u32).*;
+        image.setColor(0, 0, groups.group[0], groups.group[1], color);
+    }
+
+    /// What ran, and whether it found an image to write through: the test
+    /// reads it out of a buffer.
+    fn told(groups: *const facet.shader.Groups) callconv(.c) void {
+        const out = groups.resources.storage(u32, 0, 1) orelse return;
+        out[0] = if (groups.resources.written(0, 0, 0) == null) 0xA11_600D else 0xBAD;
+    }
+
+    const entries = [_]facet.shader.Entry{
+        facet.shader.compute("main", &run),
+        facet.shader.compute("told", &told),
+    };
+    const code = facet.shader.Code{ .entry_count = entries.len, .entries = &entries };
+};
+
+fn storageImageChecks(probe: *Probe) void {
+    const fb = probe.fb;
+    const device = probe.device.?;
+    defer probe.give();
+    const bindings = [2]facet.DescriptorSetLayoutBinding{
+        .{ .binding = 0, .descriptor_type = .storage_image, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+        .{ .binding = 1, .descriptor_type = .storage_buffer, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+    };
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    const made = fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 2, .bindings = &bindings }, &set_layout);
+    if (!probe.features.storage_images) {
+        probe.check(made == .error_feature_not_present, "a storage image refused where the device writes none");
+        probe.check(set_layout == null, "and nothing given back for it");
+        return;
+    }
+    if (made != .success) return probe.check(false, "a set layout with a storage image in it");
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    probe.check(true, "a set layout with a storage image in it");
+
+    var properties: facet.FormatProperties = undefined;
+    fb.GetPhysicalDeviceFormatProperties(probe.physical, .r8g8b8a8_unorm, &properties);
+    probe.check(properties.optimal_tiling_features & facet.FORMAT_FEATURE_STORAGE_IMAGE != 0, "the format says it may be written through");
+
+    const image = probe.image(.{
+        .format = .r8g8b8a8_unorm,
+        .extent = .{ .width = 8, .height = 8 },
+        .usage = facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_SRC,
+    }, 0) orelse return probe.check(false, "an image made to be written through");
+    probe.check(true, "an image made to be written through");
+    const sampled_only = probe.image(.{
+        .format = .r8g8b8a8_unorm,
+        .extent = .{ .width = 8, .height = 8 },
+        .usage = facet.IMAGE_USAGE_SAMPLED,
+    }, 0);
+
+    var module: ?*facet.ShaderModule = null;
+    if (fb.CreateShaderModule(device, &.{ .code = &Paint.code }, &module) != .success) return probe.check(false, "the shader module");
+    _ = Probe.keep(&probe.modules, module);
+    const range = facet.PushConstantRange{ .size = 4 };
+    var layout: ?*facet.PipelineLayout = null;
+    if (fb.CreatePipelineLayout(device, &.{ .set_layout_count = 1, .set_layouts = @ptrCast(&set_layout), .push_constant_range_count = 1, .push_constant_ranges = @ptrCast(&range) }, &layout) != .success)
+        return probe.check(false, "the pipeline layout");
+    _ = Probe.keep(&probe.layouts, layout);
+    var pool: ?*facet.DescriptorPool = null;
+    if (fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool) != .success) return probe.check(false, "a descriptor pool");
+    defer fb.DestroyDescriptorPool(device, pool);
+    var sets: [1]?*facet.DescriptorSet = undefined;
+    if (fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &sets) != .success)
+        return probe.check(false, "a descriptor set");
+    const told_buffer, const told_bytes = probe.buffer(16, facet.BUFFER_USAGE_STORAGE_BUFFER) orelse return probe.check(false, "a buffer the function writes");
+    @memset(told_bytes[0..16], 0);
+
+    const image_info = facet.DescriptorImageInfo{ .image_view = image[1] };
+    const buffer_info = facet.DescriptorBufferInfo{ .buffer = told_buffer, .range = facet.WHOLE_SIZE };
+    const writes = [2]facet.WriteDescriptorSet{
+        .{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .storage_image, .descriptor_count = 1, .image_info = @ptrCast(&image_info) },
+        .{ .dst_set = sets[0].?, .dst_binding = 1, .descriptor_type = .storage_buffer, .descriptor_count = 1, .buffer_info = @ptrCast(&buffer_info) },
+    };
+    fb.UpdateDescriptorSets(device, 2, &writes, 0, null);
+
+    const infos = [2]facet.ComputePipelineCreateInfo{
+        .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.? }, .layout = layout.? },
+        .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.?, .name = "told" }, .layout = layout.? },
+    };
+    var pipelines: [2]?*facet.Pipeline = undefined;
+    if (fb.CreateComputePipelines(device, null, 2, &infos, &pipelines) != .success) return probe.check(false, "the compute pipelines");
+    _ = Probe.keep(&probe.pipelines, pipelines[0]);
+    _ = Probe.keep(&probe.pipelines, pipelines[1]);
+
+    const four: u32 = 4;
+    var commands = probe.record() orelse return probe.check(false, "a recording");
+    fb.CmdBindPipeline(commands, .compute, pipelines[0].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout.?, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdPushConstants(commands, layout.?, facet.SHADER_STAGE_COMPUTE, 0, 4, &four);
+    fb.CmdDispatch(commands, 8, 8, 1);
+    if (!probe.submit()) return probe.check(false, "the dispatch submitted");
+
+    const back, const back_bytes = probe.buffer(8 * 8 * 4, facet.BUFFER_USAGE_TRANSFER_DST) orelse return probe.check(false, "a buffer to read the image into");
+    @memset(back_bytes[0 .. 8 * 8 * 4], 0);
+    const whole = facet.BufferImageCopy{ .image_extent = .{ .width = 8, .height = 8 } };
+    commands = probe.record() orelse return probe.check(false, "a second recording");
+    fb.CmdCopyImageToBuffer(commands, image[0], .general, back, 1, @ptrCast(&whole));
+    if (!probe.submit()) return probe.check(false, "the read-back submitted");
+
+    // r8g8b8a8 in the buffer: the group's x, its y, the push constants,
+    // and opaque.
+    probe.checkEqual(0xFF04_0000, std.mem.readInt(u32, back_bytes[0..4], .little), "the first group's texel");
+    probe.checkEqual(0xFF04_0003, std.mem.readInt(u32, back_bytes[3 * 4 ..][0..4], .little), "the fourth group's texel");
+    probe.checkEqual(0xFF04_0507, std.mem.readInt(u32, back_bytes[(5 * 8 + 7) * 4 ..][0..4], .little), "a texel in the middle of the image");
+
+    // An image that was not made to be written through: the write does not
+    // take, and the function finds nothing.
+    if (sampled_only) |one| {
+        const refused = facet.WriteDescriptorSet{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .storage_image, .descriptor_count = 1, .image_info = @ptrCast(&facet.DescriptorImageInfo{ .image_view = one[1] }) };
+        fb.UpdateDescriptorSets(device, 1, @ptrCast(&refused), 0, null);
+        commands = probe.record() orelse return probe.check(false, "a third recording");
+        fb.CmdBindPipeline(commands, .compute, pipelines[1].?);
+        fb.CmdBindDescriptorSets(commands, .compute, layout.?, 0, 1, @ptrCast(&sets), 0, null);
+        fb.CmdDispatch(commands, 1, 1, 1);
+        if (!probe.submit()) return probe.check(false, "the refused write submitted");
+        probe.checkEqual(0xA11_600D, std.mem.readInt(u32, told_bytes[0..4], .little), "an image not made for it is not written through");
+    }
+}
+
+// --- 1.32: a buffer read as texels of a format -------------------------------
+
+/// Texel k of binding 0 read as a format and written into texel k of
+/// binding 1, which is of another format: what reading by format is for.
+const Swap = struct {
+    fn run(groups: *const facet.shader.Groups) callconv(.c) void {
+        const from = groups.resources.texels(0, 0, 0) orelse return;
+        var into = groups.resources.texels(0, 1, 0) orelse return;
+        const k = groups.group[0];
+        const parts = from.at(k);
+        into.set(k, .{ parts[1], parts[0], parts[2] * 0.5, 1 });
+    }
+
+    /// What the function sees of the two: the counts, and whether each may
+    /// be written.
+    fn told(groups: *const facet.shader.Groups) callconv(.c) void {
+        const out = groups.resources.storage(u32, 0, 2) orelse return;
+        const from = groups.resources.texels(0, 0, 0);
+        const into = groups.resources.texels(0, 1, 0);
+        out[0] = if (from) |one| one.count else 0xFFFF_FFFF;
+        out[1] = if (from) |one| @intFromBool(one.writable) else 0xFFFF_FFFF;
+        out[2] = if (into) |one| one.count else 0xFFFF_FFFF;
+        out[3] = if (into) |one| @intFromBool(one.writable) else 0xFFFF_FFFF;
+        out[4] = if (from) |one| one.colorAt(0) else 0;
+    }
+
+    const entries = [_]facet.shader.Entry{
+        facet.shader.compute("main", &run),
+        facet.shader.compute("told", &told),
+    };
+    const code = facet.shader.Code{ .entry_count = entries.len, .entries = &entries };
+};
+
+fn texelBufferChecks(probe: *Probe) void {
+    const fb = probe.fb;
+    const device = probe.device.?;
+    defer probe.give();
+    const floats, const float_bytes = probe.buffer(4 * 16, facet.BUFFER_USAGE_UNIFORM_TEXEL_BUFFER) orelse return probe.check(false, "a buffer of floats");
+    const colors, const color_bytes = probe.buffer(4 * 4, facet.BUFFER_USAGE_STORAGE_TEXEL_BUFFER) orelse return probe.check(false, "a buffer of colours");
+    const given = [4][4]f32{ .{ 1, 0, 0, 1 }, .{ 0, 1, 0, 1 }, .{ 0, 0, 1, 1 }, .{ 1, 1, 1, 1 } };
+    @memcpy(float_bytes[0..64], std.mem.asBytes(&given));
+    @memset(color_bytes[0..16], 0);
+
+    var reading: ?*facet.BufferView = null;
+    const made = fb.CreateBufferView(device, &.{ .buffer = floats, .format = .r32g32b32a32_sfloat }, &reading);
+    if (!probe.features.texel_buffers) {
+        probe.check(made == .error_feature_not_present, "a buffer view refused where the device has none");
+        return;
+    }
+    if (made != .success) return probe.check(false, "a view of a buffer of floats");
+    defer fb.DestroyBufferView(device, reading);
+    probe.check(true, "a view of a buffer of floats");
+    var writing: ?*facet.BufferView = null;
+    if (fb.CreateBufferView(device, &.{ .buffer = colors, .format = .r8g8b8a8_unorm }, &writing) != .success) return probe.check(false, "a view written through");
+    defer fb.DestroyBufferView(device, writing);
+
+    // Refused: a format no view takes, and an offset that is not a texel's.
+    var none: ?*facet.BufferView = null;
+    probe.check(fb.CreateBufferView(device, &.{ .buffer = floats, .format = .d16_unorm }, &none) == .error_format_not_supported, "a format no view takes refused");
+    probe.check(fb.CreateBufferView(device, &.{ .buffer = floats, .format = .r32g32b32a32_sfloat, .offset = 4 }, &none) == .error_initialization_failed, "an offset that is not a texel's refused");
+    probe.check(none == null, "and nothing given back for either");
+
+    var module: ?*facet.ShaderModule = null;
+    if (fb.CreateShaderModule(device, &.{ .code = &Swap.code }, &module) != .success) return probe.check(false, "the shader module");
+    _ = Probe.keep(&probe.modules, module);
+    const bindings = [3]facet.DescriptorSetLayoutBinding{
+        .{ .binding = 0, .descriptor_type = .uniform_texel_buffer, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+        .{ .binding = 1, .descriptor_type = .storage_texel_buffer, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+        .{ .binding = 2, .descriptor_type = .storage_buffer, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+    };
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    if (fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 3, .bindings = &bindings }, &set_layout) != .success) return probe.check(false, "a set layout of the two kinds");
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    probe.check(true, "a set layout of the two kinds");
+    var layout: ?*facet.PipelineLayout = null;
+    if (fb.CreatePipelineLayout(device, &.{ .set_layout_count = 1, .set_layouts = @ptrCast(&set_layout) }, &layout) != .success) return probe.check(false, "the pipeline layout");
+    _ = Probe.keep(&probe.layouts, layout);
+    var pool: ?*facet.DescriptorPool = null;
+    if (fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool) != .success) return probe.check(false, "a descriptor pool");
+    defer fb.DestroyDescriptorPool(device, pool);
+    var sets: [1]?*facet.DescriptorSet = undefined;
+    if (fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &sets) != .success) return probe.check(false, "a descriptor set");
+    const told_buffer, const told_bytes = probe.buffer(32, facet.BUFFER_USAGE_STORAGE_BUFFER) orelse return probe.check(false, "a buffer the function writes");
+    @memset(told_bytes[0..32], 0);
+    const told_info = facet.DescriptorBufferInfo{ .buffer = told_buffer, .range = facet.WHOLE_SIZE };
+    const writes = [3]facet.WriteDescriptorSet{
+        .{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .uniform_texel_buffer, .descriptor_count = 1, .texel_buffer_view = @ptrCast(&reading) },
+        .{ .dst_set = sets[0].?, .dst_binding = 1, .descriptor_type = .storage_texel_buffer, .descriptor_count = 1, .texel_buffer_view = @ptrCast(&writing) },
+        .{ .dst_set = sets[0].?, .dst_binding = 2, .descriptor_type = .storage_buffer, .descriptor_count = 1, .buffer_info = @ptrCast(&told_info) },
+    };
+    fb.UpdateDescriptorSets(device, 3, &writes, 0, null);
+
+    const infos = [2]facet.ComputePipelineCreateInfo{
+        .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.? }, .layout = layout.? },
+        .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.?, .name = "told" }, .layout = layout.? },
+    };
+    var pipelines: [2]?*facet.Pipeline = undefined;
+    if (fb.CreateComputePipelines(device, null, 2, &infos, &pipelines) != .success) return probe.check(false, "the compute pipelines");
+    _ = Probe.keep(&probe.pipelines, pipelines[0]);
+    _ = Probe.keep(&probe.pipelines, pipelines[1]);
+
+    var commands = probe.record() orelse return probe.check(false, "a recording");
+    fb.CmdBindPipeline(commands, .compute, pipelines[0].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout.?, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 4, 1, 1);
+    if (!probe.submit()) return probe.check(false, "the dispatch submitted");
+
+    // Read as floats and written as 8888, red and green swapped and blue
+    // halved: r, g, b, a in the buffer's bytes.
+    probe.checkEqual(0xFF00_FF00, std.mem.readInt(u32, color_bytes[0..4], .little), "a float texel read and a colour texel written");
+    probe.checkEqual(0xFF00_00FF, std.mem.readInt(u32, color_bytes[4..8], .little), "the second of them");
+    probe.checkEqual(0xFF80_0000, std.mem.readInt(u32, color_bytes[8..12], .little), "a part halved on the way");
+    probe.checkEqual(0xFF80_FFFF, std.mem.readInt(u32, color_bytes[12..16], .little), "the last of them");
+
+    commands = probe.record() orelse return probe.check(false, "a second recording");
+    fb.CmdBindPipeline(commands, .compute, pipelines[1].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout.?, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    if (!probe.submit()) return probe.check(false, "the second dispatch submitted");
+    const out: [*]const u32 = @ptrCast(@alignCast(told_bytes));
+    probe.checkEqual(4, out[0], "the texels a uniform view holds");
+    probe.checkEqual(0, out[1], "a uniform view is not written through");
+    probe.checkEqual(4, out[2], "the texels a storage view holds");
+    probe.checkEqual(1, out[3], "a storage view is");
+    probe.checkEqual(0xFFFF_0000, out[4], "a float texel read as a colour");
+}
+
 // --- the run -----------------------------------------------------------------
 
 /// Every check on one device.
+
+// --- 1.33: a colour attachment blended its own way ---------------------------
+
+fn blendChecks(probe: *Probe) void {
+    const fb = probe.fb;
+    defer probe.give();
+    const attachments = [2]facet.AttachmentDescription{
+        .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .color_attachment_optimal },
+        .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .color_attachment_optimal },
+    };
+    const colors = [2]facet.AttachmentReference{ .{ .attachment = 0, .layout = .color_attachment_optimal }, .{ .attachment = 1, .layout = .color_attachment_optimal } };
+    const subpass = facet.SubpassDescription{ .color_attachment_count = 2, .color_attachments = &colors };
+    const pass = probe.renderPass(.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }) orelse
+        return probe.check(false, "a pass of two colour attachments");
+    probe.check(true, "a pass of two colour attachments");
+
+    // The form draws what the vertices carry, which every device draws:
+    // the V3D takes this pipeline as the cores do.
+    var module: ?*facet.ShaderModule = null;
+    if (fb.CreateShaderModule(probe.device.?, &.{ .code = &Smooth.code }, &module) != .success) return probe.check(false, "the shader module");
+    _ = Probe.keep(&probe.modules, module);
+    var layout: ?*facet.PipelineLayout = null;
+    if (fb.CreatePipelineLayout(probe.device.?, &.{}, &layout) != .success) return probe.check(false, "the pipeline layout");
+    _ = Probe.keep(&probe.layouts, layout);
+
+    // The first attachment keeps what is there, the second takes the
+    // colour: the same draw, mixed each its own way.
+    const keeps = facet.PipelineColorBlendAttachmentState{ .blend_enable = true, .src_color_blend_factor = .zero, .dst_color_blend_factor = .one, .src_alpha_blend_factor = .zero, .dst_alpha_blend_factor = .one };
+    const takes = facet.PipelineColorBlendAttachmentState{};
+    const differing = [2]facet.PipelineColorBlendAttachmentState{ keeps, takes };
+    const each_own = pipelineOf(probe, pass, module.?, layout.?, .{ .blends = &differing });
+    if (!probe.features.independent_blend) {
+        probe.check(each_own == null, "attachments that differ refused where a device blends them alike");
+        const alike = [2]facet.PipelineColorBlendAttachmentState{ keeps, keeps };
+        probe.check(pipelineOf(probe, pass, module.?, layout.?, .{ .blends = &alike }) != null, "the same state for both still taken");
+        return;
+    }
+    const pipeline = each_own orelse return probe.check(false, "a pipeline whose attachments differ");
+    probe.check(true, "a pipeline whose attachments differ");
+
+    const extent = facet.Extent3D{ .width = side, .height = side };
+    const wanted = facet.MEMORY_PROPERTY_HOST_VISIBLE;
+    const info = facet.ImageCreateInfo{ .format = .b8g8r8a8_unorm, .extent = extent, .tiling = .linear, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT };
+    const first = probe.image(info, wanted) orelse return probe.check(false, "the first picture");
+    const first_memory = probe.memories[0].?;
+    const second = probe.image(info, wanted) orelse return probe.check(false, "the second picture");
+    const second_memory = probe.memories[1].?;
+    const frame = probe.framebuffer(pass, &.{ first[1], second[1] }) orelse return probe.check(false, "a framebuffer over the two");
+
+    const vertices = [_][3]f32{
+        .{ -1, -1, 0.5 }, .{ 1, -1, 0.5 }, .{ -1, 1, 0.5 },
+        .{ -1, 1, 0.5 },  .{ 1, -1, 0.5 }, .{ 1, 1, 0.5 },
+    };
+    const vertex_buffer, const vertex_bytes = probe.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER) orelse
+        return probe.check(false, "a vertex buffer");
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
+
+    const offset: u64 = 0;
+    // What the vertices carry, and what the clear left.
+    const white: u32 = 0xFFFF_FFFF;
+    const blue: u32 = 0xFF00_00FF;
+    const clears = [2]facet.ClearValue{ .{ .color = .{ .float32 = .{ 0, 0, 1, 1 } } }, .{ .color = .{ .float32 = .{ 0, 0, 1, 1 } } } };
+    const area = facet.Rect2D{ .extent = .{ .width = side, .height = side } };
+    const commands = probe.record() orelse return probe.check(false, "a command buffer recording");
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame, .render_area = area, .clear_value_count = 2, .clear_values = &clears }, .@"inline");
+    fb.CmdBindPipeline(commands, .graphics, pipeline);
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdDraw(commands, 6, 1, 0, 0);
+    fb.CmdEndRenderPass(commands);
+    if (!probe.submit()) return probe.check(false, "the frame submitted");
+
+    const first_pixels, const first_pitch = probe.mapped(first[0], first_memory) orelse return probe.check(false, "the first picture read back");
+    const second_pixels, const second_pitch = probe.mapped(second[0], second_memory) orelse return probe.check(false, "the second picture read back");
+    probe.checkEqual(blue, pixelAt(first_pixels, first_pitch, 8, 8), "the attachment that keeps what is there kept the clear");
+    probe.checkEqual(blue, pixelAt(first_pixels, first_pitch, 40, 52), "and in another tile");
+    probe.checkEqual(white, pixelAt(second_pixels, second_pitch, 8, 8), "the attachment that takes the colour took it");
+    probe.checkEqual(white, pixelAt(second_pixels, second_pitch, 40, 52), "and in another tile");
+}
+
+// --- 1.33: the depth bias ----------------------------------------------------
+
+/// A quad over the whole picture at `z`, two triangles of it.
+fn quadAt(z: f32) [6][3]f32 {
+    return .{ .{ -1, -1, z }, .{ 1, -1, z }, .{ -1, 1, z }, .{ -1, 1, z }, .{ 1, -1, z }, .{ 1, 1, z } };
+}
+
+fn biasChecks(probe: *Probe) void {
+    const fb = probe.fb;
+    defer probe.give();
+    const pass = passKeeping(probe, .clear, .clear, .dont_care) orelse return probe.check(false, "a pass of a colour and a depth");
+
+    var module: ?*facet.ShaderModule = null;
+    if (fb.CreateShaderModule(probe.device.?, &.{ .code = &Smooth.code }, &module) != .success) return probe.check(false, "the shader module");
+    _ = Probe.keep(&probe.modules, module);
+    var layout: ?*facet.PipelineLayout = null;
+    if (fb.CreatePipelineLayout(probe.device.?, &.{}, &layout) != .success) return probe.check(false, "the pipeline layout");
+    _ = Probe.keep(&probe.layouts, layout);
+
+    // The first draw writes its depth and no colour at all; the second is
+    // the same quad, lifted towards the eye by three of the smallest
+    // differences the depth holds.
+    const depth_only = [1]facet.PipelineColorBlendAttachmentState{.{ .color_write_mask = 0 }};
+    const nearer = facet.PipelineRasterizationStateCreateInfo{ .depth_bias_enable = true, .depth_bias_constant_factor = -3 };
+    const biased = pipelineOf(probe, pass, module.?, layout.?, .{ .depth_tested = true, .raster = nearer });
+    if (!probe.features.depth_bias) {
+        probe.check(biased == null, "a depth bias refused where the device moves none");
+        probe.check(pipelineOf(probe, pass, module.?, layout.?, .{ .depth_tested = true }) != null, "a pipeline without one is still taken");
+        return;
+    }
+    const lifts = biased orelse return probe.check(false, "a pipeline that lifts its triangles");
+    probe.check(true, "a pipeline that lifts its triangles");
+    const writes_depth = pipelineOf(probe, pass, module.?, layout.?, .{ .depth_tested = true, .blends = &depth_only }) orelse
+        return probe.check(false, "a pipeline that writes the depth alone");
+    // A tenth of the range the other way, and the same held inside a
+    // twentieth of it.
+    const pushes = pipelineOf(probe, pass, module.?, layout.?, .{ .depth_tested = true, .raster = .{ .depth_bias_enable = true, .depth_bias_constant_factor = 0.11 * 65535 } }) orelse
+        return probe.check(false, "a pipeline that pushes them away");
+    const held = pipelineOf(probe, pass, module.?, layout.?, .{ .depth_tested = true, .raster = .{ .depth_bias_enable = true, .depth_bias_constant_factor = 0.11 * 65535, .depth_bias_clamp = 0.05 } }) orelse
+        return probe.check(false, "a pipeline whose bias is held inside a clamp");
+
+    const extent = facet.Extent3D{ .width = side, .height = side };
+    const color = probe.image(.{ .format = .b8g8r8a8_unorm, .extent = extent, .tiling = .linear, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, facet.MEMORY_PROPERTY_HOST_VISIBLE) orelse
+        return probe.check(false, "a picture to draw into");
+    const memory = probe.memories[0].?;
+    const depth = probe.image(.{ .format = .d16_unorm, .extent = extent, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT }, 0) orelse
+        return probe.check(false, "a depth attachment");
+    const frame = probe.framebuffer(pass, &.{ color[1], depth[1] }) orelse return probe.check(false, "a framebuffer over the two");
+    // Mapped the once: memory is mapped once at a time, and what the
+    // frames draw lands in these bytes.
+    const pixels, const pitch = probe.mapped(color[0], memory) orelse return probe.check(false, "the picture read back");
+
+    const level = quadAt(0.5);
+    const closer = quadAt(0.4);
+    const quad_bytes = @sizeOf([6][3]f32);
+    const vertex_buffer, const vertex_bytes = probe.buffer(2 * quad_bytes, facet.BUFFER_USAGE_VERTEX_BUFFER) orelse
+        return probe.check(false, "a vertex buffer");
+
+    const offset: u64 = 0;
+    const white: u32 = 0xFFFF_FFFF;
+    const blue: u32 = 0xFF00_00FF;
+    const clears = [2]facet.ClearValue{ .{ .color = .{ .float32 = .{ 0, 0, 1, 1 } } }, .{ .depth_stencil = .{ .depth = 1 } } };
+    const area = facet.Rect2D{ .extent = .{ .width = side, .height = side } };
+
+    // Each frame: the depth laid down by the first quad, then `second`
+    // drawn white over it by `pipeline`, and the pixel it left.
+    const frames = [4]struct { *facet.Pipeline, *const [6][3]f32, u32, [*:0]const u8 }{
+        .{ lifts, &level, white, "the lifted draw won at the same depth" },
+        .{ pushes, &closer, blue, "the pushed draw lost though it was nearer" },
+        .{ held, &closer, white, "the clamp left it in front" },
+        .{ writes_depth, &level, blue, "a draw of no colour at all leaves the clear" },
+    };
+    for (frames) |one| {
+        const pipeline, const second, const wanted, const name = one;
+        @memcpy(vertex_bytes[0..quad_bytes], std.mem.asBytes(&level));
+        @memcpy(vertex_bytes[quad_bytes..][0..quad_bytes], std.mem.asBytes(second));
+        const commands = probe.record() orelse return probe.check(false, "a command buffer recording");
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame, .render_area = area, .clear_value_count = 2, .clear_values = &clears }, .@"inline");
+        fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+        fb.CmdBindPipeline(commands, .graphics, writes_depth);
+        fb.CmdDraw(commands, 6, 1, 0, 0);
+        fb.CmdBindPipeline(commands, .graphics, pipeline);
+        fb.CmdDraw(commands, 6, 1, 6, 0);
+        fb.CmdEndRenderPass(commands);
+        if (!probe.submit()) return probe.check(false, "the frame submitted");
+        probe.checkEqual(wanted, pixelAt(pixels, pitch, 16, 16), name);
+    }
+
+    // What a command sets is what a dynamic pipeline uses.
+    const dynamic_states = [1]facet.DynamicState{.depth_bias};
+    const dynamic = pipelineOf(probe, pass, module.?, layout.?, .{ .depth_tested = true, .raster = .{ .depth_bias_enable = true, .depth_bias_constant_factor = 100 }, .dynamic = &dynamic_states }) orelse
+        return probe.check(false, "a pipeline whose bias a command sets");
+    for ([2]struct { f32, u32, [*:0]const u8 }{
+        .{ -3, white, "the command's bias lifted the draw" },
+        .{ 3, blue, "and pushed it away the other way" },
+    }) |one| {
+        const constant, const wanted, const name = one;
+        @memcpy(vertex_bytes[0..quad_bytes], std.mem.asBytes(&level));
+        @memcpy(vertex_bytes[quad_bytes..][0..quad_bytes], std.mem.asBytes(&level));
+        const commands = probe.record() orelse return probe.check(false, "a recording for the command's bias");
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame, .render_area = area, .clear_value_count = 2, .clear_values = &clears }, .@"inline");
+        fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+        fb.CmdBindPipeline(commands, .graphics, writes_depth);
+        fb.CmdDraw(commands, 6, 1, 0, 0);
+        fb.CmdBindPipeline(commands, .graphics, dynamic);
+        fb.CmdSetDepthBias(commands, constant, 0, 0);
+        fb.CmdDraw(commands, 6, 1, 6, 0);
+        fb.CmdEndRenderPass(commands);
+        if (!probe.submit()) return probe.check(false, "the frame submitted");
+        probe.checkEqual(wanted, pixelAt(pixels, pitch, 16, 16), name);
+    }
+}
+
+// --- 1.35: dynamic buffer descriptors ----------------------------------------
+
+/// What it was given of a dynamic uniform's range copied into a dynamic
+/// storage buffer's: both are read from where the bind said, so what
+/// lands where says the offsets were taken.
+const Shift = struct {
+    fn run(groups: *const facet.shader.Groups) callconv(.c) void {
+        const from = groups.resources.buffer([4]u32, 0, 0) orelse return;
+        const into = groups.resources.storage(u32, 0, 1) orelse return;
+        if (into.len < 4) return;
+        into[0..4].* = from.*;
+        if (into.len > 4) into[4] = @intCast(into.len);
+    }
+
+    const entries = [_]facet.shader.Entry{facet.shader.compute("main", &run)};
+    const code = facet.shader.Code{ .entry_count = entries.len, .entries = &entries };
+};
+
+fn dynamicChecks(probe: *Probe) void {
+    const fb = probe.fb;
+    const device = probe.device.?;
+    defer probe.give();
+    const bindings = [2]facet.DescriptorSetLayoutBinding{
+        .{ .binding = 0, .descriptor_type = .uniform_buffer_dynamic, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+        .{ .binding = 1, .descriptor_type = .storage_buffer_dynamic, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+    };
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    const made = fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 2, .bindings = &bindings }, &set_layout);
+    if (!probe.features.dynamic_descriptors) {
+        probe.check(made == .error_feature_not_present, "a dynamic buffer descriptor refused where the device has none");
+        probe.check(set_layout == null, "and nothing given back for it");
+        return;
+    }
+    if (made != .success) return probe.check(false, "a set layout of the two dynamic kinds");
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    probe.check(true, "a set layout of the two dynamic kinds");
+
+    // A set holds only so many of them, as the limit says.
+    var properties: facet.PhysicalDeviceProperties = undefined;
+    fb.GetPhysicalDeviceProperties(probe.physical, &properties);
+    const most = properties.limits.max_descriptor_set_dynamic_buffers;
+    probe.check(most != 0, "the limit says how many a set holds");
+    var none: ?*facet.DescriptorSetLayout = null;
+    const too_many = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .uniform_buffer_dynamic, .descriptor_count = most + 1 };
+    probe.check(fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&too_many) }, &none) == .error_feature_not_present, "a set of more than the limit refused");
+    probe.check(none == null, "and nothing given back for that either");
+
+    var module: ?*facet.ShaderModule = null;
+    if (fb.CreateShaderModule(device, &.{ .code = &Shift.code }, &module) != .success) return probe.check(false, "the shader module");
+    _ = Probe.keep(&probe.modules, module);
+    var layout: ?*facet.PipelineLayout = null;
+    if (fb.CreatePipelineLayout(device, &.{ .set_layout_count = 1, .set_layouts = @ptrCast(&set_layout) }, &layout) != .success) return probe.check(false, "the pipeline layout");
+    _ = Probe.keep(&probe.layouts, layout);
+    var pool: ?*facet.DescriptorPool = null;
+    if (fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool) != .success) return probe.check(false, "a descriptor pool");
+    defer fb.DestroyDescriptorPool(device, pool);
+    var sets: [1]?*facet.DescriptorSet = undefined;
+    if (fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &sets) != .success) return probe.check(false, "a descriptor set");
+
+    const uniform, const uniform_bytes = probe.buffer(256, facet.BUFFER_USAGE_UNIFORM_BUFFER) orelse return probe.check(false, "a uniform buffer");
+    const storage, const storage_bytes = probe.buffer(256, facet.BUFFER_USAGE_STORAGE_BUFFER) orelse return probe.check(false, "a buffer the function writes");
+    const in: [*]u32 = @ptrCast(@alignCast(uniform_bytes));
+    const out: [*]u32 = @ptrCast(@alignCast(storage_bytes));
+    for (0..64) |k| in[k] = @intCast(100 + k);
+    const infos = [2]facet.DescriptorBufferInfo{
+        .{ .buffer = uniform, .range = 128 },
+        .{ .buffer = storage, .range = 128 },
+    };
+    const writes = [2]facet.WriteDescriptorSet{
+        .{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .uniform_buffer_dynamic, .descriptor_count = 1, .buffer_info = @ptrCast(&infos[0]) },
+        .{ .dst_set = sets[0].?, .dst_binding = 1, .descriptor_type = .storage_buffer_dynamic, .descriptor_count = 1, .buffer_info = @ptrCast(&infos[1]) },
+    };
+    fb.UpdateDescriptorSets(device, 2, &writes, 0, null);
+
+    const info = facet.ComputePipelineCreateInfo{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.? }, .layout = layout.? };
+    var pipelines: [1]?*facet.Pipeline = undefined;
+    if (fb.CreateComputePipelines(device, null, 1, @ptrCast(&info), &pipelines) != .success) return probe.check(false, "the compute pipeline");
+    _ = Probe.keep(&probe.pipelines, pipelines[0]);
+
+    // The same set, bound again with offsets of its own each time.
+    for ([3]struct { [2]u32, [*:0]const u8 }{
+        .{ .{ 0, 0 }, "the set read and written where it was written" },
+        .{ .{ 16, 32 }, "the same set shifted both ways by the bind" },
+        .{ .{ 64, 4 }, "and shifted again, by other offsets" },
+    }) |one| {
+        const offsets, const name = one;
+        @memset(storage_bytes[0..256], 0);
+        const commands = probe.record() orelse return probe.check(false, "a recording");
+        fb.CmdBindPipeline(commands, .compute, pipelines[0].?);
+        fb.CmdBindDescriptorSets(commands, .compute, layout.?, 0, 1, @ptrCast(&sets), 2, &offsets);
+        fb.CmdDispatch(commands, 1, 1, 1);
+        if (!probe.submit()) return probe.check(false, "the dispatch submitted");
+        const from = offsets[0] / 4;
+        const into = offsets[1] / 4;
+        var right = true;
+        for (0..4) |k| right = right and out[into + k] == in[from + k];
+        if (into > 0) right = right and out[into - 1] == 0;
+        probe.check(right, name);
+        // What is left of the range from the offset is what the function
+        // reaches: 128 bytes less the offset, in numbers of four.
+        probe.checkEqual((128 - offsets[1]) / 4, out[into + 4], "what was left of the range from there");
+    }
+
+    // Offsets left out are 0: read and written where the writes left them.
+    @memset(storage_bytes[0..256], 0);
+    const commands = probe.record() orelse return probe.check(false, "a last recording");
+    fb.CmdBindPipeline(commands, .compute, pipelines[0].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout.?, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    if (!probe.submit()) return probe.check(false, "the dispatch submitted");
+    probe.checkEqual(in[0], out[0], "a bind without offsets shifts nothing");
+}
+
+// --- 1.36: the three device queries ------------------------------------------
+
+fn queryChecks(probe: *Probe) void {
+    const fb = probe.fb;
+    const device = probe.device.?;
+    defer probe.give();
+    var properties: facet.PhysicalDeviceProperties = undefined;
+    fb.GetPhysicalDeviceProperties(probe.physical, &properties);
+    const limits = &properties.limits;
+
+    // A sampled image: the largest, its levels and its layers, as the
+    // device's own limits say.
+    var shape: facet.ImageFormatProperties = undefined;
+    const sampled = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST;
+    if (fb.GetPhysicalDeviceImageFormatProperties(probe.physical, .b8g8r8a8_unorm, .@"2d", .optimal, sampled, 0, &shape) != .success) {
+        return probe.check(false, "the largest sampled image");
+    }
+    probe.check(true, "the largest sampled image");
+    probe.checkEqual(limits.max_image_dimension_2d, shape.max_extent.width, "as wide as the device's limit says");
+    probe.checkEqual(1, shape.max_extent.depth, "and one deep");
+    probe.checkEqual(limits.max_image_array_layers, shape.max_array_layers, "the layers of an array");
+    probe.checkEqual(1, shape.sample_counts, "one sample a pixel");
+    probe.check(shape.max_mip_levels > 1, "the levels of the largest");
+    probe.check(shape.max_resource_size != 0, "the bytes an image may take");
+
+    // An attachment is one level and one layer; a 3D image is as deep as
+    // it is wide.
+    if (fb.GetPhysicalDeviceImageFormatProperties(probe.physical, .b8g8r8a8_unorm, .@"2d", .linear, facet.IMAGE_USAGE_COLOR_ATTACHMENT, 0, &shape) != .success) {
+        return probe.check(false, "the largest colour attachment");
+    }
+    probe.checkEqual(1, shape.max_mip_levels, "an attachment has one level");
+    probe.checkEqual(1, shape.max_array_layers, "and one layer");
+    const widest = shape.max_extent.width;
+    if (fb.GetPhysicalDeviceImageFormatProperties(probe.physical, .b8g8r8a8_unorm, .@"3d", .optimal, sampled, 0, &shape) != .success) {
+        return probe.check(false, "the largest 3D image");
+    }
+    probe.checkEqual(limits.max_image_dimension_3d, shape.max_extent.depth, "a 3D image is as deep as the limit says");
+
+    // Shapes there is no image of at all.
+    probe.check(fb.GetPhysicalDeviceImageFormatProperties(probe.physical, .d16_unorm, .@"2d", .linear, facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT, 0, &shape) == .error_format_not_supported, "a depth image in rows refused");
+    probe.checkEqual(0, shape.max_mip_levels, "and nothing written for it");
+    probe.check(fb.GetPhysicalDeviceImageFormatProperties(probe.physical, .b8g8r8a8_unorm, .@"1d", .optimal, sampled, 0, &shape) == .error_format_not_supported, "a 1D image refused");
+    probe.check(fb.GetPhysicalDeviceImageFormatProperties(probe.physical, .b8g8r8a8_unorm, .@"2d", .optimal, sampled | facet.IMAGE_USAGE_COLOR_ATTACHMENT, 0, &shape) == .error_format_not_supported, "an attachment that is sampled too refused");
+
+    // What the query says is what CreateImage does.
+    var image: ?*facet.Image = null;
+    const made = fb.CreateImage(device, &.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = widest, .height = 1 }, .tiling = .linear, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, &image);
+    probe.check(made == .success, "an image of the widest extent made");
+    fb.DestroyImage(device, image);
+    image = null;
+    const over = fb.CreateImage(device, &.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = widest + 1, .height = 1 }, .tiling = .linear, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, &image);
+    probe.check(over == .error_format_not_supported and image == null, "one texel wider refused");
+
+    // The render area's granularity is the device's tile.
+    const pass = passKeeping(probe, .clear, .clear, .dont_care) orelse return probe.check(false, "a pass to ask about");
+    var granularity: facet.Extent2D = undefined;
+    fb.GetRenderAreaGranularity(device, pass, &granularity);
+    probe.checkEqual(limits.tile_size, granularity.width, "the render area's granularity is the tile");
+    probe.checkEqual(limits.tile_size, granularity.height, "square");
+
+    // What a block has behind it: all of a plain one, none of a lazily
+    // allocated one.
+    var needs = facet.MemoryRequirements{ .size = 4096, .alignment = 64, .memory_type_bits = 0xFFFF_FFFF };
+    const block = probe.block(needs, facet.MEMORY_PROPERTY_HOST_VISIBLE) orelse return probe.check(false, "a block of memory");
+    var bytes: u64 = 0xFFFF;
+    fb.GetDeviceMemoryCommitment(device, block, &bytes);
+    probe.checkEqual(4096, bytes, "a plain block is there whole");
+    needs.size = 4 << 20;
+    if (probe.block(needs, facet.MEMORY_PROPERTY_LAZILY_ALLOCATED)) |lazy| {
+        fb.GetDeviceMemoryCommitment(device, lazy, &bytes);
+        probe.checkEqual(0, bytes, "a lazily allocated block has nothing behind it");
+    }
+}
+
 fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical: *facet.PhysicalDevice, quiet: bool) struct { u32, u32 } {
     var properties: facet.PhysicalDeviceProperties = undefined;
     fb.GetPhysicalDeviceProperties(physical, &properties);
@@ -448,6 +1123,12 @@ fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical
     };
     defer probe.down();
     depthChecks(&probe);
+    storageImageChecks(&probe);
+    texelBufferChecks(&probe);
+    blendChecks(&probe);
+    biasChecks(&probe);
+    dynamicChecks(&probe);
+    queryChecks(&probe);
     return .{ probe.passed, probe.failed };
 }
 

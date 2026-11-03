@@ -36,6 +36,7 @@ pub const Bound = struct {
     viewport: facet.Viewport,
     scissor: facet.Rect2D,
     blend_constants: [4]f32,
+    depth_bias: _pipeline.Bias,
     line_width: f32,
     stencil: StencilSet,
     resources: shader.Resources,
@@ -230,9 +231,20 @@ pub fn bindVertexBuffers(player: anytype, command: *const _command.BindVertexBuf
 }
 
 pub fn bindDescriptorSets(resources: *shader.Resources, command: *const _command.BindDescriptorSets) void {
-    for (_stream.items(_command.BindDescriptorSets, *DescriptorSet, command, command.count), command.first..) |set, at| {
+    const offsets = _stream.items(_command.BindDescriptorSets, u32, command, command.offset_count);
+    var taken: usize = 0;
+    for (command.sets[0..@min(command.count, shader.MAX_SETS)], command.first..) |given, at| {
         if (at >= shader.MAX_SETS) break;
+        const set = given orelse continue;
         resources.sets[at] = &set.view;
+        // Each dynamic buffer descriptor of the set takes the next
+        // offset, in the order its bindings run; one not given is 0, so
+        // the descriptor is read from where its write left it.
+        resources.offsets[at] = @splat(0);
+        for (0..set.dynamic_count) |k| {
+            if (k < shader.MAX_DYNAMIC_OFFSETS) resources.offsets[at][k] = if (taken < offsets.len) offsets[taken] else 0;
+            taken += 1;
+        }
     }
 }
 

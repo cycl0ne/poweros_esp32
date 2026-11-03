@@ -192,6 +192,11 @@ pub const PhysicalDeviceLimits = extern struct {
     /// difference of two times this many nanoseconds. 0 where the device
     /// writes no timestamps.
     timestamp_period_ns: u32,
+    /// The dynamic buffer descriptors one set layout may hold, each
+    /// taking an offset from CmdBindDescriptorSets; 0 where the device
+    /// has none (`PhysicalDeviceFeatures.dynamic_descriptors`). A field
+    /// added at the end, so that none already there moves.
+    max_descriptor_set_dynamic_buffers: u32 = 0,
 };
 
 /// The longest name a device has, its NUL included.
@@ -269,6 +274,12 @@ pub const PhysicalDeviceFeatures = extern struct {
     /// `PipelineColorBlendStateCreateInfo.logic_op_enable`.
     logic_ops: bool = false,
     several_viewports: bool = false,
+    /// `PipelineRasterizationStateCreateInfo.depth_bias_enable` and
+    /// CmdSetDepthBias: a triangle's depth moved before it is tested and
+    /// written, for the shadow map that would shade itself and the decal
+    /// that would fight the wall it is on. False where a pipeline that asks
+    /// for one is refused. The cores have it since 1.34; the BCM2712's V3D
+    /// has a depth offset of its own that nothing drives yet.
     depth_bias: bool = false,
     depth_bounds: bool = false,
     depth_clamp: bool = false,
@@ -283,8 +294,11 @@ pub const PhysicalDeviceFeatures = extern struct {
     /// `storage_image` descriptors, and the texel buffer kinds.
     storage_images: bool = false,
     texel_buffers: bool = false,
-    /// `uniform_buffer_dynamic` and `storage_buffer_dynamic`, which is why
-    /// CmdBindDescriptorSets' `dynamic_offsets` goes unused.
+    /// `uniform_buffer_dynamic` and `storage_buffer_dynamic`: a buffer
+    /// descriptor whose bytes start where CmdBindDescriptorSets'
+    /// `dynamic_offsets` says, so one set serves draw after draw with a
+    /// range of its own for each. Every device has it since 1.35; false
+    /// where a set layout with either kind is refused.
     dynamic_descriptors: bool = false,
     /// The fixed forms that sample through the sampler bound beside the
     /// texture run here - `shader.FixedKind.texture_sampled` and
@@ -321,6 +335,13 @@ pub const PhysicalDeviceFeatures = extern struct {
     /// `SamplerCreateInfo.unnormalized_coordinates`: a sample placed in
     /// texels rather than 0 to 1 across the texture.
     unnormalized_coordinates: bool = false,
+    /// Each colour attachment of a subpass blended its own way:
+    /// `PipelineColorBlendStateCreateInfo.attachments` is taken one by one.
+    /// False where a pipeline whose attachments do not all say the same
+    /// thing is refused. Every device of this library has it since 1.33: a
+    /// colour attachment is drawn as a pass of its own, so each takes its
+    /// own mixing as it is drawn.
+    independent_blend: bool = false,
 };
 
 /// QueueFamilyProperties.queue_flags: what a family's queues do.
@@ -333,6 +354,23 @@ pub const Extent3D = extern struct {
     width: u32 = 0,
     height: u32 = 0,
     depth: u32 = 1,
+};
+
+/// What GetPhysicalDeviceImageFormatProperties answers: the largest image
+/// of the format, type, tiling and usage it was asked about.
+pub const ImageFormatProperties = extern struct {
+    /// The largest extent, in texels. `depth` is 1 but for a 3D image.
+    max_extent: Extent3D = .{ .depth = 1 },
+    /// The levels an image of `max_extent` may have, and the layers of an
+    /// array; 1 for a shape that takes no levels or no layers.
+    max_mip_levels: u32 = 0,
+    max_array_layers: u32 = 0,
+    /// The sample counts as bits, as Vulkan has them: always 1, one
+    /// sample a pixel, there being no multisampling here.
+    sample_counts: u32 = 0,
+    /// The bytes an image of this shape may take, which is the largest
+    /// heap's size.
+    max_resource_size: u64 align(4) = 0,
 };
 
 /// A width and a height.
@@ -467,6 +505,13 @@ pub const Format = enum(u32) {
 
 /// What a format does: FormatProperties' features.
 pub const FORMAT_FEATURE_SAMPLED_IMAGE: u32 = 1 << 0;
+/// A `storage_image` descriptor of this format may be written through by a
+/// shader function (`shader.Resources.written`).
+pub const FORMAT_FEATURE_STORAGE_IMAGE: u32 = 1 << 1;
+/// A BufferView of this format may be read by a shader function, and with
+/// `STORAGE_TEXEL_BUFFER` written through as well.
+pub const FORMAT_FEATURE_UNIFORM_TEXEL_BUFFER: u32 = 1 << 3;
+pub const FORMAT_FEATURE_STORAGE_TEXEL_BUFFER: u32 = 1 << 4;
 pub const FORMAT_FEATURE_VERTEX_BUFFER: u32 = 1 << 6;
 pub const FORMAT_FEATURE_COLOR_ATTACHMENT: u32 = 1 << 7;
 pub const FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND: u32 = 1 << 8;
@@ -488,9 +533,31 @@ pub const FormatProperties = extern struct {
 /// what a copy moves.
 pub const Buffer = opaque {};
 
+/// A range of a buffer read as texels of a format, which a shader function
+/// reaches through a `uniform_texel_buffer` or `storage_texel_buffer`
+/// descriptor (CreateBufferView, `shader.Resources.texels`).
+pub const BufferView = opaque {};
+
+/// What a BufferView is made of.
+pub const BufferViewCreateInfo = extern struct {
+    buffer: *Buffer,
+    /// How its bytes are read: one of the formats whose `buffer_features`
+    /// say `UNIFORM_TEXEL_BUFFER` (GetPhysicalDeviceFormatProperties).
+    format: Format,
+    /// Where the texels start in the buffer, a multiple of the format's
+    /// size, and how many bytes of them; `WHOLE_SIZE` reaches the end.
+    offset: u64 align(4) = 0,
+    range: u64 align(4) = WHOLE_SIZE,
+};
+
 /// BufferCreateInfo.usage: what a buffer is for.
 pub const BUFFER_USAGE_TRANSFER_SRC: u32 = 1 << 0;
 pub const BUFFER_USAGE_TRANSFER_DST: u32 = 1 << 1;
+/// Read by a shader function as texels of a format, through a BufferView
+/// (`shader.Resources.texels`).
+pub const BUFFER_USAGE_UNIFORM_TEXEL_BUFFER: u32 = 1 << 2;
+/// The same, and written through as well.
+pub const BUFFER_USAGE_STORAGE_TEXEL_BUFFER: u32 = 1 << 3;
 pub const BUFFER_USAGE_UNIFORM_BUFFER: u32 = 1 << 4;
 pub const BUFFER_USAGE_STORAGE_BUFFER: u32 = 1 << 5;
 pub const BUFFER_USAGE_INDEX_BUFFER: u32 = 1 << 6;
@@ -571,6 +638,10 @@ pub const ImageLayout = enum(u32) {
 pub const IMAGE_USAGE_TRANSFER_SRC: u32 = 1 << 0;
 pub const IMAGE_USAGE_TRANSFER_DST: u32 = 1 << 1;
 pub const IMAGE_USAGE_SAMPLED: u32 = 1 << 2;
+/// Written through by a shader function, as a `storage_image` descriptor
+/// (`PhysicalDeviceFeatures.storage_images`). It is kept the way a sampled
+/// image is, so an image may be both.
+pub const IMAGE_USAGE_STORAGE: u32 = 1 << 3;
 pub const IMAGE_USAGE_COLOR_ATTACHMENT: u32 = 1 << 4;
 pub const IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT: u32 = 1 << 5;
 /// Its pixels live in the tiles alone: memory of the lazily allocated
@@ -1375,6 +1446,15 @@ pub const PipelineRasterizationStateCreateInfo = extern struct {
     polygon_mode: PolygonMode = .fill,
     cull_mode: u32 = CULL_MODE_NONE,
     front_face: FrontFace = .counter_clockwise,
+    /// A triangle's depth moved before it is tested and written, by
+    /// `depth_bias_slope_factor` times its steepest slope and
+    /// `depth_bias_constant_factor` times the smallest difference the
+    /// depth attachment holds, held inside `depth_bias_clamp` where that
+    /// is not 0 - a positive one the most it may be moved, a negative one
+    /// the least. Since 1.34, on a device whose
+    /// `PhysicalDeviceFeatures.depth_bias` is true; what
+    /// `DynamicState.depth_bias` leaves to CmdSetDepthBias is the three
+    /// numbers, never whether there is a bias at all.
     depth_bias_enable: bool = false,
     depth_bias_constant_factor: f32 = 0,
     depth_bias_clamp: f32 = 0,
@@ -1520,6 +1600,9 @@ pub const PipelineColorBlendStateCreateInfo = extern struct {
     logic_op_enable: bool = false,
     logic_op: LogicOp = .copy,
     attachment_count: u32 = 0,
+    /// One for each colour attachment of the subpass the pipeline is made
+    /// for, or none for the default over all of them. Each is taken on its
+    /// own since 1.33 (`PhysicalDeviceFeatures.independent_blend`).
     attachments: ?[*]const PipelineColorBlendAttachmentState = null,
     blend_constants: [4]f32 = @splat(0),
 };
@@ -1710,7 +1793,9 @@ pub const WriteDescriptorSet = extern struct {
     descriptor_type: DescriptorType,
     image_info: ?[*]const DescriptorImageInfo = null,
     buffer_info: ?[*]const DescriptorBufferInfo = null,
-    texel_buffer_view: ?*const anyopaque = null,
+    /// For `uniform_texel_buffer` and `storage_texel_buffer`: a view for
+    /// each descriptor written (CreateBufferView).
+    texel_buffer_view: ?[*]const *BufferView = null,
 };
 
 /// Descriptors copied from one set to another.
