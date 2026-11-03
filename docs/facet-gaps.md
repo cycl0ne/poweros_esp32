@@ -350,17 +350,16 @@ is of the triangle's steepest, in depth over a pixel. What is left out:
   already had, so it is exact in the depth's own units and costs nothing a
   pixel - but it is the plane that moves, not each pixel, which is what
   Vulkan's wording allows.
-- There is still no depth clamp and no depth bounds test, and
-  `DynamicState.depth_bounds` is taken and does nothing.
+- The depth clamp and the depth bounds test are there since 1.40, with
+  CmdSetDepthBounds and `DynamicState.depth_bounds`, on the cores alone:
+  see their own section above.
 
 ## Commands that are absent
 
 - `CmdResolveImage`: there is no multisampling to resolve.
-- `CmdSetDepthBounds`.
 
-`DynamicState` names `depth_bounds`, but the pipeline takes it and the
-feature is refused when the pipeline is made, so a pipeline that lists it
-is made without it.
+That is the whole of it: every other command of Vulkan 1.0's core that
+this library has a stage for is in the table.
 
 ## Device queries that are absent
 
@@ -379,11 +378,9 @@ device's tile; and `GetDeviceMemoryCommitment` is a block's whole size, or
   of the table, not behind an extension, and `CreateScreenSurface` and
   `CreateWindowSurface` take the place of a platform's own.
 
-`GetPhysicalDeviceImageFormatProperties` says nothing about the sides of a
-sampled image being powers of two, nor about the memory an image of the
-largest extent and the most layers at once would want: the first is in
-`CreateImage`'s documentation and the second is `max_resource_size` and
-what `AllocateMemory` answers.
+`GetPhysicalDeviceImageFormatProperties` says nothing about the memory an
+image of the largest extent and the most layers at once would want:
+`max_resource_size` and what `AllocateMemory` answers are what there is.
 
 ## In the structures, refused by the implementation
 
