@@ -25,7 +25,9 @@ types, which the desktop's Information... changes.
 ## What a key can do
 
 - **Cycle Windows**: the window at the back of the screen in front comes
-  forward and takes the keyboard.
+  forward and takes the keyboard. The desktop's own window stays where it
+  is, and a window put away is passed over: nothing of it is on the
+  display, and what holds it - the dock's row - brings it back.
 - **Cycle Screens**: the screen in front goes behind the others.
 - **Enlarge Window**, **Shrink Window**: the active window grown to the
   room its screen leaves it, or back to the least it asked for.

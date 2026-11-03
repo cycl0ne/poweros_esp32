@@ -63,8 +63,8 @@ const TagItem = utility.TagItem;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FKey";
-const VERSION = "1.0";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (02.11.2026)\r\n";
+const VERSION = "1.1";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (03.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
 
@@ -424,7 +424,10 @@ fn carry(app: *App, id: i32) void {
 /// The window at the back of the screen in front brought forward and
 /// given the keyboard. A backdrop window - the desktop - is passed over:
 /// it stays behind the others whatever is asked, and would take the
-/// keyboard away from every window in turn.
+/// keyboard away from every window in turn. A window put away keeps its
+/// place in the screen's list, and is passed over too: nothing of it is
+/// on the display, so it takes no keyboard and the round would stop at
+/// it. It comes back the way it was put away, from wherever holds it.
 fn cycleWindows(app: *App) void {
     const ib = app.ib;
     const held = ib.LockIBase(0);
@@ -432,6 +435,7 @@ fn cycleWindows(app: *App) void {
     var rearmost: ?*intuition.Window = null;
     var window = ib.NextWindow(null);
     while (window) |w| : (window = ib.NextWindow(w)) {
+        if (windowAttr(ib, w, wn.WA_Hidden) != 0) continue;
         if (windowAttr(ib, w, wn.WA_Backdrop) == 0) rearmost = w;
     }
     const bring = rearmost orelse return;
