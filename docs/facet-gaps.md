@@ -37,10 +37,10 @@ a library called through an LVO table.
 What a device will and will not do is answered by
 `GetPhysicalDeviceFeatures` (since 1.24), which is Vulkan's call with a
 structure of facet's own: a field wherever a create call can refuse
-something, and no field for what the library has no call for at all. Twelve
-of its fields differ between the cores and the V3D, which is the reason a
-program that wants the GPU should ask rather than take the first device
-listed.
+something, and no field for what the library has no call for at all.
+Thirteen of its fields differ between the cores and the V3D, which is the
+reason a program that wants the GPU should ask rather than take the first
+device listed.
 
 Nothing below is a defect: every refusal is checked and answered with
 `error_feature_not_present`, and the limits are stated in the
