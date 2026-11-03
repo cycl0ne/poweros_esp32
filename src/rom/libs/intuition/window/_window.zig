@@ -396,6 +396,13 @@ pub const WMF_STAYINFRONT: u32 = 1 << 5;
 /// It is intuition's own and in front even of the windows that stay in
 /// front: the on-screen keyboard (`WA_Above`).
 pub const WMF_ABOVE: u32 = 1 << 6;
+/// It is open but not shown: `HideWindow` put it away and `ShowWindow`
+/// brings it back. Nothing of it is on the display, nothing reaches it
+/// from the input, and it cannot be the active window - but it is still
+/// on its screen's list, keeps its number, its port, its layer and its
+/// pixels, and a program listing the windows still finds it
+/// (`WA_Hidden`).
+pub const WMF_HIDDEN: u32 = 1 << 7;
 
 /// intuition.library's own tag, not in the SDK: true opens a window in
 /// front of every other, those that stay in front included, and keeps it
@@ -1238,6 +1245,21 @@ pub fn layerInFront(ib: *IntuitionBase, layer: *layers.Layer) ?*layers.Layer {
     return @ptrFromInt(next);
 }
 
+/// The window on `s` that was made active most recently and can take the
+/// activation now - a hidden one cannot - if there is one. Under the
+/// screen semaphore.
+pub fn latest(s: *Screen) ?*Window {
+    var found: ?*Window = null;
+    var node = s.windows.head;
+    while (node) |n| : (node = n.succ) {
+        if (n.succ == null) break;
+        const each: *Window = @ptrCast(@alignCast(n));
+        if (each.activated == 0 or each.more_flags & WMF_HIDDEN != 0) continue;
+        if (found == null or each.activated -% found.?.activated < 0x8000_0000) found = each;
+    }
+    return found;
+}
+
 /// The window on `s` a layer is part of: its own, its interior, or one of
 /// its requesters'. Null for a layer of no window - the screen's bar and
 /// ground, a menu, a gadget's list popped up.
@@ -1251,11 +1273,41 @@ pub fn windowOfLayer(s: *Screen, layer: *layers.Layer) ?*Window {
     return null;
 }
 
+/// Hide or show every layer a window is drawn in: its own, its interior
+/// (`WA_GimmeZeroZero`) and the ones its requesters are in. Under the
+/// screen semaphore.
+pub fn hideLayers(ib: *IntuitionBase, w: *Window, hide: bool) void {
+    const lb = ib.layers_base;
+    var req = w.first_request;
+    while (req) |r| : (req = r.older) {
+        const layer = r.layer orelse continue;
+        _ = if (hide) lb.HideLayer(layer) else lb.ShowLayer(layer);
+    }
+    if (w.inner_layer) |inner| _ = if (hide) lb.HideLayer(inner) else lb.ShowLayer(inner);
+    _ = if (hide) lb.HideLayer(w.layer) else lb.ShowLayer(w.layer);
+}
+
+/// A window that stops being the active one: its popup goes, its border
+/// is drawn the way an inactive window's is, and it is told. The caller
+/// has already taken the activation off it (`ib.active_window`).
+pub fn deactivate(ib: *IntuitionBase, o: *Window) void {
+    const requests = @import("../requester/_requester.zig");
+    // A popup goes when its window stops being the active one.
+    if (requests.popupOf(o)) |popup| _ = requests.take(ib, o, popup, true, sdk.intuition.gadgetclass.POPDOWN_DISMISSED);
+    o.flags &= ~WF_ACTIVE;
+    drawBorder(ib, o);
+    send(ib, o, wn.IDCMP_INACTIVEWINDOW, 0);
+    @import("../input/_input.zig").windowEvent(ib, o, ie.IECLASS_INACTIVEWINDOW, 0);
+}
+
 pub fn activate(ib: *IntuitionBase, w: *Window) void {
     const old = ib.active_window;
     if (old == w) return;
     // A window that never takes the activation (`WA_NoActivate`).
     if (w.flags & WF_NOACTIVATE != 0) return;
+    // Nothing of a hidden window is on the display: the keyboard would
+    // go somewhere nobody can see. `ShowWindow` first.
+    if (w.more_flags & WMF_HIDDEN != 0) return;
     ib.active_window = w;
     ib.activations +%= 1;
     w.activated = ib.activations;
@@ -1273,15 +1325,7 @@ pub fn activate(ib: *IntuitionBase, w: *Window) void {
         w.screen.title = w.screen_title;
         _screen.drawBar(ib, w.screen);
     }
-    if (old) |o| {
-        // A popup goes when its window stops being the active one.
-        const requests = @import("../requester/_requester.zig");
-        if (requests.popupOf(o)) |popup| _ = requests.take(ib, o, popup, true, sdk.intuition.gadgetclass.POPDOWN_DISMISSED);
-        o.flags &= ~WF_ACTIVE;
-        drawBorder(ib, o);
-        send(ib, o, wn.IDCMP_INACTIVEWINDOW, 0);
-        @import("../input/_input.zig").windowEvent(ib, o, ie.IECLASS_INACTIVEWINDOW, 0);
-    }
+    if (old) |o| deactivate(ib, o);
     w.flags |= WF_ACTIVE;
     drawBorder(ib, w);
     @import("../input/pointer.zig").update(ib);

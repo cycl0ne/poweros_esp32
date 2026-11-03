@@ -2297,6 +2297,74 @@ test "windows: the task that opened one, read back (WA_Task)" {
     try tearDown(ib);
 }
 
+test "windows: one put away and brought back (HideWindow, ShowWindow, WA_Hidden)" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const ie = sdk.devices.inputevent;
+    const display = try Display.up(ib);
+    const it = ib.iface();
+    const tags = [_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 4 },
+        .{ .tag = wn.WA_Top, .data = 12 },
+        .{ .tag = wn.WA_Width, .data = 56 },
+        .{ .tag = wn.WA_Height, .data = 26 },
+        .{ .tag = wn.WA_CloseGadget, .data = 1 },
+        .{},
+    };
+    const back = it.OpenWindowTagList(&tags).?;
+    const front = it.OpenWindowTagList(&tags).?;
+    it.ActivateWindow(back);
+    it.ActivateWindow(front);
+    try testing.expectEqual(@as(?*intuition.Window, front), it.ActiveWindow());
+    // The frame's shine along its top, drawn by the window in front.
+    try testing.expectEqual(@as(u16, 0xFFFF), display.pixel(4 + 30, 12));
+
+    it.HideWindow(front);
+    try testing.expectEqual(@as(usize, 1), windowAttr(ib, front, wn.WA_Hidden));
+    try testing.expectEqual(@as(usize, 0), windowAttr(ib, back, wn.WA_Hidden));
+    // The activation went where it would have gone had it closed, and
+    // nothing of it is under the pointer or hit by it.
+    try testing.expectEqual(@as(?*intuition.Window, back), it.ActiveWindow());
+    // It is no longer the active window, and does not come back looking
+    // like one.
+    try testing.expectEqual(@as(usize, 0), windowAttr(ib, front, wn.WA_Active));
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 4 + 30, 12 + 18);
+    try testing.expectEqual(@as(?*intuition.Window, back), it.WindowUnderPointer());
+    // Activating it does nothing while it is away.
+    it.ActivateWindow(front);
+    try testing.expectEqual(@as(?*intuition.Window, back), it.ActiveWindow());
+    // It is still open and still on the screen's list, in its place.
+    try testing.expectEqual(@as(?*intuition.Window, front), it.NextWindow(null));
+    try testing.expectEqual(@as(?*intuition.Window, back), it.NextWindow(front));
+    // The one behind has the pixels, frame and all: the shine is still
+    // there, and the one in front is no longer drawing it.
+    try testing.expectEqual(@as(u16, 0xFFFF), display.pixel(4 + 30, 12));
+
+    it.ShowWindow(front);
+    try testing.expectEqual(@as(usize, 0), windowAttr(ib, front, wn.WA_Hidden));
+    // Back where it was, border drawn again, and the pointer finds it.
+    try testing.expectEqual(@as(u16, 0xFFFF), display.pixel(4 + 30, 12));
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 4 + 30, 12 + 18);
+    try testing.expectEqual(@as(?*intuition.Window, front), it.WindowUnderPointer());
+    // Shown, it is not made active by itself: the program says so.
+    try testing.expectEqual(@as(?*intuition.Window, back), it.ActiveWindow());
+    it.ActivateWindow(front);
+    try testing.expectEqual(@as(?*intuition.Window, front), it.ActiveWindow());
+
+    // With nothing else to take it, the activation is nobody's.
+    it.HideWindow(back);
+    it.HideWindow(front);
+    try testing.expectEqual(@as(?*intuition.Window, null), it.ActiveWindow());
+    // A window away is closed as any other.
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, front, wn.WA_Screen));
+    it.CloseWindow(front);
+    it.CloseWindow(back);
+    try testing.expect(it.CloseScreen(screen));
+    display.down(ib);
+    try tearDown(ib);
+}
+
 test "windows: the active one, the one under the pointer, the depth order, the front screen, the pointer hidden" {
     const ib = try setUp();
     defer kexec.deinit();

@@ -73,6 +73,7 @@ Generated from the source by `./zig build autodoc`.
 - [GetWindowAttrs](#getwindowattrs) - Reads a window.
 - [HelpControl](#helpcontrol) - Turns gadget help on or off for a window and its help group.
 - [HidePointer](#hidepointer) - The pointer kept from being shown at all, or shown again.
+- [HideWindow](#hidewindow) - Puts a window away without closing it.
 - [InitRequester](#initrequester) - Clears a Requester to be filled in.
 - [IntuiTextLength](#intuitextlength) - How wide one run of an IntuiText is, in pixels.
 - [ItemAddress](#itemaddress) - The item a menu number names.
@@ -135,6 +136,7 @@ Generated from the source by `./zig build autodoc`.
 - [SetWindowPointerA](#setwindowpointera) - Gives a window its own mouse pointer, the busy pointer, the default, or none at all.
 - [SetWindowTitles](#setwindowtitles) - Changes a window's title and the screen title it shows while active.
 - [ShowTitle](#showtitle) - Puts a screen's title bar in front of its backdrop windows, or behind them.
+- [ShowWindow](#showwindow) - Brings a window put away back on to its screen.
 - [SizeWindow](#sizewindow) - Sizes a window.
 - [StylePens](#stylepens) - The screen's pens, with the ones that stand for a gadget's look taken from a part of the style.
 - [SysReqHandler](#sysreqhandler) - Reads what arrived at a requester.
@@ -3759,7 +3761,8 @@ fn GetWindowAttrs(ib: *IntuitionBase, window: *Window,
   `WA_Active`, `WA_SimpleRefresh`, `WA_Backdrop`, `WA_Checkmark`,
   `WA_AmigaKey`, `WA_MenuHelp`, `WA_Number`, `WA_PixelFormat` (since
   0.49, its screen's `SA_PixelFormat`), `WA_StayInFront` (since
-  0.57), `WA_Task` (since 0.81, the task that opened it).
+  0.57), `WA_Task` (since 0.81, the task that opened it),
+  `WA_Hidden` (since 0.82, put away with `HideWindow`).
   `WA_Left` and `WA_Top`
   are signed, written by their bits: a window past the screen's left
   edge (`IPREFS_OffScreen`) has a negative left.
@@ -3935,6 +3938,79 @@ None known.
 ```zig
 ib.HidePointer(true); // a key was typed
 defer ib.HidePointer(false); // and the mouse moved, or the program ends
+```
+
+## HideWindow
+
+Puts a window away without closing it.
+
+**SYNOPSIS**
+
+```zig
+fn HideWindow(ib: *IntuitionBase, window: *Window) void
+```
+
+**SINCE**
+
+0.82. LVO -548.
+
+**INPUTS**
+
+- `window` - the window. One already away is left as it is.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+Nothing of the window is on the display any more - its interior and
+the requesters up in it with it - and nothing of the input reaches it:
+it is not under the pointer, it cannot be clicked, and it cannot be
+the active window. What it covered is uncovered as if it had closed,
+and if it was the active window the activation goes where it would
+have gone had it closed: to the window on the screen that was active
+most recently and is not away itself.
+
+Everything else about it stays. It is still open and still on its
+screen's list in the place it had, with its number, its port, its
+menus, its gadgets, its layer and its pixels; `NextWindow` still walks
+over it and `WA_Hidden` says how it is, so a program showing the
+windows of a screen - the dock's row of them - can list it and bring
+it back with `ShowWindow`. Its program goes on running and may draw
+into it, move it, size it and close it as before; a window that asked
+to hear about its depth (`WA_NotifyDepth`) is told.
+
+**CONTEXT**
+
+- Waits: for the screen list's semaphore, and the layers' locks.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing changes hands. The window stays its program's, to show again
+or to close.
+
+**NOTES**
+
+A window nobody can bring back is a window gone: it is for a program
+that puts the way back somewhere - the dock lists it - or that shows
+the window again itself.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ShowWindow`, `GetWindowAttrs`, `NextWindow`, `CloseWindow`
+
+**EXAMPLES**
+
+```zig
+ib.HideWindow(window);
 ```
 
 ## InitRequester
@@ -8066,6 +8142,72 @@ None known.
 
 ```zig
 ib.ShowTitle(screen, false);
+```
+
+## ShowWindow
+
+Brings a window put away back on to its screen.
+
+**SYNOPSIS**
+
+```zig
+fn ShowWindow(ib: *IntuitionBase, window: *Window) void
+```
+
+**SINCE**
+
+0.82. LVO -552.
+
+**INPUTS**
+
+- `window` - the window. One that is not away is left as it is.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+The window is where it was, in the depth order it was in, with its
+interior and its requesters, and the input reaches it again. A
+smart-refresh window has its pixels back; a simple-refresh one is owed
+them and gets an `IDCMP_REFRESHWINDOW` as it would after being
+uncovered, its border and its gadgets drawn again by intuition. A
+window that asked to hear about its depth (`WA_NotifyDepth`) is told.
+
+It is not brought to the front and it is not made active: a program
+that wants both calls `WindowToFront` and `ActivateWindow` after this,
+which is what the dock does when a window's cell is clicked.
+
+**CONTEXT**
+
+- Waits: for the screen list's semaphore, and the layers' locks.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing changes hands.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`HideWindow`, `WindowToFront`, `ActivateWindow`
+
+**EXAMPLES**
+
+```zig
+ib.ShowWindow(window);
+ib.WindowToFront(window);
+ib.ActivateWindow(window);
 ```
 
 ## SizeWindow

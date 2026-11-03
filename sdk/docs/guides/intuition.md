@@ -161,7 +161,7 @@ gadgets and hands its messages over as words.
 
 A window is opaque too, read with `GetWindowAttrs` and the same tags, and
 a few that are read only: `WA_RastPort`, `WA_Layer`, `WA_UserPort`,
-`WA_Screen`, `WA_Active`, `WA_Task`, and the border's widths
+`WA_Screen`, `WA_Active`, `WA_Task`, `WA_Hidden`, and the border's widths
 `WA_BorderLeft`, `WA_BorderTop`, `WA_BorderRight` and `WA_BorderBottom`.
 `SetWindowTitles` changes the title (`wn.TITLE_UNCHANGED` leaves one as
 it is); `ChangeWindowBox`, `MoveWindow`, `SizeWindow`, `WindowLimits`,
@@ -363,6 +363,16 @@ if (ib.WindowUnderPointer()) |under| {
   (`.process`), and its CLI names the command it runs
   (`cli_CommandName`) - how the dock finds the icon to stand for a
   window in its taskbar. It is 0 for a window opened as the system's.
+- `HideWindow` puts a window away without closing it: nothing of it is
+  on the display and nothing of the input reaches it, while it stays
+  open with its number, its port, its menus and its pixels, and
+  `WA_Hidden` says so. What it covered is uncovered as if it had closed,
+  and the activation goes where it would have gone then.
+  `ShowWindow` brings it back where it was; `WindowToFront` and
+  `ActivateWindow` after it, where it should come back to the front as
+  well. A window nobody can bring back is a window gone, so this is for
+  a program that keeps the way back - the dock's row of windows, where a
+  window put away keeps its cell.
 - `HidePointer(true)` stops the pointer being drawn, wherever it is;
   `HidePointer(false)` lets it be drawn again. A window of its own that
   wants no pointer sets `WA_PointerType` instead - this is for a program

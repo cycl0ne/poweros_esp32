@@ -50,10 +50,13 @@ pub const LIBRARY_VERSION = 0;
 /// MoveSizeLayer to its new buffer, and the move - the layer at its new
 /// size, its shadow, what it uncovered - reaches the display with that
 /// batch's EndDraw when the layers are held around it.
-pub const LIBRARY_REVISION = 14;
+/// 15: a layer taken out of what is shown and put back without being
+/// taken away - HideLayer, ShowLayer, LAYERHIDDEN - what a window put
+/// away into the dock rests on.
+pub const LIBRARY_REVISION = 15;
 
 /// dd.mm.yyyy, the form every module's `$VER:` string uses.
-const BUILD_DATE = "29.10.2026";
+const BUILD_DATE = "03.11.2026";
 
 /// The `$VER:` string, NUL first so a scan of the image finds it.
 const LIBRARY_VERSION_STRING =

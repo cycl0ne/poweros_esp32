@@ -76,7 +76,11 @@ pub fn GetLayerAttrs(lb: *LayersBase, layer: *Layer, tags: ?[*]const TagItem) vo
                 .{ .x = layer.scroll_x, .y = layer.scroll_y },
             layers.LATAG_GetLastError => @as(*i32, @ptrFromInt(item.data)).* = layer.last_error,
             layers.LATAG_GetInFront => {
-                // A ghost in front does not count.
+                // A ghost in front does not count. A hidden layer does:
+                // it has its place in the order and keeps it, and the
+                // walk of the order - intuition's `NextWindow` - is how
+                // a program finds a window that is away, to bring it
+                // back. `LATAG_GetFlags` says which layers those are.
                 var pred = layer.node.pred.?;
                 while (pred.pred != null and @as(*Layer, @fieldParentPtr("node", pred)).ghost) pred = pred.pred.?;
                 const front: usize = if (pred.pred == null) 0 else @intFromPtr(@as(*Layer, @fieldParentPtr("node", pred)));

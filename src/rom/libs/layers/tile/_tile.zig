@@ -326,12 +326,20 @@ pub fn retile(lb: *LayersBase, info: *LayerInfo) bool {
             continue;
         };
         layer.next_visible = seen;
+        // A hidden layer is left with nothing to see and claims nothing,
+        // so the ones behind it are worked out as if it had gone. Its
+        // own pixels are kept, below, by the same pass that keeps a
+        // layer's covered ones - all of it is covered now.
+        const hidden = layer.flags & layers.LAYERHIDDEN != 0;
         // Cut to the display first: a layer may hang off the edge, and
         // what is off it is not somewhere its pixels may go.
         const on_screen = Rect.intersect(layer.bounds, info.bounds);
-        if (!gb.OrRectRegion(seen, &on_screen) or !gb.SubRegionRegion(covered, seen)) ok = false;
+        if (!hidden and (!gb.OrRectRegion(seen, &on_screen) or !gb.SubRegionRegion(covered, seen))) ok = false;
 
-        if (composed) {
+        if (hidden) {
+            // No shape, no shadow: nothing of it falls on anything.
+            effects.dropShade(gb, layer);
+        } else if (composed) {
             // Its buffer keeps all of it already. What it looks like is
             // the tiling's: its shape is its rectangle less its corners,
             // its shadow falls on what is not in front of it, and a layer
@@ -354,7 +362,7 @@ pub fn retile(lb: *LayersBase, info: *LayerInfo) bool {
         }
 
         if (composed) {
-            // Nothing to keep.
+            // Nothing to keep: its buffer holds all of it, hidden or not.
         } else if (layer.flags & layers.LAYERSUPER != 0) {
             // Its own bitmap is its keeping: what has just been covered
             // goes into it now; what has just been uncovered comes back in
@@ -448,6 +456,9 @@ fn behindPass(lb: *LayersBase, info: *LayerInfo) bool {
     while (at) |node| {
         const layer: *Layer = @fieldParentPtr("node", node);
         at = if (node.pred.?.pred == null) null else node.pred;
+        // A hidden layer is not there: it veils nothing, shades nothing,
+        // and cuts no shadow of the layers behind it.
+        if (layer.flags & layers.LAYERHIDDEN != 0) continue;
         if (layer.opacity != 255) info.veiled = true;
         if (!effects.keepOver(lb, layer, behind)) ok = false;
         if (layer.shade != null) info.shaded = true;

@@ -217,7 +217,11 @@ pub const LIBRARY_VERSION = 0;
 /// of the whole machine has to be able to ask.
 /// 81: WA_Task - the task that opened a window, so a program listing the
 /// windows can tell which program each belongs to.
-pub const LIBRARY_REVISION = 81;
+/// 82: HideWindow and ShowWindow - a window put away without being
+/// closed, nothing of it on the display and nothing of the input
+/// reaching it, open all the while (WA_Hidden); layers 15's hidden layer
+/// under it.
+pub const LIBRARY_REVISION = 82;
 const BUILD_DATE = "03.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

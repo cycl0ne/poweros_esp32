@@ -21,6 +21,7 @@ Generated from the source by `./zig build autodoc`.
 - [DoHookClipRects](#dohookcliprects) - Calls a hook once for each piece of a RastPort that may be drawn on.
 - [EndUpdate](#endupdate) - Puts back what `BeginUpdate` narrowed.
 - [GetLayerAttrs](#getlayerattrs) - Reads a layer.
+- [HideLayer](#hidelayer) - Takes a layer out of what is shown, without taking it away.
 - [InstallClipRegion](#installclipregion) - Narrows a layer to a region of the caller's own.
 - [InstallLayerHook](#installlayerhook) - Changes what paints a part of a layer that has nothing in it yet.
 - [LayersErrorText](#layerserrortext) - Says what an `LERR_` code means, in words.
@@ -35,6 +36,7 @@ Generated from the source by `./zig build autodoc`.
 - [RefillLayer](#refilllayer) - Paints part of a layer again with its backfill.
 - [ScrollLayer](#scrolllayer) - Moves the window a `LAYERSUPER` layer shows of its own bitmap.
 - [SetLayerAttrsTagList](#setlayerattrstaglist) - Changes what a composed layer looks like.
+- [ShowLayer](#showlayer) - Puts a hidden layer back into what is shown.
 - [ShowLayerPicture](#showlayerpicture) - Shows a picture over part of a composed layer, in place of what the layer holds there.
 - [SizeLayer](#sizelayer) - Changes a layer's size, its top-left staying where it is.
 - [UnlockLayer](#unlocklayer) - Lets a layer go again.
@@ -630,6 +632,77 @@ None known.
 var rp: usize = 0;
 const ask = [_]TagItem{ .{ .tag = layers.LATAG_GetRastPort, .data = @intFromPtr(&rp) }, .{} };
 lb.GetLayerAttrs(layer, &ask);
+```
+
+## HideLayer
+
+Takes a layer out of what is shown, without taking it away.
+
+**SYNOPSIS**
+
+```zig
+fn HideLayer(lb: *LayersBase, layer: *Layer) bool
+```
+
+**SINCE**
+
+0.15. LVO -140.
+
+**INPUTS**
+
+- `layer` - the layer.
+
+**RESULT**
+
+True, or false with `LERR_NO_MEMORY` in the layer if the tiling could
+not be worked out. A layer that is hidden already answers true.
+
+**BEHAVIOR**
+
+The layer covers nothing, is hit by nothing (`WhichLayer`) and nothing
+of it reaches the display, while its RastPort, its regions, its damage
+and its lock stay as they are: it is still a layer, and still in the
+order it was in. What was behind it is uncovered as if it had gone -
+a simple layer there is owed the pixels as damage, a smart or super
+one gets them back from its keeping, and in a composed LayerInfo each
+is copied out of its buffer.
+
+Its own pixels are kept where its kind keeps them: in its buffer when
+it is composed, in its keeping when it is smart or super. A simple
+layer keeps nothing, so it is owed all of itself as damage when it is
+shown again.
+
+Drawing into a hidden layer is allowed and goes where its pixels go,
+never on to the display: a composed layer's buffer takes it, and so
+does a smart or super layer's keeping, as it does for a layer that is
+covered - such a layer comes back as it was last drawn. A simple
+layer keeps nothing, so what is drawn into it while it is away is
+lost, and it is owed all of itself when it comes back.
+
+**CONTEXT**
+
+- Waits: yes, while another task holds the display's layers.
+- Interrupts: no. It may wait, and it allocates.
+- Locks: no spinlock may be held: it waits for locks.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated that outlives the call. The layer stays the
+caller's, to show again or to delete.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ShowLayer`, `DeleteLayer`, `GetLayerAttrs`
+
+**EXAMPLES**
+
+```zig
+_ = lb.HideLayer(layer);
 ```
 
 ## InstallClipRegion
@@ -1503,6 +1576,64 @@ None known.
 // One step of a window fading in.
 const step = [_]TagItem{ .{ .tag = layers.LATAG_Opacity, .data = value }, .{} };
 _ = lb.SetLayerAttrsTagList(layer, &step);
+```
+
+## ShowLayer
+
+Puts a hidden layer back into what is shown.
+
+**SYNOPSIS**
+
+```zig
+fn ShowLayer(lb: *LayersBase, layer: *Layer) bool
+```
+
+**SINCE**
+
+0.15. LVO -144.
+
+**INPUTS**
+
+- `layer` - the layer.
+
+**RESULT**
+
+True, or false with `LERR_NO_MEMORY` in the layer if the tiling could
+not be worked out. A layer that was not hidden answers true.
+
+**BEHAVIOR**
+
+It is seen again where it was and as far in front as it was: it covers
+what it covered, and what it covers loses those pixels as it would to
+any other layer coming in front. Its own pixels come back from where
+its kind keeps them - its buffer when it is composed, its keeping when
+it is smart or super. A simple layer is owed all of itself as damage,
+`LAYERREFRESH` is set and its program is told (`IDCMP_REFRESHWINDOW`,
+where intuition owns the layer).
+
+**CONTEXT**
+
+- Waits: yes, while another task holds the display's layers.
+- Interrupts: no. It may wait, and it allocates.
+- Locks: no spinlock may be held: it waits for locks.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated that outlives the call.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`HideLayer`, `BeginUpdate`
+
+**EXAMPLES**
+
+```zig
+_ = lb.ShowLayer(layer);
 ```
 
 ## ShowLayerPicture

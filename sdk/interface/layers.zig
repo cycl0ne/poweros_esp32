@@ -52,6 +52,8 @@ pub const LVO = struct {
     pub const ShowLayerPicture = libraries.lvo(31);
     pub const SetLayerAttrsTagList = libraries.lvo(32);
     pub const RefillLayer = libraries.lvo(33);
+    pub const HideLayer = libraries.lvo(34);
+    pub const ShowLayer = libraries.lvo(35);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -87,6 +89,8 @@ pub const Fn = struct {
     pub const ShowLayerPicture = *const fn (*LayersBase, *layers.Layer, ?*const rtg.Surface, ?*const graphics.Rect) callconv(.c) bool;
     pub const SetLayerAttrsTagList = *const fn (*LayersBase, *layers.Layer, ?[*]const utility.TagItem) callconv(.c) bool;
     pub const RefillLayer = *const fn (*LayersBase, *layers.Layer, *const graphics.Rect) callconv(.c) void;
+    pub const HideLayer = *const fn (*LayersBase, *layers.Layer) callconv(.c) bool;
+    pub const ShowLayer = *const fn (*LayersBase, *layers.Layer) callconv(.c) bool;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -295,5 +299,24 @@ pub const LayersBase = opaque {
     /// its RastPort.
     pub fn RefillLayer(self: *LayersBase, layer: *layers.Layer, area: *const graphics.Rect) void {
         return libraries.call(self, LVO.RefillLayer, Fn.RefillLayer, .{ layer, area });
+    }
+
+    /// Take a layer out of what is shown without taking it away: it covers
+    /// nothing, is hit by nothing and nothing of it reaches the display,
+    /// while its RastPort, its regions and its pixels stay. What was behind
+    /// it is uncovered as if it had gone (`DeleteLayer`). True, or false
+    /// with `LERR_NO_MEMORY` in the layer if the tiling could not be worked
+    /// out; a layer already hidden is left as it is and answers true.
+    pub fn HideLayer(self: *LayersBase, layer: *layers.Layer) bool {
+        return libraries.call(self, LVO.HideLayer, Fn.HideLayer, .{layer});
+    }
+
+    /// Show a hidden layer again, where it was and as far in front as it
+    /// was. A smart or super layer, and a composed one, has its pixels back
+    /// from its keeping; a simple one is owed them as damage and its program
+    /// gets a refresh. True, or false with `LERR_NO_MEMORY`; a layer that
+    /// was not hidden answers true.
+    pub fn ShowLayer(self: *LayersBase, layer: *layers.Layer) bool {
+        return libraries.call(self, LVO.ShowLayer, Fn.ShowLayer, .{layer});
     }
 };

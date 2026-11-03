@@ -377,6 +377,12 @@ pub const WA_StayInFront = WA_Dummy + 0x111;
 /// holds still. `GetWindowAttrs` only.
 pub const WA_Task = WA_Dummy + 0x112;
 
+/// Read only: true while the window is put away (`HideWindow`) - open,
+/// on its screen's list, keeping its number, its port and its pixels,
+/// but nothing of it on the display and nothing of the input reaching
+/// it. `ShowWindow` brings it back. `GetWindowAttrs` only.
+pub const WA_Hidden = WA_Dummy + 0x113;
+
 /// `WA_Position`'s values.
 pub const WPOS_CENTERSCREEN: u32 = 1;
 pub const WPOS_CENTERMOUSE: u32 = 2;

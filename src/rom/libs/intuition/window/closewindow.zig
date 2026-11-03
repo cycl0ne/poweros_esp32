@@ -106,19 +106,6 @@ pub fn CloseWindow(ib: *IntuitionBase, window: ?*Window) void {
     ib.sys_base.FreeMem(w, @sizeOf(Window));
     repairScreen(ib, s);
     // The activation back where it was before: drawn once the screen is.
-    if (was_active) if (latest(s)) |before| _window.activate(ib, before);
+    if (was_active) if (_window.latest(s)) |before| _window.activate(ib, before);
     if (visitor) _screen.leave(ib, s);
-}
-
-/// The window on `s` that was made active most recently, if any was.
-fn latest(s: *Screen) ?*Window {
-    var found: ?*Window = null;
-    var node = s.windows.head;
-    while (node) |n| : (node = n.succ) {
-        if (n.succ == null) break;
-        const each: *Window = @ptrCast(@alignCast(n));
-        if (each.activated == 0) continue;
-        if (found == null or each.activated -% found.?.activated < 0x8000_0000) found = each;
-    }
-    return found;
 }

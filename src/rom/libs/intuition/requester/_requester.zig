@@ -189,6 +189,10 @@ fn openLayer(ib: *IntuitionBase, w: *Window, req: *Requester) bool {
     };
     req.layer = layer;
     inFront(ib, w, req);
+    // Its window is away (`HideWindow`): nothing of the window is shown,
+    // and a requester put up in it meanwhile is not shown either - it
+    // comes with the window when that comes back.
+    if (w.more_flags & _window.WMF_HIDDEN != 0) _ = ib.layers_base.HideLayer(layer);
     if (offWindow(w, req)) req.flags |= rq.REQOFFWINDOW else req.flags &= ~rq.REQOFFWINDOW;
     return true;
 }

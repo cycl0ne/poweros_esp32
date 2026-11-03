@@ -155,6 +155,8 @@ const WindowUnderPointer = @import("window/windowunderpointer.zig").WindowUnderP
 const NextWindow = @import("window/nextwindow.zig").NextWindow;
 const FrontScreen = @import("screen/frontscreen.zig").FrontScreen;
 const HidePointer = @import("input/hidepointer.zig").HidePointer;
+const HideWindow = @import("window/hidewindow.zig").HideWindow;
+const ShowWindow = @import("window/showwindow.zig").ShowWindow;
 
 /// Its functions, as the SDK has them (sdk/fd/intuition_lib.fd).
 const interface = sdk.interface.intuition;
@@ -287,6 +289,8 @@ const contract_files = [_][]const u8{
     @embedFile("window/nextwindow.zig"),
     @embedFile("screen/frontscreen.zig"),
     @embedFile("input/hidepointer.zig"),
+    @embedFile("window/hidewindow.zig"),
+    @embedFile("window/showwindow.zig"),
 };
 
 fn lvoMakeClass(ib: *IntuitionBase, class_id: ?[*:0]const u8, super_id: ?[*:0]const u8, super_class: ?*Class, inst_size: u32) callconv(.c) ?*Class {
@@ -685,6 +689,12 @@ fn lvoFrontScreen(ib: *IntuitionBase) callconv(.c) ?*intuition.Screen {
 fn lvoHidePointer(ib: *IntuitionBase, hidden: bool) callconv(.c) void {
     HidePointer(ib, hidden);
 }
+fn lvoHideWindow(ib: *IntuitionBase, window: *intuition.Window) callconv(.c) void {
+    HideWindow(ib, @ptrCast(@alignCast(window)));
+}
+fn lvoShowWindow(ib: *IntuitionBase, window: *intuition.Window) callconv(.c) void {
+    ShowWindow(ib, @ptrCast(@alignCast(window)));
+}
 
 pub const vectors = [_]*const anyopaque{
     vec(exec.libOpen),
@@ -824,6 +834,8 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoNextWindow),
     vec(lvoFrontScreen),
     vec(lvoHidePointer),
+    vec(lvoHideWindow),
+    vec(lvoShowWindow),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

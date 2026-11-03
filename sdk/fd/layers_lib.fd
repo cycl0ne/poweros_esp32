@@ -125,4 +125,17 @@ bool SetLayerAttrsTagList(*layers.Layer layer, ?[*]const utility.TagItem tags)
 /// no buffer is shown again there, any other has the hook called through
 /// its RastPort.
 void RefillLayer(*layers.Layer layer, *const graphics.Rect area)
+/// Take a layer out of what is shown without taking it away: it covers
+/// nothing, is hit by nothing and nothing of it reaches the display,
+/// while its RastPort, its regions and its pixels stay. What was behind
+/// it is uncovered as if it had gone (`DeleteLayer`). True, or false
+/// with `LERR_NO_MEMORY` in the layer if the tiling could not be worked
+/// out; a layer already hidden is left as it is and answers true.
+bool HideLayer(*layers.Layer layer)
+/// Show a hidden layer again, where it was and as far in front as it
+/// was. A smart or super layer has its pixels back from its keeping and
+/// a composed one from its own buffer; a simple one is owed them as
+/// damage and its program gets a refresh. True, or false with
+/// `LERR_NO_MEMORY`; a layer that was not hidden answers true.
+bool ShowLayer(*layers.Layer layer)
 ##end

@@ -438,4 +438,13 @@ bool DoubleTap(*const intuition.Tap first, *const intuition.Tap second)
 /// again; the last call wins. For a program that hides it while the
 /// keyboard is being used.
 void HidePointer(bool hidden)
+/// Put a window away without closing it: nothing of it is on the display
+/// and nothing of the input reaches it, while it stays open with its
+/// number, its port and its pixels, and `WA_Hidden` says so. The
+/// activation goes where it would have gone had the window closed.
+void HideWindow(*intuition.Window window)
+/// Bring a window put away back on to its screen, where it was and as
+/// far in front as it was. It is not brought to the front and not made
+/// active: `WindowToFront` and `ActivateWindow` do that.
+void ShowWindow(*intuition.Window window)
 ##end
