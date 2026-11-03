@@ -398,6 +398,8 @@ pub fn build(b: *std.Build) void {
     const virt_ui = b.option([]const u8, "virt-ui", "QEMU's -display for the virt and virt64 display steps (default: gtk,show-cursor=off,zoom-to-fit=off - GTK's window at the picture's size, 1:1; default,show-cursor=off takes SDL, or VNC, where there is no GTK)") orelse "gtk,show-cursor=off,zoom-to-fit=off";
     const virt_monitor = virtMonitor(b, b.option([]const u8, "virt-qmp", "Open a QMP monitor on this Unix socket in the virt and virt64 display steps, which scripts/qemu-shot.py takes the running machine's picture through (such as /tmp/poweros.qmp)"));
     const usb_disk = b.option([]const u8, "usb-disk", "Plug a USB stick into the qemu steps' USB port whose blocks are this raw image file (-snapshot runs keep it unchanged)");
+    const ovmf_code = b.option([]const u8, "ovmf-code", "The x64 UEFI firmware the q35 step starts (default: /usr/share/edk2/x64/OVMF_CODE.4m.fd)") orelse "/usr/share/edk2/x64/OVMF_CODE.4m.fd";
+    const ovmf_vars = b.option([]const u8, "ovmf-vars", "The firmware's variable store the q35 step starts from, copied into work/ on its first run (default: /usr/share/edk2/x64/OVMF_VARS.4m.fd)") orelse "/usr/share/edk2/x64/OVMF_VARS.4m.fd";
     const usb = qemuUsb(b, usb_devices, usb_disk);
     // The display is the one a person sits at: `telnet localhost 2323`
     // and `ssh -p 2222 localhost` reach a ShellServer in it without asking
@@ -1192,6 +1194,32 @@ pub fn build(b: *std.Build) void {
     run_virt64_el2.stdio = .inherit;
     run_virt64_el2.has_side_effects = true;
     b.step("virt64-el2", "Boot the AArch64 kernel in QEMU's virt machine entered at EL2, PSCI by SMC").dependOn(&run_virt64_el2.step);
+
+    // QEMU's q35 machine, the x86-64 board: its UEFI firmware starts
+    // src/boot/uefi/stub.zig as BOOTX64.EFI off a boot partition the
+    // emulator makes out of a directory, and the stub reads the kernel and
+    // the disk image from beside itself there. The console is the machine's
+    // first serial port, which the stub writes by hand and exec's raw port
+    // drives afterwards, so the stub's lines and the kernel's first lines
+    // come out of the same place.
+    const q35_stub = addUefiStub(b, optimize);
+    const q35_boot = b.addWriteFiles();
+    _ = q35_boot.addCopyFile(q35_stub.getEmittedBin(), "EFI/BOOT/BOOTX64.EFI");
+    const q35_vars = keepFirmwareVars(b, ovmf_vars, "q35-vars.fd");
+    const run_q35 = b.addSystemCommand(&.{
+        "qemu-system-x86_64", "-machine", "q35",
+        "-m",                 "512",      "-nographic",
+    });
+    run_q35.addArgs(&.{ "-drive", b.fmt("if=pflash,format=raw,readonly=on,file={s}", .{ovmf_code}) });
+    run_q35.addArgs(&.{ "-drive", b.fmt("if=pflash,format=raw,file={s}", .{q35_vars.path}) });
+    // The boot partition last, and `file=` after `format=raw` so that the
+    // directory's path is the end of the argument.
+    run_q35.addArg("-drive");
+    run_q35.addPrefixedDirectoryArg("format=raw,file=fat:rw:", q35_boot.getDirectory());
+    run_q35.step.dependOn(q35_vars.step);
+    run_q35.stdio = .inherit;
+    run_q35.has_side_effects = true;
+    b.step("q35", "Boot the x86-64 stub in QEMU's q35 machine under UEFI firmware (quit with Ctrl-A X)").dependOn(&run_q35.step);
     // `archive` - what a board is handed over in, for the board this
     // build is for: QEMU's machines get the kernel, the two disks and a
     // `run.sh` that starts them (`tools/qemupackage`); an ESP32 board the
@@ -2436,6 +2464,40 @@ const VirtDisks = struct {
         run.step.dependOn(disks.work.step);
     }
 };
+
+/// The stub the x86-64 machine's firmware starts, as its own artifact: a
+/// PE32+ image for `x86_64-uefi`, which is the firmware's own target and
+/// nothing else in the tree is built for - it is the only code the firmware
+/// itself runs. The kernel beside it is an ELF for the machine's own target
+/// like every other board's.
+fn addUefiStub(b: *std.Build, optimize: std.builtin.OptimizeMode) *std.Build.Step.Compile {
+    const stub = b.createModule(.{
+        .root_source_file = b.path("src/boot/uefi/stub.zig"),
+        .target = b.resolveTargetQuery(.{ .cpu_arch = .x86_64, .os_tag = .uefi, .abi = .msvc }),
+        .optimize = optimize,
+        .single_threaded = true,
+        .unwind_tables = .none,
+    });
+    return b.addExecutable(.{ .name = "BOOTX64", .root_module = stub });
+}
+
+/// A machine's firmware variable store, `name` in `virt_work_dir`: the
+/// system's own copied there when there is none yet, so that what the
+/// firmware remembers survives between runs and the file it was copied from
+/// is never written.
+fn keepFirmwareVars(b: *std.Build, blank: []const u8, name: []const u8) WorkDisk {
+    const path = b.pathFromRoot(b.pathJoin(&.{ virt_work_dir, name }));
+    const keep = b.addSystemCommand(&.{
+        "sh",
+        "-c",
+        \\[ -f "$0" ] || { mkdir -p "$(dirname "$0")" && cp "$1" "$0"; }
+        ,
+        path,
+        blank,
+    });
+    keep.has_side_effects = true;
+    return .{ .path = path, .step = &keep.step };
+}
 
 const WorkDisk = struct { path: []const u8, step: *std.Build.Step };
 
