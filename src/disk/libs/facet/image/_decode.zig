@@ -76,62 +76,37 @@ pub fn block16(format: facet.Format, block: []const u8) [16]Rgba {
     return made;
 }
 
-/// A float to 8 bits; NaN to 0.
-fn byteOf(value: f32) u8 {
-    if (!(value > 0)) return 0;
-    if (value >= 1) return 255;
-    return @intFromFloat(value * 255 + 0.5);
-}
-
-/// A half-float's value, by hand: not every processor the disk is built for
-/// has f16 to spare.
-fn ofHalf(half: u16) f32 {
-    const negative = half & 0x8000 != 0;
-    const exponent: u32 = half >> 10 & 0x1F;
-    const mantissa: u32 = half & 0x3FF;
-    if (exponent == 31 and mantissa != 0) return std.math.nan(f32);
-    const value = ofParts(exponent, mantissa, 10, 15);
-    return if (negative) -value else value;
-}
-
-/// An unsigned float of `bits` of mantissa, its exponent biased by `bias`.
-fn ofParts(exponent: u32, mantissa: u32, comptime bits: u5, comptime bias: i32) f32 {
-    const whole: f32 = @floatFromInt(mantissa);
-    const scale = @as(f32, @floatFromInt(@as(u32, 1) << bits));
-    if (exponent == 0) return std.math.ldexp(whole / scale, 1 - bias);
-    return std.math.ldexp(1 + whole / scale, @as(i32, @intCast(exponent)) - bias);
-}
-
-/// A texel of a float format.
-pub fn texel(format: facet.Format, bytes: []const u8) Rgba {
+/// Which texture format keeps a float one's texels, for the decoder the
+/// sampler uses as well (`texture.floatTexel`).
+fn keptFloats(format: facet.Format) ?texture.Format {
     return switch (format) {
-        .r16g16b16a16_sfloat => made: {
-            var channels: Rgba = undefined;
-            for (&channels, 0..) |*channel, k| channel.* = byteOf(ofHalf(std.mem.readInt(u16, bytes[k * 2 ..][0..2], .little)));
-            break :made channels;
-        },
-        .r32g32b32a32_sfloat => made: {
-            var channels: Rgba = undefined;
-            for (&channels, 0..) |*channel, k| channel.* = byteOf(@bitCast(std.mem.readInt(u32, bytes[k * 4 ..][0..4], .little)));
-            break :made channels;
-        },
-        .b10g11r11_ufloat_pack32 => made: {
-            const word = std.mem.readInt(u32, bytes[0..4], .little);
-            const r = ofParts(word >> 6 & 0x1F, word & 0x3F, 6, 15);
-            const g = ofParts(word >> 17 & 0x1F, word >> 11 & 0x3F, 6, 15);
-            const b = ofParts(word >> 27 & 0x1F, word >> 22 & 0x1F, 5, 15);
-            break :made .{ byteOf(r), byteOf(g), byteOf(b), 255 };
-        },
-        .e5b9g9r9_ufloat_pack32 => made: {
-            const word = std.mem.readInt(u32, bytes[0..4], .little);
-            const scale = std.math.ldexp(@as(f32, 1), @as(i32, @intCast(word >> 27)) - 15 - 9);
-            const r: f32 = @floatFromInt(word & 0x1FF);
-            const g: f32 = @floatFromInt(word >> 9 & 0x1FF);
-            const b: f32 = @floatFromInt(word >> 18 & 0x1FF);
-            break :made .{ byteOf(r * scale), byteOf(g * scale), byteOf(b * scale), 255 };
-        },
-        else => .{ 0, 0, 0, 0 },
+        .r16g16b16a16_sfloat => .rgba16f,
+        .r32g32b32a32_sfloat => .rgba32f,
+        .b10g11r11_ufloat_pack32 => .rg11b10f,
+        .e5b9g9r9_ufloat_pack32 => .rgb9e5,
+        else => null,
     };
+}
+
+/// A texel of a float format, 8 bits a channel: the SDK's decoder, which
+/// is the one a sample of a kept texel reads through, so an image unpacked
+/// as it is copied in holds what sampling the floats would have read.
+pub fn texel(format: facet.Format, bytes: []const u8) Rgba {
+    const kept = keptFloats(format) orelse return .{ 0, 0, 0, 0 };
+    var made: Rgba = .{ 0, 0, 0, 0 };
+    switch (kept) {
+        inline .rgba16f, .rgba32f, .rg11b10f, .rgb9e5 => |one| {
+            const color = texture.floatTexel(one, bytes.ptr);
+            made = .{
+                @intCast(color >> 16 & 0xFF),
+                @intCast(color >> 8 & 0xFF),
+                @intCast(color & 0xFF),
+                @intCast(color >> 24),
+            };
+        },
+        else => {},
+    }
+    return made;
 }
 
 const testing = std.testing;
@@ -182,7 +157,7 @@ test "floats: cut to what 8 bits hold" {
     word = 256 | 128 << 9 | 511 << 18 | 15 << 27;
     const made = texel(.e5b9g9r9_ufloat_pack32, std.mem.asBytes(&word));
     try testing.expectEqual(Rgba{ 128, 64, 255, 255 }, made);
-    try testing.expectEqual(@as(f32, 1), ofHalf(0x3C00));
-    try testing.expectEqual(@as(f32, 0.5), ofHalf(0x3800));
-    try testing.expect(std.math.isNan(ofHalf(0x7C01)));
+    try testing.expectEqual(@as(f32, 1), texture.ofHalf(0x3C00));
+    try testing.expectEqual(@as(f32, 0.5), texture.ofHalf(0x3800));
+    try testing.expect(std.math.isNan(texture.ofHalf(0x7C01)));
 }

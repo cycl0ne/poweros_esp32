@@ -34,8 +34,10 @@ const Image = @import("../image/_image.zig").Image;
 /// the destination is left out, and the source's edge is read beyond it.
 ///
 /// A source kept in its blocks is read out of them, texel by texel (since
-/// 1.44). Nothing here compresses, so a destination that keeps its blocks
-/// takes nothing, as Vulkan does not allow one either.
+/// 1.44), and one kept as floats is read and rounded the same way (since
+/// 1.45). Nothing here compresses or makes floats, so a destination that
+/// keeps what it was given takes nothing, as Vulkan does not allow a
+/// compressed one either.
 ///
 /// CONTEXT:
 /// - Waits: no.

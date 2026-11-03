@@ -27,6 +27,11 @@ pub fn copyImage(command: *const _command.CopyImage) void {
         if (source.format == destination.format) copyBlocks(command);
         return;
     }
+    // Two float images keep what they were given, so the texels go as they
+    // lie as well, and only between images of the one format: nothing here
+    // turns one float format into another.
+    if (_image.floatTexels(source) != _image.floatTexels(destination)) return;
+    if (_image.floatTexels(source) and source.format != destination.format) return;
     const pixel = _image.bytesOf(source.format);
     if (pixel != _image.bytesOf(destination.format)) return;
     for (_stream.items(_command.CopyImage, facet.ImageCopy, command, command.count)) |*region| {
@@ -45,7 +50,8 @@ pub fn copyImage(command: *const _command.CopyImage) void {
         const height = @min(region.extent.height, from_size[1] - from_y, to_size[1] - to_y);
         const from_layers = _image.layersOf(source, region.src_subresource, region.src_offset.z, region.extent.depth) orelse continue;
         const to_layers = _image.layersOf(destination, region.dst_subresource, region.dst_offset.z, region.extent.depth) orelse continue;
-        var texel: [4]u8 = undefined;
+        // As wide as the widest texel kept: four floats of 32 bits.
+        var texel: [16]u8 = undefined;
         for (0..@min(from_layers.count, to_layers.count)) |layer_number| {
             const layer: u32 = @intCast(layer_number);
             for (0..height) |row| for (0..width) |column| {
@@ -320,9 +326,11 @@ fn texelOf(image: *const Image, color: u32) ?Texel {
             .rgba8888 => .{ .eight = texture.spread(color) },
             .rgb565 => .{ .two = narrow(color) },
             // A clear of a colour is not for a depth texture:
-            // CmdClearDepthStencilImage writes that one. Nor for a
-            // compressed one, whose texels are written as blocks alone.
-            .d16, .bc1, .bc1_rgb, .bc2, .bc3 => null,
+            // CmdClearDepthStencilImage writes that one. Nor for one that
+            // keeps what it was given - a compressed image, whose texels
+            // are written as blocks, or a float one, whose texels are
+            // moved as they lie and never made from a colour.
+            .d16, .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5 => null,
         },
         // Its pixels are rows of depth, which a clear of a colour does
         // not write; a transient one's live in the tiles.
@@ -340,9 +348,10 @@ pub fn blitImage(command: *const _command.BlitImage) void {
     const destination = command.destination;
     if (!_image.readable(source) or !_image.readable(destination)) return;
     // A compressed source is read block by block and scaled like any
-    // other; nothing here compresses, so a destination that keeps its
-    // blocks is left alone, as Vulkan does not allow one either.
-    if (_image.blocked(destination)) return;
+    // other, and a float one texel by texel; nothing here compresses or
+    // makes floats, so a destination that keeps what it was given is left
+    // alone, as Vulkan does not allow a compressed one either.
+    if (_image.blocked(destination) or _image.floatTexels(destination)) return;
     for (_stream.items(_command.BlitImage, facet.ImageBlit, command, command.count)) |*region| {
         const from_level = region.src_subresource.mip_level;
         const to_level = region.dst_subresource.mip_level;

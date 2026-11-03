@@ -132,6 +132,9 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // A compressed image is sampled out of its blocks: the one texel
         // decoder reads a BC block as well (`texture.Format.blockOf`).
         .kept_compressed = true,
+        // A float image likewise, its texels read and rounded where they
+        // lie (`texture.floatTexel`).
+        .kept_floats = true,
         // Both go by the pixel at a time way the stencil test goes by:
         // the clamp holds a pixel's depth inside the viewport's range,
         // and the bounds test reads the depth already there.

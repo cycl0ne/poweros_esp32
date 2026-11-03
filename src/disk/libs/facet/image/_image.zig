@@ -162,7 +162,10 @@ pub fn bytesOf(format: facet.Format) u32 {
         .r5g6b5_unorm_pack16, .d16_unorm => 2,
         .d16_unorm_s8_uint => 4,
         .r8g8b8a8_unorm, .b8g8r8a8_unorm, .r32_sfloat => 4,
-        .r32g32_sfloat => 8,
+        // The float formats a texture keeps as they lie (since 1.45), and
+        // the vertex ones, which are the same sizes.
+        .b10g11r11_ufloat_pack32, .e5b9g9r9_ufloat_pack32 => 4,
+        .r16g16b16a16_sfloat, .r32g32_sfloat => 8,
         .r32g32b32_sfloat => 12,
         .r32g32b32a32_sfloat => 16,
         else => 0,
@@ -181,6 +184,13 @@ pub fn textureFormat(format: facet.Format) ?texture.Format {
         .bc1_rgb_unorm_block => .bc1_rgb,
         .bc2_unorm_block => .bc2,
         .bc3_unorm_block => .bc3,
+        // Kept as the floats they were copied in as, and rounded to 8 bits
+        // a channel as they are sampled, on a device that says so
+        // (`PhysicalDeviceFeatures.kept_floats`).
+        .r16g16b16a16_sfloat => .rgba16f,
+        .r32g32b32a32_sfloat => .rgba32f,
+        .b10g11r11_ufloat_pack32 => .rg11b10f,
+        .e5b9g9r9_ufloat_pack32 => .rgb9e5,
         // A depth sampled where it lies, in rows
         // (`PhysicalDeviceFeatures.sampled_depth`).
         .d16_unorm => .d16,
@@ -217,13 +227,15 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
     if (cube and (volume or layers < 6 or extent.width != extent.height)) return null;
     // Layers are for sampling: an attachment or rows have one.
     if ((layers > 1 or _decode.unpacks(info.format)) and (info.usage & facet.IMAGE_USAGE_SAMPLED == 0 or info.tiling != .optimal)) return null;
-    // A compressed image is kept in its blocks where this device samples
-    // them (`PhysicalDeviceFeatures.kept_compressed`), and unpacked into 8
-    // bits a channel where it does not. A storage image is written texel
-    // by texel, which no compressed format takes.
-    const keeps_blocks = physical.features.kept_compressed and _decode.blockBytes(info.format) != 0 and
-        info.usage & facet.IMAGE_USAGE_STORAGE == 0;
-    const kept_format: facet.Format = if (_decode.unpacks(info.format) and !keeps_blocks) .r8g8b8a8_unorm else info.format;
+    // A compressed image is kept in its blocks, and a float one in its
+    // floats, where this device samples them
+    // (`PhysicalDeviceFeatures.kept_compressed`, `kept_floats`); where it
+    // does not they are unpacked into 8 bits a channel. A storage image is
+    // written texel by texel, which neither kind takes.
+    const writes_texels = info.usage & facet.IMAGE_USAGE_STORAGE != 0;
+    const keeps_blocks = physical.features.kept_compressed and _decode.blockBytes(info.format) != 0 and !writes_texels;
+    const keeps_floats = physical.features.kept_floats and _decode.texelBytes(info.format) != 0 and !writes_texels;
+    const kept_format: facet.Format = if (_decode.unpacks(info.format) and !(keeps_blocks or keeps_floats)) .r8g8b8a8_unorm else info.format;
     if (extent.width == 0 or extent.height == 0 or extent.width > max_image_dimension or extent.height > max_image_dimension) return null;
     if (info.mip_levels == 0) return null;
     // A block's bytes stand in for a texel's where the blocks are kept:
@@ -374,6 +386,13 @@ pub fn blockBytes(image: *const Image) u32 {
     return _decode.blockBytes(image.format);
 }
 
+/// Whether an image's texels are the floats they were copied in as
+/// (`PhysicalDeviceFeatures.kept_floats`): a sample rounds one to 8 bits a
+/// channel as it reads it, and a copy moves its bytes as they lie.
+pub fn floatTexels(image: *const Image) bool {
+    return _decode.texelBytes(image.format) != 0;
+}
+
 /// The block holding texel (x, y) of a level of a layer, into `into`;
 /// nothing where the image is not blocked.
 pub fn readBlock(image: *const Image, level: u32, layer: u32, x: u32, y: u32, into: []u8) void {
@@ -493,6 +512,9 @@ pub fn copyFromBuffer(image: *Image, from: []const u8, region: *const facet.Buff
     const width = @min(region.image_extent.width, level_width - left);
     const height = @min(region.image_extent.height, level_height - top);
     const pixel = bytesOf(image.format);
+    // A float image keeps what it is given: the texel's bytes go as they
+    // lie rather than through a colour of 8 bits a channel.
+    const keeps = floatTexels(image);
     const row_length = if (region.buffer_row_length != 0) region.buffer_row_length else region.image_extent.width;
     const source_pitch = @as(usize, row_length) * pixel;
     const slice_height = if (region.buffer_image_height != 0) region.buffer_image_height else region.image_extent.height;
@@ -511,7 +533,11 @@ pub fn copyFromBuffer(image: *Image, from: []const u8, region: *const facet.Buff
                 },
                 .texture => for (0..width) |column| {
                     const x = left + @as(u32, @intCast(column));
-                    image.texels.putLayer(layer, level, x, y, texelOf(image.format, source[column * pixel ..]));
+                    if (keeps) {
+                        image.texels.putTexels(layer, level, x, y, source[column * pixel ..]);
+                    } else {
+                        image.texels.putLayer(layer, level, x, y, texelOf(image.format, source[column * pixel ..]));
+                    }
                 },
             }
         }
@@ -563,6 +589,9 @@ pub fn readTexel(image: *const Image, level: u32, layer: u32, x: u32, y: u32, in
         .texture => if (deviceOffset(image, level, layer, x, y)) |offset| {
             const pixel = bytesOf(image.format);
             @memcpy(into[0..pixel], (image.data.? + offset)[0..pixel]);
+        } else if (floatTexels(image)) {
+            // The floats as they lie: what went in comes out again.
+            image.texels.texelsAt(layer, level, x, y, into);
         } else {
             bytesOfTexel(image.format, image.texels.peekLayer(layer, level, x, y), into);
         },
@@ -580,6 +609,8 @@ pub fn writeTexel(image: *Image, level: u32, layer: u32, x: u32, y: u32, from: [
         .texture => if (deviceOffset(image, level, layer, x, y)) |offset| {
             const pixel = bytesOf(image.format);
             @memcpy((image.data.? + offset)[0..pixel], from[0..pixel]);
+        } else if (floatTexels(image)) {
+            image.texels.putTexels(layer, level, x, y, from);
         } else {
             image.texels.putLayer(layer, level, x, y, texelOf(image.format, from));
         },

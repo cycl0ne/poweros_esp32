@@ -828,8 +828,10 @@ facet.library/WaitForFences
 	the destination is left out, and the source's edge is read beyond it.
 
 	A source kept in its blocks is read out of them, texel by texel (since
-	1.44). Nothing here compresses, so a destination that keeps its blocks
-	takes nothing, as Vulkan does not allow one either.
+	1.44), and one kept as floats is read and rounded the same way (since
+	1.45). Nothing here compresses or makes floats, so a destination that
+	keeps what it was given takes nothing, as Vulkan does not allow a
+	compressed one either.
 
    CONTEXT
 	- Waits: no.
@@ -1102,7 +1104,9 @@ facet.library/WaitForFences
 	they lie, nothing decoded: the buffer holds a row of blocks every
 	`buffer_row_length` texels, as Vulkan counts them, and the offsets are
 	on a multiple of 4 or the region is left out. One that is unpacked
-	instead takes the texels decoded, as a float image's are.
+	instead takes the texels decoded. A float image kept as its floats
+	(`kept_floats`, since 1.45) takes them as they lie too, a texel at a
+	time; one that is unpacked takes them rounded to 8 bits a channel.
 
    CONTEXT
 	- Waits: no.
@@ -1154,7 +1158,9 @@ facet.library/WaitForFences
 	Two images that keep their blocks, of the one format, are copied block by
 	block (`PhysicalDeviceFeatures.kept_compressed`, since 1.44), their
 	offsets on a multiple of 4; a compressed image and an uncompressed one,
-	either way round, take nothing.
+	either way round, take nothing. Two that keep their floats, of the one
+	format, are copied texel by texel as they lie (`kept_floats`, since
+	1.45), and a float image beside one of another kind takes nothing.
 
    CONTEXT
 	- Waits: no.
@@ -1205,9 +1211,10 @@ facet.library/WaitForFences
 
 	An image kept in its blocks gives them back as they lie, a row of them
 	every `buffer_row_length` texels, its offsets on a multiple of 4
-	(`PhysicalDeviceFeatures.kept_compressed`, since 1.44). One that was
-	unpacked as it was copied in has nothing of its format to give and
-	takes nothing.
+	(`PhysicalDeviceFeatures.kept_compressed`, since 1.44). A float image
+	kept as its floats gives its texels back the same way (`kept_floats`,
+	since 1.45). One that was unpacked as it was copied in, either kind,
+	has nothing of its format to give and takes nothing.
 
    CONTEXT
 	- Waits: no.
@@ -3207,9 +3214,14 @@ facet.library/WaitForFences
 
 	A SAMPLED image may be of BC1, BC2, BC3, R16G16B16A16_SFLOAT,
 	R32G32B32A32_SFLOAT, B10G11R11_UFLOAT or E5B9G9R9_UFLOAT, in optimal tiling.
-	A float one is kept as R8G8B8A8, unpacked as it is copied in: it takes that
-	one's memory, what is above 1 or below 0 is lost, and there is no copying
-	it out, nor another image into it, by CmdCopyImage.
+	A float one is kept as the floats it was copied in as on a device that
+	samples them (`PhysicalDeviceFeatures.kept_floats`, since 1.45): the two
+	packed formats then take 4 bytes a texel rather than the 8 an unpacked
+	texel is kept spread in, and a copy out gives back what went in. A sample
+	holds each channel inside 0 to 1 and rounds it to 8 bits, the tiles having
+	no more. A device without the feature keeps it as R8G8B8A8, unpacked as it
+	is copied in: it takes that one's memory, and there is no copying it out,
+	nor another image into it, by CmdCopyImage.
 
 	A compressed one - BC1, BC2, BC3 - is kept in its blocks on a device that
 	samples them (`PhysicalDeviceFeatures.kept_compressed`, since 1.44): an
@@ -3218,8 +3230,8 @@ facet.library/WaitForFences
 	between two images of the one format, their offsets and extents on a
 	multiple of 4 as Vulkan asks. GetImageMemoryRequirements says which was
 	done. A device without the feature unpacks it as a float image is unpacked.
-	A STORAGE image is written texel by texel, so a compressed one is unpacked
-	there whatever the device.
+	A STORAGE image is written texel by texel, so a compressed or a float one
+	is unpacked there whatever the device.
 
    CONTEXT
 	- Waits: no.

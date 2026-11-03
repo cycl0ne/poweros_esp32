@@ -34,7 +34,9 @@ const Image = @import("../image/_image.zig").Image;
 /// Two images that keep their blocks, of the one format, are copied block by
 /// block (`PhysicalDeviceFeatures.kept_compressed`, since 1.44), their
 /// offsets on a multiple of 4; a compressed image and an uncompressed one,
-/// either way round, take nothing.
+/// either way round, take nothing. Two that keep their floats, of the one
+/// format, are copied texel by texel as they lie (`kept_floats`, since
+/// 1.45), and a float image beside one of another kind takes nothing.
 ///
 /// CONTEXT:
 /// - Waits: no.

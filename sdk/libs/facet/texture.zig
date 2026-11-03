@@ -94,6 +94,19 @@ pub const Format = enum {
     /// BC3: 16 bytes a block, two endpoint alphas with three bits a texel
     /// between them, and then BC1's colours. (Since 1.44.)
     bc3,
+    /// Four half floats a texel, red first: Vulkan's R16G16B16A16_SFLOAT as
+    /// it lies, 8 bytes. A sample reads it as 0xAARRGGBB, each channel held
+    /// between 0 and 1 and rounded to 8 bits, the tiles having no more.
+    /// (Since 1.45.)
+    rgba16f,
+    /// Four floats a texel, 16 bytes: R32G32B32A32_SFLOAT. (Since 1.45.)
+    rgba32f,
+    /// B10G11R11_UFLOAT_PACK32: one word a texel, no sign and no alpha -
+    /// 11 bits of red and of green, 10 of blue. (Since 1.45.)
+    rg11b10f,
+    /// E5B9G9R9_UFLOAT_PACK32: one word, three mantissas of 9 bits over one
+    /// exponent of 5 they share. (Since 1.45.)
+    rgb9e5,
 
     /// The bytes a texel is kept in; 0 for a compressed format, whose
     /// texels have no size of their own (`blockLog2`).
@@ -106,7 +119,9 @@ pub const Format = enum {
     /// block is what is addressed there.
     pub fn shift(format: Format) u5 {
         return switch (format) {
-            .rgba8888 => 3,
+            .rgba8888, .rgba16f => 3,
+            .rgba32f => 4,
+            .rg11b10f, .rgb9e5 => 2,
             .rgb565, .d16 => 1,
             .bc1, .bc1_rgb, .bc2, .bc3 => 0,
         };
@@ -118,7 +133,9 @@ pub const Format = enum {
     pub fn blockLog2(format: Format) u5 {
         return switch (format) {
             // 16 texels of 8 bytes, and of 2.
-            .rgba8888 => 7,
+            .rgba8888, .rgba16f => 7,
+            .rgba32f => 8,
+            .rg11b10f, .rgb9e5 => 6,
             .rgb565, .d16 => 5,
             .bc1, .bc1_rgb => 3,
             .bc2, .bc3 => 4,
@@ -136,8 +153,26 @@ pub const Format = enum {
     pub fn compressed(format: Format) bool {
         return switch (format) {
             .bc1, .bc1_rgb, .bc2, .bc3 => true,
-            .rgba8888, .rgb565, .d16 => false,
+            .rgba8888, .rgb565, .d16, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5 => false,
         };
+    }
+
+    /// Whether a texel holds floats, which a sample reads and rounds to 8
+    /// bits a channel (`floatTexel`): the texel is kept as it was copied
+    /// in, so nothing of it is lost on the way out again, and nothing
+    /// writes one a texel at a time. (Since 1.45.)
+    pub fn floats(format: Format) bool {
+        return switch (format) {
+            .rgba16f, .rgba32f, .rg11b10f, .rgb9e5 => true,
+            .rgba8888, .rgb565, .d16, .bc1, .bc1_rgb, .bc2, .bc3 => false,
+        };
+    }
+
+    /// Whether a texel's bytes are moved as they are rather than through a
+    /// colour of 8 bits a channel: a compressed format's blocks and a
+    /// float one's texels. (Since 1.45.)
+    pub fn kept(format: Format) bool {
+        return format.compressed() or format.floats();
     }
 
     /// Whether a texture of this holds a depth rather than a colour: read
@@ -449,7 +484,9 @@ pub const Texture = struct {
         switch (texture.format) {
             .rgba8888 => @as(*u64, @ptrCast(@alignCast(at))).* = spread(texel),
             .rgb565, .d16 => @as(*u16, @ptrCast(@alignCast(at))).* = @truncate(texel),
-            .bc1, .bc1_rgb, .bc2, .bc3 => {},
+            // Nothing is written a texel at a time into a texture that
+            // keeps what it was given: `putTexels` moves the bytes.
+            .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5 => {},
         }
     }
 
@@ -461,7 +498,8 @@ pub const Texture = struct {
         return switch (texture.format) {
             .rgba8888 => gather(@as(*const u64, @ptrCast(@alignCast(at))).*),
             .rgb565, .d16 => @as(*const u16, @ptrCast(@alignCast(at))).*,
-            inline .bc1, .bc1_rgb, .bc2, .bc3 => |kept| blockOf(kept, at)[(y % block) * block + (x % block)],
+            inline .bc1, .bc1_rgb, .bc2, .bc3 => |one| blockOf(one, at)[(y % block) * block + (x % block)],
+            inline .rgba16f, .rgba32f, .rg11b10f, .rgb9e5 => |one| floatTexel(one, at),
         };
     }
 
@@ -475,6 +513,27 @@ pub const Texture = struct {
         if (given.len < wide) return;
         const at = texture.memory + texture.blockPlace(layer, lod, x, y);
         @memcpy(at[0..wide], given[0..wide]);
+    }
+
+    /// The bytes of texel (x, y) of a level of a layer, `format.bytes()` of
+    /// them, as they lie: how a copy into a texture that keeps its texels -
+    /// a float one - moves one, nothing converted. Nothing of a compressed
+    /// format, whose texels have no bytes of their own. (Since 1.45.)
+    pub fn putTexels(texture: *Texture, layer: u32, lod: u32, x: u32, y: u32, given: []const u8) void {
+        if (texture.format.compressed()) return;
+        const wide = texture.format.bytes();
+        if (given.len < wide) return;
+        const at = texture.memory + texture.placeOf(layer, lod, x, y);
+        @memcpy(at[0..wide], given[0..wide]);
+    }
+
+    /// The same read back, into `into`. (Since 1.45.)
+    pub fn texelsAt(texture: *const Texture, layer: u32, lod: u32, x: u32, y: u32, into: []u8) void {
+        if (texture.format.compressed()) return;
+        const wide = texture.format.bytes();
+        if (into.len < wide) return;
+        const at = texture.memory + texture.placeOf(layer, lod, x, y);
+        @memcpy(into[0..wide], at[0..wide]);
     }
 
     /// The same read back, into `into`. (Since 1.44.)
@@ -495,9 +554,9 @@ pub const Texture = struct {
             .rgb565 => as565(color),
             // The red channel as a depth, its 8 bits in the top of the 16.
             .d16 => (color >> 16 & 0xFF) * 0x101,
-            // Nothing is written through a compressed texture: `putLayer`
-            // leaves it as it lies.
-            .bc1, .bc1_rgb, .bc2, .bc3 => 0,
+            // Nothing is written through a texture that keeps what it was
+            // given: `putLayer` leaves it as it lies.
+            .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5 => 0,
         });
     }
 
@@ -509,8 +568,9 @@ pub const Texture = struct {
             .rgb565 => expanded565(texel),
             // A depth as an opaque grey: its top 8 bits.
             .d16 => greyOf8(@truncate(texel >> 8)),
-            // Decoded already: `peekLayer` read it out of its block.
-            .bc1, .bc1_rgb, .bc2, .bc3 => texel,
+            // Decoded already: `peekLayer` read it out of its block, or
+            // out of its floats.
+            .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5 => texel,
         };
     }
 
@@ -586,17 +646,18 @@ pub const Texture = struct {
     }
 
     /// A level from a picture kept row by row, `pitch` bytes from one row
-    /// to the next, in the texture's format. Nothing of a compressed
-    /// texture, whose rows are blocks: `putBlock` writes those.
+    /// to the next, in the texture's format. Nothing of a texture that
+    /// keeps what it was given - a compressed one or a float one:
+    /// `putBlock` and `putTexels` write those.
     pub fn load(texture: *Texture, lod: u32, pixels: [*]const u8, pitch: usize) void {
-        if (texture.format.compressed()) return;
+        if (texture.format.kept()) return;
         for (0..texture.height(lod)) |y| {
             const row = pixels + y * pitch;
             for (0..texture.width(lod)) |x| {
                 const texel: u32 = switch (texture.format) {
                     .rgba8888 => std.mem.readInt(u32, row[x * 4 ..][0..4], .little),
                     .rgb565, .d16 => std.mem.readInt(u16, row[x * 2 ..][0..2], .little),
-                    .bc1, .bc1_rgb, .bc2, .bc3 => unreachable,
+                    .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5 => unreachable,
                 };
                 texture.put(lod, @intCast(x), @intCast(y), texel);
             }
@@ -900,6 +961,75 @@ pub const Level = struct {
         return @bitCast((127 + exponent) << 23);
     }
 };
+
+// --- the float texels -------------------------------------------------------
+
+/// One float texel at `at` as 0xAARRGGBB: each channel held between 0 and
+/// 1 and rounded to 8 bits, which is what the tiles and the formats the
+/// library draws into hold. What is above 1 reads as 255 and what is below
+/// 0 as 0, a NaN among them. (Since 1.45.)
+pub fn floatTexel(comptime format: Format, at: [*]const u8) u32 {
+    @setRuntimeSafety(false);
+    return switch (format) {
+        .rgba16f => made: {
+            var channels: [4]u32 = undefined;
+            inline for (&channels, 0..) |*channel, k| channel.* = byteOfFloat(ofHalf(readLittle(u16, at + k * 2)));
+            break :made channels[3] << 24 | channels[0] << 16 | channels[1] << 8 | channels[2];
+        },
+        .rgba32f => made: {
+            var channels: [4]u32 = undefined;
+            inline for (&channels, 0..) |*channel, k| channel.* = byteOfFloat(@bitCast(readLittle(u32, at + k * 4)));
+            break :made channels[3] << 24 | channels[0] << 16 | channels[1] << 8 | channels[2];
+        },
+        .rg11b10f => made: {
+            const word = readLittle(u32, at);
+            const r = ofParts(word >> 6 & 0x1F, word & 0x3F, 6, 15);
+            const g = ofParts(word >> 17 & 0x1F, word >> 11 & 0x3F, 6, 15);
+            const b = ofParts(word >> 27 & 0x1F, word >> 22 & 0x1F, 5, 15);
+            break :made 0xFF00_0000 | @as(u32, byteOfFloat(r)) << 16 | @as(u32, byteOfFloat(g)) << 8 | byteOfFloat(b);
+        },
+        .rgb9e5 => made: {
+            const word = readLittle(u32, at);
+            // One exponent for the three, biased by 15, over mantissas of
+            // 9 bits that are whole numbers rather than 1.something.
+            const scale = std.math.ldexp(@as(f32, 1), @as(i32, @intCast(word >> 27)) - 15 - 9);
+            const r: f32 = @floatFromInt(word & 0x1FF);
+            const g: f32 = @floatFromInt(word >> 9 & 0x1FF);
+            const b: f32 = @floatFromInt(word >> 18 & 0x1FF);
+            break :made 0xFF00_0000 | @as(u32, byteOfFloat(r * scale)) << 16 | @as(u32, byteOfFloat(g * scale)) << 8 | byteOfFloat(b * scale);
+        },
+        else => missing_texel,
+    };
+}
+
+/// A float to 8 bits, held inside 0 to 1 and rounded; a NaN reads 0, which
+/// the first comparison catches.
+inline fn byteOfFloat(value: f32) u8 {
+    if (!(value > 0)) return 0;
+    if (value >= 1) return 255;
+    return @intFromFloat(value * 255 + 0.5);
+}
+
+/// A half float's value, worked out by hand: not every processor the
+/// library runs on has f16 to spare. A NaN comes back as one, and the
+/// infinities as the largest finite value of that exponent. (Since 1.45.)
+pub inline fn ofHalf(half: u16) f32 {
+    const negative = half & 0x8000 != 0;
+    const exponent: u32 = half >> 10 & 0x1F;
+    const mantissa: u32 = half & 0x3FF;
+    if (exponent == 31 and mantissa != 0) return std.math.nan(f32);
+    const value = ofParts(exponent, mantissa, 10, 15);
+    return if (negative) -value else value;
+}
+
+/// An unsigned float of `bits` of mantissa, its exponent biased by `bias`:
+/// 0 for the lowest exponent is a number below the smallest normal one.
+inline fn ofParts(exponent: u32, mantissa: u32, comptime bits: u5, comptime biased_by: i32) f32 {
+    const whole: f32 = @floatFromInt(mantissa);
+    const scale = @as(f32, @floatFromInt(@as(u32, 1) << bits));
+    if (exponent == 0) return std.math.ldexp(whole / scale, 1 - biased_by);
+    return std.math.ldexp(1 + whole / scale, @as(i32, @intCast(exponent)) - biased_by);
+}
 
 // --- the compressed blocks --------------------------------------------------
 
@@ -1257,6 +1387,9 @@ inline fn fetch(comptime format: Format, at: [*]const u8) u32 {
         .d16 => greyOf8(@truncate(@as(*const u16, @ptrCast(@alignCast(at))).* >> 8)),
         // Never read a texel at a time: `sampleBlocked` has the block.
         .bc1, .bc1_rgb, .bc2, .bc3 => missing_texel,
+        // A float texel read and rounded where it lies (since 1.45): the
+        // decoding is the cost of keeping the floats.
+        .rgba16f, .rgba32f, .rg11b10f, .rgb9e5 => floatTexel(format, at),
     };
 }
 
@@ -1265,7 +1398,7 @@ inline fn fetchSpread(comptime format: Format, at: [*]const u8) u64 {
     @setRuntimeSafety(false);
     return switch (format) {
         .rgba8888 => @as(*const u64, @ptrCast(@alignCast(at))).*,
-        .rgb565, .d16, .bc1, .bc1_rgb, .bc2, .bc3 => spread(fetch(format, at)),
+        .rgb565, .d16, .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5 => spread(fetch(format, at)),
     };
 }
 

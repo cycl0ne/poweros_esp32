@@ -458,3 +458,63 @@ test "a BC2 block's four bits of alpha and a BC3 block's ramp of it" {
     // (6 x 240 + 1 x 60 + 3) / 7 = 214.
     try testing.expectEqual(@as(u32, 0xD6FF_0000), three.colorAt(0, 0, 2, 0));
 }
+
+/// Four half floats, red first, as a texel of `rgba16f` holds them.
+fn halves(values: [4]f32) [8]u8 {
+    var made: [8]u8 = undefined;
+    for (values, 0..) |value, k| {
+        const half: u16 = @bitCast(@as(f16, @floatCast(value)));
+        std.mem.writeInt(u16, made[k * 2 ..][0..2], half, .little);
+    }
+    return made;
+}
+
+test "a float texture is kept as its floats and rounded to 8 bits as it is sampled" {
+    // A texel's own size, not an unpacked one's: 8 bytes for four halves,
+    // 4 for the two packed formats, 16 for four floats.
+    try testing.expectEqual(@as(usize, 16 * 8), try Texture.bytes(.rgba16f, 4, 4, 1));
+    try testing.expectEqual(@as(usize, 16 * 4), try Texture.bytes(.rg11b10f, 4, 4, 1));
+    try testing.expectEqual(@as(usize, 16 * 4), try Texture.bytes(.rgb9e5, 4, 4, 1));
+    try testing.expectEqual(@as(usize, 16 * 16), try Texture.bytes(.rgba32f, 4, 4, 1));
+    try testing.expect(texture.Format.rgba16f.floats());
+    try testing.expect(!texture.Format.rgba16f.compressed());
+    try testing.expect(texture.Format.bc2.kept() and texture.Format.rgb9e5.kept());
+    try testing.expect(!texture.Format.rgba8888.kept());
+
+    var memory: [16]u64 = undefined;
+    var made = try Texture.init(.rgba16f, 4, 4, 1, @ptrCast(&memory));
+    // What is above 1 reads as 255 and what is below 0 as 0; nothing
+    // writes a texel of one, so the bytes go in as they lie.
+    made.putTexels(0, 0, 0, 0, &halves(.{ 1, 0.5, 0, 1 }));
+    made.putTexels(0, 0, 1, 0, &halves(.{ 2, -1, 0.25, 0.5 }));
+    made.putLayer(0, 0, 2, 0, 0xFFFF_FFFF);
+    try testing.expectEqual(@as(u32, 0xFFFF_8000), made.colorAt(0, 0, 0, 0));
+    try testing.expectEqual(@as(u32, 0x80FF_0040), made.colorAt(0, 0, 1, 0));
+    // Nothing was written there: the texel is still the zero it started
+    // as, which is four halves of 0 - clear black.
+    try testing.expectEqual(@as(u32, 0), made.colorAt(0, 0, 2, 0));
+    // And read back as they went in.
+    var back: [8]u8 = undefined;
+    made.texelsAt(0, 0, 1, 0, &back);
+    try testing.expectEqualSlices(u8, &halves(.{ 2, -1, 0.25, 0.5 }), &back);
+
+    const nearest = texture.Sampling{ .format = .rgba16f, .filter = .nearest, .address = .clamp };
+    const clamp = texture.Sampling{ .format = .rgba16f, .filter = .bilinear, .address = .clamp };
+    try testing.expectEqual(@as(u32, 0xFFFF_8000), sampleAt(nearest, &made, 0, 1.0 / 8.0, 1.0 / 8.0));
+    try testing.expectEqual(@as(u32, 0x80FF_0040), sampleAt(nearest, &made, 0, 3.0 / 8.0, 1.0 / 8.0));
+    // The two texels mixed evenly, each channel rounded as the fixed path
+    // rounds it: alpha 255 and 128, red 255 and 255, green 128 and 0,
+    // blue 0 and 64.
+    try testing.expectEqual(@as(u32, 0xBFFF_4020), sampleAt(clamp, &made, 0, 0.25, 1.0 / 8.0));
+
+    // The packed formats, their channels each a power of two apart.
+    var packed_memory: [16]u64 = undefined;
+    var word = try Texture.init(.rg11b10f, 2, 2, 1, @ptrCast(&packed_memory));
+    var bits: u32 = 15 << 6 | 14 << 17 | 13 << 27;
+    word.putTexels(0, 0, 0, 0, std.mem.asBytes(&bits));
+    try testing.expectEqual(@as(u32, 0xFFFF_8040), word.colorAt(0, 0, 0, 0));
+    var shared = try Texture.init(.rgb9e5, 2, 2, 1, @ptrCast(&packed_memory));
+    bits = 256 | 128 << 9 | 511 << 18 | 15 << 27;
+    shared.putTexels(0, 0, 0, 0, std.mem.asBytes(&bits));
+    try testing.expectEqual(@as(u32, 0xFF80_40FF), shared.colorAt(0, 0, 0, 0));
+}

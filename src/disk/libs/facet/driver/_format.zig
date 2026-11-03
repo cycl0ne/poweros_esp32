@@ -5,15 +5,18 @@
 const sdk = @import("sdk");
 const facet = sdk.facet;
 
-/// What `format` does on a device that unpacks a compressed image as it is
-/// copied in: it can be written and sampled, and not read back.
+/// What `format` does on a device that unpacks a compressed or a float
+/// image as it is copied in: it can be written and sampled, and not read
+/// back.
 pub fn properties(format: facet.Format) callconv(.c) facet.FormatProperties {
     return describe(format, false);
 }
 
-/// The same on a device that keeps a compressed image in its blocks
-/// (`PhysicalDeviceFeatures.kept_compressed`): the blocks lie as they were
-/// given, so a copy out of such an image reads them back as well.
+/// The same on a device that keeps what it was given - a compressed image
+/// in its blocks, a float one in its floats
+/// (`PhysicalDeviceFeatures.kept_compressed`, `kept_floats`): they lie as
+/// they were copied in, so a copy out of such an image reads them back as
+/// well.
 pub fn keptProperties(format: facet.Format) callconv(.c) facet.FormatProperties {
     return describe(format, true);
 }
@@ -60,14 +63,18 @@ fn describe(format: facet.Format, keeps_blocks: bool) facet.FormatProperties {
                 if (keeps_blocks) facet.FORMAT_FEATURE_TRANSFER_SRC else 0,
             .buffer_features = 0,
         },
+        // Float: sampled and written, and read back as well where the
+        // floats are kept, there being something of the format to read.
         .r16g16b16a16_sfloat, .b10g11r11_ufloat_pack32, .e5b9g9r9_ufloat_pack32 => .{
             .linear_tiling_features = 0,
-            .optimal_tiling_features = sampled | facet.FORMAT_FEATURE_TRANSFER_DST,
+            .optimal_tiling_features = sampled | facet.FORMAT_FEATURE_TRANSFER_DST |
+                if (keeps_blocks) facet.FORMAT_FEATURE_TRANSFER_SRC else 0,
             .buffer_features = 0,
         },
         .r32g32b32a32_sfloat => .{
             .linear_tiling_features = 0,
-            .optimal_tiling_features = sampled | facet.FORMAT_FEATURE_TRANSFER_DST,
+            .optimal_tiling_features = sampled | facet.FORMAT_FEATURE_TRANSFER_DST |
+                if (keeps_blocks) facet.FORMAT_FEATURE_TRANSFER_SRC else 0,
             .buffer_features = vertices | texels,
         },
         .r32_sfloat, .r32g32_sfloat, .r32g32b32_sfloat => .{ .linear_tiling_features = 0, .optimal_tiling_features = 0, .buffer_features = vertices | texels },

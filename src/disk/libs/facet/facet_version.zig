@@ -331,9 +331,27 @@ pub const LIBRARY_VERSION = 1;
 /// holds - correct, and slower than the form that matches. The one decoder
 /// is the SDK's (`texture.blockOf`), which the unpacking copy uses as well,
 /// so both paths read the same colours.
+/// 45: float textures kept as their floats. A sampled image of
+/// `r16g16b16a16_sfloat`, `r32g32b32a32_sfloat`, `b10g11r11_ufloat_pack32`
+/// or `e5b9g9r9_ufloat_pack32` lies as it was copied in on a device that
+/// samples it (`PhysicalDeviceFeatures.kept_floats`, the cores): the two
+/// packed formats take 4 bytes a texel against the 8 an unpacked 8888 one
+/// is kept spread in, and what went in comes out again - the floats are
+/// copied in and out as they lie, by CmdCopyBufferToImage,
+/// CmdCopyImageToBuffer and CmdCopyImage between two images of the one
+/// format, so these formats now say TRANSFER_SRC there. A sample holds
+/// each channel inside 0 to 1 and rounds it to 8 bits, the tiles having no
+/// more, so what is drawn is what the unpacking copy drew: the one decoder
+/// is the SDK's (`texture.floatTexel`), which that copy goes through as
+/// well. `texture.Format` grew `rgba16f`, `rgba32f`, `rg11b10f` and
+/// `rgb9e5`, and `Texture.putTexels`/`texelsAt` move a kept texel's bytes;
+/// nothing writes one a texel at a time, so a blit into such an image, a
+/// clear of it, and a storage image of a float format are refused or
+/// unpacked as before. The V3D's TMU is fed unpacked texels, so there an
+/// image is unpacked into 8888 as it always was.
 /// What stays: `fifo` is the one present mode, there being no way to ask a
 /// display to show a buffer before its next frame; one queue family of one
 /// queue; a counter of 32 bits, for want of a 64-bit atomic on every
 /// machine the library runs on; and no point mode in tessellation, there
 /// being no point rasterization at all.
-pub const LIBRARY_REVISION = 44;
+pub const LIBRARY_REVISION = 45;

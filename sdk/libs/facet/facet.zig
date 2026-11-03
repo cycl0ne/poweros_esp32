@@ -403,6 +403,20 @@ pub const PhysicalDeviceFeatures = extern struct {
     /// have it since 1.44; the V3D's texture unit is fed unpacked texels
     /// here, so there an image is unpacked as before.
     kept_compressed: bool = false,
+    /// A float image is kept as the floats it was copied in as, nothing
+    /// unpacked: `r16g16b16a16_sfloat`, `r32g32b32a32_sfloat`,
+    /// `b10g11r11_ufloat_pack32` and `e5b9g9r9_ufloat_pack32` lie as they
+    /// were given, so a copy out of such an image gives back what went in,
+    /// and the two packed ones take half of what their texels unpacked
+    /// would (4 bytes against the 8 an 8888 texel is kept spread in). A
+    /// sample holds each channel inside 0 to 1 and rounds it to 8 bits, the
+    /// tiles having no more, so what is drawn is the same either way; what
+    /// is above 1 or below 0 is still lost there, and only on the way into
+    /// the tiles. False where such an image is unpacked into
+    /// `r8g8b8a8_unorm` on the copy, as it was before, and cannot be copied
+    /// out of. The cores have it since 1.45; the V3D's TMU is fed unpacked
+    /// texels, so there an image is unpacked as before.
+    kept_floats: bool = false,
 };
 
 /// QueueFamilyProperties.queue_flags: what a family's queues do.
