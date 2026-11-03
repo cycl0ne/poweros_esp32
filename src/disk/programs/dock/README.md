@@ -27,8 +27,11 @@ start meanwhile.
 - **A click on a window** listed after the entries brings that window to
   the front and gives it the keyboard; a click on the one that is in
   front already puts it away, as its hide gadget would. A window that is
-  away keeps its cell, drawn matt, and a click on that brings it back.
-  Its menu still sends a window behind the others.
+  away keeps its cell, drawn matt, and a click on that brings it back -
+  whether the cell is drawn matt yet or not, since a window put away a
+  moment ago is away whatever the dock last saw. A double click on a
+  cell is one click: the second would undo the first, and the window
+  would only blink. Its menu still sends a window behind the others.
 - **A click on a drawer or a disk** lists what is in it by the entry, a
   stack: drawers first, then the rest, each by name, as many as there is
   room for. A click on one opens it; the last row, **Open Drawer** or

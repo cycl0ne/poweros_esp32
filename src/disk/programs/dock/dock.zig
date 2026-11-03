@@ -113,7 +113,7 @@ const DiskfontBase = sdk.interface.diskfont.DiskfontBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Dock";
-const VERSION_STRING = "\x00$VER: Dock 1.6 (03.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Dock 1.7 (03.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "QUIT/S";
@@ -435,6 +435,14 @@ const App = struct {
     drop_target: ?usize = null,
     drop_gap: ?usize = null,
     press: Press = .{},
+    /// When the message being served happened, as it says itself.
+    event_seconds: u32 = 0,
+    event_micros: u32 = 0,
+    /// The window whose cell was clicked last, and when: the second
+    /// click of a double click on it is no second order.
+    clicked_window: ?u32 = null,
+    clicked_seconds: u32 = 0,
+    clicked_micros: u32 = 0,
     menu: Menu = .{},
     stack: Stack = .{},
     /// The name by the entry under the pointer, which entry, and its box.
@@ -1290,7 +1298,7 @@ const App = struct {
     /// still sends it behind the others.
     fn activate(app: *App, index: usize) void {
         const e = &app.entries[index];
-        if (e.is_window) return if (e.active) app.awayWindow(index) else app.orderWindow(index, false);
+        if (e.is_window) return app.windowCell(index);
         if (e.stacks) return app.openStack(index);
         app.openEntry(index, &.{});
     }
@@ -1701,22 +1709,68 @@ const App = struct {
         if (!found) app.ib.DisplayBeep(app.screen);
     }
 
-    /// The window a cell stands for put away (`HideWindow`): its cell
-    /// stays, drawn matt, and a click on that cell brings the window
-    /// back. Found by its number as `orderWindow` finds it, and for the
-    /// same reason.
-    fn awayWindow(app: *App, index: usize) void {
-        const number = app.entries[index].window;
+    /// A click on the cell of a window: the window put away
+    /// (`HideWindow`) if it is the one in front - its cell stays, drawn
+    /// matt - brought back if it is away, and brought forward and given
+    /// the keyboard if it is neither.
+    ///
+    /// Whether it is away is read from the window itself, not from what
+    /// the last look saw: a look is ten times a second, and a click in
+    /// between would otherwise put away a window that is away already,
+    /// which is nothing at all - the click that was to bring it back.
+    /// Whether it is the window in front is the look's to say, since a
+    /// click on the dock gives the dock's own window the keyboard: asked
+    /// here, no other window is ever the active one, and no cell could
+    /// put its window away.
+    ///
+    /// The second click of a double click on the same cell does nothing.
+    /// A cell is one click to one thing, and double-clicking an icon is
+    /// what opens everything else here: the window the first click
+    /// brought back would be put away again by the second, and all that
+    /// would be seen of it is a blink.
+    ///
+    /// The window may have closed since the look that listed it, so it
+    /// is found by its number while the screens are held still, which
+    /// keeps it open until this is done; one that is gone leaves a
+    /// flash, and its cell goes with the next look.
+    fn windowCell(app: *App, index: usize) void {
+        const e = &app.entries[index];
+        const number = e.window;
+        const in_front = e.active and !e.hidden;
+        if (app.clickedAgain(number)) return;
         var found = false;
         {
             const held = app.ib.LockIBase(0);
             defer app.ib.UnlockIBase(held);
             if (app.ib.FindWindowNumber(number)) |window| {
                 found = true;
-                app.ib.HideWindow(window);
+                if (windowAttr(app.ib, window, wn.WA_Hidden) != 0) {
+                    app.ib.ShowWindow(window);
+                    app.ib.WindowToFront(window);
+                    app.ib.ActivateWindow(window);
+                } else if (in_front) {
+                    app.ib.HideWindow(window);
+                } else {
+                    app.ib.WindowToFront(window);
+                    app.ib.ActivateWindow(window);
+                }
             }
         }
         if (!found) app.ib.DisplayBeep(app.screen);
+    }
+
+    /// Whether this click on a window's cell follows one on the same
+    /// window inside the double-click time, which the Input settings
+    /// hold.
+    fn clickedAgain(app: *App, number: u32) bool {
+        const seconds = app.event_seconds;
+        const micros = app.event_micros;
+        const again = app.clicked_window == number and
+            app.ib.DoubleClick(app.clicked_seconds, app.clicked_micros, seconds, micros);
+        app.clicked_window = number;
+        app.clicked_seconds = seconds;
+        app.clicked_micros = micros;
+        return again;
     }
 
     // --- the dock's window ----------------------------------------------------
@@ -2821,12 +2875,20 @@ fn portMask(ib: *IntuitionBase, window: ?*intuition.Window) u32 {
     return if (port) |p| p.sigMask() else 0;
 }
 
-/// An IntuiMessage's fields, read before it goes back.
-const Input = struct { class: u32, code: u32, x: i32, y: i32 };
+/// An IntuiMessage's fields, read before it goes back: when it happened
+/// among them, which is what a double click is told by.
+const Input = struct { class: u32, code: u32, x: i32, y: i32, seconds: u32, micros: u32 };
 
 fn take(ib: *IntuitionBase, window: *intuition.Window) ?Input {
     const message = ib.GetIMsg(window) orelse return null;
-    const input = Input{ .class = message.class, .code = message.code, .x = message.mouse_x, .y = message.mouse_y };
+    const input = Input{
+        .class = message.class,
+        .code = message.code,
+        .x = message.mouse_x,
+        .y = message.mouse_y,
+        .seconds = message.seconds,
+        .micros = message.micros,
+    };
     ib.ReplyIMsg(message);
     return input;
 }
@@ -3063,7 +3125,11 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         if (got & tick_mask != 0) app.ticked();
         if (got & quick_mask != 0) app.grown();
         if (got & slide_mask != 0) app.slid();
-        while (take(ib, window)) |input| app.dockInput(input.class, input.code, input.x, input.y);
+        while (take(ib, window)) |input| {
+            app.event_seconds = input.seconds;
+            app.event_micros = input.micros;
+            app.dockInput(input.class, input.code, input.x, input.y);
+        }
         while (app.menu.window) |shown| {
             const input = take(ib, shown) orelse break;
             app.menuInput(input.class, input.code, input.x, input.y);
