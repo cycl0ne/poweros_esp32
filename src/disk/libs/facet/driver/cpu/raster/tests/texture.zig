@@ -26,10 +26,19 @@ test "a texture's size and levels are checked, each level laid out in blocks of 
     // 8 x 4 is two blocks, 4 x 2 and 2 x 1 a whole one each.
     try testing.expectEqual(@as(usize, (32 + 16 + 16) * 8), try Texture.bytes(.rgba8888, 8, 4, 3));
     try testing.expectEqual(@as(usize, (32 + 16 + 16 + 16) * 2), try Texture.bytes(.rgb565, 8, 4, 4));
-    try testing.expectError(error.BadSize, Texture.bytes(.rgba8888, 6, 4, 1));
     try testing.expectError(error.BadSize, Texture.bytes(.rgba8888, 8, 0, 1));
     try testing.expectError(error.BadSize, Texture.bytes(.rgba8888, 8, 4, 0));
     try testing.expectError(error.BadSize, Texture.bytes(.rgba8888, 8, 4, 5));
+    try testing.expectError(error.BadSize, Texture.bytes(.rgba8888, 1 << 16, 4, 1));
+
+    // Any size, since 1.42: the blocks of a level are laid out by the next
+    // power of two across - 6 as 8, so two blocks - and by the level's own
+    // height down. 6 x 5 is 2 by 2 blocks, and its second level, 3 x 2, one.
+    try testing.expectEqual(@as(usize, (2 * 1 * 16) * 8), try Texture.bytes(.rgba8888, 6, 4, 1));
+    try testing.expectEqual(@as(usize, (2 * 2 * 16 + 16) * 8), try Texture.bytes(.rgba8888, 6, 5, 2));
+    // As many levels as halving the longer side gives: 100 gives seven.
+    try testing.expectError(error.BadSize, Texture.bytes(.rgba8888, 100, 60, 8));
+    _ = try Texture.bytes(.rgba8888, 100, 60, 7);
 
     var memory: [64]u64 = undefined;
     const made = try Texture.init(.rgba8888, 8, 4, 3, @ptrCast(&memory));
@@ -39,6 +48,105 @@ test "a texture's size and levels are checked, each level laid out in blocks of 
     // (5, 2) is in the second block, its third row, its second column.
     try testing.expectEqual(@as(u32, 16 + 2 * 4 + 1), made.index(0, 5, 2));
     try testing.expectEqual(@as(u32, 48 + 1), made.index(2, 1, 0));
+}
+
+test "a texture of any size: its levels halved, its texels where its width's padding says" {
+    var memory: [16 * 16]u64 = undefined;
+    const made = try Texture.init(.rgba8888, 6, 5, 2, @ptrCast(&memory));
+    try testing.expectEqual(@as(u32, 6), made.width(0));
+    try testing.expectEqual(@as(u32, 5), made.height(0));
+    try testing.expectEqual(@as(u32, 3), made.width(1));
+    try testing.expectEqual(@as(u32, 2), made.height(1));
+    // A level past the last reads as the last.
+    try testing.expectEqual(@as(u32, 3), made.width(7));
+    // Level 1 starts where level 0's two by two blocks end.
+    try testing.expectEqual(@as(u32, 0), made.layout[0].start);
+    try testing.expectEqual(@as(u32, 2 * 2 * 16 * 8), made.layout[1].start);
+    // (5, 2) is in the second block across, its third row, its second
+    // column: the blocks are laid out by 8 across, the width padded.
+    try testing.expectEqual(@as(u32, 16 + 2 * 4 + 1), made.index(0, 5, 2));
+    // Neither level tiles by masking; a texture of two powers of two does.
+    try testing.expect(!made.layout[0].tiles and !made.layout[1].tiles);
+    const square = try Texture.init(.rgba8888, 8, 4, 2, @ptrCast(&memory));
+    try testing.expect(square.layout[0].tiles and square.layout[1].tiles);
+
+    // Every texel of every level is its own, and none of level 1 is where
+    // one of level 0 lies.
+    var full = try Texture.init(.rgba8888, 6, 5, 2, @ptrCast(&memory));
+    @memset(std.mem.asBytes(&memory), 0);
+    for (0..2) |lod| for (0..full.height(@intCast(lod))) |y| for (0..full.width(@intCast(lod))) |x| {
+        full.put(@intCast(lod), @intCast(x), @intCast(y), texelAt(@intCast(x + 16 * lod), @intCast(y)));
+    };
+    for (0..2) |lod| for (0..full.height(@intCast(lod))) |y| for (0..full.width(@intCast(lod))) |x| {
+        try testing.expectEqual(texelAt(@intCast(x + 16 * lod), @intCast(y)), full.peek(@intCast(lod), @intCast(x), @intCast(y)));
+    };
+}
+
+test "a texture whose sides are not powers of two: sampled, clamped and wrapped" {
+    const across = 6;
+    const down = 5;
+    var picture: [across * down]u32 = undefined;
+    for (0..down) |y| for (0..across) |x| {
+        picture[y * across + x] = texelAt(@intCast(x), @intCast(y));
+    };
+    var memory: [16 * 16]u64 = undefined;
+    var made = try Texture.init(.rgba8888, across, down, 1, @ptrCast(&memory));
+    made.load(0, @ptrCast(&picture), across * 4);
+    for (0..down) |y| for (0..across) |x| {
+        try testing.expectEqual(picture[y * across + x], made.peek(0, @intCast(x), @intCast(y)));
+    };
+
+    // The nearest texel of each, by both ways round the edges: a
+    // coordinate is 0 to 1 across the texture, whatever its size.
+    const nearest_wrap = texture.Sampling{ .filter = .nearest, .address = .wrap };
+    const nearest_clamp = texture.Sampling{ .filter = .nearest, .address = .clamp };
+    for (0..down) |y| for (0..across) |x| {
+        const u = (@as(f32, @floatFromInt(x)) + 0.5) / across;
+        const v = (@as(f32, @floatFromInt(y)) + 0.5) / down;
+        const want = picture[y * across + x];
+        try testing.expectEqual(want, sampleAt(nearest_clamp, &made, 0, u, v));
+        try testing.expectEqual(want, sampleAt(nearest_wrap, &made, 0, u, v));
+        // The texture again, forwards and backwards: a division, not a
+        // mask, so it comes round at the texture's own size.
+        try testing.expectEqual(want, sampleAt(nearest_wrap, &made, 0, u + 3, v + 1));
+        try testing.expectEqual(want, sampleAt(nearest_wrap, &made, 0, u - 2, v - 4));
+    };
+    // Clamped, a coordinate past the edge reads the edge's texel.
+    try testing.expectEqual(picture[0], sampleAt(nearest_clamp, &made, 0, -3, -1));
+    try testing.expectEqual(picture[down * across - 1], sampleAt(nearest_clamp, &made, 0, 4, 2));
+
+    // Filtered: the four texels round the point, which for a point in the
+    // last column and row are the first ones again when it wraps, and the
+    // same ones twice when it clamps.
+    const smooth_wrap = texture.Sampling{ .filter = .bilinear, .address = .wrap };
+    const smooth_clamp = texture.Sampling{ .filter = .bilinear, .address = .clamp };
+    const last_u: f32 = (across - 0.5) / @as(f32, across);
+    const last_v: f32 = (down - 0.5) / @as(f32, down);
+    try testing.expectEqual(picture[(down - 1) * across + across - 1], sampleAt(smooth_clamp, &made, 0, last_u, last_v));
+    const corner = mixedFour(.{
+        picture[(down - 1) * across + across - 1],
+        picture[(down - 1) * across],
+        picture[across - 1],
+        picture[0],
+    }, 128, 128);
+    try testing.expectEqual(corner, sampleAt(smooth_wrap, &made, 0, last_u + 0.5 / @as(f32, across), last_v + 0.5 / @as(f32, down)));
+}
+
+/// The four texels round a point - top left, top right, bottom left,
+/// bottom right - mixed as `sampleAt` mixes them: by weights of 256 from
+/// how far the point is across the texel and down it, each channel on its
+/// own, and nothing rounded.
+fn mixedFour(corners: [4]u32, across: u32, down: u32) u32 {
+    const both = across * down >> 8;
+    const weights = [4]u32{ 256 + both - across - down, across - both, down - both, both };
+    var out: u32 = 0;
+    inline for (0..4) |channel| {
+        const shift: u5 = @as(u5, channel) * 8;
+        var sum: u32 = 0;
+        for (corners, weights) |texel, weight| sum += (texel >> shift & 0xFF) * weight;
+        out |= (sum >> 8 & 0xFF) << shift;
+    }
+    return out;
 }
 
 test "a picture loaded is read back, texel for texel, by the nearest sample" {

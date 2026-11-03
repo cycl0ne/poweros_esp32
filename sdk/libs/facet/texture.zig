@@ -2,14 +2,28 @@
 //! Textures: pictures a triangle is painted with, and how a pixel finds
 //! its colour in one.
 //!
-//! A texture has a width and a height that are powers of two, and its
-//! levels: the picture itself and each half the size of the one before,
-//! down to as many as it was given - they are made by whoever makes the
-//! texture, not here. Each level is kept in blocks of 4 x 4 texels, block
-//! after block along its rows: the texels a pixel's neighbours and a
-//! bilinear filter read lie in one or two blocks, a cache line or two,
-//! where rows kept whole would put them in as many lines as rows. A level
-//! smaller than a block takes a whole one.
+//! A texture has a width and a height of any size, and its levels: the
+//! picture itself and each half the size of the one before - `width >> lod`
+//! and no less than one, as Vulkan has it - down to as many as it was given;
+//! they are made by whoever makes the texture, not here. Each level is kept
+//! in blocks of 4 x 4 texels, block after block along its rows: the texels a
+//! pixel's neighbours and a bilinear filter read lie in one or two blocks, a
+//! cache line or two, where rows kept whole would put them in as many lines
+//! as rows. A level smaller than a block takes a whole one.
+//!
+//! **A width that is not a power of two is laid out as the next one up**
+//! (since 1.42), so that the bytes from one row of blocks to the next stay a
+//! shift and a texel's place costs what it always did. That is as much as
+//! 2 x the memory for the widest levels - 100 across is kept as 128 - and
+//! nothing for a height, which is kept in as many rows of blocks as it has.
+//! The texels past the width are never read: a sample is held inside the
+//! level's own width, which `Level.width` carries.
+//!
+//! A level whose sides are both powers of two tiles by masking bits, which
+//! is how `wrap` reads round the edges. One of any other size cannot, and
+//! has its coordinate brought inside by a division instead (`Level.tiles`):
+//! correct, and some cycles a sample. `clamp` costs the same whatever the
+//! size.
 //!
 //! An 8888 texel is kept in 64 bits, each channel in 16 of them, as a
 //! bilinear filter mixes it (`spread`): twice the memory, for the four
@@ -212,11 +226,18 @@ pub const Point = extern struct {
 /// The most levels a texture has: 32768 across, down to 1.
 pub const most_levels = 16;
 
+/// The widest and highest a texture is: what `most_levels` levels halve, and
+/// what a side's place in 1/256ths of a texel stays exact for.
+pub const most_side = 1 << 15;
+
 /// The side of a block, in texels.
 const block = 4;
 
 pub const Texture = struct {
     format: Format,
+    /// The sides the blocks are laid out by, as powers of two: each the
+    /// side itself where it is one, the next one up where it is not. The
+    /// sides themselves are each level's own (`Level.width`).
     width_log2: u5,
     height_log2: u5,
     levels: u32,
@@ -272,14 +293,17 @@ pub const Texture = struct {
             .row_high = 0,
             .blocks_shift = 0,
             .row_gap = 0,
+            // Nothing masks here: such a texture is sampled by `sampleBy`,
+            // which holds a coordinate inside the level itself.
+            .tiles = false,
         };
         return made;
     }
 
     /// A texture over `memory`, at least `bytes` long and aligned for a
     /// texel as it is kept, its texels undefined until they are put in (`put`,
-    /// `load`). error.BadSize for a side that is not a power of two, or
-    /// more levels than halving it gives.
+    /// `load`). error.BadSize for a side of nothing or over `most_side`, or
+    /// more levels than halving the longer side gives.
     pub fn init(format: Format, across: u32, down: u32, levels: u32, memory: [*]u8) Error!Texture {
         const sizes = try Sizes.of(across, down, levels);
         var texture = Texture{
@@ -298,16 +322,35 @@ pub const Texture = struct {
         return texture;
     }
 
-    /// A level's width and height. One kept in rows has the one level,
-    /// of whatever size the image is.
+    /// A texture of `count` levels of `whole`, from `base` on, over
+    /// `memory`, which is where level `base` lies: the levels laid out as
+    /// `whole` laid them out, each start counted from the first of them, so
+    /// that a view of some of an image's levels reads the texels the image
+    /// holds. (Since 1.42.)
+    pub fn from(whole: *const Texture, base: u32, count: u32, memory: [*]u8) Texture {
+        const first = @min(base, whole.levels - 1);
+        var made = whole.*;
+        made.memory = memory;
+        made.levels = @max(@min(count, whole.levels - first), 1);
+        made.width_log2 = whole.width_log2 -| @as(u5, @intCast(@min(first, 31)));
+        made.height_log2 = whole.height_log2 -| @as(u5, @intCast(@min(first, 31)));
+        const start = whole.layout[first].start;
+        for (0..made.levels) |k| {
+            made.layout[k] = whole.layout[first + k];
+            made.layout[k].start -= start;
+        }
+        return made;
+    }
+
+    /// A level's width and height, as the level itself carries them: a
+    /// level past the last reads as the last. One kept in rows has the one
+    /// level, of whatever size the image is.
     pub inline fn width(texture: *const Texture, lod: u32) u32 {
-        if (texture.pitch != 0) return texture.layout[0].width;
-        return @as(u32, 1) << @intCast(texture.width_log2 -| lod);
+        return texture.layout[@min(lod, texture.levels - 1)].width;
     }
 
     pub inline fn height(texture: *const Texture, lod: u32) u32 {
-        if (texture.pitch != 0) return texture.layout[0].height;
-        return @as(u32, 1) << @intCast(texture.height_log2 -| lod);
+        return texture.layout[@min(lod, texture.levels - 1)].height;
     }
 
     /// Where texel (x, y) of a level of a layer lies, in bytes from the
@@ -549,21 +592,47 @@ fn cubeDirection(face: u32, a: f32, b: f32) [3]f32 {
 
 /// A texture's size, checked.
 const Sizes = struct {
+    /// Level 0 as it was asked for.
+    width: u32,
+    height: u32,
+    /// The width the blocks are laid out by, as a power of two: the width
+    /// itself where that is one, and the next one up where it is not.
     width_log2: u5,
+    /// The height's, which the layout does not go by: what `Texture`
+    /// carries for `from`.
     height_log2: u5,
 
     fn of(width: u32, height: u32, levels: u32) Texture.Error!Sizes {
-        if (width == 0 or height == 0 or !std.math.isPowerOfTwo(width) or !std.math.isPowerOfTwo(height)) return error.BadSize;
-        const width_log2: u5 = @intCast(std.math.log2_int(u32, width));
-        const height_log2: u5 = @intCast(std.math.log2_int(u32, height));
-        if (levels == 0 or levels > most_levels or levels > @as(u32, @max(width_log2, height_log2)) + 1) return error.BadSize;
-        return .{ .width_log2 = width_log2, .height_log2 = height_log2 };
+        if (width == 0 or height == 0 or width > most_side or height > most_side) return error.BadSize;
+        const width_log2: u5 = @intCast(std.math.log2_int_ceil(u32, width));
+        const height_log2: u5 = @intCast(std.math.log2_int_ceil(u32, height));
+        // As many levels as halving the longer side gives, Vulkan's way:
+        // floor(log2(side)) + 1.
+        const most = std.math.log2_int(u32, @max(width, height)) + 1;
+        if (levels == 0 or levels > most_levels or levels > most) return error.BadSize;
+        return .{ .width = width, .height = height, .width_log2 = width_log2, .height_log2 = height_log2 };
     }
 
-    /// The texels a level keeps: its blocks, whole.
+    /// A level's width and height: halved each time, and never nothing.
+    fn widthAt(sizes: Sizes, lod: u5) u32 {
+        return @max(sizes.width >> lod, 1);
+    }
+
+    fn heightAt(sizes: Sizes, lod: u5) u32 {
+        return @max(sizes.height >> lod, 1);
+    }
+
+    /// The width a level's blocks are laid out by, as a power of two: no
+    /// narrower than the level, so its texels all lie inside.
+    fn pitchLog2At(sizes: Sizes, lod: u5) u5 {
+        return sizes.width_log2 -| lod;
+    }
+
+    /// The texels a level keeps: its blocks, whole, as wide as the layout
+    /// goes by and as deep as the level is.
     fn texels(sizes: Sizes, level: u5) u32 {
-        const across = ((@as(u32, 1) << (sizes.width_log2 -| level)) + block - 1) / block;
-        const down = ((@as(u32, 1) << (sizes.height_log2 -| level)) + block - 1) / block;
+        const across = ((@as(u32, 1) << sizes.pitchLog2At(level)) + block - 1) / block;
+        const down = (sizes.heightAt(level) + block - 1) / block;
         return across * down * block * block;
     }
 };
@@ -661,30 +730,38 @@ pub const Level = struct {
     row_low: u32,
     row_high: u32,
     /// Where a row's bits above its low two go: the bytes of a row of
-    /// blocks, as a power of two.
+    /// blocks, as a power of two. It goes by the width the blocks are laid
+    /// out by, which for a width that is not a power of two is the next one
+    /// up.
     blocks_shift: u5,
     /// The bits between a row's low two and its others, set to carry one
     /// over them.
     row_gap: u32,
+    /// Whether the level tiles by masking bits: both its sides powers of
+    /// two, so that `wrap` is bits rather than a division. The fields above
+    /// that mask - `last_column`, `last_row`, the lows and the highs - mean
+    /// something only then.
+    tiles: bool,
 
     fn of(format: Format, sizes: Sizes, lod: u5, start: u32) Level {
-        const width_log2 = sizes.width_log2 -| lod;
-        const height_log2 = sizes.height_log2 -| lod;
+        const width = sizes.widthAt(lod);
+        const height = sizes.heightAt(lod);
         const texel = format.shift();
         var level = Level{
             .start = start,
-            .width = @as(u32, 1) << width_log2,
-            .height = @as(u32, 1) << height_log2,
-            .across = powerOfTwo(width_log2 + 8),
-            .down = powerOfTwo(height_log2 + 8),
+            .width = width,
+            .height = height,
+            .across = @floatFromInt(width * 256),
+            .down = @floatFromInt(height * 256),
             .last_column = undefined,
             .last_row = undefined,
             .column_low = undefined,
             .column_high = undefined,
             .row_low = undefined,
             .row_high = undefined,
-            .blocks_shift = (width_log2 -| 2) + 4 + texel,
+            .blocks_shift = (sizes.pitchLog2At(lod) -| 2) + 4 + texel,
             .row_gap = undefined,
+            .tiles = std.math.isPowerOfTwo(width) and std.math.isPowerOfTwo(height),
         };
         level.last_column = columnAt(texel, level.width - 1);
         level.last_row = level.rowAt(texel, level.height - 1);
@@ -775,6 +852,14 @@ inline fn columns(comptime sampling: Sampling, level: *const Level, s: i32) [2]u
     const texel = comptime sampling.format.shift();
     switch (sampling.address) {
         .wrap => {
+            // A level of any other size than two powers of two cannot be
+            // tiled by masking: its column is brought inside by a division,
+            // which is what such a texture costs a sample.
+            if (!level.tiles) {
+                const inside: u32 = @intCast(@mod(s >> 8, @as(i32, @intCast(level.width))));
+                const next: u32 = if (inside + 1 == level.width) 0 else inside + 1;
+                return .{ columnAt(texel, inside), columnAt(texel, next) };
+            }
             // Moved straight from the coordinate, its sign's bits as well,
             // and masked: round the level.
             const wide: usize = @bitCast(@as(isize, s));
@@ -796,6 +881,11 @@ inline fn rows(comptime sampling: Sampling, level: *const Level, t: i32) [2]usiz
     const texel = comptime sampling.format.shift();
     switch (sampling.address) {
         .wrap => {
+            if (!level.tiles) {
+                const inside: u32 = @intCast(@mod(t >> 8, @as(i32, @intCast(level.height))));
+                const next: u32 = if (inside + 1 == level.height) 0 else inside + 1;
+                return .{ level.rowAt(texel, inside), level.rowAt(texel, next) };
+            }
             const wide: usize = @bitCast(@as(isize, t));
             const row = (wide >> (6 - texel) & level.row_low) | (wide >> 10 & level.row_high) << level.blocks_shift;
             return .{ row, ((row | level.row_gap) + (4 << texel)) & level.last_row };

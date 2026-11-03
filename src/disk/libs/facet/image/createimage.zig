@@ -28,11 +28,15 @@ const _image = @import("_image.zig");
 ///
 /// BEHAVIOR:
 /// What it is for decides how it lies in its memory:
-/// - SAMPLED, in optimal tiling, of B8G8R8A8, R8G8B8A8 or R5G6B5, its
-///   sides powers of two, with up to as many levels as halving them
-///   gives: a texture, in blocks of 4 x 4 texels, an 8888 texel kept in
+/// - SAMPLED, in optimal tiling, of B8G8R8A8, R8G8B8A8 or R5G6B5, of any
+///   sides, with up to as many levels as halving the longer gives -
+///   floor(log2(side)) + 1, each level the one before halved and no less
+///   than one: a texture, in blocks of 4 x 4 texels, an 8888 texel kept in
 ///   64 bits (sdk.facet.texture). Its texels come in by
-///   CmdCopyBufferToImage.
+///   CmdCopyBufferToImage. A width that is not a power of two is laid out
+///   by the next one up, so such a texture takes up to 2 x the memory of
+///   one as wide as a power of two (since 1.42); past the width nothing is
+///   ever read.
 /// - COLOR_ATTACHMENT, of B8G8R8A8, R8G8B8A8 or R5G6B5, one level: rows,
 ///   each on a cache line, in either tiling. What is drawn into one of
 ///   R5G6B5 is dithered into it (CmdBeginRenderPass).

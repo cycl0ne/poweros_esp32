@@ -38,7 +38,7 @@ const PhysicalDevice = @import("_instance.zig").PhysicalDevice;
 ///   tiling, and copied into. They are kept as 8 bits a channel, floats cut to
 ///   0 to 1: they save no memory and hold no more than B8G8R8A8.
 ///
-/// An image to be sampled has sides that are powers of two.
+/// An image to be sampled may have sides of any size (since 1.42).
 ///
 /// CONTEXT:
 /// - Waits: no.

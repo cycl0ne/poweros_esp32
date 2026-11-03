@@ -275,4 +275,24 @@ pub const LIBRARY_VERSION = 1;
 /// invocations rather than the groups, which for a `shader.compute` entry
 /// is the same number. Both devices have it: a compute function has always
 /// run on the cores.
-pub const LIBRARY_REVISION = 41;
+/// 42: a texture of any size. A sampled image's sides need not be powers
+/// of two: its levels are Vulkan's - the one before halved, never below
+/// one, as many as floor(log2(longer side)) + 1 - and a width that is not
+/// a power of two is laid out in blocks by the next one up
+/// (`texture.Level.blocks_shift`), so that a texel's place stays a shift
+/// and nothing a draw does costs more. That is up to 2 x the memory for
+/// the widest levels and nothing for a height, which is kept in as many
+/// rows of blocks as it has. Past the width nothing is read: a sample is
+/// held inside the level's own width, which the level carries.
+/// `clamp` costs the same whatever the size. `wrap` tiles by masking bits
+/// where both sides are powers of two (`texture.Level.tiles`) and by a
+/// division where they are not, which is correct and some cycles a sample;
+/// a sampler's `repeat` and `mirrored_repeat` were already a division.
+/// A view of levels from `base` on is laid out as the image laid them out
+/// (`texture.Texture.from`), not as a texture of that level's own size
+/// would be - 9 across is kept by 16, and its second level by 8, not by 4.
+/// The V3D needed nothing: its own tiling always worked from the size it
+/// was given. `texture.Level` grew a field for all this, so every program
+/// that samples a texture has to be replaced along with the library, as a
+/// driver has.
+pub const LIBRARY_REVISION = 42;

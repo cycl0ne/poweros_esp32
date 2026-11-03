@@ -336,6 +336,23 @@ test "an image: a texture, rows or a depth, by what it is for" {
     try testing.expectEqual(@as(u64, 128 * 128 * 8), layout.size);
     rig.fb.DestroyImage(device, image);
 
+    // A texture of any size, since 1.42: each level the one before halved
+    // and no less than one, its blocks laid out by the next power of two
+    // across - 100 by 60 keeps 32 blocks by 15 - and nothing padded down.
+    try testing.expectEqual(facet.Result.success, rig.fb.CreateImage(device, &.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 100, .height = 60 }, .mip_levels = 6, .usage = sampled }, &image));
+    rig.fb.GetImageMemoryRequirements(device, image.?, &needs);
+    try testing.expectEqual(try texture.Texture.bytes(.rgba8888, 100, 60, 6), needs.size);
+    rig.fb.GetImageSubresourceLayout(device, image.?, &.{ .mip_level = 1 }, &layout);
+    try testing.expectEqual(@as(u64, 32 * 15 * 16 * 8), layout.offset);
+    const levels = &_objects.of(_image.Image, image.?).texels;
+    for ([6]u32{ 100, 50, 25, 12, 6, 3 }, [6]u32{ 60, 30, 15, 7, 3, 1 }, 0..) |across, down, lod| {
+        try testing.expectEqual(across, levels.width(@intCast(lod)));
+        try testing.expectEqual(down, levels.height(@intCast(lod)));
+    }
+    rig.fb.DestroyImage(device, image);
+    // More levels than halving the longer side gives is still refused.
+    try testing.expectEqual(facet.Result.error_format_not_supported, rig.fb.CreateImage(device, &.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 100, .height = 60 }, .mip_levels = 8, .usage = sampled }, &image));
+
     // Rows: each on a cache line.
     try testing.expectEqual(facet.Result.success, rig.fb.CreateImage(device, &.{ .format = .r8g8b8a8_unorm, .extent = .{ .width = 100, .height = 30 }, .tiling = .linear, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, &image));
     rig.fb.GetImageMemoryRequirements(device, image.?, &needs);
@@ -364,7 +381,6 @@ test "an image: a texture, rows or a depth, by what it is for" {
     // What facet.library 1.0 does not make.
     const refused = [_]facet.ImageCreateInfo{
         .{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 64, .height = 64 }, .usage = sampled | facet.IMAGE_USAGE_COLOR_ATTACHMENT },
-        .{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 100, .height = 64 }, .usage = sampled },
         .{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 64, .height = 64 }, .tiling = .linear, .usage = sampled },
         .{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 64, .height = 64 }, .mip_levels = 8, .usage = sampled },
         .{ .format = .r32_sfloat, .extent = .{ .width = 64, .height = 64 }, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT },
@@ -432,6 +448,59 @@ test "a copy into a texture: each texel where the texture layout keeps it, as 0x
     try testing.expectEqual(@as(u32, 16), seen.texels.height(0));
     try testing.expectEqual(@intFromPtr(made.data.?) + made.texels.layout[1].start, @intFromPtr(seen.texels.memory));
     try testing.expectEqual(made.texels.layout[2].start - made.texels.layout[1].start, seen.texels.layout[1].start);
+}
+
+test "a texture whose sides are not powers of two: copied into, and a view from a level on" {
+    var rig = try Rig.up();
+    defer rig.down() catch |err| std.debug.panic("{}", .{err});
+    const instance, const physical = try rig.instance();
+    defer rig.fb.DestroyInstance(instance);
+    const device = try rig.device(physical);
+    defer rig.fb.DestroyDevice(device);
+
+    // 100 by 60: the blocks laid out by 128 across and 60 down, which is
+    // what a view of a level has to go by as well.
+    var image: ?*facet.Image = null;
+    try testing.expectEqual(facet.Result.success, rig.fb.CreateImage(device, &.{ .format = .r8g8b8a8_unorm, .extent = .{ .width = 100, .height = 60 }, .mip_levels = 3, .usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST }, &image));
+    defer rig.fb.DestroyImage(device, image);
+    var needs: facet.MemoryRequirements = undefined;
+    rig.fb.GetImageMemoryRequirements(device, image.?, &needs);
+    const memory = try allocate(&rig, device, needs.size);
+    defer rig.fb.FreeMemory(device, memory);
+    try testing.expectEqual(facet.Result.success, rig.fb.BindImageMemory(device, image.?, memory, 0));
+    const made = _objects.of(_image.Image, image.?);
+    @memset(made.data.?[0..@intCast(needs.size)], 0);
+
+    // Every texel of the level, each its own: copied in a row at a time
+    // over a width that is not a whole number of blocks.
+    var bytes: [100 * 60 * 4]u8 = undefined;
+    for (0..60) |y| for (0..100) |x| {
+        bytes[(y * 100 + x) * 4 ..][0..4].* = .{ @intCast(x % 256), @intCast(y), 0x40, 0xFF };
+    };
+    _image.copyFromBuffer(made, &bytes, &.{ .image_extent = .{ .width = 100, .height = 60 } });
+    const kept: [*]const u64 = @ptrCast(@alignCast(made.data.?));
+    for (0..60) |y| for (0..100) |x| {
+        const want: u32 = 0xFF00_0040 | @as(u32, @intCast(x % 256)) << 16 | @as(u32, @intCast(y)) << 8;
+        try testing.expectEqual(want, texture.gather(kept[made.texels.index(0, @intCast(x), @intCast(y))]));
+    };
+
+    // A view from level 1 on: 50 by 30, and its texels the image's own.
+    var view: ?*facet.ImageView = null;
+    try testing.expectEqual(facet.Result.success, rig.fb.CreateImageView(device, &.{ .image = image.?, .format = .r8g8b8a8_unorm, .subresource_range = .{ .base_mip_level = 1 } }, &view));
+    defer rig.fb.DestroyImageView(device, view);
+    const seen = _objects.of(_image.ImageView, view.?);
+    try testing.expectEqual(@as(u32, 50), seen.texels.width(0));
+    try testing.expectEqual(@as(u32, 30), seen.texels.height(0));
+    try testing.expectEqual(@as(u32, 25), seen.texels.width(1));
+    try testing.expectEqual(@as(u32, 15), seen.texels.height(1));
+    try testing.expectEqual(@intFromPtr(made.data.?) + made.texels.layout[1].start, @intFromPtr(seen.texels.memory));
+    try testing.expectEqual(made.texels.layout[2].start - made.texels.layout[1].start, seen.texels.layout[1].start);
+    // A texel put through the view lands where the image keeps it: the
+    // view's levels are laid out by the width the image was, not by their
+    // own (`texture.Texture.from`).
+    var writable = seen.texels;
+    writable.put(1, 24, 14, 0x1234_5678);
+    try testing.expectEqual(@as(u32, 0x1234_5678), made.texels.peek(2, 24, 14));
 }
 
 // --- command buffers, the queue, fences and semaphores -------------------------

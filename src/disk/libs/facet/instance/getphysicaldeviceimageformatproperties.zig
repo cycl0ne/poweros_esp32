@@ -53,8 +53,9 @@ const _image = @import("../image/_image.zig");
 /// - `sample_counts`: 1, one sample a pixel.
 /// - `max_resource_size`: the largest heap's bytes.
 ///
-/// An image to be sampled has sides that are powers of two, which this
-/// does not say: it is in CreateImage's documentation.
+/// An image to be sampled may have sides of any size (since 1.42); its
+/// levels are as many as halving the longer side gives, which
+/// `max_mip_levels` says.
 ///
 /// CONTEXT:
 /// - Waits: no.

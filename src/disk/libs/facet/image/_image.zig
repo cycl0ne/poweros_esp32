@@ -317,11 +317,11 @@ pub fn requirements(image: *const Image) facet.MemoryRequirements {
 /// them.
 pub fn levelsFrom(image: *const Image, base: u32, count: u32, first_layer: u32, layers: u32) texture.Texture {
     const whole = &image.texels;
-    const width = @max(image.width >> @intCast(base), 1);
-    const height = @max(image.height >> @intCast(base), 1);
-    // The levels of the whole from `base` lie as those of a texture that
-    // starts with that level: each is laid out by its own size alone.
-    var made = texture.Texture.init(whole.format, width, height, count, whole.memory + first_layer * @as(usize, @intCast(image.layer_bytes)) + whole.layout[base].start) catch unreachable;
+    // The levels of the whole from `base` on, laid out as the whole laid
+    // them out: a width that is not a power of two is laid out by the next
+    // one up, which a texture of that level's own size would not be
+    // (`texture.Texture.from`).
+    var made = texture.Texture.from(whole, base, count, whole.memory + first_layer * @as(usize, @intCast(image.layer_bytes)) + whole.layout[base].start);
     made.layer_count = layers;
     made.layer_bytes = @intCast(image.layer_bytes);
     return made;

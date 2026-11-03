@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.8 (03.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.9 (03.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -1868,6 +1868,167 @@ fn groupChecks(probe: *Probe) void {
     probe.checkEqual(1, out[51], "its one invocation is the group's first");
 }
 
+// --- 1.42: a texture of any size ---------------------------------------------
+
+/// A texture at the vertices' second two floats, sampled the nearest way:
+/// one form that clamps past the edges and one that wraps, so that both
+/// ways round a texture of an odd size are drawn.
+const Odd = struct {
+    fn vertex(vertices: *const facet.shader.Vertices) callconv(.c) void {
+        for (0..vertices.count) |k| {
+            const p = vertices.input(@intCast(k), 0);
+            const uv = vertices.input(@intCast(k), 1);
+            vertices.output(@intCast(k))[0..6].* = .{ p[0], p[1], p[2], 1, uv[0], uv[1] };
+        }
+    }
+
+    const entries = [_]facet.shader.Entry{
+        facet.shader.vertex("main", &vertex, 2),
+        facet.shader.fixedFragment("main", .{ .kind = .texture, .sampling = .{ .filter = .nearest, .address = .clamp } }),
+        facet.shader.vertex("wrapped", &vertex, 2),
+        facet.shader.fixedFragment("wrapped", .{ .kind = .texture, .sampling = .{ .filter = .nearest, .address = .wrap } }),
+    };
+    const code = facet.shader.Code{ .entry_count = entries.len, .entries = &entries };
+};
+
+/// The grey texel (x, y) of the odd texture holds: its own, and the same
+/// number whichever way round the channels of a format are.
+fn greyOf(x: u32, y: u32) u32 {
+    const value = 20 + (y * 6 + x) * 8;
+    return 0xFF00_0000 | value << 16 | value << 8 | value;
+}
+
+fn sizeChecks(probe: *Probe) void {
+    const fb = probe.fb;
+    const device = probe.device.?;
+    defer probe.give();
+    const sampled = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST;
+
+    // A texture of any size, since 1.42, with as many levels as halving
+    // its longer side gives and no more.
+    var made: ?*facet.Image = null;
+    const odd = facet.Extent3D{ .width = 100, .height = 60 };
+    probe.check(fb.CreateImage(device, &.{ .format = .b8g8r8a8_unorm, .extent = odd, .mip_levels = 7, .usage = sampled }, &made) == .success, "a texture 100 by 60, of seven levels");
+    if (made) |one| {
+        var layout: facet.SubresourceLayout = undefined;
+        fb.GetImageSubresourceLayout(device, one, &.{ .mip_level = 1 }, &layout);
+        probe.check(layout.offset > 0 and layout.size > 0, "its second level lies past its first");
+        fb.DestroyImage(device, one);
+    }
+    var none: ?*facet.Image = null;
+    probe.check(fb.CreateImage(device, &.{ .format = .b8g8r8a8_unorm, .extent = odd, .mip_levels = 8, .usage = sampled }, &none) != .success, "one of more levels than that refused");
+    probe.check(none == null, "and nothing given back for it");
+
+    // Six by five texels, each its own grey, copied in from a buffer.
+    const across = 6;
+    const down = 5;
+    const texture = probe.image(.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = across, .height = down }, .usage = sampled }, 0) orelse
+        return probe.check(false, "a texture of six by five texels");
+    // Which slot the picture's own memory lands in: the texture's took one.
+    var slot: usize = 0;
+    for (probe.memories, 0..) |each, k| if (each == null) {
+        slot = k;
+        break;
+    };
+    const shown = probe.image(.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = side, .height = side }, .tiling = .linear, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, facet.MEMORY_PROPERTY_HOST_VISIBLE) orelse
+        return probe.check(false, "a picture to draw it into");
+    const shown_memory = probe.memories[slot].?;
+    const texels, const texel_bytes = probe.buffer(across * down * 4, facet.BUFFER_USAGE_TRANSFER_SRC) orelse
+        return probe.check(false, "a buffer the texels come from");
+    for (0..down) |y| for (0..across) |x| {
+        const value: u8 = @intCast(20 + (y * across + x) * 8);
+        texel_bytes[(y * across + x) * 4 ..][0..4].* = .{ value, value, value, 0xFF };
+    };
+    const whole = facet.BufferImageCopy{ .image_extent = .{ .width = across, .height = down } };
+    var commands = probe.record() orelse return probe.check(false, "a recording");
+    fb.CmdCopyBufferToImage(commands, texels, texture[0], .general, 1, @ptrCast(&whole));
+    if (!probe.submit()) return probe.check(false, "the copy into the texture submitted");
+
+    var module: ?*facet.ShaderModule = null;
+    if (fb.CreateShaderModule(device, &.{ .code = &Odd.code }, &module) != .success) return probe.check(false, "the shader module");
+    _ = Probe.keep(&probe.modules, module);
+    const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .sampled_image, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    if (fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &set_layout) != .success) return probe.check(false, "a set layout of a sampled image");
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    var layout: ?*facet.PipelineLayout = null;
+    if (fb.CreatePipelineLayout(device, &.{ .set_layout_count = 1, .set_layouts = @ptrCast(&set_layout) }, &layout) != .success) return probe.check(false, "the pipeline layout");
+    _ = Probe.keep(&probe.layouts, layout);
+    var pool: ?*facet.DescriptorPool = null;
+    if (fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool) != .success) return probe.check(false, "a descriptor pool");
+    defer fb.DestroyDescriptorPool(device, pool);
+    var sets: [1]?*facet.DescriptorSet = undefined;
+    if (fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &sets) != .success) return probe.check(false, "a descriptor set");
+    const info = facet.DescriptorImageInfo{ .image_view = texture[1] };
+    const write = facet.WriteDescriptorSet{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .sampled_image, .descriptor_count = 1, .image_info = @ptrCast(&info) };
+    fb.UpdateDescriptorSets(device, 1, @ptrCast(&write), 0, null);
+
+    const pass = probe.renderPass(.{
+        .attachment_count = 1,
+        .attachments = @ptrCast(&facet.AttachmentDescription{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .color_attachment_optimal }),
+        .subpass_count = 1,
+        .subpasses = @ptrCast(&facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal }) }),
+    }) orelse return probe.check(false, "a pass to draw it in");
+    const onto = probe.framebuffer(pass, &.{shown[1]}) orelse return probe.check(false, "a framebuffer for it");
+    const attributes = [2]facet.VertexInputAttributeDescription{
+        .{ .location = 0, .binding = 0, .format = .r32g32b32_sfloat },
+        .{ .location = 1, .binding = 0, .format = .r32g32_sfloat, .offset = 12 },
+    };
+    const clamps = pipelineOf(probe, pass, module.?, layout.?, .{ .attributes = &attributes, .stride = 20 }) orelse
+        return probe.check(false, "a pipeline that clamps past the edges");
+    const wraps = pipelineOf(probe, pass, module.?, layout.?, .{ .attributes = &attributes, .stride = 20, .name = "wrapped" }) orelse
+        return probe.check(false, "a pipeline that wraps round them");
+
+    const vertex_buffer, const vertex_bytes = probe.buffer(256, facet.BUFFER_USAGE_VERTEX_BUFFER) orelse
+        return probe.check(false, "a vertex buffer");
+    const offset: u64 = 0;
+    const clear = [1]facet.ClearValue{.{ .color = .{ .float32 = .{ 0, 0, 1, 1 } } }};
+    const area = facet.Rect2D{ .extent = .{ .width = side, .height = side } };
+    // Where each texel's middle lands in a picture of `side`: far enough
+    // from the next texel that no slip in the interpolation reaches it.
+    const columns = [6]u32{ 5, 16, 26, 37, 47, 58 };
+    const rows = [5]u32{ 6, 19, 32, 44, 57 };
+    const pixels, const pitch = probe.mapped(shown[0], shown_memory) orelse return probe.check(false, "the picture read back");
+    for ([2]struct { *facet.Pipeline, f32, [*:0]const u8 }{
+        .{ clamps, 0, "every texel of a texture of an odd size drawn where it belongs" },
+        .{ wraps, -1, "and the same a whole texture back, which wraps by a division" },
+    }) |one| {
+        const pipeline, const shift, const name = one;
+        // The texture over the whole picture: 0 to 1 across it, or a whole
+        // texture before that, which comes round to the same texels.
+        const quad = [6][5]f32{
+            .{ -1, -1, 0.5, shift, shift },
+            .{ 1, -1, 0.5, shift + 1, shift },
+            .{ -1, 1, 0.5, shift, shift + 1 },
+            .{ -1, 1, 0.5, shift, shift + 1 },
+            .{ 1, -1, 0.5, shift + 1, shift },
+            .{ 1, 1, 0.5, shift + 1, shift + 1 },
+        };
+        @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(quad))], std.mem.asBytes(&quad));
+        commands = probe.record() orelse return probe.check(false, "a recording of the draw");
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = onto, .render_area = area, .clear_value_count = 1, .clear_values = &clear }, .@"inline");
+        fb.CmdBindPipeline(commands, .graphics, pipeline);
+        fb.CmdBindDescriptorSets(commands, .graphics, layout.?, 0, 1, @ptrCast(&sets), 0, null);
+        fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+        fb.CmdDraw(commands, 6, 1, 0, 0);
+        fb.CmdEndRenderPass(commands);
+        if (!probe.submit()) return probe.check(false, "the frame submitted");
+        var right = true;
+        var wanted: u32 = 0;
+        var found: u32 = 0;
+        for (rows, 0..) |py, y| for (columns, 0..) |px, x| {
+            const want = greyOf(@intCast(x), @intCast(y));
+            const seen = pixelAt(pixels, pitch, px, py);
+            if (seen != want and right) {
+                wanted = want;
+                found = seen;
+                right = false;
+            }
+        };
+        if (right) probe.check(true, name) else probe.checkEqual(wanted, found, name);
+    }
+}
+
 fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical: *facet.PhysicalDevice, quiet: bool) struct { u32, u32 } {
     var properties: facet.PhysicalDeviceProperties = undefined;
     fb.GetPhysicalDeviceProperties(physical, &properties);
@@ -1889,6 +2050,7 @@ fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical
     sampledDepthChecks(&probe);
     boundsChecks(&probe);
     groupChecks(&probe);
+    sizeChecks(&probe);
     return .{ probe.passed, probe.failed };
 }
 

@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.41**, so that a program need not find out by failing. It covers the API.
+1.42**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -452,7 +452,13 @@ Three more things cannot be asked for at all, having nothing to ask with:
 
 Of textures:
 
-- The sides are powers of two.
+- The sides may be any size since 1.42, with the levels Vulkan has - the
+  one before halved, never below one, as many as floor(log2(longer side))
+  + 1 - but a width that is not a power of two is **laid out by the next
+  one up**: up to 2 x the memory for the widest levels, and nothing for a
+  height. Past the width nothing is read. `wrap` round a side that is not
+  a power of two costs a division a sample instead of a mask; `clamp`
+  costs the same whatever the size.
 - A texel is kept as `rgba8888` or `rgb565`, and nothing else. An 8888
   texel takes 64 bits, each channel in 16 of them, so that the four texels
   of a bilinear sample come out of memory ready to mix.
