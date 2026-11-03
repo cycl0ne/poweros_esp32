@@ -13,6 +13,12 @@
 //!
 //! A name that matched nothing leaves RETURN_WARN, and each name deleted is
 //! printed with "  Deleted" after it.
+//!
+//! A command cannot delete the directory it was loaded from: the shell holds
+//! that directory as the command's PROGDIR: while it runs, so
+//! `RAM:work/Delete RAM:work ALL` empties the drawer and then says the
+//! drawer itself is in use. Another Delete, loaded from somewhere else,
+//! takes it away.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;

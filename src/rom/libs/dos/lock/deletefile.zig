@@ -29,6 +29,10 @@ const nameAction = _lock.nameAction;
 /// Lock follows it; one at the end of the name is what is deleted - the
 /// link, not what it names.
 ///
+/// A directory with any lock on it is ERROR_OBJECT_IN_USE, the lock a
+/// loaded program's PROGDIR: among them: a program cannot delete the
+/// directory it was loaded from while it runs.
+///
 /// CONTEXT:
 /// - Waits: yes, for the handler's answer to a packet.
 /// - Interrupts: no.
