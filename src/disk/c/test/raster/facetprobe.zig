@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.22 (04.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.23 (04.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -818,6 +818,75 @@ fn storageImageChecks(probe: *Probe) void {
     probe.checkEqual(0, seen[7], "and a place past the level's width");
     probe.checkEqual(1, seen[8], "the last level of the last layer is held");
     probe.checkEqual(0, seen[9], "and one past the last is not");
+
+    // --- 1.56: a colour attachment written through as a storage image ---
+    // The linear features say whose rows may be written through: a
+    // texture of 8888 is 0xAARRGGBB, as b8g8r8a8's rows are, and nothing
+    // reads a word with red in its low byte.
+    fb.GetPhysicalDeviceFormatProperties(probe.physical, .b8g8r8a8_unorm, &properties);
+    probe.check(properties.linear_tiling_features & facet.FORMAT_FEATURE_STORAGE_IMAGE != 0, "rows of b8g8r8a8 say they may be written through");
+    fb.GetPhysicalDeviceFormatProperties(probe.physical, .r8g8b8a8_unorm, &properties);
+    probe.check(properties.linear_tiling_features & facet.FORMAT_FEATURE_STORAGE_IMAGE == 0, "and rows of r8g8b8a8 say they may not");
+
+    const both_usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_TRANSFER_SRC;
+    // As wide as the probe's pictures, a framebuffer being made of it:
+    // the function writes its first 8 x 8 texels, which is what is read
+    // back.
+    const both = probe.bound(.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = side, .height = side }, .usage = both_usage }, 0) orelse
+        return probe.check(false, "an image drawn into and written through at once");
+    probe.check(true, "an image drawn into and written through at once");
+    var denied: ?*facet.Image = null;
+    probe.check(fb.CreateImage(device, &.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = side, .height = side }, .usage = both_usage | facet.IMAGE_USAGE_SAMPLED }, &denied) != .success, "sampled and drawn into at once still refused");
+    probe.check(fb.CreateImage(device, &.{ .format = .r8g8b8a8_unorm, .extent = .{ .width = side, .height = side }, .usage = both_usage }, &denied) != .success, "and r8g8b8a8 rows written through refused");
+    probe.check(denied == null, "and nothing given back for either");
+    const both_view = probe.viewed(.{ .image = both, .format = .b8g8r8a8_unorm }) orelse return probe.check(false, "a view of it");
+    const to_both = facet.WriteDescriptorSet{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .storage_image, .descriptor_count = 1, .image_info = @ptrCast(&facet.DescriptorImageInfo{ .image_view = both_view }) };
+    fb.UpdateDescriptorSets(device, 1, @ptrCast(&to_both), 0, null);
+
+    // Written through: the rows take the colour at once, and the function
+    // reads its own rows back.
+    commands = probe.record() orelse return probe.check(false, "a recording of the seeding write");
+    fb.CmdBindPipeline(commands, .compute, pipelines[0].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout.?, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdPushConstants(commands, layout.?, facet.SHADER_STAGE_COMPUTE, 0, 4, &four);
+    fb.CmdDispatch(commands, 8, 8, 1);
+    if (!probe.submit()) return probe.check(false, "the seeding write submitted");
+    @memset(back_bytes[0 .. 8 * 8 * 4], 0);
+    commands = probe.record() orelse return probe.check(false, "a recording of the rows read back");
+    fb.CmdCopyImageToBuffer(commands, both, .general, back, 1, @ptrCast(&whole));
+    if (!probe.submit()) return probe.check(false, "the rows read back");
+    // b8g8r8a8 in the buffer: the word is 0xAARRGGBB as it was written.
+    probe.checkEqual(0xFF00_0004, std.mem.readInt(u32, back_bytes[0..4], .little), "the attachment's rows written through by a function");
+    probe.checkEqual(0xFF05_0704, std.mem.readInt(u32, back_bytes[(7 * 8 + 5) * 4 ..][0..4], .little), "another of its rows");
+
+    // Then drawn into: a pass that clears it. What a subpass draws
+    // reaches the rows when it stores, so the clear is what is left.
+    const pass = probe.renderPass(.{
+        .attachment_count = 1,
+        .attachments = @ptrCast(&facet.AttachmentDescription{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .color_attachment_optimal }),
+        .subpass_count = 1,
+        .subpasses = @ptrCast(&facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal }) }),
+    }) orelse return probe.check(false, "a pass over the same image");
+    const onto = probe.framebuffer(pass, &.{both_view}) orelse return probe.check(false, "a framebuffer of it");
+    const clear = [1]facet.ClearValue{.{ .color = .{ .float32 = .{ 0, 0, 1, 1 } } }};
+    @memset(back_bytes[0 .. 8 * 8 * 4], 0);
+    commands = probe.record() orelse return probe.check(false, "a recording of the pass");
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = onto, .render_area = .{ .extent = .{ .width = side, .height = side } }, .clear_value_count = 1, .clear_values = &clear }, .@"inline");
+    fb.CmdEndRenderPass(commands);
+    fb.CmdCopyImageToBuffer(commands, both, .general, back, 1, @ptrCast(&whole));
+    if (!probe.submit()) return probe.check(false, "the pass submitted");
+    probe.checkEqual(0xFF00_00FF, std.mem.readInt(u32, back_bytes[0..4], .little), "what the pass drew reaches the rows when it stores");
+
+    // And written through again after it: over what the pass left.
+    @memset(back_bytes[0 .. 8 * 8 * 4], 0);
+    commands = probe.record() orelse return probe.check(false, "a recording of the write after the pass");
+    fb.CmdBindPipeline(commands, .compute, pipelines[0].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout.?, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdPushConstants(commands, layout.?, facet.SHADER_STAGE_COMPUTE, 0, 4, &four);
+    fb.CmdDispatch(commands, 8, 8, 1);
+    fb.CmdCopyImageToBuffer(commands, both, .general, back, 1, @ptrCast(&whole));
+    if (!probe.submit()) return probe.check(false, "the write after the pass submitted");
+    probe.checkEqual(0xFF00_0004, std.mem.readInt(u32, back_bytes[0..4], .little), "and a write after the pass goes over what it left");
 }
 
 // --- 1.32: a buffer read as texels of a format -------------------------------

@@ -33,12 +33,25 @@ fn describe(format: facet.Format, keeps_blocks: bool) facet.FormatProperties {
     const texels = facet.FORMAT_FEATURE_UNIFORM_TEXEL_BUFFER | facet.FORMAT_FEATURE_STORAGE_TEXEL_BUFFER;
     const vertices = facet.FORMAT_FEATURE_VERTEX_BUFFER;
     return switch (format) {
-        .b8g8r8a8_unorm, .r8g8b8a8_unorm => .{
+        // STORAGE_IMAGE in the linear features says the rows of this
+        // format may be written through by a function, which is what a
+        // colour attachment written through as a storage image is kept in
+        // (`_image.rowTexture`, since 1.56): a texture of 8888 is
+        // 0xAARRGGBB, as these rows are.
+        .b8g8r8a8_unorm => .{
+            .linear_tiling_features = attachment | transfer | storage,
+            .optimal_tiling_features = attachment | transfer | sampled | storage,
+            .buffer_features = vertices | texels,
+        },
+        // No texture reads a word with red in its low byte, so rows of
+        // this one are not written through; its texels, kept in a
+        // texture's own layout, are.
+        .r8g8b8a8_unorm => .{
             .linear_tiling_features = attachment | transfer,
             .optimal_tiling_features = attachment | transfer | sampled | storage,
             .buffer_features = vertices | texels,
         },
-        .r5g6b5_unorm_pack16 => .{ .linear_tiling_features = attachment | transfer, .optimal_tiling_features = attachment | transfer | sampled | storage, .buffer_features = texels },
+        .r5g6b5_unorm_pack16 => .{ .linear_tiling_features = attachment | transfer | storage, .optimal_tiling_features = attachment | transfer | sampled | storage, .buffer_features = texels },
         // One byte of red a texel, sampled and written through, and never
         // an attachment: a texture of one channel, read as (red, 0, 0, 1)
         // (`PhysicalDeviceFeatures.small_texels`, since 1.48). A device

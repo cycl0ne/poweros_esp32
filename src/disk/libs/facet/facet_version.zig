@@ -583,9 +583,33 @@ pub const LIBRARY_VERSION = 1;
 /// A storage image may have layers without being sampled as well, which
 /// `CreateImage` refused before: an image written through and never read
 /// by a sample is as good a reason for layers as sampling is.
+/// 56: a colour attachment written through as a storage image. Before
+/// this an image was one or the other - CreateImage refused SAMPLED or
+/// STORAGE together with COLOR_ATTACHMENT, a texture and an attachment
+/// lying differently - so a function could not write the picture a pass
+/// draws into, and a program seeding one had to draw it or copy it in.
+/// Now COLOR_ATTACHMENT, or INPUT_ATTACHMENT, with STORAGE and without
+/// SAMPLED: the image stays in rows, as an attachment is, and those rows
+/// are the texture a function writes (`texture.Texture.linear`, which is
+/// how a sampled depth has been read since 1.39). One level and one
+/// layer, and of `b8g8r8a8_unorm` or `r5g6b5_unorm_pack16`:
+/// `r8g8b8a8_unorm` is refused, a texture of 8888 being 0xAARRGGBB as
+/// B8G8R8A8's rows are, and nothing reading a word with red in its low
+/// byte. FORMAT_FEATURE_STORAGE_IMAGE in a format's linear features says
+/// which, linear tiling being rows either way.
+/// What it does not do is order the two against each other. A write
+/// through the storage image reaches the rows at once; what a subpass
+/// draws reaches them when it stores, at the end of its part. So a
+/// function may seed the rows before a pass draws into them, or write
+/// over them after it has ended, and writing them while that pass is open
+/// leaves the store to win - which is what Vulkan says of the same thing
+/// without a barrier. Nothing is refused for it, there being no barrier
+/// here to ask for.
+/// Only the cores, as every storage image is
+/// (`PhysicalDeviceFeatures.storage_images`).
 /// What stays: `fifo` is the one present mode, there being no way to ask a
 /// display to show a buffer before its next frame; one queue family of one
 /// queue; a counter of 32 bits, for want of a 64-bit atomic on every
 /// machine the library runs on; and no point mode in tessellation, there
 /// being no point rasterization at all.
-pub const LIBRARY_REVISION = 55;
+pub const LIBRARY_REVISION = 56;

@@ -119,9 +119,11 @@ pub fn UpdateDescriptorSets(base: *FacetBase, device: *facet.Device, write_count
                     };
                     if (write.descriptor_type == .sampler) break :sampled .{ .sampler = with };
                     const view = _objects.of(ImageView, info.image_view orelse break :sampled .{ .sampler = with });
-                    // A texture, or a depth attachment sampled where it
-                    // lies (`_image.sampledDepth`, since 1.39).
-                    const kept = view.image.kind == .texture or _image.sampledDepth(view.image);
+                    // A texture, a depth attachment sampled where it
+                    // lies (`_image.sampledDepth`, since 1.39), or an
+                    // attachment written through as a storage image, whose
+                    // rows are the texture (`writtenRows`, since 1.56).
+                    const kept = view.image.kind == .texture or _image.sampledDepth(view.image) or _image.writtenRows(view.image);
                     if (!kept or view.image.data == null) break :sampled .{ .sampler = with };
                     // A storage image is written through, so the image has
                     // to have been made for it; one that was not is left

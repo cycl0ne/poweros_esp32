@@ -158,6 +158,27 @@ pub fn rowFormat(format: facet.Format) shader.TexelFormat {
     };
 }
 
+/// How a shader function writes the pixels of an image kept in rows, as
+/// the texture over them (`texture.Texture.linear`): null for a format
+/// whose rows no texture reads, which is every one whose texel is not a
+/// word of its own. `r8g8b8a8_unorm` is one of those - a texture of 8888
+/// is 0xAARRGGBB, as `b8g8r8a8_unorm`'s rows are, and nothing reads a
+/// word with red in its low byte. (Since 1.56.)
+pub fn rowTexture(format: facet.Format) ?texture.Format {
+    return switch (format) {
+        .b8g8r8a8_unorm => .argb8888,
+        .r5g6b5_unorm_pack16 => .rgb565,
+        else => null,
+    };
+}
+
+/// Whether an image kept in rows is written through as a storage image:
+/// drawn into and written through at once, its rows being the texture a
+/// function writes (`rowTexture`, since 1.56).
+pub fn writtenRows(image: *const Image) bool {
+    return image.kind == .rows and image.usage & facet.IMAGE_USAGE_STORAGE != 0;
+}
+
 /// The bytes a texel, a pixel or a vertex's value of `format` takes; 0
 /// for one facet.library does not know.
 pub fn bytesOf(format: facet.Format) u32 {
@@ -320,16 +341,27 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
         return image;
     }
     if (info.usage & facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT != 0) return null;
+    // Drawn into, or read as an input attachment, and written through as a
+    // storage image at once (since 1.56): the image stays in rows, as an
+    // attachment is, and a function writes those rows. Never sampled as
+    // well, a sample wanting the blocked layout, and of a format whose
+    // rows a texture reads.
+    const rows_written = info.usage & facet.IMAGE_USAGE_STORAGE != 0 and
+        info.usage & facet.IMAGE_USAGE_SAMPLED == 0 and
+        info.usage & (facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT) != 0 and
+        info.usage & facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT == 0 and
+        rowTexture(info.format) != null and info.mip_levels == 1 and layers == 1;
     // Read as an input attachment: its pixels are read out of its rows,
     // so not in a texture's layout and not a transient attachment, which
     // has no memory at all.
     if (info.usage & facet.IMAGE_USAGE_INPUT_ATTACHMENT != 0) {
-        const not_rows = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT;
+        const not_rows = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT;
         if (info.usage & not_rows != 0) return null;
+        if (info.usage & facet.IMAGE_USAGE_STORAGE != 0 and !rows_written) return null;
     }
     // Sampled, written through as a storage image, or both: all one kind,
     // kept in the layout a sample reads.
-    if (info.usage & (facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_STORAGE) != 0) {
+    if (info.usage & (facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_STORAGE) != 0 and !rows_written) {
         if (info.tiling != .optimal or info.usage & facet.IMAGE_USAGE_COLOR_ATTACHMENT != 0) return null;
         const kept = keptFormat(kept_format, packed_texels) orelse return null;
         image.kind = .texture;
@@ -351,6 +383,9 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
     if (info.mip_levels != 1 or textureFormat(info.format) == null) return null;
     image.pitch = std.mem.alignForward(u32, extent.width * pixel, row_alignment);
     image.bytes = @as(u64, image.pitch) * extent.height;
+    // Written through as a storage image as well: the rows are the
+    // texture a function writes, over no memory yet (since 1.56).
+    if (rows_written) image.texels = texelsOver(&image, @ptrFromInt(_memory.alignment)) catch return null;
     return image;
 }
 
@@ -359,6 +394,9 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
 /// size the image is (`texture.Texture.linear`).
 pub fn texelsOver(image: *const Image, memory: [*]u8) texture.Texture.Error!texture.Texture {
     if (image.kind == .depth) return texture.Texture.linear(.d16, image.width, image.height, image.pitch, memory);
+    // A colour attachment written through as a storage image: its rows
+    // are the texture, as a sampled depth's are (since 1.56).
+    if (writtenRows(image)) return texture.Texture.linear(rowTexture(image.format).?, image.width, image.height, image.pitch, memory);
     var made = try texture.Texture.init(keptFormat(image.format, image.packed_texels).?, image.width, image.height, image.levels, memory);
     made.layer_count = image.layers;
     made.layer_bytes = @intCast(image.layer_bytes);

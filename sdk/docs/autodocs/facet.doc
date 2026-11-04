@@ -3314,6 +3314,20 @@ facet.library/WaitForFences
 	SAMPLED and COLOR_ATTACHMENT is not made: a texture and an attachment lie
 	differently.
 
+	**A colour attachment may be written through as a storage image** since
+	1.56: COLOR_ATTACHMENT, or INPUT_ATTACHMENT, with STORAGE and without
+	SAMPLED, of B8G8R8A8 or R5G6B5, one level and one layer. The image stays
+	in rows, as an attachment is, and those rows are the texture a function
+	writes (`shader.Resources.written`): a write reaches them at once, where
+	what a subpass draws reaches them when it stores, at the end of its part.
+	So a function may seed the rows before a pass draws into them, or write
+	over them after it, and writing them while the pass that draws into them
+	is open has no order against that store - as it has none in Vulkan
+	without a barrier. R8G8B8A8 is `error_format_not_supported` for this: a
+	texture of 8888 is 0xAARRGGBB, as B8G8R8A8's rows are, and nothing reads
+	a word with red in its low byte. FORMAT_FEATURE_STORAGE_IMAGE in a
+	format's **linear** features says its rows may be written through.
+
 	A SAMPLED image may have up to 256 layers, or be 3D, of type `3d`, of any
 	depth up to 256 and with levels of its own (since 1.46): a level is half
 	as deep as the one before it, and no less than one slice deep, each slice

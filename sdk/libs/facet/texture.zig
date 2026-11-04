@@ -400,8 +400,10 @@ pub const Texture = struct {
 
     /// A texture of one level over rows of `pitch` bytes: how a depth
     /// attachment's image is sampled, where it lies, with no copy and no
-    /// second layout. Its sides are whatever the image's are, powers of
-    /// two or not, and only `sampleBy` reads it.
+    /// second layout, and how a colour attachment written through as a
+    /// storage image is written (since 1.56). Its sides are whatever the
+    /// image's are, powers of two or not; `sampleBy` reads it, and
+    /// `setColor` and `colorAt` write and read its texels.
     pub fn linear(format: Format, across: u32, down: u32, pitch: u32, memory: [*]u8) Texture {
         var made = Texture{
             .format = format,

@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.55**, so that a program need not find out by failing. It covers the API.
+1.56**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -213,8 +213,18 @@ is left out:
   `layer_count`, `width` and `height`. `putLayer` and `peekLayer` are the
   raw pair in the texture's own format and hold to nothing: they are what
   the library's own copies and the samplers use.
-- A `storage_image` is still not an attachment: an image cannot be drawn
-  into and written through in the same pass.
+- A colour attachment may be written through as a storage image since 1.56
+  (CreateImage: COLOR_ATTACHMENT, or INPUT_ATTACHMENT, with STORAGE and
+  without SAMPLED, of B8G8R8A8 or R5G6B5, one level and one layer). The
+  image stays in rows and those rows are the texture a function writes.
+  **The two are not ordered against each other**: a write reaches the rows
+  at once, while what a subpass draws reaches them when it stores, so
+  writing such an image through while the pass that draws into it is open
+  leaves the store to win. Seeding the rows before the pass, or writing
+  over them after it, is what this is for. R8G8B8A8 is refused: a texture
+  of 8888 is 0xAARRGGBB, as B8G8R8A8's rows are, and nothing reads a word
+  with red in its low byte. Sampled and drawn into at once is still
+  refused, a sample wanting the blocked layout.
 
 ## Texel buffers, and the formats they read
 

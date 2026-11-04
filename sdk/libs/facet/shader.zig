@@ -942,6 +942,12 @@ pub const Resources = extern struct {
     /// `putLayer` and `peekLayer` are the same pair in the texture's own
     /// format and hold to nothing.
     ///
+    /// A colour attachment may be one since 1.56 (CreateImage): the image
+    /// is kept in rows and those rows are the texture, of one level and
+    /// one layer. A write reaches them at once, while what a subpass draws
+    /// reaches them when it stores, so writing such an image through while
+    /// the pass that draws into it is open has no order against that.
+    ///
     /// Nothing orders one function's writes against another's: a frame's
     /// work is shared between the cores, so two of them writing the same
     /// texel is for the program to avoid, as it is in Vulkan.
