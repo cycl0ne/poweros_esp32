@@ -246,6 +246,8 @@ pub const datatypesclass = @import("datatypesclass.zig");
 /// picture.datatype's, which every still picture is one of.
 pub const pictureclass = @import("pictureclass.zig");
 pub const animationclass = @import("animationclass.zig");
+/// videocodec.datatype's, which every film is one of - the group `movi`.
+pub const movieclass = @import("movieclass.zig");
 /// model.datatype's, which every model in three dimensions is one of.
 pub const modelclass = @import("modelclass.zig");
 /// sound.datatype's attributes, methods and messages.

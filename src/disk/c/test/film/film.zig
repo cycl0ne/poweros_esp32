@@ -8,15 +8,20 @@
 //!
 //! What the film is is printed - its pictures' codec, size and rate, its
 //! length, its sound - then every frame is taken and given back: how many
-//! came out, how fast, and whether their times rose. Then its sound is
+//! came out, how fast, and whether their times rose. The first picture
+//! says what its numbers mean as well: its layout, matrix, curve,
+//! primaries, range and depth, and the light it was mastered for, which
+//! is what graphics and a video layer go by. Then its sound is
 //! decoded whole, timed (NOSOUND leaves it closed). TOGETHER decodes the
 //! sound on a process of its own while the pictures are decoded, as a
 //! player does.
 //!
 //! FRAME (and TO) writes that frame - counted from 0 in the order they
 //! are shown - into TO as its planes are: NV12 (the brightness rows, then
-//! the colour rows, each as wide as the picture) for the chip's, I420
-//! for Motion JPEG and the software's H.264 and VP8. `ffmpeg -i FILE -vf "select=eq(n\,FRAME)" -frames:v 1
+//! the colour rows, each as wide as the picture) for the chip's, I420 for
+//! Motion JPEG's and the software decoders'. A film of ten bits is
+//! written as the decoder hands it out, two bytes a sample, little endian
+//! - ffmpeg's `yuv420p10le`. `ffmpeg -i FILE -vf "select=eq(n\,FRAME)" -frames:v 1
 //! -pix_fmt nv12 -f rawvideo ref.nv12` makes ffmpeg's to compare.
 //!
 //! SEEK moves the film to that second at the end and says where it
@@ -364,6 +369,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
             break;
         }
         slowest = @max(slowest, now(tb) - asked);
+        if (frames == 0) sayColours(dl, &frame.picture);
         if (frame.time <= last) out_of_order += 1;
         last = frame.time;
         if (wanted) |number| {
@@ -463,7 +469,40 @@ fn soundLeft(dl: *DosBase, vcb: *VideoCodecBase, film: *vc.VideoStream, tb: *Tim
     return @intCast(total);
 }
 
-/// A frame written as its planes are, each row as wide as the picture.
+/// What the pictures say their numbers mean - said once, of the first.
+/// An ordinary film is BT.709, the ordinary curve, video's range and
+/// eight bits; a film of high dynamic range says PQ or HLG, usually in
+/// BT.2020's primaries and ten bits, and what it was mastered for.
+fn sayColours(dl: *DosBase, p: *const rtg.RtgYuv) void {
+    const matrix: [*:0]const u8 = switch (p.matrix) {
+        rtg.RTGYUV_BT601 => "BT.601",
+        rtg.RTGYUV_BT709 => "BT.709",
+        rtg.RTGYUV_BT2020 => "BT.2020",
+        else => "an unknown",
+    };
+    const transfer: [*:0]const u8 = switch (p.transfer) {
+        rtg.RTGYUV_SDR => "the ordinary curve",
+        rtg.RTGYUV_PQ => "PQ (ST 2084)",
+        rtg.RTGYUV_HLG => "HLG",
+        else => "an unknown curve",
+    };
+    const primaries: [*:0]const u8 = switch (p.primaries) {
+        rtg.RTGYUV_BT709 => "BT.709",
+        rtg.RTGYUV_BT2020 => "BT.2020",
+        rtg.RTGYUV_P3 => "P3",
+        else => "unknown",
+    };
+    const layout: [*:0]const u8 = if (p.layout == rtg.RTGYUV_NV12) "NV12" else "I420";
+    const range: [*:0]const u8 = if (p.range == rtg.RTGYUV_FULL) "the whole" else "video's";
+    _ = Printf(dl, "pictures %s, %s matrix, %s, %s primaries, %s range, %u bits", .{
+        layout, matrix, transfer, primaries, range, p.depth,
+    });
+    if (p.peak != 0) _ = Printf(dl, ", mastered for %u candelas", .{p.peak});
+    _ = Printf(dl, "\n", .{});
+}
+
+/// A frame written as its planes are, each row as wide as the picture -
+/// two bytes a sample where the picture is of ten bits.
 fn writeFrame(dl: *DosBase, to: [*:0]const u8, frame: *const vc.VideoFrame) void {
     const file = dl.Open(to, dos.MODE_NEWFILE) orelse {
         _ = Printf(dl, "%s: cannot be written\n", .{to});
@@ -471,8 +510,9 @@ fn writeFrame(dl: *DosBase, to: [*:0]const u8, frame: *const vc.VideoFrame) void
     };
     defer _ = dl.Close(file);
     const p = frame.picture;
-    const w: isize = @intCast(frame.width);
-    const half: isize = @intCast((frame.width + 1) / 2);
+    const unit: isize = if (p.depth > 8) 2 else 1;
+    const w: isize = @as(isize, @intCast(frame.width)) * unit;
+    const half: isize = @as(isize, @intCast((frame.width + 1) / 2)) * unit;
     const h = frame.height;
     for (0..h) |y| _ = dl.Write(file, p.y + y * p.y_pitch, w);
     const rows = (h + 1) / 2;

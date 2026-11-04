@@ -49,25 +49,48 @@ const _surface = @import("../surface/_surface.zig");
 /// instead: with the store op STORE each tile's depth is written into the
 /// image's memory as the tile is drawn, and with the load op LOAD each
 /// tile starts from what is there. Both want a format that holds a depth
-/// and a device whose `stored_depth` is true - the cores, not the V3D -
+/// and a device whose `stored_depth` is true - every device since 1.47 -
 /// and an image bound to memory something is behind, which
 /// CreateFramebuffer holds to; otherwise that is
-/// `error_feature_not_present`.
+/// `error_feature_not_present`. A depth the V3D stored may be one of the
+/// 65535ths away from the one the cores would have stored: the hardware
+/// keeps a deeper number and writes its top 16 bits, which is the same
+/// where the depth falls on a 65535th and one more where it does not.
 ///
 /// Since 1.38 the stencil keeps its own the same way, by its own two ops:
 /// with `stencil_store_op` STORE each tile's stencil, a byte a pixel, is
 /// written into its own plane of the image's rows, and with
 /// `stencil_load_op` LOAD each tile starts from what is there. That wants
 /// a format that holds a stencil - `s8_uint` or `d16_unorm_s8_uint` - and
-/// a device whose `stored_stencil` is true, the cores again. A format
+/// a device whose `stored_stencil` is true, every device again. A format
 /// that holds both keeps each pixel's depth and its stencil beside each
 /// other, so the four ops are taken on their own: a pass may store the
 /// stencil and leave the depth in the tiles, or the other way round. An
 /// op for a plane the format has not is `error_feature_not_present`.
 ///
-/// So two subpasses share a depth attachment only one right after the other
-/// and with the same colour attachments too, when the second goes on in the
-/// tiles of the first; otherwise that is `error_feature_not_present`.
+/// Keeping either plane of a format that holds **both** - `d16_unorm_s8_uint`
+/// - wants `stored_both` as well (since 1.47): the cores write a pixel's
+/// planes where they lie in its four bytes, while a device that stores the
+/// whole of a tile buffer, the V3D, writes one plane's pixels one after
+/// another and so keeps only a format of that plane alone. There such an
+/// op is `error_feature_not_present`, and a `d16_unorm` or an `s8_uint`
+/// attachment keeps what it holds.
+///
+/// Two subpasses share a depth attachment either way. One right after the
+/// other and with the same colour attachments too goes on in the tiles of
+/// the first, which costs nothing at all. Otherwise - another subpass in
+/// between, or other colour attachments, so that the tiles are gone - the
+/// pass keeps it for them (since 1.52): the part that drew it last writes
+/// it into the image's rows and the next one to name it reads it in, both
+/// whatever the attachment's own ops say, those being for the whole pass.
+/// So the depth of a pass over a scene is still there for a pass over it
+/// again, with the colour of something else drawn between them.
+///
+/// That wants what keeping it always wants: a device whose `stored_depth`
+/// is true for the depth and `stored_stencil` for the stencil - and
+/// `stored_both` where the format holds both - and an image with memory
+/// something is behind, which CreateFramebuffer holds to
+/// (`error_feature_not_present` for a transient one, which has none).
 ///
 /// Since 1.37 a subpass may read attachments as well as draw into them:
 /// up to 8 `input_attachments`, each read pixel by pixel at the
@@ -90,6 +113,22 @@ const _surface = @import("../surface/_surface.zig");
 /// played over, so it costs that much more: its fragment function is called for
 /// each, and `shader.Resources.output` says for which. A fixed fragment
 /// function has one colour, which every attachment gets.
+///
+/// Since 1.51 such a subpass may be drawn **together** instead, in one
+/// pass over the tiles: SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER in its
+/// `flags`, facet.library's own, and every pipeline of it has a fragment
+/// entry that writes exactly its colour attachments in the one call
+/// (`shader.fragmentOutputs`, `shader.Fragments.colorsOf`); one that does
+/// not is `error_invalid_shader_nv` (CreateGraphicsPipelines). The
+/// vertices are worked once, the triangles binned once and a quad's
+/// fragment function called once for all of them - a G-buffer's three or
+/// four planes for the price of one - and each attachment is still
+/// blended its own way, into a plane of each tile's own. The flag wants a
+/// device whose `several_outputs` is true: the cores, not the V3D, whose
+/// fragment programs are the fixed forms and each write the one colour;
+/// there it is `error_feature_not_present`, and a subpass without it is
+/// drawn as it always was. Any other bit in `flags` is
+/// `error_feature_not_present` too.
 ///
 /// Attachments a subpass does not name are left as they are. The
 /// dependencies are not looked at: a queue's commands are done one after
@@ -132,7 +171,11 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
     const attachments: []const facet.AttachmentDescription = if (info.attachments) |given| given[0..info.attachment_count] else &.{};
     var plan = _render.RenderPass{ .device = owner, .attachment_count = info.attachment_count, .subpass_count = info.subpass_count };
     var drawn: [_render.most_attachments]bool = @splat(false);
-    var depths: [_render.most_attachments]bool = @splat(false);
+    // For each depth attachment, the last part that drew into it, or null
+    // where no subpass has yet. A later subpass that draws into the same
+    // one, with another subpass's tiles in between, has that part write
+    // its depth into the image's rows and reads it in again (since 1.52).
+    var depths: [_render.most_attachments]?u32 = @splat(null);
     for (info.subpasses[0..info.subpass_count], 0..) |subpass, number| {
         if (subpass.pipeline_bind_point != .graphics) return .error_feature_not_present;
         // A resolve attachment is multisampling's, which there is none of.
@@ -162,6 +205,13 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
         }
         if (subpass.color_attachment_count == 0 or subpass.color_attachment_count > _render.most_colors) return .error_feature_not_present;
         const colors = subpass.color_attachments.?[0..subpass.color_attachment_count];
+        // facet.library's own flag: the subpass's colour attachments are
+        // drawn together, in one pass over the tiles, by a fragment
+        // function that writes all of them at once (since 1.51). Without
+        // it the subpass is a part for each of them, played over again.
+        const together = subpass.flags & facet.SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER != 0;
+        if (together and !owner.physical.features.several_outputs) return .error_feature_not_present;
+        if (subpass.flags & ~facet.SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER != 0) return .error_feature_not_present;
         if (number > 0 and sameTargets(info.subpasses[number - 1], subpass)) {
             plan.subpasses[number] = plan.subpasses[number - 1];
             plan.subpasses[number].joined = true;
@@ -186,7 +236,20 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                 stores_depth = depth.store_op == .store;
                 loads_stencil = depth.stencil_load_op == .load;
                 stores_stencil = depth.stencil_store_op == .store;
-                if (loads_depth or stores_depth) {
+                // A subpass that goes on in the tiles of the one before
+                // it took the `continue` above, so reaching here with an
+                // attachment another subpass has already drawn into
+                // means those tiles are gone: what it left has to be in
+                // the image's rows to be tested against. The part that
+                // drew it last writes it there, and this one reads it in
+                // - whatever the attachment's own ops say, which are for
+                // the whole pass. (Since 1.52.)
+                const shared = depths[reference.attachment];
+                if (shared != null) {
+                    loads_depth = loads_depth or tests_depth;
+                    loads_stencil = loads_stencil or tests_stencil;
+                }
+                if (loads_depth or stores_depth or (shared != null and tests_depth)) {
                     // A depth that outlives the pass is written into the
                     // image's rows and read back from them, which only a
                     // device that draws in the rasterizer's tiles can do,
@@ -196,17 +259,42 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                 }
                 // The stencil keeps its own, in its own plane of those
                 // rows, by its own two ops (1.38).
-                if (loads_stencil or stores_stencil) {
+                if (loads_stencil or stores_stencil or (shared != null and tests_stencil)) {
                     if (!owner.physical.features.stored_stencil) return .error_feature_not_present;
                     if (!tests_stencil) return .error_feature_not_present;
                 }
-                // Two subpasses share it only in the same tiles.
-                if (depths[reference.attachment]) return .error_feature_not_present;
-                depths[reference.attachment] = true;
+                // A format of both planes keeps either only where the
+                // device writes a pixel's planes where they lie in it
+                // (`stored_both`, since 1.47): one that stores a tile
+                // buffer whole writes a plane's own pixels one after
+                // another, which those rows are not.
+                if ((loads_depth or stores_depth or loads_stencil or stores_stencil or shared != null) and
+                    tests_depth and tests_stencil and !owner.physical.features.stored_both) return .error_feature_not_present;
+                // The part that drew it last keeps what it left, so that
+                // this subpass can read it in.
+                if (shared) |earlier| {
+                    if (tests_depth) plan.parts[earlier].stores_depth = true;
+                    if (tests_stencil) plan.parts[earlier].stores_stencil = true;
+                }
                 depth_index = reference.attachment;
             }
         }
-        plan.subpasses[number] = .{ .first_part = plan.part_count, .part_count = subpass.color_attachment_count, .joined = false };
+        plan.subpasses[number] = .{
+            .first_part = plan.part_count,
+            .part_count = if (together) 1 else subpass.color_attachment_count,
+            .joined = false,
+        };
+        if (plan.part_count + plan.subpasses[number].part_count > _render.most_parts) return .error_feature_not_present;
+        var whole = _render.Part{
+            .color_count = 0,
+            .depth = depth_index,
+            .tests_depth = tests_depth,
+            .tests_stencil = tests_stencil,
+            .loads_depth = loads_depth,
+            .stores_depth = stores_depth,
+            .loads_stencil = loads_stencil,
+            .stores_stencil = stores_stencil,
+        };
         for (colors, 0..) |reference, k| {
             const color_index = reference.attachment;
             if (color_index >= attachments.len) return .error_initialization_failed;
@@ -215,22 +303,34 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
             const color = attachments[color_index];
             if (!_surface.drawable(color.format)) return .error_format_not_supported;
             if (color.samples != 1) return .error_feature_not_present;
-            if (plan.part_count == _render.most_parts) return .error_feature_not_present;
-            plan.parts[plan.part_count] = .{
-                .color = color_index,
-                .depth = depth_index,
-                .tests_depth = tests_depth,
-                .tests_stencil = tests_stencil,
-                .color_format = color.format,
-                .color_load = if (color.load_op == .clear and !drawn[color_index]) .clear else .keep,
-                .loads_depth = loads_depth,
-                .stores_depth = stores_depth,
-                .loads_stencil = loads_stencil,
-                .stores_stencil = stores_stencil,
-            };
+            const load: _render.ColorLoad = if (color.load_op == .clear and !drawn[color_index]) .clear else .keep;
+            if (together) {
+                // The one part draws them all: a plane of each tile for
+                // each of them.
+                whole.colors[whole.color_count] = color_index;
+                whole.color_formats[whole.color_count] = color.format;
+                whole.color_loads[whole.color_count] = load;
+                whole.color_count += 1;
+            } else {
+                var part = whole;
+                part.colors[0] = color_index;
+                part.color_formats[0] = color.format;
+                part.color_loads[0] = load;
+                part.color_count = 1;
+                plan.parts[plan.part_count] = part;
+                plan.part_count += 1;
+            }
+        }
+        if (together) {
+            plan.parts[plan.part_count] = whole;
             plan.part_count += 1;
         }
         for (colors) |reference| drawn[reference.attachment] = true;
+        // The last part of this subpass is the one a later subpass that
+        // shares the depth attachment has keep it: the parts of a subpass
+        // drawn once for each colour attachment all leave the same depth,
+        // so the last of them is enough. (Since 1.52.)
+        if (depth_index) |index| depths[index] = plan.part_count - 1;
     }
     for (plan.parts[0..plan.part_count]) |part| if (part.depth) |depth| if (drawn[depth]) return .error_initialization_failed;
     const made = _objects.create(base.sys_base, _render.RenderPass) orelse return .error_out_of_host_memory;
@@ -239,9 +339,11 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
     return .success;
 }
 
-/// Whether a subpass draws into just what the one before it does.
+/// Whether a subpass draws into just what the one before it does, the
+/// same way round.
 fn sameTargets(before: facet.SubpassDescription, subpass: facet.SubpassDescription) bool {
     if (before.color_attachment_count != subpass.color_attachment_count) return false;
+    if (before.flags != subpass.flags) return false;
     for (before.color_attachments.?[0..before.color_attachment_count], subpass.color_attachments.?[0..subpass.color_attachment_count]) |a, b| {
         if (a.attachment != b.attachment) return false;
     }

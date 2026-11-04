@@ -24,7 +24,9 @@ const _command = @import("_command.zig");
 ///
 /// BEHAVIOR:
 /// The draws after it with a pipeline whose blend constants are dynamic mix
-/// by these.
+/// by these, every colour attachment of the subpass by the one set, as in
+/// Vulkan. It also forgets what CmdSetBlendConstantsAt set for any
+/// attachment of its own (since 1.51).
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -42,7 +44,7 @@ const _command = @import("_command.zig");
 /// None known.
 ///
 /// SEE ALSO:
-/// `CreateGraphicsPipelines`
+/// `CmdSetBlendConstantsAt`, `CreateGraphicsPipelines`
 ///
 /// EXAMPLES:
 /// ```zig

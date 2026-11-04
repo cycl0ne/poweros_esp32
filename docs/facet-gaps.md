@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.43**, so that a program need not find out by failing. It covers the API.
+1.58**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -38,7 +38,7 @@ What a device will and will not do is answered by
 `GetPhysicalDeviceFeatures` (since 1.24), which is Vulkan's call with a
 structure of facet's own: a field wherever a create call can refuse
 something, and no field for what the library has no call for at all.
-Thirteen of its fields differ between the cores and the V3D, which is the
+Sixteen of its fields differ between the cores and the V3D, which is the
 reason a program that wants the GPU should ask rather than take the first
 device listed.
 
@@ -49,13 +49,17 @@ documentation of the call that enforces them.
 ## Samplers, and what a sampler still cannot ask for
 
 Since 1.28 there are samplers: `CreateSampler`, `DestroySampler`, the
-`sampler` and `combined_image_sampler` descriptors, and two fixed forms
+`sampler` and `combined_image_sampler` descriptors, and the fixed forms
 that read the sampler bound beside the texture rather than what the program
 was compiled with - `shader.FixedKind.texture_sampled` and
-`texture_shadow`. Through one a sample has what a fixed form's has not: the
-two levels round a point mixed, a bias on the level and a clamp, mirrored
-and bordered edges, up to `max_sampler_anisotropy` samples along the longer
-axis, and a comparison with a reference in place of a colour.
+`texture_shadow`, and since 1.49 `texture_array_sampled`,
+`texture_cube_sampled` and `texture_3d_sampled`. Through one a sample has
+what a fixed form's has not: the two levels round a point mixed, a bias on
+the level and a clamp, mirrored and bordered edges, up to
+`max_sampler_anisotropy` samples along the longer axis, and a comparison
+with a reference in place of a colour. All five of Vulkan's address modes
+are taken, and a sampler the set layout holds of its own
+(`immutable_samplers`).
 
 A fixed form's own sampling is still a choice made at compile time
 (`texture.Sampling`: the format, `nearest` or `bilinear`, `wrap` or
@@ -68,17 +72,23 @@ time. What is left out:
   sampler is refused there and drawn on the cores
   (`PhysicalDeviceFeatures.samplers`), as a dropping form is. On the V3D
   the TMU is still set from the form's `sampling`.
-- The fixed forms that sample through a sampler are 2D. A texture of
-  layers, a cube map and a 3D texture have forms of their own, which sample
-  as they were compiled to; a program's own fragment function can sample
-  any of them through a sampler (`texture.sampleBy`, `sampleVolumeBy`).
-- No `mirror_clamp_to_edge`, and no border colour but transparent black,
-  opaque black and opaque white: Vulkan's int and float border colours are
-  the same here, a texel being read as 0 to 1 whatever its format.
+- **A cube read through a sampler reads inside one face.** The sample's u
+  and v and their steps are the face's, so the sampler's edges are that
+  face's edges: a bilinear sample on a seam mixes the edge's texels rather
+  than reading over into the next face, which `texture_cube` does. Away
+  from the seams the two are the same.
+- An array of cubes reads a sampler since 1.53
+  (`shader.FixedKind.texture_cube_array_sampled`), at the four
+  coordinates `texture_cube_array` takes: the direction, and which cube,
+  the nearest there is. Inside one face of that cube, as a single cube's
+  sampled form is, so its seams read the same way.
+- There is no border colour but transparent black, opaque black and opaque
+  white, which are all of Vulkan 1.0's six: an int border and a float
+  border are the same here, a texel being read as 0 to 1 whatever its
+  format. A border of the program's own choosing is an extension
+  (VK_EXT_custom_border_color) and is not here.
 - `SamplerCreateInfo.unnormalized_coordinates` is refused: coordinates are
   0 to 1 across the texture.
-- `DescriptorSetLayoutBinding.immutable_samplers` is refused rather than
-  passed over, so that no program is left thinking its write took.
 
 The cores and the V3D's texture units still choose a level and its sample
 point differently, which is why `C:test/FacetCube CHECK V3D` allows 5 % of
@@ -96,11 +106,14 @@ E-clock as the command is played, in microseconds, so
 counted is added where the work is done, so a frame's cost no longer
 reaches the log alone. What is left out:
 
-- **Only the cores count the work.** The V3D's occlusion counter is not
-  read and what its QPUs were given is not counted, so a pool of either
-  kind is refused on it (`PhysicalDeviceFeatures.occlusion_queries`,
-  `pipeline_statistics_queries`). Timestamps are kept on every device,
-  because the clock is the library's and not a driver's.
+- **Only the cores count the stages.** The V3D's occlusion counter is read
+  since 1.47 - a draw points it at a word of a group of sixteen on a
+  boundary of 1024 bytes, as the hardware wants them, and what it counted
+  is added to the query as the frame is drawn - so an occlusion pool is
+  taken on every device (`PhysicalDeviceFeatures.occlusion_queries`). What
+  the QPUs were given is still counted by nothing, so a statistics pool is
+  refused there (`pipeline_statistics_queries`). Timestamps are kept on
+  every device, because the clock is the library's and not a driver's.
 - **Neither geometry statistic counts anything.** There is no geometry
   shader, so `QUERY_PIPELINE_STATISTIC_GEOMETRY_SHADER_INVOCATIONS` and
   `..._GEOMETRY_SHADER_PRIMITIVES` read 0 - which is what Vulkan has a
@@ -130,29 +143,47 @@ from what is there. So depth can be read back - `CmdCopyImageToBuffer`,
 `CmdClearDepthStencilImage`, and a second pass can test against the first
 pass's depth. What is left out:
 
-- **Only the cores keep it** (`PhysicalDeviceFeatures.stored_depth`). The
-  V3D draws in tiles of its own and nothing stores their depth to memory
-  yet, so a pass that asks for either op is refused there.
+- **Every device keeps it since 1.47** (`PhysicalDeviceFeatures.stored_depth`):
+  the V3D stores the tiles' depth to the image's rows and loads it back as
+  it does the render target. A depth it stored may be one of the 65535ths
+  away from the one the cores would have stored - the hardware keeps a
+  deeper number and writes its top 16 bits, which is the same where the
+  depth falls on a 65535th and one more where it does not.
 - **The stencil keeps its own since 1.38** (`stored_stencil`), by its own
   two ops: a byte a pixel, in its own plane of the same rows. `s8_uint`
   holds it at each pixel's only byte and `d16_unorm_s8_uint` after that
   pixel's depth, and the four ops are taken on their own - a pass may keep
   the stencil and leave the depth in the tiles. An op for a plane the
-  format has not is refused.
-- **A depth image is a texture since 1.39** (`sampled_depth`): `d16_unorm`
-  with `SAMPLED` is sampled out of the very rows the pass stored it into,
-  through a sampler, and a shadow sample compares it at all 16 bits. What
-  is left out: it is sampled by a sampler alone - the fixed forms' fast
-  path is built for blocks, so a form not compiled for `texture.Format.d16`
-  paints `shader.missing` - it has one level, no layers and no mipmaps,
-  and a sample of the colour rather than a comparison reads the depth as a
-  grey of its top 8 bits. A format with a stencil is not sampled at all,
-  there being no stencil texel.
+  format has not is refused. Keeping either plane of a format that holds
+  **both** wants `stored_both` as well (1.47): the cores write a pixel's
+  planes where they lie in its four bytes, while the V3D writes one
+  plane's pixels one after another and so keeps only `d16_unorm` or
+  `s8_uint`.
+- **A depth image is a texture since 1.39** (`sampled_depth`): a depth
+  attachment with `SAMPLED` is sampled out of the very rows the pass
+  stored it into, through a sampler, and a shadow sample compares it at
+  all 16 bits. Since 1.58 it is any of the three depth formats, and it may
+  have **layers**: a view takes the plane its aspect names - the depth,
+  read at all 16 bits by a sampler that compares and as a grey of its top
+  8 bits by one that does not, or the stencil, read as (red, 0, 0, 1) the
+  way one byte of red is - of the layers it names, and a pass draws into
+  the layer its framebuffer's view begins at. So the layers of one image
+  are the shadow maps of several lights, and the rows of a format holding
+  both planes are two textures over the same bytes, four apart
+  (`texture.Texture.linearBy`). What is left out: it has one level and no
+  mipmaps, and is never of type `3d` - a pass draws into rows, and a level
+  of its own or a slice is nothing it draws into - and both planes at once
+  are no view, there being no texel of the two together.
 - **A transient depth image keeps nothing**, having no memory: a pass that
   stores into one is refused its framebuffer. That is still the cheap way,
   and what every pass that does not ask for this goes on doing.
-- Two subpasses still share a depth attachment only one right after the
-  other, in the same tiles.
+- Two subpasses share one since 1.52 whether they are next to each other
+  or not. Next to each other and with the same colour attachments, the
+  second goes on in the first's tiles and it costs nothing; otherwise the
+  part that drew it last writes it into the image's rows and the next one
+  to name it reads it in, whatever the attachment's own ops say. So that
+  wants `stored_depth` (and `stored_stencil`, `stored_both`) and an image
+  with memory behind it: a transient one is still refused the framebuffer.
 
 ## Images written through, and what they still are not
 
@@ -165,19 +196,45 @@ is left out:
 
 - **Only the cores write one** (`PhysicalDeviceFeatures.storage_images`).
   The V3D's TMU keeps a texture in a layout of its own, which is not the one
-  the library writes, so a set layout with the kind is refused there.
+  the library writes, so a set layout with the kind is refused there. Like
+  an input attachment, this one waits on a shader compiler for the QPUs
+  and not on a packet: a storage image is written by a function of the
+  program's, and the V3D runs none of those.
 - **Nothing orders two writes.** A frame's work is shared between the
   cores, and groups run in no order, so two functions writing the same texel
   is for the program to avoid - as it is in Vulkan, there being no barrier
   and no atomic here either.
-- **The formats are a texture's**: `rgba8888` and `rgb565`. There is no
-  format conversion on a write and no `r32` of any kind, and the compressed
-  and float formats, being unpacked to 8888 as they are copied in, are not
-  written through at all.
-- **The view's first level and layer** are what a function writes: there is
-  no way to name another level from inside the function.
-- A `storage_image` is still not an attachment: an image cannot be drawn
-  into and written through in the same pass.
+- **The formats are a texture's**: `rgba8888`, `rgb565`, the two smaller
+  ones of 1.48 - an 8888 texel kept in its word, and one byte of red, which
+  takes the colour's red alone - and since 1.57 the float ones, kept as
+  their floats where the device keeps them (`kept_floats`) and written one
+  texel at a time by `texture.Texture.setParts` from four floats, with
+  `partsAt` reading them back. `r32_sfloat` is one of them, one float a
+  texel, sampled as (red, 0, 0, 1). **A compressed image asked for as a
+  storage image is still unpacked to 8888**: nothing writes one texel of a
+  BC block, which is the format and not the library, and such an image
+  wants SAMPLED beside it. There is no `r32_uint` or `r32_sint` image: a
+  texture reads a colour or floats, not whole numbers.
+- A function names the level and the layer it writes since 1.55
+  (`texture.Texture.setColor` and `colorAt` take both, level 0 of layer 0
+  being the view's first of each), and a level, a layer or a place the
+  view has not got writes nothing and reads transparent black
+  (`texture.Texture.holds`). What the view has is `levels`,
+  `layer_count`, `width` and `height`. `putLayer` and `peekLayer` are the
+  raw pair in the texture's own format and hold to nothing: they are what
+  the library's own copies and the samplers use.
+- A colour attachment may be written through as a storage image since 1.56
+  (CreateImage: COLOR_ATTACHMENT, or INPUT_ATTACHMENT, with STORAGE and
+  without SAMPLED, of B8G8R8A8 or R5G6B5, one level and one layer). The
+  image stays in rows and those rows are the texture a function writes.
+  **The two are not ordered against each other**: a write reaches the rows
+  at once, while what a subpass draws reaches them when it stores, so
+  writing such an image through while the pass that draws into it is open
+  leaves the store to win. Seeding the rows before the pass, or writing
+  over them after it, is what this is for. R8G8B8A8 is refused: a texture
+  of 8888 is 0xAARRGGBB, as B8G8R8A8's rows are, and nothing reads a word
+  with red in its low byte. Sampled and drawn into at once is still
+  refused, a sample wanting the blocked layout.
 
 ## Texel buffers, and the formats they read
 
@@ -187,12 +244,29 @@ Since 1.32 a buffer's bytes may be read as texels of a format:
 `shader.Resources.texels` gives the function a `shader.Texels` whose `at`
 reads a texel as four floats and `colorAt` as 0xAARRGGBB, whatever the
 format. A storage one is written through as well. Every device has them.
+
+Since 1.54 the formats are a regular grid: one channel, two or four of 8,
+16 or 32 bits - a `_unorm` read as 0 to 1, a `_uint` or a `_sint` as the
+whole number itself, and `r16_sfloat`, `r16g16_sfloat` and
+`r16g16b16a16_sfloat` as half-floats - beside the seven that were there
+before (8888 either way round, `r5g6b5_unorm_pack16`, and `r32_sfloat` to
+`r32g32b32a32_sfloat`). `shader.Texels.intAt` reads a texel as four whole
+numbers and `setInt` writes it from them, which the 32-bit integer formats
+want: `at`'s float carries 24 bits exactly, so a larger whole number
+copied through it comes out changed.
+
 What is left out:
 
-- **Seven formats**: `r8g8b8a8_unorm`, `b8g8r8a8_unorm`,
-  `r5g6b5_unorm_pack16`, and `r32_sfloat` to `r32g32b32a32_sfloat`. No
-  integer texel formats, nothing of 16 bits a channel, and none of the
-  compressed ones.
+- **No three-channel format but `r5g6b5_unorm_pack16` and
+  `r32g32b32_sfloat`**: nothing of `r8g8b8` or `r16g16b16`, which almost
+  no hardware carries either.
+- **No compressed format, no `_snorm`, no `_srgb` and no packed one but
+  565.** A `_snorm` channel would be the `_sint` number divided by its
+  largest, and is not here; nor are `a2r10g10b10` and the like.
+- **A `_uint` or a `_sint` texel read by `colorAt` saturates**: that call
+  holds its parts to 0 and 1 before it makes bytes of them, so any whole
+  number above 1 is white. `at` and `intAt` are what such a format is read
+  by.
 - **A view holds no bytes of its own**: it reads the buffer where it lies,
   so a destroyed view leaves a set pointing at bytes that are no longer a
   view's, as it does in Vulkan.
@@ -208,15 +282,31 @@ each colour attachment of the subpass, taken on its own: one attachment can
 be blended while the next is replaced, each with its own factors, operation
 and write mask. Every device has it
 (`PhysicalDeviceFeatures.independent_blend`), an attachment being drawn as
-a pass of its own either way. What is left out:
+a pass of its own either way.
 
-- **The blend constants are the pipeline's**, one set shared by all of its
-  attachments, as they are in Vulkan; `CmdSetBlendConstants` sets that one
-  set.
-- **A fragment function still runs once for each attachment**, with
-  `shader.Resources.output` saying which: it writes one colour, never
-  several at once, so a subpass of several has its commands played over
-  again for each rather than drawn once into all of them.
+Since 1.51 a subpass's colour attachments may be drawn **together**
+instead: SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER in `SubpassDescription.flags`
+(facet.library's own), and a fragment entry made by
+`shader.fragmentOutputs` writes all of them in the one call
+(`shader.Fragments.colorsOf`). The vertices are then worked once, the
+triangles binned once and a quad's fragment function called once for every
+attachment, each still blended its own way into a plane of each tile's
+own - a G-buffer's three or four planes for the price of one pass. Only the
+cores do it (`PhysicalDeviceFeatures.several_outputs`), and a pipeline of
+such a subpass has to write exactly its attachments
+(`error_invalid_shader_nv`). Without the flag a subpass of several is drawn
+once for each, as it always was, `shader.Resources.output` saying which.
+
+Blend constants are the pipeline's one set shared by all its attachments,
+as in Vulkan, or one set each where
+`PipelineColorBlendStateCreateInfo.attachment_constants` gives them -
+facet's own since 1.51, because a subpass drawn together has no replay left
+to set them between. `CmdSetBlendConstants` sets the one set over all of
+them and `CmdSetBlendConstantsAt` one attachment's own. What is left out:
+
+- **The V3D draws them one at a time**: its fragment programs are the
+  fixed forms and each writes the one colour, so there a subpass of
+  several costs its commands played over again for each.
 - Logic operations are still refused, for every attachment
   (`logic_op_enable`), and there is no dual-source blending: the `SRC1`
   factors do not exist.
@@ -239,7 +329,10 @@ exist now. What is left out:
 
 - **The cores alone read them** (`PhysicalDeviceFeatures.input_attachments`):
   on the V3D no fragment program of the library's is run at all, only the
-  fixed forms, and none of those reads an attachment.
+  fixed forms, and none of those reads an attachment. This one waits on a
+  shader compiler for the QPUs, not on a packet: an input attachment is
+  read by a fragment function (`shader.Resources.input`), which is the
+  program's own code.
 - **An attachment is read out of the image's memory, not out of the
   tile.** So it is read where the image stands - what the subpass before
   it drew and stored - and a subpass cannot read the attachment it is
@@ -247,10 +340,13 @@ exist now. What is left out:
   `error_initialization_failed`. Vulkan allows exactly that for the
   fragment's own pixel, which is what `VK_EXT_shader_framebuffer_fetch`
   and the subpass self-dependency are for.
-- **A depth attachment is not readable**, because it lives in the
-  rasterizer's tiles and has no rows: an input attachment is of
-  b8g8r8a8_unorm, r8g8b8a8_unorm or r5g6b5_unorm_pack16. A shadow pass
-  that wants the depth still copies it out (`CmdCopyImageToBuffer`).
+- **A depth attachment is not readable**: an input attachment is of
+  b8g8r8a8_unorm, r8g8b8a8_unorm or r5g6b5_unorm_pack16, the formats whose
+  pixels `shader.Attachment` reads. A depth that a pass stores does have
+  rows - and since 1.58 planes and layers with them (`_image.depthPlane`) -
+  so what is left is the attachment's own read, not the memory; until then
+  a pass that wants an earlier pass's depth samples it where it lies
+  (`sampled_depth`, 1.39) or copies it out (`CmdCopyImageToBuffer`).
 - **Nothing is checked against the layout**: `AttachmentReference.layout`
   is taken as it is, as every other layout is, and a program that reads
   an attachment an earlier subpass did not draw gets whatever the load op
@@ -292,7 +388,11 @@ instead of a set for each. Every device has them
 
 No `CreateEvent`, `DestroyEvent`, `GetEventStatus`, `SetEvent`,
 `ResetEvent`, `CmdSetEvent`, `CmdResetEvent` or `CmdWaitEvents`. Fences and
-semaphores are the whole of synchronisation.
+semaphores are the whole of synchronisation: with one queue family of one
+queue, played in order by one task, a `CmdWaitEvents` is either already
+satisfied or a deadlock, and the host pair would say no more than a fence
+says. A device with more than one queue is what gives them something to
+do.
 
 ### Pipeline cache
 
@@ -319,12 +419,14 @@ cutting it away, each pixel's depth held inside the viewport's
 (`DynamicState.depth_bounds`) draws a pixel only where the depth already
 in the attachment lies between the two. What is left out:
 
-- **Only the cores have them.** The V3D's control lists clip in their own
-  way and it has no depth bounds test, so a pipeline that asks for either
-  is refused there.
-- **A draw with either is walked a pixel at a time**, the way a draw with
-  a stencil test is, so it costs more than the quads the fast paths walk.
-  Nothing a draw without them costs changes.
+- **Every device has them since 1.47.** The V3D's configuration carries
+  the clamp - which turns its clip to the z planes off with it, as Vulkan
+  has a depth clamp - and the bounds are a packet of its own.
+- **On the cores a draw with either is walked a pixel at a time**, the way
+  a draw with a stencil test is, so it costs more than the quads the fast
+  paths walk. Nothing a draw without them costs changes, and on the V3D
+  neither costs anything: they are bits of the state it was going to
+  write.
 - A clamped draw is still cut just in front of the eye, where the
   projection stops holding, so geometry that reaches behind the eye is
   cut there rather than drawn from behind - which is what every
@@ -341,9 +443,10 @@ to commands. The constant is in the smallest differences the depth
 attachment holds - 65535ths of the range for `d16_unorm` - and the slope
 is of the triangle's steepest, in depth over a pixel. What is left out:
 
-- **Only the cores move it** (`PhysicalDeviceFeatures.depth_bias`). The
-  V3D has a depth offset of its own, a packet this driver does not write
-  yet, so a pipeline that asks for a bias is refused there.
+- **Every device moves it since 1.47** (`PhysicalDeviceFeatures.depth_bias`):
+  the V3D's own depth offset packet takes Vulkan's three numbers unscaled
+  - the units in the depth buffer's smallest differences, the factor of
+  the triangle's slope, the clamp as its limit.
 - **Only triangles are moved**, as in Vulkan: points and lines, and
   triangles drawn as their edges or corners, are drawn where they are.
 - The bias is worked out once a triangle, from the depth plane its set-up
@@ -351,7 +454,9 @@ is of the triangle's steepest, in depth over a pixel. What is left out:
   pixel - but it is the plane that moves, not each pixel, which is what
   Vulkan's wording allows.
 - The depth clamp and the depth bounds test are there since 1.40, with
-  CmdSetDepthBounds and `DynamicState.depth_bounds`, on the cores alone:
+  CmdSetDepthBounds and `DynamicState.depth_bounds`, and on every device
+  since 1.47 - the V3D's configuration has the clamp, which turns the clip
+  to the z planes off with it, and its own packet the bounds:
   see their own section above.
 
 ## Commands that are absent
@@ -391,8 +496,7 @@ These can be asked for and are answered with `error_feature_not_present`.
 | Multisampling entirely: `rasterization_samples` above 1, sample shading, alpha-to-coverage, alpha-to-one | `pipeline/creategraphicspipelines.zig` |
 | An attachment of more than one sample | `render/createrenderpass.zig` |
 | Logic operations: `LogicOp` is fully enumerated, `logic_op_enable` is not taken | `pipeline/creategraphicspipelines.zig` |
-| Depth clamp or the depth bounds test on a device that has neither: the V3D (`depth_clamp`, `depth_bounds`) | `pipeline/creategraphicspipelines.zig` |
-| A depth bias, on a device that moves no depth: the V3D (`depth_bias`) | `pipeline/creategraphicspipelines.zig` |
+| Depth clamp, the depth bounds test or a depth bias on a device that has none of them: every device has all three since 1.47 (`depth_clamp`, `depth_bounds`, `depth_bias`) | `pipeline/creategraphicspipelines.zig` |
 | More than one viewport or one scissor | `pipeline/creategraphicspipelines.zig` |
 | Colour attachments that differ, on a device that blends them all alike: no device of this library is one (`independent_blend`) | `pipeline/creategraphicspipelines.zig` |
 | Resolve attachments in a subpass | `render/createrenderpass.zig` |
@@ -407,12 +511,12 @@ These can be asked for and are answered with `error_feature_not_present`.
 | A `storage_image` layout on the V3D: its TMU keeps a texture its own way | `descriptor/createdescriptorsetlayout.zig` |
 | A fixed fragment form that drops pixels, on the V3D: the QPUs have no program that discards | `driver/v3d/driver.zig` |
 | A fixed fragment form that samples through a sampler, on the V3D: nor one that reads a sampler | `driver/v3d/driver.zig` |
-| An occlusion or a statistics query pool, on the V3D: it counts neither the samples nor the stages | `query/createquerypool.zig` |
+| A statistics query pool on the V3D: what its QPUs were given is counted by nothing. An occlusion pool is taken on every device since 1.47 | `query/createquerypool.zig` |
 | A bit that is no statistic at all. Both of a geometry shader's may be asked for since 1.43 and read 0, there being no such stage to count | `query/createquerypool.zig` |
 | A timestamp pool without timer.device: the clock a timestamp is read from | `query/createquerypool.zig` |
-| A depth or stencil attachment that loads or stores, on the V3D | `render/createrenderpass.zig` |
+| A depth or stencil attachment of `d16_unorm_s8_uint` that loads or stores, on a device that stores a tile buffer whole: the V3D (`stored_both`, 1.47). Either plane of a format that holds it alone is kept on every device | `render/createrenderpass.zig` |
 | A depth attachment kept, whose image has no memory behind it | `render/createframebuffer.zig` |
-| A sampled depth image on a device that samples none: the V3D (`sampled_depth`); one with a stencil in it, a transient one, or one written through as a storage image | `image/createimage.zig` |
+| A sampled depth image on a device that samples none: the V3D (`sampled_depth`); a transient one, or one written through as a storage image; one of levels of its own, or of type `3d`. Any of the three depth formats is taken since 1.58, and a view of it names one plane - both at once is refused there (`image/createimageview.zig`) | `image/createimage.zig` |
 
 One consequence does not appear in that table:
 
@@ -451,10 +555,13 @@ Three more things cannot be asked for at all, having nothing to ask with:
 | 3D depth, and array layers | 256 |
 | Attachments, subpasses, colour attachments | 8, 4, 4 |
 | Patch control points | 32 |
+| Floats a patch carries to its evaluation function | 16 |
 | Swapchain images | 1 to 4 |
 | Samples along a sampler's longer axis | 16 |
 | A query's counter | 32 bits, held there |
 | A timestamp's unit | 1000 ns, 64 bits of it |
+| A line's width | `line_width` pixels, and `CmdSetLineWidth` |
+| A point's size | one pixel, whatever the line width says: Vulkan's `PointSize` is written by no shader here |
 
 Of textures:
 
@@ -465,15 +572,80 @@ Of textures:
   height. Past the width nothing is read. `wrap` round a side that is not
   a power of two costs a division a sample instead of a mask; `clamp`
   costs the same whatever the size.
-- A texel is kept as `rgba8888` or `rgb565`, and nothing else. An 8888
-  texel takes 64 bits, each channel in 16 of them, so that the four texels
-  of a bilinear sample come out of memory ready to mix.
-- BC1, BC2, BC3 and the float formats are unpacked to 8 bits a channel as
-  they are copied in: no memory is saved, what is above 1 or below 0 in a
-  float image is lost, and such an image cannot be copied out of, nor
-  another image into it.
-- A 3D texture has one level and a depth that is a power of two. There are
-  no cube arrays and no ETC.
+- A texel is kept as `rgba8888`, `rgb565`, the blocks of BC1, BC2 or BC3
+  (1.44), the floats of the four float formats (1.45), or - since 1.48 -
+  one of the two smaller ones. An 8888 texel takes 64 bits by default,
+  each channel in 16 of them, so that the four texels of a bilinear
+  sample come out of memory ready to mix.
+- **A texel smaller than its colour** since 1.48
+  (`PhysicalDeviceFeatures.small_texels`, every device): an image of
+  `r8_unorm` keeps one byte of red a texel and reads as (red, 0, 0, 1),
+  an eighth of what the same texels kept as 8888 take; and
+  IMAGE_CREATE_PACKED_TEXELS on a sampled image of 8888 keeps each texel
+  in the 32 bits of its word rather than spread over 64, half the memory
+  for the spread a sample then does itself. Both are written through as
+  storage images and copied both ways. A fixed form reads either at full
+  speed where it was compiled for it (`texture.Format.r8`, `argb8888`);
+  one compiled for `rgba8888` draws it through the run-time sampler. On
+  the V3D an 8888 texel was never spread, so the flag costs nothing and
+  changes nothing there, and R8 is a texture type of the TMU's own. There
+  is no `r8g8`, no 16-bit channel and no signed or integer one.
+- A compressed image is kept in its blocks on a device that samples them
+  (`PhysicalDeviceFeatures.kept_compressed`, the cores since 1.44): an
+  eighth to a quarter of the memory - 16 x 16 of BC1 is 128 bytes against
+  1024 - and the block a sample reads is decoded as it is read, once for
+  the four texels where they share one. The blocks are copied in and out
+  as they lie, their offsets on a multiple of 4. The V3D has not got it:
+  its TMU is fed unpacked texels, so there such an image is unpacked into
+  8888 as before, cannot be copied out of, and takes the memory.
+- A float image is kept as its floats on a device that samples them
+  (`PhysicalDeviceFeatures.kept_floats`, the cores since 1.45): the two
+  packed formats take 4 bytes a texel against the 8 an unpacked 8888 texel
+  is kept spread in, and what was copied in comes out again. A sample
+  still holds each channel inside 0 to 1 and rounds it to 8 bits - the
+  tiles and the formats the library draws into have no more - so what is
+  above 1 is lost on the way into the tiles rather than in memory. Where
+  the device unpacks instead (the V3D), it is as it was: 8888 in memory,
+  no copying out.
+- A fixed form says the format it samples (`texture.Sampling.format`), and
+  that is the one its fast path reads. Since 1.44 a texture of another
+  format is drawn all the same, through the run-time sampler, a pixel at a
+  time: correct, and slower than the form that matches - so a program that
+  wants the fast path asks the device what it keeps and compiles the form
+  for it. Before 1.44 such a draw was painted `shader.missing`.
+- A 3D texture has levels of its own and any depth since 1.46: a level is
+  half as deep as the one before it, never below one slice, and each slice
+  carries the whole of its own pyramid - so a level past the first leaves
+  the slices past its depth unread, about a sixth of the memory wasted at
+  the deepest level. A sampler reads such a texture since 1.49
+  (`texture_3d_sampled`), but its 3D path takes the slice from the whole
+  depth at every level, so a 3D texture of levels read through a sampler
+  samples the slices of level 0.
+- An array of cubes since 1.46: a view of type `cube_array` over a
+  multiple of six layers, read by a form of
+  `shader.FixedKind.texture_cube_array` at four coordinates - the
+  direction and which cube, the nearest there is
+  (`PhysicalDeviceFeatures.cube_arrays`, the cores), and since 1.53 by
+  `texture_cube_array_sampled`, the same four through the sampler bound
+  beside it. The V3D has no QPU
+  program that reads a fourth coordinate, so it refuses the view and the
+  pipeline, and such a draw goes to the cores.
+- ETC2 and EAC since 1.46, unpacked into 8888 as they are copied in on
+  every device (`etc2_textures`), every mode of the format decoded:
+  individual, differential, T, H, planar, punchthrough alpha, and EAC's
+  alpha and 11-bit channels. No sampler reads such a block where it lies,
+  so the image takes the memory of its texels and cannot be copied out of.
+  There is no ETC1 and no ASTC.
+- The compressed formats are the four BC ones: no BC4 to BC7, no BC1 with
+  1-bit alpha told apart from the opaque one past the punch-through rule,
+  and nothing compresses - a blit or a copy into a compressed image from
+  an uncompressed one takes nothing.
+- The float formats are the four Vulkan ones the library takes:
+  `r16g16b16a16_sfloat`, `r32g32b32a32_sfloat`, `b10g11r11_ufloat_pack32`
+  and `e5b9g9r9_ufloat_pack32`. There is no `r16_sfloat` or `r16g16`, no
+  signed or unsigned integer format of any width, and nothing makes floats:
+  a blit or a clear of a float image, and a copy into one from an image of
+  another format, take nothing.
 
 ## Compute, as it stands
 
@@ -511,14 +683,36 @@ A group runs on a worker's stack, so keep what it puts there small. It
 writes storage buffers and, since 1.31, storage images (below). Compute and
 tessellation run on the cores whichever device the pipeline was made on.
 
-Tessellation divides evenly only, has no point mode - there is no point
-rasterization at all, in any pipeline - and its control function sets
-nothing but the levels.
+Tessellation has Vulkan's three spacing modes since 1.50
+(`shader.Spacing`), and its control function carries floats of its own to
+the evaluation function (`shader.control`, `Patch.ownValues`), up to
+`PhysicalDeviceLimits.max_tessellation_patch_components` of them. What it
+has not got is **point mode** - the tessellator emits triangles, or the
+lines of `isolines`, and nothing emits the patch's points on their own -
+and a control function cannot move the patch's vertices or
+change how many there are: it says the levels and writes the patch's own
+floats, and the evaluation function works from the vertices as the vertex
+function left them. Where Vulkan rounds an edge's two short fractional
+pieces is undefined; here they go one at each end, so that two patches
+sharing an edge cut it the same way from either side.
 
-## Left out on purpose
+## Left out for this hardware
 
-Multisampling, logic operations, geometry shaders, several viewports,
-sparse memory, events and a pipeline cache are not missing by accident and
-are not planned. They cost more than they would give on this hardware, and
-both the tiled rasterizer on the cores and the V3D's fixed fragment forms
-are built the way they are because of it.
+Multisampling, logic operations, dual-source blending, geometry shaders,
+several viewports, sparse memory, events and a pipeline cache are not
+missing by accident. They cost more than they would give on *this*
+hardware, and both the tiled rasterizer on the cores and the V3D's fixed
+fragment forms are built the way they are because of it: a tile that holds
+its samples no longer sits in a core's cache, a logic operation cannot use
+the blend fast path and would have to live in a fragment program the QPUs
+cannot run, a geometry stage wants an allocation between the vertex work
+and the binning, a wait on an event has nothing to wait for behind one
+in-order queue, and a pipeline cache has nothing to cache where nothing is
+compiled.
+
+None of that is a judgement on the features, and none of it is for ever.
+Every one of them is answered by the **device**: a driver for a chip that
+has the thing in hardware says yes to it, while the cores and the V3D go
+on saying no, and a program that asks `GetPhysicalDeviceFeatures` first
+needs no change at all. `docs/facet-todo.md` keeps them as work to do when
+such a chip comes in, with what each would cost then.

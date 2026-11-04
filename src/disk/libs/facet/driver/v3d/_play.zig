@@ -44,6 +44,7 @@ const _transfer = @import("../_transfer.zig");
 const driver = @import("driver.zig");
 const _queries = @import("../_queries.zig");
 const _query = @import("../../query/_query.zig");
+const _render = @import("../../render/_render.zig");
 const Hardware = driver.Hardware;
 const regs = v3d.regs;
 const cl = v3d.cl;
@@ -100,7 +101,11 @@ pub const Player = struct {
     index_type: facet.IndexType = .uint16,
     viewport: facet.Viewport = .{ .width = 0, .height = 0 },
     scissor: facet.Rect2D = .{ .extent = .{} },
+    /// What CmdSetBlendConstants set over every colour attachment, and
+    /// what CmdSetBlendConstantsAt set for one of its own (facet's own,
+    /// since 1.51).
     blend_constants: [4]f32 = @splat(0),
+    attachment_constants: [_render.most_colors]?[4]f32 = @splat(null),
     /// What CmdSetDepthBias set, for a pipeline whose bias is dynamic.
     depth_bias: _pipeline.Bias = .{},
     /// What CmdSetDepthBounds last set, for a pipeline whose bounds are
@@ -118,6 +123,21 @@ pub const Player = struct {
     frame: Frame = undefined,
     area: Area = undefined,
     image: *Image = undefined,
+    /// The image whose rows hold the depth or the stencil the frame keeps,
+    /// for the caches either side of the job: null where the pass keeps
+    /// neither (since 1.47).
+    kept_image: ?*Image = null,
+    /// The occlusion query being counted into, or null for none: what
+    /// CmdBeginQuery begins and CmdEndQuery ends (since 1.47).
+    counting: ?_queries.Counting = null,
+    /// The words this frame's queries have the hardware count into, and
+    /// the address the last packet gave - the packet is written again only
+    /// where it changes.
+    tallies: [most_tallies]Tally = undefined,
+    tally_count: u32 = 0,
+    tally_address: u32 = 0,
+    /// The frame's group of counters, carved when the first query counts.
+    tally_group: ?Place = null,
     bin: cl.List = undefined,
     /// A draw is on the binner's list.
     binned: bool = false,
@@ -259,7 +279,14 @@ fn playStream(queue: *Queue, stream: *const _stream.Stream) void {
         },
         .set_viewport => player.viewport = _stream.as(_command.SetViewport, head).viewport,
         .set_scissor => player.scissor = _stream.as(_command.SetScissor, head).scissor,
-        .set_blend_constants => player.blend_constants = _stream.as(_command.SetBlendConstants, head).constants,
+        .set_blend_constants => {
+            player.blend_constants = _stream.as(_command.SetBlendConstants, head).constants;
+            player.attachment_constants = @splat(null);
+        },
+        .set_blend_constants_at => {
+            const command = _stream.as(_command.SetBlendConstantsAt, head);
+            if (command.attachment < _render.most_colors) player.attachment_constants[command.attachment] = command.constants;
+        },
         .set_depth_bias => {
             const command = _stream.as(_command.SetDepthBias, head);
             player.depth_bias = .{ .constant = command.constant, .clamp = command.clamp, .slope = command.slope };
@@ -293,11 +320,28 @@ fn playStream(queue: *Queue, stream: *const _stream.Stream) void {
         // refuses both on it), so only a timestamp pool is ever here. A
         // query ended is still made available, so that a program waiting
         // for one does not wait for ever.
-        .begin_query => {},
-        .end_query => _queries.ended(_stream.as(_command.EndQuery, head)),
+        .begin_query => {
+            const command = _stream.as(_command.BeginQuery, head);
+            // The hardware counts an occlusion query's samples into a word
+            // of its own, which a draw points it at (since 1.47); what the
+            // QPUs were given is still counted by nothing, so a statistics
+            // pool is refused on this device and begins nothing here.
+            player.counting = _queries.begun(command);
+            if (player.counting == null and command.query >= command.pool.count) noRoom(queue, "a query begun past the pool's last");
+        },
+        .end_query => {
+            const command = _stream.as(_command.EndQuery, head);
+            _queries.ended(command);
+            if (player.counting) |counting| if (counting.pool == command.pool and counting.index == command.query) {
+                player.counting = null;
+            };
+        },
         .reset_query_pool => {
             const command = _stream.as(_command.ResetQueryPool, head);
             _query.reset(command.pool, command.first, command.count);
+            if (player.counting) |counting| if (counting.pool == command.pool) {
+                player.counting = null;
+            };
         },
         .write_timestamp => {
             const command = _stream.as(_command.WriteTimestamp, head);
@@ -318,6 +362,26 @@ fn playStream(queue: *Queue, stream: *const _stream.Stream) void {
 // --- memory -----------------------------------------------------------------
 
 /// `bytes` from the frame's chunks: null when there is no more to be had.
+/// Where the hardware counts one query's samples while a frame is drawn,
+/// and the counter those samples are added to as the frame ends (since
+/// 1.47).
+const Tally = struct {
+    samples: *u32,
+    at: *u32,
+    address: u32,
+};
+
+/// How many queries one frame counts into: a group of them, as the
+/// hardware takes them - sixteen words one after another. A program that
+/// begins more than this many in one pass has the rest counted as 0.
+const most_tallies = 16;
+
+/// What the group takes and where it must lie: the hardware wants a group
+/// of sixteen counters on a boundary of 1024 bytes, with the words
+/// themselves in the 64 at the start of it (Mesa's v3dv_query.c).
+const tally_group_bytes = 1024;
+const tally_line_bytes = most_tallies * @sizeOf(u32);
+
 fn carve(queue: *Queue, bytes: u32, alignment: u32) ?Place {
     const player = playerOf(queue);
     while (player.chunk_at < player.chunk_count) : (player.chunk_at += 1) {
@@ -406,7 +470,7 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
     if (player.hardware.broken) return;
     player.resources.output = part;
     const framebuffer = &command.targets[part];
-    const image = framebuffer.color.image;
+    const image = framebuffer.colors[0].image;
     const output: struct { u64, bool } = switch (image.format) {
         .b8g8r8a8_unorm => .{ cl.OUTPUT_RGBA8, true },
         .r8g8b8a8_unorm => .{ cl.OUTPUT_RGBA8, false },
@@ -426,7 +490,7 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
     const bottom: u32 = @intCast(std.math.clamp(@as(i64, offset.y) + command.area.extent.height, top, framebuffer.height));
     if (left == right or top == bottom) return;
     const whole = left == 0 and top == 0 and right == framebuffer.width and bottom == framebuffer.height;
-    const clears = command.parts[part].color_load == .clear;
+    const clears = command.parts[part].color_loads[0] == .clear;
     const tiles = ((framebuffer.width + 63) / 64) * ((framebuffer.height + 63) / 64);
     if (!sized(queue, &player.tile_lists, tileListsBytes(tiles, 0))) return;
     player.triangles = 0;
@@ -436,6 +500,12 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
     const list = carve(queue, list_part_bytes, 8) orelse return;
     const color = command.clear_colors[part];
     player.image = image;
+    player.kept_image = null;
+    // `beginBin` stops the hardware's counter, so the frame starts with no
+    // word and writes the packet again at the first draw that counts.
+    player.tally_address = 0;
+    player.tally_count = 0;
+    player.tally_group = null;
     player.area = .{ .left = left, .top = top, .right = right, .bottom = bottom };
     player.frame = .{
         .width = framebuffer.width,
@@ -454,6 +524,11 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
         .clear_depth = @as(f32, @floatFromInt(command.clear_depth)) / 65535,
         .stencil = command.parts[part].tests_stencil,
         .clear_stencil = command.clear_stencil,
+        .kept = kept: {
+            const made = keptOf(queue, &command.parts[part], framebuffer);
+            if (made != null) player.kept_image = framebuffer.depth.?.image;
+            break :kept made;
+        },
         .area = if (whole) null else player.area,
     };
     player.bin = .{ .at = list.cpu, .address = list.address };
@@ -461,6 +536,31 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
     frames.beginBin(&player.bin, &player.frame);
     player.drawing = true;
     if (clears and !whole) clearArea(queue, color);
+}
+
+/// The depth or the stencil a part keeps in its image's rows, or null where
+/// both live in the tiles alone. One plane at most: a format that holds
+/// them both is refused on this device, the hardware storing a plane as its
+/// own pixels one after another (`PhysicalDeviceFeatures.stored_both`).
+fn keptOf(queue: *Queue, part: *const _render.Part, framebuffer: *const _render.Target) ?frames.Kept {
+    const keeps_depth = part.loads_depth or part.stores_depth;
+    const keeps_stencil = part.loads_stencil or part.stores_stencil;
+    if (keeps_depth == keeps_stencil) return null; // neither, or the two together
+    const view = framebuffer.depth orelse return null;
+    const image = view.image;
+    const address = addressOf(queue, image);
+    if (address == 0) {
+        exec.kprintf(queue.device.sys, "v3d: a depth image at %lx is out of its reach\n", .{@intFromPtr(image.data)});
+        return null;
+    }
+    return .{
+        .buffer = if (keeps_depth) cl.STORE_Z else cl.STORE_STENCIL,
+        .format = if (keeps_depth) cl.OUTPUT_D16 else cl.OUTPUT_S8,
+        .image = address,
+        .stride = image.pitch,
+        .load = if (keeps_depth) part.loads_depth else part.loads_stencil,
+        .store = if (keeps_depth) part.stores_depth else part.stores_stencil,
+    };
 }
 
 /// A clear of part of the image: a rectangle of the colour, over all of it
@@ -580,6 +680,11 @@ fn endRenderPass(queue: *Queue) void {
         if (chunk.used != 0) space.rangeToGpu(chunk.block.cpu, chunk.used);
     }
     space.rangeToGpu(image.data.?, image_bytes);
+    // The depth or the stencil the frame keeps lies in another image: what
+    // the CPU wrote there goes out to memory before a load reads it, and
+    // what a store writes is dropped from the CPU's caches after.
+    const kept_bytes: usize = if (player.kept_image) |kept| @as(usize, kept.pitch) * player.frame.height else 0;
+    if (player.frame.kept) |kept| if (kept.load) space.rangeToGpu(player.kept_image.?.data.?, kept_bytes);
 
     sys.ObtainSemaphore(&device.base.v3d_lock);
     defer sys.ReleaseSemaphore(&device.base.v3d_lock);
@@ -598,6 +703,8 @@ fn endRenderPass(queue: *Queue) void {
     }
     const rendered = engine.render(render.address, render.here());
     space.rangeFromGpu(image.data.?, image_bytes);
+    if (player.frame.kept) |kept| if (kept.store) space.rangeFromGpu(player.kept_image.?.data.?, kept_bytes);
+    addTallies(player, space);
     if (rendered != .done) return lost(player, sys, rendered, "rendering");
     if (image.display) |display| {
         const area = player.area;
@@ -729,6 +836,8 @@ fn textureUniforms(queue: *Queue, fixed: shader.Fixed) ?u32 {
         .b8g8r8a8_unorm => .bgra,
         .r8g8b8a8_unorm => .rgba,
         .r5g6b5_unorm_pack16 => .rgb565,
+        // One byte of red a texel, the TMU's own R8 (since 1.48).
+        .r8_unorm => .r8,
         else => return null,
     };
     const layout = layoutOf(image.format, image.width, image.height, image.levels);
@@ -786,7 +895,9 @@ fn mixingOf(player: *const Player, pipeline: *const Pipeline) cl.Mixing {
         .src_alpha = @intFromEnum(mixing.src_alpha),
         .dst_alpha = @intFromEnum(mixing.dst_alpha),
         .alpha_mode = @intFromEnum(mixing.alpha_op),
-        .constants = mixing.constants orelse player.blend_constants,
+        .constants = mixing.constants orelse
+            player.attachment_constants[@min(player.resources.output, _render.most_colors - 1)] orelse
+            player.blend_constants,
         .channels = mixing.mask,
     };
 }
@@ -804,6 +915,12 @@ fn drawStateOf(player: *const Player, pipeline: *const Pipeline, viewport: *cons
     if (left == right or top == bottom or viewport.width == 0 or viewport.height == 0) return null;
     const has_depth = player.frame.depth;
     const stencil = if (player.frame.stencil) player.stencil.of(pipeline) else null;
+    // What a triangle moves its depth by, and the bounds a pixel's own is
+    // tested against: the pipeline's, or what a command set where it left
+    // them dynamic. Neither means anything without a depth buffer (since
+    // 1.47).
+    const bias = if (has_depth and pipeline.biased) (pipeline.bias orelse player.depth_bias) else null;
+    const bounds = if (has_depth and pipeline.bounded) (pipeline.bounds orelse player.depth_bounds) else null;
     return .{
         .clip = .{ .left = left, .top = top, .right = right, .bottom = bottom },
         .cfg = .{
@@ -817,9 +934,16 @@ fn drawStateOf(player: *const Player, pipeline: *const Pipeline, viewport: *cons
             .depth_write = has_depth and pipeline.depth_test != null and pipeline.depth_write,
             .stencil = stencil != null,
             .blend = _pipeline.mixingAt(pipeline, player.resources.output).enabled,
+            .biased = bias != null,
+            .bounded = bounds != null,
+            .clamped = pipeline.clamped,
         },
         .mixing = mixingOf(player, pipeline),
         .stencil = if (stencil) |faces| .{ stencilFaceOf(faces[0]), stencilFaceOf(faces[1]) } else undefined,
+        .bias_constant = if (bias) |moved| moved.constant else 0,
+        .bias_slope = if (bias) |moved| moved.slope else 0,
+        .bias_clamp = if (bias) |moved| moved.clamp else 0,
+        .bounds = bounds orelse .{ 0, 1 },
         .x = viewport.x,
         .y = viewport.y,
         .width = viewport.width,
@@ -827,6 +951,53 @@ fn drawStateOf(player: *const Player, pipeline: *const Pipeline, viewport: *cons
         .min_depth = viewport.min_depth,
         .max_depth = viewport.max_depth,
     };
+}
+
+/// Where the hardware is to count this draw's samples, written into the
+/// binner's list before the draw's state: the word of the query being
+/// counted into, or 0 for none. The packet is written only where the
+/// address changes, the binner holding it until it does (since 1.47).
+fn countSamples(queue: *Queue) void {
+    const player = playerOf(queue);
+    const address = tallyFor(queue);
+    if (address == player.tally_address) return;
+    cl.occlusionQuery(&player.bin, address);
+    player.tally_address = address;
+}
+
+/// The word this frame counts the query being counted into with: the one
+/// it already has, or a new one zeroed; 0 where nothing is counted or
+/// there is no room for another.
+fn tallyFor(queue: *Queue) u32 {
+    const player = playerOf(queue);
+    const counting = player.counting orelse return 0;
+    const samples = counting.counters.samples orelse return 0;
+    for (player.tallies[0..player.tally_count]) |tally| {
+        if (tally.samples == samples) return tally.address;
+    }
+    if (player.tally_count == most_tallies) return 0;
+    if (player.tally_group == null) {
+        const place = carve(queue, tally_group_bytes, tally_group_bytes) orelse return 0;
+        @memset(place.cpu[0..tally_line_bytes], 0);
+        player.tally_group = place;
+    }
+    const group = player.tally_group.?;
+    const at: *u32 = @ptrCast(@alignCast(group.cpu + player.tally_count * @sizeOf(u32)));
+    const address = group.address + player.tally_count * @sizeOf(u32);
+    player.tallies[player.tally_count] = .{ .samples = samples, .at = at, .address = address };
+    player.tally_count += 1;
+    return address;
+}
+
+/// What the hardware counted added to the queries, the frame drawn: each
+/// word read back out of the CPU's caches first, it being the V3D that
+/// wrote it.
+fn addTallies(player: *Player, space: *const v3d.Space) void {
+    const group = player.tally_group orelse return;
+    space.rangeFromGpu(group.cpu, tally_line_bytes);
+    for (player.tallies[0..player.tally_count]) |tally| _query.add(tally.samples, tally.at.*);
+    player.tally_count = 0;
+    player.tally_group = null;
 }
 
 /// A draw of `count` vertices, or of `count` indices with `vertex_offset`
@@ -915,7 +1086,9 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
         // Refused when the pipeline was made (driver.zig): no program drops
         // pixels, and none reads a sampler, so none of these reaches a
         // frame here.
-        .none, .texture_cutout, .texture_sampled, .texture_shadow => return,
+        .none, .texture_cutout, .texture_sampled, .texture_shadow, .texture_cube_array => return,
+        .texture_array_sampled, .texture_cube_sampled, .texture_3d_sampled => return,
+        .texture_cube_array_sampled => return,
     }
 
     const scale = ViewportScale{
@@ -926,6 +1099,7 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
     };
     const record_bytes = recordStride(varyings);
     if (!roomOnList(queue)) return noRoom(queue, "a draw with no memory for the binner's list");
+    countSamples(queue);
     frames.writeDrawState(&player.bin, &state);
     for (0..instances) |k| {
         const instance = first_instance +% @as(u32, @intCast(k));

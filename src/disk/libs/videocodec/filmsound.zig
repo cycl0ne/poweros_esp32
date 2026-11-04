@@ -1,18 +1,27 @@
 // SPDX-License-Identifier: MIT
-//! Movie's sound: the film's sound, decoded by videocodec.library, into
-//! one stream of audio.device - and the clock the pictures are shown by.
+//! A film's sound: decoded by videocodec.library into one stream of
+//! audio.device, on a process of its own - and the clock the pictures are
+//! shown by. It is compiled into whatever plays a film, as the module
+//! `filmsound`: SYS:Programs/Movie and videocodec.datatype play one with
+//! this same process.
 //!
 //! **On a process of its own.** The decoding and the writes run on a
-//! process of Movie's, "Movie sound", above every program, so that
-//! nothing the window does - decoding a picture, putting it down, a
-//! requester - holds the sound up. videocodec lets the pictures and the
-//! sound of one film be decoded by two tasks at once. The window gives
-//! the process orders (`Order`: start, pause, halt, a volume) and waits
-//! for each to be done; what the process says unasked is that the sound
-//! has played out, by a signal (`signal`), after which the window reads
-//! `state`. The process is started by `create` and told to end by
-//! `destroy`, which waits for exec's word that it is gone (`NP_EndMsg`):
-//! the code it runs is Movie's.
+//! process of the player's, above every program, so that nothing the
+//! player does - decoding a picture, putting it down, a requester - holds
+//! the sound up. videocodec lets the pictures and the sound of one film
+//! be decoded by two tasks at once. The player gives the process orders
+//! (`Order`: start, pause, halt, a volume) and waits for each to be done;
+//! what the process says unasked is that the sound has played out, by a
+//! signal (`signal`), after which the player reads `state`. The process
+//! is started by `create` and told to end by `destroy`, which waits for
+//! exec's word that it is gone (`NP_EndMsg`): the code it runs is the
+//! player's.
+//!
+//! **The ports belong to the task that made them**, so `create` is called
+//! on the one task that gives the orders and asks where the sound is -
+//! Movie's window, videocodec.datatype's own decoder process - and
+//! `destroy` by that same task. That task is also the one signalled when
+//! the sound has played out.
 //!
 //! **Three buffers go round** on the stream - one playing, one queued,
 //! one being filled - each written again as it comes back (`refill`).
@@ -22,10 +31,10 @@
 //! still on its way out (the output's latency). A start notes the
 //! position it was given at and the film's time it starts from, so the
 //! time being heard (`heard`) is that time and the frames played since,
-//! in microseconds. The window asks with a request of its own, a copy of
+//! in microseconds. The player asks with a request of its own, a copy of
 //! the opened one, so the two never share one.
 //!
-//! **Moving** is the window's: it halts the sound - what is queued taken
+//! **Moving** is the player's: it halts the sound - what is queued taken
 //! back (CMD_FLUSH) - moves the film (SeekVideo, which moves the sound
 //! with the pictures) and starts the sound again from where it landed.
 //! A pause holds the stream (CMD_STOP), and its position with it.
@@ -47,18 +56,17 @@ const TagItem = utility.TagItem;
 const buffer_frames = 4096;
 const buffer_count = 3;
 
-/// The sound's process: above every program, so the window's work never
+/// The sound's process: above every program, so the player's work never
 /// holds it up.
-const process_name = "Movie sound";
 const process_priority = 5;
 const process_stack = 4096 * @sizeOf(usize);
 
 pub const State = enum { idle, playing, paused, ended };
 
-/// What the window tells the process to do.
+/// What the player tells the process to do.
 const What = enum(u32) { start, pause, halt, volume, quit };
 
-/// One order, on the window's stack until it is answered.
+/// One order, on the player's stack until it is answered.
 const Order = struct {
     message: exec.Message = .{},
     what: What,
@@ -76,16 +84,16 @@ pub const Sound = struct {
     rate: u32,
     channels: u32,
 
-    // --- the window's ---------------------------------------------------------
-    /// The window's task, and the bit it is signalled with when the sound
-    /// has played out.
-    window: *exec.Task,
+    // --- the player's ---------------------------------------------------------
+    /// The task that made the ports: it gives the orders, reads the clock
+    /// and is signalled with `news_bit` when the sound has played out.
+    owner: *exec.Task,
     news_bit: i8,
     /// Where orders are answered, and exec's word that the process ended.
     reply_port: *exec.MsgPort,
     ended: exec.Message = .{},
     gone: bool = false,
-    /// The window's own request for the position, and its port.
+    /// The player's own request for the position, and its port.
     query: *audio.IOAudio,
     query_port: *exec.MsgPort,
     /// The first order: answered once the process has set itself up.
@@ -118,10 +126,10 @@ pub const Sound = struct {
     ending: bool = false,
 
     /// The process started on the film's sound and set up - the device
-    /// stream opened in the film's form at `percent` - or null when it
-    /// cannot be. A machine with no sound has a process all the same:
-    /// `opened` is false, and every start is silent.
-    pub fn create(sys: *ExecBase, dl: *DosBase, vcb: *VideoCodecBase, film: *vc.VideoStream, info: *const vc.VideoStreamInfo, percent: u32) ?*Sound {
+    /// stream opened in the film's form at `percent`, the process called
+    /// `name` - or null when it cannot be. A machine with no sound has a
+    /// process all the same: `opened` is false, and every start is silent.
+    pub fn create(sys: *ExecBase, dl: *DosBase, vcb: *VideoCodecBase, film: *vc.VideoStream, info: *const vc.VideoStreamInfo, percent: u32, name: [*:0]const u8) ?*Sound {
         const channels: u32 = @max(info.sound_channels, 1);
         const memory = sys.AllocVec(@sizeOf(Sound), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return null;
         const buffers = sys.AllocVec(buffer_count * buffer_frames * channels * @sizeOf(i16), exec.MEMF_ANY);
@@ -145,7 +153,7 @@ pub const Sound = struct {
             .film = film,
             .rate = @max(info.sound_rate, 1),
             .channels = channels,
-            .window = sys.FindTask(null).?,
+            .owner = sys.FindTask(null).?,
             .news_bit = news_bit,
             .reply_port = reply_port.?,
             .query = query.?,
@@ -159,7 +167,7 @@ pub const Sound = struct {
         sound.hello = &hello;
         const tags = [_]TagItem{
             .{ .tag = dos.NP_Entry, .data = @intFromPtr(&soundEntry) },
-            .{ .tag = dos.NP_Name, .data = @intFromPtr(process_name) },
+            .{ .tag = dos.NP_Name, .data = @intFromPtr(name) },
             .{ .tag = dos.NP_UserData, .data = @intFromPtr(sound) },
             .{ .tag = dos.NP_StackSize, .data = process_stack },
             .{ .tag = dos.NP_Priority, .data = @bitCast(@as(isize, process_priority)) },
@@ -204,7 +212,7 @@ pub const Sound = struct {
         sys.FreeVec(sound);
     }
 
-    /// The window's signal for a sound that has played out: `state` is
+    /// The player's signal for a sound that has played out: `state` is
     /// to be read when it comes.
     pub fn signal(sound: *const Sound) u32 {
         return @as(u32, 1) << @intCast(sound.news_bit);
@@ -222,7 +230,7 @@ pub const Sound = struct {
     }
 
     /// Silent, what was queued taken back, and nothing more decoded: what
-    /// the window does before it moves the film.
+    /// the player does before it moves the film.
     pub fn halt(sound: *Sound) void {
         _ = sound.order(.halt, 0, 0);
     }
@@ -274,7 +282,7 @@ pub const Sound = struct {
         return given.answer;
     }
 
-    /// Messages taken from the window's port until `wanted` is among them;
+    /// Messages taken from the player's port until `wanted` is among them;
     /// exec's word that the process is gone is noted on the way.
     fn waitFor(sound: *Sound, wanted: *exec.Message) void {
         const sys = sound.sys;
@@ -321,7 +329,7 @@ pub const Sound = struct {
             return false;
         }
         // The stream opened in the film's form; without the device every
-        // start is silent, and the window keeps time by the timer.
+        // start is silent, and the player keeps time by the timer.
         const opening = requests[0].?;
         opening.format = audio.AUDIO_S16;
         opening.channels = @intCast(sound.channels);
@@ -453,7 +461,7 @@ pub const Sound = struct {
     }
 
     /// The writes that came back refilled and sent again, in the order
-    /// they went; the window told once the last has played.
+    /// they went; the player told once the last has played.
     fn refill(sound: *Sound) void {
         const sys = sound.sys;
         while (sound.outstanding > 0) {
@@ -470,7 +478,7 @@ pub const Sound = struct {
 
     fn playedOut(sound: *Sound) void {
         sound.state = .ended;
-        sound.sys.Signal(sound.window, sound.signal());
+        sound.sys.Signal(sound.owner, sound.signal());
     }
 
     fn hold(sound: *Sound, held: bool) void {
@@ -497,7 +505,7 @@ pub const Sound = struct {
     }
 };
 
-/// The sound's process: set up, the window told, orders served until the
+/// The sound's process: set up, the player told, orders served until the
 /// last.
 fn soundEntry(sys: *ExecBase) callconv(.c) void {
     const sound: *Sound = @ptrCast(@alignCast(sys.FindTask(null).?.user_data.?));
@@ -507,7 +515,7 @@ fn soundEntry(sys: *ExecBase) callconv(.c) void {
         sys.ReplyMsg(&hello.message);
         return;
     }
-    // The window goes on from here: `hello` is its, and not touched again.
+    // The player goes on from here: `hello` is its, and not touched again.
     sys.ReplyMsg(&hello.message);
     sound.serve();
 }

@@ -80,6 +80,16 @@ const MC_SMPTE_240 = 7;
 const MC_BT_2020_NCL = 9;
 const MC_BT_2020_CL = 10;
 
+/// The transfer characteristics that are not a television's curve: high
+/// dynamic range, which a screen has to be mapped to.
+const TR_PQ = 16;
+const TR_HLG = 18;
+
+/// The colour primaries that are not BT.709's.
+const CP_BT_2020 = 9;
+const CP_P3_DCI = 11;
+const CP_P3_D65 = 12;
+
 /// `planes_memory` where it has room for `bytes`, any memory otherwise:
 /// asked for only where there is room, since a request that fails runs
 /// the low-memory handlers.
@@ -253,33 +263,51 @@ pub fn FlushVCodec(_: *Base, decoder: *vcodec.VCodecDecoder) void {
     m.ended = false;
 }
 
-/// The frame `s` shows copied into `slot`'s planes, as I420 in 8 bits,
-/// and lent in `frame`.
+/// The frame `s` shows copied into `slot`'s planes, as I420 at eight bits
+/// or ten, and lent in `frame`. A film of more than eight bits keeps ten
+/// of them: it is mapped into the screen's range when it is drawn, and
+/// eight bits of that show as bands in a sky.
 fn copyOut(m: *Decoder, s: av1.Shown, frame: *vc.VideoFrame, slot: u32) i32 {
     const f = s.frame;
     const width = f.width;
     const height = f.height;
     const half_width = (width + 1) / 2;
     const half_height = (height + 1) / 2;
-    const y_pitch = aligned(width);
-    const c_pitch = aligned(half_width);
+    // The identity matrix comes with colour at full size alone, and is
+    // made the screen's colours here, in bytes.
+    const rgb = f.matrix == MC_IDENTITY and !f.mono and f.ss_x == 0 and f.ss_y == 0;
+    const deep = f.bit_depth > 8 and !rgb;
+    const unit: u32 = if (deep) 2 else 1;
+    const y_pitch = aligned(width) * unit;
+    const c_pitch = aligned(half_width) * unit;
     const luma: usize = @as(usize, y_pitch) * height;
     const chroma: usize = @as(usize, c_pitch) * half_height;
     const planes = &m.planes[slot];
     if (!make(m.sys, planes, luma + 2 * chroma, width, height)) return vc.VCERR_NOMEMORY;
     const into = [3][*]u8{ planes.start, planes.start + luma, planes.start + luma + chroma };
     const pitch = [3]u32{ y_pitch, c_pitch, c_pitch };
-    // The identity matrix comes with colour at full size alone.
-    const rgb = f.matrix == MC_IDENTITY and !f.mono and f.ss_x == 0 and f.ss_y == 0;
-    var colors: u8 = switch (f.matrix) {
+    const matrix: u8 = switch (f.matrix) {
         MC_FCC, MC_BT_470_B_G, MC_BT_601 => rtg.RTGYUV_BT601,
-        MC_IDENTITY, MC_BT_709, MC_SMPTE_240, MC_BT_2020_NCL, MC_BT_2020_CL => rtg.RTGYUV_BT709,
+        MC_IDENTITY, MC_BT_709, MC_SMPTE_240 => rtg.RTGYUV_BT709,
+        MC_BT_2020_NCL, MC_BT_2020_CL => rtg.RTGYUV_BT2020,
         else => if (height >= 720) rtg.RTGYUV_BT709 else rtg.RTGYUV_BT601,
     };
-    if (f.full_range or rgb) colors |= rtg.RTGYUV_FULL;
+    const range: u8 = if (f.full_range or rgb) rtg.RTGYUV_FULL else rtg.RTGYUV_LIMITED;
+    // An RGB picture is already the screen's colours; the curves are for
+    // what a film carries.
+    const transfer: u8 = if (rgb) rtg.RTGYUV_SDR else switch (f.transfer) {
+        TR_PQ => rtg.RTGYUV_PQ,
+        TR_HLG => rtg.RTGYUV_HLG,
+        else => rtg.RTGYUV_SDR,
+    };
+    const primaries: u8 = if (rgb) rtg.RTGYUV_BT709 else switch (f.primaries) {
+        CP_BT_2020 => rtg.RTGYUV_BT2020,
+        CP_P3_D65, CP_P3_DCI => rtg.RTGYUV_P3,
+        else => rtg.RTGYUV_BT709,
+    };
     if (rgb) {
         if (f.alloc_bytes == 1) fromRgb(u8, f, into, pitch) else fromRgb(u16, f, into, pitch);
-    } else if (f.alloc_bytes == 1 and f.ss_x == 1 and f.ss_y == 1) {
+    } else if (f.alloc_bytes == 1 and !deep and f.ss_x == 1 and f.ss_y == 1) {
         // As it is: a row at a time, by exec's copy.
         for (0..3) |p| {
             if (p > 0 and f.mono) break;
@@ -291,14 +319,22 @@ fn copyOut(m: *Decoder, s: av1.Shown, frame: *vc.VideoFrame, slot: u32) i32 {
         const across: u32 = if (f.ss_x == 0) 2 else 1;
         const down: u32 = if (f.ss_y == 0) 2 else 1;
         if (f.alloc_bytes == 1) {
-            average(u8, f, 0, into[0], y_pitch, width, height, 1, 1);
-            if (!f.mono) for (1..3) |p| average(u8, f, p, into[p], c_pitch, half_width, half_height, across, down);
+            if (deep) {
+                average(u8, u16, f, 0, into[0], y_pitch, width, height, 1, 1);
+                if (!f.mono) for (1..3) |p| average(u8, u16, f, p, into[p], c_pitch, half_width, half_height, across, down);
+            } else {
+                average(u8, u8, f, 0, into[0], y_pitch, width, height, 1, 1);
+                if (!f.mono) for (1..3) |p| average(u8, u8, f, p, into[p], c_pitch, half_width, half_height, across, down);
+            }
+        } else if (deep) {
+            average(u16, u16, f, 0, into[0], y_pitch, width, height, 1, 1);
+            if (!f.mono) for (1..3) |p| average(u16, u16, f, p, into[p], c_pitch, half_width, half_height, across, down);
         } else {
-            average(u16, f, 0, into[0], y_pitch, width, height, 1, 1);
-            if (!f.mono) for (1..3) |p| average(u16, f, p, into[p], c_pitch, half_width, half_height, across, down);
+            average(u16, u8, f, 0, into[0], y_pitch, width, height, 1, 1);
+            if (!f.mono) for (1..3) |p| average(u16, u8, f, p, into[p], c_pitch, half_width, half_height, across, down);
         }
     }
-    if (f.mono) m.sys.SetMem(into[1], 128, 2 * chroma);
+    if (f.mono) grey(m.sys, into[1], 2 * chroma, deep);
     if (planes_memory & exec.MEMF_DMA != 0) m.sys.CacheClearE(planes.start, @intCast(planes.size), exec.CACRF_ClearD);
     frame.* = .{
         .picture = .{
@@ -308,7 +344,12 @@ fn copyOut(m: *Decoder, s: av1.Shown, frame: *vc.VideoFrame, slot: u32) i32 {
             .y_pitch = y_pitch,
             .c_pitch = c_pitch,
             .layout = rtg.RTGYUV_I420,
-            .colors = colors,
+            .matrix = matrix,
+            .transfer = transfer,
+            .primaries = primaries,
+            .range = range,
+            .depth = if (deep) 10 else 8,
+            .peak = f.peak_nits,
         },
         .width = width,
         .height = height,
@@ -321,34 +362,45 @@ fn copyOut(m: *Decoder, s: av1.Shown, frame: *vc.VideoFrame, slot: u32) i32 {
 /// apart: each the average of `across` by `down` of the plane's, rounded
 /// to 8 bits. Where a block of them runs past the plane's edge - an odd
 /// size - the plane's last row or column is taken again.
-fn average(comptime T: type, f: *const av1.Frame, p: usize, into: [*]u8, pitch: u32, width: u32, height: u32, across: u32, down: u32) void {
+fn average(comptime T: type, comptime O: type, f: *const av1.Frame, p: usize, into: [*]u8, pitch: u32, width: u32, height: u32, across: u32, down: u32) void {
     const samples = f.plane(T, p);
     const stride = f.stride[p];
     const sx: u5 = if (p > 0) f.ss_x else 0;
     const sy: u5 = if (p > 0) f.ss_y else 0;
     const last_x = ((f.width + (@as(u32, 1) << sx) - 1) >> sx) - 1;
     const last_y = ((f.height + (@as(u32, 1) << sy) - 1) >> sy) - 1;
-    const shift: u5 = @intCast(f.bit_depth - 8 + ((across * down) >> 1));
+    const bits: u5 = if (O == u16) 10 else 8;
+    const up: u5 = if (f.bit_depth < bits) @intCast(bits - f.bit_depth) else 0;
+    const shift: u5 = (if (f.bit_depth > bits) @as(u5, @intCast(f.bit_depth - bits)) else 0) + @as(u5, @intCast((across * down) >> 1));
     const round: u32 = (@as(u32, 1) << shift) >> 1;
+    const most: u32 = (@as(u32, 1) << bits) - 1;
     for (0..height) |r| {
         const y = @as(u32, @intCast(r)) * down;
         const row0 = samples + y * stride;
         const row1 = samples + @min(y + down - 1, last_y) * stride;
-        const out = into + r * pitch;
+        const out: [*]O = @ptrCast(@alignCast(into + r * pitch));
         if (across == 1) {
             for (0..width) |c| {
                 const sum = @as(u32, row0[c]) + if (down == 2) @as(u32, row1[c]) else 0;
-                out[c] = @intCast(@min((sum + round) >> shift, 255));
+                out[c] = @intCast(@min(((sum << up) + round) >> shift, most));
             }
         } else {
             for (0..width) |c| {
                 const x = @as(u32, @intCast(c)) * 2;
                 const x1 = @min(x + 1, last_x);
                 const sum = @as(u32, row0[x]) + row0[x1] + row1[x] + row1[x1];
-                out[c] = @intCast(@min((sum + round) >> shift, 255));
+                out[c] = @intCast(@min(((sum << up) + round) >> shift, most));
             }
         }
     }
+}
+
+/// A grey frame's chroma planes: the middle of the range, a byte of 128
+/// or a word of 512.
+fn grey(sys: *ExecBase, into: [*]u8, bytes: usize, deep: bool) void {
+    if (!deep) return sys.SetMem(into, 128, bytes);
+    const words: [*]u16 = @ptrCast(@alignCast(into));
+    for (0..bytes / 2) |i| words[i] = 512;
 }
 
 /// An RGB frame - green, blue and red, each at full size - made YUV by

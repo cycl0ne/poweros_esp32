@@ -112,7 +112,7 @@ fn stencilFaceOf(face: _pipeline.StencilFace) raster.batched.StencilFace {
 }
 
 /// 0 to 1 as 0 to 255, in 0xAARRGGBB.
-fn constantOf(constants: [4]f32) u32 {
+pub fn constantOf(constants: [4]f32) u32 {
     var packed_constant: u32 = 0;
     for (constants, [4]u5{ 16, 8, 0, 24 }) |value, shift| {
         const scaled = std.math.clamp(value, 0, 1) * 255 + 0.5;
@@ -163,16 +163,16 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
     const viewport = pipeline.viewport orelse player.viewport;
     const scissor = pipeline.scissor orelse player.scissor;
     const translated: *const RasterState = @ptrCast(@alignCast(pipeline.driver.?));
-    // The colour attachment being drawn has a mixing of its own.
-    const output = @min(resources.output, _render.most_colors - 1);
-    const asked = _pipeline.mixingAt(pipeline, output);
-    const blend = translated.blend[output];
-    var mixing = translated.mixing[output];
-    if (blend == .general) {
-        // What is there has no alpha: it reads as wholly opaque.
-        const made = if (player.target_opaque) mixingOf(&asked.overOpaque()) else mixing;
-        mixing = made;
-        mixing.constant = constantOf(asked.constants orelse player.blend_constants);
+    // The colour attachment being drawn has a mixing of its own; a
+    // fragment function that writes several at once has them all, each
+    // blended its own way into its own plane (since 1.51).
+    const colors = @min(@max(pipeline.outputs, 1), target.colorCount());
+    const first_output = @min(resources.output, _render.most_colors - 1);
+    const blend, const mixing = player.mixingFor(pipeline, translated, first_output);
+    var more_blends: [_render.most_colors - 1]raster.pipeline.Blend = @splat(.off);
+    var more_mixings: [_render.most_colors - 1]raster.pipeline.Mixing = @splat(.{});
+    for (1..colors) |k| {
+        more_blends[k - 1], more_mixings[k - 1] = player.mixingFor(pipeline, translated, @intCast(k));
     }
     const stencil: ?[2]raster.batched.StencilFace = if (player.stencil.of(pipeline)) |faces| .{ stencilFaceOf(faces[0]), stencilFaceOf(faces[1]) } else null;
     // What a query counts of this draw, or nothing where none is being
@@ -204,6 +204,9 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
         .depth_bounds = if (pipeline.bounded) pipeline.bounds orelse player.depth_bounds else null,
         .blend = blend,
         .mixing = mixing,
+        .more_blends = more_blends,
+        .more_mixings = more_mixings,
+        .color_count = colors,
         .stencil = stencil,
         .prepass = pipeline.prepass and stencil == null,
         .varyings = pipeline.varyings,
@@ -278,8 +281,9 @@ pub fn clearAttachment(queue: *Queue, command: *const _command.ClearAttachment) 
     const clears_depth = aspect & facet.IMAGE_ASPECT_DEPTH != 0;
     const color = command.color;
     const rect = command.rect;
-    const surface_width: f32 = @floatFromInt(target.surface.width);
-    const surface_height: f32 = @floatFromInt(target.surface.height);
+    const surface = target.surfaceAt(0);
+    const surface_width: f32 = @floatFromInt(surface.width);
+    const surface_height: f32 = @floatFromInt(surface.height);
     const stencil_face = raster.batched.StencilFace{ .pass = .replace, .compare = .always, .write_mask = 0xFF, .reference = @truncate(command.stencil) };
     const state = raster.batched.State{
         .viewport = .{ .x = 0, .y = 0, .width = surface_width, .height = surface_height },

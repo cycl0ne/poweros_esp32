@@ -328,6 +328,10 @@ const PipelineState = struct {
     flags: u32 = 0,
     subpass: u32 = 0,
     blend_count: u32 = 1,
+    /// The one set of blend constants a pipeline shares, and one set for
+    /// each colour attachment where facet's own are given (since 1.51).
+    blend_constants: [4]f32 = @splat(0),
+    attachment_constants: ?[*]const [4]f32 = null,
 };
 
 fn makePipeline(bench: *Bench, state: PipelineState) struct { facet.Result, ?*facet.Pipeline } {
@@ -348,7 +352,12 @@ fn makePipeline(bench: *Bench, state: PipelineState) struct { facet.Result, ?*fa
     const view = facet.PipelineViewportStateCreateInfo{ .viewports = @ptrCast(&viewport), .scissors = @ptrCast(&scissor) };
     var blends: [4]facet.PipelineColorBlendAttachmentState = @splat(state.blend);
     if (state.second_blend) |other| blends[1] = other;
-    const blend = facet.PipelineColorBlendStateCreateInfo{ .attachment_count = state.blend_count, .attachments = &blends };
+    const blend = facet.PipelineColorBlendStateCreateInfo{
+        .attachment_count = state.blend_count,
+        .attachments = &blends,
+        .blend_constants = state.blend_constants,
+        .attachment_constants = state.attachment_constants,
+    };
     const dynamic = facet.PipelineDynamicStateCreateInfo{ .dynamic_state_count = @intCast(state.dynamic.len), .dynamic_states = state.dynamic.ptr };
     const info = facet.GraphicsPipelineCreateInfo{
         .flags = state.flags,
@@ -399,9 +408,10 @@ test "a render pass: one subpass, a colour attachment and perhaps a depth one; w
 
     const pass = try renderPass(&bench, .load, true);
     const made = _objects.of(_render.RenderPass, pass);
-    try testing.expectEqual(@as(u32, 0), made.parts[0].color);
+    try testing.expectEqual(@as(u32, 0), made.parts[0].colors[0]);
+    try testing.expectEqual(@as(u32, 1), made.parts[0].color_count);
     try testing.expectEqual(@as(?u32, 1), made.parts[0].depth);
-    try testing.expectEqual(.keep, made.parts[0].color_load);
+    try testing.expectEqual(.keep, made.parts[0].color_loads[0]);
     fb.DestroyRenderPass(device, pass);
     fb.DestroyRenderPass(device, null);
 
@@ -593,8 +603,12 @@ test "descriptor sets: a layout's bindings as slots, written and copied as shade
     var kept: ?*facet.Sampler = null;
     try testing.expectEqual(facet.Result.success, fb.CreateSampler(device, &.{}, &kept));
     defer fb.DestroySampler(device, kept);
+    // A sampler the layout holds of its own, since 1.49: taken, and in
+    // the slots of every set made of it.
     const held = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .combined_image_sampler, .immutable_samplers = @ptrCast(&kept) };
-    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&held) }, &none));
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&held) }, &none));
+    fb.DestroyDescriptorSetLayout(device, none);
+    none = null;
     const twice = [2]facet.DescriptorSetLayoutBinding{ bindings[0], bindings[0] };
     try testing.expectEqual(facet.Result.error_initialization_failed, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 2, .bindings = &twice }, &none));
 
@@ -1628,6 +1642,515 @@ test "a storage image written through by a compute function and by a fragment fu
     try testing.expectEqual(0xFF00_00FF, std.mem.readInt(u32, back_bytes[(7 * 8 + 7) * 4 ..][0..4], .little));
 }
 
+test "a storage image's level and layer named from inside the function, and one it has not got" {
+    const Named = struct {
+        /// Group (x, y) writes texel (x, y) of the level and the layer the
+        /// push constants name, its colour saying which: the level in red
+        /// and the layer in green.
+        fn run(groups: *const shader.Groups) callconv(.c) void {
+            const image = groups.resources.written(0, 0, 0) orelse return;
+            const where = groups.resources.constants([2]u32).*;
+            const color = 0xFF00_0000 | (10 + 40 * where[0]) << 16 | (10 + 40 * where[1]) << 8 | groups.group[0];
+            image.setColor(where[1], where[0], groups.group[0], groups.group[1], color);
+        }
+
+        /// What the function finds of the shape, and of a texel it reads
+        /// back: the levels and the layers, the first level's size, the
+        /// texel the push constants name, and a texel of a level, a layer
+        /// and a place the view has not got.
+        fn told(groups: *const shader.Groups) callconv(.c) void {
+            const out = groups.resources.storage(u32, 0, 1) orelse return;
+            const image = groups.resources.written(0, 0, 0) orelse {
+                out[0] = 0xFFFF_FFFF;
+                return;
+            };
+            const where = groups.resources.constants([2]u32).*;
+            out[0] = image.levels;
+            out[1] = image.layer_count;
+            out[2] = image.width(0);
+            out[3] = image.height(0);
+            out[4] = image.width(1);
+            out[5] = image.colorAt(where[1], where[0], 0, 0);
+            // Transparent black, each of them: a level past the last, a
+            // layer past the last, and a place past the level's own size.
+            out[6] = image.colorAt(0, image.levels, 0, 0);
+            out[7] = image.colorAt(image.layer_count, 0, 0, 0);
+            out[8] = image.colorAt(0, 0, image.width(0), 0);
+            out[9] = image.colorAt(0, 0, 0, image.height(0));
+            // And what `holds` says of the same.
+            out[10] = @intFromBool(image.holds(image.layer_count - 1, image.levels - 1, 0, 0));
+            out[11] = @intFromBool(image.holds(0, image.levels, 0, 0));
+        }
+
+        const entries = [_]shader.Entry{ shader.compute("main", &run), shader.compute("told", &told) };
+        const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
+    };
+
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    var features: facet.PhysicalDeviceFeatures = undefined;
+    fb.GetPhysicalDeviceFeatures(bench.physical, &features);
+    try testing.expect(features.storage_images);
+
+    // Three layers and three levels, written through and never sampled:
+    // since 1.55 an image of layers needs no SAMPLED beside STORAGE.
+    const image = try bench.bareImage(.{
+        .format = .r8g8b8a8_unorm,
+        .extent = .{ .width = 8, .height = 8 },
+        .mip_levels = 3,
+        .array_layers = 3,
+        .usage = facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_TRANSFER_SRC,
+    }, false);
+    const view = try bench.viewOf(.{ .image = image, .format = .r8g8b8a8_unorm, .view_type = .@"2d_array" });
+
+    const module_made = try module(&bench, &Named.code);
+    defer fb.DestroyShaderModule(device, module_made);
+    const bindings = [2]facet.DescriptorSetLayoutBinding{
+        .{ .binding = 0, .descriptor_type = .storage_image, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+        .{ .binding = 1, .descriptor_type = .storage_buffer, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+    };
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 2, .bindings = &bindings }, &set_layout));
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    const layout = try pipelineLayout(&bench, &.{set_layout.?}, 8);
+    defer fb.DestroyPipelineLayout(device, layout);
+    var pool: ?*facet.DescriptorPool = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool));
+    defer fb.DestroyDescriptorPool(device, pool);
+    var sets: [1]?*facet.DescriptorSet = undefined;
+    try testing.expectEqual(facet.Result.success, fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &sets));
+    const told, const told_bytes = try bench.buffer(64, facet.BUFFER_USAGE_STORAGE_BUFFER);
+    @memset(told_bytes[0..64], 0);
+    const image_info = facet.DescriptorImageInfo{ .image_view = view };
+    const buffer_info = facet.DescriptorBufferInfo{ .buffer = told, .range = facet.WHOLE_SIZE };
+    const writes = [2]facet.WriteDescriptorSet{
+        .{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .storage_image, .descriptor_count = 1, .image_info = @ptrCast(&image_info) },
+        .{ .dst_set = sets[0].?, .dst_binding = 1, .descriptor_type = .storage_buffer, .descriptor_count = 1, .buffer_info = @ptrCast(&buffer_info) },
+    };
+    fb.UpdateDescriptorSets(device, 2, &writes, 0, null);
+    const infos = [2]facet.ComputePipelineCreateInfo{
+        .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module_made }, .layout = layout },
+        .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module_made, .name = "told" }, .layout = layout },
+    };
+    var pipelines: [2]?*facet.Pipeline = undefined;
+    try testing.expectEqual(facet.Result.success, fb.CreateComputePipelines(device, null, 2, &infos, &pipelines));
+    defer for (pipelines) |one| fb.DestroyPipeline(device, one);
+
+    // Level 0 of layer 0, level 1 of layer 2, and level 2 of layer 1:
+    // each written over its own size, 8, 4 and 2 texels a side.
+    const Where = struct { level: u32, layer: u32, side: u32 };
+    const places = [_]Where{
+        .{ .level = 0, .layer = 0, .side = 8 },
+        .{ .level = 1, .layer = 2, .side = 4 },
+        .{ .level = 2, .layer = 1, .side = 2 },
+        .{ .level = 0, .layer = 1, .side = 8 },
+        // A level the view has not got, and then a layer it has not got:
+        // nothing is written either time, so what is there stays.
+        .{ .level = 3, .layer = 0, .side = 1 },
+        .{ .level = 0, .layer = 3, .side = 1 },
+    };
+    for (places) |place| {
+        const named = [2]u32{ place.level, place.layer };
+        const commands = try bench.record();
+        fb.CmdBindPipeline(commands, .compute, pipelines[0].?);
+        fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+        fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_COMPUTE, 0, 8, &named);
+        fb.CmdDispatch(commands, place.side, place.side, 1);
+        try bench.submit();
+    }
+
+    // Read each level of each layer back through a buffer: the colour
+    // says which level and which layer wrote it, and a level and a layer
+    // nothing wrote is still black.
+    const back, const back_bytes = try bench.buffer(8 * 8 * 4, facet.BUFFER_USAGE_TRANSFER_DST);
+    const colorOf = struct {
+        fn colorOf(level: u32, layer: u32, x: u32) u32 {
+            return 0xFF00_0000 | (10 + 40 * level) << 16 | (10 + 40 * layer) << 8 | x;
+        }
+    }.colorOf;
+    // 0xAARRGGBB as r8g8b8a8 in a buffer: the bytes are r, g, b, a in
+    // order, so the little-endian word reads 0xAABBGGRR.
+    const swizzled = struct {
+        fn swizzled(color: u32) u32 {
+            return (color & 0xFF00_0000) | (color & 0xFF) << 16 | (color & 0xFF00) | (color >> 16 & 0xFF);
+        }
+    }.swizzled;
+    for (places[0..4]) |place| {
+        @memset(back_bytes[0 .. 8 * 8 * 4], 0);
+        const region = facet.BufferImageCopy{
+            .image_subresource = .{ .mip_level = place.level, .base_array_layer = place.layer },
+            .image_extent = .{ .width = place.side, .height = place.side },
+        };
+        const commands = try bench.record();
+        fb.CmdCopyImageToBuffer(commands, image, .general, back, 1, @ptrCast(&region));
+        try bench.submit();
+        // r8g8b8a8 in the buffer: the bytes are r, g, b, a in order, so
+        // the word reads 0xAABBGGRR.
+        const first = std.mem.readInt(u32, back_bytes[0..4], .little);
+        const last_at = ((place.side - 1) * place.side + place.side - 1) * 4;
+        const last = std.mem.readInt(u32, back_bytes[last_at..][0..4], .little);
+        try testing.expectEqual(swizzled(colorOf(place.level, place.layer, 0)), first);
+        try testing.expectEqual(swizzled(colorOf(place.level, place.layer, place.side - 1)), last);
+    }
+
+    // What the function sees of the shape, and of a texel it reads back.
+    const asked = [2]u32{ 1, 2 };
+    var commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, pipelines[1].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_COMPUTE, 0, 8, &asked);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    try bench.submit();
+    const out: [*]const u32 = @ptrCast(@alignCast(told_bytes));
+    try testing.expectEqual(@as(u32, 3), out[0]);
+    try testing.expectEqual(@as(u32, 3), out[1]);
+    try testing.expectEqual(@as(u32, 8), out[2]);
+    try testing.expectEqual(@as(u32, 8), out[3]);
+    try testing.expectEqual(@as(u32, 4), out[4]);
+    // Level 1 of layer 2, which the second dispatch wrote.
+    try testing.expectEqual(colorOf(1, 2, 0), out[5]);
+    // A level, a layer or a place the view has not got: transparent black.
+    try testing.expectEqual(@as(u32, 0), out[6]);
+    try testing.expectEqual(@as(u32, 0), out[7]);
+    try testing.expectEqual(@as(u32, 0), out[8]);
+    try testing.expectEqual(@as(u32, 0), out[9]);
+    try testing.expectEqual(@as(u32, 1), out[10]);
+    try testing.expectEqual(@as(u32, 0), out[11]);
+
+    // A view of one level and one layer of the same image: its level 0 is
+    // the image's level 1, so the function writing level 0 writes that.
+    const narrow = try bench.viewOf(.{
+        .image = image,
+        .format = .r8g8b8a8_unorm,
+        .subresource_range = .{ .base_mip_level = 1, .level_count = 1, .base_array_layer = 1, .layer_count = 1 },
+    });
+    const narrow_info = facet.DescriptorImageInfo{ .image_view = narrow };
+    const to_narrow = facet.WriteDescriptorSet{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .storage_image, .descriptor_count = 1, .image_info = @ptrCast(&narrow_info) };
+    fb.UpdateDescriptorSets(device, 1, @ptrCast(&to_narrow), 0, null);
+    const at_first = [2]u32{ 0, 0 };
+    commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, pipelines[0].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_COMPUTE, 0, 8, &at_first);
+    fb.CmdDispatch(commands, 4, 4, 1);
+    try bench.submit();
+    @memset(back_bytes[0 .. 8 * 8 * 4], 0);
+    const second = facet.BufferImageCopy{
+        .image_subresource = .{ .mip_level = 1, .base_array_layer = 1 },
+        .image_extent = .{ .width = 4, .height = 4 },
+    };
+    commands = try bench.record();
+    fb.CmdCopyImageToBuffer(commands, image, .general, back, 1, @ptrCast(&second));
+    try bench.submit();
+    try testing.expectEqual(swizzled(colorOf(0, 0, 0)), std.mem.readInt(u32, back_bytes[0..4], .little));
+    // And the function sees one level and one layer of it.
+    commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, pipelines[1].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_COMPUTE, 0, 8, &at_first);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    try bench.submit();
+    try testing.expectEqual(@as(u32, 1), out[0]);
+    try testing.expectEqual(@as(u32, 1), out[1]);
+    try testing.expectEqual(@as(u32, 4), out[2]);
+}
+
+test "a colour attachment written through as a storage image: its rows, before the pass draws into them and after" {
+    const Both = struct {
+        /// Group (x, y) writes texel (x, y) of the image bound at set 0
+        /// binding 0 - the attachment's own rows - with the colour the
+        /// push constants carry.
+        fn run(groups: *const shader.Groups) callconv(.c) void {
+            const image = groups.resources.written(0, 0, 0) orelse return;
+            image.setColor(0, 0, groups.group[0], groups.group[1], groups.resources.constants(u32).*);
+        }
+
+        /// What the function sees of it: whether it is there to write
+        /// through at all, its size, and a texel read back.
+        fn told(groups: *const shader.Groups) callconv(.c) void {
+            const out = groups.resources.storage(u32, 0, 1) orelse return;
+            const image = groups.resources.written(0, 0, 0) orelse {
+                out[0] = 0xFFFF_FFFF;
+                return;
+            };
+            out[0] = image.levels;
+            out[1] = image.layer_count;
+            out[2] = image.width(0);
+            out[3] = image.height(0);
+            out[4] = image.colorAt(0, 0, 0, 0);
+            out[5] = image.colorAt(0, 0, 7, 7);
+            // Past the rows: transparent black, as any storage image has it.
+            out[6] = image.colorAt(0, 0, image.width(0), 0);
+        }
+
+        const entries = [_]shader.Entry{ shader.compute("main", &run), shader.compute("told", &told) };
+        const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
+    };
+
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    var features: facet.PhysicalDeviceFeatures = undefined;
+    fb.GetPhysicalDeviceFeatures(bench.physical, &features);
+    try testing.expect(features.storage_images);
+
+    // The linear features say the rows of a format may be written
+    // through: b8g8r8a8's are, r8g8b8a8's are not - no texture reads a
+    // word with red in its low byte.
+    var properties: facet.FormatProperties = undefined;
+    fb.GetPhysicalDeviceFormatProperties(bench.physical, .b8g8r8a8_unorm, &properties);
+    try testing.expect(properties.linear_tiling_features & facet.FORMAT_FEATURE_STORAGE_IMAGE != 0);
+    fb.GetPhysicalDeviceFormatProperties(bench.physical, .r8g8b8a8_unorm, &properties);
+    try testing.expect(properties.linear_tiling_features & facet.FORMAT_FEATURE_STORAGE_IMAGE == 0);
+
+    // Drawn into and written through at once, which was refused before
+    // 1.56. Sampled as well is still refused, a sample wanting the
+    // blocked layout, and so is the format whose rows no texture reads.
+    const usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_TRANSFER_SRC;
+    const image = try bench.bareImage(.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = usage }, false);
+    const view = try bench.viewOf(.{ .image = image, .format = .b8g8r8a8_unorm });
+    var refused: ?*facet.Image = null;
+    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = usage | facet.IMAGE_USAGE_SAMPLED }, &refused));
+    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{ .format = .r8g8b8a8_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = usage }, &refused));
+    try testing.expect(refused == null);
+
+    const module_made = try module(&bench, &Both.code);
+    defer fb.DestroyShaderModule(device, module_made);
+    const bindings = [2]facet.DescriptorSetLayoutBinding{
+        .{ .binding = 0, .descriptor_type = .storage_image, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+        .{ .binding = 1, .descriptor_type = .storage_buffer, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+    };
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 2, .bindings = &bindings }, &set_layout));
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    const layout = try pipelineLayout(&bench, &.{set_layout.?}, 4);
+    defer fb.DestroyPipelineLayout(device, layout);
+    var pool: ?*facet.DescriptorPool = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool));
+    defer fb.DestroyDescriptorPool(device, pool);
+    var sets: [1]?*facet.DescriptorSet = undefined;
+    try testing.expectEqual(facet.Result.success, fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &sets));
+    const told, const told_bytes = try bench.buffer(64, facet.BUFFER_USAGE_STORAGE_BUFFER);
+    @memset(told_bytes[0..64], 0);
+    const image_info = facet.DescriptorImageInfo{ .image_view = view };
+    const buffer_info = facet.DescriptorBufferInfo{ .buffer = told, .range = facet.WHOLE_SIZE };
+    const writes = [2]facet.WriteDescriptorSet{
+        .{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .storage_image, .descriptor_count = 1, .image_info = @ptrCast(&image_info) },
+        .{ .dst_set = sets[0].?, .dst_binding = 1, .descriptor_type = .storage_buffer, .descriptor_count = 1, .buffer_info = @ptrCast(&buffer_info) },
+    };
+    fb.UpdateDescriptorSets(device, 2, &writes, 0, null);
+    const infos = [2]facet.ComputePipelineCreateInfo{
+        .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module_made }, .layout = layout },
+        .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module_made, .name = "told" }, .layout = layout },
+    };
+    var pipelines: [2]?*facet.Pipeline = undefined;
+    try testing.expectEqual(facet.Result.success, fb.CreateComputePipelines(device, null, 2, &infos, &pipelines));
+    defer for (pipelines) |one| fb.DestroyPipeline(device, one);
+
+    // Written through first: the rows take the colour at once.
+    const green: u32 = 0xFF00_FF00;
+    var commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, pipelines[0].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_COMPUTE, 0, 4, &green);
+    fb.CmdDispatch(commands, 8, 8, 1);
+    try bench.submit();
+    const back, const back_bytes = try bench.buffer(8 * 8 * 4, facet.BUFFER_USAGE_TRANSFER_DST);
+    @memset(back_bytes[0 .. 8 * 8 * 4], 0);
+    const whole = facet.BufferImageCopy{ .image_extent = .{ .width = 8, .height = 8 } };
+    commands = try bench.record();
+    fb.CmdCopyImageToBuffer(commands, image, .general, back, 1, @ptrCast(&whole));
+    try bench.submit();
+    // b8g8r8a8 in the buffer: the word reads 0xAARRGGBB as it is.
+    try testing.expectEqual(green, std.mem.readInt(u32, back_bytes[0..4], .little));
+    try testing.expectEqual(green, std.mem.readInt(u32, back_bytes[(7 * 8 + 7) * 4 ..][0..4], .little));
+
+    // And the function reads its own rows back, and nothing past them.
+    commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, pipelines[1].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    try bench.submit();
+    const out: [*]const u32 = @ptrCast(@alignCast(told_bytes));
+    try testing.expectEqual(@as(u32, 1), out[0]);
+    try testing.expectEqual(@as(u32, 1), out[1]);
+    try testing.expectEqual(@as(u32, 8), out[2]);
+    try testing.expectEqual(@as(u32, 8), out[3]);
+    try testing.expectEqual(green, out[4]);
+    try testing.expectEqual(green, out[5]);
+    try testing.expectEqual(@as(u32, 0), out[6]);
+
+    // Then drawn into: a pass over the same image, clearing it to blue.
+    // What a subpass draws reaches the rows when it stores, so the clear
+    // is what is there afterwards and the earlier write is gone.
+    const pass = try renderPass(&bench, .clear, false);
+    defer fb.DestroyRenderPass(device, pass);
+    const frame = try framebuffer(&bench, pass, &.{view}, 8, 8);
+    defer fb.DestroyFramebuffer(device, frame);
+    const blue = clears(0xFF00_00FF);
+    commands = try bench.record();
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame, .render_area = .{ .extent = .{ .width = 8, .height = 8 } }, .clear_value_count = 1, .clear_values = &blue }, .@"inline");
+    fb.CmdEndRenderPass(commands);
+    fb.CmdCopyImageToBuffer(commands, image, .general, back, 1, @ptrCast(&whole));
+    try bench.submit();
+    try testing.expectEqual(@as(u32, 0xFF00_00FF), std.mem.readInt(u32, back_bytes[0..4], .little));
+
+    // And written through again afterwards: the rows take the colour over
+    // what the pass left, there being nothing of the pass left in the
+    // tiles once it has ended.
+    const red: u32 = 0xFFFF_0000;
+    commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, pipelines[0].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_COMPUTE, 0, 4, &red);
+    fb.CmdDispatch(commands, 8, 8, 1);
+    fb.CmdCopyImageToBuffer(commands, image, .general, back, 1, @ptrCast(&whole));
+    try bench.submit();
+    try testing.expectEqual(red, std.mem.readInt(u32, back_bytes[0..4], .little));
+}
+
+test "storage images of floats: a texel written and read as floats, and one float a texel" {
+    const Floats = struct {
+        /// Group (x, y) writes texel (x, y) of the image bound at set 0
+        /// binding 0 from four floats the push constants carry, and then
+        /// reads it back into the buffer at binding 1: what the format
+        /// kept of them, which is the point of keeping floats.
+        fn run(groups: *const shader.Groups) callconv(.c) void {
+            const image = groups.resources.written(0, 0, 0) orelse return;
+            const out = groups.resources.storage(f32, 0, 1) orelse return;
+            const parts = groups.resources.constants([4]f32).*;
+            const x = groups.group[0];
+            const y = groups.group[1];
+            image.setParts(0, 0, x, y, parts);
+            if (x != 0 or y != 0) return;
+            const read = image.partsAt(0, 0, 0, 0);
+            for (read, 0..) |part, k| out[k] = part;
+            // The colour the same texel reads as, and what the texel past
+            // the level reads as: all zero, as any storage image has it.
+            const color = image.colorAt(0, 0, 0, 0);
+            out[4] = @bitCast(color);
+            const none = image.partsAt(0, 0, image.width(0), 0);
+            for (none, 0..) |part, k| out[5 + k] = part;
+        }
+
+        const entries = [_]shader.Entry{shader.compute("main", &run)};
+        const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
+    };
+
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    var features: facet.PhysicalDeviceFeatures = undefined;
+    fb.GetPhysicalDeviceFeatures(bench.physical, &features);
+    try testing.expect(features.storage_images);
+    try testing.expect(features.kept_floats);
+
+    // Every float format says it may be written through since 1.57, and
+    // one float a texel is a format of its own: R32_SFLOAT as an image.
+    for ([5]facet.Format{ .r16g16b16a16_sfloat, .r32g32b32a32_sfloat, .b10g11r11_ufloat_pack32, .e5b9g9r9_ufloat_pack32, .r32_sfloat }) |format| {
+        var properties: facet.FormatProperties = undefined;
+        fb.GetPhysicalDeviceFormatProperties(bench.physical, format, &properties);
+        try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_STORAGE_IMAGE != 0);
+        try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_SAMPLED_IMAGE != 0);
+    }
+
+    const module_made = try module(&bench, &Floats.code);
+    defer fb.DestroyShaderModule(device, module_made);
+    const bindings = [2]facet.DescriptorSetLayoutBinding{
+        .{ .binding = 0, .descriptor_type = .storage_image, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+        .{ .binding = 1, .descriptor_type = .storage_buffer, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+    };
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 2, .bindings = &bindings }, &set_layout));
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    const layout = try pipelineLayout(&bench, &.{set_layout.?}, 16);
+    defer fb.DestroyPipelineLayout(device, layout);
+    var pool: ?*facet.DescriptorPool = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool));
+    defer fb.DestroyDescriptorPool(device, pool);
+    var sets: [1]?*facet.DescriptorSet = undefined;
+    try testing.expectEqual(facet.Result.success, fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &sets));
+    const told, const told_bytes = try bench.buffer(64, facet.BUFFER_USAGE_STORAGE_BUFFER);
+    const buffer_info = facet.DescriptorBufferInfo{ .buffer = told, .range = facet.WHOLE_SIZE };
+    const to_buffer = facet.WriteDescriptorSet{ .dst_set = sets[0].?, .dst_binding = 1, .descriptor_type = .storage_buffer, .descriptor_count = 1, .buffer_info = @ptrCast(&buffer_info) };
+    fb.UpdateDescriptorSets(device, 1, @ptrCast(&to_buffer), 0, null);
+    const info = facet.ComputePipelineCreateInfo{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module_made }, .layout = layout };
+    var pipeline: [1]?*facet.Pipeline = undefined;
+    try testing.expectEqual(facet.Result.success, fb.CreateComputePipelines(device, null, 1, @ptrCast(&info), &pipeline));
+    defer fb.DestroyPipeline(device, pipeline[0]);
+    const out: [*]const f32 = @ptrCast(@alignCast(told_bytes));
+
+    // Each format written with the same four floats and read back: what
+    // it keeps of them. A whole number above 1 is what a colour could
+    // never have carried, which is why these are kept as floats.
+    const Kind = struct { format: facet.Format, want: [4]f32, mercy: f32, says: []const u8 };
+    const kinds = [_]Kind{
+        // Halves hold 1.5, 2.5 and 0.25 exactly.
+        .{ .format = .r16g16b16a16_sfloat, .want = .{ 1.5, 2.5, 0.25, 0.5 }, .mercy = 0, .says = "four halves" },
+        // Floats hold whatever was given.
+        .{ .format = .r32g32b32a32_sfloat, .want = .{ 1.5, 2.5, 0.25, 0.5 }, .mercy = 0, .says = "four floats" },
+        // 11, 11 and 10 bits, no sign and no alpha: the alpha reads as 1.
+        .{ .format = .b10g11r11_ufloat_pack32, .want = .{ 1.5, 2.5, 0.25, 1 }, .mercy = 0.02, .says = "packed floats" },
+        // Three mantissas over one exponent, and no alpha either.
+        .{ .format = .e5b9g9r9_ufloat_pack32, .want = .{ 1.5, 2.5, 0.25, 1 }, .mercy = 0.02, .says = "a shared exponent" },
+        // One float, read as (red, 0, 0, 1) the way one byte of red is.
+        .{ .format = .r32_sfloat, .want = .{ 1.5, 0, 0, 1 }, .mercy = 0, .says = "one float a texel" },
+    };
+    const given = [4]f32{ 1.5, 2.5, 0.25, 0.5 };
+    for (kinds) |kind| {
+        const image = try bench.bareImage(.{
+            .format = kind.format,
+            .extent = .{ .width = 8, .height = 8 },
+            .usage = facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_SRC,
+        }, false);
+        const view = try bench.viewOf(.{ .image = image, .format = kind.format });
+        const image_info = facet.DescriptorImageInfo{ .image_view = view };
+        const to_image = facet.WriteDescriptorSet{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .storage_image, .descriptor_count = 1, .image_info = @ptrCast(&image_info) };
+        fb.UpdateDescriptorSets(device, 1, @ptrCast(&to_image), 0, null);
+        @memset(told_bytes[0..64], 0);
+        const commands = try bench.record();
+        fb.CmdBindPipeline(commands, .compute, pipeline[0].?);
+        fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+        fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_COMPUTE, 0, 16, &given);
+        fb.CmdDispatch(commands, 8, 8, 1);
+        try bench.submit();
+        for (kind.want, 0..) |want, k| {
+            if (kind.mercy == 0) try testing.expectEqual(want, out[k]) else try testing.expectApproxEqAbs(want, out[k], kind.mercy);
+        }
+        // The colour the same texel reads as: each channel held inside 0
+        // to 1 and rounded to 8 bits, which is all the tiles hold.
+        const color: u32 = @bitCast(out[4]);
+        try testing.expectEqual(@as(u32, 0xFF), color >> 16 & 0xFF);
+        // And a place past the level: all zero.
+        for (0..4) |k| try testing.expectEqual(@as(f32, 0), out[5 + k]);
+    }
+
+    // A compressed image asked for as a storage image is still unpacked
+    // to 8888: nothing writes one texel of a block. It wants SAMPLED
+    // beside it, being unpacked to be sampled.
+    const blocks = try bench.bareImage(.{
+        .format = .bc1_rgba_unorm_block,
+        .extent = .{ .width = 8, .height = 8 },
+        .usage = facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST,
+    }, false);
+    var requirements: facet.MemoryRequirements = undefined;
+    fb.GetImageMemoryRequirements(device, blocks, &requirements);
+    // 8 x 8 of 8888, spread over 64 bits a texel, against the 32 bytes of
+    // four BC1 blocks: it was unpacked.
+    try testing.expect(requirements.size >= 8 * 8 * 8);
+    var denied: ?*facet.Image = null;
+    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{
+        .format = .bc1_rgba_unorm_block,
+        .extent = .{ .width = 8, .height = 8 },
+        .usage = facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_TRANSFER_DST,
+    }, &denied));
+    try testing.expect(denied == null);
+}
+
 test "a buffer read as texels of a format: a uniform one read, a storage one written, and the formats refused" {
     const Texels = struct {
         /// Each group reads texel k of binding 0 and writes what it made
@@ -1798,6 +2321,285 @@ test "a buffer read as texels of a format: a uniform one read, a storage one wri
     try testing.expectEqual(@as(f32, 1), written[3]);
 }
 
+test "texel buffers of whole numbers and of 16 bits a channel: every format of the grid, and the whole numbers exact" {
+    const Grid = struct {
+        /// Texel k of binding 0 copied into texel k of binding 1 by
+        /// floats, whatever the two formats are.
+        fn run(groups: *const shader.Groups) callconv(.c) void {
+            const from = groups.resources.texels(0, 0, 0) orelse return;
+            var into = groups.resources.texels(0, 1, 0) orelse return;
+            const k = groups.group[0];
+            into.set(k, from.at(k));
+        }
+
+        /// The same by whole numbers, which is what a 32-bit integer
+        /// format wants: `at`'s float does not carry one past 2^24.
+        fn wholes(groups: *const shader.Groups) callconv(.c) void {
+            const from = groups.resources.texels(0, 0, 0) orelse return;
+            var into = groups.resources.texels(0, 1, 0) orelse return;
+            const k = groups.group[0];
+            into.setInt(k, from.intAt(k));
+        }
+
+        /// What the function sees of binding 0: how many texels it has,
+        /// its first texel as four floats, and as four whole numbers.
+        fn told(groups: *const shader.Groups) callconv(.c) void {
+            const out = groups.resources.storage(u32, 0, 2) orelse return;
+            const from = groups.resources.texels(0, 0, 0) orelse {
+                out[0] = 0xFFFF_FFFF;
+                return;
+            };
+            out[0] = from.count;
+            const parts = from.at(0);
+            for (parts, 0..) |part, k| out[1 + k] = @bitCast(part);
+            const numbers = from.intAt(0);
+            for (numbers, 0..) |number, k| {
+                const bits: u64 = @bitCast(number);
+                out[5 + k * 2] = @truncate(bits);
+                out[6 + k * 2] = @truncate(bits >> 32);
+            }
+        }
+
+        const entries = [_]shader.Entry{ shader.compute("main", &run), shader.compute("wholes", &wholes), shader.compute("told", &told) };
+        const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
+    };
+
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    var features: facet.PhysicalDeviceFeatures = undefined;
+    fb.GetPhysicalDeviceFeatures(bench.physical, &features);
+    try testing.expect(features.texel_buffers);
+
+    // Every format the grid of 1.54 added, with the bytes a texel takes:
+    // one channel, two or four, of 8, 16 or 32 bits.
+    const Grain = struct { format: facet.Format, size: u32 };
+    const grid = [_]Grain{
+        .{ .format = .r8_unorm, .size = 1 },
+        .{ .format = .r8g8_unorm, .size = 2 },
+        .{ .format = .r8_uint, .size = 1 },
+        .{ .format = .r8g8_uint, .size = 2 },
+        .{ .format = .r8g8b8a8_uint, .size = 4 },
+        .{ .format = .r8_sint, .size = 1 },
+        .{ .format = .r8g8_sint, .size = 2 },
+        .{ .format = .r8g8b8a8_sint, .size = 4 },
+        .{ .format = .r16_unorm, .size = 2 },
+        .{ .format = .r16g16_unorm, .size = 4 },
+        .{ .format = .r16g16b16a16_unorm, .size = 8 },
+        .{ .format = .r16_uint, .size = 2 },
+        .{ .format = .r16g16_uint, .size = 4 },
+        .{ .format = .r16g16b16a16_uint, .size = 8 },
+        .{ .format = .r16_sint, .size = 2 },
+        .{ .format = .r16g16_sint, .size = 4 },
+        .{ .format = .r16g16b16a16_sint, .size = 8 },
+        .{ .format = .r16_sfloat, .size = 2 },
+        .{ .format = .r16g16_sfloat, .size = 4 },
+        .{ .format = .r16g16b16a16_sfloat, .size = 8 },
+        .{ .format = .r32_uint, .size = 4 },
+        .{ .format = .r32g32_uint, .size = 8 },
+        .{ .format = .r32g32b32a32_uint, .size = 16 },
+        .{ .format = .r32_sint, .size = 4 },
+        .{ .format = .r32g32_sint, .size = 8 },
+        .{ .format = .r32g32b32a32_sint, .size = 16 },
+    };
+
+    // Every one of them says a texel buffer and nothing else - no image
+    // is kept in them, and no vertex attribute is read in one. The two
+    // that an image is kept in, r8_unorm and r16g16b16a16_sfloat, say
+    // what they always said as well.
+    const texel_features = facet.FORMAT_FEATURE_UNIFORM_TEXEL_BUFFER | facet.FORMAT_FEATURE_STORAGE_TEXEL_BUFFER;
+    for (grid) |grain| {
+        var properties: facet.FormatProperties = undefined;
+        fb.GetPhysicalDeviceFormatProperties(bench.physical, grain.format, &properties);
+        try testing.expectEqual(texel_features, properties.buffer_features & texel_features);
+        try testing.expectEqual(@as(u32, 0), properties.buffer_features & facet.FORMAT_FEATURE_VERTEX_BUFFER);
+    }
+
+    const span = 64;
+    const source, const source_bytes = try bench.buffer(span, facet.BUFFER_USAGE_UNIFORM_TEXEL_BUFFER);
+    const target, const target_bytes = try bench.buffer(span, facet.BUFFER_USAGE_STORAGE_TEXEL_BUFFER);
+
+    const module_made = try module(&bench, &Grid.code);
+    defer fb.DestroyShaderModule(device, module_made);
+    const bindings = [3]facet.DescriptorSetLayoutBinding{
+        .{ .binding = 0, .descriptor_type = .uniform_texel_buffer, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+        .{ .binding = 1, .descriptor_type = .storage_texel_buffer, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+        .{ .binding = 2, .descriptor_type = .storage_buffer, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+    };
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 3, .bindings = &bindings }, &set_layout));
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    const layout = try pipelineLayout(&bench, &.{set_layout.?}, 0);
+    defer fb.DestroyPipelineLayout(device, layout);
+    var pool: ?*facet.DescriptorPool = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool));
+    defer fb.DestroyDescriptorPool(device, pool);
+    var sets: [1]?*facet.DescriptorSet = undefined;
+    try testing.expectEqual(facet.Result.success, fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &sets));
+    const told, const told_bytes = try bench.buffer(64, facet.BUFFER_USAGE_STORAGE_BUFFER);
+    const told_info = facet.DescriptorBufferInfo{ .buffer = told, .range = facet.WHOLE_SIZE };
+    const to_told = facet.WriteDescriptorSet{ .dst_set = sets[0].?, .dst_binding = 2, .descriptor_type = .storage_buffer, .descriptor_count = 1, .buffer_info = @ptrCast(&told_info) };
+    fb.UpdateDescriptorSets(device, 1, @ptrCast(&to_told), 0, null);
+
+    const infos = [3]facet.ComputePipelineCreateInfo{
+        .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module_made }, .layout = layout },
+        .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module_made, .name = "wholes" }, .layout = layout },
+        .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module_made, .name = "told" }, .layout = layout },
+    };
+    var pipelines: [3]?*facet.Pipeline = undefined;
+    try testing.expectEqual(facet.Result.success, fb.CreateComputePipelines(device, null, 3, &infos, &pipelines));
+    defer for (pipelines) |one| fb.DestroyPipeline(device, one);
+    const out: [*]const u32 = @ptrCast(@alignCast(told_bytes));
+
+    // A view of each, and a dispatch that tells how many texels it found:
+    // the buffer's bytes divided by the format's size, which is what the
+    // library made of the format.
+    for (grid) |grain| {
+        var view: ?*facet.BufferView = null;
+        try testing.expectEqual(facet.Result.success, fb.CreateBufferView(device, &.{ .buffer = source, .format = grain.format }, &view));
+        defer fb.DestroyBufferView(device, view);
+        const write = facet.WriteDescriptorSet{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .uniform_texel_buffer, .descriptor_count = 1, .texel_buffer_view = @ptrCast(&view) };
+        fb.UpdateDescriptorSets(device, 1, @ptrCast(&write), 0, null);
+        @memset(told_bytes[0..64], 0);
+        const commands = try bench.record();
+        fb.CmdBindPipeline(commands, .compute, pipelines[2].?);
+        fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+        fb.CmdDispatch(commands, 1, 1, 1);
+        try bench.submit();
+        try testing.expectEqual(span / grain.size, out[0]);
+        // An offset or a range that is not a whole texel is refused, and
+        // so is a range of nothing.
+        if (grain.size > 1) {
+            var none: ?*facet.BufferView = null;
+            try testing.expectEqual(facet.Result.error_initialization_failed, fb.CreateBufferView(device, &.{ .buffer = source, .format = grain.format, .offset = 1 }, &none));
+            try testing.expectEqual(facet.Result.error_initialization_failed, fb.CreateBufferView(device, &.{ .buffer = source, .format = grain.format, .range = grain.size - 1 }, &none));
+            try testing.expect(none == null);
+        }
+    }
+
+    // A view of `format` over `buffer`, written into binding `at`.
+    const bind = struct {
+        fn bind(on: *Bench, buffer: *facet.Buffer, format: facet.Format, at: u32, kind: facet.DescriptorType, into: *[1]?*facet.DescriptorSet) !*facet.BufferView {
+            var view: ?*facet.BufferView = null;
+            try testing.expectEqual(facet.Result.success, on.rig.fb.CreateBufferView(on.device, &.{ .buffer = buffer, .format = format }, &view));
+            const write = facet.WriteDescriptorSet{ .dst_set = into[0].?, .dst_binding = at, .descriptor_type = kind, .descriptor_count = 1, .texel_buffer_view = @ptrCast(&view) };
+            on.rig.fb.UpdateDescriptorSets(on.device, 1, @ptrCast(&write), 0, null);
+            return view.?;
+        }
+    }.bind;
+
+    // A whole number read as itself: r8_uint's 0 to 255, copied by floats
+    // into r16_uint, where it is the same number in two bytes.
+    source_bytes[0] = 7;
+    source_bytes[1] = 200;
+    @memset(target_bytes[0..span], 0);
+    const from_u8 = try bind(&bench, source, .r8_uint, 0, .uniform_texel_buffer, &sets);
+    defer fb.DestroyBufferView(device, from_u8);
+    const into_u16 = try bind(&bench, target, .r16_uint, 1, .storage_texel_buffer, &sets);
+    defer fb.DestroyBufferView(device, into_u16);
+    var commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, pipelines[0].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 2, 1, 1);
+    try bench.submit();
+    try testing.expectEqual(@as(u16, 7), std.mem.readInt(u16, target_bytes[0..2], .little));
+    try testing.expectEqual(@as(u16, 200), std.mem.readInt(u16, target_bytes[2..4], .little));
+    // And what the function saw of the first: 7 as a float and as a whole
+    // number, with the parts the format has not got 0 and alpha 1.
+    commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, pipelines[2].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    try bench.submit();
+    try testing.expectEqual(@as(f32, 7), @as(f32, @bitCast(out[1])));
+    try testing.expectEqual(@as(f32, 0), @as(f32, @bitCast(out[2])));
+    try testing.expectEqual(@as(f32, 1), @as(f32, @bitCast(out[4])));
+    try testing.expectEqual(@as(u32, 7), out[5]);
+    try testing.expectEqual(@as(u32, 1), out[11]);
+
+    // A signed one: -300 and 300 of r16g16_sint, read as themselves and
+    // written into r32g32_sint.
+    std.mem.writeInt(i16, source_bytes[0..2], -300, .little);
+    std.mem.writeInt(i16, source_bytes[2..4], 300, .little);
+    @memset(target_bytes[0..span], 0);
+    const from_i16 = try bind(&bench, source, .r16g16_sint, 0, .uniform_texel_buffer, &sets);
+    defer fb.DestroyBufferView(device, from_i16);
+    const into_i32 = try bind(&bench, target, .r32g32_sint, 1, .storage_texel_buffer, &sets);
+    defer fb.DestroyBufferView(device, into_i32);
+    commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, pipelines[1].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    try bench.submit();
+    try testing.expectEqual(@as(i32, -300), std.mem.readInt(i32, target_bytes[0..4], .little));
+    try testing.expectEqual(@as(i32, 300), std.mem.readInt(i32, target_bytes[4..8], .little));
+
+    // 16 bits a channel as 0 to 1: a half of 65535 reads as about 0.5,
+    // which 8 bits could not tell from the next step up.
+    std.mem.writeInt(u16, source_bytes[0..2], 32768, .little);
+    const from_u16 = try bind(&bench, source, .r16_unorm, 0, .uniform_texel_buffer, &sets);
+    defer fb.DestroyBufferView(device, from_u16);
+    commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, pipelines[2].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    try bench.submit();
+    try testing.expectApproxEqAbs(@as(f32, 0.5), @as(f32, @bitCast(out[1])), 0.0001);
+    // Its whole number is what it keeps, not 0 or 1.
+    try testing.expectEqual(@as(u32, 32768), out[5]);
+
+    // Half-floats: 1.5 and -0.25 of r16g16b16a16_sfloat, read as they are.
+    const halves = [4]f16{ 1.5, -0.25, 3, 0.5 };
+    for (halves, 0..) |half, k| std.mem.writeInt(u16, source_bytes[k * 2 ..][0..2], @bitCast(half), .little);
+    const from_f16 = try bind(&bench, source, .r16g16b16a16_sfloat, 0, .uniform_texel_buffer, &sets);
+    defer fb.DestroyBufferView(device, from_f16);
+    commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, pipelines[2].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    try bench.submit();
+    try testing.expectEqual(@as(f32, 1.5), @as(f32, @bitCast(out[1])));
+    try testing.expectEqual(@as(f32, -0.25), @as(f32, @bitCast(out[2])));
+    try testing.expectEqual(@as(f32, 0.5), @as(f32, @bitCast(out[4])));
+
+    // A 32-bit whole number past 2^24, which the float of `at` cannot
+    // carry: `intAt` reads it as it lies, and `setInt` writes it back.
+    const big: u32 = 4_000_000_001;
+    std.mem.writeInt(u32, source_bytes[0..4], big, .little);
+    @memset(target_bytes[0..span], 0);
+    const from_u32 = try bind(&bench, source, .r32_uint, 0, .uniform_texel_buffer, &sets);
+    defer fb.DestroyBufferView(device, from_u32);
+    const into_u32 = try bind(&bench, target, .r32_uint, 1, .storage_texel_buffer, &sets);
+    defer fb.DestroyBufferView(device, into_u32);
+    commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, pipelines[1].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    try bench.submit();
+    try testing.expectEqual(big, std.mem.readInt(u32, target_bytes[0..4], .little));
+    // The same copied by floats instead loses the low bits, the float
+    // carrying 24 of them.
+    @memset(target_bytes[0..span], 0);
+    commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, pipelines[0].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    try bench.submit();
+    try testing.expect(std.mem.readInt(u32, target_bytes[0..4], .little) != big);
+    // A value past what the channel carries is held to the largest it
+    // does, not wrapped: 4 thousand million into r16_uint is 65535.
+    const into_small = try bind(&bench, target, .r16_uint, 1, .storage_texel_buffer, &sets);
+    defer fb.DestroyBufferView(device, into_small);
+    @memset(target_bytes[0..span], 0);
+    commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, pipelines[1].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    try bench.submit();
+    try testing.expectEqual(@as(u16, 65535), std.mem.readInt(u16, target_bytes[0..2], .little));
+}
+
 test "tessellation: patches made into triangles and lines, on the picture where the evaluation function puts them" {
     const Bent = struct {
         var last_points: u32 = 0;
@@ -1845,16 +2647,60 @@ test "tessellation: patches made into triangles and lines, on the picture where 
         fn fragment(fragments: *const shader.Fragments) callconv(.c) void {
             shader.fill(fragments, 0xFFFF_0000);
         }
+        /// What the patch carries as a whole: three floats the control
+        /// function writes and the evaluation function reads back.
+        var carried: [3]f32 = @splat(-1);
+        /// The smallest coordinate above 0 the evaluation function was
+        /// given: where the first cut of an edge fell.
+        var smallest: f32 = 1;
+        fn carryControl(patch: *const shader.Patch, levels: *shader.Levels) callconv(.c) void {
+            last_points = patch.count;
+            // Half a piece more than three: the fraction a spacing spends.
+            levels.outer = .{ 3.5, 3.5, 3.5, 3.5 };
+            levels.inner = .{ 3.5, 3.5 };
+            // The colour of the whole patch, worked out the once: red.
+            const own = patch.ownValues();
+            if (own.len == 3) own[0..3].* = .{ 1, 0, 0 };
+        }
+        fn spent(evaluations: *const shader.Evaluations) callconv(.c) void {
+            const own = evaluations.patch.ownValues();
+            if (own.len == 3) carried = own[0..3].*;
+            for (0..evaluations.count) |k| {
+                const u = evaluations.coordinates[k][0];
+                if (u > 0 and u < smallest) smallest = u;
+            }
+            quad(evaluations);
+        }
+        /// The patch's colour handed on as the four varyings the `color`
+        /// form reads: the vertex function carries one float, so what is
+        /// drawn is wider than the patch's own vertices are.
+        fn painted(evaluations: *const shader.Evaluations) callconv(.c) void {
+            spent(evaluations);
+            const own = evaluations.patch.ownValues();
+            const full = shader.channel(1);
+            for (0..evaluations.count) |k| {
+                const out = evaluations.output(@intCast(k));
+                out[4..8].* = if (own.len == 3) .{ own[0] * full, own[1] * full, own[2] * full, full } else @splat(0);
+            }
+        }
         const entries = [_]shader.Entry{
             shader.vertex("main", &vertex, 1),
             shader.fragment("main", &fragment, 0),
-            shader.control("main", &control),
-            shader.control("triangle", &triangleControl),
+            shader.control("main", &control, 0),
+            shader.control("triangle", &triangleControl, 0),
+            shader.control("carry", &carryControl, 3),
+            shader.control("hoard", &carryControl, 17),
             shader.evaluation("triangles", &triangle, 0, .{ .domain = .triangles }),
             shader.evaluation("clockwise", &triangle, 0, .{ .domain = .triangles, .clockwise = true }),
             shader.evaluation("quads", &quad, 0, .{ .domain = .quads }),
             shader.evaluation("isolines", &quad, 0, .{ .domain = .isolines }),
             shader.evaluation("varied", &quad, 2, .{ .domain = .quads }),
+            shader.evaluation("equally", &spent, 0, .{ .domain = .quads }),
+            shader.evaluation("evenly", &spent, 0, .{ .domain = .quads, .spacing = .fractional_even }),
+            shader.evaluation("oddly", &spent, 0, .{ .domain = .quads, .spacing = .fractional_odd }),
+            shader.fixedFragment("painted", .{ .kind = .color }),
+            shader.evaluation("painted", &painted, 4, .{ .domain = .quads }),
+            .{ .name = "nohow", .stage = facet.SHADER_STAGE_TESSELLATION_EVALUATION, .function = &spent, .varyings = 1 << 8 | 3 << 11 },
         };
         const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
     };
@@ -1882,10 +2728,10 @@ test "tessellation: patches made into triangles and lines, on the picture where 
     const red: u32 = 0xFFFF_0000;
 
     const Made = struct {
-        fn of(on: *Bench, shaders: *facet.ShaderModule, by: *facet.PipelineLayout, into: *facet.RenderPass, control: [*:0]const u8, evaluation: [*:0]const u8, points: u32, topology: facet.PrimitiveTopology, raster: facet.PipelineRasterizationStateCreateInfo) struct { facet.Result, ?*facet.Pipeline } {
+        fn of(on: *Bench, shaders: *facet.ShaderModule, by: *facet.PipelineLayout, into: *facet.RenderPass, fragment: [*:0]const u8, control: [*:0]const u8, evaluation: [*:0]const u8, points: u32, topology: facet.PrimitiveTopology, raster: facet.PipelineRasterizationStateCreateInfo) struct { facet.Result, ?*facet.Pipeline } {
             const stages = [4]facet.PipelineShaderStageCreateInfo{
                 .{ .stage = facet.SHADER_STAGE_VERTEX, .module = shaders },
-                .{ .stage = facet.SHADER_STAGE_FRAGMENT, .module = shaders },
+                .{ .stage = facet.SHADER_STAGE_FRAGMENT, .module = shaders, .name = fragment },
                 .{ .stage = facet.SHADER_STAGE_TESSELLATION_CONTROL, .module = shaders, .name = control },
                 .{ .stage = facet.SHADER_STAGE_TESSELLATION_EVALUATION, .module = shaders, .name = evaluation },
             };
@@ -1932,7 +2778,7 @@ test "tessellation: patches made into triangles and lines, on the picture where 
     }.run;
 
     // A square, whole, cut however finely.
-    var result, const quads = Made.of(&bench, bent, layout, pass, "main", "quads", 4, .patch_list, .{});
+    var result, const quads = Made.of(&bench, bent, layout, pass, "main", "main", "quads", 4, .patch_list, .{});
     try testing.expectEqual(facet.Result.success, result);
     defer fb.DestroyPipeline(device, quads);
     try draw(&bench, pass, frame, quads.?, vertex_buffer, &offset, 4);
@@ -1944,7 +2790,7 @@ test "tessellation: patches made into triangles and lines, on the picture where 
     }
 
     // Two patches of three, the second left out: half of it, up to the diagonal.
-    result, const triangles = Made.of(&bench, bent, layout, pass, "triangle", "triangles", 3, .patch_list, .{});
+    result, const triangles = Made.of(&bench, bent, layout, pass, "main", "triangle", "triangles", 3, .patch_list, .{});
     try testing.expectEqual(facet.Result.success, result);
     defer fb.DestroyPipeline(device, triangles);
     try draw(&bench, pass, frame, triangles.?, vertex_buffer, &offset, 4);
@@ -1952,19 +2798,19 @@ test "tessellation: patches made into triangles and lines, on the picture where 
     try testing.expectEqual(clear, picture.at(16, 40));
 
     // Culled by the way round it is said to go.
-    result, const culled = Made.of(&bench, bent, layout, pass, "main", "triangles", 3, .patch_list, .{ .cull_mode = facet.CULL_MODE_FRONT, .front_face = .clockwise });
+    result, const culled = Made.of(&bench, bent, layout, pass, "main", "main", "triangles", 3, .patch_list, .{ .cull_mode = facet.CULL_MODE_FRONT, .front_face = .clockwise });
     try testing.expectEqual(facet.Result.success, result);
     defer fb.DestroyPipeline(device, culled);
     try draw(&bench, pass, frame, culled.?, vertex_buffer, &offset, 3);
     const one_way = picture.at(40, 16);
-    result, const other_way = Made.of(&bench, bent, layout, pass, "main", "clockwise", 3, .patch_list, .{ .cull_mode = facet.CULL_MODE_FRONT, .front_face = .clockwise });
+    result, const other_way = Made.of(&bench, bent, layout, pass, "main", "main", "clockwise", 3, .patch_list, .{ .cull_mode = facet.CULL_MODE_FRONT, .front_face = .clockwise });
     try testing.expectEqual(facet.Result.success, result);
     defer fb.DestroyPipeline(device, other_way);
     try draw(&bench, pass, frame, other_way.?, vertex_buffer, &offset, 3);
     try testing.expect(one_way != picture.at(40, 16));
 
     // Isolines: lines of constant v, the rest not touched.
-    result, const lines = Made.of(&bench, bent, layout, pass, "main", "isolines", 4, .patch_list, .{ .line_width = 1 });
+    result, const lines = Made.of(&bench, bent, layout, pass, "main", "main", "isolines", 4, .patch_list, .{ .line_width = 1 });
     try testing.expectEqual(facet.Result.success, result);
     defer fb.DestroyPipeline(device, lines);
     try draw(&bench, pass, frame, lines.?, vertex_buffer, &offset, 4);
@@ -1979,16 +2825,56 @@ test "tessellation: patches made into triangles and lines, on the picture where 
 
     // Refused: a patch of no vertices or too many; not a patch list; varyings
     // that do not come to the fragment function's.
-    result, _ = Made.of(&bench, bent, layout, pass, "main", "quads", 0, .patch_list, .{});
+    result, _ = Made.of(&bench, bent, layout, pass, "main", "main", "quads", 0, .patch_list, .{});
     try testing.expectEqual(facet.Result.error_initialization_failed, result);
-    result, _ = Made.of(&bench, bent, layout, pass, "main", "quads", 33, .patch_list, .{});
+    result, _ = Made.of(&bench, bent, layout, pass, "main", "main", "quads", 33, .patch_list, .{});
     try testing.expectEqual(facet.Result.error_initialization_failed, result);
-    result, _ = Made.of(&bench, bent, layout, pass, "main", "quads", 4, .triangle_list, .{});
+    result, _ = Made.of(&bench, bent, layout, pass, "main", "main", "quads", 4, .triangle_list, .{});
     try testing.expectEqual(facet.Result.error_initialization_failed, result);
-    result, _ = Made.of(&bench, bent, layout, pass, "main", "varied", 4, .patch_list, .{});
+    result, _ = Made.of(&bench, bent, layout, pass, "main", "main", "varied", 4, .patch_list, .{});
     try testing.expectEqual(facet.Result.error_invalid_shader_nv, result);
     const plain, _ = makePipeline(&bench, .{ .module = bent, .layout = layout, .pass = pass, .topology = .patch_list });
     try testing.expect(plain != .success);
+
+    // The floats the patch carries from its control function, and where
+    // the fraction of a level goes (since 1.50). A level of 3.5 along
+    // every edge: four pieces of one length, or four with the half piece
+    // split between the two ends, or five the same way.
+    const Spent = struct {
+        fn of(on: *Bench, shaders: *facet.ShaderModule, by: *facet.PipelineLayout, into: *facet.RenderPass, onto: *facet.Framebuffer, buffer: *facet.Buffer, where: *const u64, evaluation: [*:0]const u8) !f32 {
+            const got, const pipeline = Made.of(on, shaders, by, into, "main", "carry", evaluation, 4, .patch_list, .{});
+            try testing.expectEqual(facet.Result.success, got);
+            defer on.rig.fb.DestroyPipeline(on.device, pipeline);
+            Bent.smallest = 1;
+            Bent.carried = @splat(-1);
+            try draw(on, into, onto, pipeline.?, buffer, where, 4);
+            // The colour, written by the one function and read by the other.
+            try testing.expectEqual([3]f32{ 1, 0, 0 }, Bent.carried);
+            return Bent.smallest;
+        }
+    }.of;
+    // Rounded up to 4 pieces, all of one length: the first cut at 1/4.
+    try testing.expectApproxEqAbs(@as(f32, 0.25), try Spent(&bench, bent, layout, pass, frame, vertex_buffer, &offset, "equally"), 0.001);
+    // 4 pieces again, two of them short: (3.5 - 2) / (2 * 3.5) of the edge.
+    try testing.expectApproxEqAbs(@as(f32, 1.5 / 7.0), try Spent(&bench, bent, layout, pass, frame, vertex_buffer, &offset, "evenly"), 0.001);
+    // 5 pieces, the two short ones (3.5 - 3) / (2 * 3.5) of the edge.
+    try testing.expectApproxEqAbs(@as(f32, 0.5 / 7.0), try Spent(&bench, bent, layout, pass, frame, vertex_buffer, &offset, "oddly"), 0.001);
+
+    // What is drawn carries the evaluation function's varyings, not the
+    // vertex function's one: the patch's colour, read by a fixed form.
+    const colored = Made.of(&bench, bent, layout, pass, "painted", "carry", "painted", 4, .patch_list, .{});
+    try testing.expectEqual(facet.Result.success, colored[0]);
+    defer fb.DestroyPipeline(device, colored[1]);
+    try draw(&bench, pass, frame, colored[1].?, vertex_buffer, &offset, 4);
+    try testing.expectEqual(red, picture.at(32, 32));
+    try testing.expectEqual(red, picture.at(1, 62));
+
+    // Refused: more floats for the patch than the device holds, and a
+    // spacing of a value this library has not.
+    result, _ = Made.of(&bench, bent, layout, pass, "main", "hoard", "quads", 4, .patch_list, .{});
+    try testing.expectEqual(facet.Result.error_feature_not_present, result);
+    result, _ = Made.of(&bench, bent, layout, pass, "main", "carry", "nohow", 4, .patch_list, .{});
+    try testing.expectEqual(facet.Result.error_invalid_shader_nv, result);
 }
 
 test "images copied, blitted, read back, and parts of an attachment cleared in the middle of a pass" {
@@ -2429,11 +3315,10 @@ test "a depth image sampled where it lies: the pass stores it, a shadow sample c
     try testing.expectEqual(texture_zig.Format.d16, kept.texels.format);
     try testing.expectEqual(kept.pitch, kept.texels.pitch);
 
-    // What is refused: a stencil in it, no memory behind it, and a
-    // storage image of it.
+    // What is refused: no memory behind it, and a storage image of it. A
+    // format with a stencil in it is sampled since 1.58.
     var none: ?*facet.Image = null;
-    for ([3]facet.ImageCreateInfo{
-        .{ .format = .d16_unorm_s8_uint, .extent = .{ .width = 8, .height = 8 }, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED },
+    for ([2]facet.ImageCreateInfo{
         .{ .format = .d16_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT },
         .{ .format = .d16_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_STORAGE },
     }) |info| {
@@ -2573,6 +3458,271 @@ test "a depth image sampled where it lies: the pass stores it, a shadow sample c
     try testing.expectEqual(white, into.at(16, 8));
     try run(&bench, vertex_bytes, vertex_buffer, reading, onto, shade, sets[0].?, layout, (@as(f32, @floatFromInt(near)) + 4) / whole);
     try testing.expectEqual(black, into.at(16, 8));
+}
+
+// --- 1.58: a sampled depth image's layers and its planes --------------------
+
+/// A plain sample of whatever is bound, through the sampler bound beside
+/// it: the s and the t are varyings 0 and 1, and the colour is what the
+/// texture's own format reads as - a depth as a grey of its top 8 bits, a
+/// stencil as red alone.
+const Planed = struct {
+    fn vertex(vertices: *const shader.Vertices) callconv(.c) void {
+        for (0..vertices.count) |k| {
+            const p = vertices.input(@intCast(k), 0);
+            const uv = vertices.input(@intCast(k), 1);
+            vertices.output(@intCast(k))[0..6].* = .{ p[0], p[1], p[2], 1, uv[0], uv[1] };
+        }
+    }
+
+    const entries = [_]shader.Entry{ shader.vertex("main", &vertex, 2), shader.fixedFragment("main", .{ .kind = .texture_sampled }) };
+    const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
+};
+
+test "a sampled depth image of layers: a pass draws into the layer its view names, and a view's aspect picks the plane a sample reads" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const image_zig = @import("../image/_image.zig");
+    const side = facet.Extent3D{ .width = 64, .height = 64 };
+    const wanted = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED;
+
+    // Three layers since 1.58: a layer's rows after the one before,
+    // `layer_bytes` apart and each on a cache line.
+    const layered = try bench.bareImage(.{ .format = .d16_unorm, .extent = side, .array_layers = 3, .usage = wanted }, false);
+    const kept = _objects.of(image_zig.Image, layered);
+    try testing.expectEqual(@as(u32, 3), kept.layers);
+    try testing.expectEqual(std.mem.alignForward(u64, @as(u64, kept.pitch) * 64, 64), kept.layer_bytes);
+    try testing.expectEqual(kept.layer_bytes * 3, kept.bytes);
+
+    // Levels of its own it has not got, nor slices: what a pass draws
+    // into is rows, and a level or a slice is nothing it draws into.
+    for ([2]facet.ImageCreateInfo{
+        .{ .format = .d16_unorm, .extent = side, .mip_levels = 2, .usage = wanted },
+        .{ .format = .d16_unorm, .image_type = .@"3d", .extent = .{ .width = 64, .height = 64, .depth = 2 }, .usage = wanted },
+    }) |info| {
+        var none: ?*facet.Image = null;
+        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &info, &none));
+        try testing.expect(none == null);
+    }
+
+    // A view of one layer: the texture it samples is that layer's rows,
+    // `layer_bytes` into the image's memory.
+    var layer_views: [3]*facet.ImageView = undefined;
+    for (&layer_views, 0..) |*view, k| {
+        view.* = try bench.viewOf(.{
+            .image = layered,
+            .format = .d16_unorm,
+            .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH, .base_array_layer = @intCast(k), .layer_count = 1 },
+        });
+        const texels = &_objects.of(image_zig.ImageView, view.*).texels;
+        try testing.expectEqual(texture_zig.Format.d16, texels.format);
+        try testing.expectEqual(@as(u32, 1), texels.layer_count);
+        try testing.expectEqual(kept.data.? + k * @as(usize, @intCast(kept.layer_bytes)), texels.memory);
+    }
+    // All three at once, for a sample that names the layer itself.
+    const array_view = try bench.viewOf(.{
+        .image = layered,
+        .format = .d16_unorm,
+        .view_type = .@"2d_array",
+        .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH },
+    });
+    const array_texels = &_objects.of(image_zig.ImageView, array_view).texels;
+    try testing.expectEqual(@as(u32, 3), array_texels.layer_count);
+    try testing.expectEqual(@as(u32, @intCast(kept.layer_bytes)), array_texels.layer_bytes);
+
+    // A plane the format has not got, and both planes at once: neither is
+    // a texture, so neither is a view.
+    var no_view: ?*facet.ImageView = null;
+    for ([2]u32{ facet.IMAGE_ASPECT_STENCIL, facet.IMAGE_ASPECT_DEPTH | facet.IMAGE_ASPECT_STENCIL }) |aspect| {
+        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImageView(device, &.{
+            .image = layered,
+            .format = .d16_unorm,
+            .subresource_range = .{ .aspect_mask = aspect },
+        }, &no_view));
+        try testing.expect(no_view == null);
+    }
+
+    // A pass over each layer in turn, a quad of its own depth over the
+    // whole of it: what it writes is the layer its view names and no
+    // other.
+    const picture = try Picture.of(&bench, 64, 64);
+    const storing = try keepingPass(&bench, .clear, .clear, .store);
+    defer fb.DestroyRenderPass(device, storing);
+    const flat = try module(&bench, &Flat.code);
+    defer fb.DestroyShaderModule(device, flat);
+    const flat_layout = try pipelineLayout(&bench, &.{}, 4);
+    defer fb.DestroyPipelineLayout(device, flat_layout);
+    const tested = facet.PipelineDepthStencilStateCreateInfo{ .depth_test_enable = true, .depth_write_enable = true, .depth_compare_op = .always };
+    const flat_result, const list = makePipeline(&bench, .{ .module = flat, .layout = flat_layout, .pass = storing, .depth = tested });
+    try testing.expectEqual(facet.Result.success, flat_result);
+    defer fb.DestroyPipeline(device, list);
+
+    const depths = [3]f32{ 0.25, 0.5, 0.75 };
+    var stored: [3]u16 = undefined;
+    for (&stored, depths) |*value, depth| value.* = @intFromFloat(@round(depth * 65535));
+    const vertex_buffer, const vertex_bytes = try bench.buffer(1024, facet.BUFFER_USAGE_VERTEX_BUFFER);
+    const layerDepth = struct {
+        fn of(image: anytype, layer: u32, x: u32, y: u32) u16 {
+            const place = layer * @as(usize, @intCast(image.layer_bytes)) + @as(usize, y) * image.pitch + @as(usize, x) * 2;
+            return std.mem.readInt(u16, image.data.?[place..][0..2], .little);
+        }
+    }.of;
+    for (layer_views, depths, 0..) |view, depth, k| {
+        const quad = [6][3]f32{
+            .{ -1, -1, depth }, .{ 1, -1, depth }, .{ -1, 1, depth },
+            .{ -1, 1, depth },  .{ 1, -1, depth }, .{ 1, 1, depth },
+        };
+        @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(quad))], std.mem.asBytes(&quad));
+        const frame = try framebuffer(&bench, storing, &.{ picture.view, view }, 64, 64);
+        defer fb.DestroyFramebuffer(device, frame);
+        const red: u32 = 0xFFFF_0000;
+        const blue = clears(0xFF00_00FF);
+        const at: u64 = 0;
+        const commands = try bench.record();
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = storing, .framebuffer = frame, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 2, .clear_values = &blue }, .@"inline");
+        fb.CmdBindPipeline(commands, .graphics, list.?);
+        fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&at));
+        fb.CmdPushConstants(commands, flat_layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &red);
+        fb.CmdDraw(commands, 6, 1, 0, 0);
+        fb.CmdEndRenderPass(commands);
+        try bench.submit();
+        try testing.expectEqual(stored[k], layerDepth(kept, @intCast(k), 16, 8));
+        try testing.expectEqual(stored[k], layerDepth(kept, @intCast(k), 48, 40));
+    }
+    // Every layer still its own: none of the passes wrote another's.
+    for (stored, 0..) |value, k| try testing.expectEqual(value, layerDepth(kept, @intCast(k), 32, 32));
+
+    // Cleared a layer at a time as well: the range's own layers and no
+    // others.
+    const furthest = facet.ClearDepthStencilValue{ .depth = 1 };
+    const one_layer = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH, .base_array_layer = 1, .layer_count = 1 };
+    const clearing = try bench.record();
+    fb.CmdClearDepthStencilImage(clearing, layered, 0, &furthest, 1, @ptrCast(&one_layer));
+    try bench.submit();
+    try testing.expectEqual(@as(u16, 0xFFFF), layerDepth(kept, 1, 32, 32));
+    try testing.expectEqual(stored[0], layerDepth(kept, 0, 32, 32));
+    try testing.expectEqual(stored[2], layerDepth(kept, 2, 32, 32));
+    stored[1] = 0xFFFF;
+
+    // What a sample of each view reads: a plain sample of a depth is a
+    // grey of its top 8 bits, so every layer comes out as its own grey.
+    const into = try Picture.of(&bench, 64, 64);
+    const planed = try module(&bench, &Planed.code);
+    defer fb.DestroyShaderModule(device, planed);
+    const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .combined_image_sampler, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &set_layout));
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    const layout = try pipelineLayout(&bench, &.{set_layout.?}, 0);
+    defer fb.DestroyPipelineLayout(device, layout);
+    var sampler: ?*facet.Sampler = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateSampler(device, &.{ .mag_filter = .nearest, .min_filter = .nearest, .address_mode_u = .clamp_to_edge, .address_mode_v = .clamp_to_edge }, &sampler));
+    defer fb.DestroySampler(device, sampler);
+    var pool: ?*facet.DescriptorPool = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool));
+    defer fb.DestroyDescriptorPool(device, pool);
+    var sets: [1]?*facet.DescriptorSet = undefined;
+    try testing.expectEqual(facet.Result.success, fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &sets));
+    const reading = try renderPass(&bench, .clear, false);
+    defer fb.DestroyRenderPass(device, reading);
+    const onto = try framebuffer(&bench, reading, &.{into.view}, 64, 64);
+    defer fb.DestroyFramebuffer(device, onto);
+    const attributes = [2]facet.VertexInputAttributeDescription{
+        .{ .location = 0, .binding = 0, .format = .r32g32b32_sfloat },
+        .{ .location = 1, .binding = 0, .format = .r32g32b32_sfloat, .offset = 12 },
+    };
+    const plane_result, const plane = makePipeline(&bench, .{ .module = planed, .layout = layout, .pass = reading, .stride = 24, .attributes = &attributes });
+    try testing.expectEqual(facet.Result.success, plane_result);
+    defer fb.DestroyPipeline(device, plane);
+
+    const sample = struct {
+        fn of(on: *Bench, bytes: [*]u8, buffer: *facet.Buffer, view: *facet.ImageView, with: ?*facet.Sampler, set: *facet.DescriptorSet, pass: *facet.RenderPass, frame: *facet.Framebuffer, pipeline: ?*facet.Pipeline, by: *facet.PipelineLayout) !void {
+            const fb_of = on.rig.fb;
+            const info = facet.DescriptorImageInfo{ .sampler = with, .image_view = view };
+            const write = facet.WriteDescriptorSet{ .dst_set = set, .dst_binding = 0, .descriptor_type = .combined_image_sampler, .image_info = @ptrCast(&info) };
+            fb_of.UpdateDescriptorSets(on.device, 1, @ptrCast(&write), 0, null);
+            const quad = [6][6]f32{
+                .{ -1, -1, 0.5, 0, 0, 0 },
+                .{ 1, -1, 0.5, 1, 0, 0 },
+                .{ -1, 1, 0.5, 0, 1, 0 },
+                .{ -1, 1, 0.5, 0, 1, 0 },
+                .{ 1, -1, 0.5, 1, 0, 0 },
+                .{ 1, 1, 0.5, 1, 1, 0 },
+            };
+            @memcpy(bytes[0..@sizeOf(@TypeOf(quad))], std.mem.asBytes(&quad));
+            const at: u64 = 0;
+            const values = clears(0xFF00_00FF);
+            const commands = try on.record();
+            fb_of.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 1, .clear_values = &values }, .@"inline");
+            fb_of.CmdBindPipeline(commands, .graphics, pipeline.?);
+            fb_of.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&buffer), @ptrCast(&at));
+            fb_of.CmdBindDescriptorSets(commands, .graphics, by, 0, 1, @ptrCast(&set), 0, null);
+            fb_of.CmdDraw(commands, 6, 1, 0, 0);
+            fb_of.CmdEndRenderPass(commands);
+            try on.submit();
+        }
+    }.of;
+
+    for (layer_views, stored) |view, value| {
+        try sample(&bench, vertex_bytes, vertex_buffer, view, sampler, sets[0].?, reading, onto, plane, layout);
+        const grey: u32 = 0xFF00_0000 | @as(u32, value >> 8) * 0x01_01_01;
+        try testing.expectEqual(grey, into.at(16, 8));
+        try testing.expectEqual(grey, into.at(48, 40));
+    }
+
+    // A format that holds both planes: the depth where the pixel starts
+    // and the stencil two bytes in, each read `bytesOf` bytes apart - so
+    // the one rows are two textures, which a view's aspect picks between.
+    const both = try bench.bareImage(.{ .format = .d16_unorm_s8_uint, .extent = side, .usage = wanted | facet.IMAGE_USAGE_TRANSFER_DST }, false);
+    const both_kept = _objects.of(image_zig.Image, both);
+    const depth_plane = try bench.viewOf(.{ .image = both, .format = .d16_unorm_s8_uint, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH } });
+    const stencil_plane = try bench.viewOf(.{ .image = both, .format = .d16_unorm_s8_uint, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_STENCIL } });
+    const depth_texels = &_objects.of(image_zig.ImageView, depth_plane).texels;
+    const stencil_texels = &_objects.of(image_zig.ImageView, stencil_plane).texels;
+    try testing.expectEqual(texture_zig.Format.d16, depth_texels.format);
+    try testing.expectEqual(texture_zig.Format.r8, stencil_texels.format);
+    try testing.expectEqual(@as(u32, 4), depth_texels.stride);
+    try testing.expectEqual(@as(u32, 4), stencil_texels.stride);
+    try testing.expectEqual(both_kept.data.?, depth_texels.memory);
+    try testing.expectEqual(both_kept.data.? + 2, stencil_texels.memory);
+    // Both planes at once is no texture.
+    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImageView(device, &.{
+        .image = both,
+        .format = .d16_unorm_s8_uint,
+        .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH | facet.IMAGE_ASPECT_STENCIL },
+    }, &no_view));
+    try testing.expect(no_view == null);
+
+    // Both cleared, and each plane sampled on its own: the depth a grey
+    // of its top 8 bits, the stencil red alone, as a texel of one byte is
+    // read.
+    const filled = facet.ClearDepthStencilValue{ .depth = 0.25, .stencil = 0x60 };
+    const both_aspects = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH | facet.IMAGE_ASPECT_STENCIL };
+    const filling = try bench.record();
+    fb.CmdClearDepthStencilImage(filling, both, 0, &filled, 1, @ptrCast(&both_aspects));
+    try bench.submit();
+    try sample(&bench, vertex_bytes, vertex_buffer, depth_plane, sampler, sets[0].?, reading, onto, plane, layout);
+    try testing.expectEqual(@as(u32, 0xFF40_4040), into.at(16, 8));
+    try sample(&bench, vertex_bytes, vertex_buffer, stencil_plane, sampler, sets[0].?, reading, onto, plane, layout);
+    try testing.expectEqual(@as(u32, 0xFF60_0000), into.at(16, 8));
+
+    // A format of a stencil alone: its one plane, which a view asking for
+    // neither takes - the default, and what every view of such an image
+    // asked for before 1.58.
+    const stencil_only = try bench.bareImage(.{ .format = .s8_uint, .extent = side, .usage = wanted | facet.IMAGE_USAGE_TRANSFER_DST }, false);
+    const alone = try bench.viewOf(.{ .image = stencil_only, .format = .s8_uint, .subresource_range = .{} });
+    const alone_texels = &_objects.of(image_zig.ImageView, alone).texels;
+    try testing.expectEqual(texture_zig.Format.r8, alone_texels.format);
+    try testing.expectEqual(@as(u32, 1), alone_texels.stride);
+    try testing.expectEqual(_objects.of(image_zig.Image, stencil_only).data.?, alone_texels.memory);
+    const greyed = facet.ClearDepthStencilValue{ .depth = 0, .stencil = 0x30 };
+    const graying = try bench.record();
+    fb.CmdClearDepthStencilImage(graying, stencil_only, 0, &greyed, 1, @ptrCast(&both_aspects));
+    try bench.submit();
+    try sample(&bench, vertex_bytes, vertex_buffer, alone, sampler, sets[0].?, reading, onto, plane, layout);
+    try testing.expectEqual(@as(u32, 0xFF30_0000), into.at(16, 8));
 }
 
 /// A render pass whose stencil attachment is kept: a colour attachment of
@@ -3134,7 +4284,7 @@ test "a sampler bound beside the texture: the wrap and the border it says, and a
     fb.GetPhysicalDeviceFeatures(bench.physical, &features);
     try testing.expect(features.samplers);
     try testing.expect(features.sampler_anisotropy);
-    try testing.expect(!features.immutable_samplers);
+    try testing.expect(features.immutable_samplers);
     try testing.expect(!features.unnormalized_coordinates);
     var properties: facet.PhysicalDeviceProperties = undefined;
     fb.GetPhysicalDeviceProperties(bench.physical, &properties);
@@ -3144,7 +4294,7 @@ test "a sampler bound beside the texture: the wrap and the border it says, and a
     var refused: ?*facet.Sampler = null;
     try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateSampler(device, &.{ .unnormalized_coordinates = true }, &refused));
     try testing.expect(refused == null);
-    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateSampler(device, &.{ .address_mode_u = .mirror_clamp_to_edge }, &refused));
+    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateSampler(device, &.{ .address_mode_u = @enumFromInt(9) }, &refused));
     try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateSampler(device, &.{ .compare_enable = true, .compare_op = @enumFromInt(9) }, &refused));
     var most: ?*facet.Sampler = null;
     try testing.expectEqual(facet.Result.success, fb.CreateSampler(device, &.{ .anisotropy_enable = true, .max_anisotropy = 1000 }, &most));
@@ -3234,6 +4384,9 @@ test "a sampler bound beside the texture: the wrap and the border it says, and a
         .{ .mode = .mirrored_repeat, .outside = red },
         .{ .mode = .clamp_to_edge, .outside = red },
         .{ .mode = .clamp_to_border, .outside = white },
+        // Turned round once below 0 and then held: column -1 is column 0,
+        // which is red (since 1.49).
+        .{ .mode = .mirror_clamp_to_edge, .outside = red },
     }) |case| {
         var sampler: ?*facet.Sampler = null;
         try testing.expectEqual(facet.Result.success, fb.CreateSampler(device, &.{
@@ -3465,6 +4618,303 @@ const Deferred = struct {
     };
     const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
 };
+
+/// Two colours within `apart` of each other in every channel: what a
+/// blend by a constant may differ by between one rounding and another.
+fn nearColor(wanted: u32, found: u32, apart: u32) !void {
+    inline for (0..4) |k| {
+        const shift = k * 8;
+        const a = (wanted >> shift) & 0xFF;
+        const b = (found >> shift) & 0xFF;
+        if ((if (a > b) a - b else b - a) > apart) return testing.expectEqual(wanted, found);
+    }
+}
+
+/// Three colour attachments written in the one fragment call
+/// (`shader.fragmentOutputs`, SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER).
+const TogetherScene = struct {
+    const quad = [6][3]f32{ .{ -1, -1, 0 }, .{ 1, -1, 0 }, .{ -1, 1, 0 }, .{ -1, 1, 0 }, .{ 1, -1, 0 }, .{ 1, 1, 0 } };
+    /// How often a fragment function was called, over the whole draw.
+    var calls: u32 = 0;
+    /// What the last call was told it writes.
+    var outputs: u32 = 0;
+
+    fn vertex(vertices: *const shader.Vertices) callconv(.c) void {
+        for (0..vertices.count) |k| {
+            const p = vertices.input(@intCast(k), 0);
+            vertices.output(@intCast(k))[0..4].* = .{ p[0], p[1], p[2], 1 };
+        }
+    }
+
+    /// Red, green and blue, one for each attachment, in the one call.
+    fn three(fragments: *const shader.Fragments) callconv(.c) void {
+        calls += 1;
+        outputs = fragments.output_count;
+        const colors = [3]u32{ 0xFFFF_0000, 0xFF00_FF00, 0xFF00_00FF };
+        for (colors, 0..) |color, output| {
+            const into = fragments.colorsOf(@intCast(output));
+            for (into[0..fragments.count]) |*quad_colors| quad_colors.* = @splat(color);
+        }
+    }
+
+    /// White into all three at once: what differs between them is then
+    /// the blending alone.
+    fn white(fragments: *const shader.Fragments) callconv(.c) void {
+        calls += 1;
+        outputs = fragments.output_count;
+        for (0..fragments.output_count) |output| {
+            const into = fragments.colorsOf(@intCast(output));
+            for (into[0..fragments.count]) |*quad_colors| quad_colors.* = @splat(0xFFFF_FFFF);
+        }
+    }
+
+    /// The one colour a replayed subpass's fragment function writes, the
+    /// attachment being drawn saying which.
+    fn one(fragments: *const shader.Fragments) callconv(.c) void {
+        calls += 1;
+        outputs = fragments.output_count;
+        const colors = [3]u32{ 0xFFFF_0000, 0xFF00_FF00, 0xFF00_00FF };
+        shader.fill(fragments, colors[@min(fragments.resources.output, 2)]);
+    }
+
+    const entries = [_]shader.Entry{
+        shader.vertex("three", &vertex, 0),
+        shader.fragmentOutputs("three", &three, 0, 3),
+        shader.vertex("white", &vertex, 0),
+        shader.fragmentOutputs("white", &white, 0, 3),
+        shader.vertex("one", &vertex, 0),
+        shader.fragment("one", &one, 0),
+        shader.vertex("four", &vertex, 0),
+        shader.fragmentOutputs("four", &three, 0, 4),
+    };
+    const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
+};
+
+test "a subpass's colour attachments drawn together: one fragment call writes them all, each blended its own way" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const red = try Picture.of(&bench, 64, 64);
+    const green = try Picture.of(&bench, 64, 64);
+    const blue = try Picture.of(&bench, 64, 64);
+    const descriptions = [3]facet.AttachmentDescription{
+        .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general },
+        .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general },
+        .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general },
+    };
+    const colors = [3]facet.AttachmentReference{
+        .{ .attachment = 0, .layout = .general },
+        .{ .attachment = 1, .layout = .general },
+        .{ .attachment = 2, .layout = .general },
+    };
+    const together = facet.SubpassDescription{
+        .flags = facet.SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER,
+        .color_attachment_count = 3,
+        .color_attachments = &colors,
+    };
+    const apart = facet.SubpassDescription{ .color_attachment_count = 3, .color_attachments = &colors };
+    const info = facet.RenderPassCreateInfo{ .attachment_count = 3, .attachments = &descriptions, .subpass_count = 1, .subpasses = @ptrCast(&together) };
+    var pass_made: ?*facet.RenderPass = null;
+    const asked = fb.CreateRenderPass(device, &info, &pass_made);
+    const shaders = try module(&bench, &TogetherScene.code);
+    defer fb.DestroyShaderModule(device, shaders);
+    const layout = try pipelineLayout(&bench, &.{}, 0);
+    defer fb.DestroyPipelineLayout(device, layout);
+
+    try testing.expectEqual(facet.Result.success, asked);
+    defer fb.DestroyRenderPass(device, pass_made);
+    const pass = pass_made.?;
+    // The one part of the subpass draws all three.
+    const plan = _objects.of(_render.RenderPass, pass);
+    try testing.expectEqual(@as(u32, 1), plan.part_count);
+    try testing.expectEqual(@as(u32, 3), plan.parts[0].color_count);
+    try testing.expectEqual(@as(u32, 2), plan.parts[0].colors[2]);
+
+    const frame = try framebuffer(&bench, pass, &.{ red.view, green.view, blue.view }, 64, 64);
+    defer fb.DestroyFramebuffer(device, frame);
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(TogetherScene.quad)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(TogetherScene.quad))], std.mem.asBytes(&TogetherScene.quad));
+    const offset: u64 = 0;
+    const clear_values = [3]facet.ClearValue{
+        .{ .color = .{ .float32 = .{ 0, 0, 0, 1 } } },
+        .{ .color = .{ .float32 = .{ 0, 0, 0, 1 } } },
+        .{ .color = .{ .float32 = .{ 0, 0, 0, 1 } } },
+    };
+    const area = facet.Rect2D{ .extent = .{ .width = 64, .height = 64 } };
+
+    const draw = struct {
+        fn run(on: *Bench, into: *facet.RenderPass, onto: *facet.Framebuffer, pipeline: *facet.Pipeline, buffer: *facet.Buffer, where: *const u64, constants: ?u32) !void {
+            const commands = try on.record();
+            on.rig.fb.CmdBeginRenderPass(commands, &.{ .render_pass = into, .framebuffer = onto, .render_area = area, .clear_value_count = 3, .clear_values = &clear_values }, .@"inline");
+            on.rig.fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&buffer), @ptrCast(where));
+            on.rig.fb.CmdBindPipeline(commands, .graphics, pipeline);
+            if (constants) |at| {
+                on.rig.fb.CmdSetBlendConstants(commands, &.{ 1, 1, 1, 1 });
+                on.rig.fb.CmdSetBlendConstantsAt(commands, at, &.{ 0.25, 0.25, 0.25, 1 });
+            }
+            on.rig.fb.CmdDraw(commands, 6, 1, 0, 0);
+            on.rig.fb.CmdEndRenderPass(commands);
+            try on.submit();
+        }
+    }.run;
+
+    // One call for all three attachments: each gets its own colour, and
+    // the function was told it writes three.
+    var result, const all = makePipeline(&bench, .{ .module = shaders, .name = "three", .layout = layout, .pass = pass, .blend_count = 3 });
+    try testing.expectEqual(facet.Result.success, result);
+    defer fb.DestroyPipeline(device, all);
+    TogetherScene.calls = 0;
+    try draw(&bench, pass, frame, all.?, vertex_buffer, &offset, null);
+    try testing.expectEqual(@as(u32, 3), TogetherScene.outputs);
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), red.at(32, 32));
+    try testing.expectEqual(@as(u32, 0xFF00_FF00), green.at(32, 32));
+    try testing.expectEqual(@as(u32, 0xFF00_00FF), blue.at(1, 62));
+    const together_calls = TogetherScene.calls;
+    try testing.expect(together_calls > 0);
+
+    // The same three attachments drawn once for each, which is what there
+    // was before: three times the calls for the one picture each.
+    var plain: ?*facet.RenderPass = null;
+    var without = info;
+    without.subpasses = @ptrCast(&apart);
+    try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &without, &plain));
+    defer fb.DestroyRenderPass(device, plain);
+    const plain_frame = try framebuffer(&bench, plain.?, &.{ red.view, green.view, blue.view }, 64, 64);
+    defer fb.DestroyFramebuffer(device, plain_frame);
+    result, const each = makePipeline(&bench, .{ .module = shaders, .name = "one", .layout = layout, .pass = plain.?, .blend_count = 3 });
+    try testing.expectEqual(facet.Result.success, result);
+    defer fb.DestroyPipeline(device, each);
+    TogetherScene.calls = 0;
+    try draw(&bench, plain.?, plain_frame, each.?, vertex_buffer, &offset, null);
+    try testing.expectEqual(@as(u32, 1), TogetherScene.outputs);
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), red.at(32, 32));
+    try testing.expectEqual(@as(u32, 0xFF00_00FF), blue.at(32, 32));
+    try testing.expectEqual(@as(u32, 3) * together_calls, TogetherScene.calls);
+
+    // Each attachment cleared to its own colour, both ways round: the
+    // clears belong to the subpass's attachments in order, whether one
+    // part draws them all or a part draws each.
+    const own_clears = [3]facet.ClearValue{
+        .{ .color = .{ .float32 = .{ 1, 0, 0, 1 } } },
+        .{ .color = .{ .float32 = .{ 0, 1, 0, 1 } } },
+        .{ .color = .{ .float32 = .{ 0, 0, 1, 1 } } },
+    };
+    for ([2]*facet.RenderPass{ pass, plain.? }, [2]*facet.Framebuffer{ frame, plain_frame }) |into, onto| {
+        const cleared = try bench.record();
+        fb.CmdBeginRenderPass(cleared, &.{ .render_pass = into, .framebuffer = onto, .render_area = area, .clear_value_count = 3, .clear_values = &own_clears }, .@"inline");
+        fb.CmdEndRenderPass(cleared);
+        try bench.submit();
+        try testing.expectEqual(@as(u32, 0xFFFF_0000), red.at(32, 32));
+        try testing.expectEqual(@as(u32, 0xFF00_FF00), green.at(32, 32));
+        try testing.expectEqual(@as(u32, 0xFF00_00FF), blue.at(32, 32));
+    }
+
+    // Each attachment blended by constants of its own, which Vulkan
+    // shares between them: white drawn, mixed by the constant colour.
+    const by_constant = facet.PipelineColorBlendAttachmentState{
+        .blend_enable = true,
+        .src_color_blend_factor = .constant_color,
+        .dst_color_blend_factor = .zero,
+        .src_alpha_blend_factor = .one,
+        .dst_alpha_blend_factor = .zero,
+    };
+    const sets = [3][4]f32{ .{ 1, 1, 1, 1 }, .{ 0.5, 0.5, 0.5, 1 }, .{ 0.25, 0.25, 0.25, 1 } };
+    const blends: [3]facet.PipelineColorBlendAttachmentState = @splat(by_constant);
+    result, const mixed = makePipeline(&bench, .{
+        .module = shaders,
+        .name = "white",
+        .layout = layout,
+        .pass = pass,
+        .blend = blends[0],
+        .second_blend = blends[1],
+        .blend_count = 3,
+        .attachment_constants = &sets,
+    });
+    try testing.expectEqual(facet.Result.success, result);
+    defer fb.DestroyPipeline(device, mixed);
+    const made = _objects.of(_pipeline.Pipeline, mixed.?);
+    try testing.expectEqual(@as(?[4]f32, .{ 0.25, 0.25, 0.25, 1 }), made.mixings[2].constants);
+    try draw(&bench, pass, frame, mixed.?, vertex_buffer, &offset, null);
+    try testing.expectEqual(@as(u32, 0xFFFF_FFFF), red.at(32, 32));
+    try nearColor(0xFF80_8080, green.at(32, 32), 2);
+    try nearColor(0xFF40_4040, blue.at(32, 32), 2);
+
+    // And by what a command set: the one set over all of them, and one
+    // attachment's own over that.
+    result, const dynamic = makePipeline(&bench, .{
+        .module = shaders,
+        .name = "white",
+        .layout = layout,
+        .pass = pass,
+        .blend = by_constant,
+        .second_blend = by_constant,
+        .blend_count = 3,
+        .dynamic = &.{.blend_constants},
+    });
+    try testing.expectEqual(facet.Result.success, result);
+    defer fb.DestroyPipeline(device, dynamic);
+    try draw(&bench, pass, frame, dynamic.?, vertex_buffer, &offset, 1);
+    try testing.expectEqual(@as(u32, 0xFFFF_FFFF), red.at(32, 32));
+    try nearColor(0xFF40_4040, green.at(32, 32), 2);
+    try testing.expectEqual(@as(u32, 0xFFFF_FFFF), blue.at(32, 32));
+
+    // Refused: a fragment function that writes other than the subpass's
+    // colour attachments, either way round.
+    result, _ = makePipeline(&bench, .{ .module = shaders, .name = "one", .layout = layout, .pass = pass, .blend_count = 3 });
+    try testing.expectEqual(facet.Result.error_invalid_shader_nv, result);
+    result, _ = makePipeline(&bench, .{ .module = shaders, .name = "four", .layout = layout, .pass = pass, .blend_count = 3 });
+    try testing.expectEqual(facet.Result.error_invalid_shader_nv, result);
+    result, _ = makePipeline(&bench, .{ .module = shaders, .name = "three", .layout = layout, .pass = plain.?, .blend_count = 3 });
+    try testing.expectEqual(facet.Result.error_invalid_shader_nv, result);
+    // And a subpass flag the library has not.
+    var odd = info;
+    var oddly = together;
+    oddly.flags = 1;
+    odd.subpasses = @ptrCast(&oddly);
+    var refused: ?*facet.RenderPass = null;
+    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateRenderPass(device, &odd, &refused));
+}
+
+test "a device whose fragment programs write the one colour, as the V3D's do: the subpass that asks for several is refused" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
+    physical.features.several_outputs = false;
+    defer physical.features.several_outputs = true;
+    const descriptions = [2]facet.AttachmentDescription{
+        .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general },
+        .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general },
+    };
+    const colors = [2]facet.AttachmentReference{ .{ .attachment = 0, .layout = .general }, .{ .attachment = 1, .layout = .general } };
+    const together = facet.SubpassDescription{
+        .flags = facet.SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER,
+        .color_attachment_count = 2,
+        .color_attachments = &colors,
+    };
+    var refused: ?*facet.RenderPass = null;
+    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &descriptions, .subpass_count = 1, .subpasses = @ptrCast(&together) }, &refused));
+    try testing.expectEqual(@as(?*facet.RenderPass, null), refused);
+
+    // The same subpass without the flag is drawn as it always was, once
+    // for each attachment, and a function of several colours is refused
+    // the pipeline there.
+    const apart = facet.SubpassDescription{ .color_attachment_count = 2, .color_attachments = &colors };
+    var plain: ?*facet.RenderPass = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &descriptions, .subpass_count = 1, .subpasses = @ptrCast(&apart) }, &plain));
+    defer fb.DestroyRenderPass(device, plain);
+    const shaders = try module(&bench, &TogetherScene.code);
+    defer fb.DestroyShaderModule(device, shaders);
+    const layout = try pipelineLayout(&bench, &.{}, 0);
+    defer fb.DestroyPipelineLayout(device, layout);
+    const result, _ = makePipeline(&bench, .{ .module = shaders, .name = "three", .layout = layout, .pass = plain.?, .blend_count = 2 });
+    try testing.expectEqual(facet.Result.error_invalid_shader_nv, result);
+    const taken, const drawn = makePipeline(&bench, .{ .module = shaders, .name = "one", .layout = layout, .pass = plain.?, .blend_count = 2 });
+    try testing.expectEqual(facet.Result.success, taken);
+    fb.DestroyPipeline(device, drawn);
+}
 
 test "an input attachment: what one subpass drew read pixel by pixel by the next" {
     var bench = try Bench.up();
@@ -4379,12 +5829,25 @@ test "subpasses one after another, a depth kept only for the same attachments; a
     defer fb.DestroyRenderPass(device, pass_made);
     const pass = pass_made.?;
 
-    // The depth wanted again after another subpass: it is not stored. An
-    // attachment twice in a subpass.
+    // The depth wanted again after another subpass is kept in the
+    // image's rows and read back (since 1.52), so the pass is made - but
+    // this depth image is transient and has no rows to keep it in, which
+    // the framebuffer says.
     const other_depth = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = both[0..1], .depth_stencil_attachment = &depth };
     const apart = [3]facet.SubpassDescription{ drawn_on, into_both, other_depth };
+    var shared: ?*facet.RenderPass = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 3, .attachments = &attachments, .subpass_count = 3, .subpasses = &apart }, &shared));
+    defer fb.DestroyRenderPass(device, shared);
+    {
+        const plan = _objects.of(_render.RenderPass, shared.?);
+        // The first subpass's part keeps its depth; the last reads it in.
+        try testing.expect(plan.parts[plan.subpasses[0].first_part].stores_depth);
+        try testing.expect(plan.parts[plan.subpasses[2].first_part].loads_depth);
+        var over: ?*facet.Framebuffer = null;
+        try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateFramebuffer(device, &.{ .render_pass = shared.?, .attachment_count = 3, .attachments = &[3]*facet.ImageView{ first.view, second.view, depth_view }, .width = 64, .height = 64 }, &over));
+    }
+    // An attachment twice in a subpass.
     var none: ?*facet.RenderPass = null;
-    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateRenderPass(device, &.{ .attachment_count = 3, .attachments = &attachments, .subpass_count = 3, .subpasses = &apart }, &none));
     const twice_over = facet.SubpassDescription{ .color_attachment_count = 2, .color_attachments = &twice };
     try testing.expectEqual(facet.Result.error_initialization_failed, fb.CreateRenderPass(device, &.{ .attachment_count = 3, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&twice_over) }, &none));
 
@@ -4449,6 +5912,226 @@ test "subpasses one after another, a depth kept only for the same attachments; a
     try testing.expectEqual(SubpassScene.yellow, first.at(4, 52));
 }
 
+test "a depth attachment shared by two subpasses with another in between: kept in its rows and read back" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const first = try Picture.of(&bench, 64, 64);
+    const second = try Picture.of(&bench, 64, 64);
+    // Not transient: the depth has to have rows to be kept in.
+    _, const depth_view = try bench.image(.{
+        .format = .d16_unorm,
+        .extent = .{ .width = 64, .height = 64 },
+        .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT,
+    }, false);
+    const attachments = [3]facet.AttachmentDescription{
+        .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general },
+        .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general },
+        // Neither op asks for anything: the sharing alone makes the pass
+        // keep it between the subpasses.
+        .{ .format = .d16_unorm, .load_op = .clear, .final_layout = .depth_stencil_attachment_optimal },
+    };
+    const on_first = [1]facet.AttachmentReference{.{ .attachment = 0, .layout = .general }};
+    const on_second = [1]facet.AttachmentReference{.{ .attachment = 1, .layout = .general }};
+    const depth = facet.AttachmentReference{ .attachment = 2, .layout = .depth_stencil_attachment_optimal };
+    const subpasses = [3]facet.SubpassDescription{
+        .{ .color_attachment_count = 1, .color_attachments = &on_first, .depth_stencil_attachment = &depth },
+        // In between, in tiles of its own and with no depth at all.
+        .{ .color_attachment_count = 1, .color_attachments = &on_second },
+        .{ .color_attachment_count = 1, .color_attachments = &on_first, .depth_stencil_attachment = &depth },
+    };
+    var pass_made: ?*facet.RenderPass = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 3, .attachments = &attachments, .subpass_count = 3, .subpasses = &subpasses }, &pass_made));
+    defer fb.DestroyRenderPass(device, pass_made);
+    const pass = pass_made.?;
+    const plan = _objects.of(_render.RenderPass, pass);
+    // Three parts, none of them joined: the first keeps its depth and the
+    // last reads it in, though the attachment's own ops ask for neither.
+    try testing.expectEqual(@as(u32, 3), plan.part_count);
+    try testing.expect(plan.parts[0].stores_depth);
+    try testing.expect(!plan.parts[0].loads_depth);
+    try testing.expect(plan.parts[2].loads_depth);
+    try testing.expect(!plan.parts[2].stores_depth);
+    try testing.expect(!plan.subpasses[1].joined and !plan.subpasses[2].joined);
+
+    const frame = try framebuffer(&bench, pass, &.{ first.view, second.view, depth_view }, 64, 64);
+    defer fb.DestroyFramebuffer(device, frame);
+    const shaders = try module(&bench, &SubpassScene.code);
+    defer fb.DestroyShaderModule(device, shaders);
+    const layout = try pipelineLayout(&bench, &.{}, 0);
+    defer fb.DestroyPipelineLayout(device, layout);
+    const tested = facet.PipelineDepthStencilStateCreateInfo{ .depth_test_enable = true, .depth_write_enable = true, .depth_compare_op = .less };
+    var result, const red = makePipeline(&bench, .{ .module = shaders, .name = "red", .layout = layout, .pass = pass, .depth = tested });
+    try testing.expectEqual(facet.Result.success, result);
+    defer fb.DestroyPipeline(device, red);
+    result, const between = makePipeline(&bench, .{ .module = shaders, .name = "green", .layout = layout, .pass = pass, .subpass = 1 });
+    try testing.expectEqual(facet.Result.success, result);
+    defer fb.DestroyPipeline(device, between);
+    result, const last = makePipeline(&bench, .{ .module = shaders, .name = "green", .layout = layout, .pass = pass, .subpass = 2, .depth = tested });
+    try testing.expectEqual(facet.Result.success, result);
+    defer fb.DestroyPipeline(device, last);
+
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(SubpassScene.quad)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(SubpassScene.quad))], std.mem.asBytes(&SubpassScene.quad));
+    const offset: u64 = 0;
+    const values = [3]facet.ClearValue{
+        .{ .color = .{ .float32 = .{ 0, 0, 1, 1 } } },
+        .{ .color = .{ .float32 = .{ 0, 0, 1, 1 } } },
+        .{ .depth_stencil = .{ .depth = 1 } },
+    };
+    const area = facet.Rect2D{ .extent = .{ .width = 64, .height = 64 } };
+
+    // The last subpass's quad, at `far` eighths: drawn only where the
+    // depth the first subpass left lets it through. The first draws at a
+    // quarter, two eighths.
+    const frameOf = struct {
+        fn run(on: *Bench, into: *facet.RenderPass, onto: *facet.Framebuffer, pipelines: [3]*facet.Pipeline, buffer: *facet.Buffer, where: *const u64, far: u32) !void {
+            const commands = try on.record();
+            const dl = on.rig.fb;
+            dl.CmdBeginRenderPass(commands, &.{ .render_pass = into, .framebuffer = onto, .render_area = area, .clear_value_count = 3, .clear_values = &values }, .@"inline");
+            dl.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&buffer), @ptrCast(where));
+            dl.CmdBindPipeline(commands, .graphics, pipelines[0]);
+            dl.CmdDraw(commands, 6, 1, 0, 2);
+            dl.CmdNextSubpass(commands, .@"inline");
+            dl.CmdBindPipeline(commands, .graphics, pipelines[1]);
+            dl.CmdDraw(commands, 6, 1, 0, 0);
+            dl.CmdNextSubpass(commands, .@"inline");
+            dl.CmdBindPipeline(commands, .graphics, pipelines[2]);
+            dl.CmdDraw(commands, 6, 1, 0, far);
+            dl.CmdEndRenderPass(commands);
+            try on.submit();
+        }
+    }.run;
+
+    // Farther than the quarter the first subpass wrote: nothing of it is
+    // drawn, so the first picture is still red. Were the depth not kept,
+    // the last subpass would start from a cleared one and the green would
+    // win everywhere.
+    try frameOf(&bench, pass, frame, .{ red.?, between.?, last.? }, vertex_buffer, &offset, 6);
+    try testing.expectEqual(SubpassScene.red, first.at(32, 32));
+    try testing.expectEqual(SubpassScene.red, first.at(1, 62));
+    // The subpass in between drew into the other picture all the same.
+    try testing.expectEqual(SubpassScene.green, second.at(32, 32));
+
+    // Nearer than it: drawn, so the depth read back is a depth and not
+    // simply a wall.
+    try frameOf(&bench, pass, frame, .{ red.?, between.?, last.? }, vertex_buffer, &offset, 1);
+    try testing.expectEqual(SubpassScene.green, first.at(32, 32));
+    try testing.expectEqual(SubpassScene.green, first.at(1, 62));
+}
+
+test "a stencil shared by two subpasses with another in between: marked in the first, tested in the last" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
+    const first = try Picture.of(&bench, 64, 64);
+    const second = try Picture.of(&bench, 64, 64);
+    _, const stencil_view = try bench.image(.{
+        .format = .s8_uint,
+        .extent = .{ .width = 64, .height = 64 },
+        .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT,
+    }, false);
+    const attachments = [3]facet.AttachmentDescription{
+        .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general },
+        .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general },
+        .{ .format = .s8_uint, .stencil_load_op = .clear, .final_layout = .depth_stencil_attachment_optimal },
+    };
+    const on_first = [1]facet.AttachmentReference{.{ .attachment = 0, .layout = .general }};
+    const on_second = [1]facet.AttachmentReference{.{ .attachment = 1, .layout = .general }};
+    const stencil = facet.AttachmentReference{ .attachment = 2, .layout = .depth_stencil_attachment_optimal };
+    const subpasses = [3]facet.SubpassDescription{
+        .{ .color_attachment_count = 1, .color_attachments = &on_first, .depth_stencil_attachment = &stencil },
+        .{ .color_attachment_count = 1, .color_attachments = &on_second },
+        .{ .color_attachment_count = 1, .color_attachments = &on_first, .depth_stencil_attachment = &stencil },
+    };
+    const info = facet.RenderPassCreateInfo{ .attachment_count = 3, .attachments = &attachments, .subpass_count = 3, .subpasses = &subpasses };
+    var pass_made: ?*facet.RenderPass = null;
+
+    // A device that keeps no stencil in an image's rows cannot share one
+    // between two subpasses of different tiles.
+    physical.features.stored_stencil = false;
+    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateRenderPass(device, &info, &pass_made));
+    physical.features.stored_stencil = true;
+
+    try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &info, &pass_made));
+    defer fb.DestroyRenderPass(device, pass_made);
+    const pass = pass_made.?;
+    const plan = _objects.of(_render.RenderPass, pass);
+    try testing.expect(plan.parts[0].stores_stencil and !plan.parts[0].loads_stencil);
+    try testing.expect(plan.parts[2].loads_stencil and !plan.parts[2].stores_stencil);
+
+    const frame = try framebuffer(&bench, pass, &.{ first.view, second.view, stencil_view }, 64, 64);
+    defer fb.DestroyFramebuffer(device, frame);
+    const shaders = try module(&bench, &SubpassScene.code);
+    defer fb.DestroyShaderModule(device, shaders);
+    const layout = try pipelineLayout(&bench, &.{}, 0);
+    defer fb.DestroyPipelineLayout(device, layout);
+    const marked: u32 = 3;
+    const marks = facet.StencilOpState{ .pass_op = .replace, .compare_op = .always, .compare_mask = 0xFF, .write_mask = 0xFF, .reference = marked };
+    const only_marked = facet.StencilOpState{ .compare_op = .equal, .compare_mask = 0xFF, .reference = marked };
+    var result, const mark = makePipeline(&bench, .{
+        .module = shaders,
+        .name = "red",
+        .layout = layout,
+        .pass = pass,
+        .depth = .{ .stencil_test_enable = true, .front = marks, .back = marks },
+        .dynamic = &.{.scissor},
+    });
+    try testing.expectEqual(facet.Result.success, result);
+    defer fb.DestroyPipeline(device, mark);
+    result, const between = makePipeline(&bench, .{ .module = shaders, .name = "green", .layout = layout, .pass = pass, .subpass = 1 });
+    try testing.expectEqual(facet.Result.success, result);
+    defer fb.DestroyPipeline(device, between);
+    result, const last = makePipeline(&bench, .{
+        .module = shaders,
+        .name = "green",
+        .layout = layout,
+        .pass = pass,
+        .subpass = 2,
+        .depth = .{ .stencil_test_enable = true, .front = only_marked, .back = only_marked },
+    });
+    try testing.expectEqual(facet.Result.success, result);
+    defer fb.DestroyPipeline(device, last);
+
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(SubpassScene.quad)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(SubpassScene.quad))], std.mem.asBytes(&SubpassScene.quad));
+    const offset: u64 = 0;
+    const values = [3]facet.ClearValue{
+        .{ .color = .{ .float32 = .{ 0, 0, 1, 1 } } },
+        .{ .color = .{ .float32 = .{ 0, 0, 1, 1 } } },
+        .{ .depth_stencil = .{ .depth = 1, .stencil = 0 } },
+    };
+    const area = facet.Rect2D{ .extent = .{ .width = 64, .height = 64 } };
+    const left_half = facet.Rect2D{ .extent = .{ .width = 32, .height = 64 } };
+
+    // The first subpass marks and draws the left half; the last draws
+    // over the whole picture but only where the mark is.
+    const commands = try bench.record();
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame, .render_area = area, .clear_value_count = 3, .clear_values = &values }, .@"inline");
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdBindPipeline(commands, .graphics, mark.?);
+    fb.CmdSetScissor(commands, 0, 1, @ptrCast(&left_half));
+    fb.CmdDraw(commands, 6, 1, 0, 0);
+    fb.CmdNextSubpass(commands, .@"inline");
+    fb.CmdBindPipeline(commands, .graphics, between.?);
+    fb.CmdDraw(commands, 6, 1, 0, 0);
+    fb.CmdNextSubpass(commands, .@"inline");
+    fb.CmdBindPipeline(commands, .graphics, last.?);
+    fb.CmdDraw(commands, 6, 1, 0, 0);
+    fb.CmdEndRenderPass(commands);
+    try bench.submit();
+
+    // Green where the mark the first subpass left is, red where it drew
+    // nothing to mark - so the stencil came back through the subpass in
+    // between.
+    try testing.expectEqual(SubpassScene.green, first.at(16, 32));
+    try testing.expectEqual(@as(u32, 0xFF00_00FF), first.at(48, 32));
+    try testing.expectEqual(SubpassScene.green, second.at(48, 32));
+}
+
 /// What reads the textures of layers below: a quad over the whole picture, its
 /// instance the layer, face or slice.
 const LayerScene = struct {
@@ -4489,6 +6172,25 @@ const LayerScene = struct {
         }
     }
 
+    /// Which cube as well: the instance is the face, and the cube every
+    /// sixth of it.
+    fn cubeArray(vertices: *const shader.Vertices) callconv(.c) void {
+        for (0..vertices.count) |k| {
+            const p = vertices.input(@intCast(k), 0);
+            const a = p[0];
+            const b = p[1];
+            const towards: [3]f32 = switch (vertices.instance % 6) {
+                0 => .{ 1, -b, -a },
+                1 => .{ -1, -b, a },
+                2 => .{ a, 1, b },
+                3 => .{ a, -1, -b },
+                4 => .{ a, -b, 1 },
+                else => .{ -a, -b, -1 },
+            };
+            vertices.output(@intCast(k))[0..8].* = .{ p[0], p[1], 0, 1, towards[0], towards[1], towards[2], @floatFromInt(vertices.instance / 6) };
+        }
+    }
+
     fn volume(vertices: *const shader.Vertices) callconv(.c) void {
         for (0..vertices.count) |k| {
             const p = vertices.input(@intCast(k), 0);
@@ -4496,14 +6198,39 @@ const LayerScene = struct {
         }
     }
 
+    /// The same quad, its coordinates running a quarter of the texture
+    /// outside it either way: what a sampler's edges are seen by.
+    fn wide(vertices: *const shader.Vertices) callconv(.c) void {
+        for (0..vertices.count) |k| {
+            const p = vertices.input(@intCast(k), 0);
+            vertices.output(@intCast(k))[0..6].* = .{ p[0], p[1], 0, 1, (p[0] + 1) / 2 * 1.5 - 0.25, (p[1] + 1) / 2 * 1.5 - 0.25 };
+        }
+    }
+
     const nearest = facet.texture.Sampling{ .filter = .nearest };
     const entries = [_]shader.Entry{
         shader.vertex("flat", &flat, 2),
         shader.fixedFragment("flat", .{ .kind = .texture, .sampling = nearest }),
+        // The same shapes read through the sampler bound beside the
+        // texture (since 1.49).
+        shader.vertex("arrayby", &array, 3),
+        shader.fixedFragment("arrayby", .{ .kind = .texture_array_sampled }),
+        shader.vertex("cubeby", &cube, 3),
+        shader.fixedFragment("cubeby", .{ .kind = .texture_cube_sampled }),
+        shader.vertex("volumeby", &volume, 3),
+        shader.fixedFragment("volumeby", .{ .kind = .texture_3d_sampled }),
+        // An array of cubes read through the sampler too (since 1.53):
+        // four varyings, the fourth which cube.
+        shader.vertex("cubesby", &cubeArray, 4),
+        shader.fixedFragment("cubesby", .{ .kind = .texture_cube_array_sampled }),
+        shader.vertex("wideby", &wide, 2),
+        shader.fixedFragment("wideby", .{ .kind = .texture_sampled }),
         shader.vertex("array", &array, 3),
         shader.fixedFragment("array", .{ .kind = .texture_array, .sampling = nearest }),
         shader.vertex("cube", &cube, 3),
         shader.fixedFragment("cube", .{ .kind = .texture_cube, .sampling = nearest }),
+        shader.vertex("cubes", &cubeArray, 4),
+        shader.fixedFragment("cubes", .{ .kind = .texture_cube_array, .sampling = nearest }),
         shader.vertex("volume", &volume, 3),
         shader.fixedFragment("volume", .{ .kind = .texture_3d, .sampling = nearest }),
     };
@@ -4520,7 +6247,7 @@ const LayerScene = struct {
     }
 };
 
-test "textures of layers: arrays, cube maps, 3D, copied a layer at a time; compressed and float ones unpacked" {
+test "textures of layers: arrays, cube maps, 3D, copied a layer at a time; compressed and float ones sampled through a form of another format" {
     var bench = try Bench.up();
     defer bench.down();
     const fb = bench.rig.fb;
@@ -4530,8 +6257,6 @@ test "textures of layers: arrays, cube maps, 3D, copied a layer at a time; compr
 
     const refused = [_]facet.ImageCreateInfo{
         .{ .format = .r8g8b8a8_unorm, .extent = side16, .array_layers = 2, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT },
-        .{ .format = .r8g8b8a8_unorm, .image_type = .@"3d", .extent = .{ .width = 16, .height = 16, .depth = 3 }, .usage = usage },
-        .{ .format = .r8g8b8a8_unorm, .image_type = .@"3d", .extent = .{ .width = 16, .height = 16, .depth = 4 }, .mip_levels = 2, .usage = usage },
         .{ .format = .r8g8b8a8_unorm, .flags = facet.IMAGE_CREATE_CUBE_COMPATIBLE, .extent = side16, .array_layers = 4, .usage = usage },
         .{ .format = .r8g8b8a8_unorm, .flags = facet.IMAGE_CREATE_CUBE_COMPATIBLE, .extent = .{ .width = 16, .height = 8 }, .array_layers = 6, .usage = usage },
         .{ .format = .r8g8b8a8_unorm, .extent = side16, .array_layers = 257, .usage = usage },
@@ -4543,11 +6268,25 @@ test "textures of layers: arrays, cube maps, 3D, copied a layer at a time; compr
         try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &info, &none));
     }
 
+    // A 3D image's depth may be any number since 1.46, and it may have
+    // levels: each slice's own, with half the slices at each level.
+    for ([_]facet.ImageCreateInfo{
+        .{ .format = .r8g8b8a8_unorm, .image_type = .@"3d", .extent = .{ .width = 16, .height = 16, .depth = 3 }, .usage = usage },
+        .{ .format = .r8g8b8a8_unorm, .image_type = .@"3d", .extent = .{ .width = 16, .height = 16, .depth = 4 }, .mip_levels = 2, .usage = usage },
+        .{ .format = .r8g8b8a8_unorm, .image_type = .@"3d", .extent = .{ .width = 16, .height = 16, .depth = 6 }, .mip_levels = 5, .usage = usage },
+    }) |info| {
+        var made: ?*facet.Image = null;
+        try testing.expectEqual(facet.Result.success, fb.CreateImage(device, &info, &made));
+        fb.DestroyImage(device, made);
+    }
+
     const array_image = try bench.bareImage(.{ .format = .r8g8b8a8_unorm, .extent = side16, .array_layers = 3, .usage = usage | facet.IMAGE_USAGE_TRANSFER_SRC }, false);
     const cube_image = try bench.bareImage(.{ .format = .r8g8b8a8_unorm, .flags = facet.IMAGE_CREATE_CUBE_COMPATIBLE, .extent = side16, .array_layers = 6, .usage = usage }, false);
     const volume_image = try bench.bareImage(.{ .format = .r8g8b8a8_unorm, .image_type = .@"3d", .extent = .{ .width = 16, .height = 16, .depth = 4 }, .usage = usage }, false);
     const into_image = try bench.bareImage(.{ .format = .r8g8b8a8_unorm, .extent = side16, .array_layers = 2, .usage = usage }, false);
+    const cubes_image = try bench.bareImage(.{ .format = .r8g8b8a8_unorm, .flags = facet.IMAGE_CREATE_CUBE_COMPATIBLE, .extent = side16, .array_layers = 12, .usage = usage }, false);
     const packed_image = try bench.bareImage(.{ .format = .bc1_rgba_unorm_block, .extent = side16, .usage = usage }, false);
+    const etc_image = try bench.bareImage(.{ .format = .etc2_r8g8b8a8_unorm_block, .extent = .{ .width = 4, .height = 4 }, .usage = usage }, false);
     const half_image = try bench.bareImage(.{ .format = .r16g16b16a16_sfloat, .extent = .{ .width = 4, .height = 4 }, .usage = usage }, false);
 
     // What a view of each may be.
@@ -4559,6 +6298,11 @@ test "textures of layers: arrays, cube maps, 3D, copied a layer at a time; compr
         .{ .image = cube_image, .format = .r8g8b8a8_unorm, .view_type = .cube, .subresource_range = .{ .layer_count = 5 } },
         .{ .image = volume_image, .format = .r8g8b8a8_unorm },
         .{ .image = packed_image, .format = .r8g8b8a8_unorm },
+        // An array of cubes wants an image of cubes, a multiple of six
+        // layers of it, and a first layer that begins one.
+        .{ .image = array_image, .format = .r8g8b8a8_unorm, .view_type = .cube_array },
+        .{ .image = cubes_image, .format = .r8g8b8a8_unorm, .view_type = .cube_array, .subresource_range = .{ .layer_count = 4 } },
+        .{ .image = cubes_image, .format = .r8g8b8a8_unorm, .view_type = .cube_array, .subresource_range = .{ .base_array_layer = 2, .layer_count = 6 } },
     };
     for (not_views) |info| {
         var none: ?*facet.ImageView = null;
@@ -4569,12 +6313,15 @@ test "textures of layers: arrays, cube maps, 3D, copied a layer at a time; compr
     const cube_view = try bench.viewOf(.{ .image = cube_image, .format = .r8g8b8a8_unorm, .view_type = .cube });
     const volume_view = try bench.viewOf(.{ .image = volume_image, .format = .r8g8b8a8_unorm, .view_type = .@"3d" });
     const into_view = try bench.viewOf(.{ .image = into_image, .format = .r8g8b8a8_unorm, .subresource_range = .{ .base_array_layer = 1, .layer_count = 1 } });
+    const cubes_view = try bench.viewOf(.{ .image = cubes_image, .format = .r8g8b8a8_unorm, .view_type = .cube_array });
+    const second_view = try bench.viewOf(.{ .image = cubes_image, .format = .r8g8b8a8_unorm, .view_type = .cube_array, .subresource_range = .{ .base_array_layer = 6, .layer_count = 6 } });
     const packed_view = try bench.viewOf(.{ .image = packed_image, .format = .bc1_rgba_unorm_block });
+    const etc_view = try bench.viewOf(.{ .image = etc_image, .format = .etc2_r8g8b8a8_unorm_block });
     const half_view = try bench.viewOf(.{ .image = half_image, .format = .r16g16b16a16_sfloat });
 
     // Six stacks of texels one after another, the most any image takes.
     const stack_bytes = 16 * 16 * 4;
-    const staging, const staged = try bench.buffer(stack_bytes * 6 + 256, facet.BUFFER_USAGE_TRANSFER_SRC);
+    const staging, const staged = try bench.buffer(stack_bytes * 6 + 288, facet.BUFFER_USAGE_TRANSFER_SRC);
     for (0..6) |layer| for (0..16) |y| for (0..16) |x| {
         staged[layer * stack_bytes + (y * 16 + x) * 4 ..][0..4].* = LayerScene.texel(layer, x, y);
     };
@@ -4589,12 +6336,27 @@ test "textures of layers: arrays, cube maps, 3D, copied a layer at a time; compr
     }
     const halves_at = blocks_at + 128;
     for (0..16) |k| staged[halves_at + k * 8 ..][0..8].* = .{ 0x00, 0x3C, 0x00, 0x38, 0x00, 0x40, 0x00, 0x3C };
+    // One ETC2 block with alpha: eight bytes of EAC alpha - a base of 255,
+    // a multiplier of 1 and every index 7, which clamps to opaque - and
+    // eight of colour in the individual mode, the first subblock red and
+    // the second blue, every index 0, which is the +2 of table 0.
+    const etc_at = halves_at + 128;
+    staged[etc_at..][0..16].* = .{ 0xFF, 0x10, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xF0, 0x00, 0x0F, 0x00, 0x00, 0x00, 0x00, 0x00 };
 
     const whole = facet.BufferImageCopy{ .image_subresource = .{ .layer_count = 3 }, .image_extent = side16 };
     const slices = facet.BufferImageCopy{ .image_extent = .{ .width = 16, .height = 16, .depth = 4 } };
     var faces: [6]facet.BufferImageCopy = undefined;
     for (&faces, 0..) |*face, k| face.* = .{ .buffer_offset = k * stack_bytes, .image_subresource = .{ .base_array_layer = @intCast(k) }, .image_extent = side16 };
     const blocks = facet.BufferImageCopy{ .buffer_offset = blocks_at, .image_extent = side16 };
+    const etc = facet.BufferImageCopy{ .buffer_offset = etc_at, .image_extent = .{ .width = 4, .height = 4 } };
+    // The twelve faces of two cubes: the second cube takes the stacks of
+    // the first backwards, so that its faces are told apart from them.
+    var cubes: [12]facet.BufferImageCopy = undefined;
+    for (&cubes, 0..) |*face, k| face.* = .{
+        .buffer_offset = (if (k < 6) k else 11 - k) * stack_bytes,
+        .image_subresource = .{ .base_array_layer = @intCast(k) },
+        .image_extent = side16,
+    };
     const halves = facet.BufferImageCopy{ .buffer_offset = halves_at, .image_extent = .{ .width = 4, .height = 4 } };
     const layer_copy = facet.ImageCopy{ .src_subresource = .{ .base_array_layer = 2 }, .dst_subresource = .{ .base_array_layer = 1 }, .extent = side16 };
     const read_region = facet.BufferImageCopy{ .image_subresource = .{ .base_array_layer = 1, .layer_count = 2 }, .image_extent = side16 };
@@ -4605,7 +6367,9 @@ test "textures of layers: arrays, cube maps, 3D, copied a layer at a time; compr
     fb.CmdCopyBufferToImage(commands, staging, array_image, .transfer_dst_optimal, 1, @ptrCast(&whole));
     fb.CmdCopyBufferToImage(commands, staging, cube_image, .transfer_dst_optimal, 6, &faces);
     fb.CmdCopyBufferToImage(commands, staging, volume_image, .transfer_dst_optimal, 1, @ptrCast(&slices));
+    fb.CmdCopyBufferToImage(commands, staging, cubes_image, .transfer_dst_optimal, 12, &cubes);
     fb.CmdCopyBufferToImage(commands, staging, packed_image, .transfer_dst_optimal, 1, @ptrCast(&blocks));
+    fb.CmdCopyBufferToImage(commands, staging, etc_image, .transfer_dst_optimal, 1, @ptrCast(&etc));
     fb.CmdCopyBufferToImage(commands, staging, half_image, .transfer_dst_optimal, 1, @ptrCast(&halves));
     fb.CmdCopyImage(commands, array_image, .general, into_image, .general, 1, @ptrCast(&layer_copy));
     fb.CmdCopyImageToBuffer(commands, array_image, .general, read_buffer, 1, @ptrCast(&read_region));
@@ -4677,6 +6441,17 @@ test "textures of layers: arrays, cube maps, 3D, copied a layer at a time; compr
         .{ .run = .{ .view = cube_view, .name = "cube", .instance = 5 }, .layer = 5 },
         .{ .run = .{ .view = volume_view, .name = "volume", .instance = 0 }, .layer = 0 },
         .{ .run = .{ .view = volume_view, .name = "volume", .instance = 3 }, .layer = 3 },
+        // An array of cubes: the instance is the face, and every sixth of
+        // it the cube. The second cube's faces carry the first cube's
+        // stacks backwards.
+        .{ .run = .{ .view = cubes_view, .name = "cubes", .instance = 0 }, .layer = 0 },
+        .{ .run = .{ .view = cubes_view, .name = "cubes", .instance = 4 }, .layer = 4 },
+        .{ .run = .{ .view = cubes_view, .name = "cubes", .instance = 6 }, .layer = 5 },
+        .{ .run = .{ .view = cubes_view, .name = "cubes", .instance = 9 }, .layer = 2 },
+        // Past the last cube: the last.
+        .{ .run = .{ .view = cubes_view, .name = "cubes", .instance = 12 }, .layer = 5 },
+        // A view that begins at the second cube: its cube 0 is that one.
+        .{ .run = .{ .view = second_view, .name = "cubes", .instance = 1 }, .layer = 4 },
     };
     for (layered) |each| {
         try draw(&bench, each.run, layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
@@ -4690,6 +6465,682 @@ test "textures of layers: arrays, cube maps, 3D, copied a layer at a time; compr
     try testing.expectEqual(@as(u32, 0xFF00_00FF), picture.at(56, 56));
     try draw(&bench, .{ .view = half_view, .name = "flat", .instance = 0 }, layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
     try testing.expectEqual(@as(u32, 0xFFFF_80FF), picture.at(32, 32));
+    // An ETC2 block is unpacked as it is copied in, so an 8888 form reads
+    // it: red on the left of the block and blue on the right.
+    try draw(&bench, .{ .view = etc_view, .name = "flat", .instance = 0 }, layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
+    try testing.expectEqual(@as(u32, 0xFFFF_0202), picture.at(8, 8));
+    try testing.expectEqual(@as(u32, 0xFF02_02FF), picture.at(56, 56));
+}
+
+test "the shapes past 2D read through a sampler, an array of cubes among them, and a sampler the set layout holds" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+
+    var features: facet.PhysicalDeviceFeatures = undefined;
+    fb.GetPhysicalDeviceFeatures(bench.physical, &features);
+    try testing.expect(features.samplers);
+    try testing.expect(features.immutable_samplers);
+
+    const usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST;
+    const side16 = facet.Extent3D{ .width = 16, .height = 16 };
+    const array_image = try bench.bareImage(.{ .format = .r8g8b8a8_unorm, .extent = side16, .array_layers = 3, .usage = usage }, false);
+    const cube_image = try bench.bareImage(.{ .format = .r8g8b8a8_unorm, .flags = facet.IMAGE_CREATE_CUBE_COMPATIBLE, .extent = side16, .array_layers = 6, .usage = usage }, false);
+    const volume_image = try bench.bareImage(.{ .format = .r8g8b8a8_unorm, .image_type = .@"3d", .extent = .{ .width = 16, .height = 16, .depth = 4 }, .usage = usage }, false);
+    // Two cubes, twelve layers (since 1.53).
+    const cubes_image = try bench.bareImage(.{ .format = .r8g8b8a8_unorm, .flags = facet.IMAGE_CREATE_CUBE_COMPATIBLE, .extent = side16, .array_layers = 12, .usage = usage }, false);
+    const array_view = try bench.viewOf(.{ .image = array_image, .format = .r8g8b8a8_unorm, .view_type = .@"2d_array" });
+    const cube_view = try bench.viewOf(.{ .image = cube_image, .format = .r8g8b8a8_unorm, .view_type = .cube });
+    const volume_view = try bench.viewOf(.{ .image = volume_image, .format = .r8g8b8a8_unorm, .view_type = .@"3d" });
+    const cubes_view = try bench.viewOf(.{ .image = cubes_image, .format = .r8g8b8a8_unorm, .view_type = .cube_array });
+    const second_view = try bench.viewOf(.{ .image = cubes_image, .format = .r8g8b8a8_unorm, .view_type = .cube_array, .subresource_range = .{ .base_array_layer = 6, .layer_count = 6 } });
+    const flat_view = try bench.viewOf(.{ .image = array_image, .format = .r8g8b8a8_unorm, .subresource_range = .{ .base_array_layer = 0, .layer_count = 1 } });
+
+    const stack_bytes = 16 * 16 * 4;
+    const staging, const staged = try bench.buffer(stack_bytes * 6, facet.BUFFER_USAGE_TRANSFER_SRC);
+    for (0..6) |layer| for (0..16) |y| for (0..16) |x| {
+        staged[layer * stack_bytes + (y * 16 + x) * 4 ..][0..4].* = LayerScene.texel(layer, x, y);
+    };
+    const whole = facet.BufferImageCopy{ .image_subresource = .{ .layer_count = 3 }, .image_extent = side16 };
+    const slices = facet.BufferImageCopy{ .image_extent = .{ .width = 16, .height = 16, .depth = 4 } };
+    var faces: [6]facet.BufferImageCopy = undefined;
+    for (&faces, 0..) |*face, k| face.* = .{ .buffer_offset = k * stack_bytes, .image_subresource = .{ .base_array_layer = @intCast(k) }, .image_extent = side16 };
+    // The twelve faces of two cubes, the second cube taking the first's
+    // stacks backwards, so that its faces are told apart from them.
+    var cubes: [12]facet.BufferImageCopy = undefined;
+    for (&cubes, 0..) |*face, k| face.* = .{
+        .buffer_offset = (if (k < 6) k else 11 - k) * stack_bytes,
+        .image_subresource = .{ .base_array_layer = @intCast(k) },
+        .image_extent = side16,
+    };
+    const commands = try bench.record();
+    fb.CmdCopyBufferToImage(commands, staging, array_image, .transfer_dst_optimal, 1, @ptrCast(&whole));
+    fb.CmdCopyBufferToImage(commands, staging, cube_image, .transfer_dst_optimal, 6, &faces);
+    fb.CmdCopyBufferToImage(commands, staging, volume_image, .transfer_dst_optimal, 1, @ptrCast(&slices));
+    fb.CmdCopyBufferToImage(commands, staging, cubes_image, .transfer_dst_optimal, 12, &cubes);
+    try bench.submit();
+
+    // Two samplers that read the edges differently, and tell each other
+    // apart past the texture: the border's white against the far side.
+    var edged: ?*facet.Sampler = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateSampler(device, &.{
+        .mag_filter = .nearest,
+        .min_filter = .nearest,
+        .address_mode_u = .clamp_to_border,
+        .address_mode_v = .clamp_to_border,
+        .address_mode_w = .clamp_to_border,
+        .border_color = .float_opaque_white,
+    }, &edged));
+    defer fb.DestroySampler(device, edged);
+    var tiled: ?*facet.Sampler = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateSampler(device, &.{ .mag_filter = .nearest, .min_filter = .nearest }, &tiled));
+    defer fb.DestroySampler(device, tiled);
+
+    // One layout whose sampler is written with the set, and one that holds
+    // the bordered sampler of its own (since 1.49).
+    var written_layout: ?*facet.DescriptorSetLayout = null;
+    const written = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .combined_image_sampler, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&written) }, &written_layout));
+    defer fb.DestroyDescriptorSetLayout(device, written_layout);
+    var held_layout: ?*facet.DescriptorSetLayout = null;
+    const held = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .combined_image_sampler, .stage_flags = facet.SHADER_STAGE_FRAGMENT, .immutable_samplers = @ptrCast(&edged) };
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&held) }, &held_layout));
+    defer fb.DestroyDescriptorSetLayout(device, held_layout);
+
+    var pool: ?*facet.DescriptorPool = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorPool(device, &.{ .max_sets = 2 }, &pool));
+    defer fb.DestroyDescriptorPool(device, pool);
+    var written_set: [1]?*facet.DescriptorSet = undefined;
+    try testing.expectEqual(facet.Result.success, fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&written_layout) }, &written_set));
+    var held_set: [1]?*facet.DescriptorSet = undefined;
+    try testing.expectEqual(facet.Result.success, fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&held_layout) }, &held_set));
+
+    const shaders = try module(&bench, &LayerScene.code);
+    defer fb.DestroyShaderModule(device, shaders);
+    const written_pipes = try pipelineLayout(&bench, &.{written_layout.?}, 0);
+    defer fb.DestroyPipelineLayout(device, written_pipes);
+    const held_pipes = try pipelineLayout(&bench, &.{held_layout.?}, 0);
+    defer fb.DestroyPipelineLayout(device, held_pipes);
+    const pass = try renderPass(&bench, .clear, false);
+    defer fb.DestroyRenderPass(device, pass);
+    const picture = try Picture.of(&bench, 64, 64);
+    const frame = try framebuffer(&bench, pass, &.{picture.view}, 64, 64);
+    defer fb.DestroyFramebuffer(device, frame);
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(LayerScene.quad)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(LayerScene.quad))], std.mem.asBytes(&LayerScene.quad));
+    const offset: u64 = 0;
+    const black = clears(0xFF00_0000);
+
+    const Run = struct {
+        view: *facet.ImageView,
+        sampler: ?*facet.Sampler,
+        name: [*:0]const u8,
+        instance: u32,
+        set: *[1]?*facet.DescriptorSet,
+        layout: *facet.PipelineLayout,
+    };
+    const draw = struct {
+        fn draw(on: *Bench, run: Run, into: *facet.RenderPass, into_frame: *facet.Framebuffer, code_module: *facet.ShaderModule, vertices: *facet.Buffer, first: *const u64, clear_values: *const [2]facet.ClearValue) !void {
+            const f = on.rig.fb;
+            const image_info = facet.DescriptorImageInfo{ .sampler = run.sampler, .image_view = run.view };
+            const write = facet.WriteDescriptorSet{ .dst_set = run.set[0].?, .dst_binding = 0, .descriptor_type = .combined_image_sampler, .image_info = @ptrCast(&image_info) };
+            f.UpdateDescriptorSets(on.device, 1, @ptrCast(&write), 0, null);
+            const result, const pipeline = makePipeline(on, .{ .module = code_module, .name = run.name, .layout = run.layout, .pass = into });
+            try testing.expectEqual(facet.Result.success, result);
+            defer f.DestroyPipeline(on.device, pipeline);
+            const recording = try on.record();
+            f.CmdBeginRenderPass(recording, &.{ .render_pass = into, .framebuffer = into_frame, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 1, .clear_values = clear_values }, .@"inline");
+            f.CmdBindVertexBuffers(recording, 0, 1, @ptrCast(&vertices), @ptrCast(first));
+            f.CmdBindDescriptorSets(recording, .graphics, run.layout, 0, 1, @ptrCast(run.set), 0, null);
+            f.CmdBindPipeline(recording, .graphics, pipeline.?);
+            f.CmdDraw(recording, 6, 1, 0, run.instance);
+            f.CmdEndRenderPass(recording);
+            try on.submit();
+        }
+    }.draw;
+
+    // The three shapes read through a sampler read what the forms built
+    // for them read: the layer, the face or the slice the instance names.
+    const shapes = [_]struct { run: Run, layer: u32 }{
+        .{ .run = .{ .view = array_view, .sampler = tiled, .name = "arrayby", .instance = 0, .set = &written_set, .layout = written_pipes }, .layer = 0 },
+        .{ .run = .{ .view = array_view, .sampler = tiled, .name = "arrayby", .instance = 2, .set = &written_set, .layout = written_pipes }, .layer = 2 },
+        // Past the last layer: the last, as `texture_array` has it.
+        .{ .run = .{ .view = array_view, .sampler = tiled, .name = "arrayby", .instance = 9, .set = &written_set, .layout = written_pipes }, .layer = 2 },
+        .{ .run = .{ .view = cube_view, .sampler = tiled, .name = "cubeby", .instance = 0, .set = &written_set, .layout = written_pipes }, .layer = 0 },
+        .{ .run = .{ .view = cube_view, .sampler = tiled, .name = "cubeby", .instance = 3, .set = &written_set, .layout = written_pipes }, .layer = 3 },
+        .{ .run = .{ .view = cube_view, .sampler = tiled, .name = "cubeby", .instance = 5, .set = &written_set, .layout = written_pipes }, .layer = 5 },
+        .{ .run = .{ .view = volume_view, .sampler = tiled, .name = "volumeby", .instance = 0, .set = &written_set, .layout = written_pipes }, .layer = 0 },
+        .{ .run = .{ .view = volume_view, .sampler = tiled, .name = "volumeby", .instance = 3, .set = &written_set, .layout = written_pipes }, .layer = 3 },
+        // An array of cubes through the sampler (since 1.53): the
+        // instance is the face, and every sixth of it the cube.
+        .{ .run = .{ .view = cubes_view, .sampler = tiled, .name = "cubesby", .instance = 0, .set = &written_set, .layout = written_pipes }, .layer = 0 },
+        .{ .run = .{ .view = cubes_view, .sampler = tiled, .name = "cubesby", .instance = 4, .set = &written_set, .layout = written_pipes }, .layer = 4 },
+        .{ .run = .{ .view = cubes_view, .sampler = tiled, .name = "cubesby", .instance = 6, .set = &written_set, .layout = written_pipes }, .layer = 5 },
+        .{ .run = .{ .view = cubes_view, .sampler = tiled, .name = "cubesby", .instance = 9, .set = &written_set, .layout = written_pipes }, .layer = 2 },
+        // Past the last cube: the last, as `texture_cube_array` has it.
+        .{ .run = .{ .view = cubes_view, .sampler = tiled, .name = "cubesby", .instance = 12, .set = &written_set, .layout = written_pipes }, .layer = 5 },
+        // A view that begins at the second cube: its cube 0 is that one.
+        .{ .run = .{ .view = second_view, .sampler = tiled, .name = "cubesby", .instance = 1, .set = &written_set, .layout = written_pipes }, .layer = 4 },
+    };
+    for (shapes) |each| {
+        try draw(&bench, each.run, pass, frame, shaders, vertex_buffer, &offset, &black);
+        try testing.expectEqual(LayerScene.colorOf(each.layer, false, false), picture.at(8, 8));
+        try testing.expectEqual(LayerScene.colorOf(each.layer, true, true), picture.at(56, 56));
+    }
+
+    // A form with no sampler beside the texture still says so.
+    try draw(&bench, .{ .view = array_view, .sampler = null, .name = "arrayby", .instance = 0, .set = &written_set, .layout = written_pipes }, pass, frame, shaders, vertex_buffer, &offset, &black);
+    try testing.expectEqual(shader.missing, picture.at(32, 32));
+
+    // The quad whose coordinates run a quarter outside the texture, with
+    // the tiling sampler written into the set: the far side of the
+    // texture, which is the corner furthest from (0, 0).
+    const far = LayerScene.colorOf(0, true, true);
+    const white: u32 = 0xFFFF_FFFF;
+    try draw(&bench, .{ .view = flat_view, .sampler = tiled, .name = "wideby", .instance = 0, .set = &written_set, .layout = written_pipes }, pass, frame, shaders, vertex_buffer, &offset, &black);
+    try testing.expectEqual(far, picture.at(4, 4));
+    // The same drawn through the layout that holds the bordered sampler,
+    // written with the tiling one: the layout's wins, so the border is
+    // read past the edge and the write changed nothing.
+    try draw(&bench, .{ .view = flat_view, .sampler = tiled, .name = "wideby", .instance = 0, .set = &held_set, .layout = held_pipes }, pass, frame, shaders, vertex_buffer, &offset, &black);
+    try testing.expectEqual(white, picture.at(4, 4));
+    // And the texture the write did bring is read inside the edges: at a
+    // sixteenth in, the coordinate is 0.125, the texture's first quarter.
+    try testing.expectEqual(LayerScene.colorOf(0, false, false), picture.at(16, 16));
+    // A write of a sampler alone into that binding changes nothing either.
+    const only = facet.DescriptorImageInfo{ .sampler = tiled, .image_view = null };
+    const write_sampler = facet.WriteDescriptorSet{ .dst_set = held_set[0].?, .dst_binding = 0, .descriptor_type = .sampler, .image_info = @ptrCast(&only) };
+    fb.UpdateDescriptorSets(device, 1, @ptrCast(&write_sampler), 0, null);
+    try draw(&bench, .{ .view = flat_view, .sampler = tiled, .name = "wideby", .instance = 0, .set = &held_set, .layout = held_pipes }, pass, frame, shaders, vertex_buffer, &offset, &black);
+    try testing.expectEqual(white, picture.at(4, 4));
+}
+
+/// A quad over a texture kept in its blocks, drawn through a form for each
+/// kept format, and through one for 8888 - which is the wrong format for
+/// such a texture and takes the run-time sampler.
+const BlockScene = struct {
+    fn flat(vertices: *const shader.Vertices) callconv(.c) void {
+        for (0..vertices.count) |k| {
+            const p = vertices.input(@intCast(k), 0);
+            vertices.output(@intCast(k))[0..6].* = .{ p[0], p[1], 0, 1, (p[0] + 1) / 2, (p[1] + 1) / 2 };
+        }
+    }
+
+    const entries = [_]shader.Entry{
+        shader.vertex("blocks", &flat, 2),
+        shader.fixedFragment("blocks", .{ .kind = .texture, .sampling = .{ .format = .bc1, .filter = .nearest } }),
+        shader.vertex("alpha", &flat, 2),
+        shader.fixedFragment("alpha", .{ .kind = .texture, .sampling = .{ .format = .bc3, .filter = .nearest } }),
+        shader.vertex("eight", &flat, 2),
+        shader.fixedFragment("eight", .{ .kind = .texture, .sampling = .{ .format = .rgba8888, .filter = .nearest } }),
+    };
+    const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
+
+    /// A BC1 block of one colour: both endpoints it, every texel the first.
+    fn block1(color: u16, into: *[8]u8) void {
+        std.mem.writeInt(u16, into[0..2], color, .little);
+        std.mem.writeInt(u16, into[2..4], color, .little);
+        std.mem.writeInt(u32, into[4..8], 0, .little);
+    }
+
+    /// A BC3 block of one colour at one alpha: the alpha endpoints both it,
+    /// so every texel takes it whatever the bits say.
+    fn block3(color: u16, alpha: u8, into: *[16]u8) void {
+        into[0] = alpha;
+        into[1] = alpha;
+        @memset(into[2..8], 0);
+        block1(color, into[8..16]);
+    }
+};
+
+test "compressed textures kept in their blocks: copied as blocks, sampled out of them" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+
+    // The cores keep the blocks, and so there are blocks of the format to
+    // read back as well as to write.
+    var features: facet.PhysicalDeviceFeatures = undefined;
+    fb.GetPhysicalDeviceFeatures(bench.physical, &features);
+    try testing.expect(features.kept_compressed);
+    var properties: facet.FormatProperties = undefined;
+    fb.GetPhysicalDeviceFormatProperties(bench.physical, .bc1_rgba_unorm_block, &properties);
+    try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_TRANSFER_SRC != 0);
+    try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_TRANSFER_DST != 0);
+
+    const usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST | facet.IMAGE_USAGE_TRANSFER_SRC;
+    const side16 = facet.Extent3D{ .width = 16, .height = 16 };
+    const packed_image = try bench.bareImage(.{ .format = .bc1_rgba_unorm_block, .extent = side16, .usage = usage }, false);
+    const copy_image = try bench.bareImage(.{ .format = .bc1_rgba_unorm_block, .extent = side16, .usage = usage }, false);
+    const alpha_image = try bench.bareImage(.{ .format = .bc3_unorm_block, .extent = side16, .usage = usage }, false);
+
+    // An eighth of the texels unpacked: sixteen blocks of 8 bytes, where
+    // 16 x 16 of 8888 takes 1024.
+    var needs: facet.MemoryRequirements = undefined;
+    fb.GetImageMemoryRequirements(device, packed_image, &needs);
+    try testing.expectEqual(@as(u64, 128), needs.size);
+    fb.GetImageMemoryRequirements(device, alpha_image, &needs);
+    try testing.expectEqual(@as(u64, 256), needs.size);
+
+    const packed_view = try bench.viewOf(.{ .image = packed_image, .format = .bc1_rgba_unorm_block });
+    const copy_view = try bench.viewOf(.{ .image = copy_image, .format = .bc1_rgba_unorm_block });
+    const alpha_view = try bench.viewOf(.{ .image = alpha_image, .format = .bc3_unorm_block });
+
+    // Red blocks on the left of the picture and blue on the right, and the
+    // same colours at half alpha for BC3.
+    const red: u16 = 0xF800;
+    const blue: u16 = 0x001F;
+    const staging, const staged = try bench.buffer(512, facet.BUFFER_USAGE_TRANSFER_SRC);
+    for (0..16) |block| {
+        const color: u16 = if (block % 4 < 2) red else blue;
+        BlockScene.block1(color, staged[block * 8 ..][0..8]);
+        BlockScene.block3(color, 0x80, staged[128 + block * 16 ..][0..16]);
+    }
+    const blocks = facet.BufferImageCopy{ .image_extent = side16 };
+    const alphas = facet.BufferImageCopy{ .buffer_offset = 128, .image_extent = side16 };
+    const whole_copy = facet.ImageCopy{ .extent = side16 };
+    _, const read_back = try bench.buffer(256, facet.BUFFER_USAGE_TRANSFER_DST);
+    const read_buffer = bench.buffers[bench.buffer_count - 1];
+    const read_region = facet.BufferImageCopy{ .image_extent = side16 };
+
+    const commands = try bench.record();
+    fb.CmdCopyBufferToImage(commands, staging, packed_image, .transfer_dst_optimal, 1, @ptrCast(&blocks));
+    fb.CmdCopyBufferToImage(commands, staging, alpha_image, .transfer_dst_optimal, 1, @ptrCast(&alphas));
+    // Image to image, both keeping their blocks: the blocks go as they lie.
+    fb.CmdCopyImage(commands, packed_image, .general, copy_image, .general, 1, @ptrCast(&whole_copy));
+    fb.CmdCopyImageToBuffer(commands, copy_image, .general, read_buffer, 1, @ptrCast(&read_region));
+    try bench.submit();
+    // What came back is what went in, block for block: nothing was decoded
+    // on the way.
+    try testing.expectEqualSlices(u8, staged[0..128], read_back[0..128]);
+
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .sampled_image, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &set_layout));
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    var pool: ?*facet.DescriptorPool = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool));
+    defer fb.DestroyDescriptorPool(device, pool);
+    var set: [1]?*facet.DescriptorSet = undefined;
+    try testing.expectEqual(facet.Result.success, fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &set));
+
+    const shaders = try module(&bench, &BlockScene.code);
+    defer fb.DestroyShaderModule(device, shaders);
+    const layout = try pipelineLayout(&bench, &.{set_layout.?}, 0);
+    defer fb.DestroyPipelineLayout(device, layout);
+    const pass = try renderPass(&bench, .clear, false);
+    defer fb.DestroyRenderPass(device, pass);
+    const picture = try Picture.of(&bench, 64, 64);
+    const frame = try framebuffer(&bench, pass, &.{picture.view}, 64, 64);
+    defer fb.DestroyFramebuffer(device, frame);
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(LayerScene.quad)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(LayerScene.quad))], std.mem.asBytes(&LayerScene.quad));
+    const offset: u64 = 0;
+    const black = clears(0xFF00_0000);
+
+    const drawn = struct {
+        fn drawn(on: *Bench, view: *facet.ImageView, name: [*:0]const u8, made_layout: *facet.PipelineLayout, into: *facet.RenderPass, into_frame: *facet.Framebuffer, code_module: *facet.ShaderModule, sets: *[1]?*facet.DescriptorSet, vertices: *facet.Buffer, first: *const u64, clear_values: *const [2]facet.ClearValue) !void {
+            const f = on.rig.fb;
+            const image_info = facet.DescriptorImageInfo{ .image_view = view };
+            const write = facet.WriteDescriptorSet{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .sampled_image, .image_info = @ptrCast(&image_info) };
+            f.UpdateDescriptorSets(on.device, 1, @ptrCast(&write), 0, null);
+            const result, const pipeline = makePipeline(on, .{ .module = code_module, .name = name, .layout = made_layout, .pass = into });
+            try testing.expectEqual(facet.Result.success, result);
+            defer f.DestroyPipeline(on.device, pipeline);
+            const recording = try on.record();
+            f.CmdBeginRenderPass(recording, &.{ .render_pass = into, .framebuffer = into_frame, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 1, .clear_values = clear_values }, .@"inline");
+            f.CmdBindVertexBuffers(recording, 0, 1, @ptrCast(&vertices), @ptrCast(first));
+            f.CmdBindDescriptorSets(recording, .graphics, made_layout, 0, 1, @ptrCast(sets), 0, null);
+            f.CmdBindPipeline(recording, .graphics, pipeline.?);
+            f.CmdDraw(recording, 6, 1, 0, 0);
+            f.CmdEndRenderPass(recording);
+            try on.submit();
+        }
+    }.drawn;
+
+    // The form built for the kept format: the fast path, a block decoded
+    // where the four texels a sample mixes share one.
+    try drawn(&bench, packed_view, "blocks", layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), picture.at(8, 8));
+    try testing.expectEqual(@as(u32, 0xFF00_00FF), picture.at(56, 8));
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), picture.at(8, 56));
+    try testing.expectEqual(@as(u32, 0xFF00_00FF), picture.at(56, 56));
+    // The copy of it reads the same, the blocks having gone as they lay.
+    try drawn(&bench, copy_view, "blocks", layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), picture.at(8, 8));
+    try testing.expectEqual(@as(u32, 0xFF00_00FF), picture.at(56, 56));
+    // A form built for 8888 handed a texture of blocks: the run-time
+    // sampler draws it, and reads the same colours (since 1.44).
+    try drawn(&bench, packed_view, "eight", layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), picture.at(8, 8));
+    try testing.expectEqual(@as(u32, 0xFF00_00FF), picture.at(56, 56));
+    // BC3: the colours the same and the alpha the block's own.
+    try drawn(&bench, alpha_view, "alpha", layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
+    try testing.expectEqual(@as(u32, 0x80FF_0000), picture.at(8, 8));
+    try testing.expectEqual(@as(u32, 0x8000_00FF), picture.at(56, 56));
+
+    // A copy whose offset is not on a block is left alone, as Vulkan asks
+    // of one: the image keeps what it had.
+    const off_block = facet.BufferImageCopy{ .buffer_offset = 128, .image_offset = .{ .x = 2, .y = 0 }, .image_extent = .{ .width = 8, .height = 8 } };
+    const again = try bench.record();
+    fb.CmdCopyBufferToImage(again, staging, packed_image, .transfer_dst_optimal, 1, @ptrCast(&off_block));
+    try bench.submit();
+    try drawn(&bench, packed_view, "blocks", layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), picture.at(8, 8));
+    try testing.expectEqual(@as(u32, 0xFF00_00FF), picture.at(56, 56));
+}
+
+/// A quad over a float texture, drawn through a form built for its floats
+/// and through one built for 8888, which is the wrong format for such a
+/// texture and takes the run-time sampler.
+const FloatScene = struct {
+    fn flat(vertices: *const shader.Vertices) callconv(.c) void {
+        for (0..vertices.count) |k| {
+            const p = vertices.input(@intCast(k), 0);
+            vertices.output(@intCast(k))[0..6].* = .{ p[0], p[1], 0, 1, (p[0] + 1) / 2, (p[1] + 1) / 2 };
+        }
+    }
+
+    const entries = [_]shader.Entry{
+        shader.vertex("halves", &flat, 2),
+        shader.fixedFragment("halves", .{ .kind = .texture, .sampling = .{ .format = .rgba16f, .filter = .nearest } }),
+        shader.vertex("eight", &flat, 2),
+        shader.fixedFragment("eight", .{ .kind = .texture, .sampling = .{ .format = .rgba8888, .filter = .nearest } }),
+    };
+    const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
+
+    /// Four half floats, red first, as a texel of R16G16B16A16_SFLOAT holds
+    /// them.
+    fn texel(values: [4]f32, into: *[8]u8) void {
+        for (values, 0..) |value, k| {
+            const half: u16 = @bitCast(@as(f16, @floatCast(value)));
+            std.mem.writeInt(u16, into[k * 2 ..][0..2], half, .little);
+        }
+    }
+};
+
+test "float textures kept as their floats: copied in and out as they lie, sampled rounded" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+
+    var features: facet.PhysicalDeviceFeatures = undefined;
+    fb.GetPhysicalDeviceFeatures(bench.physical, &features);
+    try testing.expect(features.kept_floats);
+    var properties: facet.FormatProperties = undefined;
+    fb.GetPhysicalDeviceFormatProperties(bench.physical, .r16g16b16a16_sfloat, &properties);
+    try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_TRANSFER_SRC != 0);
+    fb.GetPhysicalDeviceFormatProperties(bench.physical, .b10g11r11_ufloat_pack32, &properties);
+    try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_TRANSFER_SRC != 0);
+
+    const usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST | facet.IMAGE_USAGE_TRANSFER_SRC;
+    const side4 = facet.Extent3D{ .width = 4, .height = 4 };
+    const half_image = try bench.bareImage(.{ .format = .r16g16b16a16_sfloat, .extent = side4, .usage = usage }, false);
+    const copy_image = try bench.bareImage(.{ .format = .r16g16b16a16_sfloat, .extent = side4, .usage = usage }, false);
+    const packed_image = try bench.bareImage(.{ .format = .b10g11r11_ufloat_pack32, .extent = side4, .usage = usage }, false);
+    // A storage image is written texel by texel, which a kept float is
+    // not: such an image is unpacked into 8888, as it always was.
+    const written = try bench.bareImage(.{ .format = .r16g16b16a16_sfloat, .extent = side4, .usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_TRANSFER_DST }, false);
+
+    // The texels' own size: 8 bytes for four halves, 4 for the packed one,
+    // and 8 for the 8888 an unpacked one is kept spread in.
+    var needs: facet.MemoryRequirements = undefined;
+    fb.GetImageMemoryRequirements(device, half_image, &needs);
+    try testing.expectEqual(@as(u64, 4 * 4 * 8), needs.size);
+    fb.GetImageMemoryRequirements(device, packed_image, &needs);
+    try testing.expectEqual(@as(u64, 4 * 4 * 4), needs.size);
+    fb.GetImageMemoryRequirements(device, written, &needs);
+    try testing.expectEqual(@as(u64, 4 * 4 * 8), needs.size);
+
+    const half_view = try bench.viewOf(.{ .image = half_image, .format = .r16g16b16a16_sfloat });
+    const copy_view = try bench.viewOf(.{ .image = copy_image, .format = .r16g16b16a16_sfloat });
+    const packed_view = try bench.viewOf(.{ .image = packed_image, .format = .b10g11r11_ufloat_pack32 });
+
+    // Sixteen texels: red on the left and half-bright blue on the right,
+    // one of them above 1 and one below 0, which a sample holds inside.
+    const staging, const staged = try bench.buffer(256, facet.BUFFER_USAGE_TRANSFER_SRC);
+    for (0..16) |k| {
+        const left = k % 4 < 2;
+        FloatScene.texel(if (left) .{ 2, -1, 0, 1 } else .{ 0, 0, 0.5, 1 }, staged[k * 8 ..][0..8]);
+    }
+    const words_at = 128;
+    for (0..16) |k| {
+        const bits: u32 = if (k % 4 < 2) 15 << 6 else 13 << 27;
+        std.mem.writeInt(u32, staged[words_at + k * 4 ..][0..4], bits, .little);
+    }
+    const halves = facet.BufferImageCopy{ .image_extent = side4 };
+    const words = facet.BufferImageCopy{ .buffer_offset = words_at, .image_extent = side4 };
+    const whole_copy = facet.ImageCopy{ .extent = side4 };
+    _, const read_back = try bench.buffer(256, facet.BUFFER_USAGE_TRANSFER_DST);
+    const read_buffer = bench.buffers[bench.buffer_count - 1];
+
+    const commands = try bench.record();
+    fb.CmdCopyBufferToImage(commands, staging, half_image, .transfer_dst_optimal, 1, @ptrCast(&halves));
+    fb.CmdCopyBufferToImage(commands, staging, packed_image, .transfer_dst_optimal, 1, @ptrCast(&words));
+    fb.CmdCopyImage(commands, half_image, .general, copy_image, .general, 1, @ptrCast(&whole_copy));
+    fb.CmdCopyImageToBuffer(commands, copy_image, .general, read_buffer, 1, @ptrCast(&halves));
+    try bench.submit();
+    // What came back is what went in, half for half: nothing was rounded
+    // to 8 bits on the way.
+    try testing.expectEqualSlices(u8, staged[0..128], read_back[0..128]);
+
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .sampled_image, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &set_layout));
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    var pool: ?*facet.DescriptorPool = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool));
+    defer fb.DestroyDescriptorPool(device, pool);
+    var set: [1]?*facet.DescriptorSet = undefined;
+    try testing.expectEqual(facet.Result.success, fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &set));
+
+    const shaders = try module(&bench, &FloatScene.code);
+    defer fb.DestroyShaderModule(device, shaders);
+    const layout = try pipelineLayout(&bench, &.{set_layout.?}, 0);
+    defer fb.DestroyPipelineLayout(device, layout);
+    const pass = try renderPass(&bench, .clear, false);
+    defer fb.DestroyRenderPass(device, pass);
+    const picture = try Picture.of(&bench, 64, 64);
+    const frame = try framebuffer(&bench, pass, &.{picture.view}, 64, 64);
+    defer fb.DestroyFramebuffer(device, frame);
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(LayerScene.quad)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(LayerScene.quad))], std.mem.asBytes(&LayerScene.quad));
+    const offset: u64 = 0;
+    const black = clears(0xFF00_0000);
+
+    const drawn = struct {
+        fn drawn(on: *Bench, view: *facet.ImageView, name: [*:0]const u8, made_layout: *facet.PipelineLayout, into: *facet.RenderPass, into_frame: *facet.Framebuffer, code_module: *facet.ShaderModule, sets: *[1]?*facet.DescriptorSet, vertices: *facet.Buffer, first: *const u64, clear_values: *const [2]facet.ClearValue) !void {
+            const f = on.rig.fb;
+            const image_info = facet.DescriptorImageInfo{ .image_view = view };
+            const write = facet.WriteDescriptorSet{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .sampled_image, .image_info = @ptrCast(&image_info) };
+            f.UpdateDescriptorSets(on.device, 1, @ptrCast(&write), 0, null);
+            const result, const pipeline = makePipeline(on, .{ .module = code_module, .name = name, .layout = made_layout, .pass = into });
+            try testing.expectEqual(facet.Result.success, result);
+            defer f.DestroyPipeline(on.device, pipeline);
+            const recording = try on.record();
+            f.CmdBeginRenderPass(recording, &.{ .render_pass = into, .framebuffer = into_frame, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 1, .clear_values = clear_values }, .@"inline");
+            f.CmdBindVertexBuffers(recording, 0, 1, @ptrCast(&vertices), @ptrCast(first));
+            f.CmdBindDescriptorSets(recording, .graphics, made_layout, 0, 1, @ptrCast(sets), 0, null);
+            f.CmdBindPipeline(recording, .graphics, pipeline.?);
+            f.CmdDraw(recording, 6, 1, 0, 0);
+            f.CmdEndRenderPass(recording);
+            try on.submit();
+        }
+    }.drawn;
+
+    // 2 reads as 255 and -1 as 0; the right half is blue at 128.
+    try drawn(&bench, half_view, "halves", layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), picture.at(8, 8));
+    try testing.expectEqual(@as(u32, 0xFF00_0080), picture.at(56, 56));
+    // The copy of it reads the same, the floats having gone as they lay.
+    try drawn(&bench, copy_view, "halves", layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), picture.at(8, 8));
+    try testing.expectEqual(@as(u32, 0xFF00_0080), picture.at(56, 56));
+    // A form built for 8888 handed a texture of floats: the run-time
+    // sampler draws it, and reads the same colours.
+    try drawn(&bench, half_view, "eight", layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), picture.at(8, 8));
+    try testing.expectEqual(@as(u32, 0xFF00_0080), picture.at(56, 56));
+    // The packed format through the run-time sampler as well: red at 1 on
+    // the left, and on the right a blue of 2 to the -2.
+    try drawn(&bench, packed_view, "eight", layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), picture.at(8, 8));
+    try testing.expectEqual(@as(u32, 0xFF00_0040), picture.at(56, 56));
+}
+
+/// A quad over the whole target, and the forms that sample a texture kept
+/// a texel smaller: one word of 8888, one byte of red, and the spread form
+/// handed either.
+const SmallScene = struct {
+    const entries = [_]shader.Entry{
+        shader.vertex("word", &FloatScene.flat, 2),
+        shader.fixedFragment("word", .{ .kind = .texture, .sampling = .{ .format = .argb8888, .filter = .nearest } }),
+        shader.vertex("red", &FloatScene.flat, 2),
+        shader.fixedFragment("red", .{ .kind = .texture, .sampling = .{ .format = .r8, .filter = .nearest } }),
+        shader.vertex("spread", &FloatScene.flat, 2),
+        shader.fixedFragment("spread", .{ .kind = .texture, .sampling = .{ .format = .rgba8888, .filter = .nearest } }),
+    };
+    const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
+};
+
+test "a texel kept smaller than its colour: 8888 in its word, and one byte of red" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+
+    var features: facet.PhysicalDeviceFeatures = undefined;
+    fb.GetPhysicalDeviceFeatures(bench.physical, &features);
+    try testing.expect(features.small_texels);
+    var properties: facet.FormatProperties = undefined;
+    fb.GetPhysicalDeviceFormatProperties(bench.physical, .r8_unorm, &properties);
+    try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_SAMPLED_IMAGE != 0);
+    try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_COLOR_ATTACHMENT == 0);
+    // A texel buffer of one byte a texel as well, since 1.54, and no
+    // vertex attribute is read in it.
+    try testing.expectEqual(facet.FORMAT_FEATURE_UNIFORM_TEXEL_BUFFER | facet.FORMAT_FEATURE_STORAGE_TEXEL_BUFFER, properties.buffer_features);
+
+    const usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST | facet.IMAGE_USAGE_TRANSFER_SRC;
+    // Eight by eight: a level of 64 texels, so that what each format
+    // takes is above the alignment an image's memory is rounded up to.
+    const side = facet.Extent3D{ .width = 8, .height = 8 };
+    const spread_image = try bench.bareImage(.{ .format = .b8g8r8a8_unorm, .extent = side, .usage = usage }, false);
+    const word_image = try bench.bareImage(.{ .flags = facet.IMAGE_CREATE_PACKED_TEXELS, .format = .b8g8r8a8_unorm, .extent = side, .usage = usage }, false);
+    const red_image = try bench.bareImage(.{ .format = .r8_unorm, .extent = side, .usage = usage }, false);
+
+    // What each takes: eight bytes a texel spread, four in a word, one for
+    // the red alone.
+    var needs: facet.MemoryRequirements = undefined;
+    fb.GetImageMemoryRequirements(device, spread_image, &needs);
+    try testing.expectEqual(@as(u64, 8 * 8 * 8), needs.size);
+    fb.GetImageMemoryRequirements(device, word_image, &needs);
+    try testing.expectEqual(@as(u64, 8 * 8 * 4), needs.size);
+    fb.GetImageMemoryRequirements(device, red_image, &needs);
+    try testing.expectEqual(@as(u64, 8 * 8 * 1), needs.size);
+
+    // Refused: the flag where the format has no word of 8888 to keep, and
+    // where nothing samples the image.
+    var refused: ?*facet.Image = null;
+    const packed565 = facet.ImageCreateInfo{ .flags = facet.IMAGE_CREATE_PACKED_TEXELS, .format = .r5g6b5_unorm_pack16, .extent = side, .usage = usage };
+    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &packed565, &refused));
+    const packed_rows = facet.ImageCreateInfo{ .flags = facet.IMAGE_CREATE_PACKED_TEXELS, .format = .b8g8r8a8_unorm, .extent = side, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT };
+    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &packed_rows, &refused));
+    const red_rows = facet.ImageCreateInfo{ .format = .r8_unorm, .extent = side, .usage = facet.IMAGE_USAGE_TRANSFER_DST };
+    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &red_rows, &refused));
+
+    const spread_view = try bench.viewOf(.{ .image = spread_image, .format = .b8g8r8a8_unorm });
+    const word_view = try bench.viewOf(.{ .image = word_image, .format = .b8g8r8a8_unorm });
+    const red_view = try bench.viewOf(.{ .image = red_image, .format = .r8_unorm });
+
+    // A colour of its own on the left and another on the right, and the
+    // reds of those in the one-byte image.
+    const left_color: u32 = 0xFF20_4080;
+    const right_color: u32 = 0xFFC0_6010;
+    const reds_at = 8 * 8 * 4;
+    const staging, const staged = try bench.buffer(512, facet.BUFFER_USAGE_TRANSFER_SRC);
+    for (0..64) |k| {
+        const color = if (k % 8 < 4) left_color else right_color;
+        std.mem.writeInt(u32, staged[k * 4 ..][0..4], color, .little);
+        staged[reds_at + k] = @truncate(color >> 16);
+    }
+    const words = facet.BufferImageCopy{ .image_extent = side };
+    const reds = facet.BufferImageCopy{ .buffer_offset = reds_at, .image_extent = side };
+    _, const read_back = try bench.buffer(512, facet.BUFFER_USAGE_TRANSFER_DST);
+    const read_buffer = bench.buffers[bench.buffer_count - 1];
+
+    const commands = try bench.record();
+    fb.CmdCopyBufferToImage(commands, staging, spread_image, .transfer_dst_optimal, 1, @ptrCast(&words));
+    fb.CmdCopyBufferToImage(commands, staging, word_image, .transfer_dst_optimal, 1, @ptrCast(&words));
+    fb.CmdCopyBufferToImage(commands, staging, red_image, .transfer_dst_optimal, 1, @ptrCast(&reds));
+    fb.CmdCopyImageToBuffer(commands, red_image, .general, read_buffer, 1, @ptrCast(&reds));
+    try bench.submit();
+    // One byte a texel came back, as it went in.
+    try testing.expectEqualSlices(u8, staged[reds_at..][0..64], read_back[reds_at..][0..64]);
+
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .sampled_image, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &set_layout));
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    var pool: ?*facet.DescriptorPool = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool));
+    defer fb.DestroyDescriptorPool(device, pool);
+    var set: [1]?*facet.DescriptorSet = undefined;
+    try testing.expectEqual(facet.Result.success, fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &set));
+
+    const shaders = try module(&bench, &SmallScene.code);
+    defer fb.DestroyShaderModule(device, shaders);
+    const layout = try pipelineLayout(&bench, &.{set_layout.?}, 0);
+    defer fb.DestroyPipelineLayout(device, layout);
+    const pass = try renderPass(&bench, .clear, false);
+    defer fb.DestroyRenderPass(device, pass);
+    const picture = try Picture.of(&bench, 64, 64);
+    const frame = try framebuffer(&bench, pass, &.{picture.view}, 64, 64);
+    defer fb.DestroyFramebuffer(device, frame);
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(LayerScene.quad)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(LayerScene.quad))], std.mem.asBytes(&LayerScene.quad));
+    const offset: u64 = 0;
+    const black = clears(0xFF00_0000);
+
+    const drawn = struct {
+        fn drawn(on: *Bench, view: *facet.ImageView, name: [*:0]const u8, made_layout: *facet.PipelineLayout, into: *facet.RenderPass, into_frame: *facet.Framebuffer, code_module: *facet.ShaderModule, sets: *[1]?*facet.DescriptorSet, vertices: *facet.Buffer, first: *const u64, clear_values: *const [2]facet.ClearValue) !void {
+            const f = on.rig.fb;
+            const image_info = facet.DescriptorImageInfo{ .image_view = view };
+            const write = facet.WriteDescriptorSet{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .sampled_image, .image_info = @ptrCast(&image_info) };
+            f.UpdateDescriptorSets(on.device, 1, @ptrCast(&write), 0, null);
+            const result, const pipeline = makePipeline(on, .{ .module = code_module, .name = name, .layout = made_layout, .pass = into });
+            try testing.expectEqual(facet.Result.success, result);
+            defer f.DestroyPipeline(on.device, pipeline);
+            const recording = try on.record();
+            f.CmdBeginRenderPass(recording, &.{ .render_pass = into, .framebuffer = into_frame, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 1, .clear_values = clear_values }, .@"inline");
+            f.CmdBindVertexBuffers(recording, 0, 1, @ptrCast(&vertices), @ptrCast(first));
+            f.CmdBindDescriptorSets(recording, .graphics, made_layout, 0, 1, @ptrCast(sets), 0, null);
+            f.CmdBindPipeline(recording, .graphics, pipeline.?);
+            f.CmdDraw(recording, 6, 1, 0, 0);
+            f.CmdEndRenderPass(recording);
+            try on.submit();
+        }
+    }.drawn;
+
+    // The word a texel reads what the spread one reads.
+    try drawn(&bench, spread_view, "spread", layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
+    try testing.expectEqual(left_color, picture.at(8, 8));
+    try testing.expectEqual(right_color, picture.at(56, 56));
+    try drawn(&bench, word_view, "word", layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
+    try testing.expectEqual(left_color, picture.at(8, 8));
+    try testing.expectEqual(right_color, picture.at(56, 56));
+    // The one-byte one reads red alone, the green and blue 0.
+    try drawn(&bench, red_view, "red", layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
+    try testing.expectEqual(0xFF00_0000 | (left_color & 0x00FF_0000), picture.at(8, 8));
+    try testing.expectEqual(0xFF00_0000 | (right_color & 0x00FF_0000), picture.at(56, 56));
+    // A form built for the spread 8888 handed either: the run-time
+    // sampler draws it, and reads the same colours.
+    try drawn(&bench, word_view, "spread", layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
+    try testing.expectEqual(left_color, picture.at(8, 8));
+    try drawn(&bench, red_view, "spread", layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
+    try testing.expectEqual(0xFF00_0000 | (right_color & 0x00FF_0000), picture.at(56, 56));
 }
 
 test "the cube through the API, as the rasterizer draws it by itself" {

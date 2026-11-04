@@ -37,6 +37,7 @@ facet.library/CmdPipelineBarrier
 facet.library/CmdPushConstants
 facet.library/CmdResetQueryPool
 facet.library/CmdSetBlendConstants
+facet.library/CmdSetBlendConstantsAt
 facet.library/CmdSetDepthBias
 facet.library/CmdSetDepthBounds
 facet.library/CmdSetLineWidth
@@ -827,6 +828,12 @@ facet.library/WaitForFences
 	rounded into the destination's format, not dithered. What falls outside
 	the destination is left out, and the source's edge is read beyond it.
 
+	A source kept in its blocks is read out of them, texel by texel (since
+	1.44), and one kept as floats is read and rounded the same way (since
+	1.45). Nothing here compresses or makes floats, so a destination that
+	keeps what it was given takes nothing, as Vulkan does not allow a
+	compressed one either.
+
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
@@ -1093,6 +1100,15 @@ facet.library/WaitForFences
 	copied as it is. What lies outside the level, or past the end of the
 	buffer, is left out. A depth attachment takes nothing.
 
+	An image of a compressed format kept in its blocks
+	(`PhysicalDeviceFeatures.kept_compressed`, since 1.44) takes them as
+	they lie, nothing decoded: the buffer holds a row of blocks every
+	`buffer_row_length` texels, as Vulkan counts them, and the offsets are
+	on a multiple of 4 or the region is left out. One that is unpacked
+	instead takes the texels decoded. A float image kept as its floats
+	(`kept_floats`, since 1.45) takes them as they lie too, a texel at a
+	time; one that is unpacked takes them rounded to 8 bits a channel.
+
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
@@ -1140,6 +1156,13 @@ facet.library/WaitForFences
 	Outside a render pass. The part of a rectangle outside either image is
 	left out, and so are images of depth or stencil, which live in the tiles.
 
+	Two images that keep their blocks, of the one format, are copied block by
+	block (`PhysicalDeviceFeatures.kept_compressed`, since 1.44), their
+	offsets on a multiple of 4; a compressed image and an uncompressed one,
+	either way round, take nothing. Two that keep their floats, of the one
+	format, are copied texel by texel as they lie (`kept_floats`, since
+	1.45), and a float image beside one of another kind takes nothing.
+
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
@@ -1186,6 +1209,13 @@ facet.library/WaitForFences
 	Outside a render pass. In the buffer the texels are in rows, in the image's
 	format. The part of a rectangle outside the image, or past the buffer's
 	end, is left out.
+
+	An image kept in its blocks gives them back as they lie, a row of them
+	every `buffer_row_length` texels, its offsets on a multiple of 4
+	(`PhysicalDeviceFeatures.kept_compressed`, since 1.44). A float image
+	kept as its floats gives its texels back the same way (`kept_floats`,
+	since 1.45). One that was unpacked as it was copied in, either kind,
+	has nothing of its format to give and takes nothing.
 
    CONTEXT
 	- Waits: no.
@@ -1978,7 +2008,9 @@ facet.library/WaitForFences
 
    BEHAVIOR
 	The draws after it with a pipeline whose blend constants are dynamic mix
-	by these.
+	by these, every colour attachment of the subpass by the one set, as in
+	Vulkan. It also forgets what CmdSetBlendConstantsAt set for any
+	attachment of its own (since 1.51).
 
    CONTEXT
 	- Waits: no.
@@ -1996,10 +2028,68 @@ facet.library/WaitForFences
 	None known.
 
    SEE ALSO
-	`CreateGraphicsPipelines`
+	`CmdSetBlendConstantsAt`, `CreateGraphicsPipelines`
 
    EXAMPLES
 	    fb.CmdSetBlendConstants(commands, &.{ 1, 0.5, 0.25, 1 });
+facet.library/CmdSetBlendConstantsAt      facet.library/CmdSetBlendConstantsAt
+
+   NAME
+	CmdSetBlendConstantsAt -- Recorded: one colour attachment's own blend constants, for a pipeline that leaves them to commands.
+
+   SYNOPSIS
+	    fn CmdSetBlendConstantsAt(base: *FacetBase, buffer: *facet.CommandBuffer, attachment: u32, constants: *const [4]f32) void
+
+   SINCE
+	1.51. LVO -520.
+
+   INPUTS
+	- `buffer` - a command buffer recording.
+	- `attachment` - which colour attachment of the subpass, 0 to 3.
+	- `constants` - red, green, blue and alpha, 0 to 1.
+
+   RESULT
+	None.
+
+   BEHAVIOR
+	The draws after it with a pipeline whose blend constants are dynamic mix
+	that one colour attachment by these, and the others by whatever they had:
+	what CmdSetBlendConstants set over all of them, or their own set before.
+	facet.library's own, where Vulkan has the one set a pipeline shares
+	between its attachments - which matters where a subpass draws several
+	together and one fragment call writes them all
+	(SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER), there being no replay left to
+	set them between.
+
+	A later CmdSetBlendConstants sets the one set again over every
+	attachment, and forgets what this set for any of them. An `attachment`
+	past the subpass's does nothing.
+
+	The pipeline's own constants win where it has them
+	(`PipelineColorBlendStateCreateInfo.attachment_constants`,
+	`blend_constants`): a command sets only what a pipeline left to one.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The constants are copied as the command is recorded.
+
+   NOTES
+	None.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`CmdSetBlendConstants`, `CreateGraphicsPipelines`, `CreateRenderPass`
+
+   EXAMPLES
+	    // The second attachment of a G-buffer mixed by a constant of its own.
+	    fb.CmdSetBlendConstantsAt(commands, 1, &.{ 0.25, 0.25, 0.25, 1 });
 facet.library/CmdSetDepthBias                    facet.library/CmdSetDepthBias
 
    NAME
@@ -2548,8 +2638,14 @@ facet.library/WaitForFences
 	  through, and bound to memory.
 	- `info.format` - how the bytes are read: `r8g8b8a8_unorm`,
 	  `b8g8r8a8_unorm`, `r5g6b5_unorm_pack16`, `r32_sfloat`,
-	  `r32g32_sfloat`, `r32g32b32_sfloat` or `r32g32b32a32_sfloat`, which
-	  are those whose `buffer_features` say `UNIFORM_TEXEL_BUFFER`.
+	  `r32g32_sfloat`, `r32g32b32_sfloat`, `r32g32b32a32_sfloat`, and
+	  since 1.54 one channel, two or four of 8, 16 or 32 bits - a
+	  `_unorm` read as 0 to 1, a `_uint` or a `_sint` as the whole number
+	  itself, and `r16_sfloat`, `r16g16_sfloat` and
+	  `r16g16b16a16_sfloat` as half-floats. Those are the formats whose
+	  `buffer_features` say `UNIFORM_TEXEL_BUFFER`, which
+	  `GetPhysicalDeviceFormatProperties` tells and is the same on every
+	  device.
 	- `info.offset` - the first byte of the texels, a multiple of the
 	  format's size.
 	- `info.range` - how many bytes of them, a multiple of the format's
@@ -2589,7 +2685,16 @@ facet.library/WaitForFences
 	struct, where a texel buffer reads what a file or another machine
 	handed over. `shader.Resources.texels` gives the function a
 	`shader.Texels`, whose `at` reads a texel as four floats and `colorAt`
-	as 0xAARRGGBB, whatever the format.
+	as 0xAARRGGBB, whatever the format. Since 1.54 `intAt` reads it as four
+	whole numbers as well, and `setInt` writes it from them, which is what
+	a 32-bit integer format wants: a value past 2^24 is more than `at`'s
+	float carries exactly.
+
+	No image is kept in the formats 1.54 added and no vertex attribute is
+	read in one: they say `UNIFORM_TEXEL_BUFFER` and
+	`STORAGE_TEXEL_BUFFER` in `buffer_features` and nothing else. The two
+	that were already image formats, `r8_unorm` and `r16g16b16a16_sfloat`,
+	keep what they had and gain these.
 
    BUGS
 	None known.
@@ -2782,10 +2887,11 @@ facet.library/WaitForFences
 
    RESULT
 	`success`; `error_feature_not_present` for a kind of descriptor
-	facet.library does not have, for a binding with samplers of the
-	layout's own (`immutable_samplers`), a binding numbered past 255, or
-	more than 65535 descriptors; `error_initialization_failed` for a
-	binding given twice; `error_out_of_host_memory`.
+	facet.library does not have, for samplers of the layout's own on a
+	device without `PhysicalDeviceFeatures.immutable_samplers`, a binding
+	numbered past 255, or more than 65535 descriptors;
+	`error_initialization_failed` for a binding given twice;
+	`error_out_of_host_memory`.
 
    BEHAVIOR
 	The kinds are sampler, combined_image_sampler, sampled_image,
@@ -2818,10 +2924,18 @@ facet.library/WaitForFences
 	A fragment function of a fixed form samples either as it was compiled
 	to (sdk.facet.shader.textured) or through the sampler bound beside the
 	texture (shader.FixedKind.texture_sampled), which is what a combined
-	image sampler is for. A sampler of the layout's own is refused rather
-	than ignored, so that a program is not left thinking a write of its own
-	took: `PhysicalDeviceFeatures.immutable_samplers`. Stage flags are not
-	looked at: every stage reads every binding.
+	image sampler is for. Stage flags are not looked at: every stage reads
+	every binding.
+
+	**A sampler of the layout's own** is taken since 1.49
+	(`immutable_samplers`, `PhysicalDeviceFeatures.immutable_samplers`): on
+	a `sampler` or `combined_image_sampler` binding the layout holds one
+	sampler for each of the binding's descriptors, and every set made of
+	the layout starts with them in its slots. A write of a combined image
+	sampler into such a binding brings the texture and leaves the sampler;
+	a write of a sampler alone changes nothing. The samplers have to last
+	as long as the sets do, as a written one does. On a binding of another
+	kind the pointer is passed over, as Vulkan passes it over.
 
    BUGS
 	None known.
@@ -3001,7 +3115,9 @@ facet.library/WaitForFences
 	`error_invalid_shader_nv` for stages that are not one vertex and one
 	fragment function of the same varyings, with or without a tessellation
 	control and evaluation function, whose varyings then the fragment
-	function's have to be; `error_feature_not_present`
+	function's have to be, or for a fragment function that writes other
+	than the subpass's colour attachments (`shader.fragmentOutputs`, since
+	1.51); `error_feature_not_present`
 	for state facet.library does not draw (see BEHAVIOR);
 	`error_format_not_supported` for an attribute in a format it does not
 	read; `error_initialization_failed` for state that does not hold
@@ -3021,7 +3137,14 @@ facet.library/WaitForFences
 	`tessellation_state` says the vertices of a patch, 1 to 32: the cores make
 	each patch into triangles or lines (`shader.Tessellation`), for a device
 	with a processor of its own too, and those are drawn; without them,
-	`patch_list` is `error_initialization_failed`.
+	`patch_list` is `error_initialization_failed`. The evaluation entry says
+	the domain, which way round its triangles go, and how the fraction of a
+	level is spent (`shader.Spacing`, since 1.50): a domain or a spacing of a
+	value this library has not is `error_invalid_shader_nv`. The control entry
+	says the floats the patch carries from the one function to the other
+	(`shader.control`, `Patch.ownValues`, since 1.50), more of them than
+	`PhysicalDeviceLimits.max_tessellation_patch_components` being
+	`error_feature_not_present`.
 
 	What it draws: points, lines and line strips, and triangle lists, strips
 	and fans, a restart index ending a strip or a fan; triangles filled, or as
@@ -3087,18 +3210,31 @@ facet.library/WaitForFences
 	`max_depth_bounds`, whatever the depth being drawn; `DynamicState`'s
 	`depth_bounds` leaves the two to CmdSetDepthBounds. Both want a device
 	whose `PhysicalDeviceFeatures.depth_clamp` or `depth_bounds` is true -
-	the cores, not the V3D - and both have a draw's pixels walked one at a
-	time, as a stencil test does, so they cost more than the quads the fast
+	every device since 1.47, the V3D's own configuration having both - and
+	on the cores both have a draw's pixels walked one at a time, as a
+	stencil test does, so they cost more there than the quads the fast
 	paths walk.
 
 	On an attachment without alpha, R5G6B5, what is there reads as wholly
 	opaque. `color_blend_state.attachments` holds one state for each colour
 	attachment of the subpass, or none for the default over all of them; a
 	subpass of several has each blended its own way (since 1.33,
-	`PhysicalDeviceFeatures.independent_blend`), the blend constants being
-	the pipeline's and shared. On the cores, SRC_ALPHA and ONE_MINUS_SRC_ALPHA or ONE, with
+	`PhysicalDeviceFeatures.independent_blend`). The blend constants are
+	the pipeline's and shared, as in Vulkan, unless
+	`attachment_constants` gives one set for each attachment instead -
+	facet.library's own, since 1.51 - and with `blend_constants` among the
+	dynamic states CmdSetBlendConstants sets the one set over all of them
+	and CmdSetBlendConstantsAt one attachment's own. On the cores,
+	SRC_ALPHA and ONE_MINUS_SRC_ALPHA or ONE, with
 	the alpha's factors the same or ZERO and ONE and the mask whole, cost
 	less than any other mixing.
+
+	The fragment entry says how many colours its function writes in the
+	one call: one, or the subpass's colour attachments where the subpass
+	draws them together (SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER,
+	`shader.fragmentOutputs`, since 1.51). It has to come to exactly what
+	the subpass has either way, and a function of several wants a device
+	whose `several_outputs` is true.
 
    BUGS
 	None known.
@@ -3146,7 +3282,7 @@ facet.library/WaitForFences
 
    BEHAVIOR
 	What it is for decides how it lies in its memory:
-	- SAMPLED, in optimal tiling, of B8G8R8A8, R8G8B8A8 or R5G6B5, of any
+	- SAMPLED, in optimal tiling, of B8G8R8A8, R8G8B8A8, R5G6B5 or R8_UNORM, of any
 	  sides, with up to as many levels as halving the longer gives -
 	  floor(log2(side)) + 1, each level the one before halved and no less
 	  than one: a texture, in blocks of 4 x 4 texels, an 8888 texel kept in
@@ -3158,15 +3294,22 @@ facet.library/WaitForFences
 	- COLOR_ATTACHMENT, of B8G8R8A8, R8G8B8A8 or R5G6B5, one level: rows,
 	  each on a cache line, in either tiling. What is drawn into one of
 	  R5G6B5 is dithered into it (CmdBeginRenderPass).
-	- D16_UNORM with DEPTH_STENCIL_ATTACHMENT, optimal, one level: a depth
-	  that lives in the tiles alone, never stored, whose memory may be of
-	  the lazily allocated type. With a load or a store op it is kept in
-	  rows instead (CreateRenderPass), and with SAMPLED as well those rows
-	  are the texture a sampler reads: a shadow map drawn into and sampled
-	  out of with nothing copied (`PhysicalDeviceFeatures.sampled_depth`,
-	  since 1.39). One sampled wants memory something is behind, is of
-	  D16_UNORM alone - a stencil has no texel - and is not written
-	  through as a storage image.
+	- D16_UNORM, S8_UINT or D16_UNORM_S8_UINT with
+	  DEPTH_STENCIL_ATTACHMENT, optimal, one level: a depth that lives in
+	  the tiles alone, never stored, whose memory may be of the lazily
+	  allocated type. With a load or a store op it is kept in rows instead
+	  (CreateRenderPass), and with SAMPLED as well those rows are the
+	  texture a sampler reads: a shadow map drawn into and sampled out of
+	  with nothing copied (`PhysicalDeviceFeatures.sampled_depth`, since
+	  1.39). One sampled wants memory something is behind and is not
+	  written through as a storage image.
+	  Any of the three formats is sampled since 1.58, and such an image
+	  may have layers: a view of it takes one plane - the depth, or the
+	  stencil - of the layers it names, and a pass draws into the layer
+	  its framebuffer's view begins at (CreateImageView). A layer's rows
+	  come after the one before, each on a cache line. Levels of its own
+	  it has not got, and it is never of type `3d`: what a pass draws into
+	  is rows, and a level or a slice is nothing it draws into.
 	- INPUT_ATTACHMENT, of B8G8R8A8, R8G8B8A8 or R5G6B5, in either
 	  tiling: rows, which a later subpass reads pixel by pixel
 	  (CreateRenderPass). It goes with COLOR_ATTACHMENT and the transfers,
@@ -3178,16 +3321,91 @@ facet.library/WaitForFences
 	SAMPLED and COLOR_ATTACHMENT is not made: a texture and an attachment lie
 	differently.
 
-	A SAMPLED image may have up to 256 layers, or be 3D, of type `3d`, as deep
-	as a power of two up to 256, with one level. IMAGE_CREATE_CUBE_COMPATIBLE
-	says a view of type cube will be made: of a square image of 6 layers or
-	more.
+	**A colour attachment may be written through as a storage image** since
+	1.56: COLOR_ATTACHMENT, or INPUT_ATTACHMENT, with STORAGE and without
+	SAMPLED, of B8G8R8A8 or R5G6B5, one level and one layer. The image stays
+	in rows, as an attachment is, and those rows are the texture a function
+	writes (`shader.Resources.written`): a write reaches them at once, where
+	what a subpass draws reaches them when it stores, at the end of its part.
+	So a function may seed the rows before a pass draws into them, or write
+	over them after it, and writing them while the pass that draws into them
+	is open has no order against that store - as it has none in Vulkan
+	without a barrier. R8G8B8A8 is `error_format_not_supported` for this: a
+	texture of 8888 is 0xAARRGGBB, as B8G8R8A8's rows are, and nothing reads
+	a word with red in its low byte. FORMAT_FEATURE_STORAGE_IMAGE in a
+	format's **linear** features says its rows may be written through.
+
+	A SAMPLED image may have up to 256 layers, or be 3D, of type `3d`, of any
+	depth up to 256 and with levels of its own (since 1.46): a level is half
+	as deep as the one before it, and no less than one slice deep, each slice
+	carrying the whole of its own pyramid. IMAGE_CREATE_CUBE_COMPATIBLE says a
+	view of type cube, or of cube_array, will be made: of a square image of 6
+	layers or more, a multiple of six of them for an array of cubes.
+
+	A STORAGE image may have layers and levels the same way, and since
+	1.55 needs no SAMPLED beside it to have them: a function writing one
+	names the level and the layer of the view it writes
+	(`shader.Resources.written`, `texture.Texture.setColor`). Before that
+	an image of layers was refused unless it was sampled as well.
 
 	A SAMPLED image may be of BC1, BC2, BC3, R16G16B16A16_SFLOAT,
 	R32G32B32A32_SFLOAT, B10G11R11_UFLOAT or E5B9G9R9_UFLOAT, in optimal tiling.
-	It is kept as R8G8B8A8, unpacked as it is copied in: it takes that one's
-	memory, and what is in a float image above 1 or below 0 is lost. There is no
-	copying such an image out, nor another image into it, by CmdCopyImage.
+	A float one is kept as the floats it was copied in as on a device that
+	samples them (`PhysicalDeviceFeatures.kept_floats`, since 1.45): the two
+	packed formats then take 4 bytes a texel rather than the 8 an unpacked
+	texel is kept spread in, and a copy out gives back what went in. A sample
+	holds each channel inside 0 to 1 and rounds it to 8 bits, the tiles having
+	no more. A device without the feature keeps it as R8G8B8A8, unpacked as it
+	is copied in: it takes that one's memory, and there is no copying it out,
+	nor another image into it, by CmdCopyImage.
+
+	It may also be of ETC2 or EAC - ETC2_R8G8B8, ETC2_R8G8B8A1, ETC2_R8G8B8A8,
+	EAC_R11 or EAC_R11G11 - which no sampler of this library reads: such an
+	image is always kept as R8G8B8A8, its blocks unpacked as they are copied
+	in (`PhysicalDeviceFeatures.etc2_textures`, since 1.46).
+
+	R32_SFLOAT is an image since 1.57, in optimal tiling: one float a texel,
+	sampled as (red, 0, 0, 1) the way R8_UNORM is read, with the float held
+	between 0 and 1 and rounded to 8 bits for the sample, and written through
+	by a function as the float it is (`texture.Texture.setParts`). A height
+	field, a mask or an accumulation buffer is kept in it. It is not a colour
+	attachment and not a vertex's value.
+
+	A compressed one - BC1, BC2, BC3 - is kept in its blocks on a device that
+	samples them (`PhysicalDeviceFeatures.kept_compressed`, since 1.44): an
+	eighth to a quarter of that memory, and the blocks are copied in and out
+	as they lie, by CmdCopyBufferToImage, CmdCopyImageToBuffer and CmdCopyImage
+	between two images of the one format, their offsets and extents on a
+	multiple of 4 as Vulkan asks. GetImageMemoryRequirements says which was
+	done. A device without the feature unpacks it as a float image is unpacked.
+	A STORAGE image is written texel by texel, so a compressed one is unpacked
+	there whatever the device: nothing writes one texel of a block, and such
+	an image wants SAMPLED beside it, being unpacked to be sampled. A float
+	one keeps its floats since 1.57, a function writing one texel of them by
+	`texture.Texture.setParts`, so a float storage image needs no SAMPLED
+	either.
+
+	**A texel may be kept smaller than the colour it reads as** on a device
+	that says so (`PhysicalDeviceFeatures.small_texels`, since 1.48), which
+	is where a texture is large enough that the memory it fills is what it
+	costs:
+	- R8_UNORM is one byte a texel, read as (red, 0, 0, 1) the way Vulkan
+	  reads a one-channel format - an eighth of what the same texels kept
+	  as 8888 take. For SAMPLED or STORAGE, in optimal tiling; a copy moves
+	  the bytes both ways. It is not a colour attachment and not a vertex's
+	  value.
+	- IMAGE_CREATE_PACKED_TEXELS on a SAMPLED or STORAGE image of B8G8R8A8
+	  or R8G8B8A8 keeps each texel in the 32 bits of its word rather than
+	  spread over 64: half the memory, for the spread a sample then does
+	  itself. Nothing else of the image changes - the same colours in, the
+	  same out, the same copies - and a fixed form compiled for
+	  `texture.Format.argb8888` reads it at full speed, while one compiled
+	  for `rgba8888` draws it through the run-time sampler as it does any
+	  other format it was not built for.
+
+	Both are `error_format_not_supported` where the device has not got
+	them, and so is the flag on an image that is neither sampled nor a
+	storage image, or whose format has no 8888 word to keep.
 
    CONTEXT
 	- Waits: no.
@@ -3249,6 +3467,31 @@ facet.library/WaitForFences
 	`2d_array` it is the layers asked for, for `shader.FixedKind.texture_array`;
 	`cube` is 6 layers of an image made IMAGE_CREATE_CUBE_COMPATIBLE, for
 	`texture_cube`, and `3d` the whole of a 3D image, for `texture_3d`.
+
+	Of type `cube_array` it is as many cubes as its layers divided by six, of
+	such an image, for `texture_cube_array` and, since 1.53,
+	`texture_cube_array_sampled`: its layers are a multiple of six
+	and its first layer begins a cube, so `base_array_layer` is a multiple of
+	six as well (`PhysicalDeviceFeatures.cube_arrays`, since 1.46).
+
+	**A view of a sampled depth image takes one of its planes** since 1.58
+	(`PhysicalDeviceFeatures.sampled_depth`): IMAGE_ASPECT_DEPTH is the
+	depth, read at all 16 bits by a sampler that compares and as a grey of
+	its top 8 by one that does not, and IMAGE_ASPECT_STENCIL is the
+	stencil, read as (red, 0, 0, 1) the way a texel of one byte is. Both
+	aspects at once is `error_format_not_supported`, as is a plane the
+	format has not got; an aspect naming neither - IMAGE_ASPECT_COLOR, the
+	default, and what every such view asked for before 1.58 - is the
+	format's own plane, its depth where it has one and its stencil where
+	it has not. The plane is a texture over the image's own rows, so a
+	format holding both is two textures inside the same rows, read four
+	bytes apart.
+
+	Such a view is of the layers it names as well, of type `2d` or
+	`2d_array`: the image's own rows for that layer, which is what a pass
+	drawing into the view writes and what a sample of it reads. So the
+	layers of one image are the shadow maps of several lights, each drawn
+	into through a framebuffer with a view of that layer.
 
    CONTEXT
 	- Waits: no.
@@ -3414,11 +3657,13 @@ facet.library/WaitForFences
 	asks for a reset before a query is used all the same, and a program that
 	means to be read elsewhere should do it.
 
-	Which kinds a device has is what it counts with: the occlusion and the
-	statistics are counted by the rasterizer and the calls round it, so they
-	are the cores'; a timestamp is the E-clock read as the command is
-	played, which every device does - where the machine has timer.device, or
-	there is no clock to read and the kind is refused.
+	Which kinds a device has is what it counts with: an occlusion query is
+	counted by the rasterizer on the cores and by the hardware's own counter
+	on the V3D, which every device has since 1.47; the statistics are the
+	calls round the rasterizer, so they are the cores' alone; and a
+	timestamp is the E-clock read as the command is played, which every
+	device does - where the machine has timer.device, or there is no clock
+	to read and the kind is refused.
 
    CONTEXT
 	- Waits: no.
@@ -3486,25 +3731,48 @@ facet.library/WaitForFences
 	instead: with the store op STORE each tile's depth is written into the
 	image's memory as the tile is drawn, and with the load op LOAD each
 	tile starts from what is there. Both want a format that holds a depth
-	and a device whose `stored_depth` is true - the cores, not the V3D -
+	and a device whose `stored_depth` is true - every device since 1.47 -
 	and an image bound to memory something is behind, which
 	CreateFramebuffer holds to; otherwise that is
-	`error_feature_not_present`.
+	`error_feature_not_present`. A depth the V3D stored may be one of the
+	65535ths away from the one the cores would have stored: the hardware
+	keeps a deeper number and writes its top 16 bits, which is the same
+	where the depth falls on a 65535th and one more where it does not.
 
 	Since 1.38 the stencil keeps its own the same way, by its own two ops:
 	with `stencil_store_op` STORE each tile's stencil, a byte a pixel, is
 	written into its own plane of the image's rows, and with
 	`stencil_load_op` LOAD each tile starts from what is there. That wants
 	a format that holds a stencil - `s8_uint` or `d16_unorm_s8_uint` - and
-	a device whose `stored_stencil` is true, the cores again. A format
+	a device whose `stored_stencil` is true, every device again. A format
 	that holds both keeps each pixel's depth and its stencil beside each
 	other, so the four ops are taken on their own: a pass may store the
 	stencil and leave the depth in the tiles, or the other way round. An
 	op for a plane the format has not is `error_feature_not_present`.
 
-	So two subpasses share a depth attachment only one right after the other
-	and with the same colour attachments too, when the second goes on in the
-	tiles of the first; otherwise that is `error_feature_not_present`.
+	Keeping either plane of a format that holds **both** - `d16_unorm_s8_uint`
+	- wants `stored_both` as well (since 1.47): the cores write a pixel's
+	planes where they lie in its four bytes, while a device that stores the
+	whole of a tile buffer, the V3D, writes one plane's pixels one after
+	another and so keeps only a format of that plane alone. There such an
+	op is `error_feature_not_present`, and a `d16_unorm` or an `s8_uint`
+	attachment keeps what it holds.
+
+	Two subpasses share a depth attachment either way. One right after the
+	other and with the same colour attachments too goes on in the tiles of
+	the first, which costs nothing at all. Otherwise - another subpass in
+	between, or other colour attachments, so that the tiles are gone - the
+	pass keeps it for them (since 1.52): the part that drew it last writes
+	it into the image's rows and the next one to name it reads it in, both
+	whatever the attachment's own ops say, those being for the whole pass.
+	So the depth of a pass over a scene is still there for a pass over it
+	again, with the colour of something else drawn between them.
+
+	That wants what keeping it always wants: a device whose `stored_depth`
+	is true for the depth and `stored_stencil` for the stencil - and
+	`stored_both` where the format holds both - and an image with memory
+	something is behind, which CreateFramebuffer holds to
+	(`error_feature_not_present` for a transient one, which has none).
 
 	Since 1.37 a subpass may read attachments as well as draw into them:
 	up to 8 `input_attachments`, each read pixel by pixel at the
@@ -3527,6 +3795,22 @@ facet.library/WaitForFences
 	played over, so it costs that much more: its fragment function is called for
 	each, and `shader.Resources.output` says for which. A fixed fragment
 	function has one colour, which every attachment gets.
+
+	Since 1.51 such a subpass may be drawn **together** instead, in one
+	pass over the tiles: SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER in its
+	`flags`, facet.library's own, and every pipeline of it has a fragment
+	entry that writes exactly its colour attachments in the one call
+	(`shader.fragmentOutputs`, `shader.Fragments.colorsOf`); one that does
+	not is `error_invalid_shader_nv` (CreateGraphicsPipelines). The
+	vertices are worked once, the triangles binned once and a quad's
+	fragment function called once for all of them - a G-buffer's three or
+	four planes for the price of one - and each attachment is still
+	blended its own way, into a plane of each tile's own. The flag wants a
+	device whose `several_outputs` is true: the cores, not the V3D, whose
+	fragment programs are the fixed forms and each write the one colour;
+	there it is `error_feature_not_present`, and a subpass without it is
+	drawn as it always was. Any other bit in `flags` is
+	`error_feature_not_present` too.
 
 	Attachments a subpass does not name are left as they are. The
 	dependencies are not looked at: a queue's commands are done one after
@@ -3579,9 +3863,9 @@ facet.library/WaitForFences
 
    RESULT
 	`success`; `error_feature_not_present` for `unnormalized_coordinates`,
-	for `mirror_clamp_to_edge` or another address mode the library has not
-	got, or for a filter, mipmap mode, compare operation or border colour
-	that is not one of Vulkan's; `error_out_of_host_memory`.
+	for an address mode that is none of Vulkan's five, or for a filter,
+	mipmap mode, compare operation or border colour that is not one of
+	Vulkan's; `error_out_of_host_memory`.
 
    BEHAVIOR
 	The sampler holds what it was given, in the terms the sampling is
@@ -3597,10 +3881,19 @@ facet.library/WaitForFences
 	the fragment function carries, and what comes out is how much of the
 	sample passed, not a colour.
 
+	All five of Vulkan's address modes are taken, `mirror_clamp_to_edge`
+	among them since 1.49: the texture turned round once below 0 and held
+	at its edge past the far side. The three border colours are Vulkan's
+	six: an int border and a float border are the same here, a texel being
+	read as 0 to 1 whatever its format, and Vulkan 1.0 has no border but
+	transparent black, opaque black and opaque white.
+
 	A sampler is made on either device, but is read by the sampling the
 	cores do: a pipeline whose fragment form samples through one
-	(`shader.FixedKind.texture_sampled`, `texture_shadow`) is refused on a
-	device whose `PhysicalDeviceFeatures.samplers` is false.
+	(`shader.FixedKind.texture_sampled`, `texture_shadow`, since 1.49
+	`texture_array_sampled`, `texture_cube_sampled` and `texture_3d_sampled`,
+	and since 1.53 `texture_cube_array_sampled`)
+	is refused on a device whose `PhysicalDeviceFeatures.samplers` is false.
 
    CONTEXT
 	- Waits: no.
@@ -3755,9 +4048,11 @@ facet.library/WaitForFences
 	`success`; `error_invalid_shader_nv` for code that is not a
 	shader.Code - SPIR-V among it - or an entry of a stage that is neither
 	vertex nor fragment, or with more varyings than a vertex carries;
-	`error_out_of_host_memory`. A compute entry carries a workgroup where
-	the others carry varyings (`shader.computeGroup`), and what it may hold
-	is CreateComputePipelines' to say.
+	`error_out_of_host_memory`. Two stages carry something else in that
+	word: a compute entry its workgroup (`shader.computeGroup`), and a
+	tessellation control entry the floats its patch carries to its
+	evaluation function (`shader.control`, since 1.50). What those may
+	hold is CreateComputePipelines' and CreateGraphicsPipelines' to say.
 
    BEHAVIOR
 	The entries are copied. The functions they name are the program's
@@ -5382,13 +5677,16 @@ facet.library/WaitForFences
 	another way instead of failing; a `true` is a promise for this device, not
 	for the next one listed.
 
-	Five of the fields differ between the devices of one machine, and are the
-	reason to look. `own_fragment_functions`, `sampling_format` and
-	`depth_prepass` are the cores' and not the V3D's. `compute_on_device` and
-	`tessellation_on_device` are the cores' too, and for the plain reason that
-	the cores are that device: both kinds of work run on them whichever device
-	made the pipeline, so on the V3D they are false while the work still
-	happens. The limits say the rest of
+	Sixteen of the fields differ between the devices of one machine, and are
+	the reason to look. `own_fragment_functions`, `sampling_format`,
+	`depth_prepass`, `discarding_fragment_forms`, `input_attachments`,
+	`sampled_depth`, `storage_images`, `samplers`, `sampler_anisotropy`,
+	`pipeline_statistics_queries`, `kept_compressed`, `kept_floats`,
+	`cube_arrays` and `stored_both` are the cores' and not the V3D's.
+	`compute_on_device` and `tessellation_on_device` are the cores' too, and
+	for the plain reason that the cores are that device: both kinds of work
+	run on them whichever device made the pipeline, so on the V3D they are
+	false while the work still happens. The limits say the rest of
 	what parts differ: a CM5's V3D takes one sampled image a stage where the
 	cores take sixteen (`GetPhysicalDeviceProperties`).
 
@@ -5449,12 +5747,27 @@ facet.library/WaitForFences
 	  sampled, filtered, in optimal tiling; copied.
 	- D16_UNORM: a depth attachment, in optimal tiling.
 	- R32_SFLOAT to R32G32B32A32_SFLOAT: a vertex's value.
+	- R8_UNORM: sampled, filtered, written through as a storage image, in
+	  optimal tiling, and copied both ways. One byte a texel, read as
+	  (red, 0, 0, 1) (`PhysicalDeviceFeatures.small_texels`, since 1.48);
+	  never an attachment and never a buffer's.
 	- BC1, BC2, BC3, R16G16B16A16_SFLOAT, R32G32B32A32_SFLOAT,
 	  B10G11R11_UFLOAT and E5B9G9R9_UFLOAT: sampled, filtered, in optimal
-	  tiling, and copied into. They are kept as 8 bits a channel, floats cut to
-	  0 to 1: they save no memory and hold no more than B8G8R8A8.
+	  tiling, and copied into. A device that samples such a texel where it
+	  lies keeps it as it was copied in and is copied out of as well
+	  (`kept_compressed` since 1.44, `kept_floats` since 1.45, and
+	  TRANSFER_SRC here says which); one that does not keeps it as 8 bits a
+	  channel, floats cut to 0 to 1, taking B8G8R8A8's memory and holding
+	  no more than it.
+	- ETC2 and EAC - ETC2_R8G8B8, ETC2_R8G8B8A1, ETC2_R8G8B8A8, EAC_R11 and
+	  EAC_R11G11: sampled, filtered, in optimal tiling, and copied into.
+	  No sampler of this library reads such a block, so they are always
+	  unpacked to 8 bits a channel and never copied out of (since 1.46).
 
-	An image to be sampled may have sides of any size (since 1.42).
+	An image to be sampled may have sides of any size (since 1.42). One of
+	B8G8R8A8 or R8G8B8A8 may keep its texel in the 32 bits of its word
+	rather than spread over 64 (IMAGE_CREATE_PACKED_TEXELS, since 1.48);
+	the format's features are the same either way.
 
    CONTEXT
 	- Waits: no.

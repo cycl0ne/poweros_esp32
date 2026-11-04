@@ -58,6 +58,7 @@ pub const Op = enum(u16) {
     clear_depth_stencil_image,
     set_depth_bias,
     set_depth_bounds,
+    set_blend_constants_at,
     _,
 };
 

@@ -30,6 +30,7 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const module = @import("../module.zig");
 const Base = module.Base;
 const annexb = @import("annexb.zig");
+const colour = @import("colour.zig");
 
 /// The least the chip keeps fed - its own default - and how many of the
 /// largest packets at least; a Matroska file says not how large its
@@ -58,6 +59,9 @@ const Decoder = struct {
     /// The bytes in `buffer` waiting to be fed, and their time.
     pending: usize = 0,
     pending_time: i64 = 0,
+    /// What the stream's own parameter sets say its colours are, read
+    /// when it was opened: the chip reports none of it.
+    colours: colour.Colour = .{},
     /// The frames lent out, by slot.
     held: u32,
     lent: [vcodec.VCODEC_MOST_HELD]bool = @splat(false),
@@ -111,6 +115,7 @@ fn open(sys: *ExecBase, params: *const vcodec.VCodecParams, code: *i32) ?*vcodec
     const memory = sys.AllocVec(@sizeOf(Decoder), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return failed(code, vc.VCERR_NOMEMORY);
     const c: *Decoder = @ptrCast(@alignCast(memory));
     c.* = .{ .sys = sys, .vb = vb, .decoder = undefined, .codec = codec, .length_size = setup.length_size, .held = params.held };
+    c.colours = colour.of(sys, codec == videodec.VDCODEC_H265, config, params.height);
     if (setup.header_size != 0) {
         const header = sys.AllocVec(setup.header_size, exec.MEMF_ANY) orelse {
             sys.FreeVec(c);
@@ -200,7 +205,7 @@ pub fn ReceiveVCodecFrame(_: *Base, decoder: *vcodec.VCodecDecoder, frame: *vc.V
             videodec.VDERR_OK => {
                 c.frames[slot] = got;
                 c.lent[slot] = true;
-                lend(frame, &got, slot);
+                lend(c, frame, &got, slot);
                 // A packet that found no room goes in now there is some.
                 if (c.pending != 0) _ = feedPending(c);
                 return vc.VCERR_OK;
@@ -240,9 +245,12 @@ pub fn FlushVCodec(_: *Base, decoder: *vcodec.VCodecDecoder) void {
     c.pending = 0;
 }
 
-/// The chip's frame as the program's: its NV12 planes, BT.709 for a
-/// picture 720 rows high or more and BT.601 below, as video is made.
-fn lend(frame: *vc.VideoFrame, got: *const videodec.VideoDecFrame, slot: u32) void {
+/// The chip's frame as the program's: its NV12 planes, with the colours
+/// the stream's parameter sets said (`colour.zig`) - or BT.709 for a
+/// picture 720 rows high or more and BT.601 below, as video is made,
+/// where they said nothing.
+fn lend(c: *const Decoder, frame: *vc.VideoFrame, got: *const videodec.VideoDecFrame, slot: u32) void {
+    const colours = c.colours;
     frame.* = .{
         .picture = .{
             .y = got.y.?,
@@ -250,7 +258,10 @@ fn lend(frame: *vc.VideoFrame, got: *const videodec.VideoDecFrame, slot: u32) vo
             .y_pitch = got.pitch,
             .c_pitch = got.pitch,
             .layout = rtg.RTGYUV_NV12,
-            .colors = if (got.height >= 720) rtg.RTGYUV_BT709 else rtg.RTGYUV_BT601,
+            .matrix = if (colours.known) colours.matrix else if (got.height >= 720) rtg.RTGYUV_BT709 else rtg.RTGYUV_BT601,
+            .transfer = colours.transfer,
+            .primaries = colours.primaries,
+            .range = colours.range,
         },
         .width = got.width,
         .height = got.height,

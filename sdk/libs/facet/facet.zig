@@ -205,6 +205,12 @@ pub const PhysicalDeviceLimits = extern struct {
     max_compute_work_group_size: [3]u32 = .{ 0, 0, 0 },
     max_compute_work_group_invocations: u32 = 0,
     max_compute_shared_memory_size: u32 = 0,
+    /// The floats a tessellation control function may write for the whole
+    /// patch, which its evaluation function reads back (`shader.control`,
+    /// `shader.Patch.ownValues`); 0 where the library tessellates nothing.
+    /// A field added at the end, so that none already there moves.
+    /// (Since 1.50.)
+    max_tessellation_patch_components: u32 = 0,
 };
 
 /// The longest name a device has, its NUL included.
@@ -241,10 +247,13 @@ pub const PhysicalDeviceFeatures = extern struct {
     /// own is refused: `shader.fixedFragment` then says what it may do. The
     /// cores have it; the BCM2712's V3D has not.
     own_fragment_functions: bool = false,
-    /// `texture.Sampling.format` is held to. False where the device reads a
-    /// texture's format from its image instead, so a pipeline built for one
-    /// format samples an image of another without a word; the cores paint
-    /// `shader.missing` over such a draw.
+    /// `texture.Sampling.format` is the format the fast path reads. False
+    /// where the device reads a texture's format from its image instead, so
+    /// a pipeline built for one format samples an image of another at full
+    /// speed. Either way the picture is drawn: since 1.44 a texture whose
+    /// format is not the form's goes through the run-time sampler here, a
+    /// pixel at a time, rather than painting `shader.missing` as it did
+    /// before. So this says what a form costs, not what it may sample.
     sampling_format: bool = false,
     /// Compute functions run on the device itself. False says they run - on
     /// the cores behind it, whichever device the pipeline was made on.
@@ -271,7 +280,9 @@ pub const PhysicalDeviceFeatures = extern struct {
     texture_arrays: bool = false,
     cube_maps: bool = false,
     textures_3d: bool = false,
-    /// BC1, BC2 and BC3, unpacked to 8 bits a channel as they are copied in.
+    /// BC1, BC2 and BC3 are taken: unpacked to 8 bits a channel as they
+    /// are copied in, or kept in their blocks where `kept_compressed`
+    /// says so.
     compressed_textures: bool = false,
     /// The float formats, the same way.
     float_textures: bool = false,
@@ -287,28 +298,32 @@ pub const PhysicalDeviceFeatures = extern struct {
     /// written, for the shadow map that would shade itself and the decal
     /// that would fight the wall it is on. False where a pipeline that asks
     /// for one is refused. The cores have it since 1.34; the BCM2712's V3D
-    /// has a depth offset of its own that nothing drives yet.
+    /// since 1.47, through its depth offset packet, which takes Vulkan's
+    /// three numbers as they are.
     depth_bias: bool = false,
     /// `PipelineDepthStencilStateCreateInfo.depth_bounds_test_enable`,
     /// `min_depth_bounds`, `max_depth_bounds` and CmdSetDepthBounds: a
     /// pixel is drawn only where the depth already there lies between the
     /// two, whatever the depth being drawn. False where a pipeline that
-    /// asks for it is refused. The cores have it since 1.40; the V3D has
-    /// no such test.
+    /// asks for it is refused. The cores have it since 1.40, the V3D since
+    /// 1.47: its depth bounds packet holds the tiles' test to the two.
     depth_bounds: bool = false,
     /// `PipelineRasterizationStateCreateInfo.depth_clamp_enable`: what
     /// lies past the near plane is drawn all the same, each pixel's depth
     /// held inside the viewport's `min_depth` and `max_depth`, rather than
     /// cut away - which is what a shadow volume wants. False where a
-    /// pipeline that asks for it is refused. The cores have it since 1.40;
-    /// the V3D clips in its own way.
+    /// pipeline that asks for it is refused. The cores have it since 1.40,
+    /// the V3D since 1.47: asking for it turns its clip to the z planes
+    /// off, as Vulkan's does.
     depth_clamp: bool = false,
     /// A depth attachment of `d16_unorm` that may `load` or `store`: depth
     /// outliving the pass it was drawn in, written into the image's memory
     /// as each tile is drawn and read back from it, to be copied out or
     /// made into a shadow map. False where the depth lives in the device's
     /// tiles alone and CreateRenderPass refuses both ops. The cores have it
-    /// since 1.30; the BCM2712's V3D has not.
+    /// since 1.30, the V3D since 1.47, which loads and stores the tiles'
+    /// depth as it does their colour - one plane an image, so `stored_both`
+    /// is what a pass keeping depth and stencil together asks for.
     stored_depth: bool = false,
     /// `input_attachment` descriptors and `SubpassDescription`'s
     /// `input_attachments`: an attachment a later subpass reads pixel by
@@ -322,8 +337,9 @@ pub const PhysicalDeviceFeatures = extern struct {
     /// load and store ops, a plane of the image's rows beside the depth's
     /// (`s8_uint`, `d16_unorm_s8_uint`), so a stencil outlives its pass
     /// and can be read back, written and cleared. The cores have it since
-    /// 1.38; the V3D stores neither depth nor stencil, and a pass that
-    /// asks for either op is refused there.
+    /// 1.38, the V3D since 1.47 for a stencil of its own (`s8_uint`); a
+    /// pass that keeps both planes of `d16_unorm_s8_uint` asks for
+    /// `stored_both` as well, which the V3D has not.
     stored_stencil: bool = false,
     /// A depth attachment's image may be sampled where it lies: an image
     /// of `d16_unorm` with IMAGE_USAGE_SAMPLED, kept in rows as a depth
@@ -345,8 +361,11 @@ pub const PhysicalDeviceFeatures = extern struct {
     /// where a set layout with either kind is refused.
     dynamic_descriptors: bool = false,
     /// The fixed forms that sample through the sampler bound beside the
-    /// texture run here - `shader.FixedKind.texture_sampled` and
-    /// `texture_shadow` - and with them everything a sampler says: the two
+    /// texture run here - `shader.FixedKind.texture_sampled`,
+    /// `texture_shadow`, since 1.49 `texture_array_sampled`,
+    /// `texture_cube_sampled` and `texture_3d_sampled`, and since 1.53
+    /// `texture_cube_array_sampled` - and with them
+    /// everything a sampler says: the two
     /// levels round a point mixed, a bias on the level and a clamp,
     /// mirrored and bordered edges, and a comparison with a reference. A
     /// device without it refuses such a pipeline, as with a dropping form;
@@ -360,10 +379,10 @@ pub const PhysicalDeviceFeatures = extern struct {
     /// differs between the devices as well.
     sampler_anisotropy: bool = false,
     /// Occlusion queries: the samples that passed the tests counted where
-    /// this device draws (`QueryType.occlusion`). The counting is the
-    /// rasterizer's, so a device that draws with hardware of its own has
-    /// not got it and CreateQueryPool refuses the kind. Differs between
-    /// the devices of a machine.
+    /// this device draws (`QueryType.occlusion`). The cores count in the
+    /// rasterizer; the V3D since 1.47 reads the counter of its own its
+    /// draws point at. False where CreateQueryPool refuses the kind.
+    /// Differs between the devices of a machine.
     occlusion_queries: bool = false,
     /// `QueryType.pipeline_statistics`, the same way: what the stages were
     /// given is counted where they run.
@@ -373,8 +392,11 @@ pub const PhysicalDeviceFeatures = extern struct {
     /// timer.device.
     timestamp_queries: bool = false,
     /// `DescriptorSetLayoutBinding.immutable_samplers`: a sampler the
-    /// layout holds, which a write into the set cannot change. No device of
-    /// this library has it; a sampler is written into the set instead.
+    /// layout holds, which a write into the set cannot change. Every set
+    /// made of such a layout starts with it in the slot; a write of a
+    /// combined image sampler then brings the texture alone, and a write
+    /// of a sampler nothing. Every device has it since 1.49: the layout
+    /// keeps the sampler, which is the library's doing and not a driver's.
     immutable_samplers: bool = false,
     /// `SamplerCreateInfo.unnormalized_coordinates`: a sample placed in
     /// texels rather than 0 to 1 across the texture.
@@ -386,6 +408,83 @@ pub const PhysicalDeviceFeatures = extern struct {
     /// colour attachment is drawn as a pass of its own, so each takes its
     /// own mixing as it is drawn.
     independent_blend: bool = false,
+    /// A compressed image is kept in its blocks and decoded as it is
+    /// sampled, nothing unpacked: `bc1_rgb_unorm_block`,
+    /// `bc1_rgba_unorm_block`, `bc2_unorm_block` and `bc3_unorm_block`
+    /// lie as they were copied in, an eighth to a quarter of the memory
+    /// the unpacked texels take, and the four texels a sample mixes come
+    /// out of the one block where they share it. False where such an
+    /// image is unpacked into `r8g8b8a8_unorm` on the copy
+    /// (`compressed_textures` alone), which reads the same and costs the
+    /// memory. GetImageMemoryRequirements says which was done. The cores
+    /// have it since 1.44; the V3D's texture unit is fed unpacked texels
+    /// here, so there an image is unpacked as before.
+    kept_compressed: bool = false,
+    /// A float image is kept as the floats it was copied in as, nothing
+    /// unpacked: `r16g16b16a16_sfloat`, `r32g32b32a32_sfloat`,
+    /// `b10g11r11_ufloat_pack32` and `e5b9g9r9_ufloat_pack32` lie as they
+    /// were given, so a copy out of such an image gives back what went in,
+    /// and the two packed ones take half of what their texels unpacked
+    /// would (4 bytes against the 8 an 8888 texel is kept spread in). A
+    /// sample holds each channel inside 0 to 1 and rounds it to 8 bits, the
+    /// tiles having no more, so what is drawn is the same either way; what
+    /// is above 1 or below 0 is still lost there, and only on the way into
+    /// the tiles. False where such an image is unpacked into
+    /// `r8g8b8a8_unorm` on the copy, as it was before, and cannot be copied
+    /// out of. The cores have it since 1.45; the V3D's TMU is fed unpacked
+    /// texels, so there an image is unpacked as before.
+    kept_floats: bool = false,
+    /// Cubes in an array: an image of CUBE_COMPATIBLE whose layers are a
+    /// multiple of six, a view of `ImageViewType.cube_array` over them, and
+    /// the fixed forms that sample one of them
+    /// (`shader.FixedKind.texture_cube_array`, varyings x, y, z and which
+    /// cube, and since 1.53 `texture_cube_array_sampled`, the same through
+    /// a sampler). False where both the view and such a pipeline are
+    /// refused - Vulkan's `imageCubeArray`. The cores have it since 1.46;
+    /// no QPU program of the V3D reads the fourth coordinate.
+    cube_arrays: bool = false,
+    /// ETC2 and EAC: `etc2_r8g8b8_unorm_block`,
+    /// `etc2_r8g8b8a1_unorm_block`, `etc2_r8g8b8a8_unorm_block`,
+    /// `eac_r11_unorm_block` and `eac_r11g11_unorm_block`, unpacked to 8
+    /// bits a channel as they are copied in - Vulkan's
+    /// `textureCompressionETC2`. No device of this library samples such a
+    /// block where it lies, so this is true on every device from 1.46 and
+    /// says only that the formats are taken.
+    etc2_textures: bool = false,
+    /// Whether a format that holds a depth **and** a stencil may keep
+    /// either of them in its image's rows (`stored_depth`,
+    /// `stored_stencil`): the cores write each pixel's planes where they
+    /// lie in its four bytes, while a device that stores the whole of a
+    /// tile buffer writes one plane's pixels one after another and so
+    /// keeps only a format of that plane alone - `d16_unorm` or
+    /// `s8_uint`. False on the V3D, where a load or a store op of
+    /// `d16_unorm_s8_uint` is `error_feature_not_present`
+    /// (CreateRenderPass). (Since 1.47.)
+    stored_both: bool = false,
+    /// A texel may be kept in fewer bytes than the colour it reads as: an
+    /// image of `r8_unorm`, one byte a texel, read as (red, 0, 0, 1); and
+    /// IMAGE_CREATE_PACKED_TEXELS on a sampled image of R8G8B8A8 or
+    /// B8G8R8A8, whose texel is then the 32 bits of its word rather than
+    /// the 64 it is spread over. An eighth and a half of the memory, for
+    /// the spread a sample does itself. False where CreateImage refuses
+    /// both the format and the flag with `error_format_not_supported`.
+    /// Every device has it since 1.48: the cores keep such a texel in
+    /// their own layout, the V3D's TMU reads R8 with a swizzle of its own
+    /// and has never spread an 8888 texel, so the flag costs it nothing
+    /// and changes nothing there. (Since 1.48.)
+    small_texels: bool = false,
+    /// A fragment function may write all the colour attachments of its
+    /// subpass in the one call, the subpass drawn once rather than once
+    /// for each of them (`shader.fragmentOutputs`,
+    /// SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER): a G-buffer's three or four
+    /// planes cost one pass over the vertices, one binning and one call a
+    /// quad instead of as many as there are attachments. True on the
+    /// cores, where the tiles hold a colour plane for each attachment of
+    /// such a subpass. False on the V3D, whose fragment programs are the
+    /// fixed forms and each writes the one colour: there a subpass of
+    /// several is drawn once for each, as it was before, and the flag is
+    /// `error_feature_not_present` (CreateRenderPass). (Since 1.51.)
+    several_outputs: bool = false,
 };
 
 /// QueueFamilyProperties.queue_flags: what a family's queues do.
@@ -520,6 +619,10 @@ pub const Format = enum(u32) {
     undefined = 0,
     /// 16 bits: red in the top 5, green in the middle 6, blue in the low 5.
     r5g6b5_unorm_pack16 = 4,
+    /// One byte of red, as a texture: read as (red, 0, 0, 1), one byte a
+    /// texel in memory, where an 8888 texel takes eight
+    /// (`PhysicalDeviceFeatures.small_texels`, since 1.48).
+    r8_unorm = 9,
     /// Bytes red, green, blue, alpha: 0xAABBGGRR as a 32-bit word.
     r8g8b8a8_unorm = 37,
     /// Bytes blue, green, red, alpha: 0xAARRGGBB as a 32-bit word - the
@@ -544,6 +647,48 @@ pub const Format = enum(u32) {
     bc1_rgba_unorm_block = 133,
     bc2_unorm_block = 135,
     bc3_unorm_block = 137,
+    /// ETC2 and EAC, as textures: unpacked as they come in, into 8 bits a
+    /// channel, on every device (since 1.46). A block is 4 x 4 texels in 8
+    /// bytes, or 16 where there is an alpha or a second channel.
+    etc2_r8g8b8_unorm_block = 147,
+    etc2_r8g8b8a1_unorm_block = 149,
+    etc2_r8g8b8a8_unorm_block = 151,
+    /// One channel of 11 bits, read as red alone; and two, read as red and
+    /// green with a blue of 0 - as Vulkan reads them, the alpha whole.
+    eac_r11_unorm_block = 153,
+    eac_r11g11_unorm_block = 155,
+    /// The formats a texel buffer reads and no image is kept in (since
+    /// 1.54): a whole number of 8, 16 or 32 bits a channel, signed or
+    /// not, and a half-float; one channel, two or four. A view of one
+    /// reads the buffer where it lies (`CreateBufferView`,
+    /// `shader.Texels`), so these say `UNIFORM_TEXEL_BUFFER` and
+    /// `STORAGE_TEXEL_BUFFER` in `buffer_features` and nothing else.
+    /// `_unorm` is read as 0 to 1, `_uint` and `_sint` as the number
+    /// itself, `_sfloat` as the float.
+    r8g8_unorm = 16,
+    r8_uint = 13,
+    r8g8_uint = 20,
+    r8g8b8a8_uint = 41,
+    r8_sint = 14,
+    r8g8_sint = 21,
+    r8g8b8a8_sint = 42,
+    r16_unorm = 70,
+    r16g16_unorm = 77,
+    r16g16b16a16_unorm = 91,
+    r16_uint = 74,
+    r16g16_uint = 81,
+    r16g16b16a16_uint = 95,
+    r16_sint = 75,
+    r16g16_sint = 82,
+    r16g16b16a16_sint = 96,
+    r16_sfloat = 76,
+    r16g16_sfloat = 83,
+    r32_uint = 98,
+    r32g32_uint = 101,
+    r32g32b32a32_uint = 107,
+    r32_sint = 99,
+    r32g32_sint = 102,
+    r32g32b32a32_sint = 108,
     _,
 };
 
@@ -701,6 +846,34 @@ pub const IMAGE_USAGE_INPUT_ATTACHMENT: u32 = 1 << 7;
 /// ImageCreateInfo.flags: a view of type cube may be made of it.
 pub const IMAGE_CREATE_CUBE_COMPATIBLE: u32 = 1 << 4;
 
+/// facet.library's own, in `ImageCreateInfo.flags`: a sampled image of
+/// R8G8B8A8 or B8G8R8A8 keeps each texel in the 32 bits of its word rather
+/// than spread over 64 (`texture.Format.argb8888`) - half the memory and
+/// half the cache it fills, for the spread a sample then does itself. A
+/// fixed form reads it at full speed where it was compiled for
+/// `argb8888`; one compiled for `rgba8888` draws it through the run-time
+/// sampler, a pixel at a time, as it does any other format it was not
+/// built for. Refused where `PhysicalDeviceFeatures.small_texels` is
+/// false, and on an image that is neither sampled nor a storage image.
+/// (Since 1.48.)
+pub const IMAGE_CREATE_PACKED_TEXELS: u32 = 1 << 31;
+
+/// facet.library's own, in `SubpassDescription.flags`: the subpass's
+/// colour attachments are drawn **together**, in one pass over the tiles,
+/// by a fragment function that writes all of them in the one call
+/// (`shader.fragmentOutputs`, `shader.Fragments.colorsOf`). Without it a
+/// subpass of several colour attachments is drawn once for each, every
+/// command of the pass played again with `shader.Resources.output` saying
+/// which - the vertices worked and the triangles binned over again - and
+/// a fragment function writing the one colour.
+///
+/// Refused with `error_feature_not_present` where
+/// `PhysicalDeviceFeatures.several_outputs` is false, and with
+/// `error_invalid_shader_nv` for a pipeline of such a subpass whose
+/// fragment entry does not write exactly the subpass's colour
+/// attachments. (Since 1.51.)
+pub const SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER: u32 = 1 << 31;
+
 pub const ImageCreateInfo = extern struct {
     flags: u32 = 0,
     image_type: ImageType = .@"2d",
@@ -760,6 +933,11 @@ pub const ImageViewType = enum(u32) {
     @"3d" = 2,
     cube = 3,
     @"2d_array" = 5,
+    /// Cubes one after another, six layers to each: the view's layers are a
+    /// multiple of six and its first a multiple of six, for
+    /// `shader.FixedKind.texture_cube_array` and, since 1.53,
+    /// `texture_cube_array_sampled`. (Since 1.46.)
+    cube_array = 6,
     _,
 };
 
@@ -881,7 +1059,8 @@ pub const SamplerAddressMode = enum(u32) {
     mirrored_repeat = 1,
     clamp_to_edge = 2,
     clamp_to_border = 3,
-    /// Vulkan's VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE: not here.
+    /// The texture turned round once below 0 and held at its edge past the
+    /// far side: Vulkan's MIRROR_CLAMP_TO_EDGE (since 1.49).
     mirror_clamp_to_edge = 4,
     _,
 };
@@ -1656,6 +1835,17 @@ pub const PipelineColorBlendStateCreateInfo = extern struct {
     /// own since 1.33 (`PhysicalDeviceFeatures.independent_blend`).
     attachments: ?[*]const PipelineColorBlendAttachmentState = null,
     blend_constants: [4]f32 = @splat(0),
+    /// One set of blend constants for each colour attachment of the
+    /// subpass, in place of the one `blend_constants` holds for all of
+    /// them: facet.library's own, where Vulkan has the one set
+    /// (since 1.51). Null, and every attachment blends by
+    /// `blend_constants`. As many as `attachment_count` says, or as the
+    /// subpass has colour attachments where that is 0.
+    ///
+    /// With `blend_constants` among the dynamic states, CmdSetBlendConstants
+    /// sets the one set over all of them and CmdSetBlendConstantsAt one
+    /// attachment's own.
+    attachment_constants: ?[*]const [4]f32 = null,
 };
 
 /// State a pipeline leaves to commands.
@@ -1766,9 +1956,12 @@ pub const DescriptorSetLayoutBinding = extern struct {
     descriptor_count: u32 = 1,
     stage_flags: u32 = SHADER_STAGE_ALL_GRAPHICS,
     /// A sampler of the layout's own for each descriptor, which a write
-    /// could not change: not here, and a layout that gives them is refused
-    /// (`PhysicalDeviceFeatures.immutable_samplers`). A sampler is written
-    /// into the set like anything else instead.
+    /// cannot change (`PhysicalDeviceFeatures.immutable_samplers`, since
+    /// 1.49): `descriptor_count` of them, for a `sampler` or
+    /// `combined_image_sampler` binding and passed over on any other
+    /// kind. Every set made of the layout starts with them, so a write of
+    /// a combined image sampler then brings the texture alone. They have
+    /// to last as long as the sets do.
     immutable_samplers: ?[*]const *Sampler = null,
 };
 

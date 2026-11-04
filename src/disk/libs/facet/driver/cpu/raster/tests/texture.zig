@@ -372,3 +372,306 @@ test "a shadow sample compares what it read with its reference, and mixes what p
     sampler.wrap = @splat(.clamp_to_edge);
     try testing.expectEqual(@as(u32, 0xFF80_8080), texture.sampleBy(&made, &sampler, 0, .{ .u = 0.5, .v = 0.125, .reference = 0.5 }));
 }
+
+/// A BC1 block: two endpoint colours of 565 and two bits for each of the
+/// sixteen texels, the first texel's lowest.
+fn bc1Block(low: u16, high: u16, picks: u32) [8]u8 {
+    var made: [8]u8 = undefined;
+    std.mem.writeInt(u16, made[0..2], low, .little);
+    std.mem.writeInt(u16, made[2..4], high, .little);
+    std.mem.writeInt(u32, made[4..8], picks, .little);
+    return made;
+}
+
+test "a compressed texture is kept in its blocks and decoded as it is sampled" {
+    // A block is 8 bytes of BC1 and 16 of the rest, whatever a texel of
+    // 8888 would take: 8 x 8 is four blocks.
+    try testing.expectEqual(@as(usize, 4 * 8), try Texture.bytes(.bc1, 8, 8, 1));
+    try testing.expectEqual(@as(usize, 4 * 16), try Texture.bytes(.bc3, 8, 8, 1));
+    try testing.expect(texture.Format.bc2.compressed());
+    try testing.expect(!texture.Format.rgba8888.compressed());
+
+    var memory: [16]u64 = undefined;
+    var made = try Texture.init(.bc1, 8, 8, 1, @ptrCast(&memory));
+    const red: u16 = 0xF800;
+    const blue: u16 = 0x001F;
+    // The top left block: red and blue its endpoints, its first texel the
+    // one and its second the other, the rest red.
+    made.putBlock(0, 0, 0, 0, &bc1Block(red, blue, 1 << 2));
+    // Blue all over, and white all over, from endpoints of one colour.
+    made.putBlock(0, 0, 4, 0, &bc1Block(blue, blue, 0));
+    made.putBlock(0, 0, 0, 4, &bc1Block(0xFFFF, 0xFFFF, 0));
+    // Black and white in that order punch through: the third colour is
+    // halfway and the fourth clear, which every texel here picks.
+    made.putBlock(0, 0, 4, 4, &bc1Block(0x0000, 0xFFFF, 0xFFFF_FFFF));
+
+    // A texel at a time, out of the block it lies in.
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), made.colorAt(0, 0, 0, 0));
+    try testing.expectEqual(@as(u32, 0xFF00_00FF), made.colorAt(0, 0, 1, 0));
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), made.colorAt(0, 0, 3, 3));
+    try testing.expectEqual(@as(u32, 0xFF00_00FF), made.colorAt(0, 0, 4, 0));
+    try testing.expectEqual(@as(u32, 0xFFFF_FFFF), made.colorAt(0, 0, 0, 4));
+    // Clear, and black with it: what a GPU reads of a punched-through texel.
+    try testing.expectEqual(@as(u32, 0), made.colorAt(0, 0, 5, 5));
+
+    const nearest = texture.Sampling{ .format = .bc1, .filter = .nearest };
+    const clamp = texture.Sampling{ .format = .bc1, .filter = .bilinear, .address = .clamp };
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), sampleAt(nearest, &made, 0, 1.0 / 16.0, 1.0 / 16.0));
+    try testing.expectEqual(@as(u32, 0xFF00_00FF), sampleAt(nearest, &made, 0, 3.0 / 16.0, 1.0 / 16.0));
+    try testing.expectEqual(@as(u32, 0xFFFF_FFFF), sampleAt(nearest, &made, 0, 1.0 / 16.0, 9.0 / 16.0));
+    // Two texels of one block mixed: the block is decoded once.
+    try testing.expectEqual(@as(u32, 0xFF7F_007F), sampleAt(clamp, &made, 0, 1.0 / 8.0, 1.0 / 16.0));
+    // Two texels in blocks beside each other, which takes both blocks:
+    // the red of the first and the blue of the second.
+    try testing.expectEqual(@as(u32, 0xFF7F_007F), sampleAt(clamp, &made, 0, 0.5, 1.0 / 16.0));
+}
+
+test "a BC2 block's four bits of alpha and a BC3 block's ramp of it" {
+    var memory: [16]u64 = undefined;
+    var two = try Texture.init(.bc2, 4, 4, 1, @ptrCast(&memory));
+    var block: [16]u8 = undefined;
+    // Four bits a texel, the first texel's lowest: 0, 1, ... up the block.
+    var alphas: u64 = 0;
+    for (0..16) |k| alphas |= @as(u64, @intCast(k)) << @intCast(k * 4);
+    std.mem.writeInt(u64, block[0..8], alphas, .little);
+    block[8..16].* = bc1Block(0xF800, 0xF800, 0);
+    two.putBlock(0, 0, 0, 0, &block);
+    // 0 to 15 of 15, each repeated into its low bits: 0x00, 0x11, ... 0xFF.
+    for (0..4) |y| for (0..4) |x| {
+        const k = y * 4 + x;
+        const alpha: u32 = @intCast(k * 0x11);
+        try testing.expectEqual(alpha << 24 | 0x00FF_0000, two.colorAt(0, 0, @intCast(x), @intCast(y)));
+    };
+
+    var three = try Texture.init(.bc3, 4, 4, 1, @ptrCast(&memory));
+    // Endpoints 240 and 60 in that order: six values between them, three
+    // bits picking one. Texel 0 takes the first, texel 1 the second, texel
+    // 2 the first value between.
+    block[0] = 240;
+    block[1] = 60;
+    var picks: u64 = 1 << 3 | @as(u64, 2) << 6;
+    for (0..6) |k| block[2 + k] = @intCast(picks >> @intCast(k * 8) & 0xFF);
+    picks = 0;
+    three.putBlock(0, 0, 0, 0, &block);
+    try testing.expectEqual(@as(u32, 0xF0FF_0000), three.colorAt(0, 0, 0, 0));
+    try testing.expectEqual(@as(u32, 0x3CFF_0000), three.colorAt(0, 0, 1, 0));
+    // (6 x 240 + 1 x 60 + 3) / 7 = 214.
+    try testing.expectEqual(@as(u32, 0xD6FF_0000), three.colorAt(0, 0, 2, 0));
+}
+
+/// Four half floats, red first, as a texel of `rgba16f` holds them.
+fn halves(values: [4]f32) [8]u8 {
+    var made: [8]u8 = undefined;
+    for (values, 0..) |value, k| {
+        const half: u16 = @bitCast(@as(f16, @floatCast(value)));
+        std.mem.writeInt(u16, made[k * 2 ..][0..2], half, .little);
+    }
+    return made;
+}
+
+test "a float texture is kept as its floats and rounded to 8 bits as it is sampled" {
+    // A texel's own size, not an unpacked one's: 8 bytes for four halves,
+    // 4 for the two packed formats, 16 for four floats.
+    try testing.expectEqual(@as(usize, 16 * 8), try Texture.bytes(.rgba16f, 4, 4, 1));
+    try testing.expectEqual(@as(usize, 16 * 4), try Texture.bytes(.rg11b10f, 4, 4, 1));
+    try testing.expectEqual(@as(usize, 16 * 4), try Texture.bytes(.rgb9e5, 4, 4, 1));
+    try testing.expectEqual(@as(usize, 16 * 16), try Texture.bytes(.rgba32f, 4, 4, 1));
+    try testing.expect(texture.Format.rgba16f.floats());
+    try testing.expect(!texture.Format.rgba16f.compressed());
+    try testing.expect(texture.Format.bc2.kept() and texture.Format.rgb9e5.kept());
+    try testing.expect(!texture.Format.rgba8888.kept());
+
+    var memory: [16]u64 = undefined;
+    var made = try Texture.init(.rgba16f, 4, 4, 1, @ptrCast(&memory));
+    // What is above 1 reads as 255 and what is below 0 as 0; nothing
+    // writes a texel of one, so the bytes go in as they lie.
+    made.putTexels(0, 0, 0, 0, &halves(.{ 1, 0.5, 0, 1 }));
+    made.putTexels(0, 0, 1, 0, &halves(.{ 2, -1, 0.25, 0.5 }));
+    made.putLayer(0, 0, 2, 0, 0xFFFF_FFFF);
+    try testing.expectEqual(@as(u32, 0xFFFF_8000), made.colorAt(0, 0, 0, 0));
+    try testing.expectEqual(@as(u32, 0x80FF_0040), made.colorAt(0, 0, 1, 0));
+    // Nothing was written there: the texel is still the zero it started
+    // as, which is four halves of 0 - clear black.
+    try testing.expectEqual(@as(u32, 0), made.colorAt(0, 0, 2, 0));
+    // And read back as they went in.
+    var back: [8]u8 = undefined;
+    made.texelsAt(0, 0, 1, 0, &back);
+    try testing.expectEqualSlices(u8, &halves(.{ 2, -1, 0.25, 0.5 }), &back);
+
+    const nearest = texture.Sampling{ .format = .rgba16f, .filter = .nearest, .address = .clamp };
+    const clamp = texture.Sampling{ .format = .rgba16f, .filter = .bilinear, .address = .clamp };
+    try testing.expectEqual(@as(u32, 0xFFFF_8000), sampleAt(nearest, &made, 0, 1.0 / 8.0, 1.0 / 8.0));
+    try testing.expectEqual(@as(u32, 0x80FF_0040), sampleAt(nearest, &made, 0, 3.0 / 8.0, 1.0 / 8.0));
+    // The two texels mixed evenly, each channel rounded as the fixed path
+    // rounds it: alpha 255 and 128, red 255 and 255, green 128 and 0,
+    // blue 0 and 64.
+    try testing.expectEqual(@as(u32, 0xBFFF_4020), sampleAt(clamp, &made, 0, 0.25, 1.0 / 8.0));
+
+    // The packed formats, their channels each a power of two apart.
+    var packed_memory: [16]u64 = undefined;
+    var word = try Texture.init(.rg11b10f, 2, 2, 1, @ptrCast(&packed_memory));
+    var bits: u32 = 15 << 6 | 14 << 17 | 13 << 27;
+    word.putTexels(0, 0, 0, 0, std.mem.asBytes(&bits));
+    try testing.expectEqual(@as(u32, 0xFFFF_8040), word.colorAt(0, 0, 0, 0));
+    var shared = try Texture.init(.rgb9e5, 2, 2, 1, @ptrCast(&packed_memory));
+    bits = 256 | 128 << 9 | 511 << 18 | 15 << 27;
+    shared.putTexels(0, 0, 0, 0, std.mem.asBytes(&bits));
+    try testing.expectEqual(@as(u32, 0xFF80_40FF), shared.colorAt(0, 0, 0, 0));
+}
+
+/// A texture of `layers` layers, 4 x 4 with `levels` levels each: every
+/// texel of a level of a layer the colour `stackedColor` gives it.
+fn stacked(memory: []u64, layers: u32, levels: u32) !Texture {
+    var made = try Texture.init(.rgba8888, 4, 4, levels, @ptrCast(memory.ptr));
+    made.layer_count = layers;
+    made.layer_bytes = @intCast(try Texture.bytes(.rgba8888, 4, 4, levels));
+    for (0..layers) |layer| for (0..levels) |lod| {
+        for (0..made.height(@intCast(lod))) |y| for (0..made.width(@intCast(lod))) |x| {
+            made.putLayer(@intCast(layer), @intCast(lod), @intCast(x), @intCast(y), stackedColor(@intCast(layer), @intCast(lod)));
+        };
+    };
+    return made;
+}
+
+/// Sixteen apart in red for the layer and sixty-four in green for the
+/// level, so that a mix of two of them is told from either.
+fn stackedColor(layer: u32, lod: u32) u32 {
+    return 0xFF00_0000 | (layer * 16) << 16 | (lod * 64) << 8;
+}
+
+test "a 3D texture's levels are each slice's own, half the slices at each" {
+    // Six slices of 4 x 4 with two levels: a level of a slice lies where
+    // that layer's own level lies, so the layout is the layered one.
+    var memory: [6 * 32]u64 = undefined;
+    var made = try stacked(&memory, 6, 2);
+    try testing.expectEqual(@as(u32, 6), made.slicesAt(0));
+    try testing.expectEqual(@as(u32, 3), made.slicesAt(1));
+    // Never below one, as Vulkan has a 3D image's depth.
+    try testing.expectEqual(@as(u32, 1), made.slicesAt(4));
+
+    const nearest = texture.Sampling{ .filter = .nearest, .address = .clamp };
+    // r runs 0 to 1 across the slices the level has: a sixth each at the
+    // first level, and a third each at the second.
+    try testing.expectEqual(stackedColor(0, 0), made.sampleVolume(nearest, 0, 0.5, 0.5, 0.05));
+    try testing.expectEqual(stackedColor(3, 0), made.sampleVolume(nearest, 0, 0.5, 0.5, 0.6));
+    try testing.expectEqual(stackedColor(5, 0), made.sampleVolume(nearest, 0, 0.5, 0.5, 0.95));
+    try testing.expectEqual(stackedColor(0, 1), made.sampleVolume(nearest, 1, 0.5, 0.5, 0.2));
+    try testing.expectEqual(stackedColor(2, 1), made.sampleVolume(nearest, 1, 0.5, 0.5, 0.95));
+    // Past either end, held at the edge slice.
+    try testing.expectEqual(stackedColor(0, 0), made.sampleVolume(nearest, 0, 0.5, 0.5, -1));
+    try testing.expectEqual(stackedColor(5, 0), made.sampleVolume(nearest, 0, 0.5, 0.5, 2));
+
+    // A depth that is not a power of two, since 1.46: three slices, whose
+    // second level has one.
+    var odd_memory: [3 * 32]u64 = undefined;
+    var odd = try stacked(&odd_memory, 3, 2);
+    try testing.expectEqual(@as(u32, 3), odd.slicesAt(0));
+    try testing.expectEqual(@as(u32, 1), odd.slicesAt(1));
+    try testing.expectEqual(stackedColor(2, 0), odd.sampleVolume(nearest, 0, 0.5, 0.5, 0.9));
+    try testing.expectEqual(stackedColor(0, 1), odd.sampleVolume(nearest, 1, 0.5, 0.5, 0.9));
+    // Bilinear mixes the two slices round the point, each slice of one
+    // colour: a third of the way through three slices is the middle of the
+    // first two, half of each - a red of 8 between 0 and 16.
+    const smooth = texture.Sampling{ .filter = .bilinear, .address = .clamp };
+    try testing.expectEqual(@as(u32, 0xFF08_0000), odd.sampleVolume(smooth, 0, 0.5, 0.5, 1.0 / 3.0));
+}
+
+test "an array of cubes: a cube of it by its number, and a face of that cube" {
+    // Twelve faces - two cubes - told apart by the colour of each.
+    var memory: [12 * 16]u64 = undefined;
+    var made = try stacked(&memory, 12, 1);
+    // Which cube: rounded to the nearest, held inside the array, and told
+    // as that cube's first face.
+    try testing.expectEqual(@as(u32, 0), made.cubeNear(0));
+    try testing.expectEqual(@as(u32, 0), made.cubeNear(0.4));
+    try testing.expectEqual(@as(u32, 6), made.cubeNear(1.2));
+    try testing.expectEqual(@as(u32, 6), made.cubeNear(7));
+    try testing.expectEqual(@as(u32, 0), made.cubeNear(-3));
+
+    const nearest = texture.Sampling{ .filter = .nearest, .address = .clamp };
+    // Face 0 is +x and face 3 is -y: of the second cube they are the
+    // seventh and the tenth layer.
+    try testing.expectEqual(stackedColor(0, 0), made.sampleCubeIn(nearest, 0, 0, 1, 0, 0));
+    try testing.expectEqual(stackedColor(3, 0), made.sampleCubeIn(nearest, 0, 0, 0, -1, 0));
+    try testing.expectEqual(stackedColor(6, 0), made.sampleCubeIn(nearest, 6, 0, 1, 0, 0));
+    try testing.expectEqual(stackedColor(9, 0), made.sampleCubeIn(nearest, 6, 0, 0, -1, 0));
+    // One cube on its own is the first of them.
+    try testing.expectEqual(stackedColor(0, 0), made.sampleCube(nearest, 0, 1, 0, 0));
+}
+
+test "a texel kept smaller than its colour: one word of 8888, and one byte of red" {
+    // The same picture in all three: 8888 spread over 64 bits, 8888 in the
+    // 32 of its word, and the red alone in one byte.
+    const across = 8;
+    const down = 4;
+    var picture: [across * down]u32 = undefined;
+    for (0..down) |y| for (0..across) |x| {
+        picture[y * across + x] = texelAt(@intCast(x), @intCast(y));
+    };
+
+    // A level takes what its texels take: half of the spread one for a
+    // word a texel, an eighth for a byte.
+    try testing.expectEqual(@as(usize, 32 * 8), try Texture.bytes(.rgba8888, 8, 4, 1));
+    try testing.expectEqual(@as(usize, 32 * 4), try Texture.bytes(.argb8888, 8, 4, 1));
+    try testing.expectEqual(@as(usize, 32), try Texture.bytes(.r8, 8, 4, 1));
+
+    var spread_memory: [32]u64 = undefined;
+    var packed_memory: [32]u32 = undefined;
+    var red_memory: [32]u8 = undefined;
+    var spread_out = try Texture.init(.rgba8888, across, down, 1, @ptrCast(&spread_memory));
+    var in_words = try Texture.init(.argb8888, across, down, 1, @ptrCast(&packed_memory));
+    var in_bytes = try Texture.init(.r8, across, down, 1, @ptrCast(&red_memory));
+    spread_out.load(0, @ptrCast(&picture), across * 4);
+    in_words.load(0, @ptrCast(&picture), across * 4);
+    for (0..down) |y| for (0..across) |x| {
+        in_bytes.put(0, @intCast(x), @intCast(y), picture[y * across + x] >> 16 & 0xFF);
+    };
+
+    // The texels lie in the same places, counted in their own sizes, and
+    // read as the same colours - the one-byte one as red alone, with a
+    // green and a blue of 0 and the whole alpha, the way Vulkan reads
+    // R8_UNORM.
+    for (0..down) |y| for (0..across) |x| {
+        const want = picture[y * across + x];
+        try testing.expectEqual(spread_out.index(0, @intCast(x), @intCast(y)), in_words.index(0, @intCast(x), @intCast(y)));
+        try testing.expectEqual(spread_out.index(0, @intCast(x), @intCast(y)), in_bytes.index(0, @intCast(x), @intCast(y)));
+        try testing.expectEqual(want, in_words.colorAt(0, 0, @intCast(x), @intCast(y)));
+        try testing.expectEqual(0xFF00_0000 | (want & 0x00FF_0000), in_bytes.colorAt(0, 0, @intCast(x), @intCast(y)));
+    };
+
+    // Sampled by the fast path, each format's own: the same colours as the
+    // spread one reads, red alone where red alone is kept.
+    const nearest = texture.Sampling{ .filter = .nearest, .address = .clamp };
+    const packed_nearest = texture.Sampling{ .filter = .nearest, .address = .clamp, .format = .argb8888 };
+    const red_nearest = texture.Sampling{ .filter = .nearest, .address = .clamp, .format = .r8 };
+    for (0..down) |y| for (0..across) |x| {
+        const u = (@as(f32, @floatFromInt(x)) + 0.5) / across;
+        const v = (@as(f32, @floatFromInt(y)) + 0.5) / down;
+        const want = picture[y * across + x];
+        try testing.expectEqual(want, sampleAt(nearest, &spread_out, 0, u, v));
+        try testing.expectEqual(want, sampleAt(packed_nearest, &in_words, 0, u, v));
+        try testing.expectEqual(0xFF00_0000 | (want & 0x00FF_0000), sampleAt(red_nearest, &in_bytes, 0, u, v));
+    };
+
+    // And filtered, which is where the spread is done rather than read:
+    // the word a texel reads what the spread one reads, everywhere.
+    const smooth = texture.Sampling{ .filter = .bilinear, .address = .wrap };
+    const packed_smooth = texture.Sampling{ .filter = .bilinear, .address = .wrap, .format = .argb8888 };
+    const red_smooth = texture.Sampling{ .filter = .bilinear, .address = .wrap, .format = .r8 };
+    var at: u32 = 0;
+    while (at < 64) : (at += 1) {
+        const u = @as(f32, @floatFromInt(at)) / 64 + 0.013;
+        const v = @as(f32, @floatFromInt(at % 17)) / 17 - 0.21;
+        const mixed = sampleAt(smooth, &spread_out, 0, u, v);
+        try testing.expectEqual(mixed, sampleAt(packed_smooth, &in_words, 0, u, v));
+        // Red alone mixes to the same red: the other channels are 0.
+        try testing.expectEqual(0xFF00_0000 | (mixed & 0x00FF_0000), sampleAt(red_smooth, &in_bytes, 0, u, v));
+    }
+
+    // A colour written through either, as a storage image is written: the
+    // word takes all of it, the byte its red.
+    in_words.setColor(0, 0, 1, 1, 0x8012_3456);
+    in_bytes.setColor(0, 0, 1, 1, 0x8012_3456);
+    try testing.expectEqual(@as(u32, 0x8012_3456), in_words.colorAt(0, 0, 1, 1));
+    try testing.expectEqual(@as(u32, 0xFF12_0000), in_bytes.colorAt(0, 0, 1, 1));
+}

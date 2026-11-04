@@ -1188,9 +1188,25 @@ const video_key_darkest: u32 = 0x0001_0001;
 const video_cut_across = 32;
 const video_cut_down = 2;
 
+/// Whether the overlay makes the display's colours out of such a
+/// picture. Its converter holds one matrix at a time - BT.601's or
+/// BT.709's, either range - and nothing else: there is no curve in it, so
+/// a film of high dynamic range would come out flat and grey, no way to
+/// move BT.2020's red, green and blue to the display's, and no ten-bit
+/// path at all, since it reads a sample as a byte. Such a film is left to
+/// graphics.library, which maps it.
+fn videoColours(matrix: u8, transfer: u8, primaries: u8, depth: u8) bool {
+    if (matrix != rtg.bitmaps.RTGYUV_BT601 and matrix != rtg.bitmaps.RTGYUV_BT709) return false;
+    if (transfer != rtg.bitmaps.RTGYUV_SDR or primaries != rtg.bitmaps.RTGYUV_BT709) return false;
+    return depth == 8;
+}
+
 /// The layer taken: under the picture unless asked over, nothing on it
-/// and no place yet, the scaler's filter loaded.
+/// and no place yet, the scaler's filter loaded. A picture the overlay
+/// cannot make colours out of takes no layer, so that the caller puts
+/// such a film down through graphics from the start.
 fn videoOpen(board: *rtg.RtgBoard, layer: *rtg.RtgVideoLayer) callconv(.c) i32 {
+    if (!videoColours(layer.matrix, layer.transfer, layer.primaries, layer.depth)) return err.RTGERR_NOT_SUPPORTED;
     const screen = screenOf(board);
     const sys = screen.sys;
     const under = layer.flags & rtg.RTGVLF_UNDER != 0;
@@ -1269,12 +1285,15 @@ fn videoMove(board: *rtg.RtgBoard, layer: *rtg.RtgVideoLayer, place: *const rtg.
     return if (videoPut(screen)) err.RTGERR_OK else err.RTGERR_BAD_ARG;
 }
 
-/// Whether the layer reads `part` of `picture`: its planes laid out as it
-/// takes them - NV12, or I420 with both colour planes - each of the part's
-/// rows starting on 16 bytes, the part's top left on a pair of pixels
-/// each way, at least two of them each way, and every byte of it below
-/// 4 GiB, where the controller reaches.
+/// Whether the layer reads `part` of `picture`: colours its converter
+/// makes the display's out of (`videoColours` - the picture may not be
+/// the kind the layer was opened for), its planes laid out as it takes
+/// them - NV12, or I420 with both colour planes - each of the part's rows
+/// starting on 16 bytes, the part's top left on a pair of pixels each
+/// way, at least two of them each way, and every byte of it below 4 GiB,
+/// where the controller reaches.
 fn videoReads(picture: *const rtg.RtgYuv, part: rtg.RtgRect) bool {
+    if (!videoColours(picture.matrix, picture.transfer, picture.primaries, picture.depth)) return false;
     const planar = picture.layout == rtg.bitmaps.RTGYUV_I420;
     if (!planar and picture.layout != rtg.bitmaps.RTGYUV_NV12) return false;
     if (planar and picture.cr == null) return false;
@@ -1366,8 +1385,8 @@ fn videoPut(screen: *Screen) bool {
         .planar = planar,
         .width = x.read,
         .height = y.read,
-        .bt709 = one.colors & rtg.bitmaps.RTGYUV_MATRIX == rtg.bitmaps.RTGYUV_BT709,
-        .full = one.colors & rtg.bitmaps.RTGYUV_FULL != 0,
+        .bt709 = one.matrix == rtg.bitmaps.RTGYUV_BT709,
+        .full = one.range == rtg.bitmaps.RTGYUV_FULL,
     }, .{
         .x = x.at,
         .y = y.at,

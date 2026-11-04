@@ -38,6 +38,8 @@ pub fn wrapOf(mode: facet.SamplerAddressMode) ?texture.Wrap {
         .mirrored_repeat => .mirrored_repeat,
         .clamp_to_edge => .clamp_to_edge,
         .clamp_to_border => .clamp_to_border,
+        // Turned round once and then held at the edge (since 1.49).
+        .mirror_clamp_to_edge => .mirror_clamp_to_edge,
         else => null,
     };
 }

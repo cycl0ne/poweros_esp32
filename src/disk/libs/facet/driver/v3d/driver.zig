@@ -121,6 +121,7 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
             .max_compute_work_group_size = _instance.max_compute_work_group_size,
             .max_compute_work_group_invocations = _instance.max_compute_work_group_invocations,
             .max_compute_shared_memory_size = _instance.max_compute_shared_memory_size,
+            .max_tessellation_patch_components = _instance.max_tessellation_patch_components,
             .min_memory_map_alignment = _memory.alignment,
             .tile_size = v3d.frame.tile_pixels,
             .cores = 1,
@@ -148,24 +149,53 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // forms that want one are refused and drawn on the cores.
         .samplers = false,
         .sampler_anisotropy = false,
-        // The hardware's occlusion counter is not read yet, and what the
-        // QPUs were given is not counted either: a pool of either kind is
-        // refused on this device. A timestamp is the library's clock, which
-        // every device has (CmdWriteTimestamp).
-        .occlusion_queries = false,
+        // The hardware's own counter, pointed at a word of the frame's by
+        // the packet beside a draw and added to the query as the frame is
+        // drawn (`cl.occlusionQuery`, since 1.47). What the QPUs were
+        // given is still counted by nothing, so a statistics pool is
+        // refused here. A timestamp is the library's clock, which every
+        // device has (CmdWriteTimestamp).
+        .occlusion_queries = true,
         .pipeline_statistics_queries = false,
         .timestamp_queries = true,
-        // The V3D's own tiles hold the depth and nothing stores it to
-        // memory yet, so a pass that keeps its depth is refused here.
-        .stored_depth = false,
-        .stored_stencil = false,
+        // The tiles' depth and stencil are stored to an image's rows and
+        // loaded back from them, as the render target is (`cl.STORE_Z`,
+        // `STORE_STENCIL`, since 1.47). The hardware writes a plane's own
+        // pixels one after another, so the image's format holds that
+        // plane alone: a format of both keeps neither here.
+        .stored_depth = true,
+        .stored_stencil = true,
+        .stored_both = false,
         // Its texture unit keeps a texture its own way, and knows no
         // depth format: a sampled depth image is refused.
         .sampled_depth = false,
-        // Its control lists clip in their own way, and it has no depth
-        // bounds test: a pipeline that asks for either is refused.
-        .depth_clamp = false,
-        .depth_bounds = false,
+        // Its TMU is fed texels the library unpacked, so a compressed or a
+        // float image is unpacked on the copy here as before.
+        .kept_compressed = false,
+        .kept_floats = false,
+        // No QPU program reads a fourth coordinate, so a cube of an array
+        // is refused here: the view as well as the pipeline.
+        .cube_arrays = false,
+        // ETC2 and EAC are unpacked by the library as they are copied in,
+        // which is the same work on either device.
+        .etc2_textures = true,
+        // The TMU reads an R8 texture with a swizzle of its own, and has
+        // never spread an 8888 texel: one byte a texel there, and the
+        // packed flag costs nothing and changes nothing (tiling.zig).
+        .small_texels = true,
+        // Its fragment programs are the fixed forms, and each writes the
+        // one colour: a subpass of several is drawn once for each.
+        .several_outputs = false,
+        // A set layout's own sampler is the library's doing, not a
+        // driver's: it is kept here as well, though no program of the QPUs
+        // reads a sampler.
+        .immutable_samplers = true,
+        // Version 7.1 has both of these: the clamp is a bit of the
+        // configuration, which turns the clip to the z planes off with it
+        // as Vulkan has a depth clamp, and the bounds are a packet of
+        // their own (`cl.depthBounds`, since 1.47).
+        .depth_clamp = true,
+        .depth_bounds = true,
         // A V3D texture lies the way its TMU reads it, which is not the
         // layout the library writes (`texture_offset`), so a storage image
         // is refused on this device and the set layout says so.
@@ -186,10 +216,11 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // A colour attachment is drawn as a pass of its own, so each
         // takes the mixing asked for it as it is drawn.
         .independent_blend = true,
-        // The hardware has a depth offset of its own, which nothing in
-        // this driver writes yet: a pipeline that asks for a bias is
-        // refused here and the cores draw it.
-        .depth_bias = false,
+        // The hardware's own depth offset, a packet beside the
+        // configuration that enables it (`cl.depthOffset`): the units are
+        // the depth buffer's smallest differences and the factor the
+        // triangle's slope, as Vulkan asks (since 1.47).
+        .depth_bias = true,
         // The depth pre-pass is the rasterizer's (driver/cpu/raster/prepass.zig).
         .depth_prepass = false,
         .points_and_lines = true,
@@ -372,7 +403,10 @@ fn makePipeline(pipeline: *Pipeline) callconv(.c) facet.Result {
     // that samples through a sampler a program that reads it: there is
     // neither yet, so such a pipeline is refused here and drawn on the
     // cores.
-    if (fixed.kind == .none or fixed.discards() or fixed.needsSampler() or pipeline.varyings != fixed.varyings()) return .error_feature_not_present;
+    // Nor is there one for a cube of an array, which reads a fourth
+    // coordinate (since 1.46) - `texture_cube_array_sampled` reads a
+    // sampler besides, so `needsSampler` already refuses it (since 1.53).
+    if (fixed.kind == .none or fixed.kind == .texture_cube_array or fixed.discards() or fixed.needsSampler() or pipeline.varyings != fixed.varyings()) return .error_feature_not_present;
     return .success;
 }
 

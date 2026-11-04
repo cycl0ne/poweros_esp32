@@ -217,16 +217,24 @@ pub const RtgPixels = extern struct {
 pub const RTGPIXF_OPAQUE: u8 = 1;
 
 /// A picture in YUV, as a video decoder hands it out: a plane of
-/// brightness (luma, Y) a byte a pixel, and the colour (chroma, Cb and
+/// brightness (luma, Y) a sample a pixel, and the colour (chroma, Cb and
 /// Cr) at half the size each way - one Cb and one Cr for each two by two
 /// pixels, which is 4:2:0. WriteYUVPixelArray and ScaleYUVPixelArray read
 /// it and put it down as colours; nothing else is kept of it.
+///
+/// What the numbers mean takes four fields, because a film says all four
+/// and they do not follow from one another: the `matrix` that turns Y, Cb
+/// and Cr into red, green and blue; the `transfer` - the curve from a
+/// number to light, which for a high dynamic range film is nothing like a
+/// television's; the `primaries`, which red, green and blue those are;
+/// and the `range` the numbers use. A picture that says nothing is a
+/// television's: BT.709, SDR, video's range, eight bits.
 pub const RtgYuv = extern struct {
-    /// The luma: rows of `y_pitch` bytes, a byte a pixel.
+    /// The luma: rows of `y_pitch` bytes, a sample a pixel.
     y: [*]const u8,
-    /// `RTGYUV_NV12`: the chroma, a Cb and a Cr byte for each two pixels
+    /// `RTGYUV_NV12`: the chroma, a Cb and a Cr sample for each two pixels
     /// across, a row for each two rows down. `RTGYUV_I420`: the Cb plane
-    /// alone, a byte for each two by two pixels.
+    /// alone, a sample for each two by two pixels.
     cb: [*]const u8,
     /// `RTGYUV_I420`: the Cr plane, laid out as `cb`. Unused for NV12.
     cr: ?[*]const u8 = null,
@@ -237,12 +245,31 @@ pub const RtgYuv = extern struct {
     c_pitch: u32,
     /// `RTGYUV_NV12` or `RTGYUV_I420`.
     layout: u8 = RTGYUV_NV12,
-    /// How the numbers stand for colours: `RTGYUV_BT601` or
-    /// `RTGYUV_BT709`, with `RTGYUV_FULL` for a picture whose numbers take
-    /// the whole 0 to 255 rather than video's 16 to 235 (Y) and 16 to 240
-    /// (Cb, Cr).
-    colors: u8 = RTGYUV_BT709,
-    pad: [2]u8 = .{ 0, 0 },
+    /// Which weights make red, green and blue out of Y, Cb and Cr:
+    /// `RTGYUV_BT601`, `RTGYUV_BT709` or `RTGYUV_BT2020`.
+    matrix: u8 = RTGYUV_BT709,
+    /// What a number stands for: `RTGYUV_SDR`, the curve a television has
+    /// always had, or the high dynamic range curves `RTGYUV_PQ` and
+    /// `RTGYUV_HLG`, whose light reaches far past a screen's white and is
+    /// mapped into it.
+    transfer: u8 = RTGYUV_SDR,
+    /// Which red, green and blue they are: `RTGYUV_BT709`,
+    /// `RTGYUV_BT2020` or `RTGYUV_P3`. BT.601's are taken as BT.709's,
+    /// which they are within a step.
+    primaries: u8 = RTGYUV_BT709,
+    /// `RTGYUV_LIMITED` - video's 16 to 235 (Y) and 16 to 240 (Cb, Cr) of
+    /// a byte, four times that at ten bits - or `RTGYUV_FULL`, the whole
+    /// number (JPEG's).
+    range: u8 = RTGYUV_LIMITED,
+    /// Bits in a sample: 8, a byte each, or 10, two bytes each - little
+    /// endian, the ten bits at the bottom of the word. The pitches are
+    /// bytes either way.
+    depth: u8 = 8,
+    /// The light the film was mastered for, in candelas a square metre:
+    /// the mastering display's maximum, or the brightest pixel in the film
+    /// (MaxCLL) where that is all it says. 0 where it says nothing, and
+    /// 1000 is taken. Read for `RTGYUV_PQ` alone.
+    peak: u16 = 0,
 };
 
 /// `RtgYuv.layout`: the chroma in one plane, Cb and Cr in turn - what
@@ -251,16 +278,40 @@ pub const RTGYUV_NV12: u8 = 0;
 /// `RtgYuv.layout`: the chroma in two planes, Cb's and Cr's.
 pub const RTGYUV_I420: u8 = 1;
 
-/// `RtgYuv.colors`: ITU-R BT.601's colours - a picture of standard
+/// `RtgYuv.matrix`: ITU-R BT.601's weights - a picture of standard
 /// definition, and JPEG's.
 pub const RTGYUV_BT601: u8 = 0;
-/// `RtgYuv.colors`: ITU-R BT.709's colours - high definition video.
+/// `RtgYuv.matrix`, `RtgYuv.primaries`: ITU-R BT.709's - high definition
+/// video, and what a screen shows.
 pub const RTGYUV_BT709: u8 = 1;
-/// `RtgYuv.colors`: the part of the byte that says which of the two.
-pub const RTGYUV_MATRIX: u8 = 0x0F;
-/// `RtgYuv.colors`: the numbers take the whole byte (JPEG's), not video's
-/// narrower range.
-pub const RTGYUV_FULL: u8 = 0x80;
+/// `RtgYuv.matrix`, `RtgYuv.primaries`: ITU-R BT.2020's - ultra high
+/// definition, and every film in high dynamic range.
+pub const RTGYUV_BT2020: u8 = 2;
+/// `RtgYuv.primaries`: DCI-P3's, the cinema's.
+pub const RTGYUV_P3: u8 = 3;
+
+/// `RtgYuv.transfer`: the curve of a television - BT.709 out of the
+/// camera, BT.1886 at the screen - which is what every picture had before
+/// high dynamic range.
+pub const RTGYUV_SDR: u8 = 0;
+/// `RtgYuv.transfer`: SMPTE ST 2084, "perceptual quantizer" - the curve
+/// of HDR10, Dolby Vision and HDR10+, in which a number stands for a
+/// light in candelas a square metre, up to 10000 of them.
+pub const RTGYUV_PQ: u8 = 1;
+/// `RtgYuv.transfer`: ITU-R BT.2100's hybrid log-gamma - broadcast's high
+/// dynamic range, whose lower half is a television's own curve.
+pub const RTGYUV_HLG: u8 = 2;
+
+/// `RtgYuv.range`: video's range - 16 to 235 (Y) and 16 to 240 (Cb, Cr)
+/// of a byte.
+pub const RTGYUV_LIMITED: u8 = 0;
+/// `RtgYuv.range`: the numbers take the whole byte, as JPEG's do.
+pub const RTGYUV_FULL: u8 = 1;
+
+/// What is taken for a film that says nothing of the light it was
+/// mastered for: the peak of a mastering display, in candelas a square
+/// metre.
+pub const RTGYUV_PEAK_DEFAULT: u16 = 1000;
 
 /// A colour taken apart, eight bits a channel.
 pub const RtgRGB = extern struct {

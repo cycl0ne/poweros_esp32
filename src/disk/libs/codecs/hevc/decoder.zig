@@ -292,6 +292,9 @@ pub const Decoder = struct {
     /// used again while the current picture may need it (`last_kept`).
     last_pic: ?*Store = null,
     last_kept: ?*Store = null,
+    /// The light the film was mastered for, in candelas a square metre,
+    /// as the last prefix SEI said; 0 until one does.
+    peak_nits: u16 = 0,
     /// The picture the last slice segment was of, which a suffix SEI
     /// unit belongs to: null when that picture was passed over.
     sei_pic: ?*Store = null,
@@ -380,7 +383,12 @@ pub const Decoder = struct {
                 if (id >= 64) return error.Corrupt;
                 dec.pps[id] = p;
             },
-            nal.Type.vps, nal.Type.aud, nal.Type.prefix_sei, 41...44, 48...55 => dec.finishPicture(),
+            nal.Type.prefix_sei => {
+                dec.finishPicture();
+                const n = try dec.unescape(unit[2..]);
+                dec.prefixSei(dec.rbsp[0..n]);
+            },
+            nal.Type.vps, nal.Type.aud, 41...44, 48...55 => dec.finishPicture(),
             nal.Type.end_of_seq, nal.Type.end_of_stream => {
                 dec.finishPicture();
                 dec.dpb.first = true;
@@ -457,6 +465,50 @@ pub const Decoder = struct {
             dec.rbsp = dec.env.slice(u8, payload.len + 64) orelse return error.NoMemory;
         }
         return nal.unescape(payload, dec.rbsp);
+    }
+
+    /// A prefix SEI unit: the light the film was mastered for, which is
+    /// what a screen's own range has to be mapped from (D.2.28, the
+    /// mastering display's colour volume, and D.2.35, the content light
+    /// level). The mastering display's maximum is taken, and the
+    /// brightest pixel in the film where it says that too and it is
+    /// lower - a film is no brighter than its own brightest pixel, and
+    /// mapping from a peak it never reaches would darken it for nothing.
+    fn prefixSei(dec: *Decoder, rbsp: []const u8) void {
+        var b = Bits.init(rbsp);
+        var mastering: u32 = 0;
+        var content: u32 = 0;
+        while (b.moreRbspData()) {
+            var kind: u32 = 0;
+            while (true) {
+                const v = b.u(8);
+                kind += v;
+                if (v != 0xff or b.overrun()) break;
+            }
+            var size: u32 = 0;
+            while (true) {
+                const v = b.u(8);
+                size += v;
+                if (v != 0xff or b.overrun()) break;
+            }
+            if (b.overrun() or b.pos + size * 8 > rbsp.len * 8) return;
+            const end = b.pos + size * 8;
+            if (kind == 137 and size >= 24) {
+                // The primaries and the white point are passed over: the
+                // curve needs the light alone. The maximum is in ten
+                // thousandths of a candela.
+                b.pos += 8 * 16;
+                const most = b.u(32);
+                mastering = most / 10000;
+            } else if (kind == 144 and size >= 4) {
+                content = b.u(16);
+            }
+            b.pos = end;
+        }
+        const peak = if (mastering != 0 and content != 0)
+            @min(mastering, content)
+        else if (mastering != 0) mastering else content;
+        if (peak != 0) dec.peak_nits = @intCast(@min(peak, 10000));
     }
 
     /// A suffix SEI unit: the decoded picture hash (D.2.20) of the picture
@@ -647,7 +699,10 @@ pub const Decoder = struct {
             .depth_y = sps.bit_depth_luma,
             .depth_c = sps.bit_depth_chroma,
             .matrix = sps.matrix,
+            .primaries = sps.colour_primaries,
+            .transfer = sps.transfer,
             .full_range = sps.full_range,
+            .peak_nits = dec.peak_nits,
         };
         return s;
     }

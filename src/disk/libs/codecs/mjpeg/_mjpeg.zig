@@ -232,7 +232,8 @@ fn decode(m: *Decoder, frame: *vc.VideoFrame, slot: u32) i32 {
         .y_pitch = luma.stride,
         .c_pitch = 0,
         .layout = rtg.RTGYUV_I420,
-        .colors = rtg.RTGYUV_BT601 | rtg.RTGYUV_FULL,
+        .matrix = rtg.RTGYUV_BT601,
+        .range = rtg.RTGYUV_FULL,
     };
     switch (sampling) {
         .halved, .across => {

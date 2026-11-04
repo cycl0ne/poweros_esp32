@@ -4,11 +4,13 @@
 const sdk = @import("sdk");
 const facet = sdk.facet;
 const shader = facet.shader;
+const texture = facet.texture;
 const FacetBase = @import("../facet_base.zig").FacetBase;
 const exec = sdk.exec;
 const _objects = @import("../_objects.zig");
 const Device = @import("../device/_device.zig").Device;
 const _descriptor = @import("_descriptor.zig");
+const Sampler = @import("../sampler/_sampler.zig").Sampler;
 
 /// A descriptor set layout: a set's bindings, each of a kind, with its descriptors.
 ///
@@ -26,10 +28,11 @@ const _descriptor = @import("_descriptor.zig");
 ///
 /// RESULT:
 /// `success`; `error_feature_not_present` for a kind of descriptor
-/// facet.library does not have, for a binding with samplers of the
-/// layout's own (`immutable_samplers`), a binding numbered past 255, or
-/// more than 65535 descriptors; `error_initialization_failed` for a
-/// binding given twice; `error_out_of_host_memory`.
+/// facet.library does not have, for samplers of the layout's own on a
+/// device without `PhysicalDeviceFeatures.immutable_samplers`, a binding
+/// numbered past 255, or more than 65535 descriptors;
+/// `error_initialization_failed` for a binding given twice;
+/// `error_out_of_host_memory`.
 ///
 /// BEHAVIOR:
 /// The kinds are sampler, combined_image_sampler, sampled_image,
@@ -62,10 +65,18 @@ const _descriptor = @import("_descriptor.zig");
 /// A fragment function of a fixed form samples either as it was compiled
 /// to (sdk.facet.shader.textured) or through the sampler bound beside the
 /// texture (shader.FixedKind.texture_sampled), which is what a combined
-/// image sampler is for. A sampler of the layout's own is refused rather
-/// than ignored, so that a program is not left thinking a write of its own
-/// took: `PhysicalDeviceFeatures.immutable_samplers`. Stage flags are not
-/// looked at: every stage reads every binding.
+/// image sampler is for. Stage flags are not looked at: every stage reads
+/// every binding.
+///
+/// **A sampler of the layout's own** is taken since 1.49
+/// (`immutable_samplers`, `PhysicalDeviceFeatures.immutable_samplers`): on
+/// a `sampler` or `combined_image_sampler` binding the layout holds one
+/// sampler for each of the binding's descriptors, and every set made of
+/// the layout starts with them in its slots. A write of a combined image
+/// sampler into such a binding brings the texture and leaves the sampler;
+/// a write of a sampler alone changes nothing. The samplers have to last
+/// as long as the sets do, as a written one does. On a binding of another
+/// kind the pointer is passed over, as Vulkan passes it over.
 ///
 /// BUGS:
 /// None known.
@@ -85,6 +96,10 @@ pub fn CreateDescriptorSetLayout(base: *FacetBase, device: *facet.Device, info: 
     const given: []const facet.DescriptorSetLayoutBinding = if (info.bindings) |bindings| bindings[0..info.binding_count] else &.{};
     var binding_count: u32 = 0;
     var dynamic: u32 = 0;
+    // Whether any binding holds a sampler of the layout's own, and the
+    // slots they all take: the layout keeps one for each of its slots.
+    var holds_samplers = false;
+    var held_slots: u32 = 0;
     for (given) |binding| {
         if (!_descriptor.known(binding.descriptor_type) or binding.binding > 255) return .error_feature_not_present;
         // A storage image is written through the texture the library keeps,
@@ -95,8 +110,14 @@ pub fn CreateDescriptorSetLayout(base: *FacetBase, device: *facet.Device, info: 
         // An input attachment is read by a fragment function of the
         // program's, which a device with programs of its own has not got.
         if (binding.descriptor_type == .input_attachment and !owner.physical.features.input_attachments) return .error_feature_not_present;
-        // A sampler the layout holds, which a write could not change.
-        if (binding.immutable_samplers != null and binding.descriptor_count != 0) return .error_feature_not_present;
+        // A sampler the layout holds, which a write cannot change (since
+        // 1.49): for a kind that carries one, and on a device that keeps
+        // them.
+        if (binding.immutable_samplers != null and binding.descriptor_count != 0 and _descriptor.ofSampler(binding.descriptor_type)) {
+            if (!owner.physical.features.immutable_samplers) return .error_feature_not_present;
+            holds_samplers = true;
+            held_slots += @min(binding.descriptor_count, 0xFFFF);
+        }
         binding_count = @max(binding_count, binding.binding + 1);
         // Each dynamic buffer descriptor takes one of the set's offsets,
         // and there are only so many of those.
@@ -105,9 +126,12 @@ pub fn CreateDescriptorSetLayout(base: *FacetBase, device: *facet.Device, info: 
             if (dynamic > shader.MAX_DYNAMIC_OFFSETS) return .error_feature_not_present;
         }
     }
-    const memory = base.sys_base.AllocVec(@sizeOf(_descriptor.SetLayout) + binding_count * @sizeOf(_descriptor.Binding), exec.MEMF_CLEAR) orelse return .error_out_of_host_memory;
+    const bindings_bytes = binding_count * @sizeOf(_descriptor.Binding);
+    const samplers_bytes = if (holds_samplers) held_slots * @sizeOf(?*const texture.Sampler) else 0;
+    const memory = base.sys_base.AllocVec(@sizeOf(_descriptor.SetLayout) + bindings_bytes + samplers_bytes, exec.MEMF_CLEAR) orelse return .error_out_of_host_memory;
     const made: *_descriptor.SetLayout = @ptrCast(@alignCast(memory));
     const bindings: [*]_descriptor.Binding = @ptrFromInt(@intFromPtr(made) + @sizeOf(_descriptor.SetLayout));
+    const samplers: [*]?*const texture.Sampler = @ptrFromInt(@intFromPtr(bindings) + bindings_bytes);
     for (bindings[0..binding_count]) |*binding| binding.* = .{ .kind = .sampled_image, .first = 0, .count = 0 };
     var named: [256]bool = @splat(false);
     for (given) |binding| {
@@ -129,7 +153,21 @@ pub fn CreateDescriptorSetLayout(base: *FacetBase, device: *facet.Device, info: 
         base.sys_base.FreeVec(memory);
         return .error_feature_not_present;
     }
-    made.* = .{ .device = owner, .binding_count = binding_count, .slot_count = slots };
+    // The samplers the layout holds, each in its slot's place: a set made
+    // of this layout starts with them, and a write leaves them be.
+    if (holds_samplers) {
+        for (samplers[0..held_slots]) |*each| each.* = null;
+        for (given) |binding| {
+            const kept = binding.immutable_samplers orelse continue;
+            if (binding.descriptor_count == 0 or !_descriptor.ofSampler(binding.descriptor_type)) continue;
+            const place = bindings[binding.binding];
+            for (0..place.count) |element| {
+                if (place.first + element >= held_slots) break;
+                samplers[place.first + element] = &_objects.of(Sampler, kept[element]).kept;
+            }
+        }
+    }
+    made.* = .{ .device = owner, .binding_count = binding_count, .slot_count = slots, .holds_samplers = holds_samplers };
     layout.* = _objects.handle(facet.DescriptorSetLayout, made);
     return .success;
 }

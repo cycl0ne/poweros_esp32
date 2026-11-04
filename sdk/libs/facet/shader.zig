@@ -74,9 +74,28 @@ pub const Entry = extern struct {
         return Fixed.fromBits(entry.varyings);
     }
 
-    /// An evaluation function's way of tessellating.
-    pub fn tessellation(entry: *const Entry) Tessellation {
-        return .{ .domain = @enumFromInt((entry.varyings >> 8) & 3), .clockwise = entry.varyings & (1 << 10) != 0 };
+    /// The colours a fragment function writes in the one call: 1 for a
+    /// `shader.fragment` or a `shader.fixedFragment` entry, and what
+    /// `shader.fragmentOutputs` said for one that writes a subpass's
+    /// colour attachments together (since 1.51).
+    pub fn outputCount(entry: *const Entry) u32 {
+        return ((entry.varyings >> 18) & 3) + 1;
+    }
+
+    /// An evaluation function's way of tessellating, or null where its
+    /// domain or its spacing is a value this library has not: a pipeline
+    /// refuses such an entry with `error_invalid_shader_nv`. (Since 1.50
+    /// it answers with a null rather than a domain of its own choosing.)
+    pub fn tessellation(entry: *const Entry) ?Tessellation {
+        const domain = (entry.varyings >> 8) & 3;
+        const spacing = (entry.varyings >> 11) & 3;
+        if (domain > @intFromEnum(Domain.isolines)) return null;
+        if (spacing > @intFromEnum(Spacing.fractional_odd)) return null;
+        return .{
+            .domain = @enumFromInt(domain),
+            .clockwise = entry.varyings & (1 << 10) != 0,
+            .spacing = @enumFromInt(spacing),
+        };
     }
 
     /// A compute function's invocations along each axis, which is what
@@ -114,9 +133,25 @@ pub fn fragment(name: [*:0]const u8, function: FragmentFn, varyings: u32) Entry 
     return .{ .name = name, .stage = facet.SHADER_STAGE_FRAGMENT, .function = function, .varyings = varyings };
 }
 
-/// An entry for a tessellation control function.
-pub fn control(name: [*:0]const u8, function: ControlFn) Entry {
-    return .{ .name = name, .stage = facet.SHADER_STAGE_TESSELLATION_CONTROL, .function = function, .varyings = 0 };
+/// An entry for a fragment function that writes `outputs` colours in the
+/// one call - all the colour attachments of a subpass marked
+/// SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER - rather than the one colour a
+/// `fragment` entry writes. 1 to 4, and the pipeline is refused where it
+/// is not the subpass's colour attachment count exactly.
+/// `Fragments.colorsOf` is where each one's colours go.
+/// (Since 1.51. `PhysicalDeviceFeatures.several_outputs`.)
+pub fn fragmentOutputs(name: [*:0]const u8, function: FragmentFn, varyings: u32, outputs: u32) Entry {
+    const held: u32 = @min(@max(outputs, 1), 4) - 1;
+    return .{ .name = name, .stage = facet.SHADER_STAGE_FRAGMENT, .function = function, .varyings = varyings | held << 18 };
+}
+
+/// An entry for a tessellation control function. `own` is the floats it
+/// writes for the whole patch, which its evaluation function reads back
+/// (`Patch.ownValues`, since 1.50): no more than
+/// `PhysicalDeviceLimits.max_tessellation_patch_components`, and 0 for a
+/// control function that sets the levels alone.
+pub fn control(name: [*:0]const u8, function: ControlFn, own: u32) Entry {
+    return .{ .name = name, .stage = facet.SHADER_STAGE_TESSELLATION_CONTROL, .function = function, .varyings = own };
 }
 
 /// An entry for a tessellation evaluation function.
@@ -125,7 +160,9 @@ pub fn evaluation(name: [*:0]const u8, function: EvaluationFn, varyings: u32, wa
         .name = name,
         .stage = facet.SHADER_STAGE_TESSELLATION_EVALUATION,
         .function = function,
-        .varyings = varyings | @as(u32, @intFromEnum(way.domain)) << 8 | @as(u32, @intFromBool(way.clockwise)) << 10,
+        .varyings = varyings | @as(u32, @intFromEnum(way.domain)) << 8 |
+            @as(u32, @intFromBool(way.clockwise)) << 10 |
+            @as(u32, @intFromEnum(way.spacing)) << 11,
     };
 }
 
@@ -196,6 +233,34 @@ pub const FixedKind = enum(u8) {
     /// reference, and what it writes is how much of the sample passed -
     /// white for all of it, black for none.
     texture_shadow = 9,
+    /// One cube of an array of them: varyings x, y and z, the direction,
+    /// and then which cube, the nearest there is - a view of `cube_array`,
+    /// whose layers are six to a cube. `sampling.address` is always
+    /// `clamp`, as for `texture_cube`. (Since 1.46.)
+    texture_cube_array = 10,
+    /// A layer of an array as the sampler bound beside it says: varyings
+    /// s, t and the layer, as `texture_array` has them, with everything a
+    /// sampler gives that a fixed form's sampling has not - the levels
+    /// mixed, a bias and a clamp on them, mirrored and bordered edges, and
+    /// anisotropy. (Since 1.49.)
+    texture_array_sampled = 11,
+    /// A cube map the same way: varyings x, y and z, the direction. The
+    /// sample is taken inside the face the direction falls on, so the
+    /// sampler's edges are that face's - where `texture_cube` reads over
+    /// the seam into the next face. (Since 1.49.)
+    texture_cube_sampled = 12,
+    /// A 3D texture the same way: varyings s, t and r, each 0 to 1 across
+    /// it, with `wrap[2]` for what lies past the first and last slice and
+    /// the two slices round the point mixed where the filter is bilinear.
+    /// (Since 1.49.)
+    texture_3d_sampled = 13,
+    /// One cube of an array of them as the sampler bound beside it says:
+    /// varyings x, y and z, the direction, and then which cube, as
+    /// `texture_cube_array` has them. The sample is taken inside the face
+    /// the direction falls on, that cube's own, so the sampler's edges are
+    /// that face's - where `texture_cube_array` reads over the seam into
+    /// the next face of the same cube. (Since 1.53.)
+    texture_cube_array_sampled = 14,
 };
 
 /// Under this alpha, 0 to 255, `texture_cutout` drops a pixel.
@@ -216,6 +281,8 @@ pub const Fixed = struct {
             .texture, .texture_cutout, .texture_sampled => 2,
             .texture_color => 6,
             .texture_array, .texture_cube, .texture_3d, .texture_shadow => 3,
+            .texture_array_sampled, .texture_cube_sampled, .texture_3d_sampled => 3,
+            .texture_cube_array, .texture_cube_array_sampled => 4,
         };
     }
 
@@ -226,6 +293,10 @@ pub const Fixed = struct {
     pub fn needsSampler(fixed: Fixed) bool {
         return switch (fixed.kind) {
             .texture_sampled, .texture_shadow => true,
+            // The forms past 2D that read one (since 1.49), and the
+            // array of cubes (since 1.53).
+            .texture_array_sampled, .texture_cube_sampled, .texture_3d_sampled => true,
+            .texture_cube_array_sampled => true,
             else => false,
         };
     }
@@ -263,7 +334,13 @@ pub fn fixedFragment(name: [*:0]const u8, comptime fixed: Fixed) Entry {
                 .texture => textured(fixed.sampling, fragments, fragments.resources.sampled(0, 0, 0)),
                 .texture_cutout => cutout(fixed.sampling, fragments, fragments.resources.sampled(0, 0, 0)),
                 .texture_color => modulated(fixed.sampling, fragments, fragments.resources.sampled(0, 0, 0)),
-                .texture_array, .texture_cube, .texture_3d => layered(fixed.kind, fixed.sampling, fragments, fragments.resources.sampled(0, 0, 0)),
+                .texture_array, .texture_cube, .texture_3d, .texture_cube_array => layered(fixed.kind, fixed.sampling, fragments, fragments.resources.sampled(0, 0, 0)),
+                .texture_array_sampled, .texture_cube_sampled, .texture_3d_sampled, .texture_cube_array_sampled => layeredBy(
+                    fixed.kind,
+                    fragments,
+                    fragments.resources.sampled(0, 0, 0),
+                    fragments.resources.samplerOf(0, 0, 0),
+                ),
                 .texture_sampled, .texture_shadow => texturedBy(
                     fixed.kind == .texture_shadow,
                     fixed.sampling,
@@ -316,8 +393,13 @@ pub const Slot = extern struct {
     /// buffer descriptors (`Resources.offsets`). In that padding as well,
     /// so a slot is as wide as it always was.
     dynamic: u8 = 0,
+    /// Whether `sampler` is the set layout's own and a write cannot change
+    /// it: `DescriptorSetLayoutBinding.immutable_samplers` (since 1.49).
+    /// In that padding as well, so a slot is as wide as it always was.
+    fixed_sampler: bool = false,
     /// What a sampler or a combined image sampler was written with
-    /// (CreateSampler); null for every other kind.
+    /// (CreateSampler), or what its set layout holds; null for every other
+    /// kind.
     sampler: ?*const texture.Sampler = null,
 };
 
@@ -336,6 +418,49 @@ pub const TexelFormat = enum(u8) {
     rg32f = 5,
     rgb32f = 6,
     rgba32f = 7,
+    /// The regular grid of 1.54: one channel, two or four, of 8, 16 or 32
+    /// bits, read as 0 to 1 (`r8_unorm` and the like), as the whole
+    /// number itself (`_uint`, `_sint`) or as a float (`r16_sfloat`).
+    /// `rgba8888` is 8-bit unorm of four channels already, so the grid
+    /// starts at one channel there.
+    /// 8 bits a channel: `r8_unorm`, `r8g8_unorm`.
+    r8 = 8,
+    rg8 = 9,
+    /// `r8_uint`, `r8g8_uint`, `r8g8b8a8_uint`.
+    r8u = 10,
+    rg8u = 11,
+    rgba8u = 12,
+    /// `r8_sint`, `r8g8_sint`, `r8g8b8a8_sint`.
+    r8i = 13,
+    rg8i = 14,
+    rgba8i = 15,
+    /// 16 bits a channel: `r16_unorm`, `r16g16_unorm`,
+    /// `r16g16b16a16_unorm`.
+    r16 = 16,
+    rg16 = 17,
+    rgba16 = 18,
+    /// `r16_uint`, `r16g16_uint`, `r16g16b16a16_uint`.
+    r16u = 19,
+    rg16u = 20,
+    rgba16u = 21,
+    /// `r16_sint`, `r16g16_sint`, `r16g16b16a16_sint`.
+    r16i = 22,
+    rg16i = 23,
+    rgba16i = 24,
+    /// Half-floats: `r16_sfloat`, `r16g16_sfloat`, `r16g16b16a16_sfloat`.
+    r16f = 25,
+    rg16f = 26,
+    rgba16f = 27,
+    /// 32 bits a channel, whole: `r32_uint`, `r32g32_uint`,
+    /// `r32g32b32a32_uint`. A value past 2^24 is more than `Texels.at`'s
+    /// float carries exactly, which is what `Texels.intAt` is for.
+    r32u = 28,
+    rg32u = 29,
+    rgba32u = 30,
+    /// `r32_sint`, `r32g32_sint`, `r32g32b32a32_sint`.
+    r32i = 31,
+    rg32i = 32,
+    rgba32i = 33,
 
     /// The bytes one texel takes; 0 for `.none`.
     pub fn bytes(format: TexelFormat) u32 {
@@ -346,6 +471,7 @@ pub const TexelFormat = enum(u8) {
             .rg32f => 8,
             .rgb32f => 12,
             .rgba32f => 16,
+            else => format.parts() * (format.channelBits() / 8),
         };
     }
 
@@ -354,13 +480,119 @@ pub const TexelFormat = enum(u8) {
     pub fn parts(format: TexelFormat) u32 {
         return switch (format) {
             .none => 0,
-            .r32f => 1,
-            .rg32f => 2,
+            .r32f, .r8, .r8u, .r8i, .r16, .r16u, .r16i, .r16f, .r32u, .r32i => 1,
+            .rg32f, .rg8, .rg8u, .rg8i, .rg16, .rg16u, .rg16i, .rg16f, .rg32u, .rg32i => 2,
             .rgb565, .rgb32f => 3,
             .rgba8888, .bgra8888, .rgba32f => 4,
+            .rgba8u, .rgba8i, .rgba16, .rgba16u, .rgba16i, .rgba16f, .rgba32u, .rgba32i => 4,
         };
     }
+
+    /// The bits one channel takes, for a format whose channels are all of
+    /// one width; 0 for `.none`, and 16 for `rgb565`, whose three are 5, 6
+    /// and 5 of its one word. (Since 1.54.)
+    pub fn channelBits(format: TexelFormat) u32 {
+        return switch (format) {
+            .none => 0,
+            .rgb565 => 16,
+            .rgba8888, .bgra8888 => 8,
+            .r8, .rg8, .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i => 8,
+            .r16, .rg16, .rgba16, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r16f, .rg16f, .rgba16f => 16,
+            .r32f, .rg32f, .rgb32f, .rgba32f, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => 32,
+        };
+    }
+
+    /// What a channel of the format holds. (Since 1.54.)
+    pub fn kind(format: TexelFormat) TexelKind {
+        return switch (format) {
+            .none => .none,
+            .rgb565 => .packed_bits,
+            .rgba8888, .bgra8888, .r8, .rg8, .r16, .rg16, .rgba16 => .unorm,
+            .r8u, .rg8u, .rgba8u, .r16u, .rg16u, .rgba16u, .r32u, .rg32u, .rgba32u => .uint,
+            .r8i, .rg8i, .rgba8i, .r16i, .rg16i, .rgba16i, .r32i, .rg32i, .rgba32i => .sint,
+            .r16f, .rg16f, .rgba16f, .r32f, .rg32f, .rgb32f, .rgba32f => .sfloat,
+        };
+    }
+
+    /// The largest whole number a channel of a `.unorm` format holds: 255
+    /// of 8 bits, 65535 of 16. (Since 1.54.)
+    pub fn channelMost(format: TexelFormat) f32 {
+        return if (format.channelBits() == 8) 255 else 65535;
+    }
 };
+
+/// What a channel of a `TexelFormat` holds. (Since 1.54.)
+pub const TexelKind = enum {
+    /// Nothing: `.none`.
+    none,
+    /// Channels of their own widths packed into the texel's one word:
+    /// `rgb565` alone.
+    packed_bits,
+    /// A whole number read as 0 to 1, the largest it holds as 1.
+    unorm,
+    /// A whole number read as itself, unsigned.
+    uint,
+    /// The same, signed, in two's complement.
+    sint,
+    /// A float of the channel's width.
+    sfloat,
+};
+
+/// The whole number of `bits` bits at `from`, signed or not: a channel of
+/// a `TexelFormat` whose channels are whole numbers. (Since 1.54.)
+fn wholeAt(from: [*]const u8, bits: u32, signed: bool) i64 {
+    return switch (bits) {
+        8 => if (signed) @as(i64, @as(i8, @bitCast(from[0]))) else @as(i64, from[0]),
+        16 => whole16: {
+            const word = std.mem.readInt(u16, from[0..2], .little);
+            break :whole16 if (signed) @as(i64, @as(i16, @bitCast(word))) else @as(i64, word);
+        },
+        else => whole32: {
+            const word = std.mem.readInt(u32, from[0..4], .little);
+            break :whole32 if (signed) @as(i64, @as(i32, @bitCast(word))) else @as(i64, word);
+        },
+    };
+}
+
+/// `value` written as a whole number of `bits` bits, its low bits taken.
+/// (Since 1.54.)
+fn putWhole(into: [*]u8, bits: u32, value: i64) void {
+    const bytes: u64 = @bitCast(value);
+    switch (bits) {
+        8 => into[0] = @truncate(bytes),
+        16 => std.mem.writeInt(u16, into[0..2], @truncate(bytes), .little),
+        else => std.mem.writeInt(u32, into[0..4], @truncate(bytes), .little),
+    }
+}
+
+/// `value` as a whole number of `bits` bits, held inside what they carry;
+/// a NaN as the lowest of them. (Since 1.54.)
+fn wholeFrom(value: f64, bits: u32, signed: bool) i64 {
+    const span: i64 = @as(i64, 1) << @intCast(if (signed) bits - 1 else bits);
+    const lowest: f64 = if (signed) @floatFromInt(-span) else 0;
+    const highest: f64 = @floatFromInt(span - 1);
+    const rounded = @round(value);
+    if (!(rounded > lowest)) return @intFromFloat(lowest); // a NaN as well
+    return @intFromFloat(@min(rounded, highest));
+}
+
+/// The float of `bits` bits at `from`, as an f32. (Since 1.54.)
+fn floatAt(from: [*]const u8, bits: u32) f32 {
+    if (bits == 16) {
+        const half: f16 = @bitCast(std.mem.readInt(u16, from[0..2], .little));
+        return @floatCast(half);
+    }
+    return @bitCast(std.mem.readInt(u32, from[0..4], .little));
+}
+
+/// `value` written as a float of `bits` bits. (Since 1.54.)
+fn putFloat(into: [*]u8, bits: u32, value: f32) void {
+    if (bits == 16) {
+        const half: f16 = @floatCast(value);
+        return std.mem.writeInt(u16, into[0..2], @bitCast(half), .little);
+    }
+    std.mem.writeInt(u32, into[0..4], @bitCast(value), .little);
+}
 
 /// A texel buffer as a shader function reads it: `count` texels of
 /// `format`, one after another from `bytes`. What `Resources.texels`
@@ -377,8 +609,12 @@ pub const Texels = struct {
     writable: bool,
 
     /// Texel `index` as x, y, z and w: a colour format's channels are 0 to
-    /// 1, and what the format does not hold reads as 0, w as 1. All zero
+    /// 1, an integer format's the whole numbers themselves (since 1.54),
+    /// and what the format does not hold reads as 0, w as 1. All zero
     /// past the last texel.
+    ///
+    /// A 32-bit whole number past 2^24 is more than the float carries
+    /// exactly; `intAt` reads those as they lie.
     pub fn at(texels: *const Texels, index: u32) [4]f32 {
         if (index >= texels.count) return .{ 0, 0, 0, 0 };
         const from = texels.bytes + @as(usize, index) * texels.format.bytes();
@@ -399,6 +635,64 @@ pub const Texels = struct {
             .r32f, .rg32f, .rgb32f, .rgba32f => {
                 const floats: [*]align(1) const f32 = @ptrCast(from);
                 for (0..texels.format.parts()) |k| made[k] = floats[k];
+            },
+            // The regular grid of 1.54: every channel the same width, and
+            // all of one kind.
+            else => {
+                const bits = texels.format.channelBits();
+                const step = bits / 8;
+                const sort = texels.format.kind();
+                for (0..texels.format.parts()) |k| {
+                    const part_at = from + k * step;
+                    made[k] = switch (sort) {
+                        .unorm => @as(f32, @floatFromInt(wholeAt(part_at, bits, false))) / texels.format.channelMost(),
+                        .uint => @floatFromInt(wholeAt(part_at, bits, false)),
+                        .sint => @floatFromInt(wholeAt(part_at, bits, true)),
+                        .sfloat => floatAt(part_at, bits),
+                        .none, .packed_bits => 0,
+                    };
+                }
+            },
+        }
+        return made;
+    }
+
+    /// Texel `index` as the four whole numbers its channels keep: an
+    /// integer format's values as they lie, where `at`'s floats cannot
+    /// carry a 32-bit one exactly; a format of 0 to 1 gives the numbers it
+    /// keeps (0 to 255, 0 to 65535, and `rgb565` its 5, 6 and 5 bits); and
+    /// a float format its channels rounded. What the format does not hold
+    /// reads as 0, w as 1. All zero past the last texel. (Since 1.54.)
+    pub fn intAt(texels: *const Texels, index: u32) [4]i64 {
+        if (index >= texels.count) return .{ 0, 0, 0, 0 };
+        const from = texels.bytes + @as(usize, index) * texels.format.bytes();
+        var made = [4]i64{ 0, 0, 0, 1 };
+        switch (texels.format) {
+            .none => {},
+            .rgba8888, .bgra8888 => {
+                const packed_texel = std.mem.readInt(u32, from[0..4], .little);
+                const order: [4]u5 = if (texels.format == .rgba8888) .{ 0, 8, 16, 24 } else .{ 16, 8, 0, 24 };
+                for (&made, order) |*part, shift| part.* = packed_texel >> shift & 0xFF;
+            },
+            .rgb565 => {
+                const packed_texel = std.mem.readInt(u16, from[0..2], .little);
+                made[0] = packed_texel >> 11 & 0x1F;
+                made[1] = packed_texel >> 5 & 0x3F;
+                made[2] = packed_texel & 0x1F;
+            },
+            else => {
+                const bits = texels.format.channelBits();
+                const step = bits / 8;
+                const sort = texels.format.kind();
+                for (0..texels.format.parts()) |k| {
+                    const part_at = from + k * step;
+                    made[k] = switch (sort) {
+                        .unorm, .uint => wholeAt(part_at, bits, false),
+                        .sint => wholeAt(part_at, bits, true),
+                        .sfloat => wholeFrom(floatAt(part_at, bits), 32, true),
+                        .none, .packed_bits => 0,
+                    };
+                }
             },
         }
         return made;
@@ -438,7 +732,67 @@ pub const Texels = struct {
                 const floats: [*]align(1) f32 = @ptrCast(into);
                 for (0..texels.format.parts()) |k| floats[k] = parts[k];
             },
+            // The regular grid of 1.54, as `at` reads it.
+            else => {
+                const bits = texels.format.channelBits();
+                const step = bits / 8;
+                const sort = texels.format.kind();
+                for (0..texels.format.parts()) |k| {
+                    const part_at = into + k * step;
+                    switch (sort) {
+                        .unorm => putWhole(part_at, bits, wholeFrom(held(parts[k]) * texels.format.channelMost(), bits, false)),
+                        .uint => putWhole(part_at, bits, wholeFrom(parts[k], bits, false)),
+                        .sint => putWhole(part_at, bits, wholeFrom(parts[k], bits, true)),
+                        .sfloat => putFloat(part_at, bits, parts[k]),
+                        .none, .packed_bits => {},
+                    }
+                }
+            },
         }
+    }
+
+    /// Texel `index` set from four whole numbers, as `intAt` reads them:
+    /// each held inside what its channel carries, and a value past that
+    /// cut to the largest or the smallest it holds. Nothing where the slot
+    /// is only read, or past the last texel. (Since 1.54.)
+    pub fn setInt(texels: *Texels, index: u32, parts: [4]i64) void {
+        if (!texels.writable or index >= texels.count) return;
+        const into = texels.bytes + @as(usize, index) * texels.format.bytes();
+        switch (texels.format) {
+            .none => {},
+            .rgba8888, .bgra8888 => {
+                const order: [4]u5 = if (texels.format == .rgba8888) .{ 0, 8, 16, 24 } else .{ 16, 8, 0, 24 };
+                var made: u32 = 0;
+                for (parts, order) |part, shift| made |= @as(u32, @intCast(heldWhole(part, 255))) << shift;
+                std.mem.writeInt(u32, into[0..4], made, .little);
+            },
+            .rgb565 => {
+                const r: u32 = @intCast(heldWhole(parts[0], 31));
+                const g: u32 = @intCast(heldWhole(parts[1], 63));
+                const b: u32 = @intCast(heldWhole(parts[2], 31));
+                std.mem.writeInt(u16, into[0..2], @intCast(r << 11 | g << 5 | b), .little);
+            },
+            else => {
+                const bits = texels.format.channelBits();
+                const step = bits / 8;
+                const sort = texels.format.kind();
+                for (0..texels.format.parts()) |k| {
+                    const part_at = into + k * step;
+                    switch (sort) {
+                        .unorm => putWhole(part_at, bits, heldWhole(parts[k], @intFromFloat(texels.format.channelMost()))),
+                        .uint => putWhole(part_at, bits, wholeFrom(@floatFromInt(parts[k]), bits, false)),
+                        .sint => putWhole(part_at, bits, wholeFrom(@floatFromInt(parts[k]), bits, true)),
+                        .sfloat => putFloat(part_at, bits, @floatFromInt(parts[k])),
+                        .none, .packed_bits => {},
+                    }
+                }
+            },
+        }
+    }
+
+    /// 0 to `most`, a whole number. (Since 1.54.)
+    fn heldWhole(value: i64, most: i64) i64 {
+        return @min(@max(value, 0), most);
     }
 
     /// Texel `index` set from 0xAARRGGBB.
@@ -578,10 +932,25 @@ pub const Resources = extern struct {
     /// image, as the texture it is written through: null where it is not
     /// written, or is not a kind a function may write through.
     ///
-    /// Its texels are set by `putLayer` in the texture's own format, or by
-    /// `setColor` as 0xAARRGGBB whatever the format, and read by
-    /// `colorAt`. The level and the layer are the view's first, so a
-    /// function writes level 0 of layer 0 unless the view says otherwise.
+    /// Its texels are set by `setColor` as 0xAARRGGBB whatever the format,
+    /// and read by `colorAt`; a texture of floats is set by `setParts` from
+    /// four floats and read by `partsAt` into them, which is what such a
+    /// texel holds and what a colour of 8 bits a channel could never carry
+    /// (since 1.57). Both pairs take a level and a layer: the function
+    /// names which of the view's it writes (since 1.55), level 0 of layer
+    /// 0 being the view's first of each, and one the view has not got
+    /// writes nothing and reads transparent black
+    /// (`texture.Texture.holds`). What the view has is `levels` and
+    /// `layer_count`, and each level's own size `width` and `height`.
+    /// `putLayer` and `peekLayer` are the same pair in the texture's own
+    /// format and hold to nothing.
+    ///
+    /// A colour attachment may be one since 1.56 (CreateImage): the image
+    /// is kept in rows and those rows are the texture, of one level and
+    /// one layer. A write reaches them at once, while what a subpass draws
+    /// reaches them when it stores, so writing such an image through while
+    /// the pass that draws into it is open has no order against that.
+    ///
     /// Nothing orders one function's writes against another's: a frame's
     /// work is shared between the cores, so two of them writing the same
     /// texel is for the program to avoid, as it is in Vulkan.
@@ -705,12 +1074,35 @@ pub const Domain = enum(u8) {
     isolines = 2,
 };
 
-/// What an evaluation function says of how it tessellates. The pieces are of
-/// equal length, as Vulkan's SpacingEqual.
+/// How an edge is cut into its pieces: Vulkan's three spacing modes. The
+/// level is a float, and what is made of it is a whole number of pieces -
+/// the question is what happens to the fraction. (Since 1.50.)
+pub const Spacing = enum(u8) {
+    /// The level held inside 1 to 64 and rounded up: that many pieces, all
+    /// of one length. Vulkan's SpacingEqual, and what there was before
+    /// 1.50.
+    equal = 0,
+    /// The level held inside 2 to 64 and rounded up to an even number of
+    /// pieces; all but two of one length, and two shorter ones, one at
+    /// each end of the edge, that shrink as the fraction does. So a level
+    /// that grows moves the vertices rather than jumping them, which is
+    /// what a patch whose level follows the camera wants.
+    /// Vulkan's SpacingFractionalEven.
+    fractional_even = 1,
+    /// The same with an odd number of pieces, the level held inside 1 to
+    /// 63: Vulkan's SpacingFractionalOdd. A level of 1 or below leaves the
+    /// edge uncut.
+    fractional_odd = 2,
+};
+
+/// What an evaluation function says of how it tessellates.
 pub const Tessellation = struct {
     domain: Domain = .triangles,
     /// Triangles go clockwise on the coordinates, not the other way.
     clockwise: bool = false,
+    /// How the fraction of a level is spent (since 1.50). Isolines ignore
+    /// it, as Vulkan has them: their pieces are always of equal length.
+    spacing: Spacing = .equal,
 };
 
 /// How finely a patch is made: a level is rounded up to a whole number, from
@@ -734,14 +1126,32 @@ pub const Patch = extern struct {
     number: u32,
     instance: u32,
     resources: *const Resources,
+    /// The floats this patch carries from its control function to its
+    /// evaluation function, as many as the control entry declared
+    /// (`shader.control`): the control function writes them and the
+    /// evaluation function reads them back, both through `ownValues`. Null
+    /// where the entry declared none. What they hold is the patch's own
+    /// doing - a normal of the whole patch, its displacement, a colour -
+    /// and nothing reads them between the two calls. (Since 1.50.)
+    own: ?[*]f32 = null,
+    own_count: u32 = 0,
 
     /// Vertex `k` of the patch: its position, then its varyings.
     pub inline fn point(patch: *const Patch, k: u32) [*]const f32 {
         return patch.points + patch.corners[k] * patch.point_stride;
     }
+
+    /// The patch's own floats, empty where its control entry declared
+    /// none. The control function fills them in, undefined until it does;
+    /// the evaluation function reads them. (Since 1.50.)
+    pub inline fn ownValues(patch: *const Patch) []f32 {
+        const first = patch.own orelse return &.{};
+        return first[0..patch.own_count];
+    }
 };
 
-/// Says of a patch how finely it is made, `levels` given all 1. What
+/// Says of a patch how finely it is made, `levels` given all 1, and writes
+/// what the patch carries as a whole (`Patch.ownValues`, since 1.50). What
 /// Vulkan's control shader does to the vertices, an evaluation function does
 /// from them.
 pub const ControlFn = *const fn (patch: *const Patch, levels: *Levels) callconv(.c) void;
@@ -884,7 +1294,9 @@ pub const Fragments = extern struct {
     quads: [*]Quad,
     count: u32,
     /// Where each quad's four colours go, 0xAARRGGBB, its pixels in the
-    /// order of `covered`'s bits.
+    /// order of `covered`'s bits. A function that writes several colour
+    /// attachments at once finds the next attachment's `count` colours
+    /// after this one's: `colorsOf` is the way to them.
     colors: [*][4]u32,
     /// 1 / w, then each varying over w.
     planes: [*]const Plane,
@@ -897,6 +1309,21 @@ pub const Fragments = extern struct {
     /// stand for its pixels: each has to divide.
     exact: bool,
     resources: *const Resources,
+    /// The colour attachments the function writes in this call: 1 for
+    /// every fragment function but one of a `shader.fragmentOutputs`
+    /// entry drawing a subpass whose attachments go together
+    /// (SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER, since 1.51). `colorsOf`
+    /// gives each one's colours; attachment 0's are `colors` itself, so a
+    /// function that writes the one colour needs no notice of this.
+    output_count: u32 = 1,
+
+    /// Where colour attachment `output`'s `count` colours go. Attachment
+    /// 0's are `colors`; an `output` past `output_count` gives the last
+    /// one's rather than memory that is not the batch's. (Since 1.51.)
+    pub inline fn colorsOf(fragments: *const Fragments, output: u32) [*][4]u32 {
+        const at = @min(output, fragments.output_count - 1);
+        return fragments.colors + at * fragments.count;
+    }
 };
 
 pub const FragmentFn = *const fn (fragments: *const Fragments) callconv(.c) void;
@@ -1010,8 +1437,10 @@ inline fn bytesOf(at: Pixels) @Vector(4, u32) {
 
 /// A texture, `picture`, at the coordinates the vertex function writes as
 /// varyings 0 and 1: 0 to 1 across it and down. Its format, its filter
-/// and what it does past its edges are `sampling`'s; a texture not
-/// written, or in another format, paints every pixel `missing`.
+/// and what it does past its edges are `sampling`'s; a texture not written
+/// paints every pixel `missing`. One of another format than the form says
+/// is drawn through the run-time sampler instead, a pixel at a time
+/// (since 1.44): correct, and far slower than the form it matches.
 ///
 /// Where w changes slowly enough, each quad takes its coordinates at its
 /// centre - one division - and how fast they change there, and its pixels
@@ -1033,23 +1462,56 @@ pub fn cutout(comptime sampling: texture.Sampling, fragments: *const Fragments, 
 
 pub fn textured(comptime sampling: texture.Sampling, fragments: *const Fragments, picture: ?*const texture.Texture) void {
     const given = picture orelse return fill(fragments, missing);
-    if (given.format != sampling.format) return fill(fragments, missing);
+    // A texture of another format than the form was built for - a
+    // compressed one on a device that keeps its blocks, say, where the
+    // form says 8888 - is drawn all the same, through the sampler that
+    // reads whatever a texture holds. A pixel at a time: slow, and the
+    // form to declare is the texture's own format.
+    if (given.format != sampling.format) return texturedOther(sampling, fragments, given);
     if (fragments.exact) texturedQuads(sampling, true, fragments, given) else texturedQuads(sampling, false, fragments, given);
+}
+
+/// `textured` where the texture's format is not the form's: the colours
+/// come from `Texture.sampleLayer`, which reads any format at run time,
+/// a pixel at a time. The level is the quad's own steps', as a GPU takes
+/// it. (Since 1.44.)
+fn texturedOther(comptime sampling: texture.Sampling, fragments: *const Fragments, given: *const texture.Texture) void {
+    @setRuntimeSafety(false);
+    const texels = [2]f32{ @floatFromInt(given.width(0)), @floatFromInt(given.height(0)) };
+    var rows = Rows(3).of(fragments);
+    for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
+        const at = rows.at(quad);
+        const w = @as(Pixels, @splat(1)) / at[0];
+        const u: [4]f32 = at[1] * w;
+        const v: [4]f32 = at[2] * w;
+        const lod = if (given.levels == 1) 0 else texture.levelFor(given, (u[1] - u[0]) * texels[0], (v[1] - v[0]) * texels[1], (u[2] - u[0]) * texels[0], (v[2] - v[0]) * texels[1]);
+        var colors: [4]u32 = @splat(0);
+        for (&colors, 0..) |*color, i| {
+            if (quad.covered >> @intCast(i) & 1 == 0) continue;
+            color.* = given.sampleLayer(sampling, 0, lod, u[i], v[i]);
+        }
+        out.* = colors;
+    }
 }
 
 /// A texture of layers, `picture`, at the three coordinates its `kind` takes,
 /// varyings 0 to 2. A pixel at a time: much slower than `textured`.
 pub fn layered(comptime kind: FixedKind, comptime sampling: texture.Sampling, fragments: *const Fragments, picture: ?*const texture.Texture) void {
+    // Whatever format the texture holds: the samples are read through
+    // `Texture.sampleLayer` and the like, which take it from the texture
+    // rather than from the form (since 1.44).
     const given = picture orelse return fill(fragments, missing);
-    if (given.format != sampling.format) return fill(fragments, missing);
     const texels = [2]f32{ @floatFromInt(given.width(0)), @floatFromInt(given.height(0)) };
-    var rows = Rows(4).of(fragments);
+    // A cube of an array takes a fourth coordinate: which cube.
+    const carried = comptime if (kind == .texture_cube_array) 5 else 4;
+    var rows = Rows(carried).of(fragments);
     for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
         const at = rows.at(quad);
         const w = @as(Pixels, @splat(1)) / at[0];
         const s: [4]f32 = at[1] * w;
         const t: [4]f32 = at[2] * w;
         const r: [4]f32 = at[3] * w;
+        const which: [4]f32 = if (comptime kind == .texture_cube_array) at[4] * w else @splat(0);
         var colors: [4]u32 = @splat(0);
         switch (kind) {
             .texture_array => {
@@ -1068,9 +1530,26 @@ pub fn layered(comptime kind: FixedKind, comptime sampling: texture.Sampling, fr
                     color.* = given.sampleCube(sampling, lod, s[i], t[i], r[i]);
                 }
             },
-            .texture_3d => for (&colors, 0..) |*color, i| {
-                if (quad.covered >> @intCast(i) & 1 == 0) continue;
-                color.* = given.sampleVolume(sampling, s[i], t[i], r[i]);
+            .texture_cube_array => {
+                // Each pixel its own cube and its own face: the level is
+                // the quad's, as it is for one cube.
+                const hits = [3]texture.CubeHit{ texture.cubeHit(s[0], t[0], r[0]), texture.cubeHit(s[1], t[1], r[1]), texture.cubeHit(s[2], t[2], r[2]) };
+                const same = hits[0].face == hits[1].face and hits[0].face == hits[2].face;
+                const lod = if (given.levels == 1 or !same) 0 else texture.levelFor(given, (hits[1].u - hits[0].u) * texels[0], (hits[1].v - hits[0].v) * texels[1], (hits[2].u - hits[0].u) * texels[0], (hits[2].v - hits[0].v) * texels[1]);
+                for (&colors, 0..) |*color, i| {
+                    if (quad.covered >> @intCast(i) & 1 == 0) continue;
+                    color.* = given.sampleCubeIn(sampling, given.cubeNear(which[i]), lod, s[i], t[i], r[i]);
+                }
+            },
+            .texture_3d => {
+                // Its levels are the 2D ones, each slice's own, and a
+                // level has half the slices of the one before it
+                // (`Texture.slicesAt`, since 1.46).
+                const lod = if (given.levels == 1) 0 else texture.levelFor(given, (s[1] - s[0]) * texels[0], (t[1] - t[0]) * texels[1], (s[2] - s[0]) * texels[0], (t[2] - t[0]) * texels[1]);
+                for (&colors, 0..) |*color, i| {
+                    if (quad.covered >> @intCast(i) & 1 == 0) continue;
+                    color.* = given.sampleVolume(sampling, lod, s[i], t[i], r[i]);
+                }
             },
             else => @compileError("not a form with three coordinates"),
         }
@@ -1109,8 +1588,10 @@ pub fn modulated(comptime sampling: texture.Sampling, fragments: *const Fragment
 /// and what it may ask for - the levels mixed, several samples along an
 /// axis - is work the fixed path has no room for. How fast the coordinates
 /// change is taken from the quad's own pixels, as a GPU takes it, so a
-/// quad's four samples share a level. A texture not written, in another
-/// format, or with no sampler beside it paints every pixel `missing`.
+/// quad's four samples share a level. A texture not written, or with no
+/// sampler beside it, paints every pixel `missing`; one of another format
+/// than the form says is read all the same, the sampler taking the format
+/// from the texture.
 pub fn texturedBy(
     comptime shadow: bool,
     comptime sampling: texture.Sampling,
@@ -1119,8 +1600,10 @@ pub fn texturedBy(
     sampler: ?*const texture.Sampler,
 ) void {
     const given = picture orelse return fill(fragments, missing);
-    if (given.format != sampling.format) return fill(fragments, missing);
     const with = sampler orelse return fill(fragments, missing);
+    // Everything the form's `sampling` would say - the filter, the edges,
+    // the format - the sampler says instead, or the texture itself.
+    _ = sampling;
     @setRuntimeSafety(false);
     var rows = Rows(if (shadow) 4 else 3).of(fragments);
     for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
@@ -1147,6 +1630,89 @@ pub fn texturedBy(
                 .dv_dy = dv_dy,
                 .reference = reference[i],
             });
+        }
+        out.* = colors;
+    }
+}
+
+/// A texture of layers, a cube map, a 3D texture or an array of cubes
+/// through the sampler bound beside it (`texture.Sampler`, CreateSampler),
+/// at the three coordinates varyings 0, 1 and 2 carry - as `layered` has
+/// them for the forms that sample as they were compiled to. (Since 1.49;
+/// the array of cubes, which takes a fourth coordinate, since 1.53.)
+///
+/// A pixel at a time and by floats, as `texturedBy` is, and with
+/// everything a sampler says: the two levels round the point mixed, a bias
+/// and a clamp on them, mirrored and bordered edges, anisotropy. How fast
+/// the coordinates change is taken from the quad's own pixels, so a quad's
+/// four samples share a level.
+///
+/// A cube's sample is taken inside the face the direction falls on, its
+/// own u and v and their steps the face's: so the sampler's edges are that
+/// face's, and a bilinear sample on a seam mixes the edge's texels rather
+/// than reading over into the next face, which `texture_cube` does. An
+/// array of cubes is sampled the same way, inside the face of the cube
+/// varying 3 names - the nearest there is, as `texture.Texture.cubeNear`
+/// picks it, where `texture_cube_array` reads over that cube's seams. A
+/// texture not written, or with no sampler beside it, paints every pixel
+/// `missing`.
+pub fn layeredBy(
+    comptime kind: FixedKind,
+    fragments: *const Fragments,
+    picture: ?*const texture.Texture,
+    sampler: ?*const texture.Sampler,
+) void {
+    const given = picture orelse return fill(fragments, missing);
+    const with = sampler orelse return fill(fragments, missing);
+    @setRuntimeSafety(false);
+    // A cube of an array takes a fourth coordinate: which cube.
+    const carried = comptime if (kind == .texture_cube_array_sampled) 5 else 4;
+    var rows = Rows(carried).of(fragments);
+    for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
+        const at = rows.at(quad);
+        const w = @as(Pixels, @splat(1)) / at[0];
+        const s: [4]f32 = at[1] * w;
+        const t: [4]f32 = at[2] * w;
+        const r: [4]f32 = at[3] * w;
+        const which: [4]f32 = if (comptime kind == .texture_cube_array_sampled) at[4] * w else @splat(0);
+        // Where the quad's four pixels sample, and the steps between them:
+        // the coordinates themselves for an array or a volume, and the
+        // face's own u and v for a cube, of one or of an array.
+        var us: [4]f32 = s;
+        var vs: [4]f32 = t;
+        var faces: [4]u32 = @splat(0);
+        if (comptime kind == .texture_cube_sampled or kind == .texture_cube_array_sampled) {
+            inline for (0..4) |i| {
+                const hit = texture.cubeHit(s[i], t[i], r[i]);
+                us[i] = hit.u;
+                vs[i] = hit.v;
+                faces[i] = hit.face;
+            }
+        }
+        const du_dx = us[1] - us[0];
+        const du_dy = us[2] - us[0];
+        const dv_dx = vs[1] - vs[0];
+        const dv_dy = vs[2] - vs[0];
+        var colors: [4]u32 = @splat(0);
+        for (&colors, 0..) |*color, i| {
+            if (quad.covered >> @intCast(i) & 1 == 0) continue;
+            const point = texture.Point{
+                .u = us[i],
+                .v = vs[i],
+                .du_dx = du_dx,
+                .dv_dx = dv_dx,
+                .du_dy = du_dy,
+                .dv_dy = dv_dy,
+            };
+            color.* = switch (kind) {
+                .texture_array_sampled => texture.sampleBy(given, with, given.layerNear(r[i]), point),
+                .texture_cube_sampled => texture.sampleBy(given, with, faces[i], point),
+                // That cube's first face, and the face the direction fell
+                // on after it: a cube of an array is six layers.
+                .texture_cube_array_sampled => texture.sampleBy(given, with, given.cubeNear(which[i]) + faces[i], point),
+                .texture_3d_sampled => texture.sampleVolumeBy(given, with, point, r[i]),
+                else => @compileError("not a form of three coordinates that samples through a sampler"),
+            };
         }
         out.* = colors;
     }

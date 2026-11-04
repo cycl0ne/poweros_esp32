@@ -40,11 +40,13 @@ const _query = @import("_query.zig");
 /// asks for a reset before a query is used all the same, and a program that
 /// means to be read elsewhere should do it.
 ///
-/// Which kinds a device has is what it counts with: the occlusion and the
-/// statistics are counted by the rasterizer and the calls round it, so they
-/// are the cores'; a timestamp is the E-clock read as the command is
-/// played, which every device does - where the machine has timer.device, or
-/// there is no clock to read and the kind is refused.
+/// Which kinds a device has is what it counts with: an occlusion query is
+/// counted by the rasterizer on the cores and by the hardware's own counter
+/// on the V3D, which every device has since 1.47; the statistics are the
+/// calls round the rasterizer, so they are the cores' alone; and a
+/// timestamp is the E-clock read as the command is played, which every
+/// device does - where the machine has timer.device, or there is no clock
+/// to read and the kind is refused.
 ///
 /// CONTEXT:
 /// - Waits: no.

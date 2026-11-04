@@ -20,8 +20,9 @@
 //! volume, F - or a double-click on the picture - shows the film over the
 //! whole screen, which F, Esc or a click leaves again.
 //!
-//! **The sound sets the time.** It plays on a process of its own
-//! (sound.zig), which keeps audio.device fed; the window decodes the
+//! **The sound sets the time.** It plays on a process of its own (the
+//! module `filmsound`, which videocodec.datatype plays a film's sound
+//! with too), which keeps audio.device fed; the window decodes the
 //! pictures and shows each when what is heard has come to its time -
 //! audio.device's position, less the output's latency. A picture whose
 //! time is past by more than a frame is given back unshown, up to a few
@@ -51,8 +52,10 @@
 //! itself, under the screen's picture, seen where its place is filled
 //! with the layer's key colour - so a window in front hides the film as
 //! it hides anything. The place follows the window, the canvas in it and
-//! the screen's top edge. Elsewhere - no layer, none free, a frame it
-//! cannot take - the picture is put down by graphics.library:
+//! the screen's top edge. Elsewhere - no layer, none free, a film whose
+//! colours the controller cannot make the screen's out of (one of high
+//! dynamic range, or of ten bits), a frame it cannot take - the picture
+//! is put down by graphics.library:
 //! `WriteYUVPixelArray` when it is shown at its own size,
 //! `ScaleYUVPixelArray` - the nearest pixel - when not. Either way it is
 //! drawn into a canvas gadget, which keeps it - or the key colour - for
@@ -106,7 +109,7 @@ const cv = sdk.gadgets.canvas;
 const strings = @import("strings");
 const Text = sdk.locale.Strings(strings);
 const Id = strings.Id;
-const Sound = @import("sound.zig").Sound;
+const Sound = @import("filmsound").Sound;
 const Whole = @import("whole.zig").Whole;
 const subtitles = @import("subtitles.zig");
 const Subtitles = subtitles.Subtitles;
@@ -149,6 +152,8 @@ const menu_room = 6 + 1 + most_listed + 2 + most_listed + 1;
 
 /// The files the requester shows.
 const open_pattern = "#?.(mp4|m4v|mov|mkv)";
+/// What the sound's process is called, for Top to name it.
+const sound_process = "Movie sound";
 /// How far the keys and the deck's wind buttons move.
 const jump_seconds = 10;
 /// The volume's steps on the keys, and most.
@@ -279,6 +284,10 @@ const App = struct {
     board: ?*rtg.RtgBoard = null,
     layer: ?*rtg.RtgVideoLayer = null,
     layer_place: rtg.RtgRect = .{},
+    /// A layer has been asked for, for this film and this canvas size: one
+    /// refused - the display cannot show such a picture, or has no layer
+    /// free - is not asked for again picture after picture.
+    layer_asked: bool = false,
 
     // --- the window -------------------------------------------------------------
     object: *Object = undefined,
@@ -399,7 +408,7 @@ const App = struct {
         var length: usize = 0;
         while (path[length] != 0 and length < app.name.len) : (length += 1) app.name[length] = path[length];
         app.name[length] = 0;
-        if (app.info.sound_codec != 0) app.sound = Sound.create(app.sys, app.dl, app.vcb, film, &app.info, app.level);
+        if (app.info.sound_codec != 0) app.sound = Sound.create(app.sys, app.dl, app.vcb, film, &app.info, app.level, sound_process);
         app.pictures_ended = false;
         app.fresh = true;
         app.dropped_in_row = 0;
@@ -652,6 +661,7 @@ const App = struct {
         const last = if (app.whole != null) &app.whole_box else &app.canvas_box;
         const box = fit(area, frame.width, frame.height);
         if (box.width() <= 0 or box.height() <= 0) return;
+        app.openLayer(&frame.picture);
         const moved = !same(box, last.*);
         if (moved) {
             app.gb.SetRPAttrs(rp, &[_]TagItem{ pair(graphics.RPTAG_APen, graphics.penRGB(0, 0, 0)), .{} });
@@ -690,11 +700,28 @@ const App = struct {
 
     /// A layer for the film, where the screen's display has one free -
     /// under the screen's picture only: one over it would cover the
-    /// windows in front of the film's.
-    fn openLayer(app: *App) void {
-        if (app.layer != null) return;
+    /// windows in front of the film's. It is asked for the kind of picture
+    /// the film turns out to hand out, so that a display whose controller
+    /// cannot make colours out of it - a film of high dynamic range, or
+    /// one of ten bits - gives none and the film goes down through
+    /// graphics, which maps it into the screen's range.
+    ///
+    /// Asked for when the first picture is in hand, since nothing before
+    /// it says what the film's colours are, and asked for once: the answer
+    /// would not change until the canvas is sized anew or another film is
+    /// opened.
+    fn openLayer(app: *App, picture: *const rtg.RtgYuv) void {
+        if (app.layer != null or app.layer_asked) return;
+        app.layer_asked = true;
         const rb = app.rb orelse return;
-        const layer = rb.OpenVideoLayer(app.board orelse return, null) orelse return;
+        const layer = rb.OpenVideoLayer(app.board orelse return, &[_]TagItem{
+            pair(rtg.RTGVA_Matrix, picture.matrix),
+            pair(rtg.RTGVA_Transfer, picture.transfer),
+            pair(rtg.RTGVA_Primaries, picture.primaries),
+            pair(rtg.RTGVA_Range, picture.range),
+            pair(rtg.RTGVA_Depth, picture.depth),
+            .{},
+        }) orelse return;
         if (layer.flags & rtg.RTGVLF_UNDER == 0) return rb.CloseVideoLayer(layer);
         app.layer = layer;
         app.layer_place = .{};
@@ -785,7 +812,7 @@ const App = struct {
         app.canvas_area = .{ .max_x = @intCast(width), .max_y = @intCast(height) };
         app.canvas_box = .{};
         // A size the layer may take again, if it gave up on the last.
-        if (app.film != null) app.openLayer();
+        app.layer_asked = false;
         const rp = app.rast_port orelse return;
         app.gb.SetRPAttrs(rp, &[_]TagItem{ pair(graphics.RPTAG_APen, graphics.penRGB(0, 0, 0)), .{} });
         app.gb.RectFill(rp, &app.canvas_area);
@@ -1021,7 +1048,7 @@ const App = struct {
         app.sound = null;
         _ = app.vcb.SelectVideoTrack(film, track, at);
         app.vcb.GetVideoStreamInfo(film, &app.info);
-        if (app.info.sound_codec != 0) app.sound = Sound.create(app.sys, app.dl, app.vcb, film, &app.info, app.level);
+        if (app.info.sound_codec != 0) app.sound = Sound.create(app.sys, app.dl, app.vcb, film, &app.info, app.level, sound_process);
         if (app.sound) |sound| sound.start(at, held);
         app.timer_clock = !app.soundKeepsTime();
         app.setClock(at);
@@ -1217,9 +1244,10 @@ const App = struct {
     }
 
     /// The film just opened shown and played from its start, on a layer
-    /// where there is one.
+    /// where the display has one for its pictures - asked for when the
+    /// first of them is in hand.
     fn startFilm(app: *App) void {
-        app.openLayer();
+        app.layer_asked = false;
         app.canvas_box = .{};
         app.whole_box = .{};
         if (app.rast_port) |rp| {

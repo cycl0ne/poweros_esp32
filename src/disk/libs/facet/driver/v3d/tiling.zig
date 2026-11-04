@@ -43,7 +43,7 @@ pub const Level = struct {
 };
 
 pub const Layout = struct {
-    /// Bytes a pixel: 2 or 4.
+    /// Bytes a pixel: 1, 2 or 4.
     pixel: u32,
     count: u32,
     levels: [most_levels]Level,
@@ -54,13 +54,14 @@ pub const Layout = struct {
 /// What a texture's memory has to be aligned to.
 pub const alignment = page_bytes;
 
+/// A microtile is 64 bytes whatever the texel: 8 x 8 of one byte, 8 x 4
+/// of two, 4 x 4 of four (Mesa's `v3d_utile_width`, `v3d_utile_height`).
 fn microtileWidth(pixel: u32) u32 {
-    return if (pixel == 2) 8 else 4;
+    return if (pixel <= 2) 8 else 4;
 }
 
 fn microtileHeight(pixel: u32) u32 {
-    _ = pixel;
-    return 4;
+    return if (pixel == 1) 8 else 4;
 }
 
 fn minify(size: u32, level: u32) u32 {
@@ -181,9 +182,11 @@ pub const sampler_state_bytes = 24;
 pub const texture_state_alignment = 16;
 pub const sampler_state_alignment = 32;
 
+const TEXTURE_R8: u64 = 0;
 const TEXTURE_RGBA8: u64 = 4;
 const TEXTURE_RGB565: u64 = 6;
 
+const SWIZZLE_ZERO: u64 = 0;
 const SWIZZLE_ONE: u64 = 1;
 const SWIZZLE_RED: u64 = 2;
 const SWIZZLE_GREEN: u64 = 3;
@@ -198,9 +201,16 @@ pub const Texels = enum {
     bgra,
     /// 16 bits, red at the top, blue at the bottom.
     rgb565,
+    /// One byte of red, read as (red, 0, 0, 1) - the swizzles say the
+    /// rest (since 1.48).
+    r8,
 
     pub fn bytes(texels: Texels) u32 {
-        return if (texels == .rgb565) 2 else 4;
+        return switch (texels) {
+            .rgba, .bgra => 4,
+            .rgb565 => 2,
+            .r8 => 1,
+        };
     }
 };
 
@@ -210,10 +220,22 @@ pub fn writeTextureState(into: []u8, layout: *const Layout, texels: Texels, addr
     const level_0 = &layout.levels[0];
     const base_address = address + level_0.offset;
     const strict_uif = level_0.kind == .uif or level_0.kind == .uif_xor;
-    const texture_type = if (texels == .rgb565) TEXTURE_RGB565 else TEXTURE_RGBA8;
+    const texture_type = switch (texels) {
+        .rgba, .bgra => TEXTURE_RGBA8,
+        .rgb565 => TEXTURE_RGB565,
+        .r8 => TEXTURE_R8,
+    };
+    // Which channel of the texel each of the four comes out of: a 565
+    // texel has no alpha and an R8 one has red alone, so those read 1 and
+    // 0, as Vulkan reads a format that is short of a channel.
     const red: u64 = if (texels == .bgra) SWIZZLE_BLUE else SWIZZLE_RED;
-    const blue: u64 = if (texels == .bgra) SWIZZLE_RED else SWIZZLE_BLUE;
-    const alpha: u64 = if (texels == .rgb565) SWIZZLE_ONE else SWIZZLE_ALPHA;
+    const green: u64 = if (texels == .r8) SWIZZLE_ZERO else SWIZZLE_GREEN;
+    const blue: u64 = switch (texels) {
+        .bgra => SWIZZLE_RED,
+        .r8 => SWIZZLE_ZERO,
+        .rgba, .rgb565 => SWIZZLE_BLUE,
+    };
+    const alpha: u64 = if (texels == .rgba or texels == .bgra) SWIZZLE_ALPHA else SWIZZLE_ONE;
     // Bits 0 to 63: the address, the distance between arrays' worth, and
     // the width's first 6. That distance starts at bit 33 on this chip, a
     // V3D 7.1.10; on 7.1.2 it starts at 32 (Mesa's v3d_packet.xml).
@@ -225,7 +247,7 @@ pub fn writeTextureState(into: []u8, layout: *const Layout, texels: Texels, addr
         texture_type << (100 - 64) |
         @as(u64, @intFromBool(strict_uif)) << (107 - 64) |
         red << (108 - 64) |
-        SWIZZLE_GREEN << (111 - 64) |
+        green << (111 - 64) |
         blue << (114 - 64) |
         alpha << (117 - 64) |
         @as(u64, last) << (120 - 64) |
@@ -288,10 +310,11 @@ test "the levels are in Mesa's layouts, smallest first" {
 }
 
 test "a level's texels each have a place of their own" {
-    // Sizes in every layout, for both sizes of texel.
+    // Sizes in every layout, for each size of texel - one byte as well
+    // since 1.48, whose microtile is 8 x 8 rather than 8 x 4 or 4 x 4.
     const sizes = [_][2]u32{ .{ 4, 4 }, .{ 8, 8 }, .{ 16, 16 }, .{ 32, 32 }, .{ 64, 64 }, .{ 256, 64 }, .{ 64, 256 }, .{ 128, 128 } };
     var seen: [256 * 256 * 4]bool = undefined;
-    for ([_]u32{ 2, 4 }) |pixel| for (sizes) |size| {
+    for ([_]u32{ 1, 2, 4 }) |pixel| for (sizes) |size| {
         const layout = layoutOf(pixel, size[0], size[1], 1);
         @memset(&seen, false);
         for (0..size[1]) |y| for (0..size[0]) |x| {
@@ -315,6 +338,32 @@ test "the UIF layout is v3d_tiling.c's" {
     try std.testing.expectEqual(@as(u32, 256), texelOffset(&layout, 0, 8, 0));
 }
 
+test "one byte a texel: Mesa's 8 x 8 microtile, and the TMU's R8 with the swizzles of a channel it has not" {
+    // A microtile is 64 bytes whatever the texel, so one of bytes is
+    // 8 x 8: the next byte right is 1 on, the next row 8, the next
+    // microtile right 64 and the one below 128 (two microtiles of a
+    // block, 64 each).
+    const layout = layoutOf(1, 64, 64, 1);
+    try std.testing.expectEqual(@as(u32, 1), texelOffset(&layout, 0, 1, 0));
+    try std.testing.expectEqual(@as(u32, 8), texelOffset(&layout, 0, 0, 1));
+    try std.testing.expectEqual(@as(u32, 64), texelOffset(&layout, 0, 8, 0));
+    try std.testing.expectEqual(@as(u32, 128), texelOffset(&layout, 0, 0, 8));
+    // A level of 64 x 64 bytes takes a quarter of what one of words takes.
+    const words = layoutOf(4, 64, 64, 1);
+    try std.testing.expectEqual(words.bytes - words.levels[0].offset, 4 * (layout.bytes - layout.levels[0].offset));
+
+    var state: [texture_state_bytes]u8 = undefined;
+    writeTextureState(&state, &layout, .r8, 0x20_0000, 0, 0, 1, 0);
+    const second = std.mem.readInt(u64, state[8..16], .little);
+    try std.testing.expectEqual(TEXTURE_R8, second >> (100 - 64) & 0x7F);
+    // Red from the texel, a green and a blue of 0 and a whole alpha: what
+    // Vulkan reads of a one-channel format.
+    try std.testing.expectEqual(SWIZZLE_RED, second >> (108 - 64) & 7);
+    try std.testing.expectEqual(SWIZZLE_ZERO, second >> (111 - 64) & 7);
+    try std.testing.expectEqual(SWIZZLE_ZERO, second >> (114 - 64) & 7);
+    try std.testing.expectEqual(SWIZZLE_ONE, second >> (117 - 64) & 7);
+}
+
 test "the states have their fields where the packet file has them" {
     const layout = layoutOf(4, 64, 32, 1);
     var state: [texture_state_bytes]u8 = undefined;
@@ -328,7 +377,9 @@ test "the states have their fields where the packet file has them" {
     try std.testing.expectEqual(@as(u64, 1), second >> (86 - 64) & 0x3FFF);
     try std.testing.expectEqual(TEXTURE_RGBA8, second >> (100 - 64) & 0x7F);
     try std.testing.expectEqual(SWIZZLE_BLUE, second >> (108 - 64) & 7);
+    try std.testing.expectEqual(SWIZZLE_GREEN, second >> (111 - 64) & 7);
     try std.testing.expectEqual(SWIZZLE_RED, second >> (114 - 64) & 7);
+    try std.testing.expectEqual(SWIZZLE_ALPHA, second >> (117 - 64) & 7);
     var sampler: [sampler_state_bytes]u8 = undefined;
     writeSamplerState(&sampler, .nearest, .clamp);
     const bits = std.mem.readInt(u64, sampler[0..8], .little);

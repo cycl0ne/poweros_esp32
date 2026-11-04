@@ -90,8 +90,14 @@ pub fn UpdateDescriptorSets(base: *FacetBase, device: *facet.Device, write_count
             const found = _descriptor.slotAt(set, write.dst_binding, write.dst_array_element + @as(u32, @intCast(k))) orelse break;
             if (found.kind != write.descriptor_type) continue;
             // Which of the set's offsets shifts the slot is the set's own
-            // doing, not the write's: it stays as the set was made.
+            // doing, not the write's: it stays as the set was made. So
+            // does a sampler the set layout holds (since 1.49): a write of
+            // a combined image sampler takes its image and leaves that
+            // sampler, and a write of a sampler alone changes nothing.
             const dynamic = found.slot.dynamic;
+            const fixed = found.slot.fixed_sampler;
+            const held = found.slot.sampler;
+            if (fixed and write.descriptor_type == .sampler) continue;
             found.slot.* = switch (write.descriptor_type) {
                 .input_attachment => attachment: {
                     const info = (write.image_info orelse break)[k];
@@ -113,9 +119,11 @@ pub fn UpdateDescriptorSets(base: *FacetBase, device: *facet.Device, write_count
                     };
                     if (write.descriptor_type == .sampler) break :sampled .{ .sampler = with };
                     const view = _objects.of(ImageView, info.image_view orelse break :sampled .{ .sampler = with });
-                    // A texture, or a depth attachment sampled where it
-                    // lies (`_image.sampledDepth`, since 1.39).
-                    const kept = view.image.kind == .texture or _image.sampledDepth(view.image);
+                    // A texture, a depth attachment sampled where it
+                    // lies (`_image.sampledDepth`, since 1.39), or an
+                    // attachment written through as a storage image, whose
+                    // rows are the texture (`writtenRows`, since 1.56).
+                    const kept = view.image.kind == .texture or _image.sampledDepth(view.image) or _image.writtenRows(view.image);
                     if (!kept or view.image.data == null) break :sampled .{ .sampler = with };
                     // A storage image is written through, so the image has
                     // to have been made for it; one that was not is left
@@ -145,6 +153,10 @@ pub fn UpdateDescriptorSets(base: *FacetBase, device: *facet.Device, write_count
                 },
             };
             found.slot.dynamic = dynamic;
+            if (fixed) {
+                found.slot.sampler = held;
+                found.slot.fixed_sampler = true;
+            }
         }
     };
     if (copies) |given| for (given[0..copy_count]) |copy| {
@@ -156,8 +168,14 @@ pub fn UpdateDescriptorSets(base: *FacetBase, device: *facet.Device, write_count
             const target = _descriptor.slotAt(into, copy.dst_binding, copy.dst_array_element + step) orelse break;
             if (source.kind != target.kind) continue;
             const dynamic = target.slot.dynamic;
+            const fixed = target.slot.fixed_sampler;
+            const held = target.slot.sampler;
             target.slot.* = source.slot.*;
             target.slot.dynamic = dynamic;
+            if (fixed) {
+                target.slot.sampler = held;
+                target.slot.fixed_sampler = true;
+            }
         }
     };
 }

@@ -37,6 +37,15 @@ const Image = @import("../image/_image.zig").Image;
 /// copied as it is. What lies outside the level, or past the end of the
 /// buffer, is left out. A depth attachment takes nothing.
 ///
+/// An image of a compressed format kept in its blocks
+/// (`PhysicalDeviceFeatures.kept_compressed`, since 1.44) takes them as
+/// they lie, nothing decoded: the buffer holds a row of blocks every
+/// `buffer_row_length` texels, as Vulkan counts them, and the offsets are
+/// on a multiple of 4 or the region is left out. One that is unpacked
+/// instead takes the texels decoded. A float image kept as its floats
+/// (`kept_floats`, since 1.45) takes them as they lie too, a texel at a
+/// time; one that is unpacked takes them rounded to 8 bits a channel.
+///
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no.

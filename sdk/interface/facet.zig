@@ -143,6 +143,7 @@ pub const LVO = struct {
     pub const GetRenderAreaGranularity = libraries.lvo(126);
     pub const GetDeviceMemoryCommitment = libraries.lvo(127);
     pub const CmdSetDepthBounds = libraries.lvo(128);
+    pub const CmdSetBlendConstantsAt = libraries.lvo(129);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -273,6 +274,7 @@ pub const Fn = struct {
     pub const GetRenderAreaGranularity = *const fn (*FacetBase, *facet.Device, *facet.RenderPass, *facet.Extent2D) callconv(.c) void;
     pub const GetDeviceMemoryCommitment = *const fn (*FacetBase, *facet.Device, *facet.DeviceMemory, *u64) callconv(.c) void;
     pub const CmdSetDepthBounds = *const fn (*FacetBase, *facet.CommandBuffer, f32, f32) callconv(.c) void;
+    pub const CmdSetBlendConstantsAt = *const fn (*FacetBase, *facet.CommandBuffer, u32, *const [4]f32) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -924,5 +926,11 @@ pub const FacetBase = opaque {
     /// The depths a pixel's stored depth has to lie between to be drawn.
     pub fn CmdSetDepthBounds(self: *FacetBase, buffer: *facet.CommandBuffer, min: f32, max: f32) void {
         return libraries.call(self, LVO.CmdSetDepthBounds, Fn.CmdSetDepthBounds, .{ buffer, min, max });
+    }
+
+    /// One colour attachment's own blend constants, where Vulkan has the one
+    /// set a pipeline shares between them.
+    pub fn CmdSetBlendConstantsAt(self: *FacetBase, buffer: *facet.CommandBuffer, attachment: u32, constants: *const [4]f32) void {
+        return libraries.call(self, LVO.CmdSetBlendConstantsAt, Fn.CmdSetBlendConstantsAt, .{ buffer, attachment, constants });
     }
 };

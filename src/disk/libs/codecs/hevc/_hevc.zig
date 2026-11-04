@@ -80,6 +80,17 @@ const MC_SMPTE_240 = 7;
 const MC_BT_2020_NCL = 9;
 const MC_BT_2020_CL = 10;
 
+/// The VUI's transfer characteristics (table E.4), the two that are not a
+/// television's curve: high dynamic range, which a screen has to be
+/// mapped to rather than shown as it is.
+const TR_PQ = 16;
+const TR_HLG = 18;
+
+/// The VUI's colour primaries (table E.3), those that are not BT.709's.
+const CP_BT_2020 = 9;
+const CP_P3_DCI = 11;
+const CP_P3_D65 = 12;
+
 /// `planes_memory` where it has room for `bytes`, any memory otherwise:
 /// asked for only where there is room, since a request that fails runs
 /// the low-memory handlers.
@@ -303,39 +314,47 @@ pub fn FlushVCodec(_: *Base, decoder: *vcodec.VCodecDecoder) void {
     m.ended = false;
 }
 
-/// The picture `s` copied into `slot`'s planes, as I420 in 8 bits, and
-/// lent in `frame`: as its own sequence said, which is not the active
-/// one for a picture of the sequence before.
+/// The picture `s` copied into `slot`'s planes, as I420 at eight bits or
+/// ten, and lent in `frame`: as its own sequence said, which is not the
+/// active one for a picture of the sequence before.
+///
+/// A picture of more than eight bits is handed over at ten rather than
+/// cut down to eight: a film of high dynamic range is mapped into the
+/// screen's range when it is drawn, which stretches the dark half of it,
+/// and eight bits of that show as bands in a sky.
 fn copyOut(m: *Decoder, s: *const hevc.Store, frame: *vc.VideoFrame, slot: u32) i32 {
     const f = s.format;
     const width = f.width;
     const height = f.height;
     const half_width = (width + 1) / 2;
     const half_height = (height + 1) / 2;
-    const y_pitch = aligned(width);
-    const c_pitch = aligned(half_width);
+    const wide = f.wide();
+    // The identity matrix comes with colour at full size alone, and is
+    // made the screen's colours here, in bytes.
+    const rgb = f.matrix == MC_IDENTITY and f.chroma_format == 3;
+    const deep = wide and !rgb;
+    const unit: u32 = if (deep) 2 else 1;
+    const y_pitch = aligned(width) * unit;
+    const c_pitch = aligned(half_width) * unit;
     const luma: usize = @as(usize, y_pitch) * height;
     const chroma: usize = @as(usize, c_pitch) * half_height;
     const planes = &m.planes[slot];
     if (!make(m.sys, planes, luma + 2 * chroma, width, height)) return vc.VCERR_NOMEMORY;
     const into = [3][*]u8{ planes.start, planes.start + luma, planes.start + luma + chroma };
     const pitch = [3]u32{ y_pitch, c_pitch, c_pitch };
-    const wide = f.wide();
 
-    // The identity matrix comes with colour at full size alone.
-    const rgb = f.matrix == MC_IDENTITY and f.chroma_format == 3;
     if (rgb) {
         if (wide) fromRgb(u16, s, into, pitch) else fromRgb(u8, s, into, pitch);
     } else {
-        const source: Source = .{ .s = s, .wide = wide, .x0 = f.x, .y0 = f.y };
+        const source: Source = .{ .s = s, .wide = wide, .deep = deep, .x0 = f.x, .y0 = f.y };
         source.copy(m.sys, 0, into[0], y_pitch, width, height, 1, 1, f.depth_y);
         switch (f.chroma_format) {
             // A grey picture's colour: the middle.
-            0 => m.sys.SetMem(into[1], 128, 2 * chroma),
+            0 => grey(m.sys, into[1], 2 * chroma, deep),
             else => |format| {
                 const across: u32 = if (format == 3) 2 else 1;
                 const down: u32 = if (format == 1) 1 else 2;
-                const half: Source = .{ .s = s, .wide = wide, .x0 = f.x * across / 2, .y0 = f.y * down / 2 };
+                const half: Source = .{ .s = s, .wide = wide, .deep = deep, .x0 = f.x * across / 2, .y0 = f.y * down / 2 };
                 half.copy(m.sys, 1, into[1], c_pitch, half_width, half_height, across, down, f.depth_c);
                 half.copy(m.sys, 2, into[2], c_pitch, half_width, half_height, across, down, f.depth_c);
             },
@@ -343,12 +362,25 @@ fn copyOut(m: *Decoder, s: *const hevc.Store, frame: *vc.VideoFrame, slot: u32) 
     }
     if (planes_memory & exec.MEMF_DMA != 0) m.sys.CacheClearE(planes.start, @intCast(planes.size), exec.CACRF_ClearD);
 
-    var colors: u8 = switch (f.matrix) {
+    const matrix: u8 = switch (f.matrix) {
         MC_FCC, MC_BT_470_B_G, MC_BT_601 => rtg.RTGYUV_BT601,
-        MC_IDENTITY, MC_BT_709, MC_SMPTE_240, MC_BT_2020_NCL, MC_BT_2020_CL => rtg.RTGYUV_BT709,
+        MC_IDENTITY, MC_BT_709, MC_SMPTE_240 => rtg.RTGYUV_BT709,
+        MC_BT_2020_NCL, MC_BT_2020_CL => rtg.RTGYUV_BT2020,
         else => if (height >= 720) rtg.RTGYUV_BT709 else rtg.RTGYUV_BT601,
     };
-    if (f.full_range or rgb) colors |= rtg.RTGYUV_FULL;
+    const range: u8 = if (f.full_range or rgb) rtg.RTGYUV_FULL else rtg.RTGYUV_LIMITED;
+    // An RGB picture is already the screen's colours; the curves are for
+    // what a film carries.
+    const transfer: u8 = if (rgb) rtg.RTGYUV_SDR else switch (f.transfer) {
+        TR_PQ => rtg.RTGYUV_PQ,
+        TR_HLG => rtg.RTGYUV_HLG,
+        else => rtg.RTGYUV_SDR,
+    };
+    const primaries: u8 = if (rgb) rtg.RTGYUV_BT709 else switch (f.primaries) {
+        CP_BT_2020 => rtg.RTGYUV_BT2020,
+        CP_P3_D65, CP_P3_DCI => rtg.RTGYUV_P3,
+        else => rtg.RTGYUV_BT709,
+    };
     frame.* = .{
         .picture = .{
             .y = into[0],
@@ -357,7 +389,12 @@ fn copyOut(m: *Decoder, s: *const hevc.Store, frame: *vc.VideoFrame, slot: u32) 
             .y_pitch = y_pitch,
             .c_pitch = c_pitch,
             .layout = rtg.RTGYUV_I420,
-            .colors = colors,
+            .matrix = matrix,
+            .transfer = transfer,
+            .primaries = primaries,
+            .range = range,
+            .depth = if (deep) 10 else 8,
+            .peak = f.peak_nits,
         },
         .width = width,
         .height = height,
@@ -370,14 +407,17 @@ fn copyOut(m: *Decoder, s: *const hevc.Store, frame: *vc.VideoFrame, slot: u32) 
 const Source = struct {
     s: *const hevc.Store,
     wide: bool,
+    /// The samples go out as words of ten bits rather than bytes of
+    /// eight.
+    deep: bool,
     x0: u32,
     y0: u32,
 
     /// `width` by `height` samples of plane `p` into `into`, its rows
-    /// `pitch` apart: each the average of `across` by `down` of the
-    /// plane's, rounded to 8 bits from `depth`. Where a block of them
-    /// runs past the plane's edge - an odd size shown - the plane's last
-    /// row or column is taken again.
+    /// `pitch` bytes apart: each the average of `across` by `down` of the
+    /// plane's, brought from `depth` bits to the eight or ten the frame
+    /// carries. Where a block of them runs past the plane's edge - an odd
+    /// size shown - the plane's last row or column is taken again.
     fn copy(src: Source, sys: *ExecBase, p: usize, into: [*]u8, pitch: u32, width: u32, height: u32, across: u32, down: u32, depth: u5) void {
         const s = src.s;
         const stride = s.stride[p];
@@ -389,14 +429,24 @@ const Source = struct {
             }
             return;
         }
-        const shift: u5 = @intCast(depth - 8 + @as(u5, @intCast((across * down) >> 1)));
+        const bits: u5 = if (src.deep) 10 else 8;
+        const up: u5 = if (depth < bits) bits - depth else 0;
+        const shift: u5 = (if (depth > bits) depth - bits else 0) + @as(u5, @intCast((across * down) >> 1));
+        const most: u32 = (@as(u32, 1) << bits) - 1;
         if (src.wide) {
             const samples: [*]const u16 = @ptrCast(@alignCast(s.planes[p]));
-            src.average(u16, samples, p, into, pitch, width, height, across, down, shift);
-        } else src.average(u8, s.planes[p], p, into, pitch, width, height, across, down, shift);
+            if (src.deep)
+                src.average(u16, u16, samples, p, into, pitch, width, height, across, down, up, shift, most)
+            else
+                src.average(u16, u8, samples, p, into, pitch, width, height, across, down, up, shift, most);
+        } else if (src.deep) {
+            src.average(u8, u16, s.planes[p], p, into, pitch, width, height, across, down, up, shift, most);
+        } else {
+            src.average(u8, u8, s.planes[p], p, into, pitch, width, height, across, down, up, shift, most);
+        }
     }
 
-    fn average(src: Source, comptime T: type, samples: [*]const T, p: usize, into: [*]u8, pitch: u32, width: u32, height: u32, across: u32, down: u32, shift: u5) void {
+    fn average(src: Source, comptime T: type, comptime O: type, samples: [*]const T, p: usize, into: [*]u8, pitch: u32, width: u32, height: u32, across: u32, down: u32, up: u5, shift: u5, most: u32) void {
         const s = src.s;
         const stride = s.stride[p];
         const last_x = s.width[p] - 1;
@@ -406,23 +456,31 @@ const Source = struct {
             const y = src.y0 + @as(u32, @intCast(r)) * down;
             const row0 = samples + y * stride;
             const row1 = samples + @min(y + down - 1, last_y) * stride;
-            const out = into + r * pitch;
+            const out: [*]O = @ptrCast(@alignCast(into + r * pitch));
             if (across == 1) {
                 for (0..width) |c| {
                     const sum = @as(u32, row0[src.x0 + c]) + if (down == 2) @as(u32, row1[src.x0 + c]) else 0;
-                    out[c] = @intCast(@min((sum + round) >> shift, 255));
+                    out[c] = @intCast(@min(((sum << up) + round) >> shift, most));
                 }
             } else {
                 for (0..width) |c| {
                     const x = src.x0 + @as(u32, @intCast(c)) * 2;
                     const x1 = @min(x + 1, last_x);
                     const sum = @as(u32, row0[x]) + row0[x1] + row1[x] + row1[x1];
-                    out[c] = @intCast(@min((sum + round) >> shift, 255));
+                    out[c] = @intCast(@min(((sum << up) + round) >> shift, most));
                 }
             }
         }
     }
 };
+
+/// A grey picture's chroma planes: the middle of the range, which is a
+/// byte of 128 or a word of 512.
+fn grey(sys: *ExecBase, into: [*]u8, bytes: usize, deep: bool) void {
+    if (!deep) return sys.SetMem(into, 128, bytes);
+    const words: [*]u16 = @ptrCast(@alignCast(into));
+    for (0..bytes / 2) |i| words[i] = 512;
+}
 
 /// An RGB picture - green, blue and red, each at full size - made YUV by
 /// BT.709's matrix, the whole byte; each colour sample of four pixels'

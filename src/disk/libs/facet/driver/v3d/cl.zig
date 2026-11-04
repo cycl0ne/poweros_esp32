@@ -52,8 +52,16 @@ const TILE_RENDERING_MODE_CFG: u8 = 121;
 
 pub const OUTPUT_RGBA8: u64 = 27;
 pub const OUTPUT_BGR565: u64 = 7;
+/// How a depth or a stencil plane lies in memory, for a store or a load of
+/// the tiles' own (since 1.47).
+pub const OUTPUT_D16: u64 = 42;
+pub const OUTPUT_S8: u64 = 44;
 pub const STORE_NONE: u64 = 8;
 pub const STORE_RENDER_TARGET_0: u64 = 0;
+/// The tiles' depth and their stencil, which are stored and loaded as the
+/// render target is.
+pub const STORE_Z: u64 = 9;
+pub const STORE_STENCIL: u64 = 10;
 pub const LIST_TRIANGLES: u8 = 2;
 /// The first block of each tile's list and the next ones, as 128 and 64
 /// bytes: what the binner is told and the renderer too.
@@ -132,10 +140,11 @@ pub fn store(list: *List, buffer: u64, format: u64, swap_rb: bool, address: u32,
     list.word(address);
 }
 
-/// The render target loaded from an image in rows of pixels.
-pub fn load(list: *List, format: u64, swap_rb: bool, address: u32, stride: u32) void {
+/// A buffer of the tiles loaded from an image in rows of pixels: the
+/// render target, or the depth or the stencil.
+pub fn load(list: *List, buffer: u64, format: u64, swap_rb: bool, address: u32, stride: u32) void {
     list.byte(30);
-    list.double(STORE_RENDER_TARGET_0 | format << 12 | @as(u64, @intFromBool(swap_rb)) << 20 | @as(u64, stride) << 28);
+    list.double(buffer | format << 12 | @as(u64, @intFromBool(swap_rb)) << 20 | @as(u64, stride) << 28);
     list.word(address);
 }
 
@@ -169,10 +178,18 @@ pub fn binningMode(list: *List, width: u32, height: u32, tile: u32) void {
         log2 << 8 | log2 << 11 | @as(u64, width - 1) << 32 | @as(u64, height - 1) << 48);
 }
 
+/// Where the hardware counts the samples that passed the tests and the
+/// fragment program kept: a word of its own, which it adds to as the tiles
+/// are drawn. Zero stops the counting, so that what another job left is not
+/// gone on with (since 1.47).
+pub fn occlusionQuery(list: *List, address: u32) void {
+    list.byte(92);
+    list.word(address);
+}
+
 /// No occlusion query: what another job left is not to go on counting.
 pub fn occlusionQueryOff(list: *List) void {
-    list.byte(92);
-    list.word(0);
+    occlusionQuery(list, 0);
 }
 
 pub fn clipWindow(list: *List, left: u32, bottom: u32, width: u32, height: u32) void {
@@ -181,6 +198,7 @@ pub fn clipWindow(list: *List, left: u32, bottom: u32, width: u32, height: u32) 
 }
 
 pub const COMPARE_ALWAYS: u32 = 7;
+const Z_CLIP_NONE: u32 = 0;
 const Z_CLIP_ZERO_TO_ONE: u32 = 2;
 
 pub const Cfg = struct {
@@ -193,21 +211,61 @@ pub const Cfg = struct {
     depth_write: bool = false,
     stencil: bool = false,
     blend: bool = false,
+    /// Whether a triangle moves its depth by what `depthOffset` said
+    /// (since 1.47).
+    biased: bool = false,
+    /// Whether a pixel is drawn only where the depth already in the tile
+    /// lies between what `depthBounds` said.
+    bounded: bool = false,
+    /// Whether what lies past the near plane is drawn all the same, its
+    /// depth held inside the range `clipperZLimits` gave: clamping is also
+    /// not clipping, so the clip to the z planes goes off with it, as
+    /// Vulkan has a depth clamp.
+    clamped: bool = false,
 };
 
 pub fn cfgBits(list: *List, cfg: Cfg) void {
     const value: u32 = @as(u32, @intFromBool(cfg.forward)) |
         @as(u32, @intFromBool(cfg.reverse)) << 1 |
         @as(u32, @intFromBool(cfg.clockwise)) << 2 |
+        @as(u32, @intFromBool(cfg.biased)) << 3 |
+        @as(u32, @intFromBool(cfg.bounded)) << 5 |
+        @as(u32, @intFromBool(cfg.clamped)) << 10 |
         cfg.compare << 12 |
         @as(u32, @intFromBool(cfg.depth_write)) << 15 |
         @as(u32, @intFromBool(cfg.stencil)) << 18 |
         @as(u32, @intFromBool(cfg.blend)) << 19 |
-        Z_CLIP_ZERO_TO_ONE << 22;
+        (if (cfg.clamped) Z_CLIP_NONE else Z_CLIP_ZERO_TO_ONE) << 22;
     list.byte(96);
     list.byte(@truncate(value));
     list.byte(@truncate(value >> 8));
     list.byte(@truncate(value >> 16));
+}
+
+/// What a triangle adds to its depth where `Cfg.biased` says: `units` of
+/// the depth buffer's smallest difference and `factor` of the triangle's
+/// steepest slope, as Vulkan's constant factor and slope factor, each held
+/// inside `limit` where that is not 0. The two are `f187`, the top 16 bits
+/// of a float; the limit is a float. (Since 1.47.)
+pub fn depthOffset(list: *List, factor: f32, units: f32, limit: f32) void {
+    list.byte(106);
+    list.word(f187(factor) | f187(units) << 16);
+    list.word(@bitCast(limit));
+}
+
+/// A float's top 16 bits: one of eight bits of exponent and seven of
+/// mantissa, which is how the hardware takes a small number (Mesa's
+/// `f187`).
+fn f187(value: f32) u32 {
+    return @as(u32, @bitCast(value)) >> 16;
+}
+
+/// The depth a pixel's own must lie between to be drawn, where
+/// `Cfg.bounded` says. (Since 1.47.)
+pub fn depthBounds(list: *List, least: f32, most: f32) void {
+    list.byte(93);
+    list.word(@bitCast(least));
+    list.word(@bitCast(most));
 }
 
 /// How render target 0 is written: factors and modes as facet.library

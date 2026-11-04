@@ -33,12 +33,27 @@ const PhysicalDevice = @import("_instance.zig").PhysicalDevice;
 ///   sampled, filtered, in optimal tiling; copied.
 /// - D16_UNORM: a depth attachment, in optimal tiling.
 /// - R32_SFLOAT to R32G32B32A32_SFLOAT: a vertex's value.
+/// - R8_UNORM: sampled, filtered, written through as a storage image, in
+///   optimal tiling, and copied both ways. One byte a texel, read as
+///   (red, 0, 0, 1) (`PhysicalDeviceFeatures.small_texels`, since 1.48);
+///   never an attachment and never a buffer's.
 /// - BC1, BC2, BC3, R16G16B16A16_SFLOAT, R32G32B32A32_SFLOAT,
 ///   B10G11R11_UFLOAT and E5B9G9R9_UFLOAT: sampled, filtered, in optimal
-///   tiling, and copied into. They are kept as 8 bits a channel, floats cut to
-///   0 to 1: they save no memory and hold no more than B8G8R8A8.
+///   tiling, and copied into. A device that samples such a texel where it
+///   lies keeps it as it was copied in and is copied out of as well
+///   (`kept_compressed` since 1.44, `kept_floats` since 1.45, and
+///   TRANSFER_SRC here says which); one that does not keeps it as 8 bits a
+///   channel, floats cut to 0 to 1, taking B8G8R8A8's memory and holding
+///   no more than it.
+/// - ETC2 and EAC - ETC2_R8G8B8, ETC2_R8G8B8A1, ETC2_R8G8B8A8, EAC_R11 and
+///   EAC_R11G11: sampled, filtered, in optimal tiling, and copied into.
+///   No sampler of this library reads such a block, so they are always
+///   unpacked to 8 bits a channel and never copied out of (since 1.46).
 ///
-/// An image to be sampled may have sides of any size (since 1.42).
+/// An image to be sampled may have sides of any size (since 1.42). One of
+/// B8G8R8A8 or R8G8B8A8 may keep its texel in the 32 bits of its word
+/// rather than spread over 64 (IMAGE_CREATE_PACKED_TEXELS, since 1.48);
+/// the format's features are the same either way.
 ///
 /// CONTEXT:
 /// - Waits: no.

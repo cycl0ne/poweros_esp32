@@ -1,8 +1,8 @@
 # MultiView
 
-MultiView shows a file in a window: a picture, an animation, a sound, a
-text, a Markdown document like this one, a model - whatever kind of file
-the system knows.
+MultiView shows a file in a window: a picture, an animation, a film, a
+sound, a text, a Markdown document like this one, a model - whatever
+kind of file the system knows.
 
 ## Starting it
 
@@ -31,6 +31,12 @@ MultiView [FILE] [CLIP/K/N] [SCALE/S] [PUBSCREEN/K]
   wheel takes it nearer or further.
 - Space pauses what is shown, or goes on with it, when it is something
   that can be: a model turns by itself until Space is pressed again.
+- A film plays with its sound as soon as its window opens, keeps its
+  shape in whatever size the window is given, and pauses on a click or
+  on Space. `SYS:Programs/Movie` is the better place to watch one: it
+  has a tape deck, a slider, the volume, the whole screen and the
+  subtitles, and it hands the picture to the display itself where the
+  machine has a video layer for it.
 - A Markdown document is laid out as GitHub shows one - headings over
   rules, lists under their marks, tables, quotes, code on a ground of
   its own - in the fonts the Fonts page of Prefs gives documents.

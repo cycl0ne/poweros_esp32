@@ -30,6 +30,16 @@
 //! texels of a sample read ready to mix - spreading them as they are read
 //! is a fifth of what a pixel costs on the U74.
 //!
+//! **Two formats keep a texel smaller than the colour it reads as** (since
+//! 1.48): `Format.argb8888`, the same 0xAARRGGBB in the 32 bits of one
+//! word, spread as it is read; and `Format.r8`, one byte of red, read as
+//! (red, 0, 0, 1) the way Vulkan reads R8_UNORM. Half the memory of
+//! `rgba8888` and an eighth of it, for a spread a sample does itself - the
+//! trade the other way round from the one above, and the one to make where
+//! a texture is big enough to miss the cache. A level of `r8` is kept in
+//! blocks of 4 x 4 bytes all the same, so its rows lie as every other
+//! format's do.
+//!
 //! A pipeline samples one at a time, and its format, its filter and what
 //! it does past the edges are the pipeline's, fixed at compile time
 //! (`Sampling`): the sample is built for them. Coordinates are 0 to 1
@@ -54,9 +64,19 @@
 //! sampled out of it with nothing copied. Such a texture carries the bytes
 //! from one row to the next (`Texture.pitch`), has one level, and is
 //! sampled by `sampleBy` alone: the fixed forms' fast path is built for
-//! blocks and samples it as `shader.missing`. A shadow sample compares the
-//! depth at all 16 bits (`valueOf`); a sample of the colour reads the
-//! depth as a grey, its top 8 bits.
+//! blocks, so a form handed one reads it through the run-time sampler
+//! instead. A shadow sample compares the depth at all 16 bits (`valueOf`);
+//! a sample of the colour reads the depth as a grey, its top 8 bits.
+//!
+//! **A compressed texture is kept in its blocks** (`Format.bc1`, `bc1_rgb`,
+//! `bc2`, `bc3`, since 1.44): 8 bytes to a block of 4 x 4 texels for BC1
+//! and 16 for the others, where the same texels unpacked take 128, and a
+//! sample decodes the block it reads (`blockOf`) - once for the four texels
+//! a bilinear filter mixes, where they share a block. The decoding is some
+//! twenty cycles a block against a load, which is the trade: a quarter to
+//! an eighth of the memory and of the cache it fills. Nothing writes a
+//! texel of one (`putLayer` leaves it be): the blocks are copied in whole
+//! (`putBlock`).
 
 const std = @import("std");
 
@@ -64,23 +84,139 @@ const std = @import("std");
 pub const Format = enum {
     /// 32 bits, 0xAARRGGBB; kept spread, in 64.
     rgba8888,
+    /// The same 0xAARRGGBB in 32 bits, one word a texel: half the memory
+    /// `rgba8888` takes, for the spread a sample does as it reads each of
+    /// its four texels. An image asks to be kept this way with
+    /// IMAGE_CREATE_PACKED_TEXELS (`PhysicalDeviceFeatures.small_texels`,
+    /// since 1.48). (Since 1.48.)
+    argb8888,
     /// 16 bits, red in the top 5, green in the middle 6, blue in the low 5.
     rgb565,
+    /// One byte of red a texel: Vulkan's R8_UNORM, read as (red, 0, 0, 1)
+    /// - 0xFF0000RR as a colour, the green and the blue 0 and the alpha
+    /// whole, as Vulkan reads a one-channel format. An eighth of the
+    /// memory of the same texels kept as `rgba8888`, which is what a mask,
+    /// a height field or a lightmap of one channel costs there
+    /// (`PhysicalDeviceFeatures.small_texels`). (Since 1.48.)
+    r8,
     /// 16 bits of depth, 0 nearest, as a depth attachment holds one: a
     /// texture of this is kept in rows (`Texture.pitch`) and sampled by
     /// `sampleBy` alone.
     d16,
+    /// BC1 as it lies: a block of 4 x 4 texels in 8 bytes, two endpoint
+    /// colours of 565 and two bits a texel. Where the first endpoint is
+    /// not above the second, the third colour is the two mixed evenly and
+    /// the fourth is clear - DXT1's punch-through alpha. (Since 1.44.)
+    bc1,
+    /// The same, read as wholly opaque: Vulkan's BC1_RGB, whose alpha is
+    /// 1 whatever the block says. (Since 1.44.)
+    bc1_rgb,
+    /// BC2: 16 bytes a block, four bits of alpha a texel and then BC1's
+    /// colours, always the four of them. (Since 1.44.)
+    bc2,
+    /// BC3: 16 bytes a block, two endpoint alphas with three bits a texel
+    /// between them, and then BC1's colours. (Since 1.44.)
+    bc3,
+    /// Four half floats a texel, red first: Vulkan's R16G16B16A16_SFLOAT as
+    /// it lies, 8 bytes. A sample reads it as 0xAARRGGBB, each channel held
+    /// between 0 and 1 and rounded to 8 bits, the tiles having no more.
+    /// (Since 1.45.)
+    rgba16f,
+    /// Four floats a texel, 16 bytes: R32G32B32A32_SFLOAT. (Since 1.45.)
+    rgba32f,
+    /// B10G11R11_UFLOAT_PACK32: one word a texel, no sign and no alpha -
+    /// 11 bits of red and of green, 10 of blue. (Since 1.45.)
+    rg11b10f,
+    /// E5B9G9R9_UFLOAT_PACK32: one word, three mantissas of 9 bits over one
+    /// exponent of 5 they share. (Since 1.45.)
+    rgb9e5,
+    /// One float a texel, 4 bytes: Vulkan's R32_SFLOAT, read as
+    /// (red, 0, 0, 1) the way `r8` is, the float held between 0 and 1 and
+    /// rounded to 8 bits for a sample. What a height field, a mask or an
+    /// accumulation buffer a function writes is kept in
+    /// (`Texture.setParts`, `partsAt`). (Since 1.57.)
+    r32f,
 
-    /// The bytes a texel is kept in.
+    /// The bytes a texel is kept in; 0 for a compressed format, whose
+    /// texels have no size of their own (`blockLog2`).
     pub fn bytes(format: Format) u32 {
+        if (format.compressed()) return 0;
         return @as(u32, 1) << format.shift();
     }
 
-    /// The same, as a power of two.
+    /// The same, as a power of two. Nothing for a compressed format: the
+    /// block is what is addressed there.
     pub fn shift(format: Format) u5 {
         return switch (format) {
-            .rgba8888 => 3,
+            .rgba8888, .rgba16f => 3,
+            .rgba32f => 4,
+            .argb8888, .rg11b10f, .rgb9e5, .r32f => 2,
             .rgb565, .d16 => 1,
+            .r8, .bc1, .bc1_rgb, .bc2, .bc3 => 0,
+        };
+    }
+
+    /// The bytes a block of 4 x 4 texels takes, as a power of two: what one
+    /// level's row of blocks counts in, whether the texels lie in it one by
+    /// one or compressed together.
+    pub fn blockLog2(format: Format) u5 {
+        return switch (format) {
+            // 16 texels of 8 bytes, and of 2.
+            .rgba8888, .rgba16f => 7,
+            .rgba32f => 8,
+            .argb8888, .rg11b10f, .rgb9e5, .r32f => 6,
+            .rgb565, .d16 => 5,
+            // 16 texels of one byte, and the blocks of 8 and of 16.
+            .r8, .bc2, .bc3 => 4,
+            .bc1, .bc1_rgb => 3,
+        };
+    }
+
+    /// The bytes a block takes.
+    pub fn blockBytes(format: Format) u32 {
+        return @as(u32, 1) << format.blockLog2();
+    }
+
+    /// Whether the texels of a block lie compressed together, so that a
+    /// sample decodes the block rather than reading a texel
+    /// (`blockOf`). (Since 1.44.)
+    pub fn compressed(format: Format) bool {
+        return switch (format) {
+            .bc1, .bc1_rgb, .bc2, .bc3 => true,
+            .rgba8888, .argb8888, .rgb565, .r8, .d16, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => false,
+        };
+    }
+
+    /// Whether a texel holds floats, which a sample reads and rounds to 8
+    /// bits a channel (`floatTexel`): the texel is kept as it was copied
+    /// in, so nothing of it is lost on the way out again. A function
+    /// writes one by floats as well since 1.57 (`setParts`), where
+    /// `putLayer`'s one word of a texel would have nothing to say.
+    /// (Since 1.45.)
+    pub fn floats(format: Format) bool {
+        return switch (format) {
+            .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => true,
+            .rgba8888, .argb8888, .rgb565, .r8, .d16, .bc1, .bc1_rgb, .bc2, .bc3 => false,
+        };
+    }
+
+    /// Whether a texel's bytes are moved as they are rather than through a
+    /// colour of 8 bits a channel: a compressed format's blocks and a
+    /// float one's texels. (Since 1.45.)
+    pub fn kept(format: Format) bool {
+        return format.compressed() or format.floats();
+    }
+
+    /// Whether a texel is kept in fewer bytes than the colour it reads as:
+    /// `argb8888` in the four of its word rather than the eight it is
+    /// spread in, and `r8` in one
+    /// (`PhysicalDeviceFeatures.small_texels`). A sample reads such a
+    /// texel and makes the colour of it, where the others are read as they
+    /// lie. (Since 1.48.)
+    pub fn small(format: Format) bool {
+        return switch (format) {
+            .argb8888, .r8 => true,
+            .rgba8888, .rgb565, .d16, .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => false,
         };
     }
 
@@ -125,8 +261,8 @@ pub const Mipmap = enum(u8) {
     linear,
 };
 
-/// What a sampler reads past the texture's edge: `Address`'s two, and two
-/// more that only a sampler can ask for.
+/// What a sampler reads past the texture's edge: `Address`'s two, and
+/// three more that only a sampler can ask for.
 pub const Wrap = enum(u8) {
     /// The texture again, as tiles.
     repeat,
@@ -137,6 +273,11 @@ pub const Wrap = enum(u8) {
     clamp_to_edge,
     /// `Sampler.border`, and nothing of the texture.
     clamp_to_border,
+    /// The texture turned round once and then held at its edge: a
+    /// coordinate below 0 reads the texture mirrored, and one past the far
+    /// side the far edge's texels. Vulkan's MIRROR_CLAMP_TO_EDGE, which it
+    /// has from VK_KHR_sampler_mirror_clamp_to_edge. (Since 1.49.)
+    mirror_clamp_to_edge,
 };
 
 /// How a shadow sample compares what it read with the reference it was
@@ -245,6 +386,11 @@ pub const Texture = struct {
     /// rather than blocks: a depth attachment's image, sampled where it
     /// lies (`linear`). 0 for the blocks every other texture is kept in.
     pitch: u32 = 0,
+    /// The bytes from one texel to the next along a row, where that is not
+    /// the format's own size: the stencil plane of a depth attachment that
+    /// holds both, one byte of every four (`linearBy`, since 1.58). 0 for
+    /// the format's own size, which is every other texture.
+    stride: u32 = 0,
     /// Each level as a sample reads it, worked out once; those past
     /// `levels` undefined.
     layout: [most_levels]Level,
@@ -260,22 +406,33 @@ pub const Texture = struct {
     /// levels: what `init` is given.
     pub fn bytes(format: Format, across: u32, down: u32, levels: u32) Error!usize {
         const sizes = try Sizes.of(across, down, levels);
-        var texels: usize = 0;
-        for (0..levels) |lod| texels += sizes.texels(@intCast(lod));
-        return texels * format.bytes();
+        var blocks: usize = 0;
+        for (0..levels) |lod| blocks += sizes.blocks(@intCast(lod));
+        return blocks * format.blockBytes();
     }
 
     /// A texture of one level over rows of `pitch` bytes: how a depth
     /// attachment's image is sampled, where it lies, with no copy and no
-    /// second layout. Its sides are whatever the image's are, powers of
-    /// two or not, and only `sampleBy` reads it.
+    /// second layout, and how a colour attachment written through as a
+    /// storage image is written (since 1.56). Its sides are whatever the
+    /// image's are, powers of two or not; `sampleBy` reads it, and
+    /// `setColor` and `colorAt` write and read its texels.
     pub fn linear(format: Format, across: u32, down: u32, pitch: u32, memory: [*]u8) Texture {
+        return linearBy(format, across, down, pitch, 0, memory);
+    }
+
+    /// The same with `stride` bytes from one texel to the next rather than
+    /// the format's own size, and 0 for that size: how the stencil plane
+    /// of a depth attachment that holds both is read, one byte of every
+    /// four. (Since 1.58.)
+    pub fn linearBy(format: Format, across: u32, down: u32, pitch: u32, stride: u32, memory: [*]u8) Texture {
         var made = Texture{
             .format = format,
             .width_log2 = 0,
             .height_log2 = 0,
             .levels = 1,
             .pitch = pitch,
+            .stride = stride,
             .layout = undefined,
             .memory = memory,
         };
@@ -317,7 +474,7 @@ pub const Texture = struct {
         var at: u32 = 0;
         for (0..levels) |lod| {
             texture.layout[lod] = .of(format, sizes, @intCast(lod), at);
-            at += sizes.texels(@intCast(lod)) * format.bytes();
+            at += sizes.blocks(@intCast(lod)) * format.blockBytes();
         }
         return texture;
     }
@@ -357,13 +514,25 @@ pub const Texture = struct {
     /// texture's memory: its row and column for one kept in rows, and the
     /// level's own spread places for one kept in blocks.
     inline fn placeOf(texture: *const Texture, layer: u32, lod: u32, x: u32, y: u32) usize {
-        if (texture.pitch != 0) return @as(usize, y) * texture.pitch + @as(usize, x) * texture.format.bytes();
+        if (texture.pitch != 0) {
+            const apart = if (texture.stride != 0) texture.stride else texture.format.bytes();
+            return @as(usize, layer) * texture.layer_bytes + @as(usize, y) * texture.pitch + @as(usize, x) * apart;
+        }
         return @as(usize, layer) * texture.layer_bytes + texture.layout[lod].offset(texture.format, x, y);
     }
 
-    /// Where texel (x, y) of a level is kept, in texels from `memory`.
+    /// Where texel (x, y) of a level is kept, in texels from `memory`; 0 for
+    /// a compressed format, whose texels are not addressed one by one.
     pub fn index(texture: *const Texture, lod: u32, x: u32, y: u32) u32 {
+        if (texture.format.compressed()) return 0;
         return @intCast(texture.placeOf(0, lod, x, y) / texture.format.bytes());
+    }
+
+    /// Where the block holding texel (x, y) of a level of a layer lies, in
+    /// bytes from `memory`: `blockBytes` of them, as a copy of a compressed
+    /// image moves them. (Since 1.44.)
+    pub fn blockPlace(texture: *const Texture, layer: u32, lod: u32, x: u32, y: u32) usize {
+        return texture.placeOf(layer, lod, x & ~@as(u32, block - 1), y & ~@as(u32, block - 1));
     }
 
     /// Texel (x, y) of a level set, in the texture's format.
@@ -377,43 +546,192 @@ pub const Texture = struct {
     }
 
     /// Texel (x, y) of a level of a layer set, in the texture's format.
+    /// Nothing of a compressed format: its texels are not written one at a
+    /// time, only block by block (`putBlock`).
     pub fn putLayer(texture: *Texture, layer: u32, lod: u32, x: u32, y: u32, texel: u32) void {
         const at = texture.memory + texture.placeOf(layer, lod, x, y);
         switch (texture.format) {
             .rgba8888 => @as(*u64, @ptrCast(@alignCast(at))).* = spread(texel),
+            .argb8888 => @as(*u32, @ptrCast(@alignCast(at))).* = texel,
             .rgb565, .d16 => @as(*u16, @ptrCast(@alignCast(at))).* = @truncate(texel),
+            .r8 => at[0] = @truncate(texel),
+            // Nothing is written a texel at a time into a texture that
+            // keeps what it was given: `putTexels` moves the bytes.
+            .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => {},
         }
     }
 
-    /// Texel (x, y) of a level of a layer, as `putLayer` was given it.
+    /// Texel (x, y) of a level of a layer, as `putLayer` was given it; a
+    /// compressed texture's texel as `colorAt` reads it, there being no
+    /// texel of its own to give back.
     pub fn peekLayer(texture: *const Texture, layer: u32, lod: u32, x: u32, y: u32) u32 {
         const at = texture.memory + texture.placeOf(layer, lod, x, y);
         return switch (texture.format) {
             .rgba8888 => gather(@as(*const u64, @ptrCast(@alignCast(at))).*),
+            .argb8888 => @as(*const u32, @ptrCast(@alignCast(at))).*,
             .rgb565, .d16 => @as(*const u16, @ptrCast(@alignCast(at))).*,
+            .r8 => at[0],
+            inline .bc1, .bc1_rgb, .bc2, .bc3 => |one| blockOf(one, at)[(y % block) * block + (x % block)],
+            inline .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => |one| floatTexel(one, at),
         };
+    }
+
+    /// The bytes of the block holding texel (x, y) of a level of a layer
+    /// set, `format.blockBytes()` of them: how a copy into a compressed
+    /// image moves it, the texels staying as they lie. Nothing of a format
+    /// that is not compressed. (Since 1.44.)
+    pub fn putBlock(texture: *Texture, layer: u32, lod: u32, x: u32, y: u32, given: []const u8) void {
+        if (!texture.format.compressed()) return;
+        const wide = texture.format.blockBytes();
+        if (given.len < wide) return;
+        const at = texture.memory + texture.blockPlace(layer, lod, x, y);
+        @memcpy(at[0..wide], given[0..wide]);
+    }
+
+    /// The bytes of texel (x, y) of a level of a layer, `format.bytes()` of
+    /// them, as they lie: how a copy into a texture that keeps its texels -
+    /// a float one - moves one, nothing converted. Nothing of a compressed
+    /// format, whose texels have no bytes of their own. (Since 1.45.)
+    pub fn putTexels(texture: *Texture, layer: u32, lod: u32, x: u32, y: u32, given: []const u8) void {
+        if (texture.format.compressed()) return;
+        const wide = texture.format.bytes();
+        if (given.len < wide) return;
+        const at = texture.memory + texture.placeOf(layer, lod, x, y);
+        @memcpy(at[0..wide], given[0..wide]);
+    }
+
+    /// The same read back, into `into`. (Since 1.45.)
+    pub fn texelsAt(texture: *const Texture, layer: u32, lod: u32, x: u32, y: u32, into: []u8) void {
+        if (texture.format.compressed()) return;
+        const wide = texture.format.bytes();
+        if (into.len < wide) return;
+        const at = texture.memory + texture.placeOf(layer, lod, x, y);
+        @memcpy(into[0..wide], at[0..wide]);
+    }
+
+    /// The same read back, into `into`. (Since 1.44.)
+    pub fn blockBytesAt(texture: *const Texture, layer: u32, lod: u32, x: u32, y: u32, into: []u8) void {
+        if (!texture.format.compressed()) return;
+        const wide = texture.format.blockBytes();
+        if (into.len < wide) return;
+        const at = texture.memory + texture.blockPlace(layer, lod, x, y);
+        @memcpy(into[0..wide], at[0..wide]);
+    }
+
+    /// Whether the texture has level `lod` of layer `layer`, and texel
+    /// (x, y) of it: what `setColor` writes nothing past and `colorAt`
+    /// reads transparent black past. A 3D texture's layers are its slices
+    /// at level 0, all of which lie in its memory, so a level past the
+    /// first takes more of them than a sample of that level reads
+    /// (`slicesAt`). (Since 1.55.)
+    pub fn holds(texture: *const Texture, layer: u32, lod: u32, x: u32, y: u32) bool {
+        if (lod >= texture.levels or layer >= texture.layer_count) return false;
+        return x < texture.width(lod) and y < texture.height(lod);
     }
 
     /// A texel of a layer set from 0xAARRGGBB, whatever its format:
     /// `colorAt` undone. What a shader function writes through a storage
     /// image with (`shader.Resources.written`).
+    ///
+    /// The level, the layer and the place are held to what the texture has
+    /// (`holds`): a function naming one it has not got writes nothing,
+    /// rather than past the texture's memory. `putLayer` is the same write
+    /// in the texture's own format and holds to nothing, which is what the
+    /// library's own copies want. (Since 1.55.)
     pub fn setColor(texture: *Texture, layer: u32, lod: u32, x: u32, y: u32, color: u32) void {
+        if (!texture.holds(layer, lod, x, y)) return;
+        // A texel of floats takes the colour's channels as 0 to 1, which
+        // is all a colour ever said (since 1.57); `setParts` is what such
+        // a texture is written with where more than that is meant.
+        if (texture.format.floats()) return texture.putParts(layer, lod, x, y, partsOfColor(color));
         texture.putLayer(layer, lod, x, y, switch (texture.format) {
-            .rgba8888 => color,
+            .rgba8888, .argb8888 => color,
             .rgb565 => as565(color),
+            // The red channel alone, the only one such a texel has.
+            .r8 => color >> 16 & 0xFF,
             // The red channel as a depth, its 8 bits in the top of the 16.
             .d16 => (color >> 16 & 0xFF) * 0x101,
+            // Nothing is written a texel at a time into a compressed
+            // texture: `putLayer` leaves it as it lies.
+            .bc1, .bc1_rgb, .bc2, .bc3 => 0,
+            .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => unreachable,
         });
     }
 
-    /// A texel of a layer as 0xAARRGGBB, whatever its format.
+    /// A texel of a layer set from x, y, z and w: a colour format's
+    /// channels 0 to 1, and a float format's as they are, which is what a
+    /// texture of floats is written through with - `setColor`'s 8 bits a
+    /// channel would be all such a texel ever held. The level, the layer
+    /// and the place are held to what the texture has, as `setColor` has
+    /// them, and a compressed texture takes nothing. (Since 1.57.)
+    pub fn setParts(texture: *Texture, layer: u32, lod: u32, x: u32, y: u32, parts: [4]f32) void {
+        if (!texture.holds(layer, lod, x, y)) return;
+        if (texture.format.floats()) return texture.putParts(layer, lod, x, y, parts);
+        // A depth takes x as 0 to 1 over all 16 bits, where a colour of 8
+        // bits a channel would keep the top 8 of them (since 1.58).
+        if (texture.format == .d16) return texture.putLayer(layer, lod, x, y, @intFromFloat(@round(heldAt(parts[0], 1) * 65535)));
+        if (texture.format.compressed()) return;
+        texture.setColor(layer, lod, x, y, colorOfParts(parts));
+    }
+
+    /// The same without holding to anything, for a format of floats.
+    fn putParts(texture: *Texture, layer: u32, lod: u32, x: u32, y: u32, parts: [4]f32) void {
+        const at = texture.memory + texture.placeOf(layer, lod, x, y);
+        switch (texture.format) {
+            inline .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => |one| putFloatTexel(one, at, parts),
+            else => {},
+        }
+    }
+
+    /// A texel of a layer as x, y, z and w: a float format's channels as
+    /// they lie, and any other format's colour as 0 to 1. The level, the
+    /// layer and the place are held to what the texture has, as `colorAt`
+    /// has them, and one it has not got reads all zero. (Since 1.57.)
+    pub fn partsAt(texture: *const Texture, layer: u32, lod: u32, x: u32, y: u32) [4]f32 {
+        if (!texture.holds(layer, lod, x, y)) return .{ 0, 0, 0, 0 };
+        // A depth as x, 0 to 1 over all 16 bits (since 1.58): `colorAt`
+        // gives a grey of its top 8, which is all a colour holds.
+        if (texture.format == .d16) return .{ @as(f32, @floatFromInt(texture.peekLayer(layer, lod, x, y))) / 65535, 0, 0, 1 };
+        if (texture.format.floats()) {
+            const at = texture.memory + texture.placeOf(layer, lod, x, y);
+            return switch (texture.format) {
+                inline .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => |one| floatParts(one, at),
+                else => .{ 0, 0, 0, 0 },
+            };
+        }
+        return partsOfColor(texture.texelColor(layer, lod, x, y));
+    }
+
+    /// A texel of a layer as 0xAARRGGBB, whatever its format: what a
+    /// shader function reads a storage image back with
+    /// (`shader.Resources.written`).
+    ///
+    /// The level, the layer and the place are held to what the texture has
+    /// (`holds`): a texel it has not got reads as transparent black,
+    /// rather than out of the texture's memory. `peekLayer` is the same
+    /// read in the texture's own format and holds to nothing, which is
+    /// what sampling and the library's own copies want. (Since 1.55.)
     pub fn colorAt(texture: *const Texture, layer: u32, lod: u32, x: u32, y: u32) u32 {
+        if (!texture.holds(layer, lod, x, y)) return 0;
+        return texture.texelColor(layer, lod, x, y);
+    }
+
+    /// The same without holding to anything: a texel that is there, which
+    /// is what sampling reads, every place of it having been held to the
+    /// level already.
+    fn texelColor(texture: *const Texture, layer: u32, lod: u32, x: u32, y: u32) u32 {
         const texel = texture.peekLayer(layer, lod, x, y);
         return switch (texture.format) {
-            .rgba8888 => texel,
+            .rgba8888, .argb8888 => texel,
             .rgb565 => expanded565(texel),
+            // Red alone, as Vulkan reads a one-channel format: the green
+            // and the blue 0, the alpha whole.
+            .r8 => redOf8(@truncate(texel)),
             // A depth as an opaque grey: its top 8 bits.
             .d16 => greyOf8(@truncate(texel >> 8)),
+            // Decoded already: `peekLayer` read it out of its block, or
+            // out of its floats.
+            .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => texel,
         };
     }
 
@@ -425,7 +743,7 @@ pub const Texture = struct {
         const x = sane(u) * @as(f32, @floatFromInt(across));
         const y = sane(v) * @as(f32, @floatFromInt(down));
         if (sampling.filter == .nearest) {
-            return texture.colorAt(layer, lod, placeIn(sampling.address, @intFromFloat(@floor(x)), across), placeIn(sampling.address, @intFromFloat(@floor(y)), down));
+            return texture.texelColor(layer, lod, placeIn(sampling.address, @intFromFloat(@floor(x)), across), placeIn(sampling.address, @intFromFloat(@floor(y)), down));
         }
         const low_x = @floor(x - 0.5);
         const low_y = @floor(y - 0.5);
@@ -436,49 +754,78 @@ pub const Texture = struct {
         const y0 = placeIn(sampling.address, top, down);
         const y1 = placeIn(sampling.address, top + 1, down);
         const part_x = x - 0.5 - low_x;
-        const upper = mixColors(texture.colorAt(layer, lod, x0, y0), texture.colorAt(layer, lod, x1, y0), part_x);
-        const lower = mixColors(texture.colorAt(layer, lod, x0, y1), texture.colorAt(layer, lod, x1, y1), part_x);
+        const upper = mixColors(texture.texelColor(layer, lod, x0, y0), texture.texelColor(layer, lod, x1, y0), part_x);
+        const lower = mixColors(texture.texelColor(layer, lod, x0, y1), texture.texelColor(layer, lod, x1, y1), part_x);
         return mixColors(upper, lower, y - 0.5 - low_y);
     }
 
     /// A 3D texture's colour at (u, v, r), each 0 to 1 across it.
-    pub fn sampleVolume(texture: *const Texture, sampling: Sampling, u: f32, v: f32, r: f32) u32 {
-        const z = sane(r) * @as(f32, @floatFromInt(texture.layer_count));
-        if (sampling.filter == .nearest) return texture.sampleLayer(sampling, placeIn(sampling.address, @intFromFloat(@floor(z)), texture.layer_count), 0, u, v);
+    pub fn sampleVolume(texture: *const Texture, sampling: Sampling, lod: u32, u: f32, v: f32, r: f32) u32 {
+        const slices = texture.slicesAt(lod);
+        const z = sane(r) * @as(f32, @floatFromInt(slices));
+        if (sampling.filter == .nearest) return texture.sampleLayer(sampling, placeIn(sampling.address, @intFromFloat(@floor(z)), slices), lod, u, v);
         const low = @floor(z - 0.5);
         const first: i32 = @intFromFloat(low);
-        const near = texture.sampleLayer(sampling, placeIn(sampling.address, first, texture.layer_count), 0, u, v);
-        const far = texture.sampleLayer(sampling, placeIn(sampling.address, first + 1, texture.layer_count), 0, u, v);
+        const near = texture.sampleLayer(sampling, placeIn(sampling.address, first, slices), lod, u, v);
+        const far = texture.sampleLayer(sampling, placeIn(sampling.address, first + 1, slices), lod, u, v);
         return mixColors(near, far, z - 0.5 - low);
+    }
+
+    /// The slices a level of a 3D texture has: the one before halved, never
+    /// below one, as Vulkan has a 3D image's depth. A slice is a layer here,
+    /// and a level of a slice lies where that layer's own level lies - so a
+    /// level past the first leaves the layers past its depth unread.
+    /// (Since 1.46.)
+    pub fn slicesAt(texture: *const Texture, lod: u32) u32 {
+        return @max(texture.layer_count >> @intCast(@min(lod, 31)), 1);
     }
 
     /// A cube's colour the way (x, y, z) looks. Filtered, what lies past
     /// a face's edge is read from the face next to it, as a GPU has it.
     pub fn sampleCube(texture: *const Texture, sampling: Sampling, lod: u32, x: f32, y: f32, z: f32) u32 {
+        return texture.sampleCubeIn(sampling, 0, lod, x, y, z);
+    }
+
+    /// The same of one cube of an array: `first` is that cube's first face,
+    /// a multiple of six, and the six after it are its faces. A view of
+    /// `cube_array` carries as many cubes as its layers divided by six
+    /// (`shader.FixedKind.texture_cube_array`). (Since 1.46.)
+    pub fn sampleCubeIn(texture: *const Texture, sampling: Sampling, first: u32, lod: u32, x: f32, y: f32, z: f32) u32 {
         const hit = cubeHit(sane(x), sane(y), sane(z));
         var edged = sampling;
         edged.address = .clamp;
-        if (sampling.filter == .nearest) return texture.sampleLayer(edged, hit.face, lod, hit.u, hit.v);
+        if (sampling.filter == .nearest) return texture.sampleLayer(edged, first + hit.face, lod, hit.u, hit.v);
         const size: i32 = @intCast(texture.width(lod));
         const across = hit.u * @as(f32, @floatFromInt(size)) - 0.5;
         const down = hit.v * @as(f32, @floatFromInt(size)) - 0.5;
         const left: i32 = @intFromFloat(@floor(across));
         const top: i32 = @intFromFloat(@floor(down));
         const part_x = across - @floor(across);
-        const upper = mixColors(texture.cubeTexel(hit.face, lod, left, top), texture.cubeTexel(hit.face, lod, left + 1, top), part_x);
-        const lower = mixColors(texture.cubeTexel(hit.face, lod, left, top + 1), texture.cubeTexel(hit.face, lod, left + 1, top + 1), part_x);
+        const upper = mixColors(texture.cubeTexel(first, hit.face, lod, left, top), texture.cubeTexel(first, hit.face, lod, left + 1, top), part_x);
+        const lower = mixColors(texture.cubeTexel(first, hit.face, lod, left, top + 1), texture.cubeTexel(first, hit.face, lod, left + 1, top + 1), part_x);
         return mixColors(upper, lower, down - @floor(down));
     }
 
-    /// Texel (x, y) of a face, or if that is past its edge, the one of the
-    /// next face in the same direction.
-    fn cubeTexel(texture: *const Texture, face: u32, lod: u32, x: i32, y: i32) u32 {
+    /// Which cube of an array `index` falls on, as `layerNear` picks a
+    /// layer: its first face, a multiple of six. (Since 1.46.)
+    pub fn cubeNear(texture: *const Texture, which: f32) u32 {
+        const cubes = texture.layer_count / 6;
+        if (cubes == 0) return 0;
+        const whole = @floor(sane(which) + 0.5);
+        if (whole < 0) return 0;
+        return @min(@as(u32, @intFromFloat(whole)), cubes - 1) * 6;
+    }
+
+    /// Texel (x, y) of a face of the cube whose first face is `first`, or if
+    /// that is past its edge, the one of the next face of that cube in the
+    /// same direction.
+    fn cubeTexel(texture: *const Texture, first: u32, face: u32, lod: u32, x: i32, y: i32) u32 {
         const size: i32 = @intCast(texture.width(lod));
-        if (x >= 0 and y >= 0 and x < size and y < size) return texture.colorAt(face, lod, @intCast(x), @intCast(y));
+        if (x >= 0 and y >= 0 and x < size and y < size) return texture.texelColor(first + face, lod, @intCast(x), @intCast(y));
         const whole: f32 = @floatFromInt(size);
         const towards = cubeDirection(face, (@as(f32, @floatFromInt(x)) + 0.5) / whole * 2 - 1, (@as(f32, @floatFromInt(y)) + 0.5) / whole * 2 - 1);
         const next = cubeHit(towards[0], towards[1], towards[2]);
-        return texture.colorAt(next.face, lod, placeIn(.clamp, @intFromFloat(@floor(next.u * whole)), texture.width(lod)), placeIn(.clamp, @intFromFloat(@floor(next.v * whole)), texture.width(lod)));
+        return texture.texelColor(first + next.face, lod, placeIn(.clamp, @intFromFloat(@floor(next.u * whole)), texture.width(lod)), placeIn(.clamp, @intFromFloat(@floor(next.v * whole)), texture.width(lod)));
     }
 
     /// The layer of an array `r` falls on: the nearest there is.
@@ -489,14 +836,19 @@ pub const Texture = struct {
     }
 
     /// A level from a picture kept row by row, `pitch` bytes from one row
-    /// to the next, in the texture's format.
+    /// to the next, in the texture's format. Nothing of a texture that
+    /// keeps what it was given - a compressed one or a float one:
+    /// `putBlock` and `putTexels` write those.
     pub fn load(texture: *Texture, lod: u32, pixels: [*]const u8, pitch: usize) void {
+        if (texture.format.kept()) return;
         for (0..texture.height(lod)) |y| {
             const row = pixels + y * pitch;
             for (0..texture.width(lod)) |x| {
                 const texel: u32 = switch (texture.format) {
-                    .rgba8888 => std.mem.readInt(u32, row[x * 4 ..][0..4], .little),
+                    .rgba8888, .argb8888 => std.mem.readInt(u32, row[x * 4 ..][0..4], .little),
                     .rgb565, .d16 => std.mem.readInt(u16, row[x * 2 ..][0..2], .little),
+                    .r8 => row[x],
+                    .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => unreachable,
                 };
                 texture.put(lod, @intCast(x), @intCast(y), texel);
             }
@@ -628,12 +980,12 @@ const Sizes = struct {
         return sizes.width_log2 -| lod;
     }
 
-    /// The texels a level keeps: its blocks, whole, as wide as the layout
-    /// goes by and as deep as the level is.
-    fn texels(sizes: Sizes, level: u5) u32 {
+    /// The blocks of 4 x 4 texels a level keeps, whole: as wide as the
+    /// layout goes by and as deep as the level is.
+    fn blocks(sizes: Sizes, level: u5) u32 {
         const across = ((@as(u32, 1) << sizes.pitchLog2At(level)) + block - 1) / block;
         const down = (sizes.heightAt(level) + block - 1) / block;
-        return across * down * block * block;
+        return across * down;
     }
 };
 
@@ -759,7 +1111,7 @@ pub const Level = struct {
             .column_high = undefined,
             .row_low = undefined,
             .row_high = undefined,
-            .blocks_shift = (sizes.pitchLog2At(lod) -| 2) + 4 + texel,
+            .blocks_shift = (sizes.pitchLog2At(lod) -| 2) + format.blockLog2(),
             .row_gap = undefined,
             .tiles = std.math.isPowerOfTwo(width) and std.math.isPowerOfTwo(height),
         };
@@ -773,9 +1125,19 @@ pub const Level = struct {
         return level;
     }
 
-    /// Texel (x, y)'s place, in bytes from the level's start.
+    /// Texel (x, y)'s place, in bytes from the texture's memory - the place
+    /// of the block it lies in, for a compressed format, whose texels are
+    /// read by decoding that block.
     fn offset(level: Level, format: Format, x: u32, y: u32) u32 {
+        if (format.compressed()) return level.start + level.blockAt(format, x, y);
         return level.start + level.rowAt(format.shift(), y) + columnAt(format.shift(), x);
+    }
+
+    /// Where the block holding texel (x, y) lies, in bytes from the level's
+    /// start.
+    pub inline fn blockAt(level: Level, format: Format, x: u32, y: u32) u32 {
+        @setRuntimeSafety(false);
+        return ((y / block) << level.blocks_shift) + ((x / block) << format.blockLog2());
     }
 
     /// Row `y`'s place, for texels of 2 to the `texel` bytes.
@@ -790,6 +1152,381 @@ pub const Level = struct {
         return @bitCast((127 + exponent) << 23);
     }
 };
+
+// --- the float texels -------------------------------------------------------
+
+/// One float texel at `at` as 0xAARRGGBB: each channel held between 0 and
+/// 1 and rounded to 8 bits, which is what the tiles and the formats the
+/// library draws into hold. What is above 1 reads as 255 and what is below
+/// 0 as 0, a NaN among them. (Since 1.45.)
+pub fn floatTexel(comptime format: Format, at: [*]const u8) u32 {
+    @setRuntimeSafety(false);
+    return switch (format) {
+        .rgba16f => made: {
+            var channels: [4]u32 = undefined;
+            inline for (&channels, 0..) |*channel, k| channel.* = byteOfFloat(ofHalf(readLittle(u16, at + k * 2)));
+            break :made channels[3] << 24 | channels[0] << 16 | channels[1] << 8 | channels[2];
+        },
+        .rgba32f => made: {
+            var channels: [4]u32 = undefined;
+            inline for (&channels, 0..) |*channel, k| channel.* = byteOfFloat(@bitCast(readLittle(u32, at + k * 4)));
+            break :made channels[3] << 24 | channels[0] << 16 | channels[1] << 8 | channels[2];
+        },
+        .rg11b10f => made: {
+            const word = readLittle(u32, at);
+            const r = ofParts(word >> 6 & 0x1F, word & 0x3F, 6, 15);
+            const g = ofParts(word >> 17 & 0x1F, word >> 11 & 0x3F, 6, 15);
+            const b = ofParts(word >> 27 & 0x1F, word >> 22 & 0x1F, 5, 15);
+            break :made 0xFF00_0000 | @as(u32, byteOfFloat(r)) << 16 | @as(u32, byteOfFloat(g)) << 8 | byteOfFloat(b);
+        },
+        .rgb9e5 => made: {
+            const word = readLittle(u32, at);
+            // One exponent for the three, biased by 15, over mantissas of
+            // 9 bits that are whole numbers rather than 1.something.
+            const scale = std.math.ldexp(@as(f32, 1), @as(i32, @intCast(word >> 27)) - 15 - 9);
+            const r: f32 = @floatFromInt(word & 0x1FF);
+            const g: f32 = @floatFromInt(word >> 9 & 0x1FF);
+            const b: f32 = @floatFromInt(word >> 18 & 0x1FF);
+            break :made 0xFF00_0000 | @as(u32, byteOfFloat(r * scale)) << 16 | @as(u32, byteOfFloat(g * scale)) << 8 | byteOfFloat(b * scale);
+        },
+        // One float, read as (red, 0, 0, 1) the way `r8` is (since 1.57).
+        .r32f => 0xFF00_0000 | @as(u32, byteOfFloat(@bitCast(readLittle(u32, at)))) << 16,
+        else => missing_texel,
+    };
+}
+
+/// The four channels a float texel at `at` holds, as they lie: what the
+/// format has not got reads as 0, and an alpha it has not got as 1. What
+/// `Texture.partsAt` gives a shader function. (Since 1.57.)
+pub fn floatParts(comptime format: Format, at: [*]const u8) [4]f32 {
+    @setRuntimeSafety(false);
+    return switch (format) {
+        .rgba16f => made: {
+            var parts: [4]f32 = undefined;
+            inline for (&parts, 0..) |*part, k| part.* = ofHalf(readLittle(u16, at + k * 2));
+            break :made parts;
+        },
+        .rgba32f => made: {
+            var parts: [4]f32 = undefined;
+            inline for (&parts, 0..) |*part, k| part.* = @bitCast(readLittle(u32, at + k * 4));
+            break :made parts;
+        },
+        .rg11b10f => made: {
+            const word = readLittle(u32, at);
+            break :made .{
+                ofParts(word >> 6 & 0x1F, word & 0x3F, 6, 15),
+                ofParts(word >> 17 & 0x1F, word >> 11 & 0x3F, 6, 15),
+                ofParts(word >> 27 & 0x1F, word >> 22 & 0x1F, 5, 15),
+                1,
+            };
+        },
+        .rgb9e5 => made: {
+            const word = readLittle(u32, at);
+            const scale = std.math.ldexp(@as(f32, 1), @as(i32, @intCast(word >> 27)) - 15 - 9);
+            break :made .{
+                @as(f32, @floatFromInt(word & 0x1FF)) * scale,
+                @as(f32, @floatFromInt(word >> 9 & 0x1FF)) * scale,
+                @as(f32, @floatFromInt(word >> 18 & 0x1FF)) * scale,
+                1,
+            };
+        },
+        .r32f => .{ @bitCast(readLittle(u32, at)), 0, 0, 1 },
+        else => .{ 0, 0, 0, 0 },
+    };
+}
+
+/// Four channels written as a float texel at `at`, `floatParts` undone:
+/// what the format has not got is dropped, and what it cannot hold is cut
+/// to the largest it can. What `Texture.setParts` writes with.
+/// (Since 1.57.)
+pub fn putFloatTexel(comptime format: Format, at: [*]u8, parts: [4]f32) void {
+    @setRuntimeSafety(false);
+    switch (format) {
+        .rgba16f => inline for (0..4) |k| writeLittle(u16, at + k * 2, halfOf(parts[k])),
+        .rgba32f => inline for (0..4) |k| writeLittle(u32, at + k * 4, @bitCast(parts[k])),
+        .rg11b10f => writeLittle(u32, at, partsOf(parts[0], 6, 15) | partsOf(parts[1], 6, 15) << 11 | partsOf(parts[2], 5, 15) << 22),
+        .rgb9e5 => writeLittle(u32, at, sharedExponent(parts[0], parts[1], parts[2])),
+        .r32f => writeLittle(u32, at, @bitCast(parts[0])),
+        else => {},
+    }
+}
+
+/// Red, green and blue as E5B9G9R9: one exponent of 5 bits for the three,
+/// biased by 15, over mantissas of 9 bits that are whole numbers. The
+/// exponent is the one the largest of them needs, and the three are then
+/// written against it. (Since 1.57.)
+fn sharedExponent(red: f32, green: f32, blue: f32) u32 {
+    const most = @as(f32, 0x1FF) / 512 * 32768; // the largest the format holds
+    const r = heldAt(red, most);
+    const g = heldAt(green, most);
+    const b = heldAt(blue, most);
+    const largest = @max(r, @max(g, b));
+    if (largest <= 0) return 0;
+    // The exponent that puts the largest mantissa inside its 9 bits.
+    var exponent: i32 = @max(std.math.frexp(largest).exponent, -15 + 1);
+    var scale = std.math.ldexp(@as(f32, 1), 9 - exponent);
+    if (@as(u32, @intFromFloat(largest * scale + 0.5)) > 0x1FF) {
+        exponent += 1;
+        scale = std.math.ldexp(@as(f32, 1), 9 - exponent);
+    }
+    const biased: u32 = @intCast(@min(exponent + 15, 31));
+    const nine = struct {
+        fn nine(value: f32, by: f32) u32 {
+            return @min(@as(u32, @intFromFloat(value * by + 0.5)), 0x1FF);
+        }
+    }.nine;
+    return biased << 27 | nine(b, scale) << 18 | nine(g, scale) << 9 | nine(r, scale);
+}
+
+/// 0 to `most`, a NaN as 0.
+inline fn heldAt(value: f32, most: f32) f32 {
+    return if (value > 0) @min(value, most) else 0;
+}
+
+/// A word of `T` written at `at`, little-endian and on no alignment.
+inline fn writeLittle(comptime T: type, at: [*]u8, value: T) void {
+    std.mem.writeInt(T, at[0..@sizeOf(T)], value, .little);
+}
+
+/// 0xAARRGGBB as x, y, z and w, each channel 0 to 1. (Since 1.57.)
+pub inline fn partsOfColor(color: u32) [4]f32 {
+    var parts: [4]f32 = undefined;
+    inline for (&parts, [4]u5{ 16, 8, 0, 24 }) |*part, shift| {
+        part.* = @as(f32, @floatFromInt(color >> shift & 0xFF)) / 255;
+    }
+    return parts;
+}
+
+/// The same undone: x, y, z and w as 0xAARRGGBB, each held inside 0 to 1
+/// and rounded to 8 bits. (Since 1.57.)
+pub inline fn colorOfParts(parts: [4]f32) u32 {
+    var made: u32 = 0;
+    inline for (parts, [4]u5{ 16, 8, 0, 24 }) |part, shift| made |= @as(u32, byteOfFloat(part)) << shift;
+    return made;
+}
+
+/// A float to 8 bits, held inside 0 to 1 and rounded; a NaN reads 0, which
+/// the first comparison catches.
+inline fn byteOfFloat(value: f32) u8 {
+    if (!(value > 0)) return 0;
+    if (value >= 1) return 255;
+    return @intFromFloat(value * 255 + 0.5);
+}
+
+/// A half float's value, worked out by hand: not every processor the
+/// library runs on has f16 to spare. A NaN comes back as one, and the
+/// infinities as the largest finite value of that exponent. (Since 1.45.)
+pub inline fn ofHalf(half: u16) f32 {
+    const negative = half & 0x8000 != 0;
+    const exponent: u32 = half >> 10 & 0x1F;
+    const mantissa: u32 = half & 0x3FF;
+    if (exponent == 31 and mantissa != 0) return std.math.nan(f32);
+    const value = ofParts(exponent, mantissa, 10, 15);
+    return if (negative) -value else value;
+}
+
+/// An unsigned float of `bits` of mantissa, its exponent biased by `bias`:
+/// 0 for the lowest exponent is a number below the smallest normal one.
+inline fn ofParts(exponent: u32, mantissa: u32, comptime bits: u5, comptime biased_by: i32) f32 {
+    const whole: f32 = @floatFromInt(mantissa);
+    const scale = @as(f32, @floatFromInt(@as(u32, 1) << bits));
+    if (exponent == 0) return std.math.ldexp(whole / scale, 1 - biased_by);
+    return std.math.ldexp(1 + whole / scale, @as(i32, @intCast(exponent)) - biased_by);
+}
+
+/// A half float made of a float, `ofHalf` undone, and by hand for the same
+/// reason: the nearest half, an infinity and anything above the largest
+/// half as that largest, and a NaN as one. (Since 1.57.)
+pub inline fn halfOf(value: f32) u16 {
+    const bits: u32 = @bitCast(value);
+    const sign: u16 = @intCast(bits >> 31);
+    const exponent: i32 = @intCast(bits >> 23 & 0xFF);
+    const mantissa = bits & 0x7F_FFFF;
+    // A NaN stays one, and an infinity comes back as the largest half, as
+    // `ofHalf` reads the largest exponent.
+    if (exponent == 0xFF) return sign << 15 | @as(u16, if (mantissa != 0) 0x7E00 else 0x7BFF);
+    // The half's exponent is biased by 15 where the float's is by 127.
+    const moved = exponent - 127 + 15;
+    if (moved <= 0) {
+        // Below the smallest normal half: one of the subnormals, whose
+        // value is its mantissa over 2^24, or nothing at all.
+        if (moved < -10) return sign << 15;
+        const whole = mantissa | 0x80_0000;
+        const shift: u5 = @intCast(14 - moved);
+        return sign << 15 | @as(u16, @intCast(whole >> shift));
+    }
+    // The mantissa rounded to its 10 bits, a carry out of it moving into
+    // the exponent of its own accord.
+    const together = (@as(u32, @intCast(moved)) << 23) | mantissa;
+    const half = (together + 0x1000) >> 13;
+    if (half >= 0x7C00) return sign << 15 | 0x7BFF;
+    return sign << 15 | @as(u16, @intCast(half));
+}
+
+/// An unsigned float of `bits` of mantissa biased by `biased_by`, made of
+/// a float: `ofParts` undone, its exponent and its mantissa packed low.
+/// Anything below the smallest it holds is 0 and anything above the
+/// largest is that largest. (Since 1.57.)
+inline fn partsOf(value: f32, comptime bits: u5, comptime biased_by: i32) u32 {
+    const most_exponent: u32 = 31;
+    const most_mantissa = (@as(u32, 1) << bits) - 1;
+    if (!(value > 0)) return 0; // a NaN as well
+    const whole = std.math.frexp(value);
+    // frexp gives 0.5 to 1 times two to the exponent; a float of this
+    // shape is 1 to 2 times two to its own, so the exponent is one less.
+    const moved = whole.exponent - 1 + biased_by;
+    if (moved >= most_exponent) return most_exponent << bits | most_mantissa;
+    const scale: f32 = @floatFromInt(@as(u32, 1) << bits);
+    if (moved <= 0) {
+        // The subnormals: the mantissa alone, over two to one less than
+        // the bias.
+        const lowest = std.math.ldexp(value, biased_by - 1) * scale;
+        return @min(@as(u32, @intFromFloat(lowest + 0.5)), most_mantissa);
+    }
+    const mantissa: u32 = @intFromFloat((whole.significand * 2 - 1) * scale + 0.5);
+    if (mantissa > most_mantissa) {
+        // Rounded up out of the mantissa, which is the next exponent.
+        if (moved + 1 >= most_exponent) return most_exponent << bits | most_mantissa;
+        return @as(u32, @intCast(moved + 1)) << bits;
+    }
+    return @as(u32, @intCast(moved)) << bits | mantissa;
+}
+
+// --- the compressed blocks --------------------------------------------------
+
+/// The sixteen texels of one compressed block at `at`, in rows, each
+/// 0xAARRGGBB. BC1 reads 8 bytes and the rest 16; nothing is read past
+/// them.
+///
+/// The block holds two endpoint colours of 565 and two bits for each texel,
+/// which pick one of four: the endpoints and two between them. Where the
+/// format punches through - BC1 - and the first endpoint is not above the
+/// second, there are three colours and the fourth is clear. BC2 holds four
+/// bits of alpha for each texel before the colours, and BC3 two endpoint
+/// alphas with three bits for each texel between them. (Since 1.44.)
+pub fn blockOf(comptime format: Format, at: [*]const u8) [16]u32 {
+    @setRuntimeSafety(false);
+    const colors_at = comptime if (format.blockBytes() == 16) 8 else 0;
+    const colors = at + colors_at;
+    const low = readLittle(u16, colors);
+    const high = readLittle(u16, colors + 2);
+    const table = endpoints(format == .bc1 or format == .bc1_rgb, low, high);
+    const picks = readLittle(u32, colors + 4);
+    var made: [16]u32 = undefined;
+    for (&made, 0..) |*texel, k| texel.* = table[picks >> @intCast(k * 2) & 3];
+    switch (format) {
+        // Whatever the block says, such a texture is opaque.
+        .bc1_rgb => for (&made) |*texel| {
+            texel.* |= 0xFF00_0000;
+        },
+        // Four bits a texel, the low ones first.
+        .bc2 => {
+            const bits = readLittle(u64, at);
+            for (&made, 0..) |*texel, k| {
+                const alpha: u32 = @intCast(bits >> @intCast(k * 4) & 15);
+                texel.* = texel.* & 0x00FF_FFFF | (alpha << 4 | alpha) << 24;
+            }
+        },
+        // Two endpoints and three bits a texel between them.
+        .bc3 => {
+            const values = blockAlphas(at);
+            for (&made, values) |*texel, alpha| texel.* = texel.* & 0x00FF_FFFF | @as(u32, alpha) << 24;
+        },
+        else => {},
+    }
+    return made;
+}
+
+/// The four colours a block's two endpoints make, 0xAARRGGBB, the first
+/// three opaque; the fourth is clear where the format punches through and
+/// the endpoints are in that order.
+inline fn endpoints(comptime punches: bool, low: u16, high: u16) [4]u32 {
+    @setRuntimeSafety(false);
+    const first = channels565(low);
+    const second = channels565(high);
+    var made: [4]u32 = undefined;
+    made[0] = opaqueOf(first);
+    made[1] = opaqueOf(second);
+    if (punches and low <= high) {
+        var middle: [3]u32 = undefined;
+        inline for (&middle, first, second) |*channel, a, b| channel.* = (a + b + 1) / 2;
+        made[2] = opaqueOf(middle);
+        // Clear, and black with it: what a GPU reads there.
+        made[3] = 0;
+        return made;
+    }
+    var third: [3]u32 = undefined;
+    var fourth: [3]u32 = undefined;
+    // Rounded, as an unpacking copy rounds it (`image/_decode.zig`): the
+    // texel a sample reads is the one that copy would have written.
+    inline for (&third, &fourth, first, second) |*one, *other, a, b| {
+        one.* = (2 * a + b + 1) / 3;
+        other.* = (a + 2 * b + 1) / 3;
+    }
+    made[2] = opaqueOf(third);
+    made[3] = opaqueOf(fourth);
+    return made;
+}
+
+/// A 565 colour's red, green and blue, each to 8 bits: the bits repeated
+/// into the low ones, which is `channel * 255 / 31` (or 63) to the nearest.
+inline fn channels565(color: u16) [3]u32 {
+    const r: u32 = color >> 11 & 0x1F;
+    const g: u32 = color >> 5 & 0x3F;
+    const b: u32 = color & 0x1F;
+    return .{ r << 3 | r >> 2, g << 2 | g >> 4, b << 3 | b >> 2 };
+}
+
+/// Red, green and blue as an opaque 0xAARRGGBB.
+inline fn opaqueOf(channels: [3]u32) u32 {
+    return 0xFF00_0000 | channels[0] << 16 | channels[1] << 8 | channels[2];
+}
+
+/// A BC3 block's sixteen alphas: two endpoints, and three bits for each
+/// texel choosing between them - six values between, or four and the two
+/// ends, as the endpoints' order says.
+inline fn blockAlphas(at: [*]const u8) [16]u8 {
+    @setRuntimeSafety(false);
+    const first: u32 = at[0];
+    const second: u32 = at[1];
+    var table: [8]u8 = undefined;
+    table[0] = @intCast(first);
+    table[1] = @intCast(second);
+    if (first > second) {
+        inline for (2..8) |k| table[k] = @intCast(((8 - k) * first + (k - 1) * second + 3) / 7);
+    } else {
+        inline for (2..6) |k| table[k] = @intCast(((6 - k) * first + (k - 1) * second + 2) / 5);
+        table[6] = 0;
+        table[7] = 255;
+    }
+    var bits: u64 = 0;
+    for (0..6) |k| bits |= @as(u64, at[2 + k]) << @intCast(k * 8);
+    var made: [16]u8 = undefined;
+    for (&made, 0..) |*alpha, k| alpha.* = table[@intCast(bits >> @intCast(k * 3) & 7)];
+    return made;
+}
+
+/// `T` read from `at`, least significant byte first, whatever the alignment.
+inline fn readLittle(comptime T: type, at: [*]const u8) T {
+    @setRuntimeSafety(false);
+    var made: T = 0;
+    inline for (0..@sizeOf(T)) |k| made |= @as(T, at[k]) << @intCast(k * 8);
+    return made;
+}
+
+/// Texel (x, y) of a level of a compressed texture, 0xAARRGGBB: its block
+/// decoded, and the one of its sixteen picked out. (Since 1.44.)
+pub inline fn texelIn(comptime format: Format, texture: *const Texture, level: *const Level, x: u32, y: u32) u32 {
+    @setRuntimeSafety(false);
+    const texels = blockIn(format, texture, level, x, y);
+    return texels[(y % block) * block + (x % block)];
+}
+
+/// The sixteen texels of the block holding (x, y), in rows. (Since 1.44.)
+pub inline fn blockIn(comptime format: Format, texture: *const Texture, level: *const Level, x: u32, y: u32) [16]u32 {
+    @setRuntimeSafety(false);
+    return blockOf(format, texture.memory + level.start + level.blockAt(format, x, y));
+}
 
 /// Column `x`'s place, for texels of 2 to the `texel` bytes.
 inline fn columnAt(texel: u5, x: u32) u32 {
@@ -827,6 +1564,7 @@ pub inline fn sampleAt(comptime sampling: Sampling, texture: *const Texture, lev
     // This runs for every pixel; what it works out is held inside the
     // level, and checks would cost more than the work.
     @setRuntimeSafety(false);
+    if (comptime sampling.format.compressed()) return sampleBlocked(sampling, texture, level, s, t);
     const base = texture.memory + level.start;
     const left, const right = columns(sampling, level, s);
     const top, const bottom = rows(sampling, level, t);
@@ -842,6 +1580,90 @@ pub inline fn sampleAt(comptime sampling: Sampling, texture: *const Texture, lev
                 fetchSpread(sampling.format, base + bottom + left) * (down - both) +
                 fetchSpread(sampling.format, base + bottom + right) * both;
             return gather(sum >> 8 & lanes);
+        },
+    }
+}
+
+/// A sample of a texture whose texels lie compressed: the block the point
+/// falls in decoded, and the texels picked out of it. One block for a
+/// `nearest` sample, one for a `bilinear` sample whose four texels lie in
+/// the same block - which three pixels in four do - and up to four where
+/// they do not. (Since 1.44.)
+inline fn sampleBlocked(comptime sampling: Sampling, texture: *const Texture, level: *const Level, s: i32, t: i32) u32 {
+    @setRuntimeSafety(false);
+    const left, const right = texelColumns(sampling, level, s);
+    const top, const bottom = texelRows(sampling, level, t);
+    if (comptime sampling.filter == .nearest) return texelIn(sampling.format, texture, level, left, top);
+    // The four texels round the point, from as few blocks as they lie in.
+    var corners: [4]u32 = undefined;
+    if (left / block == right / block and top / block == bottom / block) {
+        const texels = blockIn(sampling.format, texture, level, left, top);
+        const row = (top % block) * block;
+        const under = (bottom % block) * block;
+        corners = .{
+            texels[row + left % block],
+            texels[row + right % block],
+            texels[under + left % block],
+            texels[under + right % block],
+        };
+    } else {
+        corners = .{
+            texelIn(sampling.format, texture, level, left, top),
+            texelIn(sampling.format, texture, level, right, top),
+            texelIn(sampling.format, texture, level, left, bottom),
+            texelIn(sampling.format, texture, level, right, bottom),
+        };
+    }
+    // Mixed as `sampleAt` mixes its four: weights of 256 that add up to it.
+    const across: u64 = @as(u32, @bitCast(s)) & 0xFF;
+    const down: u64 = @as(u32, @bitCast(t)) & 0xFF;
+    const both = across * down >> 8;
+    const sum = spread(corners[0]) * (256 + both - across - down) +
+        spread(corners[1]) * (across - both) +
+        spread(corners[2]) * (down - both) +
+        spread(corners[3]) * both;
+    return gather(sum >> 8 & lanes);
+}
+
+/// Texel column s / 256 and the next one, held inside the level as
+/// `sampling.address` says. (Since 1.44.)
+inline fn texelColumns(comptime sampling: Sampling, level: *const Level, s: i32) [2]u32 {
+    @setRuntimeSafety(false);
+    const x = s >> 8;
+    switch (sampling.address) {
+        .wrap => {
+            if (level.tiles) {
+                const last = level.width - 1;
+                const inside = @as(u32, @bitCast(x)) & last;
+                return .{ inside, (inside + 1) & last };
+            }
+            const inside: u32 = @intCast(@mod(x, @as(i32, @intCast(level.width))));
+            return .{ inside, if (inside + 1 == level.width) 0 else inside + 1 };
+        },
+        .clamp => {
+            const last: i32 = @intCast(level.width - 1);
+            return .{ @intCast(std.math.clamp(x, 0, last)), @intCast(std.math.clamp(x +% 1, 0, last)) };
+        },
+    }
+}
+
+/// Texel row t / 256 and the next one, the same way. (Since 1.44.)
+inline fn texelRows(comptime sampling: Sampling, level: *const Level, t: i32) [2]u32 {
+    @setRuntimeSafety(false);
+    const y = t >> 8;
+    switch (sampling.address) {
+        .wrap => {
+            if (level.tiles) {
+                const last = level.height - 1;
+                const inside = @as(u32, @bitCast(y)) & last;
+                return .{ inside, (inside + 1) & last };
+            }
+            const inside: u32 = @intCast(@mod(y, @as(i32, @intCast(level.height))));
+            return .{ inside, if (inside + 1 == level.height) 0 else inside + 1 };
+        },
+        .clamp => {
+            const last: i32 = @intCast(level.height - 1);
+            return .{ @intCast(std.math.clamp(y, 0, last)), @intCast(std.math.clamp(y +% 1, 0, last)) };
         },
     }
 }
@@ -920,10 +1742,19 @@ inline fn fetch(comptime format: Format, at: [*]const u8) u32 {
     @setRuntimeSafety(false);
     return switch (format) {
         .rgba8888 => gather(fetchSpread(format, at)),
+        // The word as it lies, and the one byte made a colour: what the
+        // smaller texels cost a sample (since 1.48).
+        .argb8888 => @as(*const u32, @ptrCast(@alignCast(at))).*,
+        .r8 => redOf8(at[0]),
         .rgb565 => widen(@as(*const u16, @ptrCast(@alignCast(at))).*),
         // A depth as a grey, as `Texture.colorAt` reads one: the fast path
         // is built for blocks and never reads a texture of this.
         .d16 => greyOf8(@truncate(@as(*const u16, @ptrCast(@alignCast(at))).* >> 8)),
+        // Never read a texel at a time: `sampleBlocked` has the block.
+        .bc1, .bc1_rgb, .bc2, .bc3 => missing_texel,
+        // A float texel read and rounded where it lies (since 1.45): the
+        // decoding is the cost of keeping the floats.
+        .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => floatTexel(format, at),
     };
 }
 
@@ -932,9 +1763,13 @@ inline fn fetchSpread(comptime format: Format, at: [*]const u8) u64 {
     @setRuntimeSafety(false);
     return switch (format) {
         .rgba8888 => @as(*const u64, @ptrCast(@alignCast(at))).*,
-        .rgb565, .d16 => spread(fetch(format, at)),
+        .argb8888, .r8, .rgb565, .d16, .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => spread(fetch(format, at)),
     };
 }
+
+/// What a texel of a compressed format reads as where something asks for one
+/// a texel at a time: a sample of such a texture decodes its block instead.
+pub const missing_texel: u32 = 0xFFFF_00FF;
 
 /// RGB565 as 0xAARRGGBB: each channel's top bits again below, so that the
 /// largest value of 5 or 6 bits is 255.
@@ -1141,7 +1976,7 @@ fn sampledAt(texture: *const Texture, sampler: *const Sampler, layer: u32, lod: 
 fn texelBy(texture: *const Texture, sampler: *const Sampler, layer: u32, lod: u32, x: i32, y: i32) u32 {
     const column = wrapped(sampler.wrap[0], x, texture.width(lod)) orelse return sampler.border;
     const row = wrapped(sampler.wrap[1], y, texture.height(lod)) orelse return sampler.border;
-    return texture.colorAt(@min(layer, texture.layer_count - 1), lod, column, row);
+    return texture.texelColor(@min(layer, texture.layer_count - 1), lod, column, row);
 }
 
 /// What a shadow sample compares with the reference, 0 to 1: the depth of
@@ -1156,7 +1991,7 @@ fn valueBy(texture: *const Texture, sampler: *const Sampler, layer: u32, lod: u3
         const kept = texture.peekLayer(at, lod, column, row);
         return @as(f32, @floatFromInt(kept & 0xFFFF)) / 65535;
     }
-    return @as(f32, @floatFromInt(texture.colorAt(at, lod, column, row) >> 16 & 0xFF)) / 255;
+    return @as(f32, @floatFromInt(texture.texelColor(at, lod, column, row) >> 16 & 0xFF)) / 255;
 }
 
 /// Where a whole coordinate lands in a side of `size`; null for one past a
@@ -1171,6 +2006,9 @@ fn wrapped(wrap: Wrap, at: i32, size: u32) ?u32 {
         },
         .clamp_to_edge => @intCast(std.math.clamp(at, 0, whole - 1)),
         .clamp_to_border => if (at < 0 or at >= whole) null else @intCast(at),
+        // Turned round once below 0 - where -1 is texel 0 and -2 texel 1 -
+        // and held at the edge either way (since 1.49).
+        .mirror_clamp_to_edge => @intCast(std.math.clamp(if (at < 0) -1 - at else at, 0, whole - 1)),
     };
 }
 
@@ -1189,4 +2027,11 @@ inline fn greyOf(passed: f32) u32 {
 pub inline fn greyOf8(value: u8) u32 {
     const part: u32 = value;
     return 0xFF00_0000 | part << 16 | part << 8 | part;
+}
+
+/// A one-channel texel as a colour: red, with a green and a blue of 0 and
+/// the whole alpha, the way Vulkan reads R8_UNORM (`Format.r8`, since
+/// 1.48).
+pub inline fn redOf8(value: u8) u32 {
+    return 0xFF00_0000 | @as(u32, value) << 16;
 }

@@ -104,6 +104,7 @@ const AcquireNextImage = @import("swapchain/acquirenextimage.zig").AcquireNextIm
 const QueuePresent = @import("swapchain/queuepresent.zig").QueuePresent;
 const CreateWindowSurface = @import("surface/createwindowsurface.zig").CreateWindowSurface;
 const CmdSetBlendConstants = @import("command/cmdsetblendconstants.zig").CmdSetBlendConstants;
+const CmdSetBlendConstantsAt = @import("command/cmdsetblendconstantsat.zig").CmdSetBlendConstantsAt;
 const CmdSetLineWidth = @import("command/cmdsetlinewidth.zig").CmdSetLineWidth;
 const CmdSetStencilCompareMask = @import("command/cmdsetstencilcomparemask.zig").CmdSetStencilCompareMask;
 const CmdSetStencilWriteMask = @import("command/cmdsetstencilwritemask.zig").CmdSetStencilWriteMask;
@@ -255,6 +256,7 @@ const contract_files = [_][]const u8{
     @embedFile("swapchain/queuepresent.zig"),
     @embedFile("surface/createwindowsurface.zig"),
     @embedFile("command/cmdsetblendconstants.zig"),
+    @embedFile("command/cmdsetblendconstantsat.zig"),
     @embedFile("command/cmdsetlinewidth.zig"),
     @embedFile("command/cmdsetstencilcomparemask.zig"),
     @embedFile("command/cmdsetstencilwritemask.zig"),
@@ -480,6 +482,10 @@ fn lvoGetDeviceMemoryCommitment(base: *FacetBase, device: *facet.Device, memory:
 
 fn lvoCmdSetDepthBounds(base: *FacetBase, buffer: *facet.CommandBuffer, min: f32, max: f32) callconv(.c) void {
     return CmdSetDepthBounds(base, buffer, min, max);
+}
+
+fn lvoCmdSetBlendConstantsAt(base: *FacetBase, buffer: *facet.CommandBuffer, attachment: u32, constants: *const [4]f32) callconv(.c) void {
+    return CmdSetBlendConstantsAt(base, buffer, attachment, constants);
 }
 
 fn lvoCmdCopyBuffer(base: *FacetBase, buffer: *facet.CommandBuffer, source: *facet.Buffer, destination: *facet.Buffer, region_count: u32, regions: [*]const facet.BufferCopy) callconv(.c) void {
@@ -819,6 +825,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoGetRenderAreaGranularity),
     vec(lvoGetDeviceMemoryCommitment),
     vec(lvoCmdSetDepthBounds),
+    vec(lvoCmdSetBlendConstantsAt),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

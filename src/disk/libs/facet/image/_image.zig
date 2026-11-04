@@ -63,6 +63,10 @@ pub const Image = struct {
     volume: bool = false,
     /// IMAGE_CREATE_CUBE_COMPATIBLE.
     cube: bool = false,
+    /// IMAGE_CREATE_PACKED_TEXELS: an 8888 texel kept in the 32 bits of
+    /// its word rather than spread over 64 (`texture.Format.argb8888`,
+    /// `PhysicalDeviceFeatures.small_texels`, since 1.48).
+    packed_texels: bool = false,
     usage: u32,
     kind: Kind,
     /// `rows`: the bytes from one row to the next.
@@ -154,15 +158,40 @@ pub fn rowFormat(format: facet.Format) shader.TexelFormat {
     };
 }
 
+/// How a shader function writes the pixels of an image kept in rows, as
+/// the texture over them (`texture.Texture.linear`): null for a format
+/// whose rows no texture reads, which is every one whose texel is not a
+/// word of its own. `r8g8b8a8_unorm` is one of those - a texture of 8888
+/// is 0xAARRGGBB, as `b8g8r8a8_unorm`'s rows are, and nothing reads a
+/// word with red in its low byte. (Since 1.56.)
+pub fn rowTexture(format: facet.Format) ?texture.Format {
+    return switch (format) {
+        .b8g8r8a8_unorm => .argb8888,
+        .r5g6b5_unorm_pack16 => .rgb565,
+        else => null,
+    };
+}
+
+/// Whether an image kept in rows is written through as a storage image:
+/// drawn into and written through at once, its rows being the texture a
+/// function writes (`rowTexture`, since 1.56).
+pub fn writtenRows(image: *const Image) bool {
+    return image.kind == .rows and image.usage & facet.IMAGE_USAGE_STORAGE != 0;
+}
+
 /// The bytes a texel, a pixel or a vertex's value of `format` takes; 0
 /// for one facet.library does not know.
 pub fn bytesOf(format: facet.Format) u32 {
     return switch (format) {
-        .s8_uint => 1,
+        // One byte of red a texel (since 1.48).
+        .s8_uint, .r8_unorm => 1,
         .r5g6b5_unorm_pack16, .d16_unorm => 2,
         .d16_unorm_s8_uint => 4,
         .r8g8b8a8_unorm, .b8g8r8a8_unorm, .r32_sfloat => 4,
-        .r32g32_sfloat => 8,
+        // The float formats a texture keeps as they lie (since 1.45), and
+        // the vertex ones, which are the same sizes.
+        .b10g11r11_ufloat_pack32, .e5b9g9r9_ufloat_pack32 => 4,
+        .r16g16b16a16_sfloat, .r32g32_sfloat => 8,
         .r32g32b32_sfloat => 12,
         .r32g32b32a32_sfloat => 16,
         else => 0,
@@ -172,9 +201,36 @@ pub fn bytesOf(format: facet.Format) u32 {
 /// How a sampled image of `format` keeps its texels, or null for a format
 /// that cannot be sampled.
 pub fn textureFormat(format: facet.Format) ?texture.Format {
+    return keptFormat(format, false);
+}
+
+/// The same, with IMAGE_CREATE_PACKED_TEXELS: an 8888 texel is then kept
+/// in the 32 bits of its word rather than spread over 64, which is the
+/// same colour in half the memory (`PhysicalDeviceFeatures.small_texels`,
+/// since 1.48). The flag means nothing to any other format.
+pub fn keptFormat(format: facet.Format, packed_texels: bool) ?texture.Format {
     return switch (format) {
-        .b8g8r8a8_unorm, .r8g8b8a8_unorm => .rgba8888,
+        .b8g8r8a8_unorm, .r8g8b8a8_unorm => if (packed_texels) .argb8888 else .rgba8888,
         .r5g6b5_unorm_pack16 => .rgb565,
+        // One byte of red a texel, read as (red, 0, 0, 1) (since 1.48).
+        .r8_unorm => .r8,
+        // Kept in their blocks and decoded as they are sampled, on a
+        // device that says so (`PhysicalDeviceFeatures.kept_compressed`).
+        .bc1_rgba_unorm_block => .bc1,
+        .bc1_rgb_unorm_block => .bc1_rgb,
+        .bc2_unorm_block => .bc2,
+        .bc3_unorm_block => .bc3,
+        // Kept as the floats they were copied in as, and rounded to 8 bits
+        // a channel as they are sampled, on a device that says so
+        // (`PhysicalDeviceFeatures.kept_floats`).
+        .r16g16b16a16_sfloat => .rgba16f,
+        .r32g32b32a32_sfloat => .rgba32f,
+        .b10g11r11_ufloat_pack32 => .rg11b10f,
+        .e5b9g9r9_ufloat_pack32 => .rgb9e5,
+        // One float a texel, read as (red, 0, 0, 1) (since 1.57): a
+        // height field, a mask or an accumulation buffer a function
+        // writes through.
+        .r32_sfloat => .r32f,
         // A depth sampled where it lies, in rows
         // (`PhysicalDeviceFeatures.sampled_depth`).
         .d16_unorm => .d16,
@@ -205,16 +261,56 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
     if ((info.image_type != .@"2d" and !volume) or info.samples != 1) return null;
     const layers = if (volume) extent.depth else info.array_layers;
     if (layers == 0 or (!volume and extent.depth != 1)) return null;
-    if (volume and (info.array_layers != 1 or info.mip_levels != 1 or !std.math.isPowerOfTwo(layers) or layers > _instance.max_image_dimension_3d)) return null;
+    // A 3D image's depth is its layers, and may be any number since 1.46;
+    // its levels are each slice's own (`texture.Texture.slicesAt`).
+    if (volume and (info.array_layers != 1 or layers > _instance.max_image_dimension_3d)) return null;
     if (layers > _instance.max_image_array_layers) return null;
     const cube = info.flags & facet.IMAGE_CREATE_CUBE_COMPATIBLE != 0;
     if (cube and (volume or layers < 6 or extent.width != extent.height)) return null;
-    // Layers are for sampling: an attachment or rows have one.
-    if ((layers > 1 or _decode.unpacks(info.format)) and (info.usage & facet.IMAGE_USAGE_SAMPLED == 0 or info.tiling != .optimal)) return null;
-    const kept_format: facet.Format = if (_decode.unpacks(info.format)) .r8g8b8a8_unorm else info.format;
+    // A texel kept smaller than the colour it reads as, on a device that
+    // keeps one (`PhysicalDeviceFeatures.small_texels`, since 1.48): an
+    // 8888 texel in the 32 bits of its word rather than spread over 64,
+    // and a texel of one byte of red. Both are for an image a function
+    // reads or writes; nothing else is kept in a texture's layout.
+    const in_texels = info.usage & (facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_STORAGE) != 0;
+    const packed_texels = info.flags & facet.IMAGE_CREATE_PACKED_TEXELS != 0;
+    const packs = switch (info.format) {
+        .r8g8b8a8_unorm, .b8g8r8a8_unorm => true,
+        else => false,
+    };
+    if (packed_texels and !(physical.features.small_texels and in_texels and packs)) return null;
+    if (info.format == .r8_unorm and !(physical.features.small_texels and in_texels)) return null;
+    // Layers are for a function to read or to write: an attachment or
+    // rows have one, and both want the layout a sample reads, which is
+    // `optimal` tiling. An image of layers written through and never
+    // sampled is one of them since 1.55.
+    if ((layers > 1 or _decode.unpacks(info.format)) and info.tiling != .optimal) return null;
+    if (layers > 1 and !in_texels) return null;
+    // A compressed image is kept in its blocks, and a float one in its
+    // floats, where this device samples them
+    // (`PhysicalDeviceFeatures.kept_compressed`, `kept_floats`); where it
+    // does not they are unpacked into 8 bits a channel. A storage image is
+    // written texel by texel, which neither kind takes.
+    const writes_texels = info.usage & facet.IMAGE_USAGE_STORAGE != 0;
+    // An ETC2 or EAC block is never kept: no sampler of this library reads
+    // one, so such an image is unpacked whatever the device says.
+    const keeps_blocks = physical.features.kept_compressed and _decode.blockBytes(info.format) != 0 and !_decode.etc(info.format) and !writes_texels;
+    // A float image keeps its floats even where a function writes it
+    // through, since 1.57: `texture.Texture.setParts` writes one texel of
+    // floats, where nothing writes one texel of a compressed block.
+    const keeps_floats = physical.features.kept_floats and _decode.texelBytes(info.format) != 0;
+    const kept_format: facet.Format = if (_decode.unpacks(info.format) and !(keeps_blocks or keeps_floats)) .r8g8b8a8_unorm else info.format;
+    // What is unpacked on the way in is unpacked to be sampled: a format
+    // kept as it lies - a compressed image's blocks, a float one's floats
+    // - is not (since 1.57, where a float image written through keeps its
+    // floats and so needs no sampling).
+    if (kept_format != info.format and info.usage & facet.IMAGE_USAGE_SAMPLED == 0) return null;
     if (extent.width == 0 or extent.height == 0 or extent.width > max_image_dimension or extent.height > max_image_dimension) return null;
     if (info.mip_levels == 0) return null;
-    const pixel = bytesOf(kept_format);
+    // A block's bytes stand in for a texel's where the blocks are kept:
+    // what rows would take is never asked of such an image, which is
+    // sampled and nothing else.
+    const pixel = if (keeps_blocks) _decode.blockBytes(info.format) else bytesOf(kept_format);
     if (pixel == 0) return null;
     var image = Image{
         .device = undefined,
@@ -223,6 +319,7 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
         .layers = layers,
         .volume = volume,
         .cube = cube,
+        .packed_texels = packed_texels,
         .width = extent.width,
         .height = extent.height,
         .levels = info.mip_levels,
@@ -233,39 +330,57 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
     const depth_usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT |
         facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
     if (hasDepth(info.format) or hasStencil(info.format)) {
-        // Sampled as well, since 1.39: its rows are the texture, so it is
-        // a depth alone - there is no stencil texel - and it wants memory
-        // behind it, which `requirements` holds to.
+        // Sampled as well, since 1.39: its rows are the texture, and it
+        // wants memory behind it, which `requirements` holds to. Any of
+        // the three formats since 1.58, each plane read through a view of
+        // that aspect (`depthPlane`): the depth as 16 bits, and the
+        // stencil as one byte of every four where the format holds both.
         const sampled = info.usage & facet.IMAGE_USAGE_SAMPLED != 0;
         if (sampled) {
             if (!physical.features.sampled_depth) return null;
-            if (info.format != .d16_unorm) return null;
             if (info.usage & facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT != 0) return null;
         }
         const allowed = if (sampled) depth_usage | facet.IMAGE_USAGE_SAMPLED else depth_usage;
         if (info.usage & facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT == 0 or info.usage & ~allowed != 0) return null;
-        if (info.tiling != .optimal or info.mip_levels != 1) return null;
+        // One level, and never a volume: a pass draws into rows, and a
+        // level of its own or a slice of one is nothing it draws into.
+        if (info.tiling != .optimal or info.mip_levels != 1 or volume) return null;
         image.kind = .depth;
         // Rows, like a colour attachment's: what a render pass that stores
         // its depth writes, and what a transfer reads (`readTexel`). A
         // transient one is never written and takes the same shape.
         image.pitch = std.mem.alignForward(u32, extent.width * pixel, row_alignment);
-        image.bytes = @as(u64, image.pitch) * extent.height;
+        // Layers since 1.58: a layer's rows one after another, each on a
+        // cache line, which a framebuffer's view names one of and a
+        // sample reads any of.
+        image.layer_bytes = std.mem.alignForward(u64, @as(u64, image.pitch) * extent.height, row_alignment);
+        image.bytes = image.layer_bytes * layers;
         return image;
     }
     if (info.usage & facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT != 0) return null;
+    // Drawn into, or read as an input attachment, and written through as a
+    // storage image at once (since 1.56): the image stays in rows, as an
+    // attachment is, and a function writes those rows. Never sampled as
+    // well, a sample wanting the blocked layout, and of a format whose
+    // rows a texture reads.
+    const rows_written = info.usage & facet.IMAGE_USAGE_STORAGE != 0 and
+        info.usage & facet.IMAGE_USAGE_SAMPLED == 0 and
+        info.usage & (facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT) != 0 and
+        info.usage & facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT == 0 and
+        rowTexture(info.format) != null and info.mip_levels == 1 and layers == 1;
     // Read as an input attachment: its pixels are read out of its rows,
     // so not in a texture's layout and not a transient attachment, which
     // has no memory at all.
     if (info.usage & facet.IMAGE_USAGE_INPUT_ATTACHMENT != 0) {
-        const not_rows = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT;
+        const not_rows = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT;
         if (info.usage & not_rows != 0) return null;
+        if (info.usage & facet.IMAGE_USAGE_STORAGE != 0 and !rows_written) return null;
     }
     // Sampled, written through as a storage image, or both: all one kind,
     // kept in the layout a sample reads.
-    if (info.usage & (facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_STORAGE) != 0) {
+    if (info.usage & (facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_STORAGE) != 0 and !rows_written) {
         if (info.tiling != .optimal or info.usage & facet.IMAGE_USAGE_COLOR_ATTACHMENT != 0) return null;
-        const kept = textureFormat(kept_format) orelse return null;
+        const kept = keptFormat(kept_format, packed_texels) orelse return null;
         image.kind = .texture;
         var one_layer: u64 = texture.Texture.bytes(kept, extent.width, extent.height, info.mip_levels) catch return null;
         one_layer = std.mem.alignForward(u64, one_layer, row_alignment);
@@ -285,6 +400,9 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
     if (info.mip_levels != 1 or textureFormat(info.format) == null) return null;
     image.pitch = std.mem.alignForward(u32, extent.width * pixel, row_alignment);
     image.bytes = @as(u64, image.pitch) * extent.height;
+    // Written through as a storage image as well: the rows are the
+    // texture a function writes, over no memory yet (since 1.56).
+    if (rows_written) image.texels = texelsOver(&image, @ptrFromInt(_memory.alignment)) catch return null;
     return image;
 }
 
@@ -292,8 +410,14 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
 /// A depth image's rows are the texture themselves: one level, of whatever
 /// size the image is (`texture.Texture.linear`).
 pub fn texelsOver(image: *const Image, memory: [*]u8) texture.Texture.Error!texture.Texture {
-    if (image.kind == .depth) return texture.Texture.linear(.d16, image.width, image.height, image.pitch, memory);
-    var made = try texture.Texture.init(textureFormat(image.format).?, image.width, image.height, image.levels, memory);
+    // Its own plane, all its layers: the depth where the format has one
+    // and the stencil where it has not. The aspect a view asks for picks
+    // the plane again (`depthPlane`, since 1.58).
+    if (image.kind == .depth) return planeOver(image, 0, 0, image.layers, memory).?;
+    // A colour attachment written through as a storage image: its rows
+    // are the texture, as a sampled depth's are (since 1.56).
+    if (writtenRows(image)) return texture.Texture.linear(rowTexture(image.format).?, image.width, image.height, image.pitch, memory);
+    var made = try texture.Texture.init(keptFormat(image.format, image.packed_texels).?, image.width, image.height, image.levels, memory);
     made.layer_count = image.layers;
     made.layer_bytes = @intCast(image.layer_bytes);
     return made;
@@ -310,6 +434,43 @@ pub fn requirements(image: *const Image) facet.MemoryRequirements {
         .alignment = image.alignment,
         .memory_type_bits = if (anywhere) _memory.allTypes(properties) else _memory.backedTypes(properties),
     };
+}
+
+/// One plane of a depth attachment's rows as a texture, over `memory`:
+/// `aspect` says which, and `first_layer` and `layers` which of them. The
+/// depth is 16 bits at the pixel's first byte and the stencil one byte
+/// where the pixel keeps it (`depthOffset`, `stencilOffset`), each read
+/// `bytesOf` bytes apart - so a format that holds both is two planes
+/// inside the same rows. An `aspect` naming neither plane, which is what
+/// a view asking for the colour takes - the default, and what every view
+/// of such an image took before 1.58 - is the format's own plane: its
+/// depth where it has one, and its stencil where it has not. Null for an
+/// aspect the format has not got, or for both planes at once.
+/// (Since 1.58.)
+fn planeOver(image: *const Image, aspect: u32, first_layer: u32, layers: u32, memory: [*]u8) ?texture.Texture {
+    const asked = aspect & (facet.IMAGE_ASPECT_DEPTH | facet.IMAGE_ASPECT_STENCIL);
+    const stride = bytesOf(image.format);
+    if (stride == 0) return null;
+    const planes = if (asked != 0) asked else if (hasDepth(image.format)) facet.IMAGE_ASPECT_DEPTH else facet.IMAGE_ASPECT_STENCIL;
+    const wants_depth = planes == facet.IMAGE_ASPECT_DEPTH;
+    const wants_stencil = planes == facet.IMAGE_ASPECT_STENCIL;
+    if (wants_depth and !hasDepth(image.format)) return null;
+    if (wants_stencil and !hasStencil(image.format)) return null;
+    if (!wants_depth and !wants_stencil) return null;
+    const at = if (wants_depth) depthOffset(image.format) else stencilOffset(image.format);
+    if (at >= stride) return null;
+    // The depth is read as 16 bits of depth and the stencil as one byte,
+    // which `texture.Format.r8` reads as (red, 0, 0, 1).
+    const kept: texture.Format = if (wants_depth) .d16 else .r8;
+    var made = texture.Texture.linearBy(kept, image.width, image.height, image.pitch, stride, memory + at + first_layer * @as(usize, @intCast(image.layer_bytes)));
+    made.layer_count = layers;
+    made.layer_bytes = @intCast(image.layer_bytes);
+    return made;
+}
+
+/// The same over the image's own memory, for a view of it. (Since 1.58.)
+pub fn depthPlane(image: *const Image, aspect: u32, first_layer: u32, layers: u32) ?texture.Texture {
+    return planeOver(image, aspect, first_layer, layers, image.data orelse return null);
 }
 
 /// A texture image's levels from `base` on, `count` of them, of the layers
@@ -334,9 +495,12 @@ pub const LayerRange = struct { first: u32, count: u32 };
 /// image, as it has them along z, else by the subresource. Null for none.
 pub fn layersOf(image: *const Image, subresource: facet.ImageSubresourceLayers, z: i32, depth: u32) ?LayerRange {
     if (image.volume) {
-        if (z < 0 or z >= image.layers or depth == 0) return null;
+        // A level of a 3D image is as deep as halving its depth that often
+        // gives, and no less than one slice (`texture.Texture.slicesAt`).
+        const slices = image.texels.slicesAt(subresource.mip_level);
+        if (z < 0 or z >= slices or depth == 0) return null;
         const first: u32 = @intCast(z);
-        return .{ .first = first, .count = @min(depth, image.layers - first) };
+        return .{ .first = first, .count = @min(depth, slices - first) };
     }
     if (subresource.base_array_layer >= image.layers or subresource.layer_count == 0) return null;
     return .{ .first = subresource.base_array_layer, .count = @min(subresource.layer_count, image.layers - subresource.base_array_layer) };
@@ -345,6 +509,77 @@ pub fn layersOf(image: *const Image, subresource: facet.ImageSubresourceLayers, 
 /// Whether what is copied into an image has to be unpacked.
 pub fn unpacks(image: *const Image) bool {
     return image.given_format != image.format;
+}
+
+/// Whether an image's texels lie compressed where they were copied in, in
+/// blocks of 4 x 4 texels (`PhysicalDeviceFeatures.kept_compressed`): a
+/// sample decodes the block it reads, and a copy moves whole blocks.
+pub fn blocked(image: *const Image) bool {
+    return _decode.blockBytes(image.format) != 0;
+}
+
+/// The bytes of one of a blocked image's blocks; 0 for another image.
+pub fn blockBytes(image: *const Image) u32 {
+    return _decode.blockBytes(image.format);
+}
+
+/// Whether an image's texels are the floats they were copied in as
+/// (`PhysicalDeviceFeatures.kept_floats`): a sample rounds one to 8 bits a
+/// channel as it reads it, and a copy moves its bytes as they lie.
+pub fn floatTexels(image: *const Image) bool {
+    return _decode.texelBytes(image.format) != 0;
+}
+
+/// The block holding texel (x, y) of a level of a layer, into `into`;
+/// nothing where the image is not blocked.
+pub fn readBlock(image: *const Image, level: u32, layer: u32, x: u32, y: u32, into: []u8) void {
+    image.texels.blockBytesAt(layer, level, x, y, into);
+}
+
+/// The same written, as a copy into a compressed image moves it.
+pub fn writeBlock(image: *Image, level: u32, layer: u32, x: u32, y: u32, from: []const u8) void {
+    image.texels.putBlock(layer, level, x, y, from);
+}
+
+/// The colour of texel (x, y), 0xAARRGGBB, decoded out of the block it
+/// lies in: what a blit reads of a compressed image, there being no texel
+/// of its own in memory.
+pub fn blockColor(image: *const Image, level: u32, layer: u32, x: u32, y: u32) u32 {
+    return image.texels.peekLayer(layer, level, x, y);
+}
+
+/// Blocks of a compressed format from a buffer's bytes into a level of an
+/// image that keeps them, as they lie: the part of the rectangle outside
+/// the image, or past the end of `from`, left out. Blocks start on a
+/// multiple of 4, as Vulkan asks.
+pub fn copyBlocks(image: *Image, from: []const u8, region: *const facet.BufferImageCopy) void {
+    if (image.data == null) return;
+    const level = region.image_subresource.mip_level;
+    if (level >= image.levels or region.image_offset.x < 0 or region.image_offset.y < 0) return;
+    const size = levelSize(image, level);
+    const left: u32 = @intCast(region.image_offset.x);
+    const top: u32 = @intCast(region.image_offset.y);
+    if (left >= size[0] or top >= size[1]) return;
+    if (left % 4 != 0 or top % 4 != 0) return;
+    const width = @min(region.image_extent.width, size[0] - left);
+    const height = @min(region.image_extent.height, size[1] - top);
+    const range = layersOf(image, region.image_subresource, region.image_offset.z, region.image_extent.depth) orelse return;
+    // A buffer holds a compressed image in blocks: a row of them is
+    // `buffer_row_length` texels across, which is what Vulkan counts here.
+    const row_length = if (region.buffer_row_length != 0) region.buffer_row_length else region.image_extent.width;
+    const slice_height = if (region.buffer_image_height != 0) region.buffer_image_height else region.image_extent.height;
+    const start = std.math.cast(usize, region.buffer_offset) orelse return;
+    const wide = blockBytes(image);
+    const pitch = @as(usize, (row_length + 3) / 4) * wide;
+    for (0..range.count) |slice| {
+        const layer = range.first + @as(u32, @intCast(slice));
+        const slice_at = start + slice * @as(usize, (slice_height + 3) / 4) * pitch;
+        for (0..(height + 3) / 4) |row| for (0..(width + 3) / 4) |column| {
+            const at = slice_at + row * pitch + column * wide;
+            if (at + wide > from.len) return;
+            writeBlock(image, level, layer, left + @as(u32, @intCast(column * 4)), top + @as(u32, @intCast(row * 4)), from[at..][0..wide]);
+        };
+    }
 }
 
 /// A rectangle of a compressed or a float format from a buffer's bytes into
@@ -402,6 +637,7 @@ pub fn copyUnpacking(image: *Image, from: []const u8, region: *const facet.Buffe
 pub fn copyFromBuffer(image: *Image, from: []const u8, region: *const facet.BufferImageCopy) void {
     if (image.data == null) return;
     if (unpacks(image)) return copyUnpacking(image, from, region);
+    if (blocked(image)) return copyBlocks(image, from, region);
     const level = region.image_subresource.mip_level;
     if (level >= image.levels or region.image_offset.x < 0 or region.image_offset.y < 0) return;
     const range = layersOf(image, region.image_subresource, region.image_offset.z, region.image_extent.depth) orelse return;
@@ -413,6 +649,9 @@ pub fn copyFromBuffer(image: *Image, from: []const u8, region: *const facet.Buff
     const width = @min(region.image_extent.width, level_width - left);
     const height = @min(region.image_extent.height, level_height - top);
     const pixel = bytesOf(image.format);
+    // A float image keeps what it is given: the texel's bytes go as they
+    // lie rather than through a colour of 8 bits a channel.
+    const keeps = floatTexels(image);
     const row_length = if (region.buffer_row_length != 0) region.buffer_row_length else region.image_extent.width;
     const source_pitch = @as(usize, row_length) * pixel;
     const slice_height = if (region.buffer_image_height != 0) region.buffer_image_height else region.image_extent.height;
@@ -426,12 +665,18 @@ pub fn copyFromBuffer(image: *Image, from: []const u8, region: *const facet.Buff
             const y = top + @as(u32, @intCast(row));
             switch (image.kind) {
                 .rows, .depth => {
-                    const into = image.data.? + @as(usize, y) * image.pitch + @as(usize, left) * pixel;
+                    // A depth image may have layers since 1.58; a rows
+                    // one has the one, whose `layer_bytes` is 0.
+                    const into = image.data.? + layer * @as(usize, @intCast(image.layer_bytes)) + @as(usize, y) * image.pitch + @as(usize, left) * pixel;
                     @memcpy(into[0..source.len], source);
                 },
                 .texture => for (0..width) |column| {
                     const x = left + @as(u32, @intCast(column));
-                    image.texels.putLayer(layer, level, x, y, texelOf(image.format, source[column * pixel ..]));
+                    if (keeps) {
+                        image.texels.putTexels(layer, level, x, y, source[column * pixel ..]);
+                    } else {
+                        image.texels.putLayer(layer, level, x, y, texelOf(image.format, source[column * pixel ..]));
+                    }
                 },
             }
         }
@@ -448,6 +693,8 @@ fn texelOf(format: facet.Format, bytes: []const u8) u32 {
             break :texel color & 0xFF00_FF00 | (color >> 16 & 0xFF) | (color & 0xFF) << 16;
         },
         .r5g6b5_unorm_pack16 => std.mem.readInt(u16, bytes[0..2], .little),
+        // One byte of red, kept as it lies (since 1.48).
+        .r8_unorm => bytes[0],
         else => 0,
     };
 }
@@ -477,12 +724,15 @@ pub fn readTexel(image: *const Image, level: u32, layer: u32, x: u32, y: u32, in
         // pass that stores its depth wrote.
         .rows, .depth => {
             const pixel = bytesOf(image.format);
-            const from = image.data.? + @as(usize, y) * image.pitch + @as(usize, x) * pixel;
+            const from = image.data.? + layer * @as(usize, @intCast(image.layer_bytes)) + @as(usize, y) * image.pitch + @as(usize, x) * pixel;
             @memcpy(into[0..pixel], from[0..pixel]);
         },
         .texture => if (deviceOffset(image, level, layer, x, y)) |offset| {
             const pixel = bytesOf(image.format);
             @memcpy(into[0..pixel], (image.data.? + offset)[0..pixel]);
+        } else if (floatTexels(image)) {
+            // The floats as they lie: what went in comes out again.
+            image.texels.texelsAt(layer, level, x, y, into);
         } else {
             bytesOfTexel(image.format, image.texels.peekLayer(layer, level, x, y), into);
         },
@@ -494,12 +744,14 @@ pub fn writeTexel(image: *Image, level: u32, layer: u32, x: u32, y: u32, from: [
     switch (image.kind) {
         .rows, .depth => {
             const pixel = bytesOf(image.format);
-            const into = image.data.? + @as(usize, y) * image.pitch + @as(usize, x) * pixel;
+            const into = image.data.? + layer * @as(usize, @intCast(image.layer_bytes)) + @as(usize, y) * image.pitch + @as(usize, x) * pixel;
             @memcpy(into[0..pixel], from[0..pixel]);
         },
         .texture => if (deviceOffset(image, level, layer, x, y)) |offset| {
             const pixel = bytesOf(image.format);
             @memcpy((image.data.? + offset)[0..pixel], from[0..pixel]);
+        } else if (floatTexels(image)) {
+            image.texels.putTexels(layer, level, x, y, from);
         } else {
             image.texels.putLayer(layer, level, x, y, texelOf(image.format, from));
         },
@@ -512,6 +764,7 @@ fn bytesOfTexel(format: facet.Format, texel: u32, into: []u8) void {
         .b8g8r8a8_unorm => std.mem.writeInt(u32, into[0..4], texel, .little),
         .r8g8b8a8_unorm => std.mem.writeInt(u32, into[0..4], texel & 0xFF00_FF00 | (texel >> 16 & 0xFF) | (texel & 0xFF) << 16, .little),
         .r5g6b5_unorm_pack16 => std.mem.writeInt(u16, into[0..2], @truncate(texel), .little),
+        .r8_unorm => into[0] = @truncate(texel),
         else => {},
     }
 }
@@ -531,6 +784,8 @@ pub fn colorOfBytes(format: facet.Format, bytes: []const u8) u32 {
             const b = packed_color & 0x1F;
             break :color 0xFF00_0000 | (r << 3 | r >> 2) << 16 | (g << 2 | g >> 4) << 8 | (b << 3 | b >> 2);
         },
+        // Red alone, as Vulkan reads a one-channel format.
+        .r8_unorm => texture.redOf8(bytes[0]),
         else => 0,
     };
 }
@@ -545,6 +800,7 @@ pub fn bytesOfColor(format: facet.Format, color: u32, into: []u8) void {
             const b = ((color & 0xFF) * 31 + 127) / 255;
             std.mem.writeInt(u16, into[0..2], @intCast(r << 11 | g << 5 | b), .little);
         },
+        .r8_unorm => into[0] = @truncate(color >> 16),
         else => {},
     }
 }

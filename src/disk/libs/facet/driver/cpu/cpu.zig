@@ -43,7 +43,7 @@ const _draw = @import("_draw.zig");
 
 pub const ops = Ops{
     .describe = &describe,
-    .format_properties = &_format.properties,
+    .format_properties = &_format.keptProperties,
     .allocate_memory = &allocateMemory,
     .free_memory = &freeMemory,
     .make_pipeline = &makePipeline,
@@ -92,6 +92,7 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
             .max_compute_work_group_size = _instance.max_compute_work_group_size,
             .max_compute_work_group_invocations = _instance.max_compute_work_group_invocations,
             .max_compute_shared_memory_size = _instance.max_compute_shared_memory_size,
+            .max_tessellation_patch_components = _instance.max_tessellation_patch_components,
             .min_memory_map_alignment = _memory.alignment,
             .tile_size = raster.tile_size,
             .cores = @min(cores, raster.most_parts),
@@ -129,6 +130,30 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // A depth image's rows are sampled where they lie: the one texel
         // decoder reads a depth as well (`texture.Format.d16`).
         .sampled_depth = true,
+        // A compressed image is sampled out of its blocks: the one texel
+        // decoder reads a BC block as well (`texture.Format.blockOf`).
+        .kept_compressed = true,
+        // A float image likewise, its texels read and rounded where they
+        // lie (`texture.floatTexel`).
+        .kept_floats = true,
+        // One cube of an array, the fourth coordinate saying which
+        // (`texture.Texture.sampleCubeIn`).
+        .cube_arrays = true,
+        // ETC2 and EAC, unpacked as they are copied in (image/_decode.zig).
+        .etc2_textures = true,
+        // A texel kept smaller than its colour: one byte of red, or an
+        // 8888 word unspread, which the one sampler reads either way
+        // (`texture.Format.r8`, `argb8888`).
+        .small_texels = true,
+        // The tiles hold a colour plane for each attachment of a subpass
+        // drawn together, and one fragment call writes them all.
+        .several_outputs = true,
+        // A sampler the set layout holds, which a write cannot change: the
+        // library keeps it, so it is nothing to do with the device.
+        .immutable_samplers = true,
+        // A pixel's depth and its stencil are written where they lie in
+        // its four bytes, so a format of both keeps either (since 1.47).
+        .stored_both = true,
         // Both go by the pixel at a time way the stencil test goes by:
         // the clamp holds a pixel's depth inside the viewport's range,
         // and the bounds test reads the depth already there.

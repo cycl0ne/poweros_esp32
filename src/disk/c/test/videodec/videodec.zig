@@ -2,7 +2,8 @@
 //! VideoDec: an elementary video stream decoded by the chip's decoder,
 //! timed and checked. Built against the SDK only.
 //!
-//!   VideoDec FILE/A,H265/S,FRAME/K/N,TO/K,RGB/S,SHOW/S,SMOOTH/S,WIDTH/K/N,PACE/S
+//!   VideoDec FILE/A,H265/S,FRAME/K/N,TO/K,RGB/S,SHOW/S,SMOOTH/S,WIDTH/K/N,PACE/S,
+//!            PQ/S,HLG/S,BT2020/S,PEAK/K/N
 //!
 //! The file - H.264, or H.265 with H265 or a name ending in .h265, .265
 //! or .hevc, in Annex B form as `ffmpeg -c:v copy -bsf:v
@@ -23,6 +24,18 @@
 //! WriteYUVPixelArray as SHOW would show it, through BT.709 for a frame
 //! 720 rows high or more and BT.601 below; `-vf
 //! scale=in_color_matrix=bt709 -pix_fmt bgra` makes ffmpeg's to compare.
+//!
+//! What the stream's numbers mean has to be told: the chip reports the
+//! size, the depth and the profile and not a word of the VUI, and
+//! nothing here reads a parameter set. PQ or HLG says the pictures are
+//! of high dynamic range, BT2020 that their matrix and primaries are
+//! BT.2020's, and PEAK the light the film was mastered for (1000
+//! candelas unless given). Then RGB and SHOW go through graphics'
+//! mapping into the screen's range, which is what such a film needs; a
+//! stream shown without them comes out flat and grey, as it did before
+//! any of this was built. On the PC, ffmpeg's
+//! `libplacebo=tonemapping=bt.2390:colorspace=bt709:color_trc=bt709:
+//! color_primaries=bt709` maps the same frame to compare.
 //!
 //! SHOW puts every frame in a window as it comes, through graphics'
 //! ScaleYUVPixelArray (WriteYUVPixelArray where the window is the frame's
@@ -56,7 +69,7 @@ pub const COMMAND_NAME = "VideoDec";
 const VERSION_STRING = "\x00$VER: VideoDec 1.1 (29.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "FILE/A,H265/S,FRAME/K/N,TO/K,RGB/S,SHOW/S,SMOOTH/S,WIDTH/K/N,PACE/S";
+const template = "FILE/A,H265/S,FRAME/K/N,TO/K,RGB/S,SHOW/S,SMOOTH/S,WIDTH/K/N,PACE/S,PQ/S,HLG/S,BT2020/S,PEAK/K/N";
 const arg_file = 0;
 const arg_h265 = 1;
 const arg_frame = 2;
@@ -66,6 +79,18 @@ const arg_show = 5;
 const arg_smooth = 6;
 const arg_width = 7;
 const arg_pace = 8;
+const arg_pq = 9;
+const arg_hlg = 10;
+const arg_bt2020 = 11;
+const arg_peak = 12;
+
+/// What the stream's numbers mean, as the switches say: a picture is
+/// BT.709's at the ordinary range unless it is told otherwise.
+const Look = struct {
+    transfer: u8 = rtg.RTGYUV_SDR,
+    wide: bool = false,
+    peak: u16 = 0,
+};
 
 /// The time each picture is fed with: 25 a second.
 const picture_us: u64 = 40_000;
@@ -159,6 +184,8 @@ const Tally = struct {
     rgb: ?*GraphicsBase = null,
     sys: ?*ExecBase = null,
     show: ?*Show = null,
+    /// What the pictures' numbers mean (PQ, HLG, BT2020, PEAK).
+    look: Look = .{},
     /// The window was closed, or Ctrl-C came: no more is fed.
     stopped: bool = false,
 };
@@ -175,6 +202,8 @@ const Show = struct {
     pace: bool,
     /// WIDTH, or 0 for the frame's own.
     width: u32,
+    /// What the pictures' numbers mean (PQ, HLG, BT2020, PEAK).
+    look: Look = .{},
     window: ?*intuition.Window = null,
     rp: ?*graphics.RastPort = null,
     /// The inside's size when it was last cleared.
@@ -267,7 +296,7 @@ const Show = struct {
         const x: i32 = @intCast(@divTrunc(inner_w - w, 2));
         const y: i32 = @intCast(@divTrunc(inner_h - h, 2));
         const box = graphics.Rect{ .min_x = x, .min_y = y, .max_x = x + @as(i32, @intCast(w)), .max_y = y + @as(i32, @intCast(h)) };
-        const picture = pictureOf(frame);
+        const picture = pictureOf(frame, s.look);
         const started = now(s.tb);
         if (w == fw and h == fh) {
             s.gb.WriteYUVPixelArray(rp, &picture, 0, 0, &box);
@@ -302,17 +331,21 @@ const Show = struct {
     }
 };
 
-/// A decoded frame as graphics takes it: NV12, in BT.709's colours for
-/// high definition and BT.601's below, video's range - what a stream
-/// that says nothing else about itself is in.
-fn pictureOf(frame: *const videodec.VideoDecFrame) rtg.RtgYuv {
+/// A decoded frame as graphics takes it: NV12, video's range, and in
+/// BT.709's colours for high definition and BT.601's below - what a
+/// stream that says nothing else about itself is in - or what `look` was
+/// told the stream is.
+fn pictureOf(frame: *const videodec.VideoDecFrame, look: Look) rtg.RtgYuv {
     return .{
         .y = frame.y.?,
         .cb = frame.cbcr.?,
         .y_pitch = frame.pitch,
         .c_pitch = frame.pitch,
         .layout = rtg.RTGYUV_NV12,
-        .colors = if (frame.height >= 720) rtg.RTGYUV_BT709 else rtg.RTGYUV_BT601,
+        .matrix = if (look.wide) rtg.RTGYUV_BT2020 else if (frame.height >= 720) rtg.RTGYUV_BT709 else rtg.RTGYUV_BT601,
+        .transfer = look.transfer,
+        .primaries = if (look.wide) rtg.RTGYUV_BT2020 else rtg.RTGYUV_BT709,
+        .peak = look.peak,
     };
 }
 
@@ -326,7 +359,7 @@ fn take(dl: *DosBase, vb: *VideoDecBase, decoder: *videodec.VideoDecoder, frame:
     if (t.wanted) |n| {
         if (n == t.frames) {
             if (t.to) |name| {
-                t.written = if (t.rgb) |gb| writeColours(t.sys.?, dl, gb, name, frame) else writeFrame(dl, name, frame);
+                t.written = if (t.rgb) |gb| writeColours(t.sys.?, dl, gb, name, frame, t.look) else writeFrame(dl, name, frame);
             }
         }
     }
@@ -359,7 +392,7 @@ fn writeFrame(dl: *DosBase, name: [*:0]const u8, frame: *const videodec.VideoDec
 
 /// The frame as colours, BGRA, into the file `name`: put down in memory
 /// by WriteYUVPixelArray, as it is put in a window.
-fn writeColours(sys: *ExecBase, dl: *DosBase, gb: *GraphicsBase, name: [*:0]const u8, frame: *const videodec.VideoDecFrame) bool {
+fn writeColours(sys: *ExecBase, dl: *DosBase, gb: *GraphicsBase, name: [*:0]const u8, frame: *const videodec.VideoDecFrame, look: Look) bool {
     const bytes = @as(usize, frame.width) * frame.height * 4;
     const memory = sys.AllocVec(bytes, exec.MEMF_ANY) orelse {
         _ = Printf(dl, "RGB: no memory for the frame\n", .{});
@@ -375,7 +408,7 @@ fn writeColours(sys: *ExecBase, dl: *DosBase, gb: *GraphicsBase, name: [*:0]cons
         .format = .bgra32,
     };
     const rp = gb.CreateRastPortTagList(&[_]TagItem{ .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&surface) }, .{} }) orelse return false;
-    const picture = pictureOf(frame);
+    const picture = pictureOf(frame, look);
     gb.WriteYUVPixelArray(rp, &picture, 0, 0, &.{ .min_x = 0, .min_y = 0, .max_x = @intCast(frame.width), .max_y = @intCast(frame.height) });
     gb.FreeRastPort(rp);
     const file = dl.Open(name, dos.MODE_NEWFILE) orelse {
@@ -518,7 +551,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const lib = sys.OpenLibrary(dos.DOSNAME, 0) orelse return dos.RETURN_FAIL;
     defer sys.CloseLibrary(lib);
     const dl: *DosBase = @ptrCast(lib);
-    var argv: [9]usize = @splat(0);
+    var argv: [13]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_ERROR;
@@ -529,6 +562,11 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     var tally: Tally = .{};
     if (argv[arg_frame] != 0) tally.wanted = @intCast(@max(0, @as(*const i32, @ptrFromInt(argv[arg_frame])).*));
     if (argv[arg_to] != 0) tally.to = @ptrFromInt(argv[arg_to]);
+    tally.look = .{
+        .transfer = if (argv[arg_pq] != 0) rtg.RTGYUV_PQ else if (argv[arg_hlg] != 0) rtg.RTGYUV_HLG else rtg.RTGYUV_SDR,
+        .wide = argv[arg_bt2020] != 0,
+        .peak = if (argv[arg_peak] != 0) @intCast(@max(0, @min(10000, @as(*const i32, @ptrFromInt(argv[arg_peak])).*))) else 0,
+    };
 
     const found = sys.OpenResource(videodec.VIDEODECNAME) orelse {
         _ = Printf(dl, "No %s on this machine\n", .{videodec.VIDEODECNAME});
@@ -587,6 +625,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
             .smooth = argv[arg_smooth] != 0,
             .pace = argv[arg_pace] != 0,
             .width = if (argv[arg_width] != 0) @intCast(@max(16, @as(*const i32, @ptrFromInt(argv[arg_width])).*)) else 0,
+            .look = tally.look,
         };
         tally.show = &show;
     }

@@ -68,10 +68,14 @@ pub fn CreateFramebuffer(base: *FacetBase, device: *facet.Device, info: *const f
     const views: []const *facet.ImageView = info.attachments[0..info.attachment_count];
     var plan = _render.Framebuffer{ .device = owner, .width = info.width, .height = info.height };
     for (pass.parts[0..pass.part_count], plan.targets[0..pass.part_count]) |part, *target| {
-        const color = _objects.of(ImageView, views[part.color]);
-        const image = color.image;
-        if (image.kind != .rows or image.format != part.color_format or image.usage & facet.IMAGE_USAGE_COLOR_ATTACHMENT == 0) return .error_initialization_failed;
-        if (color.base_level != 0 or image.width < info.width or image.height < info.height) return .error_initialization_failed;
+        target.color_count = part.color_count;
+        for (part.colors[0..part.color_count], part.color_formats[0..part.color_count], 0..) |index, format, k| {
+            const color = _objects.of(ImageView, views[index]);
+            const image = color.image;
+            if (image.kind != .rows or image.format != format or image.usage & facet.IMAGE_USAGE_COLOR_ATTACHMENT == 0) return .error_initialization_failed;
+            if (color.base_level != 0 or image.width < info.width or image.height < info.height) return .error_initialization_failed;
+            target.colors[k] = color;
+        }
         const depth: ?*ImageView = if (part.depth) |index| depth: {
             const view = _objects.of(ImageView, views[index]);
             if (view.image.kind != .depth or view.image.width < info.width or view.image.height < info.height) return .error_initialization_failed;
@@ -82,7 +86,9 @@ pub fn CreateFramebuffer(base: *FacetBase, device: *facet.Device, info: *const f
             if (kept and !_image.readable(view.image)) return .error_feature_not_present;
             break :depth view;
         } else null;
-        target.* = .{ .width = info.width, .height = info.height, .color = color, .depth = depth };
+        target.width = info.width;
+        target.height = info.height;
+        target.depth = depth;
     }
     const made = _objects.create(base.sys_base, _render.Framebuffer) orelse return .error_out_of_host_memory;
     made.* = plan;

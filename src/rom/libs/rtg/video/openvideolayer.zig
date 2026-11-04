@@ -5,6 +5,7 @@ const sdk = @import("sdk");
 const exec = sdk.exec;
 const rtg = sdk.rtg;
 const TagItem = sdk.utility.TagItem;
+const Tag = sdk.utility.Tag;
 const RtgBase = @import("../rtg.zig").RtgBase;
 const err = rtg.errors;
 const privateOf = @import("../board/_board.zig").privateOf;
@@ -24,11 +25,15 @@ const privateOf = @import("../board/_board.zig").privateOf;
 ///   the caller's own.
 /// - `tag_list` - `RTGVA_Under` (bool): under the board's picture, seen
 ///   through the layer's key colour - TRUE unless given; FALSE puts it
-///   over the picture.
+///   over the picture. `RTGVA_Matrix`, `RTGVA_Transfer`,
+///   `RTGVA_Primaries`, `RTGVA_Range` and `RTGVA_Depth` (u8 each): what
+///   the pictures will be, as `RtgYuv` says them - BT.709, the ordinary
+///   range, video's range and eight bits unless given.
 ///
 /// RESULT:
 /// The layer, or null with `RtgLastError` saying why:
-/// `RTGERR_NOT_SUPPORTED` for a board without `RTGBC_VIDEO`,
+/// `RTGERR_NOT_SUPPORTED` for a board without `RTGBC_VIDEO` or one whose
+/// controller cannot make the display's colours out of such a picture,
 /// `RTGERR_IN_USE` when its layers are all taken, `RTGERR_NO_MEMORY`.
 ///
 /// BEHAVIOR:
@@ -38,6 +43,14 @@ const privateOf = @import("../board/_board.zig").privateOf;
 /// picture - a board that cannot put its picture over a layer opens it
 /// over, asked or not - with `key` the colour the picture shows it
 /// through; and how large a picture it takes and how far it scales one.
+///
+/// A board takes only a picture its controller can turn into the
+/// display's colours itself, and the tags say which that will be. One it
+/// cannot convert - a film of high dynamic range, one in BT.2020's
+/// colours, one of ten bits - is refused outright, so that the caller
+/// puts the film down through graphics, which maps it into the screen's
+/// range, rather than having it shown flat and grey. What was asked for
+/// stays in the layer's fields.
 ///
 /// Under the picture, the layer is seen only where the picture is `key`:
 /// a program fills its film's place with that colour, and whatever is
@@ -64,7 +77,15 @@ const privateOf = @import("../board/_board.zig").privateOf;
 ///
 /// EXAMPLES:
 /// ```zig
-/// const layer = rb.OpenVideoLayer(board, null) orelse return putThroughGraphics();
+/// const tags = [_]TagItem{
+///     .{ .tag = rtg.RTGVA_Matrix, .data = picture.matrix },
+///     .{ .tag = rtg.RTGVA_Transfer, .data = picture.transfer },
+///     .{ .tag = rtg.RTGVA_Primaries, .data = picture.primaries },
+///     .{ .tag = rtg.RTGVA_Range, .data = picture.range },
+///     .{ .tag = rtg.RTGVA_Depth, .data = picture.depth },
+///     .{},
+/// };
+/// const layer = rb.OpenVideoLayer(board, &tags) orelse return putThroughGraphics();
 /// defer rb.CloseVideoLayer(layer);
 /// ```
 pub fn OpenVideoLayer(rb: *RtgBase, board: *rtg.RtgBoard, tag_list: ?[*]const TagItem) ?*rtg.RtgVideoLayer {
@@ -74,7 +95,15 @@ pub fn OpenVideoLayer(rb: *RtgBase, board: *rtg.RtgBoard, tag_list: ?[*]const Ta
     const memory = sys.AllocVec(@sizeOf(rtg.RtgVideoLayer), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return failed(rb, err.RTGERR_NO_MEMORY);
     const layer: *rtg.RtgVideoLayer = @ptrCast(@alignCast(memory));
     const under = rb.utility_base.GetTagData(rtg.RTGVA_Under, 1, tag_list) != 0;
-    layer.* = .{ .board = board, .flags = if (under) rtg.RTGVLF_UNDER else 0 };
+    layer.* = .{
+        .board = board,
+        .flags = if (under) rtg.RTGVLF_UNDER else 0,
+        .matrix = kind(rb, rtg.RTGVA_Matrix, rtg.RTGYUV_BT709, tag_list),
+        .transfer = kind(rb, rtg.RTGVA_Transfer, rtg.RTGYUV_SDR, tag_list),
+        .primaries = kind(rb, rtg.RTGVA_Primaries, rtg.RTGYUV_BT709, tag_list),
+        .range = kind(rb, rtg.RTGVA_Range, rtg.RTGYUV_LIMITED, tag_list),
+        .depth = kind(rb, rtg.RTGVA_Depth, 8, tag_list),
+    };
     const result = ops.video_open.?(board, layer);
     if (result != err.RTGERR_OK) {
         sys.FreeVec(memory);
@@ -83,6 +112,14 @@ pub fn OpenVideoLayer(rb: *RtgBase, board: *rtg.RtgBoard, tag_list: ?[*]const Ta
     if (layer.flags & rtg.RTGVLF_UNDER == 0) layer.key = 0;
     _ = @atomicRmw(u32, &privateOf(board).video_layers, .Add, 1, .monotonic);
     return layer;
+}
+
+/// One of the tags that say what the picture will be: all of them are
+/// small numbers, and anything that does not fit a byte is taken as the
+/// tag not given at all - no driver would know it anyway.
+fn kind(rb: *RtgBase, tag: Tag, unless: u8, tag_list: ?[*]const TagItem) u8 {
+    const told = rb.utility_base.GetTagData(tag, unless, tag_list);
+    return if (told <= 255) @intCast(told) else unless;
 }
 
 fn failed(rb: *RtgBase, code: i32) ?*rtg.RtgVideoLayer {

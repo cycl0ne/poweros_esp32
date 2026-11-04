@@ -64,7 +64,12 @@ pub const Player = struct {
     index_type: facet.IndexType = .uint16,
     viewport: facet.Viewport = .{ .width = 0, .height = 0 },
     scissor: facet.Rect2D = .{ .extent = .{} },
+    /// What CmdSetBlendConstants set over every colour attachment, and
+    /// what CmdSetBlendConstantsAt set for one of its own (facet's own,
+    /// since 1.51): a pipeline whose constants are dynamic blends by its
+    /// attachment's where that was set, and by the shared set otherwise.
     blend_constants: [4]f32 = @splat(0),
+    attachment_constants: [_render.most_colors]?[4]f32 = @splat(null),
     /// What CmdSetDepthBias set, for a pipeline whose bias is dynamic.
     depth_bias: _pipeline.Bias = .{},
     /// What CmdSetDepthBounds last set, for a pipeline whose bounds are
@@ -72,8 +77,11 @@ pub const Player = struct {
     depth_bounds: [2]f32 = .{ 0, 1 },
     line_width: f32 = 1,
     stencil: _vertices.StencilSet = .{},
-    /// The colour attachment has no alpha.
-    target_opaque: bool = false,
+    /// Whether each colour attachment the part draws has no alpha to
+    /// read, which a blend of the destination's alpha takes as 1: one
+    /// for each, the first's alone until a subpass draws several
+    /// together (since 1.51).
+    target_opaques: [_render.most_colors]bool = @splat(false),
     /// Something left out for want of room has been reported.
     told_no_room: bool = false,
     /// The sets and the push constants as bound, and the copy of them in
@@ -92,6 +100,23 @@ pub const Player = struct {
     /// The query the work is counted into, between CmdBeginQuery and
     /// CmdEndQuery; null while nothing counts.
     query: ?_queries.Counting = null,
+
+    /// How colour attachment `output` is blended into by `pipeline`: its
+    /// own of the pipeline's mixings, with the constants a command set
+    /// where the pipeline leaves them to one, and taken over a target
+    /// with no alpha to read. (`_draw.zig` draws by these.)
+    pub fn mixingFor(player: *const Player, pipeline: *const Pipeline, translated: *const _draw.RasterState, output: u32) struct { raster.pipeline.Blend, raster.pipeline.Mixing } {
+        const at = @min(output, _render.most_colors - 1);
+        const asked = _pipeline.mixingAt(pipeline, at);
+        const blend = translated.blend[at];
+        var mixing = translated.mixing[at];
+        if (blend == .general) {
+            // What is there has no alpha: it reads as wholly opaque.
+            if (player.target_opaques[at]) mixing = _draw.mixingOf(&asked.overOpaque());
+            mixing.constant = _draw.constantOf(asked.constants orelse player.attachment_constants[at] orelse player.blend_constants);
+        }
+        return .{ blend, mixing };
+    }
 };
 
 /// The player a queue keeps while its device lasts: false when there is no
@@ -197,7 +222,16 @@ fn playStream(queue: *Queue, stream: *const _stream.Stream) void {
         },
         .set_viewport => player.viewport = _stream.as(_command.SetViewport, head).viewport,
         .set_scissor => player.scissor = _stream.as(_command.SetScissor, head).scissor,
-        .set_blend_constants => player.blend_constants = _stream.as(_command.SetBlendConstants, head).constants,
+        .set_blend_constants => {
+            player.blend_constants = _stream.as(_command.SetBlendConstants, head).constants;
+            // The one set over all of them: an attachment's own, set
+            // before it, is forgotten.
+            player.attachment_constants = @splat(null);
+        },
+        .set_blend_constants_at => {
+            const command = _stream.as(_command.SetBlendConstantsAt, head);
+            if (command.attachment < _render.most_colors) player.attachment_constants[command.attachment] = command.constants;
+        },
         .set_depth_bias => {
             const command = _stream.as(_command.SetDepthBias, head);
             player.depth_bias = .{ .constant = command.constant, .clamp = command.clamp, .slope = command.slope };
@@ -284,8 +318,8 @@ fn countersOf(player: *const Player) *const _query.Counters {
 
 /// The surface a framebuffer's colour attachment is: its image's memory,
 /// row after row. Null for an image not bound.
-fn surfaceOf(framebuffer: *const _render.Target) ?raster.Surface {
-    const image = framebuffer.color.image;
+fn surfaceOf(framebuffer: *const _render.Target, output: u32) ?raster.Surface {
+    const image = framebuffer.colors[output].image;
     return .{
         .pixels = image.data orelse return null,
         .pitch = image.pitch,
@@ -305,7 +339,8 @@ fn surfaceOf(framebuffer: *const _render.Target) ?raster.Surface {
 /// (`_image.stencilOffset`). Null where there is nothing in memory to read
 /// or write.
 fn planeOf(view: ?*const _image.ImageView, which: enum { depth, stencil }) ?raster.Attachments.Plane {
-    const image = (view orelse return null).image;
+    const held = view orelse return null;
+    const image = held.image;
     const format = image.format;
     const stride = _image.bytesOf(format);
     const at = switch (which) {
@@ -314,7 +349,10 @@ fn planeOf(view: ?*const _image.ImageView, which: enum { depth, stencil }) ?rast
     };
     if (stride == 0 or at >= stride) return null;
     const data = image.data orelse return null;
-    return .{ .pixels = data + at, .pitch = image.pitch, .stride = stride };
+    // The layer the view names, a depth image having layers since 1.58:
+    // a pass draws into the one its framebuffer's view begins at.
+    const layer = held.base_layer * @as(usize, @intCast(image.layer_bytes));
+    return .{ .pixels = data + layer + at, .pitch = image.pitch, .stride = stride };
 }
 
 fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, output: u32) void {
@@ -322,9 +360,22 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, outp
     endRenderPass(player);
     player.resources.output = output;
     const framebuffer = &command.targets[output];
-    const surface = surfaceOf(framebuffer) orelse return;
-    player.target_opaque = surface.format == .rgb565;
     const render_pass = &command.parts[output];
+    // A surface for each colour attachment the part draws: the one it
+    // usually has, and all of a subpass's where they go together
+    // (SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER, since 1.51).
+    var surfaces: [_render.most_colors]raster.Surface = undefined;
+    const colors = @min(render_pass.color_count, framebuffer.color_count);
+    for (0..colors) |k| surfaces[k] = surfaceOf(framebuffer, @intCast(k)) orelse return;
+    // The clears are the subpass's, in the order its parts draw them, so
+    // this part's begin after the colours of the parts before it: that is
+    // `output` where the subpass is played again for each of them, and 0
+    // where its one part draws them all.
+    var first_clear: u32 = 0;
+    for (command.parts[0..output]) |before| first_clear += before.color_count;
+    // Each attachment says for itself whether it has an alpha to read.
+    player.target_opaques = @splat(false);
+    for (surfaces[0..colors], 0..) |each, k| player.target_opaques[k] = each.format == .rgb565;
     // The render area, cut to the framebuffer.
     const offset = command.area.offset;
     const left: u32 = @intCast(std.math.clamp(offset.x, 0, @as(i64, framebuffer.width)));
@@ -341,8 +392,9 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, outp
     const keeps_stencil = render_pass.stores_stencil or render_pass.loads_stencil;
     const plane: ?raster.Attachments.Plane = if (keeps_depth) planeOf(framebuffer.depth, .depth) else null;
     const stencil_plane: ?raster.Attachments.Plane = if (keeps_stencil) planeOf(framebuffer.depth, .stencil) else null;
-    const attachments = raster.Attachments{
-        .color = .{ .load = if (render_pass.color_load == .clear) .clear else .keep, .clear = command.clear_colors[output] },
+    var attachments = raster.Attachments{
+        .color = .{ .load = if (render_pass.color_loads[0] == .clear) .clear else .keep, .clear = command.clear_colors[@min(first_clear, _render.most_colors - 1)] },
+        .color_count = colors,
         .depth = .{
             .used = render_pass.tests_depth,
             .clear = @intCast(command.clear_depth),
@@ -358,11 +410,17 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, outp
             .store = render_pass.stores_stencil and stencil_plane != null,
         },
     };
-    player.display = framebuffer.color.image.display;
+    // Those past the first: the subpass's own clears, in the order its
+    // part draws them.
+    for (1..colors) |k| attachments.more[k - 1] = .{
+        .load = if (render_pass.color_loads[k] == .clear) .clear else .keep,
+        .clear = command.clear_colors[@min(first_clear + k, _render.most_colors - 1)],
+    };
+    player.display = framebuffer.colors[0].image.display;
     if (player.target) |*target| {
-        target.moveTo(surface, area, attachments) catch return;
+        target.moveToAll(surfaces[0..colors], area, attachments) catch return;
     } else {
-        player.target = raster.Target.init(hostOf(queue), surface, area, attachments) catch return;
+        player.target = raster.Target.initAll(hostOf(queue), surfaces[0..colors], area, attachments) catch return;
     }
     player.target.?.begin();
     player.drawn = null;

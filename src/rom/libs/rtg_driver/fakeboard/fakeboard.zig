@@ -357,9 +357,15 @@ fn moveOverlay(board: *rtg.RtgBoard, left: i32, top: i32) callconv(.c) void {
 }
 
 /// The one video layer: a key colour, the DC8200's limits, under the
-/// picture unless the test says it cannot be.
+/// picture unless the test says it cannot be. Its converter is a real
+/// one's - the television matrices at eight bits, either range, and no
+/// high dynamic range - so a picture it could not make colours out of
+/// takes no layer.
 fn videoOpen(board: *rtg.RtgBoard, layer: *rtg.RtgVideoLayer) callconv(.c) i32 {
     const state = stateOfBoard(board);
+    if (layer.matrix != rtg.RTGYUV_BT601 and layer.matrix != rtg.RTGYUV_BT709) return err.RTGERR_NOT_SUPPORTED;
+    if (layer.transfer != rtg.RTGYUV_SDR or layer.primaries != rtg.RTGYUV_BT709) return err.RTGERR_NOT_SUPPORTED;
+    if (layer.depth != 8) return err.RTGERR_NOT_SUPPORTED;
     if (state.log.video_taken) return err.RTGERR_IN_USE;
     state.log.video_taken = true;
     state.log.video_opens += 1;

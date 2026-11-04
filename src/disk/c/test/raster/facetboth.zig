@@ -270,9 +270,9 @@ fn levelsOf(comptime outer: [4]f32, comptime inner: [2]f32) shader.ControlFn {
 const entries = [_]shader.Entry{
     shader.compute("vertices", &computeVertices),
     shader.compute("numbers", &computeNumbers),
-    shader.control("even", levelsOf(.{ 4, 4, 4, 4 }, .{ 4, 4 })),
-    shader.control("uneven", levelsOf(.{ 2, 3, 5, 7 }, .{ 3, 6 })),
-    shader.control("lines", levelsOf(.{ 5, 12, 1, 1 }, .{ 1, 1 })),
+    shader.control("even", levelsOf(.{ 4, 4, 4, 4 }, .{ 4, 4 }), 0),
+    shader.control("uneven", levelsOf(.{ 2, 3, 5, 7 }, .{ 3, 6 }), 0),
+    shader.control("lines", levelsOf(.{ 5, 12, 1, 1 }, .{ 1, 1 }), 0),
     shader.evaluation("triangles", &triangleEvaluation, 4, .{ .domain = .triangles }),
     shader.evaluation("triangles other way", &triangleEvaluation, 4, .{ .domain = .triangles, .clockwise = true }),
     shader.evaluation("quads", &quadEvaluation, 4, .{ .domain = .quads }),
