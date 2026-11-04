@@ -18,6 +18,7 @@ const layout = switch (sdk.hardware.chip) {
     .esp32p4 => @import("arch/esp32p4/layout.zig"),
     .rv64sbi => @import("arch/rv64sbi/layout.zig"),
     .a64psci => @import("arch/a64psci/layout.zig"),
+    .x64uefi => @import("arch/x64uefi/layout.zig"),
 };
 
 pub const Error = error{ NoExecTag, NoMemory, ExecInitFailed };

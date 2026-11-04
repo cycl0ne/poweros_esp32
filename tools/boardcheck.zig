@@ -5,10 +5,9 @@
 //!
 //! - **The board's description** (`src/boards/`) is imported only by the
 //!   kernel's own code: its roots, `main.zig`, `main_esp32p4.zig`,
-//!   `main_rv64sbi.zig` and `main_a64psci.zig`, which link the board's
-//!   ROM tags and its system tag list, `arch/`, which runs
-//!   before any library does, and
-//!   `boards/` itself. A module asks
+//!   `main_rv64sbi.zig`, `main_a64psci.zig` and `main_x64uefi.zig`, which
+//!   link the board's ROM tags and its system tag list, `arch/`, which
+//!   runs before any library does, and `boards/` itself. A module asks
 //!   expansion.library for its part.
 //! - **exec's hardware** (`src/arch/`) is imported by the kernel - with
 //!   the ESP32-P4's boot task (`selftest_esp32p4.zig`) - exec, and
@@ -34,12 +33,12 @@ const Rule = struct {
 const rules = [_]Rule{
     .{
         .target = "boards/",
-        .allowed = &.{ "main.zig", "main_esp32p4.zig", "main_rv64sbi.zig", "main_a64psci.zig", "arch/", "boards/" },
+        .allowed = &.{ "main.zig", "main_esp32p4.zig", "main_rv64sbi.zig", "main_a64psci.zig", "main_x64uefi.zig", "arch/", "boards/" },
         .why = "a module asks expansion.library for its part",
     },
     .{
         .target = "arch/",
-        .allowed = &.{ "main.zig", "main_esp32p4.zig", "main_rv64sbi.zig", "main_a64psci.zig", "selftest_esp32p4.zig", "bootstrap.zig", "arch/", "rom/libs/exec/", "rom/resources/platform/" },
+        .allowed = &.{ "main.zig", "main_esp32p4.zig", "main_rv64sbi.zig", "main_a64psci.zig", "main_x64uefi.zig", "selftest_esp32p4.zig", "bootstrap.zig", "arch/", "rom/libs/exec/", "rom/resources/platform/" },
         .why = "a module's peripheral is in its own folder or in sdk/hardware",
     },
 };
