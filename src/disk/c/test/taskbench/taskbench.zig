@@ -32,7 +32,7 @@ const Task = exec.Task;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "TaskBench";
-const VERSION_STRING = "\x00$VER: TaskBench 1.2 (31.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: TaskBench 1.3 (04.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "ROUNDS/N";
@@ -211,10 +211,15 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         run.report(if (inherits) "process, ended" else "process, nothing inherited", count, run.now() - started);
     }
 
-    // The partner on this core, then on another.
+    // The partner on this core, then on another: this task keeps to core
+    // 0, which every machine has, and the second round wants a core
+    // beside it - a machine that runs on one core is told so instead.
     const here = sys.SetTaskAffinity(null, 0);
-    _ = sys.SetTaskAffinity(null, 1);
-    for ([_]u32{ 1, 2 }) |core| {
+    for ([_]u32{ 0, 1 }) |core| {
+        if (sys.CoreTask(core) == null) {
+            _ = Printf(dl, "  signal and back, another core               the machine runs on one core\n", .{});
+            break;
+        }
         bench.stop = false;
         _ = sys.SetSignal(0, bench.back);
         const task = sys.CreateTask("TaskBench partner", 0, &partnerCode, 8192) orelse break;
@@ -227,7 +232,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
             sys.Signal(task, go);
             _ = sys.Wait(bench.back);
         }
-        run.report(if (core == 1) "signal and back, the same core" else "signal and back, another core", count, run.now() - started);
+        run.report(if (core == 0) "signal and back, the same core" else "signal and back, another core", count, run.now() - started);
         @atomicStore(bool, &bench.stop, true, .release);
         sys.Signal(task, go);
         _ = sys.Wait(bench.back);

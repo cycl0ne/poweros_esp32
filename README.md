@@ -657,6 +657,17 @@ cores, and 16 and 32 come up on that image unchanged, with
 turn. `C:ShowInfo TASKS` shows an idle task and a cache worker on every
 one of them.
 
+**How many cores are worth having is another question.** There is one
+ready list for every core, and `Disable` takes one lock that every
+exception on every core takes as well, so a round through the contended
+paths costs more the more cores there are. Measured in the emulator with
+more tasks than cores, the work done in five seconds peaks at four cores
+and falls away above eight - sixteen cores do a fifth of what four do and
+32 a fortieth - while the longest a core waits for that lock grows from
+0.4 ms to 25 ms. Ready lists per core are what that asks for. The figures
+are an emulator's and a real machine's are the ones to design against,
+but the shape of them is the system's own.
+
 **The machine's power** is its firmware's as well. A UEFI firmware keeps
 half of itself in memory for the system that follows it, and that half is
 asked both to restart the machine - which it does better than the

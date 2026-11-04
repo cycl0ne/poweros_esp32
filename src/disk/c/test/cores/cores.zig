@@ -38,7 +38,7 @@ const Task = exec.Task;
 const Printf = dos.stdio.Printf;
 
 const NAME = "Cores";
-const VERSION_STRING = "\x00$VER: Cores 1.2 (04.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Cores 1.3 (04.11.2026)\r\n";
 const TEMPLATE = "SECONDS/N,TASKS/N,PIN/S,FREE/S";
 
 /// The library every worker opens and closes: one in the ROM, which
@@ -252,7 +252,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     // The cores running: those ReadCoreTimes answers for.
     var cores: u32 = 0;
     var times: exec.CoreTimes = .{};
-    while (cores < 4 and sys.ReadCoreTimes(cores, &times)) cores += 1;
+    while (sys.ReadCoreTimes(cores, &times)) cores += 1;
     cores = @max(cores, 1);
     _ = Printf(dl, "%u tasks%s for %u seconds\n", .{ wanted, @as([*:0]const u8, if (pin) ", pinned to the cores in turn" else ""), seconds });
     _ = dl.Flush(dl.Output());
