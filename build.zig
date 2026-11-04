@@ -1260,10 +1260,9 @@ pub fn build(b: *std.Build) void {
     // kernel is built against: the emulator's default core is older than
     // the architecture's second generation and has neither the instructions
     // the compiler emits for it nor 1 GiB pages.
-    const run_q35 = b.addSystemCommand(&.{
-        "qemu-system-x86_64", "-machine", "q35", "-cpu", "max",
-        "-m",                 "512",      "-nographic",
-    });
+    const q35_machine = [_][]const u8{ "qemu-system-x86_64", "-machine", "q35", "-cpu", "max", "-m", "512" };
+    const run_q35 = b.addSystemCommand(&q35_machine);
+    run_q35.addArg("-nographic");
     run_q35.addArgs(&.{ "-drive", b.fmt("if=pflash,format=raw,readonly=on,file={s}", .{ovmf_code}) });
     run_q35.addArgs(&.{ "-drive", b.fmt("if=pflash,format=raw,file={s}", .{q35_vars.path}) });
     // The boot partition last, and `file=` after `format=raw` so that the
@@ -1273,7 +1272,24 @@ pub fn build(b: *std.Build) void {
     run_q35.step.dependOn(q35_vars.step);
     run_q35.stdio = .inherit;
     run_q35.has_side_effects = true;
-    b.step("q35", "Boot the x86-64 stub in QEMU's q35 machine under UEFI firmware (quit with Ctrl-A X)").dependOn(&run_q35.step);
+    b.step("q35", "Boot the x86-64 kernel in QEMU's q35 machine under UEFI firmware (quit with Ctrl-A X)").dependOn(&run_q35.step);
+
+    // The same with the machine's window, as `virt64-display`: the
+    // firmware lights the emulated display itself and hands the kernel the
+    // framebuffer, so nothing is added for it - the display is the one
+    // this machine has in any case, and `-nographic` above only keeps the
+    // window shut. The console stays on the terminal.
+    const run_q35_display = b.addSystemCommand(&q35_machine);
+    run_q35_display.addArgs(&.{ "-display", virt_ui, "-serial", "mon:stdio" });
+    run_q35_display.addArgs(&.{ "-drive", b.fmt("if=pflash,format=raw,readonly=on,file={s}", .{ovmf_code}) });
+    run_q35_display.addArgs(&.{ "-drive", b.fmt("if=pflash,format=raw,file={s}", .{q35_vars.path}) });
+    run_q35_display.addArgs(virt_monitor);
+    run_q35_display.addArg("-drive");
+    run_q35_display.addPrefixedDirectoryArg("format=raw,file=fat:rw:", q35_boot.getDirectory());
+    run_q35_display.step.dependOn(q35_vars.step);
+    run_q35_display.stdio = .inherit;
+    run_q35_display.has_side_effects = true;
+    b.step("q35-display", "Boot QEMU's q35 machine with its display, the firmware's framebuffer drawn on").dependOn(&run_q35_display.step);
     // `archive` - what a board is handed over in, for the board this
     // build is for: QEMU's machines get the kernel, the two disks and a
     // `run.sh` that starts them (`tools/qemupackage`); an ESP32 board the

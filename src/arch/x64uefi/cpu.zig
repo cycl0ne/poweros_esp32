@@ -34,6 +34,21 @@ pub const FLAGS_IF = hardware.cpu.FLAGS_IF;
 /// GS's base, which the core sets to its own block as it starts.
 pub const MSR_GS_BASE: u32 = 0xC000_0101;
 
+/// The page attribute table, which says what each of the eight kinds a
+/// page may be marked with means for the caches. Its own register per
+/// core.
+pub const MSR_PAT: u32 = 0x277;
+/// The entry the kernel sets to write-combining, and what that is: the
+/// writes to such memory are gathered and sent on as whole bursts, in
+/// order but not one by one, which is what a framebuffer written once and
+/// read every frame wants (`mmu.zig`). Entry 4 is the first of the four a
+/// page reaches with its own attribute bit alone, so a page is marked with
+/// it by that bit and nothing else; the other four are left as the
+/// architecture has them, so that every page not marked keeps the kind it
+/// had.
+const PAT_ENTRY_WC = 4;
+const PAT_WRITE_COMBINING: u64 = 0x01;
+
 /// What a core keeps of its own, reached through GS. Its number is first
 /// because that is what is read; the rest is here so that a core's block
 /// is one place and not several.
@@ -60,6 +75,19 @@ pub fn takeCore(core: u32, lapic_id: u32) void {
     core_blocks[core] = .{ .core = core, .lapic_id = lapic_id };
     lapic_ids[core] = lapic_id;
     writeMsr(MSR_GS_BASE, @intFromPtr(&core_blocks[core]));
+    takePat();
+}
+
+/// This core's page attribute table with one entry changed to
+/// write-combining, the other seven as the architecture leaves them. Every
+/// core has its own and the map is shared, so a core that does not do this
+/// would read a page the kernel marked that way as write-back memory - so
+/// it is done here, where a core is taken, rather than where the map is
+/// made.
+fn takePat() void {
+    const shift: u6 = PAT_ENTRY_WC * 8;
+    const table = readMsr(MSR_PAT) & ~(@as(u64, 0xFF) << shift);
+    writeMsr(MSR_PAT, table | PAT_WRITE_COMBINING << shift);
 }
 
 /// The core this runs on: 0 up.

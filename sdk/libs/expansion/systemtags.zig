@@ -620,6 +620,14 @@ pub const CHIP_BCM54210: u32 = 48;
 /// core's interrupt, with the hub's the next. Its clock is the VideoCore
 /// firmware's, asked through the mailbox the RTC is read through.
 pub const CHIP_BCM2712_V3D: u32 = 49;
+/// The framebuffer a UEFI firmware has already lit (PARTKIND_PANEL on
+/// BUS_MEMORY): PART_Address where the pixels are, RTGA_Width,
+/// RTGA_Height, RTGA_Pitch and RTGA_PixelFormat as the firmware set them
+/// up. It is no chip of its own - which chip lit it is not said and does
+/// not matter - and there is nothing to drive: the picture is copied into
+/// the one buffer it reads. A kernel whose firmware lit none writes no
+/// such part.
+pub const CHIP_UEFI_FB: u32 = 50;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;

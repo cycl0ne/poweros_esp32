@@ -38,6 +38,8 @@ const boards = @import("boards/boards.zig");
 const sdk = @import("sdk");
 const hardware = sdk.hardware;
 const st = sdk.expansion.systemtags;
+const rtg = sdk.rtg;
+const Tag = sdk.utility.FixedTagItem;
 
 /// The ROM's modules: their ROM tags go into .resident, where exec's boot
 /// scan finds them. A list rather than a row of imports, so the SDK's
@@ -104,8 +106,56 @@ var tables: hardware.acpi.Facts = .{};
 /// Where the firmware's own table root was, and its system table.
 var tables_at: usize = 0;
 var system_table: usize = 0;
-/// Where the firmware's framebuffer is, which item 6 will draw into.
+/// Where the firmware's framebuffer is, as the stub found it.
 var screen: handover.Framebuffer = .{};
+/// The panel part the kernel writes for that framebuffer, into the slot
+/// the board's list keeps for it: the display driver asks
+/// expansion.library for it and copies the picture into it
+/// (`src/rom/libs/rtg_driver/fbboard/uefi.zig`). The tags are here, in the
+/// kernel's own memory, because they say what the firmware did and not
+/// what the board knows - and because SystemTags promises a list that
+/// outlives everything and was never allocated.
+var panel: [12]Tag = @splat(.done);
+/// Whether that part was written, and whether the screen's memory takes
+/// gathered writes: both go in the boot's lines.
+var screen_declared = false;
+var screen_gathered = false;
+
+/// The framebuffer the firmware lit, written into the board's description
+/// as a panel part. Nothing is written where the firmware lit none, or
+/// where its pixels are in an order the display driver does not draw in -
+/// and the kernel says which, rather than leaving a blank screen
+/// unexplained.
+fn takeScreen() void {
+    if (screen.base == 0) return;
+    const format: rtg.PixelFormat = switch (screen.format) {
+        .bgrx32 => .bgra32,
+        else => return,
+    };
+    const bytes = rtg.formatBytes(format);
+    panel = .{
+        .value(st.PART_Kind, st.PARTKIND_PANEL),
+        .value(st.PART_Chip, st.CHIP_UEFI_FB),
+        .pointer(st.PART_ChipName, "uefi framebuffer"),
+        .value(st.PART_Bus, st.BUS_MEMORY),
+        .value(st.PART_Address, @intCast(screen.base)),
+        .value(rtg.tags.RTGA_Width, screen.width),
+        .value(rtg.tags.RTGA_Height, screen.height),
+        // The firmware's rows are as far apart as it chose, which is not
+        // always the width.
+        .value(rtg.tags.RTGA_Pitch, screen.stride * bytes),
+        .value(rtg.tags.RTGA_PixelFormat, @intFromEnum(format)),
+        // At most sixteen pictures at once - screens, and the buffers
+        // behind them - each taken from memory as it is opened: a ceiling,
+        // not memory set aside.
+        .value(rtg.tags.RTGA_Buffers, 16),
+        // The windows of a screen each draw into a buffer of their own,
+        // and what can be seen of them is copied into the screen's.
+        .value(rtg.tags.RTGA_Compose, 1),
+        .done,
+    };
+    screen_declared = boards.system.addPart(&panel);
+}
 
 /// The machine's figures, from the board, the handover and the firmware's
 /// tables, into the SDK's and the arch layer's variables: before anything
@@ -124,6 +174,7 @@ fn takeBoard(machine: *const handover.Handover) void {
     system_table = @intCast(machine.system_table);
     tables_at = @intCast(machine.tables);
     screen = machine.framebuffer;
+    takeScreen();
 
     // The firmware's tables: where the interrupt controllers are, what
     // cores there are, and how the machine's old lines are wired. The
@@ -236,6 +287,12 @@ export fn kmain(at: usize) callconv(.c) noreturn {
     // Address 0 unmapped, the kernel's code read-only, everything else
     // where it was: the firmware's map is in memory about to be handed out.
     mmu.take(ram.ranges());
+    // The screen's own blocks made write-combining, now that the map is
+    // the kernel's: a picture written word by word into uncached memory is
+    // slow enough to be worth the two lines.
+    if (screen.base != 0) {
+        screen_gathered = mmu.gather(.{ .start = @intCast(screen.base), .end = @intCast(screen.base + screen.size) });
+    }
     exec.log_ring.* = &log_ring;
     exec.log_clock.* = uptimeUs;
     exec.interrupt_hardware.* = apic.interrupt_hardware;
@@ -294,9 +351,23 @@ export fn kmain(at: usize) callconv(.c) noreturn {
             @as(u64, hardware.ramdisk.size / 1024),
         });
     } else note("no disk image", .{});
-    if (screen.base != 0) {
-        note("screen %dx%d, stride %d, at 0x%lx: no driver for it yet", .{ screen.width, screen.height, screen.stride, @as(u64, screen.base) });
-    } else note("no screen the firmware lit", .{});
+    if (screen.base == 0) {
+        note("no screen the firmware lit", .{});
+    } else if (!screen_declared) {
+        note("screen %dx%d at 0x%lx: its pixels are in an order nothing here draws in, so no panel is declared", .{
+            screen.width,
+            screen.height,
+            @as(u64, screen.base),
+        });
+    } else {
+        note("screen %dx%d, stride %d, at 0x%lx, writes %s", .{
+            screen.width,
+            screen.height,
+            screen.stride,
+            @as(u64, screen.base),
+            @as([*:0]const u8, if (screen_gathered) "gathered" else "one by one: the map could not gather them"),
+        });
+    }
     note("random numbers from %s", .{
         @as([*:0]const u8, if (hardware.rng.fromHardware()) "the core's own generator" else "timing jitter: no generator"),
     });

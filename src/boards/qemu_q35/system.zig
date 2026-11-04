@@ -13,12 +13,14 @@
 //! list the ROM carries for expansion.library (a part per SYSTAG_Part). The
 //! kernel reads the same list at compile time (`boards.fact`).
 //!
-//! **What this machine has and this list does not say yet.** The firmware
-//! lights a framebuffer and hands over where it is, which wants a kind of
-//! its own in the fb display driver before there is anything to declare;
-//! and PCI's host bridge is in the firmware's tables rather than here,
-//! which is the one part of this machine that cannot be written down in
-//! advance. Both are the next items of the list in `todo/port_x86_64/`.
+//! **The parts are the firmware's to say.** Where the framebuffer is and
+//! where PCI's configuration space is differ from machine to machine and
+//! only the firmware knows them, so they are not written here: the list
+//! below carries room for them, and the kernel fills it in from the
+//! handover and the firmware's tables before expansion.library starts
+//! (`addPart`). From every module's side the machine is still described
+//! and not discovered - the description is simply assembled by the one
+//! piece of code that is allowed to know the machine.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -35,9 +37,9 @@ const screen = struct {
     pub const height: u32 = 800;
 };
 
-/// The root list: the board's own facts. It has no parts yet - everything
-/// this machine has beyond its console is in the firmware's tables, and
-/// what the kernel makes of those is item 5 of the list.
+/// The root list: the board's own facts, which the kernel reads at compile
+/// time (`boards.fact`). The parts come from the firmware, through
+/// `addPart` into `list`.
 pub const root = [_]Tag{
     .pointer(st.SYSTAG_Name, name),
     // Where the machine's memory starts and how much of it there may be.
@@ -69,6 +71,41 @@ pub const root = [_]Tag{
     .done,
 };
 
+/// How many parts only the firmware can describe: the panel it lit, and
+/// the window PCI's configuration space is in.
+pub const firmware_parts = 2;
+
+/// The list expansion.library reads: the board's own facts, then a slot
+/// for each part the firmware described, then the end. Until the kernel
+/// fills a slot it is the end of the list, so a kernel that found nothing
+/// hands over the board's facts alone.
+///
+/// A variable, where every other board's list is in the image as it stands:
+/// on this machine a part may exist only because the firmware said so, and
+/// no static list can say that. What SystemTags promises holds all the
+/// same - the list is the board's own, nothing allocated it, and it lives
+/// as long as the machine does.
+pub var list: [root.len + firmware_parts]Tag = made: {
+    var assembled: [root.len + firmware_parts]Tag = @splat(.done);
+    for (root[0 .. root.len - 1], 0..) |item, at| assembled[at] = item;
+    break :made assembled;
+};
+
+/// `part`'s tag list added to the board's, in the first slot left: the
+/// kernel's to call, before expansion.library starts. False where the
+/// slots are full, which is `firmware_parts` to raise here rather than a
+/// part to drop quietly.
+pub fn addPart(part: [*]const Tag) bool {
+    var at = root.len - 1;
+    while (at + 1 < list.len) : (at += 1) {
+        if (list[at].tag != sdk.utility.TAG_DONE) continue;
+        list[at] = .pointer(st.SYSTAG_Part, part);
+        list[at + 1] = .done;
+        return true;
+    }
+    return false;
+}
+
 /// The ROM tag the list is in. No start flags: there is nothing to start,
 /// and expansion.library finds it by name.
 pub export const system_tag: exec.Resident linksection(".resident") = .{
@@ -77,5 +114,5 @@ pub export const system_tag: exec.Resident linksection(".resident") = .{
     .type = .board,
     .name = sdk.expansion.SYSTEM_RESIDENT,
     .id_string = name,
-    .init = &root,
+    .init = &list,
 };
