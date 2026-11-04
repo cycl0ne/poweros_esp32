@@ -1253,6 +1253,12 @@ pub fn build(b: *std.Build) void {
     // drives afterwards, so the stub's lines and the kernel's first lines
     // come out of the same place.
     const q35_stub = addUefiStub(b, optimize);
+    // The firmware starts the stub, not the kernel, so the stub is one of
+    // this board's build products: `zig-out/bin/BOOTX64.EFI` is what goes
+    // in `EFI/BOOT/` on the partition the firmware reads.
+    if (board == .qemu_q35) {
+        b.getInstallStep().dependOn(&b.addInstallBinFile(q35_stub.getEmittedBin(), "BOOTX64.EFI").step);
+    }
     const q35_kernel = if (board == .qemu_q35) built else addX64Image(b, addKernel(b, x64_target, optimize, sdk, .qemu_q35, disk_offset, cores, selftest, memdebug));
     const q35_boot = b.addWriteFiles();
     _ = q35_boot.addCopyFile(q35_stub.getEmittedBin(), "EFI/BOOT/BOOTX64.EFI");
@@ -1262,7 +1268,7 @@ pub fn build(b: *std.Build) void {
     // kernel is built against: the emulator's default core is older than
     // the architecture's second generation and has neither the instructions
     // the compiler emits for it nor 1 GiB pages.
-    const q35_machine = [_][]const u8{ "qemu-system-x86_64", "-machine", "q35", "-cpu", "max", "-m", "512" };
+    const q35_machine = [_][]const u8{ "qemu-system-x86_64", "-machine", "q35", "-cpu", "max", "-m", "512", "-smp", "4" };
     // The system disk and a work disk beside it, as the other two
     // emulated 64-bit machines have them: the firmware starts the kernel
     // off the boot partition, and dos starts from the system disk's DH0:.

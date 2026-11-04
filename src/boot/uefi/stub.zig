@@ -155,6 +155,24 @@ fn add(ranges: []handover.Range, count: *u32, dropped: *u32, start: u64, end: u6
     count.* += 1;
 }
 
+/// The first mebibyte, which is the only place a core can be started
+/// from: the message that starts one names a page by a number of one
+/// byte.
+const low_memory: u64 = 0x10_0000;
+
+/// A page of free memory down there kept for starting the other cores,
+/// out of a range the firmware called free. The first page of the address
+/// space is passed over: the kernel leaves it unmapped on purpose, so that
+/// a null pointer faults where it is used. The first one found is kept -
+/// one page is all it takes, and which of them it is makes no difference.
+fn takeLowPage(start: u64, end: u64) void {
+    if (machine.low_page != 0) return;
+    const first = if (start < 0x1000) 0x1000 else (start + 0xFFF) & ~@as(u64, 0xFFF);
+    const last = @min(end, low_memory);
+    if (first + 0x1000 > last) return;
+    machine.low_page = first;
+}
+
 /// The key the firmware gave with the map last read: `exitBootServices`
 /// takes it and refuses a key the map has moved past, which is how the
 /// firmware makes sure nobody leaves it holding a map that has changed.
@@ -179,10 +197,14 @@ fn takeMemory(boot: *uefi.tables.BootServices) !void {
         const start = entry.physical_start;
         const end = start + entry.number_of_pages * 4096;
         if (isFree(entry.type)) {
-            // Nothing below the first mebibyte: the machine's oldest
-            // corners are in there, and a page of it is worth less than
-            // the trouble of telling which.
-            const from = if (start < 0x10_0000) 0x10_0000 else start;
+            // Nothing below the first mebibyte goes on the list: the
+            // machine's oldest corners are in there, and a page of it is
+            // worth less than the trouble of telling which. One page is
+            // worth it - the one another core starts on - and that is
+            // taken here, where the firmware's map says which of it is
+            // free, and given to nobody else.
+            if (start < low_memory) takeLowPage(start, end);
+            const from = if (start < low_memory) low_memory else start;
             add(&machine.memory, &machine.memory_count, &machine.memory_dropped, from, end);
         } else if (isReserved(entry.type)) {
             add(&machine.reserved, &machine.reserved_count, &machine.reserved_dropped, start, end);
@@ -350,6 +372,11 @@ fn report() void {
     } else line("no screen the firmware lit");
     var free: u64 = 0;
     for (machine.memory[0..machine.memory_count]) |range| free += range.end - range.start;
+    if (machine.low_page != 0) {
+        put("stub: a page for the other cores at ");
+        putHex(machine.low_page);
+        put("\n");
+    } else line("no free page below the first mebibyte: the machine runs on one core");
     put("stub: memory ");
     putDec(machine.memory_count);
     put(" ranges, ");

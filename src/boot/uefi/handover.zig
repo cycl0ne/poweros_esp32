@@ -25,7 +25,7 @@
 /// The bytes `POSX64` and the version, as one word: what the kernel checks
 /// before it believes anything else here. A stub and a kernel from
 /// different builds is the one mistake this structure can catch for itself.
-pub const MAGIC: u64 = @bitCast(@as([8]u8, "POSX64\x00\x01".*));
+pub const MAGIC: u64 = @bitCast(@as([8]u8, "POSX64\x00\x02".*));
 
 /// The same for the other direction: what the stub reads out of the kernel
 /// image before it asks the firmware for anything.
@@ -58,7 +58,7 @@ pub const KernelHeader = extern struct {
 /// know: a stub is on the boot partition beside the kernel and the two are
 /// written together, so a mismatch is a half-written update, and saying so
 /// on the console beats running on fields that have moved.
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 
 /// A range of memory, start inclusive and end exclusive, as the other two
 /// 64-bit chips' tree readers give them.
@@ -162,6 +162,18 @@ pub const Handover = extern struct {
     /// right before it reads the tables itself. 0 where it could not tell,
     /// and the kernel then counts them its own way.
     cores: u32 = 0,
+
+    /// A page below the first mebibyte that the firmware called free, and
+    /// that nothing else is given: where another core starts. A core of
+    /// this architecture is started by a message naming a page by its
+    /// number, and that number is a byte - so the page has to be down
+    /// there, and the kernel copies the few instructions that bring a core
+    /// into the state the rest of the kernel runs in onto it
+    /// (`src/arch/x64uefi/start.S`). It is the stub's to find because it
+    /// is the only one that sees the firmware's map, which the memory list
+    /// above leaves the whole first mebibyte out of. 0 where the firmware
+    /// called none of it free, and then the machine runs on one core.
+    low_page: u64 = 0,
 
     /// The memory the kernel may hand out, as a slice.
     pub fn memoryRanges(machine: *const Handover) []const Range {

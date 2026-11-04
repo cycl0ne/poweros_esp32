@@ -323,6 +323,10 @@ fn takeBoard(machine: *const handover.Handover) void {
     }
     x64_stack_low = ram.ramBase() + trap.frame_offset;
     x64_stack_high = ram.ramEnd();
+    // The page the other cores start on, which only the stub could have
+    // found: it is below the first mebibyte, which the memory list leaves
+    // out altogether.
+    cpu1.low_page = @intCast(machine.low_page);
     cpu1.takeCores(tables.coreIds(), cpu.prid());
 }
 
@@ -355,7 +359,7 @@ fn startOthers(sys: *sdk.interface.exec.ExecBase) void {
             return;
         }
         if (!cpu1.start(core, top)) {
-            note("core %d (controller %d) did not start: %s", .{ core, cpu.lapic_ids[core], cpu1.answerName(0) });
+            note("core %d (controller %d) did not start: %s", .{ core, cpu.lapic_ids[core], cpu1.answerName(cpu1.last_answer) });
             return;
         }
         note("core %d up (controller %d)", .{ core, cpu.lapic_ids[core] });
