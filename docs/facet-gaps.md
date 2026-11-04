@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.62**, so that a program need not find out by failing. It covers the API.
+1.63**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -176,10 +176,16 @@ pass's depth. What is left out:
   the layer its framebuffer's view begins at. So the layers of one image
   are the shadow maps of several lights, and the rows of a format holding
   both planes are two textures over the same bytes, four apart
-  (`texture.Texture.linearBy`). What is left out: it has one level and no
-  mipmaps, and is never of type `3d` - a pass draws into rows, and a level
-  of its own or a slice is nothing it draws into - and both planes at once
-  are no view, there being no texel of the two together.
+  (`texture.Texture.linearBy`). Since 1.63 it may have **levels** as well,
+  as many as halving its longer side gives: a layer holds the whole
+  pyramid, a level's rows after the level before it and each as wide as
+  that level is, a pass draws into the level its framebuffer's view names
+  - that level's size being what the framebuffer has to fit - and a sample
+  reads the level it falls on or the one its sampler holds it to. So a
+  shadow map and its smaller copies are the levels of one image.
+  What is left out: it is never of type `3d`, a slice being nothing a pass
+  draws into, and both planes at once are no view, there being no texel of
+  the two together.
 - **A transient depth image keeps nothing**, having no memory: a pass that
   stores into one is refused its framebuffer. That is still the cheap way,
   and what every pass that does not ask for this goes on doing.
@@ -530,7 +536,7 @@ These can be asked for and are answered with `error_feature_not_present`.
 | A timestamp pool without timer.device: the clock a timestamp is read from | `query/createquerypool.zig` |
 | A depth or stencil attachment of `d16_unorm_s8_uint` that loads or stores, on a device that stores a tile buffer whole: the V3D (`stored_both`, 1.47). Either plane of a format that holds it alone is kept on every device | `render/createrenderpass.zig` |
 | A depth attachment kept, whose image has no memory behind it | `render/createframebuffer.zig` |
-| A sampled depth image on a device that samples none: the V3D (`sampled_depth`); a transient one, or one written through as a storage image; one of levels of its own, or of type `3d`. Any of the three depth formats is taken since 1.58, and a view of it names one plane - both at once is refused there (`image/createimageview.zig`) | `image/createimage.zig` |
+| A sampled depth image on a device that samples none: the V3D (`sampled_depth`); a transient one, or one written through as a storage image; one of more levels than halving its longer side gives, or of type `3d`. Any of the three depth formats is taken since 1.58 and levels of its own since 1.63, and a view of it names one plane - both at once is refused there (`image/createimageview.zig`) | `image/createimage.zig` |
 
 One consequence does not appear in that table:
 

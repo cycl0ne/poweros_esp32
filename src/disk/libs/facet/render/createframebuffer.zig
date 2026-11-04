@@ -36,6 +36,12 @@ const ImageView = _image.ImageView;
 /// Each colour attachment's view is of its image's first level. The size
 /// may be smaller than the images: the framebuffer is their top left.
 ///
+/// A depth view names the level and the layer the pass draws into - levels
+/// since 1.63, layers since 1.58 - and it is that level's rows that have
+/// to hold the size, not the image's first. So the levels of one depth
+/// image are a shadow map and the smaller copies a pass draws for
+/// themselves, each through a framebuffer of that level's size.
+///
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no.
@@ -78,7 +84,11 @@ pub fn CreateFramebuffer(base: *FacetBase, device: *facet.Device, info: *const f
         }
         const depth: ?*ImageView = if (part.depth) |index| depth: {
             const view = _objects.of(ImageView, views[index]);
-            if (view.image.kind != .depth or view.image.width < info.width or view.image.height < info.height) return .error_initialization_failed;
+            // The level the view names is what the pass draws into, so it
+            // is that level's rows that have to hold the render area
+            // (levels since 1.63).
+            const size = _image.levelSize(view.image, view.base_level);
+            if (view.image.kind != .depth or size[0] < info.width or size[1] < info.height) return .error_initialization_failed;
             // A depth the pass keeps is written into the image's memory, so
             // the image wants memory something is behind: a lazily
             // allocated one has none (`readable`).

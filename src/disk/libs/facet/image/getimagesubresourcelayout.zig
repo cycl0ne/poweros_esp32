@@ -5,7 +5,8 @@ const sdk = @import("sdk");
 const facet = sdk.facet;
 const FacetBase = @import("../facet_base.zig").FacetBase;
 const _objects = @import("../_objects.zig");
-const Image = @import("_image.zig").Image;
+const _image = @import("_image.zig");
+const Image = _image.Image;
 
 /// Where a level of an image lies in its memory, and how its rows do.
 ///
@@ -31,7 +32,12 @@ const Image = @import("_image.zig").Image;
 /// times the height: with its memory mapped, the program reads and writes
 /// the pixels there. For a texture it is where the level starts and how
 /// many bytes it takes, its rows not the program's to know (`row_pitch`
-/// 0). A depth attachment has nothing to say: all 0.
+/// 0). A depth attachment answers since 1.63, its rows being real and
+/// its levels its own: the offset is where the level of the layer begins,
+/// `row_pitch` that level's own pitch, `size` what the level takes and
+/// `array_pitch` the whole pyramid one layer holds. One with nothing
+/// behind it - a transient one, which lives in the tiles - answers all 0,
+/// as does a level or a layer it has not got.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -77,6 +83,18 @@ pub fn GetImageSubresourceLayout(base: *FacetBase, device: *facet.Device, image:
             layout.offset = start;
             layout.size = end - start;
         },
-        .depth => {},
+        // Rows of its own for each level of each layer (levels since
+        // 1.63): where that level begins, and how wide its rows are.
+        .depth => {
+            const level = subresource.mip_level;
+            if (made.data == null or level >= made.levels or subresource.array_layer >= made.layers) return;
+            const rows = _image.rowsAt(made, level, subresource.array_layer);
+            const size = _image.levelSize(made, level);
+            layout.offset = rows.at;
+            layout.row_pitch = rows.pitch;
+            layout.size = @as(u64, rows.pitch) * size[1];
+            layout.array_pitch = made.layer_bytes;
+            layout.depth_pitch = layout.size;
+        },
     }
 }

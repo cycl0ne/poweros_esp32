@@ -53,9 +53,14 @@ const _image = @import("_image.zig");
 ///   may have layers: a view of it takes one plane - the depth, or the
 ///   stencil - of the layers it names, and a pass draws into the layer
 ///   its framebuffer's view begins at (CreateImageView). A layer's rows
-///   come after the one before, each on a cache line. Levels of its own
-///   it has not got, and it is never of type `3d`: what a pass draws into
-///   is rows, and a level or a slice is nothing it draws into.
+///   come after the one before, each on a cache line.
+///   Levels of its own since 1.63, as many as halving the longer side
+///   gives: a layer holds the whole pyramid, a level's rows after the
+///   level before it and each level on a cache line, its pitch as wide
+///   as that level is. A pass draws into the level its framebuffer's
+///   view names, and a sample reads any of them, so a shadow map and its
+///   smaller copies are the levels of one image. It is never of type
+///   `3d`: a slice is nothing a pass draws into.
 ///   With INPUT_ATTACHMENT it is read pixel by pixel by a later subpass
 ///   instead, or as well (since 1.62): the same rows, the same feature,
 ///   and the same memory behind them, so TRANSIENT_ATTACHMENT is refused

@@ -740,10 +740,32 @@ pub const LIBRARY_VERSION = 1;
 /// to read, the way 1.52 does for a depth two subpasses share, so such a
 /// pass wants `stored_depth`, a stencil `stored_stencil`, and a format
 /// of both `stored_both`.
+/// 63: a depth attachment has levels of its own. Before this
+/// `CreateImage` refused `mip_levels` past one for a depth format, the
+/// reason being that what a pass draws into is rows and a level is not;
+/// but a level is rows as well, and 1.58 had already given such an image
+/// layers of them.
+/// Now a depth image takes as many levels as halving its longer side
+/// gives. A layer holds the whole pyramid: a level's rows after the level
+/// before it, each level's pitch as wide as that level is and each level
+/// on a cache line (`_image.depthPitch`, `depthLevelAt`, `rowsAt`), and
+/// the pyramid again for each layer. A pass draws into the level its
+/// framebuffer's view names, that level's size being what the framebuffer
+/// has to fit; a sample reads the levels the view names, each in its own
+/// rows; `CmdClearDepthStencilImage` clears the levels its range names;
+/// and the transfers read and write the level they are given.
+/// `GetImageSubresourceLayout` answers for such an image now, where it
+/// answered 0: the level's offset in its layer, its own pitch, what it
+/// takes and what a layer takes.
+/// A texture kept in rows carries a level's own pitch and start for that
+/// (`texture.Level.pitch`, `texture.Texture.linearLevel`), so a sample of
+/// one reads the level it chose out of that level's rows rather than the
+/// first level's. So a shadow map and its smaller copies are the levels
+/// of one image, drawn into one by one and sampled as one texture.
 /// What stays: `fifo` is the one present mode, there being no way to ask a
 /// display to show a buffer before its next frame; one queue family of one
 /// queue; a counter of 32 bits, for want of a 64-bit atomic on every
 /// machine the library runs on; and no point mode in tessellation, the
 /// tessellator emitting triangles or the lines of `isolines` and nothing
 /// emitting a patch's points on their own.
-pub const LIBRARY_REVISION = 62;
+pub const LIBRARY_REVISION = 63;

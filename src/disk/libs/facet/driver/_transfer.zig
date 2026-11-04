@@ -224,7 +224,8 @@ pub fn clearColorImage(command: *const _command.ClearColorImage) bool {
 }
 
 /// CmdClearDepthStencilImage's ranges: a depth image's rows set to the
-/// depth given, its stencil's to the stencil, each range's aspects alone.
+/// depth given, its stencil's to the stencil, each range's aspects alone,
+/// over the levels and the layers it names.
 /// The padding at a row's end goes with them where a whole row is one
 /// value, being the image's own memory and read by nothing. False, and
 /// nothing written, for an image this cannot write at all.
@@ -240,27 +241,31 @@ pub fn clearDepthImage(command: *const _command.ClearDepthStencilImage) bool {
     const depth_there = _image.hasDepth(image.format);
     const stencil_there = _image.hasStencil(image.format);
     for (_stream.items(_command.ClearDepthStencilImage, facet.ImageSubresourceRange, command, command.count)) |range| {
-        // One level, and the layers the range names: a depth image may
-        // have several since 1.58.
-        if (range.base_mip_level != 0 or range.base_array_layer >= image.layers) continue;
+        // The levels and the layers the range names: a depth image may
+        // have layers since 1.58 and levels since 1.63.
+        if (range.base_mip_level >= image.levels or range.base_array_layer >= image.layers) continue;
         if (range.level_count == 0 or range.layer_count == 0) continue;
+        const levels = @min(if (range.level_count == facet.REMAINING) image.levels else range.level_count, image.levels - range.base_mip_level);
         const layers = @min(if (range.layer_count == facet.REMAINING) image.layers else range.layer_count, image.layers - range.base_array_layer);
         const clears_depth = depth_there and range.aspect_mask & facet.IMAGE_ASPECT_DEPTH != 0;
         const clears_stencil = stencil_there and range.aspect_mask & facet.IMAGE_ASPECT_STENCIL != 0;
-        for (0..layers) |one| {
-            const layer = data + (range.base_array_layer + one) * @as(usize, @intCast(image.layer_bytes));
+        for (0..layers) |one| for (0..levels) |step| {
+            const level = range.base_mip_level + @as(u32, @intCast(step));
+            const rows = _image.rowsAt(image, level, range.base_array_layer + @as(u32, @intCast(one)));
+            const size = _image.levelSize(image, level);
+            const into_level = data + rows.at;
             // A format of depth alone or stencil alone, both aspects
             // asked for: every byte of every row is the one value.
             if (clears_depth and stride == 2) {
-                fill(layer, @as(usize, image.pitch) * image.height, .{ .two = command.depth });
+                fill(into_level, @as(usize, rows.pitch) * size[1], .{ .two = command.depth });
             } else if (clears_stencil and stride == 1) {
-                fill(layer, @as(usize, image.pitch) * image.height, .{ .one = command.stencil });
+                fill(into_level, @as(usize, rows.pitch) * size[1], .{ .one = command.stencil });
             }
             // A format that holds both: each pixel's own bytes, the
             // padding at a row's end left as it is.
-            if (stride == 4) for (0..image.height) |row| {
-                const into = layer + row * image.pitch;
-                for (0..image.width) |column| {
+            if (stride == 4) for (0..size[1]) |row| {
+                const into = into_level + row * rows.pitch;
+                for (0..size[0]) |column| {
                     const pixel = into + column * stride;
                     if (clears_depth) {
                         pixel[0] = @truncate(command.depth);
@@ -269,7 +274,7 @@ pub fn clearDepthImage(command: *const _command.ClearDepthStencilImage) bool {
                     if (clears_stencil) pixel[2] = command.stencil;
                 }
             };
-        }
+        };
     }
     return true;
 }

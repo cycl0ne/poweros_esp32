@@ -3496,11 +3496,12 @@ test "a sampled depth image of layers: a pass draws into the layer its view name
     try testing.expectEqual(std.mem.alignForward(u64, @as(u64, kept.pitch) * 64, 64), kept.layer_bytes);
     try testing.expectEqual(kept.layer_bytes * 3, kept.bytes);
 
-    // Levels of its own it has not got, nor slices: what a pass draws
-    // into is rows, and a level or a slice is nothing it draws into.
+    // Slices it has not got, nor more levels than halving the longer side
+    // gives: a slice of a 3D image is nothing a pass draws into, and
+    // levels of its own it has had since 1.63.
     for ([2]facet.ImageCreateInfo{
-        .{ .format = .d16_unorm, .extent = side, .mip_levels = 2, .usage = wanted },
         .{ .format = .d16_unorm, .image_type = .@"3d", .extent = .{ .width = 64, .height = 64, .depth = 2 }, .usage = wanted },
+        .{ .format = .d16_unorm, .extent = side, .mip_levels = 8, .usage = wanted },
     }) |info| {
         var none: ?*facet.Image = null;
         try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &info, &none));
@@ -4674,6 +4675,205 @@ const DepthRead = struct {
     };
     const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
 };
+
+test "a depth attachment of levels: a pass draws into the level its view names, and a sample reads the level it is held to" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const image_zig = @import("../image/_image.zig");
+    const side = facet.Extent3D{ .width = 32, .height = 32 };
+    const wanted = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED;
+
+    // Three levels since 1.63 - 32 by 32, 16 by 16 and 8 by 8 - of two
+    // layers: a level's rows after the level before it, each level's
+    // pitch as wide as that level is and each level on a cache line, and
+    // the whole pyramid again for the second layer.
+    const mipped = try bench.bareImage(.{ .format = .d16_unorm, .extent = side, .mip_levels = 3, .array_layers = 2, .usage = wanted }, false);
+    const kept = _objects.of(image_zig.Image, mipped);
+    try testing.expectEqual(@as(u32, 3), kept.levels);
+    // The same rule again, by hand: the pitch of a level, where it begins
+    // inside a layer, and what the pyramid takes.
+    const Mip = struct {
+        fn pitch(level: u32) u32 {
+            return std.mem.alignForward(u32, @max(@as(u32, 32) >> @intCast(level), 1) * 2, 64);
+        }
+        fn bytes(level: u32) u64 {
+            return std.mem.alignForward(u64, @as(u64, pitch(level)) * @max(@as(u32, 32) >> @intCast(level), 1), 64);
+        }
+        fn whole(levels: u32) u64 {
+            var sum: u64 = 0;
+            for (0..levels) |lod| sum += bytes(@intCast(lod));
+            return sum;
+        }
+        fn at(level: u32, layer: u32) usize {
+            return @intCast(layer * whole(3) + whole(level));
+        }
+    };
+    try testing.expectEqual(Mip.whole(3), kept.layer_bytes);
+    try testing.expectEqual(Mip.whole(3) * 2, kept.bytes);
+
+    // What the program is told of a level of a layer, which is what it
+    // holds: 1.63 answers for a depth attachment, where it answered 0.
+    var layout: facet.SubresourceLayout = undefined;
+    fb.GetImageSubresourceLayout(device, mipped, &.{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH, .mip_level = 1, .array_layer = 1 }, &layout);
+    try testing.expectEqual(@as(u64, Mip.at(1, 1)), layout.offset);
+    try testing.expectEqual(@as(u64, Mip.pitch(1)), layout.row_pitch);
+    try testing.expectEqual(@as(u64, Mip.pitch(1)) * 16, layout.size);
+    try testing.expectEqual(Mip.whole(3), layout.array_pitch);
+    // A level it has not got says nothing.
+    fb.GetImageSubresourceLayout(device, mipped, &.{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH, .mip_level = 3 }, &layout);
+    try testing.expectEqual(@as(u64, 0), layout.row_pitch);
+
+    const levelDepth = struct {
+        fn of(data: [*]u8, level: u32, layer: u32, x: u32, y: u32) u16 {
+            const place = Mip.at(level, layer) + @as(usize, y) * Mip.pitch(level) + @as(usize, x) * 2;
+            return std.mem.readInt(u16, data[place..][0..2], .little);
+        }
+    }.of;
+
+    // Cleared without a pass: every level of every layer, which is what
+    // a range of all of them names.
+    const furthest = facet.ClearDepthStencilValue{ .depth = 1 };
+    const everything = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH };
+    const clearing = try bench.record();
+    fb.CmdClearDepthStencilImage(clearing, mipped, 0, &furthest, 1, @ptrCast(&everything));
+    try bench.submit();
+    for (0..2) |layer| for (0..3) |level| {
+        const far = levelDepth(kept.data.?, @intCast(level), @intCast(layer), 0, 0);
+        try testing.expectEqual(@as(u16, 0xFFFF), far);
+        const side_of = @max(@as(u32, 32) >> @intCast(level), 1);
+        try testing.expectEqual(@as(u16, 0xFFFF), levelDepth(kept.data.?, @intCast(level), @intCast(layer), side_of - 1, side_of - 1));
+    };
+
+    // A pass over level 1 of layer 1: a quad of its own depth over the
+    // whole of that level, through a framebuffer of that level's size.
+    const level_view = try bench.viewOf(.{
+        .image = mipped,
+        .format = .d16_unorm,
+        .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH, .base_mip_level = 1, .level_count = 1, .base_array_layer = 1, .layer_count = 1 },
+    });
+    const picture = try Picture.of(&bench, 32, 32);
+    const storing = try keepingPass(&bench, .clear, .clear, .store);
+    defer fb.DestroyRenderPass(device, storing);
+    const flat = try module(&bench, &Flat.code);
+    defer fb.DestroyShaderModule(device, flat);
+    const flat_layout = try pipelineLayout(&bench, &.{}, 4);
+    defer fb.DestroyPipelineLayout(device, flat_layout);
+    const tested = facet.PipelineDepthStencilStateCreateInfo{ .depth_test_enable = true, .depth_write_enable = true, .depth_compare_op = .always };
+    const flat_result, const list = makePipeline(&bench, .{ .module = flat, .layout = flat_layout, .pass = storing, .depth = tested, .width = 16, .height = 16 });
+    try testing.expectEqual(facet.Result.success, flat_result);
+    defer fb.DestroyPipeline(device, list);
+    const frame = try framebuffer(&bench, storing, &.{ picture.view, level_view }, 16, 16);
+    defer fb.DestroyFramebuffer(device, frame);
+    const vertex_buffer, const vertex_bytes = try bench.buffer(1024, facet.BUFFER_USAGE_VERTEX_BUFFER);
+    const quad = [6][3]f32{
+        .{ -1, -1, 0.5 }, .{ 1, -1, 0.5 }, .{ -1, 1, 0.5 },
+        .{ -1, 1, 0.5 },  .{ 1, -1, 0.5 }, .{ 1, 1, 0.5 },
+    };
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(quad))], std.mem.asBytes(&quad));
+    const red: u32 = 0xFFFF_0000;
+    const blue = clears(0xFF00_00FF);
+    const at: u64 = 0;
+    const commands = try bench.record();
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = storing, .framebuffer = frame, .render_area = .{ .extent = .{ .width = 16, .height = 16 } }, .clear_value_count = 2, .clear_values = &blue }, .@"inline");
+    fb.CmdBindPipeline(commands, .graphics, list.?);
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&at));
+    fb.CmdPushConstants(commands, flat_layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &red);
+    fb.CmdDraw(commands, 6, 1, 0, 0);
+    fb.CmdEndRenderPass(commands);
+    try bench.submit();
+
+    // That level holds the quad's depth, over the whole of it; the levels
+    // either side of it, and the same level of the other layer, still
+    // hold what the clear left.
+    const middle: u16 = @intFromFloat(@round(0.5 * 65535));
+    try testing.expectEqual(middle, levelDepth(kept.data.?, 1, 1, 0, 0));
+    try testing.expectEqual(middle, levelDepth(kept.data.?, 1, 1, 15, 15));
+    try testing.expectEqual(@as(u16, 0xFFFF), levelDepth(kept.data.?, 0, 1, 0, 0));
+    try testing.expectEqual(@as(u16, 0xFFFF), levelDepth(kept.data.?, 2, 1, 0, 0));
+    try testing.expectEqual(@as(u16, 0xFFFF), levelDepth(kept.data.?, 1, 0, 0, 0));
+
+    // A view of all three levels of that layer, sampled: the sampler
+    // holds the level it reads, so the level drawn into comes out as its
+    // own grey and the one beside it as the clear's.
+    const whole_view = try bench.viewOf(.{
+        .image = mipped,
+        .format = .d16_unorm,
+        .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH, .base_array_layer = 1, .layer_count = 1 },
+    });
+    const texels = &_objects.of(image_zig.ImageView, whole_view).texels;
+    try testing.expectEqual(@as(u32, 3), texels.levels);
+    try testing.expectEqual(kept.data.? + Mip.at(0, 1), texels.memory);
+    try testing.expectEqual(@as(u32, Mip.pitch(0)), texels.pitch);
+    try testing.expectEqual(@as(u32, @intCast(Mip.whole(1))), texels.layout[1].start);
+    try testing.expectEqual(@as(u32, Mip.pitch(1)), texels.layout[1].pitch);
+    try testing.expectEqual(@as(u32, 16), texels.layout[1].width);
+
+    const into = try Picture.of(&bench, 32, 32);
+    const planed = try module(&bench, &Planed.code);
+    defer fb.DestroyShaderModule(device, planed);
+    const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .combined_image_sampler, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &set_layout));
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    const sampled_layout = try pipelineLayout(&bench, &.{set_layout.?}, 0);
+    defer fb.DestroyPipelineLayout(device, sampled_layout);
+    var pool: ?*facet.DescriptorPool = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool));
+    defer fb.DestroyDescriptorPool(device, pool);
+    var sets: [1]?*facet.DescriptorSet = undefined;
+    try testing.expectEqual(facet.Result.success, fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &sets));
+    const reading = try renderPass(&bench, .clear, false);
+    defer fb.DestroyRenderPass(device, reading);
+    const onto = try framebuffer(&bench, reading, &.{into.view}, 32, 32);
+    defer fb.DestroyFramebuffer(device, onto);
+    const attributes = [2]facet.VertexInputAttributeDescription{
+        .{ .location = 0, .binding = 0, .format = .r32g32b32_sfloat },
+        .{ .location = 1, .binding = 0, .format = .r32g32b32_sfloat, .offset = 12 },
+    };
+    const plane_result, const plane = makePipeline(&bench, .{ .module = planed, .layout = sampled_layout, .pass = reading, .stride = 24, .attributes = &attributes, .width = 32, .height = 32 });
+    try testing.expectEqual(facet.Result.success, plane_result);
+    defer fb.DestroyPipeline(device, plane);
+    const sampling = [6][6]f32{
+        .{ -1, -1, 0.5, 0, 0, 0 },
+        .{ 1, -1, 0.5, 1, 0, 0 },
+        .{ -1, 1, 0.5, 0, 1, 0 },
+        .{ -1, 1, 0.5, 0, 1, 0 },
+        .{ 1, -1, 0.5, 1, 0, 0 },
+        .{ 1, 1, 0.5, 1, 1, 0 },
+    };
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(sampling))], std.mem.asBytes(&sampling));
+
+    for ([2]struct { f32, u16 }{ .{ 1, middle }, .{ 0, 0xFFFF } }) |one| {
+        const lod, const value = one;
+        var sampler: ?*facet.Sampler = null;
+        try testing.expectEqual(facet.Result.success, fb.CreateSampler(device, &.{
+            .mag_filter = .nearest,
+            .min_filter = .nearest,
+            .address_mode_u = .clamp_to_edge,
+            .address_mode_v = .clamp_to_edge,
+            .min_lod = lod,
+            .max_lod = lod,
+        }, &sampler));
+        defer fb.DestroySampler(device, sampler);
+        const info = facet.DescriptorImageInfo{ .sampler = sampler, .image_view = whole_view };
+        const write = facet.WriteDescriptorSet{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .combined_image_sampler, .image_info = @ptrCast(&info) };
+        fb.UpdateDescriptorSets(device, 1, @ptrCast(&write), 0, null);
+        const values = clears(0xFF00_00FF);
+        const drawing = try bench.record();
+        fb.CmdBeginRenderPass(drawing, &.{ .render_pass = reading, .framebuffer = onto, .render_area = .{ .extent = .{ .width = 32, .height = 32 } }, .clear_value_count = 1, .clear_values = &values }, .@"inline");
+        fb.CmdBindPipeline(drawing, .graphics, plane.?);
+        fb.CmdBindVertexBuffers(drawing, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&at));
+        fb.CmdBindDescriptorSets(drawing, .graphics, sampled_layout, 0, 1, @ptrCast(&sets), 0, null);
+        fb.CmdDraw(drawing, 6, 1, 0, 0);
+        fb.CmdEndRenderPass(drawing);
+        try bench.submit();
+        const grey: u32 = 0xFF00_0000 | @as(u32, value >> 8) * 0x01_01_01;
+        try testing.expectEqual(grey, into.at(8, 8));
+        try testing.expectEqual(grey, into.at(24, 24));
+    }
+}
 
 test "a depth attachment read as an input attachment: what the subpass before drew, plane by plane" {
     var bench = try Bench.up();

@@ -349,10 +349,11 @@ fn planeOf(view: ?*const _image.ImageView, which: enum { depth, stencil }) ?rast
     };
     if (stride == 0 or at >= stride) return null;
     const data = image.data orelse return null;
-    // The layer the view names, a depth image having layers since 1.58:
-    // a pass draws into the one its framebuffer's view begins at.
-    const layer = held.base_layer * @as(usize, @intCast(image.layer_bytes));
-    return .{ .pixels = data + layer + at, .pitch = image.pitch, .stride = stride };
+    // The level and the layer the view names, a depth image having layers
+    // since 1.58 and levels since 1.63: a pass draws into the ones its
+    // framebuffer's view begins at, in that level's own rows.
+    const rows = _image.rowsAt(image, held.base_level, held.base_layer);
+    return .{ .pixels = data + rows.at + at, .pitch = rows.pitch, .stride = stride };
 }
 
 fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, output: u32) void {

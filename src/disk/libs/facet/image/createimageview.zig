@@ -58,7 +58,9 @@ const ImageView = _image.ImageView;
 /// format's own plane, its depth where it has one and its stencil where
 /// it has not. The plane is a texture over the image's own rows, so a
 /// format holding both is two textures inside the same rows, read four
-/// bytes apart.
+/// bytes apart. Since 1.63 it is the levels the view names as well, each
+/// in rows of its own: a sample of such a view reads the level it chooses,
+/// as it does of any texture.
 ///
 /// Since 1.62 the same plane is what a later subpass reads as an **input
 /// attachment** (`shader.Attachment`), where the image was made one
@@ -125,14 +127,14 @@ pub fn CreateImageView(base: *FacetBase, device: *facet.Device, info: *const fac
     // once is no texture, nor one the format has not got; an aspect
     // naming neither is the format's own plane.
     const plane = if (_image.sampledDepth(image))
-        _image.depthPlane(image, range.aspect_mask, range.base_array_layer, layers) orelse return .error_format_not_supported
+        _image.depthPlane(image, range.aspect_mask, range.base_mip_level, count, range.base_array_layer, layers) orelse return .error_format_not_supported
     else
         null;
     // The same plane as rows, for a later subpass to read pixel by pixel
     // (since 1.62): the view's first layer, the depth 0 to 1 and the
     // stencil the whole number it is.
     const read_rows = if (image.kind == .depth and image.usage & facet.IMAGE_USAGE_INPUT_ATTACHMENT != 0)
-        _image.depthRows(image, range.aspect_mask, range.base_array_layer) orelse return .error_format_not_supported
+        _image.depthRows(image, range.aspect_mask, range.base_mip_level, range.base_array_layer) orelse return .error_format_not_supported
     else
         null;
     const made = _objects.create(base.sys_base, ImageView) orelse return .error_out_of_host_memory;

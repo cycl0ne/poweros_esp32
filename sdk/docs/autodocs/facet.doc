@@ -990,8 +990,10 @@ facet.library/WaitForFences
 	- `range_count`, `ranges` - which levels and layers, by
 	  `base_mip_level`, `level_count`, `base_array_layer` and `layer_count`,
 	  and which of the two the range's `aspect_mask` asks for: a format
-	  that holds both has each cleared on its own. A depth image has one
-	  level and one layer, so a range past them is left out.
+	  that holds both has each cleared on its own. A range past the levels
+	  or the layers the image has is left out; such an image has had
+	  layers since 1.58 and levels since 1.63, each level's own rows
+	  cleared over the level's own size.
 
    RESULT
 	None.
@@ -3080,6 +3082,12 @@ facet.library/WaitForFences
 	Each colour attachment's view is of its image's first level. The size
 	may be smaller than the images: the framebuffer is their top left.
 
+	A depth view names the level and the layer the pass draws into - levels
+	since 1.63, layers since 1.58 - and it is that level's rows that have
+	to hold the size, not the image's first. So the levels of one depth
+	image are a shadow map and the smaller copies a pass draws for
+	themselves, each through a framebuffer of that level's size.
+
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
@@ -3317,9 +3325,14 @@ facet.library/WaitForFences
 	  may have layers: a view of it takes one plane - the depth, or the
 	  stencil - of the layers it names, and a pass draws into the layer
 	  its framebuffer's view begins at (CreateImageView). A layer's rows
-	  come after the one before, each on a cache line. Levels of its own
-	  it has not got, and it is never of type `3d`: what a pass draws into
-	  is rows, and a level or a slice is nothing it draws into.
+	  come after the one before, each on a cache line.
+	  Levels of its own since 1.63, as many as halving the longer side
+	  gives: a layer holds the whole pyramid, a level's rows after the
+	  level before it and each level on a cache line, its pitch as wide
+	  as that level is. A pass draws into the level its framebuffer's
+	  view names, and a sample reads any of them, so a shadow map and its
+	  smaller copies are the levels of one image. It is never of type
+	  `3d`: a slice is nothing a pass draws into.
 	  With INPUT_ATTACHMENT it is read pixel by pixel by a later subpass
 	  instead, or as well (since 1.62): the same rows, the same feature,
 	  and the same memory behind them, so TRANSIENT_ATTACHMENT is refused
@@ -3499,7 +3512,9 @@ facet.library/WaitForFences
 	format's own plane, its depth where it has one and its stencil where
 	it has not. The plane is a texture over the image's own rows, so a
 	format holding both is two textures inside the same rows, read four
-	bytes apart.
+	bytes apart. Since 1.63 it is the levels the view names as well, each
+	in rows of its own: a sample of such a view reads the level it chooses,
+	as it does of any texture.
 
 	Since 1.62 the same plane is what a later subpass reads as an **input
 	attachment** (`shader.Attachment`), where the image was made one
@@ -5662,7 +5677,12 @@ facet.library/WaitForFences
 	times the height: with its memory mapped, the program reads and writes
 	the pixels there. For a texture it is where the level starts and how
 	many bytes it takes, its rows not the program's to know (`row_pitch`
-	0). A depth attachment has nothing to say: all 0.
+	0). A depth attachment answers since 1.63, its rows being real and
+	its levels its own: the offset is where the level of the layer begins,
+	`row_pitch` that level's own pitch, `size` what the level takes and
+	`array_pitch` the whole pyramid one layer holds. One with nothing
+	behind it - a transient one, which lives in the tiles - answers all 0,
+	as does a level or a layer it has not got.
 
    CONTEXT
 	- Waits: no.

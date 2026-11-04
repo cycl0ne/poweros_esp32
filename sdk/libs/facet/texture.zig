@@ -457,6 +457,35 @@ pub const Texture = struct {
         return made;
     }
 
+    /// Another level of a texture kept in rows, in rows of its own:
+    /// `across` by `down` texels, `start` bytes into the layer, and
+    /// `pitch` bytes from one row to the next. The levels are added in
+    /// order after the first, which `linearBy` made, and a sample of one
+    /// reads that level's own rows - which is how a depth attachment of
+    /// levels is sampled, each level the rows a pass drew into
+    /// (since 1.63). A level past `most_levels` is not added.
+    pub fn linearLevel(texture: *Texture, across: u32, down: u32, start: u32, pitch: u32) void {
+        if (texture.levels >= most_levels) return;
+        texture.layout[texture.levels] = .{
+            .start = start,
+            .width = across,
+            .height = down,
+            .pitch = pitch,
+            .across = @floatFromInt(across * 256),
+            .down = @floatFromInt(down * 256),
+            .last_column = 0,
+            .last_row = 0,
+            .column_low = 0,
+            .column_high = 0,
+            .row_low = 0,
+            .row_high = 0,
+            .blocks_shift = 0,
+            .row_gap = 0,
+            .tiles = false,
+        };
+        texture.levels += 1;
+    }
+
     /// A texture over `memory`, at least `bytes` long and aligned for a
     /// texel as it is kept, its texels undefined until they are put in (`put`,
     /// `load`). error.BadSize for a side of nothing or over `most_side`, or
@@ -516,7 +545,12 @@ pub const Texture = struct {
     inline fn placeOf(texture: *const Texture, layer: u32, lod: u32, x: u32, y: u32) usize {
         if (texture.pitch != 0) {
             const apart = if (texture.stride != 0) texture.stride else texture.format.bytes();
-            return @as(usize, layer) * texture.layer_bytes + @as(usize, y) * texture.pitch + @as(usize, x) * apart;
+            // The level's own rows, after the levels before it inside the
+            // layer (since 1.63). `linearBy`'s one level starts at 0 and
+            // has no pitch of its own, so it is the texture's.
+            const level = &texture.layout[lod];
+            const pitch = if (level.pitch != 0) level.pitch else texture.pitch;
+            return @as(usize, layer) * texture.layer_bytes + level.start + @as(usize, y) * pitch + @as(usize, x) * apart;
         }
         return @as(usize, layer) * texture.layer_bytes + texture.layout[lod].offset(texture.format, x, y);
     }
@@ -1097,6 +1131,13 @@ pub const Level = struct {
     start: u32,
     width: u32,
     height: u32,
+    /// The bytes from one row of this level to the next, where the texture
+    /// is kept in rows and the level has a pitch of its own: the levels of
+    /// a depth attachment, each in rows as wide as that level is
+    /// (`linearLevel`, since 1.63). 0 is the texture's own `pitch`, which
+    /// is what one level of rows takes, and means nothing for the blocks
+    /// every other texture is kept in.
+    pitch: u32 = 0,
     /// The size in 1/256ths of a texel, as floats: what a coordinate is
     /// multiplied by.
     across: f32,

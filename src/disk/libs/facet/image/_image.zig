@@ -355,18 +355,23 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
         if (sampled) allowed |= facet.IMAGE_USAGE_SAMPLED;
         if (read_back) allowed |= facet.IMAGE_USAGE_INPUT_ATTACHMENT;
         if (info.usage & facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT == 0 or info.usage & ~allowed != 0) return null;
-        // One level, and never a volume: a pass draws into rows, and a
-        // level of its own or a slice of one is nothing it draws into.
-        if (info.tiling != .optimal or info.mip_levels != 1 or volume) return null;
+        // Levels since 1.63, and never a volume: a pass draws into the
+        // rows of the level its framebuffer's view names, and a slice of
+        // a 3D image is nothing it draws into.
+        if (info.tiling != .optimal or volume) return null;
+        if (info.mip_levels > mostLevels(extent.width, extent.height)) return null;
         image.kind = .depth;
         // Rows, like a colour attachment's: what a render pass that stores
         // its depth writes, and what a transfer reads (`readTexel`). A
         // transient one is never written and takes the same shape.
         image.pitch = std.mem.alignForward(u32, extent.width * pixel, row_alignment);
-        // Layers since 1.58: a layer's rows one after another, each on a
-        // cache line, which a framebuffer's view names one of and a
-        // sample reads any of.
-        image.layer_bytes = std.mem.alignForward(u64, @as(u64, image.pitch) * extent.height, row_alignment);
+        // Layers since 1.58, levels since 1.63: a level's rows one after
+        // another, each on a cache line, then the level after it, and
+        // the whole pyramid again for each layer. A framebuffer's view
+        // names the level and the layer a pass draws into, and a sample
+        // reads any of them.
+        image.layer_bytes = 0;
+        for (0..info.mip_levels) |lod| image.layer_bytes += depthLevelBytes(&image, @intCast(lod));
         image.bytes = image.layer_bytes * layers;
         return image;
     }
@@ -426,7 +431,7 @@ pub fn texelsOver(image: *const Image, memory: [*]u8) texture.Texture.Error!text
     // Its own plane, all its layers: the depth where the format has one
     // and the stencil where it has not. The aspect a view asks for picks
     // the plane again (`depthPlane`, since 1.58).
-    if (image.kind == .depth) return planeOver(image, 0, 0, image.layers, memory).?;
+    if (image.kind == .depth) return planeOver(image, 0, 0, image.levels, 0, image.layers, memory).?;
     // A colour attachment written through as a storage image: its rows
     // are the texture, as a sampled depth's are (since 1.56).
     if (writtenRows(image)) return texture.Texture.linear(rowTexture(image.format).?, image.width, image.height, image.pitch, memory);
@@ -460,12 +465,21 @@ pub fn requirements(image: *const Image) facet.MemoryRequirements {
 /// depth where it has one, and its stencil where it has not. Null for an
 /// aspect the format has not got, or for both planes at once.
 /// (Since 1.58.)
-fn planeOver(image: *const Image, aspect: u32, first_layer: u32, layers: u32, memory: [*]u8) ?texture.Texture {
+fn planeOver(image: *const Image, aspect: u32, first_level: u32, levels: u32, first_layer: u32, layers: u32, memory: [*]u8) ?texture.Texture {
     const plane = planeAt(image, aspect) orelse return null;
     // The depth is read as 16 bits of depth and the stencil as one byte,
     // which `texture.Format.r8` reads as (red, 0, 0, 1).
     const kept: texture.Format = if (plane.depth) .d16 else .r8;
-    var made = texture.Texture.linearBy(kept, image.width, image.height, image.pitch, plane.stride, memory + plane.at + first_layer * @as(usize, @intCast(image.layer_bytes)));
+    const first = levelSize(image, first_level);
+    const begins = @as(usize, @intCast(depthLevelAt(image, first_level)));
+    var made = texture.Texture.linearBy(kept, first[0], first[1], depthPitch(image, first_level), plane.stride, memory + plane.at + first_layer * @as(usize, @intCast(image.layer_bytes)) + begins);
+    // The levels after the first, each in rows as wide as that level is,
+    // where it lies inside the layer (since 1.63).
+    for (first_level + 1..first_level + levels) |lod| {
+        const size = levelSize(image, @intCast(lod));
+        const at = @as(usize, @intCast(depthLevelAt(image, @intCast(lod)))) - begins;
+        made.linearLevel(size[0], size[1], @intCast(at), depthPitch(image, @intCast(lod)));
+    }
     made.layer_count = layers;
     made.layer_bytes = @intCast(image.layer_bytes);
     return made;
@@ -495,28 +509,72 @@ fn planeAt(image: *const Image, aspect: u32) ?Plane {
     return .{ .at = at, .stride = stride, .depth = wants_depth };
 }
 
+/// How many levels a depth attachment of that size may have: the longer
+/// side halved until it is one, and no more than a texture's layout holds.
+/// (Since 1.63.)
+fn mostLevels(width: u32, height: u32) u32 {
+    const longer = @max(width, height);
+    return @min(32 - @clz(longer), texture.most_levels);
+}
+
+/// The bytes from one row of a level of a depth attachment to the next:
+/// the level's own width in pixels, on a cache line. (Since 1.63.)
+pub fn depthPitch(image: *const Image, level: u32) u32 {
+    return std.mem.alignForward(u32, @max(image.width >> @intCast(level), 1) * bytesOf(image.format), row_alignment);
+}
+
+/// What one level of one layer of a depth attachment takes: its rows, the
+/// last of them on a cache line so that the level after it begins on one.
+/// (Since 1.63.)
+fn depthLevelBytes(image: *const Image, level: u32) u64 {
+    const height = @max(image.height >> @intCast(level), 1);
+    return std.mem.alignForward(u64, @as(u64, depthPitch(image, level)) * height, row_alignment);
+}
+
+/// Where a level of a depth attachment begins inside a layer, in bytes:
+/// the levels before it, each its own rows. (Since 1.63.)
+pub fn depthLevelAt(image: *const Image, level: u32) u64 {
+    var at: u64 = 0;
+    for (0..level) |lod| at += depthLevelBytes(image, @intCast(lod));
+    return at;
+}
+
+/// Where a level of a layer of an image kept in rows begins, in bytes from
+/// the image's memory, and the bytes from one of its rows to the next. A
+/// depth attachment may have levels since 1.63, each in rows of its own
+/// inside the layer; every other image kept in rows has the one level, at
+/// the layer's start.
+pub fn rowsAt(image: *const Image, level: u32, layer: u32) struct { at: usize, pitch: u32 } {
+    const layer_at = layer * @as(usize, @intCast(image.layer_bytes));
+    if (image.kind != .depth) return .{ .at = layer_at, .pitch = image.pitch };
+    return .{ .at = layer_at + @as(usize, @intCast(depthLevelAt(image, level))), .pitch = depthPitch(image, level) };
+}
+
 /// One plane of a depth attachment's rows as an input attachment reads
 /// them, pixel by pixel: the layer the view names, the depth as `r16` -
 /// 0 to 1, nearest first - and the stencil as `r8u`, the whole number
 /// it is, each read `stride` bytes apart so that a format holding both is
 /// two planes inside the same rows. Null for an image with no memory
 /// behind it, or for an aspect the format has not got. (Since 1.62.)
-pub fn depthRows(image: *const Image, aspect: u32, first_layer: u32) ?shader.Attachment {
+pub fn depthRows(image: *const Image, aspect: u32, level: u32, first_layer: u32) ?shader.Attachment {
     const data = image.data orelse return null;
     const plane = planeAt(image, aspect) orelse return null;
+    const rows = rowsAt(image, level, first_layer);
+    const size = levelSize(image, level);
     return .{
-        .bytes = data + plane.at + first_layer * @as(usize, @intCast(image.layer_bytes)),
-        .pitch = image.pitch,
-        .width = image.width,
-        .height = image.height,
+        .bytes = data + rows.at + plane.at,
+        .pitch = rows.pitch,
+        .width = size[0],
+        .height = size[1],
         .format = if (plane.depth) .r16 else .r8u,
         .stride = plane.stride,
     };
 }
 
-/// The same over the image's own memory, for a view of it. (Since 1.58.)
-pub fn depthPlane(image: *const Image, aspect: u32, first_layer: u32, layers: u32) ?texture.Texture {
-    return planeOver(image, aspect, first_layer, layers, image.data orelse return null);
+/// The same over the image's own memory, for a view of it: the levels and
+/// the layers it names (levels since 1.63). (Since 1.58.)
+pub fn depthPlane(image: *const Image, aspect: u32, first_level: u32, levels: u32, first_layer: u32, layers: u32) ?texture.Texture {
+    return planeOver(image, aspect, first_level, levels, first_layer, layers, image.data orelse return null);
 }
 
 /// A texture image's levels from `base` on, `count` of them, of the layers
@@ -711,9 +769,11 @@ pub fn copyFromBuffer(image: *Image, from: []const u8, region: *const facet.Buff
             const y = top + @as(u32, @intCast(row));
             switch (image.kind) {
                 .rows, .depth => {
-                    // A depth image may have layers since 1.58; a rows
-                    // one has the one, whose `layer_bytes` is 0.
-                    const into = image.data.? + layer * @as(usize, @intCast(image.layer_bytes)) + @as(usize, y) * image.pitch + @as(usize, left) * pixel;
+                    // A depth image may have layers since 1.58 and levels
+                    // since 1.63; a rows one has the one of each, at the
+                    // start of its memory.
+                    const rows = rowsAt(image, level, layer);
+                    const into = image.data.? + rows.at + @as(usize, y) * rows.pitch + @as(usize, left) * pixel;
                     @memcpy(into[0..source.len], source);
                 },
                 .texture => for (0..width) |column| {
@@ -766,11 +826,12 @@ pub fn levelSize(image: *const Image, level: u32) [2]u32 {
 /// Texel (x, y) of a level of a layer as a buffer would hold it, in `into`.
 pub fn readTexel(image: *const Image, level: u32, layer: u32, x: u32, y: u32, into: []u8) void {
     switch (image.kind) {
-        // A depth image is rows as well, of one level and one layer: what a
-        // pass that stores its depth wrote.
+        // A depth image is rows as well, of the level and the layer
+        // asked for: what a pass that stores its depth wrote.
         .rows, .depth => {
             const pixel = bytesOf(image.format);
-            const from = image.data.? + layer * @as(usize, @intCast(image.layer_bytes)) + @as(usize, y) * image.pitch + @as(usize, x) * pixel;
+            const rows = rowsAt(image, level, layer);
+            const from = image.data.? + rows.at + @as(usize, y) * rows.pitch + @as(usize, x) * pixel;
             @memcpy(into[0..pixel], from[0..pixel]);
         },
         .texture => if (deviceOffset(image, level, layer, x, y)) |offset| {
@@ -790,7 +851,8 @@ pub fn writeTexel(image: *Image, level: u32, layer: u32, x: u32, y: u32, from: [
     switch (image.kind) {
         .rows, .depth => {
             const pixel = bytesOf(image.format);
-            const into = image.data.? + layer * @as(usize, @intCast(image.layer_bytes)) + @as(usize, y) * image.pitch + @as(usize, x) * pixel;
+            const rows = rowsAt(image, level, layer);
+            const into = image.data.? + rows.at + @as(usize, y) * rows.pitch + @as(usize, x) * pixel;
             @memcpy(into[0..pixel], from[0..pixel]);
         },
         .texture => if (deviceOffset(image, level, layer, x, y)) |offset| {

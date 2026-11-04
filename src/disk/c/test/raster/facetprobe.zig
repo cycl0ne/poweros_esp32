@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.29 (05.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.30 (05.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -2120,10 +2120,10 @@ fn sampledDepthChecks(probe: *Probe) void {
     if (asked != .success or made == null) return probe.check(false, "a depth image that is sampled as well");
     fb.DestroyImage(device, made);
     probe.check(true, "a depth image that is sampled as well");
-    // Levels of its own it has not got, and it is never a volume: what a
-    // pass draws into is rows.
+    // Levels of its own since 1.63, as many as halving the longer side
+    // gives; a volume it is never, what a pass draws into being rows.
     var none: ?*facet.Image = null;
-    probe.check(fb.CreateImage(device, &.{ .format = .d16_unorm, .extent = extent, .mip_levels = 2, .usage = usage }, &none) != .success, "one of levels of its own refused");
+    probe.check(fb.CreateImage(device, &.{ .format = .d16_unorm, .extent = extent, .mip_levels = 9, .usage = usage }, &none) != .success, "more levels than halving its longer side gives refused");
     probe.check(fb.CreateImage(device, &.{ .format = .d16_unorm, .image_type = .@"3d", .extent = .{ .width = side, .height = side, .depth = 2 }, .usage = usage }, &none) != .success, "and a volume refused");
     probe.check(none == null, "and nothing given back for either");
 
@@ -2309,6 +2309,73 @@ fn sampledDepthChecks(probe: *Probe) void {
             // itself.
             probe.checkEqual(black, sampledWith(probe, layer_views[0].?, sampler.?, sets[0].?, layout.?, reading, onto, shade, vertex_buffer, vertex_bytes, pixels, pitch, 0.5), "the layer a view names sampled, the nearer one");
             probe.checkEqual(white, sampledWith(probe, layer_views[1].?, sampler.?, sets[0].?, layout.?, reading, onto, shade, vertex_buffer, vertex_bytes, pixels, pitch, 0.5), "and the further one, its own rows a layer on");
+        }
+    }
+
+    // Levels since 1.63: a level's rows after the level before it inside
+    // the layer, each as wide as that level is, which a pass draws into
+    // one of and a sample reads the one its sampler holds it to.
+    const mipped = probe.bound(.{ .format = .d16_unorm, .extent = extent, .mip_levels = 2, .usage = usage }, 0);
+    probe.check(mipped != null, "a sampled depth image of two levels");
+    if (mipped) |held| {
+        // Its memory is the pyramid: the first level's rows, 2 bytes a
+        // pixel, and the second's, half as wide and half as high.
+        const first_bytes = @as(u64, side) * 2 * side;
+        const second_bytes = @as(u64, side / 2) * 2 * (side / 2);
+        var needs: facet.MemoryRequirements = undefined;
+        fb.GetImageMemoryRequirements(device, held, &needs);
+        probe.checkEqual(first_bytes + second_bytes, needs.size, "its memory is both levels' rows");
+        var level_layout: facet.SubresourceLayout = undefined;
+        fb.GetImageSubresourceLayout(device, held, &.{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH, .mip_level = 1 }, &level_layout);
+        probe.checkEqual(first_bytes, level_layout.offset, "the second level begins after the first level's rows");
+        probe.checkEqual(@as(u64, side / 2) * 2, level_layout.row_pitch, "and its rows are as wide as that level is");
+
+        const first_view = probe.viewed(.{ .image = held, .format = .d16_unorm, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH, .level_count = 1 } });
+        const deeper_view = probe.viewed(.{ .image = held, .format = .d16_unorm, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH } });
+        probe.check(first_view != null and deeper_view != null, "a view of its first level, and one of both");
+        var at_first: ?*facet.Sampler = null;
+        var at_second: ?*facet.Sampler = null;
+        var held_to = facet.SamplerCreateInfo{
+            .mag_filter = .nearest,
+            .min_filter = .nearest,
+            .address_mode_u = .clamp_to_edge,
+            .address_mode_v = .clamp_to_edge,
+            .compare_enable = true,
+            .compare_op = .less,
+        };
+        const asked_first = fb.CreateSampler(device, &held_to, &at_first);
+        held_to.min_lod = 1;
+        held_to.max_lod = 1;
+        const asked_second = fb.CreateSampler(device, &held_to, &at_second);
+        defer fb.DestroySampler(device, at_first);
+        defer fb.DestroySampler(device, at_second);
+        probe.check(asked_first == .success and asked_second == .success, "a sampler held to each of the two levels");
+        if (first_view != null and deeper_view != null and at_first != null and at_second != null) {
+            // Both levels cleared further than the quad, then the first
+            // drawn into: the second keeps what the clear left there.
+            const far = facet.ClearDepthStencilValue{ .depth = 0.75 };
+            const every_level = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH };
+            commands = probe.record() orelse return probe.check(false, "a recording of both levels cleared");
+            fb.CmdClearDepthStencilImage(commands, held, 0, &far, 1, @ptrCast(&every_level));
+            if (!probe.submit()) return probe.check(false, "both its levels cleared");
+            if (probe.framebuffer(storing, &.{ color[1], first_view.? })) |frame_of| {
+                const quad = quadAt(0.25);
+                @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(quad))], std.mem.asBytes(&quad));
+                commands = probe.record() orelse return probe.check(false, "a recording of its first level drawn into");
+                fb.CmdBeginRenderPass(commands, &.{ .render_pass = storing, .framebuffer = frame_of, .render_area = area, .clear_value_count = 2, .clear_values = &clears }, .@"inline");
+                fb.CmdBindPipeline(commands, .graphics, list);
+                fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+                fb.CmdPushConstants(commands, flat_layout.?, facet.SHADER_STAGE_FRAGMENT, 0, 4, &red);
+                fb.CmdDraw(commands, 6, 1, 0, 0);
+                fb.CmdEndRenderPass(commands);
+                if (!probe.submit()) return probe.check(false, "its first level drawn into");
+                probe.check(true, "a pass into the level its view names");
+                // A reference halfway: nearer than the clear's 0.75 and
+                // further than the quad's 0.25, so each level answers for
+                // itself.
+                probe.checkEqual(black, sampledWith(probe, deeper_view.?, at_first.?, sets[0].?, layout.?, reading, onto, shade, vertex_buffer, vertex_bytes, pixels, pitch, 0.5), "the level a sampler holds it to sampled, the first");
+                probe.checkEqual(white, sampledWith(probe, deeper_view.?, at_second.?, sets[0].?, layout.?, reading, onto, shade, vertex_buffer, vertex_bytes, pixels, pitch, 0.5), "and the second, its own rows a level on");
+            } else probe.check(false, "a framebuffer with its first level");
         }
     }
 }

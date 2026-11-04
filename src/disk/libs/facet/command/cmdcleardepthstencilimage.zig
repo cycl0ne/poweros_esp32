@@ -30,8 +30,10 @@ const Image = @import("../image/_image.zig").Image;
 /// - `range_count`, `ranges` - which levels and layers, by
 ///   `base_mip_level`, `level_count`, `base_array_layer` and `layer_count`,
 ///   and which of the two the range's `aspect_mask` asks for: a format
-///   that holds both has each cleared on its own. A depth image has one
-///   level and one layer, so a range past them is left out.
+///   that holds both has each cleared on its own. A range past the levels
+///   or the layers the image has is left out; such an image has had
+///   layers since 1.58 and levels since 1.63, each level's own rows
+///   cleared over the level's own size.
 ///
 /// RESULT:
 /// None.
