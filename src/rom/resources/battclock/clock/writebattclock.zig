@@ -20,9 +20,10 @@ const BattClockBase = @import("../battclock_base.zig").BattClockBase;
 /// None.
 ///
 /// BEHAVIOR:
-/// Writes the date to the board's clock chip, has the Raspberry Pi's
-/// firmware set its RTC to it, or makes the chip's RTC timer's reckoning
-/// give it from now on. Without a clock nothing happens.
+/// Writes the date to the board's clock chip or the machine's own, has
+/// the Raspberry Pi's firmware set its RTC to it, or makes the chip's RTC
+/// timer's reckoning give it from now on. Without a clock nothing
+/// happens.
 ///
 /// CONTEXT:
 /// - Waits: yes, for the resource's semaphore and for i2c.device; for
@@ -40,7 +41,10 @@ const BattClockBase = @import("../battclock_base.zig").BattClockBase;
 ///
 /// BUGS:
 /// A PCF8563 keeps the years to 2099; a later date is kept as the last
-/// second of 2099.
+/// second of 2099. An x86-64 machine's clock keeps two digits of the
+/// year, and where the firmware's tables named no register for the
+/// century it keeps nothing else: there a date outside 2000 to 2099 is
+/// kept as that last second too.
 ///
 /// SEE ALSO:
 /// `ReadBattClock`, `ResetBattClock`, utility.library/Date2Amiga,

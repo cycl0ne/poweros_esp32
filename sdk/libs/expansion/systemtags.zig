@@ -305,6 +305,11 @@ pub const PART_PinAntennaExternal = PART_Dummy + 0x46;
 /// Where the power manager a part's reset is in lies (BUS_MEMORY): its
 /// registers, where they are not the part's own.
 pub const PART_PowerManager = PART_Dummy + 0x47;
+/// Where a clock keeps the century, where it keeps it apart from the
+/// year: the index of that register among the clock's own. Absent where
+/// the clock holds no such register, and the two digits of its year are
+/// then all it says.
+pub const PART_Century = PART_Dummy + 0x48;
 
 /// A line's role, short, for a listing: "RESET", "SCL", "D0". Null for a
 /// tag that is not a line.
@@ -628,6 +633,12 @@ pub const CHIP_BCM2712_V3D: u32 = 49;
 /// the one buffer it reads. A kernel whose firmware lit none writes no
 /// such part.
 pub const CHIP_UEFI_FB: u32 = 50;
+/// The battery-backed clock an x86-64 machine has always had
+/// (PARTKIND_RTC on BUS_PORT): PART_Address the first of its two ports,
+/// PART_Century the index of the register that holds the century where
+/// the firmware's tables name one. A cell keeps it while the machine is
+/// off.
+pub const CHIP_MC146818: u32 = 51;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;
@@ -654,6 +665,10 @@ pub const BUS_PCI: u32 = 13;
 /// One of the chip's Ethernet MACs, to a PHY over RGMII: PART_BusUnit
 /// which MAC.
 pub const BUS_RGMII: u32 = 14;
+/// The I/O port space, a second set of addresses reached with their own
+/// instructions, which only the x86 machines have: PART_Address is a
+/// port there and not an address in memory.
+pub const BUS_PORT: u32 = 15;
 
 // A network link's speeds (PART_TxClockInverted).
 pub const LINKSPEED_10: u32 = 1 << 0;

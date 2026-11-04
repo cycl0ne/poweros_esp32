@@ -12,4 +12,5 @@
 
 pub const modules = .{
     @import("../../rom/libs/rtg_driver/fbboard/fbboard.zig"),
+    @import("../../rom/resources/battclock/battclock.zig"),
 };

@@ -19,6 +19,9 @@ pub const CLOCK_JH7110_RTC: u32 = 3;
 /// The Raspberry Pi's RTC, through the VideoCore's firmware
 /// (source/rpirtc.zig).
 pub const CLOCK_RPI_RTC: u32 = 4;
+/// The battery-backed clock of an x86-64 machine, in the I/O port space
+/// (source/cmos.zig).
+pub const CLOCK_CMOS: u32 = 5;
 
 pub const BattClockBase = extern struct {
     lib: exec.Library,
@@ -33,8 +36,14 @@ pub const BattClockBase = extern struct {
     i2c_address: u32,
     /// The JH7110's RTC: its registers. The Raspberry Pi's: the
     /// VideoCore's mailbox, and the buffer its messages are written in.
+    /// An x86-64 machine's: the first of its two ports.
     rtc_address: usize,
     rtc_buffer: usize,
+    /// An x86-64 machine's clock: the index of the register that holds
+    /// the century, 0 where it has none, and how the clock keeps its
+    /// figures, which the firmware set up and nothing here changes.
+    rtc_century: u32,
+    rtc_settings: u32,
     /// The RTC timer's slow clock: microseconds per cycle, 19 bits of them
     /// fraction - measured at this start, then over the time since.
     period: u32,

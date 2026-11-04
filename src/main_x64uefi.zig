@@ -116,10 +116,31 @@ var screen: handover.Framebuffer = .{};
 /// what the board knows - and because SystemTags promises a list that
 /// outlives everything and was never allocated.
 var panel: [12]Tag = @splat(.done);
+/// The battery-backed clock's part, written where the firmware's tables
+/// do not say the machine is one of the few without that clock. Which of
+/// its registers holds the century is theirs to say as well.
+var clock_part: [7]Tag = @splat(.done);
 /// Whether that part was written, and whether the screen's memory takes
 /// gathered writes: both go in the boot's lines.
 var screen_declared = false;
 var screen_gathered = false;
+
+/// The machine's battery-backed clock, written into the board's
+/// description as its RTC part: battclock.resource reads the date from it
+/// as the system starts, and C:SetClock writes it.
+fn takeClock() void {
+    if (!tables.rtc) return;
+    clock_part = .{
+        .value(st.PART_Kind, st.PARTKIND_RTC),
+        .value(st.PART_Chip, st.CHIP_MC146818),
+        .pointer(st.PART_ChipName, "mc146818"),
+        .value(st.PART_Bus, st.BUS_PORT),
+        .value(st.PART_Address, hardware.map.RTC_INDEX),
+        .value(st.PART_Century, tables.rtc_century),
+        .done,
+    };
+    _ = boards.system.addPart(&clock_part);
+}
 
 /// The framebuffer the firmware lit, written into the board's description
 /// as a panel part. Nothing is written where the firmware lit none, or
@@ -180,6 +201,7 @@ fn takeBoard(machine: *const handover.Handover) void {
     // cores there are, and how the machine's old lines are wired. The
     // board's figures stand where the tables said nothing.
     tables = hardware.acpi.read(tables_at);
+    takeClock();
     hardware.apic.lapic_base = if (tables.lapic_base != 0) @intCast(tables.lapic_base) else hardware.map.LAPIC;
     hardware.apic.io_count = 0;
     for (tables.controllers()) |controller| {

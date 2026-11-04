@@ -90,6 +90,14 @@ pub const Facts = struct {
     /// Where the machine's other timer is, if it has one.
     hpet_base: u64 = 0,
 
+    /// Whether the machine has the battery-backed clock a PC has always
+    /// had. True unless the tables say it has none, since that is what
+    /// they are read for: a machine old enough to say nothing has one.
+    rtc: bool = true,
+    /// Which of that clock's registers holds the century, 0 where the
+    /// tables name none and the year's two digits are all there is.
+    rtc_century: u8 = 0,
+
     /// The cores' ids as a slice.
     pub fn coreIds(facts: *const Facts) []const u32 {
         return facts.cores[0..facts.core_count];
@@ -271,15 +279,27 @@ fn takeInterrupts(facts: *Facts, table: usize, length: u32) void {
 }
 
 /// The fixed description (FADT): the port of the timer whose rate the
-/// architecture fixes, and whether its counter is 24 or 32 bits wide.
+/// architecture fixes, whether its counter is 24 or 32 bits wide, and
+/// what the machine's battery-backed clock is.
 const FADT_PM_TIMER = 76;
 const FADT_PM_TIMER_LENGTH = 91;
+/// Which register of the battery-backed clock holds the century, and the
+/// two bytes about the hardware a PC has always had, of which bit 5 says
+/// that this machine has no such clock. Both are later additions to the
+/// table, so a table too short for them says nothing about either.
+const FADT_CENTURY = 108;
+const FADT_PC_HARDWARE = 109;
+const FADT_NO_RTC: u32 = 1 << 5;
 const FADT_FLAGS = 112;
 /// FADT's flags, bit 8: the timer's counter is 32 bits and not 24.
 const FADT_TIMER_WIDE: u32 = 1 << 8;
 
 fn takeFixed(facts: *Facts, table: usize, length: u32) void {
     if (length < FADT_FLAGS + 4) return;
+    if (length >= FADT_PC_HARDWARE + 2) {
+        facts.rtc_century = byteAt(table + FADT_CENTURY);
+        facts.rtc = wordAt(table + FADT_PC_HARDWARE) & FADT_NO_RTC == 0;
+    }
     if (byteAt(table + FADT_PM_TIMER_LENGTH) != 4) return;
     const port = longAt(table + FADT_PM_TIMER);
     if (port == 0 or port > 0xFFFF) return;

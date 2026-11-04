@@ -22,6 +22,12 @@ pub const UART_CLOCK_HZ: u32 = 1_843_200;
 /// machine without the firmware's help.
 pub const RESET_CONTROL: u16 = 0x0CF9;
 
+/// The battery-backed clock's two ports - an index, and the register it
+/// names - where they have been since the PC. Whether the machine has the
+/// clock at all, and which of its registers holds the century, are in the
+/// firmware's tables.
+pub const RTC_INDEX: u16 = 0x0070;
+
 /// Where a core's own interrupt controller is mapped unless a model
 /// register says otherwise, and where the machine's is unless the
 /// firmware's tables say otherwise.

@@ -71,9 +71,10 @@ pub const root = [_]Tag{
     .done,
 };
 
-/// How many parts only the firmware can describe: the panel it lit, and
-/// the window PCI's configuration space is in.
-pub const firmware_parts = 2;
+/// How many parts only the firmware can describe: the panel it lit, the
+/// battery-backed clock it says the machine has, and the window PCI's
+/// configuration space is in.
+pub const firmware_parts = 3;
 
 /// The list expansion.library reads: the board's own facts, then a slot
 /// for each part the firmware described, then the end. Until the kernel
