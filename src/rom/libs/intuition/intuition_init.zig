@@ -234,7 +234,10 @@ pub const LIBRARY_VERSION = 0;
 /// flies there instead of fading - a picture of its pixels stretched into
 /// a box walking to the taker's own, the dock's row (layers 16's
 /// FlyLayer) - and grows back out of it when it is brought back.
-pub const LIBRARY_REVISION = 85;
+/// 86: a flight takes three times as long as a fade, which is what the
+/// preference times: a fade is taken in where the window already is,
+/// while a flight has to be followed across the screen.
+pub const LIBRARY_REVISION = 86;
 const BUILD_DATE = "03.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

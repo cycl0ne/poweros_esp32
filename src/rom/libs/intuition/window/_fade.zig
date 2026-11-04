@@ -70,6 +70,13 @@ pub const default_corners = 6;
 pub const default_shadow = 12;
 pub const default_fade = 160;
 
+/// How many times as long a flight takes as a fade. A fade changes a
+/// window where it already is, which the eye takes in at once; a flight
+/// crosses the screen, and the eye has to follow the window to where it
+/// lands. At the fade's own time it is over before it has been seen,
+/// the more so the wider and the quicker the display.
+pub const flight_times = 3;
+
 /// Whether a window of these `WFLG_` flags looks like a window: a border,
 /// and not a backdrop.
 pub fn framed(flags: u32) bool {
@@ -184,6 +191,13 @@ fn boxAt(fade: *const Fade, value: u32) Rect {
         .max_x = from.max_x + @divTrunc((to.max_x - from.max_x) * at, 255),
         .max_y = from.max_y + @divTrunc((to.max_y - from.max_y) * at, 255),
     };
+}
+
+/// How long the whole way takes, in milliseconds: the preference
+/// (`IPREFS_WindowFade`) for a fade, and `flight_times` that for a
+/// flight.
+fn span(ib: *IntuitionBase, fade: *const Fade) u32 {
+    return if (fade.flies()) ib.window_fade * flight_times else ib.window_fade;
 }
 
 /// The picture of a flying window shown where `value` puts it.
@@ -450,7 +464,7 @@ pub fn step(ib: *IntuitionBase) void {
             const settings = [_]TagItem{
                 .{ .tag = motion.ANIM_From, .data = fade.now },
                 .{ .tag = motion.ANIM_To, .data = fade.to },
-                .{ .tag = motion.ANIM_Duration, .data = @max(1, ib.window_fade * left / 255) },
+                .{ .tag = motion.ANIM_Duration, .data = @max(1, span(ib, fade) * left / 255) },
                 .{ .tag = motion.ANIM_Easing, .data = motion.EASE_OUT },
                 .{ .tag = motion.ANIM_Rate, .data = 60 },
                 .{ .tag = motion.ANIM_Signal, .data = signal },

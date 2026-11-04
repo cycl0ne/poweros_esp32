@@ -113,7 +113,7 @@ const DiskfontBase = sdk.interface.diskfont.DiskfontBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Dock";
-const VERSION_STRING = "\x00$VER: Dock 1.7 (03.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Dock 1.8 (03.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "QUIT/S";
@@ -1723,11 +1723,14 @@ const App = struct {
     /// here, no other window is ever the active one, and no cell could
     /// put its window away.
     ///
-    /// The second click of a double click on the same cell does nothing.
-    /// A cell is one click to one thing, and double-clicking an icon is
-    /// what opens everything else here: the window the first click
-    /// brought back would be put away again by the second, and all that
-    /// would be seen of it is a blink.
+    /// The second click of a double click on the same cell is no second
+    /// order. A cell is one click to one thing, and double-clicking an
+    /// icon is what opens everything else here: the window the first
+    /// click brought back would be put away again by the second, and all
+    /// that would be seen of it is a blink. What the first click did
+    /// stands - a window it put away stays away - and a window that is
+    /// showing is left in front and with the keyboard, which the click
+    /// on the dock took from it.
     ///
     /// The window may have closed since the look that listed it, so it
     /// is found by its number while the screens are held still, which
@@ -1737,7 +1740,7 @@ const App = struct {
         const e = &app.entries[index];
         const number = e.window;
         const in_front = e.active and !e.hidden;
-        if (app.clickedAgain(number)) return;
+        const again = app.clickedAgain(number);
         var found = false;
         {
             const held = app.ib.LockIBase(0);
@@ -1745,10 +1748,12 @@ const App = struct {
             if (app.ib.FindWindowNumber(number)) |window| {
                 found = true;
                 if (windowAttr(app.ib, window, wn.WA_Hidden) != 0) {
-                    app.ib.ShowWindow(window);
-                    app.ib.WindowToFront(window);
-                    app.ib.ActivateWindow(window);
-                } else if (in_front) {
+                    if (!again) {
+                        app.ib.ShowWindow(window);
+                        app.ib.WindowToFront(window);
+                        app.ib.ActivateWindow(window);
+                    }
+                } else if (in_front and !again) {
                     app.ib.HideWindow(window);
                 } else {
                     app.ib.WindowToFront(window);
@@ -1760,13 +1765,24 @@ const App = struct {
     }
 
     /// Whether this click on a window's cell follows one on the same
-    /// window inside the double-click time, which the Input settings
-    /// hold.
+    /// window closely enough to be the second of a double click, and no
+    /// order of its own: inside the double-click time the Input
+    /// settings hold, and inside `click_again` whatever that time is.
+    ///
+    /// The preference alone is too long to go by. It says how far apart
+    /// two presses may be and still be meant as one, which it allows a
+    /// second and a half of, and a cell deaf for that long loses the
+    /// deliberate second click - the one that puts the window away
+    /// again, a moment after it was fetched. What is to be passed over
+    /// is the second tap of a habit, which comes within a fraction of a
+    /// second; a shorter preference than that is the user asking for
+    /// less, and is taken as it is.
     fn clickedAgain(app: *App, number: u32) bool {
         const seconds = app.event_seconds;
         const micros = app.event_micros;
         const again = app.clicked_window == number and
-            app.ib.DoubleClick(app.clicked_seconds, app.clicked_micros, seconds, micros);
+            app.ib.DoubleClick(app.clicked_seconds, app.clicked_micros, seconds, micros) and
+            since(app.clicked_seconds, app.clicked_micros, seconds, micros) <= click_again;
         app.clicked_window = number;
         app.clicked_seconds = seconds;
         app.clicked_micros = micros;
@@ -2873,6 +2889,18 @@ fn portMask(ib: *IntuitionBase, window: ?*intuition.Window) u32 {
     const shown = window orelse return 0;
     const port: ?*exec.MsgPort = @ptrFromInt(windowAttr(ib, shown, wn.WA_UserPort));
     return if (port) |p| p.sigMask() else 0;
+}
+
+/// The longest a click on a window's cell is the second of a double
+/// click, in microseconds: the second tap of a habit, no more.
+const click_again: u64 = 400_000;
+
+/// How long there was between two moments an IntuiMessage timed, in
+/// microseconds; none where the second is not after the first.
+fn since(first_seconds: u32, first_micros: u32, then_seconds: u32, then_micros: u32) u64 {
+    const first = @as(u64, first_seconds) * 1_000_000 + first_micros;
+    const then = @as(u64, then_seconds) * 1_000_000 + then_micros;
+    return if (then > first) then - first else 0;
 }
 
 /// An IntuiMessage's fields, read before it goes back: when it happened

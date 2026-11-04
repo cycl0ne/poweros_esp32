@@ -14,6 +14,12 @@
 //! (VCERR_FULL). A frame is the chip's buffer, lent out as it is; its NV12
 //! planes are the frame's picture.
 //!
+//! What a stream's numbers mean the chip does not report at all, so the
+//! track's setup record is read for it when the decoder opens
+//! (`colour.zig`), and the first packets of a film of high dynamic range
+//! are looked through for the light it was mastered for, which lives in
+//! the stream rather than the setup.
+//!
 //! A track of a profile the chip has not - H.264 deeper than 8 bits or
 //! with more colour than halved both ways, H.265's range extensions - is
 //! refused when it opens (VCERR_UNSUPPORTED), for the software's module.
@@ -37,6 +43,12 @@ const colour = @import("colour.zig");
 /// largest is, and gets room for four of 2 MiB.
 const stream_bytes: usize = 2 * 1024 * 1024;
 const packets_kept = 4;
+
+/// How many packets of a film in PQ are looked through for the SEI unit
+/// that says the light it was mastered for. It travels with a key
+/// picture, so the first packet nearly always has it; after these the
+/// looking stops, and graphics maps from its own thousand candelas.
+const hunt_packets: u8 = 16;
 
 /// What a frame's `private[1]` holds, so a frame that is not one of this
 /// decoder's is passed by: "CHIP".
@@ -62,6 +74,10 @@ const Decoder = struct {
     /// What the stream's own parameter sets say its colours are, read
     /// when it was opened: the chip reports none of it.
     colours: colour.Colour = .{},
+    /// How many packets more are to be looked through for the light the
+    /// film was mastered for; 0 once it is found, or once the looking is
+    /// given up, or for a film that is not in PQ.
+    hunt: u8 = 0,
     /// The frames lent out, by slot.
     held: u32,
     lent: [vcodec.VCODEC_MOST_HELD]bool = @splat(false),
@@ -116,6 +132,9 @@ fn open(sys: *ExecBase, params: *const vcodec.VCodecParams, code: *i32) ?*vcodec
     const c: *Decoder = @ptrCast(@alignCast(memory));
     c.* = .{ .sys = sys, .vb = vb, .decoder = undefined, .codec = codec, .length_size = setup.length_size, .held = params.held };
     c.colours = colour.of(sys, codec == videodec.VDCODEC_H265, config, params.height);
+    // A film in PQ whose record did not say the light it was mastered
+    // for: the SEI that says it comes with the pictures.
+    if (c.colours.transfer == rtg.RTGYUV_PQ and c.colours.peak == 0) c.hunt = hunt_packets;
     if (setup.header_size != 0) {
         const header = sys.AllocVec(setup.header_size, exec.MEMF_ANY) orelse {
             sys.FreeVec(c);
@@ -166,6 +185,7 @@ pub fn SendVCodecPacket(_: *Base, decoder: *vcodec.VCodecDecoder, packet: *const
     if (packet.flags & vcodec.VCPKT_END != 0) return fromChip(c.vb.FeedVideoDecoder(c.decoder, null, 0, 0, videodec.VDFEED_END));
     const data = packet.data orelse return vc.VCERR_CORRUPT;
     const units = data[0..packet.size];
+    if (c.hunt != 0) lookForLight(c, units);
     const size = annexb.convertedSize(units, c.length_size) orelse return vc.VCERR_CORRUPT;
     const key = packet.flags & vcodec.VCPKT_KEY != 0;
     const whole = size + if (key) c.header_size else 0;
@@ -246,9 +266,9 @@ pub fn FlushVCodec(_: *Base, decoder: *vcodec.VCodecDecoder) void {
 }
 
 /// The chip's frame as the program's: its NV12 planes, with the colours
-/// the stream's parameter sets said (`colour.zig`) - or BT.709 for a
-/// picture 720 rows high or more and BT.601 below, as video is made,
-/// where they said nothing.
+/// the stream's parameter sets said (`colour.zig`) and the light its SEI
+/// said - or BT.709 for a picture 720 rows high or more and BT.601
+/// below, as video is made, where they said nothing.
 fn lend(c: *const Decoder, frame: *vc.VideoFrame, got: *const videodec.VideoDecFrame, slot: u32) void {
     const colours = c.colours;
     frame.* = .{
@@ -262,12 +282,26 @@ fn lend(c: *const Decoder, frame: *vc.VideoFrame, got: *const videodec.VideoDecF
             .transfer = colours.transfer,
             .primaries = colours.primaries,
             .range = colours.range,
+            .peak = colours.peak,
         },
         .width = got.width,
         .height = got.height,
         .time = @bitCast(got.time),
         .private = .{ slot + 1, frame_mark, 0 },
     };
+}
+
+/// A packet looked through for the light the film was mastered for: it
+/// is in a prefix SEI unit with the key picture, and from then on every
+/// frame says it.
+fn lookForLight(c: *Decoder, units: []const u8) void {
+    var scratch: [colour.sei_room]u8 = undefined;
+    const peak = colour.peakOf(c.codec == videodec.VDCODEC_H265, units, c.length_size, &scratch);
+    c.hunt -= 1;
+    if (peak != 0) {
+        c.colours.peak = peak;
+        c.hunt = 0;
+    }
 }
 
 fn feedPending(c: *Decoder) u32 {

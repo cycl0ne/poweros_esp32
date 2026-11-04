@@ -31,7 +31,10 @@ start meanwhile.
   whether the cell is drawn matt yet or not, since a window put away a
   moment ago is away whatever the dock last saw. A double click on a
   cell is one click: the second would undo the first, and the window
-  would only blink. Its menu still sends a window behind the others.
+  would only blink: what the first click did stands, and the window it
+  fetched keeps the keyboard. A second click a moment later, which a
+  double click is not, is an order of its own and works. Its menu still
+  sends a window behind the others.
 - **A click on a drawer or a disk** lists what is in it by the entry, a
   stack: drawers first, then the rest, each by name, as many as there is
   room for. A click on one opens it; the last row, **Open Drawer** or

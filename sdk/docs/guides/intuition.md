@@ -378,7 +378,9 @@ if (ib.WindowUnderPointer()) |under| {
   (`IPREFS_WindowFade`) - or, where a window takes the hidden ones in
   (`HideControl` below), **flies** into that window's box instead, a
   picture of its pixels shrinking into the dock's row, and grows back out
-  of it when it is fetched. Either way it is away from the moment
+  of it when it is fetched; a flight is given three times a fade's time,
+  having to be followed across the screen. Either way it is away from the
+  moment
   `HideWindow` is called, whatever its picture is still doing, and asked
   for the other way round while it is on its way it turns round where it
   is.

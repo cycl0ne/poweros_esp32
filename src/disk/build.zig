@@ -317,7 +317,10 @@ const esp_only = [_][]const u8{ "usbotg.device", "sdcard.device", "programs/Dock
 /// decoder, DTS's module with its large tables, and the video codecs in
 /// software: the ESP32s have neither the room for them on their flash
 /// disks nor the speed, and the 64-bit machines' disks are RAM.
-const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device", "nvme.device", "install", "update", "WBStartup/Dock", "videodec", "dts.acodec", "h264.vcodec", "hevc.vcodec", "vp8.vcodec", "vp9.vcodec", "av1.vcodec" };
+/// chip.vcodec goes with them: it drives videodec.resource, which no
+/// ESP32 has, and carries the parameter-set parsers it reads a stream's
+/// colours with - 60 KB for a chip that is not there.
+const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device", "nvme.device", "install", "update", "WBStartup/Dock", "videodec", "dts.acodec", "chip.vcodec", "h264.vcodec", "hevc.vcodec", "vp8.vcodec", "vp9.vcodec", "av1.vcodec" };
 /// Drivers of what only the Raspberry Pi CM5 has among the AArch64
 /// machines and no other chip does: its radio, a CYW43455 on the
 /// BCM2712's SD host.

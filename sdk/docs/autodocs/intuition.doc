@@ -3191,9 +3191,11 @@ intuition.library/ZipWindow
 	closing does (`IPREFS_WindowFade`) - or, where a window has taken the
 	screen's hidden windows in (`HideControl`), flies into that window's
 	box instead: a picture of its pixels, shrinking as it goes, which is
-	the way into the dock's row. Either way it is away from the moment it
-	is asked for: the activation has already gone, and nothing of the
-	input reaches it while its picture is still on its way.
+	the way into the dock's row. A flight is given three times a fade's
+	time, having to be followed across the screen where a fade is taken
+	in where the window already is. Either way it is away from the
+	moment it is asked for: the activation has already gone, and nothing
+	of the input reaches it while its picture is still on its way.
 
 	Everything else about it stays. It is still open and still on its
 	screen's list in the place it had, with its number, its port, its
