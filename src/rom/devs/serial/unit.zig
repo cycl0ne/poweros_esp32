@@ -35,7 +35,7 @@ const uart = sdk.hardware.uart;
 /// input.
 const usbjtag = switch (sdk.hardware.chip) {
     .esp32s3, .esp32p4 => @import("usbjtag.zig"),
-    .rv64sbi, .a64psci => no_usbjtag,
+    .rv64sbi, .a64psci, .x64uefi => no_usbjtag,
 };
 const no_usbjtag = struct {
     pub const source: u32 = 0;

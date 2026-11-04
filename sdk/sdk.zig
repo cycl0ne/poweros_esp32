@@ -169,7 +169,7 @@ fn isFixed(comptime T: type) bool {
 comptime {
     const builtin = @import("builtin");
     const arch = builtin.cpu.arch;
-    const machine = arch == .aarch64 and builtin.os.tag == .freestanding;
+    const machine = (arch == .aarch64 or arch == .x86_64) and builtin.os.tag == .freestanding;
     if (arch == .xtensa or arch == .riscv32 or arch == .riscv64 or machine) {
         @setEvalBranchQuota(20_000_000);
         checkConstants(@This(), 0);
