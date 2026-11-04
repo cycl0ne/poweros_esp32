@@ -121,8 +121,9 @@ const _instance = @import("../instance/_instance.zig");
 /// `max_depth_bounds`, whatever the depth being drawn; `DynamicState`'s
 /// `depth_bounds` leaves the two to CmdSetDepthBounds. Both want a device
 /// whose `PhysicalDeviceFeatures.depth_clamp` or `depth_bounds` is true -
-/// the cores, not the V3D - and both have a draw's pixels walked one at a
-/// time, as a stencil test does, so they cost more than the quads the fast
+/// every device since 1.47, the V3D's own configuration having both - and
+/// on the cores both have a draw's pixels walked one at a time, as a
+/// stencil test does, so they cost more there than the quads the fast
 /// paths walk.
 ///
 /// On an attachment without alpha, R5G6B5, what is there reads as wholly

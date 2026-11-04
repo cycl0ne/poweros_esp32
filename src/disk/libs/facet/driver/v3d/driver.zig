@@ -148,17 +148,23 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // forms that want one are refused and drawn on the cores.
         .samplers = false,
         .sampler_anisotropy = false,
-        // The hardware's occlusion counter is not read yet, and what the
-        // QPUs were given is not counted either: a pool of either kind is
-        // refused on this device. A timestamp is the library's clock, which
-        // every device has (CmdWriteTimestamp).
-        .occlusion_queries = false,
+        // The hardware's own counter, pointed at a word of the frame's by
+        // the packet beside a draw and added to the query as the frame is
+        // drawn (`cl.occlusionQuery`, since 1.47). What the QPUs were
+        // given is still counted by nothing, so a statistics pool is
+        // refused here. A timestamp is the library's clock, which every
+        // device has (CmdWriteTimestamp).
+        .occlusion_queries = true,
         .pipeline_statistics_queries = false,
         .timestamp_queries = true,
-        // The V3D's own tiles hold the depth and nothing stores it to
-        // memory yet, so a pass that keeps its depth is refused here.
-        .stored_depth = false,
-        .stored_stencil = false,
+        // The tiles' depth and stencil are stored to an image's rows and
+        // loaded back from them, as the render target is (`cl.STORE_Z`,
+        // `STORE_STENCIL`, since 1.47). The hardware writes a plane's own
+        // pixels one after another, so the image's format holds that
+        // plane alone: a format of both keeps neither here.
+        .stored_depth = true,
+        .stored_stencil = true,
+        .stored_both = false,
         // Its texture unit keeps a texture its own way, and knows no
         // depth format: a sampled depth image is refused.
         .sampled_depth = false,
@@ -172,10 +178,12 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // ETC2 and EAC are unpacked by the library as they are copied in,
         // which is the same work on either device.
         .etc2_textures = true,
-        // Its control lists clip in their own way, and it has no depth
-        // bounds test: a pipeline that asks for either is refused.
-        .depth_clamp = false,
-        .depth_bounds = false,
+        // Version 7.1 has both of these: the clamp is a bit of the
+        // configuration, which turns the clip to the z planes off with it
+        // as Vulkan has a depth clamp, and the bounds are a packet of
+        // their own (`cl.depthBounds`, since 1.47).
+        .depth_clamp = true,
+        .depth_bounds = true,
         // A V3D texture lies the way its TMU reads it, which is not the
         // layout the library writes (`texture_offset`), so a storage image
         // is refused on this device and the set layout says so.
@@ -196,10 +204,11 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // A colour attachment is drawn as a pass of its own, so each
         // takes the mixing asked for it as it is drawn.
         .independent_blend = true,
-        // The hardware has a depth offset of its own, which nothing in
-        // this driver writes yet: a pipeline that asks for a bias is
-        // refused here and the cores draw it.
-        .depth_bias = false,
+        // The hardware's own depth offset, a packet beside the
+        // configuration that enables it (`cl.depthOffset`): the units are
+        // the depth buffer's smallest differences and the factor the
+        // triangle's slope, as Vulkan asks (since 1.47).
+        .depth_bias = true,
         // The depth pre-pass is the rasterizer's (driver/cpu/raster/prepass.zig).
         .depth_prepass = false,
         .points_and_lines = true,

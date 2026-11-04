@@ -433,6 +433,16 @@ pub const PhysicalDeviceFeatures = extern struct {
     /// block where it lies, so this is true on every device from 1.46 and
     /// says only that the formats are taken.
     etc2_textures: bool = false,
+    /// Whether a format that holds a depth **and** a stencil may keep
+    /// either of them in its image's rows (`stored_depth`,
+    /// `stored_stencil`): the cores write each pixel's planes where they
+    /// lie in its four bytes, while a device that stores the whole of a
+    /// tile buffer writes one plane's pixels one after another and so
+    /// keeps only a format of that plane alone - `d16_unorm` or
+    /// `s8_uint`. False on the V3D, where a load or a store op of
+    /// `d16_unorm_s8_uint` is `error_feature_not_present`
+    /// (CreateRenderPass). (Since 1.47.)
+    stored_both: bool = false,
 };
 
 /// QueueFamilyProperties.queue_flags: what a family's queues do.

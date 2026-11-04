@@ -375,9 +375,36 @@ pub const LIBRARY_VERSION = 1;
 /// sampler of this library reads such a block where it lies, so an ETC2
 /// image is never kept in its blocks and never copied out of, which
 /// GetPhysicalDeviceFormatProperties says.
+/// 47: the V3D catching up on the depth and the counting. Its own depth
+/// offset packet is written where a pipeline asks for a bias
+/// (`PhysicalDeviceFeatures.depth_bias`): the units are the depth buffer's
+/// smallest differences and the factor the triangle's slope, each the top
+/// 16 bits of a float as the hardware takes them, with the clamp as its
+/// limit - Vulkan's three numbers, unscaled. Its configuration has a depth
+/// clamp (`depth_clamp`, which turns the clip to the z planes off with it)
+/// and a depth bounds test of its own packet (`depth_bounds`). The tiles'
+/// depth and stencil are stored to an image's rows and loaded back from
+/// them as the render target is (`stored_depth`, `stored_stencil`): the
+/// hardware writes one plane's pixels one after another, so the image's
+/// format holds that plane alone - `d16_unorm` or `s8_uint` - and keeping
+/// either plane of `d16_unorm_s8_uint` wants the new `stored_both`, which
+/// the cores have and the V3D has not. A depth the V3D stored may be one
+/// of the 65535ths away from the cores': it keeps a deeper number and
+/// writes its top 16 bits. And the hardware's occlusion counter is read
+/// (`occlusion_queries`): a draw points it at a word of a group of sixteen
+/// on a boundary of 1024 bytes, as the hardware wants them, and what it
+/// counted is added to the query as the frame is drawn. The CPU's caches
+/// are dropped for the depth image and those words after the job, as they
+/// always were for the colour. What the QPUs were given is still counted
+/// by nothing, so a statistics pool is refused there.
+/// What is left of that list wants a shader compiler for the QPUs, which
+/// there is none of: an input attachment is read by a fragment function
+/// (`shader.Resources.input`) and a storage image written by one, and the
+/// V3D runs none of the program's functions, only the fixed forms. Neither
+/// is a packet this driver could write.
 /// What stays: `fifo` is the one present mode, there being no way to ask a
 /// display to show a buffer before its next frame; one queue family of one
 /// queue; a counter of 32 bits, for want of a 64-bit atomic on every
 /// machine the library runs on; and no point mode in tessellation, there
 /// being no point rasterization at all.
-pub const LIBRARY_REVISION = 46;
+pub const LIBRARY_REVISION = 47;

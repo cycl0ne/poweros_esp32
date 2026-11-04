@@ -31,6 +31,23 @@ pub const Area = struct {
     bottom: u32,
 };
 
+/// A plane of the tiles kept in an image's rows: the depth or the stencil,
+/// loaded as a tile starts and stored as it ends
+/// (`PhysicalDeviceFeatures.stored_depth`, `stored_stencil`, since 1.47).
+/// The hardware stores a plane as its own pixels one after another, so the
+/// image's format holds that plane alone - `d16_unorm` or `s8_uint` - and a
+/// format that holds both is refused on this device.
+pub const Kept = struct {
+    /// Which buffer of the tiles: `cl.STORE_Z` or `cl.STORE_STENCIL`.
+    buffer: u64,
+    /// How the image holds it: `cl.OUTPUT_D16` or `cl.OUTPUT_S8`.
+    format: u64,
+    image: u32,
+    stride: u32,
+    load: bool = false,
+    store: bool = false,
+};
+
 pub const Frame = struct {
     width: u32,
     height: u32,
@@ -60,6 +77,9 @@ pub const Frame = struct {
     /// And a stencil, the same.
     stencil: bool = false,
     clear_stencil: u32 = 0,
+    /// The depth or the stencil kept in memory, or null for a pass whose
+    /// own live in the tiles alone.
+    kept: ?Kept = null,
     /// The tiles rendered: any others of the image stay as they are. Null
     /// for all.
     area: ?Area = null,
@@ -81,6 +101,15 @@ pub const DrawState = struct {
     mixing: cl.Mixing = .{},
     /// The front's and the back's test, with `cfg.stencil`.
     stencil: [2]cl.StencilFace = undefined,
+    /// What a triangle adds to its depth, with `cfg.biased`: the constant
+    /// in the depth buffer's smallest differences, the slope of the
+    /// triangle's steepest, and the clamp both are held inside (since
+    /// 1.47).
+    bias_constant: f32 = 0,
+    bias_slope: f32 = 0,
+    bias_clamp: f32 = 0,
+    /// The depth a pixel's own must lie between, with `cfg.bounded`.
+    bounds: [2]f32 = .{ 0, 1 },
     /// The viewport, as Vulkan gives it.
     x: f32,
     y: f32,
@@ -112,6 +141,8 @@ pub fn writeDrawState(list: *List, state: *const DrawState) void {
     const clip = state.clip;
     cl.clipWindow(list, clip.left, clip.top, clip.right - clip.left, clip.bottom - clip.top);
     cl.cfgBits(list, state.cfg);
+    if (state.cfg.biased) cl.depthOffset(list, state.bias_slope, state.bias_constant, state.bias_clamp);
+    if (state.cfg.bounded) cl.depthBounds(list, state.bounds[0], state.bounds[1]);
     if (state.cfg.blend) cl.blend(list, &state.mixing);
     if (state.cfg.stencil) {
         cl.stencilCfg(list, &state.stencil[0], true);
@@ -151,7 +182,10 @@ pub fn writeBin(list: *List, frame: *const Frame, record: u32, attributes: u32, 
 /// cleared area covers whole.
 pub fn writeTileList(list: *List, frame: *const Frame, load: bool) void {
     list.byte(cl.TILE_COORDINATES_IMPLICIT);
-    if (load) cl.load(list, frame.format, frame.swap_rb, frame.image, frame.stride);
+    if (load) cl.load(list, cl.STORE_RENDER_TARGET_0, frame.format, frame.swap_rb, frame.image, frame.stride);
+    // The depth or the stencil read in after the colour, as Mesa orders
+    // them, whether or not this list's tiles read the colour.
+    if (frame.kept) |kept| if (kept.load) cl.load(list, kept.buffer, kept.format, false, kept.image, kept.stride);
     list.byte(cl.END_OF_LOADS);
     // The binner starts each tile's list assuming triangles.
     cl.primListFormat(list, cl.LIST_TRIANGLES);
@@ -159,6 +193,9 @@ pub fn writeTileList(list: *List, frame: *const Frame, load: bool) void {
         cl.setInstanceId(list, 0);
         cl.branchToImplicitTileList(list);
     }
+    // And written out before it: the hardware clears the tiles' depth and
+    // stencil between tiles by itself, so neither store asks for a clear.
+    if (frame.kept) |kept| if (kept.store) cl.store(list, kept.buffer, kept.format, false, kept.image, kept.stride);
     cl.store(list, cl.STORE_RENDER_TARGET_0, frame.format, frame.swap_rb, frame.image, frame.stride);
     list.byte(cl.CLEAR_RENDER_TARGETS);
     list.byte(cl.END_OF_TILE_MARKER);

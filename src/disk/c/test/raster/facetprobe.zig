@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.13 (04.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.14 (04.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -288,6 +288,44 @@ const Smooth = struct {
     const code = facet.shader.Code{ .entry_count = entries.len, .entries = &entries };
 };
 
+/// The colour each vertex carries, read from the vertices themselves: a
+/// fixed form of `shader.FixedKind.color` again, so that a device which
+/// runs none of the program's fragment functions draws it too - and the
+/// colour is the draw's own without a push constant, which such a device
+/// has no function to read.
+const Painted = struct {
+    fn vertex(vertices: *const facet.shader.Vertices) callconv(.c) void {
+        const full = facet.shader.channel(1);
+        for (0..vertices.count) |k| {
+            const p = vertices.input(@intCast(k), 0);
+            const rgb = vertices.input(@intCast(k), 1);
+            vertices.output(@intCast(k))[0..8].* = .{
+                p[0],                           p[1],
+                p[2],                           1,
+                facet.shader.channel(rgb[0]),   facet.shader.channel(rgb[1]),
+                facet.shader.channel(rgb[2]),   full,
+            };
+        }
+    }
+
+    const entries = [_]facet.shader.Entry{
+        facet.shader.vertex("main", &vertex, 4),
+        facet.shader.fixedFragment("main", .{ .kind = .color }),
+    };
+    const code = facet.shader.Code{ .entry_count = entries.len, .entries = &entries };
+
+    /// Where it is and the colour it carries: six floats a vertex.
+    const attributes = [2]facet.VertexInputAttributeDescription{
+        .{ .location = 0, .binding = 0, .format = .r32g32b32_sfloat },
+        .{ .location = 1, .binding = 0, .format = .r32g32b32_sfloat, .offset = 12 },
+    };
+    const stride: u32 = 24;
+
+    fn at(x: f32, y: f32, z: f32, rgb: [3]f32) [6]f32 {
+        return .{ x, y, z, rgb[0], rgb[1], rgb[2] };
+    }
+};
+
 /// A pipeline of `Flat` over `pass`, depth tested and written, of one
 /// colour attachment mixed the default way.
 fn flatPipeline(probe: *Probe, pass: *facet.RenderPass, module: *facet.ShaderModule, layout: *facet.PipelineLayout) ?*facet.Pipeline {
@@ -318,6 +356,16 @@ const Shape = struct {
     min_depth: f32 = 0,
     max_depth: f32 = 1,
 };
+
+/// A copy of `shape` with the fields of `change` put over it: the probe
+/// builds several pipelines of one shape that differ in a field each.
+fn shapeWith(shape: Shape, change: anytype) Shape {
+    var made = shape;
+    inline for (@typeInfo(@TypeOf(change)).@"struct".fields) |field| {
+        @field(made, field.name) = @field(change, field.name);
+    }
+    return made;
+}
 
 /// A pipeline over `pass` of the module's "main", as `shape` says.
 fn pipelineOf(probe: *Probe, pass: *facet.RenderPass, module: *facet.ShaderModule, layout: *facet.PipelineLayout, shape: Shape) ?*facet.Pipeline {
@@ -388,6 +436,15 @@ fn depthAt(bytes: [*]const u8, x: u32, y: u32) u16 {
     return std.mem.readInt(u16, bytes[(y * side + x) * 2 ..][0..2], .little);
 }
 
+/// A depth stored, allowing the one unit of 65535 the devices may differ
+/// by: the cores write round(z x 65535) and the V3D the top 16 bits of its
+/// own deeper number, which is z x 65536 held at 65535 - the same for a
+/// depth that falls on a 65535th and one more for the rest (since 1.47).
+fn checkDepth(probe: *Probe, wanted: u16, found: u16, name: [*:0]const u8) void {
+    const apart = if (found > wanted) found - wanted else wanted - found;
+    if (apart <= 1) probe.check(true, name) else probe.checkEqual(wanted, found, name);
+}
+
 fn depthChecks(probe: *Probe) void {
     const fb = probe.fb;
     defer probe.give();
@@ -421,22 +478,27 @@ fn depthChecks(probe: *Probe) void {
         probe.check(probe.framebuffer(storing, &.{ color[1], one[1] }) == null, "a transient depth refused the framebuffer that stores");
     }
 
+    // The colour comes from the vertices, so these checks run on a device
+    // that runs none of the program's fragment functions as well
+    // (since 1.47).
     var module: ?*facet.ShaderModule = null;
-    if (fb.CreateShaderModule(probe.device.?, &.{ .code = &Flat.code }, &module) != .success) return probe.check(false, "the shader module");
+    if (fb.CreateShaderModule(probe.device.?, &.{ .code = &Painted.code }, &module) != .success) return probe.check(false, "the shader module");
     _ = Probe.keep(&probe.modules, module);
-    const range = facet.PushConstantRange{ .size = 4 };
     var layout: ?*facet.PipelineLayout = null;
-    if (fb.CreatePipelineLayout(probe.device.?, &.{ .push_constant_range_count = 1, .push_constant_ranges = @ptrCast(&range) }, &layout) != .success) return probe.check(false, "the pipeline layout");
+    if (fb.CreatePipelineLayout(probe.device.?, &.{}, &layout) != .success) return probe.check(false, "the pipeline layout");
     _ = Probe.keep(&probe.layouts, layout);
-    const first = flatPipeline(probe, storing, module.?, layout.?) orelse return probe.check(false, "a pipeline over the storing pass");
-    const second = flatPipeline(probe, loading, module.?, layout.?) orelse return probe.check(false, "a pipeline over the loading pass");
+    const painted = Shape{ .attributes = &Painted.attributes, .stride = Painted.stride, .depth_tested = true };
+    const first = pipelineOf(probe, storing, module.?, layout.?, painted) orelse return probe.check(false, "a pipeline over the storing pass");
+    const second = pipelineOf(probe, loading, module.?, layout.?, painted) orelse return probe.check(false, "a pipeline over the loading pass");
 
     // A near corner at 0.25 and a far one at 0.75, with a band between
     // them that neither covers and the clear's depth stays in: the near
     // one reaches to x + y = 48 of the 64, the far one starts past 64.
-    const vertices = [_][3]f32{
-        .{ -1, -1, 0.25 }, .{ 0.5, -1, 0.25 }, .{ -1, 0.5, 0.25 },
-        .{ 1, 1, 0.75 },   .{ -1, 1, 0.75 },   .{ 1, -1, 0.75 },
+    const paint_green = [3]f32{ 0, 1, 0 };
+    const paint_red = [3]f32{ 1, 0, 0 };
+    const vertices = [_][6]f32{
+        Painted.at(-1, -1, 0.25, paint_green), Painted.at(0.5, -1, 0.25, paint_green), Painted.at(-1, 0.5, 0.25, paint_green),
+        Painted.at(1, 1, 0.75, paint_green),   Painted.at(-1, 1, 0.75, paint_green),   Painted.at(1, -1, 0.75, paint_green),
     };
     const vertex_buffer, const vertex_bytes = probe.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER) orelse
         return probe.check(false, "a vertex buffer");
@@ -456,7 +518,6 @@ fn depthChecks(probe: *Probe) void {
     fb.CmdBeginRenderPass(commands, &.{ .render_pass = storing, .framebuffer = frame, .render_area = area, .clear_value_count = 2, .clear_values = &clears }, .@"inline");
     fb.CmdBindPipeline(commands, .graphics, first);
     fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
-    fb.CmdPushConstants(commands, layout.?, facet.SHADER_STAGE_FRAGMENT, 0, 4, &green);
     fb.CmdDraw(commands, 6, 1, 0, 0);
     fb.CmdEndRenderPass(commands);
     fb.CmdCopyImageToBuffer(commands, depth[0], .general, read_back, 1, @ptrCast(&whole));
@@ -464,21 +525,20 @@ fn depthChecks(probe: *Probe) void {
 
     const near: u16 = @intFromFloat(@round(0.25 * 65535));
     const far: u16 = @intFromFloat(@round(0.75 * 65535));
-    probe.checkEqual(near, depthAt(back_bytes, 4, 4), "the near triangle's depth stored");
-    probe.checkEqual(far, depthAt(back_bytes, 40, 40), "the far triangle's depth stored");
+    checkDepth(probe, near, depthAt(back_bytes, 4, 4), "the near triangle's depth stored");
+    checkDepth(probe, far, depthAt(back_bytes, 40, 40), "the far triangle's depth stored");
     // Past the first tile across, and down a row: the tiles are written
     // back one at a time, so a pixel in another one is worth asking about.
-    probe.checkEqual(near, depthAt(back_bytes, 34, 2), "the depth of a pixel in another tile");
-    probe.checkEqual(0xFFFF, depthAt(back_bytes, 56, 2), "the clear's depth where neither triangle is");
+    checkDepth(probe, near, depthAt(back_bytes, 34, 2), "the depth of a pixel in another tile");
+    checkDepth(probe, 0xFFFF, depthAt(back_bytes, 56, 2), "the clear's depth where neither triangle is");
 
     // The same depth loaded: a triangle at 0.5 wins only over the far half.
-    const across = [_][3]f32{ .{ -1, -1, 0.5 }, .{ 3, -1, 0.5 }, .{ -1, 3, 0.5 } };
+    const across = [_][6]f32{ Painted.at(-1, -1, 0.5, paint_red), Painted.at(3, -1, 0.5, paint_red), Painted.at(-1, 3, 0.5, paint_red) };
     @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(across))], std.mem.asBytes(&across));
     commands = probe.record() orelse return probe.check(false, "a second recording");
     fb.CmdBeginRenderPass(commands, &.{ .render_pass = loading, .framebuffer = after, .render_area = area }, .@"inline");
     fb.CmdBindPipeline(commands, .graphics, second);
     fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
-    fb.CmdPushConstants(commands, layout.?, facet.SHADER_STAGE_FRAGMENT, 0, 4, &red);
     fb.CmdDraw(commands, 3, 1, 0, 0);
     fb.CmdEndRenderPass(commands);
     fb.CmdCopyImageToBuffer(commands, depth[0], .general, read_back, 1, @ptrCast(&whole));
@@ -490,9 +550,9 @@ fn depthChecks(probe: *Probe) void {
         probe.checkEqual(red, pixelAt(pixels, pitch, 40, 40), "the further stored depth gave way");
     }
     const half: u16 = @intFromFloat(@round(0.5 * 65535));
-    probe.checkEqual(near, depthAt(back_bytes, 4, 4), "the loaded depth kept where it was nearer");
-    probe.checkEqual(half, depthAt(back_bytes, 40, 40), "the loaded depth written where it was further");
-    probe.checkEqual(half, depthAt(back_bytes, 56, 2), "the loaded clear gave way to the new triangle");
+    checkDepth(probe, near, depthAt(back_bytes, 4, 4), "the loaded depth kept where it was nearer");
+    checkDepth(probe, half, depthAt(back_bytes, 40, 40), "the loaded depth written where it was further");
+    checkDepth(probe, half, depthAt(back_bytes, 56, 2), "the loaded clear gave way to the new triangle");
 
     // Cleared without a pass over it.
     const value = facet.ClearDepthStencilValue{ .depth = 1 };
@@ -501,8 +561,8 @@ fn depthChecks(probe: *Probe) void {
     fb.CmdClearDepthStencilImage(commands, depth[0], 0, &value, 1, @ptrCast(&subresource));
     fb.CmdCopyImageToBuffer(commands, depth[0], .general, read_back, 1, @ptrCast(&whole));
     if (!probe.submit()) return probe.check(false, "the clear submitted");
-    probe.checkEqual(0xFFFF, depthAt(back_bytes, 4, 4), "CmdClearDepthStencilImage set the whole image");
-    probe.checkEqual(0xFFFF, depthAt(back_bytes, 40, 40), "and its other corner");
+    checkDepth(probe, 0xFFFF, depthAt(back_bytes, 4, 4), "CmdClearDepthStencilImage set the whole image");
+    checkDepth(probe, 0xFFFF, depthAt(back_bytes, 40, 40), "and its other corner");
 }
 
 /// A pixel of the picture read where it was drawn, 0xAARRGGBB.
@@ -1355,35 +1415,50 @@ fn stencilChecks(probe: *Probe) void {
     const extent = facet.Extent3D{ .width = side, .height = side };
     const marked: u8 = 5;
     const green: u32 = 0xFF00_FF00;
-    const red: u32 = 0xFFFF_0000;
     const blue: u32 = 0xFF00_00FF;
     const clears = [2]facet.ClearValue{ .{ .color = .{ .float32 = .{ 0, 0, 1, 1 } } }, .{ .depth_stencil = .{ .depth = 1, .stencil = 0 } } };
     const area = facet.Rect2D{ .extent = .{ .width = side, .height = side } };
     const marks = facet.StencilOpState{ .pass_op = .replace, .compare_op = .always, .compare_mask = 0xFF, .write_mask = 0xFF, .reference = marked };
     const equal = facet.StencilOpState{ .compare_op = .equal, .compare_mask = 0xFF, .reference = marked };
 
+    // The colour comes from the vertices, so these checks run on a device
+    // that runs none of the program's fragment functions as well
+    // (since 1.47).
     var module: ?*facet.ShaderModule = null;
-    if (fb.CreateShaderModule(probe.device.?, &.{ .code = &Flat.code }, &module) != .success) return probe.check(false, "the shader module");
+    if (fb.CreateShaderModule(probe.device.?, &.{ .code = &Painted.code }, &module) != .success) return probe.check(false, "the shader module");
     _ = Probe.keep(&probe.modules, module);
-    const range = facet.PushConstantRange{ .size = 4 };
     var layout: ?*facet.PipelineLayout = null;
-    if (fb.CreatePipelineLayout(probe.device.?, &.{ .push_constant_range_count = 1, .push_constant_ranges = @ptrCast(&range) }, &layout) != .success) return probe.check(false, "the pipeline layout");
+    if (fb.CreatePipelineLayout(probe.device.?, &.{}, &layout) != .success) return probe.check(false, "the pipeline layout");
     _ = Probe.keep(&probe.layouts, layout);
+    const painted = Shape{ .attributes = &Painted.attributes, .stride = Painted.stride };
 
-    // All of the picture, then its left half.
-    const vertices = [_][3]f32{
-        .{ -1, -1, 0.5 }, .{ 1, -1, 0.5 }, .{ -1, 1, 0.5 },
-        .{ -1, 1, 0.5 },  .{ 1, -1, 0.5 }, .{ 1, 1, 0.5 },
-        .{ -1, -1, 0.5 }, .{ 0, -1, 0.5 }, .{ -1, 1, 0.5 },
-        .{ -1, 1, 0.5 },  .{ 0, -1, 0.5 }, .{ 0, 1, 0.5 },
+    // All of the picture in green, then its left half in red.
+    const paint_green = [3]f32{ 0, 1, 0 };
+    const paint_red = [3]f32{ 1, 0, 0 };
+    const vertices = [_][6]f32{
+        Painted.at(-1, -1, 0.5, paint_green), Painted.at(1, -1, 0.5, paint_green), Painted.at(-1, 1, 0.5, paint_green),
+        Painted.at(-1, 1, 0.5, paint_green),  Painted.at(1, -1, 0.5, paint_green), Painted.at(1, 1, 0.5, paint_green),
+        Painted.at(-1, -1, 0.5, paint_red),   Painted.at(0, -1, 0.5, paint_red),   Painted.at(-1, 1, 0.5, paint_red),
+        Painted.at(-1, 1, 0.5, paint_red),    Painted.at(0, -1, 0.5, paint_red),   Painted.at(0, 1, 0.5, paint_red),
     };
     const vertex_buffer, const vertex_bytes = probe.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER) orelse
         return probe.check(false, "a vertex buffer");
     @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
     const offset: u64 = 0;
 
-    // One format of stencil alone, and one that holds a depth beside it.
-    for ([2]facet.Format{ .s8_uint, .d16_unorm_s8_uint }) |format| {
+    // A format that holds a depth beside the stencil keeps either only
+    // where the device writes a pixel's planes where they lie in it
+    // (`stored_both`, since 1.47); a device that stores a tile buffer
+    // whole - the V3D - takes the format of a stencil alone.
+    if (!probe.features.stored_both) {
+        probe.check(passStenciling(probe, .d16_unorm_s8_uint, "cdcs") == null, "a stored stencil refused for a format that holds a depth too");
+        probe.check(passStenciling(probe, .d16_unorm_s8_uint, "cdcd") != null, "one that stays in the tiles is still taken");
+    }
+
+    // One format of stencil alone, and one that holds a depth beside it
+    // where the device keeps either of the two.
+    const formats: []const facet.Format = if (probe.features.stored_both) &.{ .s8_uint, .d16_unorm_s8_uint } else &.{.s8_uint};
+    for (formats) |format| {
         const stride: u32 = if (format == .s8_uint) 1 else 4;
         const inside: u32 = if (stride == 1) 0 else 2;
         const storing = passStenciling(probe, format, "cdcs") orelse return probe.check(false, "a pass that stores its stencil");
@@ -1404,8 +1479,8 @@ fn stencilChecks(probe: *Probe) void {
         const frame = probe.framebuffer(storing, &.{ color[1], stencil[1] }) orelse return probe.check(false, "a framebuffer over the two");
         const after = probe.framebuffer(loading, &.{ color[1], stencil[1] }) orelse return probe.check(false, "a framebuffer for the second pass");
 
-        const mark = pipelineOf(probe, storing, module.?, layout.?, .{ .stencil = .{ marks, marks } }) orelse return probe.check(false, "a pipeline that marks");
-        const draw = pipelineOf(probe, loading, module.?, layout.?, .{ .stencil = .{ equal, equal } }) orelse return probe.check(false, "a pipeline that draws where marked");
+        const mark = pipelineOf(probe, storing, module.?, layout.?, shapeWith(painted, .{ .stencil = [2]facet.StencilOpState{ marks, marks } })) orelse return probe.check(false, "a pipeline that marks");
+        const draw = pipelineOf(probe, loading, module.?, layout.?, shapeWith(painted, .{ .stencil = [2]facet.StencilOpState{ equal, equal } })) orelse return probe.check(false, "a pipeline that draws where marked");
 
         const bytes = side * side * stride;
         const read_back, const back_bytes = probe.buffer(bytes, facet.BUFFER_USAGE_TRANSFER_DST) orelse
@@ -1418,7 +1493,6 @@ fn stencilChecks(probe: *Probe) void {
         fb.CmdBeginRenderPass(commands, &.{ .render_pass = storing, .framebuffer = frame, .render_area = area, .clear_value_count = 2, .clear_values = &clears }, .@"inline");
         fb.CmdBindPipeline(commands, .graphics, mark);
         fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
-        fb.CmdPushConstants(commands, layout.?, facet.SHADER_STAGE_FRAGMENT, 0, 4, &red);
         fb.CmdDraw(commands, 6, 1, 6, 0);
         fb.CmdEndRenderPass(commands);
         fb.CmdCopyImageToBuffer(commands, stencil[0], .general, read_back, 1, @ptrCast(&whole));
@@ -1436,7 +1510,6 @@ fn stencilChecks(probe: *Probe) void {
         fb.CmdBeginRenderPass(commands, &.{ .render_pass = loading, .framebuffer = after, .render_area = area, .clear_value_count = 2, .clear_values = &clears }, .@"inline");
         fb.CmdBindPipeline(commands, .graphics, draw);
         fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
-        fb.CmdPushConstants(commands, layout.?, facet.SHADER_STAGE_FRAGMENT, 0, 4, &green);
         fb.CmdDraw(commands, 6, 1, 0, 0);
         fb.CmdEndRenderPass(commands);
         if (!probe.submit()) return probe.check(false, "the second frame submitted");
@@ -1643,19 +1716,22 @@ fn boundsChecks(probe: *Probe) void {
     const stores = probe.features.stored_depth;
     const pass = passKeeping(probe, .clear, .clear, if (stores) .store else .dont_care) orelse
         return probe.check(false, "a pass of a colour and a depth");
+    // The colour comes from the vertices, not from a push constant: these
+    // checks run on a device that runs none of the program's fragment
+    // functions as well (since 1.47).
     var module: ?*facet.ShaderModule = null;
-    if (fb.CreateShaderModule(probe.device.?, &.{ .code = &Flat.code }, &module) != .success) return probe.check(false, "the shader module");
+    if (fb.CreateShaderModule(probe.device.?, &.{ .code = &Painted.code }, &module) != .success) return probe.check(false, "the shader module");
     _ = Probe.keep(&probe.modules, module);
-    const range = facet.PushConstantRange{ .size = 4 };
     var layout: ?*facet.PipelineLayout = null;
-    if (fb.CreatePipelineLayout(probe.device.?, &.{ .push_constant_range_count = 1, .push_constant_ranges = @ptrCast(&range) }, &layout) != .success) return probe.check(false, "the pipeline layout");
+    if (fb.CreatePipelineLayout(probe.device.?, &.{}, &layout) != .success) return probe.check(false, "the pipeline layout");
     _ = Probe.keep(&probe.layouts, layout);
+    const painted = Shape{ .attributes = &Painted.attributes, .stride = Painted.stride, .depth_tested = true };
 
     if (!probe.features.depth_bounds) {
-        probe.check(pipelineOf(probe, pass, module.?, layout.?, .{ .depth_state = bounded }) == null, "a depth bounds test refused where the device has none");
+        probe.check(pipelineOf(probe, pass, module.?, layout.?, shapeWith(painted, .{ .depth_state = bounded })) == null, "a depth bounds test refused where the device has none");
     }
     if (!probe.features.depth_clamp) {
-        probe.check(pipelineOf(probe, pass, module.?, layout.?, .{ .raster = clamping }) == null, "a depth clamp refused where the device has none");
+        probe.check(pipelineOf(probe, pass, module.?, layout.?, shapeWith(painted, .{ .raster = clamping })) == null, "a depth clamp refused where the device has none");
     }
     if (!probe.features.depth_bounds and !probe.features.depth_clamp) return;
 
@@ -1669,15 +1745,17 @@ fn boundsChecks(probe: *Probe) void {
         return probe.check(false, "a buffer to read the depth into");
     const whole = facet.BufferImageCopy{ .image_extent = extent, .image_subresource = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH } };
 
-    // The left half at 0.25, then all of it where the bounds allow.
-    const vertices = [_][3]f32{
-        .{ -1, -1, 0.25 }, .{ 0, -1, 0.25 }, .{ -1, 1, 0.25 },
-        .{ -1, 1, 0.25 },  .{ 0, -1, 0.25 }, .{ 0, 1, 0.25 },
-        .{ -1, -1, 0.5 },  .{ 1, -1, 0.5 },  .{ -1, 1, 0.5 },
-        .{ -1, 1, 0.5 },   .{ 1, -1, 0.5 },  .{ 1, 1, 0.5 },
-        // Wholly behind the near plane.
-        .{ -1, -1, -0.5 }, .{ 1, -1, -0.5 }, .{ -1, 1, -0.5 },
-        .{ -1, 1, -0.5 },  .{ 1, -1, -0.5 }, .{ 1, 1, -0.5 },
+    // The left half at 0.25 in red, then all of it in green where the
+    // bounds allow, then all of it in red wholly behind the near plane.
+    const paint_red = [3]f32{ 1, 0, 0 };
+    const paint_green = [3]f32{ 0, 1, 0 };
+    const vertices = [_][6]f32{
+        Painted.at(-1, -1, 0.25, paint_red),  Painted.at(0, -1, 0.25, paint_red),  Painted.at(-1, 1, 0.25, paint_red),
+        Painted.at(-1, 1, 0.25, paint_red),   Painted.at(0, -1, 0.25, paint_red),  Painted.at(0, 1, 0.25, paint_red),
+        Painted.at(-1, -1, 0.5, paint_green), Painted.at(1, -1, 0.5, paint_green), Painted.at(-1, 1, 0.5, paint_green),
+        Painted.at(-1, 1, 0.5, paint_green),  Painted.at(1, -1, 0.5, paint_green), Painted.at(1, 1, 0.5, paint_green),
+        Painted.at(-1, -1, -0.5, paint_red),  Painted.at(1, -1, -0.5, paint_red),  Painted.at(-1, 1, -0.5, paint_red),
+        Painted.at(-1, 1, -0.5, paint_red),   Painted.at(1, -1, -0.5, paint_red),  Painted.at(1, 1, -0.5, paint_red),
     };
     const vertex_buffer, const vertex_bytes = probe.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER) orelse
         return probe.check(false, "a vertex buffer");
@@ -1691,12 +1769,12 @@ fn boundsChecks(probe: *Probe) void {
     const pixels, const pitch = probe.mapped(color[0], color_memory) orelse return probe.check(false, "the picture read back");
 
     if (probe.features.depth_bounds) {
-        const marks = flatPipeline(probe, pass, module.?, layout.?) orelse return probe.check(false, "a pipeline that writes the depth");
-        const in_bounds = pipelineOf(probe, pass, module.?, layout.?, .{ .depth_state = bounded }) orelse
+        const marks = pipelineOf(probe, pass, module.?, layout.?, painted) orelse return probe.check(false, "a pipeline that writes the depth");
+        const in_bounds = pipelineOf(probe, pass, module.?, layout.?, shapeWith(painted, .{ .depth_state = bounded })) orelse
             return probe.check(false, "a pipeline whose bounds are tested");
         probe.check(true, "a pipeline whose bounds are tested");
         const dynamic_states = [1]facet.DynamicState{.depth_bounds};
-        const by_command = pipelineOf(probe, pass, module.?, layout.?, .{ .depth_state = .{ .depth_bounds_test_enable = true }, .dynamic = &dynamic_states }) orelse
+        const by_command = pipelineOf(probe, pass, module.?, layout.?, shapeWith(painted, .{ .depth_state = facet.PipelineDepthStencilStateCreateInfo{ .depth_bounds_test_enable = true }, .dynamic = &dynamic_states })) orelse
             return probe.check(false, "a pipeline whose bounds a command sets");
 
         for ([3]struct { ?*facet.Pipeline, ?[2]f32, u32, u32, [*:0]const u8 }{
@@ -1709,11 +1787,9 @@ fn boundsChecks(probe: *Probe) void {
             fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame, .render_area = area, .clear_value_count = 2, .clear_values = &clears }, .@"inline");
             fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
             fb.CmdBindPipeline(commands, .graphics, marks);
-            fb.CmdPushConstants(commands, layout.?, facet.SHADER_STAGE_FRAGMENT, 0, 4, &red);
             fb.CmdDraw(commands, 6, 1, 0, 0);
             fb.CmdBindPipeline(commands, .graphics, pipeline.?);
             if (set) |asked| fb.CmdSetDepthBounds(commands, asked[0], asked[1]);
-            fb.CmdPushConstants(commands, layout.?, facet.SHADER_STAGE_FRAGMENT, 0, 4, &green);
             fb.CmdDraw(commands, 6, 1, 6, 0);
             fb.CmdEndRenderPass(commands);
             if (!probe.submit()) return probe.check(false, "the frame submitted");
@@ -1727,9 +1803,9 @@ fn boundsChecks(probe: *Probe) void {
         // not the whole of it.
         const low: f32 = 0.25;
         const writes = facet.PipelineDepthStencilStateCreateInfo{ .depth_test_enable = true, .depth_write_enable = true, .depth_compare_op = .always };
-        const plain = pipelineOf(probe, pass, module.?, layout.?, .{ .depth_state = writes, .min_depth = low, .max_depth = 0.75 }) orelse
+        const plain = pipelineOf(probe, pass, module.?, layout.?, shapeWith(painted, .{ .depth_state = writes, .min_depth = low, .max_depth = 0.75 })) orelse
             return probe.check(false, "a pipeline that cuts at the near plane");
-        const clamped = pipelineOf(probe, pass, module.?, layout.?, .{ .depth_state = writes, .raster = clamping, .min_depth = low, .max_depth = 0.75 }) orelse
+        const clamped = pipelineOf(probe, pass, module.?, layout.?, shapeWith(painted, .{ .depth_state = writes, .raster = clamping, .min_depth = low, .max_depth = 0.75 })) orelse
             return probe.check(false, "a pipeline that clamps its depth");
         probe.check(true, "a pipeline that clamps its depth");
         for ([2]struct { ?*facet.Pipeline, u32, [*:0]const u8 }{
@@ -1742,7 +1818,6 @@ fn boundsChecks(probe: *Probe) void {
             fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame, .render_area = area, .clear_value_count = 2, .clear_values = &clears }, .@"inline");
             fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
             fb.CmdBindPipeline(commands, .graphics, pipeline.?);
-            fb.CmdPushConstants(commands, layout.?, facet.SHADER_STAGE_FRAGMENT, 0, 4, &red);
             fb.CmdDraw(commands, 6, 1, 12, 0);
             fb.CmdEndRenderPass(commands);
             if (stores) fb.CmdCopyImageToBuffer(commands, depth[0], .general, read_back, 1, @ptrCast(&whole));
@@ -1755,7 +1830,7 @@ fn boundsChecks(probe: *Probe) void {
             if (stores) {
                 const nearest: u16 = @intFromFloat(@round(low * 65535));
                 const wanted_depth: u16 = if (wanted == red) nearest else 0xFFFF;
-                probe.checkEqual(wanted_depth, depthAt(back_bytes, 16, 8), "and the depth it left");
+                checkDepth(probe, wanted_depth, depthAt(back_bytes, 16, 8), "and the depth it left");
             }
         }
     }
@@ -2685,6 +2760,80 @@ fn shapeChecks(probe: *Probe) void {
     }
 }
 
+// --- 1.47: the samples an occlusion query counted --------------------------
+
+/// What an occlusion query counts: the samples that passed the tests and
+/// the fragment kept. A quad over the whole picture counts every pixel of
+/// it, and one wholly behind it counts none.
+fn samplesChecks(probe: *Probe) void {
+    const fb = probe.fb;
+    const device = probe.device.?;
+    defer probe.give();
+
+    var pool: ?*facet.QueryPool = null;
+    const asked = fb.CreateQueryPool(device, &.{ .query_type = .occlusion, .query_count = 2 }, &pool);
+    if (!probe.features.occlusion_queries) {
+        return probe.check(asked != .success and pool == null, "an occlusion pool refused where the device counts no samples");
+    }
+    if (asked != .success or pool == null) return probe.check(false, "an occlusion pool of two queries");
+    probe.check(true, "an occlusion pool of two queries");
+    defer fb.DestroyQueryPool(device, pool);
+
+    const pass = passKeeping(probe, .clear, .clear, .dont_care) orelse return probe.check(false, "a pass of a colour and a depth");
+    var module: ?*facet.ShaderModule = null;
+    if (fb.CreateShaderModule(device, &.{ .code = &Painted.code }, &module) != .success) return probe.check(false, "the shader module");
+    _ = Probe.keep(&probe.modules, module);
+    var layout: ?*facet.PipelineLayout = null;
+    if (fb.CreatePipelineLayout(device, &.{}, &layout) != .success) return probe.check(false, "the pipeline layout");
+    _ = Probe.keep(&probe.layouts, layout);
+    const draws = pipelineOf(probe, pass, module.?, layout.?, .{ .attributes = &Painted.attributes, .stride = Painted.stride, .depth_tested = true }) orelse
+        return probe.check(false, "a pipeline that tests its depth");
+
+    const extent = facet.Extent3D{ .width = side, .height = side };
+    const color = probe.image(.{ .format = .b8g8r8a8_unorm, .extent = extent, .tiling = .linear, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, facet.MEMORY_PROPERTY_HOST_VISIBLE) orelse
+        return probe.check(false, "a picture to draw into");
+    const depth = probe.image(.{ .format = .d16_unorm, .extent = extent, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT }, 0) orelse
+        return probe.check(false, "a depth attachment");
+    const frame = probe.framebuffer(pass, &.{ color[1], depth[1] }) orelse return probe.check(false, "a framebuffer over the two");
+
+    // All of the picture in green at a half, then its left half in red
+    // behind that: the first counts every pixel and the second none.
+    const paint_green = [3]f32{ 0, 1, 0 };
+    const paint_red = [3]f32{ 1, 0, 0 };
+    const vertices = [_][6]f32{
+        Painted.at(-1, -1, 0.5, paint_green), Painted.at(1, -1, 0.5, paint_green), Painted.at(-1, 1, 0.5, paint_green),
+        Painted.at(-1, 1, 0.5, paint_green),  Painted.at(1, -1, 0.5, paint_green), Painted.at(1, 1, 0.5, paint_green),
+        Painted.at(-1, -1, 0.75, paint_red),  Painted.at(0, -1, 0.75, paint_red),  Painted.at(-1, 1, 0.75, paint_red),
+        Painted.at(-1, 1, 0.75, paint_red),   Painted.at(0, -1, 0.75, paint_red),  Painted.at(0, 1, 0.75, paint_red),
+    };
+    const vertex_buffer, const vertex_bytes = probe.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER) orelse
+        return probe.check(false, "a vertex buffer");
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
+    const offset: u64 = 0;
+    const clears = [2]facet.ClearValue{ .{ .color = .{ .float32 = .{ 0, 0, 1, 1 } } }, .{ .depth_stencil = .{ .depth = 1 } } };
+    const area = facet.Rect2D{ .extent = .{ .width = side, .height = side } };
+
+    const commands = probe.record() orelse return probe.check(false, "a recording");
+    fb.CmdResetQueryPool(commands, pool.?, 0, 2);
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame, .render_area = area, .clear_value_count = 2, .clear_values = &clears }, .@"inline");
+    fb.CmdBindPipeline(commands, .graphics, draws);
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdBeginQuery(commands, pool.?, 0, 0);
+    fb.CmdDraw(commands, 6, 1, 0, 0);
+    fb.CmdEndQuery(commands, pool.?, 0);
+    fb.CmdBeginQuery(commands, pool.?, 1, 0);
+    fb.CmdDraw(commands, 6, 1, 6, 0);
+    fb.CmdEndQuery(commands, pool.?, 1);
+    fb.CmdEndRenderPass(commands);
+    if (!probe.submit()) return probe.check(false, "the frame submitted");
+
+    var counted: [2]u64 = @splat(0xDEAD);
+    const read = fb.GetQueryPoolResults(device, pool.?, 0, 2, @sizeOf(@TypeOf(counted)), &counted, @sizeOf(u64), facet.QUERY_RESULT_64 | facet.QUERY_RESULT_WAIT);
+    probe.check(read == .success, "the two queries read");
+    probe.checkEqual(side * side, counted[0], "every pixel of the picture counted");
+    probe.checkEqual(0, counted[1], "and none at all for what was drawn behind it");
+}
+
 fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical: *facet.PhysicalDevice, quiet: bool) struct { u32, u32 } {
     var properties: facet.PhysicalDeviceProperties = undefined;
     fb.GetPhysicalDeviceProperties(physical, &properties);
@@ -2711,6 +2860,7 @@ fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical
     blockChecks(&probe);
     floatChecks(&probe);
     shapeChecks(&probe);
+    samplesChecks(&probe);
     return .{ probe.passed, probe.failed };
 }
 

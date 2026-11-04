@@ -49,21 +49,32 @@ const _surface = @import("../surface/_surface.zig");
 /// instead: with the store op STORE each tile's depth is written into the
 /// image's memory as the tile is drawn, and with the load op LOAD each
 /// tile starts from what is there. Both want a format that holds a depth
-/// and a device whose `stored_depth` is true - the cores, not the V3D -
+/// and a device whose `stored_depth` is true - every device since 1.47 -
 /// and an image bound to memory something is behind, which
 /// CreateFramebuffer holds to; otherwise that is
-/// `error_feature_not_present`.
+/// `error_feature_not_present`. A depth the V3D stored may be one of the
+/// 65535ths away from the one the cores would have stored: the hardware
+/// keeps a deeper number and writes its top 16 bits, which is the same
+/// where the depth falls on a 65535th and one more where it does not.
 ///
 /// Since 1.38 the stencil keeps its own the same way, by its own two ops:
 /// with `stencil_store_op` STORE each tile's stencil, a byte a pixel, is
 /// written into its own plane of the image's rows, and with
 /// `stencil_load_op` LOAD each tile starts from what is there. That wants
 /// a format that holds a stencil - `s8_uint` or `d16_unorm_s8_uint` - and
-/// a device whose `stored_stencil` is true, the cores again. A format
+/// a device whose `stored_stencil` is true, every device again. A format
 /// that holds both keeps each pixel's depth and its stencil beside each
 /// other, so the four ops are taken on their own: a pass may store the
 /// stencil and leave the depth in the tiles, or the other way round. An
 /// op for a plane the format has not is `error_feature_not_present`.
+///
+/// Keeping either plane of a format that holds **both** - `d16_unorm_s8_uint`
+/// - wants `stored_both` as well (since 1.47): the cores write a pixel's
+/// planes where they lie in its four bytes, while a device that stores the
+/// whole of a tile buffer, the V3D, writes one plane's pixels one after
+/// another and so keeps only a format of that plane alone. There such an
+/// op is `error_feature_not_present`, and a `d16_unorm` or an `s8_uint`
+/// attachment keeps what it holds.
 ///
 /// So two subpasses share a depth attachment only one right after the other
 /// and with the same colour attachments too, when the second goes on in the
@@ -200,6 +211,13 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                     if (!owner.physical.features.stored_stencil) return .error_feature_not_present;
                     if (!tests_stencil) return .error_feature_not_present;
                 }
+                // A format of both planes keeps either only where the
+                // device writes a pixel's planes where they lie in it
+                // (`stored_both`, since 1.47): one that stores a tile
+                // buffer whole writes a plane's own pixels one after
+                // another, which those rows are not.
+                if ((loads_depth or stores_depth or loads_stencil or stores_stencil) and
+                    tests_depth and tests_stencil and !owner.physical.features.stored_both) return .error_feature_not_present;
                 // Two subpasses share it only in the same tiles.
                 if (depths[reference.attachment]) return .error_feature_not_present;
                 depths[reference.attachment] = true;

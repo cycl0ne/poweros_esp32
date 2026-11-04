@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.46**, so that a program need not find out by failing. It covers the API.
+1.47**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -96,11 +96,14 @@ E-clock as the command is played, in microseconds, so
 counted is added where the work is done, so a frame's cost no longer
 reaches the log alone. What is left out:
 
-- **Only the cores count the work.** The V3D's occlusion counter is not
-  read and what its QPUs were given is not counted, so a pool of either
-  kind is refused on it (`PhysicalDeviceFeatures.occlusion_queries`,
-  `pipeline_statistics_queries`). Timestamps are kept on every device,
-  because the clock is the library's and not a driver's.
+- **Only the cores count the stages.** The V3D's occlusion counter is read
+  since 1.47 - a draw points it at a word of a group of sixteen on a
+  boundary of 1024 bytes, as the hardware wants them, and what it counted
+  is added to the query as the frame is drawn - so an occlusion pool is
+  taken on every device (`PhysicalDeviceFeatures.occlusion_queries`). What
+  the QPUs were given is still counted by nothing, so a statistics pool is
+  refused there (`pipeline_statistics_queries`). Timestamps are kept on
+  every device, because the clock is the library's and not a driver's.
 - **Neither geometry statistic counts anything.** There is no geometry
   shader, so `QUERY_PIPELINE_STATISTIC_GEOMETRY_SHADER_INVOCATIONS` and
   `..._GEOMETRY_SHADER_PRIMITIVES` read 0 - which is what Vulkan has a
@@ -130,15 +133,22 @@ from what is there. So depth can be read back - `CmdCopyImageToBuffer`,
 `CmdClearDepthStencilImage`, and a second pass can test against the first
 pass's depth. What is left out:
 
-- **Only the cores keep it** (`PhysicalDeviceFeatures.stored_depth`). The
-  V3D draws in tiles of its own and nothing stores their depth to memory
-  yet, so a pass that asks for either op is refused there.
+- **Every device keeps it since 1.47** (`PhysicalDeviceFeatures.stored_depth`):
+  the V3D stores the tiles' depth to the image's rows and loads it back as
+  it does the render target. A depth it stored may be one of the 65535ths
+  away from the one the cores would have stored - the hardware keeps a
+  deeper number and writes its top 16 bits, which is the same where the
+  depth falls on a 65535th and one more where it does not.
 - **The stencil keeps its own since 1.38** (`stored_stencil`), by its own
   two ops: a byte a pixel, in its own plane of the same rows. `s8_uint`
   holds it at each pixel's only byte and `d16_unorm_s8_uint` after that
   pixel's depth, and the four ops are taken on their own - a pass may keep
   the stencil and leave the depth in the tiles. An op for a plane the
-  format has not is refused.
+  format has not is refused. Keeping either plane of a format that holds
+  **both** wants `stored_both` as well (1.47): the cores write a pixel's
+  planes where they lie in its four bytes, while the V3D writes one
+  plane's pixels one after another and so keeps only `d16_unorm` or
+  `s8_uint`.
 - **A depth image is a texture since 1.39** (`sampled_depth`): `d16_unorm`
   with `SAMPLED` is sampled out of the very rows the pass stored it into,
   through a sampler, and a shadow sample compares it at all 16 bits. What
@@ -165,7 +175,10 @@ is left out:
 
 - **Only the cores write one** (`PhysicalDeviceFeatures.storage_images`).
   The V3D's TMU keeps a texture in a layout of its own, which is not the one
-  the library writes, so a set layout with the kind is refused there.
+  the library writes, so a set layout with the kind is refused there. Like
+  an input attachment, this one waits on a shader compiler for the QPUs
+  and not on a packet: a storage image is written by a function of the
+  program's, and the V3D runs none of those.
 - **Nothing orders two writes.** A frame's work is shared between the
   cores, and groups run in no order, so two functions writing the same texel
   is for the program to avoid - as it is in Vulkan, there being no barrier
@@ -240,7 +253,10 @@ exist now. What is left out:
 
 - **The cores alone read them** (`PhysicalDeviceFeatures.input_attachments`):
   on the V3D no fragment program of the library's is run at all, only the
-  fixed forms, and none of those reads an attachment.
+  fixed forms, and none of those reads an attachment. This one waits on a
+  shader compiler for the QPUs, not on a packet: an input attachment is
+  read by a fragment function (`shader.Resources.input`), which is the
+  program's own code.
 - **An attachment is read out of the image's memory, not out of the
   tile.** So it is read where the image stands - what the subpass before
   it drew and stored - and a subpass cannot read the attachment it is
@@ -320,12 +336,14 @@ cutting it away, each pixel's depth held inside the viewport's
 (`DynamicState.depth_bounds`) draws a pixel only where the depth already
 in the attachment lies between the two. What is left out:
 
-- **Only the cores have them.** The V3D's control lists clip in their own
-  way and it has no depth bounds test, so a pipeline that asks for either
-  is refused there.
-- **A draw with either is walked a pixel at a time**, the way a draw with
-  a stencil test is, so it costs more than the quads the fast paths walk.
-  Nothing a draw without them costs changes.
+- **Every device has them since 1.47.** The V3D's configuration carries
+  the clamp - which turns its clip to the z planes off with it, as Vulkan
+  has a depth clamp - and the bounds are a packet of its own.
+- **On the cores a draw with either is walked a pixel at a time**, the way
+  a draw with a stencil test is, so it costs more than the quads the fast
+  paths walk. Nothing a draw without them costs changes, and on the V3D
+  neither costs anything: they are bits of the state it was going to
+  write.
 - A clamped draw is still cut just in front of the eye, where the
   projection stops holding, so geometry that reaches behind the eye is
   cut there rather than drawn from behind - which is what every
@@ -342,9 +360,10 @@ to commands. The constant is in the smallest differences the depth
 attachment holds - 65535ths of the range for `d16_unorm` - and the slope
 is of the triangle's steepest, in depth over a pixel. What is left out:
 
-- **Only the cores move it** (`PhysicalDeviceFeatures.depth_bias`). The
-  V3D has a depth offset of its own, a packet this driver does not write
-  yet, so a pipeline that asks for a bias is refused there.
+- **Every device moves it since 1.47** (`PhysicalDeviceFeatures.depth_bias`):
+  the V3D's own depth offset packet takes Vulkan's three numbers unscaled
+  - the units in the depth buffer's smallest differences, the factor of
+  the triangle's slope, the clamp as its limit.
 - **Only triangles are moved**, as in Vulkan: points and lines, and
   triangles drawn as their edges or corners, are drawn where they are.
 - The bias is worked out once a triangle, from the depth plane its set-up
@@ -352,7 +371,9 @@ is of the triangle's steepest, in depth over a pixel. What is left out:
   pixel - but it is the plane that moves, not each pixel, which is what
   Vulkan's wording allows.
 - The depth clamp and the depth bounds test are there since 1.40, with
-  CmdSetDepthBounds and `DynamicState.depth_bounds`, on the cores alone:
+  CmdSetDepthBounds and `DynamicState.depth_bounds`, and on every device
+  since 1.47 - the V3D's configuration has the clamp, which turns the clip
+  to the z planes off with it, and its own packet the bounds:
   see their own section above.
 
 ## Commands that are absent
@@ -392,8 +413,7 @@ These can be asked for and are answered with `error_feature_not_present`.
 | Multisampling entirely: `rasterization_samples` above 1, sample shading, alpha-to-coverage, alpha-to-one | `pipeline/creategraphicspipelines.zig` |
 | An attachment of more than one sample | `render/createrenderpass.zig` |
 | Logic operations: `LogicOp` is fully enumerated, `logic_op_enable` is not taken | `pipeline/creategraphicspipelines.zig` |
-| Depth clamp or the depth bounds test on a device that has neither: the V3D (`depth_clamp`, `depth_bounds`) | `pipeline/creategraphicspipelines.zig` |
-| A depth bias, on a device that moves no depth: the V3D (`depth_bias`) | `pipeline/creategraphicspipelines.zig` |
+| Depth clamp, the depth bounds test or a depth bias on a device that has none of them: every device has all three since 1.47 (`depth_clamp`, `depth_bounds`, `depth_bias`) | `pipeline/creategraphicspipelines.zig` |
 | More than one viewport or one scissor | `pipeline/creategraphicspipelines.zig` |
 | Colour attachments that differ, on a device that blends them all alike: no device of this library is one (`independent_blend`) | `pipeline/creategraphicspipelines.zig` |
 | Resolve attachments in a subpass | `render/createrenderpass.zig` |
@@ -408,10 +428,10 @@ These can be asked for and are answered with `error_feature_not_present`.
 | A `storage_image` layout on the V3D: its TMU keeps a texture its own way | `descriptor/createdescriptorsetlayout.zig` |
 | A fixed fragment form that drops pixels, on the V3D: the QPUs have no program that discards | `driver/v3d/driver.zig` |
 | A fixed fragment form that samples through a sampler, on the V3D: nor one that reads a sampler | `driver/v3d/driver.zig` |
-| An occlusion or a statistics query pool, on the V3D: it counts neither the samples nor the stages | `query/createquerypool.zig` |
+| A statistics query pool on the V3D: what its QPUs were given is counted by nothing. An occlusion pool is taken on every device since 1.47 | `query/createquerypool.zig` |
 | A bit that is no statistic at all. Both of a geometry shader's may be asked for since 1.43 and read 0, there being no such stage to count | `query/createquerypool.zig` |
 | A timestamp pool without timer.device: the clock a timestamp is read from | `query/createquerypool.zig` |
-| A depth or stencil attachment that loads or stores, on the V3D | `render/createrenderpass.zig` |
+| A depth or stencil attachment of `d16_unorm_s8_uint` that loads or stores, on a device that stores a tile buffer whole: the V3D (`stored_both`, 1.47). Either plane of a format that holds it alone is kept on every device | `render/createrenderpass.zig` |
 | A depth attachment kept, whose image has no memory behind it | `render/createframebuffer.zig` |
 | A sampled depth image on a device that samples none: the V3D (`sampled_depth`); one with a stencil in it, a transient one, or one written through as a storage image | `image/createimage.zig` |
 
