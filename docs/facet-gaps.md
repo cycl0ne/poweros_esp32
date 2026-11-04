@@ -340,10 +340,13 @@ exist now. What is left out:
   `error_initialization_failed`. Vulkan allows exactly that for the
   fragment's own pixel, which is what `VK_EXT_shader_framebuffer_fetch`
   and the subpass self-dependency are for.
-- **A depth attachment is not readable**, because it lives in the
-  rasterizer's tiles and has no rows: an input attachment is of
-  b8g8r8a8_unorm, r8g8b8a8_unorm or r5g6b5_unorm_pack16. A shadow pass
-  that wants the depth still copies it out (`CmdCopyImageToBuffer`).
+- **A depth attachment is not readable**: an input attachment is of
+  b8g8r8a8_unorm, r8g8b8a8_unorm or r5g6b5_unorm_pack16, the formats whose
+  pixels `shader.Attachment` reads. A depth that a pass stores does have
+  rows - and since 1.58 planes and layers with them (`_image.depthPlane`) -
+  so what is left is the attachment's own read, not the memory; until then
+  a pass that wants an earlier pass's depth samples it where it lies
+  (`sampled_depth`, 1.39) or copies it out (`CmdCopyImageToBuffer`).
 - **Nothing is checked against the layout**: `AttachmentReference.layout`
   is taken as it is, as every other layout is, and a program that reads
   an attachment an earlier subpass did not draw gets whatever the load op
