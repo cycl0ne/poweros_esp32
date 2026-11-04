@@ -1650,15 +1650,18 @@ pub fn texturedBy(
 /// the coordinates change is taken from the quad's own pixels, so a quad's
 /// four samples share a level.
 ///
-/// A cube's sample is taken inside the face the direction falls on, its
-/// own u and v and their steps the face's: so the sampler's edges are that
-/// face's, and a bilinear sample on a seam mixes the edge's texels rather
-/// than reading over into the next face, which `texture_cube` does. An
-/// array of cubes is sampled the same way, inside the face of the cube
+/// A cube's sample is taken at the face the direction falls on, its own u
+/// and v and their steps the face's, and **since 1.60 what lies past that
+/// face's edge is read from the face beside it**
+/// (`texture.Texture.sampleCubeBy`), as the fixed form `texture_cube`
+/// does: a bilinear sample on a seam mixes the texels either side of it
+/// rather than the face's own edge twice, and the sampler's `wrap` says
+/// nothing of a cube. An array of cubes reads over the seams of the cube
 /// varying 3 names - the nearest there is, as `texture.Texture.cubeNear`
-/// picks it, where `texture_cube_array` reads over that cube's seams. A
-/// texture not written, or with no sampler beside it, paints every pixel
-/// `missing`.
+/// picks it. Where the quad's four pixels do not fall on the one face the
+/// level is the first, as it is for the fixed forms: the steps across a
+/// seam are no measure of anything. A texture not written, or with no
+/// sampler beside it, paints every pixel `missing`.
 pub fn layeredBy(
     comptime kind: FixedKind,
     fragments: *const Fragments,
@@ -1684,18 +1687,24 @@ pub fn layeredBy(
         var us: [4]f32 = s;
         var vs: [4]f32 = t;
         var faces: [4]u32 = @splat(0);
+        var one_face = true;
         if (comptime kind == .texture_cube_sampled or kind == .texture_cube_array_sampled) {
             inline for (0..4) |i| {
                 const hit = texture.cubeHit(s[i], t[i], r[i]);
                 us[i] = hit.u;
                 vs[i] = hit.v;
                 faces[i] = hit.face;
+                if (i > 0 and hit.face != faces[0]) one_face = false;
             }
         }
-        const du_dx = us[1] - us[0];
-        const du_dy = us[2] - us[0];
-        const dv_dx = vs[1] - vs[0];
-        const dv_dy = vs[2] - vs[0];
+        // The quad's steps measure a level only where its pixels are on
+        // the one face: across a seam the u and v are two faces' and say
+        // nothing, so the level is the first, as the fixed forms have it
+        // (since 1.60).
+        const du_dx = if (one_face) us[1] - us[0] else 0;
+        const du_dy = if (one_face) us[2] - us[0] else 0;
+        const dv_dx = if (one_face) vs[1] - vs[0] else 0;
+        const dv_dy = if (one_face) vs[2] - vs[0] else 0;
         var colors: [4]u32 = @splat(0);
         for (&colors, 0..) |*color, i| {
             if (quad.covered >> @intCast(i) & 1 == 0) continue;
@@ -1709,10 +1718,13 @@ pub fn layeredBy(
             };
             color.* = switch (kind) {
                 .texture_array_sampled => texture.sampleBy(given, with, given.layerNear(r[i]), point),
-                .texture_cube_sampled => texture.sampleBy(given, with, faces[i], point),
+                // Over the cube's seams since 1.60, as the fixed forms
+                // read them: the face is where the sample begins, not
+                // where it is held.
+                .texture_cube_sampled => texture.sampleCubeBy(given, with, 0, faces[i], point),
                 // That cube's first face, and the face the direction fell
-                // on after it: a cube of an array is six layers.
-                .texture_cube_array_sampled => texture.sampleBy(given, with, given.cubeNear(which[i]) + faces[i], point),
+                // on: a cube of an array is six layers.
+                .texture_cube_array_sampled => texture.sampleCubeBy(given, with, given.cubeNear(which[i]), faces[i], point),
                 .texture_3d_sampled => texture.sampleVolumeBy(given, with, point, r[i]),
                 else => @compileError("not a form of three coordinates that samples through a sampler"),
             };

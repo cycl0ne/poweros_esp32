@@ -6656,6 +6656,176 @@ test "the shapes past 2D read through a sampler, an array of cubes among them, a
     try testing.expectEqual(white, picture.at(4, 4));
 }
 
+/// A cube sampled at the one direction every vertex carries, through the
+/// sampler bound beside it and through the fixed form: what a sample on a
+/// seam reads.
+const SeamScene = struct {
+    fn vertex(vertices: *const shader.Vertices) callconv(.c) void {
+        for (0..vertices.count) |k| {
+            const p = vertices.input(@intCast(k), 0);
+            const towards = vertices.input(@intCast(k), 1);
+            vertices.output(@intCast(k))[0..7].* = .{ p[0], p[1], 0, 1, towards[0], towards[1], towards[2] };
+        }
+    }
+
+    const entries = [_]shader.Entry{
+        shader.vertex("by", &vertex, 3),
+        shader.fixedFragment("by", .{ .kind = .texture_cube_sampled }),
+        shader.vertex("fixed", &vertex, 3),
+        shader.fixedFragment("fixed", .{ .kind = .texture_cube, .sampling = .{ .filter = .bilinear } }),
+    };
+    const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
+
+    /// A quad over the whole picture, every vertex looking the one way:
+    /// each pixel samples that direction, so the whole picture is the one
+    /// colour and the quad's steps are 0 - level 0, with no derivative to
+    /// read a coarser one by.
+    fn quadTowards(towards: [3]f32) [6][6]f32 {
+        return .{
+            .{ -1, -1, 0, towards[0], towards[1], towards[2] },
+            .{ 1, -1, 0, towards[0], towards[1], towards[2] },
+            .{ -1, 1, 0, towards[0], towards[1], towards[2] },
+            .{ -1, 1, 0, towards[0], towards[1], towards[2] },
+            .{ 1, -1, 0, towards[0], towards[1], towards[2] },
+            .{ 1, 1, 0, towards[0], towards[1], towards[2] },
+        };
+    }
+
+    /// Face k's colour: red alone, 32 apart, so a mix of two faces is
+    /// told from either of them.
+    fn faceColor(face: u32) u32 {
+        return 0xFF00_0000 | (32 + 32 * face) << 16;
+    }
+};
+
+test "a cube read through a sampler reads over its seams: a bilinear sample at an edge mixes the face beside it" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+
+    const across = 16;
+    const face_bytes = across * across * 4;
+    const cube = try bench.bareImage(.{
+        .format = .b8g8r8a8_unorm,
+        .flags = facet.IMAGE_CREATE_CUBE_COMPATIBLE,
+        .extent = .{ .width = across, .height = across },
+        .array_layers = 6,
+        .usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST,
+    }, false);
+    const view = try bench.viewOf(.{ .image = cube, .format = .b8g8r8a8_unorm, .view_type = .cube });
+    const staging, const staged = try bench.buffer(face_bytes * 6, facet.BUFFER_USAGE_TRANSFER_SRC);
+    var faces: [6]facet.BufferImageCopy = undefined;
+    for (&faces, 0..) |*region, face| {
+        const color = SeamScene.faceColor(@intCast(face));
+        for (0..across * across) |texel| std.mem.writeInt(u32, staged[face * face_bytes + texel * 4 ..][0..4], color, .little);
+        region.* = .{
+            .buffer_offset = face * face_bytes,
+            .image_subresource = .{ .base_array_layer = @intCast(face) },
+            .image_extent = .{ .width = across, .height = across },
+        };
+    }
+    const copying = try bench.record();
+    fb.CmdCopyBufferToImage(copying, staging, cube, .transfer_dst_optimal, faces.len, &faces);
+    try bench.submit();
+
+    // Two samplers whose edges differ: a cube has no edge of its own to
+    // hold at or to repeat, so since 1.60 the two read a seam alike.
+    var held: ?*facet.Sampler = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateSampler(device, &.{
+        .address_mode_u = .clamp_to_edge,
+        .address_mode_v = .clamp_to_edge,
+    }, &held));
+    defer fb.DestroySampler(device, held);
+    var tiled: ?*facet.Sampler = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateSampler(device, &.{}, &tiled));
+    defer fb.DestroySampler(device, tiled);
+
+    const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .combined_image_sampler, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &set_layout));
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    const layout = try pipelineLayout(&bench, &.{set_layout.?}, 0);
+    defer fb.DestroyPipelineLayout(device, layout);
+    var pool: ?*facet.DescriptorPool = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool));
+    defer fb.DestroyDescriptorPool(device, pool);
+    var sets: [1]?*facet.DescriptorSet = undefined;
+    try testing.expectEqual(facet.Result.success, fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &sets));
+
+    const shaders = try module(&bench, &SeamScene.code);
+    defer fb.DestroyShaderModule(device, shaders);
+    const pass = try renderPass(&bench, .clear, false);
+    defer fb.DestroyRenderPass(device, pass);
+    const picture = try Picture.of(&bench, 64, 64);
+    const frame = try framebuffer(&bench, pass, &.{picture.view}, 64, 64);
+    defer fb.DestroyFramebuffer(device, frame);
+    const attributes = [2]facet.VertexInputAttributeDescription{
+        .{ .location = 0, .binding = 0, .format = .r32g32b32_sfloat },
+        .{ .location = 1, .binding = 0, .format = .r32g32b32_sfloat, .offset = 12 },
+    };
+    const by_result, const by_sampler = makePipeline(&bench, .{ .module = shaders, .name = "by", .layout = layout, .pass = pass, .stride = 24, .attributes = &attributes });
+    try testing.expectEqual(facet.Result.success, by_result);
+    defer fb.DestroyPipeline(device, by_sampler);
+    const form_result, const by_form = makePipeline(&bench, .{ .module = shaders, .name = "fixed", .layout = layout, .pass = pass, .stride = 24, .attributes = &attributes });
+    try testing.expectEqual(facet.Result.success, form_result);
+    defer fb.DestroyPipeline(device, by_form);
+    const vertex_buffer, const vertex_bytes = try bench.buffer(256, facet.BUFFER_USAGE_VERTEX_BUFFER);
+
+    const looked = struct {
+        fn at(on: *Bench, bytes: [*]u8, buffer: *facet.Buffer, with: ?*facet.Sampler, of_view: *facet.ImageView, set: *facet.DescriptorSet, into: *facet.RenderPass, onto: *facet.Framebuffer, by: *facet.PipelineLayout, drawn: ?*facet.Pipeline, towards: [3]f32) !void {
+            const f = on.rig.fb;
+            const info = facet.DescriptorImageInfo{ .sampler = with, .image_view = of_view };
+            const write = facet.WriteDescriptorSet{ .dst_set = set, .dst_binding = 0, .descriptor_type = .combined_image_sampler, .image_info = @ptrCast(&info) };
+            f.UpdateDescriptorSets(on.device, 1, @ptrCast(&write), 0, null);
+            const quad = SeamScene.quadTowards(towards);
+            @memcpy(bytes[0..@sizeOf(@TypeOf(quad))], std.mem.asBytes(&quad));
+            const first: u64 = 0;
+            const green = clears(0xFF00_FF00);
+            const commands = try on.record();
+            f.CmdBeginRenderPass(commands, &.{ .render_pass = into, .framebuffer = onto, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 1, .clear_values = &green }, .@"inline");
+            f.CmdBindPipeline(commands, .graphics, drawn.?);
+            f.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&buffer), @ptrCast(&first));
+            f.CmdBindDescriptorSets(commands, .graphics, by, 0, 1, @ptrCast(&set), 0, null);
+            f.CmdDraw(commands, 6, 1, 0, 0);
+            f.CmdEndRenderPass(commands);
+            try on.submit();
+        }
+    }.at;
+
+    // Inside a face, where no tap is past an edge: that face's colour,
+    // whatever the sampler's edges say.
+    for ([2]?*facet.Sampler{ held, tiled }) |with| {
+        try looked(&bench, vertex_bytes, vertex_buffer, with, view, sets[0].?, pass, frame, layout, by_sampler, .{ 1, 0, 0 });
+        try testing.expectEqual(SeamScene.faceColor(0), picture.at(32, 32));
+        try looked(&bench, vertex_bytes, vertex_buffer, with, view, sets[0].?, pass, frame, layout, by_sampler, .{ 0, 0, 1 });
+        try testing.expectEqual(SeamScene.faceColor(4), picture.at(32, 32));
+    }
+
+    // On the seam between +X and +Z, half a texel either side of it: the
+    // sample mixes the two faces half and half, so its red is halfway
+    // between theirs. Before 1.60 the taps were held inside the one face
+    // and it read face 0's own colour.
+    const seam = [3]f32{ 1, 0, 1 };
+    const low = SeamScene.faceColor(0) >> 16 & 0xFF;
+    const high = SeamScene.faceColor(4) >> 16 & 0xFF;
+    const middle = (low + high) / 2;
+    for ([2]?*facet.Sampler{ held, tiled }) |with| {
+        try looked(&bench, vertex_bytes, vertex_buffer, with, view, sets[0].?, pass, frame, layout, by_sampler, seam);
+        const read = picture.at(32, 32);
+        try testing.expect(read >> 16 & 0xFF >= middle - 4 and read >> 16 & 0xFF <= middle + 4);
+        // The green and the blue are what both faces have: none.
+        try testing.expectEqual(@as(u32, 0), read & 0xFFFF);
+        try testing.expectEqual(@as(u32, 0xFF), read >> 24);
+    }
+
+    // And the fixed form, which has read over its seams since 1.46, now
+    // answers the same place the same way: the two paths agree.
+    try looked(&bench, vertex_bytes, vertex_buffer, held, view, sets[0].?, pass, frame, layout, by_form, seam);
+    const form_read = picture.at(32, 32);
+    try testing.expect(form_read >> 16 & 0xFF >= middle - 4 and form_read >> 16 & 0xFF <= middle + 4);
+}
+
 /// A 3D sample through the sampler bound beside the texture, the s, the t
 /// and the r given as the vertices' second three floats: what a level of
 /// its own does to the slice a coordinate falls on.

@@ -816,16 +816,47 @@ pub const Texture = struct {
         return @min(@as(u32, @intFromFloat(whole)), cubes - 1) * 6;
     }
 
-    /// Texel (x, y) of a face of the cube whose first face is `first`, or if
-    /// that is past its edge, the one of the next face of that cube in the
-    /// same direction.
-    fn cubeTexel(texture: *const Texture, first: u32, face: u32, lod: u32, x: i32, y: i32) u32 {
+    /// Where texel (x, y) of a face of the cube whose first face is
+    /// `first` lies: that face itself, or - where x or y is past its edge
+    /// - the next face of that cube in the same direction, at the texel
+    /// the direction falls on. (Since 1.60 as a place of its own, which
+    /// `cubeTexel` read the colour of since 1.46 and a sample through a
+    /// sampler reads as well.)
+    fn cubePlace(texture: *const Texture, first: u32, face: u32, lod: u32, x: i32, y: i32) struct { layer: u32, x: u32, y: u32 } {
         const size: i32 = @intCast(texture.width(lod));
-        if (x >= 0 and y >= 0 and x < size and y < size) return texture.texelColor(first + face, lod, @intCast(x), @intCast(y));
+        if (x >= 0 and y >= 0 and x < size and y < size) return .{ .layer = first + face, .x = @intCast(x), .y = @intCast(y) };
         const whole: f32 = @floatFromInt(size);
         const towards = cubeDirection(face, (@as(f32, @floatFromInt(x)) + 0.5) / whole * 2 - 1, (@as(f32, @floatFromInt(y)) + 0.5) / whole * 2 - 1);
         const next = cubeHit(towards[0], towards[1], towards[2]);
-        return texture.texelColor(first + next.face, lod, placeIn(.clamp, @intFromFloat(@floor(next.u * whole)), texture.width(lod)), placeIn(.clamp, @intFromFloat(@floor(next.v * whole)), texture.width(lod)));
+        return .{
+            .layer = first + next.face,
+            .x = placeIn(.clamp, @intFromFloat(@floor(next.u * whole)), texture.width(lod)),
+            .y = placeIn(.clamp, @intFromFloat(@floor(next.v * whole)), texture.width(lod)),
+        };
+    }
+
+    /// The colour of that texel.
+    fn cubeTexel(texture: *const Texture, first: u32, face: u32, lod: u32, x: i32, y: i32) u32 {
+        const at = texture.cubePlace(first, face, lod, x, y);
+        return texture.texelColor(at.layer, lod, at.x, at.y);
+    }
+
+    /// And its value, as a comparison reads one: a depth at all 16 bits,
+    /// or a colour's red. (Since 1.60, for a cube compared through a
+    /// sampler - a shadow map of all six ways.)
+    fn cubeValue(texture: *const Texture, first: u32, face: u32, lod: u32, x: i32, y: i32) f32 {
+        const at = texture.cubePlace(first, face, lod, x, y);
+        return texture.valueOf(at.layer, lod, at.x, at.y);
+    }
+
+    /// What a comparison reads of a texel that is there: a depth as 0 to 1
+    /// over all 16 bits it keeps, and anything else as its red.
+    fn valueOf(texture: *const Texture, layer: u32, lod: u32, x: u32, y: u32) f32 {
+        if (texture.format.depth()) {
+            const kept = texture.peekLayer(layer, lod, x, y);
+            return @as(f32, @floatFromInt(kept & 0xFFFF)) / 65535;
+        }
+        return @as(f32, @floatFromInt(texture.texelColor(layer, lod, x, y) >> 16 & 0xFF)) / 255;
     }
 
     /// The layer of an array `r` falls on: the nearest there is.
@@ -1831,11 +1862,38 @@ pub fn levelOf(texture: *const Texture, point: Point) f32 {
 /// samples along the longer axis, at a level chosen for the shorter, which
 /// is what keeps a surface seen edge-on from blurring into one colour.
 pub fn sampleBy(texture: *const Texture, sampler: *const Sampler, layer: u32, point: Point) u32 {
+    return sampledOver(texture, sampler, .{ .layer = layer }, point);
+}
+
+/// A cube's colour the way a direction looks, as `sampler` says: `first`
+/// is the cube's first face - 0 for a single cube, a multiple of six for
+/// one of an array (`cubeNear`) - and `face` the face the direction fell
+/// on, with `point` carrying that face's u and v and how fast they change
+/// (`cubeHit`).
+///
+/// **What lies past a face's edge is read from the face beside it**, as a
+/// GPU has it and as the fixed form `texture_cube` does since 1.46: a
+/// bilinear sample on a seam mixes the texels either side of it, and a
+/// comparison on one counts what passed either side. The sampler's `wrap`
+/// says nothing of a cube - it has no edge of its own to hold at, to
+/// repeat or to border - while its levels, bias, clamp, mipmap mode,
+/// anisotropy and comparison say what they say everywhere.
+///
+/// Until 1.60 such a sample was taken inside the one face, through
+/// `sampleBy`, so a seam read the face's own edge texels twice and the
+/// sampler's edges stood in for the cube's. (Since 1.60.)
+pub fn sampleCubeBy(texture: *const Texture, sampler: *const Sampler, first: u32, face: u32, point: Point) u32 {
+    return sampledOver(texture, sampler, .{ .cube = .{ .first = first, .face = face } }, point);
+}
+
+/// What both of those do: the level the point falls on, and the levels
+/// round it mixed where the sampler asks for it. (Since 1.60.)
+fn sampledOver(texture: *const Texture, sampler: *const Sampler, reads: Reads, point: Point) u32 {
     const chosen = chosenLevel(texture, sampler, point);
     const levels = levelsOf(texture, sampler, chosen.level);
-    const low = tapped(texture, sampler, layer, levels.low, point, chosen.taps, chosen.filter);
+    const low = tapped(texture, sampler, reads, levels.low, point, chosen.taps, chosen.filter);
     if (levels.part <= 0) return low;
-    return mixColors(low, tapped(texture, sampler, layer, levels.high, point, chosen.taps, chosen.filter), levels.part);
+    return mixColors(low, tapped(texture, sampler, reads, levels.high, point, chosen.taps, chosen.filter), levels.part);
 }
 
 /// What a sample settles before it reads anything: the level the point
@@ -1917,12 +1975,12 @@ fn slicedBy(texture: *const Texture, sampler: *const Sampler, lod: u32, point: P
     const z = sane(r) * @as(f32, @floatFromInt(slices));
     if (chosen.filter == .nearest) {
         const slice = slicedIn(sampler, @intFromFloat(@floor(z)), slices) orelse return sampler.border;
-        return tapped(texture, sampler, slice, level, point, chosen.taps, chosen.filter);
+        return tapped(texture, sampler, .{ .layer = slice }, level, point, chosen.taps, chosen.filter);
     }
     const lower = @floor(z - 0.5);
     const first: i32 = @intFromFloat(lower);
-    const near = if (slicedIn(sampler, first, slices)) |slice| tapped(texture, sampler, slice, level, point, chosen.taps, chosen.filter) else sampler.border;
-    const far = if (slicedIn(sampler, first + 1, slices)) |slice| tapped(texture, sampler, slice, level, point, chosen.taps, chosen.filter) else sampler.border;
+    const near = if (slicedIn(sampler, first, slices)) |slice| tapped(texture, sampler, .{ .layer = slice }, level, point, chosen.taps, chosen.filter) else sampler.border;
+    const far = if (slicedIn(sampler, first + 1, slices)) |slice| tapped(texture, sampler, .{ .layer = slice }, level, point, chosen.taps, chosen.filter) else sampler.border;
     return mixColors(near, far, z - 0.5 - lower);
 }
 
@@ -1947,9 +2005,9 @@ inline fn held(level: f32, sampler: *const Sampler, last: f32) f32 {
 
 /// `taps` samples of a level along the longer axis, averaged: the point's
 /// own where there is one.
-fn tapped(texture: *const Texture, sampler: *const Sampler, layer: u32, lod: u32, point: Point, taps: u32, filter: Filter) u32 {
+fn tapped(texture: *const Texture, sampler: *const Sampler, reads: Reads, lod: u32, point: Point, taps: u32, filter: Filter) u32 {
     const level = @min(lod, texture.levels - 1);
-    if (taps <= 1) return sampledAt(texture, sampler, layer, level, point.u, point.v, filter, point.reference);
+    if (taps <= 1) return sampledAt(texture, sampler, reads, level, point.u, point.v, filter, point.reference);
     const sides = sidesOf(texture);
     const across = axisLength(point.du_dx * sides[0], point.dv_dx * sides[1]);
     const down = axisLength(point.du_dy * sides[0], point.dv_dy * sides[1]);
@@ -1960,7 +2018,7 @@ fn tapped(texture: *const Texture, sampler: *const Sampler, layer: u32, lod: u32
     var sums: [4]u32 = @splat(0);
     for (0..taps) |k| {
         const at = (@as(f32, @floatFromInt(k)) + 0.5) / count - 0.5;
-        const color = sampledAt(texture, sampler, layer, level, point.u + du * at, point.v + dv * at, filter, point.reference);
+        const color = sampledAt(texture, sampler, reads, level, point.u + du * at, point.v + dv * at, filter, point.reference);
         inline for (&sums, [4]u5{ 0, 8, 16, 24 }) |*sum, shift| sum.* += color >> shift & 0xFF;
     }
     var made: u32 = 0;
@@ -1970,7 +2028,7 @@ fn tapped(texture: *const Texture, sampler: *const Sampler, layer: u32, lod: u32
 
 /// One sample of a level at (u, v), filtered as `filter` says and compared
 /// where the sampler asks for it.
-fn sampledAt(texture: *const Texture, sampler: *const Sampler, layer: u32, lod: u32, u: f32, v: f32, filter: Filter, reference: f32) u32 {
+fn sampledAt(texture: *const Texture, sampler: *const Sampler, reads: Reads, lod: u32, u: f32, v: f32, filter: Filter, reference: f32) u32 {
     const across: f32 = @floatFromInt(texture.width(lod));
     const down: f32 = @floatFromInt(texture.height(lod));
     const x = sane(u) * across;
@@ -1978,8 +2036,8 @@ fn sampledAt(texture: *const Texture, sampler: *const Sampler, layer: u32, lod: 
     if (filter == .nearest) {
         const left: i32 = @intFromFloat(@floor(x));
         const top: i32 = @intFromFloat(@floor(y));
-        if (sampler.compare == .none) return texelBy(texture, sampler, layer, lod, left, top);
-        const value = valueBy(texture, sampler, layer, lod, left, top);
+        if (sampler.compare == .none) return texelAt(texture, sampler, reads, lod, left, top);
+        const value = valueAt(texture, sampler, reads, lod, left, top);
         return greyOf(if (sampler.compare.passes(value, reference)) 1 else 0);
     }
     const low_x = @floor(x - 0.5);
@@ -1989,10 +2047,10 @@ fn sampledAt(texture: *const Texture, sampler: *const Sampler, layer: u32, lod: 
     const part_x = x - 0.5 - low_x;
     const part_y = y - 0.5 - low_y;
     const corners = [4]u32{
-        texelBy(texture, sampler, layer, lod, left, top),
-        texelBy(texture, sampler, layer, lod, left + 1, top),
-        texelBy(texture, sampler, layer, lod, left, top + 1),
-        texelBy(texture, sampler, layer, lod, left + 1, top + 1),
+        texelAt(texture, sampler, reads, lod, left, top),
+        texelAt(texture, sampler, reads, lod, left + 1, top),
+        texelAt(texture, sampler, reads, lod, left, top + 1),
+        texelAt(texture, sampler, reads, lod, left + 1, top + 1),
     };
     if (sampler.compare != .none) {
         // A shadow sample mixes what passed, not what was read: Vulkan's
@@ -2002,7 +2060,7 @@ fn sampledAt(texture: *const Texture, sampler: *const Sampler, layer: u32, lod: 
         const weights = [4]f32{ (1 - part_x) * (1 - part_y), part_x * (1 - part_y), (1 - part_x) * part_y, part_x * part_y };
         const places = [4][2]i32{ .{ left, top }, .{ left + 1, top }, .{ left, top + 1 }, .{ left + 1, top + 1 } };
         inline for (places, weights) |place_at, weight| {
-            if (sampler.compare.passes(valueBy(texture, sampler, layer, lod, place_at[0], place_at[1]), reference)) passed += weight;
+            if (sampler.compare.passes(valueAt(texture, sampler, reads, lod, place_at[0], place_at[1]), reference)) passed += weight;
         }
         return greyOf(passed);
     }
@@ -2013,25 +2071,40 @@ fn sampledAt(texture: *const Texture, sampler: *const Sampler, layer: u32, lod: 
 
 /// Texel (x, y) of a level of a layer, whole numbers that may lie past the
 /// level: where they do, what `Sampler.wrap` says, which may be the border.
-fn texelBy(texture: *const Texture, sampler: *const Sampler, layer: u32, lod: u32, x: i32, y: i32) u32 {
-    const column = wrapped(sampler.wrap[0], x, texture.width(lod)) orelse return sampler.border;
-    const row = wrapped(sampler.wrap[1], y, texture.height(lod)) orelse return sampler.border;
-    return texture.texelColor(@min(layer, texture.layer_count - 1), lod, column, row);
+/// What a sample reads from: one layer as it lies, or a face of a cube,
+/// whose edges read into the faces beside it rather than taking the
+/// sampler's own. (Since 1.60.)
+const Reads = union(enum) {
+    layer: u32,
+    cube: struct { first: u32, face: u32 },
+};
+
+fn texelAt(texture: *const Texture, sampler: *const Sampler, reads: Reads, lod: u32, x: i32, y: i32) u32 {
+    switch (reads) {
+        .layer => |layer| {
+            const column = wrapped(sampler.wrap[0], x, texture.width(lod)) orelse return sampler.border;
+            const row = wrapped(sampler.wrap[1], y, texture.height(lod)) orelse return sampler.border;
+            return texture.texelColor(@min(layer, texture.layer_count - 1), lod, column, row);
+        },
+        // A cube has no edge of its own: past a face's, the face beside
+        // it, so a tap on a seam reads over it (`cubePlace`).
+        .cube => |one| return texture.cubeTexel(one.first, one.face, lod, x, y),
+    }
 }
 
 /// What a shadow sample compares with the reference, 0 to 1: the depth of
 /// a depth texture, at all 16 bits of it, and the red channel of any
 /// other. Past a bordered edge the border's own red channel.
-fn valueBy(texture: *const Texture, sampler: *const Sampler, layer: u32, lod: u32, x: i32, y: i32) f32 {
-    const border = @as(f32, @floatFromInt(sampler.border >> 16 & 0xFF)) / 255;
-    const column = wrapped(sampler.wrap[0], x, texture.width(lod)) orelse return border;
-    const row = wrapped(sampler.wrap[1], y, texture.height(lod)) orelse return border;
-    const at = @min(layer, texture.layer_count - 1);
-    if (texture.format.depth()) {
-        const kept = texture.peekLayer(at, lod, column, row);
-        return @as(f32, @floatFromInt(kept & 0xFFFF)) / 65535;
+fn valueAt(texture: *const Texture, sampler: *const Sampler, reads: Reads, lod: u32, x: i32, y: i32) f32 {
+    switch (reads) {
+        .layer => |layer| {
+            const border = @as(f32, @floatFromInt(sampler.border >> 16 & 0xFF)) / 255;
+            const column = wrapped(sampler.wrap[0], x, texture.width(lod)) orelse return border;
+            const row = wrapped(sampler.wrap[1], y, texture.height(lod)) orelse return border;
+            return texture.valueOf(@min(layer, texture.layer_count - 1), lod, column, row);
+        },
+        .cube => |one| return texture.cubeValue(one.first, one.face, lod, x, y),
     }
-    return @as(f32, @floatFromInt(texture.texelColor(at, lod, column, row) >> 16 & 0xFF)) / 255;
 }
 
 /// Where a whole coordinate lands in a side of `size`; null for one past a

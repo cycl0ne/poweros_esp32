@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.59**, so that a program need not find out by failing. It covers the API.
+1.60**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -72,16 +72,22 @@ time. What is left out:
   sampler is refused there and drawn on the cores
   (`PhysicalDeviceFeatures.samplers`), as a dropping form is. On the V3D
   the TMU is still set from the form's `sampling`.
-- **A cube read through a sampler reads inside one face.** The sample's u
-  and v and their steps are the face's, so the sampler's edges are that
-  face's edges: a bilinear sample on a seam mixes the edge's texels rather
-  than reading over into the next face, which `texture_cube` does. Away
-  from the seams the two are the same.
+- A cube read through a sampler reads **over its seams** since 1.60
+  (`texture.Texture.sampleCubeBy`), as the fixed form `texture_cube` has
+  since 1.46: a tap past a face's edge comes from the face beside it, at
+  the texel the direction falls on, so a bilinear sample on a seam mixes
+  the texels either side of it and a comparison counts what passed either
+  side. The sampler's address modes say nothing of a cube, which has no
+  edge of its own; everything else it says - the levels, the bias and
+  clamp, the mipmap mode, anisotropy, the comparison - says it here too.
+  A quad whose four pixels fall on different faces reads the first level,
+  as the fixed forms have it. Until 1.60 such a sample was taken inside
+  the one face.
 - An array of cubes reads a sampler since 1.53
   (`shader.FixedKind.texture_cube_array_sampled`), at the four
   coordinates `texture_cube_array` takes: the direction, and which cube,
-  the nearest there is. Inside one face of that cube, as a single cube's
-  sampled form is, so its seams read the same way.
+  the nearest there is. Over that cube's seams since 1.60, as a single
+  cube's sampled form reads over its own.
 - There is no border colour but transparent black, opaque black and opaque
   white, which are all of Vulkan 1.0's six: an int border and a float
   border are the same here, a texel being read as 0 to 1 whatever its

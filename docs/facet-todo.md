@@ -1,6 +1,6 @@
 # facet.library: the work list, by where each item stands in Vulkan
 
-What is left to do in facet.library as of **1.59**, each item with where it
+What is left to do in facet.library as of **1.60**, each item with where it
 bites, what it would take, and **where it stands in Vulkan**, so that a
 morning's work is never spent on something Vulkan 1.0 never had.
 
@@ -32,26 +32,7 @@ In the order I would do them. "Size" is the shape of the work, not a
 promise: small is a day with its tests, medium is a revision of its own,
 large wants splitting first.
 
-### 1.1 A cube sampled through a sampler reads inside one face
-
-- **Standing:** `1.0 core`. Seamless filtering across a cube's faces is what
-  Vulkan's cube sampling is; a sampler that stops at a face's edge is not it.
-- **Where:** `sdk/libs/facet/texture.zig`, the sampler path
-  (`sampleBy`, `sampleLayer`, `cubeNear`, `cubeTexel`). The fixed form
-  `texture_cube` reads over the seam; `texture_cube_sampled` and
-  `texture_cube_array_sampled` (1.53) do not. Away from the seams the two
-  agree, so this shows up only on a bilinear sample within half a texel of
-  an edge.
-- **What it takes:** the four taps of a bilinear sample must come from the
-  direction, not from the face's own u and v: map each tap through
-  `cubeNear`/`cubeTexel` instead of clamping it inside the face, and mix
-  what comes back. The V3D's TMU does this in hardware, so it is a cores
-  job only.
-- **Size:** medium. Watch the sample cost: this path is already a pixel at
-  a time, and `FacetCube`'s V3D tolerance of 5 % exists because the two
-  devices choose levels differently.
-
-### 1.2 A sampled depth image has one level, and is never a volume
+### 1.1 A sampled depth image has one level, and is never a volume
 
 - **Standing:** `1.0 core`. Vulkan has no rule against a depth image with
   mip levels; the limit is this library's.
@@ -66,7 +47,7 @@ large wants splitting first.
   shadow map is the reason to want it.
 - **Size:** medium.
 
-### 1.3 A depth attachment cannot be read as an input attachment
+### 1.2 A depth attachment cannot be read as an input attachment
 
 - **Standing:** `1.0 core`. Vulkan takes an input attachment of the depth
   aspect.
@@ -82,7 +63,7 @@ large wants splitting first.
   (`CmdCopyImageToBuffer`).
 - **Size:** small to medium - most of the work was done in 1.58.
 
-### 1.4 A subpass cannot read the attachment it is drawing into
+### 1.3 A subpass cannot read the attachment it is drawing into
 
 - **Standing:** `1.0 core` for the fragment's own pixel: a subpass
   self-dependency with `VK_DEPENDENCY_BY_REGION_BIT` and an input
@@ -100,7 +81,7 @@ large wants splitting first.
   is, so this is cheaper here than the copy it replaces.
 - **Size:** medium.
 
-### 1.5 A clear of a float image writes nothing
+### 1.4 A clear of a float image writes nothing
 
 - **Standing:** `1.0 format`. `CmdClearColorImage` wants
   `FORMAT_FEATURE_TRANSFER_DST`, which these formats claim.
@@ -114,7 +95,7 @@ large wants splitting first.
   library, and its `TRANSFER_DST` is for whole blocks.
 - **Size:** small.
 
-### 1.6 Texel-buffer formats: `_snorm`, `_srgb`, the packed ones, three channels
+### 1.5 Texel-buffer formats: `_snorm`, `_srgb`, the packed ones, three channels
 
 - **Standing:** `1.0 format`.
 - **Where:** `shader.TexelFormat` (append only - it is an `enum(u8)` a
@@ -128,7 +109,7 @@ large wants splitting first.
   hardware carries either - and may stay out.
 - **Size:** small, and it splits by format.
 
-### 1.7 Textures and storage images of whole numbers, and of smaller channels
+### 1.6 Textures and storage images of whole numbers, and of smaller channels
 
 - **Standing:** `1.0 format`.
 - **Where:** `texture.Format` (a plain enum - **append at the end only**,
@@ -146,7 +127,7 @@ large wants splitting first.
 - **Size:** medium to large. Worth splitting: the unorm ones (`r8g8`, 16-bit
   channels) first, the integer read after.
 
-### 1.8 `unnormalized_coordinates` on a sampler
+### 1.7 `unnormalized_coordinates` on a sampler
 
 - **Standing:** `1.0 core`.
 - **Where:** `sampler/createsampler.zig` refuses it; coordinates are 0 to 1
@@ -157,7 +138,7 @@ large wants splitting first.
   A program reading a texture as a table of values is what asks for it.
 - **Size:** small.
 
-### 1.9 A point is one pixel, and no shader writes `PointSize`
+### 1.8 A point is one pixel, and no shader writes `PointSize`
 
 - **Standing:** `1.0 core` for `PointSize`; `1.0 feature` for points wider
   than one pixel (`largePoints`).
@@ -172,7 +153,7 @@ large wants splitting first.
   (`cl.pointSize`).
 - **Size:** small, once the SDK slot is decided.
 
-### 1.10 BC4 to BC7
+### 1.9 BC4 to BC7
 
 - **Standing:** `1.0 format`, under `textureCompressionBC` - which facet
   says yes to for BC1 to BC3 and no further.
@@ -184,7 +165,7 @@ large wants splitting first.
   feature of its own and a far larger decoder, ETC1 is not a Vulkan format.
 - **Size:** BC4/BC5 small; BC6H/BC7 medium each.
 
-### 1.11 `max_resource_size` answers the heap, not the image
+### 1.10 `max_resource_size` answers the heap, not the image
 
 - **Standing:** `1.0 core` wording:
   `VkImageFormatProperties.maxResourceSize` is what an image of that shape

@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.26 (04.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.27 (04.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -3670,11 +3670,23 @@ const Held = struct {
         }
     }
 
+    /// The one direction every vertex looks: the seam between +x and +z,
+    /// where face 0's u is 0 and a bilinear tap falls half on face 4
+    /// (since 1.60).
+    fn seamed(vertices: *const facet.shader.Vertices) callconv(.c) void {
+        for (0..vertices.count) |k| {
+            const p = vertices.input(@intCast(k), 0);
+            vertices.output(@intCast(k))[0..7].* = .{ p[0], p[1], p[2], 1, 1, 0, 1 };
+        }
+    }
+
     const entries = [_]facet.shader.Entry{
         facet.shader.vertex("arrayby", &arrayed, 3),
         facet.shader.fixedFragment("arrayby", .{ .kind = .texture_array_sampled }),
         facet.shader.vertex("cubeby", &cubed, 3),
         facet.shader.fixedFragment("cubeby", .{ .kind = .texture_cube_sampled }),
+        facet.shader.vertex("seamed", &seamed, 3),
+        facet.shader.fixedFragment("seamed", .{ .kind = .texture_cube_sampled }),
         facet.shader.vertex("volumeby", &sliced, 3),
         facet.shader.fixedFragment("volumeby", .{ .kind = .texture_3d_sampled }),
         facet.shader.vertex("cubesby", &cubedArray, 4),
@@ -3957,6 +3969,38 @@ fn heldChecks(probe: *Probe) void {
             fb.CmdEndRenderPass(commands);
             if (!probe.submit()) return probe.check(false, "the level's frame submitted");
             probe.checkEqual(Held.layerColor(layer), pixelAt(pixels, pitch, middle, middle), says);
+        }
+    };
+
+    // --- 1.60: a cube read through a sampler reads over its seams ---
+    // Every pixel looks the one way, at the seam between +x and +z: the
+    // taps fall half on each face, so the red is halfway between theirs.
+    // Before 1.60 the taps were held inside face 0 and read its own.
+    var smooth: ?*facet.Sampler = null;
+    const asked_smooth = fb.CreateSampler(device, &.{ .mag_filter = .linear, .min_filter = .linear }, &smooth);
+    defer fb.DestroySampler(device, smooth);
+    const of_seam = pipelineOf(probe, pass, module.?, written_pipes.?, .{ .attributes = &attributes, .stride = 12, .name = "seamed" });
+    probe.check(asked_smooth == .success and of_seam != null, "a sampler that filters, and a form that looks at a seam");
+    if (asked_smooth == .success) if (of_seam) |drawn| {
+        const info = facet.DescriptorImageInfo{ .sampler = smooth, .image_view = cube_view };
+        const write = facet.WriteDescriptorSet{ .dst_set = written_set[0].?, .dst_binding = 0, .descriptor_type = .combined_image_sampler, .descriptor_count = 1, .image_info = @ptrCast(&info) };
+        fb.UpdateDescriptorSets(device, 1, @ptrCast(&write), 0, null);
+        commands = probe.record() orelse return probe.check(false, "a recording of the seam's draw");
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = onto, .render_area = area, .clear_value_count = 1, .clear_values = &clear }, .@"inline");
+        fb.CmdBindPipeline(commands, .graphics, drawn);
+        fb.CmdBindDescriptorSets(commands, .graphics, written_pipes.?, 0, 1, @ptrCast(&written_set), 0, null);
+        fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+        fb.CmdDraw(commands, 6, 1, 0, 0);
+        fb.CmdEndRenderPass(commands);
+        if (!probe.submit()) return probe.check(false, "the seam's frame submitted");
+        const read = pixelAt(pixels, pitch, middle, middle) >> 16 & 0xFF;
+        const low = Held.layerColor(0) >> 16 & 0xFF;
+        const high = Held.layerColor(4) >> 16 & 0xFF;
+        const halfway = (low + high) / 2;
+        if (read + 4 >= halfway and read <= halfway + 4) {
+            probe.check(true, "a bilinear sample on a cube's seam mixes the face beside it");
+        } else {
+            probe.checkEqual(halfway, read, "a bilinear sample on a cube's seam mixes the face beside it");
         }
     };
 }

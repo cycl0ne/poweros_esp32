@@ -679,10 +679,30 @@ pub const LIBRARY_VERSION = 1;
 /// `chosenLevel` gives the level, the samples along the longer axis and
 /// the filter, and `levelsOf` the levels to read and how much of the
 /// second.
+/// 60: a cube read through a sampler reads over its seams. Before this
+/// the sample was taken inside the face the direction fell on, as a plain
+/// 2D sample of that layer: a bilinear tap past the face's edge was held
+/// there by the sampler's own `wrap`, so a seam mixed the edge's texels
+/// twice and the sampler's edges stood in for a cube's, which has none.
+/// The fixed form `texture_cube` has read over them since 1.46.
+/// Now `texture.Texture.sampleCubeBy` is what `texture_cube_sampled` and
+/// `texture_cube_array_sampled` call, and a tap past a face's edge comes
+/// from the face beside it, at the texel the direction falls on
+/// (`cubePlace`, the place `cubeTexel` has read since 1.46). A comparison
+/// counts what passed either side of a seam the same way, so a shadow map
+/// of all six ways is sampled as one picture. The sampler's `wrap` says
+/// nothing of a cube; its levels, bias, clamp, mipmap mode, anisotropy
+/// and comparison say what they say everywhere.
+/// A quad whose four pixels fall on different faces takes the first
+/// level, as the fixed forms do: the steps across a seam are two faces'
+/// and measure nothing.
+/// `sampledAt` and `tapped` now read through a `Reads` - one layer as it
+/// lies, or a cube's face - so the filtering, the comparison, the
+/// anisotropy and the levels are the one path for both.
 /// What stays: `fifo` is the one present mode, there being no way to ask a
 /// display to show a buffer before its next frame; one queue family of one
 /// queue; a counter of 32 bits, for want of a 64-bit atomic on every
 /// machine the library runs on; and no point mode in tessellation, the
 /// tessellator emitting triangles or the lines of `isolines` and nothing
 /// emitting a patch's points on their own.
-pub const LIBRARY_REVISION = 59;
+pub const LIBRARY_REVISION = 60;
