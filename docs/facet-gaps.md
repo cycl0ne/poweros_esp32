@@ -388,7 +388,11 @@ instead of a set for each. Every device has them
 
 No `CreateEvent`, `DestroyEvent`, `GetEventStatus`, `SetEvent`,
 `ResetEvent`, `CmdSetEvent`, `CmdResetEvent` or `CmdWaitEvents`. Fences and
-semaphores are the whole of synchronisation.
+semaphores are the whole of synchronisation: with one queue family of one
+queue, played in order by one task, a `CmdWaitEvents` is either already
+satisfied or a deadlock, and the host pair would say no more than a fence
+says. A device with more than one queue is what gives them something to
+do.
 
 ### Pipeline cache
 
@@ -692,10 +696,23 @@ function left them. Where Vulkan rounds an edge's two short fractional
 pieces is undefined; here they go one at each end, so that two patches
 sharing an edge cut it the same way from either side.
 
-## Left out on purpose
+## Left out for this hardware
 
-Multisampling, logic operations, geometry shaders, several viewports,
-sparse memory, events and a pipeline cache are not missing by accident and
-are not planned. They cost more than they would give on this hardware, and
-both the tiled rasterizer on the cores and the V3D's fixed fragment forms
-are built the way they are because of it.
+Multisampling, logic operations, dual-source blending, geometry shaders,
+several viewports, sparse memory, events and a pipeline cache are not
+missing by accident. They cost more than they would give on *this*
+hardware, and both the tiled rasterizer on the cores and the V3D's fixed
+fragment forms are built the way they are because of it: a tile that holds
+its samples no longer sits in a core's cache, a logic operation cannot use
+the blend fast path and would have to live in a fragment program the QPUs
+cannot run, a geometry stage wants an allocation between the vertex work
+and the binning, a wait on an event has nothing to wait for behind one
+in-order queue, and a pipeline cache has nothing to cache where nothing is
+compiled.
+
+None of that is a judgement on the features, and none of it is for ever.
+Every one of them is answered by the **device**: a driver for a chip that
+has the thing in hardware says yes to it, while the cores and the V3D go
+on saying no, and a program that asks `GetPhysicalDeviceFeatures` first
+needs no change at all. `docs/facet-todo.md` keeps them as work to do when
+such a chip comes in, with what each would cost then.

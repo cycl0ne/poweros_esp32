@@ -197,23 +197,7 @@ large wants splitting first.
   feature of its own and a far larger decoder, ETC1 is not a Vulkan format.
 - **Size:** BC4/BC5 small; BC6H/BC7 medium each.
 
-### 1.12 Events
-
-- **Standing:** `1.0 core`: `CreateEvent`, `DestroyEvent`,
-  `GetEventStatus`, `SetEvent`, `ResetEvent`, `CmdSetEvent`,
-  `CmdResetEvent`, `CmdWaitEvents`. The one object kind that is absent and
-  could exist - a pipeline cache has nothing to cache, sparse memory is
-  bound whole.
-- **Where:** eight new files and eight LVOs (`sdk/fd/facet_lib.fd`).
-- **What it takes:** an object with a flag, the host pair setting and
-  reading it, and the player honouring `CmdWaitEvents`. With one in-order
-  queue a wait inside a command buffer is either already satisfied or a
-  deadlock, so the honest shape is: the host pair works, and a command
-  buffer that waits on an event no host has set is refused or returns at
-  once. Low value for the work - it is on the list for completeness.
-- **Size:** medium, low value.
-
-### 1.13 `max_resource_size` answers the heap, not the image
+### 1.12 `max_resource_size` answers the heap, not the image
 
 - **Standing:** `1.0 core` wording:
   `VkImageFormatProperties.maxResourceSize` is what an image of that shape
@@ -227,25 +211,35 @@ large wants splitting first.
 
 ---
 
-## 2. Vulkan 1.0, left out on purpose
+## 2. To do when a chip comes in that needs it
 
-These are not planned. They cost more than they would give on this
-hardware, and both the cores' tiled rasterizer and the V3D's fixed
-fragment forms are built the way they are because of it. Listed so that
-nobody picks one up thinking it was forgotten.
+Not refused for ever, and not forgotten: refused because **this** hardware
+would pay for them and get nothing back. Most of them are feature bits,
+and `PhysicalDeviceFeatures` is answered by the *device* - so a driver
+written for a chip that has the thing in hardware says yes to it while the
+cores and the V3D go on saying no, and no program that asks politely has
+to change. That is what the feature structure is for. The three that are
+core with no bit of their own - multisampling, events and a pipeline cache
+- would simply start working on a device that brings what they need.
 
-| Item | Standing | Why not |
-|---|---|---|
-| Multisampling entirely, and `CmdResolveImage` with it | `1.0 core` | Every tile would hold its samples: the memory and the bandwidth are the whole of this rasterizer's budget |
-| Logic operations, for every attachment | `1.0 feature` (`logicOp`) | A blend path of its own for something almost nothing asks for |
-| Dual-source blending (`SRC1` factors) | `1.0 feature` (`dualSrcBlend`) | Wants a second colour out of every fragment form |
-| Geometry shaders | `1.0 feature` (`geometryShader`) | No stage, no bit among `SHADER_STAGE_*`. Its two statistics read 0 since 1.43 |
-| Several viewports and scissors | `1.0 feature` (`multiViewport`) | One viewport, one scissor; the bounds and the scissor are the pipeline's or a command's |
-| Sparse resources | `1.0 feature` | Memory is bound whole |
-| A pipeline cache | `1.0 core` | There is nothing to compile: pipelines are cheap to make. The parameter is taken and ignored |
-| Tessellation point mode | `1.0 core` | The tessellator emits triangles, or the lines of `isolines`, and nothing emits a patch's points on their own |
+The next device the library is likely to meet is an **RDNA 3.5** one, and
+most of this table is hardware it has: a blend unit with logic operations
+in it, dual-source blending, a geometry stage, sixteen viewports, page
+tables for sparse memory, 2x to 8x multisampling with its own resolve, and
+several queues. So the column that matters is the last one: what brings the
+item in, and what the item costs *here* until then.
 
----
+| Item | Standing | Why not on this hardware | What brings it in |
+|---|---|---|---|
+| **Multisampling entirely**, and `CmdResolveImage` with it | `1.0 core`: the only row here that a conformant 1.0 device may not refuse - its required limits make 4 colour samples a minimum (`framebufferColorSampleCounts`). Sample shading and alpha-to-one are feature bits beside it | The cores' rasterizer earns its speed by keeping a tile in cache: 64 x 64 pixels, colour 16 KiB + depth 8 KiB + stencil 4 KiB, one buffer a part and four parts, about 114 KiB live. 4x samples makes it ~456 KiB - past the A76's 64 KiB of L1 data cache, which is the whole point of tiling. It also reaches every path in the library: the quad walk writes four pixels under one coverage mask, every load, store and clear gains a sample loop, and resolve attachments appear in a pass | A chip that multisamples and resolves in hardware. Then the work is the library's sample plumbing - `rasterization_samples`, an attachment's `samples`, resolve references, `CmdResolveImage` - with the cores and the V3D still answering no |
+| **Logic operations**, for every attachment | `1.0 feature` (`logicOp`) | They sit where blending sits but are integer operations on the final colour, so they cannot use the blend fast path. Mesa's V3D driver lowers `logicOp` **into the fragment program**, which is the one thing impossible here: the QPUs run no program of ours. So it would be a second blend path on the cores and nothing on the GPU, for the one 1.0 blend feature that predates programmable blending | AMD's blend unit has logic operations in it (which is why RADV answers yes), so an RDNA driver gets them nearly free. The library's side is `logic_op_enable` and `LogicOp`, which are already enumerated and refused in one place |
+| **Dual-source blending** (the `SRC1` factors) | `1.0 feature` (`dualSrcBlend`) | Every fragment form writes one colour: the V3D's tile write is literally "render target 0, four half-floats", and `shader.Fragments` carries one colour a quad. 1.51 paid to let a function write several *attachments*; this is two colours for *one* | A chip whose blend unit takes a second source, with a shader stage that can emit it. The SDK's side is one more output convention beside `shader.fragmentOutputs` |
+| **Geometry shaders** | `1.0 feature` (`geometryShader`) | The binner's input is a vertex array of known count. A geometry stage turns one primitive into many, so its output wants an allocation sized at run time - a stage and a pass between the vertex work and the binning. Tessellation (1.50) already amplifies, with bounded output and no extra pass. There is no `SHADER_STAGE_GEOMETRY` bit at all; both of its statistics read 0 since 1.43, so a program that counts them is not refused | A chip with the stage in hardware. The library's side is the stage bit, the entry kind in `shader.zig`, and a primitive stream the binner takes from somewhere other than the vertex array |
+| **Several viewports and scissors** | `1.0 feature` (`multiViewport`) | A viewport index has to be chosen per primitive in the vertex stage, and the SDK has no slot for one; the tile walk then compares against several rectangles instead of one. One viewport is also what keeps the scissor and the depth bounds a single state | A chip with several viewports (an RDNA one has sixteen), and the use that wants them: one pass into several layers or eyes, which is multiview - Vulkan 1.1, section 5 |
+| **Sparse resources** | `1.0 feature` | Memory here is exec's: a block with a physical address, DMA-reachable, bound whole. Sparse wants page-level mapping for each resource and a page table a driver walks, and the V3D's MMU belongs to the firmware. Nothing on an 8 GB board needs an image larger than its memory - the limits are 8192 square and 256 layers | A chip with its own page tables and a driver allowed to write them. Then `QueueBindSparse`, the two sparse queries, and a memory model that maps pages rather than blocks |
+| **Events**, and a wait on one inside a command buffer | `1.0 core` | With one queue family of one queue, played in order by one task, a `CmdWaitEvents` is either already satisfied or a deadlock: only the host pair - `SetEvent`, `GetEventStatus` - would mean anything, and a fence already says what it would say | A device with more than one queue, where a wait has something to wait for. Eight calls and eight LVOs, and the player honouring them |
+| **A pipeline cache** | `1.0 core` | There is nothing to compile: a pipeline is the create info's state copied into a struct, so the cache would cache a memcpy. The parameter is taken and ignored, which is why no program notices | **The day any device compiles** - the QPU compiler of section 4, or an RDNA back end - a pipeline carries code and a cache earns its name. This one's reason expires on its own |
+| **Tessellation point mode** | `1.0 core` | The tessellator's output path builds triangles, or the lines of `isolines`; point mode would be a third path, emitting a point for each tessellated vertex. Points themselves do rasterize - one pixel each - so it is only that path which is missing, for a mode whose use is looking at a tessellation | A chip whose tessellator has the mode, or an hour's work on ours the day somebody wants it. It is the smallest item in this table |
 
 ## 3. Vulkan 1.0, bounded by the hardware or by the shape of the library
 
@@ -379,12 +373,28 @@ is the hook a compiler would replace.
 **Size: months, not a revision.** Everything else on this list is smaller
 than step 2 of it.
 
+### Why step 1 is the one that matters
+
+The QPUs are not the last device without a compiler. An RDNA 3.5 driver
+would want the same thing again - a back end of its own, for a wholly
+different machine - and so would anything after it. If the input language
+is the **library's** (step 1(a): an IR a program's shader is recorded into
+at comptime, beside the Zig function the cores run), then each device
+after this one costs a back end and nothing else, and a program written
+once runs on all of them. If instead each driver invents its own way in,
+every device costs the whole of steps 1 to 5 again and programs are
+written per device. That is the argument for doing step 1 properly before
+any of the rest, however much slower it is to start.
+
 ---
 
 ## 5. Above Vulkan 1.0: not gaps against 1.0
 
 Listed so that the line is clear. None of these is planned, and none of
-them should be called missing.
+them should be called missing. Several of them arrive with the same chip
+section 2 is waiting for - subgroups with its waves, multiview with its
+viewports, timeline semaphores with its queues - but they are still not
+gaps against Vulkan 1.0, and the library answers 1.0.
 
 | Item | Where it lives in Vulkan |
 |---|---|
