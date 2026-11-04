@@ -5,7 +5,8 @@
 //! (`system.zig`), and the driver copies the picture into it.
 //!
 //! battclock.resource for the clock the machine keeps its date in, which
-//! every machine of this architecture has.
+//! every machine of this architecture has, and power.resource for turning
+//! the machine off and for its power button.
 //!
 //! And what starting from an NVMe disk takes, as on both other emulated
 //! 64-bit boards: pci.library, nvme.device and posfs-handler, the disk's
@@ -16,6 +17,7 @@
 pub const modules = .{
     @import("../../rom/libs/rtg_driver/fbboard/fbboard.zig"),
     @import("../../rom/resources/battclock/battclock.zig"),
+    @import("../../rom/resources/power/power.zig"),
     @import("../../disk/libs/pci/pci.zig"),
     @import("../../disk/devs/nvme/nvme.zig"),
     @import("../../disk/devs/handlers/posfs/posfs.zig"),

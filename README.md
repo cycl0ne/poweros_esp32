@@ -86,7 +86,7 @@ AArch64 `virt` machines and in its x86-64 q35 machine.
 ```mermaid
 flowchart TB
     subgraph m_programs ["Programs"]
-        m_shell["the shell<br/>58 commands in C:"]
+        m_shell["the shell<br/>65 commands in C:"]
         m_desktop["the desktop<br/>anvil.library"]
         m_apps["SYS:Programs<br/>SYS:System<br/>SYS:Commodities"]
     end
@@ -241,7 +241,7 @@ Beside them:
   ([USB guide](sdk/docs/guides/usb.md)); Ethernet up to 1000 Mbit/s, the
   ESP32-S3's Wi-Fi and SLIP, and a shell over Telnet or SSH
   ([network guide](sdk/docs/guides/network.md)).
-- **The shell:** 58 commands in `C:`, test programs in `C:test`, network
+- **The shell:** 65 commands in `C:`, test programs in `C:test`, network
   tools in `C:net` - among them a git client that clones, fetches,
   commits and pushes over HTTPS and SSH (`C:net/Git`,
   [network guide](sdk/docs/guides/network.md#git-cnetgit)); scripts,
@@ -301,7 +301,7 @@ What each board runs is in [Boards](#boards).
 | `qemu_virt` | QEMU's RISC-V 64 `virt` machine under OpenSBI: four harts, 512 MB, a 16550 console; with QEMU's options a 1920×1080 display (`virtio-gpu-device` or `ramfb`), an xHCI controller and NVMe drives on its PCI Express | runs (`./zig build virt`): the shell on the serial console, four cores, dos started from an NVMe SSD, a work disk that keeps what is saved to it beside it, a whole system installed onto a second SSD in one command (`C:Install`), from the running system or from a release package on a stick; with `-device virtio-gpu-device` or `-device ramfb` the desktop, with `-device qemu-xhci` USB keyboards, mice and sticks, a stick at SuperSpeed, a disk over UAS on streams, with more `nvme` devices more SSDs; sound through QEMU's USB speaker on the host's sound (`-Daudio` names QEMU's backend, `wav,path=out.wav` a file, sample for sample), which every virt step plugs in and its system disk prefers, pulled out and put back as it plays; with `-device usb-net` the network, through `usb/ecm.device` (the display steps plug one in) |
 | `visionfive2` | StarFive VisionFive 2 (v1.3B): JH7110 with four U74 RISC-V cores, 8 GB LPDDR4, HDMI, two gigabit Ethernet ports, four USB-A on a VL805 on PCI Express, an M.2 slot, microSD; started by the board's own OpenSBI and U-Boot | runs: the console on the debug UART, the desktop over HDMI at 1920×1080, four cores, all of its RAM, starting from the microSD card, the first Ethernet port at 1000 Mbit/s, USB keyboards and mice, an NVMe SSD in the M.2 slot, the random number generator, reboot, the four cores as the 2D engine, facet.library's 3D in a window at 60 frames a second, sound over HDMI; not yet tried on the board: a system installed onto its card or an SSD (`C:Install`), sound through a USB speaker or headset, USB 3 devices at SuperSpeed, a disk over UAS; not driven yet: the second Ethernet port, the eMMC socket |
 | `qemu_virt_a64` | QEMU's AArch64 `virt` machine with four Cortex-A76 cores and a GICv2, as the Raspberry Pi CM5's BCM2712 has them, everything below 4 GiB: 512 MB, a PL011 console; with QEMU's options a 1920×1080 display (`virtio-gpu-device` or `ramfb`), an xHCI controller and NVMe drives on its PCI Express | runs (`./zig build virt64`): the shell on the serial console, four cores, dos started from an NVMe SSD, a work disk beside it, the ROM debugger with breakpoints, watchpoints and steps; entered at EL1 or, with `virtualization=on`, at EL2 (`./zig build virt64-el2`); with `-device virtio-gpu-device` or `-device ramfb` the desktop and facet.library's 3D, with `-device qemu-xhci` USB keyboards and tablets, with more `nvme` devices more SSDs, with `-device usb-net` the network, through `usb/ecm.device` (the display steps plug one in); sound through QEMU's USB speaker, as on `qemu_virt`. The CM5 is `rpi_cm5` |
-| `qemu_q35` | QEMU's x86-64 q35 machine started by its UEFI firmware: 512 MB, a 16550 console on port 0x3F8, the firmware's own 1280×800 framebuffer, and what `-device` adds on its PCI Express | runs (`./zig build q35`): the shell on the serial console, dos started from an NVMe SSD with a work disk beside it, PCI Express from the firmware's tables with everything left where the firmware placed it, a Guru with the core's registers and a backtrace; with the machine's window (`./zig build q35-display`) the desktop at 1280x800 on the framebuffer the firmware lit, drawn into where it stands, with a USB keyboard and tablet on `-device qemu-xhci`; the date from the machine's own battery-backed clock; not driven yet: the network, sound of its own, and the other cores |
+| `qemu_q35` | QEMU's x86-64 q35 machine started by its UEFI firmware: 512 MB, a 16550 console on port 0x3F8, the firmware's own 1280×800 framebuffer, and what `-device` adds on its PCI Express | runs (`./zig build q35`): the shell on the serial console, dos started from an NVMe SSD with a work disk beside it, PCI Express from the firmware's tables with everything left where the firmware placed it, a Guru with the core's registers and a backtrace; with the machine's window (`./zig build q35-display`) the desktop at 1280x800 on the framebuffer the firmware lit, drawn into where it stands, with a USB keyboard and tablet on `-device qemu-xhci`; the date from the machine's own battery-backed clock; the machine turned off - by `C:Shutdown`, or by its power button, which stops the drives first so that what they hold is written out; not driven yet: the network, sound of its own, and the other cores |
 | `rpi_cm5` | Raspberry Pi Compute Module 5 on its IO board: BCM2712 with four Cortex-A76 cores and a GIC-400, up to 16 GB, eMMC, the console on the RP1's UART0 (pins 8 and 10 of the 40-pin header); started by the bootloader in its EEPROM, in the order its `BOOT_ORDER` setting gives - the SSD, the eMMC, or over USB with `rpiboot` | runs: the shell on the console, four cores, all of RAM, dos with the disk image the bootloader loads; the console on its interrupt, an MSI-X message from the RP1 that the board routes to the GIC; USB on the two USB 3 sockets, the RP1's DWC3 controllers through xhci.device (a mouse and a hub found); an NVMe SSD in the M.2 slot, PCI Express port 1 through pci.library, read at 432 MiB/s on its INTx line, dos started from its posfs `DH0:` (System) with `DH1:` (Work) beside it, and the kernel from the SSD's own boot partition, which `C:Install` writes beside them - the whole machine on the one medium, with the eMMC behind it in the boot order as the way back in; Wi-Fi from the module's CYW43455 (`networks/cyw43455.device`, WPA2, joined at the start); the date from its RTC through the VideoCore's firmware; the cores at 2.4 GHz, asked of the same firmware, on a supply that holds them there - PoE+ here (`CpuClock` says the clock, the chip's temperature and what holds the cores back); the chip's temperature through thermal.resource (`Temperature`), the IO board's fan turned as it asks - in Linux's steps, at speeds this fan turns at; HDMI 0 driven by the kernel - the HVS, a pixel valve and the HDMI controller - in the monitor's mode from its EDID, as HDMI with its infoframes (DVI to a monitor without HDMI's block), 1920×1080 and 2560×1440 at 60 Hz shown, and the display brought up where the firmware set none up at all - a machine starting from its own medium reaches the driver in the first second after the power comes on, before the firmware has set up any display, so the driver starts the HVS's clock itself - with the pointer and a dragged icon each in a plane of its own, the picture mirrored either way, the monitor put to sleep and woken, and its brightness set over DDC/CI; a monitor plugged in after the start or swapped while it runs; 4K at 60 Hz sent scrambled to a monitor that says it takes it (not tried yet: no such monitor here); the monitor's speakers in stereo at 48 kHz through `rta-hdmi` and audio.device; facet.library's 3D at 60 frames a second, in a window and on a screen of its own - there its pictures read by the display as they were drawn, nothing copied; Ethernet from the RP1's MAC (`networks/emac.device`) at 1000 Mbit/s, 200 MiB read from a NAS at 105 MiB/s and written at 95; a system installed onto the SSD in one command (`C:Install`), the boot pair on it, and the machine starting from the medium with no host attached; not driven yet: the RP1's GPIO, message-signalled interrupts on the M.2 slot, and - much later - HDMI 1 |
 
 `C:ShowConfig` lists what the running board has, and `ShowConfig DEVICES`
@@ -618,6 +618,26 @@ to them are gathered into bursts rather than each reaching the machine on
 its own. Nothing of the display's own is driven - no mode is set and no
 register written - and a firmware that lit none leaves the machine on its
 serial console, which is what `./zig build q35` runs it as.
+
+**The machine's power** is its firmware's as well. A UEFI firmware keeps
+half of itself in memory for the system that follows it, and that half is
+asked both to restart the machine - which it does better than the
+chipset's reset register, since it puts its own hardware back as it
+expects to find it - and to turn it off, which nothing else can do here:
+what a machine of this architecture is written to in order to be off is
+described in the firmware's tables in a language this system does not
+interpret, and the firmware wrote that description. `C:Shutdown` stops
+every drive, so that what a file system holds is written out, and turns
+the machine off; a machine that cannot is told so rather than left
+looking hung.
+
+Its power button is the machine's power management hardware, whose
+registers and interrupt line the firmware's fixed description names and
+the kernel writes into the board's description. power.resource takes the
+press there: a program that wants it asks with `AddPowerNotify` and
+decides what a press means - whether to ask whoever is sitting in front
+of the machine first - and where nobody is asking, the resource does the
+plain thing, which is what `C:Shutdown` does.
 
 `./zig build q35` boots QEMU's q35 machine with 512 MB on the serial
 console, under the firmware the system has (`-Dovmf-code=` and

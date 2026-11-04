@@ -332,6 +332,27 @@ pub const PART_PciMsiAddress = PART_Dummy + 0x4A;
 pub const PART_PciMsiData = PART_Dummy + 0x4B;
 pub const PART_PciMsiSource = PART_Dummy + 0x4C;
 pub const PART_PciMsiCount = PART_Dummy + 0x4D;
+/// The machine's power management, where it is reached through two
+/// register blocks: PART_Address is the first block, in which what has
+/// happened is reported and what may be reported is set, and these are
+/// the rest of it - a second such block on a machine that has two, the
+/// control block of each, and how many bytes a whole event block is, both
+/// its halves together. Absent means the machine has none of it.
+pub const PART_PowerEvent2 = PART_Dummy + 0x4E;
+pub const PART_PowerControl = PART_Dummy + 0x4F;
+pub const PART_PowerControl2 = PART_Dummy + 0x50;
+pub const PART_PowerEventBytes = PART_Dummy + 0x51;
+/// Where a machine that has not been put into the mode its power
+/// management works in is told to enter it, and what is written there.
+/// Absent on a machine that is in it already, which is one the firmware
+/// put there.
+pub const PART_PowerMode = PART_Dummy + 0x52;
+pub const PART_PowerModeValue = PART_Dummy + 0x53;
+/// Whether the power button is one of this hardware's own features, and
+/// so is reported in the event block above. A machine whose button is
+/// described some other way says nothing here, and nothing reads that
+/// description.
+pub const PART_PowerButton = PART_Dummy + 0x54;
 
 /// A line's role, short, for a listing: "RESET", "SCL", "D0". Null for a
 /// tag that is not a line.
@@ -460,6 +481,11 @@ pub const PARTKIND_FAN: u32 = 27;
 /// (BUS_MEMORY), PART_Irq its interrupt, PART_PowerManager where its reset
 /// is.
 pub const PARTKIND_GPU: u32 = 28;
+/// The machine's power management - what turns it off and what says its
+/// power button was pressed: PART_Chip which hardware it is,
+/// PART_Address and the PART_Power* tags where its registers are, and
+/// PART_Irq the line it raises. power.resource's.
+pub const PARTKIND_POWER: u32 = 29;
 
 // Which chip. CHIP_NONE is a part that is no chip of its own: a bus, a
 // slot, a pad.
@@ -661,6 +687,15 @@ pub const CHIP_UEFI_FB: u32 = 50;
 /// the firmware's tables name one. A cell keeps it while the machine is
 /// off.
 pub const CHIP_MC146818: u32 = 51;
+/// The power management an x86-64 machine's chipset has (PARTKIND_POWER
+/// on BUS_PORT): PART_Address its event block and PART_PowerControl its
+/// control block, with PART_PowerEvent2 and PART_PowerControl2 the second
+/// pair where the machine has one, PART_PowerEventBytes how long a block
+/// is, PART_PowerMode where to ask for the mode it works in,
+/// PART_PowerButton whether the power button is reported in the event
+/// block, and PART_Irq the line it all comes in on. The firmware's tables
+/// are where these are written down, and the kernel puts them here.
+pub const CHIP_ACPI_PM: u32 = 52;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;

@@ -28,6 +28,7 @@ const cpu = @import("arch/x64uefi/cpu.zig");
 const cpu1 = @import("arch/x64uefi/cpu1.zig");
 const desc = @import("arch/x64uefi/desc.zig");
 const exec = @import("rom/libs/exec/exec.zig");
+const firmware = @import("arch/x64uefi/firmware.zig");
 const handover = @import("boot/uefi/handover.zig");
 const layout = @import("arch/x64uefi/layout.zig");
 const mmu = @import("arch/x64uefi/mmu.zig");
@@ -127,6 +128,10 @@ var clock_part: [7]Tag = @splat(.done);
 /// drawing on, and the windows things may be placed in are written in the
 /// tables' own language, which nothing here reads.
 var pci_part: [12]Tag = @splat(.done);
+/// The power management's part, where the firmware's tables say where its
+/// registers are: power.resource turns the machine off through it and
+/// hears its power button on it.
+var power_part: [15]Tag = @splat(.done);
 /// Whether that part was written, and whether the screen's memory takes
 /// gathered writes: both go in the boot's lines.
 var screen_declared = false;
@@ -155,6 +160,36 @@ fn takePci() void {
         .done,
     };
     _ = boards.system.addPart(&pci_part);
+}
+
+/// The machine's power management, written into the board's description:
+/// the two register blocks it is reached through, the line it raises, and
+/// whether its power button is one of its own features - all of it out of
+/// the firmware's fixed description, which is where this hardware has
+/// been written down since it existed. Nothing is written for a machine
+/// whose tables named no such blocks, and power.resource then knows the
+/// machine has no button; turning the machine off is the firmware's call
+/// and wants no part at all.
+fn takePower() void {
+    if (tables.pm1_event == 0 or tables.pm1_control == 0) return;
+    power_part = .{
+        .value(st.PART_Kind, st.PARTKIND_POWER),
+        .value(st.PART_Chip, st.CHIP_ACPI_PM),
+        .pointer(st.PART_ChipName, "power management"),
+        .value(st.PART_Bus, st.BUS_PORT),
+        .value(st.PART_Address, tables.pm1_event),
+        .value(st.PART_PowerEvent2, tables.pm1_event2),
+        .value(st.PART_PowerControl, tables.pm1_control),
+        .value(st.PART_PowerControl2, tables.pm1_control2),
+        .value(st.PART_PowerEventBytes, tables.pm1_event_bytes),
+        .value(st.PART_PowerMode, tables.mode_port),
+        .value(st.PART_PowerModeValue, tables.mode_value),
+        .value(st.PART_PowerButton, @intFromBool(tables.fixed_power_button)),
+        .value(st.PART_Irq, tables.sci_line),
+        .pointer(st.PART_Label, "power"),
+        .done,
+    };
+    _ = boards.system.addPart(&power_part);
 }
 
 /// The machine's battery-backed clock, written into the board's
@@ -235,6 +270,10 @@ fn takeBoard(machine: *const handover.Handover) void {
     tables = hardware.acpi.read(tables_at);
     takeClock();
     takePci();
+    takePower();
+    // The firmware's own restart and its way to turn the machine off,
+    // which only it can do: its runtime half is still where it left it.
+    firmware.take(system_table);
     hardware.apic.lapic_base = if (tables.lapic_base != 0) @intCast(tables.lapic_base) else hardware.map.LAPIC;
     hardware.apic.io_count = 0;
     for (tables.controllers()) |controller| {

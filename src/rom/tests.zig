@@ -16,6 +16,7 @@ test {
     _ = @import("resources/battclock/battclock.zig");
     _ = @import("resources/battmem/battmem.zig");
     _ = @import("resources/thermal/thermal.zig");
+    _ = @import("resources/power/power.zig");
     _ = @import("libs/rtg/rtg.zig");
     _ = @import("libs/rta/rta.zig");
     _ = @import("libs/graphics/graphics.zig");

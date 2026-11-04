@@ -90,6 +90,35 @@ pub const Facts = struct {
     /// Where the machine's other timer is, if it has one.
     hpet_base: u64 = 0,
 
+    /// The machine's power hardware, as the fixed description gives it:
+    /// the two register blocks the architecture's power management has
+    /// had since it was written down - an event block, whose first half
+    /// is what happened and whose second is what may be reported, and a
+    /// control block - and the second pair a machine with two of them
+    /// has (0 where it has one, which nearly every machine does). All of
+    /// them are in the I/O port space.
+    pm1_event: u16 = 0,
+    pm1_event2: u16 = 0,
+    pm1_control: u16 = 0,
+    pm1_control2: u16 = 0,
+    /// How many bytes a whole event block is, both halves together, and a
+    /// control block.
+    pm1_event_bytes: u8 = 0,
+    pm1_control_bytes: u8 = 0,
+    /// The interrupt line the machine's power management raises, as a
+    /// controller input.
+    sci_line: u32 = 0,
+    /// The port a machine that is not in this mode yet is told to enter
+    /// it on, and what is written there; both 0 where it is in it
+    /// already and there is nothing to ask.
+    mode_port: u16 = 0,
+    mode_value: u8 = 0,
+    /// Whether the power button is one of this hardware's own fixed
+    /// features, which is what makes it readable without interpreting
+    /// anything: a machine whose button is described in the tables'
+    /// language instead says so, and this is false.
+    fixed_power_button: bool = false,
+
     /// Whether the machine has the battery-backed clock a PC has always
     /// had. True unless the tables say it has none, since that is what
     /// they are read for: a machine old enough to say nothing has one.
@@ -291,8 +320,24 @@ const FADT_CENTURY = 108;
 const FADT_PC_HARDWARE = 109;
 const FADT_NO_RTC: u32 = 1 << 5;
 const FADT_FLAGS = 112;
-/// FADT's flags, bit 8: the timer's counter is 32 bits and not 24.
+/// FADT's flags, bit 8: the timer's counter is 32 bits and not 24. Bit 4:
+/// the power button is described in the tables' own language rather than
+/// being a fixed feature of the power management hardware.
 const FADT_TIMER_WIDE: u32 = 1 << 8;
+const FADT_BUTTON_DESCRIBED: u32 = 1 << 4;
+
+/// The power management hardware: the line it raises, the port a machine
+/// is told on to enter this mode and what is written there, and the two
+/// pairs of register blocks with their lengths.
+const FADT_SCI_LINE = 46;
+const FADT_MODE_PORT = 48;
+const FADT_MODE_VALUE = 52;
+const FADT_PM1A_EVENT = 56;
+const FADT_PM1B_EVENT = 60;
+const FADT_PM1A_CONTROL = 64;
+const FADT_PM1B_CONTROL = 68;
+const FADT_PM1_EVENT_LENGTH = 88;
+const FADT_PM1_CONTROL_LENGTH = 89;
 
 fn takeFixed(facts: *Facts, table: usize, length: u32) void {
     if (length < FADT_FLAGS + 4) return;
@@ -300,11 +345,40 @@ fn takeFixed(facts: *Facts, table: usize, length: u32) void {
         facts.rtc_century = byteAt(table + FADT_CENTURY);
         facts.rtc = wordAt(table + FADT_PC_HARDWARE) & FADT_NO_RTC == 0;
     }
+    takePower(facts, table);
     if (byteAt(table + FADT_PM_TIMER_LENGTH) != 4) return;
     const port = longAt(table + FADT_PM_TIMER);
     if (port == 0 or port > 0xFFFF) return;
     facts.pm_timer_port = @intCast(port);
     facts.pm_timer_bits = if (longAt(table + FADT_FLAGS) & FADT_TIMER_WIDE != 0) 32 else 24;
+}
+
+/// The power management hardware out of the same table: the blocks it is
+/// reached through, the line it raises, and whether its power button is
+/// one of its fixed features. Only the 32-bit fields are read - these
+/// blocks are in the I/O port space on every machine of this
+/// architecture, and the wider fields beside them say the same thing
+/// about the same ports.
+fn takePower(facts: *Facts, table: usize) void {
+    const event = longAt(table + FADT_PM1A_EVENT);
+    const control = longAt(table + FADT_PM1A_CONTROL);
+    if (event > 0xFFFF or control > 0xFFFF) return;
+    facts.pm1_event = @intCast(event);
+    facts.pm1_control = @intCast(control);
+    const event2 = longAt(table + FADT_PM1B_EVENT);
+    const control2 = longAt(table + FADT_PM1B_CONTROL);
+    if (event2 <= 0xFFFF) facts.pm1_event2 = @intCast(event2);
+    if (control2 <= 0xFFFF) facts.pm1_control2 = @intCast(control2);
+    facts.pm1_event_bytes = byteAt(table + FADT_PM1_EVENT_LENGTH);
+    facts.pm1_control_bytes = byteAt(table + FADT_PM1_CONTROL_LENGTH);
+    facts.sci_line = wordAt(table + FADT_SCI_LINE);
+    const port = longAt(table + FADT_MODE_PORT);
+    const value = byteAt(table + FADT_MODE_VALUE);
+    if (port != 0 and port <= 0xFFFF and value != 0) {
+        facts.mode_port = @intCast(port);
+        facts.mode_value = value;
+    }
+    facts.fixed_power_button = longAt(table + FADT_FLAGS) & FADT_BUTTON_DESCRIBED == 0;
 }
 
 /// The configuration space table (MCFG): where PCI's configuration space
