@@ -20,6 +20,7 @@ pub const map = @import("map.zig");
 pub const system = @import("system.zig");
 pub const uart = @import("uart.zig");
 pub const cpu = @import("cpu.zig");
+pub const apic = @import("apic.zig");
 pub const systimer = @import("systimer.zig");
 pub const ramdisk = @import("ramdisk.zig");
 pub const rng = @import("rng.zig");

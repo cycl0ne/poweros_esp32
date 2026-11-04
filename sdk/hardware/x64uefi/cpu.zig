@@ -78,10 +78,11 @@ pub inline fn highestLeaf() u32 {
 }
 
 /// Whether the timestamp counter counts at a fixed rate whatever the
-/// core's clock does, which leaf 0x8000_0007 bit 8 says. Everything this
-/// system runs on does; a core that says it does not would want the clock
-/// taken from elsewhere, and the kernel says so rather than quietly
-/// mistiming everything.
+/// core's clock does, which leaf 0x8000_0007 bit 8 says. Every machine made
+/// in the last fifteen years does; the emulator's cores do not say so,
+/// because the emulator cannot promise it of the host it runs on. The
+/// kernel says which it found rather than quietly mistiming everything on
+/// a core whose counter follows its speed.
 pub inline fn invariantTsc() bool {
     if (leaf(0x8000_0000, 0).eax < 0x8000_0007) return false;
     return leaf(0x8000_0007, 0).edx & (1 << 8) != 0;
