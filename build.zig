@@ -1039,6 +1039,16 @@ pub fn build(b: *std.Build) void {
         },
     }
 
+    // The x86-64 machine's loader: a PE32+ of its own that the firmware
+    // starts, and which then reads the kernel (src/boot/uefi/stub.zig).
+    // It is one of that board's build products - `zig-out/bin/BOOTX64.EFI`
+    // - because it is a file that has to be on the partition the firmware
+    // reads, as much as the kernel is.
+    const uefi_stub = addUefiStub(b, optimize);
+    if (board == .qemu_q35) {
+        b.getInstallStep().dependOn(&b.addInstallBinFile(uefi_stub.getEmittedBin(), "BOOTX64.EFI").step);
+    }
+
     // SYS:Storage/Boot on the image of the machine this build is for: the
     // files its firmware loads, so it installs itself from what it is
     // running - no network, no second machine - and SYS:Storage/manifest
@@ -1252,16 +1262,9 @@ pub fn build(b: *std.Build) void {
     // first serial port, which the stub writes by hand and exec's raw port
     // drives afterwards, so the stub's lines and the kernel's first lines
     // come out of the same place.
-    const q35_stub = addUefiStub(b, optimize);
-    // The firmware starts the stub, not the kernel, so the stub is one of
-    // this board's build products: `zig-out/bin/BOOTX64.EFI` is what goes
-    // in `EFI/BOOT/` on the partition the firmware reads.
-    if (board == .qemu_q35) {
-        b.getInstallStep().dependOn(&b.addInstallBinFile(q35_stub.getEmittedBin(), "BOOTX64.EFI").step);
-    }
     const q35_kernel = if (board == .qemu_q35) built else addX64Image(b, addKernel(b, x64_target, optimize, sdk, .qemu_q35, disk_offset, cores, selftest, memdebug));
     const q35_boot = b.addWriteFiles();
-    _ = q35_boot.addCopyFile(q35_stub.getEmittedBin(), "EFI/BOOT/BOOTX64.EFI");
+    _ = q35_boot.addCopyFile(uefi_stub.getEmittedBin(), "EFI/BOOT/BOOTX64.EFI");
     _ = q35_boot.addCopyFile(q35_kernel.image, "kernel.bin");
     const q35_vars = keepFirmwareVars(b, ovmf_vars, "q35-vars.fd");
     // `-cpu max` is everything the emulator can do, which is what the
@@ -1319,6 +1322,7 @@ pub fn build(b: *std.Build) void {
         .rv64_system = rv64_system_disk,
         .a64_system = a64_system_disk,
         .work_disk = blank_work_disk,
+        .uefi_stub = uefi_stub.getEmittedBin(),
         .boot_files = boot_files,
         .disk_offset = disk_offset,
         .disk_size = disk_size,
@@ -2018,6 +2022,11 @@ fn addEspPackage(b: *std.Build, step: *std.Build.Step, board: Board, image: Imag
 /// its loader puts in RAM beside it, and what `-Dboot=` added.
 const BootParts = struct {
     ram_disk: std.Build.LazyPath,
+    /// A loader the firmware starts instead of the kernel, where the
+    /// machine has one, and where on the partition it goes. A board
+    /// whose firmware loads the kernel itself passes none.
+    loader: ?std.Build.LazyPath = null,
+    loader_path: []const u8 = "",
     boot_files: []const BootFile,
 };
 
@@ -2035,8 +2044,14 @@ fn addBootPackage(b: *std.Build, step: *std.Build.Step, board: Board, kernel_ima
     _ = bundle.addCopyFile(parts.ram_disk, b.fmt("{s}/{s}", .{ name, disk_name }));
     _ = bundle.addCopyFile(b.path("tools/bootpackage/write.sh"), b.fmt("{s}/write.sh", .{name}));
     _ = bundle.addCopyFile(b.path("tools/bootpackage/bundle.md"), b.fmt("{s}/README.md", .{name}));
-    // What the firmware reads, in the order write.sh copies them.
+    // What the firmware reads, in the order write.sh copies them - the
+    // loader first on a machine that has one, since it is what the
+    // firmware starts.
     var files = b.fmt("kernel.bin {s}", .{disk_name});
+    if (parts.loader) |loader| {
+        _ = bundle.addCopyFile(loader, b.fmt("{s}/{s}", .{ name, parts.loader_path }));
+        files = b.fmt("{s} {s}", .{ parts.loader_path, files });
+    }
     if (board == .rpi_cm5) {
         _ = bundle.addCopyFile(b.path("src/boards/rpi_cm5/config.txt"), b.fmt("{s}/config.txt", .{name}));
         files = b.fmt("{s} config.txt", .{files});
@@ -2066,6 +2081,9 @@ const ArchiveParts = struct {
     rv64_system: std.Build.LazyPath,
     a64_system: std.Build.LazyPath,
     work_disk: std.Build.LazyPath,
+    /// The x86-64 machine's loader, which its firmware starts instead of
+    /// the kernel; no other board has one.
+    uefi_stub: std.Build.LazyPath,
     boot_files: []const BootFile,
     disk_offset: u32,
     disk_size: u32,
@@ -2098,6 +2116,8 @@ fn addBoardArchive(b: *std.Build, step: *std.Build.Step, board: Board, image: Im
         // partition, as a PC is: the files it reads are copied there.
         .qemu_q35 => addBootPackage(b, step, board, image.image, .{
             .ram_disk = disk,
+            .loader = parts.uefi_stub,
+            .loader_path = "EFI/BOOT/BOOTX64.EFI",
             .boot_files = parts.boot_files,
         }),
         .visionfive2, .rpi_cm5 => addBootPackage(b, step, board, image.image, .{
