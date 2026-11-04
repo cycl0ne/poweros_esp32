@@ -6656,6 +6656,172 @@ test "the shapes past 2D read through a sampler, an array of cubes among them, a
     try testing.expectEqual(white, picture.at(4, 4));
 }
 
+/// A 3D sample through the sampler bound beside the texture, the s, the t
+/// and the r given as the vertices' second three floats: what a level of
+/// its own does to the slice a coordinate falls on.
+const SliceScene = struct {
+    fn vertex(vertices: *const shader.Vertices) callconv(.c) void {
+        for (0..vertices.count) |k| {
+            const p = vertices.input(@intCast(k), 0);
+            const uvr = vertices.input(@intCast(k), 1);
+            vertices.output(@intCast(k))[0..7].* = .{ p[0], p[1], 0, 1, uvr[0], uvr[1], uvr[2] };
+        }
+    }
+
+    const entries = [_]shader.Entry{
+        shader.vertex("main", &vertex, 3),
+        shader.fixedFragment("main", .{ .kind = .texture_3d_sampled }),
+    };
+    const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
+
+    /// A quad over the whole picture at (0.5, 0.5) of the texture, `r`
+    /// through it: a slice read whole, whatever the filtering across it.
+    fn quadAt(r: f32) [6][6]f32 {
+        return .{
+            .{ -1, -1, 0.5, 0.5, 0.5, r },
+            .{ 1, -1, 0.5, 0.5, 0.5, r },
+            .{ -1, 1, 0.5, 0.5, 0.5, r },
+            .{ -1, 1, 0.5, 0.5, 0.5, r },
+            .{ 1, -1, 0.5, 0.5, 0.5, r },
+            .{ 1, 1, 0.5, 0.5, 0.5, r },
+        };
+    }
+};
+
+test "a 3D texture of levels read through a sampler: the slices of the level it reads, not of the whole depth" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+
+    // 16 x 16 x 4 with two levels: level 0 is four slices, level 1 two,
+    // as halving the depth gives (`texture.Texture.slicesAt`).
+    const usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST;
+    const volume = try bench.bareImage(.{
+        .format = .b8g8r8a8_unorm,
+        .image_type = .@"3d",
+        .extent = .{ .width = 16, .height = 16, .depth = 4 },
+        .mip_levels = 2,
+        .usage = usage,
+    }, false);
+    const view = try bench.viewOf(.{ .image = volume, .format = .b8g8r8a8_unorm, .view_type = .@"3d" });
+
+    // Each slice of each level one colour of its own, so that a sample
+    // says which slice of which level it read.
+    const deep = [4]u32{ 0xFF11_4400, 0xFF11_5500, 0xFF11_6600, 0xFF11_7700 };
+    const halved = [2]u32{ 0xFF22_AA00, 0xFF22_BB00 };
+    const staging, const staged = try bench.buffer(16 * 16 * 4 * 4 + 8 * 8 * 4 * 2, facet.BUFFER_USAGE_TRANSFER_SRC);
+    var regions: [6]facet.BufferImageCopy = undefined;
+    var at: usize = 0;
+    for (deep, 0..) |color, slice| {
+        for (0..16 * 16) |texel| std.mem.writeInt(u32, staged[at + texel * 4 ..][0..4], color, .little);
+        regions[slice] = .{
+            .buffer_offset = at,
+            .image_offset = .{ .z = @intCast(slice) },
+            .image_extent = .{ .width = 16, .height = 16, .depth = 1 },
+        };
+        at += 16 * 16 * 4;
+    }
+    for (halved, 0..) |color, slice| {
+        for (0..8 * 8) |texel| std.mem.writeInt(u32, staged[at + texel * 4 ..][0..4], color, .little);
+        regions[4 + slice] = .{
+            .buffer_offset = at,
+            .image_subresource = .{ .mip_level = 1 },
+            .image_offset = .{ .z = @intCast(slice) },
+            .image_extent = .{ .width = 8, .height = 8, .depth = 1 },
+        };
+        at += 8 * 8 * 4;
+    }
+    const copying = try bench.record();
+    fb.CmdCopyBufferToImage(copying, staging, volume, .transfer_dst_optimal, regions.len, &regions);
+    try bench.submit();
+
+    // A sampler of its own for each level, nearest either way: what is
+    // read is the slice the coordinate falls on and nothing mixed.
+    var samplers: [2]?*facet.Sampler = .{ null, null };
+    for (&samplers, 0..) |*made, level| {
+        const lod: f32 = @floatFromInt(level);
+        try testing.expectEqual(facet.Result.success, fb.CreateSampler(device, &.{
+            .mag_filter = .nearest,
+            .min_filter = .nearest,
+            .min_lod = lod,
+            .max_lod = lod,
+        }, made));
+    }
+    defer for (samplers) |one| fb.DestroySampler(device, one);
+
+    const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .combined_image_sampler, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &set_layout));
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    const layout = try pipelineLayout(&bench, &.{set_layout.?}, 0);
+    defer fb.DestroyPipelineLayout(device, layout);
+    var pool: ?*facet.DescriptorPool = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool));
+    defer fb.DestroyDescriptorPool(device, pool);
+    var sets: [1]?*facet.DescriptorSet = undefined;
+    try testing.expectEqual(facet.Result.success, fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &sets));
+
+    const shaders = try module(&bench, &SliceScene.code);
+    defer fb.DestroyShaderModule(device, shaders);
+    const pass = try renderPass(&bench, .clear, false);
+    defer fb.DestroyRenderPass(device, pass);
+    const picture = try Picture.of(&bench, 64, 64);
+    const frame = try framebuffer(&bench, pass, &.{picture.view}, 64, 64);
+    defer fb.DestroyFramebuffer(device, frame);
+    const attributes = [2]facet.VertexInputAttributeDescription{
+        .{ .location = 0, .binding = 0, .format = .r32g32b32_sfloat },
+        .{ .location = 1, .binding = 0, .format = .r32g32b32_sfloat, .offset = 12 },
+    };
+    const made, const pipeline = makePipeline(&bench, .{ .module = shaders, .layout = layout, .pass = pass, .stride = 24, .attributes = &attributes });
+    try testing.expectEqual(facet.Result.success, made);
+    defer fb.DestroyPipeline(device, pipeline);
+    const vertex_buffer, const vertex_bytes = try bench.buffer(256, facet.BUFFER_USAGE_VERTEX_BUFFER);
+
+    const sampled = struct {
+        fn of(on: *Bench, bytes: [*]u8, buffer: *facet.Buffer, with: ?*facet.Sampler, of_view: *facet.ImageView, set: *facet.DescriptorSet, into: *facet.RenderPass, onto: *facet.Framebuffer, by: *facet.PipelineLayout, drawn: ?*facet.Pipeline, r: f32) !void {
+            const f = on.rig.fb;
+            const info = facet.DescriptorImageInfo{ .sampler = with, .image_view = of_view };
+            const write = facet.WriteDescriptorSet{ .dst_set = set, .dst_binding = 0, .descriptor_type = .combined_image_sampler, .image_info = @ptrCast(&info) };
+            f.UpdateDescriptorSets(on.device, 1, @ptrCast(&write), 0, null);
+            const quad = SliceScene.quadAt(r);
+            @memcpy(bytes[0..@sizeOf(@TypeOf(quad))], std.mem.asBytes(&quad));
+            const first: u64 = 0;
+            const black = clears(0xFF00_0000);
+            const commands = try on.record();
+            f.CmdBeginRenderPass(commands, &.{ .render_pass = into, .framebuffer = onto, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 1, .clear_values = &black }, .@"inline");
+            f.CmdBindPipeline(commands, .graphics, drawn.?);
+            f.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&buffer), @ptrCast(&first));
+            f.CmdBindDescriptorSets(commands, .graphics, by, 0, 1, @ptrCast(&set), 0, null);
+            f.CmdDraw(commands, 6, 1, 0, 0);
+            f.CmdEndRenderPass(commands);
+            try on.submit();
+        }
+    }.of;
+
+    // Level 0 has the whole depth: a quarter of the way through it for
+    // each of the four slices.
+    for ([4]f32{ 0.125, 0.375, 0.625, 0.875 }, deep) |r, wanted| {
+        try sampled(&bench, vertex_bytes, vertex_buffer, samplers[0], view, sets[0].?, pass, frame, layout, pipeline, r);
+        try testing.expectEqual(wanted, picture.at(16, 8));
+        try testing.expectEqual(wanted, picture.at(48, 40));
+    }
+
+    // Level 1 has two: the coordinate falls on the level's own slices, so
+    // the first half of the texture reads its first slice and the second
+    // half its second. Before 1.59 the coordinate was taken over the
+    // whole four, so a quarter of the way through read the second slice
+    // and three quarters read a slice the level has not got.
+    for ([4]f32{ 0.125, 0.375, 0.625, 0.875 }, [4]u32{ halved[0], halved[0], halved[1], halved[1] }) |r, wanted| {
+        try sampled(&bench, vertex_bytes, vertex_buffer, samplers[1], view, sets[0].?, pass, frame, layout, pipeline, r);
+        try testing.expectEqual(wanted, picture.at(16, 8));
+    }
+
+    // Past the end either way, as `repeat` has it: the first slice again.
+    try sampled(&bench, vertex_bytes, vertex_buffer, samplers[1], view, sets[0].?, pass, frame, layout, pipeline, 1.125);
+    try testing.expectEqual(halved[0], picture.at(16, 8));
+}
+
 /// A quad over a texture kept in its blocks, drawn through a form for each
 /// kept format, and through one for 8888 - which is the wrong format for
 /// such a texture and takes the run-time sampler.

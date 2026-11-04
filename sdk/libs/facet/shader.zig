@@ -252,7 +252,10 @@ pub const FixedKind = enum(u8) {
     /// A 3D texture the same way: varyings s, t and r, each 0 to 1 across
     /// it, with `wrap[2]` for what lies past the first and last slice and
     /// the two slices round the point mixed where the filter is bilinear.
-    /// (Since 1.49.)
+    /// Since 1.59 `r` is taken over the slices the **level** has, a level
+    /// being half as deep as the one before it
+    /// (`texture.Texture.slicesAt`), and where two levels are mixed each
+    /// is read over its own. (Since 1.49.)
     texture_3d_sampled = 13,
     /// One cube of an array of them as the sampler bound beside it says:
     /// varyings x, y and z, the direction, and then which cube, as

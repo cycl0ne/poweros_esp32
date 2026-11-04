@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.58**, so that a program need not find out by failing. It covers the API.
+1.59**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -618,9 +618,12 @@ Of textures:
   carries the whole of its own pyramid - so a level past the first leaves
   the slices past its depth unread, about a sixth of the memory wasted at
   the deepest level. A sampler reads such a texture since 1.49
-  (`texture_3d_sampled`), but its 3D path takes the slice from the whole
-  depth at every level, so a 3D texture of levels read through a sampler
-  samples the slices of level 0.
+  (`texture_3d_sampled`), and since 1.59 it reads the slices the level it
+  chose has, each level over its own - before that the slice came from the
+  whole depth whatever the level, so a level past the first read the wrong
+  slice, or memory no copy had written. Which of the two filters decides
+  whether the slices either side of the point are mixed is the one the
+  level asked for, as it is across the slice.
 - An array of cubes since 1.46: a view of type `cube_array` over a
   multiple of six layers, read by a form of
   `shader.FixedKind.texture_cube_array` at four coordinates - the

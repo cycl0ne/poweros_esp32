@@ -662,10 +662,27 @@ pub const LIBRARY_VERSION = 1;
 /// slice is nothing it draws into.
 /// Only the cores: the V3D's texture unit knows no depth format
 /// (`PhysicalDeviceFeatures.sampled_depth`).
+/// 59: a 3D texture of levels read through a sampler. Before this the
+/// coordinate through the texture was taken over the whole depth whatever
+/// level the sample read, while a level has half the slices of the one
+/// before it (`texture.Texture.slicesAt`): a level past the first read the
+/// wrong slice, and past the slices that level has it read memory no copy
+/// had written. The fixed form `texture_3d` was right all along; it is the
+/// sampler's path, `texture_3d_sampled` since 1.49, that was not.
+/// Now the level comes first and the slice after it: `r` is taken over the
+/// slices that level has, and where `mipmap` is `linear` each of the two
+/// levels is read over its own and the two mixed. Which of the sampler's
+/// filters decides whether the slices either side of the point are mixed
+/// is the one the level asked for, as it already was across a slice -
+/// before, it was mixed only where both filters were `bilinear`.
+/// `sampleBy` and `sampleVolumeBy` now share what they settle first:
+/// `chosenLevel` gives the level, the samples along the longer axis and
+/// the filter, and `levelsOf` the levels to read and how much of the
+/// second.
 /// What stays: `fifo` is the one present mode, there being no way to ask a
 /// display to show a buffer before its next frame; one queue family of one
 /// queue; a counter of 32 bits, for want of a 64-bit atomic on every
 /// machine the library runs on; and no point mode in tessellation, the
 /// tessellator emitting triangles or the lines of `isolines` and nothing
 /// emitting a patch's points on their own.
-pub const LIBRARY_REVISION = 58;
+pub const LIBRARY_REVISION = 59;

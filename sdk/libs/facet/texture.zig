@@ -1831,6 +1831,20 @@ pub fn levelOf(texture: *const Texture, point: Point) f32 {
 /// samples along the longer axis, at a level chosen for the shorter, which
 /// is what keeps a surface seen edge-on from blurring into one colour.
 pub fn sampleBy(texture: *const Texture, sampler: *const Sampler, layer: u32, point: Point) u32 {
+    const chosen = chosenLevel(texture, sampler, point);
+    const levels = levelsOf(texture, sampler, chosen.level);
+    const low = tapped(texture, sampler, layer, levels.low, point, chosen.taps, chosen.filter);
+    if (levels.part <= 0) return low;
+    return mixColors(low, tapped(texture, sampler, layer, levels.high, point, chosen.taps, chosen.filter), levels.part);
+}
+
+/// What a sample settles before it reads anything: the level the point
+/// falls on as the sampler holds it, how many samples to take along the
+/// longer axis, and which of the sampler's two filters the level asks
+/// for. (Since 1.59, where `sampleVolumeBy` came to want the same.)
+const Chosen = struct { level: f32, taps: u32, filter: Filter };
+
+fn chosenLevel(texture: *const Texture, sampler: *const Sampler, point: Point) Chosen {
     const last: f32 = @floatFromInt(texture.levels - 1);
     const wanted = levelOf(texture, point);
     // Vulkan's rule: the level before it is held says which filter it is.
@@ -1853,36 +1867,62 @@ pub fn sampleBy(texture: *const Texture, sampler: *const Sampler, layer: u32, po
             level = @log2(longer / @as(f32, @floatFromInt(taps)));
         }
     }
-    level = held(level + sampler.lod_bias, sampler, last);
+    return .{ .level = held(level + sampler.lod_bias, sampler, last), .taps = taps, .filter = filter };
+}
+
+/// The levels a sample reads and how much of the second: the nearer one
+/// alone where `mipmap` is `nearest` or there is one level, and `part` 0
+/// for it. (Since 1.59.)
+const Levels = struct { low: u32, high: u32, part: f32 };
+
+fn levelsOf(texture: *const Texture, sampler: *const Sampler, level: f32) Levels {
     if (sampler.mipmap == .nearest or texture.levels == 1) {
-        return tapped(texture, sampler, layer, @intFromFloat(@round(level)), point, taps, filter);
+        const one: u32 = @intFromFloat(@round(level));
+        return .{ .low = one, .high = one, .part = 0 };
     }
     const lower = @floor(level);
     const low: u32 = @intFromFloat(lower);
+    const last: f32 = @floatFromInt(texture.levels - 1);
     const high: u32 = @intFromFloat(@min(lower + 1, last));
     const part = level - lower;
-    if (low == high or part <= 0) return tapped(texture, sampler, layer, low, point, taps, filter);
-    return mixColors(
-        tapped(texture, sampler, layer, low, point, taps, filter),
-        tapped(texture, sampler, layer, high, point, taps, filter),
-        part,
-    );
+    if (low == high or part <= 0) return .{ .low = low, .high = low, .part = 0 };
+    return .{ .low = low, .high = high, .part = part };
 }
 
 /// A 3D texture's colour at (u, v) of `point` and `r` through it, each 0 to
 /// 1, as `sampler` says: its slices are its layers, read as `wrap[2]` says
 /// and mixed where the filter is bilinear.
+///
+/// The level comes first and the slice after it, because **a level has
+/// half the slices of the one before it** (`slicesAt`): `r` is taken over
+/// the slices that level has, and where two levels are mixed each is read
+/// over its own. Until 1.59 it was taken over the whole depth at every
+/// level, so a sample of a level past the first read the slices of none of
+/// them - the wrong slice where it was there at all, and memory no copy
+/// had written where it was not.
 pub fn sampleVolumeBy(texture: *const Texture, sampler: *const Sampler, point: Point, r: f32) u32 {
-    const slices = texture.layer_count;
+    const chosen = chosenLevel(texture, sampler, point);
+    const levels = levelsOf(texture, sampler, chosen.level);
+    const low = slicedBy(texture, sampler, levels.low, point, r, chosen);
+    if (levels.part <= 0) return low;
+    return mixColors(low, slicedBy(texture, sampler, levels.high, point, r, chosen), levels.part);
+}
+
+/// One level of a 3D texture at (u, v) of `point` and `r` through it: the
+/// slice `r` falls on of the `slicesAt` that level has, or the two it
+/// falls between where the filter mixes. (Since 1.59.)
+fn slicedBy(texture: *const Texture, sampler: *const Sampler, lod: u32, point: Point, r: f32, chosen: Chosen) u32 {
+    const level = @min(lod, texture.levels - 1);
+    const slices = texture.slicesAt(level);
     const z = sane(r) * @as(f32, @floatFromInt(slices));
-    if (sampler.min_filter == .nearest and sampler.mag_filter == .nearest) {
+    if (chosen.filter == .nearest) {
         const slice = slicedIn(sampler, @intFromFloat(@floor(z)), slices) orelse return sampler.border;
-        return sampleBy(texture, sampler, slice, point);
+        return tapped(texture, sampler, slice, level, point, chosen.taps, chosen.filter);
     }
     const lower = @floor(z - 0.5);
     const first: i32 = @intFromFloat(lower);
-    const near = if (slicedIn(sampler, first, slices)) |slice| sampleBy(texture, sampler, slice, point) else sampler.border;
-    const far = if (slicedIn(sampler, first + 1, slices)) |slice| sampleBy(texture, sampler, slice, point) else sampler.border;
+    const near = if (slicedIn(sampler, first, slices)) |slice| tapped(texture, sampler, slice, level, point, chosen.taps, chosen.filter) else sampler.border;
+    const far = if (slicedIn(sampler, first + 1, slices)) |slice| tapped(texture, sampler, slice, level, point, chosen.taps, chosen.filter) else sampler.border;
     return mixColors(near, far, z - 0.5 - lower);
 }
 

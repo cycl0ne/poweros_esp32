@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.25 (04.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.26 (04.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -3897,6 +3897,68 @@ fn heldChecks(probe: *Probe) void {
         if (!probe.submit()) return probe.check(false, "the frame submitted");
         probe.checkEqual(case.want, pixelAt(pixels, pitch, case.at, case.at), case.says);
     }
+
+    // --- 1.59: a 3D texture of levels read through a sampler ---
+    // A level has half the slices of the one before it, so the
+    // coordinate through the texture falls on that level's own slices.
+    // Before 1.59 it fell on the whole depth's, whatever the level.
+    const deep = probe.bound(.{
+        .format = .b8g8r8a8_unorm,
+        .image_type = .@"3d",
+        .extent = .{ .width = across, .height = across, .depth = 4 },
+        .mip_levels = 2,
+        .usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST,
+    }, 0);
+    probe.check(deep != null, "a 3D image of four slices and two levels");
+    const deep_view = if (deep) |image| probe.viewed(.{ .image = image, .format = .b8g8r8a8_unorm, .view_type = .@"3d" }) else null;
+    var deeper: ?*facet.Sampler = null;
+    const asked_deeper = fb.CreateSampler(device, &.{ .mag_filter = .nearest, .min_filter = .nearest, .min_lod = 1, .max_lod = 1 }, &deeper);
+    probe.check(deep_view != null and asked_deeper == .success, "a view of it, and a sampler held to its second level");
+    defer fb.DestroySampler(device, deeper);
+    if (deep) |image| if (deep_view) |view| if (asked_deeper == .success) {
+        // Level 0 takes the first four layer colours, a slice each;
+        // level 1 the next two, 8 x 8 of the one colour being all a
+        // slice of it holds.
+        var levels: [6]facet.BufferImageCopy = undefined;
+        for (0..4) |slice| levels[slice] = .{
+            .buffer_offset = slice * layer_bytes,
+            .image_offset = .{ .z = @intCast(slice) },
+            .image_extent = .{ .width = across, .height = across, .depth = 1 },
+        };
+        for (0..2) |slice| levels[4 + slice] = .{
+            .buffer_offset = (4 + slice) * layer_bytes,
+            .image_subresource = .{ .mip_level = 1 },
+            .image_offset = .{ .z = @intCast(slice) },
+            .image_extent = .{ .width = across / 2, .height = across / 2, .depth = 1 },
+        };
+        commands = probe.record() orelse return probe.check(false, "a recording of its levels copied in");
+        fb.CmdCopyBufferToImage(commands, texels, image, .general, levels.len, &levels);
+        if (!probe.submit()) return probe.check(false, "its levels copied in");
+
+        // The form's r is (instance + 0.5) / 4, so the four draws read an
+        // eighth, three eighths, five eighths and seven eighths of the
+        // way through. At level 1, whose slices are two, the first half
+        // is its first slice and the second half its second.
+        const info = facet.DescriptorImageInfo{ .sampler = deeper, .image_view = view };
+        const write = facet.WriteDescriptorSet{ .dst_set = written_set[0].?, .dst_binding = 0, .descriptor_type = .combined_image_sampler, .descriptor_count = 1, .image_info = @ptrCast(&info) };
+        fb.UpdateDescriptorSets(device, 1, @ptrCast(&write), 0, null);
+        for ([4]u32{ 0, 1, 2, 3 }, [4]u32{ 4, 4, 5, 5 }, [4][*:0]const u8{
+            "the second level's first slice, an eighth of the way through",
+            "its first slice again, three eighths through",
+            "its second slice, five eighths through",
+            "and its second slice again, seven eighths through",
+        }) |instance, layer, says| {
+            commands = probe.record() orelse return probe.check(false, "a recording of the level's draw");
+            fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = onto, .render_area = area, .clear_value_count = 1, .clear_values = &clear }, .@"inline");
+            fb.CmdBindPipeline(commands, .graphics, of_volume);
+            fb.CmdBindDescriptorSets(commands, .graphics, written_pipes.?, 0, 1, @ptrCast(&written_set), 0, null);
+            fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+            fb.CmdDraw(commands, 6, 1, 0, instance);
+            fb.CmdEndRenderPass(commands);
+            if (!probe.submit()) return probe.check(false, "the level's frame submitted");
+            probe.checkEqual(Held.layerColor(layer), pixelAt(pixels, pitch, middle, middle), says);
+        }
+    };
 }
 
 // --- 1.50: the fraction of a level, and the floats a patch carries ----------
