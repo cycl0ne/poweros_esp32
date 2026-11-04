@@ -28,7 +28,7 @@ const cpu = @import("cpu.zig");
 const exec_base = @import("../../rom/libs/exec/exec_base.zig");
 const trap = @import("trap.zig");
 
-const max_cores = exec_base.max_cores;
+const max_cores = cpu.max_cores;
 
 /// The selectors start.S set up.
 pub const GDT_CODE: u16 = 0x08;

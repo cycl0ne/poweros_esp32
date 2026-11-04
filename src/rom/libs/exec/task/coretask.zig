@@ -65,5 +65,5 @@ const Task = sdk.exec.Task;
 /// ```
 pub fn CoreTask(base: *ExecBase, core: u32) ?*Task {
     if (core >= base.cores_running) return null;
-    return base.cpus[core].this_task;
+    return base.cpus_at[core].this_task;
 }

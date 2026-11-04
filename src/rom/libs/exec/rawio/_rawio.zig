@@ -93,17 +93,19 @@ pub var raw_io_hardware: RawIOHardware = if (builtin.is_test) no_raw_io else chi
 /// Set by RawIOInit: before it, the raw port is silent.
 pub var raw_ready = false;
 
-/// Each core's own line, as both write: the next character starts a
-/// line, and gets the time and the writer in front of it; a `LOG_MARK`
-/// started the line, so the next character is its level; the line being
-/// written is below the level kept, and goes nowhere. Two cores writing at
-/// once mix their characters on the port, but each line is read right.
-const Line = struct {
-    start: bool = true,
-    marked: bool = false,
-    dropping: bool = false,
-};
-var lines: [exec_base.max_cores]Line = @splat(.{});
+/// exec, for the core's own line (`OutLine`): set by RawIOInit, which is
+/// the first thing exec's init does. Two cores writing at once mix their
+/// characters on the port, but each line is read right.
+pub var owner: ?*exec_base.ExecBase = null;
+
+/// The line before exec has its cores' state: one core, one line.
+var boot_line: exec_base.OutLine = .{};
+
+/// Where this core's line stands.
+fn lineOf() *exec_base.OutLine {
+    const base = owner orelse return &boot_line;
+    return &base.cpu().out_line;
+}
 /// Every line goes out, whatever its level: set while an alert is shown,
 /// which must reach the port.
 pub var unfiltered = false;
@@ -143,7 +145,7 @@ fn noGet() ?u8 {
 /// - `character` - the byte to send.
 pub fn putChar(character: u8) void {
     if (character == 0) return;
-    const line = &lines[exec_base.coreId()];
+    const line = lineOf();
     if (line.marked) {
         line.marked = false;
         if (character >= '1' and character <= '4') return startLine(line, character - '0');
@@ -168,7 +170,7 @@ pub fn putChar(character: u8) void {
 
 /// A line at `level` begins: dropped when the log keeps less, else its
 /// prefix, and its level's letter when it is not information.
-fn startLine(line: *Line, level: u32) void {
+fn startLine(line: *exec_base.OutLine, level: u32) void {
     line.start = false;
     line.dropping = !unfiltered and level > _log.level;
     if (line.dropping) return;

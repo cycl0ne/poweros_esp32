@@ -59,14 +59,22 @@ pub const CoreBlock = extern struct {
     lapic_id: u64 = 0,
 };
 
+/// How many cores this kernel keeps tables of its own for - the words a
+/// core leaves behind, its trap state, its timer, its task segment and its
+/// stack for a fault. A machine of this kind says in its tables how many
+/// it has, and that is any number at all, so the kernel takes as many as
+/// there is room for here and says what it found beside it. start.S has
+/// the same figure (MAX_CORES) for the tables it lays out.
+pub const max_cores = 8;
+
 /// Each core's block. Core 0's is set up by `takeCore` before anything
 /// reads it, and the entry points GS at the array before that: it is
 /// exported because the entry takes its address (start.S).
-pub export var core_blocks: [exec_base.max_cores]CoreBlock = @splat(.{});
+pub export var core_blocks: [max_cores]CoreBlock = @splat(.{});
 
 /// Each core's local controller id, as the firmware's tables name them;
 /// core 0's is read from its own controller.
-pub var lapic_ids: [exec_base.max_cores]u32 = @splat(0);
+pub var lapic_ids: [max_cores]u32 = @splat(0);
 
 /// This core made core `core`: its block filled and GS pointed at it, so
 /// `coreId` answers from here on. Nothing may read the core's number

@@ -70,7 +70,7 @@ pub fn FindTask(base: *ExecBase, name: ?[*:0]const u8) ?*Task {
     if (own.node.name) |own_name| {
         if (sameName(own_name, wanted)) return own;
     }
-    for (base.cpus[0..base.cores_running]) |*cpu| {
+    for (base.cpus_at[0..base.cores_running]) |*cpu| {
         if (cpu.this_task == own) continue;
         if (cpu.this_task.node.name) |other_name| {
             if (sameName(other_name, wanted)) return cpu.this_task;

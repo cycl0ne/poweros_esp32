@@ -204,8 +204,8 @@ fn decimalInto(text: []u8, value: u32) void {
 /// Every task with `take`: each core's running one first, with its core,
 /// then the ready ones and the waiting ones.
 fn eachTask(reader: Reader, base: *const ExecBase, sink: anytype, comptime take: anytype) void {
-    const cores: usize = @min(base.cores_running, exec_base.max_cores);
-    for (base.cpus[0..cores], 0..) |*cpu, core| {
+    const cores: usize = @min(base.cores_running, base.cores_state);
+    for (base.cpus_at[0..cores], 0..) |*cpu, core| {
         if (taskAt(reader, cpu.this_task)) |task| take(reader, task, @intCast(core), sink);
     }
     for ([_]*const List{ &base.task_ready, &base.task_wait }) |list| {
@@ -285,8 +285,8 @@ pub const tasks = struct {
 
     pub fn totals(base: *const ExecBase) Totals {
         var sum: Totals = .{};
-        const cores: usize = @min(base.cores_running, exec_base.max_cores);
-        for (base.cpus[0..cores]) |*cpu| {
+        const cores: usize = @min(base.cores_running, base.cores_state);
+        for (base.cpus_at[0..cores]) |*cpu| {
             sum.dispatches +%= cpu.disp_count;
             sum.idle_rounds +%= cpu.idle_count;
         }

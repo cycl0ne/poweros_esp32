@@ -32,14 +32,6 @@ const List = sdk.exec.List;
 const Resident = sdk.exec.Resident;
 const Task = sdk.exec.Task;
 
-/// How many cores exec keeps state for: the ESP32s' two, the four of a
-/// 64-bit RISC-V or AArch64 machine (and the host's tests). A one-core
-/// ROM uses the first.
-pub const max_cores = switch (builtin.cpu.arch) {
-    .xtensa, .riscv32 => 2,
-    else => 4,
-};
-
 /// Whether this is the system's own code rather than a host build (the
 /// tests): an ARM host is AArch64 too.
 const on_machine = builtin.os.tag == .freestanding;
@@ -92,6 +84,17 @@ pub inline fn coreId() u32 {
     }
 }
 
+/// Where a core's line on the raw port stands, as both exec's output and
+/// the log write it: the next character starts a line, and gets the time
+/// and the writer in front of it; a `LOG_MARK` started the line, so the
+/// next character is its level; the line being written is below the level
+/// kept, and goes nowhere.
+pub const OutLine = extern struct {
+    start: bool = true,
+    marked: bool = false,
+    dropping: bool = false,
+};
+
 /// What each core has of its own: the task it runs, its Disable state, its scheduling flags and time slice, how deep it is in
 /// exceptions, its counts, and the spinlocks it holds. A task reads its
 /// core's state with the core's interrupts masked or in an exception, so
@@ -121,6 +124,14 @@ pub const CpuState = extern struct {
     /// IdleCount, DispCount.
     idle_count: u32 = 0,
     disp_count: u32 = 0,
+    /// The cache engine's lock as this core has seen it (`CacheClearE`):
+    /// the longest it waited for it and the longest it held it, in cycles,
+    /// and when it took it.
+    engine_wait_max: u32 = 0,
+    engine_held_max: u32 = 0,
+    engine_taken_at: u32 = 0,
+    /// Where the core's line on the raw port stands (`rawio/_rawio.zig`).
+    out_line: OutLine = .{},
     /// The spinlocks the core holds, the latest last (AcquireLock): what
     /// the lock rules are checked against. They are the core's, not a
     /// task's - a holder is not switched away while it holds them.
@@ -260,14 +271,24 @@ pub const ExecBase = extern struct {
     /// is.
     lock_guard: u32 = 0,
 
-    /// Each core's own state (CpuState).
-    cpus: [max_cores]CpuState = @splat(.{}),
+    /// Each core's own state (CpuState), one for every core the system
+    /// was started to run on: a block of its own, cut when exec was built,
+    /// since how many cores a machine has is not known until the kernel
+    /// has looked.
+    cpus_at: [*]CpuState = undefined,
+    /// How many there are, which is the most `coreId` may answer.
+    cores_state: u32 = 0,
 
     /// This core's own state. A task reads it with its interrupts masked,
     /// or holding a spinlock: otherwise it may be moved to the other core
     /// between asking which core it is on and reading.
     pub inline fn cpu(base: *ExecBase) *CpuState {
-        return &base.cpus[coreId()];
+        return &base.cpus_at[coreId()];
+    }
+
+    /// Every core's state, as many as there are.
+    pub inline fn cpus(base: *ExecBase) []CpuState {
+        return base.cpus_at[0..base.cores_state];
     }
 
     /// exec through its own jump table, the way everything else calls it.

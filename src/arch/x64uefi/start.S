@@ -53,9 +53,10 @@
    stride. */
 #define STUB_STRIDE     16
 
-/* exec's max_cores, and a stack of each core's own for an exception taken
-   with no room on the stack it came on. */
-#define MAX_CORES       4
+/* cpu.zig's max_cores - the two must match: it lays out the task segments
+   and the descriptors here - and a stack of each core's own for an
+   exception taken with no room on the stack it came on. */
+#define MAX_CORES       8
 #define FAULT_STACK_SIZE 4096
 
 /* GS's base: which core this is (cpu.MSR_GS_BASE). */
@@ -142,10 +143,11 @@ x64_gdt:
     .quad   0                       /* 0x00: none */
     .quad   0x00AF9A000000FFFF      /* 0x08: code, 64-bit, this level */
     .quad   0x00CF92000000FFFF      /* 0x10: data */
-    .quad   0, 0                    /* 0x18: core 0's task segment */
-    .quad   0, 0                    /* 0x28: core 1's */
-    .quad   0, 0                    /* 0x38: core 2's */
-    .quad   0, 0                    /* 0x48: core 3's */
+    /* 0x18 and up: a task segment per core, two entries each, which
+       desc.zig fills in as each core starts. */
+    .rept   MAX_CORES
+    .quad   0, 0
+    .endr
 x64_gdt_end:
 
     .balign 8

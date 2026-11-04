@@ -112,7 +112,7 @@ pub const root = [_]Tag{
     .value(st.SYSTAG_ConsoleIrq, 4),
     // As many as `-smp` gives the machine, up to four. The kernel runs on
     // the boot core alone until it can start the others.
-    .value(st.SYSTAG_Cores, 4),
+    .value(st.SYSTAG_Cores, 8),
     .value(st.SYSTAG_ScreenWidth, screen.width),
     .value(st.SYSTAG_ScreenHeight, screen.height),
     .pointer(st.SYSTAG_Part, &gpu),

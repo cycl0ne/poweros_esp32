@@ -92,7 +92,8 @@
 const builtin = @import("builtin");
 const sdk = @import("sdk");
 
-const ExecBase = @import("../exec.zig").ExecBase;
+const exec = @import("../exec.zig");
+const ExecBase = exec.ExecBase;
 const _interrupt = @import("../interrupt/_interrupt.zig");
 const _workers = @import("../task/_workers.zig");
 const exec_base = @import("../exec_base.zig");
@@ -102,12 +103,6 @@ const exec_base = @import("../exec_base.zig");
 /// kernel's state, like `cache_hardware`.
 var engine_lock: u32 = 0;
 
-/// The longest each core waited for the engine and held it, in cycles,
-/// until `s3> cores reset`: both with the core's interrupts masked.
-pub var engine_wait_max: [exec_base.max_cores]u32 = @splat(0);
-pub var engine_held_max: [exec_base.max_cores]u32 = @splat(0);
-var engine_taken_at: [exec_base.max_cores]u32 = @splat(0);
-
 /// The engine taken by this core, its interrupts masked meanwhile; answers
 /// the state `dropEngine` puts back. A hold asked meanwhile is answered.
 fn takeEngine() u32 {
@@ -116,14 +111,18 @@ fn takeEngine() u32 {
     const before = exec_base.cycles();
     while (@cmpxchgWeak(u32, &engine_lock, 0, core + 1, .acquire, .monotonic) != null) _interrupt.interrupt_hardware.park_if_asked();
     const now = exec_base.cycles();
-    engine_wait_max[core] = @max(engine_wait_max[core], now -% before);
-    engine_taken_at[core] = now;
+    // The figures are the core's own, kept with its state: the longest it
+    // waited for the engine and the longest it held it, until
+    // `s3> cores reset`.
+    const cpu = exec.SysBase.cpu();
+    cpu.engine_wait_max = @max(cpu.engine_wait_max, now -% before);
+    cpu.engine_taken_at = now;
     return state;
 }
 
 fn dropEngine(state: u32) void {
-    const core = exec_base.coreId();
-    engine_held_max[core] = @max(engine_held_max[core], exec_base.cycles() -% engine_taken_at[core]);
+    const cpu = exec.SysBase.cpu();
+    cpu.engine_held_max = @max(cpu.engine_held_max, exec_base.cycles() -% cpu.engine_taken_at);
     @atomicStore(u32, &engine_lock, 0, .release);
     _interrupt.unmask(state);
 }
@@ -314,7 +313,7 @@ fn spread(base: *ExecBase, range: Range, operation: *const fn (usize, usize) voi
     const bytes = range.end - range.start;
     if (bytes < share_from or !cache_hardware.cores_share()) return inChunks(range, operation);
     var job = Spread{ .range = range, .operation = operation };
-    _ = _workers.share(base, &spreadPart, &job, @intCast(@min(bytes / share_from, exec_base.max_cores)));
+    _ = _workers.share(base, &spreadPart, &job, @intCast(@min(bytes / share_from, base.cores_state)));
 }
 
 /// A range shared between the cores.

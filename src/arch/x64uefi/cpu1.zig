@@ -31,7 +31,7 @@ const exec_base = @import("../../rom/libs/exec/exec_base.zig");
 const hardware = @import("sdk").hardware;
 const lapic = hardware.apic;
 
-const max_cores = exec_base.max_cores;
+const max_cores = cpu.max_cores;
 
 extern fn _start_other() callconv(.c) void;
 

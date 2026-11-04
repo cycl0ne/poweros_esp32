@@ -36,7 +36,7 @@ pub const hardware: exec.TaskHardware = .{
 
 /// The task each core's dispatcher is switching away from, until start.S
 /// has moved to the next task's stack, and clears it.
-export var task_leaving: [exec_base.max_cores]usize = @splat(0);
+export var task_leaving: [cpu.max_cores]usize = @splat(0);
 
 /// RFLAGS of a task that has not run yet: bit 1 is always set, and the
 /// interrupts are on.

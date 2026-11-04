@@ -22,7 +22,7 @@ const timer = @import("timer.zig");
 const hardware = @import("sdk").hardware;
 const psci = hardware.psci;
 
-const max_cores = exec_base.max_cores;
+const max_cores = cpu.max_cores;
 
 extern fn _start_other() callconv(.c) void;
 

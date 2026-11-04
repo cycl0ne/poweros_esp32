@@ -370,7 +370,7 @@ pub fn build(b: *std.Build) void {
     const dh0_size_kib = b.option(u32, "dh0-size", "DH0:'s size in KiB, a multiple of 4; the rest of the flash disk is left for partitions made later with C:RDB ADD (default: all of it)") orelse 0;
     const disk_offset_kib = b.option(u32, "disk-offset", "Where the flash disk starts, in KiB: a multiple of 64 (default: 2048)") orelse default_disk_offset_kib;
     const rdb_size_kib = b.option(u32, "rdb-size", "The flash disk's partition table area before DH0:, in KiB, a multiple of 4 and 64 at least: room for more partitions and for file systems kept in the table (default: 64)") orelse default_rdb_size_kib;
-    const cores = b.option(u32, "cores", "How many cores the kernel runs on, 1 or 2 - up to 4 on a RISC-V 64, AArch64 or x86-64 machine (default: what the board's SYSTAG_Cores says)") orelse 0;
+    const cores = b.option(u32, "cores", "How many cores the kernel runs on, 1 or 2 - up to 4 on a RISC-V 64 or AArch64 machine and 8 on an x86-64 one (default: what the board's SYSTAG_Cores says)") orelse 0;
     const selftest = b.option(bool, "selftest", "ESP32-P4: the boot task checks the chip and runs test tasks instead of the shell (default: false)") orelse false;
     // Whether the `disk/` tree goes on the images. It is the builder's own
     // files, and a package to hand out is built without them
@@ -380,7 +380,8 @@ pub fn build(b: *std.Build) void {
     const memdebug = b.option(bool, "memdebug", "Memory debugging on from exec's start: walls behind blocks, patterns in new and freed memory, wide stack guards (default: false; s3> memdebug and C:MemDebug switch it at run time)") orelse false;
     const posfs_soak = b.option(u32, "posfs-soak", "`zig build test`: run posfs's power-cut test on this many more seeds, each on flash, a card and a stick (default: 0)") orelse 0;
     const most_cores: u32 = switch (chipOf(board)) {
-        .rv64sbi, .a64psci, .x64uefi => 4,
+        .x64uefi => 8,
+        .rv64sbi, .a64psci => 4,
         .esp32s3, .esp32p4 => 2,
     };
     if (cores > most_cores) std.debug.panic("-Dcores={d}: this chip has {d} cores", .{ cores, most_cores });

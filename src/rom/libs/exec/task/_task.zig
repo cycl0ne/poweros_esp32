@@ -192,8 +192,9 @@ pub const TaskHardware = struct {
     /// away from, which the CPU sets back to 0 once the switch is done and
     /// the core is off that task's stack - its windows written there, and
     /// the exception's own frames below them left. Until then no other
-    /// core may resume the task. None where nothing switches.
-    leaving: ?*[exec_base.max_cores]usize = null,
+    /// core may resume the task. As many as the chip's own code has cores
+    /// for; none where nothing switches.
+    leaving: ?[]usize = null,
 };
 
 /// Where exec reaches the CPU to switch tasks. The kernel writes it before
@@ -244,12 +245,33 @@ pub fn alignUp(value: usize, alignment: usize) usize {
 
 // --- the boot and idle tasks ------------------------------------------------
 
-const idle_names = names: {
-    var names: [exec_base.max_cores][:0]const u8 = undefined;
-    names[0] = "idle";
-    for (1..exec_base.max_cores) |core| names[core] = @import("std").fmt.comptimePrint("idle {d}", .{core});
-    break :names names;
-};
+/// `word`, a space and `number`, NUL-ended, into `buffer`: the name of a
+/// task there is one of per core, built where it is wanted since there are
+/// as many as the machine has cores. `newTask` copies it, so the buffer
+/// may be the caller's own. It wants room for the word, eleven digits and
+/// the NUL.
+pub fn numberedName(buffer: []u8, word: []const u8, number: u32) [*:0]const u8 {
+    @memcpy(buffer[0..word.len], word);
+    var at = word.len;
+    buffer[at] = ' ';
+    at += 1;
+    var digits: [10]u8 = undefined;
+    var count: usize = 0;
+    var rest = number;
+    while (true) {
+        digits[count] = '0' + @as(u8, @intCast(rest % 10));
+        count += 1;
+        rest /= 10;
+        if (rest == 0) break;
+    }
+    while (count > 0) {
+        count -= 1;
+        buffer[at] = digits[count];
+        at += 1;
+    }
+    buffer[at] = 0;
+    return @ptrCast(buffer.ptr);
+}
 
 /// Makes the machine able to run tasks: the code running now becomes the
 /// first task, "kernel", and an idle task is created under everything else.
@@ -278,7 +300,7 @@ pub fn initTasks(base: *ExecBase) error{OutOfMemory}!void {
     base.cpu().this_task = boot;
     base.cpu().time_mark = cycles();
     base.boot_task = boot;
-    const idle = base.iface().CreateTask(idle_names[0], -128, &idleLoop, idle_stack_size) orelse
+    const idle = base.iface().CreateTask("idle", -128, &idleLoop, idle_stack_size) orelse
         return error.OutOfMemory;
     makeSystemTask(idle);
     // Pinned once it is on the ready list: no other core runs yet.
@@ -301,17 +323,21 @@ pub fn initTasks(base: *ExecBase) error{OutOfMemory}!void {
 /// RESULT:
 /// False when there was no memory for the task.
 pub fn prepareCore(base: *ExecBase, core: u32, stack_lower: usize, stack_upper: usize) bool {
-    const task = newTask(base, idle_names[core].ptr, -128, 0) orelse return false;
+    // Only a core exec has state for: the kernel said how many when it
+    // built exec, from what the machine answered.
+    if (core >= base.cores_state) return false;
+    var name: [32]u8 = undefined;
+    const task = newTask(base, numberedName(&name, "idle", core), -128, 0) orelse return false;
     task.sp_lower = stack_lower;
     task.sp_upper = stack_upper;
     task.core = core;
     task.sig_alloc |= sdk.exec.tasks.system_signals;
     task.state = .run;
     guardStack(task);
-    base.cpus[core] = .{};
-    base.cpus[core].this_task = task;
-    base.cpus[core].elapsed = base.quantum;
-    base.cpus[core].idle_task = task;
+    base.cpus_at[core] = .{};
+    base.cpus_at[core].this_task = task;
+    base.cpus_at[core].elapsed = base.quantum;
+    base.cpus_at[core].idle_task = task;
     return true;
 }
 
@@ -344,12 +370,12 @@ pub fn idleHere(base: *ExecBase) noreturn {
 /// INPUTS:
 /// - `base` - exec: the jump table the calls go through.
 pub fn deinitTasks(base: *ExecBase) void {
-    for ([_]?*Task{ base.cpus[0].idle_task, base.boot_task }) |maybe| {
+    for ([_]?*Task{ base.cpus_at[0].idle_task, base.boot_task }) |maybe| {
         const task = maybe orelse continue;
         if (task.state == .ready or task.state == .wait) base.iface().Remove(&task.node);
         freeTaskMemory(base, task);
     }
-    base.cpus[0].idle_task = null;
+    base.cpus_at[0].idle_task = null;
     base.boot_task = null;
 }
 
@@ -656,7 +682,7 @@ fn killEntry(task: *Task) callconv(.c) noreturn {
 /// - `base` - exec: the running tasks and the lists.
 /// - `id` - a task's number (`Task.id`).
 pub fn findById(base: *ExecBase, id: u32) ?*Task {
-    for (base.cpus[0..base.cores_running]) |*cpu| {
+    for (base.cpus_at[0..base.cores_running]) |*cpu| {
         if (cpu.this_task.id == id) return cpu.this_task;
     }
     for ([_]*sdk.exec.List{ &base.task_ready, &base.task_wait }) |list| {
@@ -964,7 +990,7 @@ pub fn interruptExit(base: *ExecBase, context: *anyopaque) *anyopaque {
 /// - `base` - exec: the slice, the ready list and the running task.
 pub fn tickQuantum(base: *ExecBase) void {
     const core = exec_base.coreId();
-    const cpu = &base.cpus[core];
+    const cpu = &base.cpus_at[core];
     if (cpu.elapsed > 0) cpu.elapsed -= 1;
     if (cpu.elapsed != 0) return;
     cpu.sys_flags |= SFF_TQE;
@@ -1031,7 +1057,7 @@ pub fn startMultitasking(base: *ExecBase) void {
 /// What the kernel resumes.
 fn reschedule(base: *ExecBase, context: *anyopaque) *anyopaque {
     const core = exec_base.coreId();
-    const cpu = &base.cpus[core];
+    const cpu = &base.cpus_at[core];
     const current = cpu.this_task;
     const started = @atomicLoad(u32, &base.multitasking, .acquire) != 0;
     const held = !started or cpu.id_nest_cnt >= 0 or cpu.hold_count != 0;
@@ -1104,7 +1130,7 @@ fn reschedule(base: *ExecBase, context: *anyopaque) *anyopaque {
         const other: u32 = @intCast(number);
         if (other == core) continue;
         if (bestReady(base, other)) |waiting| {
-            if (waiting.node.pri > base.cpus[other].this_task.node.pri) pokeCore(other);
+            if (waiting.node.pri > base.cpus_at[other].this_task.node.pri) pokeCore(other);
         }
     }
     return raiseException(base, next, next.sp_reg.?);
@@ -1189,15 +1215,15 @@ fn takeReady(base: *ExecBase, core: u32) *Task {
 /// - `task` - the task made ready.
 pub fn wakeFor(base: *ExecBase, task: *Task) void {
     const core = exec_base.coreId();
-    const here = base.cpus[core].this_task.node.pri;
+    const here = base.cpus_at[core].this_task.node.pri;
     const may_here = runnableOn(base, task, core);
     if (leastOutranked(base, task, core)) |other| {
-        if (!may_here or base.cpus[other].this_task.node.pri < here) {
+        if (!may_here or base.cpus_at[other].this_task.node.pri < here) {
             pokeCore(other);
             return;
         }
     }
-    if (may_here and task.node.pri > here) base.cpus[core].sys_flags |= SFF_SAR;
+    if (may_here and task.node.pri > here) base.cpus_at[core].sys_flags |= SFF_SAR;
 }
 
 /// `task`, ready, offered to the cores that are not `core`: the one
@@ -1215,7 +1241,7 @@ fn leastOutranked(base: *const ExecBase, task: *const Task, core: u32) ?u32 {
     for (0..base.cores_running) |number| {
         const other: u32 = @intCast(number);
         if (other == core) continue;
-        const there = base.cpus[other].this_task.node.pri;
+        const there = base.cpus_at[other].this_task.node.pri;
         if (there < least and runnableOn(base, task, other)) {
             found = other;
             least = there;
@@ -1234,8 +1260,8 @@ fn leastOutranked(base: *const ExecBase, task: *const Task, core: u32) ?u32 {
 /// - `task` - the task.
 pub fn askCoreOf(base: *ExecBase, task: *const Task) void {
     const core = exec_base.coreId();
-    if (base.cpus[core].this_task == task) {
-        base.cpus[core].sys_flags |= SFF_SAR;
+    if (base.cpus_at[core].this_task == task) {
+        base.cpus_at[core].sys_flags |= SFF_SAR;
     } else if (runningOn(base, task)) |other| {
         pokeCore(other);
     }
@@ -1246,7 +1272,7 @@ pub fn askCoreOf(base: *ExecBase, task: *const Task) void {
 pub fn runningOn(base: *ExecBase, task: *const Task) ?u32 {
     const core = exec_base.coreId();
     for (0..base.cores_running) |other| {
-        if (other != core and base.cpus[other].this_task == task) return @intCast(other);
+        if (other != core and base.cpus_at[other].this_task == task) return @intCast(other);
     }
     return null;
 }
@@ -1281,7 +1307,7 @@ pub fn stopElsewhere(base: *ExecBase, task: *Task) void {
     sys.Disable();
     defer sys.Enable();
     const core = runningOn(base, task) orelse return;
-    const cpu = &base.cpus[core];
+    const cpu = &base.cpus_at[core];
     cpu.stopping = task;
     cpu.stop_waiter = base.cpu().this_task;
     pokeCore(core);

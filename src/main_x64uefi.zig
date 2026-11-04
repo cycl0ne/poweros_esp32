@@ -406,7 +406,7 @@ export fn kmain(at: usize) callconv(.c) noreturn {
     // exec.library from its ROM tag; its init does RawIOInit, sets up the
     // rest, scans the ROM tags and creates the exec task. Task switching
     // stays off until startMultitasking below.
-    _ = bootstrap.bootStrap(ram.regions(&regions)) catch |err| @panic(@errorName(err));
+    _ = bootstrap.bootStrap(ram.regions(&regions), @min(boards.cores, cpu1.found)) catch |err| @panic(@errorName(err));
 
     exec.kprintf("PowerOS kernel for x86-64 on %s, built with Zig %s (%s)\n", .{
         boards.text(st.SYSTAG_Name),

@@ -85,7 +85,7 @@ pub fn ReadCoreTimes(base: *ExecBase, core: u32, times: *CoreTimes) bool {
     sys.Disable();
     defer sys.Enable();
     if (core >= base.cores_running) return false;
-    const cpu = &base.cpus[core];
+    const cpu = &base.cpus_at[core];
     times.* = .{ .tasks = cpu.time_tasks, .idle = cpu.time_idle, .interrupts = cpu.time_interrupts };
     // The caller's own core: since its last exception it has been running
     // the caller, a task.

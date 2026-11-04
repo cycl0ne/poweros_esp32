@@ -107,7 +107,11 @@ pub const LIBRARY_VERSION = 1;
 /// instruction to fault on. 29: the core a task keeps to is a number of
 /// its own (`Task.core`, `SetTaskAffinity`, `ANY_CORE`) rather than flags
 /// in its flags byte, so no machine has more cores than a task can name.
-pub const LIBRARY_REVISION = 29;
+/// 30: each core's state is cut beside exec's base as it is built, one for
+/// every core the kernel found, in place of an array of a fixed size -
+/// with the raw port's line and the cache engine's figures in it, which
+/// were arrays of their own - so what exec keeps is what the machine has.
+pub const LIBRARY_REVISION = 30;
 const BUILD_DATE = "04.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
@@ -145,13 +149,15 @@ pub export const exec_tag: Resident linksection(".resident") = .{
 /// switches memory debugging on where BOOTF_MEMDEBUG asks, right after
 /// those two tasks, and goes on with the system start.
 fn initExec(lib: *Library, seg_list: ?*anyopaque, _: *exec.interface.ExecBase) callconv(.c) ?*Library {
-    // First the raw serial port, for kprintf: nothing is printed before.
+    // Every core's own state as it starts, as many as the kernel said the
+    // machine has: no Disable, no locks held. First of all, since the raw
+    // port keeps each core's line in it.
+    const sys: *ExecBase = @fieldParentPtr("lib", lib);
+    for (sys.cpus()) |*cpu| cpu.* = .{};
+    // Then the raw serial port, for kprintf: nothing is printed before.
     // Direct, not through the table: SysBase is set further down, so there
     // is nothing to call a vector through yet (codex rule 1).
-    const sys: *ExecBase = @fieldParentPtr("lib", lib);
     exec.RawIOInit(sys);
-    // Every core's own state as it starts: no Disable, no locks held.
-    sys.cpus = @splat(.{});
     sys.log_followers = @splat(.{});
     sys.log_told = 0;
     sys.log_ticks = 0;

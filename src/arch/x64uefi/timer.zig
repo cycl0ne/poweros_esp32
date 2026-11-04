@@ -31,7 +31,7 @@ const lapic = hardware.apic;
 const mmio = hardware.mmio;
 const systimer = hardware.systimer;
 const intbits = hardware.intbits;
-const max_cores = @import("../../rom/libs/exec/exec_base.zig").max_cores;
+const max_cores = @import("cpu.zig").max_cores;
 
 /// The vector the tick comes in on, which is this machine's answer to the
 /// interrupt a tick is on.

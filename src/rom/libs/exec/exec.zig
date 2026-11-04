@@ -407,6 +407,7 @@ pub const LIBRARY_REVISION = exec_init.LIBRARY_REVISION;
 
 /// struct ExecBase (exec_base.zig).
 pub const ExecBase = exec_base.ExecBase;
+pub const CpuState = exec_base.CpuState;
 
 /// Where exec routes interrupt numbers and masks interrupts; the kernel
 /// sets it before the bootstrap (the default does nothing, for host tests).
@@ -457,7 +458,8 @@ pub const BOOTF_MEMDEBUG: u32 = 1 << 0;
 ///
 /// INPUTS:
 /// - `mh` - the region.
-/// - `bytes` - the library's jump table and base together.
+/// - `bytes` - the library's jump table and base together, or the cores'
+///   state beside it.
 pub fn allocateExecBlock(mh: *MemHeader, bytes: usize) ?*anyopaque {
     const whole = _memory.wholeSize(bytes, false) orelse return null;
     const no_base: *ExecBase = undefined; // Allocate never reads it
@@ -479,6 +481,13 @@ pub fn deinit() void {
     while (it.next()) |node| {
         const mh: *MemHeader = @fieldParentPtr("node", node);
         if (start >= @intFromPtr(mh.lower) and start < @intFromPtr(mh.upper)) {
+            // The cores' state first, while the base is still there to
+            // say where it is and how much of it there is.
+            const cpus_start = @intFromPtr(sys.cpus_at);
+            const cpus_header = sdk.exec.MemBlock.of(@ptrFromInt(cpus_start));
+            const cpus_whole = _memory.alignUp(sys.cores_state * @sizeOf(CpuState), MEM_BLOCKSIZE) + MEM_BLOCKSIZE;
+            cpus_header.size = 0;
+            SysBase.iface().Deallocate(mh, cpus_header, cpus_whole);
             // Through the table like everything else: the vector is read
             // before the call, and what it frees is the memory holding
             // both the table and SysBase, so nothing may use either after.
@@ -718,9 +727,14 @@ fn testBoot(regions: []const MemRegion, boot: ?*const BootInfo) error{OutOfMemor
     var pending: List = .{};
     pending.init(.memory);
     var block: ?*anyopaque = null;
+    // The tests run on one core, so there is one core's state.
+    var cpus: ?*anyopaque = null;
     for (regions) |r| {
         const mh = CreateMemHeader(no_base, r.size, r.attributes, r.pri, r.base, r.name) orelse continue;
-        if (block == null) block = allocateExecBlock(mh, sizes.neg + sizes.pos);
+        if (block == null) {
+            block = allocateExecBlock(mh, sizes.neg + sizes.pos);
+            if (block != null) cpus = allocateExecBlock(mh, @sizeOf(CpuState));
+        }
         Enqueue(no_base, &pending, &mh.node);
     }
     const lib = _library.buildLibrary(@ptrCast(block orelse return error.OutOfMemory), vectors, sizes);
@@ -729,6 +743,8 @@ fn testBoot(regions: []const MemRegion, boot: ?*const BootInfo) error{OutOfMemor
     lib.version = exec_init.exec_tag.version;
     lib.id_string = exec_init.exec_tag.id_string;
     const sys: *ExecBase = @fieldParentPtr("lib", lib);
+    sys.cpus_at = @ptrCast(@alignCast(cpus orelse return error.OutOfMemory));
+    sys.cores_state = 1;
     sys.mem_list.init(.memory);
     while (RemHead(sys, &pending)) |node| Enqueue(sys, &sys.mem_list, node);
     _ = table.init.?(lib, @constCast(boot), @ptrCast(sys)) orelse return error.OutOfMemory;
@@ -3178,8 +3194,13 @@ test "PostWork: run at once and replied with one core; with workers queued by th
     // the poster's priority first, the order posted among the same.
     const pool = &SysBase.workers;
     _workers.initQueue(SysBase);
-    pool.workers[0] = .{ .core = 0, .state = .part };
-    pool.workers[1] = .{ .core = 1, .state = .part };
+    // The pool's own block is the exec task's to allocate; these two are
+    // this test's, which is what the pool points at while it runs.
+    var two_workers = [_]_workers.Worker{
+        .{ .core = 0, .state = .part },
+        .{ .core = 1, .state = .part },
+    };
+    pool.workers_at = &two_workers;
     pool.count = 2;
     defer pool.count = 0;
     const me = FindTask(SysBase, null).?;
@@ -3196,7 +3217,7 @@ test "PostWork: run at once and replied with one core; with workers queued by th
     try testing.expectEqual(@as(i8, 5), jobs[2].message.node.pri);
 
     // A worker claimed for a part takes none; an idle one takes them all.
-    const worker = &pool.workers[1];
+    const worker = &two_workers[1];
     try testing.expect(_workers.take(SysBase.iface(), pool, worker) == null);
     worker.state = .idle;
     const first = _workers.take(SysBase.iface(), pool, worker).?;
@@ -3208,7 +3229,7 @@ test "PostWork: run at once and replied with one core; with workers queued by th
         fn work(_: ?*anyopaque, _: u32, _: u32) callconv(.c) void {}
     };
     InitSemaphore(SysBase, &pool.lock);
-    pool.workers[0].state = .jobs;
+    two_workers[0].state = .jobs;
     try testing.expectEqual(@as(u32, 1), ShareWork(SysBase, &Nothing.work, null, 4));
 
     // A job that posts a job: the new one queued behind its equals.

@@ -46,15 +46,15 @@ pub fn run(shell: *Shell, args: *Args) anyerror!void {
             pokeOthers(base);
         } else if (_shell.same(word, "reset")) {
             sys.Disable();
-            for (&base.cpus) |*cpu| {
+            for (base.cpus()) |*cpu| {
                 cpu.lock_held_max = 0;
                 cpu.lock_wait_max = 0;
+                cpu.engine_wait_max = 0;
+                cpu.engine_held_max = 0;
             }
-            _cache.engine_wait_max = @splat(0);
             trap.longest = @splat(0);
             trap.line_longest = @splat(@splat(0));
             intmatrix.source_longest = @splat(0);
-            _cache.engine_held_max = @splat(0);
             rendezvous.parked_max = @splat(0);
             sys.Enable();
         } else if (_shell.same(word, "share")) {
@@ -80,7 +80,7 @@ pub fn run(shell: *Shell, args: *Args) anyerror!void {
         // Copied under Disable: the task may end once it is let go.
         var running: [24]u8 = undefined;
         sys.Disable();
-        const cpu = &base.cpus[core];
+        const cpu = &base.cpus_at[core];
         const task_name = cpu.this_task.name();
         const length = @min(task_name.len, running.len - 1);
         @memcpy(running[0..length], task_name[0..length]);
@@ -104,8 +104,8 @@ pub fn run(shell: *Shell, args: *Args) anyerror!void {
             @as(u32, @truncate(cpu.lock_wait_where)),
         });
         shell.print("  cache engine waited up to %u us, held up to %u us; parked up to %u us\n", .{
-            _cache.engine_wait_max[core] / per_us,
-            _cache.engine_held_max[core] / per_us,
+            cpu.engine_wait_max / per_us,
+            cpu.engine_held_max / per_us,
             rendezvous.parked_max[core] / per_us,
         });
         shell.print("  longest exception %u us (cause %u, lines 0x%08x); lines over 50 us:", .{
