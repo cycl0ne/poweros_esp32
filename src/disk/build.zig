@@ -187,7 +187,7 @@ const modules = [_]Program{
     .{ .disk = "libs/codecs/mp4.container", .source = "libs/media/mp4.zig", .name = "mp4.container" },
     .{ .disk = "libs/codecs/mkv.container", .source = "libs/media/mkv.zig", .name = "mkv.container" },
     .{ .disk = "libs/videocodec.library", .source = "libs/videocodec/videocodec.zig", .name = "videocodec.library" },
-    .{ .disk = "libs/codecs/chip.vcodec", .source = "libs/codecs/chip.zig", .name = "chip.vcodec" },
+    .{ .disk = "libs/codecs/chip.vcodec", .source = "libs/codecs/chip.zig", .name = "chip.vcodec", .imports = &.{ "h264core", "hevccore" } },
     .{ .disk = "libs/codecs/mjpeg.vcodec", .source = "libs/codecs/mjpeg.zig", .name = "mjpeg.vcodec", .imports = &.{"jpegdecode"} },
     .{ .disk = "libs/codecs/h264.vcodec", .source = "libs/codecs/h264.zig", .name = "h264.vcodec", .imports = &.{"h264core"} },
     .{ .disk = "libs/codecs/vp8.vcodec", .source = "libs/codecs/vp8.zig", .name = "vp8.vcodec", .imports = &.{"vp8core"} },

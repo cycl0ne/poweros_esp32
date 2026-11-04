@@ -4082,23 +4082,28 @@ test "ScalePixelArray: every pixel the nearest one of the picture, clipped the s
 /// A YUV picture of four by two for the tests: a luma ramp, one chroma
 /// pair to the left half and another to the right, laid out as NV12 and
 /// as I420.
+const Look = struct {
+    matrix: u8 = rtg.RTGYUV_BT709,
+    range: u8 = rtg.RTGYUV_LIMITED,
+};
+
 const TestYuv = struct {
     const luma = [_]u8{ 16, 60, 120, 235, 40, 80, 160, 200 };
     const pairs = [_]u8{ 90, 200, 180, 70 };
     const blue = [_]u8{ 90, 180 };
     const red = [_]u8{ 200, 70 };
 
-    fn nv12(colors: u8) rtg.RtgYuv {
-        return .{ .y = &luma, .cb = &pairs, .y_pitch = 4, .c_pitch = 4, .layout = rtg.RTGYUV_NV12, .colors = colors };
+    fn nv12(look: Look) rtg.RtgYuv {
+        return .{ .y = &luma, .cb = &pairs, .y_pitch = 4, .c_pitch = 4, .layout = rtg.RTGYUV_NV12, .matrix = look.matrix, .range = look.range };
     }
 
-    fn planar(colors: u8) rtg.RtgYuv {
-        return .{ .y = &luma, .cb = &blue, .cr = &red, .y_pitch = 4, .c_pitch = 2, .layout = rtg.RTGYUV_I420, .colors = colors };
+    fn planar(look: Look) rtg.RtgYuv {
+        return .{ .y = &luma, .cb = &blue, .cr = &red, .y_pitch = 4, .c_pitch = 2, .layout = rtg.RTGYUV_I420, .matrix = look.matrix, .range = look.range };
     }
 
     /// The colour of pixel (x, y), as the converter works it out.
-    fn pen(colors: u8, x: usize, y: usize) graphics.Pen {
-        const c = yuv.colorsFor(colors).?;
+    fn pen(look: Look, x: usize, y: usize) graphics.Pen {
+        const c = yuv.colorsFor(look.matrix, look.range, 8, null).?;
         return yuv.penFor(c, luma[y * 4 + x], blue[x / 2], red[x / 2]);
     }
 };
@@ -4122,7 +4127,7 @@ test "WriteYUVPixelArray: a frame put down as colours, NV12 and I420 alike, clip
     const rp = base(gb).CreateRastPortTagList(&tags) orelse return error.NoRastPort;
     var err: i32 = 0;
     const ask = [_]TagItem{ .{ .tag = graphics.RPTAG_LastError, .data = @intFromPtr(&err) }, .{} };
-    const colors = rtg.RTGYUV_BT709;
+    const colors = Look{};
 
     // The whole picture at (1, 1): each pixel its own Y and the chroma of
     // the two by two it is in.
@@ -4172,7 +4177,7 @@ test "WriteYUVPixelArray: a frame put down as colours, NV12 and I420 alike, clip
     base(gb).GetRPAttrs(@ptrCast(rp), &ask);
     try testing.expectEqual(graphics.GERR_BAD_FORMAT, err);
     bad = nv12;
-    bad.colors = 5;
+    bad.matrix = 5;
     base(gb).WriteYUVPixelArray(@ptrCast(rp), &bad, 0, 0, &.{ .min_x = 4, .min_y = 0, .max_x = 8, .max_y = 2 });
     base(gb).GetRPAttrs(@ptrCast(rp), &ask);
     try testing.expectEqual(graphics.GERR_BAD_FORMAT, err);
@@ -4185,7 +4190,7 @@ test "WriteYUVPixelArray: into the surface's own format, whatever it is" {
     const gb = try setUp();
     defer kexec.deinit();
 
-    const colors = rtg.RTGYUV_BT601 | rtg.RTGYUV_FULL;
+    const colors = Look{ .matrix = rtg.RTGYUV_BT601, .range = rtg.RTGYUV_FULL };
     const nv12 = TestYuv.nv12(colors);
     for ([_]rtg.bitmaps.PixelFormat{ .rgba32, .rgb24, .bgr24, .rgb565, .argb1555, .gray8 }) |format| {
         var pixels: [4 * 2 * 4 + 1]u8 = @splat(0);
@@ -4233,7 +4238,7 @@ test "ScaleYUVPixelArray: the nearest pixel, clipped the same either way; smooth
     };
     const tags = [_]TagItem{ .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&surface) }, .{} };
     const rp = base(gb).CreateRastPortTagList(&tags) orelse return error.NoRastPort;
-    const colors = rtg.RTGYUV_BT709;
+    const colors = Look{};
     const nv12 = TestYuv.nv12(colors);
     const whole = graphics.Rect{ .min_x = 0, .min_y = 0, .max_x = 4, .max_y = 2 };
 
@@ -4265,8 +4270,8 @@ test "ScaleYUVPixelArray: the nearest pixel, clipped the same either way; smooth
     // colour everywhere.
     const flat_luma = [_]u8{150} ** 16;
     const flat_pairs = [_]u8{ 100, 170 } ** 4;
-    const flat = rtg.RtgYuv{ .y = &flat_luma, .cb = &flat_pairs, .y_pitch = 4, .c_pitch = 4, .colors = colors };
-    const flat_pen = yuv.penFor(yuv.colorsFor(colors).?, 150, 100, 170);
+    const flat = rtg.RtgYuv{ .y = &flat_luma, .cb = &flat_pairs, .y_pitch = 4, .c_pitch = 4, .matrix = colors.matrix, .range = colors.range };
+    const flat_pen = yuv.penFor(yuv.colorsFor(colors.matrix, colors.range, 8, null).?, 150, 100, 170);
     base(gb).SetRPAttrs(@ptrCast(rp), &[_]TagItem{ .{ .tag = graphics.RPTAG_Smooth, .data = 1 }, .{} });
     for ([_]i32{ 2, 3, 7, 8 }) |size| {
         @memset(&pixels, 0);
@@ -4279,10 +4284,10 @@ test "ScaleYUVPixelArray: the nearest pixel, clipped the same either way; smooth
     // Smooth and halved: each pixel the mean of the two by two it covers.
     // Stripes of black and white luma make grey; the chroma is flat.
     const stripes_luma = [_]u8{ 16, 235, 16, 235 } ** 4;
-    const stripes = rtg.RtgYuv{ .y = &stripes_luma, .cb = &flat_pairs, .y_pitch = 4, .c_pitch = 4, .colors = colors };
+    const stripes = rtg.RtgYuv{ .y = &stripes_luma, .cb = &flat_pairs, .y_pitch = 4, .c_pitch = 4, .matrix = colors.matrix, .range = colors.range };
     @memset(&pixels, 0);
     base(gb).ScaleYUVPixelArray(@ptrCast(rp), &stripes, &.{ .min_x = 0, .min_y = 0, .max_x = 4, .max_y = 4 }, &.{ .min_x = 0, .min_y = 0, .max_x = 2, .max_y = 2 });
-    const grey = yuv.penFor(yuv.colorsFor(colors).?, (16 + 235 + 1) / 2, 100, 170);
+    const grey = yuv.penFor(yuv.colorsFor(colors.matrix, colors.range, 8, null).?, (16 + 235 + 1) / 2, 100, 170);
     for (0..2) |y| for (0..2) |x| try testing.expectEqual(grey, pen32At(&surface, @intCast(x), @intCast(y)));
 
     // An empty source or destination writes nothing and is no error.

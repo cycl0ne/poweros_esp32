@@ -11,6 +11,10 @@ pub const Store = common.Store;
 pub const Format = common.Format;
 pub const nal = @import("nal.zig");
 pub const params = @import("params.zig");
+/// The bit reader a parameter set is read with: whoever reads one of
+/// those by itself - chip.vcodec, for the colours of a stream its
+/// hardware says nothing about - needs it.
+pub const bits = @import("bits.zig");
 
 test {
     _ = @import("bits.zig");

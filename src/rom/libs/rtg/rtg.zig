@@ -1224,9 +1224,31 @@ test "video layers: one to a board, a picture needs its part, the limits kept, c
     _ = base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
     try testing.expect(info.caps & rtg.boards.RTGBC_VIDEO != 0);
 
+    // A layer is asked for a kind of picture, and a board whose converter
+    // cannot make the display's colours out of it hands out none: a film
+    // of high dynamic range, one in BT.2020's colours, one of ten bits.
+    // Nothing is taken by a refusal.
+    const kinds = [_]TagItem{
+        .{ .tag = rtg.RTGVA_Transfer, .data = rtg.RTGYUV_PQ },
+        .{ .tag = rtg.RTGVA_Primaries, .data = rtg.RTGYUV_BT2020 },
+        .{ .tag = rtg.RTGVA_Matrix, .data = rtg.RTGYUV_BT2020 },
+        .{ .tag = rtg.RTGVA_Depth, .data = 10 },
+    };
+    for (kinds) |one| {
+        try testing.expect(base(rb).OpenVideoLayer(board, &[_]TagItem{ one, .{} }) == null);
+        try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, base(rb).RtgLastError());
+    }
+    try testing.expectEqual(@as(u32, 0), fk.log.video_opens);
+
     // Under the picture unless asked otherwise, with its key and limits;
-    // the board's one layer is then taken.
-    const layer = base(rb).OpenVideoLayer(board, null) orelse return error.NoLayer;
+    // the board's one layer is then taken. What it was asked for stays in
+    // its fields, where the driver read them.
+    const layer = base(rb).OpenVideoLayer(board, &[_]TagItem{ .{ .tag = rtg.RTGVA_Matrix, .data = rtg.RTGYUV_BT601 }, .{ .tag = rtg.RTGVA_Range, .data = rtg.RTGYUV_FULL }, .{} }) orelse return error.NoLayer;
+    try testing.expectEqual(rtg.RTGYUV_BT601, layer.matrix);
+    try testing.expectEqual(rtg.RTGYUV_FULL, layer.range);
+    try testing.expectEqual(rtg.RTGYUV_SDR, layer.transfer);
+    try testing.expectEqual(rtg.RTGYUV_BT709, layer.primaries);
+    try testing.expectEqual(@as(u8, 8), layer.depth);
     try testing.expectEqual(board, layer.board);
     try testing.expect(layer.flags & rtg.RTGVLF_UNDER != 0);
     try testing.expectEqual(@as(u32, 0x0008_0008), layer.key);

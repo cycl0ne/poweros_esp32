@@ -62,9 +62,15 @@ A frame is the decoder's own memory, lent: nothing is copied, and the
 planes stay as they are until `ReleaseVideoFrame` gives them back. Up to
 `VIDEO_HELD_FRAMES` (three) may be held at once - one shown, one waiting
 its turn - and a fourth `DecodeVideoFrame` is `VCERR_BUSY`. `picture` is
-an `rtg.RtgYuv` with its layout and colours set - NV12 in BT.709 for a
-chip's frame 720 rows high or more, BT.601 below; I420 in JFIF's full
-range for Motion JPEG - so graphics takes it as it is. `time` is in
+an `rtg.RtgYuv` with its layout and colours set, as the stream says them
+- NV12 for a chip's frame, I420 for a software decoder's, in JFIF's full
+range for Motion JPEG - so graphics takes it as it is. Its `matrix`,
+`transfer`, `primaries`, `range`, `depth` and `peak` are the stream's
+own: a film of high dynamic range comes out in PQ or HLG, in BT.2020's
+red, green and blue, often ten bits a sample, and graphics maps it into
+the screen's range as it puts it down. The chip's frames say it too - the
+hardware reports none of it, so the setup record's parameter set is read
+when the stream is opened. `time` is in
 microseconds from the start of what the film presents; `number` counts
 the frames handed out. `VCERR_CORRUPT` is one picture the decoder
 stopped on: calling again goes on with the next. `VCERR_END` follows the
@@ -79,7 +85,17 @@ is, and the processor does nothing more for it:
 ```zig
 var board: usize = 0;
 ib.GetScreenAttrs(screen, &[_]utility.TagItem{ .{ .tag = sc.SA_Board, .data = @intFromPtr(&board) }, .{} });
-const layer = rb.OpenVideoLayer(@ptrFromInt(board), null);
+// What the frames will be: a display whose controller cannot make its
+// colours out of them hands out no layer at all.
+const kind = [_]utility.TagItem{
+    .{ .tag = rtg.RTGVA_Matrix, .data = frame.picture.matrix },
+    .{ .tag = rtg.RTGVA_Transfer, .data = frame.picture.transfer },
+    .{ .tag = rtg.RTGVA_Primaries, .data = frame.picture.primaries },
+    .{ .tag = rtg.RTGVA_Range, .data = frame.picture.range },
+    .{ .tag = rtg.RTGVA_Depth, .data = frame.picture.depth },
+    .{},
+};
+const layer = rb.OpenVideoLayer(@ptrFromInt(board), &kind);
 // The film's box in the window filled with layer.key, the layer moved there.
 const all = rtg.RtgRect{ .width = @intCast(frame.width), .height = @intCast(frame.height) };
 if (rb.ShowVideoFrame(layer, &frame.picture, &all) == rtg.errors.RTGERR_OK) {
@@ -96,6 +112,14 @@ being decoded. A program follows its window with the layer - on
 `IDCMP_CHANGEWINDOW`, windowclass's `WMHI_CHANGEWINDOW` - and closes the
 layer before it gives back the last frame. Movie does all of this, and
 puts the film through graphics where it gets no layer.
+
+A layer is asked for when the first frame is in hand, since nothing
+before it says what the film's colours are, and a film of high dynamic
+range or of ten bits gets none: the controller's converter knows one
+matrix and no curve, so such a film is put down by graphics, which maps
+it into the screen's range (`ScaleYUVPixelArray`). That costs the
+processor the frames it would have cost on a board with no layer at all,
+and the film looks as it should.
 
 ## The sound
 

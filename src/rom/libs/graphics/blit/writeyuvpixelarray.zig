@@ -25,9 +25,9 @@ const rastport = @import("../rastport/_rastport.zig");
 /// INPUTS:
 /// - `rp` - the RastPort. Its clip decides where the pixels land.
 /// - `picture` - the picture: its luma and chroma planes, their layout
-///   (`RTGYUV_NV12` or `RTGYUV_I420`) and how its numbers stand for
-///   colours (`RTGYUV_BT601` or `RTGYUV_BT709`, with `RTGYUV_FULL` for
-///   the whole byte).
+///   (`RTGYUV_NV12` or `RTGYUV_I420`), their depth (8 or 10 bits) and how
+///   its numbers stand for colours - the `matrix`, the `transfer`, the
+///   `primaries` and the `range`.
 /// - `src_x` - where in the picture to start, across, in luma pixels.
 /// - `src_y` - where in it to start, down.
 /// - `area` - where it lands, half-open. Its size is how much is taken.
@@ -88,7 +88,11 @@ pub fn WriteYUVPixelArray(gb: *GraphicsBase, rp: *RastPort, picture: *const rtg.
     const held = rastport.hold(gb, rp);
     defer rastport.letGo(gb, held);
     rp.last_error = graphics.GERR_OK;
-    const planes = yuv.Planes.of(picture) orelse {
+    // The tables for a picture of high dynamic range are made for this
+    // call and live on this stack: a kilobyte, and no lock between two
+    // tasks each playing a film of its own.
+    var tone_store: yuv.Tone = undefined;
+    const planes = yuv.Planes.of(picture, yuv.toneFor(picture, &tone_store)) orelse {
         rp.last_error = graphics.GERR_BAD_FORMAT;
         return;
     };

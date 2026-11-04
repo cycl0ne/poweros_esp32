@@ -306,6 +306,9 @@ pub const Frame = struct {
     transfer: u8 = 2,
     matrix: u8 = 2,
     full_range: bool = false,
+    /// The light the film was mastered for, in candelas a square metre,
+    /// from a metadata OBU; 0 where the stream says nothing.
+    peak_nits: u16 = 0,
     /// The size its planes were made for: whole superblocks.
     alloc_w: u32 = 0,
     alloc_h: u32 = 0,

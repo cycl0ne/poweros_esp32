@@ -279,7 +279,8 @@ fn expectFrame(frame: *const vc.VideoFrame, reference: []const u8) !void {
     const h: usize = frame.height;
     const p = frame.picture;
     try testing.expectEqual(rtg.RTGYUV_I420, p.layout);
-    try testing.expectEqual(rtg.RTGYUV_BT601 | rtg.RTGYUV_FULL, p.colors);
+    try testing.expectEqual(rtg.RTGYUV_BT601, p.matrix);
+    try testing.expectEqual(rtg.RTGYUV_FULL, p.range);
     try expectPlane(p.y, p.y_pitch, reference[0 .. w * h], w, h, 1);
     const cw = (w + 1) / 2;
     const ch = (h + 1) / 2;
@@ -565,7 +566,8 @@ test "H.264 in software: every frame as ffmpeg's, in the order shown, at its tim
             const p = frame.picture;
             try testing.expectEqual(rtg.RTGYUV_I420, p.layout);
             // No VUI and fewer than 720 rows: BT.601, video's range.
-            try testing.expectEqual(rtg.RTGYUV_BT601, p.colors);
+            try testing.expectEqual(rtg.RTGYUV_BT601, p.matrix);
+            try testing.expectEqual(rtg.RTGYUV_LIMITED, p.range);
             const reference = tiny_ref[n * frame_bytes ..][0..frame_bytes];
             for (0..48) |y| try testing.expectEqualSlices(u8, reference[y * 64 ..][0..64], p.y[y * p.y_pitch ..][0..64]);
             for (0..24) |y| {
@@ -609,7 +611,8 @@ test "AV1 in software, from an MP4 with its av1C: every frame as dav1d's, at its
             try testing.expectEqual(rtg.RTGYUV_I420, p.layout);
             // No matrix said and fewer than 720 rows: BT.601, video's
             // range.
-            try testing.expectEqual(rtg.RTGYUV_BT601, p.colors);
+            try testing.expectEqual(rtg.RTGYUV_BT601, p.matrix);
+            try testing.expectEqual(rtg.RTGYUV_LIMITED, p.range);
             const reference = av1_ref[n * frame_bytes ..][0..frame_bytes];
             for (0..48) |y| try testing.expectEqualSlices(u8, reference[y * 64 ..][0..64], p.y[y * p.y_pitch ..][0..64]);
             for (0..24) |y| {
@@ -673,7 +676,8 @@ test "H.265 in software, from an MP4 with its hvcC: every frame as ffmpeg's, in 
             try testing.expectEqual(rtg.RTGYUV_I420, p.layout);
             // No matrix said and fewer than 720 rows: BT.601, video's
             // range.
-            try testing.expectEqual(rtg.RTGYUV_BT601, p.colors);
+            try testing.expectEqual(rtg.RTGYUV_BT601, p.matrix);
+            try testing.expectEqual(rtg.RTGYUV_LIMITED, p.range);
             const reference = hevc_ref[n * frame_bytes ..][0..frame_bytes];
             for (0..h) |y| try testing.expectEqualSlices(u8, reference[y * w ..][0..w], p.y[y * p.y_pitch ..][0..w]);
             for (0..23) |y| {

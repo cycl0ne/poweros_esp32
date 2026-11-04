@@ -307,16 +307,19 @@ pub fn FlushVCodec(_: *Base, decoder: *vcodec.VCodecDecoder) void {
     m.ended = false;
 }
 
-/// The picture `s` copied into `slot`'s planes, as I420 in 8 bits, and
-/// lent in `frame`.
+/// The picture `s` copied into `slot`'s planes, as I420 at eight bits or
+/// ten, and lent in `frame`. A picture of more than eight bits keeps ten
+/// of them rather than being cut down, which is what a gradient needs.
 fn copyOut(m: *Decoder, s: *const h264.Store, frame: *vc.VideoFrame, slot: u32) i32 {
     const sps = m.core.active_sps.?;
     const width = sps.croppedWidth();
     const height = sps.croppedHeight();
     const half_width = (width + 1) / 2;
     const half_height = (height + 1) / 2;
-    const y_pitch = aligned(width);
-    const c_pitch = aligned(half_width);
+    const deep = m.core.wide;
+    const unit: u32 = if (deep) 2 else 1;
+    const y_pitch = aligned(width) * unit;
+    const c_pitch = aligned(half_width) * unit;
     const luma: usize = @as(usize, y_pitch) * height;
     const chroma: usize = @as(usize, c_pitch) * half_height;
     const planes = &m.planes[slot];
@@ -325,30 +328,43 @@ fn copyOut(m: *Decoder, s: *const h264.Store, frame: *vc.VideoFrame, slot: u32) 
     const cb = y + luma;
     const cr = cb + chroma;
 
-    const source: Source = .{ .s = s, .wide = m.core.wide, .x0 = sps.cropX(), .y0 = sps.cropY() };
+    const source: Source = .{ .s = s, .wide = m.core.wide, .deep = deep, .x0 = sps.cropX(), .y0 = sps.cropY() };
     source.copy(m.sys, 0, y, y_pitch, width, height, 1, 1, m.core.depth_y);
     switch (sps.chroma_format_idc) {
         // A grey picture's colour: the middle, filled when the planes
         // were made.
-        0 => if (fresh) m.sys.SetMem(cb, 128, 2 * chroma),
+        0 => if (fresh) grey(m.sys, cb, 2 * chroma, deep),
         else => |format| {
             const across: u32 = if (format == 3) 2 else 1;
             const down: u32 = if (format == 1) 1 else 2;
             // Separate colour planes are each coded as the brightness is.
             const depth = if (sps.separate_colour_plane) m.core.depth_y else m.core.depth_c;
-            const half: Source = .{ .s = s, .wide = m.core.wide, .x0 = source.x0 * across / 2, .y0 = source.y0 * down / 2 };
+            const half: Source = .{ .s = s, .wide = m.core.wide, .deep = deep, .x0 = source.x0 * across / 2, .y0 = source.y0 * down / 2 };
             half.copy(m.sys, 1, cb, c_pitch, half_width, half_height, across, down, depth);
             half.copy(m.sys, 2, cr, c_pitch, half_width, half_height, across, down, depth);
         },
     }
     if (planes_memory & exec.MEMF_DMA != 0) m.sys.CacheClearE(planes.start, @intCast(planes.size), exec.CACRF_ClearD);
 
-    var colors: u8 = switch (sps.matrix) {
+    const matrix: u8 = switch (sps.matrix) {
         1 => rtg.RTGYUV_BT709,
         5, 6 => rtg.RTGYUV_BT601,
+        // BT.2020, constant luminance or not.
+        9, 10 => rtg.RTGYUV_BT2020,
         else => if (height >= 720) rtg.RTGYUV_BT709 else rtg.RTGYUV_BT601,
     };
-    if (sps.full_range) colors |= rtg.RTGYUV_FULL;
+    // The curve and the primaries the VUI names (E.3, E.4): high dynamic
+    // range is rare in H.264, but a stream that says so is believed.
+    const transfer: u8 = switch (sps.transfer) {
+        16 => rtg.RTGYUV_PQ,
+        18 => rtg.RTGYUV_HLG,
+        else => rtg.RTGYUV_SDR,
+    };
+    const primaries: u8 = switch (sps.colour_primaries) {
+        9 => rtg.RTGYUV_BT2020,
+        11, 12 => rtg.RTGYUV_P3,
+        else => rtg.RTGYUV_BT709,
+    };
     frame.* = .{
         .picture = .{
             .y = y,
@@ -357,7 +373,11 @@ fn copyOut(m: *Decoder, s: *const h264.Store, frame: *vc.VideoFrame, slot: u32) 
             .y_pitch = y_pitch,
             .c_pitch = c_pitch,
             .layout = rtg.RTGYUV_I420,
-            .colors = colors,
+            .depth = if (deep) 10 else 8,
+            .matrix = matrix,
+            .transfer = transfer,
+            .primaries = primaries,
+            .range = if (sps.full_range) rtg.RTGYUV_FULL else rtg.RTGYUV_LIMITED,
         },
         .width = width,
         .height = height,
@@ -370,14 +390,16 @@ fn copyOut(m: *Decoder, s: *const h264.Store, frame: *vc.VideoFrame, slot: u32) 
 const Source = struct {
     s: *const h264.Store,
     wide: bool,
+    /// The samples go out as words of ten bits rather than bytes.
+    deep: bool,
     x0: u32,
     y0: u32,
 
     /// `width` by `height` samples of plane `p` into `into`, its rows
-    /// `pitch` apart: each the average of `across` by `down` of the
-    /// plane's, rounded to 8 bits from `depth`. Where a block of them
-    /// runs past the plane's edge - an odd size shown - the plane's last
-    /// row or column is taken again.
+    /// `pitch` bytes apart: each the average of `across` by `down` of the
+    /// plane's, brought from `depth` bits to the eight or ten the frame
+    /// carries. Where a block of them runs past the plane's edge - an odd
+    /// size shown - the plane's last row or column is taken again.
     fn copy(src: Source, sys: *ExecBase, p: usize, into: [*]u8, pitch: u32, width: u32, height: u32, across: u32, down: u32, depth: u5) void {
         const s = src.s;
         const stride = s.stride[p];
@@ -389,14 +411,24 @@ const Source = struct {
             }
             return;
         }
-        const shift: u5 = @intCast(depth - 8 + @as(u5, @intCast((across * down) >> 1)));
+        const bits: u5 = if (src.deep) 10 else 8;
+        const up: u5 = if (depth < bits) bits - depth else 0;
+        const shift: u5 = (if (depth > bits) depth - bits else 0) + @as(u5, @intCast((across * down) >> 1));
+        const most: u32 = (@as(u32, 1) << bits) - 1;
         if (src.wide) {
             const samples: [*]const u16 = @ptrCast(@alignCast(s.planes[p]));
-            src.average(u16, samples, p, into, pitch, width, height, across, down, shift);
-        } else src.average(u8, s.planes[p], p, into, pitch, width, height, across, down, shift);
+            if (src.deep)
+                src.average(u16, u16, samples, p, into, pitch, width, height, across, down, up, shift, most)
+            else
+                src.average(u16, u8, samples, p, into, pitch, width, height, across, down, up, shift, most);
+        } else if (src.deep) {
+            src.average(u8, u16, s.planes[p], p, into, pitch, width, height, across, down, up, shift, most);
+        } else {
+            src.average(u8, u8, s.planes[p], p, into, pitch, width, height, across, down, up, shift, most);
+        }
     }
 
-    fn average(src: Source, comptime T: type, samples: [*]const T, p: usize, into: [*]u8, pitch: u32, width: u32, height: u32, across: u32, down: u32, shift: u5) void {
+    fn average(src: Source, comptime T: type, comptime O: type, samples: [*]const T, p: usize, into: [*]u8, pitch: u32, width: u32, height: u32, across: u32, down: u32, up: u5, shift: u5, most: u32) void {
         const s = src.s;
         const stride = s.stride[p];
         const last_x = s.width[p] - 1;
@@ -406,18 +438,18 @@ const Source = struct {
             const y = src.y0 + @as(u32, @intCast(r)) * down;
             const row0 = samples + y * stride;
             const row1 = samples + @min(y + down - 1, last_y) * stride;
-            const out = into + r * pitch;
+            const out: [*]O = @ptrCast(@alignCast(into + r * pitch));
             if (across == 1) {
                 for (0..width) |c| {
                     const sum = @as(u32, row0[src.x0 + c]) + if (down == 2) @as(u32, row1[src.x0 + c]) else 0;
-                    out[c] = @intCast(@min((sum + round) >> shift, 255));
+                    out[c] = @intCast(@min(((sum << up) + round) >> shift, most));
                 }
             } else {
                 for (0..width) |c| {
                     const x = src.x0 + @as(u32, @intCast(c)) * 2;
                     const x1 = @min(x + 1, last_x);
                     const sum = @as(u32, row0[x]) + row0[x1] + row1[x] + row1[x1];
-                    out[c] = @intCast(@min((sum + round) >> shift, 255));
+                    out[c] = @intCast(@min(((sum << up) + round) >> shift, most));
                 }
             }
         }
@@ -441,4 +473,12 @@ fn make(sys: *ExecBase, planes: *Planes, size: usize, width: u32, height: u32) ?
         .height = height,
     };
     return true;
+}
+
+/// A grey picture's chroma planes: the middle of the range, a byte of 128
+/// or a word of 512.
+fn grey(sys: *ExecBase, into: [*]u8, bytes: usize, deep: bool) void {
+    if (!deep) return sys.SetMem(into, 128, bytes);
+    const words: [*]u16 = @ptrCast(@alignCast(into));
+    for (0..bytes / 2) |i| words[i] = 512;
 }
