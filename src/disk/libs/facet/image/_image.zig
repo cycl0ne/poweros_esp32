@@ -221,7 +221,9 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
     if ((info.image_type != .@"2d" and !volume) or info.samples != 1) return null;
     const layers = if (volume) extent.depth else info.array_layers;
     if (layers == 0 or (!volume and extent.depth != 1)) return null;
-    if (volume and (info.array_layers != 1 or info.mip_levels != 1 or !std.math.isPowerOfTwo(layers) or layers > _instance.max_image_dimension_3d)) return null;
+    // A 3D image's depth is its layers, and may be any number since 1.46;
+    // its levels are each slice's own (`texture.Texture.slicesAt`).
+    if (volume and (info.array_layers != 1 or layers > _instance.max_image_dimension_3d)) return null;
     if (layers > _instance.max_image_array_layers) return null;
     const cube = info.flags & facet.IMAGE_CREATE_CUBE_COMPATIBLE != 0;
     if (cube and (volume or layers < 6 or extent.width != extent.height)) return null;
@@ -233,7 +235,9 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
     // does not they are unpacked into 8 bits a channel. A storage image is
     // written texel by texel, which neither kind takes.
     const writes_texels = info.usage & facet.IMAGE_USAGE_STORAGE != 0;
-    const keeps_blocks = physical.features.kept_compressed and _decode.blockBytes(info.format) != 0 and !writes_texels;
+    // An ETC2 or EAC block is never kept: no sampler of this library reads
+    // one, so such an image is unpacked whatever the device says.
+    const keeps_blocks = physical.features.kept_compressed and _decode.blockBytes(info.format) != 0 and !_decode.etc(info.format) and !writes_texels;
     const keeps_floats = physical.features.kept_floats and _decode.texelBytes(info.format) != 0 and !writes_texels;
     const kept_format: facet.Format = if (_decode.unpacks(info.format) and !(keeps_blocks or keeps_floats)) .r8g8b8a8_unorm else info.format;
     if (extent.width == 0 or extent.height == 0 or extent.width > max_image_dimension or extent.height > max_image_dimension) return null;
@@ -361,9 +365,12 @@ pub const LayerRange = struct { first: u32, count: u32 };
 /// image, as it has them along z, else by the subresource. Null for none.
 pub fn layersOf(image: *const Image, subresource: facet.ImageSubresourceLayers, z: i32, depth: u32) ?LayerRange {
     if (image.volume) {
-        if (z < 0 or z >= image.layers or depth == 0) return null;
+        // A level of a 3D image is as deep as halving its depth that often
+        // gives, and no less than one slice (`texture.Texture.slicesAt`).
+        const slices = image.texels.slicesAt(subresource.mip_level);
+        if (z < 0 or z >= slices or depth == 0) return null;
         const first: u32 = @intCast(z);
-        return .{ .first = first, .count = @min(depth, image.layers - first) };
+        return .{ .first = first, .count = @min(depth, slices - first) };
     }
     if (subresource.base_array_layer >= image.layers or subresource.layer_count == 0) return null;
     return .{ .first = subresource.base_array_layer, .count = @min(subresource.layer_count, image.layers - subresource.base_array_layer) };

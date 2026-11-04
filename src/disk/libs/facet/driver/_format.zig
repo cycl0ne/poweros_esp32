@@ -63,6 +63,14 @@ fn describe(format: facet.Format, keeps_blocks: bool) facet.FormatProperties {
                 if (keeps_blocks) facet.FORMAT_FEATURE_TRANSFER_SRC else 0,
             .buffer_features = 0,
         },
+        // ETC2 and EAC are unpacked as they are copied in, on every
+        // device: sampled and written, and never read back, there being no
+        // block of the format left to read.
+        .etc2_r8g8b8_unorm_block, .etc2_r8g8b8a1_unorm_block, .etc2_r8g8b8a8_unorm_block, .eac_r11_unorm_block, .eac_r11g11_unorm_block => .{
+            .linear_tiling_features = 0,
+            .optimal_tiling_features = sampled | facet.FORMAT_FEATURE_TRANSFER_DST,
+            .buffer_features = 0,
+        },
         // Float: sampled and written, and read back as well where the
         // floats are kept, there being something of the format to read.
         .r16g16b16a16_sfloat, .b10g11r11_ufloat_pack32, .e5b9g9r9_ufloat_pack32 => .{

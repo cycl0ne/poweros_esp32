@@ -196,6 +196,11 @@ pub const FixedKind = enum(u8) {
     /// reference, and what it writes is how much of the sample passed -
     /// white for all of it, black for none.
     texture_shadow = 9,
+    /// One cube of an array of them: varyings x, y and z, the direction,
+    /// and then which cube, the nearest there is - a view of `cube_array`,
+    /// whose layers are six to a cube. `sampling.address` is always
+    /// `clamp`, as for `texture_cube`. (Since 1.46.)
+    texture_cube_array = 10,
 };
 
 /// Under this alpha, 0 to 255, `texture_cutout` drops a pixel.
@@ -216,6 +221,7 @@ pub const Fixed = struct {
             .texture, .texture_cutout, .texture_sampled => 2,
             .texture_color => 6,
             .texture_array, .texture_cube, .texture_3d, .texture_shadow => 3,
+            .texture_cube_array => 4,
         };
     }
 
@@ -263,7 +269,7 @@ pub fn fixedFragment(name: [*:0]const u8, comptime fixed: Fixed) Entry {
                 .texture => textured(fixed.sampling, fragments, fragments.resources.sampled(0, 0, 0)),
                 .texture_cutout => cutout(fixed.sampling, fragments, fragments.resources.sampled(0, 0, 0)),
                 .texture_color => modulated(fixed.sampling, fragments, fragments.resources.sampled(0, 0, 0)),
-                .texture_array, .texture_cube, .texture_3d => layered(fixed.kind, fixed.sampling, fragments, fragments.resources.sampled(0, 0, 0)),
+                .texture_array, .texture_cube, .texture_3d, .texture_cube_array => layered(fixed.kind, fixed.sampling, fragments, fragments.resources.sampled(0, 0, 0)),
                 .texture_sampled, .texture_shadow => texturedBy(
                     fixed.kind == .texture_shadow,
                     fixed.sampling,
@@ -1075,13 +1081,16 @@ pub fn layered(comptime kind: FixedKind, comptime sampling: texture.Sampling, fr
     // rather than from the form (since 1.44).
     const given = picture orelse return fill(fragments, missing);
     const texels = [2]f32{ @floatFromInt(given.width(0)), @floatFromInt(given.height(0)) };
-    var rows = Rows(4).of(fragments);
+    // A cube of an array takes a fourth coordinate: which cube.
+    const carried = comptime if (kind == .texture_cube_array) 5 else 4;
+    var rows = Rows(carried).of(fragments);
     for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
         const at = rows.at(quad);
         const w = @as(Pixels, @splat(1)) / at[0];
         const s: [4]f32 = at[1] * w;
         const t: [4]f32 = at[2] * w;
         const r: [4]f32 = at[3] * w;
+        const which: [4]f32 = if (comptime kind == .texture_cube_array) at[4] * w else @splat(0);
         var colors: [4]u32 = @splat(0);
         switch (kind) {
             .texture_array => {
@@ -1100,9 +1109,26 @@ pub fn layered(comptime kind: FixedKind, comptime sampling: texture.Sampling, fr
                     color.* = given.sampleCube(sampling, lod, s[i], t[i], r[i]);
                 }
             },
-            .texture_3d => for (&colors, 0..) |*color, i| {
-                if (quad.covered >> @intCast(i) & 1 == 0) continue;
-                color.* = given.sampleVolume(sampling, s[i], t[i], r[i]);
+            .texture_cube_array => {
+                // Each pixel its own cube and its own face: the level is
+                // the quad's, as it is for one cube.
+                const hits = [3]texture.CubeHit{ texture.cubeHit(s[0], t[0], r[0]), texture.cubeHit(s[1], t[1], r[1]), texture.cubeHit(s[2], t[2], r[2]) };
+                const same = hits[0].face == hits[1].face and hits[0].face == hits[2].face;
+                const lod = if (given.levels == 1 or !same) 0 else texture.levelFor(given, (hits[1].u - hits[0].u) * texels[0], (hits[1].v - hits[0].v) * texels[1], (hits[2].u - hits[0].u) * texels[0], (hits[2].v - hits[0].v) * texels[1]);
+                for (&colors, 0..) |*color, i| {
+                    if (quad.covered >> @intCast(i) & 1 == 0) continue;
+                    color.* = given.sampleCubeIn(sampling, given.cubeNear(which[i]), lod, s[i], t[i], r[i]);
+                }
+            },
+            .texture_3d => {
+                // Its levels are the 2D ones, each slice's own, and a
+                // level has half the slices of the one before it
+                // (`Texture.slicesAt`, since 1.46).
+                const lod = if (given.levels == 1) 0 else texture.levelFor(given, (s[1] - s[0]) * texels[0], (t[1] - t[0]) * texels[1], (s[2] - s[0]) * texels[0], (t[2] - t[0]) * texels[1]);
+                for (&colors, 0..) |*color, i| {
+                    if (quad.covered >> @intCast(i) & 1 == 0) continue;
+                    color.* = given.sampleVolume(sampling, lod, s[i], t[i], r[i]);
+                }
             },
             else => @compileError("not a form with three coordinates"),
         }

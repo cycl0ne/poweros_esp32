@@ -135,6 +135,11 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // A float image likewise, its texels read and rounded where they
         // lie (`texture.floatTexel`).
         .kept_floats = true,
+        // One cube of an array, the fourth coordinate saying which
+        // (`texture.Texture.sampleCubeIn`).
+        .cube_arrays = true,
+        // ETC2 and EAC, unpacked as they are copied in (image/_decode.zig).
+        .etc2_textures = true,
         // Both go by the pixel at a time way the stencil test goes by:
         // the clamp holds a pixel's depth inside the viewport's range,
         // and the bounds test reads the depth already there.

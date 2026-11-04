@@ -417,6 +417,22 @@ pub const PhysicalDeviceFeatures = extern struct {
     /// out of. The cores have it since 1.45; the V3D's TMU is fed unpacked
     /// texels, so there an image is unpacked as before.
     kept_floats: bool = false,
+    /// Cubes in an array: an image of CUBE_COMPATIBLE whose layers are a
+    /// multiple of six, a view of `ImageViewType.cube_array` over them, and
+    /// the fixed form that samples one of them
+    /// (`shader.FixedKind.texture_cube_array`, varyings x, y, z and which
+    /// cube). False where both the view and such a pipeline are refused -
+    /// Vulkan's `imageCubeArray`. The cores have it since 1.46; no QPU
+    /// program of the V3D reads the fourth coordinate.
+    cube_arrays: bool = false,
+    /// ETC2 and EAC: `etc2_r8g8b8_unorm_block`,
+    /// `etc2_r8g8b8a1_unorm_block`, `etc2_r8g8b8a8_unorm_block`,
+    /// `eac_r11_unorm_block` and `eac_r11g11_unorm_block`, unpacked to 8
+    /// bits a channel as they are copied in - Vulkan's
+    /// `textureCompressionETC2`. No device of this library samples such a
+    /// block where it lies, so this is true on every device from 1.46 and
+    /// says only that the formats are taken.
+    etc2_textures: bool = false,
 };
 
 /// QueueFamilyProperties.queue_flags: what a family's queues do.
@@ -575,6 +591,16 @@ pub const Format = enum(u32) {
     bc1_rgba_unorm_block = 133,
     bc2_unorm_block = 135,
     bc3_unorm_block = 137,
+    /// ETC2 and EAC, as textures: unpacked as they come in, into 8 bits a
+    /// channel, on every device (since 1.46). A block is 4 x 4 texels in 8
+    /// bytes, or 16 where there is an alpha or a second channel.
+    etc2_r8g8b8_unorm_block = 147,
+    etc2_r8g8b8a1_unorm_block = 149,
+    etc2_r8g8b8a8_unorm_block = 151,
+    /// One channel of 11 bits, read as a grey; and two, read as red and
+    /// green with a blue of 0.
+    eac_r11_unorm_block = 153,
+    eac_r11g11_unorm_block = 155,
     _,
 };
 
@@ -791,6 +817,10 @@ pub const ImageViewType = enum(u32) {
     @"3d" = 2,
     cube = 3,
     @"2d_array" = 5,
+    /// Cubes one after another, six layers to each: the view's layers are a
+    /// multiple of six and its first a multiple of six, for
+    /// `shader.FixedKind.texture_cube_array`. (Since 1.46.)
+    cube_array = 6,
     _,
 };
 

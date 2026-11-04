@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.45**, so that a program need not find out by failing. It covers the API.
+1.46**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -466,8 +466,8 @@ Of textures:
   height. Past the width nothing is read. `wrap` round a side that is not
   a power of two costs a division a sample instead of a mask; `clamp`
   costs the same whatever the size.
-- A texel is kept as `rgba8888`, `rgb565` or, since 1.44, the blocks of
-  BC1, BC2 or BC3. An 8888 texel takes 64 bits, each channel in 16 of
+- A texel is kept as `rgba8888`, `rgb565`, the blocks of BC1, BC2 or BC3
+  (1.44), or the floats of the four float formats (1.45). An 8888 texel takes 64 bits, each channel in 16 of
   them, so that the four texels of a bilinear sample come out of memory
   ready to mix.
 - A compressed image is kept in its blocks on a device that samples them
@@ -493,8 +493,25 @@ Of textures:
   time: correct, and slower than the form that matches - so a program that
   wants the fast path asks the device what it keeps and compiles the form
   for it. Before 1.44 such a draw was painted `shader.missing`.
-- A 3D texture has one level and a depth that is a power of two. There are
-  no cube arrays and no ETC.
+- A 3D texture has levels of its own and any depth since 1.46: a level is
+  half as deep as the one before it, never below one slice, and each slice
+  carries the whole of its own pyramid - so a level past the first leaves
+  the slices past its depth unread, about a sixth of the memory wasted at
+  the deepest level. A sampler's own 3D path (`texture.sampleVolumeBy`) is
+  not wired to a form yet and still reads the whole depth at every level.
+- An array of cubes since 1.46: a view of type `cube_array` over a
+  multiple of six layers, read by a form of
+  `shader.FixedKind.texture_cube_array` at four coordinates - the
+  direction and which cube, the nearest there is
+  (`PhysicalDeviceFeatures.cube_arrays`, the cores). The V3D has no QPU
+  program that reads a fourth coordinate, so it refuses the view and the
+  pipeline, and such a draw goes to the cores.
+- ETC2 and EAC since 1.46, unpacked into 8888 as they are copied in on
+  every device (`etc2_textures`), every mode of the format decoded:
+  individual, differential, T, H, planar, punchthrough alpha, and EAC's
+  alpha and 11-bit channels. No sampler reads such a block where it lies,
+  so the image takes the memory of its texels and cannot be copied out of.
+  There is no ETC1 and no ASTC.
 - The compressed formats are the four BC ones: no BC4 to BC7, no BC1 with
   1-bit alpha told apart from the opaque one past the punch-through rule,
   and nothing compresses - a blit or a copy into a compressed image from

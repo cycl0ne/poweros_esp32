@@ -3207,10 +3207,12 @@ facet.library/WaitForFences
 	SAMPLED and COLOR_ATTACHMENT is not made: a texture and an attachment lie
 	differently.
 
-	A SAMPLED image may have up to 256 layers, or be 3D, of type `3d`, as deep
-	as a power of two up to 256, with one level. IMAGE_CREATE_CUBE_COMPATIBLE
-	says a view of type cube will be made: of a square image of 6 layers or
-	more.
+	A SAMPLED image may have up to 256 layers, or be 3D, of type `3d`, of any
+	depth up to 256 and with levels of its own (since 1.46): a level is half
+	as deep as the one before it, and no less than one slice deep, each slice
+	carrying the whole of its own pyramid. IMAGE_CREATE_CUBE_COMPATIBLE says a
+	view of type cube, or of cube_array, will be made: of a square image of 6
+	layers or more, a multiple of six of them for an array of cubes.
 
 	A SAMPLED image may be of BC1, BC2, BC3, R16G16B16A16_SFLOAT,
 	R32G32B32A32_SFLOAT, B10G11R11_UFLOAT or E5B9G9R9_UFLOAT, in optimal tiling.
@@ -3222,6 +3224,11 @@ facet.library/WaitForFences
 	no more. A device without the feature keeps it as R8G8B8A8, unpacked as it
 	is copied in: it takes that one's memory, and there is no copying it out,
 	nor another image into it, by CmdCopyImage.
+
+	It may also be of ETC2 or EAC - ETC2_R8G8B8, ETC2_R8G8B8A1, ETC2_R8G8B8A8,
+	EAC_R11 or EAC_R11G11 - which no sampler of this library reads: such an
+	image is always kept as R8G8B8A8, its blocks unpacked as they are copied
+	in (`PhysicalDeviceFeatures.etc2_textures`, since 1.46).
 
 	A compressed one - BC1, BC2, BC3 - is kept in its blocks on a device that
 	samples them (`PhysicalDeviceFeatures.kept_compressed`, since 1.44): an
@@ -3293,6 +3300,11 @@ facet.library/WaitForFences
 	`2d_array` it is the layers asked for, for `shader.FixedKind.texture_array`;
 	`cube` is 6 layers of an image made IMAGE_CREATE_CUBE_COMPATIBLE, for
 	`texture_cube`, and `3d` the whole of a 3D image, for `texture_3d`.
+
+	Of type `cube_array` it is as many cubes as its layers divided by six, of
+	such an image, for `texture_cube_array`: its layers are a multiple of six
+	and its first layer begins a cube, so `base_array_layer` is a multiple of
+	six as well (`PhysicalDeviceFeatures.cube_arrays`, since 1.46).
 
    CONTEXT
 	- Waits: no.

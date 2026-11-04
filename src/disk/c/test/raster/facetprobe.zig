@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.12 (04.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.13 (04.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -155,9 +155,9 @@ const Probe = struct {
         return .{ held, @ptrCast(data.?) };
     }
 
-    /// An image as `info` says, bound into memory with `wanted`, and a view
-    /// of it; `null` for either where the call refused.
-    fn image(probe: *Probe, info: facet.ImageCreateInfo, wanted: u32) ?struct { *facet.Image, *facet.ImageView } {
+    /// An image as `info` says, bound into memory with `wanted`, and no
+    /// view of it: what a shape takes a view of more ways than one.
+    fn bound(probe: *Probe, info: facet.ImageCreateInfo, wanted: u32) ?*facet.Image {
         const fb = probe.fb;
         const device = probe.device.?;
         var made: ?*facet.Image = null;
@@ -167,10 +167,23 @@ const Probe = struct {
         fb.GetImageMemoryRequirements(device, held, &needs);
         const memory = probe.block(needs, wanted) orelse return null;
         if (fb.BindImageMemory(device, held, memory, 0) != .success) return null;
+        return held;
+    }
+
+    /// A view as `info` says, kept; null where the call refused it.
+    fn viewed(probe: *Probe, info: facet.ImageViewCreateInfo) ?*facet.ImageView {
+        var made: ?*facet.ImageView = null;
+        if (probe.fb.CreateImageView(probe.device.?, &info, &made) != .success) return null;
+        return keep(&probe.views, made);
+    }
+
+    /// An image as `info` says, bound into memory with `wanted`, and a view
+    /// of it; `null` for either where the call refused.
+    fn image(probe: *Probe, info: facet.ImageCreateInfo, wanted: u32) ?struct { *facet.Image, *facet.ImageView } {
+        const held = probe.bound(info, wanted) orelse return null;
         const aspect: u32 = if (info.format == .d16_unorm) facet.IMAGE_ASPECT_DEPTH else facet.IMAGE_ASPECT_COLOR;
-        var view: ?*facet.ImageView = null;
-        if (fb.CreateImageView(device, &.{ .image = held, .format = info.format, .subresource_range = .{ .aspect_mask = aspect } }, &view) != .success) return null;
-        return .{ held, keep(&probe.views, view) orelse return null };
+        const view = probe.viewed(.{ .image = held, .format = info.format, .subresource_range = .{ .aspect_mask = aspect } }) orelse return null;
+        return .{ held, view };
     }
 
     /// The bytes of an image the program reads directly, and its pitch.
@@ -2461,6 +2474,217 @@ fn floatChecks(probe: *Probe) void {
     }
 }
 
+// --- 1.46: the other texture shapes ------------------------------------------
+
+/// A quad over a texture of layers: an array of cubes, whose instance is the
+/// face and every sixth of it the cube, and a plain texture of 8888 - which
+/// is what an ETC2 one is kept as, unpacked on the copy in.
+const Shapes = struct {
+    fn flat(vertices: *const facet.shader.Vertices) callconv(.c) void {
+        for (0..vertices.count) |k| {
+            const p = vertices.input(@intCast(k), 0);
+            const uv = vertices.input(@intCast(k), 1);
+            vertices.output(@intCast(k))[0..6].* = .{ p[0], p[1], p[2], 1, uv[0], uv[1] };
+        }
+    }
+
+    fn cubes(vertices: *const facet.shader.Vertices) callconv(.c) void {
+        for (0..vertices.count) |k| {
+            const p = vertices.input(@intCast(k), 0);
+            const a = p[0];
+            const b = p[1];
+            const towards: [3]f32 = switch (vertices.instance % 6) {
+                0 => .{ 1, -b, -a },
+                1 => .{ -1, -b, a },
+                2 => .{ a, 1, b },
+                3 => .{ a, -1, -b },
+                4 => .{ a, -b, 1 },
+                else => .{ -a, -b, -1 },
+            };
+            vertices.output(@intCast(k))[0..8].* = .{ p[0], p[1], p[2], 1, towards[0], towards[1], towards[2], @floatFromInt(vertices.instance / 6) };
+        }
+    }
+
+    const entries = [_]facet.shader.Entry{
+        facet.shader.vertex("main", &flat, 2),
+        facet.shader.fixedFragment("main", .{ .kind = .texture, .sampling = .{ .filter = .nearest, .address = .clamp } }),
+        facet.shader.vertex("cubes", &cubes, 4),
+        facet.shader.fixedFragment("cubes", .{ .kind = .texture_cube_array, .sampling = .{ .filter = .nearest, .address = .clamp } }),
+    };
+    const code = facet.shader.Code{ .entry_count = entries.len, .entries = &entries };
+
+    /// A face's colour: sixteen apart in red, so that the faces of the two
+    /// cubes are told apart.
+    fn faceColor(layer: u32) u32 {
+        return 0xFF00_0000 | (16 + layer * 16) << 16;
+    }
+};
+
+/// The shapes of 1.46: a 3D texture with levels of its own and a depth that
+/// is not a power of two, an array of cubes sampled one cube at a time, and
+/// an ETC2 texture unpacked as it is copied in.
+fn shapeChecks(probe: *Probe) void {
+    const fb = probe.fb;
+    const device = probe.device.?;
+    defer probe.give();
+    const arrays = probe.features.cube_arrays;
+    const sampled = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST;
+    const across = 4;
+    const square = facet.Extent3D{ .width = across, .height = across };
+
+    // ETC2 is taken on every device, sampled and copied into but never read
+    // back: the blocks are gone once they are unpacked.
+    probe.check(probe.features.etc2_textures, "ETC2 and EAC are taken, unpacked as they are copied in");
+    var properties: facet.FormatProperties = undefined;
+    fb.GetPhysicalDeviceFormatProperties(probe.physical, .etc2_r8g8b8a8_unorm_block, &properties);
+    const features = properties.optimal_tiling_features;
+    probe.check(features & facet.FORMAT_FEATURE_SAMPLED_IMAGE != 0 and features & facet.FORMAT_FEATURE_TRANSFER_DST != 0 and
+        features & facet.FORMAT_FEATURE_TRANSFER_SRC == 0, "an ETC2 format is sampled and copied into, and not copied out of");
+
+    // A 3D texture of six slices with five levels: each slice carries its
+    // own pyramid, and a level has half the slices of the one before it.
+    const volume = probe.bound(.{ .image_type = .@"3d", .format = .r8g8b8a8_unorm, .extent = .{ .width = across, .height = across, .depth = 6 }, .mip_levels = 3, .usage = sampled }, 0) orelse
+        return probe.check(false, "a 3D texture of six slices with three levels");
+    probe.check(probe.viewed(.{ .image = volume, .format = .r8g8b8a8_unorm, .view_type = .@"3d" }) != null, "a 3D texture may have levels of its own, and a view of the whole of it");
+    var needs: facet.MemoryRequirements = undefined;
+    fb.GetImageMemoryRequirements(device, volume, &needs);
+    probe.check(needs.size != 0, "its memory holds every slice's levels");
+    // And a depth that is not a power of two.
+    probe.check(probe.bound(.{ .image_type = .@"3d", .format = .r8g8b8a8_unorm, .extent = .{ .width = across, .height = across, .depth = 3 }, .usage = sampled }, 0) != null, "a 3D texture's depth need not be a power of two");
+
+    // Two cubes one after another: twelve layers of a square image.
+    const stack = probe.bound(.{ .format = .r8g8b8a8_unorm, .flags = facet.IMAGE_CREATE_CUBE_COMPATIBLE, .extent = square, .array_layers = 12, .usage = sampled }, 0) orelse
+        return probe.check(false, "a texture of twelve layers, of cubes");
+    const whole_cubes = facet.ImageViewCreateInfo{ .image = stack, .format = .r8g8b8a8_unorm, .view_type = .cube_array };
+    const stack_view = probe.viewed(whole_cubes);
+    probe.check((stack_view != null) == arrays, if (arrays) "a view of cubes one after another" else "a view of cubes one after another is refused here");
+    // Whatever the device, a view of part of a cube is not one of cubes.
+    probe.check(probe.viewed(.{ .image = stack, .format = .r8g8b8a8_unorm, .view_type = .cube_array, .subresource_range = .{ .layer_count = 4 } }) == null, "layers that are not a multiple of six are refused");
+    probe.check(probe.viewed(.{ .image = stack, .format = .r8g8b8a8_unorm, .view_type = .cube_array, .subresource_range = .{ .base_array_layer = 2, .layer_count = 6 } }) == null, "and a first layer that does not begin a cube");
+
+    const etc = probe.bound(.{ .format = .etc2_r8g8b8a8_unorm_block, .extent = square, .usage = sampled }, 0) orelse
+        return probe.check(false, "a texture of 4 by 4 of ETC2 with alpha");
+    const etc_view = probe.viewed(.{ .image = etc, .format = .etc2_r8g8b8a8_unorm_block }) orelse
+        return probe.check(false, "a view of it");
+    fb.GetImageMemoryRequirements(device, etc, &needs);
+    probe.check(needs.size >= across * across * 4, "its memory is the texels' it unpacks into, not the block's");
+
+    // Which slot the picture's own memory lands in: the textures' took theirs.
+    var slot: usize = 0;
+    for (probe.memories, 0..) |each, k| if (each == null) {
+        slot = k;
+        break;
+    };
+    const shown = probe.image(.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = side, .height = side }, .tiling = .linear, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, facet.MEMORY_PROPERTY_HOST_VISIBLE) orelse
+        return probe.check(false, "a picture to draw them into");
+    const shown_memory = probe.memories[slot].?;
+
+    // The twelve faces, each of one colour, and one ETC2 block after them:
+    // eight bytes of EAC alpha that clamp to opaque, and eight of colour in
+    // the individual mode - the first subblock red and the second blue.
+    const texels, const texel_bytes = probe.buffer(1024, facet.BUFFER_USAGE_TRANSFER_SRC) orelse
+        return probe.check(false, "a buffer the texels come from");
+    for (0..12) |layer| {
+        const color = Shapes.faceColor(@intCast(layer));
+        for (0..16) |k| texel_bytes[layer * 64 + k * 4 ..][0..4].* = .{ @truncate(color >> 16), @truncate(color >> 8), @truncate(color), 0xFF };
+    }
+    const block_at = 12 * 64;
+    texel_bytes[block_at..][0..16].* = .{ 0xFF, 0x10, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xF0, 0x00, 0x0F, 0x00, 0x00, 0x00, 0x00, 0x00 };
+
+    var faces: [12]facet.BufferImageCopy = undefined;
+    for (&faces, 0..) |*face, k| face.* = .{ .buffer_offset = k * 64, .image_subresource = .{ .base_array_layer = @intCast(k) }, .image_extent = square };
+    const block = facet.BufferImageCopy{ .buffer_offset = block_at, .image_extent = square };
+    const commands = probe.record() orelse return probe.check(false, "a recording");
+    fb.CmdCopyBufferToImage(commands, texels, stack, .general, 12, &faces);
+    fb.CmdCopyBufferToImage(commands, texels, etc, .general, 1, @ptrCast(&block));
+    if (!probe.submit()) return probe.check(false, "the copies into the textures submitted");
+
+    var module: ?*facet.ShaderModule = null;
+    if (fb.CreateShaderModule(device, &.{ .code = &Shapes.code }, &module) != .success) return probe.check(false, "the shader module");
+    _ = Probe.keep(&probe.modules, module);
+    const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .sampled_image, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    if (fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &set_layout) != .success) return probe.check(false, "a set layout of a sampled image");
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    var layout: ?*facet.PipelineLayout = null;
+    if (fb.CreatePipelineLayout(device, &.{ .set_layout_count = 1, .set_layouts = @ptrCast(&set_layout) }, &layout) != .success) return probe.check(false, "the pipeline layout");
+    _ = Probe.keep(&probe.layouts, layout);
+    var pool: ?*facet.DescriptorPool = null;
+    if (fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool) != .success) return probe.check(false, "a descriptor pool");
+    defer fb.DestroyDescriptorPool(device, pool);
+    var sets: [1]?*facet.DescriptorSet = undefined;
+    if (fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &sets) != .success) return probe.check(false, "a descriptor set");
+
+    const pass = probe.renderPass(.{
+        .attachment_count = 1,
+        .attachments = @ptrCast(&facet.AttachmentDescription{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .color_attachment_optimal }),
+        .subpass_count = 1,
+        .subpasses = @ptrCast(&facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal }) }),
+    }) orelse return probe.check(false, "a pass to draw them in");
+    const onto = probe.framebuffer(pass, &.{shown[1]}) orelse return probe.check(false, "a framebuffer for it");
+    const attributes = [2]facet.VertexInputAttributeDescription{
+        .{ .location = 0, .binding = 0, .format = .r32g32b32_sfloat },
+        .{ .location = 1, .binding = 0, .format = .r32g32_sfloat, .offset = 12 },
+    };
+    const of_eight = pipelineOf(probe, pass, module.?, layout.?, .{ .attributes = &attributes, .stride = 20 }) orelse
+        return probe.check(false, "a pipeline whose form samples 8888");
+    const of_cubes = pipelineOf(probe, pass, module.?, layout.?, .{ .attributes = &attributes, .stride = 20, .name = "cubes" });
+    probe.check((of_cubes != null) == arrays, if (arrays) "a pipeline whose form samples a cube of an array" else "a form that samples a cube of an array is refused here");
+
+    const vertex_buffer, const vertex_bytes = probe.buffer(256, facet.BUFFER_USAGE_VERTEX_BUFFER) orelse
+        return probe.check(false, "a vertex buffer");
+    const quad = [6][5]f32{
+        .{ -1, -1, 0.5, 0, 0 },
+        .{ 1, -1, 0.5, 1, 0 },
+        .{ -1, 1, 0.5, 0, 1 },
+        .{ -1, 1, 0.5, 0, 1 },
+        .{ 1, -1, 0.5, 1, 0 },
+        .{ 1, 1, 0.5, 1, 1 },
+    };
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(quad))], std.mem.asBytes(&quad));
+    const offset: u64 = 0;
+    const clear = [1]facet.ClearValue{.{ .color = .{ .float32 = .{ 0, 1, 0, 1 } } }};
+    const area = facet.Rect2D{ .extent = .{ .width = side, .height = side } };
+    const pixels, const pitch = probe.mapped(shown[0], shown_memory) orelse return probe.check(false, "the picture read back");
+
+    const draw = struct {
+        fn draw(on: *Probe, view: *facet.ImageView, pipeline: *facet.Pipeline, instance: u32, held: *facet.PipelineLayout, into: *facet.RenderPass, frame: *facet.Framebuffer, kept: *[1]?*facet.DescriptorSet, vertices: *facet.Buffer, first: *const u64, values: *const [1]facet.ClearValue, where: facet.Rect2D) bool {
+            const f = on.fb;
+            const info = facet.DescriptorImageInfo{ .image_view = view };
+            const write = facet.WriteDescriptorSet{ .dst_set = kept[0].?, .dst_binding = 0, .descriptor_type = .sampled_image, .descriptor_count = 1, .image_info = @ptrCast(&info) };
+            f.UpdateDescriptorSets(on.device.?, 1, @ptrCast(&write), 0, null);
+            const recording = on.record() orelse return false;
+            f.CmdBeginRenderPass(recording, &.{ .render_pass = into, .framebuffer = frame, .render_area = where, .clear_value_count = 1, .clear_values = values }, .@"inline");
+            f.CmdBindPipeline(recording, .graphics, pipeline);
+            f.CmdBindDescriptorSets(recording, .graphics, held, 0, 1, @ptrCast(kept), 0, null);
+            f.CmdBindVertexBuffers(recording, 0, 1, @ptrCast(&vertices), @ptrCast(first));
+            f.CmdDraw(recording, 6, 1, 0, instance);
+            f.CmdEndRenderPass(recording);
+            return on.submit();
+        }
+    }.draw;
+
+    // An ETC2 block decoded as it was copied in: red on the left of the
+    // picture and blue on the right, each channel the +2 of table 0.
+    if (!draw(probe, etc_view, of_eight, 0, layout.?, pass, onto, &sets, vertex_buffer, &offset, &clear, area)) return probe.check(false, "the ETC2 frame submitted");
+    const quarter = side / 4;
+    const left = pixelAt(pixels, pitch, quarter, quarter);
+    const right = pixelAt(pixels, pitch, side - quarter, side - quarter);
+    if (left == 0xFFFF_0202 and right == 0xFF02_02FF) probe.check(true, "an ETC2 block is unpacked as it is copied in, and sampled as 8888") else probe.checkEqual(0xFFFF_0202_FF02_02FF, @as(u64, left) << 32 | right, "an ETC2 block is unpacked as it is copied in, and sampled as 8888");
+
+    // And each cube of the array, the fourth coordinate saying which: the
+    // first face of the first cube, and of the second.
+    if (arrays) {
+        for ([3]struct { u32, u32 }{ .{ 0, 0 }, .{ 6, 6 }, .{ 12, 6 } }) |one| {
+            const instance, const layer = one;
+            if (!draw(probe, stack_view.?, of_cubes.?, instance, layout.?, pass, onto, &sets, vertex_buffer, &offset, &clear, area)) return probe.check(false, "the cube frame submitted");
+            const middle = pixelAt(pixels, pitch, side / 2, side / 2);
+            const name: [*:0]const u8 = if (instance == 0) "the first face of the first cube of the array" else if (instance == 6) "the first face of the second cube" else "a cube past the last reads as the last";
+            if (middle == Shapes.faceColor(layer)) probe.check(true, name) else probe.checkEqual(Shapes.faceColor(layer), middle, name);
+        }
+    }
+}
+
 fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical: *facet.PhysicalDevice, quiet: bool) struct { u32, u32 } {
     var properties: facet.PhysicalDeviceProperties = undefined;
     fb.GetPhysicalDeviceProperties(physical, &properties);
@@ -2486,6 +2710,7 @@ fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical
     edgeChecks(&probe);
     blockChecks(&probe);
     floatChecks(&probe);
+    shapeChecks(&probe);
     return .{ probe.passed, probe.failed };
 }
 

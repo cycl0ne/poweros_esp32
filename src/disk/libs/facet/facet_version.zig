@@ -349,9 +349,35 @@ pub const LIBRARY_VERSION = 1;
 /// clear of it, and a storage image of a float format are refused or
 /// unpacked as before. The V3D's TMU is fed unpacked texels, so there an
 /// image is unpacked into 8888 as it always was.
+/// 46: the other texture shapes. A 3D image may have levels of its own and
+/// a depth that is not a power of two: a level is half as deep as the one
+/// before it and never less than one slice (`texture.Texture.slicesAt`),
+/// each slice carrying the whole of its own pyramid, so the layout is the
+/// layered one and a level past the first leaves the slices past its depth
+/// unread - about a sixth of the memory wasted at the deepest level, for no
+/// new layout. A copy into a level of such an image addresses that level's
+/// slices, and a sample picks the level from the quad's step as a 2D one
+/// does. A view may be of cubes one after another, of type `cube_array`
+/// over a multiple of six layers of an image made CUBE_COMPATIBLE, its
+/// first layer beginning a cube: a form of `shader.FixedKind`
+/// `texture_cube_array` reads it at four coordinates - the direction and
+/// then which cube, the nearest there is, held inside the array
+/// (`PhysicalDeviceFeatures.cube_arrays`, the cores;
+/// `texture.Texture.sampleCubeIn`, `cubeNear`). No QPU program reads a
+/// fourth coordinate, so the V3D refuses the view and the pipeline, and
+/// such a draw goes to the cores. ETC2 and EAC are taken as well -
+/// `etc2_r8g8b8_unorm_block`, `etc2_r8g8b8a1_unorm_block`,
+/// `etc2_r8g8b8a8_unorm_block`, `eac_r11_unorm_block` and
+/// `eac_r11g11_unorm_block`, Vulkan's `textureCompressionETC2` - unpacked
+/// into 8888 as they are copied in on every device, every mode of the
+/// format decoded from the specification: individual, differential, T, H,
+/// planar, the punchthrough alpha, and EAC's alpha and 11-bit channels. No
+/// sampler of this library reads such a block where it lies, so an ETC2
+/// image is never kept in its blocks and never copied out of, which
+/// GetPhysicalDeviceFormatProperties says.
 /// What stays: `fifo` is the one present mode, there being no way to ask a
 /// display to show a buffer before its next frame; one queue family of one
 /// queue; a counter of 32 bits, for want of a 64-bit atomic on every
 /// machine the library runs on; and no point mode in tessellation, there
 /// being no point rasterization at all.
-pub const LIBRARY_REVISION = 45;
+pub const LIBRARY_REVISION = 46;

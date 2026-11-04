@@ -41,6 +41,11 @@ const ImageView = _image.ImageView;
 /// `cube` is 6 layers of an image made IMAGE_CREATE_CUBE_COMPATIBLE, for
 /// `texture_cube`, and `3d` the whole of a 3D image, for `texture_3d`.
 ///
+/// Of type `cube_array` it is as many cubes as its layers divided by six, of
+/// such an image, for `texture_cube_array`: its layers are a multiple of six
+/// and its first layer begins a cube, so `base_array_layer` is a multiple of
+/// six as well (`PhysicalDeviceFeatures.cube_arrays`, since 1.46).
+///
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no.
@@ -79,6 +84,9 @@ pub fn CreateImageView(base: *FacetBase, device: *facet.Device, info: *const fac
         .@"2d" => if (layers != 1 or image.volume) return .error_format_not_supported,
         .@"2d_array" => if (image.volume) return .error_format_not_supported,
         .cube => if (!image.cube or layers != 6) return .error_format_not_supported,
+        // Cubes one after another: six layers to each, and the first layer
+        // of the view is the first face of a cube (since 1.46).
+        .cube_array => if (!image.device.physical.features.cube_arrays or !image.cube or layers % 6 != 0 or range.base_array_layer % 6 != 0) return .error_format_not_supported,
         .@"3d" => if (!image.volume or range.base_array_layer != 0 or layers != image.layers) return .error_format_not_supported,
         else => return .error_format_not_supported,
     }

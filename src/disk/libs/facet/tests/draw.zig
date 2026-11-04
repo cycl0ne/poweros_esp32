@@ -4489,6 +4489,25 @@ const LayerScene = struct {
         }
     }
 
+    /// Which cube as well: the instance is the face, and the cube every
+    /// sixth of it.
+    fn cubeArray(vertices: *const shader.Vertices) callconv(.c) void {
+        for (0..vertices.count) |k| {
+            const p = vertices.input(@intCast(k), 0);
+            const a = p[0];
+            const b = p[1];
+            const towards: [3]f32 = switch (vertices.instance % 6) {
+                0 => .{ 1, -b, -a },
+                1 => .{ -1, -b, a },
+                2 => .{ a, 1, b },
+                3 => .{ a, -1, -b },
+                4 => .{ a, -b, 1 },
+                else => .{ -a, -b, -1 },
+            };
+            vertices.output(@intCast(k))[0..8].* = .{ p[0], p[1], 0, 1, towards[0], towards[1], towards[2], @floatFromInt(vertices.instance / 6) };
+        }
+    }
+
     fn volume(vertices: *const shader.Vertices) callconv(.c) void {
         for (0..vertices.count) |k| {
             const p = vertices.input(@intCast(k), 0);
@@ -4504,6 +4523,8 @@ const LayerScene = struct {
         shader.fixedFragment("array", .{ .kind = .texture_array, .sampling = nearest }),
         shader.vertex("cube", &cube, 3),
         shader.fixedFragment("cube", .{ .kind = .texture_cube, .sampling = nearest }),
+        shader.vertex("cubes", &cubeArray, 4),
+        shader.fixedFragment("cubes", .{ .kind = .texture_cube_array, .sampling = nearest }),
         shader.vertex("volume", &volume, 3),
         shader.fixedFragment("volume", .{ .kind = .texture_3d, .sampling = nearest }),
     };
@@ -4530,8 +4551,6 @@ test "textures of layers: arrays, cube maps, 3D, copied a layer at a time; compr
 
     const refused = [_]facet.ImageCreateInfo{
         .{ .format = .r8g8b8a8_unorm, .extent = side16, .array_layers = 2, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT },
-        .{ .format = .r8g8b8a8_unorm, .image_type = .@"3d", .extent = .{ .width = 16, .height = 16, .depth = 3 }, .usage = usage },
-        .{ .format = .r8g8b8a8_unorm, .image_type = .@"3d", .extent = .{ .width = 16, .height = 16, .depth = 4 }, .mip_levels = 2, .usage = usage },
         .{ .format = .r8g8b8a8_unorm, .flags = facet.IMAGE_CREATE_CUBE_COMPATIBLE, .extent = side16, .array_layers = 4, .usage = usage },
         .{ .format = .r8g8b8a8_unorm, .flags = facet.IMAGE_CREATE_CUBE_COMPATIBLE, .extent = .{ .width = 16, .height = 8 }, .array_layers = 6, .usage = usage },
         .{ .format = .r8g8b8a8_unorm, .extent = side16, .array_layers = 257, .usage = usage },
@@ -4543,11 +4562,25 @@ test "textures of layers: arrays, cube maps, 3D, copied a layer at a time; compr
         try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &info, &none));
     }
 
+    // A 3D image's depth may be any number since 1.46, and it may have
+    // levels: each slice's own, with half the slices at each level.
+    for ([_]facet.ImageCreateInfo{
+        .{ .format = .r8g8b8a8_unorm, .image_type = .@"3d", .extent = .{ .width = 16, .height = 16, .depth = 3 }, .usage = usage },
+        .{ .format = .r8g8b8a8_unorm, .image_type = .@"3d", .extent = .{ .width = 16, .height = 16, .depth = 4 }, .mip_levels = 2, .usage = usage },
+        .{ .format = .r8g8b8a8_unorm, .image_type = .@"3d", .extent = .{ .width = 16, .height = 16, .depth = 6 }, .mip_levels = 5, .usage = usage },
+    }) |info| {
+        var made: ?*facet.Image = null;
+        try testing.expectEqual(facet.Result.success, fb.CreateImage(device, &info, &made));
+        fb.DestroyImage(device, made);
+    }
+
     const array_image = try bench.bareImage(.{ .format = .r8g8b8a8_unorm, .extent = side16, .array_layers = 3, .usage = usage | facet.IMAGE_USAGE_TRANSFER_SRC }, false);
     const cube_image = try bench.bareImage(.{ .format = .r8g8b8a8_unorm, .flags = facet.IMAGE_CREATE_CUBE_COMPATIBLE, .extent = side16, .array_layers = 6, .usage = usage }, false);
     const volume_image = try bench.bareImage(.{ .format = .r8g8b8a8_unorm, .image_type = .@"3d", .extent = .{ .width = 16, .height = 16, .depth = 4 }, .usage = usage }, false);
     const into_image = try bench.bareImage(.{ .format = .r8g8b8a8_unorm, .extent = side16, .array_layers = 2, .usage = usage }, false);
+    const cubes_image = try bench.bareImage(.{ .format = .r8g8b8a8_unorm, .flags = facet.IMAGE_CREATE_CUBE_COMPATIBLE, .extent = side16, .array_layers = 12, .usage = usage }, false);
     const packed_image = try bench.bareImage(.{ .format = .bc1_rgba_unorm_block, .extent = side16, .usage = usage }, false);
+    const etc_image = try bench.bareImage(.{ .format = .etc2_r8g8b8a8_unorm_block, .extent = .{ .width = 4, .height = 4 }, .usage = usage }, false);
     const half_image = try bench.bareImage(.{ .format = .r16g16b16a16_sfloat, .extent = .{ .width = 4, .height = 4 }, .usage = usage }, false);
 
     // What a view of each may be.
@@ -4559,6 +4592,11 @@ test "textures of layers: arrays, cube maps, 3D, copied a layer at a time; compr
         .{ .image = cube_image, .format = .r8g8b8a8_unorm, .view_type = .cube, .subresource_range = .{ .layer_count = 5 } },
         .{ .image = volume_image, .format = .r8g8b8a8_unorm },
         .{ .image = packed_image, .format = .r8g8b8a8_unorm },
+        // An array of cubes wants an image of cubes, a multiple of six
+        // layers of it, and a first layer that begins one.
+        .{ .image = array_image, .format = .r8g8b8a8_unorm, .view_type = .cube_array },
+        .{ .image = cubes_image, .format = .r8g8b8a8_unorm, .view_type = .cube_array, .subresource_range = .{ .layer_count = 4 } },
+        .{ .image = cubes_image, .format = .r8g8b8a8_unorm, .view_type = .cube_array, .subresource_range = .{ .base_array_layer = 2, .layer_count = 6 } },
     };
     for (not_views) |info| {
         var none: ?*facet.ImageView = null;
@@ -4569,12 +4607,15 @@ test "textures of layers: arrays, cube maps, 3D, copied a layer at a time; compr
     const cube_view = try bench.viewOf(.{ .image = cube_image, .format = .r8g8b8a8_unorm, .view_type = .cube });
     const volume_view = try bench.viewOf(.{ .image = volume_image, .format = .r8g8b8a8_unorm, .view_type = .@"3d" });
     const into_view = try bench.viewOf(.{ .image = into_image, .format = .r8g8b8a8_unorm, .subresource_range = .{ .base_array_layer = 1, .layer_count = 1 } });
+    const cubes_view = try bench.viewOf(.{ .image = cubes_image, .format = .r8g8b8a8_unorm, .view_type = .cube_array });
+    const second_view = try bench.viewOf(.{ .image = cubes_image, .format = .r8g8b8a8_unorm, .view_type = .cube_array, .subresource_range = .{ .base_array_layer = 6, .layer_count = 6 } });
     const packed_view = try bench.viewOf(.{ .image = packed_image, .format = .bc1_rgba_unorm_block });
+    const etc_view = try bench.viewOf(.{ .image = etc_image, .format = .etc2_r8g8b8a8_unorm_block });
     const half_view = try bench.viewOf(.{ .image = half_image, .format = .r16g16b16a16_sfloat });
 
     // Six stacks of texels one after another, the most any image takes.
     const stack_bytes = 16 * 16 * 4;
-    const staging, const staged = try bench.buffer(stack_bytes * 6 + 256, facet.BUFFER_USAGE_TRANSFER_SRC);
+    const staging, const staged = try bench.buffer(stack_bytes * 6 + 288, facet.BUFFER_USAGE_TRANSFER_SRC);
     for (0..6) |layer| for (0..16) |y| for (0..16) |x| {
         staged[layer * stack_bytes + (y * 16 + x) * 4 ..][0..4].* = LayerScene.texel(layer, x, y);
     };
@@ -4589,12 +4630,27 @@ test "textures of layers: arrays, cube maps, 3D, copied a layer at a time; compr
     }
     const halves_at = blocks_at + 128;
     for (0..16) |k| staged[halves_at + k * 8 ..][0..8].* = .{ 0x00, 0x3C, 0x00, 0x38, 0x00, 0x40, 0x00, 0x3C };
+    // One ETC2 block with alpha: eight bytes of EAC alpha - a base of 255,
+    // a multiplier of 1 and every index 7, which clamps to opaque - and
+    // eight of colour in the individual mode, the first subblock red and
+    // the second blue, every index 0, which is the +2 of table 0.
+    const etc_at = halves_at + 128;
+    staged[etc_at..][0..16].* = .{ 0xFF, 0x10, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xF0, 0x00, 0x0F, 0x00, 0x00, 0x00, 0x00, 0x00 };
 
     const whole = facet.BufferImageCopy{ .image_subresource = .{ .layer_count = 3 }, .image_extent = side16 };
     const slices = facet.BufferImageCopy{ .image_extent = .{ .width = 16, .height = 16, .depth = 4 } };
     var faces: [6]facet.BufferImageCopy = undefined;
     for (&faces, 0..) |*face, k| face.* = .{ .buffer_offset = k * stack_bytes, .image_subresource = .{ .base_array_layer = @intCast(k) }, .image_extent = side16 };
     const blocks = facet.BufferImageCopy{ .buffer_offset = blocks_at, .image_extent = side16 };
+    const etc = facet.BufferImageCopy{ .buffer_offset = etc_at, .image_extent = .{ .width = 4, .height = 4 } };
+    // The twelve faces of two cubes: the second cube takes the stacks of
+    // the first backwards, so that its faces are told apart from them.
+    var cubes: [12]facet.BufferImageCopy = undefined;
+    for (&cubes, 0..) |*face, k| face.* = .{
+        .buffer_offset = (if (k < 6) k else 11 - k) * stack_bytes,
+        .image_subresource = .{ .base_array_layer = @intCast(k) },
+        .image_extent = side16,
+    };
     const halves = facet.BufferImageCopy{ .buffer_offset = halves_at, .image_extent = .{ .width = 4, .height = 4 } };
     const layer_copy = facet.ImageCopy{ .src_subresource = .{ .base_array_layer = 2 }, .dst_subresource = .{ .base_array_layer = 1 }, .extent = side16 };
     const read_region = facet.BufferImageCopy{ .image_subresource = .{ .base_array_layer = 1, .layer_count = 2 }, .image_extent = side16 };
@@ -4605,7 +4661,9 @@ test "textures of layers: arrays, cube maps, 3D, copied a layer at a time; compr
     fb.CmdCopyBufferToImage(commands, staging, array_image, .transfer_dst_optimal, 1, @ptrCast(&whole));
     fb.CmdCopyBufferToImage(commands, staging, cube_image, .transfer_dst_optimal, 6, &faces);
     fb.CmdCopyBufferToImage(commands, staging, volume_image, .transfer_dst_optimal, 1, @ptrCast(&slices));
+    fb.CmdCopyBufferToImage(commands, staging, cubes_image, .transfer_dst_optimal, 12, &cubes);
     fb.CmdCopyBufferToImage(commands, staging, packed_image, .transfer_dst_optimal, 1, @ptrCast(&blocks));
+    fb.CmdCopyBufferToImage(commands, staging, etc_image, .transfer_dst_optimal, 1, @ptrCast(&etc));
     fb.CmdCopyBufferToImage(commands, staging, half_image, .transfer_dst_optimal, 1, @ptrCast(&halves));
     fb.CmdCopyImage(commands, array_image, .general, into_image, .general, 1, @ptrCast(&layer_copy));
     fb.CmdCopyImageToBuffer(commands, array_image, .general, read_buffer, 1, @ptrCast(&read_region));
@@ -4677,6 +4735,17 @@ test "textures of layers: arrays, cube maps, 3D, copied a layer at a time; compr
         .{ .run = .{ .view = cube_view, .name = "cube", .instance = 5 }, .layer = 5 },
         .{ .run = .{ .view = volume_view, .name = "volume", .instance = 0 }, .layer = 0 },
         .{ .run = .{ .view = volume_view, .name = "volume", .instance = 3 }, .layer = 3 },
+        // An array of cubes: the instance is the face, and every sixth of
+        // it the cube. The second cube's faces carry the first cube's
+        // stacks backwards.
+        .{ .run = .{ .view = cubes_view, .name = "cubes", .instance = 0 }, .layer = 0 },
+        .{ .run = .{ .view = cubes_view, .name = "cubes", .instance = 4 }, .layer = 4 },
+        .{ .run = .{ .view = cubes_view, .name = "cubes", .instance = 6 }, .layer = 5 },
+        .{ .run = .{ .view = cubes_view, .name = "cubes", .instance = 9 }, .layer = 2 },
+        // Past the last cube: the last.
+        .{ .run = .{ .view = cubes_view, .name = "cubes", .instance = 12 }, .layer = 5 },
+        // A view that begins at the second cube: its cube 0 is that one.
+        .{ .run = .{ .view = second_view, .name = "cubes", .instance = 1 }, .layer = 4 },
     };
     for (layered) |each| {
         try draw(&bench, each.run, layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
@@ -4690,6 +4759,11 @@ test "textures of layers: arrays, cube maps, 3D, copied a layer at a time; compr
     try testing.expectEqual(@as(u32, 0xFF00_00FF), picture.at(56, 56));
     try draw(&bench, .{ .view = half_view, .name = "flat", .instance = 0 }, layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
     try testing.expectEqual(@as(u32, 0xFFFF_80FF), picture.at(32, 32));
+    // An ETC2 block is unpacked as it is copied in, so an 8888 form reads
+    // it: red on the left of the block and blue on the right.
+    try draw(&bench, .{ .view = etc_view, .name = "flat", .instance = 0 }, layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
+    try testing.expectEqual(@as(u32, 0xFFFF_0202), picture.at(8, 8));
+    try testing.expectEqual(@as(u32, 0xFF02_02FF), picture.at(56, 56));
 }
 
 /// A quad over a texture kept in its blocks, drawn through a form for each

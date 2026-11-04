@@ -599,43 +599,72 @@ pub const Texture = struct {
     }
 
     /// A 3D texture's colour at (u, v, r), each 0 to 1 across it.
-    pub fn sampleVolume(texture: *const Texture, sampling: Sampling, u: f32, v: f32, r: f32) u32 {
-        const z = sane(r) * @as(f32, @floatFromInt(texture.layer_count));
-        if (sampling.filter == .nearest) return texture.sampleLayer(sampling, placeIn(sampling.address, @intFromFloat(@floor(z)), texture.layer_count), 0, u, v);
+    pub fn sampleVolume(texture: *const Texture, sampling: Sampling, lod: u32, u: f32, v: f32, r: f32) u32 {
+        const slices = texture.slicesAt(lod);
+        const z = sane(r) * @as(f32, @floatFromInt(slices));
+        if (sampling.filter == .nearest) return texture.sampleLayer(sampling, placeIn(sampling.address, @intFromFloat(@floor(z)), slices), lod, u, v);
         const low = @floor(z - 0.5);
         const first: i32 = @intFromFloat(low);
-        const near = texture.sampleLayer(sampling, placeIn(sampling.address, first, texture.layer_count), 0, u, v);
-        const far = texture.sampleLayer(sampling, placeIn(sampling.address, first + 1, texture.layer_count), 0, u, v);
+        const near = texture.sampleLayer(sampling, placeIn(sampling.address, first, slices), lod, u, v);
+        const far = texture.sampleLayer(sampling, placeIn(sampling.address, first + 1, slices), lod, u, v);
         return mixColors(near, far, z - 0.5 - low);
+    }
+
+    /// The slices a level of a 3D texture has: the one before halved, never
+    /// below one, as Vulkan has a 3D image's depth. A slice is a layer here,
+    /// and a level of a slice lies where that layer's own level lies - so a
+    /// level past the first leaves the layers past its depth unread.
+    /// (Since 1.46.)
+    pub fn slicesAt(texture: *const Texture, lod: u32) u32 {
+        return @max(texture.layer_count >> @intCast(@min(lod, 31)), 1);
     }
 
     /// A cube's colour the way (x, y, z) looks. Filtered, what lies past
     /// a face's edge is read from the face next to it, as a GPU has it.
     pub fn sampleCube(texture: *const Texture, sampling: Sampling, lod: u32, x: f32, y: f32, z: f32) u32 {
+        return texture.sampleCubeIn(sampling, 0, lod, x, y, z);
+    }
+
+    /// The same of one cube of an array: `first` is that cube's first face,
+    /// a multiple of six, and the six after it are its faces. A view of
+    /// `cube_array` carries as many cubes as its layers divided by six
+    /// (`shader.FixedKind.texture_cube_array`). (Since 1.46.)
+    pub fn sampleCubeIn(texture: *const Texture, sampling: Sampling, first: u32, lod: u32, x: f32, y: f32, z: f32) u32 {
         const hit = cubeHit(sane(x), sane(y), sane(z));
         var edged = sampling;
         edged.address = .clamp;
-        if (sampling.filter == .nearest) return texture.sampleLayer(edged, hit.face, lod, hit.u, hit.v);
+        if (sampling.filter == .nearest) return texture.sampleLayer(edged, first + hit.face, lod, hit.u, hit.v);
         const size: i32 = @intCast(texture.width(lod));
         const across = hit.u * @as(f32, @floatFromInt(size)) - 0.5;
         const down = hit.v * @as(f32, @floatFromInt(size)) - 0.5;
         const left: i32 = @intFromFloat(@floor(across));
         const top: i32 = @intFromFloat(@floor(down));
         const part_x = across - @floor(across);
-        const upper = mixColors(texture.cubeTexel(hit.face, lod, left, top), texture.cubeTexel(hit.face, lod, left + 1, top), part_x);
-        const lower = mixColors(texture.cubeTexel(hit.face, lod, left, top + 1), texture.cubeTexel(hit.face, lod, left + 1, top + 1), part_x);
+        const upper = mixColors(texture.cubeTexel(first, hit.face, lod, left, top), texture.cubeTexel(first, hit.face, lod, left + 1, top), part_x);
+        const lower = mixColors(texture.cubeTexel(first, hit.face, lod, left, top + 1), texture.cubeTexel(first, hit.face, lod, left + 1, top + 1), part_x);
         return mixColors(upper, lower, down - @floor(down));
     }
 
-    /// Texel (x, y) of a face, or if that is past its edge, the one of the
-    /// next face in the same direction.
-    fn cubeTexel(texture: *const Texture, face: u32, lod: u32, x: i32, y: i32) u32 {
+    /// Which cube of an array `index` falls on, as `layerNear` picks a
+    /// layer: its first face, a multiple of six. (Since 1.46.)
+    pub fn cubeNear(texture: *const Texture, which: f32) u32 {
+        const cubes = texture.layer_count / 6;
+        if (cubes == 0) return 0;
+        const whole = @floor(sane(which) + 0.5);
+        if (whole < 0) return 0;
+        return @min(@as(u32, @intFromFloat(whole)), cubes - 1) * 6;
+    }
+
+    /// Texel (x, y) of a face of the cube whose first face is `first`, or if
+    /// that is past its edge, the one of the next face of that cube in the
+    /// same direction.
+    fn cubeTexel(texture: *const Texture, first: u32, face: u32, lod: u32, x: i32, y: i32) u32 {
         const size: i32 = @intCast(texture.width(lod));
-        if (x >= 0 and y >= 0 and x < size and y < size) return texture.colorAt(face, lod, @intCast(x), @intCast(y));
+        if (x >= 0 and y >= 0 and x < size and y < size) return texture.colorAt(first + face, lod, @intCast(x), @intCast(y));
         const whole: f32 = @floatFromInt(size);
         const towards = cubeDirection(face, (@as(f32, @floatFromInt(x)) + 0.5) / whole * 2 - 1, (@as(f32, @floatFromInt(y)) + 0.5) / whole * 2 - 1);
         const next = cubeHit(towards[0], towards[1], towards[2]);
-        return texture.colorAt(next.face, lod, placeIn(.clamp, @intFromFloat(@floor(next.u * whole)), texture.width(lod)), placeIn(.clamp, @intFromFloat(@floor(next.v * whole)), texture.width(lod)));
+        return texture.colorAt(first + next.face, lod, placeIn(.clamp, @intFromFloat(@floor(next.u * whole)), texture.width(lod)), placeIn(.clamp, @intFromFloat(@floor(next.v * whole)), texture.width(lod)));
     }
 
     /// The layer of an array `r` falls on: the nearest there is.

@@ -166,6 +166,12 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // float image is unpacked on the copy here as before.
         .kept_compressed = false,
         .kept_floats = false,
+        // No QPU program reads a fourth coordinate, so a cube of an array
+        // is refused here: the view as well as the pipeline.
+        .cube_arrays = false,
+        // ETC2 and EAC are unpacked by the library as they are copied in,
+        // which is the same work on either device.
+        .etc2_textures = true,
         // Its control lists clip in their own way, and it has no depth
         // bounds test: a pipeline that asks for either is refused.
         .depth_clamp = false,
@@ -376,7 +382,9 @@ fn makePipeline(pipeline: *Pipeline) callconv(.c) facet.Result {
     // that samples through a sampler a program that reads it: there is
     // neither yet, so such a pipeline is refused here and drawn on the
     // cores.
-    if (fixed.kind == .none or fixed.discards() or fixed.needsSampler() or pipeline.varyings != fixed.varyings()) return .error_feature_not_present;
+    // Nor is there one for a cube of an array, which reads a fourth
+    // coordinate (since 1.46).
+    if (fixed.kind == .none or fixed.kind == .texture_cube_array or fixed.discards() or fixed.needsSampler() or pipeline.varyings != fixed.varyings()) return .error_feature_not_present;
     return .success;
 }
 

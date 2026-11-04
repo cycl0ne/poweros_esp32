@@ -518,3 +518,83 @@ test "a float texture is kept as its floats and rounded to 8 bits as it is sampl
     shared.putTexels(0, 0, 0, 0, std.mem.asBytes(&bits));
     try testing.expectEqual(@as(u32, 0xFF80_40FF), shared.colorAt(0, 0, 0, 0));
 }
+
+/// A texture of `layers` layers, 4 x 4 with `levels` levels each: every
+/// texel of a level of a layer the colour `stackedColor` gives it.
+fn stacked(memory: []u64, layers: u32, levels: u32) !Texture {
+    var made = try Texture.init(.rgba8888, 4, 4, levels, @ptrCast(memory.ptr));
+    made.layer_count = layers;
+    made.layer_bytes = @intCast(try Texture.bytes(.rgba8888, 4, 4, levels));
+    for (0..layers) |layer| for (0..levels) |lod| {
+        for (0..made.height(@intCast(lod))) |y| for (0..made.width(@intCast(lod))) |x| {
+            made.putLayer(@intCast(layer), @intCast(lod), @intCast(x), @intCast(y), stackedColor(@intCast(layer), @intCast(lod)));
+        };
+    };
+    return made;
+}
+
+/// Sixteen apart in red for the layer and sixty-four in green for the
+/// level, so that a mix of two of them is told from either.
+fn stackedColor(layer: u32, lod: u32) u32 {
+    return 0xFF00_0000 | (layer * 16) << 16 | (lod * 64) << 8;
+}
+
+test "a 3D texture's levels are each slice's own, half the slices at each" {
+    // Six slices of 4 x 4 with two levels: a level of a slice lies where
+    // that layer's own level lies, so the layout is the layered one.
+    var memory: [6 * 32]u64 = undefined;
+    var made = try stacked(&memory, 6, 2);
+    try testing.expectEqual(@as(u32, 6), made.slicesAt(0));
+    try testing.expectEqual(@as(u32, 3), made.slicesAt(1));
+    // Never below one, as Vulkan has a 3D image's depth.
+    try testing.expectEqual(@as(u32, 1), made.slicesAt(4));
+
+    const nearest = texture.Sampling{ .filter = .nearest, .address = .clamp };
+    // r runs 0 to 1 across the slices the level has: a sixth each at the
+    // first level, and a third each at the second.
+    try testing.expectEqual(stackedColor(0, 0), made.sampleVolume(nearest, 0, 0.5, 0.5, 0.05));
+    try testing.expectEqual(stackedColor(3, 0), made.sampleVolume(nearest, 0, 0.5, 0.5, 0.6));
+    try testing.expectEqual(stackedColor(5, 0), made.sampleVolume(nearest, 0, 0.5, 0.5, 0.95));
+    try testing.expectEqual(stackedColor(0, 1), made.sampleVolume(nearest, 1, 0.5, 0.5, 0.2));
+    try testing.expectEqual(stackedColor(2, 1), made.sampleVolume(nearest, 1, 0.5, 0.5, 0.95));
+    // Past either end, held at the edge slice.
+    try testing.expectEqual(stackedColor(0, 0), made.sampleVolume(nearest, 0, 0.5, 0.5, -1));
+    try testing.expectEqual(stackedColor(5, 0), made.sampleVolume(nearest, 0, 0.5, 0.5, 2));
+
+    // A depth that is not a power of two, since 1.46: three slices, whose
+    // second level has one.
+    var odd_memory: [3 * 32]u64 = undefined;
+    var odd = try stacked(&odd_memory, 3, 2);
+    try testing.expectEqual(@as(u32, 3), odd.slicesAt(0));
+    try testing.expectEqual(@as(u32, 1), odd.slicesAt(1));
+    try testing.expectEqual(stackedColor(2, 0), odd.sampleVolume(nearest, 0, 0.5, 0.5, 0.9));
+    try testing.expectEqual(stackedColor(0, 1), odd.sampleVolume(nearest, 1, 0.5, 0.5, 0.9));
+    // Bilinear mixes the two slices round the point, each slice of one
+    // colour: a third of the way through three slices is the middle of the
+    // first two, half of each - a red of 8 between 0 and 16.
+    const smooth = texture.Sampling{ .filter = .bilinear, .address = .clamp };
+    try testing.expectEqual(@as(u32, 0xFF08_0000), odd.sampleVolume(smooth, 0, 0.5, 0.5, 1.0 / 3.0));
+}
+
+test "an array of cubes: a cube of it by its number, and a face of that cube" {
+    // Twelve faces - two cubes - told apart by the colour of each.
+    var memory: [12 * 16]u64 = undefined;
+    var made = try stacked(&memory, 12, 1);
+    // Which cube: rounded to the nearest, held inside the array, and told
+    // as that cube's first face.
+    try testing.expectEqual(@as(u32, 0), made.cubeNear(0));
+    try testing.expectEqual(@as(u32, 0), made.cubeNear(0.4));
+    try testing.expectEqual(@as(u32, 6), made.cubeNear(1.2));
+    try testing.expectEqual(@as(u32, 6), made.cubeNear(7));
+    try testing.expectEqual(@as(u32, 0), made.cubeNear(-3));
+
+    const nearest = texture.Sampling{ .filter = .nearest, .address = .clamp };
+    // Face 0 is +x and face 3 is -y: of the second cube they are the
+    // seventh and the tenth layer.
+    try testing.expectEqual(stackedColor(0, 0), made.sampleCubeIn(nearest, 0, 0, 1, 0, 0));
+    try testing.expectEqual(stackedColor(3, 0), made.sampleCubeIn(nearest, 0, 0, 0, -1, 0));
+    try testing.expectEqual(stackedColor(6, 0), made.sampleCubeIn(nearest, 6, 0, 1, 0, 0));
+    try testing.expectEqual(stackedColor(9, 0), made.sampleCubeIn(nearest, 6, 0, 0, -1, 0));
+    // One cube on its own is the first of them.
+    try testing.expectEqual(stackedColor(0, 0), made.sampleCube(nearest, 0, 1, 0, 0));
+}
