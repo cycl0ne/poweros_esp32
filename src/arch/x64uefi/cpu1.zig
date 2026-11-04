@@ -51,6 +51,11 @@ pub var cores: u32 = 1;
 /// what the machine has, not what is running.
 pub var found: u32 = 1;
 
+/// How many cores the machine's tables named, core 0's included, whether
+/// or not there is state for them all: a machine of this kind commonly has
+/// more than the system runs on, and the boot's line says so.
+pub var in_machine: u32 = 1;
+
 /// The page below the first mebibyte another core starts on, which the
 /// stub found and kept out of memory; the kernel sets it. 0 where the
 /// firmware called none of it free.
@@ -82,8 +87,10 @@ pub fn isUp() bool {
 
 /// The cores the firmware's tables name, the boot core left out, made
 /// cores 1 on - as many as exec keeps state for. Their controller ids are
-/// what starting one wants.
+/// what starting one wants, and how many were named is kept as it was,
+/// since the machine's count and the system's are not the same number.
 pub fn takeCores(ids: []const u32, boot: u32) void {
+    if (ids.len != 0) in_machine = @intCast(ids.len);
     for (ids) |id| {
         if (id == boot) continue;
         if (found == max_cores) break;

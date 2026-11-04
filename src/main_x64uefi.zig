@@ -364,6 +364,11 @@ fn startOthers(sys: *sdk.interface.exec.ExecBase) void {
         }
         note("core %d up (controller %d)", .{ core, cpu.lapic_ids[core] });
     }
+    // What the machine has against what the system took: this architecture
+    // is the first here whose machines commonly have more cores than exec
+    // keeps state for, and a line that said only the four would read as if
+    // the other four were missing.
+    if (cpu1.in_machine > core) note("the machine has %d cores; the system runs on %d", .{ cpu1.in_machine, core });
 }
 
 /// Called from _boot by the stub's hand-over, with the stack set up, .bss

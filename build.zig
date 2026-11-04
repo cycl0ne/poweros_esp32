@@ -370,7 +370,7 @@ pub fn build(b: *std.Build) void {
     const dh0_size_kib = b.option(u32, "dh0-size", "DH0:'s size in KiB, a multiple of 4; the rest of the flash disk is left for partitions made later with C:RDB ADD (default: all of it)") orelse 0;
     const disk_offset_kib = b.option(u32, "disk-offset", "Where the flash disk starts, in KiB: a multiple of 64 (default: 2048)") orelse default_disk_offset_kib;
     const rdb_size_kib = b.option(u32, "rdb-size", "The flash disk's partition table area before DH0:, in KiB, a multiple of 4 and 64 at least: room for more partitions and for file systems kept in the table (default: 64)") orelse default_rdb_size_kib;
-    const cores = b.option(u32, "cores", "How many cores the kernel runs on, 1 or 2 - up to 4 on a RISC-V 64 or AArch64 board (default: what the board's SYSTAG_Cores says)") orelse 0;
+    const cores = b.option(u32, "cores", "How many cores the kernel runs on, 1 or 2 - up to 4 on a RISC-V 64, AArch64 or x86-64 machine (default: what the board's SYSTAG_Cores says)") orelse 0;
     const selftest = b.option(bool, "selftest", "ESP32-P4: the boot task checks the chip and runs test tasks instead of the shell (default: false)") orelse false;
     // Whether the `disk/` tree goes on the images. It is the builder's own
     // files, and a package to hand out is built without them
@@ -1271,7 +1271,7 @@ pub fn build(b: *std.Build) void {
     // kernel is built against: the emulator's default core is older than
     // the architecture's second generation and has neither the instructions
     // the compiler emits for it nor 1 GiB pages.
-    const q35_machine = [_][]const u8{ "qemu-system-x86_64", "-machine", "q35", "-cpu", "max", "-m", "512", "-smp", "4" };
+    const q35_machine = [_][]const u8{ "qemu-system-x86_64", "-machine", "q35", "-cpu", "max", "-m", "512", "-smp", "8" };
     // The system disk and a work disk beside it, as the other two
     // emulated 64-bit machines have them: the firmware starts the kernel
     // off the boot partition, and dos starts from the system disk's DH0:.
