@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.56**, so that a program need not find out by failing. It covers the API.
+1.57**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -198,13 +198,17 @@ is left out:
   cores, and groups run in no order, so two functions writing the same texel
   is for the program to avoid - as it is in Vulkan, there being no barrier
   and no atomic here either.
-- **The formats are a texture's**: `rgba8888`, `rgb565`, and since 1.48 the
-  two smaller ones - an 8888 texel kept in its word, and one byte of red,
-  which takes the colour's red alone. There is no format conversion past
-  that and no `r32` of any kind. A compressed or a float image asked for as
-  a storage image is unpacked to 8888, whatever the device keeps for a
-  sampled one: nothing here writes a texel into a block or makes a float of
-  one.
+- **The formats are a texture's**: `rgba8888`, `rgb565`, the two smaller
+  ones of 1.48 - an 8888 texel kept in its word, and one byte of red, which
+  takes the colour's red alone - and since 1.57 the float ones, kept as
+  their floats where the device keeps them (`kept_floats`) and written one
+  texel at a time by `texture.Texture.setParts` from four floats, with
+  `partsAt` reading them back. `r32_sfloat` is one of them, one float a
+  texel, sampled as (red, 0, 0, 1). **A compressed image asked for as a
+  storage image is still unpacked to 8888**: nothing writes one texel of a
+  BC block, which is the format and not the library, and such an image
+  wants SAMPLED beside it. There is no `r32_uint` or `r32_sint` image: a
+  texture reads a colour or floats, not whole numbers.
 - A function names the level and the layer it writes since 1.55
   (`texture.Texture.setColor` and `colorAt` take both, level 0 of layer 0
   being the view's first of each), and a level, a layer or a place the

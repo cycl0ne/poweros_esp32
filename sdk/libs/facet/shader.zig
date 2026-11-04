@@ -933,7 +933,10 @@ pub const Resources = extern struct {
     /// written, or is not a kind a function may write through.
     ///
     /// Its texels are set by `setColor` as 0xAARRGGBB whatever the format,
-    /// and read by `colorAt`. Both take a level and a layer: the function
+    /// and read by `colorAt`; a texture of floats is set by `setParts` from
+    /// four floats and read by `partsAt` into them, which is what such a
+    /// texel holds and what a colour of 8 bits a channel could never carry
+    /// (since 1.57). Both pairs take a level and a layer: the function
     /// names which of the view's it writes (since 1.55), level 0 of layer
     /// 0 being the view's first of each, and one the view has not got
     /// writes nothing and reads transparent black

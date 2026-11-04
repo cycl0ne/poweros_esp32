@@ -94,28 +94,39 @@ fn describe(format: facet.Format, keeps_blocks: bool) facet.FormatProperties {
             .optimal_tiling_features = sampled | facet.FORMAT_FEATURE_TRANSFER_DST,
             .buffer_features = 0,
         },
-        // Float: sampled and written, and read back as well where the
+        // Float: sampled, and written through by a function since 1.57
+        // (`texture.Texture.setParts`), and read back as well where the
         // floats are kept, there being something of the format to read.
         .b10g11r11_ufloat_pack32, .e5b9g9r9_ufloat_pack32 => .{
             .linear_tiling_features = 0,
-            .optimal_tiling_features = sampled | facet.FORMAT_FEATURE_TRANSFER_DST |
+            .optimal_tiling_features = sampled | storage | facet.FORMAT_FEATURE_TRANSFER_DST |
                 if (keeps_blocks) facet.FORMAT_FEATURE_TRANSFER_SRC else 0,
             .buffer_features = 0,
         },
         // The same, and a texel buffer of half-floats as well since 1.54.
         .r16g16b16a16_sfloat => .{
             .linear_tiling_features = 0,
-            .optimal_tiling_features = sampled | facet.FORMAT_FEATURE_TRANSFER_DST |
+            .optimal_tiling_features = sampled | storage | facet.FORMAT_FEATURE_TRANSFER_DST |
                 if (keeps_blocks) facet.FORMAT_FEATURE_TRANSFER_SRC else 0,
             .buffer_features = texels,
         },
         .r32g32b32a32_sfloat => .{
             .linear_tiling_features = 0,
-            .optimal_tiling_features = sampled | facet.FORMAT_FEATURE_TRANSFER_DST |
+            .optimal_tiling_features = sampled | storage | facet.FORMAT_FEATURE_TRANSFER_DST |
                 if (keeps_blocks) facet.FORMAT_FEATURE_TRANSFER_SRC else 0,
             .buffer_features = vertices | texels,
         },
-        .r32_sfloat, .r32g32_sfloat, .r32g32b32_sfloat => .{ .linear_tiling_features = 0, .optimal_tiling_features = 0, .buffer_features = vertices | texels },
+        // One float a texel as an image since 1.57, sampled as
+        // (red, 0, 0, 1) and written through by a function
+        // (`texture.Texture.setParts`): kept as the float where the
+        // device keeps floats, and unpacked to 8888 where it does not.
+        .r32_sfloat => .{
+            .linear_tiling_features = 0,
+            .optimal_tiling_features = sampled | storage | facet.FORMAT_FEATURE_TRANSFER_DST |
+                if (keeps_blocks) facet.FORMAT_FEATURE_TRANSFER_SRC else 0,
+            .buffer_features = vertices | texels,
+        },
+        .r32g32_sfloat, .r32g32b32_sfloat => .{ .linear_tiling_features = 0, .optimal_tiling_features = 0, .buffer_features = vertices | texels },
         // A texel buffer and nothing else, since 1.54: no image is kept
         // in these, and no vertex attribute is read in one. The grid is
         // one channel, two or four, of 8, 16 or 32 bits, as 0 to 1, as

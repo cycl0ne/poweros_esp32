@@ -3357,6 +3357,13 @@ facet.library/WaitForFences
 	image is always kept as R8G8B8A8, its blocks unpacked as they are copied
 	in (`PhysicalDeviceFeatures.etc2_textures`, since 1.46).
 
+	R32_SFLOAT is an image since 1.57, in optimal tiling: one float a texel,
+	sampled as (red, 0, 0, 1) the way R8_UNORM is read, with the float held
+	between 0 and 1 and rounded to 8 bits for the sample, and written through
+	by a function as the float it is (`texture.Texture.setParts`). A height
+	field, a mask or an accumulation buffer is kept in it. It is not a colour
+	attachment and not a vertex's value.
+
 	A compressed one - BC1, BC2, BC3 - is kept in its blocks on a device that
 	samples them (`PhysicalDeviceFeatures.kept_compressed`, since 1.44): an
 	eighth to a quarter of that memory, and the blocks are copied in and out
@@ -3364,8 +3371,12 @@ facet.library/WaitForFences
 	between two images of the one format, their offsets and extents on a
 	multiple of 4 as Vulkan asks. GetImageMemoryRequirements says which was
 	done. A device without the feature unpacks it as a float image is unpacked.
-	A STORAGE image is written texel by texel, so a compressed or a float one
-	is unpacked there whatever the device.
+	A STORAGE image is written texel by texel, so a compressed one is unpacked
+	there whatever the device: nothing writes one texel of a block, and such
+	an image wants SAMPLED beside it, being unpacked to be sampled. A float
+	one keeps its floats since 1.57, a function writing one texel of them by
+	`texture.Texture.setParts`, so a float storage image needs no SAMPLED
+	either.
 
 	**A texel may be kept smaller than the colour it reads as** on a device
 	that says so (`PhysicalDeviceFeatures.small_texels`, since 1.48), which

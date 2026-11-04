@@ -48,7 +48,8 @@ pub fn texelBytes(format: facet.Format) u32 {
     return switch (format) {
         .r16g16b16a16_sfloat => 8,
         .r32g32b32a32_sfloat => 16,
-        .b10g11r11_ufloat_pack32, .e5b9g9r9_ufloat_pack32 => 4,
+        // One float a texel, since 1.57.
+        .b10g11r11_ufloat_pack32, .e5b9g9r9_ufloat_pack32, .r32_sfloat => 4,
         else => 0,
     };
 }
@@ -361,6 +362,8 @@ fn keptFloats(format: facet.Format) ?texture.Format {
         .r32g32b32a32_sfloat => .rgba32f,
         .b10g11r11_ufloat_pack32 => .rg11b10f,
         .e5b9g9r9_ufloat_pack32 => .rgb9e5,
+        // One float a texel, since 1.57.
+        .r32_sfloat => .r32f,
         else => null,
     };
 }
@@ -372,7 +375,7 @@ pub fn texel(format: facet.Format, bytes: []const u8) Rgba {
     const kept = keptFloats(format) orelse return .{ 0, 0, 0, 0 };
     var made: Rgba = .{ 0, 0, 0, 0 };
     switch (kept) {
-        inline .rgba16f, .rgba32f, .rg11b10f, .rgb9e5 => |one| {
+        inline .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => |one| {
             const color = texture.floatTexel(one, bytes.ptr);
             made = .{
                 @intCast(color >> 16 & 0xFF),

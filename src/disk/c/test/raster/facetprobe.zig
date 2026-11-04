@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.23 (04.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.24 (04.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -54,9 +54,9 @@ const Probe = struct {
     commands: *facet.CommandBuffer = undefined,
     fence: ?*facet.Fence = null,
     /// What a check made and `give` gives back, newest first.
-    memories: [12]?*facet.DeviceMemory = @splat(null),
-    images: [8]?*facet.Image = @splat(null),
-    views: [8]?*facet.ImageView = @splat(null),
+    memories: [20]?*facet.DeviceMemory = @splat(null),
+    images: [16]?*facet.Image = @splat(null),
+    views: [16]?*facet.ImageView = @splat(null),
     buffers: [8]?*facet.Buffer = @splat(null),
     passes: [8]?*facet.RenderPass = @splat(null),
     frames: [8]?*facet.Framebuffer = @splat(null),
@@ -606,6 +606,25 @@ const Paint = struct {
         out[0] = if (groups.resources.written(0, 0, 0) == null) 0xA11_600D else 0xBAD;
     }
 
+    /// Group (x, y) writes texel (x, y) from four floats the push
+    /// constants carry, and the first group reads texel (0, 0) back into
+    /// the buffer: what the format kept of them, which is the point of
+    /// keeping floats (since 1.57).
+    fn floats(groups: *const facet.shader.Groups) callconv(.c) void {
+        const image = groups.resources.written(0, 0, 0) orelse return;
+        const out = groups.resources.storage(f32, 0, 1) orelse return;
+        const parts = groups.resources.constants([4]f32).*;
+        const x = groups.group[0];
+        const y = groups.group[1];
+        image.setParts(0, 0, x, y, parts);
+        if (x != 0 or y != 0) return;
+        const read = image.partsAt(0, 0, 0, 0);
+        for (read, 0..) |part, k| out[k] = part;
+        out[4] = @bitCast(image.colorAt(0, 0, 0, 0));
+        const none = image.partsAt(0, 0, image.width(0), 0);
+        for (none, 0..) |part, k| out[5 + k] = part;
+    }
+
     /// The shape the function sees, and what it reads back: the levels and
     /// the layers, the first two levels' widths, the texel the push
     /// constants name, and a level, a layer and a place the view has not
@@ -634,6 +653,7 @@ const Paint = struct {
         facet.shader.compute("told", &told),
         facet.shader.compute("named", &named),
         facet.shader.compute("shape", &shape),
+        facet.shader.compute("floats", &floats),
     };
     const code = facet.shader.Code{ .entry_count = entries.len, .entries = &entries };
 };
@@ -676,7 +696,7 @@ fn storageImageChecks(probe: *Probe) void {
     var module: ?*facet.ShaderModule = null;
     if (fb.CreateShaderModule(device, &.{ .code = &Paint.code }, &module) != .success) return probe.check(false, "the shader module");
     _ = Probe.keep(&probe.modules, module);
-    const range = facet.PushConstantRange{ .size = 8 };
+    const range = facet.PushConstantRange{ .size = 16 };
     var layout: ?*facet.PipelineLayout = null;
     if (fb.CreatePipelineLayout(device, &.{ .set_layout_count = 1, .set_layouts = @ptrCast(&set_layout), .push_constant_range_count = 1, .push_constant_ranges = @ptrCast(&range) }, &layout) != .success)
         return probe.check(false, "the pipeline layout");
@@ -698,14 +718,15 @@ fn storageImageChecks(probe: *Probe) void {
     };
     fb.UpdateDescriptorSets(device, 2, &writes, 0, null);
 
-    const infos = [4]facet.ComputePipelineCreateInfo{
+    const infos = [5]facet.ComputePipelineCreateInfo{
         .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.? }, .layout = layout.? },
         .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.?, .name = "told" }, .layout = layout.? },
         .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.?, .name = "named" }, .layout = layout.? },
         .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.?, .name = "shape" }, .layout = layout.? },
+        .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.?, .name = "floats" }, .layout = layout.? },
     };
-    var pipelines: [4]?*facet.Pipeline = undefined;
-    if (fb.CreateComputePipelines(device, null, 4, &infos, &pipelines) != .success) return probe.check(false, "the compute pipelines");
+    var pipelines: [5]?*facet.Pipeline = undefined;
+    if (fb.CreateComputePipelines(device, null, 5, &infos, &pipelines) != .success) return probe.check(false, "the compute pipelines");
     for (pipelines) |one| _ = Probe.keep(&probe.pipelines, one);
 
     const four: u32 = 4;
@@ -887,6 +908,81 @@ fn storageImageChecks(probe: *Probe) void {
     fb.CmdCopyImageToBuffer(commands, both, .general, back, 1, @ptrCast(&whole));
     if (!probe.submit()) return probe.check(false, "the write after the pass submitted");
     probe.checkEqual(0xFF00_0004, std.mem.readInt(u32, back_bytes[0..4], .little), "and a write after the pass goes over what it left");
+
+    // --- 1.57: a storage image of floats, and one float a texel ---
+    // Every float format says it may be written through, and R32_SFLOAT
+    // is an image format of its own.
+    const float_formats = [5]facet.Format{ .r16g16b16a16_sfloat, .r32g32b32a32_sfloat, .b10g11r11_ufloat_pack32, .e5b9g9r9_ufloat_pack32, .r32_sfloat };
+    var all_storage = true;
+    for (float_formats) |format| {
+        fb.GetPhysicalDeviceFormatProperties(probe.physical, format, &properties);
+        if (properties.optimal_tiling_features & facet.FORMAT_FEATURE_STORAGE_IMAGE == 0) all_storage = false;
+    }
+    probe.check(all_storage, "every float format says it may be written through");
+
+    // Each written with the same four floats and read back: what the
+    // format keeps of them. A whole number above 1 is what a colour could
+    // never have carried.
+    const Kind = struct { format: facet.Format, want: [4]f32, mercy: f32, says: [*:0]const u8 };
+    const kinds = [_]Kind{
+        .{ .format = .r16g16b16a16_sfloat, .want = .{ 1.5, 2.5, 0.25, 0.5 }, .mercy = 0, .says = "four halves kept and read as floats" },
+        .{ .format = .r32g32b32a32_sfloat, .want = .{ 1.5, 2.5, 0.25, 0.5 }, .mercy = 0, .says = "four floats kept as they were given" },
+        .{ .format = .b10g11r11_ufloat_pack32, .want = .{ 1.5, 2.5, 0.25, 1 }, .mercy = 0.02, .says = "packed floats of 11, 11 and 10 bits" },
+        .{ .format = .e5b9g9r9_ufloat_pack32, .want = .{ 1.5, 2.5, 0.25, 1 }, .mercy = 0.02, .says = "three mantissas over a shared exponent" },
+        .{ .format = .r32_sfloat, .want = .{ 1.5, 0, 0, 1 }, .mercy = 0, .says = "one float a texel, read as red alone" },
+    };
+    const given = [4]f32{ 1.5, 2.5, 0.25, 0.5 };
+    const floats_out: [*]const f32 = @ptrCast(@alignCast(told_bytes));
+    for (kinds) |kind| {
+        const held = probe.bound(.{
+            .format = kind.format,
+            .extent = .{ .width = 8, .height = 8 },
+            .usage = facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_SRC,
+        }, 0) orelse {
+            probe.check(false, kind.says);
+            continue;
+        };
+        const held_view = probe.viewed(.{ .image = held, .format = kind.format }) orelse {
+            probe.check(false, kind.says);
+            continue;
+        };
+        const to_held = facet.WriteDescriptorSet{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .storage_image, .descriptor_count = 1, .image_info = @ptrCast(&facet.DescriptorImageInfo{ .image_view = held_view }) };
+        fb.UpdateDescriptorSets(device, 1, @ptrCast(&to_held), 0, null);
+        @memset(told_bytes[0..64], 0);
+        commands = probe.record() orelse return probe.check(false, "a recording of the float write");
+        fb.CmdBindPipeline(commands, .compute, pipelines[4].?);
+        fb.CmdBindDescriptorSets(commands, .compute, layout.?, 0, 1, @ptrCast(&sets), 0, null);
+        fb.CmdPushConstants(commands, layout.?, facet.SHADER_STAGE_COMPUTE, 0, 16, &given);
+        fb.CmdDispatch(commands, 8, 8, 1);
+        if (!probe.submit()) return probe.check(false, "the float write submitted");
+        var alike = true;
+        for (kind.want, 0..) |want, k| {
+            const found = floats_out[k];
+            if (kind.mercy == 0) {
+                if (found != want) alike = false;
+            } else if (@abs(found - want) > kind.mercy) alike = false;
+        }
+        // The colour the same texel reads as: red held to 1 and rounded
+        // to 8 bits, which is all the tiles hold.
+        const as_color: u32 = @bitCast(floats_out[4]);
+        if (as_color >> 16 & 0xFF != 0xFF) alike = false;
+        // And a place past the level: all zero.
+        for (0..4) |k| if (floats_out[5 + k] != 0) {
+            alike = false;
+        };
+        probe.check(alike, kind.says);
+    }
+
+    // A compressed image asked for as a storage image is still unpacked
+    // into 8888: nothing writes one texel of a block, so it wants SAMPLED
+    // beside it, being unpacked to be sampled.
+    var blocked: ?*facet.Image = null;
+    probe.check(fb.CreateImage(device, &.{
+        .format = .bc1_rgba_unorm_block,
+        .extent = .{ .width = 8, .height = 8 },
+        .usage = facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_TRANSFER_DST,
+    }, &blocked) != .success, "a compressed storage image with no sampling refused");
+    probe.check(blocked == null, "and nothing given back for it");
 }
 
 // --- 1.32: a buffer read as texels of a format -------------------------------

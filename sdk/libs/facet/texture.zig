@@ -130,6 +130,12 @@ pub const Format = enum {
     /// E5B9G9R9_UFLOAT_PACK32: one word, three mantissas of 9 bits over one
     /// exponent of 5 they share. (Since 1.45.)
     rgb9e5,
+    /// One float a texel, 4 bytes: Vulkan's R32_SFLOAT, read as
+    /// (red, 0, 0, 1) the way `r8` is, the float held between 0 and 1 and
+    /// rounded to 8 bits for a sample. What a height field, a mask or an
+    /// accumulation buffer a function writes is kept in
+    /// (`Texture.setParts`, `partsAt`). (Since 1.57.)
+    r32f,
 
     /// The bytes a texel is kept in; 0 for a compressed format, whose
     /// texels have no size of their own (`blockLog2`).
@@ -144,7 +150,7 @@ pub const Format = enum {
         return switch (format) {
             .rgba8888, .rgba16f => 3,
             .rgba32f => 4,
-            .argb8888, .rg11b10f, .rgb9e5 => 2,
+            .argb8888, .rg11b10f, .rgb9e5, .r32f => 2,
             .rgb565, .d16 => 1,
             .r8, .bc1, .bc1_rgb, .bc2, .bc3 => 0,
         };
@@ -158,7 +164,7 @@ pub const Format = enum {
             // 16 texels of 8 bytes, and of 2.
             .rgba8888, .rgba16f => 7,
             .rgba32f => 8,
-            .argb8888, .rg11b10f, .rgb9e5 => 6,
+            .argb8888, .rg11b10f, .rgb9e5, .r32f => 6,
             .rgb565, .d16 => 5,
             // 16 texels of one byte, and the blocks of 8 and of 16.
             .r8, .bc2, .bc3 => 4,
@@ -177,17 +183,19 @@ pub const Format = enum {
     pub fn compressed(format: Format) bool {
         return switch (format) {
             .bc1, .bc1_rgb, .bc2, .bc3 => true,
-            .rgba8888, .argb8888, .rgb565, .r8, .d16, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5 => false,
+            .rgba8888, .argb8888, .rgb565, .r8, .d16, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => false,
         };
     }
 
     /// Whether a texel holds floats, which a sample reads and rounds to 8
     /// bits a channel (`floatTexel`): the texel is kept as it was copied
-    /// in, so nothing of it is lost on the way out again, and nothing
-    /// writes one a texel at a time. (Since 1.45.)
+    /// in, so nothing of it is lost on the way out again. A function
+    /// writes one by floats as well since 1.57 (`setParts`), where
+    /// `putLayer`'s one word of a texel would have nothing to say.
+    /// (Since 1.45.)
     pub fn floats(format: Format) bool {
         return switch (format) {
-            .rgba16f, .rgba32f, .rg11b10f, .rgb9e5 => true,
+            .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => true,
             .rgba8888, .argb8888, .rgb565, .r8, .d16, .bc1, .bc1_rgb, .bc2, .bc3 => false,
         };
     }
@@ -208,7 +216,7 @@ pub const Format = enum {
     pub fn small(format: Format) bool {
         return switch (format) {
             .argb8888, .r8 => true,
-            .rgba8888, .rgb565, .d16, .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5 => false,
+            .rgba8888, .rgb565, .d16, .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => false,
         };
     }
 
@@ -532,7 +540,7 @@ pub const Texture = struct {
             .r8 => at[0] = @truncate(texel),
             // Nothing is written a texel at a time into a texture that
             // keeps what it was given: `putTexels` moves the bytes.
-            .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5 => {},
+            .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => {},
         }
     }
 
@@ -547,7 +555,7 @@ pub const Texture = struct {
             .rgb565, .d16 => @as(*const u16, @ptrCast(@alignCast(at))).*,
             .r8 => at[0],
             inline .bc1, .bc1_rgb, .bc2, .bc3 => |one| blockOf(one, at)[(y % block) * block + (x % block)],
-            inline .rgba16f, .rgba32f, .rg11b10f, .rgb9e5 => |one| floatTexel(one, at),
+            inline .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => |one| floatTexel(one, at),
         };
     }
 
@@ -615,6 +623,10 @@ pub const Texture = struct {
     /// library's own copies want. (Since 1.55.)
     pub fn setColor(texture: *Texture, layer: u32, lod: u32, x: u32, y: u32, color: u32) void {
         if (!texture.holds(layer, lod, x, y)) return;
+        // A texel of floats takes the colour's channels as 0 to 1, which
+        // is all a colour ever said (since 1.57); `setParts` is what such
+        // a texture is written with where more than that is meant.
+        if (texture.format.floats()) return texture.putParts(layer, lod, x, y, partsOfColor(color));
         texture.putLayer(layer, lod, x, y, switch (texture.format) {
             .rgba8888, .argb8888 => color,
             .rgb565 => as565(color),
@@ -622,10 +634,49 @@ pub const Texture = struct {
             .r8 => color >> 16 & 0xFF,
             // The red channel as a depth, its 8 bits in the top of the 16.
             .d16 => (color >> 16 & 0xFF) * 0x101,
-            // Nothing is written through a texture that keeps what it was
-            // given: `putLayer` leaves it as it lies.
-            .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5 => 0,
+            // Nothing is written a texel at a time into a compressed
+            // texture: `putLayer` leaves it as it lies.
+            .bc1, .bc1_rgb, .bc2, .bc3 => 0,
+            .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => unreachable,
         });
+    }
+
+    /// A texel of a layer set from x, y, z and w: a colour format's
+    /// channels 0 to 1, and a float format's as they are, which is what a
+    /// texture of floats is written through with - `setColor`'s 8 bits a
+    /// channel would be all such a texel ever held. The level, the layer
+    /// and the place are held to what the texture has, as `setColor` has
+    /// them, and a compressed texture takes nothing. (Since 1.57.)
+    pub fn setParts(texture: *Texture, layer: u32, lod: u32, x: u32, y: u32, parts: [4]f32) void {
+        if (!texture.holds(layer, lod, x, y)) return;
+        if (texture.format.floats()) return texture.putParts(layer, lod, x, y, parts);
+        if (texture.format.compressed()) return;
+        texture.setColor(layer, lod, x, y, colorOfParts(parts));
+    }
+
+    /// The same without holding to anything, for a format of floats.
+    fn putParts(texture: *Texture, layer: u32, lod: u32, x: u32, y: u32, parts: [4]f32) void {
+        const at = texture.memory + texture.placeOf(layer, lod, x, y);
+        switch (texture.format) {
+            inline .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => |one| putFloatTexel(one, at, parts),
+            else => {},
+        }
+    }
+
+    /// A texel of a layer as x, y, z and w: a float format's channels as
+    /// they lie, and any other format's colour as 0 to 1. The level, the
+    /// layer and the place are held to what the texture has, as `colorAt`
+    /// has them, and one it has not got reads all zero. (Since 1.57.)
+    pub fn partsAt(texture: *const Texture, layer: u32, lod: u32, x: u32, y: u32) [4]f32 {
+        if (!texture.holds(layer, lod, x, y)) return .{ 0, 0, 0, 0 };
+        if (texture.format.floats()) {
+            const at = texture.memory + texture.placeOf(layer, lod, x, y);
+            return switch (texture.format) {
+                inline .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => |one| floatParts(one, at),
+                else => .{ 0, 0, 0, 0 },
+            };
+        }
+        return partsOfColor(texture.texelColor(layer, lod, x, y));
     }
 
     /// A texel of a layer as 0xAARRGGBB, whatever its format: what a
@@ -657,7 +708,7 @@ pub const Texture = struct {
             .d16 => greyOf8(@truncate(texel >> 8)),
             // Decoded already: `peekLayer` read it out of its block, or
             // out of its floats.
-            .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5 => texel,
+            .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => texel,
         };
     }
 
@@ -774,7 +825,7 @@ pub const Texture = struct {
                     .rgba8888, .argb8888 => std.mem.readInt(u32, row[x * 4 ..][0..4], .little),
                     .rgb565, .d16 => std.mem.readInt(u16, row[x * 2 ..][0..2], .little),
                     .r8 => row[x],
-                    .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5 => unreachable,
+                    .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => unreachable,
                 };
                 texture.put(lod, @intCast(x), @intCast(y), texel);
             }
@@ -1115,8 +1166,120 @@ pub fn floatTexel(comptime format: Format, at: [*]const u8) u32 {
             const b: f32 = @floatFromInt(word >> 18 & 0x1FF);
             break :made 0xFF00_0000 | @as(u32, byteOfFloat(r * scale)) << 16 | @as(u32, byteOfFloat(g * scale)) << 8 | byteOfFloat(b * scale);
         },
+        // One float, read as (red, 0, 0, 1) the way `r8` is (since 1.57).
+        .r32f => 0xFF00_0000 | @as(u32, byteOfFloat(@bitCast(readLittle(u32, at)))) << 16,
         else => missing_texel,
     };
+}
+
+/// The four channels a float texel at `at` holds, as they lie: what the
+/// format has not got reads as 0, and an alpha it has not got as 1. What
+/// `Texture.partsAt` gives a shader function. (Since 1.57.)
+pub fn floatParts(comptime format: Format, at: [*]const u8) [4]f32 {
+    @setRuntimeSafety(false);
+    return switch (format) {
+        .rgba16f => made: {
+            var parts: [4]f32 = undefined;
+            inline for (&parts, 0..) |*part, k| part.* = ofHalf(readLittle(u16, at + k * 2));
+            break :made parts;
+        },
+        .rgba32f => made: {
+            var parts: [4]f32 = undefined;
+            inline for (&parts, 0..) |*part, k| part.* = @bitCast(readLittle(u32, at + k * 4));
+            break :made parts;
+        },
+        .rg11b10f => made: {
+            const word = readLittle(u32, at);
+            break :made .{
+                ofParts(word >> 6 & 0x1F, word & 0x3F, 6, 15),
+                ofParts(word >> 17 & 0x1F, word >> 11 & 0x3F, 6, 15),
+                ofParts(word >> 27 & 0x1F, word >> 22 & 0x1F, 5, 15),
+                1,
+            };
+        },
+        .rgb9e5 => made: {
+            const word = readLittle(u32, at);
+            const scale = std.math.ldexp(@as(f32, 1), @as(i32, @intCast(word >> 27)) - 15 - 9);
+            break :made .{
+                @as(f32, @floatFromInt(word & 0x1FF)) * scale,
+                @as(f32, @floatFromInt(word >> 9 & 0x1FF)) * scale,
+                @as(f32, @floatFromInt(word >> 18 & 0x1FF)) * scale,
+                1,
+            };
+        },
+        .r32f => .{ @bitCast(readLittle(u32, at)), 0, 0, 1 },
+        else => .{ 0, 0, 0, 0 },
+    };
+}
+
+/// Four channels written as a float texel at `at`, `floatParts` undone:
+/// what the format has not got is dropped, and what it cannot hold is cut
+/// to the largest it can. What `Texture.setParts` writes with.
+/// (Since 1.57.)
+pub fn putFloatTexel(comptime format: Format, at: [*]u8, parts: [4]f32) void {
+    @setRuntimeSafety(false);
+    switch (format) {
+        .rgba16f => inline for (0..4) |k| writeLittle(u16, at + k * 2, halfOf(parts[k])),
+        .rgba32f => inline for (0..4) |k| writeLittle(u32, at + k * 4, @bitCast(parts[k])),
+        .rg11b10f => writeLittle(u32, at, partsOf(parts[0], 6, 15) | partsOf(parts[1], 6, 15) << 11 | partsOf(parts[2], 5, 15) << 22),
+        .rgb9e5 => writeLittle(u32, at, sharedExponent(parts[0], parts[1], parts[2])),
+        .r32f => writeLittle(u32, at, @bitCast(parts[0])),
+        else => {},
+    }
+}
+
+/// Red, green and blue as E5B9G9R9: one exponent of 5 bits for the three,
+/// biased by 15, over mantissas of 9 bits that are whole numbers. The
+/// exponent is the one the largest of them needs, and the three are then
+/// written against it. (Since 1.57.)
+fn sharedExponent(red: f32, green: f32, blue: f32) u32 {
+    const most = @as(f32, 0x1FF) / 512 * 32768; // the largest the format holds
+    const r = heldAt(red, most);
+    const g = heldAt(green, most);
+    const b = heldAt(blue, most);
+    const largest = @max(r, @max(g, b));
+    if (largest <= 0) return 0;
+    // The exponent that puts the largest mantissa inside its 9 bits.
+    var exponent: i32 = @max(std.math.frexp(largest).exponent, -15 + 1);
+    var scale = std.math.ldexp(@as(f32, 1), 9 - exponent);
+    if (@as(u32, @intFromFloat(largest * scale + 0.5)) > 0x1FF) {
+        exponent += 1;
+        scale = std.math.ldexp(@as(f32, 1), 9 - exponent);
+    }
+    const biased: u32 = @intCast(@min(exponent + 15, 31));
+    const nine = struct {
+        fn nine(value: f32, by: f32) u32 {
+            return @min(@as(u32, @intFromFloat(value * by + 0.5)), 0x1FF);
+        }
+    }.nine;
+    return biased << 27 | nine(b, scale) << 18 | nine(g, scale) << 9 | nine(r, scale);
+}
+
+/// 0 to `most`, a NaN as 0.
+inline fn heldAt(value: f32, most: f32) f32 {
+    return if (value > 0) @min(value, most) else 0;
+}
+
+/// A word of `T` written at `at`, little-endian and on no alignment.
+inline fn writeLittle(comptime T: type, at: [*]u8, value: T) void {
+    std.mem.writeInt(T, at[0..@sizeOf(T)], value, .little);
+}
+
+/// 0xAARRGGBB as x, y, z and w, each channel 0 to 1. (Since 1.57.)
+pub inline fn partsOfColor(color: u32) [4]f32 {
+    var parts: [4]f32 = undefined;
+    inline for (&parts, [4]u5{ 16, 8, 0, 24 }) |*part, shift| {
+        part.* = @as(f32, @floatFromInt(color >> shift & 0xFF)) / 255;
+    }
+    return parts;
+}
+
+/// The same undone: x, y, z and w as 0xAARRGGBB, each held inside 0 to 1
+/// and rounded to 8 bits. (Since 1.57.)
+pub inline fn colorOfParts(parts: [4]f32) u32 {
+    var made: u32 = 0;
+    inline for (parts, [4]u5{ 16, 8, 0, 24 }) |part, shift| made |= @as(u32, byteOfFloat(part)) << shift;
+    return made;
 }
 
 /// A float to 8 bits, held inside 0 to 1 and rounded; a NaN reads 0, which
@@ -1146,6 +1309,64 @@ inline fn ofParts(exponent: u32, mantissa: u32, comptime bits: u5, comptime bias
     const scale = @as(f32, @floatFromInt(@as(u32, 1) << bits));
     if (exponent == 0) return std.math.ldexp(whole / scale, 1 - biased_by);
     return std.math.ldexp(1 + whole / scale, @as(i32, @intCast(exponent)) - biased_by);
+}
+
+/// A half float made of a float, `ofHalf` undone, and by hand for the same
+/// reason: the nearest half, an infinity and anything above the largest
+/// half as that largest, and a NaN as one. (Since 1.57.)
+pub inline fn halfOf(value: f32) u16 {
+    const bits: u32 = @bitCast(value);
+    const sign: u16 = @intCast(bits >> 31);
+    const exponent: i32 = @intCast(bits >> 23 & 0xFF);
+    const mantissa = bits & 0x7F_FFFF;
+    // A NaN stays one, and an infinity comes back as the largest half, as
+    // `ofHalf` reads the largest exponent.
+    if (exponent == 0xFF) return sign << 15 | @as(u16, if (mantissa != 0) 0x7E00 else 0x7BFF);
+    // The half's exponent is biased by 15 where the float's is by 127.
+    const moved = exponent - 127 + 15;
+    if (moved <= 0) {
+        // Below the smallest normal half: one of the subnormals, whose
+        // value is its mantissa over 2^24, or nothing at all.
+        if (moved < -10) return sign << 15;
+        const whole = mantissa | 0x80_0000;
+        const shift: u5 = @intCast(14 - moved);
+        return sign << 15 | @as(u16, @intCast(whole >> shift));
+    }
+    // The mantissa rounded to its 10 bits, a carry out of it moving into
+    // the exponent of its own accord.
+    const together = (@as(u32, @intCast(moved)) << 23) | mantissa;
+    const half = (together + 0x1000) >> 13;
+    if (half >= 0x7C00) return sign << 15 | 0x7BFF;
+    return sign << 15 | @as(u16, @intCast(half));
+}
+
+/// An unsigned float of `bits` of mantissa biased by `biased_by`, made of
+/// a float: `ofParts` undone, its exponent and its mantissa packed low.
+/// Anything below the smallest it holds is 0 and anything above the
+/// largest is that largest. (Since 1.57.)
+inline fn partsOf(value: f32, comptime bits: u5, comptime biased_by: i32) u32 {
+    const most_exponent: u32 = 31;
+    const most_mantissa = (@as(u32, 1) << bits) - 1;
+    if (!(value > 0)) return 0; // a NaN as well
+    const whole = std.math.frexp(value);
+    // frexp gives 0.5 to 1 times two to the exponent; a float of this
+    // shape is 1 to 2 times two to its own, so the exponent is one less.
+    const moved = whole.exponent - 1 + biased_by;
+    if (moved >= most_exponent) return most_exponent << bits | most_mantissa;
+    const scale: f32 = @floatFromInt(@as(u32, 1) << bits);
+    if (moved <= 0) {
+        // The subnormals: the mantissa alone, over two to one less than
+        // the bias.
+        const lowest = std.math.ldexp(value, biased_by - 1) * scale;
+        return @min(@as(u32, @intFromFloat(lowest + 0.5)), most_mantissa);
+    }
+    const mantissa: u32 = @intFromFloat((whole.significand * 2 - 1) * scale + 0.5);
+    if (mantissa > most_mantissa) {
+        // Rounded up out of the mantissa, which is the next exponent.
+        if (moved + 1 >= most_exponent) return most_exponent << bits | most_mantissa;
+        return @as(u32, @intCast(moved + 1)) << bits;
+    }
+    return @as(u32, @intCast(moved)) << bits | mantissa;
 }
 
 // --- the compressed blocks --------------------------------------------------
@@ -1510,7 +1731,7 @@ inline fn fetch(comptime format: Format, at: [*]const u8) u32 {
         .bc1, .bc1_rgb, .bc2, .bc3 => missing_texel,
         // A float texel read and rounded where it lies (since 1.45): the
         // decoding is the cost of keeping the floats.
-        .rgba16f, .rgba32f, .rg11b10f, .rgb9e5 => floatTexel(format, at),
+        .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => floatTexel(format, at),
     };
 }
 
@@ -1519,7 +1740,7 @@ inline fn fetchSpread(comptime format: Format, at: [*]const u8) u64 {
     @setRuntimeSafety(false);
     return switch (format) {
         .rgba8888 => @as(*const u64, @ptrCast(@alignCast(at))).*,
-        .argb8888, .r8, .rgb565, .d16, .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5 => spread(fetch(format, at)),
+        .argb8888, .r8, .rgb565, .d16, .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => spread(fetch(format, at)),
     };
 }
 

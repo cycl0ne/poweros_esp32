@@ -227,6 +227,10 @@ pub fn keptFormat(format: facet.Format, packed_texels: bool) ?texture.Format {
         .r32g32b32a32_sfloat => .rgba32f,
         .b10g11r11_ufloat_pack32 => .rg11b10f,
         .e5b9g9r9_ufloat_pack32 => .rgb9e5,
+        // One float a texel, read as (red, 0, 0, 1) (since 1.57): a
+        // height field, a mask or an accumulation buffer a function
+        // writes through.
+        .r32_sfloat => .r32f,
         // A depth sampled where it lies, in rows
         // (`PhysicalDeviceFeatures.sampled_depth`).
         .d16_unorm => .d16,
@@ -282,8 +286,6 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
     // sampled is one of them since 1.55.
     if ((layers > 1 or _decode.unpacks(info.format)) and info.tiling != .optimal) return null;
     if (layers > 1 and !in_texels) return null;
-    // What is unpacked on the way in is unpacked to be sampled.
-    if (_decode.unpacks(info.format) and info.usage & facet.IMAGE_USAGE_SAMPLED == 0) return null;
     // A compressed image is kept in its blocks, and a float one in its
     // floats, where this device samples them
     // (`PhysicalDeviceFeatures.kept_compressed`, `kept_floats`); where it
@@ -293,8 +295,16 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
     // An ETC2 or EAC block is never kept: no sampler of this library reads
     // one, so such an image is unpacked whatever the device says.
     const keeps_blocks = physical.features.kept_compressed and _decode.blockBytes(info.format) != 0 and !_decode.etc(info.format) and !writes_texels;
-    const keeps_floats = physical.features.kept_floats and _decode.texelBytes(info.format) != 0 and !writes_texels;
+    // A float image keeps its floats even where a function writes it
+    // through, since 1.57: `texture.Texture.setParts` writes one texel of
+    // floats, where nothing writes one texel of a compressed block.
+    const keeps_floats = physical.features.kept_floats and _decode.texelBytes(info.format) != 0;
     const kept_format: facet.Format = if (_decode.unpacks(info.format) and !(keeps_blocks or keeps_floats)) .r8g8b8a8_unorm else info.format;
+    // What is unpacked on the way in is unpacked to be sampled: a format
+    // kept as it lies - a compressed image's blocks, a float one's floats
+    // - is not (since 1.57, where a float image written through keeps its
+    // floats and so needs no sampling).
+    if (kept_format != info.format and info.usage & facet.IMAGE_USAGE_SAMPLED == 0) return null;
     if (extent.width == 0 or extent.height == 0 or extent.width > max_image_dimension or extent.height > max_image_dimension) return null;
     if (info.mip_levels == 0) return null;
     // A block's bytes stand in for a texel's where the blocks are kept:

@@ -2012,6 +2012,145 @@ test "a colour attachment written through as a storage image: its rows, before t
     try testing.expectEqual(red, std.mem.readInt(u32, back_bytes[0..4], .little));
 }
 
+test "storage images of floats: a texel written and read as floats, and one float a texel" {
+    const Floats = struct {
+        /// Group (x, y) writes texel (x, y) of the image bound at set 0
+        /// binding 0 from four floats the push constants carry, and then
+        /// reads it back into the buffer at binding 1: what the format
+        /// kept of them, which is the point of keeping floats.
+        fn run(groups: *const shader.Groups) callconv(.c) void {
+            const image = groups.resources.written(0, 0, 0) orelse return;
+            const out = groups.resources.storage(f32, 0, 1) orelse return;
+            const parts = groups.resources.constants([4]f32).*;
+            const x = groups.group[0];
+            const y = groups.group[1];
+            image.setParts(0, 0, x, y, parts);
+            if (x != 0 or y != 0) return;
+            const read = image.partsAt(0, 0, 0, 0);
+            for (read, 0..) |part, k| out[k] = part;
+            // The colour the same texel reads as, and what the texel past
+            // the level reads as: all zero, as any storage image has it.
+            const color = image.colorAt(0, 0, 0, 0);
+            out[4] = @bitCast(color);
+            const none = image.partsAt(0, 0, image.width(0), 0);
+            for (none, 0..) |part, k| out[5 + k] = part;
+        }
+
+        const entries = [_]shader.Entry{shader.compute("main", &run)};
+        const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
+    };
+
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    var features: facet.PhysicalDeviceFeatures = undefined;
+    fb.GetPhysicalDeviceFeatures(bench.physical, &features);
+    try testing.expect(features.storage_images);
+    try testing.expect(features.kept_floats);
+
+    // Every float format says it may be written through since 1.57, and
+    // one float a texel is a format of its own: R32_SFLOAT as an image.
+    for ([5]facet.Format{ .r16g16b16a16_sfloat, .r32g32b32a32_sfloat, .b10g11r11_ufloat_pack32, .e5b9g9r9_ufloat_pack32, .r32_sfloat }) |format| {
+        var properties: facet.FormatProperties = undefined;
+        fb.GetPhysicalDeviceFormatProperties(bench.physical, format, &properties);
+        try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_STORAGE_IMAGE != 0);
+        try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_SAMPLED_IMAGE != 0);
+    }
+
+    const module_made = try module(&bench, &Floats.code);
+    defer fb.DestroyShaderModule(device, module_made);
+    const bindings = [2]facet.DescriptorSetLayoutBinding{
+        .{ .binding = 0, .descriptor_type = .storage_image, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+        .{ .binding = 1, .descriptor_type = .storage_buffer, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+    };
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 2, .bindings = &bindings }, &set_layout));
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    const layout = try pipelineLayout(&bench, &.{set_layout.?}, 16);
+    defer fb.DestroyPipelineLayout(device, layout);
+    var pool: ?*facet.DescriptorPool = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool));
+    defer fb.DestroyDescriptorPool(device, pool);
+    var sets: [1]?*facet.DescriptorSet = undefined;
+    try testing.expectEqual(facet.Result.success, fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &sets));
+    const told, const told_bytes = try bench.buffer(64, facet.BUFFER_USAGE_STORAGE_BUFFER);
+    const buffer_info = facet.DescriptorBufferInfo{ .buffer = told, .range = facet.WHOLE_SIZE };
+    const to_buffer = facet.WriteDescriptorSet{ .dst_set = sets[0].?, .dst_binding = 1, .descriptor_type = .storage_buffer, .descriptor_count = 1, .buffer_info = @ptrCast(&buffer_info) };
+    fb.UpdateDescriptorSets(device, 1, @ptrCast(&to_buffer), 0, null);
+    const info = facet.ComputePipelineCreateInfo{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module_made }, .layout = layout };
+    var pipeline: [1]?*facet.Pipeline = undefined;
+    try testing.expectEqual(facet.Result.success, fb.CreateComputePipelines(device, null, 1, @ptrCast(&info), &pipeline));
+    defer fb.DestroyPipeline(device, pipeline[0]);
+    const out: [*]const f32 = @ptrCast(@alignCast(told_bytes));
+
+    // Each format written with the same four floats and read back: what
+    // it keeps of them. A whole number above 1 is what a colour could
+    // never have carried, which is why these are kept as floats.
+    const Kind = struct { format: facet.Format, want: [4]f32, mercy: f32, says: []const u8 };
+    const kinds = [_]Kind{
+        // Halves hold 1.5, 2.5 and 0.25 exactly.
+        .{ .format = .r16g16b16a16_sfloat, .want = .{ 1.5, 2.5, 0.25, 0.5 }, .mercy = 0, .says = "four halves" },
+        // Floats hold whatever was given.
+        .{ .format = .r32g32b32a32_sfloat, .want = .{ 1.5, 2.5, 0.25, 0.5 }, .mercy = 0, .says = "four floats" },
+        // 11, 11 and 10 bits, no sign and no alpha: the alpha reads as 1.
+        .{ .format = .b10g11r11_ufloat_pack32, .want = .{ 1.5, 2.5, 0.25, 1 }, .mercy = 0.02, .says = "packed floats" },
+        // Three mantissas over one exponent, and no alpha either.
+        .{ .format = .e5b9g9r9_ufloat_pack32, .want = .{ 1.5, 2.5, 0.25, 1 }, .mercy = 0.02, .says = "a shared exponent" },
+        // One float, read as (red, 0, 0, 1) the way one byte of red is.
+        .{ .format = .r32_sfloat, .want = .{ 1.5, 0, 0, 1 }, .mercy = 0, .says = "one float a texel" },
+    };
+    const given = [4]f32{ 1.5, 2.5, 0.25, 0.5 };
+    for (kinds) |kind| {
+        const image = try bench.bareImage(.{
+            .format = kind.format,
+            .extent = .{ .width = 8, .height = 8 },
+            .usage = facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_SRC,
+        }, false);
+        const view = try bench.viewOf(.{ .image = image, .format = kind.format });
+        const image_info = facet.DescriptorImageInfo{ .image_view = view };
+        const to_image = facet.WriteDescriptorSet{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .storage_image, .descriptor_count = 1, .image_info = @ptrCast(&image_info) };
+        fb.UpdateDescriptorSets(device, 1, @ptrCast(&to_image), 0, null);
+        @memset(told_bytes[0..64], 0);
+        const commands = try bench.record();
+        fb.CmdBindPipeline(commands, .compute, pipeline[0].?);
+        fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+        fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_COMPUTE, 0, 16, &given);
+        fb.CmdDispatch(commands, 8, 8, 1);
+        try bench.submit();
+        for (kind.want, 0..) |want, k| {
+            if (kind.mercy == 0) try testing.expectEqual(want, out[k]) else try testing.expectApproxEqAbs(want, out[k], kind.mercy);
+        }
+        // The colour the same texel reads as: each channel held inside 0
+        // to 1 and rounded to 8 bits, which is all the tiles hold.
+        const color: u32 = @bitCast(out[4]);
+        try testing.expectEqual(@as(u32, 0xFF), color >> 16 & 0xFF);
+        // And a place past the level: all zero.
+        for (0..4) |k| try testing.expectEqual(@as(f32, 0), out[5 + k]);
+    }
+
+    // A compressed image asked for as a storage image is still unpacked
+    // to 8888: nothing writes one texel of a block. It wants SAMPLED
+    // beside it, being unpacked to be sampled.
+    const blocks = try bench.bareImage(.{
+        .format = .bc1_rgba_unorm_block,
+        .extent = .{ .width = 8, .height = 8 },
+        .usage = facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST,
+    }, false);
+    var requirements: facet.MemoryRequirements = undefined;
+    fb.GetImageMemoryRequirements(device, blocks, &requirements);
+    // 8 x 8 of 8888, spread over 64 bits a texel, against the 32 bytes of
+    // four BC1 blocks: it was unpacked.
+    try testing.expect(requirements.size >= 8 * 8 * 8);
+    var denied: ?*facet.Image = null;
+    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{
+        .format = .bc1_rgba_unorm_block,
+        .extent = .{ .width = 8, .height = 8 },
+        .usage = facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_TRANSFER_DST,
+    }, &denied));
+    try testing.expect(denied == null);
+}
+
 test "a buffer read as texels of a format: a uniform one read, a storage one written, and the formats refused" {
     const Texels = struct {
         /// Each group reads texel k of binding 0 and writes what it made

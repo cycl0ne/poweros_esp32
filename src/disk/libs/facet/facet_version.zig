@@ -607,9 +607,35 @@ pub const LIBRARY_VERSION = 1;
 /// here to ask for.
 /// Only the cores, as every storage image is
 /// (`PhysicalDeviceFeatures.storage_images`).
+/// 57: the formats a storage image is written through in. Before this a
+/// float image asked for as one was unpacked into 8888, whatever the
+/// device kept for a sampled one, because `putLayer`'s one word of a
+/// texel had nothing to say about four floats; and there was no `r32` of
+/// any kind.
+/// Now a float image keeps its floats where the device keeps them
+/// (`kept_floats`) whether a function writes it or not, and
+/// `texture.Texture.setParts` writes one texel of them while `partsAt`
+/// reads it - four floats either way, a colour format's channels as 0 to
+/// 1 and a float format's as they lie. `setColor` on a float texture
+/// writes the colour's channels as 0 to 1 rather than nothing, which is
+/// all a colour ever said. A whole number above 1, which no colour could
+/// carry, now survives a write and a read: that is what keeping floats is
+/// for.
+/// `r32_sfloat` is an image format as well, `texture.Format.r32f`: one
+/// float a texel, sampled as (red, 0, 0, 1) the way one byte of red is,
+/// written through as the float it is. A height field, a mask or an
+/// accumulation buffer is kept in it, in a quarter of what 8888 spread
+/// over 64 bits takes and with the whole of a float's range.
+/// The encoders are the decoders of 1.45 run backwards - `halfOf` beside
+/// `ofHalf`, `partsOf` beside `ofParts`, and a shared exponent worked out
+/// from the largest of the three - so what goes in comes out again as far
+/// as the format holds it.
+/// A compressed image asked for as a storage image is still unpacked into
+/// 8888: nothing writes one texel of a BC block, and that is the format,
+/// not the library.
 /// What stays: `fifo` is the one present mode, there being no way to ask a
 /// display to show a buffer before its next frame; one queue family of one
 /// queue; a counter of 32 bits, for want of a 64-bit atomic on every
 /// machine the library runs on; and no point mode in tessellation, there
 /// being no point rasterization at all.
-pub const LIBRARY_REVISION = 56;
+pub const LIBRARY_REVISION = 57;

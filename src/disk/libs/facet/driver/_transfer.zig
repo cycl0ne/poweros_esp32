@@ -334,7 +334,7 @@ fn texelOf(image: *const Image, color: u32) ?Texel {
             // keeps what it was given - a compressed image, whose texels
             // are written as blocks, or a float one, whose texels are
             // moved as they lie and never made from a colour.
-            .d16, .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5 => null,
+            .d16, .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => null,
         },
         // Its pixels are rows of depth, which a clear of a colour does
         // not write; a transient one's live in the tiles.
