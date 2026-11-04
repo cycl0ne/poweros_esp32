@@ -178,6 +178,10 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // ETC2 and EAC are unpacked by the library as they are copied in,
         // which is the same work on either device.
         .etc2_textures = true,
+        // The TMU reads an R8 texture with a swizzle of its own, and has
+        // never spread an 8888 texel: one byte a texel there, and the
+        // packed flag costs nothing and changes nothing (tiling.zig).
+        .small_texels = true,
         // Version 7.1 has both of these: the clamp is a bit of the
         // configuration, which turns the clip to the z planes off with it
         // as Vulkan has a depth clamp, and the bounds are a packet of

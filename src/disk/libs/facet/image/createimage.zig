@@ -28,7 +28,7 @@ const _image = @import("_image.zig");
 ///
 /// BEHAVIOR:
 /// What it is for decides how it lies in its memory:
-/// - SAMPLED, in optimal tiling, of B8G8R8A8, R8G8B8A8 or R5G6B5, of any
+/// - SAMPLED, in optimal tiling, of B8G8R8A8, R8G8B8A8, R5G6B5 or R8_UNORM, of any
 ///   sides, with up to as many levels as halving the longer gives -
 ///   floor(log2(side)) + 1, each level the one before halved and no less
 ///   than one: a texture, in blocks of 4 x 4 texels, an 8888 texel kept in
@@ -92,6 +92,28 @@ const _image = @import("_image.zig");
 /// done. A device without the feature unpacks it as a float image is unpacked.
 /// A STORAGE image is written texel by texel, so a compressed or a float one
 /// is unpacked there whatever the device.
+///
+/// **A texel may be kept smaller than the colour it reads as** on a device
+/// that says so (`PhysicalDeviceFeatures.small_texels`, since 1.48), which
+/// is where a texture is large enough that the memory it fills is what it
+/// costs:
+/// - R8_UNORM is one byte a texel, read as (red, 0, 0, 1) the way Vulkan
+///   reads a one-channel format - an eighth of what the same texels kept
+///   as 8888 take. For SAMPLED or STORAGE, in optimal tiling; a copy moves
+///   the bytes both ways. It is not a colour attachment and not a vertex's
+///   value.
+/// - IMAGE_CREATE_PACKED_TEXELS on a SAMPLED or STORAGE image of B8G8R8A8
+///   or R8G8B8A8 keeps each texel in the 32 bits of its word rather than
+///   spread over 64: half the memory, for the spread a sample then does
+///   itself. Nothing else of the image changes - the same colours in, the
+///   same out, the same copies - and a fixed form compiled for
+///   `texture.Format.argb8888` reads it at full speed, while one compiled
+///   for `rgba8888` draws it through the run-time sampler as it does any
+///   other format it was not built for.
+///
+/// Both are `error_format_not_supported` where the device has not got
+/// them, and so is the flag on an image that is neither sampled nor a
+/// storage image, or whose format has no 8888 word to keep.
 ///
 /// CONTEXT:
 /// - Waits: no.

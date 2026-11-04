@@ -448,6 +448,18 @@ pub const PhysicalDeviceFeatures = extern struct {
     /// `d16_unorm_s8_uint` is `error_feature_not_present`
     /// (CreateRenderPass). (Since 1.47.)
     stored_both: bool = false,
+    /// A texel may be kept in fewer bytes than the colour it reads as: an
+    /// image of `r8_unorm`, one byte a texel, read as (red, 0, 0, 1); and
+    /// IMAGE_CREATE_PACKED_TEXELS on a sampled image of R8G8B8A8 or
+    /// B8G8R8A8, whose texel is then the 32 bits of its word rather than
+    /// the 64 it is spread over. An eighth and a half of the memory, for
+    /// the spread a sample does itself. False where CreateImage refuses
+    /// both the format and the flag with `error_format_not_supported`.
+    /// Every device has it since 1.48: the cores keep such a texel in
+    /// their own layout, the V3D's TMU reads R8 with a swizzle of its own
+    /// and has never spread an 8888 texel, so the flag costs it nothing
+    /// and changes nothing there. (Since 1.48.)
+    small_texels: bool = false,
 };
 
 /// QueueFamilyProperties.queue_flags: what a family's queues do.
@@ -582,6 +594,10 @@ pub const Format = enum(u32) {
     undefined = 0,
     /// 16 bits: red in the top 5, green in the middle 6, blue in the low 5.
     r5g6b5_unorm_pack16 = 4,
+    /// One byte of red, as a texture: read as (red, 0, 0, 1), one byte a
+    /// texel in memory, where an 8888 texel takes eight
+    /// (`PhysicalDeviceFeatures.small_texels`, since 1.48).
+    r8_unorm = 9,
     /// Bytes red, green, blue, alpha: 0xAABBGGRR as a 32-bit word.
     r8g8b8a8_unorm = 37,
     /// Bytes blue, green, red, alpha: 0xAARRGGBB as a 32-bit word - the
@@ -612,8 +628,8 @@ pub const Format = enum(u32) {
     etc2_r8g8b8_unorm_block = 147,
     etc2_r8g8b8a1_unorm_block = 149,
     etc2_r8g8b8a8_unorm_block = 151,
-    /// One channel of 11 bits, read as a grey; and two, read as red and
-    /// green with a blue of 0.
+    /// One channel of 11 bits, read as red alone; and two, read as red and
+    /// green with a blue of 0 - as Vulkan reads them, the alpha whole.
     eac_r11_unorm_block = 153,
     eac_r11g11_unorm_block = 155,
     _,
@@ -772,6 +788,18 @@ pub const IMAGE_USAGE_INPUT_ATTACHMENT: u32 = 1 << 7;
 /// What an image is made with.
 /// ImageCreateInfo.flags: a view of type cube may be made of it.
 pub const IMAGE_CREATE_CUBE_COMPATIBLE: u32 = 1 << 4;
+
+/// facet.library's own, in `ImageCreateInfo.flags`: a sampled image of
+/// R8G8B8A8 or B8G8R8A8 keeps each texel in the 32 bits of its word rather
+/// than spread over 64 (`texture.Format.argb8888`) - half the memory and
+/// half the cache it fills, for the spread a sample then does itself. A
+/// fixed form reads it at full speed where it was compiled for
+/// `argb8888`; one compiled for `rgba8888` draws it through the run-time
+/// sampler, a pixel at a time, as it does any other format it was not
+/// built for. Refused where `PhysicalDeviceFeatures.small_texels` is
+/// false, and on an image that is neither sampled nor a storage image.
+/// (Since 1.48.)
+pub const IMAGE_CREATE_PACKED_TEXELS: u32 = 1 << 31;
 
 pub const ImageCreateInfo = extern struct {
     flags: u32 = 0,

@@ -140,6 +140,10 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         .cube_arrays = true,
         // ETC2 and EAC, unpacked as they are copied in (image/_decode.zig).
         .etc2_textures = true,
+        // A texel kept smaller than its colour: one byte of red, or an
+        // 8888 word unspread, which the one sampler reads either way
+        // (`texture.Format.r8`, `argb8888`).
+        .small_texels = true,
         // A pixel's depth and its stencil are written where they lie in
         // its four bytes, so a format of both keeps either (since 1.47).
         .stored_both = true,

@@ -5101,6 +5101,156 @@ test "float textures kept as their floats: copied in and out as they lie, sample
     try testing.expectEqual(@as(u32, 0xFF00_0040), picture.at(56, 56));
 }
 
+/// A quad over the whole target, and the forms that sample a texture kept
+/// a texel smaller: one word of 8888, one byte of red, and the spread form
+/// handed either.
+const SmallScene = struct {
+    const entries = [_]shader.Entry{
+        shader.vertex("word", &FloatScene.flat, 2),
+        shader.fixedFragment("word", .{ .kind = .texture, .sampling = .{ .format = .argb8888, .filter = .nearest } }),
+        shader.vertex("red", &FloatScene.flat, 2),
+        shader.fixedFragment("red", .{ .kind = .texture, .sampling = .{ .format = .r8, .filter = .nearest } }),
+        shader.vertex("spread", &FloatScene.flat, 2),
+        shader.fixedFragment("spread", .{ .kind = .texture, .sampling = .{ .format = .rgba8888, .filter = .nearest } }),
+    };
+    const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
+};
+
+test "a texel kept smaller than its colour: 8888 in its word, and one byte of red" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+
+    var features: facet.PhysicalDeviceFeatures = undefined;
+    fb.GetPhysicalDeviceFeatures(bench.physical, &features);
+    try testing.expect(features.small_texels);
+    var properties: facet.FormatProperties = undefined;
+    fb.GetPhysicalDeviceFormatProperties(bench.physical, .r8_unorm, &properties);
+    try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_SAMPLED_IMAGE != 0);
+    try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_COLOR_ATTACHMENT == 0);
+    try testing.expectEqual(@as(u32, 0), properties.buffer_features);
+
+    const usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST | facet.IMAGE_USAGE_TRANSFER_SRC;
+    // Eight by eight: a level of 64 texels, so that what each format
+    // takes is above the alignment an image's memory is rounded up to.
+    const side = facet.Extent3D{ .width = 8, .height = 8 };
+    const spread_image = try bench.bareImage(.{ .format = .b8g8r8a8_unorm, .extent = side, .usage = usage }, false);
+    const word_image = try bench.bareImage(.{ .flags = facet.IMAGE_CREATE_PACKED_TEXELS, .format = .b8g8r8a8_unorm, .extent = side, .usage = usage }, false);
+    const red_image = try bench.bareImage(.{ .format = .r8_unorm, .extent = side, .usage = usage }, false);
+
+    // What each takes: eight bytes a texel spread, four in a word, one for
+    // the red alone.
+    var needs: facet.MemoryRequirements = undefined;
+    fb.GetImageMemoryRequirements(device, spread_image, &needs);
+    try testing.expectEqual(@as(u64, 8 * 8 * 8), needs.size);
+    fb.GetImageMemoryRequirements(device, word_image, &needs);
+    try testing.expectEqual(@as(u64, 8 * 8 * 4), needs.size);
+    fb.GetImageMemoryRequirements(device, red_image, &needs);
+    try testing.expectEqual(@as(u64, 8 * 8 * 1), needs.size);
+
+    // Refused: the flag where the format has no word of 8888 to keep, and
+    // where nothing samples the image.
+    var refused: ?*facet.Image = null;
+    const packed565 = facet.ImageCreateInfo{ .flags = facet.IMAGE_CREATE_PACKED_TEXELS, .format = .r5g6b5_unorm_pack16, .extent = side, .usage = usage };
+    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &packed565, &refused));
+    const packed_rows = facet.ImageCreateInfo{ .flags = facet.IMAGE_CREATE_PACKED_TEXELS, .format = .b8g8r8a8_unorm, .extent = side, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT };
+    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &packed_rows, &refused));
+    const red_rows = facet.ImageCreateInfo{ .format = .r8_unorm, .extent = side, .usage = facet.IMAGE_USAGE_TRANSFER_DST };
+    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &red_rows, &refused));
+
+    const spread_view = try bench.viewOf(.{ .image = spread_image, .format = .b8g8r8a8_unorm });
+    const word_view = try bench.viewOf(.{ .image = word_image, .format = .b8g8r8a8_unorm });
+    const red_view = try bench.viewOf(.{ .image = red_image, .format = .r8_unorm });
+
+    // A colour of its own on the left and another on the right, and the
+    // reds of those in the one-byte image.
+    const left_color: u32 = 0xFF20_4080;
+    const right_color: u32 = 0xFFC0_6010;
+    const reds_at = 8 * 8 * 4;
+    const staging, const staged = try bench.buffer(512, facet.BUFFER_USAGE_TRANSFER_SRC);
+    for (0..64) |k| {
+        const color = if (k % 8 < 4) left_color else right_color;
+        std.mem.writeInt(u32, staged[k * 4 ..][0..4], color, .little);
+        staged[reds_at + k] = @truncate(color >> 16);
+    }
+    const words = facet.BufferImageCopy{ .image_extent = side };
+    const reds = facet.BufferImageCopy{ .buffer_offset = reds_at, .image_extent = side };
+    _, const read_back = try bench.buffer(512, facet.BUFFER_USAGE_TRANSFER_DST);
+    const read_buffer = bench.buffers[bench.buffer_count - 1];
+
+    const commands = try bench.record();
+    fb.CmdCopyBufferToImage(commands, staging, spread_image, .transfer_dst_optimal, 1, @ptrCast(&words));
+    fb.CmdCopyBufferToImage(commands, staging, word_image, .transfer_dst_optimal, 1, @ptrCast(&words));
+    fb.CmdCopyBufferToImage(commands, staging, red_image, .transfer_dst_optimal, 1, @ptrCast(&reds));
+    fb.CmdCopyImageToBuffer(commands, red_image, .general, read_buffer, 1, @ptrCast(&reds));
+    try bench.submit();
+    // One byte a texel came back, as it went in.
+    try testing.expectEqualSlices(u8, staged[reds_at..][0..64], read_back[reds_at..][0..64]);
+
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .sampled_image, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &set_layout));
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    var pool: ?*facet.DescriptorPool = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool));
+    defer fb.DestroyDescriptorPool(device, pool);
+    var set: [1]?*facet.DescriptorSet = undefined;
+    try testing.expectEqual(facet.Result.success, fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &set));
+
+    const shaders = try module(&bench, &SmallScene.code);
+    defer fb.DestroyShaderModule(device, shaders);
+    const layout = try pipelineLayout(&bench, &.{set_layout.?}, 0);
+    defer fb.DestroyPipelineLayout(device, layout);
+    const pass = try renderPass(&bench, .clear, false);
+    defer fb.DestroyRenderPass(device, pass);
+    const picture = try Picture.of(&bench, 64, 64);
+    const frame = try framebuffer(&bench, pass, &.{picture.view}, 64, 64);
+    defer fb.DestroyFramebuffer(device, frame);
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(LayerScene.quad)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(LayerScene.quad))], std.mem.asBytes(&LayerScene.quad));
+    const offset: u64 = 0;
+    const black = clears(0xFF00_0000);
+
+    const drawn = struct {
+        fn drawn(on: *Bench, view: *facet.ImageView, name: [*:0]const u8, made_layout: *facet.PipelineLayout, into: *facet.RenderPass, into_frame: *facet.Framebuffer, code_module: *facet.ShaderModule, sets: *[1]?*facet.DescriptorSet, vertices: *facet.Buffer, first: *const u64, clear_values: *const [2]facet.ClearValue) !void {
+            const f = on.rig.fb;
+            const image_info = facet.DescriptorImageInfo{ .image_view = view };
+            const write = facet.WriteDescriptorSet{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .sampled_image, .image_info = @ptrCast(&image_info) };
+            f.UpdateDescriptorSets(on.device, 1, @ptrCast(&write), 0, null);
+            const result, const pipeline = makePipeline(on, .{ .module = code_module, .name = name, .layout = made_layout, .pass = into });
+            try testing.expectEqual(facet.Result.success, result);
+            defer f.DestroyPipeline(on.device, pipeline);
+            const recording = try on.record();
+            f.CmdBeginRenderPass(recording, &.{ .render_pass = into, .framebuffer = into_frame, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 1, .clear_values = clear_values }, .@"inline");
+            f.CmdBindVertexBuffers(recording, 0, 1, @ptrCast(&vertices), @ptrCast(first));
+            f.CmdBindDescriptorSets(recording, .graphics, made_layout, 0, 1, @ptrCast(sets), 0, null);
+            f.CmdBindPipeline(recording, .graphics, pipeline.?);
+            f.CmdDraw(recording, 6, 1, 0, 0);
+            f.CmdEndRenderPass(recording);
+            try on.submit();
+        }
+    }.drawn;
+
+    // The word a texel reads what the spread one reads.
+    try drawn(&bench, spread_view, "spread", layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
+    try testing.expectEqual(left_color, picture.at(8, 8));
+    try testing.expectEqual(right_color, picture.at(56, 56));
+    try drawn(&bench, word_view, "word", layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
+    try testing.expectEqual(left_color, picture.at(8, 8));
+    try testing.expectEqual(right_color, picture.at(56, 56));
+    // The one-byte one reads red alone, the green and blue 0.
+    try drawn(&bench, red_view, "red", layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
+    try testing.expectEqual(0xFF00_0000 | (left_color & 0x00FF_0000), picture.at(8, 8));
+    try testing.expectEqual(0xFF00_0000 | (right_color & 0x00FF_0000), picture.at(56, 56));
+    // A form built for the spread 8888 handed either: the run-time
+    // sampler draws it, and reads the same colours.
+    try drawn(&bench, word_view, "spread", layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
+    try testing.expectEqual(left_color, picture.at(8, 8));
+    try drawn(&bench, red_view, "spread", layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
+    try testing.expectEqual(0xFF00_0000 | (right_color & 0x00FF_0000), picture.at(56, 56));
+}
+
 test "the cube through the API, as the rasterizer draws it by itself" {
     var bench = try Bench.up();
     defer bench.down();

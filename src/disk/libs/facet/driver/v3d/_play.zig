@@ -825,6 +825,8 @@ fn textureUniforms(queue: *Queue, fixed: shader.Fixed) ?u32 {
         .b8g8r8a8_unorm => .bgra,
         .r8g8b8a8_unorm => .rgba,
         .r5g6b5_unorm_pack16 => .rgb565,
+        // One byte of red a texel, the TMU's own R8 (since 1.48).
+        .r8_unorm => .r8,
         else => return null,
     };
     const layout = layoutOf(image.format, image.width, image.height, image.levels);

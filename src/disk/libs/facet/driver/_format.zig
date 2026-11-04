@@ -39,6 +39,15 @@ fn describe(format: facet.Format, keeps_blocks: bool) facet.FormatProperties {
             .buffer_features = vertices | texels,
         },
         .r5g6b5_unorm_pack16 => .{ .linear_tiling_features = attachment | transfer, .optimal_tiling_features = attachment | transfer | sampled | storage, .buffer_features = texels },
+        // One byte of red a texel, sampled and written through, and never
+        // an attachment: a texture of one channel, read as (red, 0, 0, 1)
+        // (`PhysicalDeviceFeatures.small_texels`, since 1.48). A device
+        // without that feature refuses such an image all the same.
+        .r8_unorm => .{
+            .linear_tiling_features = 0,
+            .optimal_tiling_features = transfer | sampled | storage,
+            .buffer_features = 0,
+        },
         // A depth attachment, and since 1.30 a transfer as well: a pass
         // that stores its depth writes the image's rows, and a copy reads
         // them (`PhysicalDeviceFeatures.stored_depth`).

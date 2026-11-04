@@ -598,3 +598,80 @@ test "an array of cubes: a cube of it by its number, and a face of that cube" {
     // One cube on its own is the first of them.
     try testing.expectEqual(stackedColor(0, 0), made.sampleCube(nearest, 0, 1, 0, 0));
 }
+
+test "a texel kept smaller than its colour: one word of 8888, and one byte of red" {
+    // The same picture in all three: 8888 spread over 64 bits, 8888 in the
+    // 32 of its word, and the red alone in one byte.
+    const across = 8;
+    const down = 4;
+    var picture: [across * down]u32 = undefined;
+    for (0..down) |y| for (0..across) |x| {
+        picture[y * across + x] = texelAt(@intCast(x), @intCast(y));
+    };
+
+    // A level takes what its texels take: half of the spread one for a
+    // word a texel, an eighth for a byte.
+    try testing.expectEqual(@as(usize, 32 * 8), try Texture.bytes(.rgba8888, 8, 4, 1));
+    try testing.expectEqual(@as(usize, 32 * 4), try Texture.bytes(.argb8888, 8, 4, 1));
+    try testing.expectEqual(@as(usize, 32), try Texture.bytes(.r8, 8, 4, 1));
+
+    var spread_memory: [32]u64 = undefined;
+    var packed_memory: [32]u32 = undefined;
+    var red_memory: [32]u8 = undefined;
+    var spread_out = try Texture.init(.rgba8888, across, down, 1, @ptrCast(&spread_memory));
+    var in_words = try Texture.init(.argb8888, across, down, 1, @ptrCast(&packed_memory));
+    var in_bytes = try Texture.init(.r8, across, down, 1, @ptrCast(&red_memory));
+    spread_out.load(0, @ptrCast(&picture), across * 4);
+    in_words.load(0, @ptrCast(&picture), across * 4);
+    for (0..down) |y| for (0..across) |x| {
+        in_bytes.put(0, @intCast(x), @intCast(y), picture[y * across + x] >> 16 & 0xFF);
+    };
+
+    // The texels lie in the same places, counted in their own sizes, and
+    // read as the same colours - the one-byte one as red alone, with a
+    // green and a blue of 0 and the whole alpha, the way Vulkan reads
+    // R8_UNORM.
+    for (0..down) |y| for (0..across) |x| {
+        const want = picture[y * across + x];
+        try testing.expectEqual(spread_out.index(0, @intCast(x), @intCast(y)), in_words.index(0, @intCast(x), @intCast(y)));
+        try testing.expectEqual(spread_out.index(0, @intCast(x), @intCast(y)), in_bytes.index(0, @intCast(x), @intCast(y)));
+        try testing.expectEqual(want, in_words.colorAt(0, 0, @intCast(x), @intCast(y)));
+        try testing.expectEqual(0xFF00_0000 | (want & 0x00FF_0000), in_bytes.colorAt(0, 0, @intCast(x), @intCast(y)));
+    };
+
+    // Sampled by the fast path, each format's own: the same colours as the
+    // spread one reads, red alone where red alone is kept.
+    const nearest = texture.Sampling{ .filter = .nearest, .address = .clamp };
+    const packed_nearest = texture.Sampling{ .filter = .nearest, .address = .clamp, .format = .argb8888 };
+    const red_nearest = texture.Sampling{ .filter = .nearest, .address = .clamp, .format = .r8 };
+    for (0..down) |y| for (0..across) |x| {
+        const u = (@as(f32, @floatFromInt(x)) + 0.5) / across;
+        const v = (@as(f32, @floatFromInt(y)) + 0.5) / down;
+        const want = picture[y * across + x];
+        try testing.expectEqual(want, sampleAt(nearest, &spread_out, 0, u, v));
+        try testing.expectEqual(want, sampleAt(packed_nearest, &in_words, 0, u, v));
+        try testing.expectEqual(0xFF00_0000 | (want & 0x00FF_0000), sampleAt(red_nearest, &in_bytes, 0, u, v));
+    };
+
+    // And filtered, which is where the spread is done rather than read:
+    // the word a texel reads what the spread one reads, everywhere.
+    const smooth = texture.Sampling{ .filter = .bilinear, .address = .wrap };
+    const packed_smooth = texture.Sampling{ .filter = .bilinear, .address = .wrap, .format = .argb8888 };
+    const red_smooth = texture.Sampling{ .filter = .bilinear, .address = .wrap, .format = .r8 };
+    var at: u32 = 0;
+    while (at < 64) : (at += 1) {
+        const u = @as(f32, @floatFromInt(at)) / 64 + 0.013;
+        const v = @as(f32, @floatFromInt(at % 17)) / 17 - 0.21;
+        const mixed = sampleAt(smooth, &spread_out, 0, u, v);
+        try testing.expectEqual(mixed, sampleAt(packed_smooth, &in_words, 0, u, v));
+        // Red alone mixes to the same red: the other channels are 0.
+        try testing.expectEqual(0xFF00_0000 | (mixed & 0x00FF_0000), sampleAt(red_smooth, &in_bytes, 0, u, v));
+    }
+
+    // A colour written through either, as a storage image is written: the
+    // word takes all of it, the byte its red.
+    in_words.setColor(0, 0, 1, 1, 0x8012_3456);
+    in_bytes.setColor(0, 0, 1, 1, 0x8012_3456);
+    try testing.expectEqual(@as(u32, 0x8012_3456), in_words.colorAt(0, 0, 1, 1));
+    try testing.expectEqual(@as(u32, 0xFF12_0000), in_bytes.colorAt(0, 0, 1, 1));
+}

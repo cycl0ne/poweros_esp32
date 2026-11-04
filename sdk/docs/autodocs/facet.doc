@@ -3176,7 +3176,7 @@ facet.library/WaitForFences
 
    BEHAVIOR
 	What it is for decides how it lies in its memory:
-	- SAMPLED, in optimal tiling, of B8G8R8A8, R8G8B8A8 or R5G6B5, of any
+	- SAMPLED, in optimal tiling, of B8G8R8A8, R8G8B8A8, R5G6B5 or R8_UNORM, of any
 	  sides, with up to as many levels as halving the longer gives -
 	  floor(log2(side)) + 1, each level the one before halved and no less
 	  than one: a texture, in blocks of 4 x 4 texels, an 8888 texel kept in
@@ -3240,6 +3240,28 @@ facet.library/WaitForFences
 	done. A device without the feature unpacks it as a float image is unpacked.
 	A STORAGE image is written texel by texel, so a compressed or a float one
 	is unpacked there whatever the device.
+
+	**A texel may be kept smaller than the colour it reads as** on a device
+	that says so (`PhysicalDeviceFeatures.small_texels`, since 1.48), which
+	is where a texture is large enough that the memory it fills is what it
+	costs:
+	- R8_UNORM is one byte a texel, read as (red, 0, 0, 1) the way Vulkan
+	  reads a one-channel format - an eighth of what the same texels kept
+	  as 8888 take. For SAMPLED or STORAGE, in optimal tiling; a copy moves
+	  the bytes both ways. It is not a colour attachment and not a vertex's
+	  value.
+	- IMAGE_CREATE_PACKED_TEXELS on a SAMPLED or STORAGE image of B8G8R8A8
+	  or R8G8B8A8 keeps each texel in the 32 bits of its word rather than
+	  spread over 64: half the memory, for the spread a sample then does
+	  itself. Nothing else of the image changes - the same colours in, the
+	  same out, the same copies - and a fixed form compiled for
+	  `texture.Format.argb8888` reads it at full speed, while one compiled
+	  for `rgba8888` draws it through the run-time sampler as it does any
+	  other format it was not built for.
+
+	Both are `error_format_not_supported` where the device has not got
+	them, and so is the flag on an image that is neither sampled nor a
+	storage image, or whose format has no 8888 word to keep.
 
    CONTEXT
 	- Waits: no.
@@ -5452,13 +5474,16 @@ facet.library/WaitForFences
 	another way instead of failing; a `true` is a promise for this device, not
 	for the next one listed.
 
-	Five of the fields differ between the devices of one machine, and are the
-	reason to look. `own_fragment_functions`, `sampling_format` and
-	`depth_prepass` are the cores' and not the V3D's. `compute_on_device` and
-	`tessellation_on_device` are the cores' too, and for the plain reason that
-	the cores are that device: both kinds of work run on them whichever device
-	made the pipeline, so on the V3D they are false while the work still
-	happens. The limits say the rest of
+	Sixteen of the fields differ between the devices of one machine, and are
+	the reason to look. `own_fragment_functions`, `sampling_format`,
+	`depth_prepass`, `discarding_fragment_forms`, `input_attachments`,
+	`sampled_depth`, `storage_images`, `samplers`, `sampler_anisotropy`,
+	`pipeline_statistics_queries`, `kept_compressed`, `kept_floats`,
+	`cube_arrays` and `stored_both` are the cores' and not the V3D's.
+	`compute_on_device` and `tessellation_on_device` are the cores' too, and
+	for the plain reason that the cores are that device: both kinds of work
+	run on them whichever device made the pipeline, so on the V3D they are
+	false while the work still happens. The limits say the rest of
 	what parts differ: a CM5's V3D takes one sampled image a stage where the
 	cores take sixteen (`GetPhysicalDeviceProperties`).
 
@@ -5519,12 +5544,27 @@ facet.library/WaitForFences
 	  sampled, filtered, in optimal tiling; copied.
 	- D16_UNORM: a depth attachment, in optimal tiling.
 	- R32_SFLOAT to R32G32B32A32_SFLOAT: a vertex's value.
+	- R8_UNORM: sampled, filtered, written through as a storage image, in
+	  optimal tiling, and copied both ways. One byte a texel, read as
+	  (red, 0, 0, 1) (`PhysicalDeviceFeatures.small_texels`, since 1.48);
+	  never an attachment and never a buffer's.
 	- BC1, BC2, BC3, R16G16B16A16_SFLOAT, R32G32B32A32_SFLOAT,
 	  B10G11R11_UFLOAT and E5B9G9R9_UFLOAT: sampled, filtered, in optimal
-	  tiling, and copied into. They are kept as 8 bits a channel, floats cut to
-	  0 to 1: they save no memory and hold no more than B8G8R8A8.
+	  tiling, and copied into. A device that samples such a texel where it
+	  lies keeps it as it was copied in and is copied out of as well
+	  (`kept_compressed` since 1.44, `kept_floats` since 1.45, and
+	  TRANSFER_SRC here says which); one that does not keeps it as 8 bits a
+	  channel, floats cut to 0 to 1, taking B8G8R8A8's memory and holding
+	  no more than it.
+	- ETC2 and EAC - ETC2_R8G8B8, ETC2_R8G8B8A1, ETC2_R8G8B8A8, EAC_R11 and
+	  EAC_R11G11: sampled, filtered, in optimal tiling, and copied into.
+	  No sampler of this library reads such a block, so they are always
+	  unpacked to 8 bits a channel and never copied out of (since 1.46).
 
-	An image to be sampled may have sides of any size (since 1.42).
+	An image to be sampled may have sides of any size (since 1.42). One of
+	B8G8R8A8 or R8G8B8A8 may keep its texel in the 32 bits of its word
+	rather than spread over 64 (IMAGE_CREATE_PACKED_TEXELS, since 1.48);
+	the format's features are the same either way.
 
    CONTEXT
 	- Waits: no.

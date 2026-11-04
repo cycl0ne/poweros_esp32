@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.47**, so that a program need not find out by failing. It covers the API.
+1.48**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -38,7 +38,7 @@ What a device will and will not do is answered by
 `GetPhysicalDeviceFeatures` (since 1.24), which is Vulkan's call with a
 structure of facet's own: a field wherever a create call can refuse
 something, and no field for what the library has no call for at all.
-Thirteen of its fields differ between the cores and the V3D, which is the
+Sixteen of its fields differ between the cores and the V3D, which is the
 reason a program that wants the GPU should ask rather than take the first
 device listed.
 
@@ -183,11 +183,13 @@ is left out:
   cores, and groups run in no order, so two functions writing the same texel
   is for the program to avoid - as it is in Vulkan, there being no barrier
   and no atomic here either.
-- **The formats are a texture's**: `rgba8888` and `rgb565`. There is no
-  format conversion on a write and no `r32` of any kind. A compressed or a
-  float image asked for as a storage image is unpacked to 8888, whatever
-  the device keeps for a sampled one: nothing here writes a texel into a
-  block or makes a float of one.
+- **The formats are a texture's**: `rgba8888`, `rgb565`, and since 1.48 the
+  two smaller ones - an 8888 texel kept in its word, and one byte of red,
+  which takes the colour's red alone. There is no format conversion past
+  that and no `r32` of any kind. A compressed or a float image asked for as
+  a storage image is unpacked to 8888, whatever the device keeps for a
+  sampled one: nothing here writes a texel into a block or makes a float of
+  one.
 - **The view's first level and layer** are what a function writes: there is
   no way to name another level from inside the function.
 - A `storage_image` is still not an attachment: an image cannot be drawn
@@ -487,9 +489,23 @@ Of textures:
   a power of two costs a division a sample instead of a mask; `clamp`
   costs the same whatever the size.
 - A texel is kept as `rgba8888`, `rgb565`, the blocks of BC1, BC2 or BC3
-  (1.44), or the floats of the four float formats (1.45). An 8888 texel takes 64 bits, each channel in 16 of
-  them, so that the four texels of a bilinear sample come out of memory
-  ready to mix.
+  (1.44), the floats of the four float formats (1.45), or - since 1.48 -
+  one of the two smaller ones. An 8888 texel takes 64 bits by default,
+  each channel in 16 of them, so that the four texels of a bilinear
+  sample come out of memory ready to mix.
+- **A texel smaller than its colour** since 1.48
+  (`PhysicalDeviceFeatures.small_texels`, every device): an image of
+  `r8_unorm` keeps one byte of red a texel and reads as (red, 0, 0, 1),
+  an eighth of what the same texels kept as 8888 take; and
+  IMAGE_CREATE_PACKED_TEXELS on a sampled image of 8888 keeps each texel
+  in the 32 bits of its word rather than spread over 64, half the memory
+  for the spread a sample then does itself. Both are written through as
+  storage images and copied both ways. A fixed form reads either at full
+  speed where it was compiled for it (`texture.Format.r8`, `argb8888`);
+  one compiled for `rgba8888` draws it through the run-time sampler. On
+  the V3D an 8888 texel was never spread, so the flag costs nothing and
+  changes nothing there, and R8 is a texture type of the TMU's own. There
+  is no `r8g8`, no 16-bit channel and no signed or integer one.
 - A compressed image is kept in its blocks on a device that samples them
   (`PhysicalDeviceFeatures.kept_compressed`, the cores since 1.44): an
   eighth to a quarter of the memory - 16 x 16 of BC1 is 128 bytes against

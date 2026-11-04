@@ -63,6 +63,10 @@ pub const Image = struct {
     volume: bool = false,
     /// IMAGE_CREATE_CUBE_COMPATIBLE.
     cube: bool = false,
+    /// IMAGE_CREATE_PACKED_TEXELS: an 8888 texel kept in the 32 bits of
+    /// its word rather than spread over 64 (`texture.Format.argb8888`,
+    /// `PhysicalDeviceFeatures.small_texels`, since 1.48).
+    packed_texels: bool = false,
     usage: u32,
     kind: Kind,
     /// `rows`: the bytes from one row to the next.
@@ -158,7 +162,8 @@ pub fn rowFormat(format: facet.Format) shader.TexelFormat {
 /// for one facet.library does not know.
 pub fn bytesOf(format: facet.Format) u32 {
     return switch (format) {
-        .s8_uint => 1,
+        // One byte of red a texel (since 1.48).
+        .s8_uint, .r8_unorm => 1,
         .r5g6b5_unorm_pack16, .d16_unorm => 2,
         .d16_unorm_s8_uint => 4,
         .r8g8b8a8_unorm, .b8g8r8a8_unorm, .r32_sfloat => 4,
@@ -175,9 +180,19 @@ pub fn bytesOf(format: facet.Format) u32 {
 /// How a sampled image of `format` keeps its texels, or null for a format
 /// that cannot be sampled.
 pub fn textureFormat(format: facet.Format) ?texture.Format {
+    return keptFormat(format, false);
+}
+
+/// The same, with IMAGE_CREATE_PACKED_TEXELS: an 8888 texel is then kept
+/// in the 32 bits of its word rather than spread over 64, which is the
+/// same colour in half the memory (`PhysicalDeviceFeatures.small_texels`,
+/// since 1.48). The flag means nothing to any other format.
+pub fn keptFormat(format: facet.Format, packed_texels: bool) ?texture.Format {
     return switch (format) {
-        .b8g8r8a8_unorm, .r8g8b8a8_unorm => .rgba8888,
+        .b8g8r8a8_unorm, .r8g8b8a8_unorm => if (packed_texels) .argb8888 else .rgba8888,
         .r5g6b5_unorm_pack16 => .rgb565,
+        // One byte of red a texel, read as (red, 0, 0, 1) (since 1.48).
+        .r8_unorm => .r8,
         // Kept in their blocks and decoded as they are sampled, on a
         // device that says so (`PhysicalDeviceFeatures.kept_compressed`).
         .bc1_rgba_unorm_block => .bc1,
@@ -227,6 +242,19 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
     if (layers > _instance.max_image_array_layers) return null;
     const cube = info.flags & facet.IMAGE_CREATE_CUBE_COMPATIBLE != 0;
     if (cube and (volume or layers < 6 or extent.width != extent.height)) return null;
+    // A texel kept smaller than the colour it reads as, on a device that
+    // keeps one (`PhysicalDeviceFeatures.small_texels`, since 1.48): an
+    // 8888 texel in the 32 bits of its word rather than spread over 64,
+    // and a texel of one byte of red. Both are for an image a function
+    // reads or writes; nothing else is kept in a texture's layout.
+    const in_texels = info.usage & (facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_STORAGE) != 0;
+    const packed_texels = info.flags & facet.IMAGE_CREATE_PACKED_TEXELS != 0;
+    const packs = switch (info.format) {
+        .r8g8b8a8_unorm, .b8g8r8a8_unorm => true,
+        else => false,
+    };
+    if (packed_texels and !(physical.features.small_texels and in_texels and packs)) return null;
+    if (info.format == .r8_unorm and !(physical.features.small_texels and in_texels)) return null;
     // Layers are for sampling: an attachment or rows have one.
     if ((layers > 1 or _decode.unpacks(info.format)) and (info.usage & facet.IMAGE_USAGE_SAMPLED == 0 or info.tiling != .optimal)) return null;
     // A compressed image is kept in its blocks, and a float one in its
@@ -254,6 +282,7 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
         .layers = layers,
         .volume = volume,
         .cube = cube,
+        .packed_texels = packed_texels,
         .width = extent.width,
         .height = extent.height,
         .levels = info.mip_levels,
@@ -296,7 +325,7 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
     // kept in the layout a sample reads.
     if (info.usage & (facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_STORAGE) != 0) {
         if (info.tiling != .optimal or info.usage & facet.IMAGE_USAGE_COLOR_ATTACHMENT != 0) return null;
-        const kept = textureFormat(kept_format) orelse return null;
+        const kept = keptFormat(kept_format, packed_texels) orelse return null;
         image.kind = .texture;
         var one_layer: u64 = texture.Texture.bytes(kept, extent.width, extent.height, info.mip_levels) catch return null;
         one_layer = std.mem.alignForward(u64, one_layer, row_alignment);
@@ -324,7 +353,7 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
 /// size the image is (`texture.Texture.linear`).
 pub fn texelsOver(image: *const Image, memory: [*]u8) texture.Texture.Error!texture.Texture {
     if (image.kind == .depth) return texture.Texture.linear(.d16, image.width, image.height, image.pitch, memory);
-    var made = try texture.Texture.init(textureFormat(image.format).?, image.width, image.height, image.levels, memory);
+    var made = try texture.Texture.init(keptFormat(image.format, image.packed_texels).?, image.width, image.height, image.levels, memory);
     made.layer_count = image.layers;
     made.layer_bytes = @intCast(image.layer_bytes);
     return made;
@@ -561,6 +590,8 @@ fn texelOf(format: facet.Format, bytes: []const u8) u32 {
             break :texel color & 0xFF00_FF00 | (color >> 16 & 0xFF) | (color & 0xFF) << 16;
         },
         .r5g6b5_unorm_pack16 => std.mem.readInt(u16, bytes[0..2], .little),
+        // One byte of red, kept as it lies (since 1.48).
+        .r8_unorm => bytes[0],
         else => 0,
     };
 }
@@ -630,6 +661,7 @@ fn bytesOfTexel(format: facet.Format, texel: u32, into: []u8) void {
         .b8g8r8a8_unorm => std.mem.writeInt(u32, into[0..4], texel, .little),
         .r8g8b8a8_unorm => std.mem.writeInt(u32, into[0..4], texel & 0xFF00_FF00 | (texel >> 16 & 0xFF) | (texel & 0xFF) << 16, .little),
         .r5g6b5_unorm_pack16 => std.mem.writeInt(u16, into[0..2], @truncate(texel), .little),
+        .r8_unorm => into[0] = @truncate(texel),
         else => {},
     }
 }
@@ -649,6 +681,8 @@ pub fn colorOfBytes(format: facet.Format, bytes: []const u8) u32 {
             const b = packed_color & 0x1F;
             break :color 0xFF00_0000 | (r << 3 | r >> 2) << 16 | (g << 2 | g >> 4) << 8 | (b << 3 | b >> 2);
         },
+        // Red alone, as Vulkan reads a one-channel format.
+        .r8_unorm => texture.redOf8(bytes[0]),
         else => 0,
     };
 }
@@ -663,6 +697,7 @@ pub fn bytesOfColor(format: facet.Format, color: u32, into: []u8) void {
             const b = ((color & 0xFF) * 31 + 127) / 255;
             std.mem.writeInt(u16, into[0..2], @intCast(r << 11 | g << 5 | b), .little);
         },
+        .r8_unorm => into[0] = @truncate(color >> 16),
         else => {},
     }
 }

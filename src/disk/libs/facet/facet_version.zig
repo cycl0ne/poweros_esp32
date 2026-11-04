@@ -402,9 +402,30 @@ pub const LIBRARY_VERSION = 1;
 /// (`shader.Resources.input`) and a storage image written by one, and the
 /// V3D runs none of the program's functions, only the fixed forms. Neither
 /// is a packet this driver could write.
+/// 48: a texel kept smaller than the colour it reads as
+/// (`PhysicalDeviceFeatures.small_texels`, on every device). An image of
+/// `r8_unorm` keeps one byte of red a texel and reads as (red, 0, 0, 1),
+/// the way Vulkan reads a one-channel format - an eighth of what the same
+/// texels kept as 8888 take, which is what a mask, a height field or a
+/// lightmap costs now (`texture.Format.r8`). And
+/// IMAGE_CREATE_PACKED_TEXELS on a sampled image of 8888 keeps each texel
+/// in the 32 bits of its word rather than spread over 64
+/// (`texture.Format.argb8888`): half the memory and half the cache it
+/// fills, for the spread a sample then does itself, which is the trade the
+/// other way round from the one the spread texel was made for. A fixed
+/// form compiled for either format reads it at full speed; one compiled
+/// for `rgba8888` draws it through the run-time sampler, as it does any
+/// other format it was not built for, so a program asks the device what it
+/// keeps and compiles for that. Both are written through as storage images
+/// as well - the word takes the whole colour, the byte its red - and both
+/// are copied in and out as they lie. On the V3D a texel was never spread,
+/// so the flag costs nothing and changes nothing there, and R8 is a
+/// texture type of the TMU's own, read with the swizzles of the channels
+/// it has not: its microtile is 8 x 8 rather than 4 x 4, one byte a texel
+/// being 64 bytes all the same (`driver/v3d/tiling.zig`).
 /// What stays: `fifo` is the one present mode, there being no way to ask a
 /// display to show a buffer before its next frame; one queue family of one
 /// queue; a counter of 32 bits, for want of a 64-bit atomic on every
 /// machine the library runs on; and no point mode in tessellation, there
 /// being no point rasterization at all.
-pub const LIBRARY_REVISION = 47;
+pub const LIBRARY_REVISION = 48;

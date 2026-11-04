@@ -324,6 +324,10 @@ fn texelOf(image: *const Image, color: u32) ?Texel {
         },
         .texture => switch (image.texels.format) {
             .rgba8888 => .{ .eight = texture.spread(color) },
+            // A texel kept smaller than its colour (since 1.48): the word
+            // as it is, and the red alone.
+            .argb8888 => .{ .four = color },
+            .r8 => .{ .one = @truncate(color >> 16) },
             .rgb565 => .{ .two = narrow(color) },
             // A clear of a colour is not for a depth texture:
             // CmdClearDepthStencilImage writes that one. Nor for one that

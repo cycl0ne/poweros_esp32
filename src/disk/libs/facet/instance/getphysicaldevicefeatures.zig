@@ -31,13 +31,16 @@ const PhysicalDevice = @import("_instance.zig").PhysicalDevice;
 /// another way instead of failing; a `true` is a promise for this device, not
 /// for the next one listed.
 ///
-/// Five of the fields differ between the devices of one machine, and are the
-/// reason to look. `own_fragment_functions`, `sampling_format` and
-/// `depth_prepass` are the cores' and not the V3D's. `compute_on_device` and
-/// `tessellation_on_device` are the cores' too, and for the plain reason that
-/// the cores are that device: both kinds of work run on them whichever device
-/// made the pipeline, so on the V3D they are false while the work still
-/// happens. The limits say the rest of
+/// Sixteen of the fields differ between the devices of one machine, and are
+/// the reason to look. `own_fragment_functions`, `sampling_format`,
+/// `depth_prepass`, `discarding_fragment_forms`, `input_attachments`,
+/// `sampled_depth`, `storage_images`, `samplers`, `sampler_anisotropy`,
+/// `pipeline_statistics_queries`, `kept_compressed`, `kept_floats`,
+/// `cube_arrays` and `stored_both` are the cores' and not the V3D's.
+/// `compute_on_device` and `tessellation_on_device` are the cores' too, and
+/// for the plain reason that the cores are that device: both kinds of work
+/// run on them whichever device made the pipeline, so on the V3D they are
+/// false while the work still happens. The limits say the rest of
 /// what parts differ: a CM5's V3D takes one sampled image a stage where the
 /// cores take sixteen (`GetPhysicalDeviceProperties`).
 ///

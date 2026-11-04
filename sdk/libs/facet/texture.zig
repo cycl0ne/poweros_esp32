@@ -30,6 +30,16 @@
 //! texels of a sample read ready to mix - spreading them as they are read
 //! is a fifth of what a pixel costs on the U74.
 //!
+//! **Two formats keep a texel smaller than the colour it reads as** (since
+//! 1.48): `Format.argb8888`, the same 0xAARRGGBB in the 32 bits of one
+//! word, spread as it is read; and `Format.r8`, one byte of red, read as
+//! (red, 0, 0, 1) the way Vulkan reads R8_UNORM. Half the memory of
+//! `rgba8888` and an eighth of it, for a spread a sample does itself - the
+//! trade the other way round from the one above, and the one to make where
+//! a texture is big enough to miss the cache. A level of `r8` is kept in
+//! blocks of 4 x 4 bytes all the same, so its rows lie as every other
+//! format's do.
+//!
 //! A pipeline samples one at a time, and its format, its filter and what
 //! it does past the edges are the pipeline's, fixed at compile time
 //! (`Sampling`): the sample is built for them. Coordinates are 0 to 1
@@ -74,8 +84,21 @@ const std = @import("std");
 pub const Format = enum {
     /// 32 bits, 0xAARRGGBB; kept spread, in 64.
     rgba8888,
+    /// The same 0xAARRGGBB in 32 bits, one word a texel: half the memory
+    /// `rgba8888` takes, for the spread a sample does as it reads each of
+    /// its four texels. An image asks to be kept this way with
+    /// IMAGE_CREATE_PACKED_TEXELS (`PhysicalDeviceFeatures.small_texels`,
+    /// since 1.48). (Since 1.48.)
+    argb8888,
     /// 16 bits, red in the top 5, green in the middle 6, blue in the low 5.
     rgb565,
+    /// One byte of red a texel: Vulkan's R8_UNORM, read as (red, 0, 0, 1)
+    /// - 0xFF0000RR as a colour, the green and the blue 0 and the alpha
+    /// whole, as Vulkan reads a one-channel format. An eighth of the
+    /// memory of the same texels kept as `rgba8888`, which is what a mask,
+    /// a height field or a lightmap of one channel costs there
+    /// (`PhysicalDeviceFeatures.small_texels`). (Since 1.48.)
+    r8,
     /// 16 bits of depth, 0 nearest, as a depth attachment holds one: a
     /// texture of this is kept in rows (`Texture.pitch`) and sampled by
     /// `sampleBy` alone.
@@ -121,9 +144,9 @@ pub const Format = enum {
         return switch (format) {
             .rgba8888, .rgba16f => 3,
             .rgba32f => 4,
-            .rg11b10f, .rgb9e5 => 2,
+            .argb8888, .rg11b10f, .rgb9e5 => 2,
             .rgb565, .d16 => 1,
-            .bc1, .bc1_rgb, .bc2, .bc3 => 0,
+            .r8, .bc1, .bc1_rgb, .bc2, .bc3 => 0,
         };
     }
 
@@ -135,10 +158,11 @@ pub const Format = enum {
             // 16 texels of 8 bytes, and of 2.
             .rgba8888, .rgba16f => 7,
             .rgba32f => 8,
-            .rg11b10f, .rgb9e5 => 6,
+            .argb8888, .rg11b10f, .rgb9e5 => 6,
             .rgb565, .d16 => 5,
+            // 16 texels of one byte, and the blocks of 8 and of 16.
+            .r8, .bc2, .bc3 => 4,
             .bc1, .bc1_rgb => 3,
-            .bc2, .bc3 => 4,
         };
     }
 
@@ -153,7 +177,7 @@ pub const Format = enum {
     pub fn compressed(format: Format) bool {
         return switch (format) {
             .bc1, .bc1_rgb, .bc2, .bc3 => true,
-            .rgba8888, .rgb565, .d16, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5 => false,
+            .rgba8888, .argb8888, .rgb565, .r8, .d16, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5 => false,
         };
     }
 
@@ -164,7 +188,7 @@ pub const Format = enum {
     pub fn floats(format: Format) bool {
         return switch (format) {
             .rgba16f, .rgba32f, .rg11b10f, .rgb9e5 => true,
-            .rgba8888, .rgb565, .d16, .bc1, .bc1_rgb, .bc2, .bc3 => false,
+            .rgba8888, .argb8888, .rgb565, .r8, .d16, .bc1, .bc1_rgb, .bc2, .bc3 => false,
         };
     }
 
@@ -173,6 +197,19 @@ pub const Format = enum {
     /// float one's texels. (Since 1.45.)
     pub fn kept(format: Format) bool {
         return format.compressed() or format.floats();
+    }
+
+    /// Whether a texel is kept in fewer bytes than the colour it reads as:
+    /// `argb8888` in the four of its word rather than the eight it is
+    /// spread in, and `r8` in one
+    /// (`PhysicalDeviceFeatures.small_texels`). A sample reads such a
+    /// texel and makes the colour of it, where the others are read as they
+    /// lie. (Since 1.48.)
+    pub fn small(format: Format) bool {
+        return switch (format) {
+            .argb8888, .r8 => true,
+            .rgba8888, .rgb565, .d16, .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5 => false,
+        };
     }
 
     /// Whether a texture of this holds a depth rather than a colour: read
@@ -483,7 +520,9 @@ pub const Texture = struct {
         const at = texture.memory + texture.placeOf(layer, lod, x, y);
         switch (texture.format) {
             .rgba8888 => @as(*u64, @ptrCast(@alignCast(at))).* = spread(texel),
+            .argb8888 => @as(*u32, @ptrCast(@alignCast(at))).* = texel,
             .rgb565, .d16 => @as(*u16, @ptrCast(@alignCast(at))).* = @truncate(texel),
+            .r8 => at[0] = @truncate(texel),
             // Nothing is written a texel at a time into a texture that
             // keeps what it was given: `putTexels` moves the bytes.
             .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5 => {},
@@ -497,7 +536,9 @@ pub const Texture = struct {
         const at = texture.memory + texture.placeOf(layer, lod, x, y);
         return switch (texture.format) {
             .rgba8888 => gather(@as(*const u64, @ptrCast(@alignCast(at))).*),
+            .argb8888 => @as(*const u32, @ptrCast(@alignCast(at))).*,
             .rgb565, .d16 => @as(*const u16, @ptrCast(@alignCast(at))).*,
+            .r8 => at[0],
             inline .bc1, .bc1_rgb, .bc2, .bc3 => |one| blockOf(one, at)[(y % block) * block + (x % block)],
             inline .rgba16f, .rgba32f, .rg11b10f, .rgb9e5 => |one| floatTexel(one, at),
         };
@@ -550,8 +591,10 @@ pub const Texture = struct {
     /// image with (`shader.Resources.written`).
     pub fn setColor(texture: *Texture, layer: u32, lod: u32, x: u32, y: u32, color: u32) void {
         texture.putLayer(layer, lod, x, y, switch (texture.format) {
-            .rgba8888 => color,
+            .rgba8888, .argb8888 => color,
             .rgb565 => as565(color),
+            // The red channel alone, the only one such a texel has.
+            .r8 => color >> 16 & 0xFF,
             // The red channel as a depth, its 8 bits in the top of the 16.
             .d16 => (color >> 16 & 0xFF) * 0x101,
             // Nothing is written through a texture that keeps what it was
@@ -564,8 +607,11 @@ pub const Texture = struct {
     pub fn colorAt(texture: *const Texture, layer: u32, lod: u32, x: u32, y: u32) u32 {
         const texel = texture.peekLayer(layer, lod, x, y);
         return switch (texture.format) {
-            .rgba8888 => texel,
+            .rgba8888, .argb8888 => texel,
             .rgb565 => expanded565(texel),
+            // Red alone, as Vulkan reads a one-channel format: the green
+            // and the blue 0, the alpha whole.
+            .r8 => redOf8(@truncate(texel)),
             // A depth as an opaque grey: its top 8 bits.
             .d16 => greyOf8(@truncate(texel >> 8)),
             // Decoded already: `peekLayer` read it out of its block, or
@@ -684,8 +730,9 @@ pub const Texture = struct {
             const row = pixels + y * pitch;
             for (0..texture.width(lod)) |x| {
                 const texel: u32 = switch (texture.format) {
-                    .rgba8888 => std.mem.readInt(u32, row[x * 4 ..][0..4], .little),
+                    .rgba8888, .argb8888 => std.mem.readInt(u32, row[x * 4 ..][0..4], .little),
                     .rgb565, .d16 => std.mem.readInt(u16, row[x * 2 ..][0..2], .little),
+                    .r8 => row[x],
                     .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5 => unreachable,
                 };
                 texture.put(lod, @intCast(x), @intCast(y), texel);
@@ -1410,6 +1457,10 @@ inline fn fetch(comptime format: Format, at: [*]const u8) u32 {
     @setRuntimeSafety(false);
     return switch (format) {
         .rgba8888 => gather(fetchSpread(format, at)),
+        // The word as it lies, and the one byte made a colour: what the
+        // smaller texels cost a sample (since 1.48).
+        .argb8888 => @as(*const u32, @ptrCast(@alignCast(at))).*,
+        .r8 => redOf8(at[0]),
         .rgb565 => widen(@as(*const u16, @ptrCast(@alignCast(at))).*),
         // A depth as a grey, as `Texture.colorAt` reads one: the fast path
         // is built for blocks and never reads a texture of this.
@@ -1427,7 +1478,7 @@ inline fn fetchSpread(comptime format: Format, at: [*]const u8) u64 {
     @setRuntimeSafety(false);
     return switch (format) {
         .rgba8888 => @as(*const u64, @ptrCast(@alignCast(at))).*,
-        .rgb565, .d16, .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5 => spread(fetch(format, at)),
+        .argb8888, .r8, .rgb565, .d16, .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5 => spread(fetch(format, at)),
     };
 }
 
@@ -1688,4 +1739,11 @@ inline fn greyOf(passed: f32) u32 {
 pub inline fn greyOf8(value: u8) u32 {
     const part: u32 = value;
     return 0xFF00_0000 | part << 16 | part << 8 | part;
+}
+
+/// A one-channel texel as a colour: red, with a green and a blue of 0 and
+/// the whole alpha, the way Vulkan reads R8_UNORM (`Format.r8`, since
+/// 1.48).
+pub inline fn redOf8(value: u8) u32 {
+    return 0xFF00_0000 | @as(u32, value) << 16;
 }
