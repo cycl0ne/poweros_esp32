@@ -196,14 +196,14 @@ fn mixed(a: u32, b: u32, part: f32) u32 {
 /// corners say, and in the destination's format.
 /// CmdClearColorImage: every texel of the levels and layers named set to
 /// the colour. False, and nothing written, for a format whose texel this
-/// cannot write - a compressed one, which Vulkan does not allow here either.
+/// cannot write - a compressed one, whose texels go in as whole blocks.
 ///
 /// Whole levels are written, so how a level's texels lie does not matter:
 /// each takes the same value, in whatever order they are kept.
 pub fn clearColorImage(command: *const _command.ClearColorImage) bool {
     const image = command.image;
     const data = image.data orelse return true;
-    const texel = texelOf(image, command.color) orelse return false;
+    const texel = texelOf(image, command.color, command.parts) orelse return false;
     for (_stream.items(_command.ClearColorImage, facet.ImageSubresourceRange, command, command.count)) |range| {
         const first_level = range.base_mip_level;
         if (first_level >= image.levels) continue;
@@ -308,18 +308,23 @@ fn fill(into: [*]u8, count: usize, texel: Texel) void {
             const pairs: [*]align(1) u64 = @ptrCast(into);
             @memset(pairs[0 .. count / 8], value);
         },
+        .sixteen => |value| {
+            const quads: [*]align(1) u128 = @ptrCast(into);
+            @memset(quads[0 .. count / 16], value);
+        },
     }
 }
 
 /// A texel as it lies in memory, which is as wide as that memory keeps one.
-const Texel = union(enum) { one: u8, two: u16, four: u32, eight: u64 };
+const Texel = union(enum) { one: u8, two: u16, four: u32, eight: u64, sixteen: u128 };
 
-/// The colour, 0xAARRGGBB, as this image keeps a texel; null for memory
-/// whose texel this cannot write. How wide one is depends on the image's
-/// kind and not only on its format: a `texture` keeps an 8888 texel spread
-/// over 64 bits, ready for the filter to mix, which is what `texture.spread`
-/// makes of it.
-fn texelOf(image: *const Image, color: u32) ?Texel {
+/// The colour, 0xAARRGGBB, as this image keeps a texel, or its channels as
+/// they were given where the format holds more than a byte of each; null
+/// for memory whose texel this cannot write. How wide one is depends on the
+/// image's kind and not only on its format: a `texture` keeps an 8888 texel
+/// spread over 64 bits, ready for the filter to mix, which is what
+/// `texture.spread` makes of it.
+fn texelOf(image: *const Image, color: u32, parts: [4]f32) ?Texel {
     return switch (image.kind) {
         .rows => switch (image.format) {
             .b8g8r8a8_unorm => .{ .four = color },
@@ -334,17 +339,35 @@ fn texelOf(image: *const Image, color: u32) ?Texel {
             .argb8888 => .{ .four = color },
             .r8 => .{ .one = @truncate(color >> 16) },
             .rgb565 => .{ .two = narrow(color) },
+            // A float texture takes the four channels as they were
+            // given, put into its own texel the way a copy of one would
+            // be (since 1.61): a channel above 1 or below 0 goes in as
+            // far as the format reaches, rather than being rounded to a
+            // byte on the way.
+            .rgba16f => .{ .eight = pattern(.rgba16f, u64, parts) },
+            .rgba32f => .{ .sixteen = pattern(.rgba32f, u128, parts) },
+            .rg11b10f => .{ .four = pattern(.rg11b10f, u32, parts) },
+            .rgb9e5 => .{ .four = pattern(.rgb9e5, u32, parts) },
+            .r32f => .{ .four = pattern(.r32f, u32, parts) },
             // A clear of a colour is not for a depth texture:
-            // CmdClearDepthStencilImage writes that one. Nor for one that
-            // keeps what it was given - a compressed image, whose texels
-            // are written as blocks, or a float one, whose texels are
-            // moved as they lie and never made from a colour.
-            .d16, .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => null,
+            // CmdClearDepthStencilImage writes that one. Nor for a
+            // compressed image, whose texels are written as whole blocks
+            // and which nothing here compresses.
+            .d16, .bc1, .bc1_rgb, .bc2, .bc3 => null,
         },
         // Its pixels are rows of depth, which a clear of a colour does
         // not write; a transient one's live in the tiles.
         .depth => null,
     };
+}
+
+/// A float format's texel as the word a fill writes over and over: the
+/// channels put into the format's own bytes, red first, which is the same
+/// encoder a copy into such an image uses. (Since 1.61.)
+fn pattern(comptime format: texture.Format, comptime Word: type, parts: [4]f32) Word {
+    var bytes: [@sizeOf(Word)]u8 = @splat(0);
+    texture.putFloatTexel(format, &bytes, parts);
+    return @bitCast(bytes);
 }
 
 /// A colour, 0xAARRGGBB, as 565.

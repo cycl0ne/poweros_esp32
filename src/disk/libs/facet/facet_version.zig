@@ -699,10 +699,30 @@ pub const LIBRARY_VERSION = 1;
 /// `sampledAt` and `tapped` now read through a `Reads` - one layer as it
 /// lies, or a cube's face - so the filtering, the comparison, the
 /// anisotropy and the levels are the one path for both.
+/// 61: `CmdClearColorImage` writes a float image, with the channels it
+/// was given. Before this the clear found no texel it could make of the
+/// colour for a format that keeps what it was told - R16G16B16A16_SFLOAT,
+/// R32G32B32A32_SFLOAT, B10G11R11_UFLOAT_PACK32, E5B9G9R9_UFLOAT_PACK32,
+/// R32_SFLOAT - and wrote nothing at all, saying so in the log, although
+/// every one of them claims FORMAT_FEATURE_TRANSFER_DST and a copy into
+/// one has moved floats since 1.57.
+/// Now the four floats of `ClearColorValue.float32` are put into the
+/// format's own texel by `texture.putFloatTexel`, the encoder a copy into
+/// such an image uses, and that texel is written over every texel of the
+/// levels and layers named. The channels go in as they stand, not rounded
+/// to a byte each: a red of 2 and a blue of 0.5 are what the image holds
+/// afterwards, as far as the format reaches, and what a format cannot
+/// hold - a green below 0 where it has no sign - it holds at its own
+/// limit, the same way a copy of that texel would. A clear of 16 bytes a
+/// texel fills by 16 (`Texel.sixteen`).
+/// A compressed image is still the one this cannot write: its texels go
+/// in as whole blocks, nothing here compresses, and that is the format
+/// and not the library. A depth image is `CmdClearDepthStencilImage`'s,
+/// as it was.
 /// What stays: `fifo` is the one present mode, there being no way to ask a
 /// display to show a buffer before its next frame; one queue family of one
 /// queue; a counter of 32 bits, for want of a 64-bit atomic on every
 /// machine the library runs on; and no point mode in tessellation, the
 /// tessellator emitting triangles or the lines of `isolines` and nothing
 /// emitting a patch's points on their own.
-pub const LIBRARY_REVISION = 60;
+pub const LIBRARY_REVISION = 61;

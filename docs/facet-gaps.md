@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.60**, so that a program need not find out by failing. It covers the API.
+1.61**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -649,12 +649,15 @@ Of textures:
   1-bit alpha told apart from the opaque one past the punch-through rule,
   and nothing compresses - a blit or a copy into a compressed image from
   an uncompressed one takes nothing.
-- The float formats are the four Vulkan ones the library takes:
-  `r16g16b16a16_sfloat`, `r32g32b32a32_sfloat`, `b10g11r11_ufloat_pack32`
-  and `e5b9g9r9_ufloat_pack32`. There is no `r16_sfloat` or `r16g16`, no
-  signed or unsigned integer format of any width, and nothing makes floats:
-  a blit or a clear of a float image, and a copy into one from an image of
-  another format, take nothing.
+- The float formats are the five Vulkan ones the library takes:
+  `r16g16b16a16_sfloat`, `r32g32b32a32_sfloat`, `b10g11r11_ufloat_pack32`,
+  `e5b9g9r9_ufloat_pack32` and `r32_sfloat`. There is no `r16_sfloat` or
+  `r16g16`, and no signed or unsigned integer format of any width.
+  `CmdClearColorImage` writes such an image since 1.61, with the channels
+  of `ClearColorValue.float32` as they stand rather than rounded to a byte
+  each, so a red of 2 is a red of 2 afterwards as far as the format
+  reaches. What still makes no floats: a blit into a float image, and a
+  copy into one from an image of another format, take nothing.
 
 ## Compute, as it stands
 

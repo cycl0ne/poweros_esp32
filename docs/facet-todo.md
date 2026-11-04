@@ -1,6 +1,6 @@
 # facet.library: the work list, by where each item stands in Vulkan
 
-What is left to do in facet.library as of **1.60**, each item with where it
+What is left to do in facet.library as of **1.61**, each item with where it
 bites, what it would take, and **where it stands in Vulkan**, so that a
 morning's work is never spent on something Vulkan 1.0 never had.
 
@@ -81,21 +81,7 @@ large wants splitting first.
   is, so this is cheaper here than the copy it replaces.
 - **Size:** medium.
 
-### 1.4 A clear of a float image writes nothing
-
-- **Standing:** `1.0 format`. `CmdClearColorImage` wants
-  `FORMAT_FEATURE_TRANSFER_DST`, which these formats claim.
-- **Where:** `driver/_transfer.zig`, `texelOf`: the float formats and the
-  compressed ones answer null, so the clear is refused.
-- **What it takes:** 1.57 wrote the encoders this needs -
-  `texture.putFloatTexel`, `partsOfColor` - so a float clear is now the
-  colour turned into the format's own bytes and written a texel at a time
-  (or a word at a time where the texel is 4 bytes). A compressed image
-  stays as it is: nothing here compresses, which is the format and not the
-  library, and its `TRANSFER_DST` is for whole blocks.
-- **Size:** small.
-
-### 1.5 Texel-buffer formats: `_snorm`, `_srgb`, the packed ones, three channels
+### 1.4 Texel-buffer formats: `_snorm`, `_srgb`, the packed ones, three channels
 
 - **Standing:** `1.0 format`.
 - **Where:** `shader.TexelFormat` (append only - it is an `enum(u8)` a
@@ -109,7 +95,7 @@ large wants splitting first.
   hardware carries either - and may stay out.
 - **Size:** small, and it splits by format.
 
-### 1.6 Textures and storage images of whole numbers, and of smaller channels
+### 1.5 Textures and storage images of whole numbers, and of smaller channels
 
 - **Standing:** `1.0 format`.
 - **Where:** `texture.Format` (a plain enum - **append at the end only**,
@@ -127,7 +113,7 @@ large wants splitting first.
 - **Size:** medium to large. Worth splitting: the unorm ones (`r8g8`, 16-bit
   channels) first, the integer read after.
 
-### 1.7 `unnormalized_coordinates` on a sampler
+### 1.6 `unnormalized_coordinates` on a sampler
 
 - **Standing:** `1.0 core`.
 - **Where:** `sampler/createsampler.zig` refuses it; coordinates are 0 to 1
@@ -138,7 +124,7 @@ large wants splitting first.
   A program reading a texture as a table of values is what asks for it.
 - **Size:** small.
 
-### 1.8 A point is one pixel, and no shader writes `PointSize`
+### 1.7 A point is one pixel, and no shader writes `PointSize`
 
 - **Standing:** `1.0 core` for `PointSize`; `1.0 feature` for points wider
   than one pixel (`largePoints`).
@@ -153,7 +139,7 @@ large wants splitting first.
   (`cl.pointSize`).
 - **Size:** small, once the SDK slot is decided.
 
-### 1.9 BC4 to BC7
+### 1.8 BC4 to BC7
 
 - **Standing:** `1.0 format`, under `textureCompressionBC` - which facet
   says yes to for BC1 to BC3 and no further.
@@ -165,7 +151,7 @@ large wants splitting first.
   feature of its own and a far larger decoder, ETC1 is not a Vulkan format.
 - **Size:** BC4/BC5 small; BC6H/BC7 medium each.
 
-### 1.10 `max_resource_size` answers the heap, not the image
+### 1.9 `max_resource_size` answers the heap, not the image
 
 - **Standing:** `1.0 core` wording:
   `VkImageFormatProperties.maxResourceSize` is what an image of that shape

@@ -1158,7 +1158,8 @@ fn CmdClearColorImage(base: *FacetBase, buffer: *facet.CommandBuffer, image: *fa
 - `image` - the image cleared, which is not an attachment of the pass
   being recorded: this is a transfer, not a draw.
 - `layout` - what the image is in, which this library does not act on.
-- `color` - the colour, 0 to 1 a channel, as `float32`.
+- `color` - the colour, as `float32`: 0 to 1 a channel for a format of
+  whole numbers, and since 1.61 whatever it says for a float one.
 - `range_count`, `ranges` - which levels and layers, by
   `base_mip_level`, `level_count`, `base_array_layer` and `layer_count`;
   `facet.REMAINING`, which both counts default to, reaches to the end.
@@ -1171,8 +1172,17 @@ None.
 
 Every texel of each level and layer named is set to the colour. A level
 or a layer the image does not have is left out. An image whose format
-this cannot write a single texel of - a compressed one, which Vulkan
-does not allow here either - is left out and said to be in the log.
+this cannot write a single texel of is left out and said to be in the
+log: a compressed one, whose texels are written as whole blocks and
+which nothing here compresses, and a depth one, which
+`CmdClearDepthStencilImage` writes instead.
+
+**A float image takes the channels as they were given** since 1.61
+(`PhysicalDeviceFeatures.kept_floats`): the four floats are put into
+the format's own texel the way a copy of one would be, so a channel
+above 1 or below 0 goes in as far as the format reaches instead of
+being rounded to a byte. Before 1.61 such an image was the one this
+could not write and was left alone.
 
 Whole levels are written, so the clear does not care how a level's
 texels are laid out in memory: every one of them takes the same value.

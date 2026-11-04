@@ -122,6 +122,10 @@ pub const ClearColorImage = extern struct {
     count: u32,
     /// 0xAARRGGBB.
     color: u32,
+    /// The channels as they were given, red first, for a float image whose
+    /// texels hold what they were told rather than a byte a channel
+    /// (since 1.61).
+    parts: [4]f32,
     image: *Image,
 };
 

@@ -7326,6 +7326,72 @@ test "float textures kept as their floats: copied in and out as they lie, sample
     try testing.expectEqual(@as(u32, 0xFFFF_0000), picture.at(8, 8));
     try testing.expectEqual(@as(u32, 0xFF00_0040), picture.at(56, 56));
 }
+test "a clear of a float image writes its floats: the channels as given, into each format's own texel" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+
+    const usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST | facet.IMAGE_USAGE_TRANSFER_SRC;
+    const side4 = facet.Extent3D{ .width = 4, .height = 4 };
+    // Two levels on the halves, to see that a clear writes both.
+    const halves = try bench.bareImage(.{ .format = .r16g16b16a16_sfloat, .extent = side4, .mip_levels = 2, .usage = usage }, false);
+    const words = try bench.bareImage(.{ .format = .r32g32b32a32_sfloat, .extent = side4, .usage = usage }, false);
+    const packed_image = try bench.bareImage(.{ .format = .b10g11r11_ufloat_pack32, .extent = side4, .usage = usage }, false);
+    const shared = try bench.bareImage(.{ .format = .e5b9g9r9_ufloat_pack32, .extent = side4, .usage = usage }, false);
+    const reds = try bench.bareImage(.{ .format = .r32_sfloat, .extent = side4, .usage = usage }, false);
+
+    // A colour no 8888 texel holds: red above 1, green below 0, blue at a
+    // half. Before 1.61 the clear wrote nothing at all.
+    const color = facet.ClearColorValue{ .float32 = .{ 2, -1, 0.5, 1 } };
+    const whole = facet.ImageSubresourceRange{};
+    const read_buffer, const read_back = try bench.buffer(1024, facet.BUFFER_USAGE_TRANSFER_DST);
+    @memset(read_back[0..1024], 0xAA);
+    const at_level1 = 128;
+    const at_words = 160;
+    const at_packed = 416;
+    const at_shared = 480;
+    const at_reds = 544;
+    const level0 = facet.BufferImageCopy{ .image_extent = side4 };
+    const level1 = facet.BufferImageCopy{ .buffer_offset = at_level1, .image_subresource = .{ .mip_level = 1 }, .image_extent = .{ .width = 2, .height = 2 } };
+    const word_copy = facet.BufferImageCopy{ .buffer_offset = at_words, .image_extent = side4 };
+    const packed_copy = facet.BufferImageCopy{ .buffer_offset = at_packed, .image_extent = side4 };
+    const shared_copy = facet.BufferImageCopy{ .buffer_offset = at_shared, .image_extent = side4 };
+    const red_copy = facet.BufferImageCopy{ .buffer_offset = at_reds, .image_extent = side4 };
+
+    const commands = try bench.record();
+    for ([_]*facet.Image{ halves, words, packed_image, shared, reds }) |one| {
+        fb.CmdClearColorImage(commands, one, .transfer_dst_optimal, &color, 1, @ptrCast(&whole));
+    }
+    fb.CmdCopyImageToBuffer(commands, halves, .general, read_buffer, 1, @ptrCast(&level0));
+    fb.CmdCopyImageToBuffer(commands, halves, .general, read_buffer, 1, @ptrCast(&level1));
+    fb.CmdCopyImageToBuffer(commands, words, .general, read_buffer, 1, @ptrCast(&word_copy));
+    fb.CmdCopyImageToBuffer(commands, packed_image, .general, read_buffer, 1, @ptrCast(&packed_copy));
+    fb.CmdCopyImageToBuffer(commands, shared, .general, read_buffer, 1, @ptrCast(&shared_copy));
+    fb.CmdCopyImageToBuffer(commands, reds, .general, read_buffer, 1, @ptrCast(&red_copy));
+    try bench.submit();
+
+    // Four halves and four whole floats, written out by hand: 2, -1, 0.5
+    // and 1 as those formats hold them.
+    var want_half: [8]u8 = undefined;
+    inline for ([4]u16{ 0x4000, 0xBC00, 0x3800, 0x3C00 }, 0..) |bits, k| std.mem.writeInt(u16, want_half[k * 2 ..][0..2], bits, .little);
+    var want_word: [16]u8 = undefined;
+    inline for ([4]u32{ 0x4000_0000, 0xBF80_0000, 0x3F00_0000, 0x3F80_0000 }, 0..) |bits, k| std.mem.writeInt(u32, want_word[k * 4 ..][0..4], bits, .little);
+    // Every texel of both levels, and of the whole floats beside them.
+    for (0..16) |k| try testing.expectEqualSlices(u8, &want_half, read_back[k * 8 ..][0..8]);
+    for (0..4) |k| try testing.expectEqualSlices(u8, &want_half, read_back[at_level1 + k * 8 ..][0..8]);
+    for (0..16) |k| try testing.expectEqualSlices(u8, &want_word, read_back[at_words + k * 16 ..][0..16]);
+
+    // The packed formats read back through the reader, not compared byte
+    // for byte: each holds 2 and 0.5 exactly, has no green below 0 to
+    // hold, and answers an alpha of 1 it has not got.
+    for (0..16) |k| {
+        try testing.expectEqual([4]f32{ 2, 0, 0.5, 1 }, texture_zig.floatParts(.rg11b10f, read_back + at_packed + k * 4));
+        try testing.expectEqual([4]f32{ 2, 0, 0.5, 1 }, texture_zig.floatParts(.rgb9e5, read_back + at_shared + k * 4));
+        try testing.expectEqual([4]f32{ 2, 0, 0, 1 }, texture_zig.floatParts(.r32f, read_back + at_reds + k * 4));
+    }
+    // Nothing was written past the last texel of the last image.
+    try testing.expectEqual(@as(u8, 0xAA), read_back[at_reds + 64]);
+}
 
 /// A quad over the whole target, and the forms that sample a texture kept
 /// a texel smaller: one word of 8888, one byte of red, and the spread form

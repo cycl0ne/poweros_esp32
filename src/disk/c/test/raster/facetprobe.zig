@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.27 (04.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.28 (04.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -3054,6 +3054,27 @@ fn floatChecks(probe: *Probe) void {
             break;
         };
         probe.check(same, "the floats read back are the ones copied in, nothing rounded on the way");
+
+        // 1.61: a clear of such an image writes the channels it was
+        // given, 2 and 0.5 among them, where before it wrote nothing.
+        const filled = probe.image(.{ .format = .r16g16b16a16_sfloat, .extent = .{ .width = across, .height = across }, .usage = sampled }, 0) orelse
+            return probe.check(false, "a float texture to clear");
+        var want: [8]u8 = undefined;
+        Floats.texel(.{ 2, -1, 0.5, 1 }, &want);
+        @memset(back_bytes[128..256], 0xAA);
+        const cleared = facet.ClearColorValue{ .float32 = .{ 2, -1, 0.5, 1 } };
+        const range = facet.ImageSubresourceRange{};
+        const out = facet.BufferImageCopy{ .buffer_offset = 128, .image_extent = .{ .width = across, .height = across } };
+        commands = probe.record() orelse return probe.check(false, "a recording of the clear");
+        fb.CmdClearColorImage(commands, filled[0], .transfer_dst_optimal, &cleared, 1, @ptrCast(&range));
+        fb.CmdCopyImageToBuffer(commands, filled[0], .general, back, 1, @ptrCast(&out));
+        if (!probe.submit()) return probe.check(false, "the clear of a float image submitted");
+        var every = true;
+        for (0..16) |k| if (!std.mem.eql(u8, &want, back_bytes[128 + k * 8 ..][0..8])) {
+            every = false;
+            break;
+        };
+        probe.check(every, "a clear of a float image writes the channels as they were given, 2 and 0.5 among them");
     }
 
     var module: ?*facet.ShaderModule = null;
