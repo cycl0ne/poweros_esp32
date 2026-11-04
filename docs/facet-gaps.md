@@ -509,7 +509,7 @@ These can be asked for and are answered with `error_feature_not_present`.
 | A timestamp pool without timer.device: the clock a timestamp is read from | `query/createquerypool.zig` |
 | A depth or stencil attachment of `d16_unorm_s8_uint` that loads or stores, on a device that stores a tile buffer whole: the V3D (`stored_both`, 1.47). Either plane of a format that holds it alone is kept on every device | `render/createrenderpass.zig` |
 | A depth attachment kept, whose image has no memory behind it | `render/createframebuffer.zig` |
-| A sampled depth image on a device that samples none: the V3D (`sampled_depth`); one with a stencil in it, a transient one, or one written through as a storage image | `image/createimage.zig` |
+| A sampled depth image on a device that samples none: the V3D (`sampled_depth`); a transient one, or one written through as a storage image; one of levels of its own, or of type `3d`. Any of the three depth formats is taken since 1.58, and a view of it names one plane - both at once is refused there (`image/createimageview.zig`) | `image/createimage.zig` |
 
 One consequence does not appear in that table:
 
@@ -553,6 +553,8 @@ Three more things cannot be asked for at all, having nothing to ask with:
 | Samples along a sampler's longer axis | 16 |
 | A query's counter | 32 bits, held there |
 | A timestamp's unit | 1000 ns, 64 bits of it |
+| A line's width | `line_width` pixels, and `CmdSetLineWidth` |
+| A point's size | one pixel, whatever the line width says: Vulkan's `PointSize` is written by no shader here |
 
 Of textures:
 
@@ -678,8 +680,9 @@ Tessellation has Vulkan's three spacing modes since 1.50
 (`shader.Spacing`), and its control function carries floats of its own to
 the evaluation function (`shader.control`, `Patch.ownValues`), up to
 `PhysicalDeviceLimits.max_tessellation_patch_components` of them. What it
-has not got is **point mode** - there is no point rasterization at all, in
-any pipeline - and a control function cannot move the patch's vertices or
+has not got is **point mode** - the tessellator emits triangles, or the
+lines of `isolines`, and nothing emits the patch's points on their own -
+and a control function cannot move the patch's vertices or
 change how many there are: it says the levels and writes the patch's own
 floats, and the evaluation function works from the vertices as the vertex
 function left them. Where Vulkan rounds an edge's two short fractional

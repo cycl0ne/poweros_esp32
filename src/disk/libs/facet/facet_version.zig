@@ -665,6 +665,7 @@ pub const LIBRARY_VERSION = 1;
 /// What stays: `fifo` is the one present mode, there being no way to ask a
 /// display to show a buffer before its next frame; one queue family of one
 /// queue; a counter of 32 bits, for want of a 64-bit atomic on every
-/// machine the library runs on; and no point mode in tessellation, there
-/// being no point rasterization at all.
+/// machine the library runs on; and no point mode in tessellation, the
+/// tessellator emitting triangles or the lines of `isolines` and nothing
+/// emitting a patch's points on their own.
 pub const LIBRARY_REVISION = 58;
