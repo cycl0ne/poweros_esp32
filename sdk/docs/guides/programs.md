@@ -238,8 +238,9 @@ A program with more than the flash disks hold - a game and its data -
 goes in a drawer of `games/` in the tree's root instead. Built with
 `-Dgames`, the virt machines' system disks have that drawer in
 `SYS:Games/`: `games/Maze/Maze.rv64sbi.seg` is `SYS:Games/Maze/Maze` on
-the RISC-V 64 one's (`.a64psci.seg` on the AArch64 one's), and any other
-file is on both, beside the program, where `PROGDIR:` finds it.
+the RISC-V 64 one's (`.a64psci.seg` on the AArch64 one's,
+`.x64uefi.seg` on the x86-64 one's), and any other file is on all of
+them, beside the program, where `PROGDIR:` finds it.
 
 The programs in `src/disk/c/` are all built this way and are the best
 examples: each opens its libraries, reads its arguments with a `ReadArgs`

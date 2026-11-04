@@ -62,12 +62,14 @@ pub const mac = switch (sdk.hardware.chip) {
     .rv64sbi => @import("eqos.zig"),
     .esp32s3 => @compileError("the ESP32-S3 has no Ethernet MAC"),
     .a64psci => @import("gem.zig"),
+    .x64uefi => @compileError("an x86-64 machine's Ethernet is a card on PCI, not this MAC"),
 };
 pub const port = switch (sdk.hardware.chip) {
     .esp32p4 => @import("rmii.zig"),
     .rv64sbi => @import("rgmii.zig"),
     .esp32s3 => @compileError("the ESP32-S3 has no Ethernet MAC"),
     .a64psci => @import("rp1eth.zig"),
+    .x64uefi => @compileError("an x86-64 machine's Ethernet is a card on PCI, not this MAC"),
 };
 
 pub const DEVICE_NAME = "emac.device";

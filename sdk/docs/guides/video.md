@@ -198,9 +198,9 @@ colour, a pixel half covered or more is the subtitle's.
 | Motion JPEG, baseline: grey, 4:2:0, 4:2:2, 4:4:4 | mjpeg.vcodec: software, on the calling task | about a second for a 1080p picture: small pictures only |
 | MPEG-4 Part 2 | nothing | - |
 
-The software modules but mjpeg.vcodec are on the RISC-V 64 and AArch64
-machines' disks alone: the ESP32s have neither the room on their flash
-disks nor the speed.
+The software modules but mjpeg.vcodec are on the 64-bit machines' disks
+alone: the ESP32s have neither the room on their flash disks nor the
+speed.
 
 The sound is audiocodec.library's: AAC-LC
 ([AAC and MP4](audio.md#aac-and-mp4)), AC-3 and E-AC-3 mixed into

@@ -87,8 +87,8 @@ const room_mark = queue_max / 4;
 /// answers its writes between batches of what it received has room for
 /// the acknowledgements of a batch - with 8, a read at link speed made
 /// more of them than went, and the queue ran over; elsewhere 16.
-pub const reads_max = if (sdk.hardware.chip == .rv64sbi or sdk.hardware.chip == .a64psci) 256 else 128;
-pub const writes_max = if (sdk.hardware.chip == .rv64sbi or sdk.hardware.chip == .a64psci) 32 else 16;
+pub const reads_max = if (sdk.hardware.chip == .rv64sbi or sdk.hardware.chip == .a64psci or sdk.hardware.chip == .x64uefi) 256 else 128;
+pub const writes_max = if (sdk.hardware.chip == .rv64sbi or sdk.hardware.chip == .a64psci or sdk.hardware.chip == .x64uefi) 32 else 16;
 
 pub const Kind = enum(u8) { read_ip, read_arp, read_ip6, write, event, control };
 

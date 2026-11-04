@@ -56,12 +56,12 @@ pub const io_seconds: u32 = 30;
 /// out - one read in two 0.2-0.8 s slower; with 512 KiB, or 1 MiB, it
 /// repaired every one from the SACK blocks at once. A sealed READ's answer
 /// of 1 MiB comes into it whole while the one before is opened.
-const receive_ring: i32 = if (sdk.hardware.chip == .rv64sbi or sdk.hardware.chip == .a64psci) 1 << 20 else 64 * 1024;
+const receive_ring: i32 = if (sdk.hardware.chip == .rv64sbi or sdk.hardware.chip == .a64psci or sdk.hardware.chip == .x64uefi) 1 << 20 else 64 * 1024;
 /// Its send ring: on the 64-bit boards the stack's largest, 1 MiB - a
 /// whole WRITE of `session.io_max` but its header - so that Send is done
 /// once the piece is in the ring and the next is signed while the stack
 /// sends this one; the stack's own 8 KiB where memory is short.
-const send_ring: ?i32 = if (sdk.hardware.chip == .rv64sbi or sdk.hardware.chip == .a64psci) 1 << 20 else null;
+const send_ring: ?i32 = if (sdk.hardware.chip == .rv64sbi or sdk.hardware.chip == .a64psci or sdk.hardware.chip == .x64uefi) 1 << 20 else null;
 
 /// What framing takes in front of a message.
 pub const frame_header: usize = 4;

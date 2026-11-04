@@ -300,22 +300,23 @@ const modules = [_]Program{
 /// its UART, Ethernet in Espressif QEMU's S3 machine. The ESP32-P4's come
 /// as drivers of their own.
 const s3_only = [_][]const u8{ "rs485.device", "openeth.device" };
-/// Drivers of hardware the ESP32-P4, the JH7110 and the RP1 have and the
-/// ESP32-S3 does not: an Ethernet MAC of the chip's own.
+/// Drivers of hardware the ESP32-P4, the JH7110 and the RP1 have and
+/// neither the ESP32-S3 nor an x86-64 machine does: an Ethernet MAC of
+/// the chip's own. An x86-64 machine's Ethernet is a card on PCI.
 const mac_only = [_][]const u8{"emac.device"};
 /// Drivers of hardware both ESP32s have and a RISC-V 64 machine under SBI
 /// does not: the DWC2 USB controller, the SD host. And the dock in
 /// SYS:Programs, started by hand: on their small screens it is not
 /// wanted from the start.
 const esp_only = [_][]const u8{ "usbotg.device", "sdcard.device", "programs/Dock" };
-/// What a RISC-V 64 machine under SBI and an AArch64 machine under PSCI
-/// have and the ESP32s do not: PCI, the command that lists it, and the
-/// USB controllers and SSDs on it. The install, which puts a system onto
-/// a card or an SSD for a machine whose firmware loads a kernel from a
-/// partition - an ESP32's kernel is in its flash. And the dock in
-/// SYS:WBStartup, started with the desktop, the test of a chip's video
-/// decoder, DTS's module with its large tables, and the video codecs in
-/// software: the ESP32s have neither the room for them on their flash
+/// What the 64-bit machines - RISC-V 64 under SBI, AArch64 under PSCI,
+/// x86-64 under UEFI - have and the ESP32s do not: PCI, the command that
+/// lists it, and the USB controllers and SSDs on it. The install, which
+/// puts a system onto a card or an SSD for a machine whose firmware loads
+/// a kernel from a partition - an ESP32's kernel is in its flash. And the
+/// dock in SYS:WBStartup, started with the desktop, the test of a chip's
+/// video decoder, DTS's module with its large tables, and the video codecs
+/// in software: the ESP32s have neither the room for them on their flash
 /// disks nor the speed, and the 64-bit machines' disks are RAM.
 const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device", "nvme.device", "install", "update", "WBStartup/Dock", "videodec", "dts.acodec", "h264.vcodec", "hevc.vcodec", "vp8.vcodec", "vp9.vcodec", "av1.vcodec" };
 /// Drivers of what only the Raspberry Pi CM5 has among the AArch64
@@ -353,6 +354,7 @@ pub fn builtFor(program: Program, chip: poweros_sdk.Chip) bool {
         .esp32s3 => &(mac_only ++ rv64_only ++ a64_only ++ no_3d),
         .esp32p4 => &(s3_only ++ rv64_only ++ a64_only),
         .rv64sbi => &(s3_only ++ esp_only ++ a64_only),
+        .x64uefi => &(s3_only ++ esp_only ++ a64_only ++ mac_only),
         .a64psci => &(s3_only ++ esp_only),
     };
     for (others) |name| {

@@ -1,9 +1,10 @@
 # PowerOS
 
 PowerOS is an operating system for Espressif's ESP32 microcontrollers and
-for 64-bit RISC-V and AArch64 machines, written in Zig. It boots straight
-from an ESP32's ROM loader, from a RISC-V machine's SBI firmware or from a
-Raspberry Pi's bootloader, and brings up a complete little system: a
+for 64-bit RISC-V, AArch64 and x86-64 machines, written in Zig. It boots
+straight from an ESP32's ROM loader, from a RISC-V machine's SBI firmware,
+from a Raspberry Pi's bootloader or from a PC's UEFI firmware, and brings
+up a complete little system: a
 multitasking kernel with libraries and devices, a DOS with file systems
 and a shell, a TCP/IP stack, and a windowed desktop on the board's
 display. Programs are loaded from disk at run time and built against a
@@ -12,8 +13,8 @@ separate SDK.
 **Status: release 0.21** ([the archives to
 download](https://github.com/cycl0ne/poweros_esp32/releases/latest)). It runs on two ESP32-S3 boards, on two
 ESP32-P4 boards, on StarFive's VisionFive 2 (RISC-V 64), on a Raspberry Pi
-Compute Module 5 (AArch64), in Espressif's QEMU and in QEMU's RISC-V 64
-and AArch64 `virt` machines.
+Compute Module 5 (AArch64), in Espressif's QEMU, in QEMU's RISC-V 64 and
+AArch64 `virt` machines and in its x86-64 q35 machine.
 
 [![PowerOS in QEMU's AArch64 machine: a textured cube turning in a window, CPU Load with four cores at work, Memory Map and the desktop's About](docs/screenshots/desktop-a64.gif)](docs/screenshots/README.md#four-cores-the-desktop-on-aarch64)
 
@@ -38,7 +39,7 @@ and AArch64 `virt` machines.
 |---|---|
 | [Screenshots](docs/screenshots/README.md) | four cores on AArch64, the desktop at rest and at work, the Player, the shell, Notepad, HDToolBox, CPU load, drawing, a game, fonts, menus, gadgets, on the boards |
 | [What PowerOS is - and what it is not](#what-poweros-is---and-what-it-is-not) | the idea, and what is in it |
-| [Quick start](#quick-start) | boards, building, [QEMU the first time](#first-time-in-qemu), flashing, [the RISC-V machines](#the-risc-v-machines), [the AArch64 machine](#the-aarch64-machine), [onto a card or an SSD](#onto-a-card-or-an-ssd) |
+| [Quick start](#quick-start) | boards, building, [QEMU the first time](#first-time-in-qemu), flashing, [the RISC-V machines](#the-risc-v-machines), [the AArch64 machine](#the-aarch64-machine), [the x86-64 machine](#the-x86-64-machine), [onto a card or an SSD](#onto-a-card-or-an-ssd) |
 | [Writing programs](sdk/docs/guides/programs.md) | examples: hello in the shell, a window, buttons |
 | [Debugging](sdk/docs/guides/debugging.md) | what a failure prints, from an address to a line, the ROM debugger, `s3>`, memory debugging, JTAG |
 | [The SDK](sdk/) | the package a program builds against |
@@ -60,7 +61,8 @@ and AArch64 `virt` machines.
   tables; a library or a device can be replaced, loaded from disk or
   patched at run time.
 - **It is** made for the ESP32 family, and runs on 64-bit RISC-V machines
-  under SBI firmware and on AArch64 machines under PSCI firmware too. It
+  under SBI firmware, on AArch64 machines under PSCI firmware and on
+  x86-64 machines under UEFI firmware too. It
   drives the hardware itself, register by register: on an ESP32 everything
   between power-on and the desktop is in this tree, on the others
   everything after their firmware hands over.
@@ -110,6 +112,7 @@ flowchart TB
         m_p4["ESP32-P4"]
         m_rv64["RISC-V 64<br/>under SBI firmware"]
         m_a64["AArch64<br/>under PSCI firmware"]
+        m_x64["x86-64<br/>under UEFI firmware"]
     end
 
     m_intuition --> m_rtg
@@ -280,6 +283,7 @@ What each board runs is in [Boards](#boards).
 | ESP32-S3, two Xtensa LX7 cores | Waveshare 7B, ES3C35P, Espressif QEMU | the caches and the MMU, flash and PSRAM, the interrupt matrix, GDMA, RGB and QSPI panels, I2S, SPI, I2C, UART, the USB serial port, USB OTG, the SD slot, and the radio with its vendor libraries |
 | ESP32-P4, two RISC-V 32 cores | Olimex ESP32-P4-PC, Elecrow CrowPanel Advanced 10.1", esp-emulator | the same, and MIPI DSI, the PPA and 2D-DMA engines, the JPEG codec, the SDMMC host, 10/100 Ethernet, and USB OTG with the ports behind a hub |
 | RISC-V 64 under SBI firmware, four cores - StarFive's JH7110 | VisionFive 2, QEMU's `virt` | its display controller behind HDMI, PCI Express with an NVMe SSD and the VL805's USB, gigabit Ethernet, the SDMMC host, the random number generator, the video decoder, DMA, the RTC, and sound over HDMI and on the jack |
+| x86-64 under UEFI firmware, one core so far | QEMU's q35, a PC | the descriptor and interrupt tables, the task state with its own stack for a fault, the local interrupt controller and the machine's I/O controller in front of it, the timestamp counter measured against the power-management timer, the controller's own timer as the tick, the page tables, the firmware's tables read for the memory, the cores and the controllers, a 16550 console in the I/O port space, and the core's own random numbers |
 | AArch64 under PSCI firmware, four cores - Broadcom's BCM2712 | Compute Module 5, QEMU's `virt` | HDMI 0 - the video scaler, a pixel valve, the HDMI controller, the monitor read and set over DDC/CI - PCI Express with an NVMe SSD, the V3D GPU, the RP1's two USB controllers, Ethernet and UART over its PCI Express link, the radio on the second SD host, the RTC and the core clocks through the VideoCore's firmware, the chip's temperature, and the IO board's fan turned as it asks |
 
 ## Quick start
@@ -297,6 +301,7 @@ What each board runs is in [Boards](#boards).
 | `qemu_virt` | QEMU's RISC-V 64 `virt` machine under OpenSBI: four harts, 512 MB, a 16550 console; with QEMU's options a 1920×1080 display (`virtio-gpu-device` or `ramfb`), an xHCI controller and NVMe drives on its PCI Express | runs (`./zig build virt`): the shell on the serial console, four cores, dos started from an NVMe SSD, a work disk that keeps what is saved to it beside it, a whole system installed onto a second SSD in one command (`C:Install`), from the running system or from a release package on a stick; with `-device virtio-gpu-device` or `-device ramfb` the desktop, with `-device qemu-xhci` USB keyboards, mice and sticks, a stick at SuperSpeed, a disk over UAS on streams, with more `nvme` devices more SSDs; sound through QEMU's USB speaker on the host's sound (`-Daudio` names QEMU's backend, `wav,path=out.wav` a file, sample for sample), which every virt step plugs in and its system disk prefers, pulled out and put back as it plays; with `-device usb-net` the network, through `usb/ecm.device` (the display steps plug one in) |
 | `visionfive2` | StarFive VisionFive 2 (v1.3B): JH7110 with four U74 RISC-V cores, 8 GB LPDDR4, HDMI, two gigabit Ethernet ports, four USB-A on a VL805 on PCI Express, an M.2 slot, microSD; started by the board's own OpenSBI and U-Boot | runs: the console on the debug UART, the desktop over HDMI at 1920×1080, four cores, all of its RAM, starting from the microSD card, the first Ethernet port at 1000 Mbit/s, USB keyboards and mice, an NVMe SSD in the M.2 slot, the random number generator, reboot, the four cores as the 2D engine, facet.library's 3D in a window at 60 frames a second, sound over HDMI; not yet tried on the board: a system installed onto its card or an SSD (`C:Install`), sound through a USB speaker or headset, USB 3 devices at SuperSpeed, a disk over UAS; not driven yet: the second Ethernet port, the eMMC socket |
 | `qemu_virt_a64` | QEMU's AArch64 `virt` machine with four Cortex-A76 cores and a GICv2, as the Raspberry Pi CM5's BCM2712 has them, everything below 4 GiB: 512 MB, a PL011 console; with QEMU's options a 1920×1080 display (`virtio-gpu-device` or `ramfb`), an xHCI controller and NVMe drives on its PCI Express | runs (`./zig build virt64`): the shell on the serial console, four cores, dos started from an NVMe SSD, a work disk beside it, the ROM debugger with breakpoints, watchpoints and steps; entered at EL1 or, with `virtualization=on`, at EL2 (`./zig build virt64-el2`); with `-device virtio-gpu-device` or `-device ramfb` the desktop and facet.library's 3D, with `-device qemu-xhci` USB keyboards and tablets, with more `nvme` devices more SSDs, with `-device usb-net` the network, through `usb/ecm.device` (the display steps plug one in); sound through QEMU's USB speaker, as on `qemu_virt`. The CM5 is `rpi_cm5` |
+| `qemu_q35` | QEMU's x86-64 q35 machine started by its UEFI firmware: 512 MB, a 16550 console on port 0x3F8, the firmware's own 1280×800 framebuffer, and what `-device` adds on its PCI Express | runs (`./zig build q35`): the shell on the serial console, dos with the disk image the stub loads into RAM, a Guru with the core's registers and a backtrace; not driven yet: the firmware's framebuffer, PCI and the drives on it, USB, the network, and the other cores |
 | `rpi_cm5` | Raspberry Pi Compute Module 5 on its IO board: BCM2712 with four Cortex-A76 cores and a GIC-400, up to 16 GB, eMMC, the console on the RP1's UART0 (pins 8 and 10 of the 40-pin header); started by the bootloader in its EEPROM, in the order its `BOOT_ORDER` setting gives - the SSD, the eMMC, or over USB with `rpiboot` | runs: the shell on the console, four cores, all of RAM, dos with the disk image the bootloader loads; the console on its interrupt, an MSI-X message from the RP1 that the board routes to the GIC; USB on the two USB 3 sockets, the RP1's DWC3 controllers through xhci.device (a mouse and a hub found); an NVMe SSD in the M.2 slot, PCI Express port 1 through pci.library, read at 432 MiB/s on its INTx line, dos started from its posfs `DH0:` (System) with `DH1:` (Work) beside it, and the kernel from the SSD's own boot partition, which `C:Install` writes beside them - the whole machine on the one medium, with the eMMC behind it in the boot order as the way back in; Wi-Fi from the module's CYW43455 (`networks/cyw43455.device`, WPA2, joined at the start); the date from its RTC through the VideoCore's firmware; the cores at 2.4 GHz, asked of the same firmware, on a supply that holds them there - PoE+ here (`CpuClock` says the clock, the chip's temperature and what holds the cores back); the chip's temperature through thermal.resource (`Temperature`), the IO board's fan turned as it asks - in Linux's steps, at speeds this fan turns at; HDMI 0 driven by the kernel - the HVS, a pixel valve and the HDMI controller - in the monitor's mode from its EDID, as HDMI with its infoframes (DVI to a monitor without HDMI's block), 1920×1080 and 2560×1440 at 60 Hz shown, and the display brought up where the firmware set none up at all - a machine starting from its own medium reaches the driver in the first second after the power comes on, before the firmware has set up any display, so the driver starts the HVS's clock itself - with the pointer and a dragged icon each in a plane of its own, the picture mirrored either way, the monitor put to sleep and woken, and its brightness set over DDC/CI; a monitor plugged in after the start or swapped while it runs; 4K at 60 Hz sent scrambled to a monitor that says it takes it (not tried yet: no such monitor here); the monitor's speakers in stereo at 48 kHz through `rta-hdmi` and audio.device; facet.library's 3D at 60 frames a second, in a window and on a screen of its own - there its pictures read by the display as they were drawn, nothing copied; Ethernet from the RP1's MAC (`networks/emac.device`) at 1000 Mbit/s, 200 MiB read from a NAS at 105 MiB/s and written at 95; a system installed onto the SSD in one command (`C:Install`), the boot pair on it, and the machine starting from the medium with no host attached; not driven yet: the RP1's GPIO, message-signalled interrupts on the M.2 slot, and - much later - HDMI 1 |
 
 `C:ShowConfig` lists what the running board has, and `ShowConfig DEVICES`
@@ -305,8 +310,9 @@ devices, ... (`SPEAKS=serial`) - with its units on this board, none of
 them opened or loaded to find out.
 
 You need Linux or macOS, `esptool` (v5) to flash, and for the emulator
-Espressif's QEMU; for the 64-bit machines `qemu-system-riscv64` and
-`qemu-system-aarch64`, on the VisionFive 2 the U-Boot it comes with, and
+Espressif's QEMU; for the 64-bit machines `qemu-system-riscv64`,
+`qemu-system-aarch64` and, with x64 UEFI firmware beside it,
+`qemu-system-x86_64`, on the VisionFive 2 the U-Boot it comes with, and
 on the Compute Module 5 its own bootloader or Raspberry Pi's `rpiboot`. Always build with the `./zig`
 wrapper: it fetches the Espressif Zig toolchain (`0.16.0-xtensa`) into
 `toolchain/` on first use.
@@ -323,6 +329,7 @@ wrapper: it fetches the Espressif Zig toolchain (`0.16.0-xtensa`) into
 ./zig build virt64           # the AArch64 kernel in QEMU's virt machine (quit: Ctrl-A X)
 ./zig build virt64-display   # the same with its display, a USB keyboard, a tablet and network
 ./zig build virt64-ramfb     # the same with the ramfb as its display
+./zig build q35              # the x86-64 kernel in QEMU's q35 machine under UEFI (quit: Ctrl-A X)
 ./zig build flash-all -Dport=/dev/ttyACM0   # kernel and a fresh disk onto a board
 ./zig build package -Dboard=visionfive2     # a release package in release/package-visionfive2/
 ./zig build serve -Dboard=visionfive2       # hand that package out over HTTP (quit: Ctrl-C)
@@ -342,7 +349,7 @@ Fetched once into `toolchain/`, pinned and checked, never committed:
 | `scripts/fetch-certs.sh` | Mozilla's root certificates, made into the trust store `SYS:Certificates/Roots` |
 | `scripts/fetch-cyw43455.sh` | the Compute Module 5's radio firmware, which `DEVS:networks/cyw43455.device` loads into it (the AArch64 disk) |
 | `scripts/fetch-vpu.sh` | the JH7110's video decoder firmware, which `videodec.resource` loads (the RISC-V 64 disk) |
-| `scripts/fetch-pciids.sh` | the PCI ID Repository's list, `DEVS:pci.ids` on the RISC-V 64 and AArch64 disks, which `C:PCIInfo` names vendors and devices from - the host's copy where it has one, the current list otherwise: not pinned |
+| `scripts/fetch-pciids.sh` | the PCI ID Repository's list, `DEVS:pci.ids` on the 64-bit machines' disks, which `C:PCIInfo` names vendors and devices from - the host's copy where it has one, the current list otherwise: not pinned |
 | `scripts/fetch-icons.sh` | the pictures of the disk's icons (Tango, public domain), drawn at the boards' sizes |
 | `scripts/fetch-novnc.sh` | noVNC, the VNC client that runs in a browser, which `scripts/qemu-web.sh` serves beside a QEMU machine to show its display in a browser tab |
 | `scripts/fetch-esp-emu.sh` | Espressif's esp-emulator, which runs the ESP32-P4: both cores, its interrupt controller, UART0 on the terminal, the system timer, flash, PSRAM, the Ethernet MAC and a GDB stub, from the chip's own ROM; no display. With it the v1.x chips' ROM (Espressif's ROM ELFs), which `./zig build emu` boots |
@@ -575,6 +582,44 @@ shows is what dos starts from, while the bootloader still loads
 `kernel.bin`, which holds everything up to posfs, from the eMMC: it
 reads FAT, not posfs.
 
+
+### The x86-64 machine
+
+`-Dboard=qemu_q35` builds a kernel for an x86-64 machine started by UEFI
+firmware (chip `x64uefi`): `zig-out/bin/kernel` (the ELF, for a
+debugger), `kernel.bin` (the same from its first address, 0x00200000),
+`disk-x64.bin`, the disk as an image of its whole 32 MB for a loader to
+put in RAM as on the other two 64-bit machines, and `system-x64.bin`, the
+same files as a system disk. The kernel runs on a map of its own: an
+identity map, 1 GiB blocks where the core has them, page 0 left out so
+that a null pointer faults, the kernel's code read-only, and anything the
+firmware did not call memory uncached.
+
+Between the firmware and the kernel there is nothing but a stub of the
+system's own, `EFI/BOOT/BOOTX64.EFI` (`src/boot/uefi/stub.zig`). It asks
+the firmware for the memory map, for the framebuffer it has already lit
+and for the root of its tables; reads `kernel.bin` and `disk-x64.bin` off
+the partition it was started from - the kernel into the pages its own
+header names, since the image runs where it was linked; leaves the
+firmware; and calls the kernel with all of it in one structure, which is
+to this machine what a device tree is to the other two. Its own lines go
+out of the serial port by hand, so they and the kernel's first lines come
+out of the same place and a machine that stops between them can be read.
+
+`./zig build q35` boots QEMU's q35 machine with 512 MB on the serial
+console, under the firmware the system has (`-Dovmf-code=` and
+`-Dovmf-vars=` name another; what that firmware remembers is kept in
+`work/q35-vars.fd`). It runs it with `-cpu max`, which is what the kernel
+is built against: the emulator's default core is older than the
+architecture's second generation and has neither the instructions the
+compiler emits nor 1 GiB pages. The machine reaches the shell on the
+console, with dos on the disk image in RAM.
+
+```sh
+./zig build -Dboard=qemu_q35
+./zig build q35
+```
+
 ### Archives to download, and a release
 
 `./zig build archive -Dboard=<board>` packs what somebody needs to run the
@@ -784,7 +829,7 @@ More build steps and options:
 | `-Dboot=/boot/firmware/bcm2712-rpi-cm5-cm5io.dtb` | a file this tree does not hold in a release package's `boot/` and in `SYS:Storage/Boot`, under its own name or the one before a `=`: what a board's firmware reads besides the kernel |
 | `-Dserve-port=8080` | the port `./zig build serve` hands a package out on |
 | `-Dextra=c/hello=path/to/hello.seg` | put a file built elsewhere on the disk images; with a chip before the path (`rv64sbi:c/hello=...`) on that chip's only, with `virt:` on the virt machines' system disks only - room for files the flash disks cannot hold |
-| `-Dgames` | put what `games/` in the tree's root holds in the `Games` drawer of the virt machines' system disks: `games/x/x.a64psci.seg` is `SYS:Games/x/x` on the AArch64 one's, any other file on both |
+| `-Dgames` | put what `games/` in the tree's root holds in the `Games` drawer of the virt machines' system disks: `games/x/x.a64psci.seg` is `SYS:Games/x/x` on the AArch64 one's, any other file on all of them |
 | `-Ddh0-size=8192` | `DH0:` that many KiB, the rest of the flash disk left for partitions made later (HDToolBox, `C:RDB ADD`) |
 | `-Drdb-size=1024` | the flash disk's partition table area before `DH0:`, in KiB (default 64): room for file systems kept in the table (HDToolBox, `C:RDB ADDFS`) |
 | `-Dnet=none` | the `qemu*` and virt display steps without a network, or another QEMU network backend (`tap,ifname=tap0,script=no,downscript=no`) |
@@ -796,14 +841,14 @@ More build steps and options:
 | `-Dusb=usb-hub,usb-kbd,usb-mouse` | the `qemu*` steps' USB devices, QEMU's names (`usb-tablet`, `usb-serial` on a pty, `usb-net` on a network of its own, 10.0.3.0/24, too); an item with `=` is a property of the one before (`usb-kbd,id=kb1`, for `device_del kb1` in the monitor) |
 | `-Dusb-disk=stick.img` | a USB stick in the `qemu*` steps, its contents that image |
 | `-Daudio=pa,out.frequency=48000` | the virt steps' USB speaker on that QEMU audio backend - its driver and options, `wav,path=out.wav` for a file, `none` for nothing (default: the first QEMU has, at 44.1 kHz); at 48000 QEMU does not resample the speaker's 48 kHz |
-| `-Dcores=1` | the cores the kernel runs on: 1 or 2, up to 4 on a RISC-V or AArch64 board (default: what the board says - two on the ESP32 boards and in `qemu`, four on the RISC-V and AArch64 boards) |
+| `-Dcores=1` | the cores the kernel runs on: 1 or 2, up to 4 on a 64-bit board (default: what the board says - two on the ESP32 boards and in `qemu`, four on the RISC-V and AArch64 boards; one on x86-64, whose other cores are not started yet) |
 | `-Dselftest` | the ESP32-P4's boot task checks the chip (its blocks, DMA, PSRAM, the flash) and runs test tasks on both cores, rather than the shell |
 | `-Dmemdebug=true` | memory debugging on from exec's start, so the blocks the system makes as it comes up are walled too (`C:MemDebug` and `s3> memdebug` switch it while running) |
 
 ## Repository layout
 
 ```
-src/arch/      the chips (esp32s3, esp32p4, rv64sbi, a64psci): boot, exceptions, clock, MMU, memory, interrupts
+src/arch/      the chips (esp32s3, esp32p4, rv64sbi, a64psci, x64uefi): boot, exceptions, clock, MMU, memory, interrupts
 src/rom/       what is in the ROM: libraries, devices, handlers, resources, shell
 src/boards/    one folder per board: its parts and wiring, and its drivers
 src/disk/      what goes on the disk: commands, test programs, disk-loaded

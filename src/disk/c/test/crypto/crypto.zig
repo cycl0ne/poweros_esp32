@@ -390,7 +390,7 @@ fn gcmAgrees(cb: *CryptoBase, key: []const u8, aad: []const u8, data: [*]const u
 /// How much long data there is: 2.2 MB on the 64-bit boards - past two
 /// of the JH7110's engine buffers (1 MiB and 4 KiB each) - and 150000
 /// bytes on the ESP32s. A check longer than that is left out.
-const long_size: u32 = if (sdk.hardware.chip == .rv64sbi or sdk.hardware.chip == .a64psci) 2_200_000 else 150_000;
+const long_size: u32 = if (sdk.hardware.chip == .rv64sbi or sdk.hardware.chip == .a64psci or sdk.hardware.chip == .x64uefi) 2_200_000 else 150_000;
 
 fn longData(run: *Run) void {
     const cb = run.cb;
