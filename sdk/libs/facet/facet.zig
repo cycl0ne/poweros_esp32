@@ -205,6 +205,12 @@ pub const PhysicalDeviceLimits = extern struct {
     max_compute_work_group_size: [3]u32 = .{ 0, 0, 0 },
     max_compute_work_group_invocations: u32 = 0,
     max_compute_shared_memory_size: u32 = 0,
+    /// The floats a tessellation control function may write for the whole
+    /// patch, which its evaluation function reads back (`shader.control`,
+    /// `shader.Patch.ownValues`); 0 where the library tessellates nothing.
+    /// A field added at the end, so that none already there moves.
+    /// (Since 1.50.)
+    max_tessellation_patch_components: u32 = 0,
 };
 
 /// The longest name a device has, its NUL included.

@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.49**, so that a program need not find out by failing. It covers the API.
+1.50**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -481,6 +481,7 @@ Three more things cannot be asked for at all, having nothing to ask with:
 | 3D depth, and array layers | 256 |
 | Attachments, subpasses, colour attachments | 8, 4, 4 |
 | Patch control points | 32 |
+| Floats a patch carries to its evaluation function | 16 |
 | Swapchain images | 1 to 4 |
 | Samples along a sampler's longer axis | 16 |
 | A query's counter | 32 bits, held there |
@@ -602,9 +603,17 @@ A group runs on a worker's stack, so keep what it puts there small. It
 writes storage buffers and, since 1.31, storage images (below). Compute and
 tessellation run on the cores whichever device the pipeline was made on.
 
-Tessellation divides evenly only, has no point mode - there is no point
-rasterization at all, in any pipeline - and its control function sets
-nothing but the levels.
+Tessellation has Vulkan's three spacing modes since 1.50
+(`shader.Spacing`), and its control function carries floats of its own to
+the evaluation function (`shader.control`, `Patch.ownValues`), up to
+`PhysicalDeviceLimits.max_tessellation_patch_components` of them. What it
+has not got is **point mode** - there is no point rasterization at all, in
+any pipeline - and a control function cannot move the patch's vertices or
+change how many there are: it says the levels and writes the patch's own
+floats, and the evaluation function works from the vertices as the vertex
+function left them. Where Vulkan rounds an edge's two short fractional
+pieces is undefined; here they go one at each end, so that two patches
+sharing an edge cut it the same way from either side.
 
 ## Left out on purpose
 

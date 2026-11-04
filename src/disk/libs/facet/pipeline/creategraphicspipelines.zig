@@ -55,7 +55,14 @@ const _instance = @import("../instance/_instance.zig");
 /// `tessellation_state` says the vertices of a patch, 1 to 32: the cores make
 /// each patch into triangles or lines (`shader.Tessellation`), for a device
 /// with a processor of its own too, and those are drawn; without them,
-/// `patch_list` is `error_initialization_failed`.
+/// `patch_list` is `error_initialization_failed`. The evaluation entry says
+/// the domain, which way round its triangles go, and how the fraction of a
+/// level is spent (`shader.Spacing`, since 1.50): a domain or a spacing of a
+/// value this library has not is `error_invalid_shader_nv`. The control entry
+/// says the floats the patch carries from the one function to the other
+/// (`shader.control`, `Patch.ownValues`, since 1.50), more of them than
+/// `PhysicalDeviceLimits.max_tessellation_patch_components` being
+/// `error_feature_not_present`.
 ///
 /// What it draws: points, lines and line strips, and triangle lists, strips
 /// and fans, a restart index ending a strip or a fan; triangles filled, or as
@@ -220,7 +227,11 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         .vertex = @ptrCast(@alignCast(vertex_entry.function)),
         .fragment = @ptrCast(@alignCast(fragment_entry.function)),
         .fixed = fragment_entry.fixed(),
-        .varyings = vertex_entry.varyingCount(),
+        // What is drawn carries, which with tessellation is the
+        // evaluation function's output and not the vertex function's: the
+        // patch's own vertices are as wide as `Tessellated.vertex_varyings`
+        // says instead.
+        .varyings = last_entry.varyingCount(),
         .locations = 0,
         .bindings = @splat(.{}),
         .attributes = undefined,
@@ -275,14 +286,18 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
     if (evaluation) |entry| {
         const state = info.tessellation_state orelse return .error_initialization_failed;
         if (made.topology != .patch_list or state.patch_control_points == 0 or state.patch_control_points > _instance.max_patch_points) return .error_initialization_failed;
-        const way = entry.tessellation();
-        if (@intFromEnum(way.domain) > @intFromEnum(shader.Domain.isolines)) return .error_invalid_shader_nv;
+        const way = entry.tessellation() orelse return .error_invalid_shader_nv;
+        // What the control function writes for the whole patch (since
+        // 1.50): its entry's own count, held to the limit.
+        const own = control.?.varyingCount();
+        if (own > _instance.max_tessellation_patch_components) return .error_feature_not_present;
         made.tessellated = .{
             .control = @ptrCast(@alignCast(control.?.function)),
             .evaluation = @ptrCast(@alignCast(entry.function)),
             .way = way,
             .points = state.patch_control_points,
             .vertex_varyings = vertex_entry.varyingCount(),
+            .own = own,
         };
         made.drawn_topology = if (way.domain == .isolines) .line_list else .triangle_list;
     } else if (made.topology == .patch_list) return .error_initialization_failed;

@@ -114,6 +114,10 @@ pub const Tessellated = struct {
     points: u32,
     /// What the vertex function writes past the position.
     vertex_varyings: u32,
+    /// The floats the control function writes for the whole patch, which
+    /// the evaluation function reads back (`shader.Patch.ownValues`,
+    /// since 1.50); 0 where its entry declared none.
+    own: u32 = 0,
 };
 
 pub const Pipeline = struct {

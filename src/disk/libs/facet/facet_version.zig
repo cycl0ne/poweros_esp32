@@ -450,9 +450,37 @@ pub const LIBRARY_VERSION = 1;
 /// sampler brings the texture and leaves the sampler, and a write of a
 /// sampler alone changes nothing. A set keeps the addresses, so the layout
 /// may go while the sets live on.
+/// 50: tessellation spends the fraction of a level, and a patch carries
+/// what its control function worked out. `shader.Spacing` is Vulkan's
+/// three spacing modes, said by the evaluation entry: `equal`, which is
+/// what there was before, rounds the level up and cuts the edge into
+/// pieces all of one length; `fractional_even` and `fractional_odd` round
+/// it up to an even or an odd number of pieces and give the fraction to
+/// two short ones, so a level that follows the camera moves the vertices
+/// rather than jumping them. The two short pieces go one at each end of
+/// the edge, where Vulkan leaves their place undefined: two patches
+/// sharing an edge walk it opposite ways round, and only a pattern that
+/// is its own mirror leaves no crack between them. An inner ring takes
+/// the same pattern, windowed in by one piece a ring, which under equal
+/// spacing is the even cut it always was.
+/// `shader.control` now says how many floats the patch carries from the
+/// control function to the evaluation function
+/// (`shader.Patch.ownValues`): the control function writes them, the
+/// evaluation function reads them back, and nothing between the two calls
+/// touches them - a normal of the whole patch, a displacement, a colour
+/// worked out once rather than at every vertex. They live in the draw's
+/// own memory, one run of them for each patch, and
+/// `PhysicalDeviceLimits.max_tessellation_patch_components` says how many
+/// a patch may have.
+/// Fixed on the way: what is drawn with tessellation carries the
+/// evaluation function's varyings, where the pipeline took the vertex
+/// function's. An evaluation function that handed on more than the vertex
+/// function did wrote past the room there was for it, and the fragment
+/// function read what was never written - a colour of nothing, where the
+/// patch's own floats are what the evaluation function makes it from.
 /// What stays: `fifo` is the one present mode, there being no way to ask a
 /// display to show a buffer before its next frame; one queue family of one
 /// queue; a counter of 32 bits, for want of a 64-bit atomic on every
 /// machine the library runs on; and no point mode in tessellation, there
 /// being no point rasterization at all.
-pub const LIBRARY_REVISION = 49;
+pub const LIBRARY_REVISION = 50;

@@ -3918,7 +3918,14 @@ With tessellation functions, the topology is `patch_list` and the
 `tessellation_state` says the vertices of a patch, 1 to 32: the cores make
 each patch into triangles or lines (`shader.Tessellation`), for a device
 with a processor of its own too, and those are drawn; without them,
-`patch_list` is `error_initialization_failed`.
+`patch_list` is `error_initialization_failed`. The evaluation entry says
+the domain, which way round its triangles go, and how the fraction of a
+level is spent (`shader.Spacing`, since 1.50): a domain or a spacing of a
+value this library has not is `error_invalid_shader_nv`. The control entry
+says the floats the patch carries from the one function to the other
+(`shader.control`, `Patch.ownValues`, since 1.50), more of them than
+`PhysicalDeviceLimits.max_tessellation_patch_components` being
+`error_feature_not_present`.
 
 What it draws: points, lines and line strips, and triangle lists, strips
 and fans, a restart index ending a strip or a fan; triangles filled, or as
@@ -4872,9 +4879,11 @@ fn CreateShaderModule(base: *FacetBase, device: *facet.Device, info: *const face
 `success`; `error_invalid_shader_nv` for code that is not a
 shader.Code - SPIR-V among it - or an entry of a stage that is neither
 vertex nor fragment, or with more varyings than a vertex carries;
-`error_out_of_host_memory`. A compute entry carries a workgroup where
-the others carry varyings (`shader.computeGroup`), and what it may hold
-is CreateComputePipelines' to say.
+`error_out_of_host_memory`. Two stages carry something else in that
+word: a compute entry its workgroup (`shader.computeGroup`), and a
+tessellation control entry the floats its patch carries to its
+evaluation function (`shader.control`, since 1.50). What those may
+hold is CreateComputePipelines' and CreateGraphicsPipelines' to say.
 
 **BEHAVIOR**
 

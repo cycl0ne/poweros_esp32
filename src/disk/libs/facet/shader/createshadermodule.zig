@@ -29,9 +29,11 @@ const max_vertex_output_components = @import("../instance/_instance.zig").max_ve
 /// `success`; `error_invalid_shader_nv` for code that is not a
 /// shader.Code - SPIR-V among it - or an entry of a stage that is neither
 /// vertex nor fragment, or with more varyings than a vertex carries;
-/// `error_out_of_host_memory`. A compute entry carries a workgroup where
-/// the others carry varyings (`shader.computeGroup`), and what it may hold
-/// is CreateComputePipelines' to say.
+/// `error_out_of_host_memory`. Two stages carry something else in that
+/// word: a compute entry its workgroup (`shader.computeGroup`), and a
+/// tessellation control entry the floats its patch carries to its
+/// evaluation function (`shader.control`, since 1.50). What those may
+/// hold is CreateComputePipelines' and CreateGraphicsPipelines' to say.
 ///
 /// BEHAVIOR:
 /// The entries are copied. The functions they name are the program's
@@ -84,8 +86,15 @@ pub fn CreateShaderModule(base: *FacetBase, device: *facet.Device, info: *const 
         }
         // A compute entry's word is its workgroup, not varyings: the
         // device's compute limits are what bounds it, which the pipeline
-        // sees to (CreateComputePipelines).
-        if (entry.stage != facet.SHADER_STAGE_COMPUTE and entry.varyingCount() > max_vertex_output_components) return .error_invalid_shader_nv;
+        // sees to (CreateComputePipelines). A tessellation control
+        // entry's is the floats its patch carries to its evaluation
+        // function (`shader.control`, since 1.50), which
+        // CreateGraphicsPipelines holds to
+        // `PhysicalDeviceLimits.max_tessellation_patch_components`.
+        switch (entry.stage) {
+            facet.SHADER_STAGE_COMPUTE, facet.SHADER_STAGE_TESSELLATION_CONTROL => {},
+            else => if (entry.varyingCount() > max_vertex_output_components) return .error_invalid_shader_nv,
+        }
     }
     const memory = base.sys_base.AllocVec(@sizeOf(ShaderModule) + entries.len * @sizeOf(shader.Entry), exec.MEMF_CLEAR) orelse return .error_out_of_host_memory;
     const made: *ShaderModule = @ptrCast(@alignCast(memory));

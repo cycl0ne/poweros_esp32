@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.16 (04.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.17 (04.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -3273,6 +3273,196 @@ fn heldChecks(probe: *Probe) void {
     }
 }
 
+// --- 1.50: the fraction of a level, and the floats a patch carries ----------
+
+/// A patch cut into pieces. The control function works out the colour once
+/// for the whole patch and carries it to the evaluation function
+/// (`shader.Patch.ownValues`), which is all the colour the picture ever
+/// gets; each evaluation entry spends the fraction of a level its own way
+/// (`shader.Spacing`). Tessellation runs on the cores whichever device the
+/// pipeline was made on, so these functions run on both.
+const Cut = struct {
+    /// The smallest coordinate above 0 the evaluation function was given:
+    /// where the first cut of an edge fell.
+    var smallest: f32 = 1;
+    /// What came back through the patch's own floats, red first.
+    var carried: [4]f32 = @splat(-1);
+    /// How many floats the evaluation function found the patch carrying.
+    var carried_count: u32 = 0;
+
+    fn vertex(vertices: *const facet.shader.Vertices) callconv(.c) void {
+        for (0..vertices.count) |k| {
+            const p = vertices.input(@intCast(k), 0);
+            vertices.output(@intCast(k))[0..4].* = .{ p[0], p[1], p[2], 1 };
+        }
+    }
+
+    /// Every edge cut three and a half pieces' worth: the half piece is
+    /// what a spacing has to do something with.
+    fn control(patch: *const facet.shader.Patch, levels: *facet.shader.Levels) callconv(.c) void {
+        levels.outer = .{ 3.5, 3.5, 3.5, 3.5 };
+        levels.inner = .{ 3.5, 3.5 };
+        const own = patch.ownValues();
+        const full = facet.shader.channel(1);
+        if (own.len >= 4) own[0..4].* = .{ full, 0, 0, full };
+    }
+
+    fn evaluate(evaluations: *const facet.shader.Evaluations) callconv(.c) void {
+        const own = evaluations.patch.ownValues();
+        carried_count = @intCast(own.len);
+        if (own.len >= 4) carried = own[0..4].*;
+        const a = evaluations.patch.point(0);
+        const b = evaluations.patch.point(1);
+        const c = evaluations.patch.point(2);
+        const d = evaluations.patch.point(3);
+        for (0..evaluations.count) |k| {
+            const u = evaluations.coordinates[k][0];
+            const v = evaluations.coordinates[k][1];
+            if (u > 0 and u < smallest) smallest = u;
+            const out = evaluations.output(@intCast(k));
+            for (0..3) |axis| out[axis] = (a[axis] * (1 - u) + b[axis] * u) * (1 - v) + (d[axis] * (1 - u) + c[axis] * u) * v;
+            out[3] = 1;
+            // The colour the control function worked out, and nothing
+            // else: a patch that carried none draws black.
+            out[4..8].* = if (own.len >= 4) own[0..4].* else @splat(0);
+        }
+    }
+
+    const entries = [_]facet.shader.Entry{
+        facet.shader.vertex("main", &vertex, 0),
+        facet.shader.fixedFragment("main", .{ .kind = .color }),
+        facet.shader.control("main", &control, 4),
+        // More floats for the patch than any device of this library holds.
+        facet.shader.control("hoard", &control, 17),
+        facet.shader.evaluation("equally", &evaluate, 4, .{ .domain = .quads }),
+        facet.shader.evaluation("evenly", &evaluate, 4, .{ .domain = .quads, .spacing = .fractional_even }),
+        facet.shader.evaluation("oddly", &evaluate, 4, .{ .domain = .quads, .spacing = .fractional_odd }),
+        // A spacing of a value the library has not: bits 11 and 12 both set.
+        .{ .name = "nohow", .stage = facet.SHADER_STAGE_TESSELLATION_EVALUATION, .function = &evaluate, .varyings = 4 | 1 << 8 | 3 << 11 },
+    };
+    const code = facet.shader.Code{ .entry_count = entries.len, .entries = &entries };
+
+    /// The whole picture as one patch of four corners.
+    const corners = [4][3]f32{ .{ -1, -1, 0.5 }, .{ 1, -1, 0.5 }, .{ 1, 1, 0.5 }, .{ -1, 1, 0.5 } };
+};
+
+/// A pipeline of `Cut` over `pass`, of the control and evaluation entries
+/// named; null where the call refused it.
+fn cutPipeline(probe: *Probe, pass: *facet.RenderPass, module: *facet.ShaderModule, layout: *facet.PipelineLayout, control: [*:0]const u8, evaluation: [*:0]const u8) ?*facet.Pipeline {
+    const stages = [4]facet.PipelineShaderStageCreateInfo{
+        .{ .stage = facet.SHADER_STAGE_VERTEX, .module = module },
+        .{ .stage = facet.SHADER_STAGE_FRAGMENT, .module = module },
+        .{ .stage = facet.SHADER_STAGE_TESSELLATION_CONTROL, .module = module, .name = control },
+        .{ .stage = facet.SHADER_STAGE_TESSELLATION_EVALUATION, .module = module, .name = evaluation },
+    };
+    const binding = facet.VertexInputBindingDescription{ .binding = 0, .stride = 12 };
+    const attribute = facet.VertexInputAttributeDescription{ .location = 0, .binding = 0, .format = .r32g32b32_sfloat };
+    const input = facet.PipelineVertexInputStateCreateInfo{ .vertex_binding_description_count = 1, .vertex_binding_descriptions = @ptrCast(&binding), .vertex_attribute_description_count = 1, .vertex_attribute_descriptions = @ptrCast(&attribute) };
+    const assembly = facet.PipelineInputAssemblyStateCreateInfo{ .topology = .patch_list };
+    const tessellation = facet.PipelineTessellationStateCreateInfo{ .patch_control_points = 4 };
+    const viewport = facet.Viewport{ .width = side, .height = side };
+    const scissor = facet.Rect2D{ .extent = .{ .width = side, .height = side } };
+    const view = facet.PipelineViewportStateCreateInfo{ .viewports = @ptrCast(&viewport), .scissors = @ptrCast(&scissor) };
+    const raster = facet.PipelineRasterizationStateCreateInfo{};
+    const depth = facet.PipelineDepthStencilStateCreateInfo{};
+    const attachment = facet.PipelineColorBlendAttachmentState{};
+    const blend = facet.PipelineColorBlendStateCreateInfo{ .attachment_count = 1, .attachments = @ptrCast(&attachment) };
+    const info = facet.GraphicsPipelineCreateInfo{
+        .stage_count = 4,
+        .stages = &stages,
+        .vertex_input_state = &input,
+        .input_assembly_state = &assembly,
+        .tessellation_state = &tessellation,
+        .viewport_state = &view,
+        .rasterization_state = &raster,
+        .depth_stencil_state = &depth,
+        .color_blend_state = &blend,
+        .layout = layout,
+        .render_pass = pass,
+    };
+    var made: [1]?*facet.Pipeline = undefined;
+    if (probe.fb.CreateGraphicsPipelines(probe.device.?, null, 1, @ptrCast(&info), &made) != .success) return null;
+    return Probe.keep(&probe.pipelines, made[0]);
+}
+
+/// `wanted` and `found` within `apart` of each other, the two said where
+/// they are not.
+fn checkNear(probe: *Probe, wanted: f32, found: f32, apart: f32, name: [*:0]const u8) void {
+    const off = if (found > wanted) found - wanted else wanted - found;
+    if (off <= apart) return probe.check(true, name);
+    probe.failed += 1;
+    _ = Printf(probe.dl, "  FAILED  %s: wanted %d/10000, found %d/10000\n", .{ name, @as(i32, @intFromFloat(wanted * 10000)), @as(i32, @intFromFloat(found * 10000)) });
+}
+
+/// Vulkan's three spacings, and the floats a control function carries to
+/// its evaluation function (1.50).
+fn cutChecks(probe: *Probe) void {
+    const fb = probe.fb;
+    defer probe.give();
+    var properties: facet.PhysicalDeviceProperties = undefined;
+    fb.GetPhysicalDeviceProperties(probe.physical, &properties);
+    const held = properties.limits.max_tessellation_patch_components;
+    probe.check(held >= 4, "the device says how many floats a patch may carry");
+
+    const color_attachment = facet.AttachmentDescription{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .color_attachment_optimal };
+    const reference = facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal };
+    const subpass = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&reference) };
+    const pass = probe.renderPass(.{ .attachment_count = 1, .attachments = @ptrCast(&color_attachment), .subpass_count = 1, .subpasses = @ptrCast(&subpass) }) orelse
+        return probe.check(false, "a pass to cut patches into");
+
+    var module: ?*facet.ShaderModule = null;
+    if (fb.CreateShaderModule(probe.device.?, &.{ .code = &Cut.code }, &module) != .success) return probe.check(false, "the shader module of a cut patch");
+    _ = Probe.keep(&probe.modules, module);
+    var layout: ?*facet.PipelineLayout = null;
+    if (fb.CreatePipelineLayout(probe.device.?, &.{}, &layout) != .success) return probe.check(false, "the pipeline layout");
+    _ = Probe.keep(&probe.layouts, layout);
+
+    const color = probe.image(.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = side, .height = side }, .tiling = .linear, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, facet.MEMORY_PROPERTY_HOST_VISIBLE) orelse
+        return probe.check(false, "a picture to draw the patch into");
+    const frame = probe.framebuffer(pass, &.{color[1]}) orelse return probe.check(false, "a framebuffer over it");
+    const pixels, const pitch = probe.mapped(color[0], probe.memories[0].?) orelse return probe.check(false, "the picture read back");
+
+    const vertex_buffer, const vertex_bytes = probe.buffer(@sizeOf(@TypeOf(Cut.corners)), facet.BUFFER_USAGE_VERTEX_BUFFER) orelse
+        return probe.check(false, "a vertex buffer of four corners");
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(Cut.corners))], std.mem.asBytes(&Cut.corners));
+    const offset: u64 = 0;
+    const clear = [1]facet.ClearValue{.{ .color = .{ .float32 = .{ 0, 0, 1, 1 } } }};
+    const area = facet.Rect2D{ .extent = .{ .width = side, .height = side } };
+    const red: u32 = 0xFFFF_0000;
+
+    // A level of 3.5 along every edge: four pieces of one length; four
+    // with the half piece split between the two ends of the edge; or five
+    // the same way. Where the fraction goes is where the first cut falls.
+    for ([_]struct { name: [*:0]const u8, first: f32, says: [*:0]const u8, drew: [*:0]const u8, got: [*:0]const u8 }{
+        .{ .name = "equally", .first = 1.0 / 4.0, .says = "an equal spacing cuts the edge into four of one length", .drew = "the patch cut equally fills the picture", .got = "the floats the patch carries come back, cut equally" },
+        .{ .name = "evenly", .first = 1.5 / 7.0, .says = "an even fractional spacing puts the half piece at the two ends", .drew = "the patch cut evenly fills the picture", .got = "the floats the patch carries come back, cut evenly" },
+        .{ .name = "oddly", .first = 0.5 / 7.0, .says = "an odd fractional spacing cuts five, the short two at the ends", .drew = "the patch cut oddly fills the picture", .got = "the floats the patch carries come back, cut oddly" },
+    }) |one| {
+        const pipeline = cutPipeline(probe, pass, module.?, layout.?, "main", one.name) orelse
+            return probe.check(false, "a pipeline of one of the three spacings");
+        Cut.smallest = 1;
+        Cut.carried = @splat(-1);
+        Cut.carried_count = 0;
+        const commands = probe.record() orelse return probe.check(false, "a recording of the cut patch");
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame, .render_area = area, .clear_value_count = 1, .clear_values = &clear }, .@"inline");
+        fb.CmdBindPipeline(commands, .graphics, pipeline);
+        fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+        fb.CmdDraw(commands, 4, 1, 0, 0);
+        fb.CmdEndRenderPass(commands);
+        if (!probe.submit()) return probe.check(false, "the frame submitted");
+        checkNear(probe, one.first, Cut.smallest, 0.001, one.says);
+        // The whole picture is covered whatever the cut, and the colour is
+        // the control function's, carried over in the patch's own floats.
+        probe.checkEqual(red, pixelAt(pixels, pitch, side / 2, side / 2), one.drew);
+        probe.check(Cut.carried_count == 4 and Cut.carried[0] > 1 and Cut.carried[1] == 0, one.got);
+    }
+
+    // Refused: more floats for the patch than the device holds, and a
+    // spacing of a value this library has not.
+    probe.check(cutPipeline(probe, pass, module.?, layout.?, "hoard", "equally") == null, "a patch of more floats than the device holds refused");
+    probe.check(cutPipeline(probe, pass, module.?, layout.?, "main", "nohow") == null, "a spacing of none of the three refused");
+}
+
 fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical: *facet.PhysicalDevice, quiet: bool) struct { u32, u32 } {
     var properties: facet.PhysicalDeviceProperties = undefined;
     fb.GetPhysicalDeviceProperties(physical, &properties);
@@ -3302,6 +3492,7 @@ fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical
     samplesChecks(&probe);
     smallChecks(&probe);
     heldChecks(&probe);
+    cutChecks(&probe);
     return .{ probe.passed, probe.failed };
 }
 

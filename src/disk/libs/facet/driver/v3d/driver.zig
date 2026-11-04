@@ -121,6 +121,7 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
             .max_compute_work_group_size = _instance.max_compute_work_group_size,
             .max_compute_work_group_invocations = _instance.max_compute_work_group_invocations,
             .max_compute_shared_memory_size = _instance.max_compute_shared_memory_size,
+            .max_tessellation_patch_components = _instance.max_tessellation_patch_components,
             .min_memory_map_alignment = _memory.alignment,
             .tile_size = v3d.frame.tile_pixels,
             .cores = 1,

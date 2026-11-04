@@ -74,9 +74,20 @@ pub const Entry = extern struct {
         return Fixed.fromBits(entry.varyings);
     }
 
-    /// An evaluation function's way of tessellating.
-    pub fn tessellation(entry: *const Entry) Tessellation {
-        return .{ .domain = @enumFromInt((entry.varyings >> 8) & 3), .clockwise = entry.varyings & (1 << 10) != 0 };
+    /// An evaluation function's way of tessellating, or null where its
+    /// domain or its spacing is a value this library has not: a pipeline
+    /// refuses such an entry with `error_invalid_shader_nv`. (Since 1.50
+    /// it answers with a null rather than a domain of its own choosing.)
+    pub fn tessellation(entry: *const Entry) ?Tessellation {
+        const domain = (entry.varyings >> 8) & 3;
+        const spacing = (entry.varyings >> 11) & 3;
+        if (domain > @intFromEnum(Domain.isolines)) return null;
+        if (spacing > @intFromEnum(Spacing.fractional_odd)) return null;
+        return .{
+            .domain = @enumFromInt(domain),
+            .clockwise = entry.varyings & (1 << 10) != 0,
+            .spacing = @enumFromInt(spacing),
+        };
     }
 
     /// A compute function's invocations along each axis, which is what
@@ -114,9 +125,13 @@ pub fn fragment(name: [*:0]const u8, function: FragmentFn, varyings: u32) Entry 
     return .{ .name = name, .stage = facet.SHADER_STAGE_FRAGMENT, .function = function, .varyings = varyings };
 }
 
-/// An entry for a tessellation control function.
-pub fn control(name: [*:0]const u8, function: ControlFn) Entry {
-    return .{ .name = name, .stage = facet.SHADER_STAGE_TESSELLATION_CONTROL, .function = function, .varyings = 0 };
+/// An entry for a tessellation control function. `own` is the floats it
+/// writes for the whole patch, which its evaluation function reads back
+/// (`Patch.ownValues`, since 1.50): no more than
+/// `PhysicalDeviceLimits.max_tessellation_patch_components`, and 0 for a
+/// control function that sets the levels alone.
+pub fn control(name: [*:0]const u8, function: ControlFn, own: u32) Entry {
+    return .{ .name = name, .stage = facet.SHADER_STAGE_TESSELLATION_CONTROL, .function = function, .varyings = own };
 }
 
 /// An entry for a tessellation evaluation function.
@@ -125,7 +140,9 @@ pub fn evaluation(name: [*:0]const u8, function: EvaluationFn, varyings: u32, wa
         .name = name,
         .stage = facet.SHADER_STAGE_TESSELLATION_EVALUATION,
         .function = function,
-        .varyings = varyings | @as(u32, @intFromEnum(way.domain)) << 8 | @as(u32, @intFromBool(way.clockwise)) << 10,
+        .varyings = varyings | @as(u32, @intFromEnum(way.domain)) << 8 |
+            @as(u32, @intFromBool(way.clockwise)) << 10 |
+            @as(u32, @intFromEnum(way.spacing)) << 11,
     };
 }
 
@@ -741,12 +758,35 @@ pub const Domain = enum(u8) {
     isolines = 2,
 };
 
-/// What an evaluation function says of how it tessellates. The pieces are of
-/// equal length, as Vulkan's SpacingEqual.
+/// How an edge is cut into its pieces: Vulkan's three spacing modes. The
+/// level is a float, and what is made of it is a whole number of pieces -
+/// the question is what happens to the fraction. (Since 1.50.)
+pub const Spacing = enum(u8) {
+    /// The level held inside 1 to 64 and rounded up: that many pieces, all
+    /// of one length. Vulkan's SpacingEqual, and what there was before
+    /// 1.50.
+    equal = 0,
+    /// The level held inside 2 to 64 and rounded up to an even number of
+    /// pieces; all but two of one length, and two shorter ones, one at
+    /// each end of the edge, that shrink as the fraction does. So a level
+    /// that grows moves the vertices rather than jumping them, which is
+    /// what a patch whose level follows the camera wants.
+    /// Vulkan's SpacingFractionalEven.
+    fractional_even = 1,
+    /// The same with an odd number of pieces, the level held inside 1 to
+    /// 63: Vulkan's SpacingFractionalOdd. A level of 1 or below leaves the
+    /// edge uncut.
+    fractional_odd = 2,
+};
+
+/// What an evaluation function says of how it tessellates.
 pub const Tessellation = struct {
     domain: Domain = .triangles,
     /// Triangles go clockwise on the coordinates, not the other way.
     clockwise: bool = false,
+    /// How the fraction of a level is spent (since 1.50). Isolines ignore
+    /// it, as Vulkan has them: their pieces are always of equal length.
+    spacing: Spacing = .equal,
 };
 
 /// How finely a patch is made: a level is rounded up to a whole number, from
@@ -770,14 +810,32 @@ pub const Patch = extern struct {
     number: u32,
     instance: u32,
     resources: *const Resources,
+    /// The floats this patch carries from its control function to its
+    /// evaluation function, as many as the control entry declared
+    /// (`shader.control`): the control function writes them and the
+    /// evaluation function reads them back, both through `ownValues`. Null
+    /// where the entry declared none. What they hold is the patch's own
+    /// doing - a normal of the whole patch, its displacement, a colour -
+    /// and nothing reads them between the two calls. (Since 1.50.)
+    own: ?[*]f32 = null,
+    own_count: u32 = 0,
 
     /// Vertex `k` of the patch: its position, then its varyings.
     pub inline fn point(patch: *const Patch, k: u32) [*]const f32 {
         return patch.points + patch.corners[k] * patch.point_stride;
     }
+
+    /// The patch's own floats, empty where its control entry declared
+    /// none. The control function fills them in, undefined until it does;
+    /// the evaluation function reads them. (Since 1.50.)
+    pub inline fn ownValues(patch: *const Patch) []f32 {
+        const first = patch.own orelse return &.{};
+        return first[0..patch.own_count];
+    }
 };
 
-/// Says of a patch how finely it is made, `levels` given all 1. What
+/// Says of a patch how finely it is made, `levels` given all 1, and writes
+/// what the patch carries as a whole (`Patch.ownValues`, since 1.50). What
 /// Vulkan's control shader does to the vertices, an evaluation function does
 /// from them.
 pub const ControlFn = *const fn (patch: *const Patch, levels: *Levels) callconv(.c) void;

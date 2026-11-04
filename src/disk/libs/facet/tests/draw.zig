@@ -1849,16 +1849,60 @@ test "tessellation: patches made into triangles and lines, on the picture where 
         fn fragment(fragments: *const shader.Fragments) callconv(.c) void {
             shader.fill(fragments, 0xFFFF_0000);
         }
+        /// What the patch carries as a whole: three floats the control
+        /// function writes and the evaluation function reads back.
+        var carried: [3]f32 = @splat(-1);
+        /// The smallest coordinate above 0 the evaluation function was
+        /// given: where the first cut of an edge fell.
+        var smallest: f32 = 1;
+        fn carryControl(patch: *const shader.Patch, levels: *shader.Levels) callconv(.c) void {
+            last_points = patch.count;
+            // Half a piece more than three: the fraction a spacing spends.
+            levels.outer = .{ 3.5, 3.5, 3.5, 3.5 };
+            levels.inner = .{ 3.5, 3.5 };
+            // The colour of the whole patch, worked out the once: red.
+            const own = patch.ownValues();
+            if (own.len == 3) own[0..3].* = .{ 1, 0, 0 };
+        }
+        fn spent(evaluations: *const shader.Evaluations) callconv(.c) void {
+            const own = evaluations.patch.ownValues();
+            if (own.len == 3) carried = own[0..3].*;
+            for (0..evaluations.count) |k| {
+                const u = evaluations.coordinates[k][0];
+                if (u > 0 and u < smallest) smallest = u;
+            }
+            quad(evaluations);
+        }
+        /// The patch's colour handed on as the four varyings the `color`
+        /// form reads: the vertex function carries one float, so what is
+        /// drawn is wider than the patch's own vertices are.
+        fn painted(evaluations: *const shader.Evaluations) callconv(.c) void {
+            spent(evaluations);
+            const own = evaluations.patch.ownValues();
+            const full = shader.channel(1);
+            for (0..evaluations.count) |k| {
+                const out = evaluations.output(@intCast(k));
+                out[4..8].* = if (own.len == 3) .{ own[0] * full, own[1] * full, own[2] * full, full } else @splat(0);
+            }
+        }
         const entries = [_]shader.Entry{
             shader.vertex("main", &vertex, 1),
             shader.fragment("main", &fragment, 0),
-            shader.control("main", &control),
-            shader.control("triangle", &triangleControl),
+            shader.control("main", &control, 0),
+            shader.control("triangle", &triangleControl, 0),
+            shader.control("carry", &carryControl, 3),
+            shader.control("hoard", &carryControl, 17),
             shader.evaluation("triangles", &triangle, 0, .{ .domain = .triangles }),
             shader.evaluation("clockwise", &triangle, 0, .{ .domain = .triangles, .clockwise = true }),
             shader.evaluation("quads", &quad, 0, .{ .domain = .quads }),
             shader.evaluation("isolines", &quad, 0, .{ .domain = .isolines }),
             shader.evaluation("varied", &quad, 2, .{ .domain = .quads }),
+            shader.evaluation("equally", &spent, 0, .{ .domain = .quads }),
+            shader.evaluation("evenly", &spent, 0, .{ .domain = .quads, .spacing = .fractional_even }),
+            shader.evaluation("oddly", &spent, 0, .{ .domain = .quads, .spacing = .fractional_odd }),
+            shader.fixedFragment("painted", .{ .kind = .color }),
+            shader.evaluation("painted", &painted, 4, .{ .domain = .quads }),
+            .{ .name = "nohow", .stage = facet.SHADER_STAGE_TESSELLATION_EVALUATION, .function = &spent, .varyings = 1 << 8 | 3 << 11 },
         };
         const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
     };
@@ -1886,10 +1930,10 @@ test "tessellation: patches made into triangles and lines, on the picture where 
     const red: u32 = 0xFFFF_0000;
 
     const Made = struct {
-        fn of(on: *Bench, shaders: *facet.ShaderModule, by: *facet.PipelineLayout, into: *facet.RenderPass, control: [*:0]const u8, evaluation: [*:0]const u8, points: u32, topology: facet.PrimitiveTopology, raster: facet.PipelineRasterizationStateCreateInfo) struct { facet.Result, ?*facet.Pipeline } {
+        fn of(on: *Bench, shaders: *facet.ShaderModule, by: *facet.PipelineLayout, into: *facet.RenderPass, fragment: [*:0]const u8, control: [*:0]const u8, evaluation: [*:0]const u8, points: u32, topology: facet.PrimitiveTopology, raster: facet.PipelineRasterizationStateCreateInfo) struct { facet.Result, ?*facet.Pipeline } {
             const stages = [4]facet.PipelineShaderStageCreateInfo{
                 .{ .stage = facet.SHADER_STAGE_VERTEX, .module = shaders },
-                .{ .stage = facet.SHADER_STAGE_FRAGMENT, .module = shaders },
+                .{ .stage = facet.SHADER_STAGE_FRAGMENT, .module = shaders, .name = fragment },
                 .{ .stage = facet.SHADER_STAGE_TESSELLATION_CONTROL, .module = shaders, .name = control },
                 .{ .stage = facet.SHADER_STAGE_TESSELLATION_EVALUATION, .module = shaders, .name = evaluation },
             };
@@ -1936,7 +1980,7 @@ test "tessellation: patches made into triangles and lines, on the picture where 
     }.run;
 
     // A square, whole, cut however finely.
-    var result, const quads = Made.of(&bench, bent, layout, pass, "main", "quads", 4, .patch_list, .{});
+    var result, const quads = Made.of(&bench, bent, layout, pass, "main", "main", "quads", 4, .patch_list, .{});
     try testing.expectEqual(facet.Result.success, result);
     defer fb.DestroyPipeline(device, quads);
     try draw(&bench, pass, frame, quads.?, vertex_buffer, &offset, 4);
@@ -1948,7 +1992,7 @@ test "tessellation: patches made into triangles and lines, on the picture where 
     }
 
     // Two patches of three, the second left out: half of it, up to the diagonal.
-    result, const triangles = Made.of(&bench, bent, layout, pass, "triangle", "triangles", 3, .patch_list, .{});
+    result, const triangles = Made.of(&bench, bent, layout, pass, "main", "triangle", "triangles", 3, .patch_list, .{});
     try testing.expectEqual(facet.Result.success, result);
     defer fb.DestroyPipeline(device, triangles);
     try draw(&bench, pass, frame, triangles.?, vertex_buffer, &offset, 4);
@@ -1956,19 +2000,19 @@ test "tessellation: patches made into triangles and lines, on the picture where 
     try testing.expectEqual(clear, picture.at(16, 40));
 
     // Culled by the way round it is said to go.
-    result, const culled = Made.of(&bench, bent, layout, pass, "main", "triangles", 3, .patch_list, .{ .cull_mode = facet.CULL_MODE_FRONT, .front_face = .clockwise });
+    result, const culled = Made.of(&bench, bent, layout, pass, "main", "main", "triangles", 3, .patch_list, .{ .cull_mode = facet.CULL_MODE_FRONT, .front_face = .clockwise });
     try testing.expectEqual(facet.Result.success, result);
     defer fb.DestroyPipeline(device, culled);
     try draw(&bench, pass, frame, culled.?, vertex_buffer, &offset, 3);
     const one_way = picture.at(40, 16);
-    result, const other_way = Made.of(&bench, bent, layout, pass, "main", "clockwise", 3, .patch_list, .{ .cull_mode = facet.CULL_MODE_FRONT, .front_face = .clockwise });
+    result, const other_way = Made.of(&bench, bent, layout, pass, "main", "main", "clockwise", 3, .patch_list, .{ .cull_mode = facet.CULL_MODE_FRONT, .front_face = .clockwise });
     try testing.expectEqual(facet.Result.success, result);
     defer fb.DestroyPipeline(device, other_way);
     try draw(&bench, pass, frame, other_way.?, vertex_buffer, &offset, 3);
     try testing.expect(one_way != picture.at(40, 16));
 
     // Isolines: lines of constant v, the rest not touched.
-    result, const lines = Made.of(&bench, bent, layout, pass, "main", "isolines", 4, .patch_list, .{ .line_width = 1 });
+    result, const lines = Made.of(&bench, bent, layout, pass, "main", "main", "isolines", 4, .patch_list, .{ .line_width = 1 });
     try testing.expectEqual(facet.Result.success, result);
     defer fb.DestroyPipeline(device, lines);
     try draw(&bench, pass, frame, lines.?, vertex_buffer, &offset, 4);
@@ -1983,16 +2027,56 @@ test "tessellation: patches made into triangles and lines, on the picture where 
 
     // Refused: a patch of no vertices or too many; not a patch list; varyings
     // that do not come to the fragment function's.
-    result, _ = Made.of(&bench, bent, layout, pass, "main", "quads", 0, .patch_list, .{});
+    result, _ = Made.of(&bench, bent, layout, pass, "main", "main", "quads", 0, .patch_list, .{});
     try testing.expectEqual(facet.Result.error_initialization_failed, result);
-    result, _ = Made.of(&bench, bent, layout, pass, "main", "quads", 33, .patch_list, .{});
+    result, _ = Made.of(&bench, bent, layout, pass, "main", "main", "quads", 33, .patch_list, .{});
     try testing.expectEqual(facet.Result.error_initialization_failed, result);
-    result, _ = Made.of(&bench, bent, layout, pass, "main", "quads", 4, .triangle_list, .{});
+    result, _ = Made.of(&bench, bent, layout, pass, "main", "main", "quads", 4, .triangle_list, .{});
     try testing.expectEqual(facet.Result.error_initialization_failed, result);
-    result, _ = Made.of(&bench, bent, layout, pass, "main", "varied", 4, .patch_list, .{});
+    result, _ = Made.of(&bench, bent, layout, pass, "main", "main", "varied", 4, .patch_list, .{});
     try testing.expectEqual(facet.Result.error_invalid_shader_nv, result);
     const plain, _ = makePipeline(&bench, .{ .module = bent, .layout = layout, .pass = pass, .topology = .patch_list });
     try testing.expect(plain != .success);
+
+    // The floats the patch carries from its control function, and where
+    // the fraction of a level goes (since 1.50). A level of 3.5 along
+    // every edge: four pieces of one length, or four with the half piece
+    // split between the two ends, or five the same way.
+    const Spent = struct {
+        fn of(on: *Bench, shaders: *facet.ShaderModule, by: *facet.PipelineLayout, into: *facet.RenderPass, onto: *facet.Framebuffer, buffer: *facet.Buffer, where: *const u64, evaluation: [*:0]const u8) !f32 {
+            const got, const pipeline = Made.of(on, shaders, by, into, "main", "carry", evaluation, 4, .patch_list, .{});
+            try testing.expectEqual(facet.Result.success, got);
+            defer on.rig.fb.DestroyPipeline(on.device, pipeline);
+            Bent.smallest = 1;
+            Bent.carried = @splat(-1);
+            try draw(on, into, onto, pipeline.?, buffer, where, 4);
+            // The colour, written by the one function and read by the other.
+            try testing.expectEqual([3]f32{ 1, 0, 0 }, Bent.carried);
+            return Bent.smallest;
+        }
+    }.of;
+    // Rounded up to 4 pieces, all of one length: the first cut at 1/4.
+    try testing.expectApproxEqAbs(@as(f32, 0.25), try Spent(&bench, bent, layout, pass, frame, vertex_buffer, &offset, "equally"), 0.001);
+    // 4 pieces again, two of them short: (3.5 - 2) / (2 * 3.5) of the edge.
+    try testing.expectApproxEqAbs(@as(f32, 1.5 / 7.0), try Spent(&bench, bent, layout, pass, frame, vertex_buffer, &offset, "evenly"), 0.001);
+    // 5 pieces, the two short ones (3.5 - 3) / (2 * 3.5) of the edge.
+    try testing.expectApproxEqAbs(@as(f32, 0.5 / 7.0), try Spent(&bench, bent, layout, pass, frame, vertex_buffer, &offset, "oddly"), 0.001);
+
+    // What is drawn carries the evaluation function's varyings, not the
+    // vertex function's one: the patch's colour, read by a fixed form.
+    const colored = Made.of(&bench, bent, layout, pass, "painted", "carry", "painted", 4, .patch_list, .{});
+    try testing.expectEqual(facet.Result.success, colored[0]);
+    defer fb.DestroyPipeline(device, colored[1]);
+    try draw(&bench, pass, frame, colored[1].?, vertex_buffer, &offset, 4);
+    try testing.expectEqual(red, picture.at(32, 32));
+    try testing.expectEqual(red, picture.at(1, 62));
+
+    // Refused: more floats for the patch than the device holds, and a
+    // spacing of a value this library has not.
+    result, _ = Made.of(&bench, bent, layout, pass, "main", "hoard", "quads", 4, .patch_list, .{});
+    try testing.expectEqual(facet.Result.error_feature_not_present, result);
+    result, _ = Made.of(&bench, bent, layout, pass, "main", "carry", "nohow", 4, .patch_list, .{});
+    try testing.expectEqual(facet.Result.error_invalid_shader_nv, result);
 }
 
 test "images copied, blitted, read back, and parts of an attachment cleared in the middle of a pass" {
