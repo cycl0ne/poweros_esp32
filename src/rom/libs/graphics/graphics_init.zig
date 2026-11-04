@@ -69,11 +69,11 @@ pub const LIBRARY_VERSION = 0;
 /// `WriteYUVPixelArray` and `ScaleYUVPixelArray`, a video decoder's YUV
 /// frames put down as colours. The version stays 0 until there is
 /// something to demand of it.
-pub const LIBRARY_REVISION = 36;
+pub const LIBRARY_REVISION = 37;
 
 /// dd.mm.yyyy, the form every module's `$VER:` string uses so that
 /// `Version` reads them all the same way.
-const BUILD_DATE = "29.10.2026";
+const BUILD_DATE = "04.11.2026";
 
 /// The `$VER:` string, NUL first so that a scan of the image finds it and
 /// `id_string` can start one byte in as a plain C string.

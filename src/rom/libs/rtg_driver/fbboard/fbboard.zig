@@ -179,7 +179,7 @@ const timer = sdk.devices.timer;
 const MODULE_NAME = "rtg-fb";
 const DRIVER_NAME = "fb";
 const VERSION = 1;
-const REVISION = 22;
+const REVISION = 23;
 const BUILD_DATE = "04.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -1803,7 +1803,7 @@ fn overlayMoved(screen: *Screen, left: i32, top: i32) void {
 // --- the board -------------------------------------------------------------------
 
 /// The display the part describes, if it is there.
-fn findScanout(rb: *RtgBase, chip: u32, tag_list: ?[*]const TagItem) ?Scanout {
+fn findScanout(rb: *RtgBase, sys: *ExecBase, chip: u32, tag_list: ?[*]const TagItem) ?Scanout {
     const address = rb.GetRtgTagData(st.PART_Address, 0, tag_list);
     return switch (chip) {
         st.CHIP_QEMU_RAMFB => .{ .ramfb = ramfb.find(address) orelse return null },
@@ -1812,11 +1812,17 @@ fn findScanout(rb: *RtgBase, chip: u32, tag_list: ?[*]const TagItem) ?Scanout {
         st.CHIP_JH7110_DC8200 => .jh7110,
         // Nor of the BCM2712's before the firmware has its clocks running.
         st.CHIP_BCM2712_HVS => .bcm2712,
-        st.CHIP_VIRTIO_GPU => .{ .virtio = virtio.find(
-            address,
-            @truncate(rb.GetRtgTagData(st.PART_Windows, 1, tag_list)),
-            rb.GetRtgTagData(st.PART_WindowSize, 0, tag_list),
-        ) orelse return null },
+        // On PCI the driver finds the function itself and the part says
+        // nothing about where it lies; on a memory-mapped transport the
+        // board names the block, or the first of a row of them.
+        st.CHIP_VIRTIO_GPU => if (rb.GetRtgTagData(st.PART_Bus, st.BUS_NONE, tag_list) == st.BUS_PCI)
+            .{ .virtio = virtio.findOnPci(sys) orelse return null }
+        else
+            .{ .virtio = virtio.find(
+                address,
+                @truncate(rb.GetRtgTagData(st.PART_Windows, 1, tag_list)),
+                rb.GetRtgTagData(st.PART_WindowSize, 0, tag_list),
+            ) orelse return null },
         // Nothing to probe: the firmware set this one up, and the board
         // says what it set up.
         st.CHIP_UEFI_FB => found: {
@@ -1840,7 +1846,7 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
     const sys = state.sys;
 
     const chip: u32 = @truncate(rb.GetRtgTagData(st.PART_Chip, st.CHIP_NONE, tag_list));
-    const scanout = findScanout(rb, chip, tag_list) orelse return err.RTGERR_NO_DISPLAY;
+    const scanout = findScanout(rb, sys, chip, tag_list) orelse return err.RTGERR_NO_DISPLAY;
     const format: rtg.PixelFormat = @enumFromInt(@as(u8, @truncate(rb.GetRtgTagData(tags.RTGA_PixelFormat, @intFromEnum(rtg.PixelFormat.bgra32), tag_list))));
     const bytes: u32 = switch (format) {
         .bgra32 => 4,

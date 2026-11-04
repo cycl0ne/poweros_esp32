@@ -25,6 +25,8 @@
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const st = sdk.expansion.systemtags;
+const rtg = sdk.rtg;
+const tags = rtg.tags;
 const Tag = sdk.utility.FixedTagItem;
 
 /// The machine, as QEMU names it.
@@ -52,6 +54,33 @@ const usb = [_]Tag{
     .value(st.PART_UsbSpeed, st.USBSPEED_HIGH),
     .value(st.PART_UsbVbus, st.USBVBUS_ALWAYS),
     .pointer(st.PART_Label, "USB"),
+    .done,
+};
+
+/// QEMU's virtio GPU on PCI, there when the machine is started with
+/// `-device virtio-gpu-pci`: a function of its own, which the driver
+/// finds by what it is rather than by where it lies, so nothing here says
+/// an address. The picture is as large as the emulator's window has it
+/// (`xres`, `yres`), the size below where it says none.
+///
+/// It is listed before the firmware's own framebuffer, which the kernel
+/// adds after these: a machine that has this display shows it there, and
+/// one that has not falls through to what the firmware lit.
+const gpu = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_PANEL),
+    .value(st.PART_Chip, st.CHIP_VIRTIO_GPU),
+    .pointer(st.PART_ChipName, "virtio-gpu"),
+    .value(st.PART_Bus, st.BUS_PCI),
+    .value(tags.RTGA_Width, screen.width),
+    .value(tags.RTGA_Height, screen.height),
+    .value(tags.RTGA_PixelFormat, @intFromEnum(rtg.PixelFormat.bgra32)),
+    // At most sixteen pictures at once - screens, and the buffers behind
+    // them - each taken from memory as it is opened: a ceiling, not memory
+    // set aside.
+    .value(tags.RTGA_Buffers, 16),
+    // The windows of a screen each draw into a buffer of their own, and
+    // what can be seen of them is copied into the screen's.
+    .value(tags.RTGA_Compose, 1),
     .done,
 };
 
@@ -86,6 +115,7 @@ pub const root = [_]Tag{
     .value(st.SYSTAG_Cores, 4),
     .value(st.SYSTAG_ScreenWidth, screen.width),
     .value(st.SYSTAG_ScreenHeight, screen.height),
+    .pointer(st.SYSTAG_Part, &gpu),
     .pointer(st.SYSTAG_Part, &usb),
     .done,
 };
