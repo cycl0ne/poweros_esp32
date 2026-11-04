@@ -72,44 +72,21 @@ pub const sei_room = 512;
 const SEI_MASTERING = 137;
 const SEI_LIGHT_LEVEL = 144;
 
-/// The VUI's matrices, curves and primaries (H.264 Table E-5 and the
-/// like, H.265 Table E.5), by the numbers both standards share.
-const MC_BT_709 = 1;
-const MC_BT_470_B_G = 5;
-const MC_BT_601 = 6;
-const MC_FCC = 4;
-const MC_SMPTE_240 = 7;
-const MC_BT_2020_NCL = 9;
-const MC_BT_2020_CL = 10;
-const TR_PQ = 16;
-const TR_HLG = 18;
-const CP_BT_2020 = 9;
-const CP_P3_DCI = 11;
-const CP_P3_D65 = 12;
+// The VUI's matrix, curve and primaries are H.273's numbers, which rtg
+// turns into its own (`cicpMatrix` and the two beside it); what the VUI
+// does not say is what it would have been guessed to be.
 
 fn matrixOf(matrix: u8, height: u32) u8 {
-    return switch (matrix) {
-        MC_BT_709 => rtg.RTGYUV_BT709,
-        MC_FCC, MC_BT_470_B_G, MC_BT_601, MC_SMPTE_240 => rtg.RTGYUV_BT601,
-        MC_BT_2020_NCL, MC_BT_2020_CL => rtg.RTGYUV_BT2020,
-        else => if (height >= 720) rtg.RTGYUV_BT709 else rtg.RTGYUV_BT601,
-    };
+    return rtg.bitmaps.cicpMatrix(matrix) orelse
+        if (height >= 720) rtg.RTGYUV_BT709 else rtg.RTGYUV_BT601;
 }
 
 fn transferOf(transfer: u8) u8 {
-    return switch (transfer) {
-        TR_PQ => rtg.RTGYUV_PQ,
-        TR_HLG => rtg.RTGYUV_HLG,
-        else => rtg.RTGYUV_SDR,
-    };
+    return rtg.bitmaps.cicpTransfer(transfer) orelse rtg.RTGYUV_SDR;
 }
 
 fn primariesOf(primaries: u8) u8 {
-    return switch (primaries) {
-        CP_BT_2020 => rtg.RTGYUV_BT2020,
-        CP_P3_DCI, CP_P3_D65 => rtg.RTGYUV_P3,
-        else => rtg.RTGYUV_BT709,
-    };
+    return rtg.bitmaps.cicpPrimaries(primaries) orelse rtg.RTGYUV_BT709;
 }
 
 /// The colours the setup record's SPS says, for a picture `height` rows

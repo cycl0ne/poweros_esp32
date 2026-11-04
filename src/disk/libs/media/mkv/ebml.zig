@@ -172,6 +172,17 @@ pub const CodecDelay: u32 = 0x56AA;
 pub const Video: u32 = 0xE0;
 pub const PixelWidth: u32 = 0xB0;
 pub const PixelHeight: u32 = 0xBA;
+/// The colour description of a picture track: what its numbers mean, in
+/// the numbering of H.273 that the streams use (`Colour`, 0x55B0, and
+/// what is in it).
+pub const Colour: u32 = 0x55B0;
+pub const MatrixCoefficients: u32 = 0x55B1;
+pub const Range: u32 = 0x55B9;
+pub const TransferCharacteristics: u32 = 0x55BA;
+pub const Primaries: u32 = 0x55BB;
+pub const MaxCLL: u32 = 0x55BC;
+pub const MasteringMetadata: u32 = 0x55D0;
+pub const LuminanceMax: u32 = 0x55D9;
 pub const Audio: u32 = 0xE1;
 pub const SamplingFrequency: u32 = 0xB5;
 pub const Channels: u32 = 0x9F;

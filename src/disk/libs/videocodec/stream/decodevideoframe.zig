@@ -77,6 +77,7 @@ pub fn DecodeVideoFrame(_: *VideoCodecBase, stream: *vc.VideoStream, frame: *vc.
     const slot = _stream.freeSlot(s) orelse return vc.VCERR_BUSY;
     const result = _codec.decode(s, frame, slot);
     if (result != vc.VCERR_OK) return result;
+    _stream.tellColours(&s.picture, &frame.picture);
     s.held[slot] = true;
     frame.number = s.number;
     frame.private = .{ slot + 1, _stream.frame_mark, 0 };

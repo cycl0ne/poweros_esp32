@@ -1230,6 +1230,7 @@ test "video layers: one to a board, a picture needs its part, the limits kept, c
     // Nothing is taken by a refusal.
     const kinds = [_]TagItem{
         .{ .tag = rtg.RTGVA_Transfer, .data = rtg.RTGYUV_PQ },
+        .{ .tag = rtg.RTGVA_Transfer, .data = rtg.RTGYUV_HLG },
         .{ .tag = rtg.RTGVA_Primaries, .data = rtg.RTGYUV_BT2020 },
         .{ .tag = rtg.RTGVA_Matrix, .data = rtg.RTGYUV_BT2020 },
         .{ .tag = rtg.RTGVA_Depth, .data = 10 },

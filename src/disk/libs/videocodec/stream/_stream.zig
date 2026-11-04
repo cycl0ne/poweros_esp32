@@ -25,6 +25,7 @@ const exec = sdk.exec;
 const media = sdk.media;
 const ac = sdk.audiocodec;
 const vc = sdk.videocodec;
+const rtg = sdk.rtg;
 const ExecBase = sdk.interface.exec.ExecBase;
 const MediaBase = sdk.interface.media.MediaBase;
 const AudioCodecBase = sdk.interface.audiocodec.AudioCodecBase;
@@ -81,6 +82,21 @@ pub const Stream = struct {
     sub_track: u32,
     subtitles: ?*subtitle.Reader,
 };
+
+/// What the container said the pictures' numbers mean, put over what
+/// the decoder read from the stream itself. Where the container says
+/// nothing - which is most files - what the decoder said stands; where
+/// both speak it is the container that is taken, since it is the later
+/// word: a remux has been seen to clear a stream's primaries while the
+/// file's own element kept them. VP8 and VP9 say nothing in the stream
+/// at all, so for a WebM of high dynamic range this is the whole of it.
+pub fn tellColours(track: *const media.MediaTrack, picture: *rtg.RtgYuv) void {
+    if (rtg.bitmaps.cicpMatrix(track.matrix)) |one| picture.matrix = one;
+    if (rtg.bitmaps.cicpTransfer(track.transfer)) |one| picture.transfer = one;
+    if (rtg.bitmaps.cicpPrimaries(track.primaries)) |one| picture.primaries = one;
+    if (track.range != 0) picture.range = if (track.range == 2) rtg.RTGYUV_FULL else rtg.RTGYUV_LIMITED;
+    if (track.peak != 0) picture.peak = track.peak;
+}
 
 pub fn of(stream: *vc.VideoStream) *Stream {
     return @ptrCast(@alignCast(stream));
