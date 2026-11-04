@@ -3685,9 +3685,21 @@ facet.library/WaitForFences
 	op is `error_feature_not_present`, and a `d16_unorm` or an `s8_uint`
 	attachment keeps what it holds.
 
-	So two subpasses share a depth attachment only one right after the other
-	and with the same colour attachments too, when the second goes on in the
-	tiles of the first; otherwise that is `error_feature_not_present`.
+	Two subpasses share a depth attachment either way. One right after the
+	other and with the same colour attachments too goes on in the tiles of
+	the first, which costs nothing at all. Otherwise - another subpass in
+	between, or other colour attachments, so that the tiles are gone - the
+	pass keeps it for them (since 1.52): the part that drew it last writes
+	it into the image's rows and the next one to name it reads it in, both
+	whatever the attachment's own ops say, those being for the whole pass.
+	So the depth of a pass over a scene is still there for a pass over it
+	again, with the colour of something else drawn between them.
+
+	That wants what keeping it always wants: a device whose `stored_depth`
+	is true for the depth and `stored_stencil` for the stencil - and
+	`stored_both` where the format holds both - and an image with memory
+	something is behind, which CreateFramebuffer holds to
+	(`error_feature_not_present` for a transient one, which has none).
 
 	Since 1.37 a subpass may read attachments as well as draw into them:
 	up to 8 `input_attachments`, each read pixel by pixel at the

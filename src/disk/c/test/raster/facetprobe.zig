@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.18 (04.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.19 (04.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -3714,6 +3714,121 @@ fn checkNearColor(probe: *Probe, wanted: u32, found: u32, name: [*:0]const u8) v
     probe.check(true, name);
 }
 
+// --- 1.52: a depth attachment shared across a subpass -----------------------
+
+/// A depth attachment the first and the last subpass share, with a
+/// subpass of other tiles in between: the pass keeps it in the image's
+/// rows between them, neither of the attachment's own ops asking for that
+/// (1.52).
+fn sharedDepthChecks(probe: *Probe) void {
+    const fb = probe.fb;
+    const device = probe.device.?;
+    defer probe.give();
+
+    const descriptions = [3]facet.AttachmentDescription{
+        .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .color_attachment_optimal },
+        .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .color_attachment_optimal },
+        .{ .format = .d16_unorm, .load_op = .clear, .final_layout = .depth_stencil_attachment_optimal },
+    };
+    const on_first = [1]facet.AttachmentReference{.{ .attachment = 0, .layout = .color_attachment_optimal }};
+    const on_second = [1]facet.AttachmentReference{.{ .attachment = 1, .layout = .color_attachment_optimal }};
+    const depth = facet.AttachmentReference{ .attachment = 2, .layout = .depth_stencil_attachment_optimal };
+    const subpasses = [3]facet.SubpassDescription{
+        .{ .color_attachment_count = 1, .color_attachments = &on_first, .depth_stencil_attachment = &depth },
+        // In tiles of its own, and with no depth at all.
+        .{ .color_attachment_count = 1, .color_attachments = &on_second },
+        .{ .color_attachment_count = 1, .color_attachments = &on_first, .depth_stencil_attachment = &depth },
+    };
+    const pass = probe.renderPass(.{ .attachment_count = 3, .attachments = &descriptions, .subpass_count = 3, .subpasses = &subpasses }) orelse
+        return probe.check(false, "a pass whose first and last subpass share a depth attachment");
+    probe.check(true, "a pass whose first and last subpass share a depth attachment");
+
+    var module: ?*facet.ShaderModule = null;
+    if (fb.CreateShaderModule(device, &.{ .code = &Smooth.code }, &module) != .success) return probe.check(false, "the shader module");
+    _ = Probe.keep(&probe.modules, module);
+    var layout: ?*facet.PipelineLayout = null;
+    if (fb.CreatePipelineLayout(device, &.{}, &layout) != .success) return probe.check(false, "the pipeline layout");
+    _ = Probe.keep(&probe.layouts, layout);
+
+    const extent = facet.Extent3D{ .width = side, .height = side };
+    const shown = probe.image(.{ .format = .b8g8r8a8_unorm, .extent = extent, .tiling = .linear, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, facet.MEMORY_PROPERTY_HOST_VISIBLE) orelse
+        return probe.check(false, "a picture the first and the last subpass draw into");
+    const shown_memory = probe.memories[0].?;
+    const other = probe.image(.{ .format = .b8g8r8a8_unorm, .extent = extent, .tiling = .linear, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, facet.MEMORY_PROPERTY_HOST_VISIBLE) orelse
+        return probe.check(false, "a picture for the subpass in between");
+    // A depth with memory something is behind: a kept one needs rows.
+    const kept = probe.image(.{ .format = .d16_unorm, .extent = extent, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT }, 0) orelse
+        return probe.check(false, "a depth attachment with rows to keep it in");
+    const frame = probe.framebuffer(pass, &.{ shown[1], other[1], kept[1] }) orelse
+        return probe.check(false, "a framebuffer over the three");
+    const pixels, const pitch = probe.mapped(shown[0], shown_memory) orelse return probe.check(false, "the picture read back");
+
+    // A transient depth has nothing behind it to keep, so such a pass is
+    // refused the framebuffer.
+    if (probe.bound(.{ .format = .d16_unorm, .extent = extent, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT }, facet.MEMORY_PROPERTY_LAZILY_ALLOCATED)) |transient| {
+        if (probe.viewed(.{ .image = transient, .format = .d16_unorm, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH } })) |view| {
+            probe.check(probe.framebuffer(pass, &.{ shown[1], other[1], view }) == null, "a transient depth refused the framebuffer of such a pass");
+        }
+    }
+
+    // Three quads: the one the first subpass lays its depth down with,
+    // and the farther and nearer ones the last subpass tries.
+    const quads = [3][6][3]f32{ quadAt(0.5), quadAt(0.75), quadAt(0.25) };
+    const quad_bytes = @sizeOf([6][3]f32);
+    const vertex_buffer, const vertex_bytes = probe.buffer(quads.len * quad_bytes, facet.BUFFER_USAGE_VERTEX_BUFFER) orelse
+        return probe.check(false, "a vertex buffer of the three quads");
+    @memcpy(vertex_bytes[0 .. quads.len * quad_bytes], std.mem.asBytes(&quads));
+    const offset: u64 = 0;
+    const blue: u32 = 0xFF00_00FF;
+    const white: u32 = 0xFFFF_FFFF;
+    const clears = [3]facet.ClearValue{
+        .{ .color = .{ .float32 = .{ 0, 0, 1, 1 } } },
+        .{ .color = .{ .float32 = .{ 0, 0, 1, 1 } } },
+        .{ .depth_stencil = .{ .depth = 1 } },
+    };
+    const area = facet.Rect2D{ .extent = .{ .width = side, .height = side } };
+    const tested = facet.PipelineDepthStencilStateCreateInfo{ .depth_test_enable = true, .depth_write_enable = true, .depth_compare_op = .less };
+    // The first subpass writes its depth and no colour at all, so what
+    // the picture holds at the end is the last subpass's doing alone.
+    const depth_only = [1]facet.PipelineColorBlendAttachmentState{.{ .color_write_mask = 0 }};
+
+    const lays = pipelineOf(probe, pass, module.?, layout.?, .{ .depth_state = tested, .blends = &depth_only }) orelse
+        return probe.check(false, "a pipeline that writes the depth alone");
+    const between = pipelineOf(probe, pass, module.?, layout.?, .{ .subpass = 1 }) orelse
+        return probe.check(false, "a pipeline for the subpass in between");
+    const against = pipelineOf(probe, pass, module.?, layout.?, .{ .subpass = 2, .depth_state = tested }) orelse
+        return probe.check(false, "a pipeline for the last subpass");
+
+    // Twice: the last subpass's quad farther than the half the first
+    // wrote, then nearer. Were the depth not kept, the last subpass would
+    // start from a cleared one and draw both.
+    for ([2]struct { u32, u32, [*:0]const u8 }{
+        .{ 6, blue, "the last subpass's farther quad is held off by the depth the first left" },
+        .{ 12, white, "and its nearer one gets through, so what came back is a depth and not a wall" },
+    }) |one| {
+        const first_vertex, const want, const says = one;
+        const commands = probe.record() orelse return probe.check(false, "a recording of the three subpasses");
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame, .render_area = area, .clear_value_count = 3, .clear_values = &clears }, .@"inline");
+        fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+        fb.CmdBindPipeline(commands, .graphics, lays);
+        fb.CmdDraw(commands, 6, 1, 0, 0);
+        fb.CmdNextSubpass(commands, .@"inline");
+        fb.CmdBindPipeline(commands, .graphics, between);
+        fb.CmdDraw(commands, 6, 1, 0, 0);
+        fb.CmdNextSubpass(commands, .@"inline");
+        fb.CmdBindPipeline(commands, .graphics, against);
+        fb.CmdDraw(commands, 6, 1, first_vertex, 0);
+        fb.CmdEndRenderPass(commands);
+        if (!probe.submit()) return probe.check(false, "the frame submitted");
+        probe.checkEqual(want, pixelAt(pixels, pitch, side / 2, side / 2), says);
+    }
+
+    // The subpass in between drew into its own picture all the same.
+    const between_pixels, const between_pitch = probe.mapped(other[0], probe.memories[1].?) orelse
+        return probe.check(false, "the other picture read back");
+    probe.checkEqual(white, pixelAt(between_pixels, between_pitch, side / 2, side / 2), "the subpass in between drew into its own picture");
+}
+
 fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical: *facet.PhysicalDevice, quiet: bool) struct { u32, u32 } {
     var properties: facet.PhysicalDeviceProperties = undefined;
     fb.GetPhysicalDeviceProperties(physical, &properties);
@@ -3745,6 +3860,7 @@ fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical
     heldChecks(&probe);
     cutChecks(&probe);
     togetherChecks(&probe);
+    sharedDepthChecks(&probe);
     return .{ probe.passed, probe.failed };
 }
 

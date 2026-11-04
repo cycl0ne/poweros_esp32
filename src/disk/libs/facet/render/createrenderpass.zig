@@ -76,9 +76,21 @@ const _surface = @import("../surface/_surface.zig");
 /// op is `error_feature_not_present`, and a `d16_unorm` or an `s8_uint`
 /// attachment keeps what it holds.
 ///
-/// So two subpasses share a depth attachment only one right after the other
-/// and with the same colour attachments too, when the second goes on in the
-/// tiles of the first; otherwise that is `error_feature_not_present`.
+/// Two subpasses share a depth attachment either way. One right after the
+/// other and with the same colour attachments too goes on in the tiles of
+/// the first, which costs nothing at all. Otherwise - another subpass in
+/// between, or other colour attachments, so that the tiles are gone - the
+/// pass keeps it for them (since 1.52): the part that drew it last writes
+/// it into the image's rows and the next one to name it reads it in, both
+/// whatever the attachment's own ops say, those being for the whole pass.
+/// So the depth of a pass over a scene is still there for a pass over it
+/// again, with the colour of something else drawn between them.
+///
+/// That wants what keeping it always wants: a device whose `stored_depth`
+/// is true for the depth and `stored_stencil` for the stencil - and
+/// `stored_both` where the format holds both - and an image with memory
+/// something is behind, which CreateFramebuffer holds to
+/// (`error_feature_not_present` for a transient one, which has none).
 ///
 /// Since 1.37 a subpass may read attachments as well as draw into them:
 /// up to 8 `input_attachments`, each read pixel by pixel at the
@@ -159,7 +171,11 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
     const attachments: []const facet.AttachmentDescription = if (info.attachments) |given| given[0..info.attachment_count] else &.{};
     var plan = _render.RenderPass{ .device = owner, .attachment_count = info.attachment_count, .subpass_count = info.subpass_count };
     var drawn: [_render.most_attachments]bool = @splat(false);
-    var depths: [_render.most_attachments]bool = @splat(false);
+    // For each depth attachment, the last part that drew into it, or null
+    // where no subpass has yet. A later subpass that draws into the same
+    // one, with another subpass's tiles in between, has that part write
+    // its depth into the image's rows and reads it in again (since 1.52).
+    var depths: [_render.most_attachments]?u32 = @splat(null);
     for (info.subpasses[0..info.subpass_count], 0..) |subpass, number| {
         if (subpass.pipeline_bind_point != .graphics) return .error_feature_not_present;
         // A resolve attachment is multisampling's, which there is none of.
@@ -220,7 +236,20 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                 stores_depth = depth.store_op == .store;
                 loads_stencil = depth.stencil_load_op == .load;
                 stores_stencil = depth.stencil_store_op == .store;
-                if (loads_depth or stores_depth) {
+                // A subpass that goes on in the tiles of the one before
+                // it took the `continue` above, so reaching here with an
+                // attachment another subpass has already drawn into
+                // means those tiles are gone: what it left has to be in
+                // the image's rows to be tested against. The part that
+                // drew it last writes it there, and this one reads it in
+                // - whatever the attachment's own ops say, which are for
+                // the whole pass. (Since 1.52.)
+                const shared = depths[reference.attachment];
+                if (shared != null) {
+                    loads_depth = loads_depth or tests_depth;
+                    loads_stencil = loads_stencil or tests_stencil;
+                }
+                if (loads_depth or stores_depth or (shared != null and tests_depth)) {
                     // A depth that outlives the pass is written into the
                     // image's rows and read back from them, which only a
                     // device that draws in the rasterizer's tiles can do,
@@ -230,7 +259,7 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                 }
                 // The stencil keeps its own, in its own plane of those
                 // rows, by its own two ops (1.38).
-                if (loads_stencil or stores_stencil) {
+                if (loads_stencil or stores_stencil or (shared != null and tests_stencil)) {
                     if (!owner.physical.features.stored_stencil) return .error_feature_not_present;
                     if (!tests_stencil) return .error_feature_not_present;
                 }
@@ -239,11 +268,14 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                 // (`stored_both`, since 1.47): one that stores a tile
                 // buffer whole writes a plane's own pixels one after
                 // another, which those rows are not.
-                if ((loads_depth or stores_depth or loads_stencil or stores_stencil) and
+                if ((loads_depth or stores_depth or loads_stencil or stores_stencil or shared != null) and
                     tests_depth and tests_stencil and !owner.physical.features.stored_both) return .error_feature_not_present;
-                // Two subpasses share it only in the same tiles.
-                if (depths[reference.attachment]) return .error_feature_not_present;
-                depths[reference.attachment] = true;
+                // The part that drew it last keeps what it left, so that
+                // this subpass can read it in.
+                if (shared) |earlier| {
+                    if (tests_depth) plan.parts[earlier].stores_depth = true;
+                    if (tests_stencil) plan.parts[earlier].stores_stencil = true;
+                }
                 depth_index = reference.attachment;
             }
         }
@@ -294,6 +326,11 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
             plan.part_count += 1;
         }
         for (colors) |reference| drawn[reference.attachment] = true;
+        // The last part of this subpass is the one a later subpass that
+        // shares the depth attachment has keep it: the parts of a subpass
+        // drawn once for each colour attachment all leave the same depth,
+        // so the last of them is enough. (Since 1.52.)
+        if (depth_index) |index| depths[index] = plan.part_count - 1;
     }
     for (plan.parts[0..plan.part_count]) |part| if (part.depth) |depth| if (drawn[depth]) return .error_initialization_failed;
     const made = _objects.create(base.sys_base, _render.RenderPass) orelse return .error_out_of_host_memory;

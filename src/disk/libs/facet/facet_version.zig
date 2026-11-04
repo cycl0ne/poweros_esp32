@@ -505,9 +505,26 @@ pub const LIBRARY_VERSION = 1;
 /// CmdSetBlendConstantsAt (LVO -520). A subpass drawn together has no
 /// replay left to set them between, so without this its attachments could
 /// not be blended by constants of their own at all.
+/// 52: two subpasses share a depth attachment with another in between.
+/// Before this they shared one only when the second went on in the tiles
+/// of the first - right after it and into the same colour attachments -
+/// and anything else was `error_feature_not_present`. Now the pass keeps
+/// it for them: the part that drew it last writes its depth, and its
+/// stencil, into the image's rows, and the next part to name that
+/// attachment reads them in as it starts. Neither the attachment's load
+/// op nor its store op says so; they are for the whole pass, and what
+/// goes on inside it is the pass's own doing. So a pass over a scene can
+/// draw something else into another picture and then come back and test
+/// against the depth it left.
+/// It is the machinery a depth that outlives its pass has had since 1.30
+/// put to another use, so it wants the same of the device
+/// (`stored_depth`, `stored_stencil`, `stored_both` for a format of both)
+/// and the same of the image: memory something is behind, a transient one
+/// having none, which CreateFramebuffer says. Where the tiles can be
+/// shared they still are, and that pass pays nothing.
 /// What stays: `fifo` is the one present mode, there being no way to ask a
 /// display to show a buffer before its next frame; one queue family of one
 /// queue; a counter of 32 bits, for want of a 64-bit atomic on every
 /// machine the library runs on; and no point mode in tessellation, there
 /// being no point rasterization at all.
-pub const LIBRARY_REVISION = 51;
+pub const LIBRARY_REVISION = 52;

@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.51**, so that a program need not find out by failing. It covers the API.
+1.52**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -168,8 +168,13 @@ pass's depth. What is left out:
 - **A transient depth image keeps nothing**, having no memory: a pass that
   stores into one is refused its framebuffer. That is still the cheap way,
   and what every pass that does not ask for this goes on doing.
-- Two subpasses still share a depth attachment only one right after the
-  other, in the same tiles.
+- Two subpasses share one since 1.52 whether they are next to each other
+  or not. Next to each other and with the same colour attachments, the
+  second goes on in the first's tiles and it costs nothing; otherwise the
+  part that drew it last writes it into the image's rows and the next one
+  to name it reads it in, whatever the attachment's own ops say. So that
+  wants `stored_depth` (and `stored_stencil`, `stored_both`) and an image
+  with memory behind it: a transient one is still refused the framebuffer.
 
 ## Images written through, and what they still are not
 
