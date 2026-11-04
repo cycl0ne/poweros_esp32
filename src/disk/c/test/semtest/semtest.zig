@@ -283,7 +283,7 @@ fn batch(sys: *ExecBase, dl: *DosBase, mode: Mode, wanted: u32, seconds: u32, pi
         const task = sys.CreateTask(@ptrCast(name), -1, &workerCode, worker_stack) orelse break;
         worker.ended = .{ .reply_port = ended };
         sys.SetTaskEndMsg(task, &worker.ended);
-        if (pin) _ = sys.SetTaskAffinity(task, exec.coreFlag(@intCast(number % cores)));
+        if (pin) _ = sys.SetTaskAffinity(task, @intCast(number % cores));
         worker.task = task;
         run.count += 1;
     }

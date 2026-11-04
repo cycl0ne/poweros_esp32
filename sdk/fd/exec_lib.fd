@@ -218,7 +218,7 @@ void ReleaseOtherCores()
 /// Set the cores `task` (null: the caller) may run on - TF_CORE0, TF_CORE1,
 /// or 0 for any - and move it if it is where it may no longer be. Returns
 /// what they were.
-u32 SetTaskAffinity(?*exec.Task task, u32 cores)
+u32 SetTaskAffinity(?*exec.Task task, u32 core)
 /// The task core `core` is running now, or null for a core that is not
 /// running. Asked inside Disable; copy what is wanted before the Enable.
 ?*exec.Task CoreTask(u32 core)

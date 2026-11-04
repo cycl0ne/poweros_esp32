@@ -959,15 +959,15 @@ on every core:
   every core: a driver changes them inside `Disable`.
 
 A task that has to stay on one core - code written for one core, or one
-that drives a core's own hardware - is pinned with `SetTaskAffinity`, or
-from its first instruction: with its core's flag (`TF_CORE0` to
-`TF_CORE3`, `coreFlag(core)`) set in the `Task` handed to `AddTask`, or
-with `NP_Affinity` when dos makes it:
+that drives a core's own hardware - is kept there with `SetTaskAffinity`,
+or from its first instruction: with that core's number in the `Task`
+handed to `AddTask`, or with `NP_Affinity` when dos makes it. A task names
+no core by default (`exec.ANY_CORE`) and runs wherever there is room:
 
 ```zig
 radio.task = .{
     .node = .{ .name = "radio", .pri = 5 },
-    .flags = sdk.exec.TF_CORE0, // no core but 0 ever runs it
+    .core = 0, // no core but 0 ever runs it
     .sp_lower = @intFromPtr(stack),
     .sp_upper = @intFromPtr(stack) + stack_size,
 };

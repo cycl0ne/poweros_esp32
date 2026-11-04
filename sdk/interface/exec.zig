@@ -863,8 +863,8 @@ pub const ExecBase = opaque {
     /// Set the cores `task` (null: the caller) may run on - TF_CORE0, TF_CORE1,
     /// or 0 for any - and move it if it is where it may no longer be. Returns
     /// what they were.
-    pub fn SetTaskAffinity(self: *ExecBase, task: ?*exec.Task, cores: u32) u32 {
-        return libraries.call(self, LVO.SetTaskAffinity, Fn.SetTaskAffinity, .{ task, cores });
+    pub fn SetTaskAffinity(self: *ExecBase, task: ?*exec.Task, core: u32) u32 {
+        return libraries.call(self, LVO.SetTaskAffinity, Fn.SetTaskAffinity, .{ task, core });
     }
 
     /// The task core `core` is running now, or null for a core that is not

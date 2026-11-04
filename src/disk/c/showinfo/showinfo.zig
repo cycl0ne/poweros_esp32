@@ -19,7 +19,7 @@
 //! locks are spinlocks, under which nothing may wait.
 //!
 //! TASKS shows what each core runs, then the ready and the waiting tasks,
-//! with the core a task is pinned to (SetTaskAffinity, NP_Affinity).
+//! with the core a task keeps to (SetTaskAffinity, NP_Affinity).
 //!
 //! A region's free blocks are not walked: its largest block is asked of
 //! AvailMem - the largest of memory of its kind.
@@ -263,6 +263,22 @@ fn countRunning() u32 {
     }
 }
 
+/// `value` in decimal into `text`, which the NUL ends: a core is a number
+/// of its own, and a machine may have more cores than there are digits.
+fn decimalInto(text: []u8, value: u32) void {
+    var digits: [10]u8 = undefined;
+    var count: usize = 0;
+    var rest = value;
+    while (true) {
+        digits[count] = '0' + @as(u8, @intCast(rest % 10));
+        count += 1;
+        rest /= 10;
+        if (rest == 0) break;
+    }
+    for (0..count) |at| text[at] = digits[count - 1 - at];
+    text[count] = 0;
+}
+
 /// A task as it was when it was looked at, copied out under Disable into
 /// this program's own memory: the task may be gone by the time its line
 /// is printed.
@@ -271,8 +287,8 @@ const Seen = struct {
     pri: i8 = 0,
     is_process: bool = false,
     own: bool = false,
-    /// The cores it may run on: its TF_CORE0 and TF_CORE1 flags.
-    pins: u8 = 0,
+    /// The core it keeps to, or exec.ANY_CORE for whichever is free.
+    pinned: u32 = exec.ANY_CORE,
     state: [*:0]const u8 = "",
     /// The core it runs on, for a running one.
     core: ?u32 = null,
@@ -284,7 +300,7 @@ const Seen = struct {
             .pri = task.node.pri,
             .is_process = task.node.type == .process,
             .own = own,
-            .pins = task.flags & exec.TF_CORES,
+            .pinned = task.core,
             .state = state,
             .core = core,
         };
@@ -292,22 +308,16 @@ const Seen = struct {
     }
 
     /// Its line: the state, the core it runs on (a running task's only),
-    /// the core it is pinned to, or "-" for any.
+    /// the core it keeps to, or "-" for any.
     fn show(seen: *const Seen) void {
-        var core_text: [4:0]u8 = .{ '-', 0, 0, 0 };
-        if (seen.core) |number| core_text[0] = '0' + @as(u8, @intCast(number % 10));
-        // "core 0" for one, "cores 02" for several.
-        var pin_text: [10:0]u8 = @splat(0);
-        var length: usize = 0;
-        if (seen.pins != 0) {
-            const word = if (@popCount(seen.pins) == 1) "core " else "cores ";
-            @memcpy(pin_text[0..word.len], word);
-            length = word.len;
-            for (0..4) |number| {
-                if (seen.pins & exec.coreFlag(@intCast(number)) == 0) continue;
-                pin_text[length] = '0' + @as(u8, @intCast(number));
-                length += 1;
-            }
+        var core_text: [12:0]u8 = @splat(0);
+        core_text[0] = '-';
+        if (seen.core) |number| decimalInto(&core_text, number);
+        // "core 5" for one it keeps to, "-" for none.
+        var pin_text: [16:0]u8 = @splat(0);
+        if (seen.pinned != exec.ANY_CORE) {
+            @memcpy(pin_text[0..5], "core ");
+            decimalInto(pin_text[5..], seen.pinned);
         } else pin_text[0] = '-';
         const pinned: [*:0]const u8 = &pin_text;
         _ = Printf(dl, "%-8s %-4s  %-6s  %4d  0x%08zx  %s%s%s\n", .{

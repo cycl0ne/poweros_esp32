@@ -185,6 +185,22 @@ pub fn Copied(comptime Listing: type, comptime capacity: usize) type {
     };
 }
 
+/// `value` in decimal into `text`, which the NUL ends: a core is a number
+/// now, and a machine may have more cores than there are digits.
+fn decimalInto(text: []u8, value: u32) void {
+    var digits: [10]u8 = undefined;
+    var count: usize = 0;
+    var rest = value;
+    while (true) {
+        digits[count] = '0' + @as(u8, @intCast(rest % 10));
+        count += 1;
+        rest /= 10;
+        if (rest == 0) break;
+    }
+    for (0..count) |at| text[at] = digits[count - 1 - at];
+    text[count] = 0;
+}
+
 /// Every task with `take`: each core's running one first, with its core,
 /// then the ready ones and the waiting ones.
 fn eachTask(reader: Reader, base: *const ExecBase, sink: anytype, comptime take: anytype) void {
@@ -211,9 +227,9 @@ pub const tasks = struct {
         pri: i8,
         state: sdk.exec.TaskState,
         /// The core it runs on, for a running one.
-        core: u8,
-        /// The cores it may run on: its TF_CORE0 to TF_CORE3 flags.
-        pins: u8,
+        core: u32,
+        /// The core it keeps to, or ANY_CORE.
+        pinned: u32,
         sig_wait: u32,
         sig_recvd: u32,
         sig_except: u32,
@@ -235,7 +251,7 @@ pub const tasks = struct {
             .pri = task.node.pri,
             .state = task.state,
             .core = core,
-            .pins = task.flags & sdk.exec.TF_CORES,
+            .pinned = task.core,
             .sig_wait = task.sig_wait,
             .sig_recvd = task.sig_recvd,
             .sig_except = task.sig_except,
@@ -247,16 +263,12 @@ pub const tasks = struct {
     }
 
     pub fn print(out: anytype, row: *const Row) void {
-        var core_text: [2:0]u8 = .{ '0' + row.core % 10, 0 };
+        var core_text: [12:0]u8 = @splat(0);
+        decimalInto(&core_text, row.core);
         const core: [*:0]const u8 = if (row.state != .run) "" else &core_text;
-        // The digits of the cores it is pinned to.
-        var pin_text: [4:0]u8 = @splat(0);
-        var digits: usize = 0;
-        for (0..4) |number| {
-            if (row.pins & sdk.exec.coreFlag(@intCast(number)) == 0) continue;
-            pin_text[digits] = '0' + @as(u8, @intCast(number));
-            digits += 1;
-        }
+        // The core it keeps to, if it keeps to one.
+        var pin_text: [12:0]u8 = @splat(0);
+        if (row.pinned != sdk.exec.ANY_CORE) decimalInto(&pin_text, row.pinned);
         const pin: [*:0]const u8 = &pin_text;
         out.print("0x%08zx  %-16s %-7s %4d  %-6s %-4s  %-3s  %08x  %08x  %08x  %08zx  %08zx\n", .{
             row.address,                                @as([*:0]const u8, @ptrCast(&row.name)),

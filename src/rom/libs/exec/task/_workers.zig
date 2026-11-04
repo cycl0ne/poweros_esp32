@@ -233,7 +233,7 @@ pub fn setUp(base: *ExecBase) void {
     sys.BeginSystemMemory();
     for (pool.workers[0..cores]) |*worker| {
         const task = sys.CreateTask(worker_names[worker.core], 0, &workerCode, worker_stack) orelse break;
-        _ = sys.SetTaskAffinity(task, sdk.exec.coreFlag(worker.core));
+        _ = sys.SetTaskAffinity(task, worker.core);
         worker.task = task;
         @atomicStore(?*anyopaque, &task.user_data, worker, .release);
         sys.Signal(task, SIGF_SINGLE);

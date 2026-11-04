@@ -385,7 +385,7 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
     // and whose interrupts are core 0's.
     base.task = .{
         .node = .{ .type = .task, .pri = task_pri, .name = DEVICE_NAME },
-        .flags = exec.TF_CORE0,
+        .core = 0,
         .sp_lower = @intFromPtr(stack),
         .sp_upper = @intFromPtr(stack) + stack_size,
     };

@@ -104,8 +104,10 @@ pub const LIBRARY_VERSION = 1;
 /// register the machine keeps it in, the interrupt flag masked and
 /// unmasked in its own place, caches that need nothing said about them,
 /// the Guru's backtrace by frame pointers, and the debug shell's own
-/// instruction to fault on.
-pub const LIBRARY_REVISION = 28;
+/// instruction to fault on. 29: the core a task keeps to is a number of
+/// its own (`Task.core`, `SetTaskAffinity`, `ANY_CORE`) rather than flags
+/// in its flags byte, so no machine has more cores than a task can name.
+pub const LIBRARY_REVISION = 29;
 const BUILD_DATE = "04.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

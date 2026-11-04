@@ -645,8 +645,8 @@ kernel. The page is the stub's to find, since the memory list leaves the
 whole first mebibyte out and only the stub sees the firmware's map.
 `C:test/cores` passes on all four. The machine is started with eight,
 which is what a PC of this kind has: the system takes the first four,
-since four is what exec keeps core state for and what a task's cores can
-name, and the boot's line says both numbers.
+which is what exec keeps core state for, and the boot's line says both
+numbers.
 
 **The machine's power** is its firmware's as well. A UEFI firmware keeps
 half of itself in memory for the system that follows it, and that half is

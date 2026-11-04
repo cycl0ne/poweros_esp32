@@ -3003,20 +3003,20 @@ test "tasks: SetTaskAffinity - a task pinned to another core is passed over, and
 
     // On core 1 alone, and core 1 not running: core 0 never takes it,
     // however high it is raised.
-    try testing.expectEqual(@as(u32, 0), SetTaskAffinity(SysBase, task, sdk.exec.TF_CORE1));
+    try testing.expectEqual(sdk.exec.ANY_CORE, SetTaskAffinity(SysBase, task, 1));
     _ = SetTaskPri(SysBase, task, 10);
     try testing.expectEqual(boot_ctx, exceptionExit(boot_ctx));
     try testing.expectEqual(boot, SysBase.cpu().this_task);
 
     // Let go: it outranks the running task, and runs.
-    try testing.expectEqual(@as(u32, sdk.exec.TF_CORE1), SetTaskAffinity(SysBase, task, 0));
+    try testing.expectEqual(@as(u32, 1), SetTaskAffinity(SysBase, task, sdk.exec.ANY_CORE));
     try testing.expectEqual(ctx(task), exceptionExit(boot_ctx));
     try testing.expectEqual(task, SysBase.cpu().this_task);
 
-    // Pinned away from this core by itself: switched out at once, and the
-    // boot task - pinned to core 0 - goes on.
-    try testing.expectEqual(@as(u32, 0), SetTaskAffinity(SysBase, null, sdk.exec.TF_CORE1 | 0x80));
-    try testing.expectEqual(sdk.exec.TF_CORE1, task.flags & (sdk.exec.TF_CORE0 | sdk.exec.TF_CORE1));
+    // Kept to another core by itself: switched out at once, and the boot
+    // task - which keeps to core 0 - goes on.
+    try testing.expectEqual(sdk.exec.ANY_CORE, SetTaskAffinity(SysBase, null, 1));
+    try testing.expectEqual(@as(u32, 1), task.core);
     try testing.expectEqual(boot_ctx, exceptionExit(ctx(task)));
     try testing.expectEqual(boot, SysBase.cpu().this_task);
     try testing.expectEqual(TaskState.ready, task.state);

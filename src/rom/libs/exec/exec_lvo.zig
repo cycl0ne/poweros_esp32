@@ -870,8 +870,8 @@ fn lvoReleaseOtherCores(base: *ExecBase) callconv(.c) void {
     exec.ReleaseOtherCores(base);
 }
 
-fn lvoSetTaskAffinity(base: *ExecBase, task: ?*Task, cores: u32) callconv(.c) u32 {
-    return exec.SetTaskAffinity(base, task, cores);
+fn lvoSetTaskAffinity(base: *ExecBase, task: ?*Task, core: u32) callconv(.c) u32 {
+    return exec.SetTaskAffinity(base, task, core);
 }
 
 fn lvoCoreTask(base: *ExecBase, core: u32) callconv(.c) ?*Task {

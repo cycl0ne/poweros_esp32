@@ -274,7 +274,7 @@ pub fn initTasks(base: *ExecBase) error{OutOfMemory}!void {
     base.cpu().elapsed = default_quantum;
     const boot = newTask(base, "kernel", 0, 0) orelse return error.OutOfMemory;
     boot.state = .run;
-    boot.flags |= sdk.exec.TF_CORE0;
+    boot.core = 0;
     base.cpu().this_task = boot;
     base.cpu().time_mark = cycles();
     base.boot_task = boot;
@@ -282,7 +282,7 @@ pub fn initTasks(base: *ExecBase) error{OutOfMemory}!void {
         return error.OutOfMemory;
     makeSystemTask(idle);
     // Pinned once it is on the ready list: no other core runs yet.
-    idle.flags |= sdk.exec.TF_CORE0;
+    idle.core = 0;
     base.cpu().idle_task = idle;
 }
 
@@ -304,7 +304,7 @@ pub fn prepareCore(base: *ExecBase, core: u32, stack_lower: usize, stack_upper: 
     const task = newTask(base, idle_names[core].ptr, -128, 0) orelse return false;
     task.sp_lower = stack_lower;
     task.sp_upper = stack_upper;
-    task.flags |= sdk.exec.coreFlag(core);
+    task.core = core;
     task.sig_alloc |= sdk.exec.tasks.system_signals;
     task.state = .run;
     guardStack(task);
@@ -1131,24 +1131,15 @@ fn waitLeft(task: *const Task, core: u32) void {
 
 // --- the cores --------------------------------------------------------------
 
-/// The flags of the cores exec keeps state for.
-const machine_cores: u8 = cores: {
-    var flags: u8 = 0;
-    for (0..exec_base.max_cores) |core| flags |= sdk.exec.coreFlag(core);
-    break :cores flags;
-};
-
-/// Whether `task` may run on `core`: pinned to cores that include it, or
-/// to none of them (or all) - and then on a core but 0 only once the
-/// cores share.
+/// Whether `task` may run on `core`: the core it keeps to, or any - and
+/// then on a core but 0 only once the cores share.
 ///
 /// INPUTS:
 /// - `base` - exec: whether the cores share.
 /// - `task` - the task.
 /// - `core` - the core.
 pub fn runnableOn(base: *const ExecBase, task: *const Task, core: u32) bool {
-    const pins = task.flags & machine_cores;
-    if (pins != 0 and pins != machine_cores) return pins & sdk.exec.coreFlag(core) != 0;
+    if (task.core != sdk.exec.ANY_CORE) return task.core == core;
     return core == 0 or base.share_cores != 0;
 }
 

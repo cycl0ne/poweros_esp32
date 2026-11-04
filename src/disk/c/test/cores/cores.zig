@@ -267,7 +267,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         const task = sys.CreateTask(@ptrCast(name), -1, &workerCode, worker_stack) orelse break;
         worker.ended = .{ .reply_port = ended };
         sys.SetTaskEndMsg(task, &worker.ended);
-        if (pin) _ = sys.SetTaskAffinity(task, exec.coreFlag(@intCast(number % cores)));
+        if (pin) _ = sys.SetTaskAffinity(task, @intCast(number % cores));
         worker.task = task;
         run.count += 1;
     }

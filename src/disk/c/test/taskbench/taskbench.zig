@@ -213,12 +213,12 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 
     // The partner on this core, then on another.
     const here = sys.SetTaskAffinity(null, 0);
-    _ = sys.SetTaskAffinity(null, exec.coreFlag(1));
+    _ = sys.SetTaskAffinity(null, 1);
     for ([_]u32{ 1, 2 }) |core| {
         bench.stop = false;
         _ = sys.SetSignal(0, bench.back);
         const task = sys.CreateTask("TaskBench partner", 0, &partnerCode, 8192) orelse break;
-        _ = sys.SetTaskAffinity(task, exec.coreFlag(core));
+        _ = sys.SetTaskAffinity(task, core);
         _ = sys.Wait(bench.back);
         const go = @atomicLoad(u32, &bench.go, .acquire);
         var count: u32 = 0;

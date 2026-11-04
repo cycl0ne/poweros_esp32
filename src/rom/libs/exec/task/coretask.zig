@@ -43,8 +43,8 @@ const Task = sdk.exec.Task;
 /// The task is its own; nothing is handed over.
 ///
 /// NOTES:
-/// A task's `TF_CORE0` and `TF_CORE1` flags say which cores it may run
-/// on (`SetTaskAffinity`); this says where it runs.
+/// A task's `core` says which core it keeps to (`SetTaskAffinity`); this
+/// says where it runs.
 ///
 /// BUGS:
 /// None known.
