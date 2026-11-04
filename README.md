@@ -283,7 +283,7 @@ What each board runs is in [Boards](#boards).
 | ESP32-S3, two Xtensa LX7 cores | Waveshare 7B, ES3C35P, Espressif QEMU | the caches and the MMU, flash and PSRAM, the interrupt matrix, GDMA, RGB and QSPI panels, I2S, SPI, I2C, UART, the USB serial port, USB OTG, the SD slot, and the radio with its vendor libraries |
 | ESP32-P4, two RISC-V 32 cores | Olimex ESP32-P4-PC, Elecrow CrowPanel Advanced 10.1", esp-emulator | the same, and MIPI DSI, the PPA and 2D-DMA engines, the JPEG codec, the SDMMC host, 10/100 Ethernet, and USB OTG with the ports behind a hub |
 | RISC-V 64 under SBI firmware, four cores - StarFive's JH7110 | VisionFive 2, QEMU's `virt` | its display controller behind HDMI, PCI Express with an NVMe SSD and the VL805's USB, gigabit Ethernet, the SDMMC host, the random number generator, the video decoder, DMA, the RTC, and sound over HDMI and on the jack |
-| x86-64 under UEFI firmware, one core so far | QEMU's q35, a PC | the descriptor and interrupt tables, the task state with its own stack for a fault, the local interrupt controller and the machine's I/O controller in front of it, the timestamp counter measured against the power-management timer, the controller's own timer as the tick, the page tables, the firmware's tables read for the memory, the cores and the controllers, a 16550 console in the I/O port space, and the core's own random numbers |
+| x86-64 under UEFI firmware, one core so far | QEMU's q35, a PC | the descriptor and interrupt tables, the task state with its own stack for a fault, the local interrupt controller and the machine's I/O controller in front of it, the timestamp counter measured against the power-management timer, the controller's own timer as the tick, the page tables, the firmware's tables read for the memory, the cores, the controllers and PCI Express's configuration space, messages from a PCI function as interrupts of the local controller's own, a 16550 console in the I/O port space, and the core's own random numbers |
 | AArch64 under PSCI firmware, four cores - Broadcom's BCM2712 | Compute Module 5, QEMU's `virt` | HDMI 0 - the video scaler, a pixel valve, the HDMI controller, the monitor read and set over DDC/CI - PCI Express with an NVMe SSD, the V3D GPU, the RP1's two USB controllers, Ethernet and UART over its PCI Express link, the radio on the second SD host, the RTC and the core clocks through the VideoCore's firmware, the chip's temperature, and the IO board's fan turned as it asks |
 
 ## Quick start
@@ -301,7 +301,7 @@ What each board runs is in [Boards](#boards).
 | `qemu_virt` | QEMU's RISC-V 64 `virt` machine under OpenSBI: four harts, 512 MB, a 16550 console; with QEMU's options a 1920×1080 display (`virtio-gpu-device` or `ramfb`), an xHCI controller and NVMe drives on its PCI Express | runs (`./zig build virt`): the shell on the serial console, four cores, dos started from an NVMe SSD, a work disk that keeps what is saved to it beside it, a whole system installed onto a second SSD in one command (`C:Install`), from the running system or from a release package on a stick; with `-device virtio-gpu-device` or `-device ramfb` the desktop, with `-device qemu-xhci` USB keyboards, mice and sticks, a stick at SuperSpeed, a disk over UAS on streams, with more `nvme` devices more SSDs; sound through QEMU's USB speaker on the host's sound (`-Daudio` names QEMU's backend, `wav,path=out.wav` a file, sample for sample), which every virt step plugs in and its system disk prefers, pulled out and put back as it plays; with `-device usb-net` the network, through `usb/ecm.device` (the display steps plug one in) |
 | `visionfive2` | StarFive VisionFive 2 (v1.3B): JH7110 with four U74 RISC-V cores, 8 GB LPDDR4, HDMI, two gigabit Ethernet ports, four USB-A on a VL805 on PCI Express, an M.2 slot, microSD; started by the board's own OpenSBI and U-Boot | runs: the console on the debug UART, the desktop over HDMI at 1920×1080, four cores, all of its RAM, starting from the microSD card, the first Ethernet port at 1000 Mbit/s, USB keyboards and mice, an NVMe SSD in the M.2 slot, the random number generator, reboot, the four cores as the 2D engine, facet.library's 3D in a window at 60 frames a second, sound over HDMI; not yet tried on the board: a system installed onto its card or an SSD (`C:Install`), sound through a USB speaker or headset, USB 3 devices at SuperSpeed, a disk over UAS; not driven yet: the second Ethernet port, the eMMC socket |
 | `qemu_virt_a64` | QEMU's AArch64 `virt` machine with four Cortex-A76 cores and a GICv2, as the Raspberry Pi CM5's BCM2712 has them, everything below 4 GiB: 512 MB, a PL011 console; with QEMU's options a 1920×1080 display (`virtio-gpu-device` or `ramfb`), an xHCI controller and NVMe drives on its PCI Express | runs (`./zig build virt64`): the shell on the serial console, four cores, dos started from an NVMe SSD, a work disk beside it, the ROM debugger with breakpoints, watchpoints and steps; entered at EL1 or, with `virtualization=on`, at EL2 (`./zig build virt64-el2`); with `-device virtio-gpu-device` or `-device ramfb` the desktop and facet.library's 3D, with `-device qemu-xhci` USB keyboards and tablets, with more `nvme` devices more SSDs, with `-device usb-net` the network, through `usb/ecm.device` (the display steps plug one in); sound through QEMU's USB speaker, as on `qemu_virt`. The CM5 is `rpi_cm5` |
-| `qemu_q35` | QEMU's x86-64 q35 machine started by its UEFI firmware: 512 MB, a 16550 console on port 0x3F8, the firmware's own 1280×800 framebuffer, and what `-device` adds on its PCI Express | runs (`./zig build q35`): the shell on the serial console, dos with the disk image the stub loads into RAM, a Guru with the core's registers and a backtrace; with the machine's window (`./zig build q35-display`) the desktop at 1280x800 on the framebuffer the firmware lit, drawn into where it stands; the date from the machine's own battery-backed clock; not driven yet: PCI and the drives on it, USB - so the keyboard and the mouse, which are on it - the network, and the other cores |
+| `qemu_q35` | QEMU's x86-64 q35 machine started by its UEFI firmware: 512 MB, a 16550 console on port 0x3F8, the firmware's own 1280×800 framebuffer, and what `-device` adds on its PCI Express | runs (`./zig build q35`): the shell on the serial console, dos started from an NVMe SSD with a work disk beside it, PCI Express from the firmware's tables with everything left where the firmware placed it, a Guru with the core's registers and a backtrace; with the machine's window (`./zig build q35-display`) the desktop at 1280x800 on the framebuffer the firmware lit, drawn into where it stands, with a USB keyboard and tablet on `-device qemu-xhci`; the date from the machine's own battery-backed clock; not driven yet: the network, sound of its own, and the other cores |
 | `rpi_cm5` | Raspberry Pi Compute Module 5 on its IO board: BCM2712 with four Cortex-A76 cores and a GIC-400, up to 16 GB, eMMC, the console on the RP1's UART0 (pins 8 and 10 of the 40-pin header); started by the bootloader in its EEPROM, in the order its `BOOT_ORDER` setting gives - the SSD, the eMMC, or over USB with `rpiboot` | runs: the shell on the console, four cores, all of RAM, dos with the disk image the bootloader loads; the console on its interrupt, an MSI-X message from the RP1 that the board routes to the GIC; USB on the two USB 3 sockets, the RP1's DWC3 controllers through xhci.device (a mouse and a hub found); an NVMe SSD in the M.2 slot, PCI Express port 1 through pci.library, read at 432 MiB/s on its INTx line, dos started from its posfs `DH0:` (System) with `DH1:` (Work) beside it, and the kernel from the SSD's own boot partition, which `C:Install` writes beside them - the whole machine on the one medium, with the eMMC behind it in the boot order as the way back in; Wi-Fi from the module's CYW43455 (`networks/cyw43455.device`, WPA2, joined at the start); the date from its RTC through the VideoCore's firmware; the cores at 2.4 GHz, asked of the same firmware, on a supply that holds them there - PoE+ here (`CpuClock` says the clock, the chip's temperature and what holds the cores back); the chip's temperature through thermal.resource (`Temperature`), the IO board's fan turned as it asks - in Linux's steps, at speeds this fan turns at; HDMI 0 driven by the kernel - the HVS, a pixel valve and the HDMI controller - in the monitor's mode from its EDID, as HDMI with its infoframes (DVI to a monitor without HDMI's block), 1920×1080 and 2560×1440 at 60 Hz shown, and the display brought up where the firmware set none up at all - a machine starting from its own medium reaches the driver in the first second after the power comes on, before the firmware has set up any display, so the driver starts the HVS's clock itself - with the pointer and a dragged icon each in a plane of its own, the picture mirrored either way, the monitor put to sleep and woken, and its brightness set over DDC/CI; a monitor plugged in after the start or swapped while it runs; 4K at 60 Hz sent scrambled to a monitor that says it takes it (not tried yet: no such monitor here); the monitor's speakers in stereo at 48 kHz through `rta-hdmi` and audio.device; facet.library's 3D at 60 frames a second, in a window and on a screen of its own - there its pictures read by the display as they were drawn, nothing copied; Ethernet from the RP1's MAC (`networks/emac.device`) at 1000 Mbit/s, 200 MiB read from a NAS at 105 MiB/s and written at 95; a system installed onto the SSD in one command (`C:Install`), the boot pair on it, and the machine starting from the medium with no host attached; not driven yet: the RP1's GPIO, message-signalled interrupts on the M.2 slot, and - much later - HDMI 1 |
 
 `C:ShowConfig` lists what the running board has, and `ShowConfig DEVICES`
@@ -589,9 +589,9 @@ reads FAT, not posfs.
 `-Dboard=qemu_q35` builds a kernel for an x86-64 machine started by UEFI
 firmware (chip `x64uefi`): `zig-out/bin/kernel` (the ELF, for a
 debugger), `kernel.bin` (the same from its first address, 0x00200000),
-`disk-x64.bin`, the disk as an image of its whole 32 MB for a loader to
-put in RAM as on the other two 64-bit machines, and `system-x64.bin`, the
-same files as a system disk. The kernel runs on a map of its own: an
+`system-x64.bin`, the system as a disk for the machine to start from, and
+`disk-x64.bin`, the same files as an image of 32 MB for a loader to put in
+RAM, which is what a machine with no disk of its own runs on. The kernel runs on a map of its own: an
 identity map, 1 GiB blocks where the core has them, page 0 left out so
 that a null pointer faults, the kernel's code read-only, and anything the
 firmware did not call memory uncached.
@@ -599,9 +599,10 @@ firmware did not call memory uncached.
 Between the firmware and the kernel there is nothing but a stub of the
 system's own, `EFI/BOOT/BOOTX64.EFI` (`src/boot/uefi/stub.zig`). It asks
 the firmware for the memory map, for the framebuffer it has already lit
-and for the root of its tables; reads `kernel.bin` and `disk-x64.bin` off
-the partition it was started from - the kernel into the pages its own
-header names, since the image runs where it was linked; leaves the
+and for the root of its tables; reads `kernel.bin` off the partition it
+was started from - into the pages its own header names, since the image
+runs where it was linked - and a `disk-x64.bin` beside it where there is
+one, which is how a machine with no disk gets a system; leaves the
 firmware; and calls the kernel with all of it in one structure, which is
 to this machine what a device tree is to the other two. Its own lines go
 out of the serial port by hand, so they and the kernel's first lines come
@@ -624,11 +625,14 @@ console, under the firmware the system has (`-Dovmf-code=` and
 `work/q35-vars.fd`). It runs it with `-cpu max`, which is what the kernel
 is built against: the emulator's default core is older than the
 architecture's second generation and has neither the instructions the
-compiler emits nor 1 GiB pages. The machine reaches the shell on the
-console, with dos on the disk image in RAM. `./zig build q35-display`
-opens the machine's window as well, where the desktop comes up at
-1280x800; there is no keyboard and no mouse on it yet, since both are
-USB and USB is on PCI.
+compiler emits nor 1 GiB pages. It gives the machine the two drives both
+other emulated 64-bit machines have - the system disk it starts from, on
+which what is written is dropped when it stops, and a work disk beside it
+that keeps what is saved to it in `work/q35.bin` - and an xHCI
+controller. The machine reaches the shell on the console, with dos
+started from the system disk's `DH0:`. `./zig build q35-display` opens
+the machine's window as well, where the desktop comes up at 1280x800,
+with a USB keyboard and a tablet on it.
 
 ```sh
 ./zig build -Dboard=qemu_q35

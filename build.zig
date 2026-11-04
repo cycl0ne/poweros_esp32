@@ -1244,8 +1244,11 @@ pub fn build(b: *std.Build) void {
 
     // QEMU's q35 machine, the x86-64 board: its UEFI firmware starts
     // src/boot/uefi/stub.zig as BOOTX64.EFI off a boot partition the
-    // emulator makes out of a directory, and the stub reads the kernel and
-    // the disk image from beside itself there. The console is the machine's
+    // emulator makes out of a directory, and the stub reads the kernel
+    // from beside itself there. Only the kernel: the machine's system is
+    // on its NVMe disk, and a disk image on the boot partition would be a
+    // second system beside it - the stub reads one where there is one, for
+    // a machine that has no disk of its own. The console is the machine's
     // first serial port, which the stub writes by hand and exec's raw port
     // drives afterwards, so the stub's lines and the kernel's first lines
     // come out of the same place.
@@ -1254,15 +1257,19 @@ pub fn build(b: *std.Build) void {
     const q35_boot = b.addWriteFiles();
     _ = q35_boot.addCopyFile(q35_stub.getEmittedBin(), "EFI/BOOT/BOOTX64.EFI");
     _ = q35_boot.addCopyFile(q35_kernel.image, "kernel.bin");
-    _ = q35_boot.addCopyFile(x64_disk_bin, "disk-x64.bin");
     const q35_vars = keepFirmwareVars(b, ovmf_vars, "q35-vars.fd");
     // `-cpu max` is everything the emulator can do, which is what the
     // kernel is built against: the emulator's default core is older than
     // the architecture's second generation and has neither the instructions
     // the compiler emits for it nor 1 GiB pages.
     const q35_machine = [_][]const u8{ "qemu-system-x86_64", "-machine", "q35", "-cpu", "max", "-m", "512" };
+    // The system disk and a work disk beside it, as the other two
+    // emulated 64-bit machines have them: the firmware starts the kernel
+    // off the boot partition, and dos starts from the system disk's DH0:.
+    const q35_disks: VirtDisks = .{ .system = x64_system_disk, .work = keepWorkDisk(b, blank_work_disk, "q35.bin") };
     const run_q35 = b.addSystemCommand(&q35_machine);
-    run_q35.addArg("-nographic");
+    run_q35.addArgs(&.{ "-nographic", "-device", "qemu-xhci" });
+    q35_disks.addTo(run_q35);
     run_q35.addArgs(&.{ "-drive", b.fmt("if=pflash,format=raw,readonly=on,file={s}", .{ovmf_code}) });
     run_q35.addArgs(&.{ "-drive", b.fmt("if=pflash,format=raw,file={s}", .{q35_vars.path}) });
     // The boot partition last, and `file=` after `format=raw` so that the
@@ -1280,7 +1287,12 @@ pub fn build(b: *std.Build) void {
     // this machine has in any case, and `-nographic` above only keeps the
     // window shut. The console stays on the terminal.
     const run_q35_display = b.addSystemCommand(&q35_machine);
-    run_q35_display.addArgs(&.{ "-display", virt_ui, "-serial", "mon:stdio" });
+    run_q35_display.addArgs(&.{
+        "-display", virt_ui,      "-serial", "mon:stdio",
+        "-device",  "qemu-xhci",  "-device", "usb-kbd",
+        "-device",  "usb-tablet",
+    });
+    q35_disks.addTo(run_q35_display);
     run_q35_display.addArgs(&.{ "-drive", b.fmt("if=pflash,format=raw,readonly=on,file={s}", .{ovmf_code}) });
     run_q35_display.addArgs(&.{ "-drive", b.fmt("if=pflash,format=raw,file={s}", .{q35_vars.path}) });
     run_q35_display.addArgs(virt_monitor);

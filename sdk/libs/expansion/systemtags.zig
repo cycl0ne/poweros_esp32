@@ -310,6 +310,28 @@ pub const PART_PowerManager = PART_Dummy + 0x47;
 /// the clock holds no such register, and the two digits of its year are
 /// then all it says.
 pub const PART_Century = PART_Dummy + 0x48;
+/// A PCI host bridge whose functions the firmware has already placed and
+/// whose windows are therefore nobody's to name: every BAR stays where
+/// the firmware put it. This is what a machine started by UEFI firmware
+/// is - its windows are in the tables' own language and not in anything
+/// read here, and its screen is already being read from the address the
+/// firmware gave it.
+pub const PART_PciPlaced = PART_Dummy + 0x49;
+/// Where a PCI function's messages go on the bus, what the first of this
+/// bridge's vectors must carry to be told from the others, which
+/// interrupt source that first vector arrives on, and how many vectors
+/// there are. A bridge that takes no messages says none of it.
+///
+/// A machine whose messages reach the cores' interrupt controllers
+/// directly - every x86-64 machine - gives each vector a source of its
+/// own, from PART_PciMsiSource up, and what a vector carries is the
+/// number its source's interrupt comes in on. One whose bridge gathers
+/// them raises one interrupt for all of them and tells them apart by what
+/// they carry.
+pub const PART_PciMsiAddress = PART_Dummy + 0x4A;
+pub const PART_PciMsiData = PART_Dummy + 0x4B;
+pub const PART_PciMsiSource = PART_Dummy + 0x4C;
+pub const PART_PciMsiCount = PART_Dummy + 0x4D;
 
 /// A line's role, short, for a listing: "RESET", "SCL", "D0". Null for a
 /// tag that is not a line.

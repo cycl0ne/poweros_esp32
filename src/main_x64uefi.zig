@@ -10,11 +10,12 @@
 //!
 //! The ROM holds what runs on the machine's console, timer and RAM alone:
 //! timer.device on the core's own counter, serial.device on the console's
-//! 16550 in the I/O port space, flash.device on the disk image the stub
-//! read off the boot partition, dos.library with its handlers and the
-//! Shell, utility, expansion and platform. The boot task goes on as the
-//! `s3>` debug shell on serial.device's unit 0, where `newshell` starts the
-//! CLI on the disk.
+//! 16550 in the I/O port space, flash.device on a disk image where the
+//! stub found one beside itself, dos.library with its handlers and the
+//! Shell, utility, expansion and platform. What the machine starts from
+//! beyond that is the board's (`src/boards/<board>/romtags.zig`). The boot
+//! task goes on as the `s3>` debug shell on serial.device's unit 0, where
+//! `newshell` starts the CLI on the system disk.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -120,10 +121,41 @@ var panel: [12]Tag = @splat(.done);
 /// do not say the machine is one of the few without that clock. Which of
 /// its registers holds the century is theirs to say as well.
 var clock_part: [7]Tag = @splat(.done);
+/// PCI's part, where the firmware's tables say where its configuration
+/// space is. What is behind the bridge the firmware has already placed,
+/// and the kernel says so: moving anything would move the screen it is
+/// drawing on, and the windows things may be placed in are written in the
+/// tables' own language, which nothing here reads.
+var pci_part: [12]Tag = @splat(.done);
 /// Whether that part was written, and whether the screen's memory takes
 /// gathered writes: both go in the boot's lines.
 var screen_declared = false;
 var screen_gathered = false;
+
+/// PCI's configuration space, written into the board's description as
+/// its host bridge - with where a function's messages go, what the first
+/// of them carries and which interrupt source it arrives on. On this
+/// machine a message goes to a core's own interrupt controller rather
+/// than to the bridge, so each has a source of its own and carries the
+/// number its source's interrupt comes in on (`apic.vectorOf`).
+fn takePci() void {
+    if (tables.ecam_base == 0) return;
+    pci_part = .{
+        .value(st.PART_Kind, st.PARTKIND_PCI),
+        .value(st.PART_Chip, st.CHIP_PCI_ECAM),
+        .pointer(st.PART_ChipName, "pcie-ecam"),
+        .value(st.PART_Bus, st.BUS_MEMORY),
+        .value(st.PART_PciConfig, @intCast(tables.ecam_base)),
+        .value(st.PART_PciPlaced, 1),
+        .value(st.PART_PciMsiAddress, apic.messageAddress(0)),
+        .value(st.PART_PciMsiData, apic.vectorOf(hardware.intbits.INTB_MSI_FIRST)),
+        .value(st.PART_PciMsiSource, hardware.intbits.INTB_MSI_FIRST),
+        .value(st.PART_PciMsiCount, hardware.intbits.INTB_MSI_COUNT),
+        .pointer(st.PART_Label, "PCI Express"),
+        .done,
+    };
+    _ = boards.system.addPart(&pci_part);
+}
 
 /// The machine's battery-backed clock, written into the board's
 /// description as its RTC part: battclock.resource reads the date from it
@@ -202,6 +234,7 @@ fn takeBoard(machine: *const handover.Handover) void {
     // board's figures stand where the tables said nothing.
     tables = hardware.acpi.read(tables_at);
     takeClock();
+    takePci();
     hardware.apic.lapic_base = if (tables.lapic_base != 0) @intCast(tables.lapic_base) else hardware.map.LAPIC;
     hardware.apic.io_count = 0;
     for (tables.controllers()) |controller| {

@@ -62,6 +62,10 @@ pub const Host = struct {
     registers: usize = 0,
     config: usize = 0,
     windows: place.Windows = .{},
+    /// Whether the firmware placed everything behind this bridge and it
+    /// stays where it put it (PART_PciPlaced): then the windows above are
+    /// nobody's to name and none is.
+    placed: bool = false,
     /// PART_Irq.
     irq: u32 = 0,
     /// The line that holds what is plugged in in reset (a BoardPin).
@@ -82,6 +86,12 @@ pub const Host = struct {
     msi_address: u64 = 0,
     msi_count: u8 = 0,
     msi_used: u32 = 0,
+    /// What the first of those vectors carries (PART_PciMsiData), and
+    /// which interrupt source it arrives on (PART_PciMsiSource) where
+    /// each vector has one of its own. A bridge that gathers its
+    /// messages into one interrupt says neither, and both are 0.
+    msi_data: u32 = 0,
+    msi_source: u32 = 0,
     vectors: [max_vectors]exec.List = undefined,
 };
 
@@ -312,10 +322,12 @@ pub fn remServer(entry: *Entry, server: *exec.Interrupt) void {
     }
 }
 
-/// `server` on the host's vector `vector`.
+/// `server` on the host's vector `vector`. Where each vector arrives on
+/// an interrupt source of its own, that is exec's source and the chain is
+/// exec's own; where the bridge gathers them, the chain is the bridge's.
 pub fn addVectorServer(host: *Host, vector: u8, server: *exec.Interrupt) void {
     switch (host.chip) {
-        .ecam, .bcm2712 => {},
+        .ecam, .bcm2712 => if (host.msi_source != 0) host.sys.AddIntServer(host.msi_source + vector, server),
         .jh7110 => jh7110.addVectorServer(host, vector, server),
     }
 }
@@ -323,16 +335,17 @@ pub fn addVectorServer(host: *Host, vector: u8, server: *exec.Interrupt) void {
 /// `server` off the host's vector `vector`.
 pub fn remVectorServer(host: *Host, vector: u8, server: *exec.Interrupt) void {
     switch (host.chip) {
-        .ecam, .bcm2712 => {},
-        .jh7110 => {
-            // The server's node knows its chain.
-            _ = vector;
-            jh7110.remVectorServer(host, server);
-        },
+        .ecam, .bcm2712 => if (host.msi_source != 0) host.sys.RemIntServer(host.msi_source + vector, server),
+        // The server's node knows its chain, so the vector is not
+        // needed there.
+        .jh7110 => jh7110.remVectorServer(host, server),
     }
 }
 
 /// Every server off the host's vectors `first` to `first + count - 1`.
+/// Where the vectors are exec's sources there is nothing to clear: a
+/// driver takes its own servers off, and exec's chains are not the
+/// library's to empty.
 pub fn clearVectors(host: *Host, first: u8, count: u16) void {
     switch (host.chip) {
         .ecam, .bcm2712 => {},

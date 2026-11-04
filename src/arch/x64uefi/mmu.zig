@@ -25,11 +25,19 @@
 //! 2 MiB and the blocks the kernel's code is in are 4 KiB pages - the
 //! first so that page 0 can be left out, the second so that the code can
 //! be read-only without the data beside it becoming so. Above the first
-//! gibibyte a core that has 1 GiB pages gets them, which maps the whole
-//! address space from one table; one that has not gets 2 MiB blocks from
-//! the tables below, which reach eight gibibytes. The kernel says which it
-//! used and how far it reached, so a machine with more memory than that
-//! and a core without the larger pages is not quietly left with less.
+//! gibibyte a core that has 1 GiB pages gets them, as far as the core
+//! addresses memory at all and at most as far as the tables here reach;
+//! one that has not gets 2 MiB blocks from the tables below, which reach
+//! eight gibibytes. The kernel says which it used and how far it reached,
+//! so a machine with something above that is not quietly left without it.
+//!
+//! **How far it reaches matters more here than it looks.** A function's
+//! memory is where the firmware put it, and a firmware with a 64-bit
+//! window puts it where no memory is - QEMU's q35 puts an xHCI
+//! controller's registers at 768 gibibytes - so a map that covered only
+//! what the machine has RAM for would fault the first time a driver
+//! touched its own controller. Mapping what the core can address costs
+//! one table per 512 gibibytes and nothing at all per gibibyte.
 //!
 //! **Device memory is uncached**, so that a register read reaches the
 //! device and a write does not wait in a cache line. The firmware's
@@ -73,13 +81,18 @@ const ADDRESS: u64 = 0x000F_FFFF_FFFF_F000;
 /// How many gibibytes above the first the 2 MiB tables below reach, for a
 /// core with no 1 GiB pages.
 const pool_gibibytes = 7;
+/// How many tables of 1 GiB blocks there are, each covering 512 GiB: four
+/// tebibytes in all, which is past the addresses any machine this runs on
+/// decodes and well past where a firmware puts a 64-bit window.
+const high_tables = 8;
 /// How many 2 MiB blocks of the kernel's code get pages of their own, so
 /// that the code in them can be read-only: past them it stays writable.
 const code_tables = 4;
 
 /// The tables, in the kernel's own .bss so that nothing hands them out.
 var level4: [entries]u64 align(4 * kib) = @splat(0);
-var level3: [entries]u64 align(4 * kib) = @splat(0);
+/// The 1 GiB blocks, 512 GiB to a table.
+var level3: [high_tables][entries]u64 align(4 * kib) = @splat(@splat(0));
 /// The first gibibyte, in 2 MiB blocks.
 var low_level2: [entries]u64 align(4 * kib) = @splat(0);
 /// Its first 2 MiB, in 4 KiB pages, whose first is left out.
@@ -142,16 +155,20 @@ pub fn take(memory: []const Range) void {
     }
     // The blocks the kernel's code is in, in pages, the code read-only.
     takeCode();
-    level3[0] = @intFromPtr(&low_level2) | PRESENT | WRITABLE | TOUCHED;
+    level3[0][0] = @intFromPtr(&low_level2) | PRESENT | WRITABLE | TOUCHED;
 
-    // Everything above the first gibibyte.
+    // Everything above the first gibibyte: as far as the core addresses
+    // memory, in 1 GiB blocks, or the eight gibibytes the 2 MiB tables
+    // reach where it has no such blocks.
     var reach: usize = gib;
     if (large) {
-        for (1..entries) |block| {
-            const at = block * gib;
-            level3[block] = at | PRESENT | WRITABLE | LARGE | TOUCHED | deviceBits(at, memory);
+        const limit = @min(cpu.addressableBytes(), high_tables * entries * gib);
+        var at: usize = gib;
+        while (at < limit) : (at += gib) {
+            const which = at / (entries * gib);
+            level3[which][at / gib % entries] = at | PRESENT | WRITABLE | LARGE | TOUCHED | deviceBits(at, memory);
         }
-        reach = entries * gib;
+        reach = limit;
     } else {
         for (&pool_level2, 0..) |*table, index| {
             const base = (index + 1) * gib;
@@ -159,13 +176,16 @@ pub fn take(memory: []const Range) void {
                 const at = base + number * 2 * mib;
                 block.* = at | PRESENT | WRITABLE | LARGE | TOUCHED | deviceBits(at, memory);
             }
-            level3[index + 1] = @intFromPtr(table) | PRESENT | WRITABLE | TOUCHED;
+            level3[0][index + 1] = @intFromPtr(table) | PRESENT | WRITABLE | TOUCHED;
         }
         reach = (pool_gibibytes + 1) * gib;
     }
     mapped_end = reach;
 
-    level4[0] = @intFromPtr(&level3) | PRESENT | WRITABLE | TOUCHED;
+    for (&level3, 0..) |*table, which| {
+        if (which * entries * gib >= reach) break;
+        level4[which] = @intFromPtr(table) | PRESENT | WRITABLE | TOUCHED;
+    }
     cpu.writeCr3(@intFromPtr(&level4));
 }
 
@@ -191,13 +211,15 @@ pub fn gather(range: Range) bool {
         if ((end - 1) / gib != first / gib) return false;
         const which = first / gib;
         const base = which * gib;
-        const had = level3[which] & (UNCACHED | WRITE_THROUGH);
+        const table = &level3[which / entries];
+        const slot = which % entries;
+        const had = table[slot] & (UNCACHED | WRITE_THROUGH);
         for (&screen_level2, 0..) |*block, number| {
             const at = base + number * 2 * mib;
             const inside = at >= first and at < end;
             block.* = at | PRESENT | WRITABLE | LARGE | TOUCHED | (if (inside) GATHERED else had);
         }
-        level3[which] = @intFromPtr(&screen_level2) | PRESENT | WRITABLE | TOUCHED;
+        table[slot] = @intFromPtr(&screen_level2) | PRESENT | WRITABLE | TOUCHED;
     } else {
         // Already 2 MiB blocks: each is marked where it lies. A block that
         // holds a table of pages instead - the bottom of memory, and the

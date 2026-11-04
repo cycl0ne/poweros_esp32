@@ -78,6 +78,18 @@ pub fn takeCore(core: u32, lapic_id: u32) void {
     takePat();
 }
 
+/// How much memory this core can address at all: 2 to the power of the
+/// physical address width it reports (leaf 0x8000_0008, the low byte of
+/// EAX), which is 40 bits on the emulator's cores and 46 or more on a
+/// machine. 4 GiB where the core says nothing, which no core this runs on
+/// does.
+pub fn addressableBytes() usize {
+    if (leaf(0x8000_0000, 0).eax < 0x8000_0008) return 1 << 32;
+    const bits: u8 = @truncate(leaf(0x8000_0008, 0).eax);
+    if (bits < 32 or bits >= 64) return 1 << 32;
+    return @as(usize, 1) << @intCast(bits);
+}
+
 /// This core's page attribute table with one entry changed to
 /// write-combining, the other seven as the architecture leaves them. Every
 /// core has its own and the map is shared, so a core that does not do this

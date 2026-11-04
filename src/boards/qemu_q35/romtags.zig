@@ -4,13 +4,19 @@
 //! handed over - the kernel declares it as the board's panel
 //! (`system.zig`), and the driver copies the picture into it.
 //!
-//! What starting from an NVMe disk takes - pci.library, nvme.device and
-//! posfs-handler, as both other emulated 64-bit boards carry them - comes
-//! with PCI, which is the next item of the list in `todo/port_x86_64/`.
-//! Until then SYS: is the disk image the stub reads off the boot
-//! partition.
+//! battclock.resource for the clock the machine keeps its date in, which
+//! every machine of this architecture has.
+//!
+//! And what starting from an NVMe disk takes, as on both other emulated
+//! 64-bit boards: pci.library, nvme.device and posfs-handler, the disk's
+//! own, built in as they are. The machine has no flash: SYS: is the system
+//! disk's DH0:, and the firmware's boot partition carries the kernel
+//! alone.
 
 pub const modules = .{
     @import("../../rom/libs/rtg_driver/fbboard/fbboard.zig"),
     @import("../../rom/resources/battclock/battclock.zig"),
+    @import("../../disk/libs/pci/pci.zig"),
+    @import("../../disk/devs/nvme/nvme.zig"),
+    @import("../../disk/devs/handlers/posfs/posfs.zig"),
 };

@@ -35,8 +35,8 @@ const _state = @import("host/_state.zig");
 
 pub const LIBRARY_NAME = pci.PCINAME;
 pub const LIBRARY_VERSION = 2;
-pub const LIBRARY_REVISION = 5;
-const BUILD_DATE = "01.11.2026";
+pub const LIBRARY_REVISION = 6;
+const BUILD_DATE = "04.11.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
@@ -114,8 +114,13 @@ fn findHosts(base: *PCIBase) bool {
                 .mem = .of(mem, ub.GetTagData(st.PART_PciMemBus, mem, it.tags), ub.GetTagData(st.PART_PciMemSize, 0, it.tags)),
                 .pref = .of(pref, ub.GetTagData(st.PART_PciPrefBus, pref, it.tags), ub.GetTagData(st.PART_PciPrefSize, 0, it.tags)),
             },
+            .placed = ub.GetTagData(st.PART_PciPlaced, 0, it.tags) != 0,
             .irq = @truncate(ub.GetTagData(st.PART_Irq, 0, it.tags)),
             .perst = ub.GetTagData(st.PART_PinReset, 0, it.tags),
+            .msi_address = ub.GetTagData(st.PART_PciMsiAddress, 0, it.tags),
+            .msi_count = @truncate(@min(ub.GetTagData(st.PART_PciMsiCount, 0, it.tags), _host.max_vectors)),
+            .msi_data = @truncate(ub.GetTagData(st.PART_PciMsiData, 0, it.tags)),
+            .msi_source = @truncate(ub.GetTagData(st.PART_PciMsiSource, 0, it.tags)),
         };
         if (!_host.start(host)) {
             sys.FreeMem(memory, @sizeOf(Host));
@@ -130,6 +135,17 @@ fn findHosts(base: *PCIBase) bool {
     var tail: *?*pci.PCIDevice = &base.first;
     for (hosts[0..count]) |host| walkHost(host, nodes, &tail, &delay);
     return true;
+}
+
+/// Where a function's line went on a machine whose firmware routed it:
+/// the firmware wrote that into the function's own interrupt line
+/// register, which is the one place it is to be had without reading the
+/// tables' own language. 0xFF there means it routed none, and so does a
+/// function with no line at all.
+fn firmwareLine(host: *Host, at: _host.Address, info: *const scan.Function) u32 {
+    if (info.interrupt_pin == 0) return 0;
+    const line = _host.read(host, at, pci.PCI_INTERRUPT_LINE, 1) & 0xFF;
+    return if (line == 0xFF) 0 else line;
 }
 
 /// PCIDevice.bridge_windows: the windows a bridge has.
@@ -153,7 +169,9 @@ fn walkHost(host: *Host, nodes: []scan.Node, tail: **?*pci.PCIDevice, delay: *De
     }
     if (result.count == 0) return;
     const found = nodes[0..result.count];
-    place.place(space, found, &host.windows);
+    // A machine whose firmware placed everything keeps those places: see
+    // `place.keep`.
+    if (host.placed) place.keep(space, found) else place.place(space, found, &host.windows);
 
     const bytes = found.len * @sizeOf(Entry);
     const memory = sys.AllocMem(bytes, exec.MEMF_CLEAR | exec.MEMF_SYSTEM) orelse return;
@@ -161,7 +179,7 @@ fn walkHost(host: *Host, nodes: []scan.Node, tail: **?*pci.PCIDevice, delay: *De
     for (found, entries) |*node, *entry| {
         const info = &node.info;
         const at = node.at;
-        const interrupt = _host.interruptOf(host, info.root_device, info.root_pin);
+        const interrupt = if (host.placed) firmwareLine(host, at, info) else _host.interruptOf(host, info.root_device, info.root_pin);
         entry.* = .{
             .device = .{
                 .segment = host.segment,
@@ -203,8 +221,9 @@ fn walkHost(host: *Host, nodes: []scan.Node, tail: **?*pci.PCIDevice, delay: *De
             .cap_express = info.cap_express,
         };
         // The line register says where the line went, as far as a byte
-        // does; nothing here reads it back.
-        if (info.interrupt_pin != 0) _host.write(host, at, pci.PCI_INTERRUPT_LINE, 1, interrupt & 0xFF);
+        // does; nothing here reads it back - except where the firmware
+        // routed the lines itself, and it is the firmware's answer.
+        if (info.interrupt_pin != 0 and !host.placed) _host.write(host, at, pci.PCI_INTERRUPT_LINE, 1, interrupt & 0xFF);
         if (info.header_type == pci.PCI_HEADER_NORMAL) entry.kept = _state.save(entry);
         tail.*.* = &entry.device;
         tail.* = &entry.device.next;

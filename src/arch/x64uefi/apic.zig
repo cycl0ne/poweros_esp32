@@ -100,6 +100,16 @@ pub var line_flags: [intbits.INTB_GSI_COUNT]LineFlags = blk: {
 var softint_pending: [max_cores]u32 = @splat(0);
 var cross_core_pending: [max_cores]u32 = @splat(0);
 
+/// Where a PCI function's message goes to reach core `core`: the address
+/// the local controllers answer at, with that core's controller in it.
+/// The message carries the vector it is to raise as its data
+/// (`vectorOf`), so a function told where to write and what to write is
+/// told everything - there is no controller input in the way, and nothing
+/// to switch on.
+pub fn messageAddress(core: u32) usize {
+    return apic.lapic_base | (@as(usize, cpu.lapic_ids[core]) << 12);
+}
+
 /// The vector of source `source`.
 pub fn vectorOf(source: u32) u8 {
     return @intCast(VECTOR_SOURCE_FIRST + source);

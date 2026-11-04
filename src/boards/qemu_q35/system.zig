@@ -37,6 +37,24 @@ const screen = struct {
     pub const height: u32 = 800;
 };
 
+/// The USB bus of an xHCI controller added with `-device qemu-xhci`, and
+/// of one on a real machine: the first xHCI function on PCI. Without one,
+/// xhci.device finds none and the bus does not start. The machine's own
+/// older keyboard and mouse ports are not driven: what is plugged into a
+/// machine of this kind today is USB.
+const usb = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_USB),
+    .value(st.PART_Chip, st.CHIP_XHCI),
+    .pointer(st.PART_ChipName, "xhci"),
+    .value(st.PART_Bus, st.BUS_PCI),
+    .value(st.PART_BusUnit, 0),
+    .value(st.PART_UsbRoles, st.USBROLE_HOST),
+    .value(st.PART_UsbSpeed, st.USBSPEED_HIGH),
+    .value(st.PART_UsbVbus, st.USBVBUS_ALWAYS),
+    .pointer(st.PART_Label, "USB"),
+    .done,
+};
+
 /// The root list: the board's own facts, which the kernel reads at compile
 /// time (`boards.fact`). The parts come from the firmware, through
 /// `addPart` into `list`.
@@ -68,12 +86,13 @@ pub const root = [_]Tag{
     .value(st.SYSTAG_Cores, 4),
     .value(st.SYSTAG_ScreenWidth, screen.width),
     .value(st.SYSTAG_ScreenHeight, screen.height),
+    .pointer(st.SYSTAG_Part, &usb),
     .done,
 };
 
 /// How many parts only the firmware can describe: the panel it lit, the
-/// battery-backed clock it says the machine has, and the window PCI's
-/// configuration space is in.
+/// battery-backed clock it says the machine has, and where PCI's
+/// configuration space is.
 pub const firmware_parts = 3;
 
 /// The list expansion.library reads: the board's own facts, then a slot

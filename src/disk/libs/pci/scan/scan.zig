@@ -352,7 +352,10 @@ fn Walker(comptime Space: type, comptime Delay: type) type {
             return .{ .device = d, .pin = p };
         }
 
-        /// The function's `count` BARs sized: what each is and how large.
+        /// The function's `count` BARs sized: what each is, how large,
+        /// and where whoever ran before this - a firmware that placed
+        /// everything - had put it, which `place.keep` uses and the
+        /// placing overwrites.
         fn bars(self: *Self, at: Address, count: u32, into: *[6]pci.PCIBar) void {
             var i: u32 = 0;
             while (i < count) {
@@ -368,23 +371,29 @@ fn Walker(comptime Space: type, comptime Delay: type) type {
                 if (mask & pci.PCI_BASE_ADDRESS_SPACE_IO != 0) {
                     // Only the low 16 bits of an I/O BAR need answer.
                     const io_mask = (mask & 0xFFFF_FFFC) | 0xFFFF_0000;
-                    into[i] = .{ .size = (~io_mask +% 1) & 0xFFFF_FFFF, .flags = pci.PCIBAR_IO };
+                    into[i] = .{
+                        .address = was & 0xFFFF_FFFC,
+                        .size = (~io_mask +% 1) & 0xFFFF_FFFF,
+                        .flags = pci.PCIBAR_IO,
+                    };
                     i += 1;
                     continue;
                 }
                 const wide = mask & pci.PCI_BASE_ADDRESS_MEM_TYPE_MASK == pci.PCI_BASE_ADDRESS_MEM_TYPE_64 and i + 1 < count;
                 var full: u64 = 0xFFFF_FFFF_0000_0000 | @as(u64, mask & 0xFFFF_FFF0);
+                var had: u64 = was & 0xFFFF_FFF0;
                 if (wide) {
                     const high_was = self.read(at, offset + 4, 4);
                     self.write(at, offset + 4, 4, 0xFFFF_FFFF);
                     const high = self.read(at, offset + 4, 4);
                     self.write(at, offset + 4, 4, high_was);
                     full = (@as(u64, high) << 32) | @as(u64, mask & 0xFFFF_FFF0);
+                    had |= @as(u64, high_was) << 32;
                 }
                 var flags: u32 = 0;
                 if (wide) flags |= pci.PCIBAR_64;
                 if (mask & pci.PCI_BASE_ADDRESS_MEM_PREFETCH != 0) flags |= pci.PCIBAR_PREFETCH;
-                into[i] = .{ .size = ~full +% 1, .flags = flags };
+                into[i] = .{ .address = had, .size = ~full +% 1, .flags = flags };
                 i += if (wide) 2 else 1;
             }
         }
