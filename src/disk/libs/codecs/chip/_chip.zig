@@ -250,7 +250,7 @@ fn lend(frame: *vc.VideoFrame, got: *const videodec.VideoDecFrame, slot: u32) vo
             .y_pitch = got.pitch,
             .c_pitch = got.pitch,
             .layout = rtg.RTGYUV_NV12,
-            .colors = if (got.height >= 720) rtg.RTGYUV_BT709 else rtg.RTGYUV_BT601,
+            .matrix = if (got.height >= 720) rtg.RTGYUV_BT709 else rtg.RTGYUV_BT601,
         },
         .width = got.width,
         .height = got.height,

@@ -312,7 +312,7 @@ fn pictureOf(frame: *const videodec.VideoDecFrame) rtg.RtgYuv {
         .y_pitch = frame.pitch,
         .c_pitch = frame.pitch,
         .layout = rtg.RTGYUV_NV12,
-        .colors = if (frame.height >= 720) rtg.RTGYUV_BT709 else rtg.RTGYUV_BT601,
+        .matrix = if (frame.height >= 720) rtg.RTGYUV_BT709 else rtg.RTGYUV_BT601,
     };
 }
 

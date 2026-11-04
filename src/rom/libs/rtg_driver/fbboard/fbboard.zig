@@ -1366,8 +1366,8 @@ fn videoPut(screen: *Screen) bool {
         .planar = planar,
         .width = x.read,
         .height = y.read,
-        .bt709 = one.colors & rtg.bitmaps.RTGYUV_MATRIX == rtg.bitmaps.RTGYUV_BT709,
-        .full = one.colors & rtg.bitmaps.RTGYUV_FULL != 0,
+        .bt709 = one.matrix == rtg.bitmaps.RTGYUV_BT709,
+        .full = one.range == rtg.bitmaps.RTGYUV_FULL,
     }, .{
         .x = x.at,
         .y = y.at,

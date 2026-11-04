@@ -82,9 +82,17 @@ pub const Format = struct {
     chroma_format: u2 = 1,
     depth_y: u5 = 8,
     depth_c: u5 = 8,
-    /// The VUI's matrix_coeffs and video_full_range_flag.
+    /// The VUI's matrix_coeffs, colour_primaries, transfer_characteristics
+    /// and video_full_range_flag: what the numbers mean, which for a film
+    /// of high dynamic range is nothing like a television's.
     matrix: u8 = 2,
+    primaries: u8 = 2,
+    transfer: u8 = 2,
     full_range: bool = false,
+    /// The light the film was mastered for, in candelas a square metre,
+    /// from the mastering display's SEI or the content light level's; 0
+    /// where the stream says neither.
+    peak_nits: u16 = 0,
 
     /// Whether a sample takes two bytes.
     pub fn wide(f: Format) bool {

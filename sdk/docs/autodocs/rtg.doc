@@ -2609,7 +2609,8 @@ rtg.library/WaitVBlank
 
    BEHAVIOR
 	The picture is shown from the next frame on, its part scaled into the
-	layer's place (`MoveVideoLayer`), its colours as `RtgYuv.colors` says.
+	layer's place (`MoveVideoLayer`), its colours as the picture's
+	`matrix`, `transfer`, `primaries` and `range` say.
 	The call returns once the controller has taken it: the picture shown
 	before is no longer read, and may be given back. This one is read
 	until the next is shown, or the layer is closed, so it stays lent

@@ -270,6 +270,9 @@ pub const Decoder = struct {
     parses: [max_workers]?*parse.Parse = @splat(null),
     /// Until a key frame: at the start, after an error and a reset.
     need_key: bool = true,
+    /// The light the film was mastered for, in candelas a square metre,
+    /// as a metadata OBU said; 0 until one does.
+    peak_nits: u16 = 0,
     /// The temporal unit's frame to show.
     shown: ?*Frame = null,
 
@@ -424,6 +427,7 @@ pub const Decoder = struct {
                     if (!dec.in_frame) return error.Corrupt;
                     try dec.tileGroup(o.payload);
                 },
+                header.OBU_METADATA => dec.metadata(o.payload),
                 else => {},
             }
         }
@@ -441,6 +445,31 @@ pub const Decoder = struct {
         return a.bit_depth == b.bit_depth and a.mono == b.mono and a.ss_x == b.ss_x and a.ss_y == b.ss_y and
             a.max_frame_width == b.max_frame_width and a.max_frame_height == b.max_frame_height and
             a.use_128x128 == b.use_128x128;
+    }
+
+    /// A metadata OBU (5.8.1): the light the film was mastered for, which
+    /// the screen's own range has to be mapped from. The mastering
+    /// display's maximum, and the film's brightest pixel where it says
+    /// that too and it is lower - a film is no brighter than its
+    /// brightest pixel, and mapping from a peak it never reaches would
+    /// darken it for nothing. Anything else in the OBU is passed over.
+    fn metadata(dec: *Decoder, payload: []const u8) void {
+        const kind = header.leb128(payload, 0) orelse return;
+        var b: header.Bits = .{ .data = payload, .pos = kind.len * 8 };
+        const peak: u32 = switch (kind.value) {
+            // metadata_hdr_cll: max_cll, in candelas.
+            1 => b.f(16),
+            // metadata_hdr_mdcv: the primaries and the white point first,
+            // then luminance_max in 256ths of a candela.
+            2 => blk: {
+                b.pos += 16 * 8;
+                break :blk b.f(32) >> 8;
+            },
+            else => return,
+        };
+        if (b.overrun() or peak == 0) return;
+        const now: u16 = @intCast(@min(peak, 10000));
+        dec.peak_nits = if (dec.peak_nits == 0) now else @min(dec.peak_nits, now);
     }
 
     fn frameHeader(dec: *Decoder, b: *header.Bits, temporal_id: u8, spatial_id: u8) Error!void {
@@ -786,6 +815,7 @@ pub const Decoder = struct {
         f.transfer = seq.transfer;
         f.matrix = seq.matrix;
         f.full_range = seq.full_range;
+        f.peak_nits = dec.peak_nits;
         return f;
     }
 
