@@ -339,7 +339,8 @@ fn surfaceOf(framebuffer: *const _render.Target, output: u32) ?raster.Surface {
 /// (`_image.stencilOffset`). Null where there is nothing in memory to read
 /// or write.
 fn planeOf(view: ?*const _image.ImageView, which: enum { depth, stencil }) ?raster.Attachments.Plane {
-    const image = (view orelse return null).image;
+    const held = view orelse return null;
+    const image = held.image;
     const format = image.format;
     const stride = _image.bytesOf(format);
     const at = switch (which) {
@@ -348,7 +349,10 @@ fn planeOf(view: ?*const _image.ImageView, which: enum { depth, stencil }) ?rast
     };
     if (stride == 0 or at >= stride) return null;
     const data = image.data orelse return null;
-    return .{ .pixels = data + at, .pitch = image.pitch, .stride = stride };
+    // The layer the view names, a depth image having layers since 1.58:
+    // a pass draws into the one its framebuffer's view begins at.
+    const layer = held.base_layer * @as(usize, @intCast(image.layer_bytes));
+    return .{ .pixels = data + layer + at, .pitch = image.pitch, .stride = stride };
 }
 
 fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, output: u32) void {

@@ -40,15 +40,22 @@ const _image = @import("_image.zig");
 /// - COLOR_ATTACHMENT, of B8G8R8A8, R8G8B8A8 or R5G6B5, one level: rows,
 ///   each on a cache line, in either tiling. What is drawn into one of
 ///   R5G6B5 is dithered into it (CmdBeginRenderPass).
-/// - D16_UNORM with DEPTH_STENCIL_ATTACHMENT, optimal, one level: a depth
-///   that lives in the tiles alone, never stored, whose memory may be of
-///   the lazily allocated type. With a load or a store op it is kept in
-///   rows instead (CreateRenderPass), and with SAMPLED as well those rows
-///   are the texture a sampler reads: a shadow map drawn into and sampled
-///   out of with nothing copied (`PhysicalDeviceFeatures.sampled_depth`,
-///   since 1.39). One sampled wants memory something is behind, is of
-///   D16_UNORM alone - a stencil has no texel - and is not written
-///   through as a storage image.
+/// - D16_UNORM, S8_UINT or D16_UNORM_S8_UINT with
+///   DEPTH_STENCIL_ATTACHMENT, optimal, one level: a depth that lives in
+///   the tiles alone, never stored, whose memory may be of the lazily
+///   allocated type. With a load or a store op it is kept in rows instead
+///   (CreateRenderPass), and with SAMPLED as well those rows are the
+///   texture a sampler reads: a shadow map drawn into and sampled out of
+///   with nothing copied (`PhysicalDeviceFeatures.sampled_depth`, since
+///   1.39). One sampled wants memory something is behind and is not
+///   written through as a storage image.
+///   Any of the three formats is sampled since 1.58, and such an image
+///   may have layers: a view of it takes one plane - the depth, or the
+///   stencil - of the layers it names, and a pass draws into the layer
+///   its framebuffer's view begins at (CreateImageView). A layer's rows
+///   come after the one before, each on a cache line. Levels of its own
+///   it has not got, and it is never of type `3d`: what a pass draws into
+///   is rows, and a level or a slice is nothing it draws into.
 /// - INPUT_ATTACHMENT, of B8G8R8A8, R8G8B8A8 or R5G6B5, in either
 ///   tiling: rows, which a later subpass reads pixel by pixel
 ///   (CreateRenderPass). It goes with COLOR_ATTACHMENT and the transfers,

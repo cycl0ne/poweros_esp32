@@ -4183,15 +4183,22 @@ What it is for decides how it lies in its memory:
 - COLOR_ATTACHMENT, of B8G8R8A8, R8G8B8A8 or R5G6B5, one level: rows,
   each on a cache line, in either tiling. What is drawn into one of
   R5G6B5 is dithered into it (CmdBeginRenderPass).
-- D16_UNORM with DEPTH_STENCIL_ATTACHMENT, optimal, one level: a depth
-  that lives in the tiles alone, never stored, whose memory may be of
-  the lazily allocated type. With a load or a store op it is kept in
-  rows instead (CreateRenderPass), and with SAMPLED as well those rows
-  are the texture a sampler reads: a shadow map drawn into and sampled
-  out of with nothing copied (`PhysicalDeviceFeatures.sampled_depth`,
-  since 1.39). One sampled wants memory something is behind, is of
-  D16_UNORM alone - a stencil has no texel - and is not written
-  through as a storage image.
+- D16_UNORM, S8_UINT or D16_UNORM_S8_UINT with
+  DEPTH_STENCIL_ATTACHMENT, optimal, one level: a depth that lives in
+  the tiles alone, never stored, whose memory may be of the lazily
+  allocated type. With a load or a store op it is kept in rows instead
+  (CreateRenderPass), and with SAMPLED as well those rows are the
+  texture a sampler reads: a shadow map drawn into and sampled out of
+  with nothing copied (`PhysicalDeviceFeatures.sampled_depth`, since
+  1.39). One sampled wants memory something is behind and is not
+  written through as a storage image.
+  Any of the three formats is sampled since 1.58, and such an image
+  may have layers: a view of it takes one plane - the depth, or the
+  stencil - of the layers it names, and a pass draws into the layer
+  its framebuffer's view begins at (CreateImageView). A layer's rows
+  come after the one before, each on a cache line. Levels of its own
+  it has not got, and it is never of type `3d`: what a pass draws into
+  is rows, and a level or a slice is nothing it draws into.
 - INPUT_ATTACHMENT, of B8G8R8A8, R8G8B8A8 or R5G6B5, in either
   tiling: rows, which a later subpass reads pixel by pixel
   (CreateRenderPass). It goes with COLOR_ATTACHMENT and the transfers,
@@ -4370,6 +4377,25 @@ such an image, for `texture_cube_array` and, since 1.53,
 `texture_cube_array_sampled`: its layers are a multiple of six
 and its first layer begins a cube, so `base_array_layer` is a multiple of
 six as well (`PhysicalDeviceFeatures.cube_arrays`, since 1.46).
+
+**A view of a sampled depth image takes one of its planes** since 1.58
+(`PhysicalDeviceFeatures.sampled_depth`): IMAGE_ASPECT_DEPTH is the
+depth, read at all 16 bits by a sampler that compares and as a grey of
+its top 8 by one that does not, and IMAGE_ASPECT_STENCIL is the
+stencil, read as (red, 0, 0, 1) the way a texel of one byte is. Both
+aspects at once is `error_format_not_supported`, as is a plane the
+format has not got; an aspect naming neither - IMAGE_ASPECT_COLOR, the
+default, and what every such view asked for before 1.58 - is the
+format's own plane, its depth where it has one and its stencil where
+it has not. The plane is a texture over the image's own rows, so a
+format holding both is two textures inside the same rows, read four
+bytes apart.
+
+Such a view is of the layers it names as well, of type `2d` or
+`2d_array`: the image's own rows for that layer, which is what a pass
+drawing into the view writes and what a sample of it reads. So the
+layers of one image are the shadow maps of several lights, each drawn
+into through a framebuffer with a view of that layer.
 
 **CONTEXT**
 

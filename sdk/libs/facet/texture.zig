@@ -386,6 +386,11 @@ pub const Texture = struct {
     /// rather than blocks: a depth attachment's image, sampled where it
     /// lies (`linear`). 0 for the blocks every other texture is kept in.
     pitch: u32 = 0,
+    /// The bytes from one texel to the next along a row, where that is not
+    /// the format's own size: the stencil plane of a depth attachment that
+    /// holds both, one byte of every four (`linearBy`, since 1.58). 0 for
+    /// the format's own size, which is every other texture.
+    stride: u32 = 0,
     /// Each level as a sample reads it, worked out once; those past
     /// `levels` undefined.
     layout: [most_levels]Level,
@@ -413,12 +418,21 @@ pub const Texture = struct {
     /// image's are, powers of two or not; `sampleBy` reads it, and
     /// `setColor` and `colorAt` write and read its texels.
     pub fn linear(format: Format, across: u32, down: u32, pitch: u32, memory: [*]u8) Texture {
+        return linearBy(format, across, down, pitch, 0, memory);
+    }
+
+    /// The same with `stride` bytes from one texel to the next rather than
+    /// the format's own size, and 0 for that size: how the stencil plane
+    /// of a depth attachment that holds both is read, one byte of every
+    /// four. (Since 1.58.)
+    pub fn linearBy(format: Format, across: u32, down: u32, pitch: u32, stride: u32, memory: [*]u8) Texture {
         var made = Texture{
             .format = format,
             .width_log2 = 0,
             .height_log2 = 0,
             .levels = 1,
             .pitch = pitch,
+            .stride = stride,
             .layout = undefined,
             .memory = memory,
         };
@@ -500,7 +514,10 @@ pub const Texture = struct {
     /// texture's memory: its row and column for one kept in rows, and the
     /// level's own spread places for one kept in blocks.
     inline fn placeOf(texture: *const Texture, layer: u32, lod: u32, x: u32, y: u32) usize {
-        if (texture.pitch != 0) return @as(usize, y) * texture.pitch + @as(usize, x) * texture.format.bytes();
+        if (texture.pitch != 0) {
+            const apart = if (texture.stride != 0) texture.stride else texture.format.bytes();
+            return @as(usize, layer) * texture.layer_bytes + @as(usize, y) * texture.pitch + @as(usize, x) * apart;
+        }
         return @as(usize, layer) * texture.layer_bytes + texture.layout[lod].offset(texture.format, x, y);
     }
 
@@ -650,6 +667,9 @@ pub const Texture = struct {
     pub fn setParts(texture: *Texture, layer: u32, lod: u32, x: u32, y: u32, parts: [4]f32) void {
         if (!texture.holds(layer, lod, x, y)) return;
         if (texture.format.floats()) return texture.putParts(layer, lod, x, y, parts);
+        // A depth takes x as 0 to 1 over all 16 bits, where a colour of 8
+        // bits a channel would keep the top 8 of them (since 1.58).
+        if (texture.format == .d16) return texture.putLayer(layer, lod, x, y, @intFromFloat(@round(heldAt(parts[0], 1) * 65535)));
         if (texture.format.compressed()) return;
         texture.setColor(layer, lod, x, y, colorOfParts(parts));
     }
@@ -669,6 +689,9 @@ pub const Texture = struct {
     /// has them, and one it has not got reads all zero. (Since 1.57.)
     pub fn partsAt(texture: *const Texture, layer: u32, lod: u32, x: u32, y: u32) [4]f32 {
         if (!texture.holds(layer, lod, x, y)) return .{ 0, 0, 0, 0 };
+        // A depth as x, 0 to 1 over all 16 bits (since 1.58): `colorAt`
+        // gives a grey of its top 8, which is all a colour holds.
+        if (texture.format == .d16) return .{ @as(f32, @floatFromInt(texture.peekLayer(layer, lod, x, y))) / 65535, 0, 0, 1 };
         if (texture.format.floats()) {
             const at = texture.memory + texture.placeOf(layer, lod, x, y);
             return switch (texture.format) {

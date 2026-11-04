@@ -240,31 +240,36 @@ pub fn clearDepthImage(command: *const _command.ClearDepthStencilImage) bool {
     const depth_there = _image.hasDepth(image.format);
     const stencil_there = _image.hasStencil(image.format);
     for (_stream.items(_command.ClearDepthStencilImage, facet.ImageSubresourceRange, command, command.count)) |range| {
-        // One level and one layer: a depth image has no others.
-        if (range.base_mip_level != 0 or range.base_array_layer != 0) continue;
+        // One level, and the layers the range names: a depth image may
+        // have several since 1.58.
+        if (range.base_mip_level != 0 or range.base_array_layer >= image.layers) continue;
         if (range.level_count == 0 or range.layer_count == 0) continue;
+        const layers = @min(if (range.layer_count == facet.REMAINING) image.layers else range.layer_count, image.layers - range.base_array_layer);
         const clears_depth = depth_there and range.aspect_mask & facet.IMAGE_ASPECT_DEPTH != 0;
         const clears_stencil = stencil_there and range.aspect_mask & facet.IMAGE_ASPECT_STENCIL != 0;
-        // A format of depth alone or stencil alone, both aspects asked
-        // for: every byte of every row is the one value.
-        if (clears_depth and stride == 2) {
-            fill(data, @as(usize, image.pitch) * image.height, .{ .two = command.depth });
-        } else if (clears_stencil and stride == 1) {
-            fill(data, @as(usize, image.pitch) * image.height, .{ .one = command.stencil });
-        }
-        // A format that holds both: each pixel's own bytes, the padding at
-        // a row's end left as it is.
-        if (stride == 4) for (0..image.height) |row| {
-            const into = data + row * image.pitch;
-            for (0..image.width) |column| {
-                const pixel = into + column * stride;
-                if (clears_depth) {
-                    pixel[0] = @truncate(command.depth);
-                    pixel[1] = @truncate(command.depth >> 8);
-                }
-                if (clears_stencil) pixel[2] = command.stencil;
+        for (0..layers) |one| {
+            const layer = data + (range.base_array_layer + one) * @as(usize, @intCast(image.layer_bytes));
+            // A format of depth alone or stencil alone, both aspects
+            // asked for: every byte of every row is the one value.
+            if (clears_depth and stride == 2) {
+                fill(layer, @as(usize, image.pitch) * image.height, .{ .two = command.depth });
+            } else if (clears_stencil and stride == 1) {
+                fill(layer, @as(usize, image.pitch) * image.height, .{ .one = command.stencil });
             }
-        };
+            // A format that holds both: each pixel's own bytes, the
+            // padding at a row's end left as it is.
+            if (stride == 4) for (0..image.height) |row| {
+                const into = layer + row * image.pitch;
+                for (0..image.width) |column| {
+                    const pixel = into + column * stride;
+                    if (clears_depth) {
+                        pixel[0] = @truncate(command.depth);
+                        pixel[1] = @truncate(command.depth >> 8);
+                    }
+                    if (clears_stencil) pixel[2] = command.stencil;
+                }
+            };
+        }
     }
     return true;
 }

@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.24 (04.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.25 (04.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -2043,10 +2043,12 @@ fn sampledDepthChecks(probe: *Probe) void {
     if (asked != .success or made == null) return probe.check(false, "a depth image that is sampled as well");
     fb.DestroyImage(device, made);
     probe.check(true, "a depth image that is sampled as well");
-    // One with a stencil in it has no texel to sample.
+    // Levels of its own it has not got, and it is never a volume: what a
+    // pass draws into is rows.
     var none: ?*facet.Image = null;
-    probe.check(fb.CreateImage(device, &.{ .format = .d16_unorm_s8_uint, .extent = extent, .usage = usage }, &none) != .success, "one with a stencil in it refused");
-    probe.check(none == null, "and nothing given back for it");
+    probe.check(fb.CreateImage(device, &.{ .format = .d16_unorm, .extent = extent, .mip_levels = 2, .usage = usage }, &none) != .success, "one of levels of its own refused");
+    probe.check(fb.CreateImage(device, &.{ .format = .d16_unorm, .image_type = .@"3d", .extent = .{ .width = side, .height = side, .depth = 2 }, .usage = usage }, &none) != .success, "and a volume refused");
+    probe.check(none == null, "and nothing given back for either");
 
     const depth = probe.image(.{ .format = .d16_unorm, .extent = extent, .usage = usage }, facet.MEMORY_PROPERTY_HOST_VISIBLE) orelse
         return probe.check(false, "a sampled depth image bound to memory");
@@ -2164,6 +2166,118 @@ fn sampledDepthChecks(probe: *Probe) void {
         probe.checkEqual(wanted_left, pixelAt(pixels, pitch, 16, 8), name);
         probe.checkEqual(wanted_right, pixelAt(pixels, pitch, 48, 40), "and where the clear left its depth");
     }
+
+    // --- 1.58: the planes a view names, and layers ---
+    // A format that holds a stencil is sampled as well: a view takes one
+    // of its planes, and both at once is no texture.
+    const with_stencil = probe.bound(.{ .format = .d16_unorm_s8_uint, .extent = extent, .usage = usage | facet.IMAGE_USAGE_TRANSFER_DST }, 0);
+    probe.check(with_stencil != null, "a sampled depth image of a format that holds a stencil");
+    if (with_stencil) |held| {
+        const depth_plane = probe.viewed(.{ .image = held, .format = .d16_unorm_s8_uint, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH } });
+        const stencil_plane = probe.viewed(.{ .image = held, .format = .d16_unorm_s8_uint, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_STENCIL } });
+        probe.check(depth_plane != null and stencil_plane != null, "a view of each of its planes");
+        var two: ?*facet.ImageView = null;
+        probe.check(fb.CreateImageView(device, &.{ .image = held, .format = .d16_unorm_s8_uint, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH | facet.IMAGE_ASPECT_STENCIL } }, &two) != .success and two == null, "and both planes at once no view at all");
+
+        // Its depth plane cleared and sampled, the stencil beside it left
+        // whole: the plane is read two bytes of every four, so a sample
+        // that read the four would not answer the reference.
+        if (depth_plane) |plane| {
+            const filled = facet.ClearDepthStencilValue{ .depth = 0.75, .stencil = 0xFF };
+            const planes = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH | facet.IMAGE_ASPECT_STENCIL };
+            commands = probe.record() orelse return probe.check(false, "a recording of the plane cleared");
+            fb.CmdClearDepthStencilImage(commands, held, 0, &filled, 1, @ptrCast(&planes));
+            if (!probe.submit()) return probe.check(false, "the plane cleared");
+            probe.checkEqual(0xFFFF_FFFF, sampledWith(probe, plane, sampler.?, sets[0].?, layout.?, reading, onto, shade, vertex_buffer, vertex_bytes, pixels, pitch, 0.5), "the depth plane of such an image sampled at 16 bits");
+        }
+    }
+
+    // Layers since 1.58: a layer's rows after the one before, which a
+    // pass draws into one of and a sample reads any of.
+    const layered = probe.bound(.{ .format = .d16_unorm, .extent = extent, .array_layers = 3, .usage = usage }, 0);
+    probe.check(layered != null, "a sampled depth image of three layers");
+    if (layered) |held| {
+        var layer_views: [2]?*facet.ImageView = .{ null, null };
+        for (&layer_views, [2]u32{ 0, 2 }) |*view, layer| {
+            view.* = probe.viewed(.{ .image = held, .format = .d16_unorm, .subresource_range = .{
+                .aspect_mask = facet.IMAGE_ASPECT_DEPTH,
+                .base_array_layer = layer,
+                .layer_count = 1,
+            } });
+        }
+        probe.check(layer_views[0] != null and layer_views[1] != null, "a view of one layer of it, and of another");
+        if (layer_views[0] != null and layer_views[1] != null) {
+            // The first layer drawn at 0.25 and the third at 0.75, each
+            // through a framebuffer with that layer's view.
+            var drawn = true;
+            for (layer_views, [2]f32{ 0.25, 0.75 }) |view, how_near| {
+                const frame_of = probe.framebuffer(storing, &.{ color[1], view.? }) orelse {
+                    drawn = false;
+                    continue;
+                };
+                const quad = quadAt(how_near);
+                @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(quad))], std.mem.asBytes(&quad));
+                commands = probe.record() orelse return probe.check(false, "a recording of a layer drawn into");
+                fb.CmdBeginRenderPass(commands, &.{ .render_pass = storing, .framebuffer = frame_of, .render_area = area, .clear_value_count = 2, .clear_values = &clears }, .@"inline");
+                fb.CmdBindPipeline(commands, .graphics, list);
+                fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+                fb.CmdPushConstants(commands, flat_layout.?, facet.SHADER_STAGE_FRAGMENT, 0, 4, &red);
+                fb.CmdDraw(commands, 6, 1, 0, 0);
+                fb.CmdEndRenderPass(commands);
+                if (!probe.submit()) return probe.check(false, "a layer drawn into");
+            }
+            probe.check(drawn, "a pass over each of two layers of it");
+            // A reference halfway: nearer than the third layer's 0.75 and
+            // further than the first's 0.25, so each layer answers for
+            // itself.
+            probe.checkEqual(black, sampledWith(probe, layer_views[0].?, sampler.?, sets[0].?, layout.?, reading, onto, shade, vertex_buffer, vertex_bytes, pixels, pitch, 0.5), "the layer a view names sampled, the nearer one");
+            probe.checkEqual(white, sampledWith(probe, layer_views[1].?, sampler.?, sets[0].?, layout.?, reading, onto, shade, vertex_buffer, vertex_bytes, pixels, pitch, 0.5), "and the further one, its own rows a layer on");
+        }
+    }
+}
+
+/// One shadow sample of `view` over the whole of a picture, `reference`
+/// compared with every texel of it: the pixel at (16, 8) of what it drew.
+/// (Since 1.58.)
+fn sampledWith(
+    probe: *Probe,
+    view: *facet.ImageView,
+    sampler: *facet.Sampler,
+    set: *facet.DescriptorSet,
+    layout: *facet.PipelineLayout,
+    pass: *facet.RenderPass,
+    frame: *facet.Framebuffer,
+    pipeline: *facet.Pipeline,
+    buffer: *facet.Buffer,
+    bytes: [*]u8,
+    pixels: [*]const u8,
+    pitch: u32,
+    reference: f32,
+) u32 {
+    const fb = probe.fb;
+    const info = facet.DescriptorImageInfo{ .sampler = sampler, .image_view = view };
+    const write = facet.WriteDescriptorSet{ .dst_set = set, .dst_binding = 0, .descriptor_type = .combined_image_sampler, .descriptor_count = 1, .image_info = @ptrCast(&info) };
+    fb.UpdateDescriptorSets(probe.device.?, 1, @ptrCast(&write), 0, null);
+    const quad = [6][6]f32{
+        .{ -1, -1, 0.5, 0, 0, reference },
+        .{ 1, -1, 0.5, 1, 0, reference },
+        .{ -1, 1, 0.5, 0, 1, reference },
+        .{ -1, 1, 0.5, 0, 1, reference },
+        .{ 1, -1, 0.5, 1, 0, reference },
+        .{ 1, 1, 0.5, 1, 1, reference },
+    };
+    @memcpy(bytes[0..@sizeOf(@TypeOf(quad))], std.mem.asBytes(&quad));
+    const at: u64 = 0;
+    const one_clear = [1]facet.ClearValue{.{ .color = .{ .float32 = .{ 0, 0, 1, 1 } } }};
+    const commands = probe.record() orelse return 0;
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame, .render_area = .{ .extent = .{ .width = side, .height = side } }, .clear_value_count = 1, .clear_values = &one_clear }, .@"inline");
+    fb.CmdBindPipeline(commands, .graphics, pipeline);
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&buffer), @ptrCast(&at));
+    fb.CmdBindDescriptorSets(commands, .graphics, layout, 0, 1, @ptrCast(&set), 0, null);
+    fb.CmdDraw(commands, 6, 1, 0, 0);
+    fb.CmdEndRenderPass(commands);
+    if (!probe.submit()) return 0;
+    return pixelAt(pixels, pitch, 16, 8);
 }
 
 // --- 1.40: the depth clamp and the depth bounds test -------------------------

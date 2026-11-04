@@ -47,6 +47,25 @@ const ImageView = _image.ImageView;
 /// and its first layer begins a cube, so `base_array_layer` is a multiple of
 /// six as well (`PhysicalDeviceFeatures.cube_arrays`, since 1.46).
 ///
+/// **A view of a sampled depth image takes one of its planes** since 1.58
+/// (`PhysicalDeviceFeatures.sampled_depth`): IMAGE_ASPECT_DEPTH is the
+/// depth, read at all 16 bits by a sampler that compares and as a grey of
+/// its top 8 by one that does not, and IMAGE_ASPECT_STENCIL is the
+/// stencil, read as (red, 0, 0, 1) the way a texel of one byte is. Both
+/// aspects at once is `error_format_not_supported`, as is a plane the
+/// format has not got; an aspect naming neither - IMAGE_ASPECT_COLOR, the
+/// default, and what every such view asked for before 1.58 - is the
+/// format's own plane, its depth where it has one and its stencil where
+/// it has not. The plane is a texture over the image's own rows, so a
+/// format holding both is two textures inside the same rows, read four
+/// bytes apart.
+///
+/// Such a view is of the layers it names as well, of type `2d` or
+/// `2d_array`: the image's own rows for that layer, which is what a pass
+/// drawing into the view writes and what a sample of it reads. So the
+/// layers of one image are the shadow maps of several lights, each drawn
+/// into through a framebuffer with a view of that layer.
+///
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no.
@@ -94,13 +113,22 @@ pub fn CreateImageView(base: *FacetBase, device: *facet.Device, info: *const fac
     const count = if (range.level_count == facet.REMAINING) image.levels - range.base_mip_level else range.level_count;
     if (count == 0 or count > image.levels - range.base_mip_level) return .error_format_not_supported;
     if (image.kind != .depth and image.data == null) return .error_format_not_supported;
+    // A depth attachment sampled where it lies: the plane the view's
+    // aspect names, of the layers it names (since 1.58). Both planes at
+    // once is no texture, nor one the format has not got; an aspect
+    // naming neither is the format's own plane.
+    const plane = if (_image.sampledDepth(image))
+        _image.depthPlane(image, range.aspect_mask, range.base_array_layer, layers) orelse return .error_format_not_supported
+    else
+        null;
     const made = _objects.create(base.sys_base, ImageView) orelse return .error_out_of_host_memory;
     made.* = .{ .image = image, .base_level = range.base_mip_level, .level_count = count, .base_layer = range.base_array_layer, .layer_count = layers };
     if (image.kind == .texture) made.texels = _image.levelsFrom(image, range.base_mip_level, count, range.base_array_layer, layers);
-    // A depth attachment sampled where it lies, or a colour attachment
-    // written through as a storage image (since 1.56): its rows are the
-    // one level, and a view of it takes them as they are.
-    if (_image.sampledDepth(image) or _image.writtenRows(image)) made.texels = image.texels;
+    // A colour attachment written through as a storage image (since
+    // 1.56): its rows are the one level, and a view of it takes them as
+    // they are.
+    if (_image.writtenRows(image)) made.texels = image.texels;
+    if (plane) |one| made.texels = one;
     // Its pixels, for a later subpass to read as an input attachment.
     if (image.kind == .rows) made.rows = .{
         .bytes = image.data,

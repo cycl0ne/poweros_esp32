@@ -633,9 +633,38 @@ pub const LIBRARY_VERSION = 1;
 /// A compressed image asked for as a storage image is still unpacked into
 /// 8888: nothing writes one texel of a BC block, and that is the format,
 /// not the library.
+/// 58: a sampled depth image's shape. Before this it was of `d16_unorm`
+/// alone, of one layer, and a format with a stencil in it was refused as
+/// sampled outright: there was nowhere to say which plane a view read,
+/// and a depth image's memory was one layer's rows however many layers
+/// were asked for - so a second layer shared the first one's pixels.
+/// Now any of the three depth formats is sampled, and such an image has
+/// layers: `layer_bytes` of rows each, on a cache line, which
+/// `GetImageMemoryRequirements` asks for and a pass writes the one its
+/// framebuffer's view begins at. A view takes the plane its aspect names
+/// - IMAGE_ASPECT_DEPTH read at all 16 bits by a sampler that compares
+/// and as a grey of its top 8 by one that does not, IMAGE_ASPECT_STENCIL
+/// read as (red, 0, 0, 1) the way one byte of red is - so the rows of a
+/// format holding both are two textures over the same bytes, four apart.
+/// `texture.Texture.linearBy` is what carries that: a `stride` from one
+/// texel to the next other than the format's own size, 0 meaning its own.
+/// Both planes at once is refused, there being no texel of the two
+/// together; an aspect naming neither plane, IMAGE_ASPECT_COLOR being the
+/// default, is the format's own plane, which is what every view of such
+/// an image asked for before this.
+/// `texture.Texture.setParts` and `partsAt` read and write a `d16` texel
+/// as well, as the whole 16 bits in 0 to 1: a function given a depth
+/// plane reads a depth as a number rather than as a grey.
+/// CmdClearDepthStencilImage clears the layers its range names rather
+/// than the first alone.
+/// What stays a gap: levels of its own, so no mipmapped shadow map, and
+/// no depth image of type `3d`. A pass draws into rows, and a level or a
+/// slice is nothing it draws into.
+/// Only the cores: the V3D's texture unit knows no depth format
+/// (`PhysicalDeviceFeatures.sampled_depth`).
 /// What stays: `fifo` is the one present mode, there being no way to ask a
 /// display to show a buffer before its next frame; one queue family of one
 /// queue; a counter of 32 bits, for want of a 64-bit atomic on every
 /// machine the library runs on; and no point mode in tessellation, there
 /// being no point rasterization at all.
-pub const LIBRARY_REVISION = 57;
+pub const LIBRARY_REVISION = 58;

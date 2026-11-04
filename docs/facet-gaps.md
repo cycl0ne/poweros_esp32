@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.57**, so that a program need not find out by failing. It covers the API.
+1.58**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -159,15 +159,21 @@ pass's depth. What is left out:
   planes where they lie in its four bytes, while the V3D writes one
   plane's pixels one after another and so keeps only `d16_unorm` or
   `s8_uint`.
-- **A depth image is a texture since 1.39** (`sampled_depth`): `d16_unorm`
-  with `SAMPLED` is sampled out of the very rows the pass stored it into,
-  through a sampler, and a shadow sample compares it at all 16 bits. What
-  is left out: it is sampled by a sampler alone - the fixed forms' fast
-  path is built for blocks, so a form not compiled for `texture.Format.d16`
-  paints `shader.missing` - it has one level, no layers and no mipmaps,
-  and a sample of the colour rather than a comparison reads the depth as a
-  grey of its top 8 bits. A format with a stencil is not sampled at all,
-  there being no stencil texel.
+- **A depth image is a texture since 1.39** (`sampled_depth`): a depth
+  attachment with `SAMPLED` is sampled out of the very rows the pass
+  stored it into, through a sampler, and a shadow sample compares it at
+  all 16 bits. Since 1.58 it is any of the three depth formats, and it may
+  have **layers**: a view takes the plane its aspect names - the depth,
+  read at all 16 bits by a sampler that compares and as a grey of its top
+  8 bits by one that does not, or the stencil, read as (red, 0, 0, 1) the
+  way one byte of red is - of the layers it names, and a pass draws into
+  the layer its framebuffer's view begins at. So the layers of one image
+  are the shadow maps of several lights, and the rows of a format holding
+  both planes are two textures over the same bytes, four apart
+  (`texture.Texture.linearBy`). What is left out: it has one level and no
+  mipmaps, and is never of type `3d` - a pass draws into rows, and a level
+  of its own or a slice is nothing it draws into - and both planes at once
+  are no view, there being no texel of the two together.
 - **A transient depth image keeps nothing**, having no memory: a pass that
   stores into one is refused its framebuffer. That is still the cheap way,
   and what every pass that does not ask for this goes on doing.
