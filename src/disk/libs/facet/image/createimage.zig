@@ -56,11 +56,15 @@ const _image = @import("_image.zig");
 ///   come after the one before, each on a cache line. Levels of its own
 ///   it has not got, and it is never of type `3d`: what a pass draws into
 ///   is rows, and a level or a slice is nothing it draws into.
+///   With INPUT_ATTACHMENT it is read pixel by pixel by a later subpass
+///   instead, or as well (since 1.62): the same rows, the same feature,
+///   and the same memory behind them, so TRANSIENT_ATTACHMENT is refused
+///   with it too.
 /// - INPUT_ATTACHMENT, of B8G8R8A8, R8G8B8A8 or R5G6B5, in either
 ///   tiling: rows, which a later subpass reads pixel by pixel
 ///   (CreateRenderPass). It goes with COLOR_ATTACHMENT and the transfers,
 ///   not with SAMPLED, STORAGE or TRANSIENT_ATTACHMENT, which lie
-///   otherwise or nowhere.
+///   otherwise or nowhere. On a depth format it is the bullet above.
 /// - Anything else of a colour format, one level: rows.
 ///
 /// Images have one sample a pixel, and are up to 8192 wide and high. One both

@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.28 (04.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.29 (05.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -1709,11 +1709,27 @@ const Deferred = struct {
         }
     }
 
+    /// The depth of the attachment read, 0 to 1, as a grey of its red
+    /// (since 1.62).
+    fn readDepth(fragments: *const facet.shader.Fragments) callconv(.c) void {
+        const from = fragments.resources.input(0, 0, 0) orelse return facet.shader.fill(fragments, missing);
+        for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |spot, *out| {
+            inline for (0..4) |i| {
+                const x = fragments.x + @as(u32, spot.x) + @as(u32, i & 1);
+                const y = fragments.y + @as(u32, spot.y) + @as(u32, i >> 1);
+                const byte: u32 = @intFromFloat(from.at(x, y)[0] * 255 + 0.5);
+                out[i] = 0xFF00_0000 | byte << 16;
+            }
+        }
+    }
+
     const entries = [_]facet.shader.Entry{
         facet.shader.vertex("main", &vertex, 0),
         facet.shader.fragment("main", &write, 0),
         facet.shader.vertex("read", &vertex, 0),
         facet.shader.fragment("read", &read, 0),
+        facet.shader.vertex("depth", &vertex, 0),
+        facet.shader.fragment("depth", &readDepth, 0),
     };
     const code = facet.shader.Code{ .entry_count = entries.len, .entries = &entries };
 };
@@ -1764,7 +1780,10 @@ fn inputChecks(probe: *Probe) void {
         .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general },
     };
     const reads_depth = facet.SubpassDescription{ .input_attachment_count = 1, .input_attachments = &to_first, .color_attachment_count = 1, .color_attachments = &to_second };
-    probe.check(probe.renderPass(.{ .attachment_count = 2, .attachments = &with_depth, .subpass_count = 1, .subpasses = @ptrCast(&reads_depth) }) == null, "a depth attachment read as an input attachment refused");
+    // 1.62: a depth attachment is read as an input attachment, where
+    // the device keeps a depth to be read at all.
+    const depth_pass = probe.renderPass(.{ .attachment_count = 2, .attachments = &with_depth, .subpass_count = 1, .subpasses = @ptrCast(&reads_depth) });
+    probe.check((depth_pass != null) == probe.features.sampled_depth, if (probe.features.sampled_depth) "a depth attachment read as an input attachment" else "a depth attachment read as an input attachment refused where none is kept");
 
     // The pictures: the one read is made to be read, and one that is not.
     const extent = facet.Extent3D{ .width = side, .height = side };
@@ -1840,6 +1859,64 @@ fn inputChecks(probe: *Probe) void {
         probe.checkEqual(expected, pixelAt(second_pixels, second_pitch, 8, 8), name);
         probe.checkEqual(expected, pixelAt(second_pixels, second_pitch, 40, 52), other);
     }
+
+    // 1.62: the depth the first subpass drew, read pixel by pixel by the
+    // next - the plane the view's aspect names, out of the image's rows.
+    if (!probe.features.sampled_depth or !probe.features.stored_depth) return;
+    const deep = probe.image(.{ .format = .d16_unorm, .extent = extent, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT }, 0) orelse
+        return probe.check(false, "a depth attachment made to be read");
+    var transient: ?*facet.Image = null;
+    probe.check(fb.CreateImage(device, &.{ .format = .d16_unorm, .extent = extent, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT }, &transient) != .success, "a transient depth refused as an input attachment, having nothing behind it");
+    if (transient) |each| fb.DestroyImage(device, each);
+    const both_kinds = [2]facet.AttachmentDescription{
+        .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general },
+        .{ .format = .d16_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general },
+    };
+    const two = [2]facet.SubpassDescription{
+        .{ .color_attachment_count = 1, .color_attachments = &to_first, .depth_stencil_attachment = &to_second[0] },
+        .{ .input_attachment_count = 1, .input_attachments = &to_second, .color_attachment_count = 1, .color_attachments = &to_first },
+    };
+    const deep_pass = probe.renderPass(.{ .attachment_count = 2, .attachments = &both_kinds, .subpass_count = 2, .subpasses = &two }) orelse
+        return probe.check(false, "a pass that draws a depth and then reads it");
+    probe.check(true, "a pass that draws a depth and then reads it");
+    const deep_frame = probe.framebuffer(deep_pass, &.{ second[1], deep[1] }) orelse return probe.check(false, "a framebuffer over the colour and the depth");
+
+    var deep_pool: ?*facet.DescriptorPool = null;
+    if (fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &deep_pool) != .success) return probe.check(false, "a pool for the depth's set");
+    defer fb.DestroyDescriptorPool(device, deep_pool);
+    var deep_sets: [1]?*facet.DescriptorSet = undefined;
+    if (fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = deep_pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &deep_sets) != .success) return probe.check(false, "a set for the depth");
+    const deep_info = facet.DescriptorImageInfo{ .image_view = deep[1], .image_layout = .general };
+    const deep_write = facet.WriteDescriptorSet{ .dst_set = deep_sets[0].?, .dst_binding = 0, .descriptor_type = .input_attachment, .descriptor_count = 1, .image_info = @ptrCast(&deep_info) };
+    fb.UpdateDescriptorSets(device, 1, @ptrCast(&deep_write), 0, null);
+
+    const writing = facet.PipelineDepthStencilStateCreateInfo{ .depth_test_enable = true, .depth_write_enable = true, .depth_compare_op = .less };
+    const draws = pipelineOf(probe, deep_pass, module.?, layout.?, .{ .depth_state = writing }) orelse
+        return probe.check(false, "the pipeline that draws the depth");
+    const takes = pipelineOf(probe, deep_pass, module.?, layout.?, .{ .subpass = 1, .name = "depth" }) orelse
+        return probe.check(false, "the pipeline that reads it");
+
+    // The left half nearer than the clear, so the two halves hold two
+    // depths; the second subpass draws them as greys.
+    const half = [6][3]f32{ .{ -1, -1, 0.25 }, .{ 0, -1, 0.25 }, .{ -1, 1, 0.25 }, .{ -1, 1, 0.25 }, .{ 0, -1, 0.25 }, .{ 0, 1, 0.25 } };
+    const half_buffer, const half_bytes = probe.buffer(@sizeOf(@TypeOf(half)), facet.BUFFER_USAGE_VERTEX_BUFFER) orelse
+        return probe.check(false, "a vertex buffer for the half quad");
+    @memcpy(half_bytes[0..@sizeOf(@TypeOf(half))], std.mem.asBytes(&half));
+    const deep_clears = [2]facet.ClearValue{ .{ .color = .{ .float32 = .{ 0, 0, 1, 1 } } }, .{ .depth_stencil = .{ .depth = 1, .stencil = 0 } } };
+    const commands = probe.record() orelse return probe.check(false, "a recording of the two subpasses");
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = deep_pass, .framebuffer = deep_frame, .render_area = area, .clear_value_count = 2, .clear_values = &deep_clears }, .@"inline");
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&half_buffer), @ptrCast(&offset));
+    fb.CmdBindPipeline(commands, .graphics, draws);
+    fb.CmdDraw(commands, 6, 1, 0, 0);
+    fb.CmdNextSubpass(commands, .@"inline");
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdBindPipeline(commands, .graphics, takes);
+    fb.CmdBindDescriptorSets(commands, .graphics, layout.?, 0, 1, @ptrCast(&deep_sets), 0, null);
+    fb.CmdDraw(commands, 6, 1, 0, 0);
+    fb.CmdEndRenderPass(commands);
+    if (!probe.submit()) return probe.check(false, "the two subpasses submitted");
+    checkNearColor(probe, 0xFF40_0000, pixelAt(second_pixels, second_pitch, 8, 8), "the depth the subpass before drew, read where the quad covered it");
+    checkNearColor(probe, 0xFFFF_0000, pixelAt(second_pixels, second_pitch, 40, 52), "and the depth the clear left, where it did not");
 }
 
 // --- 1.38: a stencil that outlives its pass ----------------------------------

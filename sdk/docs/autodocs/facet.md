@@ -4209,11 +4209,15 @@ What it is for decides how it lies in its memory:
   come after the one before, each on a cache line. Levels of its own
   it has not got, and it is never of type `3d`: what a pass draws into
   is rows, and a level or a slice is nothing it draws into.
+  With INPUT_ATTACHMENT it is read pixel by pixel by a later subpass
+  instead, or as well (since 1.62): the same rows, the same feature,
+  and the same memory behind them, so TRANSIENT_ATTACHMENT is refused
+  with it too.
 - INPUT_ATTACHMENT, of B8G8R8A8, R8G8B8A8 or R5G6B5, in either
   tiling: rows, which a later subpass reads pixel by pixel
   (CreateRenderPass). It goes with COLOR_ATTACHMENT and the transfers,
   not with SAMPLED, STORAGE or TRANSIENT_ATTACHMENT, which lie
-  otherwise or nowhere.
+  otherwise or nowhere. On a depth format it is the bullet above.
 - Anything else of a colour format, one level: rows.
 
 Images have one sample a pixel, and are up to 8192 wide and high. One both
@@ -4400,6 +4404,13 @@ format's own plane, its depth where it has one and its stencil where
 it has not. The plane is a texture over the image's own rows, so a
 format holding both is two textures inside the same rows, read four
 bytes apart.
+
+Since 1.62 the same plane is what a later subpass reads as an **input
+attachment** (`shader.Attachment`), where the image was made one
+(IMAGE_USAGE_INPUT_ATTACHMENT): the view's first layer, the depth as
+`r16`, 0 to 1 and nearest first, and the stencil as `r8u`, the whole
+number it is. A format holding both is read four bytes from one pixel
+to the next, the view's aspect saying which plane this is.
 
 Such a view is of the layers it names as well, of type `2d` or
 `2d_array`: the image's own rows for that layer, which is what a pass
@@ -4755,8 +4766,21 @@ Such an attachment is read out of the image's memory, so its format is
 one whose pixels are kept in rows - b8g8r8a8_unorm, r8g8b8a8_unorm or
 r5g6b5_unorm_pack16, anything else being
 `error_format_not_supported` - and what it holds is what an earlier
-subpass drew, or what its load op left there. A depth attachment is
-not read that way: it lives in the tiles. Drawing into an attachment
+subpass drew, or what its load op left there.
+
+**A depth attachment is read that way too** since 1.62
+(`PhysicalDeviceFeatures.sampled_depth`): one plane of it, the one the
+view's aspect names, the depth as 0 to 1 and the stencil as the whole
+number it is (`CreateImageView`, `shader.Attachment`). Where an
+earlier subpass drew that depth, the part which drew it last writes it
+into the image's rows for this subpass to read, the way a depth two
+subpasses share is kept (1.52): so it wants `stored_depth`, a stencil
+`stored_stencil`, and a format holding both `stored_both`. The image
+is one made IMAGE_USAGE_INPUT_ATTACHMENT, which for a depth means
+memory behind it and not the tiles alone - a transient one is refused
+(CreateImage).
+
+Drawing into an attachment
 and reading it in the same subpass is a loop, which is
 `error_initialization_failed`, and only a device whose
 `input_attachments` is true reads any - the cores, not the V3D -
@@ -8739,8 +8763,9 @@ paint `shader.missing` for rather than sampling some other way.
 
 An input attachment is written from `image_info` too, and its view has
 to be of an image made with IMAGE_USAGE_INPUT_ATTACHMENT, of a format
-whose pixels are kept in rows; anything else leaves the descriptor
-empty, and a fragment function then finds nothing
+whose pixels are kept in rows - or, since 1.62, of a depth attachment
+that is kept, whose plane the view names is read the same way
+(CreateImageView); anything else leaves the descriptor empty, and a fragment function then finds nothing
 (`shader.Resources.input` answers null). What the set holds is the
 view's rows, so the attachment is read wherever the image's memory
 stands when the draw runs - which is what the subpass before it drew

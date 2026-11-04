@@ -244,6 +244,13 @@ pub fn sampledDepth(image: *const Image) bool {
     return image.kind == .depth and image.usage & facet.IMAGE_USAGE_SAMPLED != 0;
 }
 
+/// Whether a depth attachment's rows are read by anything after the pass
+/// that drew them - sampled, or read pixel by pixel as an input attachment
+/// (since 1.62) - and so want memory behind them rather than the tiles.
+pub fn keptDepth(image: *const Image) bool {
+    return image.kind == .depth and image.usage & (facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_INPUT_ATTACHMENT) != 0;
+}
+
 /// An image as `info` asks for it, not yet bound; null for one
 /// facet.library does not make.
 pub fn shapeOf(device: *Device, info: *const facet.ImageCreateInfo) ?Image {
@@ -335,12 +342,18 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
         // the three formats since 1.58, each plane read through a view of
         // that aspect (`depthPlane`): the depth as 16 bits, and the
         // stencil as one byte of every four where the format holds both.
+        // Read as an input attachment as well, since 1.62: a later
+        // subpass reads the plane pixel by pixel where it lies, which
+        // wants the same memory behind it that a sampled one does.
         const sampled = info.usage & facet.IMAGE_USAGE_SAMPLED != 0;
-        if (sampled) {
+        const read_back = info.usage & facet.IMAGE_USAGE_INPUT_ATTACHMENT != 0;
+        if (sampled or read_back) {
             if (!physical.features.sampled_depth) return null;
             if (info.usage & facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT != 0) return null;
         }
-        const allowed = if (sampled) depth_usage | facet.IMAGE_USAGE_SAMPLED else depth_usage;
+        var allowed = depth_usage;
+        if (sampled) allowed |= facet.IMAGE_USAGE_SAMPLED;
+        if (read_back) allowed |= facet.IMAGE_USAGE_INPUT_ATTACHMENT;
         if (info.usage & facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT == 0 or info.usage & ~allowed != 0) return null;
         // One level, and never a volume: a pass draws into rows, and a
         // level of its own or a slice of one is nothing it draws into.
@@ -428,7 +441,7 @@ pub fn texelsOver(image: *const Image, memory: [*]u8) texture.Texture.Error!text
 /// depth one that is sampled among them, its rows being read.
 pub fn requirements(image: *const Image) facet.MemoryRequirements {
     const properties = &image.device.physical.memory;
-    const anywhere = image.kind == .depth and !sampledDepth(image);
+    const anywhere = image.kind == .depth and !keptDepth(image);
     return .{
         .size = image.bytes,
         .alignment = image.alignment,
@@ -448,6 +461,26 @@ pub fn requirements(image: *const Image) facet.MemoryRequirements {
 /// aspect the format has not got, or for both planes at once.
 /// (Since 1.58.)
 fn planeOver(image: *const Image, aspect: u32, first_layer: u32, layers: u32, memory: [*]u8) ?texture.Texture {
+    const plane = planeAt(image, aspect) orelse return null;
+    // The depth is read as 16 bits of depth and the stencil as one byte,
+    // which `texture.Format.r8` reads as (red, 0, 0, 1).
+    const kept: texture.Format = if (plane.depth) .d16 else .r8;
+    var made = texture.Texture.linearBy(kept, image.width, image.height, image.pitch, plane.stride, memory + plane.at + first_layer * @as(usize, @intCast(image.layer_bytes)));
+    made.layer_count = layers;
+    made.layer_bytes = @intCast(image.layer_bytes);
+    return made;
+}
+
+/// Where one plane of a depth attachment's pixels lies: `at` the bytes
+/// into a pixel it begins at, `stride` the bytes from one pixel to the
+/// next, and `depth` whether it is the depth or the stencil. (Since 1.62,
+/// from `planeOver`, which picked the plane by itself before.)
+const Plane = struct { at: u32, stride: u32, depth: bool };
+
+/// The plane `aspect` names, by the rule `planeOver` describes: null for
+/// an aspect the format has not got, or for both planes at once.
+/// (Since 1.62.)
+fn planeAt(image: *const Image, aspect: u32) ?Plane {
     const asked = aspect & (facet.IMAGE_ASPECT_DEPTH | facet.IMAGE_ASPECT_STENCIL);
     const stride = bytesOf(image.format);
     if (stride == 0) return null;
@@ -459,13 +492,26 @@ fn planeOver(image: *const Image, aspect: u32, first_layer: u32, layers: u32, me
     if (!wants_depth and !wants_stencil) return null;
     const at = if (wants_depth) depthOffset(image.format) else stencilOffset(image.format);
     if (at >= stride) return null;
-    // The depth is read as 16 bits of depth and the stencil as one byte,
-    // which `texture.Format.r8` reads as (red, 0, 0, 1).
-    const kept: texture.Format = if (wants_depth) .d16 else .r8;
-    var made = texture.Texture.linearBy(kept, image.width, image.height, image.pitch, stride, memory + at + first_layer * @as(usize, @intCast(image.layer_bytes)));
-    made.layer_count = layers;
-    made.layer_bytes = @intCast(image.layer_bytes);
-    return made;
+    return .{ .at = at, .stride = stride, .depth = wants_depth };
+}
+
+/// One plane of a depth attachment's rows as an input attachment reads
+/// them, pixel by pixel: the layer the view names, the depth as `r16` -
+/// 0 to 1, nearest first - and the stencil as `r8u`, the whole number
+/// it is, each read `stride` bytes apart so that a format holding both is
+/// two planes inside the same rows. Null for an image with no memory
+/// behind it, or for an aspect the format has not got. (Since 1.62.)
+pub fn depthRows(image: *const Image, aspect: u32, first_layer: u32) ?shader.Attachment {
+    const data = image.data orelse return null;
+    const plane = planeAt(image, aspect) orelse return null;
+    return .{
+        .bytes = data + plane.at + first_layer * @as(usize, @intCast(image.layer_bytes)),
+        .pitch = image.pitch,
+        .width = image.width,
+        .height = image.height,
+        .format = if (plane.depth) .r16 else .r8u,
+        .stride = plane.stride,
+    };
 }
 
 /// The same over the image's own memory, for a view of it. (Since 1.58.)

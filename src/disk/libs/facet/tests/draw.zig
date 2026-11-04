@@ -4619,6 +4619,189 @@ const Deferred = struct {
     const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
 };
 
+/// A quad drawn into a depth attachment, and the functions that read that
+/// attachment back pixel by pixel in the subpass after it: the depth as a
+/// grey of its own value, and a stencil as the number it holds. (1.62.)
+const DepthRead = struct {
+    /// The left half, nearer than the clear; and the whole target.
+    const half = [6][3]f32{ .{ -1, -1, 0.25 }, .{ 0, -1, 0.25 }, .{ -1, 1, 0.25 }, .{ -1, 1, 0.25 }, .{ 0, -1, 0.25 }, .{ 0, 1, 0.25 } };
+    const whole = [6][3]f32{ .{ -1, -1, 0.5 }, .{ 1, -1, 0.5 }, .{ -1, 1, 0.5 }, .{ -1, 1, 0.5 }, .{ 1, -1, 0.5 }, .{ 1, 1, 0.5 } };
+    const written: u32 = 0xFF11_2233;
+    /// What it draws where there is nothing to read.
+    const missing: u32 = 0xFF00_0000;
+
+    fn vertex(vertices: *const shader.Vertices) callconv(.c) void {
+        for (0..vertices.count) |k| {
+            const p = vertices.input(@intCast(k), 0);
+            vertices.output(@intCast(k))[0..4].* = .{ p[0], p[1], p[2], 1 };
+        }
+    }
+
+    fn write(fragments: *const shader.Fragments) callconv(.c) void {
+        shader.fill(fragments, written);
+    }
+
+    fn readDepth(fragments: *const shader.Fragments) callconv(.c) void {
+        paint(fragments, 255);
+    }
+
+    fn readStencil(fragments: *const shader.Fragments) callconv(.c) void {
+        paint(fragments, 1);
+    }
+
+    /// The attachment's first channel at each pixel, times `by`, as the
+    /// red: a depth of 0 to 1 scaled to a byte, a stencil as it stands.
+    fn paint(fragments: *const shader.Fragments, by: f32) void {
+        const from = fragments.resources.input(0, 0, 0) orelse return shader.fill(fragments, missing);
+        for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |spot, *out| {
+            inline for (0..4) |i| {
+                const x = fragments.x + @as(u32, spot.x) + @as(u32, i & 1);
+                const y = fragments.y + @as(u32, spot.y) + @as(u32, i >> 1);
+                const value = from.at(x, y)[0] * by;
+                const byte: u32 = @intFromFloat(@min(@max(value, 0), 255) + 0.5);
+                out[i] = 0xFF00_0000 | byte << 16;
+            }
+        }
+    }
+
+    const entries = [_]shader.Entry{
+        shader.vertex("write", &vertex, 0),
+        shader.fragment("write", &write, 0),
+        shader.vertex("depth", &vertex, 0),
+        shader.fragment("depth", &readDepth, 0),
+        shader.vertex("stencil", &vertex, 0),
+        shader.fragment("stencil", &readStencil, 0),
+    };
+    const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
+};
+
+test "a depth attachment read as an input attachment: what the subpass before drew, plane by plane" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+
+    var features: facet.PhysicalDeviceFeatures = undefined;
+    fb.GetPhysicalDeviceFeatures(bench.physical, &features);
+    try testing.expect(features.input_attachments and features.sampled_depth and features.stored_both);
+
+    const picture = try Picture.of(&bench, 64, 64);
+    const depth_usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT;
+    const side = facet.Extent3D{ .width = 64, .height = 64 };
+    _, const plain_view = try bench.image(.{ .format = .d16_unorm, .extent = side, .usage = depth_usage }, false);
+    const both_image, const both_view = try bench.image(.{ .format = .d16_unorm_s8_uint, .extent = side, .usage = depth_usage }, false);
+    // The stencil of that same image: the other plane of the same rows.
+    const stencil_view = try bench.viewOf(.{ .image = both_image, .format = .d16_unorm_s8_uint, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_STENCIL } });
+
+    // A depth read pixel by pixel wants memory behind it, so a transient
+    // one is refused.
+    var none: ?*facet.Image = null;
+    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{ .format = .d16_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = depth_usage | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT }, &none));
+    try testing.expect(none == null);
+
+    const to_color = [1]facet.AttachmentReference{.{ .attachment = 0, .layout = .general }};
+    const of_depth = [1]facet.AttachmentReference{.{ .attachment = 1, .layout = .general }};
+    const subpasses = [2]facet.SubpassDescription{
+        .{ .color_attachment_count = 1, .color_attachments = &to_color, .depth_stencil_attachment = &of_depth[0] },
+        .{ .input_attachment_count = 1, .input_attachments = &of_depth, .color_attachment_count = 1, .color_attachments = &to_color },
+    };
+
+    const shaders = try module(&bench, &DepthRead.code);
+    defer fb.DestroyShaderModule(device, shaders);
+    const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .input_attachment, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &set_layout));
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    const layout = try pipelineLayout(&bench, &.{set_layout.?}, 0);
+    defer fb.DestroyPipelineLayout(device, layout);
+    var pool: ?*facet.DescriptorPool = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorPool(device, &.{ .max_sets = 3 }, &pool));
+    defer fb.DestroyDescriptorPool(device, pool);
+    const layouts = [3]*facet.DescriptorSetLayout{ set_layout.?, set_layout.?, set_layout.? };
+    var sets: [3]?*facet.DescriptorSet = undefined;
+    try testing.expectEqual(facet.Result.success, fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 3, .set_layouts = &layouts }, &sets));
+    const infos = [3]facet.DescriptorImageInfo{
+        .{ .image_view = plain_view, .image_layout = .general },
+        .{ .image_view = both_view, .image_layout = .general },
+        .{ .image_view = stencil_view, .image_layout = .general },
+    };
+    var writes: [3]facet.WriteDescriptorSet = undefined;
+    for (&writes, 0..) |*one, k| one.* = .{ .dst_set = sets[k].?, .dst_binding = 0, .descriptor_type = .input_attachment, .image_info = @ptrCast(&infos[k]) };
+    fb.UpdateDescriptorSets(device, 3, &writes, 0, null);
+
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(DepthRead.half)) * 2, facet.BUFFER_USAGE_VERTEX_BUFFER);
+    const quad_bytes = @sizeOf(@TypeOf(DepthRead.half));
+    @memcpy(vertex_bytes[0..quad_bytes], std.mem.asBytes(&DepthRead.half));
+    @memcpy(vertex_bytes[quad_bytes..][0..quad_bytes], std.mem.asBytes(&DepthRead.whole));
+    const first_quad: u64 = 0;
+    const second_quad: u64 = quad_bytes;
+    const area = facet.Rect2D{ .extent = .{ .width = 64, .height = 64 } };
+    const starts = [2]facet.ClearValue{ .{ .color = .{ .float32 = .{ 0, 0, 1, 1 } } }, .{ .depth_stencil = .{ .depth = 1, .stencil = 0 } } };
+    const writing = facet.PipelineDepthStencilStateCreateInfo{
+        .depth_test_enable = true,
+        .depth_write_enable = true,
+        .depth_compare_op = .less,
+        .stencil_test_enable = true,
+        .front = .{ .fail_op = .replace, .pass_op = .replace, .depth_fail_op = .replace, .compare_op = .always, .write_mask = 0xFF, .reference = 0x30 },
+        .back = .{ .fail_op = .replace, .pass_op = .replace, .depth_fail_op = .replace, .compare_op = .always, .write_mask = 0xFF, .reference = 0x30 },
+    };
+
+    // The depth of a format of depth alone, then the two planes of one
+    // that holds both: the depth every four bytes, and the stencil beside
+    // it.
+    for ([3]struct { facet.Format, *facet.ImageView, u32, [*:0]const u8, u32, u32 }{
+        .{ .d16_unorm, plain_view, 0, "depth", 0xFF40_0000, 0xFFFF_0000 },
+        .{ .d16_unorm_s8_uint, both_view, 1, "depth", 0xFF40_0000, 0xFFFF_0000 },
+        .{ .d16_unorm_s8_uint, both_view, 2, "stencil", 0xFF30_0000, 0xFF00_0000 },
+    }) |one| {
+        const format, const view, const which, const name, const left, const right = one;
+        // The stencil's own two ops are for a format that has one: a
+        // store asked of a format without it is refused.
+        const has_stencil = format == .d16_unorm_s8_uint;
+        const attachments = [2]facet.AttachmentDescription{
+            .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general },
+            .{
+                .format = format,
+                .load_op = .clear,
+                .store_op = .store,
+                .stencil_load_op = if (has_stencil) .clear else .dont_care,
+                .stencil_store_op = if (has_stencil) .store else .dont_care,
+                .final_layout = .general,
+            },
+        };
+        var pass_made: ?*facet.RenderPass = null;
+        try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 2, .subpasses = &subpasses }, &pass_made));
+        defer fb.DestroyRenderPass(device, pass_made);
+        const pass = pass_made.?;
+        const frame = try framebuffer(&bench, pass, &.{ picture.view, view }, 64, 64);
+        defer fb.DestroyFramebuffer(device, frame);
+        const made_writer, const writer = makePipeline(&bench, .{ .module = shaders, .name = "write", .layout = layout, .pass = pass, .depth = writing });
+        try testing.expectEqual(facet.Result.success, made_writer);
+        defer fb.DestroyPipeline(device, writer);
+        const made_reader, const reader = makePipeline(&bench, .{ .module = shaders, .name = name, .layout = layout, .pass = pass, .subpass = 1 });
+        try testing.expectEqual(facet.Result.success, made_reader);
+        defer fb.DestroyPipeline(device, reader);
+
+        const commands = try bench.record();
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame, .render_area = area, .clear_value_count = 2, .clear_values = &starts }, .@"inline");
+        fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&first_quad));
+        fb.CmdBindPipeline(commands, .graphics, writer.?);
+        fb.CmdDraw(commands, 6, 1, 0, 0);
+        fb.CmdNextSubpass(commands, .@"inline");
+        fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&second_quad));
+        fb.CmdBindPipeline(commands, .graphics, reader.?);
+        fb.CmdBindDescriptorSets(commands, .graphics, layout, 0, 1, @ptrCast(&sets[which]), 0, null);
+        fb.CmdDraw(commands, 6, 1, 0, 0);
+        fb.CmdEndRenderPass(commands);
+        try bench.submit();
+
+        // The left half is what the first subpass left there, the right
+        // half what the clear did.
+        try nearColor(left, picture.at(16, 32), 1);
+        try nearColor(right, picture.at(48, 32), 1);
+    }
+}
+
 /// Two colours within `apart` of each other in every channel: what a
 /// blend by a constant may differ by between one rounding and another.
 fn nearColor(wanted: u32, found: u32, apart: u32) !void {
@@ -4960,16 +5143,23 @@ test "an input attachment: what one subpass drew read pixel by pixel by the next
     defer fb.DestroyRenderPass(device, pass_made);
     const pass = pass_made.?;
 
-    // A depth attachment read as an input attachment, and one of a format
-    // no pixels are kept in: refused.
-    var refused: ?*facet.RenderPass = null;
+    // A depth attachment read as an input attachment is made since 1.62;
+    // one of a format no pixels are kept in is refused all the same.
+    var another: ?*facet.RenderPass = null;
     const depth_formats = [2]facet.AttachmentDescription{
         .{ .format = .d16_unorm, .final_layout = .general },
         .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general },
     };
     const of_depth = [1]facet.AttachmentReference{.{ .attachment = 0, .layout = .general }};
     const reads_depth = facet.SubpassDescription{ .input_attachment_count = 1, .input_attachments = &of_depth, .color_attachment_count = 1, .color_attachments = &to_second };
-    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &depth_formats, .subpass_count = 1, .subpasses = @ptrCast(&reads_depth) }, &refused));
+    try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &depth_formats, .subpass_count = 1, .subpasses = @ptrCast(&reads_depth) }, &another));
+    fb.DestroyRenderPass(device, another);
+    var refused: ?*facet.RenderPass = null;
+    const odd_formats = [2]facet.AttachmentDescription{
+        .{ .format = .r16g16b16a16_sfloat, .final_layout = .general },
+        .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general },
+    };
+    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &odd_formats, .subpass_count = 1, .subpasses = @ptrCast(&reads_depth) }, &refused));
     try testing.expect(refused == null);
 
     const frame = try framebuffer(&bench, pass, &.{ first_view, second.view }, 64, 64);

@@ -45,8 +45,9 @@ const BufferView = @import("../buffer/_bufferview.zig").BufferView;
 ///
 /// An input attachment is written from `image_info` too, and its view has
 /// to be of an image made with IMAGE_USAGE_INPUT_ATTACHMENT, of a format
-/// whose pixels are kept in rows; anything else leaves the descriptor
-/// empty, and a fragment function then finds nothing
+/// whose pixels are kept in rows - or, since 1.62, of a depth attachment
+/// that is kept, whose plane the view names is read the same way
+/// (CreateImageView); anything else leaves the descriptor empty, and a fragment function then finds nothing
 /// (`shader.Resources.input` answers null). What the set holds is the
 /// view's rows, so the attachment is read wherever the image's memory
 /// stands when the draw runs - which is what the subpass before it drew
@@ -102,10 +103,13 @@ pub fn UpdateDescriptorSets(base: *FacetBase, device: *facet.Device, write_count
                 .input_attachment => attachment: {
                     const info = (write.image_info orelse break)[k];
                     const view = _objects.of(ImageView, info.image_view orelse break :attachment .{});
-                    // Rows in memory, made to be read as one: an image of
-                    // another kind is left unwritten rather than handed
-                    // over to be read as pixels it has not got.
-                    if (view.image.kind != .rows or view.image.usage & facet.IMAGE_USAGE_INPUT_ATTACHMENT == 0) break :attachment .{};
+                    // Rows in memory, made to be read as one: a colour
+                    // attachment's pixels, or since 1.62 the plane of a
+                    // depth attachment that is kept (`_image.depthRows`).
+                    // An image of another kind is left unwritten rather
+                    // than handed over to be read as pixels it has not
+                    // got.
+                    if (view.image.kind == .texture or view.image.usage & facet.IMAGE_USAGE_INPUT_ATTACHMENT == 0) break :attachment .{};
                     if (view.rows.format == .none or view.rows.bytes == null) break :attachment .{};
                     break :attachment .{ .pointer = &view.rows, .range = @intCast(@min(view.image.bytes, 0xFFFF_FFFF)) };
                 },

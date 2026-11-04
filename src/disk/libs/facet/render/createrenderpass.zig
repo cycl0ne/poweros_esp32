@@ -99,8 +99,21 @@ const _surface = @import("../surface/_surface.zig");
 /// one whose pixels are kept in rows - b8g8r8a8_unorm, r8g8b8a8_unorm or
 /// r5g6b5_unorm_pack16, anything else being
 /// `error_format_not_supported` - and what it holds is what an earlier
-/// subpass drew, or what its load op left there. A depth attachment is
-/// not read that way: it lives in the tiles. Drawing into an attachment
+/// subpass drew, or what its load op left there.
+///
+/// **A depth attachment is read that way too** since 1.62
+/// (`PhysicalDeviceFeatures.sampled_depth`): one plane of it, the one the
+/// view's aspect names, the depth as 0 to 1 and the stencil as the whole
+/// number it is (`CreateImageView`, `shader.Attachment`). Where an
+/// earlier subpass drew that depth, the part which drew it last writes it
+/// into the image's rows for this subpass to read, the way a depth two
+/// subpasses share is kept (1.52): so it wants `stored_depth`, a stencil
+/// `stored_stencil`, and a format holding both `stored_both`. The image
+/// is one made IMAGE_USAGE_INPUT_ATTACHMENT, which for a depth means
+/// memory behind it and not the tiles alone - a transient one is refused
+/// (CreateImage).
+///
+/// Drawing into an attachment
 /// and reading it in the same subpass is a loop, which is
 /// `error_initialization_failed`, and only a device whose
 /// `input_attachments` is true reads any - the cores, not the V3D -
@@ -188,10 +201,32 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                 if (reference.attachment == facet.ATTACHMENT_UNUSED) continue;
                 if (reference.attachment >= attachments.len) return .error_initialization_failed;
                 const read = attachments[reference.attachment];
-                // Read out of the image's memory, pixel by pixel, so it
-                // is a colour format kept in rows and an earlier subpass
-                // has to have drawn it (or it holds what was loaded).
-                if (_image.rowFormat(read.format) == .none) return .error_format_not_supported;
+                // Read out of the image's memory, pixel by pixel, so an
+                // earlier subpass has to have drawn it (or it holds what
+                // was loaded): a colour format kept in rows, or since
+                // 1.62 a depth format, one plane of which is read where
+                // it lies, as a sampled depth image's is
+                // (`PhysicalDeviceFeatures.sampled_depth`).
+                const depth_read = _image.hasDepth(read.format) or _image.hasStencil(read.format);
+                if (depth_read and !owner.physical.features.sampled_depth) return .error_feature_not_present;
+                if (!depth_read and _image.rowFormat(read.format) == .none) return .error_format_not_supported;
+                // A depth another subpass drew is in that subpass's
+                // tiles, so the part that drew it last writes it into
+                // the image's rows for this one to read, the way 1.52
+                // does for a depth two subpasses share. Which plane the
+                // view takes is the view's own doing, so both are kept
+                // where the format holds both.
+                if (depth_read) if (depths[reference.attachment]) |earlier| {
+                    if (_image.hasDepth(read.format)) {
+                        if (!owner.physical.features.stored_depth) return .error_feature_not_present;
+                        plan.parts[earlier].stores_depth = true;
+                    }
+                    if (_image.hasStencil(read.format)) {
+                        if (!owner.physical.features.stored_stencil) return .error_feature_not_present;
+                        plan.parts[earlier].stores_stencil = true;
+                    }
+                    if (_image.hasDepth(read.format) and _image.hasStencil(read.format) and !owner.physical.features.stored_both) return .error_feature_not_present;
+                };
                 if (read.samples != 1) return .error_feature_not_present;
                 // Drawn and read in the same subpass is a loop: the
                 // pixels being read are the ones being written.

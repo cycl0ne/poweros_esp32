@@ -610,6 +610,16 @@ pub const Texels = struct {
     count: u32,
     format: TexelFormat,
     writable: bool,
+    /// The bytes from one texel to the next where that is not the
+    /// format's own size, and 0 where it is: the depth of an attachment
+    /// that holds a stencil too lies every four bytes, with the stencil
+    /// in between (since 1.62).
+    stride: u32 = 0,
+
+    /// The bytes from one texel to the next.
+    fn apart(texels: *const Texels) usize {
+        return if (texels.stride != 0) texels.stride else texels.format.bytes();
+    }
 
     /// Texel `index` as x, y, z and w: a colour format's channels are 0 to
     /// 1, an integer format's the whole numbers themselves (since 1.54),
@@ -620,7 +630,7 @@ pub const Texels = struct {
     /// exactly; `intAt` reads those as they lie.
     pub fn at(texels: *const Texels, index: u32) [4]f32 {
         if (index >= texels.count) return .{ 0, 0, 0, 0 };
-        const from = texels.bytes + @as(usize, index) * texels.format.bytes();
+        const from = texels.bytes + @as(usize, index) * texels.apart();
         var made = [4]f32{ 0, 0, 0, 1 };
         switch (texels.format) {
             .none => {},
@@ -668,7 +678,7 @@ pub const Texels = struct {
     /// reads as 0, w as 1. All zero past the last texel. (Since 1.54.)
     pub fn intAt(texels: *const Texels, index: u32) [4]i64 {
         if (index >= texels.count) return .{ 0, 0, 0, 0 };
-        const from = texels.bytes + @as(usize, index) * texels.format.bytes();
+        const from = texels.bytes + @as(usize, index) * texels.apart();
         var made = [4]i64{ 0, 0, 0, 1 };
         switch (texels.format) {
             .none => {},
@@ -716,7 +726,7 @@ pub const Texels = struct {
     /// read, or past the last texel. A colour format takes 0 to 1.
     pub fn set(texels: *Texels, index: u32, parts: [4]f32) void {
         if (!texels.writable or index >= texels.count) return;
-        const into = texels.bytes + @as(usize, index) * texels.format.bytes();
+        const into = texels.bytes + @as(usize, index) * texels.apart();
         switch (texels.format) {
             .none => {},
             .rgba8888, .bgra8888 => {
@@ -760,7 +770,7 @@ pub const Texels = struct {
     /// is only read, or past the last texel. (Since 1.54.)
     pub fn setInt(texels: *Texels, index: u32, parts: [4]i64) void {
         if (!texels.writable or index >= texels.count) return;
-        const into = texels.bytes + @as(usize, index) * texels.format.bytes();
+        const into = texels.bytes + @as(usize, index) * texels.apart();
         switch (texels.format) {
             .none => {},
             .rgba8888, .bgra8888 => {
@@ -820,6 +830,13 @@ pub const Texels = struct {
 /// from the tile's corner and the quad's place in it (`Fragments.x`,
 /// `Fragments.y`, `Quad.x`, `Quad.y`). Reading another pixel is the
 /// function's own doing, and what is outside reads as transparent black.
+///
+/// Since 1.62 a depth attachment that is kept is read this way too: one
+/// plane of it, the one the view's aspect names, as `r16` - the depth 0
+/// to 1, nearest first, which `at` gives as x - or as `r8u`, the stencil
+/// as the whole number it is. A format holding both is the two planes
+/// inside the same rows, four bytes from one pixel to the next
+/// (`stride`), and the view says which of them this is.
 pub const Attachment = extern struct {
     /// Its first pixel, or null where nothing was written into the slot.
     bytes: ?[*]const u8 = null,
@@ -829,6 +846,11 @@ pub const Attachment = extern struct {
     height: u32 = 0,
     /// How a pixel is read, which is the attachment's own format.
     format: TexelFormat = .none,
+    /// The bytes from one pixel to the next where that is not the
+    /// format's own size, and 0 where it is: a depth attachment that
+    /// holds a stencil as well is read four bytes apart, its depth and
+    /// its stencil two planes inside the same rows (since 1.62).
+    stride: u32 = 0,
 
     /// The pixel at (x, y) as 0xAARRGGBB; transparent black outside it.
     pub fn colorAt(attachment: *const Attachment, x: u32, y: u32) u32 {
@@ -853,6 +875,7 @@ pub const Attachment = extern struct {
             .count = attachment.width,
             .format = attachment.format,
             .writable = false,
+            .stride = attachment.stride,
         };
     }
 };

@@ -719,10 +719,31 @@ pub const LIBRARY_VERSION = 1;
 /// in as whole blocks, nothing here compresses, and that is the format
 /// and not the library. A depth image is `CmdClearDepthStencilImage`'s,
 /// as it was.
+/// 62: a depth attachment is read as an input attachment. Before this
+/// `CreateRenderPass` answered `error_format_not_supported` for an input
+/// reference of a depth format, the reason being that a depth lives in
+/// the tiles and has no rows to read - which has not been so since 1.39,
+/// when a sampled depth gained memory of its own, nor since 1.58, when
+/// each of the three formats gained planes and layers.
+/// Now an image made IMAGE_USAGE_INPUT_ATTACHMENT of a depth format is
+/// the same rows a sampler reads (`PhysicalDeviceFeatures.sampled_depth`,
+/// and no transient one), a view of it carries the plane its aspect
+/// names as `shader.Attachment` (`_image.depthRows`), and
+/// `UpdateDescriptorSets` writes that into an `input_attachment`
+/// descriptor. The depth reads as `r16`, 0 to 1 and nearest first, and
+/// the stencil as `r8u`, the whole number it holds.
+/// A format that holds both is two planes inside the same rows, four
+/// bytes from one pixel to the next: `shader.Attachment` and
+/// `shader.Texels` gained a `stride` for that, 0 being the format's own
+/// size, which is every other attachment. The part of the pass that drew
+/// the depth last writes it into the image's rows for the later subpass
+/// to read, the way 1.52 does for a depth two subpasses share, so such a
+/// pass wants `stored_depth`, a stencil `stored_stencil`, and a format
+/// of both `stored_both`.
 /// What stays: `fifo` is the one present mode, there being no way to ask a
 /// display to show a buffer before its next frame; one queue family of one
 /// queue; a counter of 32 bits, for want of a 64-bit atomic on every
 /// machine the library runs on; and no point mode in tessellation, the
 /// tessellator emitting triangles or the lines of `isolines` and nothing
 /// emitting a patch's points on their own.
-pub const LIBRARY_REVISION = 61;
+pub const LIBRARY_REVISION = 62;

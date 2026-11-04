@@ -60,6 +60,13 @@ const ImageView = _image.ImageView;
 /// format holding both is two textures inside the same rows, read four
 /// bytes apart.
 ///
+/// Since 1.62 the same plane is what a later subpass reads as an **input
+/// attachment** (`shader.Attachment`), where the image was made one
+/// (IMAGE_USAGE_INPUT_ATTACHMENT): the view's first layer, the depth as
+/// `r16`, 0 to 1 and nearest first, and the stencil as `r8u`, the whole
+/// number it is. A format holding both is read four bytes from one pixel
+/// to the next, the view's aspect saying which plane this is.
+///
 /// Such a view is of the layers it names as well, of type `2d` or
 /// `2d_array`: the image's own rows for that layer, which is what a pass
 /// drawing into the view writes and what a sample of it reads. So the
@@ -121,6 +128,13 @@ pub fn CreateImageView(base: *FacetBase, device: *facet.Device, info: *const fac
         _image.depthPlane(image, range.aspect_mask, range.base_array_layer, layers) orelse return .error_format_not_supported
     else
         null;
+    // The same plane as rows, for a later subpass to read pixel by pixel
+    // (since 1.62): the view's first layer, the depth 0 to 1 and the
+    // stencil the whole number it is.
+    const read_rows = if (image.kind == .depth and image.usage & facet.IMAGE_USAGE_INPUT_ATTACHMENT != 0)
+        _image.depthRows(image, range.aspect_mask, range.base_array_layer) orelse return .error_format_not_supported
+    else
+        null;
     const made = _objects.create(base.sys_base, ImageView) orelse return .error_out_of_host_memory;
     made.* = .{ .image = image, .base_level = range.base_mip_level, .level_count = count, .base_layer = range.base_array_layer, .layer_count = layers };
     if (image.kind == .texture) made.texels = _image.levelsFrom(image, range.base_mip_level, count, range.base_array_layer, layers);
@@ -129,6 +143,7 @@ pub fn CreateImageView(base: *FacetBase, device: *facet.Device, info: *const fac
     // they are.
     if (_image.writtenRows(image)) made.texels = image.texels;
     if (plane) |one| made.texels = one;
+    if (read_rows) |one| made.rows = one;
     // Its pixels, for a later subpass to read as an input attachment.
     if (image.kind == .rows) made.rows = .{
         .bytes = image.data,

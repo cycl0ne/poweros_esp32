@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.61**, so that a program need not find out by failing. It covers the API.
+1.62**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -346,13 +346,21 @@ exist now. What is left out:
   `error_initialization_failed`. Vulkan allows exactly that for the
   fragment's own pixel, which is what `VK_EXT_shader_framebuffer_fetch`
   and the subpass self-dependency are for.
-- **A depth attachment is not readable**: an input attachment is of
-  b8g8r8a8_unorm, r8g8b8a8_unorm or r5g6b5_unorm_pack16, the formats whose
-  pixels `shader.Attachment` reads. A depth that a pass stores does have
-  rows - and since 1.58 planes and layers with them (`_image.depthPlane`) -
-  so what is left is the attachment's own read, not the memory; until then
-  a pass that wants an earlier pass's depth samples it where it lies
-  (`sampled_depth`, 1.39) or copies it out (`CmdCopyImageToBuffer`).
+- **A depth attachment is readable since 1.62**
+  (`PhysicalDeviceFeatures.sampled_depth` beside `input_attachments`):
+  the image is made IMAGE_USAGE_INPUT_ATTACHMENT of one of the three
+  depth formats, which gives it memory of its own rather than the tiles
+  alone - a transient one is refused - and the view's aspect says which
+  plane the descriptor reads, the depth as `r16`, 0 to 1 and nearest
+  first, or the stencil as `r8u`, the whole number it holds. A format
+  that holds both is the two planes inside the same rows, four bytes from
+  one pixel to the next (`shader.Attachment.stride`). The part that drew
+  the depth writes it into those rows for the later subpass, the way a
+  depth two subpasses share is kept, so such a pass wants `stored_depth`,
+  a stencil `stored_stencil` and a format of both `stored_both`. A
+  colour input attachment is still of b8g8r8a8_unorm, r8g8b8a8_unorm or
+  r5g6b5_unorm_pack16, every other colour format being
+  `error_format_not_supported`.
 - **Nothing is checked against the layout**: `AttachmentReference.layout`
   is taken as it is, as every other layout is, and a program that reads
   an attachment an earlier subpass did not draw gets whatever the load op
@@ -507,7 +515,7 @@ These can be asked for and are answered with `error_feature_not_present`.
 | Colour attachments that differ, on a device that blends them all alike: no device of this library is one (`independent_blend`) | `pipeline/creategraphicspipelines.zig` |
 | Resolve attachments in a subpass | `render/createrenderpass.zig` |
 | An input attachment on a device that reads none: the V3D (`input_attachments`) | `render/createrenderpass.zig` |
-| An input attachment of a format whose pixels are not kept in rows, a depth attachment among them | `render/createrenderpass.zig` |
+| An input attachment of a colour format whose pixels are not kept in rows (a depth format is read since 1.62) | `render/createrenderpass.zig` |
 | An image both INPUT_ATTACHMENT and SAMPLED, STORAGE or TRANSIENT_ATTACHMENT | `image/createimage.zig` |
 | A depth or stencil op for a plane the format has not, or on a device that keeps neither (`stored_depth`, `stored_stencil`) | `render/createrenderpass.zig` |
 | Present modes but `fifo`, though `immediate`, `mailbox` and `fifo_relaxed` are enumerated: a display shows a buffer from its next frame on, and there is no way to ask it for anything else | `swapchain/createswapchain.zig` |
