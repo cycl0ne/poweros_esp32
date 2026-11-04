@@ -2221,12 +2221,16 @@ fn OpenVideoLayer(rb: *RtgBase, board: *rtg.RtgBoard, tag_list: ?[*]const TagIte
   the caller's own.
 - `tag_list` - `RTGVA_Under` (bool): under the board's picture, seen
   through the layer's key colour - TRUE unless given; FALSE puts it
-  over the picture.
+  over the picture. `RTGVA_Matrix`, `RTGVA_Transfer`,
+  `RTGVA_Primaries`, `RTGVA_Range` and `RTGVA_Depth` (u8 each): what
+  the pictures will be, as `RtgYuv` says them - BT.709, the ordinary
+  range, video's range and eight bits unless given.
 
 **RESULT**
 
 The layer, or null with `RtgLastError` saying why:
-`RTGERR_NOT_SUPPORTED` for a board without `RTGBC_VIDEO`,
+`RTGERR_NOT_SUPPORTED` for a board without `RTGBC_VIDEO` or one whose
+controller cannot make the display's colours out of such a picture,
 `RTGERR_IN_USE` when its layers are all taken, `RTGERR_NO_MEMORY`.
 
 **BEHAVIOR**
@@ -2237,6 +2241,14 @@ say what it is: `RTGVLF_UNDER` in `flags` where it is under the
 picture - a board that cannot put its picture over a layer opens it
 over, asked or not - with `key` the colour the picture shows it
 through; and how large a picture it takes and how far it scales one.
+
+A board takes only a picture its controller can turn into the
+display's colours itself, and the tags say which that will be. One it
+cannot convert - a film of high dynamic range, one in BT.2020's
+colours, one of ten bits - is refused outright, so that the caller
+puts the film down through graphics, which maps it into the screen's
+range, rather than having it shown flat and grey. What was asked for
+stays in the layer's fields.
 
 Under the picture, the layer is seen only where the picture is `key`:
 a program fills its film's place with that colour, and whatever is
@@ -2268,7 +2280,15 @@ None known.
 **EXAMPLES**
 
 ```zig
-const layer = rb.OpenVideoLayer(board, null) orelse return putThroughGraphics();
+const tags = [_]TagItem{
+    .{ .tag = rtg.RTGVA_Matrix, .data = picture.matrix },
+    .{ .tag = rtg.RTGVA_Transfer, .data = picture.transfer },
+    .{ .tag = rtg.RTGVA_Primaries, .data = picture.primaries },
+    .{ .tag = rtg.RTGVA_Range, .data = picture.range },
+    .{ .tag = rtg.RTGVA_Depth, .data = picture.depth },
+    .{},
+};
+const layer = rb.OpenVideoLayer(board, &tags) orelse return putThroughGraphics();
 defer rb.CloseVideoLayer(layer);
 ```
 

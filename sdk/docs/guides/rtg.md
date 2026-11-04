@@ -465,7 +465,17 @@ out, turning them into colours and scaling them into a place on the
 display. Nothing is converted, scaled or composed by the processor.
 
 ```zig
-const layer = rb.OpenVideoLayer(board, null) orelse return putThroughGraphics();
+// What the frames will be, so that a controller that cannot make the
+// display's colours out of them says so now rather than showing them wrong.
+const kind = [_]utility.TagItem{
+    .{ .tag = rtg.RTGVA_Matrix, .data = frame.picture.matrix },
+    .{ .tag = rtg.RTGVA_Transfer, .data = frame.picture.transfer },
+    .{ .tag = rtg.RTGVA_Primaries, .data = frame.picture.primaries },
+    .{ .tag = rtg.RTGVA_Range, .data = frame.picture.range },
+    .{ .tag = rtg.RTGVA_Depth, .data = frame.picture.depth },
+    .{},
+};
+const layer = rb.OpenVideoLayer(board, &kind) orelse return putThroughGraphics();
 defer rb.CloseVideoLayer(layer);
 _ = rb.MoveVideoLayer(layer, &.{ .x = 100, .y = 80, .width = 1280, .height = 720 });
 const all = rtg.RtgRect{ .width = @intCast(frame.width), .height = @intCast(frame.height) };
@@ -480,6 +490,14 @@ if (rb.ShowVideoFrame(layer, &frame.picture, &all) != rtg.errors.RTGERR_OK) putT
   what it is: `RTGVLF_UNDER`, the `key` colour it is seen through, and
   how large a picture it takes and how far it scales one (`max_width`,
   `max_height`, `max_up`, `max_down`).
+- The tags also say what the pictures will be - `RTGVA_Matrix`,
+  `RTGVA_Transfer`, `RTGVA_Primaries`, `RTGVA_Range` and `RTGVA_Depth`,
+  as `RtgYuv` says them, an ordinary film (BT.709, eight bits, video's
+  range) unless given. A controller's converter holds one matrix and no
+  curve, so a film of high dynamic range, one in BT.2020's red, green
+  and blue, or one of ten bits gets `RTGERR_NOT_SUPPORTED` and no layer:
+  it goes through graphics, which maps such a film into the screen's
+  range. Better no layer than a film shown flat and grey.
 - `MoveVideoLayer(layer, place)` puts it in the display's coordinates -
   a window's place on its screen, the screen's `SA_Top` added. An empty
   place hides it.

@@ -86,6 +86,11 @@ pub const RtgVideoLayer = video.RtgVideoLayer;
 pub const RTGVLF_UNDER = video.RTGVLF_UNDER;
 pub const RTGVA_Dummy = video.RTGVA_Dummy;
 pub const RTGVA_Under = video.RTGVA_Under;
+pub const RTGVA_Matrix = video.RTGVA_Matrix;
+pub const RTGVA_Transfer = video.RTGVA_Transfer;
+pub const RTGVA_Primaries = video.RTGVA_Primaries;
+pub const RTGVA_Range = video.RTGVA_Range;
+pub const RTGVA_Depth = video.RTGVA_Depth;
 
 pub const RtgTransport = transport.RtgTransport;
 pub const RtgTransportOps = transport.RtgTransportOps;
