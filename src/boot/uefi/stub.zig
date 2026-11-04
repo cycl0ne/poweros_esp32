@@ -155,6 +155,11 @@ fn add(ranges: []handover.Range, count: *u32, dropped: *u32, start: u64, end: u6
     count.* += 1;
 }
 
+/// The key the firmware gave with the map last read: `exitBootServices`
+/// takes it and refuses a key the map has moved past, which is how the
+/// firmware makes sure nobody leaves it holding a map that has changed.
+var map_key: uefi.tables.MemoryMapKey = undefined;
+
 /// The firmware's memory map into the handover's two lists. The map is read
 /// into memory the firmware gives, which the kernel is free to use
 /// afterwards.
@@ -167,6 +172,7 @@ fn takeMemory(boot: *uefi.tables.BootServices) !void {
     const room = (info.len + 8) * info.descriptor_size;
     const buffer = try boot.allocatePool(.loader_data, room);
     const map = try boot.getMemoryMap(@alignCast(buffer));
+    map_key = map.info.key;
 
     var walk = map.iterator();
     while (walk.next()) |entry| {
@@ -258,6 +264,59 @@ fn readFile(boot: *uefi.tables.BootServices, volume: *uefi.protocol.File, name: 
     return .{ .start = start, .end = start + size };
 }
 
+/// Where the kernel is to be called. Only the image says, and it says in
+/// the header `readKernel` reads.
+var entry_at: u64 = 0;
+
+/// `kernel.bin` read into the pages it names for itself, and the range it
+/// is in.
+///
+/// The image begins with a `KernelHeader` (`handover.zig`): where it has
+/// to be, how much memory it takes there - its zeroed data and its boot
+/// stack included - and how far into it the entry is. It cannot be moved,
+/// so those pages are asked for by address rather than wherever the
+/// firmware pleases, and a firmware that will not give them says so here
+/// instead of leaving a kernel in the wrong place. They are asked for as
+/// loader code, which is the kind of memory a firmware does not keep code
+/// from running in.
+///
+/// The page below the image goes with them: it is where the kernel keeps
+/// the one pointer a program finds the system by, and the kernel keeps
+/// that same page out of its heap (`src/arch/x64uefi/ram.zig`).
+fn readKernel(boot: *uefi.tables.BootServices, volume: *uefi.protocol.File) !handover.Range {
+    var file = try volume.open(kernel_name, .read, .{});
+    defer file.close() catch {};
+
+    const info = try file.getInfo(.file, &info_buffer);
+    const size = info.file_size;
+
+    var head: handover.KernelHeader = .{};
+    const head_bytes = @as([*]u8, @ptrCast(&head))[0..@sizeOf(handover.KernelHeader)];
+    if (size < head_bytes.len) return error.Empty;
+    if (try file.read(head_bytes) != head_bytes.len) return error.Short;
+    if (head.magic != handover.KERNEL_MAGIC) return error.NotAKernel;
+    if (head.load < page or head.load % page != 0) return error.LoadAddress;
+    if (head.memory < size or head.entry >= size) return error.ImageSize;
+
+    const from = head.load - page;
+    const pages = (head.memory + page + (page - 1)) / page;
+    _ = try boot.allocatePages(.{ .address = @ptrFromInt(from) }, .loader_code, @intCast(pages));
+
+    try file.setPosition(0);
+    const bytes: []u8 = @as([*]u8, @ptrFromInt(head.load))[0..@intCast(size)];
+    var done: usize = 0;
+    while (done < bytes.len) {
+        const read = try file.read(bytes[done..]);
+        if (read == 0) return error.Short;
+        done += read;
+    }
+    entry_at = head.load + head.entry;
+    return .{ .start = from, .end = head.load + head.memory };
+}
+
+/// A page of memory, which is what the firmware hands out in.
+const page = 4096;
+
 /// Room for a file's information, which the protocol writes into the
 /// caller's memory. One file is read at a time.
 var info_buffer: [512]u8 align(8) = undefined;
@@ -326,6 +385,41 @@ fn report() void {
     } else line("no disk image: the machine would run diskless");
 }
 
+// --- leaving the firmware ----------------------------------------------------------
+
+/// The firmware let go of the machine and the kernel called, which does
+/// not return.
+///
+/// `exitBootServices` refuses a memory-map key the map has moved past,
+/// which is the firmware saying the map the stub gathered is out of date.
+/// Nothing between reading it and here asks the firmware for anything, so
+/// that should not happen; it is asked again once rather than giving up,
+/// since everything the firmware allocated while it was up becomes the
+/// kernel's the moment it leaves anyway.
+///
+/// After it the firmware's console and its handlers are gone, so the
+/// interrupts stay masked until the kernel's own are up, and anything the
+/// stub still has to say goes out of the serial port by hand.
+fn handOver(boot: *uefi.tables.BootServices) uefi.Status {
+    boot.exitBootServices(uefi.handle, map_key) catch {
+        const info = boot.getMemoryMapInfo() catch {
+            line("the firmware will not say where its memory map is");
+            return .load_error;
+        };
+        map_key = info.key;
+        boot.exitBootServices(uefi.handle, map_key) catch {
+            line("the firmware will not let go of the machine");
+            return .load_error;
+        };
+    };
+    asm volatile ("cli");
+    // The kernel is built for the ordinary 64-bit calling convention, not
+    // the firmware's: the handover's address goes in RDI.
+    const Entry = *const fn (machine: u64) callconv(.{ .x86_64_sysv = .{} }) noreturn;
+    const enter: Entry = @ptrFromInt(entry_at);
+    enter(@intFromPtr(&machine));
+}
+
 // --- the firmware's entry ----------------------------------------------------------
 
 pub fn main() uefi.Status {
@@ -343,7 +437,13 @@ pub fn main() uefi.Status {
     takeFramebuffer(boot);
 
     if (ownVolume(boot)) |volume| {
-        machine.kernel = readFile(boot, volume, kernel_name) catch .{ .start = 0, .end = 0 };
+        if (readKernel(boot, volume)) |where| {
+            machine.kernel = where;
+        } else |err| {
+            put("stub: kernel.bin cannot be read where it has to be: ");
+            put(@errorName(err));
+            put("\n");
+        }
         machine.disk = readFile(boot, volume, disk_name) catch .{ .start = 0, .end = 0 };
     } else |_| {
         line("the partition the stub was started from cannot be read");
@@ -358,6 +458,12 @@ pub fn main() uefi.Status {
     };
 
     report();
-    line("nothing to hand over to yet: the kernel comes next");
-    return .success;
+    if (machine.kernel.end == 0) {
+        line("no kernel to start: the machine stops here");
+        return .load_error;
+    }
+    put("stub: leaving the firmware, entering the kernel at ");
+    putHex(entry_at);
+    put("\n");
+    return handOver(boot);
 }

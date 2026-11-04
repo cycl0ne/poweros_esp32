@@ -27,6 +27,33 @@
 /// different builds is the one mistake this structure can catch for itself.
 pub const MAGIC: u64 = @bitCast(@as([8]u8, "POSX64\x00\x01".*));
 
+/// The same for the other direction: what the stub reads out of the kernel
+/// image before it asks the firmware for anything.
+pub const KERNEL_MAGIC: u64 = @bitCast(@as([8]u8, "POSKRN\x00\x01".*));
+
+/// The first bytes of `kernel.bin`, which `src/arch/x64uefi/start.S` lays
+/// down at the image's start.
+///
+/// **It is the kernel that says where it goes, not the stub.** The image is
+/// not relocatable: its code holds addresses at fixed distances and it
+/// reads its own pieces by the symbols its linker script set, so it has to
+/// run where it was linked. Rather than write that address down a second
+/// time in the stub, the kernel carries it here together with how much
+/// memory it needs from there - its code and data, its .bss and its boot
+/// stack - and the stub asks the firmware for exactly those pages, by
+/// address, and reads the image straight into them. A firmware that will
+/// not give them says so, and the stub says so on the console, which is a
+/// great deal better than a kernel read into the wrong place.
+pub const KernelHeader = extern struct {
+    magic: u64 = KERNEL_MAGIC,
+    /// Where the image must be.
+    load: u64 = 0,
+    /// How many bytes it takes from there.
+    memory: u64 = 0,
+    /// How far into the image its entry is.
+    entry: u64 = 0,
+};
+
 /// The version of this structure. The kernel refuses what it does not
 /// know: a stub is on the boot partition beside the kernel and the two are
 /// written together, so a mismatch is a half-written update, and saying so
@@ -135,4 +162,14 @@ pub const Handover = extern struct {
     /// right before it reads the tables itself. 0 where it could not tell,
     /// and the kernel then counts them its own way.
     cores: u32 = 0,
+
+    /// The memory the kernel may hand out, as a slice.
+    pub fn memoryRanges(machine: *const Handover) []const Range {
+        return machine.memory[0..@min(machine.memory_count, max_memory)];
+    }
+
+    /// The memory it must leave alone, as a slice.
+    pub fn reservedRanges(machine: *const Handover) []const Range {
+        return machine.reserved[0..@min(machine.reserved_count, max_reserved)];
+    }
 };
