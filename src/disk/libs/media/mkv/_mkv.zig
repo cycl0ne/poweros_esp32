@@ -327,11 +327,61 @@ fn readTracks(file: *File, index: []const u8, duration: f64) void {
     }
 }
 
+/// The Colour element of a picture track: what its numbers mean, and
+/// the light it was mastered for. The three descriptions are H.273's
+/// numbers, as `MediaTrack` keeps them; VP8 and VP9 say none of this in
+/// the stream, so for a WebM of high dynamic range this element is the
+/// only word there is.
+fn colour(out: *media.MediaTrack, body: []const u8) void {
+    var mastering: u32 = 0;
+    var content: u32 = 0;
+    var items = ebml.Elements{ .rest = body };
+    while (items.next()) |item| switch (item.id) {
+        ebml.MatrixCoefficients => out.matrix = small(ebml.uint(item.body)),
+        ebml.TransferCharacteristics => out.transfer = small(ebml.uint(item.body)),
+        ebml.Primaries => out.primaries = small(ebml.uint(item.body)),
+        // 0 unspecified, 1 video's range, 2 the whole byte, 3 whatever
+        // the matrix and the curve imply - which is nothing said here.
+        ebml.Range => out.range = switch (ebml.uint(item.body)) {
+            1 => 1,
+            2 => 2,
+            else => 0,
+        },
+        ebml.MaxCLL => content = @truncate(ebml.uint(item.body)),
+        ebml.MasteringMetadata => {
+            var inner = ebml.Elements{ .rest = item.body };
+            while (inner.next()) |one| {
+                if (one.id == ebml.LuminanceMax) {
+                    const light = ebml.float(one.body);
+                    if (light > 0 and light < 1e5) mastering = @intFromFloat(light);
+                }
+            }
+        },
+        else => {},
+    };
+    // The display it was graded on, held down to the brightest pixel in
+    // the film where it says that too: a film is no brighter than its
+    // own brightest pixel.
+    const peak = if (mastering != 0 and content != 0)
+        @min(mastering, content)
+    else if (mastering != 0) mastering else content;
+    out.peak = @truncate(@min(peak, 10000));
+}
+
+/// An element's number as a description, which is a byte: anything
+/// larger is a file saying something no standard has, and nothing.
+fn small(value: u64) u8 {
+    return if (value <= 255) @truncate(value) else 2;
+}
+
 /// A track out of its TrackEntry: false for one with no number.
 fn makeTrack(file: *File, entry: []const u8, track: *Track, duration: f64) bool {
     const m = blocks.fileOf(file);
     const own = blocks.trackOf(track);
     const out = &track.info;
+    // What a track says nothing of is what MediaTrack says it is - the
+    // colours "unspecified", not the zero the memory came as.
+    out.* = .{};
     own.default = true;
     own.forced = false;
     var enabled = true;
@@ -360,6 +410,7 @@ fn makeTrack(file: *File, entry: []const u8, track: *Track, duration: f64) bool 
             while (video.next()) |item| switch (item.id) {
                 ebml.PixelWidth => out.width = @truncate(ebml.uint(item.body)),
                 ebml.PixelHeight => out.height = @truncate(ebml.uint(item.body)),
+                ebml.Colour => colour(out, item.body),
                 else => {},
             };
         },

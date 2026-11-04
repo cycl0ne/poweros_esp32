@@ -801,6 +801,19 @@ const Maker = struct {
         const video = m.begin(0xE0);
         m.uint(0xB0, 320);
         m.uint(0xBA, 240);
+        // What its numbers mean, which a VP9 stream says nowhere itself:
+        // BT.2020 both ways, PQ, video's range, mastered for 1000
+        // candelas with a brightest pixel of 820.
+        const colour = m.begin(0x55B0);
+        m.uint(0x55B1, 9);
+        m.uint(0x55B9, 1);
+        m.uint(0x55BA, 16);
+        m.uint(0x55BB, 9);
+        m.uint(0x55BC, 820);
+        const mastering = m.begin(0x55D0);
+        m.float(0x55D9, 1000.0);
+        m.end(mastering);
+        m.end(colour);
         m.end(video);
         m.end(entry);
         entry = m.track(6, 0x11, "S_TEXT/ASS");
@@ -990,6 +1003,21 @@ test "Matroska by hand: lacing, header stripping, frames packed with zlib, sizes
     try testing.expectEqual(@as(u32, 320), track.width);
     try testing.expectEqual(@as(u32, 240), track.height);
     try testing.expectEqual(@as(u32, 25_000), track.frame_rate);
+    // The Colour element: H.273's numbers as they stand, video's range,
+    // and the light held down to the film's brightest pixel.
+    try testing.expectEqual(@as(u8, 9), track.matrix);
+    try testing.expectEqual(@as(u8, 16), track.transfer);
+    try testing.expectEqual(@as(u8, 9), track.primaries);
+    try testing.expectEqual(@as(u8, 1), track.range);
+    try testing.expectEqual(@as(u16, 820), track.peak);
+    // A track whose file says none of it leaves "unspecified", so that
+    // what the stream itself says stands.
+    try testing.expectEqual(media.MERR_OK, mb.GetMediaTrack(file, 0, &track));
+    try testing.expectEqual(@as(u8, 2), track.matrix);
+    try testing.expectEqual(@as(u8, 2), track.transfer);
+    try testing.expectEqual(@as(u8, 2), track.primaries);
+    try testing.expectEqual(@as(u8, 0), track.range);
+    try testing.expectEqual(@as(u16, 0), track.peak);
     try testing.expectEqual(media.MERR_OK, mb.GetMediaTrack(file, 5, &track));
     try testing.expectEqual(media.MCODEC_ASS, track.codec);
     try testing.expectEqualStrings("[Script Info]", track.config.?[0..track.config_size]);

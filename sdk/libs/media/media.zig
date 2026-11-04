@@ -147,6 +147,24 @@ pub const MediaTrack = extern struct {
     width: u32 = 0,
     height: u32 = 0,
     frame_rate: u32 = 0,
+    /// Pictures: what the container says its numbers mean, in the
+    /// numbering the streams use as well (ITU-T H.273) - 2, "unspecified",
+    /// where it says nothing, which is most files. A Matroska file keeps
+    /// them in its `Colour` element, an MP4 in the sample entry's `colr`
+    /// box (and `vpcC` for VP9); where a container and a stream both
+    /// speak, videocodec.library takes the container's, since it is the
+    /// later word - a remux has been seen to clear a stream's primaries
+    /// while the file kept them.
+    matrix: u8 = 2,
+    transfer: u8 = 2,
+    primaries: u8 = 2,
+    /// 0 where the container says nothing, 1 video's range, 2 the whole
+    /// byte.
+    range: u8 = 0,
+    /// The light the film was mastered for, in candelas a square metre;
+    /// 0 where nothing says. The mastering display's maximum, held down
+    /// to the brightest pixel in the film where that is said and lower.
+    peak: u16 = 0,
     /// Sound: frames a second, channels, the bits a sample is coded in
     /// where the codec says (0 for a lossy codec).
     rate: u32 = 0,

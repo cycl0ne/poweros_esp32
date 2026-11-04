@@ -218,6 +218,9 @@ fn movie(file: *File) i32 {
 /// A track out of its `trak` box: false for one with no media in it.
 fn makeTrack(file: *File, trak: []const u8, track: *Track) bool {
     const out = &track.info;
+    // What a track says nothing of is what MediaTrack says it is - the
+    // colours "unspecified", not the zero the memory came as.
+    out.* = .{};
     if (child(trak, kind("tkhd"))) |tkhd| {
         if (tkhd.len >= 84 and tkhd[0] == 0) {
             out.id = be32(tkhd[12..16]);
@@ -505,6 +508,54 @@ fn pictureEntry(out: *media.MediaTrack, format: u32, body: []const u8) void {
         kind("jpeg"), kind("mjpa"), kind("mjpb"), kind("MJPG") => out.codec = media.MCODEC_MJPEG,
         else => {},
     }
+    colours(out, children);
+}
+
+/// What the sample entry says its numbers mean: the `colr` box (ISO
+/// 14496-12, `nclx` or QuickTime's `nclc`), VP9's `vpcC` where there is
+/// one - a VP9 stream says none of this itself - and the two boxes of
+/// HDR10's light, `mdcv` (the mastering display) and `clli` (the
+/// brightest pixel). All of it in H.273's numbering, as `MediaTrack`
+/// keeps it.
+fn colours(out: *media.MediaTrack, children: []const u8) void {
+    if (child(children, kind("colr"))) |box| {
+        const what = if (box.len >= 4) be32(box[0..4]) else 0;
+        if ((what == kind("nclx") or what == kind("nclc")) and box.len >= 10) {
+            out.primaries = small(be16(box[4..6]));
+            out.transfer = small(be16(box[6..8]));
+            out.matrix = small(be16(box[8..10]));
+            // nclx has a byte more, the full range flag at its top.
+            if (what == kind("nclx") and box.len >= 11) out.range = if (box[10] & 0x80 != 0) 2 else 1;
+        }
+    }
+    if (child(children, kind("vpcC"))) |box| {
+        if (box.len >= 10) {
+            out.range = if (box[6] & 1 != 0) 2 else 1;
+            out.primaries = box[7];
+            out.transfer = box[8];
+            out.matrix = box[9];
+        }
+    }
+    var mastering: u32 = 0;
+    var content: u32 = 0;
+    if (child(children, kind("mdcv"))) |box| {
+        // Three primaries and the white point first, six words of them,
+        // then the maximum in ten-thousandths of a candela.
+        if (box.len >= 24) mastering = be32(box[16..20]) / 10000;
+    }
+    if (child(children, kind("clli"))) |box| {
+        if (box.len >= 4) content = be16(box[0..2]);
+    }
+    const peak = if (mastering != 0 and content != 0)
+        @min(mastering, content)
+    else if (mastering != 0) mastering else content;
+    if (peak != 0) out.peak = @truncate(@min(peak, 10000));
+}
+
+/// A number as a description, which is a byte: anything larger is a file
+/// saying something no standard has, and nothing.
+fn small(value: u32) u8 {
+    return if (value <= 255) @truncate(value) else 2;
 }
 
 /// A box's body, past `skip` bytes of its own header, as the setup.
@@ -582,4 +633,59 @@ fn descriptorAt(bytes: []const u8, at: *usize) ?Descriptor {
     const body = bytes[at.*..][0..length];
     at.* += length;
     return .{ .tag = tag, .body = body };
+}
+
+// --- tests (host: ./zig build test) -----------------------------------------
+
+const testing = std.testing;
+
+/// A box - its length, its kind, its body - written into `out`.
+fn written(out: []u8, what: []const u8, body: []const u8) usize {
+    const length = 8 + body.len;
+    std.mem.writeInt(u32, out[0..4], @intCast(length), .big);
+    @memcpy(out[4..8], what);
+    @memcpy(out[8..][0..body.len], body);
+    return length;
+}
+
+test "a sample entry's colours: the colr box, VP9's own, and HDR10's two lights" {
+    var bytes: [128]u8 = @splat(0);
+    var at: usize = 0;
+    // BT.2020 both ways, PQ, the whole byte.
+    at += written(bytes[at..], "colr", &[_]u8{ 'n', 'c', 'l', 'x', 0, 9, 0, 16, 0, 9, 0x80 });
+    // A mastering display of a thousand candelas, in ten-thousandths.
+    var mdcv: [24]u8 = @splat(0);
+    std.mem.writeInt(u32, mdcv[16..20], 10_000_000, .big);
+    at += written(bytes[at..], "mdcv", &mdcv);
+    // The brightest pixel in the film, lower: that is what is mapped from.
+    at += written(bytes[at..], "clli", &[_]u8{ 0x03, 0x34, 0x01, 0x2C });
+    var track: media.MediaTrack = .{};
+    colours(&track, bytes[0..at]);
+    try testing.expectEqual(@as(u8, 9), track.matrix);
+    try testing.expectEqual(@as(u8, 16), track.transfer);
+    try testing.expectEqual(@as(u8, 9), track.primaries);
+    try testing.expectEqual(@as(u8, 2), track.range);
+    try testing.expectEqual(@as(u16, 820), track.peak);
+
+    // VP9's `vpcC`: ten bits, video's range, BT.2020 and PQ - a VP9
+    // stream says none of it itself.
+    var vp: [128]u8 = @splat(0);
+    const vpcc = [_]u8{ 1, 0, 0, 0, 2, 10, 0xA2, 9, 16, 9 };
+    const len = written(&vp, "vpcC", &vpcc);
+    var vp9: media.MediaTrack = .{};
+    colours(&vp9, vp[0..len]);
+    try testing.expectEqual(@as(u8, 9), vp9.matrix);
+    try testing.expectEqual(@as(u8, 16), vp9.transfer);
+    try testing.expectEqual(@as(u8, 9), vp9.primaries);
+    try testing.expectEqual(@as(u8, 1), vp9.range);
+    try testing.expectEqual(@as(u16, 0), vp9.peak);
+
+    // A sample entry with none of those boxes says nothing, and what the
+    // stream itself says stands.
+    var plain: media.MediaTrack = .{};
+    colours(&plain, &.{});
+    try testing.expectEqual(@as(u8, 2), plain.matrix);
+    try testing.expectEqual(@as(u8, 2), plain.transfer);
+    try testing.expectEqual(@as(u8, 2), plain.primaries);
+    try testing.expectEqual(@as(u8, 0), plain.range);
 }
