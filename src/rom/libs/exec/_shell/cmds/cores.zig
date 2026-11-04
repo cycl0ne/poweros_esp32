@@ -46,16 +46,18 @@ pub fn run(shell: *Shell, args: *Args) anyerror!void {
             pokeOthers(base);
         } else if (_shell.same(word, "reset")) {
             sys.Disable();
-            for (base.cpus()) |*cpu| {
+            for (base.cpus(), 0..) |*cpu, core| {
                 cpu.lock_held_max = 0;
                 cpu.lock_wait_max = 0;
                 cpu.engine_wait_max = 0;
                 cpu.engine_held_max = 0;
+                // The chips' own figures are kept per core as well, in
+                // tables of theirs: as many as that chip has cores.
+                trap.longest[core] = 0;
+                trap.line_longest[core] = @splat(0);
+                rendezvous.parked_max[core] = 0;
             }
-            trap.longest = @splat(0);
-            trap.line_longest = @splat(@splat(0));
             intmatrix.source_longest = @splat(0);
-            rendezvous.parked_max = @splat(0);
             sys.Enable();
         } else if (_shell.same(word, "share")) {
             const setting = args.next() orelse return error.Usage;

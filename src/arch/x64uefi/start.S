@@ -53,10 +53,8 @@
    stride. */
 #define STUB_STRIDE     16
 
-/* cpu.zig's max_cores - the two must match: it lays out the task segments
-   and the descriptors here - and a stack of each core's own for an
-   exception taken with no room on the stack it came on. */
-#define MAX_CORES       8
+/* A stack of each core's own for an exception taken with no room on the
+   stack it came on (desc.zig, which lays out one per core). */
 #define FAULT_STACK_SIZE 4096
 
 /* GS's base: which core this is (cpu.MSR_GS_BASE). */
@@ -143,11 +141,10 @@ x64_gdt:
     .quad   0                       /* 0x00: none */
     .quad   0x00AF9A000000FFFF      /* 0x08: code, 64-bit, this level */
     .quad   0x00CF92000000FFFF      /* 0x10: data */
-    /* 0x18 and up: a task segment per core, two entries each, which
-       desc.zig fills in as each core starts. */
-    .rept   MAX_CORES
+    /* 0x18: core 0's task segment, until desc.zig lays out a table with
+       one for every core the machine has and points x64_gdt_pointer at
+       it - which `_start_other` below then loads as well. */
     .quad   0, 0
-    .endr
 x64_gdt_end:
 
     .balign 8
@@ -230,7 +227,7 @@ _trap_common:
        place by every core - this architecture does not reorder stores -
        and the `iretq` below serialises in any case. */
     movq    %rax, %rsp
-    leaq    task_leaving(%rip), %rdx
+    movq    task_leaving_at(%rip), %rdx
     movl    %gs:0, %ecx
     movq    $0, (%rdx,%rcx,8)
 
@@ -271,7 +268,7 @@ _trap_bad_stack:
     movl    %gs:0, %eax
     incl    %eax
     shll    $12, %eax               /* (core + 1) * FAULT_STACK_SIZE */
-    leaq    x64_fault_stacks(%rip), %r9
+    movq    x64_fault_stacks_at(%rip), %r9
     addq    %rax, %r9
     movq    %r9, %rsp
     xorl    %ebp, %ebp
@@ -279,11 +276,6 @@ _trap_bad_stack:
 1:  hlt
     jmp     1b
 
-    .section .bss.x64_fault_stacks, "aw", %nobits
-    .balign 16
-    .global x64_fault_stacks
-x64_fault_stacks:
-    .space  MAX_CORES * FAULT_STACK_SIZE
 
 /*
  * i32 x64_call_on_stack(usize stack_upper, fn code, void *arg), for exec's
@@ -451,7 +443,7 @@ _start_other:
     xorl    %eax, %eax
     movl    %eax, %fs
     movl    %eax, %gs
-    leaq    x64_core_stacks(%rip), %rax
+    movq    x64_core_stacks_at(%rip), %rax
     movq    (%rax,%r15,8), %rsp
     movl    %r15d, %edi
     xorl    %ebp, %ebp

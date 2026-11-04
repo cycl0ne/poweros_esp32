@@ -27,8 +27,7 @@ const std = @import("std");
 const cpu = @import("cpu.zig");
 const exec_base = @import("../../rom/libs/exec/exec_base.zig");
 const trap = @import("trap.zig");
-
-const max_cores = cpu.max_cores;
+const coretables = @import("coretables.zig");
 
 /// The selectors start.S set up.
 pub const GDT_CODE: u16 = 0x08;
@@ -45,9 +44,48 @@ const stub_stride: usize = 16;
 /// no room on the stack it came on (start.S FAULT_STACK_SIZE).
 const fault_stack_size: usize = 4096;
 
-extern var x64_gdt: [gdt_tss_first + 2 * max_cores]u64;
+/// What the entry laid out: the three fixed descriptors and room for core
+/// 0's task segment, which is what the kernel runs on until a table with
+/// one for every core the machine has is laid out below.
+extern var x64_gdt: [gdt_tss_first + 2]u64;
+/// What `lgdt` reads, in the entry's own data, so that a core starting
+/// later loads whichever table is current (start.S, `_start_other`).
+extern var x64_gdt_pointer: TablePointer;
 extern const x64_isr_stubs: [256 * stub_stride]u8;
-extern var x64_fault_stacks: [max_cores * fault_stack_size]u8;
+
+/// The descriptors in use, a task segment per core, and a stack each for
+/// an exception taken with no room on its own: as many as the machine has
+/// cores (`coretables.zig`), with one core's worth until they are laid
+/// out. The stacks' pointer is the entry's to read.
+var gdt_at: [*]u64 = &x64_gdt;
+var segments_at: [*]TaskSegment = &one_segment;
+var one_segment: [1]TaskSegment = .{.{}};
+export var x64_fault_stacks_at: [*]u8 = &one_fault_stack;
+var one_fault_stack: [fault_stack_size]u8 align(16) = @splat(0);
+
+/// This chip's share of the cores' tables.
+pub fn layTables(bump: *coretables.Bump, count: u32) void {
+    if (bump.take(u64, gdt_tss_first + 2 * count)) |at| gdt_at = at;
+    if (bump.take(TaskSegment, count)) |at| segments_at = at;
+    if (bump.take([fault_stack_size]u8, count)) |at| x64_fault_stacks_at = @ptrCast(at);
+}
+
+/// The table just laid out put to use: the three fixed descriptors every
+/// core loads copied into it, and the core pointed at it. Each core's task
+/// segment goes in as the core starts (`setUp`), and a core started later
+/// loads this same table through the entry's pointer.
+pub fn useTables() void {
+    for (0..gdt_tss_first) |at| gdt_at[at] = x64_gdt[at];
+    const entries = gdt_tss_first + 2 * coretables.cores;
+    x64_gdt_pointer = .{ .limit = @intCast(@sizeOf(u64) * entries - 1), .base = @intFromPtr(gdt_at) };
+    asm volatile ("lgdt %[pointer]"
+        :
+        : [pointer] "*p" (&x64_gdt_pointer),
+        : .{ .memory = true });
+    // This core's own descriptors again, in the table it now reads: its
+    // task segment is where its stack for a fault is named.
+    setUp();
+}
 
 /// A task segment as the architecture reads it: the stacks for a change of
 /// privilege level, which nothing here makes, then the seven of the
@@ -72,9 +110,6 @@ comptime {
     std.debug.assert(@offsetOf(TaskSegment, "ist") == 36);
     std.debug.assert(@offsetOf(TaskSegment, "io_map_base") == 102);
 }
-
-/// Each core's. Only core 0's is used until the other cores start.
-pub var segments: [max_cores]TaskSegment = @splat(.{});
 
 /// One of the 256 vectors: where it goes, with which code segment, and
 /// which stack of the interrupt stack table it is taken on.
@@ -132,13 +167,13 @@ fn stubOf(vector: usize) usize {
 /// itself is built once, by core 0, and every core loads the same one.
 pub fn setUp() void {
     const core = cpu.coreId();
-    const fault_top = @intFromPtr(&x64_fault_stacks) + (core + 1) * fault_stack_size;
-    segments[core] = .{};
+    const fault_top = @intFromPtr(x64_fault_stacks_at) + (core + 1) * fault_stack_size;
+    segments_at[core] = .{};
     // The stack the three worst exceptions are taken on. It is the same
     // one start.S switches to for an exception that came with no room on
     // its own stack: both of them end in a Guru and a machine that stops,
     // so neither has to leave the other's anything.
-    segments[core].ist[IST_FAULT - 1] = fault_top & ~@as(u64, 15);
+    segments_at[core].ist[IST_FAULT - 1] = fault_top & ~@as(u64, 15);
     writeSegmentDescriptor(core);
     const selector: u16 = @intCast(8 * (gdt_tss_first + 2 * core));
     asm volatile ("ltr %[selector]"
@@ -176,15 +211,15 @@ pub fn setUp() void {
 /// present, an available 64-bit task segment, the segment's address split
 /// across the two entries the architecture splits it across.
 fn writeSegmentDescriptor(core: u32) void {
-    const base = @intFromPtr(&segments[core]);
+    const base = @intFromPtr(&segments_at[core]);
     const limit: u64 = @sizeOf(TaskSegment) - 1;
     const access: u64 = 0x89; // present, type 9: an available 64-bit task segment
-    x64_gdt[gdt_tss_first + 2 * core] =
+    gdt_at[gdt_tss_first + 2 * core] =
         (limit & 0xFFFF) |
         ((base & 0xFFFF) << 16) |
         (((base >> 16) & 0xFF) << 32) |
         (access << 40) |
         (((limit >> 16) & 0xF) << 48) |
         (((base >> 24) & 0xFF) << 56);
-    x64_gdt[gdt_tss_first + 2 * core + 1] = base >> 32;
+    gdt_at[gdt_tss_first + 2 * core + 1] = base >> 32;
 }

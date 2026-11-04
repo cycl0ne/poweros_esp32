@@ -34,7 +34,7 @@ const exec = @import("../../rom/libs/exec/exec.zig");
 const exec_base = @import("../../rom/libs/exec/exec_base.zig");
 const exec_cache = @import("../../rom/libs/exec/cache/_cache.zig");
 
-const max_cores = cpu.max_cores;
+const coretables = @import("coretables.zig");
 
 /// Layout shared with start.S: the SSE state lowest, then the general
 /// registers in the order they are pushed, the vector and its error code,
@@ -120,7 +120,8 @@ pub const own_first = exception_count;
 pub const line_count = 16;
 
 pub const Handler = *const fn (line: u6) void;
-var handlers: [max_cores][line_count]?Handler = @splat(@splat(null));
+var handlers: [*][line_count]?Handler = &one_handlers;
+var one_handlers: [1][line_count]?Handler = .{@splat(null)};
 
 /// `handler` for the kernel's own interrupt `line` on the core this runs
 /// on: the tick's, exec's Cause, the poke from another core.
@@ -170,7 +171,8 @@ pub const Syscall = enum(u32) {
 pub const syscall_vector = own_first + 3;
 
 /// Set by the leave_exception syscall, each core's own.
-var resume_frame: [max_cores]?*Frame = @splat(null);
+var resume_frame: [*]?*Frame = &one_resume_frame;
+var one_resume_frame: [1]?*Frame = .{null};
 
 /// Trap into the kernel with `syscall`; the result comes back in RAX. It
 /// is taken whether or not the core's interrupts are masked, which the
@@ -188,13 +190,29 @@ pub fn syscall(nr: u32, arg: usize) usize {
 /// interrupts it served (bit n for line n), and the longest each of those
 /// ran; the shell's `cores` shows them. A device's interrupt is counted
 /// per source instead (`apic.source_longest`).
-pub var longest: [max_cores]u32 = @splat(0);
-pub var longest_cause: [max_cores]u32 = @splat(0);
-pub var longest_lines: [max_cores]u32 = @splat(0);
-pub var line_longest: [max_cores][line_count]u32 = @splat(@splat(0));
+pub var longest: [*]u32 = &one_longest;
+pub var longest_cause: [*]u32 = &one_longest_cause;
+pub var longest_lines: [*]u32 = &one_longest_lines;
+pub var line_longest: [*][line_count]u32 = &one_line_longest;
+var one_longest: [1]u32 = .{0};
+var one_longest_cause: [1]u32 = .{0};
+var one_longest_lines: [1]u32 = .{0};
+var one_line_longest: [1][line_count]u32 = .{@splat(0)};
 /// Which of the kernel's own interrupts the last one on each core was,
 /// for `longest_lines`.
-pub var last_line: [max_cores]u32 = @splat(0);
+pub var last_line: [*]u32 = &one_last_line;
+var one_last_line: [1]u32 = .{0};
+
+/// This chip's share of the cores' tables.
+pub fn layTables(bump: *coretables.Bump, count: u32) void {
+    if (bump.take([line_count]?Handler, count)) |at| handlers = at;
+    if (bump.take(?*Frame, count)) |at| resume_frame = at;
+    if (bump.take(u32, count)) |at| longest = at;
+    if (bump.take(u32, count)) |at| longest_cause = at;
+    if (bump.take(u32, count)) |at| longest_lines = at;
+    if (bump.take([line_count]u32, count)) |at| line_longest = at;
+    if (bump.take(u32, count)) |at| last_line = at;
+}
 
 /// Called by start.S for every exception and every interrupt. Returns the
 /// frame to resume: `frame` itself, or another task's when exec switched

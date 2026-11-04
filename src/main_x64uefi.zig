@@ -26,6 +26,7 @@ const clock = @import("arch/x64uefi/clock.zig");
 const context = @import("arch/x64uefi/context.zig");
 const cpu = @import("arch/x64uefi/cpu.zig");
 const cpu1 = @import("arch/x64uefi/cpu1.zig");
+const coretables = @import("arch/x64uefi/coretables.zig");
 const desc = @import("arch/x64uefi/desc.zig");
 const exec = @import("rom/libs/exec/exec.zig");
 const firmware = @import("arch/x64uefi/firmware.zig");
@@ -327,7 +328,6 @@ fn takeBoard(machine: *const handover.Handover) void {
     // found: it is below the first mebibyte, which the memory list leaves
     // out altogether.
     cpu1.low_page = @intCast(machine.low_page);
-    cpu1.takeCores(tables.coreIds(), cpu.prid());
 }
 
 /// The highest address the kernel's map has to reach: the end of RAM, of
@@ -342,6 +342,14 @@ fn highestAddress() usize {
 
 /// Each other core's stack, which its idle task goes on running on.
 const other_stack_size = 16 * 1024;
+
+/// How many cores the system runs on: what the board asks for, down to
+/// what the machine has - and every core it has where the board asks for
+/// no number in particular, which is what a PC's board says.
+fn runCores() u32 {
+    if (boards.cores == 0) return cpu1.found;
+    return @min(boards.cores, cpu1.found);
+}
 
 /// The other cores started in turn, as many as the board says and there are
 /// cores for; the first that does not come up ends it.
@@ -386,10 +394,19 @@ export fn kmain(at: usize) callconv(.c) noreturn {
     // Read before exec has the memory it is in.
     takeBoard(machine);
     // The descriptor tables, so an exception from here on is the kernel's.
+    // They are one core's until the cores' tables are laid out below.
     desc.setUp();
     // Address 0 unmapped, the kernel's code read-only, everything else
     // where it was: the firmware's map is in memory about to be handed out.
     mmu.take(ram.ranges());
+    // The cores' own tables, one set for every core the machine's tables
+    // named, taken out of RAM: before exec, since GS points at a core's
+    // block from this kernel's first instruction and nothing allocates
+    // yet, and after the map above, since the firmware leaves pages of
+    // what it calls free memory read-only. Then the cores' controller ids
+    // into them.
+    _ = coretables.take(cpu1.countCores(tables.core_count));
+    cpu1.takeCores(&tables, cpu.prid());
     // The screen's own blocks made write-combining, now that the map is
     // the kernel's: a picture written word by word into uncached memory is
     // slow enough to be worth the two lines.
@@ -406,7 +423,7 @@ export fn kmain(at: usize) callconv(.c) noreturn {
     // exec.library from its ROM tag; its init does RawIOInit, sets up the
     // rest, scans the ROM tags and creates the exec task. Task switching
     // stays off until startMultitasking below.
-    _ = bootstrap.bootStrap(ram.regions(&regions), @min(boards.cores, cpu1.found)) catch |err| @panic(@errorName(err));
+    _ = bootstrap.bootStrap(ram.regions(&regions), runCores()) catch |err| @panic(@errorName(err));
 
     exec.kprintf("PowerOS kernel for x86-64 on %s, built with Zig %s (%s)\n", .{
         boards.text(st.SYSTAG_Name),
@@ -481,7 +498,7 @@ export fn kmain(at: usize) callconv(.c) noreturn {
     clock.init();
     // The other cores, where the board has them: let go once exec and the
     // tick's rate exist.
-    cpu1.cores = boards.cores;
+    cpu1.cores = runCores();
     startOthers(sys);
     note("counter %d.%d MHz (measured), tick %d Hz on vector %d, comparator %s", .{
         hardware.systimer.timebase_hz / 1_000_000,

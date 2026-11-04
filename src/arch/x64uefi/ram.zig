@@ -49,6 +49,27 @@ pub var reserved_count: usize = 0;
 /// Where DMA stops reaching, which the kernel sets from the board.
 pub var dma_limit: usize = 1 << 32;
 
+/// What the kernel took for itself before exec was built: the cores' own
+/// tables, which are as many as the machine has cores
+/// (`coretables.take`). It is RAM like any other and the map covers it;
+/// it is only kept out of what exec hands out.
+pub var taken: Range = .{ .start = 0, .end = 0 };
+
+/// `bytes` of RAM for the kernel's own use, whole pages, off the end of
+/// the largest range: where it is, or 0 where no range has room. Called
+/// once, before `regions`, and nothing frees it.
+pub fn take(bytes: usize) usize {
+    const want = (bytes + page - 1) & ~@as(usize, page - 1);
+    var biggest: ?*Range = null;
+    for (memory[0..memory_count]) |*range| {
+        if (range.end - range.start < want + smallest) continue;
+        if (biggest == null or range.end - range.start > biggest.?.end - biggest.?.start) biggest = range;
+    }
+    const range = biggest orelse return 0;
+    taken = .{ .start = range.end - want, .end = range.end };
+    return taken.start;
+}
+
 /// RAM's ranges.
 pub fn ranges() []const Range {
     return memory[0..memory_count];
@@ -83,8 +104,9 @@ const largest: usize = 1 << 31;
 const page = 4096;
 
 /// What is not free, each widened to whole pages: the kernel first, then
-/// page 0, the disk image and the reserved ranges, in no order.
-fn holes(buf: *[max_reserved + 3]Range) []const Range {
+/// page 0, the disk image, the cores' tables and the reserved ranges, in
+/// no order.
+fn holes(buf: *[max_reserved + 4]Range) []const Range {
     var count: usize = 0;
     buf[count] = .{ .start = @intFromPtr(sdk.exec.AbsExecBase) & ~@as(usize, page - 1), .end = layout.heapStart() };
     count += 1;
@@ -92,6 +114,10 @@ fn holes(buf: *[max_reserved + 3]Range) []const Range {
     count += 1;
     if (ramdisk.size != 0) {
         buf[count] = .{ .start = ramdisk.base, .end = ramdisk.base + ramdisk.size };
+        count += 1;
+    }
+    if (taken.end != taken.start) {
+        buf[count] = taken;
         count += 1;
     }
     for (reserved[0..reserved_count]) |range| {
@@ -107,7 +133,7 @@ fn holes(buf: *[max_reserved + 3]Range) []const Range {
 
 /// Regions for the bootstrap. The first one also holds SysBase.
 pub fn regions(buf: *[max_regions]exec.MemRegion) []const exec.MemRegion {
-    var hole_buf: [max_reserved + 3]Range = undefined;
+    var hole_buf: [max_reserved + 4]Range = undefined;
     const in_use = holes(&hole_buf);
     const kernel = in_use[0];
     var count: usize = 0;

@@ -110,9 +110,11 @@ pub const root = [_]Tag{
     .value(st.SYSTAG_ConsoleBase, 0x3F8),
     .value(st.SYSTAG_ConsoleClock, 1_843_200),
     .value(st.SYSTAG_ConsoleIrq, 4),
-    // As many as `-smp` gives the machine, up to four. The kernel runs on
-    // the boot core alone until it can start the others.
-    .value(st.SYSTAG_Cores, 8),
+    // Every core the machine has: a PC names no number, since its
+    // firmware's tables say how many there are and each machine answers
+    // for itself. The kernel runs on the boot core alone until it can
+    // start the others.
+    .value(st.SYSTAG_Cores, 0),
     .value(st.SYSTAG_ScreenWidth, screen.width),
     .value(st.SYSTAG_ScreenHeight, screen.height),
     .pointer(st.SYSTAG_Part, &gpu),

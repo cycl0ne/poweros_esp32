@@ -29,8 +29,10 @@ const HEADER_LENGTH = 4;
 const HEADER_REVISION = 8;
 const HEADER_CHECKSUM = 9;
 
-/// How many of each the reader records.
-pub const MAX_CORES = 16;
+/// How many of each the reader records. The cores are not among them:
+/// there are as many as the machine has, which is any number at all, so
+/// they are counted here and read again into the room the caller then has
+/// for them (`fillCores`).
 pub const MAX_IO_CONTROLLERS = 4;
 pub const MAX_OVERRIDES = 24;
 
@@ -66,10 +68,12 @@ pub const Facts = struct {
 
     /// Where a core's own interrupt controller is mapped.
     lapic_base: u64 = 0,
-    /// The cores' controller ids, the boot core's among them: only the
-    /// ones the firmware says may be used.
-    cores: [MAX_CORES]u32 = @splat(0),
+    /// How many cores the firmware says may be used, the boot core
+    /// among them, and where their description is so that their
+    /// controller ids can be read out of it (`fillCores`).
     core_count: u32 = 0,
+    madt: usize = 0,
+    madt_length: u32 = 0,
 
     io: [MAX_IO_CONTROLLERS]IoController = @splat(.{}),
     io_count: u32 = 0,
@@ -127,9 +131,33 @@ pub const Facts = struct {
     /// tables name none and the year's two digits are all there is.
     rtc_century: u8 = 0,
 
-    /// The cores' ids as a slice.
-    pub fn coreIds(facts: *const Facts) []const u32 {
-        return facts.cores[0..facts.core_count];
+    /// The cores' controller ids into `into`, as many of them as it
+    /// holds, by the walk that counted them: how many were written. The
+    /// description is in the firmware's own memory, which the kernel
+    /// keeps, so this may be asked at any time.
+    pub fn fillCores(facts: *const Facts, into: []u32) u32 {
+        if (facts.madt == 0) return 0;
+        var count: u32 = 0;
+        var at = facts.madt + MADT_ENTRIES;
+        const end = facts.madt + facts.madt_length;
+        while (at + 2 <= end and count < into.len) {
+            const kind = byteAt(at);
+            const size = byteAt(at + 1);
+            if (size < 2 or at + size > end) break;
+            switch (kind) {
+                MADT_LOCAL => if (size >= 8 and longAt(at + 4) & (CORE_ENABLED | CORE_CAPABLE) != 0) {
+                    into[count] = byteAt(at + 3);
+                    count += 1;
+                },
+                MADT_LOCAL_WIDE => if (size >= 16 and longAt(at + 8) & (CORE_ENABLED | CORE_CAPABLE) != 0) {
+                    into[count] = longAt(at + 4);
+                    count += 1;
+                },
+                else => {},
+            }
+            at += size;
+        }
+        return count;
     }
 
     /// The I/O controllers as a slice.
@@ -258,6 +286,8 @@ const CORE_CAPABLE: u32 = 1 << 1;
 
 fn takeInterrupts(facts: *Facts, table: usize, length: u32) void {
     facts.lapic_base = longAt(table + MADT_LAPIC);
+    facts.madt = table;
+    facts.madt_length = length;
     var at = table + MADT_ENTRIES;
     const end = table + length;
     while (at + 2 <= end) {
@@ -266,11 +296,7 @@ fn takeInterrupts(facts: *Facts, table: usize, length: u32) void {
         if (size < 2 or at + size > end) break;
         switch (kind) {
             MADT_LOCAL => if (size >= 8) {
-                const flags = longAt(at + 4);
-                if (flags & (CORE_ENABLED | CORE_CAPABLE) != 0 and facts.core_count < MAX_CORES) {
-                    facts.cores[facts.core_count] = byteAt(at + 3);
-                    facts.core_count += 1;
-                }
+                if (longAt(at + 4) & (CORE_ENABLED | CORE_CAPABLE) != 0) facts.core_count += 1;
             },
             MADT_IO => if (size >= 12 and facts.io_count < MAX_IO_CONTROLLERS) {
                 facts.io[facts.io_count] = .{ .address = longAt(at + 4), .first_line = longAt(at + 8) };
@@ -295,11 +321,7 @@ fn takeInterrupts(facts: *Facts, table: usize, length: u32) void {
                 facts.lapic_base = quadAt(at + 4);
             },
             MADT_LOCAL_WIDE => if (size >= 16) {
-                const flags = longAt(at + 8);
-                if (flags & (CORE_ENABLED | CORE_CAPABLE) != 0 and facts.core_count < MAX_CORES) {
-                    facts.cores[facts.core_count] = longAt(at + 4);
-                    facts.core_count += 1;
-                }
+                if (longAt(at + 8) & (CORE_ENABLED | CORE_CAPABLE) != 0) facts.core_count += 1;
             },
             else => {},
         }

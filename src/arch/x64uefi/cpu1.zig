@@ -23,6 +23,7 @@
 //! before the next, because exec counts the cores that run.
 
 const cpu = @import("cpu.zig");
+const coretables = @import("coretables.zig");
 const desc = @import("desc.zig");
 const apic = @import("apic.zig");
 const timer = @import("timer.zig");
@@ -30,8 +31,6 @@ const exec = @import("../../rom/libs/exec/exec.zig");
 const exec_base = @import("../../rom/libs/exec/exec_base.zig");
 const hardware = @import("sdk").hardware;
 const lapic = hardware.apic;
-
-const max_cores = cpu.max_cores;
 
 extern fn _start_other() callconv(.c) void;
 
@@ -61,8 +60,16 @@ pub var in_machine: u32 = 1;
 /// firmware called none of it free.
 pub var low_page: usize = 0;
 
-/// Each core's stack top, for `_start_other` to load.
-export var x64_core_stacks: [max_cores]usize = @splat(0);
+/// Each core's stack top, for `_start_other` to load: as many as the
+/// machine has cores (`coretables.zig`), reached through the pointer
+/// since they are not in the kernel's own image.
+export var x64_core_stacks_at: [*]usize = &one_stack;
+var one_stack: [1]usize = .{0};
+
+/// This chip's share of the cores' tables.
+pub fn layTables(bump: *coretables.Bump, count: u32) void {
+    if (bump.take(usize, count)) |at| x64_core_stacks_at = at;
+}
 
 /// How many of the other cores have said they are up.
 var up_count: u32 = 0;
@@ -85,18 +92,32 @@ pub fn isUp() bool {
     return @atomicLoad(u32, &up_count, .acquire) != 0;
 }
 
-/// The cores the firmware's tables name, the boot core left out, made
-/// cores 1 on - as many as exec keeps state for. Their controller ids are
-/// what starting one wants, and how many were named is kept as it was,
-/// since the machine's count and the system's are not the same number.
-pub fn takeCores(ids: []const u32, boot: u32) void {
-    if (ids.len != 0) in_machine = @intCast(ids.len);
-    for (ids) |id| {
-        if (id == boot) continue;
-        if (found == max_cores) break;
-        cpu.lapic_ids[found] = id;
-        found += 1;
+/// How many cores the firmware's tables named, core 0's included: what
+/// the kernel lays the cores' tables out for, before it knows anything
+/// else about them. 1 where the tables named none.
+pub fn countCores(counted: u32) u32 {
+    in_machine = @max(counted, 1);
+    return in_machine;
+}
+
+/// The cores' controller ids into the tables laid out for them, the boot
+/// core's first - it is core 0 whatever order the firmware listed them
+/// in - and as many of the others as there is room for. Their ids are
+/// what starting one wants.
+///
+/// INPUTS:
+/// - `facts` - the firmware's tables, which hold the cores' description.
+/// - `boot` - this core's own controller id.
+pub fn takeCores(facts: *const hardware.acpi.Facts, boot: u32) void {
+    const written = facts.fillCores(cpu.lapic_ids[0..coretables.cores]);
+    found = @max(written, 1);
+    var at: u32 = 0;
+    while (at < written) : (at += 1) {
+        if (cpu.lapic_ids[at] != boot) continue;
+        cpu.lapic_ids[at] = cpu.lapic_ids[0];
+        break;
     }
+    cpu.lapic_ids[0] = boot;
 }
 
 /// Core `core` started on the stack that ends at `stack_top` (16-byte
@@ -114,7 +135,7 @@ pub fn start(core: u32, stack_top: usize) bool {
         last_answer = ANSWER_NO_MAP;
         return false;
     }
-    @atomicStore(usize, &x64_core_stacks[core], stack_top, .release);
+    @atomicStore(usize, &x64_core_stacks_at[core], stack_top, .release);
     layTrampoline(core, @truncate(map), stack_top);
     release(cpu.lapic_ids[core]);
     const since = timer.uptimeUs();

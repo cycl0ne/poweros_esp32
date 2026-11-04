@@ -31,7 +31,7 @@ const lapic = hardware.apic;
 const mmio = hardware.mmio;
 const systimer = hardware.systimer;
 const intbits = hardware.intbits;
-const max_cores = @import("cpu.zig").max_cores;
+const coretables = @import("coretables.zig");
 
 /// The vector the tick comes in on, which is this machine's answer to the
 /// interrupt a tick is on.
@@ -48,9 +48,17 @@ pub var cpu_hz: u32 = 0;
 pub var tick_hz: u32 = 0;
 var period: u64 = 0;
 /// Each core's ticks; core 0's are the system's.
-var ticks: [max_cores]u32 = @splat(0);
+var ticks: [*]u32 = &one_ticks;
+var one_ticks: [1]u32 = .{0};
 /// Each core's next tick, in the counter's units.
-var next_tick: [max_cores]u64 = @splat(0);
+var next_tick: [*]u64 = &one_next_tick;
+var one_next_tick: [1]u64 = .{0};
+
+/// This chip's share of the cores' tables.
+pub fn layTables(bump: *coretables.Bump, count: u32) void {
+    if (bump.take(u32, count)) |at| ticks = at;
+    if (bump.take(u64, count)) |at| next_tick = at;
+}
 /// Another core changed an alarm: core 0 sets its comparator again at its
 /// cross-core interrupt.
 var rethink_asked: u32 = 0;

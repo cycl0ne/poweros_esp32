@@ -59,7 +59,9 @@ pub const SYSTAG_LogSize = SYSTAG_Dummy + 11;
 pub const SYSTAG_LogMirror = SYSTAG_Dummy + 12;
 /// How many cores the kernel runs tasks on: 1 or 2 on the ESP32s, up to 4
 /// on a RISC-V 64 machine, which uses as many as its device tree has harts
-/// for. Absent, 1. The build's `-Dcores` has the last word.
+/// for. 0 says every core the machine has, which is what a board whose
+/// machines differ says - a PC names no number, since each one answers for
+/// itself. Absent, 1. The build's `-Dcores` has the last word.
 pub const SYSTAG_Cores = SYSTAG_Dummy + 13;
 /// The PSRAM's bus clock in MHz: as fast as the board's wiring holds it
 /// without errors. The ESP32-P4 runs it at 200 or 80; absent, 80.

@@ -23,20 +23,33 @@ const desc = @import("desc.zig");
 const exec = @import("../../rom/libs/exec/exec.zig");
 const exec_base = @import("../../rom/libs/exec/exec_base.zig");
 const trap = @import("trap.zig");
+const coretables = @import("coretables.zig");
 
-pub const hardware: exec.TaskHardware = .{
+pub var hardware: exec.TaskHardware = .{
     .init_context = initContext,
     .switch_now = switchNow,
     .idle = idle,
     .push_exception = pushException,
     .leave_exception = leaveException,
     .call_on_stack = callOnStack,
-    .leaving = &task_leaving,
+    .leaving = &one_leaving,
 };
 
 /// The task each core's dispatcher is switching away from, until start.S
-/// has moved to the next task's stack, and clears it.
-export var task_leaving: [cpu.max_cores]usize = @splat(0);
+/// has moved to the next task's stack, and clears it: one word a core, as
+/// many as the machine has (`coretables.zig`). The trap exit reads the
+/// pointer rather than an array's address, since the words are not in the
+/// kernel's own image.
+export var task_leaving_at: [*]usize = &one_leaving;
+var one_leaving: [1]usize = .{0};
+
+/// This chip's share of the cores' tables.
+pub fn layTables(bump: *coretables.Bump, count: u32) void {
+    if (bump.take(usize, count)) |at| {
+        task_leaving_at = at;
+        hardware.leaving = at[0..count];
+    }
+}
 
 /// RFLAGS of a task that has not run yet: bit 1 is always set, and the
 /// interrupts are on.

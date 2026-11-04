@@ -112,7 +112,9 @@ pub fn fact(comptime tag: Tag, comptime default: usize) usize {
 }
 
 /// How many cores the kernel runs tasks on: the build's `-Dcores`, or
-/// else the board's SYSTAG_Cores (1 without it).
+/// else the board's SYSTAG_Cores (1 without it). 0 is the board saying
+/// every core the machine has, which the kernel reads from the machine
+/// itself.
 pub const cores: u32 = if (build_options.cores != 0) build_options.cores else fact(st.SYSTAG_Cores, 1);
 
 /// A string from the board's root list (SYSTAG_Name).

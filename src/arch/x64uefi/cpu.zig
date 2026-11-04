@@ -21,6 +21,7 @@
 //! leaves puts back what the resumed frame holds.
 
 const exec_base = @import("../../rom/libs/exec/exec_base.zig");
+const coretables = @import("coretables.zig");
 const hardware = @import("sdk").hardware;
 
 pub const ccount = hardware.cpu.ccount;
@@ -59,30 +60,41 @@ pub const CoreBlock = extern struct {
     lapic_id: u64 = 0,
 };
 
-/// How many cores this kernel keeps tables of its own for - the words a
-/// core leaves behind, its trap state, its timer, its task segment and its
-/// stack for a fault. A machine of this kind says in its tables how many
-/// it has, and that is any number at all, so the kernel takes as many as
-/// there is room for here and says what it found beside it. start.S has
-/// the same figure (MAX_CORES) for the tables it lays out.
-pub const max_cores = 8;
+/// Core 0's block, which the entry points GS at before anything reads it
+/// (start.S, which takes its address): one core's worth until the cores'
+/// tables are laid out, since how many cores the machine has is not known
+/// that early.
+pub export var core_blocks: [1]CoreBlock = .{.{}};
 
-/// Each core's block. Core 0's is set up by `takeCore` before anything
-/// reads it, and the entry points GS at the array before that: it is
-/// exported because the entry takes its address (start.S).
-pub export var core_blocks: [max_cores]CoreBlock = @splat(.{});
+/// Every core's block, as many as the machine has (`coretables.zig`).
+pub var blocks: [*]CoreBlock = &core_blocks;
 
 /// Each core's local controller id, as the firmware's tables name them;
-/// core 0's is read from its own controller.
-pub var lapic_ids: [max_cores]u32 = @splat(0);
+/// core 0's is its own controller's.
+pub var lapic_ids: [*]u32 = &one_lapic_id;
+var one_lapic_id: [1]u32 = .{0};
+
+/// This chip's share of the cores' tables.
+pub fn layTables(bump: *coretables.Bump, count: u32) void {
+    if (bump.take(CoreBlock, count)) |at| blocks = at;
+    if (bump.take(u32, count)) |at| lapic_ids = at;
+}
+
+/// Core 0 moved onto them: what its own block held, and GS pointed at its
+/// place in the table.
+pub fn useTables() void {
+    blocks[0] = core_blocks[0];
+    lapic_ids[0] = one_lapic_id[0];
+    writeMsr(MSR_GS_BASE, @intFromPtr(&blocks[0]));
+}
 
 /// This core made core `core`: its block filled and GS pointed at it, so
 /// `coreId` answers from here on. Nothing may read the core's number
 /// before this.
 pub fn takeCore(core: u32, lapic_id: u32) void {
-    core_blocks[core] = .{ .core = core, .lapic_id = lapic_id };
+    blocks[core] = .{ .core = core, .lapic_id = lapic_id };
     lapic_ids[core] = lapic_id;
-    writeMsr(MSR_GS_BASE, @intFromPtr(&core_blocks[core]));
+    writeMsr(MSR_GS_BASE, @intFromPtr(&blocks[core]));
     takePat();
 }
 

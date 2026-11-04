@@ -25,7 +25,7 @@ const cpu = @import("cpu.zig");
 const cpu1 = @import("cpu1.zig");
 const apic = @import("apic.zig");
 const exec = @import("../../rom/libs/exec/exec.zig");
-const max_cores = @import("cpu.zig").max_cores;
+const coretables = @import("coretables.zig");
 
 /// The hold asked for - its count above the low byte, the asking core and
 /// one in it - or 0; the last hold let go; and how many cores are parked.
@@ -35,7 +35,8 @@ var parked: u32 = 0;
 /// The holds counted, for the next one's word.
 var holds: u32 = 0;
 /// The hold each core last parked for and was let go by.
-var parked_for: [max_cores]u32 = @splat(0);
+var parked_for: [*]u32 = &one_parked_for;
+var one_parked_for: [1]u32 = .{0};
 /// How many more times the holding core has asked while it holds: an alert
 /// holds the other cores, and the debugger it offers holds them again.
 var nested: u32 = 0;
@@ -96,7 +97,14 @@ pub fn releaseOther() void {
 }
 
 /// The longest each core was parked, in cycles.
-pub var parked_max: [max_cores]u32 = @splat(0);
+pub var parked_max: [*]u32 = &one_parked_max;
+var one_parked_max: [1]u32 = .{0};
+
+/// This chip's share of the cores' tables.
+pub fn layTables(bump: *coretables.Bump, count: u32) void {
+    if (bump.take(u32, count)) |at| parked_for = at;
+    if (bump.take(u32, count)) |at| parked_max = at;
+}
 
 /// Parked if another core asks, and has not let this one go yet: from the
 /// cross-core interrupt, and from every spin for another core.

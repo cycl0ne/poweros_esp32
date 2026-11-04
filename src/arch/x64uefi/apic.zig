@@ -36,7 +36,7 @@ const exec_base = @import("../../rom/libs/exec/exec_base.zig");
 const trap = @import("trap.zig");
 const rendezvous = @import("rendezvous.zig");
 
-const max_cores = cpu.max_cores;
+const coretables = @import("coretables.zig");
 
 pub const interrupt_hardware: exec.InterruptHardware = .{
     .enable_source = enableSource,
@@ -97,8 +97,10 @@ pub var line_flags: [intbits.INTB_GSI_COUNT]LineFlags = blk: {
 };
 
 /// Each core's software interrupts, by what they carry.
-var softint_pending: [max_cores]u32 = @splat(0);
-var cross_core_pending: [max_cores]u32 = @splat(0);
+var softint_pending: [*]u32 = &one_softint_pending;
+var cross_core_pending: [*]u32 = &one_cross_core_pending;
+var one_softint_pending: [1]u32 = .{0};
+var one_cross_core_pending: [1]u32 = .{0};
 
 /// Where a PCI function's message goes to reach core `core`: the address
 /// the local controllers answer at, with that core's controller in it.
@@ -158,7 +160,8 @@ fn initCore() void {
 }
 
 /// Each core counts its cross-core interrupts.
-pub var cross_core_count: [max_cores]u32 = @splat(0);
+pub var cross_core_count: [*]u32 = &one_cross_core_count;
+var one_cross_core_count: [1]u32 = .{0};
 
 /// The cross-core interrupt raised on `core`: its flag, and the vector to
 /// its controller. The flag is out before the vector is - this
@@ -207,7 +210,16 @@ fn onSource(vector: u32) void {
     dispatch(source);
 }
 
-var reported: [max_cores]bool = @splat(false);
+var reported: [*]bool = &one_reported;
+var one_reported: [1]bool = .{false};
+
+/// This chip's share of the cores' tables.
+pub fn layTables(bump: *coretables.Bump, count: u32) void {
+    if (bump.take(u32, count)) |at| softint_pending = at;
+    if (bump.take(u32, count)) |at| cross_core_pending = at;
+    if (bump.take(u32, count)) |at| cross_core_count = at;
+    if (bump.take(bool, count)) |at| reported = at;
+}
 
 /// `source`'s chain run, and how long it took kept.
 pub fn dispatch(source: u32) void {

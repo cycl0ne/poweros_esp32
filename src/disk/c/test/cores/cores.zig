@@ -38,7 +38,7 @@ const Task = exec.Task;
 const Printf = dos.stdio.Printf;
 
 const NAME = "Cores";
-const VERSION_STRING = "\x00$VER: Cores 1.1 (04.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Cores 1.2 (04.11.2026)\r\n";
 const TEMPLATE = "SECONDS/N,TASKS/N,PIN/S,FREE/S";
 
 /// The library every worker opens and closes: one in the ROM, which
@@ -47,7 +47,9 @@ const test_library = "utility.library";
 
 const default_seconds = 5;
 const default_tasks = 4;
-const max_tasks = 8;
+/// More than a machine here has cores, so that every core can be given
+/// several tasks to go round with.
+const max_tasks = 64;
 const worker_stack = 4096;
 /// How many times a worker looks, inside a section, whether it is still
 /// alone there: long enough for another core to come in if it could.
