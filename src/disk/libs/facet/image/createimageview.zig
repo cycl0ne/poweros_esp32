@@ -42,7 +42,8 @@ const ImageView = _image.ImageView;
 /// `texture_cube`, and `3d` the whole of a 3D image, for `texture_3d`.
 ///
 /// Of type `cube_array` it is as many cubes as its layers divided by six, of
-/// such an image, for `texture_cube_array`: its layers are a multiple of six
+/// such an image, for `texture_cube_array` and, since 1.53,
+/// `texture_cube_array_sampled`: its layers are a multiple of six
 /// and its first layer begins a cube, so `base_array_layer` is a multiple of
 /// six as well (`PhysicalDeviceFeatures.cube_arrays`, since 1.46).
 ///

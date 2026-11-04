@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.19 (04.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.20 (04.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -3064,6 +3064,25 @@ const Held = struct {
         }
     }
 
+    /// A cube of an array: the instance is the face, and every sixth of
+    /// it the cube - a fourth coordinate (since 1.53).
+    fn cubedArray(vertices: *const facet.shader.Vertices) callconv(.c) void {
+        for (0..vertices.count) |k| {
+            const p = vertices.input(@intCast(k), 0);
+            const a = p[0];
+            const b = p[1];
+            const towards: [3]f32 = switch (vertices.instance % 6) {
+                0 => .{ 1, -b, -a },
+                1 => .{ -1, -b, a },
+                2 => .{ a, 1, b },
+                3 => .{ a, -1, -b },
+                4 => .{ a, -b, 1 },
+                else => .{ -a, -b, -1 },
+            };
+            vertices.output(@intCast(k))[0..8].* = .{ p[0], p[1], p[2], 1, towards[0], towards[1], towards[2], @floatFromInt(vertices.instance / 6) };
+        }
+    }
+
     fn sliced(vertices: *const facet.shader.Vertices) callconv(.c) void {
         for (0..vertices.count) |k| {
             const p = vertices.input(@intCast(k), 0);
@@ -3087,6 +3106,8 @@ const Held = struct {
         facet.shader.fixedFragment("cubeby", .{ .kind = .texture_cube_sampled }),
         facet.shader.vertex("volumeby", &sliced, 3),
         facet.shader.fixedFragment("volumeby", .{ .kind = .texture_3d_sampled }),
+        facet.shader.vertex("cubesby", &cubedArray, 4),
+        facet.shader.fixedFragment("cubesby", .{ .kind = .texture_cube_array_sampled }),
         facet.shader.vertex("wideby", &wide, 2),
         facet.shader.fixedFragment("wideby", .{ .kind = .texture_sampled }),
     };
@@ -3098,7 +3119,8 @@ const Held = struct {
     }
 };
 
-/// The sampler forms past 2D of 1.49, and a sampler the set layout holds.
+/// The sampler forms past 2D of 1.49, the array of cubes of 1.53, and a
+/// sampler the set layout holds.
 fn heldChecks(probe: *Probe) void {
     const fb = probe.fb;
     const device = probe.device.?;
@@ -3164,7 +3186,7 @@ fn heldChecks(probe: *Probe) void {
     // them is refused there and the program draws on the cores instead.
     if (!probe.features.samplers) {
         var refused = false;
-        for ([3][*:0]const u8{ "arrayby", "cubeby", "volumeby" }) |name| {
+        for ([4][*:0]const u8{ "arrayby", "cubeby", "volumeby", "cubesby" }) |name| {
             if (pipelineOf(probe, pass, module.?, written_pipes.?, .{ .attributes = &attributes, .stride = 12, .name = name }) == null) refused = true else refused = false;
             if (!refused) break;
         }
@@ -3177,12 +3199,18 @@ fn heldChecks(probe: *Probe) void {
         return probe.check(false, "an image of six layers");
     const volume_image = probe.bound(.{ .format = .b8g8r8a8_unorm, .image_type = .@"3d", .extent = .{ .width = across, .height = across, .depth = 4 }, .usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST }, 0) orelse
         return probe.check(false, "a 3D image of four slices");
+    const cubes_image = probe.bound(.{ .flags = facet.IMAGE_CREATE_CUBE_COMPATIBLE, .format = .b8g8r8a8_unorm, .extent = .{ .width = across, .height = across }, .array_layers = 12, .usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST }, 0) orelse
+        return probe.check(false, "an image of two cubes");
     const array_view = probe.viewed(.{ .image = cube_image, .format = .b8g8r8a8_unorm, .view_type = .@"2d_array", .subresource_range = .{ .layer_count = 6 } }) orelse
         return probe.check(false, "a view of it as an array");
     const cube_view = probe.viewed(.{ .image = cube_image, .format = .b8g8r8a8_unorm, .view_type = .cube, .subresource_range = .{ .layer_count = 6 } }) orelse
         return probe.check(false, "and one as a cube");
     const volume_view = probe.viewed(.{ .image = volume_image, .format = .b8g8r8a8_unorm, .view_type = .@"3d" }) orelse
         return probe.check(false, "a view of the 3D image");
+    const cubes_view = probe.viewed(.{ .image = cubes_image, .format = .b8g8r8a8_unorm, .view_type = .cube_array, .subresource_range = .{ .layer_count = 12 } }) orelse
+        return probe.check(false, "a view of the two cubes as an array of them");
+    const second_view = probe.viewed(.{ .image = cubes_image, .format = .b8g8r8a8_unorm, .view_type = .cube_array, .subresource_range = .{ .base_array_layer = 6, .layer_count = 6 } }) orelse
+        return probe.check(false, "and one that begins at the second cube");
 
     const texels, const texel_bytes = probe.buffer(layer_bytes * 6, facet.BUFFER_USAGE_TRANSFER_SRC) orelse
         return probe.check(false, "a buffer the layers come from");
@@ -3193,9 +3221,18 @@ fn heldChecks(probe: *Probe) void {
     var faces: [6]facet.BufferImageCopy = undefined;
     for (&faces, 0..) |*face, k| face.* = .{ .buffer_offset = k * layer_bytes, .image_subresource = .{ .base_array_layer = @intCast(k) }, .image_extent = .{ .width = across, .height = across } };
     const slices = facet.BufferImageCopy{ .image_extent = .{ .width = across, .height = across, .depth = 4 } };
+    // The second cube takes the first's layers backwards, so that its
+    // faces are told apart from them.
+    var cubes: [12]facet.BufferImageCopy = undefined;
+    for (&cubes, 0..) |*face, k| face.* = .{
+        .buffer_offset = (if (k < 6) k else 11 - k) * layer_bytes,
+        .image_subresource = .{ .base_array_layer = @intCast(k) },
+        .image_extent = .{ .width = across, .height = across },
+    };
     var commands = probe.record() orelse return probe.check(false, "a recording");
     fb.CmdCopyBufferToImage(commands, texels, cube_image, .general, 6, &faces);
     fb.CmdCopyBufferToImage(commands, texels, volume_image, .general, 1, @ptrCast(&slices));
+    fb.CmdCopyBufferToImage(commands, texels, cubes_image, .general, 12, &cubes);
     if (!probe.submit()) return probe.check(false, "the copies into them submitted");
 
     var slot: usize = 0;
@@ -3234,6 +3271,8 @@ fn heldChecks(probe: *Probe) void {
         return probe.check(false, "one whose form reads a cube through a sampler");
     const of_volume = pipelineOf(probe, pass, module.?, written_pipes.?, .{ .attributes = &attributes, .stride = 12, .name = "volumeby" }) orelse
         return probe.check(false, "one whose form reads a 3D texture through a sampler");
+    const of_cubes = pipelineOf(probe, pass, module.?, written_pipes.?, .{ .attributes = &attributes, .stride = 12, .name = "cubesby" }) orelse
+        return probe.check(false, "one whose form reads a cube of an array through a sampler");
     const of_wide = pipelineOf(probe, pass, module.?, written_pipes.?, .{ .attributes = &attributes, .stride = 12, .name = "wideby" }) orelse
         return probe.check(false, "one that reads past the texture's edges");
     const of_held = pipelineOf(probe, pass, module.?, held_pipes.?, .{ .attributes = &attributes, .stride = 12, .name = "wideby" }) orelse
@@ -3259,6 +3298,14 @@ fn heldChecks(probe: *Probe) void {
         .{ .pipeline = of_cube, .view = cube_view, .instance = 3, .sets = &written_set, .layout = written_pipes.?, .want = Held.layerColor(3), .at = middle, .says = "and another face of it" },
         .{ .pipeline = of_volume, .view = volume_view, .instance = 0, .sets = &written_set, .layout = written_pipes.?, .want = Held.layerColor(0), .at = middle, .says = "a slice of a 3D texture read through a sampler" },
         .{ .pipeline = of_volume, .view = volume_view, .instance = 3, .sets = &written_set, .layout = written_pipes.?, .want = Held.layerColor(3), .at = middle, .says = "and another slice of it" },
+        // An array of cubes through a sampler (since 1.53): the second
+        // cube's faces carry the first cube's layers backwards.
+        .{ .pipeline = of_cubes, .view = cubes_view, .instance = 0, .sets = &written_set, .layout = written_pipes.?, .want = Held.layerColor(0), .at = middle, .says = "a face of a cube of an array read through a sampler" },
+        .{ .pipeline = of_cubes, .view = cubes_view, .instance = 4, .sets = &written_set, .layout = written_pipes.?, .want = Held.layerColor(4), .at = middle, .says = "and another face of that cube" },
+        .{ .pipeline = of_cubes, .view = cubes_view, .instance = 6, .sets = &written_set, .layout = written_pipes.?, .want = Held.layerColor(5), .at = middle, .says = "the first face of the second cube" },
+        .{ .pipeline = of_cubes, .view = cubes_view, .instance = 9, .sets = &written_set, .layout = written_pipes.?, .want = Held.layerColor(2), .at = middle, .says = "and another face of that one" },
+        .{ .pipeline = of_cubes, .view = cubes_view, .instance = 12, .sets = &written_set, .layout = written_pipes.?, .want = Held.layerColor(5), .at = middle, .says = "a cube past the last reads as the last" },
+        .{ .pipeline = of_cubes, .view = second_view, .instance = 1, .sets = &written_set, .layout = written_pipes.?, .want = Held.layerColor(4), .at = middle, .says = "a view that begins at the second cube reads it as cube 0" },
         // Past the edges, with the tiling sampler written into the set:
         // the texture again.
         .{ .pipeline = of_wide, .view = cube_view, .instance = 0, .sets = &written_set, .layout = written_pipes.?, .want = Held.layerColor(0), .at = corner, .says = "the written sampler tiles past the texture's edge" },

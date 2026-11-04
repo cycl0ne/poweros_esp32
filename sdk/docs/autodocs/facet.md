@@ -4320,7 +4320,8 @@ Of type `2d` it is one layer, of a texture with any number of them. Of type
 `texture_cube`, and `3d` the whole of a 3D image, for `texture_3d`.
 
 Of type `cube_array` it is as many cubes as its layers divided by six, of
-such an image, for `texture_cube_array`: its layers are a multiple of six
+such an image, for `texture_cube_array` and, since 1.53,
+`texture_cube_array_sampled`: its layers are a multiple of six
 and its first layer begins a cube, so `base_array_layer` is a multiple of
 six as well (`PhysicalDeviceFeatures.cube_arrays`, since 1.46).
 
@@ -4796,8 +4797,9 @@ transparent black, opaque black and opaque white.
 
 A sampler is made on either device, but is read by the sampling the
 cores do: a pipeline whose fragment form samples through one
-(`shader.FixedKind.texture_sampled`, `texture_shadow`, and since 1.49
-`texture_array_sampled`, `texture_cube_sampled` and `texture_3d_sampled`)
+(`shader.FixedKind.texture_sampled`, `texture_shadow`, since 1.49
+`texture_array_sampled`, `texture_cube_sampled` and `texture_3d_sampled`,
+and since 1.53 `texture_cube_array_sampled`)
 is refused on a device whose `PhysicalDeviceFeatures.samplers` is false.
 
 **CONTEXT**

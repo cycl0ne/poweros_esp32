@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.52**, so that a program need not find out by failing. It covers the API.
+1.53**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -77,8 +77,11 @@ time. What is left out:
   face's edges: a bilinear sample on a seam mixes the edge's texels rather
   than reading over into the next face, which `texture_cube` does. Away
   from the seams the two are the same.
-- **An array of cubes has no form that reads a sampler**: `cube_array`
-  takes a fourth coordinate, and `layeredBy` carries three.
+- An array of cubes reads a sampler since 1.53
+  (`shader.FixedKind.texture_cube_array_sampled`), at the four
+  coordinates `texture_cube_array` takes: the direction, and which cube,
+  the nearest there is. Inside one face of that cube, as a single cube's
+  sampled form is, so its seams read the same way.
 - There is no border colour but transparent black, opaque black and opaque
   white, which are all of Vulkan 1.0's six: an int border and a float
   border are the same here, a texel being read as 0 to 1 whatever its
@@ -562,13 +565,17 @@ Of textures:
   half as deep as the one before it, never below one slice, and each slice
   carries the whole of its own pyramid - so a level past the first leaves
   the slices past its depth unread, about a sixth of the memory wasted at
-  the deepest level. A sampler's own 3D path (`texture.sampleVolumeBy`) is
-  not wired to a form yet and still reads the whole depth at every level.
+  the deepest level. A sampler reads such a texture since 1.49
+  (`texture_3d_sampled`), but its 3D path takes the slice from the whole
+  depth at every level, so a 3D texture of levels read through a sampler
+  samples the slices of level 0.
 - An array of cubes since 1.46: a view of type `cube_array` over a
   multiple of six layers, read by a form of
   `shader.FixedKind.texture_cube_array` at four coordinates - the
   direction and which cube, the nearest there is
-  (`PhysicalDeviceFeatures.cube_arrays`, the cores). The V3D has no QPU
+  (`PhysicalDeviceFeatures.cube_arrays`, the cores), and since 1.53 by
+  `texture_cube_array_sampled`, the same four through the sampler bound
+  beside it. The V3D has no QPU
   program that reads a fourth coordinate, so it refuses the view and the
   pipeline, and such a draw goes to the cores.
 - ETC2 and EAC since 1.46, unpacked into 8888 as they are copied in on

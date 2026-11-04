@@ -522,9 +522,26 @@ pub const LIBRARY_VERSION = 1;
 /// and the same of the image: memory something is behind, a transient one
 /// having none, which CreateFramebuffer says. Where the tiles can be
 /// shared they still are, and that pass pays nothing.
+/// 53: an array of cubes read through the sampler bound beside it
+/// (`shader.FixedKind.texture_cube_array_sampled`), at the four
+/// coordinates `texture_cube_array` takes: the direction, and which cube,
+/// the nearest there is. It was the one shape with no sampler form left
+/// after 1.49, which gave the other three theirs, because it takes a
+/// fourth coordinate where `shader.layeredBy` carried three; now that
+/// function reads a fifth plane for the forms that want it.
+/// The sample is taken inside the face of that cube the direction falls
+/// on, its own u and v and their steps the face's, as a single cube's
+/// sampled form has it - so the sampler's edges are that face's and a
+/// bilinear sample on a seam mixes the edge's texels, where
+/// `texture_cube_array` reads over the seam into the next face of the same
+/// cube. The cube is picked a pixel at a time, so a quad may read four
+/// cubes, and the level is the quad's.
+/// Only the cores (`PhysicalDeviceFeatures.samplers` and `cube_arrays`):
+/// the V3D has no QPU program that reads a sampler, nor one that reads a
+/// fourth coordinate, so it refuses such a pipeline twice over.
 /// What stays: `fifo` is the one present mode, there being no way to ask a
 /// display to show a buffer before its next frame; one queue family of one
 /// queue; a counter of 32 bits, for want of a 64-bit atomic on every
 /// machine the library runs on; and no point mode in tessellation, there
 /// being no point rasterization at all.
-pub const LIBRARY_REVISION = 52;
+pub const LIBRARY_REVISION = 53;

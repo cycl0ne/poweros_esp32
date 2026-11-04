@@ -404,7 +404,8 @@ fn makePipeline(pipeline: *Pipeline) callconv(.c) facet.Result {
     // neither yet, so such a pipeline is refused here and drawn on the
     // cores.
     // Nor is there one for a cube of an array, which reads a fourth
-    // coordinate (since 1.46).
+    // coordinate (since 1.46) - `texture_cube_array_sampled` reads a
+    // sampler besides, so `needsSampler` already refuses it (since 1.53).
     if (fixed.kind == .none or fixed.kind == .texture_cube_array or fixed.discards() or fixed.needsSampler() or pipeline.varyings != fixed.varyings()) return .error_feature_not_present;
     return .success;
 }

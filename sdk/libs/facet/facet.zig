@@ -362,8 +362,9 @@ pub const PhysicalDeviceFeatures = extern struct {
     dynamic_descriptors: bool = false,
     /// The fixed forms that sample through the sampler bound beside the
     /// texture run here - `shader.FixedKind.texture_sampled`,
-    /// `texture_shadow`, and since 1.49 `texture_array_sampled`,
-    /// `texture_cube_sampled` and `texture_3d_sampled` - and with them
+    /// `texture_shadow`, since 1.49 `texture_array_sampled`,
+    /// `texture_cube_sampled` and `texture_3d_sampled`, and since 1.53
+    /// `texture_cube_array_sampled` - and with them
     /// everything a sampler says: the two
     /// levels round a point mixed, a bias on the level and a clamp,
     /// mirrored and bordered edges, and a comparison with a reference. A
@@ -435,11 +436,12 @@ pub const PhysicalDeviceFeatures = extern struct {
     kept_floats: bool = false,
     /// Cubes in an array: an image of CUBE_COMPATIBLE whose layers are a
     /// multiple of six, a view of `ImageViewType.cube_array` over them, and
-    /// the fixed form that samples one of them
+    /// the fixed forms that sample one of them
     /// (`shader.FixedKind.texture_cube_array`, varyings x, y, z and which
-    /// cube). False where both the view and such a pipeline are refused -
-    /// Vulkan's `imageCubeArray`. The cores have it since 1.46; no QPU
-    /// program of the V3D reads the fourth coordinate.
+    /// cube, and since 1.53 `texture_cube_array_sampled`, the same through
+    /// a sampler). False where both the view and such a pipeline are
+    /// refused - Vulkan's `imageCubeArray`. The cores have it since 1.46;
+    /// no QPU program of the V3D reads the fourth coordinate.
     cube_arrays: bool = false,
     /// ETC2 and EAC: `etc2_r8g8b8_unorm_block`,
     /// `etc2_r8g8b8a1_unorm_block`, `etc2_r8g8b8a8_unorm_block`,
@@ -901,7 +903,8 @@ pub const ImageViewType = enum(u32) {
     @"2d_array" = 5,
     /// Cubes one after another, six layers to each: the view's layers are a
     /// multiple of six and its first a multiple of six, for
-    /// `shader.FixedKind.texture_cube_array`. (Since 1.46.)
+    /// `shader.FixedKind.texture_cube_array` and, since 1.53,
+    /// `texture_cube_array_sampled`. (Since 1.46.)
     cube_array = 6,
     _,
 };

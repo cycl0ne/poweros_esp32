@@ -254,6 +254,13 @@ pub const FixedKind = enum(u8) {
     /// the two slices round the point mixed where the filter is bilinear.
     /// (Since 1.49.)
     texture_3d_sampled = 13,
+    /// One cube of an array of them as the sampler bound beside it says:
+    /// varyings x, y and z, the direction, and then which cube, as
+    /// `texture_cube_array` has them. The sample is taken inside the face
+    /// the direction falls on, that cube's own, so the sampler's edges are
+    /// that face's - where `texture_cube_array` reads over the seam into
+    /// the next face of the same cube. (Since 1.53.)
+    texture_cube_array_sampled = 14,
 };
 
 /// Under this alpha, 0 to 255, `texture_cutout` drops a pixel.
@@ -275,7 +282,7 @@ pub const Fixed = struct {
             .texture_color => 6,
             .texture_array, .texture_cube, .texture_3d, .texture_shadow => 3,
             .texture_array_sampled, .texture_cube_sampled, .texture_3d_sampled => 3,
-            .texture_cube_array => 4,
+            .texture_cube_array, .texture_cube_array_sampled => 4,
         };
     }
 
@@ -286,8 +293,10 @@ pub const Fixed = struct {
     pub fn needsSampler(fixed: Fixed) bool {
         return switch (fixed.kind) {
             .texture_sampled, .texture_shadow => true,
-            // The forms past 2D that read one (since 1.49).
+            // The forms past 2D that read one (since 1.49), and the
+            // array of cubes (since 1.53).
             .texture_array_sampled, .texture_cube_sampled, .texture_3d_sampled => true,
+            .texture_cube_array_sampled => true,
             else => false,
         };
     }
@@ -326,7 +335,7 @@ pub fn fixedFragment(name: [*:0]const u8, comptime fixed: Fixed) Entry {
                 .texture_cutout => cutout(fixed.sampling, fragments, fragments.resources.sampled(0, 0, 0)),
                 .texture_color => modulated(fixed.sampling, fragments, fragments.resources.sampled(0, 0, 0)),
                 .texture_array, .texture_cube, .texture_3d, .texture_cube_array => layered(fixed.kind, fixed.sampling, fragments, fragments.resources.sampled(0, 0, 0)),
-                .texture_array_sampled, .texture_cube_sampled, .texture_3d_sampled => layeredBy(
+                .texture_array_sampled, .texture_cube_sampled, .texture_3d_sampled, .texture_cube_array_sampled => layeredBy(
                     fixed.kind,
                     fragments,
                     fragments.resources.sampled(0, 0, 0),
@@ -1339,10 +1348,11 @@ pub fn texturedBy(
     }
 }
 
-/// A texture of layers, a cube map or a 3D texture through the sampler
-/// bound beside it (`texture.Sampler`, CreateSampler), at the three
-/// coordinates varyings 0, 1 and 2 carry - as `layered` has them for the
-/// forms that sample as they were compiled to. (Since 1.49.)
+/// A texture of layers, a cube map, a 3D texture or an array of cubes
+/// through the sampler bound beside it (`texture.Sampler`, CreateSampler),
+/// at the three coordinates varyings 0, 1 and 2 carry - as `layered` has
+/// them for the forms that sample as they were compiled to. (Since 1.49;
+/// the array of cubes, which takes a fourth coordinate, since 1.53.)
 ///
 /// A pixel at a time and by floats, as `texturedBy` is, and with
 /// everything a sampler says: the two levels round the point mixed, a bias
@@ -1353,7 +1363,10 @@ pub fn texturedBy(
 /// A cube's sample is taken inside the face the direction falls on, its
 /// own u and v and their steps the face's: so the sampler's edges are that
 /// face's, and a bilinear sample on a seam mixes the edge's texels rather
-/// than reading over into the next face, which `texture_cube` does. A
+/// than reading over into the next face, which `texture_cube` does. An
+/// array of cubes is sampled the same way, inside the face of the cube
+/// varying 3 names - the nearest there is, as `texture.Texture.cubeNear`
+/// picks it, where `texture_cube_array` reads over that cube's seams. A
 /// texture not written, or with no sampler beside it, paints every pixel
 /// `missing`.
 pub fn layeredBy(
@@ -1365,20 +1378,23 @@ pub fn layeredBy(
     const given = picture orelse return fill(fragments, missing);
     const with = sampler orelse return fill(fragments, missing);
     @setRuntimeSafety(false);
-    var rows = Rows(4).of(fragments);
+    // A cube of an array takes a fourth coordinate: which cube.
+    const carried = comptime if (kind == .texture_cube_array_sampled) 5 else 4;
+    var rows = Rows(carried).of(fragments);
     for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
         const at = rows.at(quad);
         const w = @as(Pixels, @splat(1)) / at[0];
         const s: [4]f32 = at[1] * w;
         const t: [4]f32 = at[2] * w;
         const r: [4]f32 = at[3] * w;
+        const which: [4]f32 = if (comptime kind == .texture_cube_array_sampled) at[4] * w else @splat(0);
         // Where the quad's four pixels sample, and the steps between them:
         // the coordinates themselves for an array or a volume, and the
-        // face's own u and v for a cube.
+        // face's own u and v for a cube, of one or of an array.
         var us: [4]f32 = s;
         var vs: [4]f32 = t;
         var faces: [4]u32 = @splat(0);
-        if (comptime kind == .texture_cube_sampled) {
+        if (comptime kind == .texture_cube_sampled or kind == .texture_cube_array_sampled) {
             inline for (0..4) |i| {
                 const hit = texture.cubeHit(s[i], t[i], r[i]);
                 us[i] = hit.u;
@@ -1404,6 +1420,9 @@ pub fn layeredBy(
             color.* = switch (kind) {
                 .texture_array_sampled => texture.sampleBy(given, with, given.layerNear(r[i]), point),
                 .texture_cube_sampled => texture.sampleBy(given, with, faces[i], point),
+                // That cube's first face, and the face the direction fell
+                // on after it: a cube of an array is six layers.
+                .texture_cube_array_sampled => texture.sampleBy(given, with, given.cubeNear(which[i]) + faces[i], point),
                 .texture_3d_sampled => texture.sampleVolumeBy(given, with, point, r[i]),
                 else => @compileError("not a form of three coordinates that samples through a sampler"),
             };

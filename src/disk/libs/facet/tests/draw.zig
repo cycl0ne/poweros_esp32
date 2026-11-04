@@ -5167,6 +5167,10 @@ const LayerScene = struct {
         shader.fixedFragment("cubeby", .{ .kind = .texture_cube_sampled }),
         shader.vertex("volumeby", &volume, 3),
         shader.fixedFragment("volumeby", .{ .kind = .texture_3d_sampled }),
+        // An array of cubes read through the sampler too (since 1.53):
+        // four varyings, the fourth which cube.
+        shader.vertex("cubesby", &cubeArray, 4),
+        shader.fixedFragment("cubesby", .{ .kind = .texture_cube_array_sampled }),
         shader.vertex("wideby", &wide, 2),
         shader.fixedFragment("wideby", .{ .kind = .texture_sampled }),
         shader.vertex("array", &array, 3),
@@ -5416,7 +5420,7 @@ test "textures of layers: arrays, cube maps, 3D, copied a layer at a time; compr
     try testing.expectEqual(@as(u32, 0xFF02_02FF), picture.at(56, 56));
 }
 
-test "the shapes past 2D read through a sampler, and a sampler the set layout holds" {
+test "the shapes past 2D read through a sampler, an array of cubes among them, and a sampler the set layout holds" {
     var bench = try Bench.up();
     defer bench.down();
     const fb = bench.rig.fb;
@@ -5432,9 +5436,13 @@ test "the shapes past 2D read through a sampler, and a sampler the set layout ho
     const array_image = try bench.bareImage(.{ .format = .r8g8b8a8_unorm, .extent = side16, .array_layers = 3, .usage = usage }, false);
     const cube_image = try bench.bareImage(.{ .format = .r8g8b8a8_unorm, .flags = facet.IMAGE_CREATE_CUBE_COMPATIBLE, .extent = side16, .array_layers = 6, .usage = usage }, false);
     const volume_image = try bench.bareImage(.{ .format = .r8g8b8a8_unorm, .image_type = .@"3d", .extent = .{ .width = 16, .height = 16, .depth = 4 }, .usage = usage }, false);
+    // Two cubes, twelve layers (since 1.53).
+    const cubes_image = try bench.bareImage(.{ .format = .r8g8b8a8_unorm, .flags = facet.IMAGE_CREATE_CUBE_COMPATIBLE, .extent = side16, .array_layers = 12, .usage = usage }, false);
     const array_view = try bench.viewOf(.{ .image = array_image, .format = .r8g8b8a8_unorm, .view_type = .@"2d_array" });
     const cube_view = try bench.viewOf(.{ .image = cube_image, .format = .r8g8b8a8_unorm, .view_type = .cube });
     const volume_view = try bench.viewOf(.{ .image = volume_image, .format = .r8g8b8a8_unorm, .view_type = .@"3d" });
+    const cubes_view = try bench.viewOf(.{ .image = cubes_image, .format = .r8g8b8a8_unorm, .view_type = .cube_array });
+    const second_view = try bench.viewOf(.{ .image = cubes_image, .format = .r8g8b8a8_unorm, .view_type = .cube_array, .subresource_range = .{ .base_array_layer = 6, .layer_count = 6 } });
     const flat_view = try bench.viewOf(.{ .image = array_image, .format = .r8g8b8a8_unorm, .subresource_range = .{ .base_array_layer = 0, .layer_count = 1 } });
 
     const stack_bytes = 16 * 16 * 4;
@@ -5446,10 +5454,19 @@ test "the shapes past 2D read through a sampler, and a sampler the set layout ho
     const slices = facet.BufferImageCopy{ .image_extent = .{ .width = 16, .height = 16, .depth = 4 } };
     var faces: [6]facet.BufferImageCopy = undefined;
     for (&faces, 0..) |*face, k| face.* = .{ .buffer_offset = k * stack_bytes, .image_subresource = .{ .base_array_layer = @intCast(k) }, .image_extent = side16 };
+    // The twelve faces of two cubes, the second cube taking the first's
+    // stacks backwards, so that its faces are told apart from them.
+    var cubes: [12]facet.BufferImageCopy = undefined;
+    for (&cubes, 0..) |*face, k| face.* = .{
+        .buffer_offset = (if (k < 6) k else 11 - k) * stack_bytes,
+        .image_subresource = .{ .base_array_layer = @intCast(k) },
+        .image_extent = side16,
+    };
     const commands = try bench.record();
     fb.CmdCopyBufferToImage(commands, staging, array_image, .transfer_dst_optimal, 1, @ptrCast(&whole));
     fb.CmdCopyBufferToImage(commands, staging, cube_image, .transfer_dst_optimal, 6, &faces);
     fb.CmdCopyBufferToImage(commands, staging, volume_image, .transfer_dst_optimal, 1, @ptrCast(&slices));
+    fb.CmdCopyBufferToImage(commands, staging, cubes_image, .transfer_dst_optimal, 12, &cubes);
     try bench.submit();
 
     // Two samplers that read the edges differently, and tell each other
@@ -5543,6 +5560,16 @@ test "the shapes past 2D read through a sampler, and a sampler the set layout ho
         .{ .run = .{ .view = cube_view, .sampler = tiled, .name = "cubeby", .instance = 5, .set = &written_set, .layout = written_pipes }, .layer = 5 },
         .{ .run = .{ .view = volume_view, .sampler = tiled, .name = "volumeby", .instance = 0, .set = &written_set, .layout = written_pipes }, .layer = 0 },
         .{ .run = .{ .view = volume_view, .sampler = tiled, .name = "volumeby", .instance = 3, .set = &written_set, .layout = written_pipes }, .layer = 3 },
+        // An array of cubes through the sampler (since 1.53): the
+        // instance is the face, and every sixth of it the cube.
+        .{ .run = .{ .view = cubes_view, .sampler = tiled, .name = "cubesby", .instance = 0, .set = &written_set, .layout = written_pipes }, .layer = 0 },
+        .{ .run = .{ .view = cubes_view, .sampler = tiled, .name = "cubesby", .instance = 4, .set = &written_set, .layout = written_pipes }, .layer = 4 },
+        .{ .run = .{ .view = cubes_view, .sampler = tiled, .name = "cubesby", .instance = 6, .set = &written_set, .layout = written_pipes }, .layer = 5 },
+        .{ .run = .{ .view = cubes_view, .sampler = tiled, .name = "cubesby", .instance = 9, .set = &written_set, .layout = written_pipes }, .layer = 2 },
+        // Past the last cube: the last, as `texture_cube_array` has it.
+        .{ .run = .{ .view = cubes_view, .sampler = tiled, .name = "cubesby", .instance = 12, .set = &written_set, .layout = written_pipes }, .layer = 5 },
+        // A view that begins at the second cube: its cube 0 is that one.
+        .{ .run = .{ .view = second_view, .sampler = tiled, .name = "cubesby", .instance = 1, .set = &written_set, .layout = written_pipes }, .layer = 4 },
     };
     for (shapes) |each| {
         try draw(&bench, each.run, pass, frame, shaders, vertex_buffer, &offset, &black);

@@ -57,8 +57,9 @@ const max_sampler_anisotropy = @import("../instance/_instance.zig").max_sampler_
 ///
 /// A sampler is made on either device, but is read by the sampling the
 /// cores do: a pipeline whose fragment form samples through one
-/// (`shader.FixedKind.texture_sampled`, `texture_shadow`, and since 1.49
-/// `texture_array_sampled`, `texture_cube_sampled` and `texture_3d_sampled`)
+/// (`shader.FixedKind.texture_sampled`, `texture_shadow`, since 1.49
+/// `texture_array_sampled`, `texture_cube_sampled` and `texture_3d_sampled`,
+/// and since 1.53 `texture_cube_array_sampled`)
 /// is refused on a device whose `PhysicalDeviceFeatures.samplers` is false.
 ///
 /// CONTEXT:
