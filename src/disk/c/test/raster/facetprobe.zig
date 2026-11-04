@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.21 (04.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.22 (04.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -589,6 +589,16 @@ const Paint = struct {
         image.setColor(0, 0, groups.group[0], groups.group[1], color);
     }
 
+    /// Group (x, y) writes texel (x, y) of the level and the layer the
+    /// push constants name: the level in red and the layer in green, so
+    /// what is written says where it went (since 1.55).
+    fn named(groups: *const facet.shader.Groups) callconv(.c) void {
+        const image = groups.resources.written(0, 0, 0) orelse return;
+        const where = groups.resources.constants([2]u32).*;
+        const color = 0xFF00_0000 | (10 + 40 * where[0]) << 16 | (10 + 40 * where[1]) << 8 | groups.group[0];
+        image.setColor(where[1], where[0], groups.group[0], groups.group[1], color);
+    }
+
     /// What ran, and whether it found an image to write through: the test
     /// reads it out of a buffer.
     fn told(groups: *const facet.shader.Groups) callconv(.c) void {
@@ -596,9 +606,34 @@ const Paint = struct {
         out[0] = if (groups.resources.written(0, 0, 0) == null) 0xA11_600D else 0xBAD;
     }
 
+    /// The shape the function sees, and what it reads back: the levels and
+    /// the layers, the first two levels' widths, the texel the push
+    /// constants name, and a level, a layer and a place the view has not
+    /// got, each of which reads transparent black (since 1.55).
+    fn shape(groups: *const facet.shader.Groups) callconv(.c) void {
+        const out = groups.resources.storage(u32, 0, 1) orelse return;
+        const image = groups.resources.written(0, 0, 0) orelse {
+            out[0] = 0xFFFF_FFFF;
+            return;
+        };
+        const where = groups.resources.constants([2]u32).*;
+        out[0] = image.levels;
+        out[1] = image.layer_count;
+        out[2] = image.width(0);
+        out[3] = image.width(1);
+        out[4] = image.colorAt(where[1], where[0], 0, 0);
+        out[5] = image.colorAt(0, image.levels, 0, 0);
+        out[6] = image.colorAt(image.layer_count, 0, 0, 0);
+        out[7] = image.colorAt(0, 0, image.width(0), 0);
+        out[8] = @intFromBool(image.holds(image.layer_count - 1, image.levels - 1, 0, 0));
+        out[9] = @intFromBool(image.holds(0, image.levels, 0, 0));
+    }
+
     const entries = [_]facet.shader.Entry{
         facet.shader.compute("main", &run),
         facet.shader.compute("told", &told),
+        facet.shader.compute("named", &named),
+        facet.shader.compute("shape", &shape),
     };
     const code = facet.shader.Code{ .entry_count = entries.len, .entries = &entries };
 };
@@ -641,7 +676,7 @@ fn storageImageChecks(probe: *Probe) void {
     var module: ?*facet.ShaderModule = null;
     if (fb.CreateShaderModule(device, &.{ .code = &Paint.code }, &module) != .success) return probe.check(false, "the shader module");
     _ = Probe.keep(&probe.modules, module);
-    const range = facet.PushConstantRange{ .size = 4 };
+    const range = facet.PushConstantRange{ .size = 8 };
     var layout: ?*facet.PipelineLayout = null;
     if (fb.CreatePipelineLayout(device, &.{ .set_layout_count = 1, .set_layouts = @ptrCast(&set_layout), .push_constant_range_count = 1, .push_constant_ranges = @ptrCast(&range) }, &layout) != .success)
         return probe.check(false, "the pipeline layout");
@@ -652,8 +687,8 @@ fn storageImageChecks(probe: *Probe) void {
     var sets: [1]?*facet.DescriptorSet = undefined;
     if (fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &sets) != .success)
         return probe.check(false, "a descriptor set");
-    const told_buffer, const told_bytes = probe.buffer(16, facet.BUFFER_USAGE_STORAGE_BUFFER) orelse return probe.check(false, "a buffer the function writes");
-    @memset(told_bytes[0..16], 0);
+    const told_buffer, const told_bytes = probe.buffer(64, facet.BUFFER_USAGE_STORAGE_BUFFER) orelse return probe.check(false, "a buffer the function writes");
+    @memset(told_bytes[0..64], 0);
 
     const image_info = facet.DescriptorImageInfo{ .image_view = image[1] };
     const buffer_info = facet.DescriptorBufferInfo{ .buffer = told_buffer, .range = facet.WHOLE_SIZE };
@@ -663,14 +698,15 @@ fn storageImageChecks(probe: *Probe) void {
     };
     fb.UpdateDescriptorSets(device, 2, &writes, 0, null);
 
-    const infos = [2]facet.ComputePipelineCreateInfo{
+    const infos = [4]facet.ComputePipelineCreateInfo{
         .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.? }, .layout = layout.? },
         .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.?, .name = "told" }, .layout = layout.? },
+        .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.?, .name = "named" }, .layout = layout.? },
+        .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.?, .name = "shape" }, .layout = layout.? },
     };
-    var pipelines: [2]?*facet.Pipeline = undefined;
-    if (fb.CreateComputePipelines(device, null, 2, &infos, &pipelines) != .success) return probe.check(false, "the compute pipelines");
-    _ = Probe.keep(&probe.pipelines, pipelines[0]);
-    _ = Probe.keep(&probe.pipelines, pipelines[1]);
+    var pipelines: [4]?*facet.Pipeline = undefined;
+    if (fb.CreateComputePipelines(device, null, 4, &infos, &pipelines) != .success) return probe.check(false, "the compute pipelines");
+    for (pipelines) |one| _ = Probe.keep(&probe.pipelines, one);
 
     const four: u32 = 4;
     var commands = probe.record() orelse return probe.check(false, "a recording");
@@ -705,6 +741,83 @@ fn storageImageChecks(probe: *Probe) void {
         if (!probe.submit()) return probe.check(false, "the refused write submitted");
         probe.checkEqual(0xA11_600D, std.mem.readInt(u32, told_bytes[0..4], .little), "an image not made for it is not written through");
     }
+
+    // --- 1.55: the level and the layer the function names ---
+    // Three levels and three layers, written through and never sampled:
+    // an image of layers needed SAMPLED beside STORAGE before 1.55.
+    const stack = probe.bound(.{
+        .format = .r8g8b8a8_unorm,
+        .extent = .{ .width = 8, .height = 8 },
+        .mip_levels = 3,
+        .array_layers = 3,
+        .usage = facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_TRANSFER_SRC,
+    }, 0) orelse return probe.check(false, "an image of layers written through and never sampled");
+    probe.check(true, "an image of layers written through and never sampled");
+    const stack_view = probe.viewed(.{ .image = stack, .format = .r8g8b8a8_unorm, .view_type = .@"2d_array", .subresource_range = .{ .layer_count = 3 } }) orelse
+        return probe.check(false, "a view of all of its levels and layers");
+    const to_stack = facet.WriteDescriptorSet{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .storage_image, .descriptor_count = 1, .image_info = @ptrCast(&facet.DescriptorImageInfo{ .image_view = stack_view }) };
+    fb.UpdateDescriptorSets(device, 1, @ptrCast(&to_stack), 0, null);
+
+    const Where = struct { level: u32, layer: u32, side: u32 };
+    const places = [_]Where{
+        .{ .level = 0, .layer = 0, .side = 8 },
+        .{ .level = 1, .layer = 2, .side = 4 },
+        .{ .level = 2, .layer = 1, .side = 2 },
+        .{ .level = 0, .layer = 1, .side = 8 },
+        // A level the view has not got, and then a layer it has not got:
+        // nothing is written either time.
+        .{ .level = 3, .layer = 0, .side = 1 },
+        .{ .level = 0, .layer = 3, .side = 1 },
+    };
+    for (places) |place| {
+        const named = [2]u32{ place.level, place.layer };
+        commands = probe.record() orelse return probe.check(false, "a recording of a named write");
+        fb.CmdBindPipeline(commands, .compute, pipelines[2].?);
+        fb.CmdBindDescriptorSets(commands, .compute, layout.?, 0, 1, @ptrCast(&sets), 0, null);
+        fb.CmdPushConstants(commands, layout.?, facet.SHADER_STAGE_COMPUTE, 0, 8, &named);
+        fb.CmdDispatch(commands, place.side, place.side, 1);
+        if (!probe.submit()) return probe.check(false, "the named write submitted");
+    }
+
+    // Each of the four written places read back: the colour says which
+    // level and which layer wrote it, so none of them went anywhere else.
+    // r8g8b8a8 in the buffer, so the word reads 0xAABBGGRR.
+    var all_placed = true;
+    for (places[0..4]) |place| {
+        @memset(back_bytes[0 .. 8 * 8 * 4], 0);
+        const region = facet.BufferImageCopy{
+            .image_subresource = .{ .mip_level = place.level, .base_array_layer = place.layer },
+            .image_extent = .{ .width = place.side, .height = place.side },
+        };
+        commands = probe.record() orelse return probe.check(false, "a recording of the read-back");
+        fb.CmdCopyImageToBuffer(commands, stack, .general, back, 1, @ptrCast(&region));
+        if (!probe.submit()) return probe.check(false, "the read-back submitted");
+        const want = 0xFF00_0000 | (place.side - 1) << 16 | (10 + 40 * place.layer) << 8 | (10 + 40 * place.level);
+        const last_at = ((place.side - 1) * place.side + place.side - 1) * 4;
+        if (std.mem.readInt(u32, back_bytes[last_at..][0..4], .little) != want) all_placed = false;
+    }
+    probe.check(all_placed, "each level and layer the function named written where it said");
+
+    // What the function sees of the shape, and of what it reads back.
+    const asked = [2]u32{ 1, 2 };
+    @memset(told_bytes[0..64], 0);
+    commands = probe.record() orelse return probe.check(false, "a recording of the shape");
+    fb.CmdBindPipeline(commands, .compute, pipelines[3].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout.?, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdPushConstants(commands, layout.?, facet.SHADER_STAGE_COMPUTE, 0, 8, &asked);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    if (!probe.submit()) return probe.check(false, "the shape submitted");
+    const seen: [*]const u32 = @ptrCast(@alignCast(told_bytes));
+    probe.checkEqual(3, seen[0], "the levels the function sees of the view");
+    probe.checkEqual(3, seen[1], "the layers it sees");
+    probe.checkEqual(8, seen[2], "the first level's width");
+    probe.checkEqual(4, seen[3], "and the second level's");
+    probe.checkEqual(0xFF32_5A00, seen[4], "a texel of a named level and layer read back");
+    probe.checkEqual(0, seen[5], "a level the view has not got reads transparent black");
+    probe.checkEqual(0, seen[6], "a layer it has not got as well");
+    probe.checkEqual(0, seen[7], "and a place past the level's width");
+    probe.checkEqual(1, seen[8], "the last level of the last layer is held");
+    probe.checkEqual(0, seen[9], "and one past the last is not");
 }
 
 // --- 1.32: a buffer read as texels of a format -------------------------------

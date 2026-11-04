@@ -591,10 +591,28 @@ pub const Texture = struct {
         @memcpy(into[0..wide], at[0..wide]);
     }
 
+    /// Whether the texture has level `lod` of layer `layer`, and texel
+    /// (x, y) of it: what `setColor` writes nothing past and `colorAt`
+    /// reads transparent black past. A 3D texture's layers are its slices
+    /// at level 0, all of which lie in its memory, so a level past the
+    /// first takes more of them than a sample of that level reads
+    /// (`slicesAt`). (Since 1.55.)
+    pub fn holds(texture: *const Texture, layer: u32, lod: u32, x: u32, y: u32) bool {
+        if (lod >= texture.levels or layer >= texture.layer_count) return false;
+        return x < texture.width(lod) and y < texture.height(lod);
+    }
+
     /// A texel of a layer set from 0xAARRGGBB, whatever its format:
     /// `colorAt` undone. What a shader function writes through a storage
     /// image with (`shader.Resources.written`).
+    ///
+    /// The level, the layer and the place are held to what the texture has
+    /// (`holds`): a function naming one it has not got writes nothing,
+    /// rather than past the texture's memory. `putLayer` is the same write
+    /// in the texture's own format and holds to nothing, which is what the
+    /// library's own copies want. (Since 1.55.)
     pub fn setColor(texture: *Texture, layer: u32, lod: u32, x: u32, y: u32, color: u32) void {
+        if (!texture.holds(layer, lod, x, y)) return;
         texture.putLayer(layer, lod, x, y, switch (texture.format) {
             .rgba8888, .argb8888 => color,
             .rgb565 => as565(color),
@@ -608,8 +626,24 @@ pub const Texture = struct {
         });
     }
 
-    /// A texel of a layer as 0xAARRGGBB, whatever its format.
+    /// A texel of a layer as 0xAARRGGBB, whatever its format: what a
+    /// shader function reads a storage image back with
+    /// (`shader.Resources.written`).
+    ///
+    /// The level, the layer and the place are held to what the texture has
+    /// (`holds`): a texel it has not got reads as transparent black,
+    /// rather than out of the texture's memory. `peekLayer` is the same
+    /// read in the texture's own format and holds to nothing, which is
+    /// what sampling and the library's own copies want. (Since 1.55.)
     pub fn colorAt(texture: *const Texture, layer: u32, lod: u32, x: u32, y: u32) u32 {
+        if (!texture.holds(layer, lod, x, y)) return 0;
+        return texture.texelColor(layer, lod, x, y);
+    }
+
+    /// The same without holding to anything: a texel that is there, which
+    /// is what sampling reads, every place of it having been held to the
+    /// level already.
+    fn texelColor(texture: *const Texture, layer: u32, lod: u32, x: u32, y: u32) u32 {
         const texel = texture.peekLayer(layer, lod, x, y);
         return switch (texture.format) {
             .rgba8888, .argb8888 => texel,
@@ -633,7 +667,7 @@ pub const Texture = struct {
         const x = sane(u) * @as(f32, @floatFromInt(across));
         const y = sane(v) * @as(f32, @floatFromInt(down));
         if (sampling.filter == .nearest) {
-            return texture.colorAt(layer, lod, placeIn(sampling.address, @intFromFloat(@floor(x)), across), placeIn(sampling.address, @intFromFloat(@floor(y)), down));
+            return texture.texelColor(layer, lod, placeIn(sampling.address, @intFromFloat(@floor(x)), across), placeIn(sampling.address, @intFromFloat(@floor(y)), down));
         }
         const low_x = @floor(x - 0.5);
         const low_y = @floor(y - 0.5);
@@ -644,8 +678,8 @@ pub const Texture = struct {
         const y0 = placeIn(sampling.address, top, down);
         const y1 = placeIn(sampling.address, top + 1, down);
         const part_x = x - 0.5 - low_x;
-        const upper = mixColors(texture.colorAt(layer, lod, x0, y0), texture.colorAt(layer, lod, x1, y0), part_x);
-        const lower = mixColors(texture.colorAt(layer, lod, x0, y1), texture.colorAt(layer, lod, x1, y1), part_x);
+        const upper = mixColors(texture.texelColor(layer, lod, x0, y0), texture.texelColor(layer, lod, x1, y0), part_x);
+        const lower = mixColors(texture.texelColor(layer, lod, x0, y1), texture.texelColor(layer, lod, x1, y1), part_x);
         return mixColors(upper, lower, y - 0.5 - low_y);
     }
 
@@ -711,11 +745,11 @@ pub const Texture = struct {
     /// same direction.
     fn cubeTexel(texture: *const Texture, first: u32, face: u32, lod: u32, x: i32, y: i32) u32 {
         const size: i32 = @intCast(texture.width(lod));
-        if (x >= 0 and y >= 0 and x < size and y < size) return texture.colorAt(first + face, lod, @intCast(x), @intCast(y));
+        if (x >= 0 and y >= 0 and x < size and y < size) return texture.texelColor(first + face, lod, @intCast(x), @intCast(y));
         const whole: f32 = @floatFromInt(size);
         const towards = cubeDirection(face, (@as(f32, @floatFromInt(x)) + 0.5) / whole * 2 - 1, (@as(f32, @floatFromInt(y)) + 0.5) / whole * 2 - 1);
         const next = cubeHit(towards[0], towards[1], towards[2]);
-        return texture.colorAt(first + next.face, lod, placeIn(.clamp, @intFromFloat(@floor(next.u * whole)), texture.width(lod)), placeIn(.clamp, @intFromFloat(@floor(next.v * whole)), texture.width(lod)));
+        return texture.texelColor(first + next.face, lod, placeIn(.clamp, @intFromFloat(@floor(next.u * whole)), texture.width(lod)), placeIn(.clamp, @intFromFloat(@floor(next.v * whole)), texture.width(lod)));
     }
 
     /// The layer of an array `r` falls on: the nearest there is.
@@ -1696,7 +1730,7 @@ fn sampledAt(texture: *const Texture, sampler: *const Sampler, layer: u32, lod: 
 fn texelBy(texture: *const Texture, sampler: *const Sampler, layer: u32, lod: u32, x: i32, y: i32) u32 {
     const column = wrapped(sampler.wrap[0], x, texture.width(lod)) orelse return sampler.border;
     const row = wrapped(sampler.wrap[1], y, texture.height(lod)) orelse return sampler.border;
-    return texture.colorAt(@min(layer, texture.layer_count - 1), lod, column, row);
+    return texture.texelColor(@min(layer, texture.layer_count - 1), lod, column, row);
 }
 
 /// What a shadow sample compares with the reference, 0 to 1: the depth of
@@ -1711,7 +1745,7 @@ fn valueBy(texture: *const Texture, sampler: *const Sampler, layer: u32, lod: u3
         const kept = texture.peekLayer(at, lod, column, row);
         return @as(f32, @floatFromInt(kept & 0xFFFF)) / 65535;
     }
-    return @as(f32, @floatFromInt(texture.colorAt(at, lod, column, row) >> 16 & 0xFF)) / 255;
+    return @as(f32, @floatFromInt(texture.texelColor(at, lod, column, row) >> 16 & 0xFF)) / 255;
 }
 
 /// Where a whole coordinate lands in a side of `size`; null for one past a

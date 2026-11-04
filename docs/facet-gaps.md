@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.54**, so that a program need not find out by failing. It covers the API.
+1.55**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -205,8 +205,14 @@ is left out:
   a storage image is unpacked to 8888, whatever the device keeps for a
   sampled one: nothing here writes a texel into a block or makes a float of
   one.
-- **The view's first level and layer** are what a function writes: there is
-  no way to name another level from inside the function.
+- A function names the level and the layer it writes since 1.55
+  (`texture.Texture.setColor` and `colorAt` take both, level 0 of layer 0
+  being the view's first of each), and a level, a layer or a place the
+  view has not got writes nothing and reads transparent black
+  (`texture.Texture.holds`). What the view has is `levels`,
+  `layer_count`, `width` and `height`. `putLayer` and `peekLayer` are the
+  raw pair in the texture's own format and hold to nothing: they are what
+  the library's own copies and the samplers use.
 - A `storage_image` is still not an attachment: an image cannot be drawn
   into and written through in the same pass.
 

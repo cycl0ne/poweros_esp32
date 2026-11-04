@@ -255,8 +255,14 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
     };
     if (packed_texels and !(physical.features.small_texels and in_texels and packs)) return null;
     if (info.format == .r8_unorm and !(physical.features.small_texels and in_texels)) return null;
-    // Layers are for sampling: an attachment or rows have one.
-    if ((layers > 1 or _decode.unpacks(info.format)) and (info.usage & facet.IMAGE_USAGE_SAMPLED == 0 or info.tiling != .optimal)) return null;
+    // Layers are for a function to read or to write: an attachment or
+    // rows have one, and both want the layout a sample reads, which is
+    // `optimal` tiling. An image of layers written through and never
+    // sampled is one of them since 1.55.
+    if ((layers > 1 or _decode.unpacks(info.format)) and info.tiling != .optimal) return null;
+    if (layers > 1 and !in_texels) return null;
+    // What is unpacked on the way in is unpacked to be sampled.
+    if (_decode.unpacks(info.format) and info.usage & facet.IMAGE_USAGE_SAMPLED == 0) return null;
     // A compressed image is kept in its blocks, and a float one in its
     // floats, where this device samples them
     // (`PhysicalDeviceFeatures.kept_compressed`, `kept_floats`); where it

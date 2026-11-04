@@ -1642,6 +1642,221 @@ test "a storage image written through by a compute function and by a fragment fu
     try testing.expectEqual(0xFF00_00FF, std.mem.readInt(u32, back_bytes[(7 * 8 + 7) * 4 ..][0..4], .little));
 }
 
+test "a storage image's level and layer named from inside the function, and one it has not got" {
+    const Named = struct {
+        /// Group (x, y) writes texel (x, y) of the level and the layer the
+        /// push constants name, its colour saying which: the level in red
+        /// and the layer in green.
+        fn run(groups: *const shader.Groups) callconv(.c) void {
+            const image = groups.resources.written(0, 0, 0) orelse return;
+            const where = groups.resources.constants([2]u32).*;
+            const color = 0xFF00_0000 | (10 + 40 * where[0]) << 16 | (10 + 40 * where[1]) << 8 | groups.group[0];
+            image.setColor(where[1], where[0], groups.group[0], groups.group[1], color);
+        }
+
+        /// What the function finds of the shape, and of a texel it reads
+        /// back: the levels and the layers, the first level's size, the
+        /// texel the push constants name, and a texel of a level, a layer
+        /// and a place the view has not got.
+        fn told(groups: *const shader.Groups) callconv(.c) void {
+            const out = groups.resources.storage(u32, 0, 1) orelse return;
+            const image = groups.resources.written(0, 0, 0) orelse {
+                out[0] = 0xFFFF_FFFF;
+                return;
+            };
+            const where = groups.resources.constants([2]u32).*;
+            out[0] = image.levels;
+            out[1] = image.layer_count;
+            out[2] = image.width(0);
+            out[3] = image.height(0);
+            out[4] = image.width(1);
+            out[5] = image.colorAt(where[1], where[0], 0, 0);
+            // Transparent black, each of them: a level past the last, a
+            // layer past the last, and a place past the level's own size.
+            out[6] = image.colorAt(0, image.levels, 0, 0);
+            out[7] = image.colorAt(image.layer_count, 0, 0, 0);
+            out[8] = image.colorAt(0, 0, image.width(0), 0);
+            out[9] = image.colorAt(0, 0, 0, image.height(0));
+            // And what `holds` says of the same.
+            out[10] = @intFromBool(image.holds(image.layer_count - 1, image.levels - 1, 0, 0));
+            out[11] = @intFromBool(image.holds(0, image.levels, 0, 0));
+        }
+
+        const entries = [_]shader.Entry{ shader.compute("main", &run), shader.compute("told", &told) };
+        const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
+    };
+
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    var features: facet.PhysicalDeviceFeatures = undefined;
+    fb.GetPhysicalDeviceFeatures(bench.physical, &features);
+    try testing.expect(features.storage_images);
+
+    // Three layers and three levels, written through and never sampled:
+    // since 1.55 an image of layers needs no SAMPLED beside STORAGE.
+    const image = try bench.bareImage(.{
+        .format = .r8g8b8a8_unorm,
+        .extent = .{ .width = 8, .height = 8 },
+        .mip_levels = 3,
+        .array_layers = 3,
+        .usage = facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_TRANSFER_SRC,
+    }, false);
+    const view = try bench.viewOf(.{ .image = image, .format = .r8g8b8a8_unorm, .view_type = .@"2d_array" });
+
+    const module_made = try module(&bench, &Named.code);
+    defer fb.DestroyShaderModule(device, module_made);
+    const bindings = [2]facet.DescriptorSetLayoutBinding{
+        .{ .binding = 0, .descriptor_type = .storage_image, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+        .{ .binding = 1, .descriptor_type = .storage_buffer, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+    };
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 2, .bindings = &bindings }, &set_layout));
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    const layout = try pipelineLayout(&bench, &.{set_layout.?}, 8);
+    defer fb.DestroyPipelineLayout(device, layout);
+    var pool: ?*facet.DescriptorPool = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool));
+    defer fb.DestroyDescriptorPool(device, pool);
+    var sets: [1]?*facet.DescriptorSet = undefined;
+    try testing.expectEqual(facet.Result.success, fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &sets));
+    const told, const told_bytes = try bench.buffer(64, facet.BUFFER_USAGE_STORAGE_BUFFER);
+    @memset(told_bytes[0..64], 0);
+    const image_info = facet.DescriptorImageInfo{ .image_view = view };
+    const buffer_info = facet.DescriptorBufferInfo{ .buffer = told, .range = facet.WHOLE_SIZE };
+    const writes = [2]facet.WriteDescriptorSet{
+        .{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .storage_image, .descriptor_count = 1, .image_info = @ptrCast(&image_info) },
+        .{ .dst_set = sets[0].?, .dst_binding = 1, .descriptor_type = .storage_buffer, .descriptor_count = 1, .buffer_info = @ptrCast(&buffer_info) },
+    };
+    fb.UpdateDescriptorSets(device, 2, &writes, 0, null);
+    const infos = [2]facet.ComputePipelineCreateInfo{
+        .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module_made }, .layout = layout },
+        .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module_made, .name = "told" }, .layout = layout },
+    };
+    var pipelines: [2]?*facet.Pipeline = undefined;
+    try testing.expectEqual(facet.Result.success, fb.CreateComputePipelines(device, null, 2, &infos, &pipelines));
+    defer for (pipelines) |one| fb.DestroyPipeline(device, one);
+
+    // Level 0 of layer 0, level 1 of layer 2, and level 2 of layer 1:
+    // each written over its own size, 8, 4 and 2 texels a side.
+    const Where = struct { level: u32, layer: u32, side: u32 };
+    const places = [_]Where{
+        .{ .level = 0, .layer = 0, .side = 8 },
+        .{ .level = 1, .layer = 2, .side = 4 },
+        .{ .level = 2, .layer = 1, .side = 2 },
+        .{ .level = 0, .layer = 1, .side = 8 },
+        // A level the view has not got, and then a layer it has not got:
+        // nothing is written either time, so what is there stays.
+        .{ .level = 3, .layer = 0, .side = 1 },
+        .{ .level = 0, .layer = 3, .side = 1 },
+    };
+    for (places) |place| {
+        const named = [2]u32{ place.level, place.layer };
+        const commands = try bench.record();
+        fb.CmdBindPipeline(commands, .compute, pipelines[0].?);
+        fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+        fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_COMPUTE, 0, 8, &named);
+        fb.CmdDispatch(commands, place.side, place.side, 1);
+        try bench.submit();
+    }
+
+    // Read each level of each layer back through a buffer: the colour
+    // says which level and which layer wrote it, and a level and a layer
+    // nothing wrote is still black.
+    const back, const back_bytes = try bench.buffer(8 * 8 * 4, facet.BUFFER_USAGE_TRANSFER_DST);
+    const colorOf = struct {
+        fn colorOf(level: u32, layer: u32, x: u32) u32 {
+            return 0xFF00_0000 | (10 + 40 * level) << 16 | (10 + 40 * layer) << 8 | x;
+        }
+    }.colorOf;
+    // 0xAARRGGBB as r8g8b8a8 in a buffer: the bytes are r, g, b, a in
+    // order, so the little-endian word reads 0xAABBGGRR.
+    const swizzled = struct {
+        fn swizzled(color: u32) u32 {
+            return (color & 0xFF00_0000) | (color & 0xFF) << 16 | (color & 0xFF00) | (color >> 16 & 0xFF);
+        }
+    }.swizzled;
+    for (places[0..4]) |place| {
+        @memset(back_bytes[0 .. 8 * 8 * 4], 0);
+        const region = facet.BufferImageCopy{
+            .image_subresource = .{ .mip_level = place.level, .base_array_layer = place.layer },
+            .image_extent = .{ .width = place.side, .height = place.side },
+        };
+        const commands = try bench.record();
+        fb.CmdCopyImageToBuffer(commands, image, .general, back, 1, @ptrCast(&region));
+        try bench.submit();
+        // r8g8b8a8 in the buffer: the bytes are r, g, b, a in order, so
+        // the word reads 0xAABBGGRR.
+        const first = std.mem.readInt(u32, back_bytes[0..4], .little);
+        const last_at = ((place.side - 1) * place.side + place.side - 1) * 4;
+        const last = std.mem.readInt(u32, back_bytes[last_at..][0..4], .little);
+        try testing.expectEqual(swizzled(colorOf(place.level, place.layer, 0)), first);
+        try testing.expectEqual(swizzled(colorOf(place.level, place.layer, place.side - 1)), last);
+    }
+
+    // What the function sees of the shape, and of a texel it reads back.
+    const asked = [2]u32{ 1, 2 };
+    var commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, pipelines[1].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_COMPUTE, 0, 8, &asked);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    try bench.submit();
+    const out: [*]const u32 = @ptrCast(@alignCast(told_bytes));
+    try testing.expectEqual(@as(u32, 3), out[0]);
+    try testing.expectEqual(@as(u32, 3), out[1]);
+    try testing.expectEqual(@as(u32, 8), out[2]);
+    try testing.expectEqual(@as(u32, 8), out[3]);
+    try testing.expectEqual(@as(u32, 4), out[4]);
+    // Level 1 of layer 2, which the second dispatch wrote.
+    try testing.expectEqual(colorOf(1, 2, 0), out[5]);
+    // A level, a layer or a place the view has not got: transparent black.
+    try testing.expectEqual(@as(u32, 0), out[6]);
+    try testing.expectEqual(@as(u32, 0), out[7]);
+    try testing.expectEqual(@as(u32, 0), out[8]);
+    try testing.expectEqual(@as(u32, 0), out[9]);
+    try testing.expectEqual(@as(u32, 1), out[10]);
+    try testing.expectEqual(@as(u32, 0), out[11]);
+
+    // A view of one level and one layer of the same image: its level 0 is
+    // the image's level 1, so the function writing level 0 writes that.
+    const narrow = try bench.viewOf(.{
+        .image = image,
+        .format = .r8g8b8a8_unorm,
+        .subresource_range = .{ .base_mip_level = 1, .level_count = 1, .base_array_layer = 1, .layer_count = 1 },
+    });
+    const narrow_info = facet.DescriptorImageInfo{ .image_view = narrow };
+    const to_narrow = facet.WriteDescriptorSet{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .storage_image, .descriptor_count = 1, .image_info = @ptrCast(&narrow_info) };
+    fb.UpdateDescriptorSets(device, 1, @ptrCast(&to_narrow), 0, null);
+    const at_first = [2]u32{ 0, 0 };
+    commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, pipelines[0].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_COMPUTE, 0, 8, &at_first);
+    fb.CmdDispatch(commands, 4, 4, 1);
+    try bench.submit();
+    @memset(back_bytes[0 .. 8 * 8 * 4], 0);
+    const second = facet.BufferImageCopy{
+        .image_subresource = .{ .mip_level = 1, .base_array_layer = 1 },
+        .image_extent = .{ .width = 4, .height = 4 },
+    };
+    commands = try bench.record();
+    fb.CmdCopyImageToBuffer(commands, image, .general, back, 1, @ptrCast(&second));
+    try bench.submit();
+    try testing.expectEqual(swizzled(colorOf(0, 0, 0)), std.mem.readInt(u32, back_bytes[0..4], .little));
+    // And the function sees one level and one layer of it.
+    commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, pipelines[1].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_COMPUTE, 0, 8, &at_first);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    try bench.submit();
+    try testing.expectEqual(@as(u32, 1), out[0]);
+    try testing.expectEqual(@as(u32, 1), out[1]);
+    try testing.expectEqual(@as(u32, 4), out[2]);
+}
+
 test "a buffer read as texels of a format: a uniform one read, a storage one written, and the formats refused" {
     const Texels = struct {
         /// Each group reads texel k of binding 0 and writes what it made

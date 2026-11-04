@@ -562,9 +562,30 @@ pub const LIBRARY_VERSION = 1;
 /// Every device, the formats being read by the library and not by any
 /// hardware: `TexelFormat.channelBits` and `kind` say how, and a view
 /// reads the buffer where it lies as it always did.
+/// 55: a storage image's level and layer named from inside the function.
+/// `shader.Resources.written` gave back the view's texture before this
+/// too, and `texture.Texture.setColor` and `colorAt` took a level and a
+/// layer, but nothing held them to what was there: a function naming a
+/// level the view has not got read `layout[lod]` where nothing had been
+/// laid out and wrote wherever that pointed. So the level and the layer a
+/// function could rely on were the view's first, and an image of layers
+/// written through was refused unless it was sampled as well.
+/// Now both calls hold to what the texture has (`texture.Texture.holds`):
+/// a level, a layer or a place it has not got writes nothing and reads
+/// transparent black, as a texel buffer past its last texel reads as 0
+/// and an input attachment outside its rows as transparent black. So a
+/// function may name any of the view's levels and any of its layers, and
+/// `levels`, `layer_count`, `width` and `height` say what those are.
+/// `putLayer` and `peekLayer` stay the raw pair in the texture's own
+/// format, holding to nothing: they are what the library's own copies and
+/// the samplers use, and holding there would cost a frame something. The
+/// samplers hold every place to the level before they read it anyway.
+/// A storage image may have layers without being sampled as well, which
+/// `CreateImage` refused before: an image written through and never read
+/// by a sample is as good a reason for layers as sampling is.
 /// What stays: `fifo` is the one present mode, there being no way to ask a
 /// display to show a buffer before its next frame; one queue family of one
 /// queue; a counter of 32 bits, for want of a 64-bit atomic on every
 /// machine the library runs on; and no point mode in tessellation, there
 /// being no point rasterization at all.
-pub const LIBRARY_REVISION = 54;
+pub const LIBRARY_REVISION = 55;

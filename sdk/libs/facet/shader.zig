@@ -932,10 +932,16 @@ pub const Resources = extern struct {
     /// image, as the texture it is written through: null where it is not
     /// written, or is not a kind a function may write through.
     ///
-    /// Its texels are set by `putLayer` in the texture's own format, or by
-    /// `setColor` as 0xAARRGGBB whatever the format, and read by
-    /// `colorAt`. The level and the layer are the view's first, so a
-    /// function writes level 0 of layer 0 unless the view says otherwise.
+    /// Its texels are set by `setColor` as 0xAARRGGBB whatever the format,
+    /// and read by `colorAt`. Both take a level and a layer: the function
+    /// names which of the view's it writes (since 1.55), level 0 of layer
+    /// 0 being the view's first of each, and one the view has not got
+    /// writes nothing and reads transparent black
+    /// (`texture.Texture.holds`). What the view has is `levels` and
+    /// `layer_count`, and each level's own size `width` and `height`.
+    /// `putLayer` and `peekLayer` are the same pair in the texture's own
+    /// format and hold to nothing.
+    ///
     /// Nothing orders one function's writes against another's: a frame's
     /// work is shared between the cores, so two of them writing the same
     /// texel is for the program to avoid, as it is in Vulkan.

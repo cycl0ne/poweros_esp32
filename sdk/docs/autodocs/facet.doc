@@ -3321,6 +3321,12 @@ facet.library/WaitForFences
 	view of type cube, or of cube_array, will be made: of a square image of 6
 	layers or more, a multiple of six of them for an array of cubes.
 
+	A STORAGE image may have layers and levels the same way, and since
+	1.55 needs no SAMPLED beside it to have them: a function writing one
+	names the level and the layer of the view it writes
+	(`shader.Resources.written`, `texture.Texture.setColor`). Before that
+	an image of layers was refused unless it was sampled as well.
+
 	A SAMPLED image may be of BC1, BC2, BC3, R16G16B16A16_SFLOAT,
 	R32G32B32A32_SFLOAT, B10G11R11_UFLOAT or E5B9G9R9_UFLOAT, in optimal tiling.
 	A float one is kept as the floats it was copied in as on a device that
