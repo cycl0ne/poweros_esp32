@@ -102,6 +102,22 @@ const _surface = @import("../surface/_surface.zig");
 /// each, and `shader.Resources.output` says for which. A fixed fragment
 /// function has one colour, which every attachment gets.
 ///
+/// Since 1.51 such a subpass may be drawn **together** instead, in one
+/// pass over the tiles: SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER in its
+/// `flags`, facet.library's own, and every pipeline of it has a fragment
+/// entry that writes exactly its colour attachments in the one call
+/// (`shader.fragmentOutputs`, `shader.Fragments.colorsOf`); one that does
+/// not is `error_invalid_shader_nv` (CreateGraphicsPipelines). The
+/// vertices are worked once, the triangles binned once and a quad's
+/// fragment function called once for all of them - a G-buffer's three or
+/// four planes for the price of one - and each attachment is still
+/// blended its own way, into a plane of each tile's own. The flag wants a
+/// device whose `several_outputs` is true: the cores, not the V3D, whose
+/// fragment programs are the fixed forms and each write the one colour;
+/// there it is `error_feature_not_present`, and a subpass without it is
+/// drawn as it always was. Any other bit in `flags` is
+/// `error_feature_not_present` too.
+///
 /// Attachments a subpass does not name are left as they are. The
 /// dependencies are not looked at: a queue's commands are done one after
 /// the other.
@@ -173,6 +189,13 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
         }
         if (subpass.color_attachment_count == 0 or subpass.color_attachment_count > _render.most_colors) return .error_feature_not_present;
         const colors = subpass.color_attachments.?[0..subpass.color_attachment_count];
+        // facet.library's own flag: the subpass's colour attachments are
+        // drawn together, in one pass over the tiles, by a fragment
+        // function that writes all of them at once (since 1.51). Without
+        // it the subpass is a part for each of them, played over again.
+        const together = subpass.flags & facet.SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER != 0;
+        if (together and !owner.physical.features.several_outputs) return .error_feature_not_present;
+        if (subpass.flags & ~facet.SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER != 0) return .error_feature_not_present;
         if (number > 0 and sameTargets(info.subpasses[number - 1], subpass)) {
             plan.subpasses[number] = plan.subpasses[number - 1];
             plan.subpasses[number].joined = true;
@@ -224,7 +247,22 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                 depth_index = reference.attachment;
             }
         }
-        plan.subpasses[number] = .{ .first_part = plan.part_count, .part_count = subpass.color_attachment_count, .joined = false };
+        plan.subpasses[number] = .{
+            .first_part = plan.part_count,
+            .part_count = if (together) 1 else subpass.color_attachment_count,
+            .joined = false,
+        };
+        if (plan.part_count + plan.subpasses[number].part_count > _render.most_parts) return .error_feature_not_present;
+        var whole = _render.Part{
+            .color_count = 0,
+            .depth = depth_index,
+            .tests_depth = tests_depth,
+            .tests_stencil = tests_stencil,
+            .loads_depth = loads_depth,
+            .stores_depth = stores_depth,
+            .loads_stencil = loads_stencil,
+            .stores_stencil = stores_stencil,
+        };
         for (colors, 0..) |reference, k| {
             const color_index = reference.attachment;
             if (color_index >= attachments.len) return .error_initialization_failed;
@@ -233,19 +271,26 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
             const color = attachments[color_index];
             if (!_surface.drawable(color.format)) return .error_format_not_supported;
             if (color.samples != 1) return .error_feature_not_present;
-            if (plan.part_count == _render.most_parts) return .error_feature_not_present;
-            plan.parts[plan.part_count] = .{
-                .color = color_index,
-                .depth = depth_index,
-                .tests_depth = tests_depth,
-                .tests_stencil = tests_stencil,
-                .color_format = color.format,
-                .color_load = if (color.load_op == .clear and !drawn[color_index]) .clear else .keep,
-                .loads_depth = loads_depth,
-                .stores_depth = stores_depth,
-                .loads_stencil = loads_stencil,
-                .stores_stencil = stores_stencil,
-            };
+            const load: _render.ColorLoad = if (color.load_op == .clear and !drawn[color_index]) .clear else .keep;
+            if (together) {
+                // The one part draws them all: a plane of each tile for
+                // each of them.
+                whole.colors[whole.color_count] = color_index;
+                whole.color_formats[whole.color_count] = color.format;
+                whole.color_loads[whole.color_count] = load;
+                whole.color_count += 1;
+            } else {
+                var part = whole;
+                part.colors[0] = color_index;
+                part.color_formats[0] = color.format;
+                part.color_loads[0] = load;
+                part.color_count = 1;
+                plan.parts[plan.part_count] = part;
+                plan.part_count += 1;
+            }
+        }
+        if (together) {
+            plan.parts[plan.part_count] = whole;
             plan.part_count += 1;
         }
         for (colors) |reference| drawn[reference.attachment] = true;
@@ -257,9 +302,11 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
     return .success;
 }
 
-/// Whether a subpass draws into just what the one before it does.
+/// Whether a subpass draws into just what the one before it does, the
+/// same way round.
 fn sameTargets(before: facet.SubpassDescription, subpass: facet.SubpassDescription) bool {
     if (before.color_attachment_count != subpass.color_attachment_count) return false;
+    if (before.flags != subpass.flags) return false;
     for (before.color_attachments.?[0..before.color_attachment_count], subpass.color_attachments.?[0..subpass.color_attachment_count]) |a, b| {
         if (a.attachment != b.attachment) return false;
     }

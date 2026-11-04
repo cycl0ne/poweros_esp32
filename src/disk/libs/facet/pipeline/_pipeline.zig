@@ -182,6 +182,12 @@ pub const Pipeline = struct {
     /// (`PhysicalDeviceFeatures.independent_blend`, since 1.33). All hold
     /// the default where the create info gave no attachment state.
     mixings: [_render.most_colors]Mixing,
+    /// The colour attachments the fragment function writes in the one
+    /// call (`shader.fragmentOutputs`, since 1.51): 1 for a function that
+    /// writes the one colour, and the subpass's colour attachment count
+    /// for one drawing a subpass whose attachments go together
+    /// (SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER).
+    outputs: u32 = 1,
     /// The viewport and the scissor, or null where commands set them.
     viewport: ?facet.Viewport,
     scissor: ?facet.Rect2D,

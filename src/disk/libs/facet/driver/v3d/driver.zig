@@ -183,6 +183,9 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // never spread an 8888 texel: one byte a texel there, and the
         // packed flag costs nothing and changes nothing (tiling.zig).
         .small_texels = true,
+        // Its fragment programs are the fixed forms, and each writes the
+        // one colour: a subpass of several is drawn once for each.
+        .several_outputs = false,
         // A set layout's own sampler is the library's doing, not a
         // driver's: it is kept here as well, though no program of the QPUs
         // reads a sampler.

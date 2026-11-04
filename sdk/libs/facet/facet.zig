@@ -471,6 +471,18 @@ pub const PhysicalDeviceFeatures = extern struct {
     /// and has never spread an 8888 texel, so the flag costs it nothing
     /// and changes nothing there. (Since 1.48.)
     small_texels: bool = false,
+    /// A fragment function may write all the colour attachments of its
+    /// subpass in the one call, the subpass drawn once rather than once
+    /// for each of them (`shader.fragmentOutputs`,
+    /// SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER): a G-buffer's three or four
+    /// planes cost one pass over the vertices, one binning and one call a
+    /// quad instead of as many as there are attachments. True on the
+    /// cores, where the tiles hold a colour plane for each attachment of
+    /// such a subpass. False on the V3D, whose fragment programs are the
+    /// fixed forms and each writes the one colour: there a subpass of
+    /// several is drawn once for each, as it was before, and the flag is
+    /// `error_feature_not_present` (CreateRenderPass). (Since 1.51.)
+    several_outputs: bool = false,
 };
 
 /// QueueFamilyProperties.queue_flags: what a family's queues do.
@@ -811,6 +823,22 @@ pub const IMAGE_CREATE_CUBE_COMPATIBLE: u32 = 1 << 4;
 /// false, and on an image that is neither sampled nor a storage image.
 /// (Since 1.48.)
 pub const IMAGE_CREATE_PACKED_TEXELS: u32 = 1 << 31;
+
+/// facet.library's own, in `SubpassDescription.flags`: the subpass's
+/// colour attachments are drawn **together**, in one pass over the tiles,
+/// by a fragment function that writes all of them in the one call
+/// (`shader.fragmentOutputs`, `shader.Fragments.colorsOf`). Without it a
+/// subpass of several colour attachments is drawn once for each, every
+/// command of the pass played again with `shader.Resources.output` saying
+/// which - the vertices worked and the triangles binned over again - and
+/// a fragment function writing the one colour.
+///
+/// Refused with `error_feature_not_present` where
+/// `PhysicalDeviceFeatures.several_outputs` is false, and with
+/// `error_invalid_shader_nv` for a pipeline of such a subpass whose
+/// fragment entry does not write exactly the subpass's colour
+/// attachments. (Since 1.51.)
+pub const SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER: u32 = 1 << 31;
 
 pub const ImageCreateInfo = extern struct {
     flags: u32 = 0,
@@ -1772,6 +1800,17 @@ pub const PipelineColorBlendStateCreateInfo = extern struct {
     /// own since 1.33 (`PhysicalDeviceFeatures.independent_blend`).
     attachments: ?[*]const PipelineColorBlendAttachmentState = null,
     blend_constants: [4]f32 = @splat(0),
+    /// One set of blend constants for each colour attachment of the
+    /// subpass, in place of the one `blend_constants` holds for all of
+    /// them: facet.library's own, where Vulkan has the one set
+    /// (since 1.51). Null, and every attachment blends by
+    /// `blend_constants`. As many as `attachment_count` says, or as the
+    /// subpass has colour attachments where that is 0.
+    ///
+    /// With `blend_constants` among the dynamic states, CmdSetBlendConstants
+    /// sets the one set over all of them and CmdSetBlendConstantsAt one
+    /// attachment's own.
+    attachment_constants: ?[*]const [4]f32 = null,
 };
 
 /// State a pipeline leaves to commands.

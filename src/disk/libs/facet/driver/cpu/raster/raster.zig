@@ -34,7 +34,7 @@
 //! tests, one part after another.
 
 const target = @import("target.zig");
-const pipeline = @import("pipeline.zig");
+pub const pipeline = @import("pipeline.zig");
 const texture = @import("sdk").facet.texture;
 
 pub const Target = target.Target;

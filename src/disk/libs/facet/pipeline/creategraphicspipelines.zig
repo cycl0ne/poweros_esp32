@@ -35,7 +35,9 @@ const _instance = @import("../instance/_instance.zig");
 /// `error_invalid_shader_nv` for stages that are not one vertex and one
 /// fragment function of the same varyings, with or without a tessellation
 /// control and evaluation function, whose varyings then the fragment
-/// function's have to be; `error_feature_not_present`
+/// function's have to be, or for a fragment function that writes other
+/// than the subpass's colour attachments (`shader.fragmentOutputs`, since
+/// 1.51); `error_feature_not_present`
 /// for state facet.library does not draw (see BEHAVIOR);
 /// `error_format_not_supported` for an attribute in a format it does not
 /// read; `error_initialization_failed` for state that does not hold
@@ -137,10 +139,22 @@ const _instance = @import("../instance/_instance.zig");
 /// opaque. `color_blend_state.attachments` holds one state for each colour
 /// attachment of the subpass, or none for the default over all of them; a
 /// subpass of several has each blended its own way (since 1.33,
-/// `PhysicalDeviceFeatures.independent_blend`), the blend constants being
-/// the pipeline's and shared. On the cores, SRC_ALPHA and ONE_MINUS_SRC_ALPHA or ONE, with
+/// `PhysicalDeviceFeatures.independent_blend`). The blend constants are
+/// the pipeline's and shared, as in Vulkan, unless
+/// `attachment_constants` gives one set for each attachment instead -
+/// facet.library's own, since 1.51 - and with `blend_constants` among the
+/// dynamic states CmdSetBlendConstants sets the one set over all of them
+/// and CmdSetBlendConstantsAt one attachment's own. On the cores,
+/// SRC_ALPHA and ONE_MINUS_SRC_ALPHA or ONE, with
 /// the alpha's factors the same or ZERO and ONE and the mask whole, cost
 /// less than any other mixing.
+///
+/// The fragment entry says how many colours its function writes in the
+/// one call: one, or the subpass's colour attachments where the subpass
+/// draws them together (SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER,
+/// `shader.fragmentOutputs`, since 1.51). It has to come to exactly what
+/// the subpass has either way, and a function of several wants a device
+/// whose `several_outputs` is true.
 ///
 /// BUGS:
 /// None known.
@@ -220,7 +234,17 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
     if (last_entry.varyingCount() != fragment_entry.varyingCount()) return .error_invalid_shader_nv;
     const pass = _objects.of(_render.RenderPass, info.render_pass);
     if (info.subpass >= pass.subpass_count) return .error_initialization_failed;
-    const colors = pass.subpasses[info.subpass].part_count;
+    const subpass = pass.subpasses[info.subpass];
+    // The subpass's colour attachments: one a part where it is drawn once
+    // for each of them, and all of the one part where they go together
+    // (SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER, since 1.51).
+    const colors = if (subpass.part_count == 1) pass.parts[subpass.first_part].color_count else subpass.part_count;
+    // The fragment entry says how many colours it writes in the one call
+    // (`shader.fragmentOutputs`): the subpass's own count where they go
+    // together, and one where they do not.
+    const outputs = fragment_entry.outputCount();
+    if (outputs != pass.parts[subpass.first_part].color_count) return .error_invalid_shader_nv;
+    if (outputs > 1 and !device.physical.features.several_outputs) return .error_feature_not_present;
 
     made.* = .{
         .device = device,
@@ -254,6 +278,7 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         .polygon_mode = .fill,
         .line_width = 1,
         .mixings = @splat(.{}),
+        .outputs = outputs,
         .viewport = null,
         .scissor = null,
     };
@@ -392,8 +417,15 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
                 mixing.alpha_op = attachment.alpha_blend_op;
             }
         };
-        // The constants are the pipeline's, shared by all of them.
+        // The constants are the pipeline's, shared by all of them - or
+        // one set for each attachment, which is facet.library's own
+        // (since 1.51).
         for (&made.mixings) |*mixing| mixing.constants = blend.blend_constants;
+        if (blend.attachment_constants) |given| {
+            const count = if (blend.attachment_count != 0) blend.attachment_count else colors;
+            if (count > _render.most_colors) return .error_initialization_failed;
+            for (given[0..count], made.mixings[0..count]) |constants, *mixing| mixing.constants = constants;
+        }
     }
 
     // The viewport and the scissor, unless commands set them.

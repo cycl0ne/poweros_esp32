@@ -49,6 +49,7 @@ Generated from the source by `./zig build autodoc`.
 - [CmdPushConstants](#cmdpushconstants) - Recorded: bytes of push constants set.
 - [CmdResetQueryPool](#cmdresetquerypool) - Recorded: `count` queries from `first` set back to nothing counted and not available.
 - [CmdSetBlendConstants](#cmdsetblendconstants) - Recorded: the blend constants, for a pipeline that leaves them to commands.
+- [CmdSetBlendConstantsAt](#cmdsetblendconstantsat) - Recorded: one colour attachment's own blend constants, for a pipeline that leaves them to commands.
 - [CmdSetDepthBias](#cmdsetdepthbias) - Recorded: the depth bias, for a pipeline that leaves it to commands.
 - [CmdSetDepthBounds](#cmdsetdepthbounds) - Recorded: the depth bounds, for a pipeline that leaves them to commands.
 - [CmdSetLineWidth](#cmdsetlinewidth) - Recorded: the width of lines, for a pipeline that leaves it to commands.
@@ -2566,7 +2567,9 @@ None.
 **BEHAVIOR**
 
 The draws after it with a pipeline whose blend constants are dynamic mix
-by these.
+by these, every colour attachment of the subpass by the one set, as in
+Vulkan. It also forgets what CmdSetBlendConstantsAt set for any
+attachment of its own (since 1.51).
 
 **CONTEXT**
 
@@ -2589,12 +2592,85 @@ None known.
 
 **SEE ALSO**
 
-`CreateGraphicsPipelines`
+`CmdSetBlendConstantsAt`, `CreateGraphicsPipelines`
 
 **EXAMPLES**
 
 ```zig
 fb.CmdSetBlendConstants(commands, &.{ 1, 0.5, 0.25, 1 });
+```
+
+## CmdSetBlendConstantsAt
+
+Recorded: one colour attachment's own blend constants, for a pipeline that leaves them to commands.
+
+**SYNOPSIS**
+
+```zig
+fn CmdSetBlendConstantsAt(base: *FacetBase, buffer: *facet.CommandBuffer, attachment: u32, constants: *const [4]f32) void
+```
+
+**SINCE**
+
+1.51. LVO -520.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording.
+- `attachment` - which colour attachment of the subpass, 0 to 3.
+- `constants` - red, green, blue and alpha, 0 to 1.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+The draws after it with a pipeline whose blend constants are dynamic mix
+that one colour attachment by these, and the others by whatever they had:
+what CmdSetBlendConstants set over all of them, or their own set before.
+facet.library's own, where Vulkan has the one set a pipeline shares
+between its attachments - which matters where a subpass draws several
+together and one fragment call writes them all
+(SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER), there being no replay left to
+set them between.
+
+A later CmdSetBlendConstants sets the one set again over every
+attachment, and forgets what this set for any of them. An `attachment`
+past the subpass's does nothing.
+
+The pipeline's own constants win where it has them
+(`PipelineColorBlendStateCreateInfo.attachment_constants`,
+`blend_constants`): a command sets only what a pipeline left to one.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The constants are copied as the command is recorded.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CmdSetBlendConstants`, `CreateGraphicsPipelines`, `CreateRenderPass`
+
+**EXAMPLES**
+
+```zig
+// The second attachment of a G-buffer mixed by a constant of its own.
+fb.CmdSetBlendConstantsAt(commands, 1, &.{ 0.25, 0.25, 0.25, 1 });
 ```
 
 ## CmdSetDepthBias
@@ -3897,7 +3973,9 @@ fn CreateGraphicsPipelines(base: *FacetBase, device: *facet.Device, cache: ?*fac
 `error_invalid_shader_nv` for stages that are not one vertex and one
 fragment function of the same varyings, with or without a tessellation
 control and evaluation function, whose varyings then the fragment
-function's have to be; `error_feature_not_present`
+function's have to be, or for a fragment function that writes other
+than the subpass's colour attachments (`shader.fragmentOutputs`, since
+1.51); `error_feature_not_present`
 for state facet.library does not draw (see BEHAVIOR);
 `error_format_not_supported` for an attribute in a format it does not
 read; `error_initialization_failed` for state that does not hold
@@ -4003,10 +4081,22 @@ On an attachment without alpha, R5G6B5, what is there reads as wholly
 opaque. `color_blend_state.attachments` holds one state for each colour
 attachment of the subpass, or none for the default over all of them; a
 subpass of several has each blended its own way (since 1.33,
-`PhysicalDeviceFeatures.independent_blend`), the blend constants being
-the pipeline's and shared. On the cores, SRC_ALPHA and ONE_MINUS_SRC_ALPHA or ONE, with
+`PhysicalDeviceFeatures.independent_blend`). The blend constants are
+the pipeline's and shared, as in Vulkan, unless
+`attachment_constants` gives one set for each attachment instead -
+facet.library's own, since 1.51 - and with `blend_constants` among the
+dynamic states CmdSetBlendConstants sets the one set over all of them
+and CmdSetBlendConstantsAt one attachment's own. On the cores,
+SRC_ALPHA and ONE_MINUS_SRC_ALPHA or ONE, with
 the alpha's factors the same or ZERO and ONE and the mask whole, cost
 less than any other mixing.
+
+The fragment entry says how many colours its function writes in the
+one call: one, or the subpass's colour attachments where the subpass
+draws them together (SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER,
+`shader.fragmentOutputs`, since 1.51). It has to come to exactly what
+the subpass has either way, and a function of several wants a device
+whose `several_outputs` is true.
 
 **BUGS**
 
@@ -4584,6 +4674,22 @@ A subpass of several colour attachments is drawn once for each, its commands
 played over, so it costs that much more: its fragment function is called for
 each, and `shader.Resources.output` says for which. A fixed fragment
 function has one colour, which every attachment gets.
+
+Since 1.51 such a subpass may be drawn **together** instead, in one
+pass over the tiles: SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER in its
+`flags`, facet.library's own, and every pipeline of it has a fragment
+entry that writes exactly its colour attachments in the one call
+(`shader.fragmentOutputs`, `shader.Fragments.colorsOf`); one that does
+not is `error_invalid_shader_nv` (CreateGraphicsPipelines). The
+vertices are worked once, the triangles binned once and a quad's
+fragment function called once for all of them - a G-buffer's three or
+four planes for the price of one - and each attachment is still
+blended its own way, into a plane of each tile's own. The flag wants a
+device whose `several_outputs` is true: the cores, not the V3D, whose
+fragment programs are the fixed forms and each write the one colour;
+there it is `error_feature_not_present`, and a subpass without it is
+drawn as it always was. Any other bit in `flags` is
+`error_feature_not_present` too.
 
 Attachments a subpass does not name are left as they are. The
 dependencies are not looked at: a queue's commands are done one after

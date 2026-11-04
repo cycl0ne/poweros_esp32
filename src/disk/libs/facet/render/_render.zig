@@ -36,18 +36,23 @@ pub const most_subpasses = 4;
 pub const most_colors = 4;
 pub const most_parts = 8;
 
-/// One colour attachment of a subpass, drawn as a pass of its own.
+/// One pass over the tiles: a subpass's colour attachments, or one of
+/// them where the subpass is drawn once for each.
 pub const Part = struct {
-    /// The colour attachment's place among the attachments, and the depth
-    /// attachment's if there is one.
-    color: u32,
+    /// The colour attachments it draws into, by their place among the
+    /// pass's: `color_count` of them, which is 1 unless the subpass
+    /// draws several together (SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER,
+    /// since 1.51).
+    colors: [most_colors]u32 = @splat(0),
+    color_count: u32 = 1,
+    /// The depth attachment's place, if there is one.
     depth: ?u32,
     /// What that attachment has of the two.
     tests_depth: bool,
     tests_stencil: bool,
-    color_format: facet.Format,
-    /// What the colour starts with.
-    color_load: ColorLoad,
+    /// Each colour attachment's format, and what it starts with.
+    color_formats: [most_colors]facet.Format = @splat(.undefined),
+    color_loads: [most_colors]ColorLoad = @splat(.keep),
     /// Whether the depth attachment is read from its image as the part
     /// starts, and written into it as the part ends: a depth that outlives
     /// the pass (`PhysicalDeviceFeatures.stored_depth`). Both are false for
@@ -77,11 +82,13 @@ pub const RenderPass = struct {
     subpass_count: u32 = 0,
 };
 
-/// What a part of a subpass draws into.
+/// What a part of a subpass draws into: a view for each of its colour
+/// attachments, and the depth's.
 pub const Target = struct {
     width: u32,
     height: u32,
-    color: *ImageView,
+    colors: [most_colors]*ImageView = undefined,
+    color_count: u32 = 1,
     depth: ?*ImageView,
 };
 

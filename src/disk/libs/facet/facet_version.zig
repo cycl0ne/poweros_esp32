@@ -478,9 +478,36 @@ pub const LIBRARY_VERSION = 1;
 /// function did wrote past the room there was for it, and the fragment
 /// function read what was never written - a colour of nothing, where the
 /// patch's own floats are what the evaluation function makes it from.
+/// 51: a subpass's colour attachments drawn together, one fragment call
+/// writing all of them. SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER in a
+/// `SubpassDescription.flags` - facet.library's own, Vulkan having no bit
+/// for it - says so, and every pipeline of that subpass has a fragment
+/// entry from `shader.fragmentOutputs` declaring exactly its colour
+/// attachments. The function then finds `Fragments.output_count` above 1
+/// and each attachment's colours after the one before
+/// (`Fragments.colorsOf`), and writes them all in the one call. Before
+/// this the subpass was drawn once for each attachment, its commands
+/// played over again with `Resources.output` saying which: the vertices
+/// worked again, the triangles binned again and every quad's fragment
+/// function called again. A G-buffer of three or four planes now costs
+/// one pass over all of it.
+/// The tiles hold a colour plane for each attachment, and the room for a
+/// batch's colours for all of them, out of memory of the part's own:
+/// a frame of the one colour keeps the 24 KiB buffer and the stack it had,
+/// and pays nothing for this. Each attachment is still blended its own
+/// way, by its own mixing, into its own plane. Only the cores do it
+/// (`PhysicalDeviceFeatures.several_outputs`); on the V3D the flag is
+/// `error_feature_not_present`, its fragment programs being the fixed
+/// forms and each writing the one colour.
+/// Blend constants may be one set for each attachment as well - facet's
+/// own again, where Vulkan has the one set a pipeline shares - by
+/// `PipelineColorBlendStateCreateInfo.attachment_constants` or by the new
+/// CmdSetBlendConstantsAt (LVO -520). A subpass drawn together has no
+/// replay left to set them between, so without this its attachments could
+/// not be blended by constants of their own at all.
 /// What stays: `fifo` is the one present mode, there being no way to ask a
 /// display to show a buffer before its next frame; one queue family of one
 /// queue; a counter of 32 bits, for want of a 64-bit atomic on every
 /// machine the library runs on; and no point mode in tessellation, there
 /// being no point rasterization at all.
-pub const LIBRARY_REVISION = 50;
+pub const LIBRARY_REVISION = 51;

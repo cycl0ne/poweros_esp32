@@ -145,6 +145,9 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // 8888 word unspread, which the one sampler reads either way
         // (`texture.Format.r8`, `argb8888`).
         .small_texels = true,
+        // The tiles hold a colour plane for each attachment of a subpass
+        // drawn together, and one fragment call writes them all.
+        .several_outputs = true,
         // A sampler the set layout holds, which a write cannot change: the
         // library keeps it, so it is nothing to do with the device.
         .immutable_samplers = true,

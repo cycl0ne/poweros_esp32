@@ -101,7 +101,11 @@ pub const Player = struct {
     index_type: facet.IndexType = .uint16,
     viewport: facet.Viewport = .{ .width = 0, .height = 0 },
     scissor: facet.Rect2D = .{ .extent = .{} },
+    /// What CmdSetBlendConstants set over every colour attachment, and
+    /// what CmdSetBlendConstantsAt set for one of its own (facet's own,
+    /// since 1.51).
     blend_constants: [4]f32 = @splat(0),
+    attachment_constants: [_render.most_colors]?[4]f32 = @splat(null),
     /// What CmdSetDepthBias set, for a pipeline whose bias is dynamic.
     depth_bias: _pipeline.Bias = .{},
     /// What CmdSetDepthBounds last set, for a pipeline whose bounds are
@@ -275,7 +279,14 @@ fn playStream(queue: *Queue, stream: *const _stream.Stream) void {
         },
         .set_viewport => player.viewport = _stream.as(_command.SetViewport, head).viewport,
         .set_scissor => player.scissor = _stream.as(_command.SetScissor, head).scissor,
-        .set_blend_constants => player.blend_constants = _stream.as(_command.SetBlendConstants, head).constants,
+        .set_blend_constants => {
+            player.blend_constants = _stream.as(_command.SetBlendConstants, head).constants;
+            player.attachment_constants = @splat(null);
+        },
+        .set_blend_constants_at => {
+            const command = _stream.as(_command.SetBlendConstantsAt, head);
+            if (command.attachment < _render.most_colors) player.attachment_constants[command.attachment] = command.constants;
+        },
         .set_depth_bias => {
             const command = _stream.as(_command.SetDepthBias, head);
             player.depth_bias = .{ .constant = command.constant, .clamp = command.clamp, .slope = command.slope };
@@ -459,7 +470,7 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
     if (player.hardware.broken) return;
     player.resources.output = part;
     const framebuffer = &command.targets[part];
-    const image = framebuffer.color.image;
+    const image = framebuffer.colors[0].image;
     const output: struct { u64, bool } = switch (image.format) {
         .b8g8r8a8_unorm => .{ cl.OUTPUT_RGBA8, true },
         .r8g8b8a8_unorm => .{ cl.OUTPUT_RGBA8, false },
@@ -479,7 +490,7 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
     const bottom: u32 = @intCast(std.math.clamp(@as(i64, offset.y) + command.area.extent.height, top, framebuffer.height));
     if (left == right or top == bottom) return;
     const whole = left == 0 and top == 0 and right == framebuffer.width and bottom == framebuffer.height;
-    const clears = command.parts[part].color_load == .clear;
+    const clears = command.parts[part].color_loads[0] == .clear;
     const tiles = ((framebuffer.width + 63) / 64) * ((framebuffer.height + 63) / 64);
     if (!sized(queue, &player.tile_lists, tileListsBytes(tiles, 0))) return;
     player.triangles = 0;
@@ -884,7 +895,9 @@ fn mixingOf(player: *const Player, pipeline: *const Pipeline) cl.Mixing {
         .src_alpha = @intFromEnum(mixing.src_alpha),
         .dst_alpha = @intFromEnum(mixing.dst_alpha),
         .alpha_mode = @intFromEnum(mixing.alpha_op),
-        .constants = mixing.constants orelse player.blend_constants,
+        .constants = mixing.constants orelse
+            player.attachment_constants[@min(player.resources.output, _render.most_colors - 1)] orelse
+            player.blend_constants,
         .channels = mixing.mask,
     };
 }

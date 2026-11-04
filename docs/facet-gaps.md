@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.50**, so that a program need not find out by failing. It covers the API.
+1.51**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -231,15 +231,31 @@ each colour attachment of the subpass, taken on its own: one attachment can
 be blended while the next is replaced, each with its own factors, operation
 and write mask. Every device has it
 (`PhysicalDeviceFeatures.independent_blend`), an attachment being drawn as
-a pass of its own either way. What is left out:
+a pass of its own either way.
 
-- **The blend constants are the pipeline's**, one set shared by all of its
-  attachments, as they are in Vulkan; `CmdSetBlendConstants` sets that one
-  set.
-- **A fragment function still runs once for each attachment**, with
-  `shader.Resources.output` saying which: it writes one colour, never
-  several at once, so a subpass of several has its commands played over
-  again for each rather than drawn once into all of them.
+Since 1.51 a subpass's colour attachments may be drawn **together**
+instead: SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER in `SubpassDescription.flags`
+(facet.library's own), and a fragment entry made by
+`shader.fragmentOutputs` writes all of them in the one call
+(`shader.Fragments.colorsOf`). The vertices are then worked once, the
+triangles binned once and a quad's fragment function called once for every
+attachment, each still blended its own way into a plane of each tile's
+own - a G-buffer's three or four planes for the price of one pass. Only the
+cores do it (`PhysicalDeviceFeatures.several_outputs`), and a pipeline of
+such a subpass has to write exactly its attachments
+(`error_invalid_shader_nv`). Without the flag a subpass of several is drawn
+once for each, as it always was, `shader.Resources.output` saying which.
+
+Blend constants are the pipeline's one set shared by all its attachments,
+as in Vulkan, or one set each where
+`PipelineColorBlendStateCreateInfo.attachment_constants` gives them -
+facet's own since 1.51, because a subpass drawn together has no replay left
+to set them between. `CmdSetBlendConstants` sets the one set over all of
+them and `CmdSetBlendConstantsAt` one attachment's own. What is left out:
+
+- **The V3D draws them one at a time**: its fragment programs are the
+  fixed forms and each writes the one colour, so there a subpass of
+  several costs its commands played over again for each.
 - Logic operations are still refused, for every attachment
   (`logic_op_enable`), and there is no dual-source blending: the `SRC1`
   factors do not exist.

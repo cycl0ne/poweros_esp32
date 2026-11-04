@@ -74,6 +74,14 @@ pub const Entry = extern struct {
         return Fixed.fromBits(entry.varyings);
     }
 
+    /// The colours a fragment function writes in the one call: 1 for a
+    /// `shader.fragment` or a `shader.fixedFragment` entry, and what
+    /// `shader.fragmentOutputs` said for one that writes a subpass's
+    /// colour attachments together (since 1.51).
+    pub fn outputCount(entry: *const Entry) u32 {
+        return ((entry.varyings >> 18) & 3) + 1;
+    }
+
     /// An evaluation function's way of tessellating, or null where its
     /// domain or its spacing is a value this library has not: a pipeline
     /// refuses such an entry with `error_invalid_shader_nv`. (Since 1.50
@@ -123,6 +131,18 @@ pub fn vertex(name: [*:0]const u8, function: VertexFn, varyings: u32) Entry {
 /// An entry for a fragment function.
 pub fn fragment(name: [*:0]const u8, function: FragmentFn, varyings: u32) Entry {
     return .{ .name = name, .stage = facet.SHADER_STAGE_FRAGMENT, .function = function, .varyings = varyings };
+}
+
+/// An entry for a fragment function that writes `outputs` colours in the
+/// one call - all the colour attachments of a subpass marked
+/// SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER - rather than the one colour a
+/// `fragment` entry writes. 1 to 4, and the pipeline is refused where it
+/// is not the subpass's colour attachment count exactly.
+/// `Fragments.colorsOf` is where each one's colours go.
+/// (Since 1.51. `PhysicalDeviceFeatures.several_outputs`.)
+pub fn fragmentOutputs(name: [*:0]const u8, function: FragmentFn, varyings: u32, outputs: u32) Entry {
+    const held: u32 = @min(@max(outputs, 1), 4) - 1;
+    return .{ .name = name, .stage = facet.SHADER_STAGE_FRAGMENT, .function = function, .varyings = varyings | held << 18 };
 }
 
 /// An entry for a tessellation control function. `own` is the floats it
@@ -978,7 +998,9 @@ pub const Fragments = extern struct {
     quads: [*]Quad,
     count: u32,
     /// Where each quad's four colours go, 0xAARRGGBB, its pixels in the
-    /// order of `covered`'s bits.
+    /// order of `covered`'s bits. A function that writes several colour
+    /// attachments at once finds the next attachment's `count` colours
+    /// after this one's: `colorsOf` is the way to them.
     colors: [*][4]u32,
     /// 1 / w, then each varying over w.
     planes: [*]const Plane,
@@ -991,6 +1013,21 @@ pub const Fragments = extern struct {
     /// stand for its pixels: each has to divide.
     exact: bool,
     resources: *const Resources,
+    /// The colour attachments the function writes in this call: 1 for
+    /// every fragment function but one of a `shader.fragmentOutputs`
+    /// entry drawing a subpass whose attachments go together
+    /// (SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER, since 1.51). `colorsOf`
+    /// gives each one's colours; attachment 0's are `colors` itself, so a
+    /// function that writes the one colour needs no notice of this.
+    output_count: u32 = 1,
+
+    /// Where colour attachment `output`'s `count` colours go. Attachment
+    /// 0's are `colors`; an `output` past `output_count` gives the last
+    /// one's rather than memory that is not the batch's. (Since 1.51.)
+    pub inline fn colorsOf(fragments: *const Fragments, output: u32) [*][4]u32 {
+        const at = @min(output, fragments.output_count - 1);
+        return fragments.colors + at * fragments.count;
+    }
 };
 
 pub const FragmentFn = *const fn (fragments: *const Fragments) callconv(.c) void;

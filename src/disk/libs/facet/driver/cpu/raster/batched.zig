@@ -56,6 +56,12 @@ pub const most_varyings = 8;
 /// The quads a batch holds.
 pub const batch_quads = 64;
 
+comptime {
+    // The tiles hand out room for the colour attachments past the first
+    // (`Tile.extra_colors`): it has to be a batch's worth exactly.
+    if (target_zig.batch_color_words != batch_quads * 4) @compileError("a tile's batch colours are not a batch's");
+}
+
 /// How a depth is compared with the one kept: the pixel passes where it
 /// is so to it. The numbers are a mask - 1 less, 2 equal, 4 greater - and
 /// Vulkan's.
@@ -164,6 +170,14 @@ pub const State = struct {
     blend: pipeline.Blend = .off,
     /// How it mixes, with `.general`.
     mixing: pipeline.Mixing = .{},
+    /// The blend and the mixing of the colour attachments past the first,
+    /// where the draw writes several together (`color_count`, since
+    /// 1.51): `blend` and `mixing` are the first's.
+    more_blends: [target_zig.most_colors - 1]pipeline.Blend = @splat(.off),
+    more_mixings: [target_zig.most_colors - 1]pipeline.Mixing = @splat(.{}),
+    /// The colour attachments the fragment function writes in the one
+    /// call: 1, and `blend` and `mixing` alone are used. (Since 1.51.)
+    color_count: u32 = 1,
     /// The stencil test on a target with stencil: the front's, the back's.
     stencil: ?[2]StencilFace = null,
     /// The depth pre-pass, where the depth test is less or less or equal,
@@ -213,6 +227,13 @@ const Shading = struct {
     depth_write: bool,
     blend: pipeline.Blend,
     mixing: pipeline.Mixing,
+    /// Those of the colour attachments past the first, where several go
+    /// together (`color_count`, since 1.51).
+    more_blends: [target_zig.most_colors - 1]pipeline.Blend,
+    more_mixings: [target_zig.most_colors - 1]pipeline.Mixing,
+    /// The colour attachments the fragment function writes at once: 1 for
+    /// every draw but one into a subpass whose attachments go together.
+    color_count: u32,
     /// The depth is tested, with a stencil test.
     has_depth: bool,
     stencil: [2]StencilFace,
@@ -289,6 +310,10 @@ fn setUpAll(target: *Target, state: *const State, vertices: []const f32, stride:
         .depth_write = depth and state.depth_write,
         .blend = state.blend,
         .mixing = state.mixing,
+        .more_blends = state.more_blends,
+        .more_mixings = state.more_mixings,
+        // Never more than the frame has planes and surfaces for.
+        .color_count = @min(@max(state.color_count, 1), target.colorCount()),
         .has_depth = depth,
         // A draw that goes by pixel without a stencil test of its own has
         // a test that passes and writes nothing.
@@ -706,7 +731,13 @@ const Batch = struct {
             .y = tile.y,
             .exact = !(least > 0 and change <= least * newton_change),
             .resources = shading.resources,
+            .output_count = shading.color_count,
         };
+        // A function that writes several colour attachments at once
+        // writes them one after another, so they go in the one run the
+        // tile keeps for its part; the one colour a draw usually writes
+        // stays on the stack, where it always was. (Since 1.51.)
+        if (shading.color_count > 1) batch.fragments.colors = tile.extra_colors.?;
     }
 
     /// The quads gathered coloured by the fragment function, and the
@@ -718,9 +749,15 @@ const Batch = struct {
         // After it, not before: the quads' `kept` is what the function left.
         if (batch.deferred_depth) batch.putDepths();
         if (batch.shading.fragments != null or batch.shading.samples != null) batch.countPixels();
-        switch (batch.shading.blend) {
-            .general => batch.putMixed(),
-            inline else => |blend| batch.put(blend),
+        // The colours the function wrote: each attachment's `count` of
+        // them after the one before (`shader.Fragments.colorsOf`), and
+        // each blended its own way into its own plane of the tile
+        // (since 1.51).
+        const written = batch.fragments.colors;
+        batch.putAt(0, batch.shading.blend, &batch.shading.mixing, written);
+        var output: u32 = 1;
+        while (output < batch.shading.color_count) : (output += 1) {
+            batch.putAt(output, batch.shading.more_blends[output - 1], &batch.shading.more_mixings[output - 1], written + output * batch.count);
         }
         batch.count = 0;
     }
@@ -765,12 +802,21 @@ const Batch = struct {
         }
     }
 
-    inline fn put(batch: *Batch, comptime blend: pipeline.Blend) void {
+    /// Colour attachment `output`'s colours put into its plane of the
+    /// tile, as its own blend says. (Since 1.51: before that there was
+    /// the one attachment, and `put` and `putMixed` took the tile's one
+    /// colour plane.)
+    inline fn putAt(batch: *Batch, output: u32, blend: pipeline.Blend, mixing: *const pipeline.Mixing, colors: [*][4]u32) void {
+        const plane = batch.tile.plane(output);
+        switch (blend) {
+            .general => batch.putMixed(plane, mixing, colors),
+            inline else => |one| batch.put(plane, one, colors),
+        }
+    }
+
+    inline fn put(batch: *Batch, pixels: [*]u32, comptime blend: pipeline.Blend, from: [*][4]u32) void {
         @setRuntimeSafety(false);
-        // The tile's colours held here: through the tile they would be
-        // read again after every pixel stored.
-        const pixels: [*]u32 = &batch.tile.buffer.color;
-        for (batch.quads[0..batch.count], batch.colors[0..batch.count]) |quad, *colors| {
+        for (batch.quads[0..batch.count], from[0..batch.count]) |quad, *colors| {
             const at = pixels + @as(u32, quad.y) * tile_size + quad.x;
             if (quad.kept == 0xF and blend == .off) {
                 // A row of a quad a store: its column is even, and its two
@@ -783,12 +829,10 @@ const Batch = struct {
         }
     }
 
-    /// As `put`, by what the draw's Mixing says.
-    fn putMixed(batch: *Batch) void {
+    /// As `put`, by what the attachment's Mixing says.
+    fn putMixed(batch: *Batch, pixels: [*]u32, mixing: *const pipeline.Mixing, from: [*][4]u32) void {
         @setRuntimeSafety(false);
-        const mixing = &batch.shading.mixing;
-        const pixels: [*]u32 = &batch.tile.buffer.color;
-        for (batch.quads[0..batch.count], batch.colors[0..batch.count]) |quad, *colors| {
+        for (batch.quads[0..batch.count], from[0..batch.count]) |quad, *colors| {
             const at = pixels + @as(u32, quad.y) * tile_size + quad.x;
             inline for (0..4) |i| {
                 if (quad.kept >> i & 1 != 0) at[offset(i)] = mixing.mixed(colors[i], at[offset(i)]);

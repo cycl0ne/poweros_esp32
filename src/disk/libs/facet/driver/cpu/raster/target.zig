@@ -55,6 +55,19 @@ const tile_pixels = tile_size * tile_size;
 /// The most parts a frame's tiles are shared between: a buffer each.
 pub const most_parts = 4;
 
+/// The most colour attachments a frame draws together, a plane of each
+/// tile's own for each of them past the first (`Tile.rowOf`, since 1.51).
+pub const most_colors = 4;
+
+/// The words a batch of quads' colours take for one colour attachment:
+/// four a quad, as many quads as a batch holds (`batched.batch_quads`,
+/// which a comptime check there holds to this). Where a frame draws
+/// several colour attachments together the fragment function writes them
+/// all in the one call, one after another, so the room for them has to be
+/// one run: a tile hands out its part's own rather than growing every
+/// worker's stack by it. (Since 1.51.)
+pub const batch_color_words = 64 * 4;
+
 /// The cache line a tile's rows start on.
 const line_bytes = 64;
 
@@ -252,9 +265,24 @@ pub const Surface = struct {
 
 /// What each frame starts with.
 pub const Attachments = struct {
+    /// The first colour attachment, which every frame has.
     color: Color = .{},
+    /// The ones past it, for a frame that draws several together: each
+    /// has a plane of its own in every tile, and a surface of its own
+    /// (`Target.initAll`). (Since 1.51.)
+    more: [most_colors - 1]Color = @splat(.{}),
+    /// How many colour attachments the frame draws: 1, and `color`
+    /// alone, which is every frame until a subpass asks for several
+    /// (SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER).
+    color_count: u32 = 1,
     depth: Depth = .{},
     stencil: Stencil = .{},
+
+    /// Colour attachment `output`'s: the first's for 0.
+    pub inline fn colorAt(attachments: *const Attachments, output: u32) Color {
+        if (output == 0 or output > most_colors - 1) return attachments.color;
+        return attachments.more[output - 1];
+    }
 
     pub const Color = struct {
         /// Cleared to `clear`, or what the surface holds.
@@ -345,7 +373,10 @@ const TileState = struct {
 
 /// A part's tile: its colour and depth, a cache line aligned, and the
 /// pixels the depth pre-pass's second pass has shaded, a bit each, a row
-/// a word.
+/// a word. The colour attachments past the first, where a frame draws
+/// several together, have planes of their own outside it
+/// (`Target.extras`): the one colour a frame usually draws keeps the
+/// buffer the 24 KiB it was, and the cache with it.
 const Buffer = extern struct {
     color: [tile_pixels]u32 align(line_bytes),
     depth: [tile_pixels]u16,
@@ -356,6 +387,17 @@ const Buffer = extern struct {
 /// The tile a part draws: its buffer, and where it lies on the surface.
 pub const Tile = struct {
     buffer: *Buffer,
+    /// This part's planes for the colour attachments past the first, one
+    /// after another, `tile_pixels` words each; null where the frame
+    /// draws the one colour. (Since 1.51.)
+    extras: ?[*]u32 = null,
+    /// This part's room for a batch's colours, one colour attachment
+    /// after another, `batch_color_words` each and one more run than
+    /// there are extra planes: what the fragment function writes for all
+    /// of them in the one call, before each goes into its own plane.
+    /// Null where the frame draws the one colour, whose colours go on the
+    /// stack as they always did. (Since 1.51.)
+    extra_colors: ?[*][4]u32 = null,
     /// The grid square's number, row by row.
     index: u32,
     /// The grid square's top left on the surface.
@@ -388,6 +430,20 @@ pub const Tile = struct {
         return tile.buffer.color[y * tile_size ..].ptr;
     }
 
+    /// Colour attachment `output`'s whole plane in the tile, 64 x 64
+    /// words: the buffer's own for 0, and one of `extras` past it.
+    /// (Since 1.51.)
+    pub inline fn plane(tile: *const Tile, output: u32) [*]u32 {
+        if (output == 0) return &tile.buffer.color;
+        return tile.extras.? + (output - 1) * tile_pixels;
+    }
+
+    /// Row `y` of colour attachment `output`'s plane, from its left.
+    /// (Since 1.51.)
+    pub inline fn rowOf(tile: *const Tile, output: u32, y: u32) [*]u32 {
+        return tile.plane(output) + y * tile_size;
+    }
+
     /// Row `y` of the tile's depth, from its left.
     pub inline fn depthRow(tile: *const Tile, y: u32) [*]u16 {
         return tile.buffer.depth[y * tile_size ..].ptr;
@@ -407,10 +463,17 @@ const Grid = struct {
     columns: u32,
     rows: u32,
 
-    fn over(surface: Surface, area: Rect) error{OutOfBounds}!Grid {
+    fn over(surfaces: []const Surface, area: Rect) error{OutOfBounds}!Grid {
         if (area.width == 0 or area.height == 0) return error.OutOfBounds;
-        if (@as(u64, area.x) + area.width > surface.width or @as(u64, area.y) + area.height > surface.height) return error.OutOfBounds;
-        const across = line_bytes / surface.format.bytes();
+        if (surfaces.len == 0 or surfaces.len > most_colors) return error.OutOfBounds;
+        // The grid's left is on a cache line of every surface it writes,
+        // so the widest pixel count a line holds is what it is rounded
+        // to: no two tiles share a line of any of them.
+        var across: u32 = 1;
+        for (surfaces) |surface| {
+            if (@as(u64, area.x) + area.width > surface.width or @as(u64, area.y) + area.height > surface.height) return error.OutOfBounds;
+            across = @max(across, line_bytes / surface.format.bytes());
+        }
         const x = area.x / across * across;
         return .{
             .x = x,
@@ -427,9 +490,12 @@ const Grid = struct {
 
 pub const Target = struct {
     host: Host,
-    surface: Surface,
-    /// How the tiles' colours are packed into the surface's pixels.
-    packing: *const Packing,
+    /// The memory each colour attachment is written into: `surface_count`
+    /// of them, one for each the frame draws (`Attachments.color_count`).
+    surfaces: [most_colors]Surface,
+    surface_count: u32,
+    /// How the tiles' colours are packed into each surface's pixels.
+    packings: [most_colors]*const Packing,
     area: Rect,
     attachments: Attachments,
     /// The grid: its top left on the surface, and its squares across and
@@ -442,13 +508,19 @@ pub const Target = struct {
     tiles: []TileState,
     /// A buffer for each part.
     buffers: *[most_parts]Buffer,
+    /// The planes for the colour attachments past the first, where the
+    /// frame draws several together: `extra_planes` for each part, one
+    /// after another, `tile_pixels` words each. Null where there are
+    /// none. (Since 1.51.)
+    extras: ?[*]u32 = null,
+    extra_planes: u32 = 0,
     /// The squares a frame draws, in the order they are handed out, and
     /// the next to hand out.
     order: []u32,
     count: u32 = 0,
     next: u32 = 0,
-    /// The colour cleared to, 0xAARRGGBB as the tiles keep it.
-    clear_pixel: u32 = 0,
+    /// Each colour attachment's clear, 0xAARRGGBB as the tiles keep it.
+    clear_pixels: [most_colors]u32 = @splat(0),
     /// The frame's memory, and the triangles set up by the draw under way
     /// and not yet on the tiles' lists.
     arena: bins.Arena,
@@ -461,13 +533,22 @@ pub const Target = struct {
     memory_bytes: usize,
     room: u32,
 
-    /// A target over `area` of `surface`, which has to lie inside it.
+    /// A target over `area` of `surface`, which has to lie inside it: the
+    /// one colour attachment a frame usually draws.
     pub fn init(host: Host, surface: Surface, area: Rect, attachments: Attachments) error{ OutOfMemory, OutOfBounds }!Target {
-        const grid = try Grid.over(surface, area);
+        return initAll(host, &.{surface}, area, attachments);
+    }
+
+    /// The same over several colour attachments, drawn together: a
+    /// surface for each, all holding `area`, and `attachments.color_count`
+    /// saying how many the frames draw. (Since 1.51.)
+    pub fn initAll(host: Host, surfaces: []const Surface, area: Rect, attachments: Attachments) error{ OutOfMemory, OutOfBounds }!Target {
+        const grid = try Grid.over(surfaces, area);
         var target = Target{
             .host = host,
-            .surface = surface,
-            .packing = Packing.of(surface.format),
+            .surfaces = undefined,
+            .surface_count = @intCast(surfaces.len),
+            .packings = undefined,
             .area = area,
             .attachments = attachments,
             .grid_x = grid.x,
@@ -482,8 +563,42 @@ pub const Target = struct {
             .memory_bytes = 0,
             .room = 0,
         };
-        try target.lay(grid.squares());
+        target.take(surfaces);
+        try target.lay(grid.squares(), planesOf(attachments));
         return target;
+    }
+
+    /// The surfaces kept, and how each one's pixels are packed.
+    fn take(target: *Target, surfaces: []const Surface) void {
+        target.surface_count = @intCast(surfaces.len);
+        for (surfaces, 0..) |surface, k| {
+            target.surfaces[k] = surface;
+            target.packings[k] = Packing.of(surface.format);
+        }
+    }
+
+    /// Colour attachment `output`'s surface: the first's where the frame
+    /// draws fewer than that.
+    pub inline fn surfaceAt(target: *const Target, output: u32) Surface {
+        return target.surfaces[@min(output, target.surface_count - 1)];
+    }
+
+    /// The planes a frame needs past the first colour attachment's.
+    fn planesOf(attachments: Attachments) u32 {
+        return @min(@max(attachments.color_count, 1), most_colors) - 1;
+    }
+
+    /// The words one part takes for `planes` extra planes and the batch
+    /// colours of the attachments they and the first make: 0 for a frame
+    /// of the one colour, whose colours go on the worker's stack.
+    fn wordsOf(planes: u32) usize {
+        if (planes == 0) return 0;
+        return @as(usize, planes) * tile_pixels + @as(usize, planes + 1) * batch_color_words;
+    }
+
+    /// The same for this target's own planes.
+    inline fn partWords(target: *const Target) usize {
+        return wordsOf(target.extra_planes);
     }
 
     /// The target moved onto `area` of `surface`, which may be another, and
@@ -491,10 +606,16 @@ pub const Target = struct {
     /// grid laid again - in its block while that has room for the squares,
     /// else in a larger one. Between frames.
     pub fn moveTo(target: *Target, surface: Surface, area: Rect, attachments: Attachments) error{ OutOfMemory, OutOfBounds }!void {
-        const grid = try Grid.over(surface, area);
-        if (grid.squares() > target.room) try target.lay(grid.squares());
-        target.surface = surface;
-        target.packing = Packing.of(surface.format);
+        return target.moveToAll(&.{surface}, area, attachments);
+    }
+
+    /// The same onto several colour attachments, drawn together.
+    /// (Since 1.51.)
+    pub fn moveToAll(target: *Target, surfaces: []const Surface, area: Rect, attachments: Attachments) error{ OutOfMemory, OutOfBounds }!void {
+        const grid = try Grid.over(surfaces, area);
+        const planes = planesOf(attachments);
+        if (grid.squares() > target.room or planes > target.extra_planes) try target.lay(@max(grid.squares(), target.room), @max(planes, target.extra_planes));
+        target.take(surfaces);
         target.area = area;
         target.attachments = attachments;
         target.grid_x = grid.x;
@@ -505,19 +626,24 @@ pub const Target = struct {
         target.order = target.order.ptr[0..grid.squares()];
     }
 
-    /// A block for the buffers and `squares` squares, in place of the one
-    /// there was: the buffers, the squares and their order laid out in it.
-    fn lay(target: *Target, squares: u32) error{OutOfMemory}!void {
+    /// A block for the buffers, `planes` colour planes a part past the
+    /// first and `squares` squares, in place of the one there was: all of
+    /// them laid out in it.
+    fn lay(target: *Target, squares: u32, planes: u32) error{OutOfMemory}!void {
         const host = target.host;
         const buffers_bytes = @sizeOf([most_parts]Buffer);
+        const extras_bytes = @as(usize, most_parts) * wordsOf(planes) * @sizeOf(u32);
         const tiles_bytes = squares * @sizeOf(TileState);
         const order_bytes = squares * @sizeOf(u32);
-        const bytes = line_bytes + buffers_bytes + tiles_bytes + order_bytes;
+        const bytes = line_bytes + buffers_bytes + extras_bytes + tiles_bytes + order_bytes;
         const memory = host.allocate(host.context, bytes) orelse return error.OutOfMemory;
         if (target.memory_bytes != 0) host.free(host.context, target.memory, target.memory_bytes);
         var at = (@intFromPtr(memory) + line_bytes - 1) / line_bytes * line_bytes;
         target.buffers = @ptrFromInt(at);
         at += buffers_bytes;
+        target.extras = if (planes == 0) null else @as([*]u32, @ptrFromInt(at));
+        target.extra_planes = planes;
+        at += extras_bytes;
         target.tiles = @as([*]TileState, @ptrFromInt(at))[0..squares];
         at += tiles_bytes;
         target.order = @as([*]u32, @ptrFromInt(at))[0..squares];
@@ -540,15 +666,27 @@ pub const Target = struct {
         // depth that is kept and starts cleared.
         const depth = target.attachments.depth;
         const stencil = target.attachments.stencil;
-        const cleared = target.attachments.color.load == .clear or
+        var any_cleared = false;
+        const colors = target.colorCount();
+        for (0..colors) |output| {
+            const color = target.attachments.colorAt(@intCast(output));
+            target.clear_pixels[output] = color.clear;
+            if (color.load == .clear) any_cleared = true;
+        }
+        const cleared = any_cleared or
             (depth.store and depth.load == .clear) or
             (stencil.store and stencil.load == .clear);
         for (target.tiles) |*state| state.* = .{ .dirty = cleared };
-        target.clear_pixel = target.attachments.color.clear;
         target.arena.reset();
         target.pending = &.{};
         target.pending_count = 0;
         target.stats = .{};
+    }
+
+    /// The colour attachments a frame draws together: never more than
+    /// there are surfaces for, or planes.
+    pub inline fn colorCount(target: *const Target) u32 {
+        return @min(@max(target.attachments.color_count, 1), target.surface_count, target.extra_planes + 1);
     }
 
     /// Microseconds, if the host can tell.
@@ -626,6 +764,8 @@ pub const Target = struct {
         const area = target.area;
         return .{
             .buffer = &target.buffers[part],
+            .extras = if (target.extras) |first| first + @as(usize, part) * target.partWords() else null,
+            .extra_colors = if (target.extras) |first| @ptrCast(@alignCast(first + @as(usize, part) * target.partWords() + target.extra_planes * tile_pixels)) else null,
             .index = index,
             .x = x,
             .y = y,
@@ -640,9 +780,13 @@ pub const Target = struct {
     /// the surface.
     fn drawTile(target: *Target, tile: *const Tile) void {
         const buffer = tile.buffer;
-        switch (target.attachments.color.load) {
-            .clear => @memset(&buffer.color, target.clear_pixel),
-            .keep => target.load(tile),
+        const colors = target.colorCount();
+        var output: u32 = 0;
+        while (output < colors) : (output += 1) {
+            switch (target.attachments.colorAt(output).load) {
+                .clear => @memset(tile.plane(output)[0..tile_pixels], target.clear_pixels[output]),
+                .keep => target.load(tile, output),
+            }
         }
         const depth = &target.attachments.depth;
         if (depth.used) switch (depth.load) {
@@ -667,7 +811,8 @@ pub const Target = struct {
                 drawn += 1;
             }
         }
-        target.store(tile);
+        output = 0;
+        while (output < colors) : (output += 1) target.store(tile, output);
         if (depth.store) target.storeDepth(tile);
         if (stencil.store) target.storeStencil(tile);
     }
@@ -699,23 +844,24 @@ pub const Target = struct {
         });
     }
 
-    /// The surface under the tile, into its buffer.
-    fn load(target: *Target, tile: *const Tile) void {
-        const packing = target.packing;
+    /// Colour attachment `output`'s surface under the tile, into that
+    /// attachment's plane in the buffer.
+    fn load(target: *Target, tile: *const Tile, output: u32) void {
+        const packing = target.packings[output];
         const column = tile.x + tile.left;
         var row = tile.top;
         while (row < tile.bottom) : (row += 1) {
-            packing.load(tile.row(row) + tile.left, target.pixelAt(column, tile.y + row), tile.right - tile.left);
+            packing.load(tile.rowOf(output, row) + tile.left, target.pixelAt(output, column, tile.y + row), tile.right - tile.left);
         }
     }
 
-    /// The tile's buffer, into the surface.
-    fn store(target: *Target, tile: *const Tile) void {
-        const packing = target.packing;
+    /// The tile's plane for colour attachment `output`, into its surface.
+    fn store(target: *Target, tile: *const Tile, output: u32) void {
+        const packing = target.packings[output];
         const column = tile.x + tile.left;
         var row = tile.top;
         while (row < tile.bottom) : (row += 1) {
-            packing.store(target.pixelAt(column, tile.y + row), tile.row(row) + tile.left, tile.right - tile.left, column, tile.y + row);
+            packing.store(target.pixelAt(output, column, tile.y + row), tile.rowOf(output, row) + tile.left, tile.right - tile.left, column, tile.y + row);
         }
     }
 
@@ -802,10 +948,10 @@ pub const Target = struct {
         return plane.pixels + @as(usize, y) * plane.pitch + @as(usize, x) * plane.stride;
     }
 
-    /// The surface's pixel at column `x` of row `y`.
-    inline fn pixelAt(target: *const Target, x: u32, y: u32) [*]u8 {
-        const surface = target.surface;
-        return surface.pixels + @as(usize, y) * surface.pitch + @as(usize, x) * target.packing.bytes;
+    /// Colour attachment `output`'s surface, at column `x` of row `y`.
+    inline fn pixelAt(target: *const Target, output: u32, x: u32, y: u32) [*]u8 {
+        const surface = target.surfaces[output];
+        return surface.pixels + @as(usize, y) * surface.pitch + @as(usize, x) * target.packings[output].bytes;
     }
 };
 

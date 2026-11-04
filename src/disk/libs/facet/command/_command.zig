@@ -211,7 +211,8 @@ pub const BeginRenderPass = extern struct {
     targets: [*]const _render.Target,
     part_count: u32,
     area: facet.Rect2D,
-    /// 0xAARRGGBB for each, and the depth buffer's 0 to 65535.
+    /// 0xAARRGGBB for each colour attachment of the subpass, in the
+    /// order the parts draw them, and the depth buffer's 0 to 65535.
     clear_colors: [_render.most_colors]u32,
     clear_depth: u32,
     clear_stencil: u32,
@@ -232,8 +233,16 @@ pub fn beginSubpass(made: *CommandBuffer, number: u32) void {
         .clear_depth = if (first.depth) |depth| (if (depth < clears.len) _render.depthOf(clears[depth].depth_stencil) else 0xFFFF) else 0xFFFF,
         .clear_stencil = if (first.depth) |depth| (if (depth < clears.len) clears[depth].depth_stencil.stencil & 0xFF else 0) else 0,
     };
-    for (pass.parts[subpass.first_part..][0..subpass.part_count], command.clear_colors[0..subpass.part_count]) |part, *color| {
-        if (part.color < clears.len) color.* = _render.colorOf(clears[part.color].color);
+    // The subpass's colour attachments in the order its parts draw
+    // them: one a part where it is played again for each, and all of a
+    // part where they go together (since 1.51).
+    var at: u32 = 0;
+    for (pass.parts[subpass.first_part..][0..subpass.part_count]) |part| {
+        for (part.colors[0..part.color_count]) |index| {
+            if (at == _render.most_colors) break;
+            if (index < clears.len) command.clear_colors[at] = _render.colorOf(clears[index].color);
+            at += 1;
+        }
     }
     record(made, command, u8, &.{});
 }
@@ -356,6 +365,16 @@ pub const SetScissor = extern struct {
 pub const SetBlendConstants = extern struct {
     pub const op: _stream.Op = .set_blend_constants;
     head: Head = .{ .op = op },
+    constants: [4]f32,
+};
+
+/// CmdSetBlendConstantsAt: one colour attachment's own blend constants,
+/// facet.library's own where Vulkan has the one set (since 1.51).
+pub const SetBlendConstantsAt = extern struct {
+    pub const op: _stream.Op = .set_blend_constants_at;
+    head: Head = .{ .op = op },
+    attachment: u32,
+    pad: u32 = 0,
     constants: [4]f32,
 };
 
