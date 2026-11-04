@@ -2638,8 +2638,14 @@ facet.library/WaitForFences
 	  through, and bound to memory.
 	- `info.format` - how the bytes are read: `r8g8b8a8_unorm`,
 	  `b8g8r8a8_unorm`, `r5g6b5_unorm_pack16`, `r32_sfloat`,
-	  `r32g32_sfloat`, `r32g32b32_sfloat` or `r32g32b32a32_sfloat`, which
-	  are those whose `buffer_features` say `UNIFORM_TEXEL_BUFFER`.
+	  `r32g32_sfloat`, `r32g32b32_sfloat`, `r32g32b32a32_sfloat`, and
+	  since 1.54 one channel, two or four of 8, 16 or 32 bits - a
+	  `_unorm` read as 0 to 1, a `_uint` or a `_sint` as the whole number
+	  itself, and `r16_sfloat`, `r16g16_sfloat` and
+	  `r16g16b16a16_sfloat` as half-floats. Those are the formats whose
+	  `buffer_features` say `UNIFORM_TEXEL_BUFFER`, which
+	  `GetPhysicalDeviceFormatProperties` tells and is the same on every
+	  device.
 	- `info.offset` - the first byte of the texels, a multiple of the
 	  format's size.
 	- `info.range` - how many bytes of them, a multiple of the format's
@@ -2679,7 +2685,16 @@ facet.library/WaitForFences
 	struct, where a texel buffer reads what a file or another machine
 	handed over. `shader.Resources.texels` gives the function a
 	`shader.Texels`, whose `at` reads a texel as four floats and `colorAt`
-	as 0xAARRGGBB, whatever the format.
+	as 0xAARRGGBB, whatever the format. Since 1.54 `intAt` reads it as four
+	whole numbers as well, and `setInt` writes it from them, which is what
+	a 32-bit integer format wants: a value past 2^24 is more than `at`'s
+	float carries exactly.
+
+	No image is kept in the formats 1.54 added and no vertex attribute is
+	read in one: they say `UNIFORM_TEXEL_BUFFER` and
+	`STORAGE_TEXEL_BUFFER` in `buffer_features` and nothing else. The two
+	that were already image formats, `r8_unorm` and `r16g16b16a16_sfloat`,
+	keep what they had and gain these.
 
    BUGS
 	None known.

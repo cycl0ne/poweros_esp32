@@ -1812,6 +1812,285 @@ test "a buffer read as texels of a format: a uniform one read, a storage one wri
     try testing.expectEqual(@as(f32, 1), written[3]);
 }
 
+test "texel buffers of whole numbers and of 16 bits a channel: every format of the grid, and the whole numbers exact" {
+    const Grid = struct {
+        /// Texel k of binding 0 copied into texel k of binding 1 by
+        /// floats, whatever the two formats are.
+        fn run(groups: *const shader.Groups) callconv(.c) void {
+            const from = groups.resources.texels(0, 0, 0) orelse return;
+            var into = groups.resources.texels(0, 1, 0) orelse return;
+            const k = groups.group[0];
+            into.set(k, from.at(k));
+        }
+
+        /// The same by whole numbers, which is what a 32-bit integer
+        /// format wants: `at`'s float does not carry one past 2^24.
+        fn wholes(groups: *const shader.Groups) callconv(.c) void {
+            const from = groups.resources.texels(0, 0, 0) orelse return;
+            var into = groups.resources.texels(0, 1, 0) orelse return;
+            const k = groups.group[0];
+            into.setInt(k, from.intAt(k));
+        }
+
+        /// What the function sees of binding 0: how many texels it has,
+        /// its first texel as four floats, and as four whole numbers.
+        fn told(groups: *const shader.Groups) callconv(.c) void {
+            const out = groups.resources.storage(u32, 0, 2) orelse return;
+            const from = groups.resources.texels(0, 0, 0) orelse {
+                out[0] = 0xFFFF_FFFF;
+                return;
+            };
+            out[0] = from.count;
+            const parts = from.at(0);
+            for (parts, 0..) |part, k| out[1 + k] = @bitCast(part);
+            const numbers = from.intAt(0);
+            for (numbers, 0..) |number, k| {
+                const bits: u64 = @bitCast(number);
+                out[5 + k * 2] = @truncate(bits);
+                out[6 + k * 2] = @truncate(bits >> 32);
+            }
+        }
+
+        const entries = [_]shader.Entry{ shader.compute("main", &run), shader.compute("wholes", &wholes), shader.compute("told", &told) };
+        const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
+    };
+
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    var features: facet.PhysicalDeviceFeatures = undefined;
+    fb.GetPhysicalDeviceFeatures(bench.physical, &features);
+    try testing.expect(features.texel_buffers);
+
+    // Every format the grid of 1.54 added, with the bytes a texel takes:
+    // one channel, two or four, of 8, 16 or 32 bits.
+    const Grain = struct { format: facet.Format, size: u32 };
+    const grid = [_]Grain{
+        .{ .format = .r8_unorm, .size = 1 },
+        .{ .format = .r8g8_unorm, .size = 2 },
+        .{ .format = .r8_uint, .size = 1 },
+        .{ .format = .r8g8_uint, .size = 2 },
+        .{ .format = .r8g8b8a8_uint, .size = 4 },
+        .{ .format = .r8_sint, .size = 1 },
+        .{ .format = .r8g8_sint, .size = 2 },
+        .{ .format = .r8g8b8a8_sint, .size = 4 },
+        .{ .format = .r16_unorm, .size = 2 },
+        .{ .format = .r16g16_unorm, .size = 4 },
+        .{ .format = .r16g16b16a16_unorm, .size = 8 },
+        .{ .format = .r16_uint, .size = 2 },
+        .{ .format = .r16g16_uint, .size = 4 },
+        .{ .format = .r16g16b16a16_uint, .size = 8 },
+        .{ .format = .r16_sint, .size = 2 },
+        .{ .format = .r16g16_sint, .size = 4 },
+        .{ .format = .r16g16b16a16_sint, .size = 8 },
+        .{ .format = .r16_sfloat, .size = 2 },
+        .{ .format = .r16g16_sfloat, .size = 4 },
+        .{ .format = .r16g16b16a16_sfloat, .size = 8 },
+        .{ .format = .r32_uint, .size = 4 },
+        .{ .format = .r32g32_uint, .size = 8 },
+        .{ .format = .r32g32b32a32_uint, .size = 16 },
+        .{ .format = .r32_sint, .size = 4 },
+        .{ .format = .r32g32_sint, .size = 8 },
+        .{ .format = .r32g32b32a32_sint, .size = 16 },
+    };
+
+    // Every one of them says a texel buffer and nothing else - no image
+    // is kept in them, and no vertex attribute is read in one. The two
+    // that an image is kept in, r8_unorm and r16g16b16a16_sfloat, say
+    // what they always said as well.
+    const texel_features = facet.FORMAT_FEATURE_UNIFORM_TEXEL_BUFFER | facet.FORMAT_FEATURE_STORAGE_TEXEL_BUFFER;
+    for (grid) |grain| {
+        var properties: facet.FormatProperties = undefined;
+        fb.GetPhysicalDeviceFormatProperties(bench.physical, grain.format, &properties);
+        try testing.expectEqual(texel_features, properties.buffer_features & texel_features);
+        try testing.expectEqual(@as(u32, 0), properties.buffer_features & facet.FORMAT_FEATURE_VERTEX_BUFFER);
+    }
+
+    const span = 64;
+    const source, const source_bytes = try bench.buffer(span, facet.BUFFER_USAGE_UNIFORM_TEXEL_BUFFER);
+    const target, const target_bytes = try bench.buffer(span, facet.BUFFER_USAGE_STORAGE_TEXEL_BUFFER);
+
+    const module_made = try module(&bench, &Grid.code);
+    defer fb.DestroyShaderModule(device, module_made);
+    const bindings = [3]facet.DescriptorSetLayoutBinding{
+        .{ .binding = 0, .descriptor_type = .uniform_texel_buffer, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+        .{ .binding = 1, .descriptor_type = .storage_texel_buffer, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+        .{ .binding = 2, .descriptor_type = .storage_buffer, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+    };
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 3, .bindings = &bindings }, &set_layout));
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    const layout = try pipelineLayout(&bench, &.{set_layout.?}, 0);
+    defer fb.DestroyPipelineLayout(device, layout);
+    var pool: ?*facet.DescriptorPool = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool));
+    defer fb.DestroyDescriptorPool(device, pool);
+    var sets: [1]?*facet.DescriptorSet = undefined;
+    try testing.expectEqual(facet.Result.success, fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &sets));
+    const told, const told_bytes = try bench.buffer(64, facet.BUFFER_USAGE_STORAGE_BUFFER);
+    const told_info = facet.DescriptorBufferInfo{ .buffer = told, .range = facet.WHOLE_SIZE };
+    const to_told = facet.WriteDescriptorSet{ .dst_set = sets[0].?, .dst_binding = 2, .descriptor_type = .storage_buffer, .descriptor_count = 1, .buffer_info = @ptrCast(&told_info) };
+    fb.UpdateDescriptorSets(device, 1, @ptrCast(&to_told), 0, null);
+
+    const infos = [3]facet.ComputePipelineCreateInfo{
+        .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module_made }, .layout = layout },
+        .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module_made, .name = "wholes" }, .layout = layout },
+        .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module_made, .name = "told" }, .layout = layout },
+    };
+    var pipelines: [3]?*facet.Pipeline = undefined;
+    try testing.expectEqual(facet.Result.success, fb.CreateComputePipelines(device, null, 3, &infos, &pipelines));
+    defer for (pipelines) |one| fb.DestroyPipeline(device, one);
+    const out: [*]const u32 = @ptrCast(@alignCast(told_bytes));
+
+    // A view of each, and a dispatch that tells how many texels it found:
+    // the buffer's bytes divided by the format's size, which is what the
+    // library made of the format.
+    for (grid) |grain| {
+        var view: ?*facet.BufferView = null;
+        try testing.expectEqual(facet.Result.success, fb.CreateBufferView(device, &.{ .buffer = source, .format = grain.format }, &view));
+        defer fb.DestroyBufferView(device, view);
+        const write = facet.WriteDescriptorSet{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .uniform_texel_buffer, .descriptor_count = 1, .texel_buffer_view = @ptrCast(&view) };
+        fb.UpdateDescriptorSets(device, 1, @ptrCast(&write), 0, null);
+        @memset(told_bytes[0..64], 0);
+        const commands = try bench.record();
+        fb.CmdBindPipeline(commands, .compute, pipelines[2].?);
+        fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+        fb.CmdDispatch(commands, 1, 1, 1);
+        try bench.submit();
+        try testing.expectEqual(span / grain.size, out[0]);
+        // An offset or a range that is not a whole texel is refused, and
+        // so is a range of nothing.
+        if (grain.size > 1) {
+            var none: ?*facet.BufferView = null;
+            try testing.expectEqual(facet.Result.error_initialization_failed, fb.CreateBufferView(device, &.{ .buffer = source, .format = grain.format, .offset = 1 }, &none));
+            try testing.expectEqual(facet.Result.error_initialization_failed, fb.CreateBufferView(device, &.{ .buffer = source, .format = grain.format, .range = grain.size - 1 }, &none));
+            try testing.expect(none == null);
+        }
+    }
+
+    // A view of `format` over `buffer`, written into binding `at`.
+    const bind = struct {
+        fn bind(on: *Bench, buffer: *facet.Buffer, format: facet.Format, at: u32, kind: facet.DescriptorType, into: *[1]?*facet.DescriptorSet) !*facet.BufferView {
+            var view: ?*facet.BufferView = null;
+            try testing.expectEqual(facet.Result.success, on.rig.fb.CreateBufferView(on.device, &.{ .buffer = buffer, .format = format }, &view));
+            const write = facet.WriteDescriptorSet{ .dst_set = into[0].?, .dst_binding = at, .descriptor_type = kind, .descriptor_count = 1, .texel_buffer_view = @ptrCast(&view) };
+            on.rig.fb.UpdateDescriptorSets(on.device, 1, @ptrCast(&write), 0, null);
+            return view.?;
+        }
+    }.bind;
+
+    // A whole number read as itself: r8_uint's 0 to 255, copied by floats
+    // into r16_uint, where it is the same number in two bytes.
+    source_bytes[0] = 7;
+    source_bytes[1] = 200;
+    @memset(target_bytes[0..span], 0);
+    const from_u8 = try bind(&bench, source, .r8_uint, 0, .uniform_texel_buffer, &sets);
+    defer fb.DestroyBufferView(device, from_u8);
+    const into_u16 = try bind(&bench, target, .r16_uint, 1, .storage_texel_buffer, &sets);
+    defer fb.DestroyBufferView(device, into_u16);
+    var commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, pipelines[0].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 2, 1, 1);
+    try bench.submit();
+    try testing.expectEqual(@as(u16, 7), std.mem.readInt(u16, target_bytes[0..2], .little));
+    try testing.expectEqual(@as(u16, 200), std.mem.readInt(u16, target_bytes[2..4], .little));
+    // And what the function saw of the first: 7 as a float and as a whole
+    // number, with the parts the format has not got 0 and alpha 1.
+    commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, pipelines[2].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    try bench.submit();
+    try testing.expectEqual(@as(f32, 7), @as(f32, @bitCast(out[1])));
+    try testing.expectEqual(@as(f32, 0), @as(f32, @bitCast(out[2])));
+    try testing.expectEqual(@as(f32, 1), @as(f32, @bitCast(out[4])));
+    try testing.expectEqual(@as(u32, 7), out[5]);
+    try testing.expectEqual(@as(u32, 1), out[11]);
+
+    // A signed one: -300 and 300 of r16g16_sint, read as themselves and
+    // written into r32g32_sint.
+    std.mem.writeInt(i16, source_bytes[0..2], -300, .little);
+    std.mem.writeInt(i16, source_bytes[2..4], 300, .little);
+    @memset(target_bytes[0..span], 0);
+    const from_i16 = try bind(&bench, source, .r16g16_sint, 0, .uniform_texel_buffer, &sets);
+    defer fb.DestroyBufferView(device, from_i16);
+    const into_i32 = try bind(&bench, target, .r32g32_sint, 1, .storage_texel_buffer, &sets);
+    defer fb.DestroyBufferView(device, into_i32);
+    commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, pipelines[1].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    try bench.submit();
+    try testing.expectEqual(@as(i32, -300), std.mem.readInt(i32, target_bytes[0..4], .little));
+    try testing.expectEqual(@as(i32, 300), std.mem.readInt(i32, target_bytes[4..8], .little));
+
+    // 16 bits a channel as 0 to 1: a half of 65535 reads as about 0.5,
+    // which 8 bits could not tell from the next step up.
+    std.mem.writeInt(u16, source_bytes[0..2], 32768, .little);
+    const from_u16 = try bind(&bench, source, .r16_unorm, 0, .uniform_texel_buffer, &sets);
+    defer fb.DestroyBufferView(device, from_u16);
+    commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, pipelines[2].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    try bench.submit();
+    try testing.expectApproxEqAbs(@as(f32, 0.5), @as(f32, @bitCast(out[1])), 0.0001);
+    // Its whole number is what it keeps, not 0 or 1.
+    try testing.expectEqual(@as(u32, 32768), out[5]);
+
+    // Half-floats: 1.5 and -0.25 of r16g16b16a16_sfloat, read as they are.
+    const halves = [4]f16{ 1.5, -0.25, 3, 0.5 };
+    for (halves, 0..) |half, k| std.mem.writeInt(u16, source_bytes[k * 2 ..][0..2], @bitCast(half), .little);
+    const from_f16 = try bind(&bench, source, .r16g16b16a16_sfloat, 0, .uniform_texel_buffer, &sets);
+    defer fb.DestroyBufferView(device, from_f16);
+    commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, pipelines[2].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    try bench.submit();
+    try testing.expectEqual(@as(f32, 1.5), @as(f32, @bitCast(out[1])));
+    try testing.expectEqual(@as(f32, -0.25), @as(f32, @bitCast(out[2])));
+    try testing.expectEqual(@as(f32, 0.5), @as(f32, @bitCast(out[4])));
+
+    // A 32-bit whole number past 2^24, which the float of `at` cannot
+    // carry: `intAt` reads it as it lies, and `setInt` writes it back.
+    const big: u32 = 4_000_000_001;
+    std.mem.writeInt(u32, source_bytes[0..4], big, .little);
+    @memset(target_bytes[0..span], 0);
+    const from_u32 = try bind(&bench, source, .r32_uint, 0, .uniform_texel_buffer, &sets);
+    defer fb.DestroyBufferView(device, from_u32);
+    const into_u32 = try bind(&bench, target, .r32_uint, 1, .storage_texel_buffer, &sets);
+    defer fb.DestroyBufferView(device, into_u32);
+    commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, pipelines[1].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    try bench.submit();
+    try testing.expectEqual(big, std.mem.readInt(u32, target_bytes[0..4], .little));
+    // The same copied by floats instead loses the low bits, the float
+    // carrying 24 of them.
+    @memset(target_bytes[0..span], 0);
+    commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, pipelines[0].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    try bench.submit();
+    try testing.expect(std.mem.readInt(u32, target_bytes[0..4], .little) != big);
+    // A value past what the channel carries is held to the largest it
+    // does, not wrapped: 4 thousand million into r16_uint is 65535.
+    const into_small = try bind(&bench, target, .r16_uint, 1, .storage_texel_buffer, &sets);
+    defer fb.DestroyBufferView(device, into_small);
+    @memset(target_bytes[0..span], 0);
+    commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, pipelines[1].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    try bench.submit();
+    try testing.expectEqual(@as(u16, 65535), std.mem.readInt(u16, target_bytes[0..2], .little));
+}
+
 test "tessellation: patches made into triangles and lines, on the picture where the evaluation function puts them" {
     const Bent = struct {
         var last_points: u32 = 0;
@@ -5967,7 +6246,9 @@ test "a texel kept smaller than its colour: 8888 in its word, and one byte of re
     fb.GetPhysicalDeviceFormatProperties(bench.physical, .r8_unorm, &properties);
     try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_SAMPLED_IMAGE != 0);
     try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_COLOR_ATTACHMENT == 0);
-    try testing.expectEqual(@as(u32, 0), properties.buffer_features);
+    // A texel buffer of one byte a texel as well, since 1.54, and no
+    // vertex attribute is read in it.
+    try testing.expectEqual(facet.FORMAT_FEATURE_UNIFORM_TEXEL_BUFFER | facet.FORMAT_FEATURE_STORAGE_TEXEL_BUFFER, properties.buffer_features);
 
     const usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST | facet.IMAGE_USAGE_TRANSFER_SRC;
     // Eight by eight: a level of 64 texels, so that what each format

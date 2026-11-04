@@ -657,6 +657,38 @@ pub const Format = enum(u32) {
     /// green with a blue of 0 - as Vulkan reads them, the alpha whole.
     eac_r11_unorm_block = 153,
     eac_r11g11_unorm_block = 155,
+    /// The formats a texel buffer reads and no image is kept in (since
+    /// 1.54): a whole number of 8, 16 or 32 bits a channel, signed or
+    /// not, and a half-float; one channel, two or four. A view of one
+    /// reads the buffer where it lies (`CreateBufferView`,
+    /// `shader.Texels`), so these say `UNIFORM_TEXEL_BUFFER` and
+    /// `STORAGE_TEXEL_BUFFER` in `buffer_features` and nothing else.
+    /// `_unorm` is read as 0 to 1, `_uint` and `_sint` as the number
+    /// itself, `_sfloat` as the float.
+    r8g8_unorm = 16,
+    r8_uint = 13,
+    r8g8_uint = 20,
+    r8g8b8a8_uint = 41,
+    r8_sint = 14,
+    r8g8_sint = 21,
+    r8g8b8a8_sint = 42,
+    r16_unorm = 70,
+    r16g16_unorm = 77,
+    r16g16b16a16_unorm = 91,
+    r16_uint = 74,
+    r16g16_uint = 81,
+    r16g16b16a16_uint = 95,
+    r16_sint = 75,
+    r16g16_sint = 82,
+    r16g16b16a16_sint = 96,
+    r16_sfloat = 76,
+    r16g16_sfloat = 83,
+    r32_uint = 98,
+    r32g32_uint = 101,
+    r32g32b32a32_uint = 107,
+    r32_sint = 99,
+    r32g32_sint = 102,
+    r32g32b32a32_sint = 108,
     _,
 };
 

@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.53**, so that a program need not find out by failing. It covers the API.
+1.54**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -218,12 +218,29 @@ Since 1.32 a buffer's bytes may be read as texels of a format:
 `shader.Resources.texels` gives the function a `shader.Texels` whose `at`
 reads a texel as four floats and `colorAt` as 0xAARRGGBB, whatever the
 format. A storage one is written through as well. Every device has them.
+
+Since 1.54 the formats are a regular grid: one channel, two or four of 8,
+16 or 32 bits - a `_unorm` read as 0 to 1, a `_uint` or a `_sint` as the
+whole number itself, and `r16_sfloat`, `r16g16_sfloat` and
+`r16g16b16a16_sfloat` as half-floats - beside the seven that were there
+before (8888 either way round, `r5g6b5_unorm_pack16`, and `r32_sfloat` to
+`r32g32b32a32_sfloat`). `shader.Texels.intAt` reads a texel as four whole
+numbers and `setInt` writes it from them, which the 32-bit integer formats
+want: `at`'s float carries 24 bits exactly, so a larger whole number
+copied through it comes out changed.
+
 What is left out:
 
-- **Seven formats**: `r8g8b8a8_unorm`, `b8g8r8a8_unorm`,
-  `r5g6b5_unorm_pack16`, and `r32_sfloat` to `r32g32b32a32_sfloat`. No
-  integer texel formats, nothing of 16 bits a channel, and none of the
-  compressed ones.
+- **No three-channel format but `r5g6b5_unorm_pack16` and
+  `r32g32b32_sfloat`**: nothing of `r8g8b8` or `r16g16b16`, which almost
+  no hardware carries either.
+- **No compressed format, no `_snorm`, no `_srgb` and no packed one but
+  565.** A `_snorm` channel would be the `_sint` number divided by its
+  largest, and is not here; nor are `a2r10g10b10` and the like.
+- **A `_uint` or a `_sint` texel read by `colorAt` saturates**: that call
+  holds its parts to 0 and 1 before it makes bytes of them, so any whole
+  number above 1 is white. `at` and `intAt` are what such a format is read
+  by.
 - **A view holds no bytes of its own**: it reads the buffer where it lies,
   so a destroyed view leaves a set pointing at bytes that are no longer a
   view's, as it does in Vulkan.

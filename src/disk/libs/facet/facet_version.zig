@@ -539,9 +539,32 @@ pub const LIBRARY_VERSION = 1;
 /// Only the cores (`PhysicalDeviceFeatures.samplers` and `cube_arrays`):
 /// the V3D has no QPU program that reads a sampler, nor one that reads a
 /// fourth coordinate, so it refuses such a pipeline twice over.
+/// 54: the formats a texel buffer reads, a regular grid of them. Before
+/// this there were seven - 8888 either way round, 565 and one float to
+/// four - so a buffer of whole numbers, or of 16 bits a channel, had no
+/// view that read it and the program had to read the bytes itself through
+/// a storage buffer, which wants it and the data to agree on a struct.
+/// Now one channel, two or four of 8, 16 or 32 bits: `_unorm` read as 0
+/// to 1, `_uint` and `_sint` as the whole number itself, and
+/// `r16_sfloat`, `r16g16_sfloat` and `r16g16b16a16_sfloat` as
+/// half-floats. Twenty-five formats more, every one of them a texel
+/// buffer and nothing else - no image is kept in them and no vertex
+/// attribute is read in one - but for `r8_unorm` and
+/// `r16g16b16a16_sfloat`, which were already image formats and keep what
+/// they had.
+/// `shader.Texels` reads the lot as before, by `at` into four floats or
+/// by `colorAt` into 0xAARRGGBB. For the integer formats it also reads
+/// `intAt` into four whole numbers and writes `setInt` from them, because
+/// a float carries 24 bits exactly and a 32-bit whole number is more than
+/// that: a value past 2^24 copied through `at` comes out changed, and
+/// through `intAt` it does not. A number past what a channel holds is cut
+/// to the largest or the smallest it does, not wrapped.
+/// Every device, the formats being read by the library and not by any
+/// hardware: `TexelFormat.channelBits` and `kind` say how, and a view
+/// reads the buffer where it lies as it always did.
 /// What stays: `fifo` is the one present mode, there being no way to ask a
 /// display to show a buffer before its next frame; one queue family of one
 /// queue; a counter of 32 bits, for want of a 64-bit atomic on every
 /// machine the library runs on; and no point mode in tessellation, there
 /// being no point rasterization at all.
-pub const LIBRARY_REVISION = 53;
+pub const LIBRARY_REVISION = 54;

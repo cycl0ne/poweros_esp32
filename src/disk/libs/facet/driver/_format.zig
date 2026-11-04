@@ -46,7 +46,8 @@ fn describe(format: facet.Format, keeps_blocks: bool) facet.FormatProperties {
         .r8_unorm => .{
             .linear_tiling_features = 0,
             .optimal_tiling_features = transfer | sampled | storage,
-            .buffer_features = 0,
+            // And a texel buffer of one byte a texel, since 1.54.
+            .buffer_features = texels,
         },
         // A depth attachment, and since 1.30 a transfer as well: a pass
         // that stores its depth writes the image's rows, and a copy reads
@@ -82,11 +83,18 @@ fn describe(format: facet.Format, keeps_blocks: bool) facet.FormatProperties {
         },
         // Float: sampled and written, and read back as well where the
         // floats are kept, there being something of the format to read.
-        .r16g16b16a16_sfloat, .b10g11r11_ufloat_pack32, .e5b9g9r9_ufloat_pack32 => .{
+        .b10g11r11_ufloat_pack32, .e5b9g9r9_ufloat_pack32 => .{
             .linear_tiling_features = 0,
             .optimal_tiling_features = sampled | facet.FORMAT_FEATURE_TRANSFER_DST |
                 if (keeps_blocks) facet.FORMAT_FEATURE_TRANSFER_SRC else 0,
             .buffer_features = 0,
+        },
+        // The same, and a texel buffer of half-floats as well since 1.54.
+        .r16g16b16a16_sfloat => .{
+            .linear_tiling_features = 0,
+            .optimal_tiling_features = sampled | facet.FORMAT_FEATURE_TRANSFER_DST |
+                if (keeps_blocks) facet.FORMAT_FEATURE_TRANSFER_SRC else 0,
+            .buffer_features = texels,
         },
         .r32g32b32a32_sfloat => .{
             .linear_tiling_features = 0,
@@ -95,6 +103,35 @@ fn describe(format: facet.Format, keeps_blocks: bool) facet.FormatProperties {
             .buffer_features = vertices | texels,
         },
         .r32_sfloat, .r32g32_sfloat, .r32g32b32_sfloat => .{ .linear_tiling_features = 0, .optimal_tiling_features = 0, .buffer_features = vertices | texels },
+        // A texel buffer and nothing else, since 1.54: no image is kept
+        // in these, and no vertex attribute is read in one. The grid is
+        // one channel, two or four, of 8, 16 or 32 bits, as 0 to 1, as
+        // whole numbers signed or not, or as a half-float.
+        .r8g8_unorm,
+        .r8_uint,
+        .r8g8_uint,
+        .r8g8b8a8_uint,
+        .r8_sint,
+        .r8g8_sint,
+        .r8g8b8a8_sint,
+        .r16_unorm,
+        .r16g16_unorm,
+        .r16g16b16a16_unorm,
+        .r16_uint,
+        .r16g16_uint,
+        .r16g16b16a16_uint,
+        .r16_sint,
+        .r16g16_sint,
+        .r16g16b16a16_sint,
+        .r16_sfloat,
+        .r16g16_sfloat,
+        .r32_uint,
+        .r32g32_uint,
+        .r32g32b32a32_uint,
+        .r32_sint,
+        .r32g32_sint,
+        .r32g32b32a32_sint,
+        => .{ .linear_tiling_features = 0, .optimal_tiling_features = 0, .buffer_features = texels },
         else => .{ .linear_tiling_features = 0, .optimal_tiling_features = 0, .buffer_features = 0 },
     };
 }

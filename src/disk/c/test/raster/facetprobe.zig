@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.20 (04.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.21 (04.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -720,6 +720,23 @@ const Swap = struct {
         into.set(k, .{ parts[1], parts[0], parts[2] * 0.5, 1 });
     }
 
+    /// Texel k copied as it lies, by floats (since 1.54).
+    fn copies(groups: *const facet.shader.Groups) callconv(.c) void {
+        const from = groups.resources.texels(0, 0, 0) orelse return;
+        var into = groups.resources.texels(0, 1, 0) orelse return;
+        const k = groups.group[0];
+        into.set(k, from.at(k));
+    }
+
+    /// The same by whole numbers, which is what a 32-bit integer format
+    /// wants: `at`'s float carries 24 bits exactly (since 1.54).
+    fn wholes(groups: *const facet.shader.Groups) callconv(.c) void {
+        const from = groups.resources.texels(0, 0, 0) orelse return;
+        var into = groups.resources.texels(0, 1, 0) orelse return;
+        const k = groups.group[0];
+        into.setInt(k, from.intAt(k));
+    }
+
     /// What the function sees of the two: the counts, and whether each may
     /// be written.
     fn told(groups: *const facet.shader.Groups) callconv(.c) void {
@@ -731,11 +748,21 @@ const Swap = struct {
         out[2] = if (into) |one| one.count else 0xFFFF_FFFF;
         out[3] = if (into) |one| @intFromBool(one.writable) else 0xFFFF_FFFF;
         out[4] = if (from) |one| one.colorAt(0) else 0;
+        // Its first texel as four floats and as four whole numbers, the
+        // two ways a texel is read since 1.54.
+        if (from) |one| {
+            const parts = one.at(0);
+            for (parts, 0..) |part, k| out[5 + k] = @bitCast(part);
+            const numbers = one.intAt(0);
+            for (numbers, 0..) |number, k| out[9 + k] = @truncate(@as(u64, @bitCast(number)));
+        }
     }
 
     const entries = [_]facet.shader.Entry{
         facet.shader.compute("main", &run),
         facet.shader.compute("told", &told),
+        facet.shader.compute("copies", &copies),
+        facet.shader.compute("wholes", &wholes),
     };
     const code = facet.shader.Code{ .entry_count = entries.len, .entries = &entries };
 };
@@ -789,8 +816,8 @@ fn texelBufferChecks(probe: *Probe) void {
     defer fb.DestroyDescriptorPool(device, pool);
     var sets: [1]?*facet.DescriptorSet = undefined;
     if (fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &sets) != .success) return probe.check(false, "a descriptor set");
-    const told_buffer, const told_bytes = probe.buffer(32, facet.BUFFER_USAGE_STORAGE_BUFFER) orelse return probe.check(false, "a buffer the function writes");
-    @memset(told_bytes[0..32], 0);
+    const told_buffer, const told_bytes = probe.buffer(64, facet.BUFFER_USAGE_STORAGE_BUFFER) orelse return probe.check(false, "a buffer the function writes");
+    @memset(told_bytes[0..64], 0);
     const told_info = facet.DescriptorBufferInfo{ .buffer = told_buffer, .range = facet.WHOLE_SIZE };
     const writes = [3]facet.WriteDescriptorSet{
         .{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .uniform_texel_buffer, .descriptor_count = 1, .texel_buffer_view = @ptrCast(&reading) },
@@ -799,14 +826,15 @@ fn texelBufferChecks(probe: *Probe) void {
     };
     fb.UpdateDescriptorSets(device, 3, &writes, 0, null);
 
-    const infos = [2]facet.ComputePipelineCreateInfo{
+    const infos = [4]facet.ComputePipelineCreateInfo{
         .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.? }, .layout = layout.? },
         .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.?, .name = "told" }, .layout = layout.? },
+        .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.?, .name = "copies" }, .layout = layout.? },
+        .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.?, .name = "wholes" }, .layout = layout.? },
     };
-    var pipelines: [2]?*facet.Pipeline = undefined;
-    if (fb.CreateComputePipelines(device, null, 2, &infos, &pipelines) != .success) return probe.check(false, "the compute pipelines");
-    _ = Probe.keep(&probe.pipelines, pipelines[0]);
-    _ = Probe.keep(&probe.pipelines, pipelines[1]);
+    var pipelines: [4]?*facet.Pipeline = undefined;
+    if (fb.CreateComputePipelines(device, null, 4, &infos, &pipelines) != .success) return probe.check(false, "the compute pipelines");
+    for (pipelines) |one| _ = Probe.keep(&probe.pipelines, one);
 
     var commands = probe.record() orelse return probe.check(false, "a recording");
     fb.CmdBindPipeline(commands, .compute, pipelines[0].?);
@@ -832,6 +860,157 @@ fn texelBufferChecks(probe: *Probe) void {
     probe.checkEqual(4, out[2], "the texels a storage view holds");
     probe.checkEqual(1, out[3], "a storage view is");
     probe.checkEqual(0xFFFF_0000, out[4], "a float texel read as a colour");
+
+    // --- 1.54: the grid of formats a view takes ---
+    // Each of them over the 64-byte buffer: the texels it counts are 64
+    // divided by the format's own size, which is what the library made of
+    // the format.
+    const Grain = struct { format: facet.Format, size: u32 };
+    const grid = [_]Grain{
+        .{ .format = .r8_unorm, .size = 1 },
+        .{ .format = .r8g8_unorm, .size = 2 },
+        .{ .format = .r8_uint, .size = 1 },
+        .{ .format = .r8g8_uint, .size = 2 },
+        .{ .format = .r8g8b8a8_uint, .size = 4 },
+        .{ .format = .r8_sint, .size = 1 },
+        .{ .format = .r8g8_sint, .size = 2 },
+        .{ .format = .r8g8b8a8_sint, .size = 4 },
+        .{ .format = .r16_unorm, .size = 2 },
+        .{ .format = .r16g16_unorm, .size = 4 },
+        .{ .format = .r16g16b16a16_unorm, .size = 8 },
+        .{ .format = .r16_uint, .size = 2 },
+        .{ .format = .r16g16_uint, .size = 4 },
+        .{ .format = .r16g16b16a16_uint, .size = 8 },
+        .{ .format = .r16_sint, .size = 2 },
+        .{ .format = .r16g16_sint, .size = 4 },
+        .{ .format = .r16g16b16a16_sint, .size = 8 },
+        .{ .format = .r16_sfloat, .size = 2 },
+        .{ .format = .r16g16_sfloat, .size = 4 },
+        .{ .format = .r16g16b16a16_sfloat, .size = 8 },
+        .{ .format = .r32_uint, .size = 4 },
+        .{ .format = .r32g32_uint, .size = 8 },
+        .{ .format = .r32g32b32a32_uint, .size = 16 },
+        .{ .format = .r32_sint, .size = 4 },
+        .{ .format = .r32g32_sint, .size = 8 },
+        .{ .format = .r32g32b32a32_sint, .size = 16 },
+    };
+    var all_made = true;
+    var all_counted = true;
+    var all_told = true;
+    var all_bare = true;
+    const texel_features = facet.FORMAT_FEATURE_UNIFORM_TEXEL_BUFFER | facet.FORMAT_FEATURE_STORAGE_TEXEL_BUFFER;
+    for (grid) |grain| {
+        var properties: facet.FormatProperties = undefined;
+        fb.GetPhysicalDeviceFormatProperties(probe.physical, grain.format, &properties);
+        if (properties.buffer_features & texel_features != texel_features) all_told = false;
+        if (properties.buffer_features & facet.FORMAT_FEATURE_VERTEX_BUFFER != 0) all_bare = false;
+        var view: ?*facet.BufferView = null;
+        if (fb.CreateBufferView(device, &.{ .buffer = floats, .format = grain.format }, &view) != .success) {
+            all_made = false;
+            continue;
+        }
+        const one = facet.WriteDescriptorSet{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .uniform_texel_buffer, .descriptor_count = 1, .texel_buffer_view = @ptrCast(&view) };
+        fb.UpdateDescriptorSets(device, 1, @ptrCast(&one), 0, null);
+        @memset(told_bytes[0..64], 0);
+        commands = probe.record() orelse return probe.check(false, "a recording of the count");
+        fb.CmdBindPipeline(commands, .compute, pipelines[1].?);
+        fb.CmdBindDescriptorSets(commands, .compute, layout.?, 0, 1, @ptrCast(&sets), 0, null);
+        fb.CmdDispatch(commands, 1, 1, 1);
+        if (!probe.submit()) return probe.check(false, "the count submitted");
+        if (out[0] != 64 / grain.size) all_counted = false;
+        fb.DestroyBufferView(device, view);
+    }
+    probe.check(all_made, "a view of every format the grid of 1.54 added");
+    probe.check(all_counted, "each counting its texels by its own size");
+    probe.check(all_told, "and each saying UNIFORM_TEXEL_BUFFER and STORAGE_TEXEL_BUFFER");
+    probe.check(all_bare, "and none of them a vertex format");
+
+    // A whole number read as itself: 7 and 200 of r8_uint, copied into
+    // r16_uint, where they are the same numbers in two bytes each.
+    float_bytes[0] = 7;
+    float_bytes[1] = 200;
+    @memset(color_bytes[0..16], 0);
+    var from_u8: ?*facet.BufferView = null;
+    var into_u16: ?*facet.BufferView = null;
+    if (fb.CreateBufferView(device, &.{ .buffer = floats, .format = .r8_uint }, &from_u8) != .success) return probe.check(false, "a view of whole bytes");
+    defer fb.DestroyBufferView(device, from_u8);
+    if (fb.CreateBufferView(device, &.{ .buffer = colors, .format = .r16_uint }, &into_u16) != .success) return probe.check(false, "a view of whole words written through");
+    defer fb.DestroyBufferView(device, into_u16);
+    const pair = [2]facet.WriteDescriptorSet{
+        .{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .uniform_texel_buffer, .descriptor_count = 1, .texel_buffer_view = @ptrCast(&from_u8) },
+        .{ .dst_set = sets[0].?, .dst_binding = 1, .descriptor_type = .storage_texel_buffer, .descriptor_count = 1, .texel_buffer_view = @ptrCast(&into_u16) },
+    };
+    fb.UpdateDescriptorSets(device, 2, &pair, 0, null);
+    commands = probe.record() orelse return probe.check(false, "a recording of the copy");
+    fb.CmdBindPipeline(commands, .compute, pipelines[2].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout.?, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 2, 1, 1);
+    if (!probe.submit()) return probe.check(false, "the copy submitted");
+    probe.checkEqual(7, std.mem.readInt(u16, color_bytes[0..2], .little), "a whole byte read as itself and written as a word");
+    probe.checkEqual(200, std.mem.readInt(u16, color_bytes[2..4], .little), "and the next of them");
+
+    // What the function saw of the first: 7 as a float and as a whole
+    // number, the parts the format has not got 0, and alpha 1.
+    @memset(told_bytes[0..64], 0);
+    commands = probe.record() orelse return probe.check(false, "a recording of what it saw");
+    fb.CmdBindPipeline(commands, .compute, pipelines[1].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout.?, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    if (!probe.submit()) return probe.check(false, "that dispatch submitted");
+    probe.check(@as(f32, @bitCast(out[5])) == 7, "a whole byte read as the float 7");
+    probe.check(@as(f32, @bitCast(out[6])) == 0, "its green, which the format has not got, as 0");
+    probe.check(@as(f32, @bitCast(out[8])) == 1, "and its alpha as 1");
+    probe.checkEqual(7, out[9], "the same as a whole number");
+    probe.checkEqual(1, out[12], "and its alpha as the whole number 1");
+
+    // Half-floats read as they lie: 1.5 and -0.25 of r16g16b16a16_sfloat.
+    const halves = [4]f16{ 1.5, -0.25, 3, 0.5 };
+    for (halves, 0..) |half, k| std.mem.writeInt(u16, float_bytes[k * 2 ..][0..2], @bitCast(half), .little);
+    var from_f16: ?*facet.BufferView = null;
+    if (fb.CreateBufferView(device, &.{ .buffer = floats, .format = .r16g16b16a16_sfloat }, &from_f16) != .success) return probe.check(false, "a view of half-floats");
+    defer fb.DestroyBufferView(device, from_f16);
+    const to_halves = facet.WriteDescriptorSet{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .uniform_texel_buffer, .descriptor_count = 1, .texel_buffer_view = @ptrCast(&from_f16) };
+    fb.UpdateDescriptorSets(device, 1, @ptrCast(&to_halves), 0, null);
+    @memset(told_bytes[0..64], 0);
+    commands = probe.record() orelse return probe.check(false, "a recording of the half-floats");
+    fb.CmdBindPipeline(commands, .compute, pipelines[1].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout.?, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    if (!probe.submit()) return probe.check(false, "the half-floats submitted");
+    probe.check(@as(f32, @bitCast(out[5])) == 1.5, "a half-float read as 1.5");
+    probe.check(@as(f32, @bitCast(out[6])) == -0.25, "and a negative one as -0.25");
+    probe.check(@as(f32, @bitCast(out[8])) == 0.5, "and its alpha as the half it holds");
+
+    // A 32-bit whole number past 2^24: `intAt` reads it as it lies, where
+    // the float of `at` cannot carry it.
+    const big: u32 = 4_000_000_001;
+    std.mem.writeInt(u32, float_bytes[0..4], big, .little);
+    @memset(color_bytes[0..16], 0);
+    var from_u32: ?*facet.BufferView = null;
+    var into_u32: ?*facet.BufferView = null;
+    if (fb.CreateBufferView(device, &.{ .buffer = floats, .format = .r32_uint }, &from_u32) != .success) return probe.check(false, "a view of whole words");
+    defer fb.DestroyBufferView(device, from_u32);
+    if (fb.CreateBufferView(device, &.{ .buffer = colors, .format = .r32_uint }, &into_u32) != .success) return probe.check(false, "and one written through");
+    defer fb.DestroyBufferView(device, into_u32);
+    const wide = [2]facet.WriteDescriptorSet{
+        .{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .uniform_texel_buffer, .descriptor_count = 1, .texel_buffer_view = @ptrCast(&from_u32) },
+        .{ .dst_set = sets[0].?, .dst_binding = 1, .descriptor_type = .storage_texel_buffer, .descriptor_count = 1, .texel_buffer_view = @ptrCast(&into_u32) },
+    };
+    fb.UpdateDescriptorSets(device, 2, &wide, 0, null);
+    commands = probe.record() orelse return probe.check(false, "a recording of the wide copy");
+    fb.CmdBindPipeline(commands, .compute, pipelines[3].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout.?, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    if (!probe.submit()) return probe.check(false, "the wide copy submitted");
+    probe.checkEqual(big, std.mem.readInt(u32, color_bytes[0..4], .little), "a whole number past 2^24 copied by whole numbers");
+    // The same copied by floats instead loses its low bits.
+    @memset(color_bytes[0..16], 0);
+    commands = probe.record() orelse return probe.check(false, "a recording of the float copy");
+    fb.CmdBindPipeline(commands, .compute, pipelines[2].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout.?, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    if (!probe.submit()) return probe.check(false, "the float copy submitted");
+    probe.check(std.mem.readInt(u32, color_bytes[0..4], .little) != big, "and changed where the float carried it");
 }
 
 // --- the run -----------------------------------------------------------------
