@@ -122,10 +122,11 @@ pub const chip_raw_io: RawIOHardware = .{ .init = uart.consoleInit, .put = uart.
 /// same registers while the system runs, and two writers on one FIFO
 /// would tear each other's packets; the debugger takes it only with the
 /// machine stopped, when nothing else is running. A machine under SBI or
-/// PSCI firmware has no such port, and nothing there.
+/// PSCI firmware, or one started by UEFI, has no such port, and nothing
+/// there.
 pub const usb_jtag_raw_io: RawIOHardware = switch (sdk.hardware.chip) {
     .esp32s3, .esp32p4 => .{ .init = usbJtagInit, .put = usbJtagPut, .get = usbJtagGet },
-    .rv64sbi, .a64psci => no_raw_io,
+    .rv64sbi, .a64psci, .x64uefi => no_raw_io,
 };
 
 fn noInit() void {}

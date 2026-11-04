@@ -141,13 +141,17 @@ pub var fetch_stale: u32 = 0;
 /// This core's instruction fetch fenced, if another core has invalidated
 /// instruction-cache lines since it last did: what the RISC-V and AArch64
 /// kernels' exception exit calls before it resumes a task. On AArch64 an
-/// `isb`, which the eret after it would be as well.
+/// `isb`, which the eret after it would be as well. On x86-64 nothing: a
+/// core's instruction fetch sees what another core wrote, and the `iretq`
+/// the exception exit ends with serialises in any case - nothing there ever
+/// marks a core stale.
 pub fn syncFetch(core: u32) void {
     const mine = @as(u32, 1) << @intCast(core);
     if (@atomicLoad(u32, &fetch_stale, .acquire) & mine == 0) return;
     _ = @atomicRmw(u32, &fetch_stale, .And, ~mine, .acq_rel);
     switch (builtin.cpu.arch) {
         .aarch64 => asm volatile ("isb" ::: .{ .memory = true }),
+        .x86_64 => {},
         else => asm volatile ("fence.i" ::: .{ .memory = true }),
     }
 }
@@ -211,6 +215,7 @@ pub const chip_cache: CacheHardware = switch (sdk.hardware.chip) {
     .esp32p4 => p4.hardware,
     .rv64sbi => rv64.hardware,
     .a64psci => a64.hardware,
+    .x64uefi => x64.hardware,
 };
 
 /// A DCache line, in bytes.
@@ -236,13 +241,13 @@ pub const Range = struct {
 pub const data_bus: Range = switch (sdk.hardware.chip) {
     .esp32s3 => .{ .start = 0x3C00_0000, .end = 0x3E00_0000 },
     .esp32p4 => .{ .start = sdk.hardware.cache.CACHED_START, .end = sdk.hardware.cache.CACHED_END },
-    .rv64sbi, .a64psci => .{ .start = sdk.hardware.map.DRAM_START, .end = sdk.hardware.map.DRAM_END },
+    .rv64sbi, .a64psci, .x64uefi => .{ .start = sdk.hardware.map.DRAM_START, .end = sdk.hardware.map.DRAM_END },
 };
 /// The instruction bus, through the ICache: on the P4 the same addresses.
 pub const instruction_bus: Range = switch (sdk.hardware.chip) {
     .esp32s3 => .{ .start = 0x4200_0000, .end = 0x4400_0000 },
     .esp32p4 => data_bus,
-    .rv64sbi, .a64psci => data_bus,
+    .rv64sbi, .a64psci, .x64uefi => data_bus,
 };
 
 /// The start of the line holding `address`.
@@ -392,7 +397,7 @@ pub const chip_code_map: CodeMap = switch (sdk.hardware.chip) {
         .instruction_start = sdk.hardware.map.PSRAM_START,
         .size = sdk.hardware.map.DRAM_END - sdk.hardware.map.PSRAM_START,
     },
-    .rv64sbi, .a64psci => .{
+    .rv64sbi, .a64psci, .x64uefi => .{
         .data_start = sdk.hardware.map.DRAM_START,
         .instruction_start = sdk.hardware.map.DRAM_START,
         .size = sdk.hardware.map.DRAM_END - sdk.hardware.map.DRAM_START,
@@ -710,4 +715,32 @@ const a64 = struct {
         const mine = @as(u32, 1) << @intCast(exec_base.coreId());
         _ = @atomicRmw(u32, &fetch_stale, .Or, ~mine, .release);
     }
+};
+
+// --- an x86-64 machine started by UEFI firmware ------------------------------
+
+/// Nothing. This architecture keeps the cores' caches and what a device
+/// sees of memory the same, in hardware, on every machine of it: a range a
+/// device is about to read wants nothing written back, a range it has
+/// written wants nothing dropped, and a core's instruction fetch sees code
+/// another core wrote. So every call here is a no-op, and `writeback_drops`
+/// says so plainly - writing a range back leaves nothing to invalidate -
+/// rather than having a caller do two no-ops where it would do one.
+///
+/// The cache instructions do exist (`clflush`, `wbinvd`), and there is no
+/// use for them here: they are for memory a device reaches outside the
+/// coherent view, which nothing on these machines does.
+const x64 = struct {
+    const hardware: CacheHardware = .{
+        .writeback_all = nothing,
+        .invalidate_icache_all = nothing,
+        .writeback = nothingRange,
+        .writeback_line = nothingLine,
+        .invalidate = nothingRange,
+        .writeback_drops = true,
+    };
+
+    fn nothing() void {}
+    fn nothingRange(_: usize, _: usize) void {}
+    fn nothingLine(_: usize) void {}
 };

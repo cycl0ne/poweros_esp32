@@ -62,12 +62,13 @@ pub const help =
 ;
 
 /// The "from CPU" sources are the ESP32s'; a machine under SBI firmware
-/// raises its software interrupts through the hart's own register and
-/// the firmware's IPIs, one under PSCI firmware through the GIC's SGIs,
-/// which `cause` and `cores` show.
+/// raises its software interrupts through the hart's own register and the
+/// firmware's IPIs, one under PSCI firmware through the GIC's SGIs, and an
+/// x86-64 machine by writing a vector to its own local controller - which
+/// `cause` and `cores` show.
 const has_from_cpu = switch (sdk.hardware.chip) {
     .esp32s3, .esp32p4 => true,
-    .rv64sbi, .a64psci => false,
+    .rv64sbi, .a64psci, .x64uefi => false,
 };
 
 pub fn run(shell: *Shell, args: *Args) anyerror!void {

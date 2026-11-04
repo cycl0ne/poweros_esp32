@@ -100,9 +100,13 @@ pub const LIBRARY_VERSION = 1;
 /// PostWork - a job run beside its poster on another core's worker, and
 /// replied when done; the workers take posted jobs by priority, ShareWork
 /// hands parts to the idle ones only, and their stacks are the standard
-/// (32 KiB on 64-bit).
-pub const LIBRARY_REVISION = 27;
-const BUILD_DATE = "31.10.2026";
+/// (32 KiB on 64-bit). 28: x86-64 - the core's number from the segment
+/// register the machine keeps it in, the interrupt flag masked and
+/// unmasked in its own place, caches that need nothing said about them,
+/// the Guru's backtrace by frame pointers, and the debug shell's own
+/// instruction to fault on.
+pub const LIBRARY_REVISION = 28;
+const BUILD_DATE = "04.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

@@ -53,7 +53,8 @@ pub inline fn cycles() u32 {
 /// The core this code runs on: 0 or 1. On the Xtensa from PRID (0xCDCD
 /// for core 0, 0xABAB for core 1 - bit 13 tells them apart), on the
 /// ESP32-P4 from mhartid, under SBI firmware from tp, under PSCI firmware
-/// from TPIDR_EL1. The host tests have one.
+/// from TPIDR_EL1, on x86-64 from the block GS points at. The host tests
+/// have one.
 pub inline fn coreId() u32 {
     switch (comptime builtin.cpu.arch) {
         .xtensa => {
@@ -75,6 +76,15 @@ pub inline fn coreId() u32 {
         .aarch64 => {
             if (comptime !on_machine) return 0;
             return @truncate(asm volatile ("mrs %[id], tpidr_el1"
+                : [id] "=r" (-> u64),
+            ));
+        },
+        // An x86-64 core has no register that says which core it is: each
+        // keeps its number in the block GS points at
+        // (src/arch/x64uefi/cpu.zig).
+        .x86_64 => {
+            if (comptime !on_machine) return 0;
+            return @truncate(asm volatile ("movq %%gs:0, %[id]"
                 : [id] "=r" (-> u64),
             ));
         },

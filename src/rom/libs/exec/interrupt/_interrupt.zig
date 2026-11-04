@@ -157,6 +157,16 @@ pub inline fn mask() u32 {
             : [r] "=r" (-> u64),
             :
             : .{ .memory = true })),
+        // RFLAGS read and the interrupts cleared in one go, so nothing
+        // comes between the two. A host build goes through the table: this
+        // is also the host's architecture.
+        .x86_64 => if (builtin.os.tag != .freestanding) interrupt_hardware.disable() else @truncate(asm volatile (
+            \\pushfq
+            \\popq %[r]
+            \\cli
+            : [r] "=r" (-> u64),
+            :
+            : .{ .memory = true })),
         else => interrupt_hardware.disable(),
     };
 }
@@ -176,6 +186,10 @@ pub inline fn unmask(state: u32) void {
         .riscv32 => if (state & 8 != 0) asm volatile ("csrsi mstatus, 8" ::: .{ .memory = true }),
         .riscv64 => if (state & 2 != 0) asm volatile ("csrsi sstatus, 2" ::: .{ .memory = true }),
         .aarch64 => if (state & (1 << 7) == 0) asm volatile ("msr daifclr, #2" ::: .{ .memory = true }),
+        // RFLAGS.IF: on again only if it was on.
+        .x86_64 => if (builtin.os.tag != .freestanding)
+            interrupt_hardware.restore(state)
+        else if (state & (1 << 9) != 0) asm volatile ("sti" ::: .{ .memory = true }),
         else => interrupt_hardware.restore(state),
     }
 }
