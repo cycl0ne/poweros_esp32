@@ -201,6 +201,22 @@ pub const FixedKind = enum(u8) {
     /// whose layers are six to a cube. `sampling.address` is always
     /// `clamp`, as for `texture_cube`. (Since 1.46.)
     texture_cube_array = 10,
+    /// A layer of an array as the sampler bound beside it says: varyings
+    /// s, t and the layer, as `texture_array` has them, with everything a
+    /// sampler gives that a fixed form's sampling has not - the levels
+    /// mixed, a bias and a clamp on them, mirrored and bordered edges, and
+    /// anisotropy. (Since 1.49.)
+    texture_array_sampled = 11,
+    /// A cube map the same way: varyings x, y and z, the direction. The
+    /// sample is taken inside the face the direction falls on, so the
+    /// sampler's edges are that face's - where `texture_cube` reads over
+    /// the seam into the next face. (Since 1.49.)
+    texture_cube_sampled = 12,
+    /// A 3D texture the same way: varyings s, t and r, each 0 to 1 across
+    /// it, with `wrap[2]` for what lies past the first and last slice and
+    /// the two slices round the point mixed where the filter is bilinear.
+    /// (Since 1.49.)
+    texture_3d_sampled = 13,
 };
 
 /// Under this alpha, 0 to 255, `texture_cutout` drops a pixel.
@@ -221,6 +237,7 @@ pub const Fixed = struct {
             .texture, .texture_cutout, .texture_sampled => 2,
             .texture_color => 6,
             .texture_array, .texture_cube, .texture_3d, .texture_shadow => 3,
+            .texture_array_sampled, .texture_cube_sampled, .texture_3d_sampled => 3,
             .texture_cube_array => 4,
         };
     }
@@ -232,6 +249,8 @@ pub const Fixed = struct {
     pub fn needsSampler(fixed: Fixed) bool {
         return switch (fixed.kind) {
             .texture_sampled, .texture_shadow => true,
+            // The forms past 2D that read one (since 1.49).
+            .texture_array_sampled, .texture_cube_sampled, .texture_3d_sampled => true,
             else => false,
         };
     }
@@ -270,6 +289,12 @@ pub fn fixedFragment(name: [*:0]const u8, comptime fixed: Fixed) Entry {
                 .texture_cutout => cutout(fixed.sampling, fragments, fragments.resources.sampled(0, 0, 0)),
                 .texture_color => modulated(fixed.sampling, fragments, fragments.resources.sampled(0, 0, 0)),
                 .texture_array, .texture_cube, .texture_3d, .texture_cube_array => layered(fixed.kind, fixed.sampling, fragments, fragments.resources.sampled(0, 0, 0)),
+                .texture_array_sampled, .texture_cube_sampled, .texture_3d_sampled => layeredBy(
+                    fixed.kind,
+                    fragments,
+                    fragments.resources.sampled(0, 0, 0),
+                    fragments.resources.samplerOf(0, 0, 0),
+                ),
                 .texture_sampled, .texture_shadow => texturedBy(
                     fixed.kind == .texture_shadow,
                     fixed.sampling,
@@ -322,8 +347,13 @@ pub const Slot = extern struct {
     /// buffer descriptors (`Resources.offsets`). In that padding as well,
     /// so a slot is as wide as it always was.
     dynamic: u8 = 0,
+    /// Whether `sampler` is the set layout's own and a write cannot change
+    /// it: `DescriptorSetLayoutBinding.immutable_samplers` (since 1.49).
+    /// In that padding as well, so a slot is as wide as it always was.
+    fixed_sampler: bool = false,
     /// What a sampler or a combined image sampler was written with
-    /// (CreateSampler); null for every other kind.
+    /// (CreateSampler), or what its set layout holds; null for every other
+    /// kind.
     sampler: ?*const texture.Sampler = null,
 };
 
@@ -1209,6 +1239,79 @@ pub fn texturedBy(
                 .dv_dy = dv_dy,
                 .reference = reference[i],
             });
+        }
+        out.* = colors;
+    }
+}
+
+/// A texture of layers, a cube map or a 3D texture through the sampler
+/// bound beside it (`texture.Sampler`, CreateSampler), at the three
+/// coordinates varyings 0, 1 and 2 carry - as `layered` has them for the
+/// forms that sample as they were compiled to. (Since 1.49.)
+///
+/// A pixel at a time and by floats, as `texturedBy` is, and with
+/// everything a sampler says: the two levels round the point mixed, a bias
+/// and a clamp on them, mirrored and bordered edges, anisotropy. How fast
+/// the coordinates change is taken from the quad's own pixels, so a quad's
+/// four samples share a level.
+///
+/// A cube's sample is taken inside the face the direction falls on, its
+/// own u and v and their steps the face's: so the sampler's edges are that
+/// face's, and a bilinear sample on a seam mixes the edge's texels rather
+/// than reading over into the next face, which `texture_cube` does. A
+/// texture not written, or with no sampler beside it, paints every pixel
+/// `missing`.
+pub fn layeredBy(
+    comptime kind: FixedKind,
+    fragments: *const Fragments,
+    picture: ?*const texture.Texture,
+    sampler: ?*const texture.Sampler,
+) void {
+    const given = picture orelse return fill(fragments, missing);
+    const with = sampler orelse return fill(fragments, missing);
+    @setRuntimeSafety(false);
+    var rows = Rows(4).of(fragments);
+    for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
+        const at = rows.at(quad);
+        const w = @as(Pixels, @splat(1)) / at[0];
+        const s: [4]f32 = at[1] * w;
+        const t: [4]f32 = at[2] * w;
+        const r: [4]f32 = at[3] * w;
+        // Where the quad's four pixels sample, and the steps between them:
+        // the coordinates themselves for an array or a volume, and the
+        // face's own u and v for a cube.
+        var us: [4]f32 = s;
+        var vs: [4]f32 = t;
+        var faces: [4]u32 = @splat(0);
+        if (comptime kind == .texture_cube_sampled) {
+            inline for (0..4) |i| {
+                const hit = texture.cubeHit(s[i], t[i], r[i]);
+                us[i] = hit.u;
+                vs[i] = hit.v;
+                faces[i] = hit.face;
+            }
+        }
+        const du_dx = us[1] - us[0];
+        const du_dy = us[2] - us[0];
+        const dv_dx = vs[1] - vs[0];
+        const dv_dy = vs[2] - vs[0];
+        var colors: [4]u32 = @splat(0);
+        for (&colors, 0..) |*color, i| {
+            if (quad.covered >> @intCast(i) & 1 == 0) continue;
+            const point = texture.Point{
+                .u = us[i],
+                .v = vs[i],
+                .du_dx = du_dx,
+                .dv_dx = dv_dx,
+                .du_dy = du_dy,
+                .dv_dy = dv_dy,
+            };
+            color.* = switch (kind) {
+                .texture_array_sampled => texture.sampleBy(given, with, given.layerNear(r[i]), point),
+                .texture_cube_sampled => texture.sampleBy(given, with, faces[i], point),
+                .texture_3d_sampled => texture.sampleVolumeBy(given, with, point, r[i]),
+                else => @compileError("not a form of three coordinates that samples through a sampler"),
+            };
         }
         out.* = colors;
     }

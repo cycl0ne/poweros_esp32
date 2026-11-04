@@ -30,9 +30,9 @@ const max_sampler_anisotropy = @import("../instance/_instance.zig").max_sampler_
 ///
 /// RESULT:
 /// `success`; `error_feature_not_present` for `unnormalized_coordinates`,
-/// for `mirror_clamp_to_edge` or another address mode the library has not
-/// got, or for a filter, mipmap mode, compare operation or border colour
-/// that is not one of Vulkan's; `error_out_of_host_memory`.
+/// for an address mode that is none of Vulkan's five, or for a filter,
+/// mipmap mode, compare operation or border colour that is not one of
+/// Vulkan's; `error_out_of_host_memory`.
 ///
 /// BEHAVIOR:
 /// The sampler holds what it was given, in the terms the sampling is
@@ -48,10 +48,18 @@ const max_sampler_anisotropy = @import("../instance/_instance.zig").max_sampler_
 /// the fragment function carries, and what comes out is how much of the
 /// sample passed, not a colour.
 ///
+/// All five of Vulkan's address modes are taken, `mirror_clamp_to_edge`
+/// among them since 1.49: the texture turned round once below 0 and held
+/// at its edge past the far side. The three border colours are Vulkan's
+/// six: an int border and a float border are the same here, a texel being
+/// read as 0 to 1 whatever its format, and Vulkan 1.0 has no border but
+/// transparent black, opaque black and opaque white.
+///
 /// A sampler is made on either device, but is read by the sampling the
 /// cores do: a pipeline whose fragment form samples through one
-/// (`shader.FixedKind.texture_sampled`, `texture_shadow`) is refused on a
-/// device whose `PhysicalDeviceFeatures.samplers` is false.
+/// (`shader.FixedKind.texture_sampled`, `texture_shadow`, and since 1.49
+/// `texture_array_sampled`, `texture_cube_sampled` and `texture_3d_sampled`)
+/// is refused on a device whose `PhysicalDeviceFeatures.samplers` is false.
 ///
 /// CONTEXT:
 /// - Waits: no.

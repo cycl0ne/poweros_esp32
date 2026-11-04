@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.48**, so that a program need not find out by failing. It covers the API.
+1.49**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -49,13 +49,17 @@ documentation of the call that enforces them.
 ## Samplers, and what a sampler still cannot ask for
 
 Since 1.28 there are samplers: `CreateSampler`, `DestroySampler`, the
-`sampler` and `combined_image_sampler` descriptors, and two fixed forms
+`sampler` and `combined_image_sampler` descriptors, and the fixed forms
 that read the sampler bound beside the texture rather than what the program
 was compiled with - `shader.FixedKind.texture_sampled` and
-`texture_shadow`. Through one a sample has what a fixed form's has not: the
-two levels round a point mixed, a bias on the level and a clamp, mirrored
-and bordered edges, up to `max_sampler_anisotropy` samples along the longer
-axis, and a comparison with a reference in place of a colour.
+`texture_shadow`, and since 1.49 `texture_array_sampled`,
+`texture_cube_sampled` and `texture_3d_sampled`. Through one a sample has
+what a fixed form's has not: the two levels round a point mixed, a bias on
+the level and a clamp, mirrored and bordered edges, up to
+`max_sampler_anisotropy` samples along the longer axis, and a comparison
+with a reference in place of a colour. All five of Vulkan's address modes
+are taken, and a sampler the set layout holds of its own
+(`immutable_samplers`).
 
 A fixed form's own sampling is still a choice made at compile time
 (`texture.Sampling`: the format, `nearest` or `bilinear`, `wrap` or
@@ -68,17 +72,20 @@ time. What is left out:
   sampler is refused there and drawn on the cores
   (`PhysicalDeviceFeatures.samplers`), as a dropping form is. On the V3D
   the TMU is still set from the form's `sampling`.
-- The fixed forms that sample through a sampler are 2D. A texture of
-  layers, a cube map and a 3D texture have forms of their own, which sample
-  as they were compiled to; a program's own fragment function can sample
-  any of them through a sampler (`texture.sampleBy`, `sampleVolumeBy`).
-- No `mirror_clamp_to_edge`, and no border colour but transparent black,
-  opaque black and opaque white: Vulkan's int and float border colours are
-  the same here, a texel being read as 0 to 1 whatever its format.
+- **A cube read through a sampler reads inside one face.** The sample's u
+  and v and their steps are the face's, so the sampler's edges are that
+  face's edges: a bilinear sample on a seam mixes the edge's texels rather
+  than reading over into the next face, which `texture_cube` does. Away
+  from the seams the two are the same.
+- **An array of cubes has no form that reads a sampler**: `cube_array`
+  takes a fourth coordinate, and `layeredBy` carries three.
+- There is no border colour but transparent black, opaque black and opaque
+  white, which are all of Vulkan 1.0's six: an int border and a float
+  border are the same here, a texel being read as 0 to 1 whatever its
+  format. A border of the program's own choosing is an extension
+  (VK_EXT_custom_border_color) and is not here.
 - `SamplerCreateInfo.unnormalized_coordinates` is refused: coordinates are
   0 to 1 across the texture.
-- `DescriptorSetLayoutBinding.immutable_samplers` is refused rather than
-  passed over, so that no program is left thinking its write took.
 
 The cores and the V3D's texture units still choose a level and its sample
 point differently, which is why `C:test/FacetCube CHECK V3D` allows 5 % of

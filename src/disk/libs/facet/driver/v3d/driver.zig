@@ -182,6 +182,10 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // never spread an 8888 texel: one byte a texel there, and the
         // packed flag costs nothing and changes nothing (tiling.zig).
         .small_texels = true,
+        // A set layout's own sampler is the library's doing, not a
+        // driver's: it is kept here as well, though no program of the QPUs
+        // reads a sampler.
+        .immutable_samplers = true,
         // Version 7.1 has both of these: the clamp is a bit of the
         // configuration, which turns the clip to the z planes off with it
         // as Vulkan has a depth clamp, and the bounds are a packet of

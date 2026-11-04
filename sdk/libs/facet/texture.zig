@@ -253,8 +253,8 @@ pub const Mipmap = enum(u8) {
     linear,
 };
 
-/// What a sampler reads past the texture's edge: `Address`'s two, and two
-/// more that only a sampler can ask for.
+/// What a sampler reads past the texture's edge: `Address`'s two, and
+/// three more that only a sampler can ask for.
 pub const Wrap = enum(u8) {
     /// The texture again, as tiles.
     repeat,
@@ -265,6 +265,11 @@ pub const Wrap = enum(u8) {
     clamp_to_edge,
     /// `Sampler.border`, and nothing of the texture.
     clamp_to_border,
+    /// The texture turned round once and then held at its edge: a
+    /// coordinate below 0 reads the texture mirrored, and one past the far
+    /// side the far edge's texels. Vulkan's MIRROR_CLAMP_TO_EDGE, which it
+    /// has from VK_KHR_sampler_mirror_clamp_to_edge. (Since 1.49.)
+    mirror_clamp_to_edge,
 };
 
 /// How a shadow sample compares what it read with the reference it was
@@ -1721,6 +1726,9 @@ fn wrapped(wrap: Wrap, at: i32, size: u32) ?u32 {
         },
         .clamp_to_edge => @intCast(std.math.clamp(at, 0, whole - 1)),
         .clamp_to_border => if (at < 0 or at >= whole) null else @intCast(at),
+        // Turned round once below 0 - where -1 is texel 0 and -2 texel 1 -
+        // and held at the edge either way (since 1.49).
+        .mirror_clamp_to_edge => @intCast(std.math.clamp(if (at < 0) -1 - at else at, 0, whole - 1)),
     };
 }
 

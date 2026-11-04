@@ -355,8 +355,10 @@ pub const PhysicalDeviceFeatures = extern struct {
     /// where a set layout with either kind is refused.
     dynamic_descriptors: bool = false,
     /// The fixed forms that sample through the sampler bound beside the
-    /// texture run here - `shader.FixedKind.texture_sampled` and
-    /// `texture_shadow` - and with them everything a sampler says: the two
+    /// texture run here - `shader.FixedKind.texture_sampled`,
+    /// `texture_shadow`, and since 1.49 `texture_array_sampled`,
+    /// `texture_cube_sampled` and `texture_3d_sampled` - and with them
+    /// everything a sampler says: the two
     /// levels round a point mixed, a bias on the level and a clamp,
     /// mirrored and bordered edges, and a comparison with a reference. A
     /// device without it refuses such a pipeline, as with a dropping form;
@@ -383,8 +385,11 @@ pub const PhysicalDeviceFeatures = extern struct {
     /// timer.device.
     timestamp_queries: bool = false,
     /// `DescriptorSetLayoutBinding.immutable_samplers`: a sampler the
-    /// layout holds, which a write into the set cannot change. No device of
-    /// this library has it; a sampler is written into the set instead.
+    /// layout holds, which a write into the set cannot change. Every set
+    /// made of such a layout starts with it in the slot; a write of a
+    /// combined image sampler then brings the texture alone, and a write
+    /// of a sampler nothing. Every device has it since 1.49: the layout
+    /// keeps the sampler, which is the library's doing and not a driver's.
     immutable_samplers: bool = false,
     /// `SamplerCreateInfo.unnormalized_coordinates`: a sample placed in
     /// texels rather than 0 to 1 across the texture.
@@ -985,7 +990,8 @@ pub const SamplerAddressMode = enum(u32) {
     mirrored_repeat = 1,
     clamp_to_edge = 2,
     clamp_to_border = 3,
-    /// Vulkan's VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE: not here.
+    /// The texture turned round once below 0 and held at its edge past the
+    /// far side: Vulkan's MIRROR_CLAMP_TO_EDGE (since 1.49).
     mirror_clamp_to_edge = 4,
     _,
 };
@@ -1870,9 +1876,12 @@ pub const DescriptorSetLayoutBinding = extern struct {
     descriptor_count: u32 = 1,
     stage_flags: u32 = SHADER_STAGE_ALL_GRAPHICS,
     /// A sampler of the layout's own for each descriptor, which a write
-    /// could not change: not here, and a layout that gives them is refused
-    /// (`PhysicalDeviceFeatures.immutable_samplers`). A sampler is written
-    /// into the set like anything else instead.
+    /// cannot change (`PhysicalDeviceFeatures.immutable_samplers`, since
+    /// 1.49): `descriptor_count` of them, for a `sampler` or
+    /// `combined_image_sampler` binding and passed over on any other
+    /// kind. Every set made of the layout starts with them, so a write of
+    /// a combined image sampler then brings the texture alone. They have
+    /// to last as long as the sets do.
     immutable_samplers: ?[*]const *Sampler = null,
 };
 

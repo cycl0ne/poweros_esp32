@@ -3609,10 +3609,11 @@ fn CreateDescriptorSetLayout(base: *FacetBase, device: *facet.Device, info: *con
 **RESULT**
 
 `success`; `error_feature_not_present` for a kind of descriptor
-facet.library does not have, for a binding with samplers of the
-layout's own (`immutable_samplers`), a binding numbered past 255, or
-more than 65535 descriptors; `error_initialization_failed` for a
-binding given twice; `error_out_of_host_memory`.
+facet.library does not have, for samplers of the layout's own on a
+device without `PhysicalDeviceFeatures.immutable_samplers`, a binding
+numbered past 255, or more than 65535 descriptors;
+`error_initialization_failed` for a binding given twice;
+`error_out_of_host_memory`.
 
 **BEHAVIOR**
 
@@ -3649,10 +3650,18 @@ bindings are read during the call alone.
 A fragment function of a fixed form samples either as it was compiled
 to (sdk.facet.shader.textured) or through the sampler bound beside the
 texture (shader.FixedKind.texture_sampled), which is what a combined
-image sampler is for. A sampler of the layout's own is refused rather
-than ignored, so that a program is not left thinking a write of its own
-took: `PhysicalDeviceFeatures.immutable_samplers`. Stage flags are not
-looked at: every stage reads every binding.
+image sampler is for. Stage flags are not looked at: every stage reads
+every binding.
+
+**A sampler of the layout's own** is taken since 1.49
+(`immutable_samplers`, `PhysicalDeviceFeatures.immutable_samplers`): on
+a `sampler` or `combined_image_sampler` binding the layout holds one
+sampler for each of the binding's descriptors, and every set made of
+the layout starts with them in its slots. A write of a combined image
+sampler into such a binding brings the texture and leaves the sampler;
+a write of a sampler alone changes nothing. The samplers have to last
+as long as the sets do, as a written one does. On a binding of another
+kind the pointer is passed over, as Vulkan passes it over.
 
 **BUGS**
 
@@ -4634,9 +4643,9 @@ fn CreateSampler(base: *FacetBase, device: *facet.Device, info: *const facet.Sam
 **RESULT**
 
 `success`; `error_feature_not_present` for `unnormalized_coordinates`,
-for `mirror_clamp_to_edge` or another address mode the library has not
-got, or for a filter, mipmap mode, compare operation or border colour
-that is not one of Vulkan's; `error_out_of_host_memory`.
+for an address mode that is none of Vulkan's five, or for a filter,
+mipmap mode, compare operation or border colour that is not one of
+Vulkan's; `error_out_of_host_memory`.
 
 **BEHAVIOR**
 
@@ -4653,10 +4662,18 @@ through it a shadow sample: what is read is compared with the reference
 the fragment function carries, and what comes out is how much of the
 sample passed, not a colour.
 
+All five of Vulkan's address modes are taken, `mirror_clamp_to_edge`
+among them since 1.49: the texture turned round once below 0 and held
+at its edge past the far side. The three border colours are Vulkan's
+six: an int border and a float border are the same here, a texel being
+read as 0 to 1 whatever its format, and Vulkan 1.0 has no border but
+transparent black, opaque black and opaque white.
+
 A sampler is made on either device, but is read by the sampling the
 cores do: a pipeline whose fragment form samples through one
-(`shader.FixedKind.texture_sampled`, `texture_shadow`) is refused on a
-device whose `PhysicalDeviceFeatures.samplers` is false.
+(`shader.FixedKind.texture_sampled`, `texture_shadow`, and since 1.49
+`texture_array_sampled`, `texture_cube_sampled` and `texture_3d_sampled`)
+is refused on a device whose `PhysicalDeviceFeatures.samplers` is false.
 
 **CONTEXT**
 

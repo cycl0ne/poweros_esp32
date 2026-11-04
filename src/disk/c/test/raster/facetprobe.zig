@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.15 (04.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.16 (04.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -3026,6 +3026,253 @@ fn smallChecks(probe: *Probe) void {
     }
 }
 
+// --- 1.49: the shapes read through a sampler, and a sampler a layout holds -
+
+/// A quad over a texture of layers read through the sampler bound beside
+/// it: an array, a cube and a 3D texture, and a plain 2D one whose
+/// coordinates run outside the texture, where the sampler's edges show.
+const Held = struct {
+    fn arrayed(vertices: *const facet.shader.Vertices) callconv(.c) void {
+        for (0..vertices.count) |k| {
+            const p = vertices.input(@intCast(k), 0);
+            vertices.output(@intCast(k))[0..7].* = .{ p[0], p[1], p[2], 1, (p[0] + 1) / 2, (p[1] + 1) / 2, @floatFromInt(vertices.instance) };
+        }
+    }
+
+    fn cubed(vertices: *const facet.shader.Vertices) callconv(.c) void {
+        for (0..vertices.count) |k| {
+            const p = vertices.input(@intCast(k), 0);
+            const a = p[0];
+            const b = p[1];
+            const towards: [3]f32 = switch (vertices.instance) {
+                0 => .{ 1, -b, -a },
+                1 => .{ -1, -b, a },
+                2 => .{ a, 1, b },
+                3 => .{ a, -1, -b },
+                4 => .{ a, -b, 1 },
+                else => .{ -a, -b, -1 },
+            };
+            vertices.output(@intCast(k))[0..7].* = .{ p[0], p[1], p[2], 1, towards[0], towards[1], towards[2] };
+        }
+    }
+
+    fn sliced(vertices: *const facet.shader.Vertices) callconv(.c) void {
+        for (0..vertices.count) |k| {
+            const p = vertices.input(@intCast(k), 0);
+            const r = (@as(f32, @floatFromInt(vertices.instance)) + 0.5) / 4;
+            vertices.output(@intCast(k))[0..7].* = .{ p[0], p[1], p[2], 1, (p[0] + 1) / 2, (p[1] + 1) / 2, r };
+        }
+    }
+
+    /// Coordinates a quarter of the texture outside it either way.
+    fn wide(vertices: *const facet.shader.Vertices) callconv(.c) void {
+        for (0..vertices.count) |k| {
+            const p = vertices.input(@intCast(k), 0);
+            vertices.output(@intCast(k))[0..6].* = .{ p[0], p[1], p[2], 1, (p[0] + 1) / 2 * 1.5 - 0.25, (p[1] + 1) / 2 * 1.5 - 0.25 };
+        }
+    }
+
+    const entries = [_]facet.shader.Entry{
+        facet.shader.vertex("arrayby", &arrayed, 3),
+        facet.shader.fixedFragment("arrayby", .{ .kind = .texture_array_sampled }),
+        facet.shader.vertex("cubeby", &cubed, 3),
+        facet.shader.fixedFragment("cubeby", .{ .kind = .texture_cube_sampled }),
+        facet.shader.vertex("volumeby", &sliced, 3),
+        facet.shader.fixedFragment("volumeby", .{ .kind = .texture_3d_sampled }),
+        facet.shader.vertex("wideby", &wide, 2),
+        facet.shader.fixedFragment("wideby", .{ .kind = .texture_sampled }),
+    };
+    const code = facet.shader.Code{ .entry_count = entries.len, .entries = &entries };
+
+    /// A layer's colour, each its own: forty apart in red.
+    fn layerColor(layer: u32) u32 {
+        return 0xFF00_0000 | (10 + 40 * layer) << 16;
+    }
+};
+
+/// The sampler forms past 2D of 1.49, and a sampler the set layout holds.
+fn heldChecks(probe: *Probe) void {
+    const fb = probe.fb;
+    const device = probe.device.?;
+    defer probe.give();
+    const across = 16;
+    const layer_bytes = across * across * 4;
+
+    // A sampler the set layout holds is the library's doing, so every
+    // device takes one; the forms that read a sampler are the cores'.
+    var kept: ?*facet.Sampler = null;
+    if (fb.CreateSampler(device, &.{
+        .mag_filter = .nearest,
+        .min_filter = .nearest,
+        .address_mode_u = .clamp_to_border,
+        .address_mode_v = .clamp_to_border,
+        .address_mode_w = .clamp_to_border,
+        .border_color = .float_opaque_white,
+    }, &kept) != .success) return probe.check(false, "a sampler with a white border");
+    defer fb.DestroySampler(device, kept);
+    var tiled: ?*facet.Sampler = null;
+    if (fb.CreateSampler(device, &.{ .mag_filter = .nearest, .min_filter = .nearest }, &tiled) != .success)
+        return probe.check(false, "a sampler that tiles");
+    defer fb.DestroySampler(device, tiled);
+    // All five of Vulkan's address modes, since 1.49.
+    var mirrored: ?*facet.Sampler = null;
+    const asked = fb.CreateSampler(device, &.{ .address_mode_u = .mirror_clamp_to_edge }, &mirrored);
+    probe.check(asked == .success and mirrored != null, "a sampler that mirrors once and then holds at the edge");
+    if (asked == .success) fb.DestroySampler(device, mirrored);
+    var unknown: ?*facet.Sampler = null;
+    probe.check(fb.CreateSampler(device, &.{ .address_mode_u = @enumFromInt(9) }, &unknown) != .success, "an address mode that is none of the five refused");
+
+    var held_layout: ?*facet.DescriptorSetLayout = null;
+    const held_binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .combined_image_sampler, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_FRAGMENT, .immutable_samplers = @ptrCast(&kept) };
+    const made_layout = fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&held_binding) }, &held_layout);
+    probe.check(made_layout == .success and held_layout != null, "a set layout that holds a sampler of its own");
+    if (made_layout != .success or held_layout == null) return;
+    defer fb.DestroyDescriptorSetLayout(device, held_layout);
+    var written_layout: ?*facet.DescriptorSetLayout = null;
+    const written_binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .combined_image_sampler, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
+    if (fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&written_binding) }, &written_layout) != .success)
+        return probe.check(false, "a set layout whose sampler is written");
+    defer fb.DestroyDescriptorSetLayout(device, written_layout);
+
+    var module: ?*facet.ShaderModule = null;
+    if (fb.CreateShaderModule(device, &.{ .code = &Held.code }, &module) != .success) return probe.check(false, "the shader module");
+    _ = Probe.keep(&probe.modules, module);
+    var held_pipes: ?*facet.PipelineLayout = null;
+    if (fb.CreatePipelineLayout(device, &.{ .set_layout_count = 1, .set_layouts = @ptrCast(&held_layout) }, &held_pipes) != .success) return probe.check(false, "a pipeline layout over it");
+    _ = Probe.keep(&probe.layouts, held_pipes);
+    var written_pipes: ?*facet.PipelineLayout = null;
+    if (fb.CreatePipelineLayout(device, &.{ .set_layout_count = 1, .set_layouts = @ptrCast(&written_layout) }, &written_pipes) != .success) return probe.check(false, "and one over the other");
+    _ = Probe.keep(&probe.layouts, written_pipes);
+
+    const pass = probe.renderPass(.{
+        .attachment_count = 1,
+        .attachments = @ptrCast(&facet.AttachmentDescription{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .color_attachment_optimal }),
+        .subpass_count = 1,
+        .subpasses = @ptrCast(&facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal }) }),
+    }) orelse return probe.check(false, "a pass to draw in");
+    const attributes = [1]facet.VertexInputAttributeDescription{.{ .location = 0, .binding = 0, .format = .r32g32b32_sfloat }};
+
+    // Where the device runs no form that reads a sampler, every one of
+    // them is refused there and the program draws on the cores instead.
+    if (!probe.features.samplers) {
+        var refused = false;
+        for ([3][*:0]const u8{ "arrayby", "cubeby", "volumeby" }) |name| {
+            if (pipelineOf(probe, pass, module.?, written_pipes.?, .{ .attributes = &attributes, .stride = 12, .name = name }) == null) refused = true else refused = false;
+            if (!refused) break;
+        }
+        return probe.check(refused, "a form past 2D that reads a sampler is refused where the device reads none");
+    }
+
+    // Bound without a view of their own: a plain 2D one is not what
+    // either of these is read as.
+    const cube_image = probe.bound(.{ .flags = facet.IMAGE_CREATE_CUBE_COMPATIBLE, .format = .b8g8r8a8_unorm, .extent = .{ .width = across, .height = across }, .array_layers = 6, .usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST }, 0) orelse
+        return probe.check(false, "an image of six layers");
+    const volume_image = probe.bound(.{ .format = .b8g8r8a8_unorm, .image_type = .@"3d", .extent = .{ .width = across, .height = across, .depth = 4 }, .usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST }, 0) orelse
+        return probe.check(false, "a 3D image of four slices");
+    const array_view = probe.viewed(.{ .image = cube_image, .format = .b8g8r8a8_unorm, .view_type = .@"2d_array", .subresource_range = .{ .layer_count = 6 } }) orelse
+        return probe.check(false, "a view of it as an array");
+    const cube_view = probe.viewed(.{ .image = cube_image, .format = .b8g8r8a8_unorm, .view_type = .cube, .subresource_range = .{ .layer_count = 6 } }) orelse
+        return probe.check(false, "and one as a cube");
+    const volume_view = probe.viewed(.{ .image = volume_image, .format = .b8g8r8a8_unorm, .view_type = .@"3d" }) orelse
+        return probe.check(false, "a view of the 3D image");
+
+    const texels, const texel_bytes = probe.buffer(layer_bytes * 6, facet.BUFFER_USAGE_TRANSFER_SRC) orelse
+        return probe.check(false, "a buffer the layers come from");
+    for (0..6) |layer| {
+        const color = Held.layerColor(@intCast(layer));
+        for (0..across * across) |k| std.mem.writeInt(u32, texel_bytes[layer * layer_bytes + k * 4 ..][0..4], color, .little);
+    }
+    var faces: [6]facet.BufferImageCopy = undefined;
+    for (&faces, 0..) |*face, k| face.* = .{ .buffer_offset = k * layer_bytes, .image_subresource = .{ .base_array_layer = @intCast(k) }, .image_extent = .{ .width = across, .height = across } };
+    const slices = facet.BufferImageCopy{ .image_extent = .{ .width = across, .height = across, .depth = 4 } };
+    var commands = probe.record() orelse return probe.check(false, "a recording");
+    fb.CmdCopyBufferToImage(commands, texels, cube_image, .general, 6, &faces);
+    fb.CmdCopyBufferToImage(commands, texels, volume_image, .general, 1, @ptrCast(&slices));
+    if (!probe.submit()) return probe.check(false, "the copies into them submitted");
+
+    var slot: usize = 0;
+    for (probe.memories, 0..) |each, k| if (each == null) {
+        slot = k;
+        break;
+    };
+    const shown = probe.image(.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = side, .height = side }, .tiling = .linear, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, facet.MEMORY_PROPERTY_HOST_VISIBLE) orelse
+        return probe.check(false, "a picture to draw into");
+    const shown_memory = probe.memories[slot].?;
+    const onto = probe.framebuffer(pass, &.{shown[1]}) orelse return probe.check(false, "a framebuffer for it");
+
+    var pool: ?*facet.DescriptorPool = null;
+    if (fb.CreateDescriptorPool(device, &.{ .max_sets = 2 }, &pool) != .success) return probe.check(false, "a descriptor pool");
+    defer fb.DestroyDescriptorPool(device, pool);
+    var written_set: [1]?*facet.DescriptorSet = undefined;
+    if (fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&written_layout) }, &written_set) != .success)
+        return probe.check(false, "a set whose sampler is written");
+    var held_set: [1]?*facet.DescriptorSet = undefined;
+    if (fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&held_layout) }, &held_set) != .success)
+        return probe.check(false, "and one of the layout that holds its own");
+
+    const vertex_buffer, const vertex_bytes = probe.buffer(256, facet.BUFFER_USAGE_VERTEX_BUFFER) orelse
+        return probe.check(false, "a vertex buffer");
+    const quad = [6][3]f32{ .{ -1, -1, 0.5 }, .{ 1, -1, 0.5 }, .{ -1, 1, 0.5 }, .{ -1, 1, 0.5 }, .{ 1, -1, 0.5 }, .{ 1, 1, 0.5 } };
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(quad))], std.mem.asBytes(&quad));
+    const offset: u64 = 0;
+    const clear = [1]facet.ClearValue{.{ .color = .{ .float32 = .{ 0, 1, 0, 1 } } }};
+    const area = facet.Rect2D{ .extent = .{ .width = side, .height = side } };
+    const pixels, const pitch = probe.mapped(shown[0], shown_memory) orelse return probe.check(false, "the picture read back");
+
+    // One pipeline for each form, made once: the probe keeps only so many.
+    const of_array = pipelineOf(probe, pass, module.?, written_pipes.?, .{ .attributes = &attributes, .stride = 12, .name = "arrayby" }) orelse
+        return probe.check(false, "a pipeline whose form reads an array through a sampler");
+    const of_cube = pipelineOf(probe, pass, module.?, written_pipes.?, .{ .attributes = &attributes, .stride = 12, .name = "cubeby" }) orelse
+        return probe.check(false, "one whose form reads a cube through a sampler");
+    const of_volume = pipelineOf(probe, pass, module.?, written_pipes.?, .{ .attributes = &attributes, .stride = 12, .name = "volumeby" }) orelse
+        return probe.check(false, "one whose form reads a 3D texture through a sampler");
+    const of_wide = pipelineOf(probe, pass, module.?, written_pipes.?, .{ .attributes = &attributes, .stride = 12, .name = "wideby" }) orelse
+        return probe.check(false, "one that reads past the texture's edges");
+    const of_held = pipelineOf(probe, pass, module.?, held_pipes.?, .{ .attributes = &attributes, .stride = 12, .name = "wideby" }) orelse
+        return probe.check(false, "and the same over the layout that holds a sampler");
+
+    const Case = struct {
+        pipeline: *facet.Pipeline,
+        view: *facet.ImageView,
+        instance: u32,
+        sets: *[1]?*facet.DescriptorSet,
+        layout: *facet.PipelineLayout,
+        want: u32,
+        at: u32,
+        says: [*:0]const u8,
+    };
+    const middle = side / 2;
+    const corner = side / 16;
+    for ([_]Case{
+        .{ .pipeline = of_array, .view = array_view, .instance = 0, .sets = &written_set, .layout = written_pipes.?, .want = Held.layerColor(0), .at = middle, .says = "a layer of an array read through a sampler" },
+        .{ .pipeline = of_array, .view = array_view, .instance = 4, .sets = &written_set, .layout = written_pipes.?, .want = Held.layerColor(4), .at = middle, .says = "and another layer of it" },
+        .{ .pipeline = of_array, .view = array_view, .instance = 9, .sets = &written_set, .layout = written_pipes.?, .want = Held.layerColor(5), .at = middle, .says = "a layer past the last reads as the last" },
+        .{ .pipeline = of_cube, .view = cube_view, .instance = 0, .sets = &written_set, .layout = written_pipes.?, .want = Held.layerColor(0), .at = middle, .says = "a face of a cube read through a sampler" },
+        .{ .pipeline = of_cube, .view = cube_view, .instance = 3, .sets = &written_set, .layout = written_pipes.?, .want = Held.layerColor(3), .at = middle, .says = "and another face of it" },
+        .{ .pipeline = of_volume, .view = volume_view, .instance = 0, .sets = &written_set, .layout = written_pipes.?, .want = Held.layerColor(0), .at = middle, .says = "a slice of a 3D texture read through a sampler" },
+        .{ .pipeline = of_volume, .view = volume_view, .instance = 3, .sets = &written_set, .layout = written_pipes.?, .want = Held.layerColor(3), .at = middle, .says = "and another slice of it" },
+        // Past the edges, with the tiling sampler written into the set:
+        // the texture again.
+        .{ .pipeline = of_wide, .view = cube_view, .instance = 0, .sets = &written_set, .layout = written_pipes.?, .want = Held.layerColor(0), .at = corner, .says = "the written sampler tiles past the texture's edge" },
+        // The same draw through the layout that holds the bordered
+        // sampler: the layout's wins, so the border is read there.
+        .{ .pipeline = of_held, .view = cube_view, .instance = 0, .sets = &held_set, .layout = held_pipes.?, .want = 0xFFFF_FFFF, .at = corner, .says = "the layout's own sampler is read instead of the one written" },
+    }) |case| {
+        const info = facet.DescriptorImageInfo{ .sampler = tiled, .image_view = case.view };
+        const write = facet.WriteDescriptorSet{ .dst_set = case.sets[0].?, .dst_binding = 0, .descriptor_type = .combined_image_sampler, .descriptor_count = 1, .image_info = @ptrCast(&info) };
+        fb.UpdateDescriptorSets(device, 1, @ptrCast(&write), 0, null);
+        commands = probe.record() orelse return probe.check(false, "a recording of the draw");
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = onto, .render_area = area, .clear_value_count = 1, .clear_values = &clear }, .@"inline");
+        fb.CmdBindPipeline(commands, .graphics, case.pipeline);
+        fb.CmdBindDescriptorSets(commands, .graphics, case.layout, 0, 1, @ptrCast(case.sets), 0, null);
+        fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+        fb.CmdDraw(commands, 6, 1, 0, case.instance);
+        fb.CmdEndRenderPass(commands);
+        if (!probe.submit()) return probe.check(false, "the frame submitted");
+        probe.checkEqual(case.want, pixelAt(pixels, pitch, case.at, case.at), case.says);
+    }
+}
+
 fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical: *facet.PhysicalDevice, quiet: bool) struct { u32, u32 } {
     var properties: facet.PhysicalDeviceProperties = undefined;
     fb.GetPhysicalDeviceProperties(physical, &properties);
@@ -3054,6 +3301,7 @@ fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical
     shapeChecks(&probe);
     samplesChecks(&probe);
     smallChecks(&probe);
+    heldChecks(&probe);
     return .{ probe.passed, probe.failed };
 }
 

@@ -593,8 +593,12 @@ test "descriptor sets: a layout's bindings as slots, written and copied as shade
     var kept: ?*facet.Sampler = null;
     try testing.expectEqual(facet.Result.success, fb.CreateSampler(device, &.{}, &kept));
     defer fb.DestroySampler(device, kept);
+    // A sampler the layout holds of its own, since 1.49: taken, and in
+    // the slots of every set made of it.
     const held = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .combined_image_sampler, .immutable_samplers = @ptrCast(&kept) };
-    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&held) }, &none));
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&held) }, &none));
+    fb.DestroyDescriptorSetLayout(device, none);
+    none = null;
     const twice = [2]facet.DescriptorSetLayoutBinding{ bindings[0], bindings[0] };
     try testing.expectEqual(facet.Result.error_initialization_failed, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 2, .bindings = &twice }, &none));
 
@@ -3134,7 +3138,7 @@ test "a sampler bound beside the texture: the wrap and the border it says, and a
     fb.GetPhysicalDeviceFeatures(bench.physical, &features);
     try testing.expect(features.samplers);
     try testing.expect(features.sampler_anisotropy);
-    try testing.expect(!features.immutable_samplers);
+    try testing.expect(features.immutable_samplers);
     try testing.expect(!features.unnormalized_coordinates);
     var properties: facet.PhysicalDeviceProperties = undefined;
     fb.GetPhysicalDeviceProperties(bench.physical, &properties);
@@ -3144,7 +3148,7 @@ test "a sampler bound beside the texture: the wrap and the border it says, and a
     var refused: ?*facet.Sampler = null;
     try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateSampler(device, &.{ .unnormalized_coordinates = true }, &refused));
     try testing.expect(refused == null);
-    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateSampler(device, &.{ .address_mode_u = .mirror_clamp_to_edge }, &refused));
+    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateSampler(device, &.{ .address_mode_u = @enumFromInt(9) }, &refused));
     try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateSampler(device, &.{ .compare_enable = true, .compare_op = @enumFromInt(9) }, &refused));
     var most: ?*facet.Sampler = null;
     try testing.expectEqual(facet.Result.success, fb.CreateSampler(device, &.{ .anisotropy_enable = true, .max_anisotropy = 1000 }, &most));
@@ -3234,6 +3238,9 @@ test "a sampler bound beside the texture: the wrap and the border it says, and a
         .{ .mode = .mirrored_repeat, .outside = red },
         .{ .mode = .clamp_to_edge, .outside = red },
         .{ .mode = .clamp_to_border, .outside = white },
+        // Turned round once below 0 and then held: column -1 is column 0,
+        // which is red (since 1.49).
+        .{ .mode = .mirror_clamp_to_edge, .outside = red },
     }) |case| {
         var sampler: ?*facet.Sampler = null;
         try testing.expectEqual(facet.Result.success, fb.CreateSampler(device, &.{
@@ -4515,10 +4522,29 @@ const LayerScene = struct {
         }
     }
 
+    /// The same quad, its coordinates running a quarter of the texture
+    /// outside it either way: what a sampler's edges are seen by.
+    fn wide(vertices: *const shader.Vertices) callconv(.c) void {
+        for (0..vertices.count) |k| {
+            const p = vertices.input(@intCast(k), 0);
+            vertices.output(@intCast(k))[0..6].* = .{ p[0], p[1], 0, 1, (p[0] + 1) / 2 * 1.5 - 0.25, (p[1] + 1) / 2 * 1.5 - 0.25 };
+        }
+    }
+
     const nearest = facet.texture.Sampling{ .filter = .nearest };
     const entries = [_]shader.Entry{
         shader.vertex("flat", &flat, 2),
         shader.fixedFragment("flat", .{ .kind = .texture, .sampling = nearest }),
+        // The same shapes read through the sampler bound beside the
+        // texture (since 1.49).
+        shader.vertex("arrayby", &array, 3),
+        shader.fixedFragment("arrayby", .{ .kind = .texture_array_sampled }),
+        shader.vertex("cubeby", &cube, 3),
+        shader.fixedFragment("cubeby", .{ .kind = .texture_cube_sampled }),
+        shader.vertex("volumeby", &volume, 3),
+        shader.fixedFragment("volumeby", .{ .kind = .texture_3d_sampled }),
+        shader.vertex("wideby", &wide, 2),
+        shader.fixedFragment("wideby", .{ .kind = .texture_sampled }),
         shader.vertex("array", &array, 3),
         shader.fixedFragment("array", .{ .kind = .texture_array, .sampling = nearest }),
         shader.vertex("cube", &cube, 3),
@@ -4764,6 +4790,167 @@ test "textures of layers: arrays, cube maps, 3D, copied a layer at a time; compr
     try draw(&bench, .{ .view = etc_view, .name = "flat", .instance = 0 }, layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
     try testing.expectEqual(@as(u32, 0xFFFF_0202), picture.at(8, 8));
     try testing.expectEqual(@as(u32, 0xFF02_02FF), picture.at(56, 56));
+}
+
+test "the shapes past 2D read through a sampler, and a sampler the set layout holds" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+
+    var features: facet.PhysicalDeviceFeatures = undefined;
+    fb.GetPhysicalDeviceFeatures(bench.physical, &features);
+    try testing.expect(features.samplers);
+    try testing.expect(features.immutable_samplers);
+
+    const usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST;
+    const side16 = facet.Extent3D{ .width = 16, .height = 16 };
+    const array_image = try bench.bareImage(.{ .format = .r8g8b8a8_unorm, .extent = side16, .array_layers = 3, .usage = usage }, false);
+    const cube_image = try bench.bareImage(.{ .format = .r8g8b8a8_unorm, .flags = facet.IMAGE_CREATE_CUBE_COMPATIBLE, .extent = side16, .array_layers = 6, .usage = usage }, false);
+    const volume_image = try bench.bareImage(.{ .format = .r8g8b8a8_unorm, .image_type = .@"3d", .extent = .{ .width = 16, .height = 16, .depth = 4 }, .usage = usage }, false);
+    const array_view = try bench.viewOf(.{ .image = array_image, .format = .r8g8b8a8_unorm, .view_type = .@"2d_array" });
+    const cube_view = try bench.viewOf(.{ .image = cube_image, .format = .r8g8b8a8_unorm, .view_type = .cube });
+    const volume_view = try bench.viewOf(.{ .image = volume_image, .format = .r8g8b8a8_unorm, .view_type = .@"3d" });
+    const flat_view = try bench.viewOf(.{ .image = array_image, .format = .r8g8b8a8_unorm, .subresource_range = .{ .base_array_layer = 0, .layer_count = 1 } });
+
+    const stack_bytes = 16 * 16 * 4;
+    const staging, const staged = try bench.buffer(stack_bytes * 6, facet.BUFFER_USAGE_TRANSFER_SRC);
+    for (0..6) |layer| for (0..16) |y| for (0..16) |x| {
+        staged[layer * stack_bytes + (y * 16 + x) * 4 ..][0..4].* = LayerScene.texel(layer, x, y);
+    };
+    const whole = facet.BufferImageCopy{ .image_subresource = .{ .layer_count = 3 }, .image_extent = side16 };
+    const slices = facet.BufferImageCopy{ .image_extent = .{ .width = 16, .height = 16, .depth = 4 } };
+    var faces: [6]facet.BufferImageCopy = undefined;
+    for (&faces, 0..) |*face, k| face.* = .{ .buffer_offset = k * stack_bytes, .image_subresource = .{ .base_array_layer = @intCast(k) }, .image_extent = side16 };
+    const commands = try bench.record();
+    fb.CmdCopyBufferToImage(commands, staging, array_image, .transfer_dst_optimal, 1, @ptrCast(&whole));
+    fb.CmdCopyBufferToImage(commands, staging, cube_image, .transfer_dst_optimal, 6, &faces);
+    fb.CmdCopyBufferToImage(commands, staging, volume_image, .transfer_dst_optimal, 1, @ptrCast(&slices));
+    try bench.submit();
+
+    // Two samplers that read the edges differently, and tell each other
+    // apart past the texture: the border's white against the far side.
+    var edged: ?*facet.Sampler = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateSampler(device, &.{
+        .mag_filter = .nearest,
+        .min_filter = .nearest,
+        .address_mode_u = .clamp_to_border,
+        .address_mode_v = .clamp_to_border,
+        .address_mode_w = .clamp_to_border,
+        .border_color = .float_opaque_white,
+    }, &edged));
+    defer fb.DestroySampler(device, edged);
+    var tiled: ?*facet.Sampler = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateSampler(device, &.{ .mag_filter = .nearest, .min_filter = .nearest }, &tiled));
+    defer fb.DestroySampler(device, tiled);
+
+    // One layout whose sampler is written with the set, and one that holds
+    // the bordered sampler of its own (since 1.49).
+    var written_layout: ?*facet.DescriptorSetLayout = null;
+    const written = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .combined_image_sampler, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&written) }, &written_layout));
+    defer fb.DestroyDescriptorSetLayout(device, written_layout);
+    var held_layout: ?*facet.DescriptorSetLayout = null;
+    const held = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .combined_image_sampler, .stage_flags = facet.SHADER_STAGE_FRAGMENT, .immutable_samplers = @ptrCast(&edged) };
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&held) }, &held_layout));
+    defer fb.DestroyDescriptorSetLayout(device, held_layout);
+
+    var pool: ?*facet.DescriptorPool = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorPool(device, &.{ .max_sets = 2 }, &pool));
+    defer fb.DestroyDescriptorPool(device, pool);
+    var written_set: [1]?*facet.DescriptorSet = undefined;
+    try testing.expectEqual(facet.Result.success, fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&written_layout) }, &written_set));
+    var held_set: [1]?*facet.DescriptorSet = undefined;
+    try testing.expectEqual(facet.Result.success, fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&held_layout) }, &held_set));
+
+    const shaders = try module(&bench, &LayerScene.code);
+    defer fb.DestroyShaderModule(device, shaders);
+    const written_pipes = try pipelineLayout(&bench, &.{written_layout.?}, 0);
+    defer fb.DestroyPipelineLayout(device, written_pipes);
+    const held_pipes = try pipelineLayout(&bench, &.{held_layout.?}, 0);
+    defer fb.DestroyPipelineLayout(device, held_pipes);
+    const pass = try renderPass(&bench, .clear, false);
+    defer fb.DestroyRenderPass(device, pass);
+    const picture = try Picture.of(&bench, 64, 64);
+    const frame = try framebuffer(&bench, pass, &.{picture.view}, 64, 64);
+    defer fb.DestroyFramebuffer(device, frame);
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(LayerScene.quad)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(LayerScene.quad))], std.mem.asBytes(&LayerScene.quad));
+    const offset: u64 = 0;
+    const black = clears(0xFF00_0000);
+
+    const Run = struct {
+        view: *facet.ImageView,
+        sampler: ?*facet.Sampler,
+        name: [*:0]const u8,
+        instance: u32,
+        set: *[1]?*facet.DescriptorSet,
+        layout: *facet.PipelineLayout,
+    };
+    const draw = struct {
+        fn draw(on: *Bench, run: Run, into: *facet.RenderPass, into_frame: *facet.Framebuffer, code_module: *facet.ShaderModule, vertices: *facet.Buffer, first: *const u64, clear_values: *const [2]facet.ClearValue) !void {
+            const f = on.rig.fb;
+            const image_info = facet.DescriptorImageInfo{ .sampler = run.sampler, .image_view = run.view };
+            const write = facet.WriteDescriptorSet{ .dst_set = run.set[0].?, .dst_binding = 0, .descriptor_type = .combined_image_sampler, .image_info = @ptrCast(&image_info) };
+            f.UpdateDescriptorSets(on.device, 1, @ptrCast(&write), 0, null);
+            const result, const pipeline = makePipeline(on, .{ .module = code_module, .name = run.name, .layout = run.layout, .pass = into });
+            try testing.expectEqual(facet.Result.success, result);
+            defer f.DestroyPipeline(on.device, pipeline);
+            const recording = try on.record();
+            f.CmdBeginRenderPass(recording, &.{ .render_pass = into, .framebuffer = into_frame, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 1, .clear_values = clear_values }, .@"inline");
+            f.CmdBindVertexBuffers(recording, 0, 1, @ptrCast(&vertices), @ptrCast(first));
+            f.CmdBindDescriptorSets(recording, .graphics, run.layout, 0, 1, @ptrCast(run.set), 0, null);
+            f.CmdBindPipeline(recording, .graphics, pipeline.?);
+            f.CmdDraw(recording, 6, 1, 0, run.instance);
+            f.CmdEndRenderPass(recording);
+            try on.submit();
+        }
+    }.draw;
+
+    // The three shapes read through a sampler read what the forms built
+    // for them read: the layer, the face or the slice the instance names.
+    const shapes = [_]struct { run: Run, layer: u32 }{
+        .{ .run = .{ .view = array_view, .sampler = tiled, .name = "arrayby", .instance = 0, .set = &written_set, .layout = written_pipes }, .layer = 0 },
+        .{ .run = .{ .view = array_view, .sampler = tiled, .name = "arrayby", .instance = 2, .set = &written_set, .layout = written_pipes }, .layer = 2 },
+        // Past the last layer: the last, as `texture_array` has it.
+        .{ .run = .{ .view = array_view, .sampler = tiled, .name = "arrayby", .instance = 9, .set = &written_set, .layout = written_pipes }, .layer = 2 },
+        .{ .run = .{ .view = cube_view, .sampler = tiled, .name = "cubeby", .instance = 0, .set = &written_set, .layout = written_pipes }, .layer = 0 },
+        .{ .run = .{ .view = cube_view, .sampler = tiled, .name = "cubeby", .instance = 3, .set = &written_set, .layout = written_pipes }, .layer = 3 },
+        .{ .run = .{ .view = cube_view, .sampler = tiled, .name = "cubeby", .instance = 5, .set = &written_set, .layout = written_pipes }, .layer = 5 },
+        .{ .run = .{ .view = volume_view, .sampler = tiled, .name = "volumeby", .instance = 0, .set = &written_set, .layout = written_pipes }, .layer = 0 },
+        .{ .run = .{ .view = volume_view, .sampler = tiled, .name = "volumeby", .instance = 3, .set = &written_set, .layout = written_pipes }, .layer = 3 },
+    };
+    for (shapes) |each| {
+        try draw(&bench, each.run, pass, frame, shaders, vertex_buffer, &offset, &black);
+        try testing.expectEqual(LayerScene.colorOf(each.layer, false, false), picture.at(8, 8));
+        try testing.expectEqual(LayerScene.colorOf(each.layer, true, true), picture.at(56, 56));
+    }
+
+    // A form with no sampler beside the texture still says so.
+    try draw(&bench, .{ .view = array_view, .sampler = null, .name = "arrayby", .instance = 0, .set = &written_set, .layout = written_pipes }, pass, frame, shaders, vertex_buffer, &offset, &black);
+    try testing.expectEqual(shader.missing, picture.at(32, 32));
+
+    // The quad whose coordinates run a quarter outside the texture, with
+    // the tiling sampler written into the set: the far side of the
+    // texture, which is the corner furthest from (0, 0).
+    const far = LayerScene.colorOf(0, true, true);
+    const white: u32 = 0xFFFF_FFFF;
+    try draw(&bench, .{ .view = flat_view, .sampler = tiled, .name = "wideby", .instance = 0, .set = &written_set, .layout = written_pipes }, pass, frame, shaders, vertex_buffer, &offset, &black);
+    try testing.expectEqual(far, picture.at(4, 4));
+    // The same drawn through the layout that holds the bordered sampler,
+    // written with the tiling one: the layout's wins, so the border is
+    // read past the edge and the write changed nothing.
+    try draw(&bench, .{ .view = flat_view, .sampler = tiled, .name = "wideby", .instance = 0, .set = &held_set, .layout = held_pipes }, pass, frame, shaders, vertex_buffer, &offset, &black);
+    try testing.expectEqual(white, picture.at(4, 4));
+    // And the texture the write did bring is read inside the edges: at a
+    // sixteenth in, the coordinate is 0.125, the texture's first quarter.
+    try testing.expectEqual(LayerScene.colorOf(0, false, false), picture.at(16, 16));
+    // A write of a sampler alone into that binding changes nothing either.
+    const only = facet.DescriptorImageInfo{ .sampler = tiled, .image_view = null };
+    const write_sampler = facet.WriteDescriptorSet{ .dst_set = held_set[0].?, .dst_binding = 0, .descriptor_type = .sampler, .image_info = @ptrCast(&only) };
+    fb.UpdateDescriptorSets(device, 1, @ptrCast(&write_sampler), 0, null);
+    try draw(&bench, .{ .view = flat_view, .sampler = tiled, .name = "wideby", .instance = 0, .set = &held_set, .layout = held_pipes }, pass, frame, shaders, vertex_buffer, &offset, &black);
+    try testing.expectEqual(white, picture.at(4, 4));
 }
 
 /// A quad over a texture kept in its blocks, drawn through a form for each

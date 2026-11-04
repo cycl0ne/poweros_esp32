@@ -21,6 +21,7 @@ const sdk = @import("sdk");
 const exec = sdk.exec;
 const facet = sdk.facet;
 const shader = facet.shader;
+const texture = facet.texture;
 const ExecBase = sdk.interface.exec.ExecBase;
 const Device = @import("../device/_device.zig").Device;
 
@@ -62,6 +63,12 @@ pub fn ofTexels(kind: facet.DescriptorType) bool {
     return kind == .uniform_texel_buffer or kind == .storage_texel_buffer;
 }
 
+/// Whether a kind carries a sampler, so that a set layout may hold one of
+/// its own for it (`immutable_samplers`, since 1.49).
+pub fn ofSampler(kind: facet.DescriptorType) bool {
+    return kind == .sampler or kind == .combined_image_sampler;
+}
+
 /// A binding of a layout: its kind, its first slot and its descriptors.
 /// A binding not given has none.
 pub const Binding = struct {
@@ -75,11 +82,24 @@ pub const SetLayout = struct {
     /// The highest binding given, and one; the slots all of them take.
     binding_count: u32,
     slot_count: u32,
+    /// Whether it holds samplers of its own, one slot each, after the
+    /// bindings (`immutable_samplers`, since 1.49).
+    holds_samplers: bool = false,
 
     /// Its bindings, which follow it.
     pub fn bindings(layout: *const SetLayout) []const Binding {
         const first: [*]const Binding = @ptrFromInt(@intFromPtr(layout) + @sizeOf(SetLayout));
         return first[0..layout.binding_count];
+    }
+
+    /// The sampler of each slot, null where the slot's binding holds none:
+    /// what a set made of this layout is given and a write cannot change.
+    /// Empty where no binding holds one. (Since 1.49.)
+    pub fn samplers(layout: *const SetLayout) []const ?*const texture.Sampler {
+        if (!layout.holds_samplers) return &.{};
+        const after = @intFromPtr(layout) + @sizeOf(SetLayout) + layout.binding_count * @sizeOf(Binding);
+        const first: [*]const ?*const texture.Sampler = @ptrFromInt(after);
+        return first[0..layout.slot_count];
     }
 };
 
@@ -125,9 +145,19 @@ pub fn makeSet(sys: *ExecBase, pool: *Pool, layout: *const SetLayout) ?*Set {
     // CmdBindDescriptorSets hands them over. The memory came cleared, so
     // every other slot says none (`shader.Slot.dynamic` 0).
     var dynamic: u32 = 0;
+    const held = layout.samplers();
     for (bindings, 0..) |binding, k| {
         kinds[k] = binding.kind;
         firsts[k] = binding.first;
+        // A sampler the layout holds is in the slot from the start, and
+        // marked so that a write leaves it be (since 1.49).
+        if (held.len != 0 and ofSampler(binding.kind)) {
+            for (0..binding.count) |element| {
+                const kept = held[binding.first + element] orelse continue;
+                slots[binding.first + element].sampler = kept;
+                slots[binding.first + element].fixed_sampler = true;
+            }
+        }
         if (!ofDynamic(binding.kind)) continue;
         for (0..binding.count) |element| {
             if (dynamic < shader.MAX_DYNAMIC_OFFSETS) slots[binding.first + element].dynamic = @intCast(dynamic + 1);

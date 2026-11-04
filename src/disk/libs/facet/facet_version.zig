@@ -423,9 +423,36 @@ pub const LIBRARY_VERSION = 1;
 /// texture type of the TMU's own, read with the swizzles of the channels
 /// it has not: its microtile is 8 x 8 rather than 4 x 4, one byte a texel
 /// being 64 bytes all the same (`driver/v3d/tiling.zig`).
+/// 49: the shapes past 2D read through a sampler, and a sampler a set
+/// layout holds. Three fixed forms join the two that read the sampler
+/// bound beside the texture: `shader.FixedKind.texture_array_sampled`,
+/// `texture_cube_sampled` and `texture_3d_sampled`, each at the three
+/// coordinates its own form has (`shader.layeredBy`) - so an array, a
+/// cube or a 3D texture has the two levels round a point mixed, a bias and
+/// a clamp on them, mirrored and bordered edges and anisotropy, which the
+/// forms compiled for a sampling have not. A cube's sample is taken inside
+/// the face the direction falls on, its u and v and their steps the
+/// face's, so a bilinear sample on a seam mixes that face's edge rather
+/// than reading over into the next, which `texture_cube` does. The V3D
+/// refuses them as it refuses the other two, no QPU program reading a
+/// sampler.
+/// `mirror_clamp_to_edge` is the fifth of Vulkan's address modes and the
+/// last of them this library had not got: a coordinate below 0 reads the
+/// texture turned round once, and one past the far side the far edge's
+/// texels. The three border colours are all of Vulkan's six - an int
+/// border and a float border are the same here, a texel being read as 0
+/// to 1 whatever its format.
+/// And `DescriptorSetLayoutBinding.immutable_samplers` is taken on every
+/// device (`PhysicalDeviceFeatures.immutable_samplers`): the layout holds
+/// one sampler for each descriptor of a `sampler` or
+/// `combined_image_sampler` binding, every set made of it starts with them
+/// in its slots (`shader.Slot.fixed_sampler`), a write of a combined image
+/// sampler brings the texture and leaves the sampler, and a write of a
+/// sampler alone changes nothing. A set keeps the addresses, so the layout
+/// may go while the sets live on.
 /// What stays: `fifo` is the one present mode, there being no way to ask a
 /// display to show a buffer before its next frame; one queue family of one
 /// queue; a counter of 32 bits, for want of a 64-bit atomic on every
 /// machine the library runs on; and no point mode in tessellation, there
 /// being no point rasterization at all.
-pub const LIBRARY_REVISION = 48;
+pub const LIBRARY_REVISION = 49;

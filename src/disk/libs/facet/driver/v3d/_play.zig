@@ -1074,6 +1074,7 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
         // pixels, and none reads a sampler, so none of these reaches a
         // frame here.
         .none, .texture_cutout, .texture_sampled, .texture_shadow, .texture_cube_array => return,
+        .texture_array_sampled, .texture_cube_sampled, .texture_3d_sampled => return,
     }
 
     const scale = ViewportScale{
