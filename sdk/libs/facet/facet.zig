@@ -292,28 +292,32 @@ pub const PhysicalDeviceFeatures = extern struct {
     /// written, for the shadow map that would shade itself and the decal
     /// that would fight the wall it is on. False where a pipeline that asks
     /// for one is refused. The cores have it since 1.34; the BCM2712's V3D
-    /// has a depth offset of its own that nothing drives yet.
+    /// since 1.47, through its depth offset packet, which takes Vulkan's
+    /// three numbers as they are.
     depth_bias: bool = false,
     /// `PipelineDepthStencilStateCreateInfo.depth_bounds_test_enable`,
     /// `min_depth_bounds`, `max_depth_bounds` and CmdSetDepthBounds: a
     /// pixel is drawn only where the depth already there lies between the
     /// two, whatever the depth being drawn. False where a pipeline that
-    /// asks for it is refused. The cores have it since 1.40; the V3D has
-    /// no such test.
+    /// asks for it is refused. The cores have it since 1.40, the V3D since
+    /// 1.47: its depth bounds packet holds the tiles' test to the two.
     depth_bounds: bool = false,
     /// `PipelineRasterizationStateCreateInfo.depth_clamp_enable`: what
     /// lies past the near plane is drawn all the same, each pixel's depth
     /// held inside the viewport's `min_depth` and `max_depth`, rather than
     /// cut away - which is what a shadow volume wants. False where a
-    /// pipeline that asks for it is refused. The cores have it since 1.40;
-    /// the V3D clips in its own way.
+    /// pipeline that asks for it is refused. The cores have it since 1.40,
+    /// the V3D since 1.47: asking for it turns its clip to the z planes
+    /// off, as Vulkan's does.
     depth_clamp: bool = false,
     /// A depth attachment of `d16_unorm` that may `load` or `store`: depth
     /// outliving the pass it was drawn in, written into the image's memory
     /// as each tile is drawn and read back from it, to be copied out or
     /// made into a shadow map. False where the depth lives in the device's
     /// tiles alone and CreateRenderPass refuses both ops. The cores have it
-    /// since 1.30; the BCM2712's V3D has not.
+    /// since 1.30, the V3D since 1.47, which loads and stores the tiles'
+    /// depth as it does their colour - one plane an image, so `stored_both`
+    /// is what a pass keeping depth and stencil together asks for.
     stored_depth: bool = false,
     /// `input_attachment` descriptors and `SubpassDescription`'s
     /// `input_attachments`: an attachment a later subpass reads pixel by
@@ -327,8 +331,9 @@ pub const PhysicalDeviceFeatures = extern struct {
     /// load and store ops, a plane of the image's rows beside the depth's
     /// (`s8_uint`, `d16_unorm_s8_uint`), so a stencil outlives its pass
     /// and can be read back, written and cleared. The cores have it since
-    /// 1.38; the V3D stores neither depth nor stencil, and a pass that
-    /// asks for either op is refused there.
+    /// 1.38, the V3D since 1.47 for a stencil of its own (`s8_uint`); a
+    /// pass that keeps both planes of `d16_unorm_s8_uint` asks for
+    /// `stored_both` as well, which the V3D has not.
     stored_stencil: bool = false,
     /// A depth attachment's image may be sampled where it lies: an image
     /// of `d16_unorm` with IMAGE_USAGE_SAMPLED, kept in rows as a depth
@@ -365,10 +370,10 @@ pub const PhysicalDeviceFeatures = extern struct {
     /// differs between the devices as well.
     sampler_anisotropy: bool = false,
     /// Occlusion queries: the samples that passed the tests counted where
-    /// this device draws (`QueryType.occlusion`). The counting is the
-    /// rasterizer's, so a device that draws with hardware of its own has
-    /// not got it and CreateQueryPool refuses the kind. Differs between
-    /// the devices of a machine.
+    /// this device draws (`QueryType.occlusion`). The cores count in the
+    /// rasterizer; the V3D since 1.47 reads the counter of its own its
+    /// draws point at. False where CreateQueryPool refuses the kind.
+    /// Differs between the devices of a machine.
     occlusion_queries: bool = false,
     /// `QueryType.pipeline_statistics`, the same way: what the stages were
     /// given is counted where they run.
