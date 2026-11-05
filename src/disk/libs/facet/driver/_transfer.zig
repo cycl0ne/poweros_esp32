@@ -27,11 +27,12 @@ pub fn copyImage(command: *const _command.CopyImage) void {
         if (source.format == destination.format) copyBlocks(command);
         return;
     }
-    // Two float images keep what they were given, so the texels go as they
-    // lie as well, and only between images of the one format: nothing here
-    // turns one float format into another.
-    if (_image.floatTexels(source) != _image.floatTexels(destination)) return;
-    if (_image.floatTexels(source) and source.format != destination.format) return;
+    // Two images that keep what they were given - their floats, or their
+    // own channels since 1.69 - move the texels as they lie as well, and
+    // only between images of the one format: nothing here turns one such
+    // format into another.
+    if (_image.keptTexels(source) != _image.keptTexels(destination)) return;
+    if (_image.keptTexels(source) and source.format != destination.format) return;
     const pixel = _image.bytesOf(source.format);
     if (pixel != _image.bytesOf(destination.format)) return;
     for (_stream.items(_command.CopyImage, facet.ImageCopy, command, command.count)) |*region| {
@@ -354,6 +355,14 @@ fn texelOf(image: *const Image, color: u32, parts: [4]f32) ?Texel {
             .rg11b10f => .{ .four = pattern(.rg11b10f, u32, parts) },
             .rgb9e5 => .{ .four = pattern(.rgb9e5, u32, parts) },
             .r32f => .{ .four = pattern(.r32f, u32, parts) },
+            // A texture whose channels are its own takes them the same
+            // way (since 1.69): each held to 0 to 1 and written at the
+            // width that channel has, where a colour of 8 bits would
+            // throw half of a 16-bit one away.
+            .rg8 => .{ .two = channelPattern(.rg8, u16, parts) },
+            .r16 => .{ .two = channelPattern(.r16, u16, parts) },
+            .rg16 => .{ .four = channelPattern(.rg16, u32, parts) },
+            .rgba16 => .{ .eight = channelPattern(.rgba16, u64, parts) },
             // A clear of a colour is not for a depth texture:
             // CmdClearDepthStencilImage writes that one. Nor for a
             // compressed image, whose texels are written as whole blocks
@@ -375,6 +384,15 @@ fn pattern(comptime format: texture.Format, comptime Word: type, parts: [4]f32) 
     return @bitCast(bytes);
 }
 
+/// The same for a format whose channels are its own: each channel put
+/// into its own bytes, red first, by the encoder a copy into such an
+/// image uses. (Since 1.69.)
+fn channelPattern(format: texture.Format, comptime Word: type, parts: [4]f32) Word {
+    var bytes: [@sizeOf(Word)]u8 = @splat(0);
+    texture.putChannelParts(format, &bytes, parts);
+    return @bitCast(bytes);
+}
+
 /// A colour, 0xAARRGGBB, as 565.
 fn narrow(color: u32) u16 {
     return @truncate(color >> 8 & 0xF800 | color >> 5 & 0x07E0 | color >> 3 & 0x001F);
@@ -388,7 +406,7 @@ pub fn blitImage(command: *const _command.BlitImage) void {
     // other, and a float one texel by texel; nothing here compresses or
     // makes floats, so a destination that keeps what it was given is left
     // alone, as Vulkan does not allow a compressed one either.
-    if (_image.blocked(destination) or _image.floatTexels(destination)) return;
+    if (_image.blocked(destination) or _image.keptTexels(destination)) return;
     for (_stream.items(_command.BlitImage, facet.ImageBlit, command, command.count)) |*region| {
         const from_level = region.src_subresource.mip_level;
         const to_level = region.dst_subresource.mip_level;

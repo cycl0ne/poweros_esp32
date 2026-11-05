@@ -487,6 +487,20 @@ pub const PhysicalDeviceFeatures = extern struct {
     /// several is drawn once for each, as it was before, and the flag is
     /// `error_feature_not_present` (CreateRenderPass). (Since 1.51.)
     several_outputs: bool = false,
+    /// A texture may keep channels of its own rather than the 8888 colour
+    /// a sample makes of them: an image of `r8g8_unorm`, two bytes a
+    /// texel, read as (red, green, 0, 1), and of `r16_unorm`,
+    /// `r16g16_unorm` or `r16g16b16a16_unorm`, 16 bits a channel. A
+    /// sample reads the top 8 bits of each, which is all a tile's colour
+    /// holds, while `texture.Texture.partsAt` gives the whole of them and
+    /// `setParts` writes the whole of them - a height field, a shadow map
+    /// of a program's own, or a texture a function writes through at more
+    /// than 8 bits a channel. True on the cores; false on the V3D, whose
+    /// texture unit is fed what the library unpacked, where CreateImage
+    /// answers `error_format_not_supported` for such an image and
+    /// GetPhysicalDeviceFormatProperties says the format is sampled by
+    /// nothing. (Since 1.69.)
+    wide_channels: bool = false,
 };
 
 /// QueueFamilyProperties.queue_flags: what a family's queues do.

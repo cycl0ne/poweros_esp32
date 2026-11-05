@@ -134,16 +134,23 @@ fn describe(format: facet.Format, keeps_blocks: bool) facet.FormatProperties {
         // in these, and no vertex attribute is read in one. The grid is
         // one channel, two or four, of 8, 16 or 32 bits, as 0 to 1, as
         // whole numbers signed or not, or as a half-float.
-        .r8g8_unorm,
+        // A texture of its own channels since 1.69, where the device
+        // keeps them: sampled as the colour of their top 8 bits, written
+        // through by a function as the whole of them, and read back,
+        // there being something of the format to read. A device that
+        // keeps 8 bits a channel says nothing but the texel buffer here,
+        // and CreateImage refuses such an image there.
+        .r8g8_unorm, .r16_unorm, .r16g16_unorm, .r16g16b16a16_unorm => .{
+            .linear_tiling_features = 0,
+            .optimal_tiling_features = if (keeps_blocks) sampled | storage | transfer else 0,
+            .buffer_features = texels,
+        },
         .r8_uint,
         .r8g8_uint,
         .r8g8b8a8_uint,
         .r8_sint,
         .r8g8_sint,
         .r8g8b8a8_sint,
-        .r16_unorm,
-        .r16g16_unorm,
-        .r16g16b16a16_unorm,
         .r16_uint,
         .r16g16_uint,
         .r16g16b16a16_uint,

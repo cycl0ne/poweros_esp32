@@ -140,6 +140,11 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // A float image likewise, its texels read and rounded where they
         // lie (`texture.floatTexel`).
         .kept_floats = true,
+        // And a texture whose channels are its own: two bytes of red and
+        // green, or 16 bits a channel, read as the colour of their top 8
+        // bits and as the whole of them by a function
+        // (`texture.channelColor`, `channelParts`, since 1.69).
+        .wide_channels = true,
         // One cube of an array, the fourth coordinate saying which
         // (`texture.Texture.sampleCubeIn`).
         .cube_arrays = true,

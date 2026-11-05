@@ -172,6 +172,16 @@ pub fn rowTexture(format: facet.Format) ?texture.Format {
     };
 }
 
+/// Whether a texture of `format` keeps channels of its own rather than
+/// the 8888 colour a sample makes of them
+/// (`PhysicalDeviceFeatures.wide_channels`, since 1.69).
+pub fn wideChannels(format: facet.Format) bool {
+    return switch (format) {
+        .r8g8_unorm, .r16_unorm, .r16g16_unorm, .r16g16b16a16_unorm => true,
+        else => false,
+    };
+}
+
 /// Whether an image kept in rows is written through as a storage image:
 /// drawn into and written through at once, its rows being the texture a
 /// function writes (`rowTexture`, since 1.56).
@@ -186,6 +196,10 @@ pub fn bytesOf(format: facet.Format) u32 {
         // One byte of red a texel (since 1.48).
         .s8_uint, .r8_unorm => 1,
         .r5g6b5_unorm_pack16, .d16_unorm => 2,
+        // The channels a texture keeps as they lie (since 1.69).
+        .r8g8_unorm, .r16_unorm => 2,
+        .r16g16_unorm => 4,
+        .r16g16b16a16_unorm => 8,
         .d16_unorm_s8_uint => 4,
         .r8g8b8a8_unorm, .b8g8r8a8_unorm, .r32_sfloat => 4,
         // The float formats a texture keeps as they lie (since 1.45), and
@@ -231,6 +245,13 @@ pub fn keptFormat(format: facet.Format, packed_texels: bool) ?texture.Format {
         // height field, a mask or an accumulation buffer a function
         // writes through.
         .r32_sfloat => .r32f,
+        // Channels of the texture's own, kept as they lie, on a device
+        // that says so (`PhysicalDeviceFeatures.wide_channels`, since
+        // 1.69): two bytes of red and green, and 16 bits a channel.
+        .r8g8_unorm => .rg8,
+        .r16_unorm => .r16,
+        .r16g16_unorm => .rg16,
+        .r16g16b16a16_unorm => .rgba16,
         // A depth sampled where it lies, in rows
         // (`PhysicalDeviceFeatures.sampled_depth`).
         .d16_unorm => .d16,
@@ -287,6 +308,12 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
     };
     if (packed_texels and !(physical.features.small_texels and in_texels and packs)) return null;
     if (info.format == .r8_unorm and !(physical.features.small_texels and in_texels)) return null;
+    // A texture whose channels are its own, kept as they lie
+    // (`PhysicalDeviceFeatures.wide_channels`, since 1.69): two bytes of
+    // red and green, or 16 bits a channel. Such an image is for a
+    // function to read or to write, as a small texel is, and a device
+    // that keeps 8 bits a channel refuses it.
+    if (wideChannels(info.format) and !(physical.features.wide_channels and in_texels)) return null;
     // Layers are for a function to read or to write: an attachment or
     // rows have one, and both want the layout a sample reads, which is
     // `optimal` tiling. An image of layers written through and never
@@ -634,6 +661,14 @@ pub fn floatTexels(image: *const Image) bool {
     return _decode.texelBytes(image.format) != 0;
 }
 
+/// Whether an image's texels are moved as they lie rather than through a
+/// colour word of 8 bits a channel: a float one's, and a texture whose
+/// channels are its own (`wideChannels`, since 1.69). Both keep what they
+/// were copied in as, so a copy out reads it back unchanged.
+pub fn keptTexels(image: *const Image) bool {
+    return floatTexels(image) or wideChannels(image.format);
+}
+
 /// The block holding texel (x, y) of a level of a layer, into `into`;
 /// nothing where the image is not blocked.
 pub fn readBlock(image: *const Image, level: u32, layer: u32, x: u32, y: u32, into: []u8) void {
@@ -753,9 +788,10 @@ pub fn copyFromBuffer(image: *Image, from: []const u8, region: *const facet.Buff
     const width = @min(region.image_extent.width, level_width - left);
     const height = @min(region.image_extent.height, level_height - top);
     const pixel = bytesOf(image.format);
-    // A float image keeps what it is given: the texel's bytes go as they
+    // An image that keeps what it is given - a float one's floats, or a
+    // texture's own channels since 1.69 - takes the texel's bytes as they
     // lie rather than through a colour of 8 bits a channel.
-    const keeps = floatTexels(image);
+    const keeps = keptTexels(image);
     const row_length = if (region.buffer_row_length != 0) region.buffer_row_length else region.image_extent.width;
     const source_pitch = @as(usize, row_length) * pixel;
     const slice_height = if (region.buffer_image_height != 0) region.buffer_image_height else region.image_extent.height;
@@ -837,8 +873,9 @@ pub fn readTexel(image: *const Image, level: u32, layer: u32, x: u32, y: u32, in
         .texture => if (deviceOffset(image, level, layer, x, y)) |offset| {
             const pixel = bytesOf(image.format);
             @memcpy(into[0..pixel], (image.data.? + offset)[0..pixel]);
-        } else if (floatTexels(image)) {
-            // The floats as they lie: what went in comes out again.
+        } else if (keptTexels(image)) {
+            // The floats, or the channels, as they lie: what went in
+            // comes out again.
             image.texels.texelsAt(layer, level, x, y, into);
         } else {
             bytesOfTexel(image.format, image.texels.peekLayer(layer, level, x, y), into);
@@ -858,7 +895,7 @@ pub fn writeTexel(image: *Image, level: u32, layer: u32, x: u32, y: u32, from: [
         .texture => if (deviceOffset(image, level, layer, x, y)) |offset| {
             const pixel = bytesOf(image.format);
             @memcpy((image.data.? + offset)[0..pixel], from[0..pixel]);
-        } else if (floatTexels(image)) {
+        } else if (keptTexels(image)) {
             image.texels.putTexels(layer, level, x, y, from);
         } else {
             image.texels.putLayer(layer, level, x, y, texelOf(image.format, from));
@@ -894,6 +931,9 @@ pub fn colorOfBytes(format: facet.Format, bytes: []const u8) u32 {
         },
         // Red alone, as Vulkan reads a one-channel format.
         .r8_unorm => texture.redOf8(bytes[0]),
+        // The channels a texture keeps as they lie, as the colour of
+        // their top 8 bits (since 1.69).
+        .r8g8_unorm, .r16_unorm, .r16g16_unorm, .r16g16b16a16_unorm => texture.channelColor(keptFormat(format, false).?, bytes.ptr),
         else => 0,
     };
 }
@@ -902,6 +942,9 @@ pub fn colorOfBytes(format: facet.Format, bytes: []const u8) u32 {
 pub fn bytesOfColor(format: facet.Format, color: u32, into: []u8) void {
     switch (format) {
         .b8g8r8a8_unorm, .r8g8b8a8_unorm => bytesOfTexel(format, color, into),
+        // Each channel of the colour at the width that channel has
+        // (since 1.69).
+        .r8g8_unorm, .r16_unorm, .r16g16_unorm, .r16g16b16a16_unorm => texture.putChannelParts(keptFormat(format, false).?, into.ptr, texture.partsOfColor(color)),
         .r5g6b5_unorm_pack16 => {
             const r = ((color >> 16 & 0xFF) * 31 + 127) / 255;
             const g = ((color >> 8 & 0xFF) * 63 + 127) / 255;

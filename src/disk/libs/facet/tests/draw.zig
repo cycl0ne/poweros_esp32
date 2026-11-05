@@ -2012,7 +2012,7 @@ test "a colour attachment written through as a storage image: its rows, before t
     try testing.expectEqual(red, std.mem.readInt(u32, back_bytes[0..4], .little));
 }
 
-test "storage images of floats: a texel written and read as floats, and one float a texel" {
+test "storage images of floats and of channels of their own: a texel written and read back at the width it keeps" {
     const Floats = struct {
         /// Group (x, y) writes texel (x, y) of the image bound at set 0
         /// binding 0 from four floats the push constants carry, and then
@@ -2048,10 +2048,13 @@ test "storage images of floats: a texel written and read as floats, and one floa
     fb.GetPhysicalDeviceFeatures(bench.physical, &features);
     try testing.expect(features.storage_images);
     try testing.expect(features.kept_floats);
+    // And since 1.69 a texture whose channels are its own.
+    try testing.expect(features.wide_channels);
 
     // Every float format says it may be written through since 1.57, and
     // one float a texel is a format of its own: R32_SFLOAT as an image.
-    for ([5]facet.Format{ .r16g16b16a16_sfloat, .r32g32b32a32_sfloat, .b10g11r11_ufloat_pack32, .e5b9g9r9_ufloat_pack32, .r32_sfloat }) |format| {
+    // The channels of 1.69 say the same.
+    for ([9]facet.Format{ .r16g16b16a16_sfloat, .r32g32b32a32_sfloat, .b10g11r11_ufloat_pack32, .e5b9g9r9_ufloat_pack32, .r32_sfloat, .r8g8_unorm, .r16_unorm, .r16g16_unorm, .r16g16b16a16_unorm }) |format| {
         var properties: facet.FormatProperties = undefined;
         fb.GetPhysicalDeviceFormatProperties(bench.physical, format, &properties);
         try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_STORAGE_IMAGE != 0);
@@ -2099,6 +2102,15 @@ test "storage images of floats: a texel written and read as floats, and one floa
         .{ .format = .e5b9g9r9_ufloat_pack32, .want = .{ 1.5, 2.5, 0.25, 1 }, .mercy = 0.02, .says = "a shared exponent" },
         // One float, read as (red, 0, 0, 1) the way one byte of red is.
         .{ .format = .r32_sfloat, .want = .{ 1.5, 0, 0, 1 }, .mercy = 0, .says = "one float a texel" },
+        // 1.69: channels of the texture's own, each held to 0 to 1 - a
+        // whole number above 1 is what these cannot carry and a float
+        // format can. Two bytes of red and green read as
+        // (red, green, 0, 1), and 16 bits a channel keep 0.25 and 0.5 to
+        // a part in 65535.
+        .{ .format = .r8g8_unorm, .want = .{ 1, 1, 0, 1 }, .mercy = 0, .says = "two bytes of red and green" },
+        .{ .format = .r16_unorm, .want = .{ 1, 0, 0, 1 }, .mercy = 0, .says = "16 bits of red" },
+        .{ .format = .r16g16_unorm, .want = .{ 1, 1, 0, 1 }, .mercy = 0, .says = "16 bits of red and green" },
+        .{ .format = .r16g16b16a16_unorm, .want = .{ 1, 1, 0.25, 0.5 }, .mercy = 0.0001, .says = "16 bits a channel" },
     };
     const given = [4]f32{ 1.5, 2.5, 0.25, 0.5 };
     for (kinds) |kind| {
@@ -2147,6 +2159,55 @@ test "storage images of floats: a texel written and read as floats, and one floa
         .format = .bc1_rgba_unorm_block,
         .extent = .{ .width = 8, .height = 8 },
         .usage = facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_TRANSFER_DST,
+    }, &denied));
+    try testing.expect(denied == null);
+
+    // --- 1.69: what 16 bits a channel keeps that 8 could not ---
+    // Three parts in 65535 is nothing at all in 8 bits, and a part in
+    // 65535 over a half is the next value up from it: both come back.
+    const fine = [4]f32{ 3.0 / 65535.0, 32769.0 / 65535.0, 1, 0 };
+    const wide = try bench.bareImage(.{
+        .format = .r16g16b16a16_unorm,
+        .extent = .{ .width = 8, .height = 8 },
+        .usage = facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_SRC,
+    }, false);
+    const wide_view = try bench.viewOf(.{ .image = wide, .format = .r16g16b16a16_unorm });
+    const wide_info = facet.DescriptorImageInfo{ .image_view = wide_view };
+    const to_wide = facet.WriteDescriptorSet{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .storage_image, .descriptor_count = 1, .image_info = @ptrCast(&wide_info) };
+    fb.UpdateDescriptorSets(device, 1, @ptrCast(&to_wide), 0, null);
+    @memset(told_bytes[0..64], 0);
+    const fine_commands = try bench.record();
+    fb.CmdBindPipeline(fine_commands, .compute, pipeline[0].?);
+    fb.CmdBindDescriptorSets(fine_commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdPushConstants(fine_commands, layout, facet.SHADER_STAGE_COMPUTE, 0, 16, &fine);
+    fb.CmdDispatch(fine_commands, 8, 8, 1);
+    try bench.submit();
+    try testing.expectApproxEqAbs(fine[0], out[0], 1.0 / 65535.0);
+    try testing.expect(out[0] > 0);
+    try testing.expectApproxEqAbs(fine[1], out[1], 1.0 / 65535.0);
+    // A colour of 8 bits a channel would have rounded both to the same
+    // byte as a half: these are a part in 65535 apart from it.
+    try testing.expect(out[1] != 0.5);
+    try testing.expect(out[1] != 128.0 / 255.0);
+    // The colour the same texel reads as is still the top 8 bits: the
+    // three parts in 65535 are 0 there, and the half is 128.
+    const rounded: u32 = @bitCast(out[4]);
+    try testing.expectEqual(@as(u32, 0), rounded >> 16 & 0xFF);
+    try testing.expectEqual(@as(u32, 128), rounded >> 8 & 0xFF);
+
+    // An image of such a format that no function reads or writes is
+    // refused: these are kept for a function, as a small texel is.
+    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{
+        .format = .r16g16b16a16_unorm,
+        .extent = .{ .width = 8, .height = 8 },
+        .usage = facet.IMAGE_USAGE_TRANSFER_DST | facet.IMAGE_USAGE_TRANSFER_SRC,
+    }, &denied));
+    try testing.expect(denied == null);
+    // And one of them is no colour attachment.
+    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{
+        .format = .r16g16_unorm,
+        .extent = .{ .width = 8, .height = 8 },
+        .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT,
     }, &denied));
     try testing.expect(denied == null);
 }
@@ -8105,6 +8166,11 @@ const FloatScene = struct {
         shader.fixedFragment("halves", .{ .kind = .texture, .sampling = .{ .format = .rgba16f, .filter = .nearest } }),
         shader.vertex("eight", &flat, 2),
         shader.fixedFragment("eight", .{ .kind = .texture, .sampling = .{ .format = .rgba8888, .filter = .nearest } }),
+        // 1.69: forms built for a texture whose channels are its own.
+        shader.vertex("wide", &flat, 2),
+        shader.fixedFragment("wide", .{ .kind = .texture, .sampling = .{ .format = .rgba16, .filter = .nearest } }),
+        shader.vertex("two", &flat, 2),
+        shader.fixedFragment("two", .{ .kind = .texture, .sampling = .{ .format = .rg8, .filter = .nearest } }),
     };
     const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
 
@@ -8246,6 +8312,63 @@ test "float textures kept as their floats: copied in and out as they lie, sample
     try drawn(&bench, packed_view, "eight", layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
     try testing.expectEqual(@as(u32, 0xFFFF_0000), picture.at(8, 8));
     try testing.expectEqual(@as(u32, 0xFF00_0040), picture.at(56, 56));
+
+    // --- 1.69: a texture whose channels are its own ---
+    // 16 bits a channel and two bytes of red and green: copied in and out
+    // as they lie, and sampled as the colour of their top 8 bits.
+    const wide_image = try bench.bareImage(.{ .format = .r16g16b16a16_unorm, .extent = side4, .usage = usage }, false);
+    const two_image = try bench.bareImage(.{ .format = .r8g8_unorm, .extent = side4, .usage = usage }, false);
+    fb.GetImageMemoryRequirements(device, wide_image, &needs);
+    try testing.expectEqual(@as(u64, 4 * 4 * 8), needs.size);
+    fb.GetImageMemoryRequirements(device, two_image, &needs);
+    // Two bytes a texel is 32 for the sixteen of them, which an image's
+    // memory rounds up to the cache line it begins on.
+    try testing.expectEqual(@as(u64, 64), needs.size);
+    const wide_view = try bench.viewOf(.{ .image = wide_image, .format = .r16g16b16a16_unorm });
+    const two_view = try bench.viewOf(.{ .image = two_image, .format = .r8g8_unorm });
+
+    // Red on the left, half-bright blue on the right; and for the two
+    // bytes, red on the left and half-bright green on the right.
+    const wide_at = 0;
+    const two_at = 128;
+    for (0..16) |k| {
+        const left = k % 4 < 2;
+        const channels: [4]u16 = if (left) .{ 0xFFFF, 0, 0, 0xFFFF } else .{ 0, 0, 0x8080, 0xFFFF };
+        for (channels, 0..) |one, c| std.mem.writeInt(u16, staged[wide_at + k * 8 + c * 2 ..][0..2], one, .little);
+        staged[two_at + k * 2] = if (left) 255 else 0;
+        staged[two_at + k * 2 + 1] = if (left) 0 else 128;
+    }
+    const wides = facet.BufferImageCopy{ .buffer_offset = wide_at, .image_extent = side4 };
+    const twos = facet.BufferImageCopy{ .buffer_offset = two_at, .image_extent = side4 };
+    @memset(read_back[0..256], 0);
+    const wide_commands = try bench.record();
+    fb.CmdCopyBufferToImage(wide_commands, staging, wide_image, .transfer_dst_optimal, 1, @ptrCast(&wides));
+    fb.CmdCopyBufferToImage(wide_commands, staging, two_image, .transfer_dst_optimal, 1, @ptrCast(&twos));
+    fb.CmdCopyImageToBuffer(wide_commands, wide_image, .general, read_buffer, 1, @ptrCast(&wides));
+    fb.CmdCopyImageToBuffer(wide_commands, two_image, .general, read_buffer, 1, @ptrCast(&twos));
+    try bench.submit();
+    // What came back is what went in, channel for channel: nothing was
+    // rounded to 8 bits on the way.
+    try testing.expectEqualSlices(u8, staged[wide_at..][0..128], read_back[wide_at..][0..128]);
+    try testing.expectEqualSlices(u8, staged[two_at..][0..32], read_back[two_at..][0..32]);
+
+    // Sampled through a form built for the format: the top 8 bits of each
+    // channel.
+    try drawn(&bench, wide_view, "wide", layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), picture.at(8, 8));
+    try testing.expectEqual(@as(u32, 0xFF00_0080), picture.at(56, 56));
+    // And through one built for 8888, which takes the run-time sampler:
+    // the same colours.
+    try drawn(&bench, wide_view, "eight", layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), picture.at(8, 8));
+    try testing.expectEqual(@as(u32, 0xFF00_0080), picture.at(56, 56));
+    // Two bytes read as (red, green, 0, 1), the alpha whole where the
+    // format has none.
+    try drawn(&bench, two_view, "two", layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), picture.at(8, 8));
+    try testing.expectEqual(@as(u32, 0xFF00_8000), picture.at(56, 56));
+    try drawn(&bench, two_view, "eight", layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
+    try testing.expectEqual(@as(u32, 0xFF00_8000), picture.at(56, 56));
 }
 test "a clear of a float image writes its floats: the channels as given, into each format's own texel" {
     var bench = try Bench.up();

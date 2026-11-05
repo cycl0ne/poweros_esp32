@@ -136,6 +136,22 @@ pub const Format = enum {
     /// accumulation buffer a function writes is kept in
     /// (`Texture.setParts`, `partsAt`). (Since 1.57.)
     r32f,
+    /// Two bytes a texel, red and green: Vulkan's R8G8_UNORM, read as
+    /// (red, green, 0, 1). A quarter of the memory of the same texels
+    /// spread as `rgba8888`, for a normal map of two channels, a flow
+    /// field or a pair of masks
+    /// (`PhysicalDeviceFeatures.wide_channels`). (Since 1.69.)
+    rg8,
+    /// 16 bits a channel, as they lie: Vulkan's R16_UNORM, read as
+    /// (red, 0, 0, 1), R16G16_UNORM and R16G16B16A16_UNORM. A sample
+    /// reads the top 8 bits of each channel, which is all a tile's colour
+    /// holds, while `Texture.partsAt` gives the whole of them - a height
+    /// field, a shadow map of a program's own or a texture a function
+    /// writes through at more than 8 bits
+    /// (`PhysicalDeviceFeatures.wide_channels`). (Since 1.69.)
+    r16,
+    rg16,
+    rgba16,
 
     /// The bytes a texel is kept in; 0 for a compressed format, whose
     /// texels have no size of their own (`blockLog2`).
@@ -148,10 +164,10 @@ pub const Format = enum {
     /// block is what is addressed there.
     pub fn shift(format: Format) u5 {
         return switch (format) {
-            .rgba8888, .rgba16f => 3,
+            .rgba8888, .rgba16f, .rgba16 => 3,
             .rgba32f => 4,
-            .argb8888, .rg11b10f, .rgb9e5, .r32f => 2,
-            .rgb565, .d16 => 1,
+            .argb8888, .rg11b10f, .rgb9e5, .r32f, .rg16 => 2,
+            .rgb565, .d16, .rg8, .r16 => 1,
             .r8, .bc1, .bc1_rgb, .bc2, .bc3 => 0,
         };
     }
@@ -162,10 +178,10 @@ pub const Format = enum {
     pub fn blockLog2(format: Format) u5 {
         return switch (format) {
             // 16 texels of 8 bytes, and of 2.
-            .rgba8888, .rgba16f => 7,
+            .rgba8888, .rgba16f, .rgba16 => 7,
             .rgba32f => 8,
-            .argb8888, .rg11b10f, .rgb9e5, .r32f => 6,
-            .rgb565, .d16 => 5,
+            .argb8888, .rg11b10f, .rgb9e5, .r32f, .rg16 => 6,
+            .rgb565, .d16, .rg8, .r16 => 5,
             // 16 texels of one byte, and the blocks of 8 and of 16.
             .r8, .bc2, .bc3 => 4,
             .bc1, .bc1_rgb => 3,
@@ -184,6 +200,7 @@ pub const Format = enum {
         return switch (format) {
             .bc1, .bc1_rgb, .bc2, .bc3 => true,
             .rgba8888, .argb8888, .rgb565, .r8, .d16, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => false,
+            .rg8, .r16, .rg16, .rgba16 => false,
         };
     }
 
@@ -197,6 +214,34 @@ pub const Format = enum {
         return switch (format) {
             .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => true,
             .rgba8888, .argb8888, .rgb565, .r8, .d16, .bc1, .bc1_rgb, .bc2, .bc3 => false,
+            .rg8, .r16, .rg16, .rgba16 => false,
+        };
+    }
+
+    /// Whether a texel holds channels of its own that are not the 8888
+    /// colour a sample makes of them: two bytes of red and green, or 16
+    /// bits a channel. The texel is kept as it was copied in, as a float
+    /// one is, so nothing of it is lost on the way out again: a sample
+    /// reads the top 8 bits of each channel and `Texture.partsAt` the
+    /// whole of them, and `setParts` writes the whole of them
+    /// (`PhysicalDeviceFeatures.wide_channels`). (Since 1.69.)
+    pub fn channels(format: Format) bool {
+        return switch (format) {
+            .rg8, .r16, .rg16, .rgba16 => true,
+            .rgba8888, .argb8888, .rgb565, .r8, .d16, .bc1, .bc1_rgb, .bc2, .bc3 => false,
+            .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => false,
+        };
+    }
+
+    /// How many channels a `channels` format holds, and how many bits
+    /// each takes: nothing for every other format. (Since 1.69.)
+    pub fn channelsOf(format: Format) ?struct { parts: u32, bits: u32 } {
+        return switch (format) {
+            .rg8 => .{ .parts = 2, .bits = 8 },
+            .r16 => .{ .parts = 1, .bits = 16 },
+            .rg16 => .{ .parts = 2, .bits = 16 },
+            .rgba16 => .{ .parts = 4, .bits = 16 },
+            else => null,
         };
     }
 
@@ -204,7 +249,7 @@ pub const Format = enum {
     /// colour of 8 bits a channel: a compressed format's blocks and a
     /// float one's texels. (Since 1.45.)
     pub fn kept(format: Format) bool {
-        return format.compressed() or format.floats();
+        return format.compressed() or format.floats() or format.channels();
     }
 
     /// Whether a texel is kept in fewer bytes than the colour it reads as:
@@ -215,8 +260,11 @@ pub const Format = enum {
     /// lie. (Since 1.48.)
     pub fn small(format: Format) bool {
         return switch (format) {
-            .argb8888, .r8 => true,
+            .argb8888, .r8, .rg8, .r16, .rg16 => true,
             .rgba8888, .rgb565, .d16, .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => false,
+            // Eight bytes, as a spread colour is, and still read channel
+            // by channel (since 1.69).
+            .rgba16 => false,
         };
     }
 
@@ -607,6 +655,7 @@ pub const Texture = struct {
             // Nothing is written a texel at a time into a texture that
             // keeps what it was given: `putTexels` moves the bytes.
             .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => {},
+            .rg8, .r16, .rg16, .rgba16 => {},
         }
     }
 
@@ -622,6 +671,9 @@ pub const Texture = struct {
             .r8 => at[0],
             inline .bc1, .bc1_rgb, .bc2, .bc3 => |one| blockOf(one, at)[(y % block) * block + (x % block)],
             inline .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => |one| floatTexel(one, at),
+            // The channels made into a colour, as a float texel is
+            // (since 1.69): the top 8 bits of each.
+            .rg8, .r16, .rg16, .rgba16 => channelColor(texture.format, at),
         };
     }
 
@@ -693,6 +745,9 @@ pub const Texture = struct {
         // is all a colour ever said (since 1.57); `setParts` is what such
         // a texture is written with where more than that is meant.
         if (texture.format.floats()) return texture.putParts(layer, lod, x, y, partsOfColor(color));
+        // The same of a texel of channels of its own (since 1.69): the
+        // colour's channels as 0 to 1, which is all a colour ever said.
+        if (texture.format.channels()) return texture.putChannels(layer, lod, x, y, partsOfColor(color));
         texture.putLayer(layer, lod, x, y, switch (texture.format) {
             .rgba8888, .argb8888 => color,
             .rgb565 => as565(color),
@@ -704,6 +759,7 @@ pub const Texture = struct {
             // texture: `putLayer` leaves it as it lies.
             .bc1, .bc1_rgb, .bc2, .bc3 => 0,
             .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => unreachable,
+            .rg8, .r16, .rg16, .rgba16 => unreachable,
         });
     }
 
@@ -716,11 +772,20 @@ pub const Texture = struct {
     pub fn setParts(texture: *Texture, layer: u32, lod: u32, x: u32, y: u32, parts: [4]f32) void {
         if (!texture.holds(layer, lod, x, y)) return;
         if (texture.format.floats()) return texture.putParts(layer, lod, x, y, parts);
+        // Channels of its own, the whole of each (since 1.69): 16 bits a
+        // channel keeps what a colour of 8 could not.
+        if (texture.format.channels()) return texture.putChannels(layer, lod, x, y, parts);
         // A depth takes x as 0 to 1 over all 16 bits, where a colour of 8
         // bits a channel would keep the top 8 of them (since 1.58).
         if (texture.format == .d16) return texture.putLayer(layer, lod, x, y, @intFromFloat(@round(heldAt(parts[0], 1) * 65535)));
         if (texture.format.compressed()) return;
         texture.setColor(layer, lod, x, y, colorOfParts(parts));
+    }
+
+    /// The same for a format whose channels are its own: each held to 0
+    /// to 1 and written at the width the channel has. (Since 1.69.)
+    fn putChannels(texture: *Texture, layer: u32, lod: u32, x: u32, y: u32, parts: [4]f32) void {
+        putChannelParts(texture.format, texture.memory + texture.placeOf(layer, lod, x, y), parts);
     }
 
     /// The same without holding to anything, for a format of floats.
@@ -748,6 +813,10 @@ pub const Texture = struct {
                 else => .{ 0, 0, 0, 0 },
             };
         }
+        // The whole of each channel, where the format holds more of one
+        // than a colour does (since 1.69): a sample reads the top 8 bits,
+        // and this reads all 16.
+        if (texture.format.channels()) return channelParts(texture.format, texture.memory + texture.placeOf(layer, lod, x, y));
         return partsOfColor(texture.texelColor(layer, lod, x, y));
     }
 
@@ -778,9 +847,10 @@ pub const Texture = struct {
             .r8 => redOf8(@truncate(texel)),
             // A depth as an opaque grey: its top 8 bits.
             .d16 => greyOf8(@truncate(texel >> 8)),
-            // Decoded already: `peekLayer` read it out of its block, or
-            // out of its floats.
+            // Decoded already: `peekLayer` read it out of its block, out
+            // of its floats, or out of its channels.
             .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => texel,
+            .rg8, .r16, .rg16, .rgba16 => texel,
         };
     }
 
@@ -929,6 +999,7 @@ pub const Texture = struct {
                     .rgb565, .d16 => std.mem.readInt(u16, row[x * 2 ..][0..2], .little),
                     .r8 => row[x],
                     .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => unreachable,
+                    .rg8, .r16, .rg16, .rgba16 => unreachable,
                 };
                 texture.put(lod, @intCast(x), @intCast(y), texel);
             }
@@ -1320,6 +1391,52 @@ pub fn floatParts(comptime format: Format, at: [*]const u8) [4]f32 {
         .r32f => .{ @bitCast(readLittle(u32, at)), 0, 0, 1 },
         else => .{ 0, 0, 0, 0 },
     };
+}
+
+/// The channels of a texel of a `Format.channels` format at `at` as x, y,
+/// z and w, 0 to 1: what the format has not got reads as 0, and an alpha
+/// it has not got as 1. What `Texture.partsAt` gives a shader function of
+/// such a texture, the whole of every channel. (Since 1.69.)
+pub fn channelParts(format: Format, at: [*]const u8) [4]f32 {
+    @setRuntimeSafety(false);
+    const one = format.channelsOf() orelse return .{ 0, 0, 0, 0 };
+    const most: f32 = if (one.bits == 8) 255 else 65535;
+    var made = [4]f32{ 0, 0, 0, 1 };
+    for (0..one.parts) |k| made[k] = @as(f32, @floatFromInt(channelAt(at, one.bits, k))) / most;
+    return made;
+}
+
+/// The same written back, each channel held to 0 to 1 and rounded to the
+/// width it has. What `Texture.setParts` writes such a texel with.
+/// (Since 1.69.)
+pub fn putChannelParts(format: Format, at: [*]u8, parts: [4]f32) void {
+    @setRuntimeSafety(false);
+    const one = format.channelsOf() orelse return;
+    const most: f32 = if (one.bits == 8) 255 else 65535;
+    for (0..one.parts) |k| {
+        const value: u32 = @intFromFloat(@round(heldAt(parts[k], 1) * most));
+        if (one.bits == 8) at[k] = @truncate(value) else writeLittle(u16, at + k * 2, @truncate(value));
+    }
+}
+
+/// The colour a sample makes of such a texel, 0xAARRGGBB: the top 8 bits
+/// of each channel, which is all a tile's colour holds; what the format
+/// has not got is 0, and an alpha it has not got is whole, as Vulkan
+/// reads a format of fewer channels. (Since 1.69.)
+pub fn channelColor(format: Format, at: [*]const u8) u32 {
+    @setRuntimeSafety(false);
+    const one = format.channelsOf() orelse return 0;
+    var channels = [4]u32{ 0, 0, 0, 255 };
+    for (0..one.parts) |k| {
+        const value = channelAt(at, one.bits, k);
+        channels[k] = if (one.bits == 8) value else value >> 8;
+    }
+    return channels[3] << 24 | channels[0] << 16 | channels[1] << 8 | channels[2];
+}
+
+/// Channel `k` of a texel at `at`, as it lies. (Since 1.69.)
+inline fn channelAt(at: [*]const u8, bits: u32, k: usize) u32 {
+    return if (bits == 8) at[k] else readLittle(u16, at + k * 2);
 }
 
 /// Four channels written as a float texel at `at`, `floatParts` undone:
@@ -1842,6 +1959,9 @@ inline fn fetch(comptime format: Format, at: [*]const u8) u32 {
         // A float texel read and rounded where it lies (since 1.45): the
         // decoding is the cost of keeping the floats.
         .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => floatTexel(format, at),
+        // Channels of its own read and made into a colour (since 1.69):
+        // the top 8 bits of each, which is all a tile's colour holds.
+        .rg8, .r16, .rg16, .rgba16 => channelColor(format, at),
     };
 }
 
@@ -1851,6 +1971,7 @@ inline fn fetchSpread(comptime format: Format, at: [*]const u8) u64 {
     return switch (format) {
         .rgba8888 => @as(*const u64, @ptrCast(@alignCast(at))).*,
         .argb8888, .r8, .rgb565, .d16, .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => spread(fetch(format, at)),
+        .rg8, .r16, .rg16, .rgba16 => spread(fetch(format, at)),
     };
 }
 

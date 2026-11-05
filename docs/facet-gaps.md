@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.68**, so that a program need not find out by failing. It covers the API.
+1.69**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -230,8 +230,11 @@ is left out:
   their floats where the device keeps them (`kept_floats`) and written one
   texel at a time by `texture.Texture.setParts` from four floats, with
   `partsAt` reading them back. `r32_sfloat` is one of them, one float a
-  texel, sampled as (red, 0, 0, 1). **A compressed image asked for as a
-  storage image is still unpacked to 8888**: nothing writes one texel of a
+  texel, sampled as (red, 0, 0, 1). Since 1.69 the channels a texture
+  keeps as its own are among them as well (`wide_channels`): a function
+  writes 16 bits of a channel through `setParts` and reads its own 16
+  bits back. **A compressed image asked for as a storage image is still
+  unpacked to 8888**: nothing writes one texel of a
   BC block, which is the format and not the library, and such an image
   wants SAMPLED beside it. There is no `r32_uint` or `r32_sint` image: a
   texture reads a colour or floats, not whole numbers.
@@ -659,8 +662,9 @@ Of textures:
   speed where it was compiled for it (`texture.Format.r8`, `argb8888`);
   one compiled for `rgba8888` draws it through the run-time sampler. On
   the V3D an 8888 texel was never spread, so the flag costs nothing and
-  changes nothing there, and R8 is a texture type of the TMU's own. There
-  is no `r8g8`, no 16-bit channel and no signed or integer one.
+  changes nothing there, and R8 is a texture type of the TMU's own.
+  `r8g8` and the 16-bit channels joined them in 1.69, below; there is
+  still no signed or integer channel.
 - A compressed image is kept in its blocks on a device that samples them
   (`PhysicalDeviceFeatures.kept_compressed`, the cores since 1.44): an
   eighth to a quarter of the memory - 16 x 16 of BC1 is 128 bytes against
@@ -678,6 +682,23 @@ Of textures:
   above 1 is lost on the way into the tiles rather than in memory. Where
   the device unpacks instead (the V3D), it is as it was: 8888 in memory,
   no copying out.
+- A texture keeps channels of its own since 1.69
+  (`PhysicalDeviceFeatures.wide_channels`, the cores): `r8g8_unorm`, two
+  bytes a texel read as (red, green, 0, 1), and `r16_unorm`,
+  `r16g16_unorm` and `r16g16b16a16_unorm`, 16 bits a channel. They go the
+  way a float texture's texels go - kept as they lie, copied in and out
+  to the bit, and moved whole between two images of the one format - and
+  a sample reads the colour of each channel's top 8 bits, which is all a
+  tile's colour holds, while `texture.Texture.partsAt` and `setParts`
+  give and take the whole of every channel. So a height field, a shadow
+  map of a program's own or a table of values at more than 8 bits a
+  channel need no longer be a float texture of twice the memory. Like a
+  small texel, such an image is for a function to read or to write: one
+  that is only copied into and out of is refused, as is a colour
+  attachment of the format, and the V3D refuses them all, its TMU being
+  fed what the library unpacked. A texel buffer has read all four since
+  1.54, on either device. What is still out: the signed and the integer
+  channels, and the three-channel formats.
 - A fixed form says the format it samples (`texture.Sampling.format`), and
   that is the one its fast path reads. Since 1.44 a texture of another
   format is drawn all the same, through the run-time sampler, a pixel at a

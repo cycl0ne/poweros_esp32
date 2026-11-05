@@ -879,10 +879,42 @@ pub const LIBRARY_VERSION = 1;
 /// What is still out: the three-channel formats of 8 and of 16 bits, 3 or
 /// 6 bytes a texel being what almost no hardware carries either, and the
 /// `_uscaled` and `_sscaled` kinds, which nothing here has a use for.
+/// 69: a texture keeps channels of its own where the device says so
+/// (`PhysicalDeviceFeatures.wide_channels`): `r8g8_unorm`, two bytes a
+/// texel, and `r16_unorm`, `r16g16_unorm` and `r16g16b16a16_unorm`, 16
+/// bits a channel. A texel buffer has read all four since 1.54, but an
+/// image of one of them was refused: a texture held an 8888 colour and
+/// nothing else, so a height field, a shadow map of a program's own or a
+/// table of values at more than 8 bits a channel had to be a float
+/// texture, four or eight bytes where two would do, or be scaled into
+/// 8888 and lose what it was for.
+/// They go the way a float texture's texels have gone since 1.45: kept as
+/// they lie. A copy in writes the bytes as they are given and a copy out
+/// reads them back unchanged, to the bit, and a copy between two images of
+/// the one format moves them whole (`_image.keptTexels`, which is what the
+/// transfers now ask rather than whether the texels are floats). A sample
+/// reads the colour of each channel's top 8 bits, which is all a tile's
+/// colour holds (`texture.channelColor`), while
+/// `texture.Texture.partsAt` and `setParts` give and take the whole of
+/// every channel - so a function writing through such a storage image
+/// writes 16 bits of it, and reads its own 16 bits back.
+/// `texture.Format` has `rg8`, `r16`, `rg16` and `rgba16`, and
+/// `channelParts`, `putChannelParts` and `channelColor` are where a
+/// channel's bits are turned into 0 to 1 and back; a fixed fragment form
+/// built for one of them samples it directly
+/// (`shader.Sampling.format`), and one built for 8888 draws it through
+/// the run-time sampler as before. A clear writes each channel at the
+/// width that channel has.
+/// Like a small texel, such an image is for a function to read or to
+/// write: one that is only copied into and out of is refused, as is a
+/// colour attachment of the format, and the V3D refuses them all, its
+/// texture unit being fed what the library unpacked -
+/// `GetPhysicalDeviceFormatProperties` says the format is sampled by
+/// nothing there, while the texel buffer stands on either device.
 /// What stays: `fifo` is the one present mode, there being no way to ask a
 /// display to show a buffer before its next frame; one queue family of one
 /// queue; a counter of 32 bits, for want of a 64-bit atomic on every
 /// machine the library runs on; and no point mode in tessellation, the
 /// tessellator emitting triangles or the lines of `isolines` and nothing
 /// emitting a patch's points on their own.
-pub const LIBRARY_REVISION = 68;
+pub const LIBRARY_REVISION = 69;

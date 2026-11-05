@@ -176,6 +176,10 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // float image is unpacked on the copy here as before.
         .kept_compressed = false,
         .kept_floats = false,
+        // Its TMU is fed what the library unpacked, which is 8 bits a
+        // channel: a texture of its own channels is refused here (since
+        // 1.69).
+        .wide_channels = false,
         // No QPU program reads a fourth coordinate, so a cube of an array
         // is refused here: the view as well as the pipeline.
         .cube_arrays = false,
