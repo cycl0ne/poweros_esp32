@@ -315,7 +315,20 @@ Espressif's QEMU; for the 64-bit machines `qemu-system-riscv64`,
 `qemu-system-x86_64`, on the VisionFive 2 the U-Boot it comes with, and
 on the Compute Module 5 its own bootloader or Raspberry Pi's `rpiboot`. Always build with the `./zig`
 wrapper: it fetches the Espressif Zig toolchain (`0.16.0-xtensa`) into
-`toolchain/` on first use.
+`toolchain/` on first use, and it holds the build cache to a size. The
+compiler's cache keeps every step it has ever built - a changed source
+leaves the old entry behind, and a test binary alone is a quarter of a
+gigabyte - so the wrapper runs `scripts/prune-cache.sh` before the build
+and drops the oldest entries once `.zig-cache` passes 64 GiB. What goes
+is built again when it is next needed; `ZIG_CACHE_LIMIT=120G` moves the
+limit, `ZIG_CACHE_NO_PRUNE=1` leaves the cache to grow, and the script
+takes any cache of its own:
+
+```sh
+scripts/prune-cache.sh --dry-run                      # what would go, and why
+scripts/prune-cache.sh --limit 32G                    # this tree's cache, now
+scripts/prune-cache.sh --dir ~/.cache/zig --limit 8G  # the global one
+```
 
 ```sh
 ./zig build                  # the kernel and a flash disk: zig-out/bin/flash.bin
