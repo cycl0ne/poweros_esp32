@@ -811,10 +811,27 @@ pub const LIBRARY_VERSION = 1;
 /// two 1.64 had - 99856 triangles over 60 frames of 1920x1080 measured
 /// 11.2 to 11.6 ms with the pointer against 11.7 to 11.9 ms with the
 /// attachment itself.
+/// 66: `GetPhysicalDeviceImageFormatProperties` answers the largest
+/// image, not the largest heap. `max_resource_size` was the bytes of the
+/// biggest memory heap - a fact about the memory and nothing about the
+/// image asked about - where Vulkan has it as what an image of that shape
+/// may take, every level of every layer of it. Now the call writes the
+/// create info of the largest image of the shape and lays it out with the
+/// very code `CreateImage` lays an image out with (`_image.shapeFor`),
+/// and answers the bytes of that - what `GetImageMemoryRequirements` then
+/// answers for such an image, to the byte.
+/// Its levels and its layers are asked of those same rules rather than
+/// worked out from the kind of image, which is what had left them behind:
+/// a depth attachment answered one level where 1.63 gives it as many as a
+/// colour one has, a sampled depth attachment answered one layer where
+/// 1.58 gives it 256, and a 3D image answered one level where each of its
+/// slices has its own. Every answer is a maximum, so each of them only
+/// grew; an extent, a level count or a layer count inside what is
+/// answered is made, and one outside it refused, as before.
 /// What stays: `fifo` is the one present mode, there being no way to ask a
 /// display to show a buffer before its next frame; one queue family of one
 /// queue; a counter of 32 bits, for want of a 64-bit atomic on every
 /// machine the library runs on; and no point mode in tessellation, the
 /// tessellator emitting triangles or the lines of `isolines` and nothing
 /// emitting a patch's points on their own.
-pub const LIBRARY_REVISION = 65;
+pub const LIBRARY_REVISION = 66;

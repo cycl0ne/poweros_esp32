@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.65**, so that a program need not find out by failing. It covers the API.
+1.66**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -519,9 +519,13 @@ device's tile; and `GetDeviceMemoryCommitment` is a block's whole size, or
   of the table, not behind an extension, and `CreateScreenSurface` and
   `CreateWindowSurface` take the place of a platform's own.
 
-`GetPhysicalDeviceImageFormatProperties` says nothing about the memory an
-image of the largest extent and the most layers at once would want:
-`max_resource_size` and what `AllocateMemory` answers are what there is.
+`max_resource_size` is the bytes of the image the rest of that answer
+describes - its largest extent, its most levels and its most layers at
+once - which is what `GetImageMemoryRequirements` answers for such an
+image (since 1.66; before it, the largest heap's size). It is a size, not
+a promise of memory: the largest extent and the most layers together come
+to more than any heap of this machine holds, and `AllocateMemory` is what
+finds that out.
 
 ## In the structures, refused by the implementation
 

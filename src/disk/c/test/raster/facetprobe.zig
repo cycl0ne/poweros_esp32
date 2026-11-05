@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.32 (05.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.33 (05.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -1636,6 +1636,40 @@ fn queryChecks(probe: *Probe) void {
         return probe.check(false, "the largest 3D image");
     }
     probe.checkEqual(limits.max_image_dimension_3d, shape.max_extent.depth, "a 3D image is as deep as the limit says");
+    probe.check(shape.max_mip_levels > 1, "and has the levels its slices have");
+
+    // 1.66: a depth attachment has the levels 1.63 gave it, and the
+    // layers 1.58 gave one that is read back.
+    if (fb.GetPhysicalDeviceImageFormatProperties(probe.physical, .d16_unorm, .@"2d", .optimal, facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT, 0, &shape) != .success) {
+        return probe.check(false, "the largest depth attachment");
+    }
+    probe.check(shape.max_mip_levels > 1, "a depth attachment has levels of its own");
+    probe.checkEqual(1, shape.max_array_layers, "and one layer until it is read back");
+    if (probe.features.sampled_depth) {
+        const read_back = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED;
+        if (fb.GetPhysicalDeviceImageFormatProperties(probe.physical, .d16_unorm, .@"2d", .optimal, read_back, 0, &shape) != .success) {
+            return probe.check(false, "the largest sampled depth attachment");
+        }
+        probe.checkEqual(limits.max_image_array_layers, shape.max_array_layers, "a sampled depth attachment has its layers");
+    }
+
+    // 1.66: `max_resource_size` is the bytes of the image the rest of the
+    // answer describes - that image made, and its memory asked for.
+    // CreateImage lays an image out and binds nothing, so the largest
+    // costs an object and no memory at all.
+    if (fb.GetPhysicalDeviceImageFormatProperties(probe.physical, .b8g8r8a8_unorm, .@"2d", .optimal, sampled, 0, &shape) != .success) {
+        return probe.check(false, "the largest sampled image again");
+    }
+    var biggest: ?*facet.Image = null;
+    const laid = fb.CreateImage(device, &.{ .format = .b8g8r8a8_unorm, .extent = shape.max_extent, .mip_levels = shape.max_mip_levels, .array_layers = shape.max_array_layers, .usage = sampled }, &biggest);
+    probe.check(laid == .success, "the largest image of that answer made");
+    if (laid == .success) {
+        var needs: facet.MemoryRequirements = undefined;
+        fb.GetImageMemoryRequirements(device, biggest.?, &needs);
+        probe.checkEqual(shape.max_resource_size, needs.size, "its memory is what max_resource_size said");
+        probe.check(needs.size > @as(u64, shape.max_extent.width) * shape.max_extent.height * 4, "which is more than one level of one layer");
+    }
+    fb.DestroyImage(device, biggest);
 
     // Shapes there is no image of at all.
     probe.check(fb.GetPhysicalDeviceImageFormatProperties(probe.physical, .d16_unorm, .@"2d", .linear, facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT, 0, &shape) == .error_format_not_supported, "a depth image in rows refused");

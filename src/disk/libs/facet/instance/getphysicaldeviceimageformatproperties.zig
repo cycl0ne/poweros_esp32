@@ -34,24 +34,32 @@ const _image = @import("../image/_image.zig");
 /// refuse every image of that shape, whatever its extent.
 ///
 /// BEHAVIOR:
-/// The question is asked of the same rules CreateImage keeps, so an
-/// extent inside what is answered here is made and one outside it is
-/// refused - with one exception: an image of the largest extent and the
-/// most layers at once may want more memory than a heap holds, which
-/// `max_resource_size` says and AllocateMemory finds out.
+/// The question is asked of the same rules CreateImage keeps: the image
+/// of the largest extent is laid out by the very code CreateImage lays
+/// an image out with, so an extent inside what is answered here is made
+/// and one outside it is refused.
 ///
 /// What is answered, from the device's own limits
-/// (GetPhysicalDeviceProperties):
+/// (GetPhysicalDeviceProperties) and from what CreateImage takes of
+/// them:
 /// - `max_extent`: `max_image_dimension_2d` square for a 2D image -
 ///   8192 on this machine's devices - `max_image_dimension_3d` cubed for
 ///   a 3D one, 256, and 1 deep for every other.
-/// - `max_mip_levels`: the levels of `max_extent` where the shape takes
-///   levels - a sampled image or one written through - and 1 where it
-///   does not, which is an attachment, rows, a depth image and a 3D one.
-/// - `max_array_layers`: `max_image_array_layers` for a sampled image,
-///   256, and 1 for every other shape, layers being for sampling.
+/// - `max_mip_levels`: the levels of `max_extent`, as many as halving
+///   its longest side gives, where the shape takes levels - a sampled
+///   image, one written through, a depth attachment since 1.63, and a 3D
+///   image whose slices have levels of their own - and 1 where it does
+///   not, which is a colour attachment and rows.
+/// - `max_array_layers`: `max_image_array_layers`, 256, where the shape
+///   takes layers - an image a function reads or writes, a sampled or
+///   read-back depth attachment among them - and 1 for every other
+///   shape, a 3D image's layers being its depth.
 /// - `sample_counts`: 1, one sample a pixel.
-/// - `max_resource_size`: the largest heap's bytes.
+/// - `max_resource_size`: the bytes an image of all of the above takes,
+///   every level of every layer of it (since 1.66), which is what
+///   GetImageMemoryRequirements answers for such an image. It may be
+///   more memory than any heap holds: AllocateMemory is what finds that
+///   out.
 ///
 /// An image to be sampled may have sides of any size (since 1.42); its
 /// levels are as many as halving the longer side gives, which
@@ -70,6 +78,14 @@ const _image = @import("../image/_image.zig");
 /// A format may be sampled and drawn into without one image being both:
 /// the two lie differently in memory, so the usages are asked about one
 /// at a time, as CreateImage takes them.
+///
+/// Until 1.66 `max_resource_size` was the largest heap's bytes, which is
+/// a fact about the memory and not about the image, and the levels and
+/// the layers were worked out from the kind of image rather than asked
+/// of CreateImage - so a depth attachment answered one level where 1.63
+/// had given it as many as a colour one has, a sampled depth attachment
+/// answered one layer where 1.58 had given it 256, and a 3D image
+/// answered one level where its slices have their own.
 ///
 /// BUGS:
 /// None known.
@@ -93,33 +109,49 @@ pub fn GetPhysicalDeviceImageFormatProperties(base: *FacetBase, physical: *facet
     const device = _objects.of(PhysicalDevice, physical);
     const volume = image_type == .@"3d";
     const cube = flags & facet.IMAGE_CREATE_CUBE_COMPATIBLE != 0;
-    // The smallest image of the shape asked about: one texel, one level,
-    // and the six layers a cube wants. What CreateImage says of it is
-    // what it says of every image of the shape, the extent apart.
-    const probe = facet.ImageCreateInfo{
+    // What the device said its images may be (GetPhysicalDeviceProperties).
+    const limits = &device.properties.limits;
+    const side: u32 = if (volume) limits.max_image_dimension_3d else limits.max_image_dimension_2d;
+    // The largest image of the shape asked about, written as CreateImage
+    // would be asked for it: that extent, one level, and the fewest
+    // layers the shape has - the six a cube wants, the depth a 3D image's
+    // layers are, and one for the rest. What CreateImage says of it is
+    // what it says of every image of the shape, its levels and its layers
+    // apart, which are asked after.
+    var asked = facet.ImageCreateInfo{
         .flags = flags,
         .image_type = image_type,
         .format = format,
-        .extent = .{ .width = 1, .height = 1, .depth = 1 },
+        .extent = .{ .width = side, .height = side, .depth = if (volume) side else 1 },
         .mip_levels = 1,
-        .array_layers = if (cube) 6 else 1,
+        .array_layers = if (cube and !volume) 6 else 1,
         .samples = 1,
         .tiling = tiling,
         .usage = usage,
     };
-    const shape = _image.shapeFor(device, &probe) orelse return .error_format_not_supported;
-    // What the device said its images may be (GetPhysicalDeviceProperties).
-    const limits = &device.properties.limits;
-    const side: u32 = if (volume) limits.max_image_dimension_3d else limits.max_image_dimension_2d;
-    // Levels and layers are a texture's: an attachment, rows and a depth
-    // image are one level, and layers are for sampling.
-    const texture = shape.kind == .texture;
+    var largest = _image.shapeFor(device, &asked) orelse return .error_format_not_supported;
+    // Its levels and its layers, each asked of those same rules rather
+    // than worked out here: as many levels as halving the longest side
+    // gives, and the device's limit of layers, kept where CreateImage
+    // takes them and dropped where it does not. A 3D image's layers are
+    // its depth, which the extent holds already.
+    asked.mip_levels = levelsOf(side);
+    if (_image.shapeFor(device, &asked)) |deeper| largest = deeper else asked.mip_levels = 1;
+    if (!volume) {
+        const fewest = asked.array_layers;
+        asked.array_layers = limits.max_image_array_layers;
+        if (_image.shapeFor(device, &asked)) |wider| largest = wider else asked.array_layers = fewest;
+    }
     properties.* = .{
-        .max_extent = .{ .width = side, .height = side, .depth = if (volume) side else 1 },
-        .max_mip_levels = if (texture and !volume) levelsOf(side) else 1,
-        .max_array_layers = if (texture and !volume) limits.max_image_array_layers else 1,
+        .max_extent = asked.extent,
+        .max_mip_levels = asked.mip_levels,
+        .max_array_layers = asked.array_layers,
         .sample_counts = 1,
-        .max_resource_size = largestHeap(&device.memory),
+        // The bytes that image takes, every level of every layer of it:
+        // what GetImageMemoryRequirements answers for it, and more than
+        // any heap holds where the largest extent and the most layers
+        // meet (since 1.66).
+        .max_resource_size = largest.bytes,
     };
     return .success;
 }
@@ -127,11 +159,4 @@ pub fn GetPhysicalDeviceImageFormatProperties(base: *FacetBase, physical: *facet
 /// The levels an image `side` texels across has, down to one texel.
 fn levelsOf(side: u32) u32 {
     return 32 - @clz(side);
-}
-
-/// The bytes of the largest heap of `memory`.
-fn largestHeap(memory: *const facet.PhysicalDeviceMemoryProperties) u64 {
-    var most: u64 = 0;
-    for (memory.memory_heaps[0..memory.memory_heap_count]) |heap| most = @max(most, heap.size);
-    return most;
 }

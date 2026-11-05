@@ -511,8 +511,12 @@ pub const ImageFormatProperties = extern struct {
     /// The sample counts as bits, as Vulkan has them: always 1, one
     /// sample a pixel, there being no multisampling here.
     sample_counts: u32 = 0,
-    /// The bytes an image of this shape may take, which is the largest
-    /// heap's size.
+    /// The bytes an image of `max_extent`, of `max_mip_levels` levels and
+    /// of `max_array_layers` layers takes - what
+    /// GetImageMemoryRequirements answers for such an image (since 1.66,
+    /// where it was the largest heap's size before). More memory than any
+    /// heap holds, where the largest extent and the most layers meet:
+    /// AllocateMemory is what finds that out.
     max_resource_size: u64 align(4) = 0,
 };
 

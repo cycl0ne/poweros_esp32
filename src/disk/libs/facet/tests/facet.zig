@@ -529,20 +529,88 @@ test "the three device queries: the largest image of a shape, the render area's 
     try testing.expectEqual(@as(u32, 1), properties.sample_counts);
     try testing.expect(properties.max_resource_size != 0);
 
-    // A colour attachment is one level and one layer, in either tiling.
+    // A colour attachment is one level and one layer, in either tiling,
+    // and its bytes are its rows.
     try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"2d", .linear, facet.IMAGE_USAGE_COLOR_ATTACHMENT, 0, &properties));
     try testing.expectEqual(@as(u32, 1), properties.max_mip_levels);
     try testing.expectEqual(@as(u32, 1), properties.max_array_layers);
-    // A depth image, the same way; and a 3D one is 256 cubed.
+    try testing.expectEqual(@as(u64, 8192 * 4 * 8192), properties.max_resource_size);
+    // A depth attachment has the levels 1.63 gave it, and one layer
+    // until it is sampled as well, which 1.58 gave 256 of.
     try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, .d16_unorm, .@"2d", .optimal, facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT, 0, &properties));
-    try testing.expectEqual(@as(u32, 1), properties.max_mip_levels);
+    try testing.expectEqual(@as(u32, 14), properties.max_mip_levels);
+    try testing.expectEqual(@as(u32, 1), properties.max_array_layers);
+    try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, .d16_unorm, .@"2d", .optimal, facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED, 0, &properties));
+    try testing.expectEqual(@as(u32, 14), properties.max_mip_levels);
+    try testing.expectEqual(@as(u32, 256), properties.max_array_layers);
+    // A 3D image is 256 cubed, of one layer - its depth being its layers
+    // - and of the levels each of its slices has.
     try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"3d", .optimal, sampled, 0, &properties));
     try testing.expectEqual(@as(u32, 256), properties.max_extent.depth);
-    try testing.expectEqual(@as(u32, 1), properties.max_mip_levels);
+    try testing.expectEqual(@as(u32, 9), properties.max_mip_levels);
     try testing.expectEqual(@as(u32, 1), properties.max_array_layers);
     // A cube's six layers are there to be had.
     try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"2d", .optimal, sampled, facet.IMAGE_CREATE_CUBE_COMPATIBLE, &properties));
     try testing.expectEqual(@as(u32, 256), properties.max_array_layers);
+
+    // `max_resource_size` is the bytes of the image the rest of the
+    // answer describes, to the byte: the same image made, and
+    // GetImageMemoryRequirements asked (since 1.66). CreateImage lays an
+    // image out and binds nothing, so the largest of them costs an
+    // object and no memory at all.
+    const shapes = [_]struct { facet.Format, facet.ImageType, facet.ImageTiling, u32, u32 }{
+        .{ .b8g8r8a8_unorm, .@"2d", .optimal, sampled, 0 },
+        .{ .b8g8r8a8_unorm, .@"2d", .optimal, sampled, facet.IMAGE_CREATE_CUBE_COMPATIBLE },
+        .{ .b8g8r8a8_unorm, .@"2d", .linear, facet.IMAGE_USAGE_COLOR_ATTACHMENT, 0 },
+        .{ .b8g8r8a8_unorm, .@"3d", .optimal, sampled, 0 },
+        .{ .d16_unorm, .@"2d", .optimal, facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT, 0 },
+        .{ .d16_unorm_s8_uint, .@"2d", .optimal, facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED, 0 },
+        .{ .r16g16b16a16_sfloat, .@"2d", .optimal, sampled, 0 },
+    };
+    for (shapes) |shape| {
+        const format, const kind, const tiling, const usage, const flags = shape;
+        try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, format, kind, tiling, usage, flags, &properties));
+        const volume = kind == .@"3d";
+        var largest: ?*facet.Image = null;
+        try testing.expectEqual(facet.Result.success, fb.CreateImage(device, &.{
+            .flags = flags,
+            .image_type = kind,
+            .format = format,
+            .extent = properties.max_extent,
+            .mip_levels = properties.max_mip_levels,
+            .array_layers = properties.max_array_layers,
+            .tiling = tiling,
+            .usage = usage,
+        }, &largest));
+        var needs: facet.MemoryRequirements = undefined;
+        fb.GetImageMemoryRequirements(device, largest.?, &needs);
+        try testing.expectEqual(properties.max_resource_size, needs.size);
+        fb.DestroyImage(device, largest);
+        // One level more, or one layer more, is refused: the answer is
+        // the largest there is.
+        var over: ?*facet.Image = null;
+        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{
+            .flags = flags,
+            .image_type = kind,
+            .format = format,
+            .extent = properties.max_extent,
+            .mip_levels = properties.max_mip_levels + 1,
+            .array_layers = properties.max_array_layers,
+            .tiling = tiling,
+            .usage = usage,
+        }, &over));
+        if (!volume) try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{
+            .flags = flags,
+            .image_type = kind,
+            .format = format,
+            .extent = properties.max_extent,
+            .mip_levels = properties.max_mip_levels,
+            .array_layers = properties.max_array_layers + 1,
+            .tiling = tiling,
+            .usage = usage,
+        }, &over));
+        try testing.expect(over == null);
+    }
 
     // Shapes there is no image of at all, and nothing written for them.
     properties = .{ .max_mip_levels = 9 };

@@ -5893,24 +5893,32 @@ facet.library/WaitForFences
 	refuse every image of that shape, whatever its extent.
 
    BEHAVIOR
-	The question is asked of the same rules CreateImage keeps, so an
-	extent inside what is answered here is made and one outside it is
-	refused - with one exception: an image of the largest extent and the
-	most layers at once may want more memory than a heap holds, which
-	`max_resource_size` says and AllocateMemory finds out.
+	The question is asked of the same rules CreateImage keeps: the image
+	of the largest extent is laid out by the very code CreateImage lays
+	an image out with, so an extent inside what is answered here is made
+	and one outside it is refused.
 
 	What is answered, from the device's own limits
-	(GetPhysicalDeviceProperties):
+	(GetPhysicalDeviceProperties) and from what CreateImage takes of
+	them:
 	- `max_extent`: `max_image_dimension_2d` square for a 2D image -
 	  8192 on this machine's devices - `max_image_dimension_3d` cubed for
 	  a 3D one, 256, and 1 deep for every other.
-	- `max_mip_levels`: the levels of `max_extent` where the shape takes
-	  levels - a sampled image or one written through - and 1 where it
-	  does not, which is an attachment, rows, a depth image and a 3D one.
-	- `max_array_layers`: `max_image_array_layers` for a sampled image,
-	  256, and 1 for every other shape, layers being for sampling.
+	- `max_mip_levels`: the levels of `max_extent`, as many as halving
+	  its longest side gives, where the shape takes levels - a sampled
+	  image, one written through, a depth attachment since 1.63, and a 3D
+	  image whose slices have levels of their own - and 1 where it does
+	  not, which is a colour attachment and rows.
+	- `max_array_layers`: `max_image_array_layers`, 256, where the shape
+	  takes layers - an image a function reads or writes, a sampled or
+	  read-back depth attachment among them - and 1 for every other
+	  shape, a 3D image's layers being its depth.
 	- `sample_counts`: 1, one sample a pixel.
-	- `max_resource_size`: the largest heap's bytes.
+	- `max_resource_size`: the bytes an image of all of the above takes,
+	  every level of every layer of it (since 1.66), which is what
+	  GetImageMemoryRequirements answers for such an image. It may be
+	  more memory than any heap holds: AllocateMemory is what finds that
+	  out.
 
 	An image to be sampled may have sides of any size (since 1.42); its
 	levels are as many as halving the longer side gives, which
@@ -5929,6 +5937,14 @@ facet.library/WaitForFences
 	A format may be sampled and drawn into without one image being both:
 	the two lie differently in memory, so the usages are asked about one
 	at a time, as CreateImage takes them.
+
+	Until 1.66 `max_resource_size` was the largest heap's bytes, which is
+	a fact about the memory and not about the image, and the levels and
+	the layers were worked out from the kind of image rather than asked
+	of CreateImage - so a depth attachment answered one level where 1.63
+	had given it as many as a colour one has, a sampled depth attachment
+	answered one layer where 1.58 had given it 256, and a 3D image
+	answered one level where its slices have their own.
 
    BUGS
 	None known.

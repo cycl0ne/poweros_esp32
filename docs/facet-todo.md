@@ -1,6 +1,6 @@
 # facet.library: the work list, by where each item stands in Vulkan
 
-What is left to do in facet.library as of **1.65**, each item with where it
+What is left to do in facet.library as of **1.66**, each item with where it
 bites, what it would take, and **where it stands in Vulkan**, so that a
 morning's work is never spent on something Vulkan 1.0 never had.
 
@@ -101,18 +101,6 @@ large wants splitting first.
   substantial decoders on their own. ASTC and ETC1 stay out - ASTC is a
   feature of its own and a far larger decoder, ETC1 is not a Vulkan format.
 - **Size:** BC4/BC5 small; BC6H/BC7 medium each.
-
-### 1.6 `max_resource_size` answers the heap, not the image
-
-- **Standing:** `1.0 core` wording:
-  `VkImageFormatProperties.maxResourceSize` is what an image of that shape
-  may take.
-- **Where:** `instance/getphysicaldeviceimageformatproperties.zig` answers
-  the largest heap's bytes.
-- **What it takes:** the bytes of the largest extent and the most layers of
-  that format, from the same rules `CreateImage` keeps - the two already
-  share them, so this is one call into `_image.shapeFor`.
-- **Size:** trivial.
 
 ---
 
