@@ -8333,6 +8333,9 @@ const BlockScene = struct {
         // 1.73: four channels in the same sixteen bytes.
         shader.vertex("full", &flat, 2),
         shader.fixedFragment("full", .{ .kind = .texture, .sampling = .{ .format = .bc7, .filter = .nearest } }),
+        // 1.74: BC6H's three channels of half float.
+        shader.vertex("halves", &flat, 2),
+        shader.fixedFragment("halves", .{ .kind = .texture, .sampling = .{ .format = .bc6hu, .filter = .nearest } }),
     };
     const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
 
@@ -8376,6 +8379,23 @@ const BlockScene = struct {
                 }
                 next += 7;
             }
+        }
+    }
+
+    /// A BC6H block of one colour: mode 3, which holds both endpoints as
+    /// they are in 10 bits each and transforms neither, so every texel
+    /// takes the first whatever the indices say. 495 of 1024 unquantizes
+    /// and scales to the half float for 1, and 0 to 0. (Since 1.74.)
+    fn block6(red: u32, green: u32, blue: u32, into: *[16]u8) void {
+        @memset(into, 0);
+        into[0] = 3;
+        var next: u32 = 5;
+        for ([6]u32{ red, green, blue, red, green, blue }) |value| {
+            for (0..10) |bit| {
+                const place = next + @as(u32, @intCast(bit));
+                if (value >> @intCast(bit) & 1 != 0) into[place >> 3] |= @as(u8, 1) << @intCast(place & 7);
+            }
+            next += 10;
         }
     }
 
@@ -8427,7 +8447,7 @@ test "compressed textures kept in their blocks: copied as blocks, sampled out of
     // same colours at half alpha for BC3.
     const red: u16 = 0xF800;
     const blue: u16 = 0x001F;
-    const staging, const staged = try bench.buffer(1024, facet.BUFFER_USAGE_TRANSFER_SRC);
+    const staging, const staged = try bench.buffer(2048, facet.BUFFER_USAGE_TRANSFER_SRC);
     for (0..16) |block| {
         const color: u16 = if (block % 4 < 2) red else blue;
         BlockScene.block1(color, staged[block * 8 ..][0..8]);
@@ -8611,6 +8631,45 @@ test "compressed textures kept in their blocks: copied as blocks, sampled out of
     try drawn(&bench, full_view, "eight", layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
     try testing.expectEqual(@as(u32, half_red), picture.at(8, 8));
     try testing.expectEqual(@as(u32, quarter_blue), picture.at(56, 56));
+
+    // --- 1.74: BC6H, three channels of half float ---
+    // The one block of these to hold floats, for a texture whose channels
+    // run past 1: a sample reads them held between 0 and 1 and rounded to
+    // 8 bits, the way a float texture's are read.
+    for ([2]facet.Format{ .bc6h_ufloat_block, .bc6h_sfloat_block }) |format| {
+        fb.GetPhysicalDeviceFormatProperties(bench.physical, format, &properties);
+        try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_SAMPLED_IMAGE != 0);
+        try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_TRANSFER_SRC != 0);
+        try testing.expectEqual(@as(u32, 0), properties.optimal_tiling_features & facet.FORMAT_FEATURE_COLOR_ATTACHMENT);
+    }
+    const halves_image = try bench.bareImage(.{ .format = .bc6h_ufloat_block, .extent = side16, .usage = usage }, false);
+    fb.GetImageMemoryRequirements(device, halves_image, &needs);
+    try testing.expectEqual(@as(u64, 256), needs.size);
+    const halves_view = try bench.viewOf(.{ .image = halves_image, .format = .bc6h_ufloat_block });
+
+    // Red on the left and blue on the right, each channel the half float
+    // for 1 or for 0.
+    const halves_at = 896;
+    for (0..16) |block| {
+        const left = block % 4 < 2;
+        BlockScene.block6(if (left) 495 else 0, 0, if (left) 0 else 495, staged[halves_at + block * 16 ..][0..16]);
+    }
+    const halves_blocks = facet.BufferImageCopy{ .buffer_offset = halves_at, .image_extent = side16 };
+    @memset(read_back[0..256], 0);
+    const halves_commands = try bench.record();
+    fb.CmdCopyBufferToImage(halves_commands, staging, halves_image, .transfer_dst_optimal, 1, @ptrCast(&halves_blocks));
+    fb.CmdCopyImageToBuffer(halves_commands, halves_image, .general, read_buffer, 1, @ptrCast(&facet.BufferImageCopy{ .image_extent = side16 }));
+    try bench.submit();
+    try testing.expectEqualSlices(u8, staged[halves_at..][0..256], read_back[0..256]);
+
+    // Sampled through the form built for BC6H and through the one built
+    // for 8888: a half float of 1 is a channel at the full.
+    try drawn(&bench, halves_view, "halves", layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), picture.at(8, 8));
+    try testing.expectEqual(@as(u32, 0xFF00_00FF), picture.at(56, 8));
+    try drawn(&bench, halves_view, "eight", layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), picture.at(8, 8));
+    try testing.expectEqual(@as(u32, 0xFF00_00FF), picture.at(56, 56));
 
     // A copy whose offset is not on a block is left alone, as Vulkan asks
     // of one: the image keeps what it had.

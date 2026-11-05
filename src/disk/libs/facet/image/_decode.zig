@@ -29,8 +29,9 @@ pub fn blockBytes(format: facet.Format) u32 {
         // BC4 and BC5, one channel and two (since 1.72).
         .bc4_unorm_block => 8,
         .bc5_unorm_block => 16,
-        // BC7, four channels in the same 16 (since 1.73).
-        .bc7_unorm_block => 16,
+        // BC7, four channels in the same 16 (since 1.73), and BC6H's
+        // three of half float (since 1.74).
+        .bc7_unorm_block, .bc6h_ufloat_block, .bc6h_sfloat_block => 16,
         // ETC2 and EAC (since 1.46): one 64-bit word for colour, and a
         // second for an alpha or a second channel.
         .etc2_r8g8b8_unorm_block, .etc2_r8g8b8a1_unorm_block, .eac_r11_unorm_block => 8,
@@ -314,6 +315,8 @@ fn keptBlocks(format: facet.Format) ?texture.Format {
         .bc4_unorm_block => .bc4,
         .bc5_unorm_block => .bc5,
         .bc7_unorm_block => .bc7,
+        .bc6h_ufloat_block => .bc6hu,
+        .bc6h_sfloat_block => .bc6hs,
         else => null,
     };
 }
@@ -348,7 +351,7 @@ pub fn block16(format: facet.Format, block: []const u8) [16]Rgba {
     }
     const kept = keptBlocks(format) orelse return made;
     switch (kept) {
-        inline .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc7 => |one| {
+        inline .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc7, .bc6hu, .bc6hs => |one| {
             const texels = texture.blockOf(one, block.ptr);
             for (&made, texels) |*each, color| each.* = .{
                 @intCast(color >> 16 & 0xFF),
@@ -579,6 +582,148 @@ test "BC7: subsets, modes and indices in the same sixteen bytes" {
     made = block16(.bc7_unorm_block, &empty);
     for (made) |each| try testing.expectEqual(Rgba{ 0, 0, 0, 0 }, each);
     try testing.expectEqual(@as(u32, 16), blockBytes(.bc7_unorm_block));
+}
+
+test "BC6H: half floats out of subsets, modes and offsets" {
+    // A block written the way the specification's Table.F reads: a field
+    // `v[to:from]` takes the bits of `v` from `from` towards `to`, lowest
+    // block bit first.
+    const Put = struct {
+        bytes: [16]u8 = @splat(0),
+        next: u32 = 0,
+
+        fn put(writer: *@This(), count: u32, value: u32) void {
+            for (0..count) |k| {
+                const place = writer.next + @as(u32, @intCast(k));
+                if (value >> @intCast(k) & 1 != 0) writer.bytes[place >> 3] |= @as(u8, 1) << @intCast(place & 7);
+            }
+            writer.next += count;
+        }
+
+        fn field(writer: *@This(), to: i32, from: i32, value: u32) void {
+            const count: u32 = @intCast(@abs(to - from) + 1);
+            var sits = from;
+            for (0..count) |_| {
+                writer.put(1, value >> @intCast(sits) & 1);
+                sits += if (to >= from) 1 else -1;
+            }
+        }
+    };
+
+    // Mode 3: one subset, both endpoints held as they are in 10 bits, and
+    // 4 bits an index. 495 of 1024 unquantizes to 31712, which the final
+    // scaling of 31/64 makes 0x3C00 - the half float for 1. Texel 0 is
+    // the anchor, with a bit fewer.
+    var one = Put{};
+    one.put(5, 3);
+    for ([6]u32{ 0, 495, 0, 495, 495, 0 }) |value| one.field(9, 0, value);
+    one.put(3, 0);
+    one.put(4, 15);
+    one.put(4, 8);
+    var halves = texture.bc6hHalves(false, &one.bytes);
+    try testing.expectEqual([3]u16{ 0, 0x3C00, 0 }, halves[0]);
+    try testing.expectEqual([3]u16{ 0x3C00, 0x3C00, 0 }, halves[1]);
+    // Half way along the index, which is half way along the bits of a
+    // half float rather than half way along its value: the format
+    // interpolates what the bits stand for.
+    try testing.expectEqual([3]u16{ 0x1FE0, 0x3C00, 0 }, halves[2]);
+    var made = block16(.bc6h_ufloat_block, &one.bytes);
+    try testing.expectEqual(Rgba{ 0, 255, 0, 255 }, made[0]);
+    try testing.expectEqual(Rgba{ 255, 255, 0, 255 }, made[1]);
+    try testing.expectEqual(Rgba{ 2, 255, 0, 255 }, made[2]);
+
+    // Mode 1: two subsets, the first endpoint in 7 bits and the others
+    // offsets on it in 6, and 3 bits an index. The offsets are -1, which
+    // wraps to 127 - the largest of 7 bits, which unquantizes to 0xFFFF
+    // and scales to the largest half float there is.
+    var two = Put{};
+    two.put(2, 1);
+    two.field(5, 5, 0);
+    two.field(4, 4, 0);
+    two.field(5, 5, 0);
+    two.field(6, 0, 0);
+    two.field(0, 0, 0);
+    two.field(1, 1, 0);
+    two.field(4, 4, 0);
+    two.field(6, 0, 0);
+    two.field(5, 5, 0);
+    two.field(2, 2, 0);
+    two.field(4, 4, 0);
+    two.field(6, 0, 0);
+    two.field(3, 3, 0);
+    two.field(5, 5, 0);
+    two.field(4, 4, 0);
+    two.field(5, 0, 0x3F);
+    two.field(3, 0, 0);
+    two.field(5, 0, 0x3F);
+    two.field(3, 0, 0);
+    two.field(5, 0, 0x3F);
+    two.field(3, 0, 0);
+    two.field(5, 0, 0);
+    two.field(5, 0, 0);
+    two.put(5, 0);
+    two.put(2, 0);
+    two.put(3, 7);
+    halves = texture.bc6hHalves(false, &two.bytes);
+    try testing.expectEqual([3]u16{ 0, 0, 0 }, halves[0]);
+    try testing.expectEqual([3]u16{ 0x7BFF, 0x7BFF, 0x7BFF }, halves[1]);
+    // The partition of 0 puts the right half of the block in the second
+    // subset, whose two endpoints are the first one over again: nothing.
+    try testing.expectEqual([3]u16{ 0, 0, 0 }, halves[2]);
+    made = block16(.bc6h_ufloat_block, &two.bytes);
+    try testing.expectEqual(Rgba{ 0, 0, 0, 255 }, made[0]);
+    try testing.expectEqual(Rgba{ 255, 255, 255, 255 }, made[1]);
+
+    // Mode 15: one subset, the first endpoint in 16 bits with its top six
+    // held in reverse - the specification's `r0[10:15]`, where the first
+    // bit of the block is the highest bit of the value - and the other
+    // endpoint an offset of 4 bits, 0 here. 3072 scales to 0x05D0, which
+    // is a number far under 1, where the reverse read of those six bits
+    // would make 49152 and a number far over it.
+    var three = Put{};
+    three.put(5, 15);
+    for ([3]u32{ 3072, 0, 0 }) |value| three.field(9, 0, value);
+    for ([3]u32{ 3072, 0, 0 }) |value| {
+        three.field(3, 0, 0);
+        three.field(10, 15, value);
+    }
+    halves = texture.bc6hHalves(false, &three.bytes);
+    for (halves) |each| try testing.expectEqual([3]u16{ 0x05D0, 0, 0 }, each);
+    made = block16(.bc6h_ufloat_block, &three.bytes);
+    for (made) |each| try testing.expectEqual(Rgba{ 0, 0, 0, 255 }, each);
+
+    // The signed form of the format, over the same mode 3: the first
+    // endpoint is -495 of 10 bits and the second 495, and the signed
+    // scaling is 31/32, so the two ends are the same magnitude either way
+    // of 0. A colour holds nothing under 0, and nothing over 1.
+    var four = Put{};
+    four.put(5, 3);
+    for ([6]u32{ 1024 - 495, 0, 0, 495, 0, 0 }) |value| four.field(9, 0, value);
+    four.put(3, 0);
+    four.put(4, 15);
+    halves = texture.bc6hHalves(true, &four.bytes);
+    try testing.expectEqual(@as(u16, 0xF801), halves[0][0]);
+    try testing.expectEqual(@as(u16, 0x7801), halves[1][0]);
+    made = block16(.bc6h_sfloat_block, &four.bytes);
+    try testing.expectEqual(Rgba{ 0, 0, 0, 255 }, made[0]);
+    try testing.expectEqual(Rgba{ 255, 0, 0, 255 }, made[1]);
+
+    // A texture of the format gives a function the halves themselves,
+    // where a colour would hold only what 8 bits take of them: texel
+    // (1, 0) of the mode-3 block above is 1 in red and green, and the
+    // alpha of a format with three channels is whole.
+    var held = try texture.Texture.init(.bc6hu, 4, 4, 1, &one.bytes);
+    try testing.expectEqual([4]f32{ 1, 1, 0, 1 }, held.partsAt(0, 0, 1, 0));
+
+    // A mode the format reserves - 19, 23, 27 and 31 - reads as opaque
+    // black rather than refusing the block; and a block is 16 bytes.
+    var reserved = Put{};
+    reserved.put(5, 19);
+    reserved.put(32, 0xFFFF_FFFF);
+    made = block16(.bc6h_ufloat_block, &reserved.bytes);
+    for (made) |each| try testing.expectEqual(Rgba{ 0, 0, 0, 255 }, each);
+    try testing.expectEqual(@as(u32, 16), blockBytes(.bc6h_ufloat_block));
+    try testing.expectEqual(@as(u32, 16), blockBytes(.bc6h_sfloat_block));
 }
 
 test "floats: cut to what 8 bits hold" {

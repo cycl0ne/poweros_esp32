@@ -1033,10 +1033,50 @@ pub const LIBRARY_VERSION = 1;
 /// form is not here: a texture of this library is read as it lies. BC6H
 /// is still out: its endpoints are half-floats, and its texels run past
 /// 1, which is a float texture's ground rather than a colour's.
+/// 74: BC6H, three channels of half float in sixteen bytes a block, and
+/// the last of the BC formats. It is the one of them that holds a texture
+/// whose channels run past 1 - a light probe, a sky, an exposure a frame
+/// is drawn from - and it has no alpha at all. The block is cut into one
+/// subset or two the way BC7's is, with the same partition table over its
+/// first 32 rows and the same anchors, but the endpoints are whole
+/// numbers that stand for half floats: one of fourteen modes says how
+/// many bits the first endpoint's channels take, how many the others take
+/// as offsets on it, and where in the block every one of those sits - a
+/// field at a time, a channel's bits in several places, and the
+/// high-precision modes holding the top bits of the first endpoint in
+/// reverse.
+/// `texture.bc6hHalves` reads one: the mode is the low two bits of the
+/// block where they are under 2 and the low five otherwise, the fields
+/// are the specification's Table.F (`bc6_fields`, `bc6_modes`), an
+/// offset endpoint is sign-extended from its own width and added to the
+/// first wrapped at the first's width, and the endpoints are then
+/// unquantized over the 16 bits of a half float, interpolated as whole
+/// numbers, and scaled by 31/64 unsigned or 31/32 signed into the half
+/// float the format means. So the interpolation is linear in what a half
+/// float's bits stand for rather than in its value, which is the format's
+/// own doing. A mode the format reserves - 19, 23, 27 and 31 - reads as
+/// opaque black.
+/// `bc6h_ufloat_block` and `bc6h_sfloat_block` are the facet formats,
+/// `_ufloat` holding nothing under 0 and `_sfloat` running either way,
+/// and `texture.Format` has `bc6hu` and `bc6hs` appended. A sample reads
+/// such a texel held between 0 and 1 and rounded to 8 bits, the way a
+/// float texel is read (`floatTexel`), and `Texture.partsAt` gives a
+/// function the halves themselves - which is where the channels past 1
+/// are to be had, a colour of 8 bits a channel having nothing to say
+/// about them. Otherwise it goes the way the other blocks go: kept as it
+/// lies on a device that samples blocks (`kept_compressed`, the cores),
+/// copied in and out as it lies, unpacked into 8888 where the texture
+/// unit is fed texels (the V3D, which loses what is above 1 as the copy
+/// is made), and no colour attachment.
+/// That is BC1 to BC7 whole. What stays out of the compressed formats is
+/// the `_snorm` pair of BC4 and BC5 and the `_srgb` forms, a texture
+/// holding 0 to 1 and being read as it lies; ASTC, which is a feature of
+/// its own and a far larger decoder; and ETC1, which is no Vulkan format.
+/// Nothing compresses into any of them.
 /// What stays: `fifo` is the one present mode, there being no way to ask a
 /// display to show a buffer before its next frame; one queue family of one
 /// queue; a counter of 32 bits, for want of a 64-bit atomic on every
 /// machine the library runs on; and no point mode in tessellation, the
 /// tessellator emitting triangles or the lines of `isolines` and nothing
 /// emitting a patch's points on their own.
-pub const LIBRARY_REVISION = 73;
+pub const LIBRARY_REVISION = 74;

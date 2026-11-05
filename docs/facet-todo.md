@@ -1,6 +1,6 @@
 # facet.library: the work list, by where each item stands in Vulkan
 
-What is left to do in facet.library as of **1.73**, each item with where it
+What is left to do in facet.library as of **1.74**, each item with where it
 bites, what it would take, and **where it stands in Vulkan**, so that a
 morning's work is never spent on something Vulkan 1.0 never had.
 
@@ -28,32 +28,19 @@ them.
 
 ## 1. Vulkan 1.0, pickable: a revision each
 
-In the order I would do them. "Size" is the shape of the work, not a
-promise: small is a day with its tests, medium is a revision of its own,
-large wants splitting first.
+**Nothing is left here.** Every item this section held has been done, the
+last of them in 1.74: the compressed formats are all of BC1 to BC7, the
+texel buffers read every format Vulkan 1.0 asks of them, textures are
+kept in their own channels and in whole numbers, and a point is as wide as
+its vertex says.
 
-### 1.1 BC6H
-
-- **Standing:** `1.0 format`, under `textureCompressionBC` - which facet
-  says yes to for BC1 to BC5 and BC7, and no further.
-- **Where:** `image/_decode.zig` beside the BC1/BC2/BC3 decoders,
-  `texture.blockOf`, `texture.Format`, `driver/_format.zig`.
-- **Done in 1.72:** BC4 and BC5, which were the BC3 alpha block over one
-  channel and over two (`bc4_unorm_block`, `bc5_unorm_block`).
-- **Done in 1.73:** BC7 (`bc7_unorm_block`): subsets cut out by one of 64
-  patterns, eight modes, p-bits, a rotation and a second set of indices
-  for the alpha, read by `texture.bc7Block`.
-- **What is left:** BC6H, whose two endpoints are half-floats in fourteen
-  mode layouts, most of them with the second endpoint held as a delta on
-  the first, and whose channels run past 1. That is the deciding part:
-  what it reads as. A block decoded into 8 bits a channel throws away
-  what the format is for, so it belongs with the float textures
-  (`kept_floats`, `texture.Format.rgba16f`) - a block decoded into
-  half-floats, sampled the way a float texture is, with the `_sfloat`
-  form signed and the `_ufloat` one not. ASTC and ETC1 stay out - ASTC is
-  a feature of its own and a far larger decoder, ETC1 is not a Vulkan
-  format.
-- **Size:** medium.
+What is left of Vulkan 1.0 is in section 3, where each item is bounded by
+the hardware or by the shape of the library rather than by the work, and
+in section 4, which is the one large piece of work still outstanding - the
+QPU shader compiler, and the per-device features that would follow it.
+The next revision's work comes from there, from a chip that needs
+something in section 2, or from whatever a program asks for and does not
+find.
 
 ---
 

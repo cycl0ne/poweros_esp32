@@ -428,8 +428,9 @@ pub const PhysicalDeviceFeatures = extern struct {
     /// A compressed image is kept in its blocks and decoded as it is
     /// sampled, nothing unpacked: `bc1_rgb_unorm_block`,
     /// `bc1_rgba_unorm_block`, `bc2_unorm_block`, `bc3_unorm_block` and
-    /// since 1.72 `bc4_unorm_block` and `bc5_unorm_block`, and since
-    /// 1.73 `bc7_unorm_block`,
+    /// since 1.72 `bc4_unorm_block` and `bc5_unorm_block`, since 1.73
+    /// `bc7_unorm_block` and since 1.74 `bc6h_ufloat_block` and
+    /// `bc6h_sfloat_block`,
     /// lie as they were copied in, an eighth to a quarter of the memory
     /// the unpacked texels take, and the four texels a sample mixes come
     /// out of the one block where they share it. False where such an
@@ -709,6 +710,18 @@ pub const Format = enum(u32) {
     /// to 1. (Since 1.72.)
     bc4_unorm_block = 139,
     bc5_unorm_block = 141,
+    /// Three channels of half float in 16 bytes a block, and no alpha:
+    /// the one of these to hold a texture whose channels run past 1 - a
+    /// light probe, a sky, an exposure a frame is drawn from. The block
+    /// is cut into one subset or two as BC7's is, and one of fourteen
+    /// modes says how many bits the first endpoint's channels take and
+    /// how many the others take as offsets on it. `_ufloat` holds nothing
+    /// under 0 and `_sfloat` runs either way. A sample reads the texel
+    /// held between 0 and 1 and rounded to 8 bits, the way a float
+    /// texture's is, and `texture.Texture.partsAt` gives a function the
+    /// halves themselves. (Since 1.74.)
+    bc6h_ufloat_block = 143,
+    bc6h_sfloat_block = 144,
     /// Four channels in the same 16 bytes a block: subsets cut out of the
     /// block by one of 64 patterns, two endpoints for each, and an index
     /// for every texel - one of eight modes saying how many bits each of

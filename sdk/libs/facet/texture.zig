@@ -206,6 +206,19 @@ pub const Format = enum {
     /// Kept in its blocks on a device that samples them
     /// (`PhysicalDeviceFeatures.kept_compressed`). (Since 1.73.)
     bc7,
+    /// BC6H, the one block of these to hold floats: three channels of
+    /// half float in 16 bytes, with no alpha, for a texture whose
+    /// channels run past 1 - a light probe, a sky, an exposure a frame is
+    /// drawn from. The block is cut into one subset or two as BC7's is,
+    /// and one of fourteen modes says how many bits the first endpoint's
+    /// channels take and how many the others take as offsets on it. The
+    /// `_ufloat` form holds nothing under 0 and the `_sfloat` one runs
+    /// either way (`bc6hu`, `bc6hs`). A sample reads such a texel held
+    /// between 0 and 1 and rounded to 8 bits, the way a float texel is,
+    /// and `Texture.partsAt` gives a function the halves themselves.
+    /// (Since 1.74.)
+    bc6hu,
+    bc6hs,
 
     /// The bytes a texel is kept in; 0 for a compressed format, whose
     /// texels have no size of their own (`blockLog2`).
@@ -222,7 +235,7 @@ pub const Format = enum {
             .rgba32f => 4,
             .argb8888, .rg11b10f, .rgb9e5, .r32f, .rg16 => 2,
             .rgb565, .d16, .rg8, .r16 => 1,
-            .r8, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc7 => 0,
+            .r8, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc6hu, .bc6hs, .bc7 => 0,
             // The whole numbers of 1.70: one channel, two or four, of 8,
             // 16 or 32 bits, which is 1 to 16 bytes a texel.
             .r8u, .r8i => 0,
@@ -250,7 +263,7 @@ pub const Format = enum {
             .rg8u, .rg8i, .r16u, .r16i => 5,
             .r8u, .r8i => 4,
             // 16 texels of one byte, and the blocks of 8 and of 16.
-            .r8, .bc2, .bc3, .bc5, .bc7 => 4,
+            .r8, .bc2, .bc3, .bc5, .bc6hu, .bc6hs, .bc7 => 4,
             .bc1, .bc1_rgb, .bc4 => 3,
         };
     }
@@ -265,7 +278,7 @@ pub const Format = enum {
     /// (`blockOf`). (Since 1.44.)
     pub fn compressed(format: Format) bool {
         return switch (format) {
-            .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc7 => true,
+            .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc6hu, .bc6hs, .bc7 => true,
             .rgba8888, .argb8888, .rgb565, .r8, .d16, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => false,
             .rg8, .r16, .rg16, .rgba16 => false,
             .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => false,
@@ -281,7 +294,7 @@ pub const Format = enum {
     pub fn floats(format: Format) bool {
         return switch (format) {
             .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => true,
-            .rgba8888, .argb8888, .rgb565, .r8, .d16, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc7 => false,
+            .rgba8888, .argb8888, .rgb565, .r8, .d16, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc6hu, .bc6hs, .bc7 => false,
             .rg8, .r16, .rg16, .rgba16 => false,
             .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => false,
         };
@@ -297,7 +310,7 @@ pub const Format = enum {
     pub fn channels(format: Format) bool {
         return switch (format) {
             .rg8, .r16, .rg16, .rgba16 => true,
-            .rgba8888, .argb8888, .rgb565, .r8, .d16, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc7 => false,
+            .rgba8888, .argb8888, .rgb565, .r8, .d16, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc6hu, .bc6hs, .bc7 => false,
             .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => false,
             // Whole numbers are their own kind: `wholes` (since 1.70).
             .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => false,
@@ -371,7 +384,7 @@ pub const Format = enum {
     pub fn small(format: Format) bool {
         return switch (format) {
             .argb8888, .r8, .rg8, .r16, .rg16 => true,
-            .rgba8888, .rgb565, .d16, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc7, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => false,
+            .rgba8888, .rgb565, .d16, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc6hu, .bc6hs, .bc7, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => false,
             // Eight bytes, as a spread colour is, and still read channel
             // by channel (since 1.69).
             .rgba16 => false,
@@ -768,7 +781,7 @@ pub const Texture = struct {
             .r8 => at[0] = @truncate(texel),
             // Nothing is written a texel at a time into a texture that
             // keeps what it was given: `putTexels` moves the bytes.
-            .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc7, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => {},
+            .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc6hu, .bc6hs, .bc7, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => {},
             .rg8, .r16, .rg16, .rgba16 => {},
             .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => {},
         }
@@ -784,7 +797,7 @@ pub const Texture = struct {
             .argb8888 => @as(*const u32, @ptrCast(@alignCast(at))).*,
             .rgb565, .d16 => @as(*const u16, @ptrCast(@alignCast(at))).*,
             .r8 => at[0],
-            inline .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc7 => |one| blockOf(one, at)[(y % block) * block + (x % block)],
+            inline .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc6hu, .bc6hs, .bc7 => |one| blockOf(one, at)[(y % block) * block + (x % block)],
             inline .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => |one| floatTexel(one, at),
             // The channels made into a colour, as a float texel is
             // (since 1.69): the top 8 bits of each.
@@ -881,7 +894,7 @@ pub const Texture = struct {
             .d16 => (color >> 16 & 0xFF) * 0x101,
             // Nothing is written a texel at a time into a compressed
             // texture: `putLayer` leaves it as it lies.
-            .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc7 => 0,
+            .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc6hu, .bc6hs, .bc7 => 0,
             .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => unreachable,
             .rg8, .r16, .rg16, .rgba16 => unreachable,
             .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => unreachable,
@@ -1002,6 +1015,17 @@ pub const Texture = struct {
         // than a colour does (since 1.69): a sample reads the top 8 bits,
         // and this reads all 16.
         if (texture.format.channels()) return channelParts(texture.format, texture.memory + texture.placeOf(layer, lod, x, y));
+        // The halves a BC6H block holds (since 1.74): the format is for
+        // channels past 1, and this is where a function reads them, a
+        // colour of 8 bits having nothing to say about what is above it.
+        switch (texture.format) {
+            inline .bc6hu, .bc6hs => |one| {
+                const at = texture.memory + texture.placeOf(layer, lod, x, y);
+                const halves = bc6hHalves(one == .bc6hs, at)[(y % block) * block + (x % block)];
+                return .{ ofHalf(halves[0]), ofHalf(halves[1]), ofHalf(halves[2]), 1 };
+            },
+            else => {},
+        }
         // The whole numbers as they are, not 0 to 1 (since 1.70): a float
         // carries 24 bits of one exactly, and `wholesAt` all 32.
         if (texture.format.wholes()) {
@@ -1042,7 +1066,7 @@ pub const Texture = struct {
             .d16 => greyOf8(@truncate(texel >> 8)),
             // Decoded already: `peekLayer` read it out of its block, out
             // of its floats, or out of its channels.
-            .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc7, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => texel,
+            .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc6hu, .bc6hs, .bc7, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => texel,
             .rg8, .r16, .rg16, .rgba16 => texel,
             .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => texel,
         };
@@ -1192,7 +1216,7 @@ pub const Texture = struct {
                     .rgba8888, .argb8888 => std.mem.readInt(u32, row[x * 4 ..][0..4], .little),
                     .rgb565, .d16 => std.mem.readInt(u16, row[x * 2 ..][0..2], .little),
                     .r8 => row[x],
-                    .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc7, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => unreachable,
+                    .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc6hu, .bc6hs, .bc7, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => unreachable,
                     .rg8, .r16, .rg16, .rgba16 => unreachable,
                     .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => unreachable,
                 };
@@ -1893,10 +1917,16 @@ inline fn partsOf(value: f32, comptime bits: u5, comptime biased_by: i32) u32 {
 ///
 /// BC7 is another block altogether, read by `bc7Block`: subsets, modes
 /// and up to four bits an index, in the same 16 bytes. (Since 1.73.)
+///
+/// BC6H is another again, read by `bc6hBlock`: three channels of half
+/// float, held between 0 and 1 and rounded to 8 bits here the way a float
+/// texel is, with the alpha whole. (Since 1.74.)
 pub fn blockOf(comptime format: Format, at: [*]const u8) [16]u32 {
     @setRuntimeSafety(false);
-    // BC7 shares nothing with the others but its size (since 1.73).
+    // BC7 shares nothing with the others but its size (since 1.73), and
+    // BC6H holds floats rather than a colour at all (since 1.74).
     if (format == .bc7) return bc7Block(at);
+    if (format == .bc6hu or format == .bc6hs) return bc6hBlock(format == .bc6hs, at);
     // BC4 and BC5 hold no endpoint colour at all: one channel and two,
     // each the block BC3 keeps its alpha in, read as (red, 0, 0, 1) and
     // (red, green, 0, 1) (since 1.72).
@@ -2376,6 +2406,245 @@ const bc7_anchor_three_third = [64]u8{
     15, 3, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 3, 15, 15, 8,
 };
 
+
+// --- BC6H --------------------------------------------------------------------
+
+/// One field of a BC6H block: which of the twelve endpoint components it
+/// belongs to, and which of that component's bits it holds. The
+/// specification's Table.F writes a field `v[a:b]`, and the bits run from
+/// `from` towards `to` - the reverse where `to` is under `from`, which is
+/// how the high-precision modes hold the top bits of their first
+/// endpoint. The components are r0, g0, b0, r1, g1, b1 and so on, so
+/// `which` divided by three is the endpoint and the rest of it the
+/// channel. (Since 1.74.)
+const Bc6Field = struct { which: u8, to: u8, from: u8 };
+
+/// What one of BC6H's fourteen modes holds: the specification's Table.MF
+/// beside the fields of Table.F. A mode with one subset holds two
+/// endpoints and no partition; one with two holds four endpoints and a
+/// partition of 5 bits. `transformed` says the endpoints past the first
+/// are offsets on it, in which case they are held in fewer bits -
+/// `deltas`, a count for each channel - than the first's `bits`.
+/// (Since 1.74.)
+const Bc6Mode = struct {
+    transformed: bool,
+    subsets: u8,
+    bits: u8,
+    deltas: [3]u8,
+    fields: []const Bc6Field,
+};
+
+/// The modes by their number, as the low two bits of a block hold it
+/// where they are under 2 and the low five otherwise. The numbers that
+/// are not here - 19, 23, 27 and 31 - are reserved by the format, and
+/// such a block reads as opaque black.
+const bc6_modes = modes: {
+    var made: [32]?Bc6Mode = @splat(null);
+    const fields = bc6_fields;
+    made[0] = .{ .transformed = true, .subsets = 2, .bits = 10, .deltas = .{ 5, 5, 5 }, .fields = fields[0] };
+    made[1] = .{ .transformed = true, .subsets = 2, .bits = 7, .deltas = .{ 6, 6, 6 }, .fields = fields[1] };
+    made[2] = .{ .transformed = true, .subsets = 2, .bits = 11, .deltas = .{ 5, 4, 4 }, .fields = fields[2] };
+    made[3] = .{ .transformed = false, .subsets = 1, .bits = 10, .deltas = .{ 10, 10, 10 }, .fields = fields[3] };
+    made[6] = .{ .transformed = true, .subsets = 2, .bits = 11, .deltas = .{ 4, 5, 4 }, .fields = fields[4] };
+    made[7] = .{ .transformed = true, .subsets = 1, .bits = 11, .deltas = .{ 9, 9, 9 }, .fields = fields[5] };
+    made[10] = .{ .transformed = true, .subsets = 2, .bits = 11, .deltas = .{ 4, 4, 5 }, .fields = fields[6] };
+    made[11] = .{ .transformed = true, .subsets = 1, .bits = 12, .deltas = .{ 8, 8, 8 }, .fields = fields[7] };
+    made[14] = .{ .transformed = true, .subsets = 2, .bits = 9, .deltas = .{ 5, 5, 5 }, .fields = fields[8] };
+    made[15] = .{ .transformed = true, .subsets = 1, .bits = 16, .deltas = .{ 4, 4, 4 }, .fields = fields[9] };
+    made[18] = .{ .transformed = true, .subsets = 2, .bits = 8, .deltas = .{ 6, 5, 5 }, .fields = fields[10] };
+    made[22] = .{ .transformed = true, .subsets = 2, .bits = 8, .deltas = .{ 5, 6, 5 }, .fields = fields[11] };
+    made[26] = .{ .transformed = true, .subsets = 2, .bits = 8, .deltas = .{ 5, 5, 6 }, .fields = fields[12] };
+    made[30] = .{ .transformed = false, .subsets = 2, .bits = 6, .deltas = .{ 6, 6, 6 }, .fields = fields[13] };
+    break :modes made;
+};
+
+/// Where every mode keeps its endpoint components: the specification's
+/// Table.F, read from the lowest bit of the block after the mode and
+/// going up. The rows are in the order the modes are given there - 0, 1,
+/// 2, 3, 6, 7, 10, 11, 14, 15, 18, 22, 26, 30 - and `bc6_modes` picks
+/// one by its number.
+const bc6_fields = [14][]const Bc6Field{
+    // mode 0
+    &.{ .{ .which = 7, .to = 4, .from = 4 }, .{ .which = 8, .to = 4, .from = 4 }, .{ .which = 11, .to = 4, .from = 4 }, .{ .which = 0, .to = 9, .from = 0 }, .{ .which = 1, .to = 9, .from = 0 }, .{ .which = 2, .to = 9, .from = 0 }, .{ .which = 3, .to = 4, .from = 0 }, .{ .which = 10, .to = 4, .from = 4 }, .{ .which = 7, .to = 3, .from = 0 }, .{ .which = 4, .to = 4, .from = 0 }, .{ .which = 11, .to = 0, .from = 0 }, .{ .which = 10, .to = 3, .from = 0 }, .{ .which = 5, .to = 4, .from = 0 }, .{ .which = 11, .to = 1, .from = 1 }, .{ .which = 8, .to = 3, .from = 0 }, .{ .which = 6, .to = 4, .from = 0 }, .{ .which = 11, .to = 2, .from = 2 }, .{ .which = 9, .to = 4, .from = 0 }, .{ .which = 11, .to = 3, .from = 3 } },
+    // mode 1
+    &.{ .{ .which = 7, .to = 5, .from = 5 }, .{ .which = 10, .to = 4, .from = 4 }, .{ .which = 10, .to = 5, .from = 5 }, .{ .which = 0, .to = 6, .from = 0 }, .{ .which = 11, .to = 0, .from = 0 }, .{ .which = 11, .to = 1, .from = 1 }, .{ .which = 8, .to = 4, .from = 4 }, .{ .which = 1, .to = 6, .from = 0 }, .{ .which = 8, .to = 5, .from = 5 }, .{ .which = 11, .to = 2, .from = 2 }, .{ .which = 7, .to = 4, .from = 4 }, .{ .which = 2, .to = 6, .from = 0 }, .{ .which = 11, .to = 3, .from = 3 }, .{ .which = 11, .to = 5, .from = 5 }, .{ .which = 11, .to = 4, .from = 4 }, .{ .which = 3, .to = 5, .from = 0 }, .{ .which = 7, .to = 3, .from = 0 }, .{ .which = 4, .to = 5, .from = 0 }, .{ .which = 10, .to = 3, .from = 0 }, .{ .which = 5, .to = 5, .from = 0 }, .{ .which = 8, .to = 3, .from = 0 }, .{ .which = 6, .to = 5, .from = 0 }, .{ .which = 9, .to = 5, .from = 0 } },
+    // mode 2
+    &.{ .{ .which = 0, .to = 9, .from = 0 }, .{ .which = 1, .to = 9, .from = 0 }, .{ .which = 2, .to = 9, .from = 0 }, .{ .which = 3, .to = 4, .from = 0 }, .{ .which = 0, .to = 10, .from = 10 }, .{ .which = 7, .to = 3, .from = 0 }, .{ .which = 4, .to = 3, .from = 0 }, .{ .which = 1, .to = 10, .from = 10 }, .{ .which = 11, .to = 0, .from = 0 }, .{ .which = 10, .to = 3, .from = 0 }, .{ .which = 5, .to = 3, .from = 0 }, .{ .which = 2, .to = 10, .from = 10 }, .{ .which = 11, .to = 1, .from = 1 }, .{ .which = 8, .to = 3, .from = 0 }, .{ .which = 6, .to = 4, .from = 0 }, .{ .which = 11, .to = 2, .from = 2 }, .{ .which = 9, .to = 4, .from = 0 }, .{ .which = 11, .to = 3, .from = 3 } },
+    // mode 3
+    &.{ .{ .which = 0, .to = 9, .from = 0 }, .{ .which = 1, .to = 9, .from = 0 }, .{ .which = 2, .to = 9, .from = 0 }, .{ .which = 3, .to = 9, .from = 0 }, .{ .which = 4, .to = 9, .from = 0 }, .{ .which = 5, .to = 9, .from = 0 } },
+    // mode 6
+    &.{ .{ .which = 0, .to = 9, .from = 0 }, .{ .which = 1, .to = 9, .from = 0 }, .{ .which = 2, .to = 9, .from = 0 }, .{ .which = 3, .to = 3, .from = 0 }, .{ .which = 0, .to = 10, .from = 10 }, .{ .which = 10, .to = 4, .from = 4 }, .{ .which = 7, .to = 3, .from = 0 }, .{ .which = 4, .to = 4, .from = 0 }, .{ .which = 1, .to = 10, .from = 10 }, .{ .which = 10, .to = 3, .from = 0 }, .{ .which = 5, .to = 3, .from = 0 }, .{ .which = 2, .to = 10, .from = 10 }, .{ .which = 11, .to = 1, .from = 1 }, .{ .which = 8, .to = 3, .from = 0 }, .{ .which = 6, .to = 3, .from = 0 }, .{ .which = 11, .to = 0, .from = 0 }, .{ .which = 11, .to = 2, .from = 2 }, .{ .which = 9, .to = 3, .from = 0 }, .{ .which = 7, .to = 4, .from = 4 }, .{ .which = 11, .to = 3, .from = 3 } },
+    // mode 7
+    &.{ .{ .which = 0, .to = 9, .from = 0 }, .{ .which = 1, .to = 9, .from = 0 }, .{ .which = 2, .to = 9, .from = 0 }, .{ .which = 3, .to = 8, .from = 0 }, .{ .which = 0, .to = 10, .from = 10 }, .{ .which = 4, .to = 8, .from = 0 }, .{ .which = 1, .to = 10, .from = 10 }, .{ .which = 5, .to = 8, .from = 0 }, .{ .which = 2, .to = 10, .from = 10 } },
+    // mode 10
+    &.{ .{ .which = 0, .to = 9, .from = 0 }, .{ .which = 1, .to = 9, .from = 0 }, .{ .which = 2, .to = 9, .from = 0 }, .{ .which = 3, .to = 3, .from = 0 }, .{ .which = 0, .to = 10, .from = 10 }, .{ .which = 8, .to = 4, .from = 4 }, .{ .which = 7, .to = 3, .from = 0 }, .{ .which = 4, .to = 3, .from = 0 }, .{ .which = 1, .to = 10, .from = 10 }, .{ .which = 11, .to = 0, .from = 0 }, .{ .which = 10, .to = 3, .from = 0 }, .{ .which = 5, .to = 4, .from = 0 }, .{ .which = 2, .to = 10, .from = 10 }, .{ .which = 8, .to = 3, .from = 0 }, .{ .which = 6, .to = 3, .from = 0 }, .{ .which = 11, .to = 1, .from = 1 }, .{ .which = 11, .to = 2, .from = 2 }, .{ .which = 9, .to = 3, .from = 0 }, .{ .which = 11, .to = 4, .from = 4 }, .{ .which = 11, .to = 3, .from = 3 } },
+    // mode 11
+    &.{ .{ .which = 0, .to = 9, .from = 0 }, .{ .which = 1, .to = 9, .from = 0 }, .{ .which = 2, .to = 9, .from = 0 }, .{ .which = 3, .to = 7, .from = 0 }, .{ .which = 0, .to = 10, .from = 11 }, .{ .which = 4, .to = 7, .from = 0 }, .{ .which = 1, .to = 10, .from = 11 }, .{ .which = 5, .to = 7, .from = 0 }, .{ .which = 2, .to = 10, .from = 11 } },
+    // mode 14
+    &.{ .{ .which = 0, .to = 8, .from = 0 }, .{ .which = 8, .to = 4, .from = 4 }, .{ .which = 1, .to = 8, .from = 0 }, .{ .which = 7, .to = 4, .from = 4 }, .{ .which = 2, .to = 8, .from = 0 }, .{ .which = 11, .to = 4, .from = 4 }, .{ .which = 3, .to = 4, .from = 0 }, .{ .which = 10, .to = 4, .from = 4 }, .{ .which = 7, .to = 3, .from = 0 }, .{ .which = 4, .to = 4, .from = 0 }, .{ .which = 11, .to = 0, .from = 0 }, .{ .which = 10, .to = 3, .from = 0 }, .{ .which = 5, .to = 4, .from = 0 }, .{ .which = 11, .to = 1, .from = 1 }, .{ .which = 8, .to = 3, .from = 0 }, .{ .which = 6, .to = 4, .from = 0 }, .{ .which = 11, .to = 2, .from = 2 }, .{ .which = 9, .to = 4, .from = 0 }, .{ .which = 11, .to = 3, .from = 3 } },
+    // mode 15
+    &.{ .{ .which = 0, .to = 9, .from = 0 }, .{ .which = 1, .to = 9, .from = 0 }, .{ .which = 2, .to = 9, .from = 0 }, .{ .which = 3, .to = 3, .from = 0 }, .{ .which = 0, .to = 10, .from = 15 }, .{ .which = 4, .to = 3, .from = 0 }, .{ .which = 1, .to = 10, .from = 15 }, .{ .which = 5, .to = 3, .from = 0 }, .{ .which = 2, .to = 10, .from = 15 } },
+    // mode 18
+    &.{ .{ .which = 0, .to = 7, .from = 0 }, .{ .which = 10, .to = 4, .from = 4 }, .{ .which = 8, .to = 4, .from = 4 }, .{ .which = 1, .to = 7, .from = 0 }, .{ .which = 11, .to = 2, .from = 2 }, .{ .which = 7, .to = 4, .from = 4 }, .{ .which = 2, .to = 7, .from = 0 }, .{ .which = 11, .to = 3, .from = 3 }, .{ .which = 11, .to = 4, .from = 4 }, .{ .which = 3, .to = 5, .from = 0 }, .{ .which = 7, .to = 3, .from = 0 }, .{ .which = 4, .to = 4, .from = 0 }, .{ .which = 11, .to = 0, .from = 0 }, .{ .which = 10, .to = 3, .from = 0 }, .{ .which = 5, .to = 4, .from = 0 }, .{ .which = 11, .to = 1, .from = 1 }, .{ .which = 8, .to = 3, .from = 0 }, .{ .which = 6, .to = 5, .from = 0 }, .{ .which = 9, .to = 5, .from = 0 } },
+    // mode 22
+    &.{ .{ .which = 0, .to = 7, .from = 0 }, .{ .which = 11, .to = 0, .from = 0 }, .{ .which = 8, .to = 4, .from = 4 }, .{ .which = 1, .to = 7, .from = 0 }, .{ .which = 7, .to = 5, .from = 5 }, .{ .which = 7, .to = 4, .from = 4 }, .{ .which = 2, .to = 7, .from = 0 }, .{ .which = 10, .to = 5, .from = 5 }, .{ .which = 11, .to = 4, .from = 4 }, .{ .which = 3, .to = 4, .from = 0 }, .{ .which = 10, .to = 4, .from = 4 }, .{ .which = 7, .to = 3, .from = 0 }, .{ .which = 4, .to = 5, .from = 0 }, .{ .which = 10, .to = 3, .from = 0 }, .{ .which = 5, .to = 4, .from = 0 }, .{ .which = 11, .to = 1, .from = 1 }, .{ .which = 8, .to = 3, .from = 0 }, .{ .which = 6, .to = 4, .from = 0 }, .{ .which = 11, .to = 2, .from = 2 }, .{ .which = 9, .to = 4, .from = 0 }, .{ .which = 11, .to = 3, .from = 3 } },
+    // mode 26
+    &.{ .{ .which = 0, .to = 7, .from = 0 }, .{ .which = 11, .to = 1, .from = 1 }, .{ .which = 8, .to = 4, .from = 4 }, .{ .which = 1, .to = 7, .from = 0 }, .{ .which = 8, .to = 5, .from = 5 }, .{ .which = 7, .to = 4, .from = 4 }, .{ .which = 2, .to = 7, .from = 0 }, .{ .which = 11, .to = 5, .from = 5 }, .{ .which = 11, .to = 4, .from = 4 }, .{ .which = 3, .to = 4, .from = 0 }, .{ .which = 10, .to = 4, .from = 4 }, .{ .which = 7, .to = 3, .from = 0 }, .{ .which = 4, .to = 4, .from = 0 }, .{ .which = 11, .to = 0, .from = 0 }, .{ .which = 10, .to = 3, .from = 0 }, .{ .which = 5, .to = 5, .from = 0 }, .{ .which = 8, .to = 3, .from = 0 }, .{ .which = 6, .to = 4, .from = 0 }, .{ .which = 11, .to = 2, .from = 2 }, .{ .which = 9, .to = 4, .from = 0 }, .{ .which = 11, .to = 3, .from = 3 } },
+    // mode 30
+    &.{ .{ .which = 0, .to = 5, .from = 0 }, .{ .which = 10, .to = 4, .from = 4 }, .{ .which = 11, .to = 0, .from = 0 }, .{ .which = 11, .to = 1, .from = 1 }, .{ .which = 8, .to = 4, .from = 4 }, .{ .which = 1, .to = 5, .from = 0 }, .{ .which = 7, .to = 5, .from = 5 }, .{ .which = 8, .to = 5, .from = 5 }, .{ .which = 11, .to = 2, .from = 2 }, .{ .which = 7, .to = 4, .from = 4 }, .{ .which = 2, .to = 5, .from = 0 }, .{ .which = 10, .to = 5, .from = 5 }, .{ .which = 11, .to = 3, .from = 3 }, .{ .which = 11, .to = 5, .from = 5 }, .{ .which = 11, .to = 4, .from = 4 }, .{ .which = 3, .to = 5, .from = 0 }, .{ .which = 7, .to = 3, .from = 0 }, .{ .which = 4, .to = 5, .from = 0 }, .{ .which = 10, .to = 3, .from = 0 }, .{ .which = 5, .to = 5, .from = 0 }, .{ .which = 8, .to = 3, .from = 0 }, .{ .which = 6, .to = 5, .from = 0 }, .{ .which = 9, .to = 5, .from = 0 } },
+};
+
+/// `value`, held in `bits` bits, as the number those bits stand for where
+/// the top one is its sign.
+inline fn bc6Signed(value: i32, bits: u8) i32 {
+    const spare: u5 = @intCast(32 - bits);
+    return value << spare >> spare;
+}
+
+/// An endpoint component unquantized: spread over the 16 bits a half float
+/// has, so that the bits are used to the full and a negative range
+/// interpolates the way a two's complement value does. The
+/// specification's unquantize step, over `bits` of endpoint.
+fn bc6Unquantize(comptime signed: bool, value: i32, bits: u8) i32 {
+    if (!signed) {
+        if (bits >= 15) return value;
+        if (value == 0) return 0;
+        if (value == (@as(i32, 1) << @intCast(bits)) - 1) return 0xFFFF;
+        return ((value << 15) + 0x4000) >> @intCast(bits - 1);
+    }
+    if (bits >= 16) return value;
+    const negative = value < 0;
+    const whole = if (negative) -value else value;
+    var made: i32 = 0;
+    if (whole == 0) {
+        made = 0;
+    } else if (whole >= (@as(i32, 1) << @intCast(bits - 1)) - 1) {
+        made = 0x7FFF;
+    } else {
+        made = ((whole << 15) + 0x4000) >> @intCast(bits - 1);
+    }
+    return if (negative) -made else made;
+}
+
+/// An interpolated component as the half float it stands for: the
+/// specification's final unquantize, which scales the magnitude by 31/64
+/// where the format is unsigned and by 31/32 where it is signed, the sign
+/// going back on afterwards. What comes out is a legal half float, the
+/// largest of them for the largest value.
+inline fn bc6Finish(comptime signed: bool, value: i32) u16 {
+    if (!signed) return @intCast(value * 31 >> 6);
+    const negative = value < 0;
+    const whole = (if (negative) -value else value) * 31 >> 5;
+    return @intCast(if (negative) whole | 0x8000 else whole);
+}
+
+/// The three channels of each of a BC6H block's sixteen texels, as the
+/// half floats they are: 16 bytes read at `at`, and nothing past them.
+/// `signed` is the `_sfloat` form of the format, whose values run either
+/// way from 0; the `_ufloat` one holds nothing under it.
+///
+/// The block is cut into one subset or two, as BC7's is, and each subset
+/// has two endpoints with an index for every texel between them. One of
+/// fourteen modes says how many bits the first endpoint's channels take,
+/// how many the others take as offsets on it, and where in the block
+/// every one of those sits (`bc6_modes`, `bc6_fields`). The endpoints are
+/// then unquantized over the 16 bits of a half float, interpolated as
+/// whole numbers, and scaled into the half float the format means. A mode
+/// the format reserves reads as black. (Since 1.74.)
+pub fn bc6hHalves(comptime signed: bool, at: [*]const u8) [16][3]u16 {
+    @setRuntimeSafety(false);
+    var made: [16][3]u16 = @splat(@splat(0));
+    const low: u32 = at[0] & 0x1F;
+    const number = if (low & 3 < 2) low & 3 else low;
+    const mode = bc6_modes[number] orelse return made;
+    var bits = Bc7Bits{ .at = at, .next = if (number < 2) 2 else 5 };
+
+    // The endpoint components, field by field as Table.F has them: the
+    // bits of one component can lie in several places, and the
+    // high-precision modes hold some of them in reverse.
+    var ends: [4][3]i32 = @splat(@splat(0));
+    for (mode.fields) |field| {
+        const up = field.to >= field.from;
+        const count: u32 = if (up) field.to - field.from + 1 else field.from - field.to + 1;
+        const got = bits.read(count);
+        const into = &ends[field.which / 3][field.which % 3];
+        var sits: i32 = field.from;
+        for (0..count) |k| {
+            if (got >> @intCast(k) & 1 != 0) into.* |= @as(i32, 1) << @intCast(sits);
+            sits += if (up) 1 else -1;
+        }
+    }
+
+    // The first endpoint is a signed value where the texture is; the
+    // others are where it is or where they are offsets on the first,
+    // which they then are, wrapped at the bits the first takes.
+    const epb = mode.bits;
+    const ends_held = mode.subsets * 2;
+    const base = ends[0];
+    if (signed) {
+        for (&ends[0]) |*value| value.* = bc6Signed(value.*, epb);
+    }
+    const mask = (@as(i32, 1) << @intCast(epb)) - 1;
+    for (1..ends_held) |end| {
+        for (&ends[end], mode.deltas, 0..) |*value, width, channel| {
+            if (signed or mode.transformed) value.* = bc6Signed(value.*, width);
+            if (mode.transformed) {
+                value.* = (value.* + if (signed) bc6Signed(base[channel], epb) else base[channel]) & mask;
+                if (signed) value.* = bc6Signed(value.*, epb);
+            }
+        }
+    }
+    var wide: [4][3]i32 = @splat(@splat(0));
+    for (0..ends_held) |end| {
+        for (&wide[end], ends[end]) |*value, raw| value.* = bc6Unquantize(signed, raw, epb);
+    }
+
+    // Which subset each texel is in, and its index between that subset's
+    // two endpoints: the first half of BC7's two-subset table, and its
+    // anchors.
+    const two = mode.subsets == 2;
+    var subsets: [16]u32 = @splat(0);
+    var anchor: u32 = 0;
+    if (two) {
+        const partition = bits.read(5);
+        const picks = bc7_two[partition];
+        for (&subsets, &picks) |*one, pick| one.* = pick;
+        anchor = bc7_anchor_two[partition];
+    }
+    const index_bits: u32 = if (two) 3 else 4;
+    for (&made, 0..) |*texel, k| {
+        const subset = subsets[k];
+        const anchored = k == 0 or (two and k == anchor);
+        const index = bits.read(index_bits - @as(u32, if (anchored) 1 else 0));
+        const weight: i32 = @intCast(bc7Weight(index_bits, index));
+        const first = &wide[subset * 2];
+        const second = &wide[subset * 2 + 1];
+        for (texel, first, second) |*half, a, b| {
+            half.* = bc6Finish(signed, (a * (64 - weight) + b * weight + 32) >> 6);
+        }
+    }
+    return made;
+}
+
+/// The sixteen texels of a BC6H block at `at`, in rows, each 0xAARRGGBB:
+/// the halves `bc6hHalves` reads, each held between 0 and 1 and rounded
+/// to 8 bits the way a float texel is (`floatTexel`), and the alpha
+/// whole - the format holds three channels and no fourth. What is above 1
+/// reads as 255, which is what a colour of 8 bits a channel has to say
+/// about it: `Texture.partsAt` gives a function the halves themselves.
+/// (Since 1.74.)
+pub fn bc6hBlock(comptime signed: bool, at: [*]const u8) [16]u32 {
+    @setRuntimeSafety(false);
+    var made: [16]u32 = undefined;
+    for (&made, bc6hHalves(signed, at)) |*texel, halves| {
+        texel.* = 0xFF00_0000 |
+            @as(u32, byteOfFloat(ofHalf(halves[0]))) << 16 |
+            @as(u32, byteOfFloat(ofHalf(halves[1]))) << 8 |
+            byteOfFloat(ofHalf(halves[2]));
+    }
+    return made;
+}
+
 /// `T` read from `at`, least significant byte first, whatever the alignment.
 inline fn readLittle(comptime T: type, at: [*]const u8) T {
     @setRuntimeSafety(false);
@@ -2621,7 +2890,7 @@ inline fn fetch(comptime format: Format, at: [*]const u8) u32 {
         // is built for blocks and never reads a texture of this.
         .d16 => greyOf8(@truncate(@as(*const u16, @ptrCast(@alignCast(at))).* >> 8)),
         // Never read a texel at a time: `sampleBlocked` has the block.
-        .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc7 => missing_texel,
+        .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc6hu, .bc6hs, .bc7 => missing_texel,
         // A float texel read and rounded where it lies (since 1.45): the
         // decoding is the cost of keeping the floats.
         .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => floatTexel(format, at),
@@ -2639,7 +2908,7 @@ inline fn fetchSpread(comptime format: Format, at: [*]const u8) u64 {
     @setRuntimeSafety(false);
     return switch (format) {
         .rgba8888 => @as(*const u64, @ptrCast(@alignCast(at))).*,
-        .argb8888, .r8, .rgb565, .d16, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc7, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => spread(fetch(format, at)),
+        .argb8888, .r8, .rgb565, .d16, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc6hu, .bc6hs, .bc7, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => spread(fetch(format, at)),
         .rg8, .r16, .rg16, .rgba16 => spread(fetch(format, at)),
         .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => spread(fetch(format, at)),
     };
