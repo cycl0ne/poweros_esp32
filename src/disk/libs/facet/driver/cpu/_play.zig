@@ -82,6 +82,10 @@ pub const Player = struct {
     /// for each, the first's alone until a subpass draws several
     /// together (since 1.51).
     target_opaques: [_render.most_colors]bool = @splat(false),
+    /// Whether the part being drawn reads the colour attachment it draws
+    /// into: its fragment functions are given the tile's own pixels for
+    /// it (`shader.Fragments.keptAt`, since 1.64).
+    reads_target: bool = false,
     /// Something left out for want of room has been reported.
     told_no_room: bool = false,
     /// The sets and the push constants as bound, and the copy of them in
@@ -377,6 +381,8 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, outp
     // Each attachment says for itself whether it has an alpha to read.
     player.target_opaques = @splat(false);
     for (surfaces[0..colors], 0..) |each, k| player.target_opaques[k] = each.format == .rgb565;
+    // What the subpass reads of what it draws (since 1.64).
+    player.reads_target = render_pass.reads_target;
     // The render area, cut to the framebuffer.
     const offset = command.area.offset;
     const left: u32 = @intCast(std.math.clamp(offset.x, 0, @as(i64, framebuffer.width)));

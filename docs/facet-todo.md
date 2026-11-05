@@ -1,6 +1,6 @@
 # facet.library: the work list, by where each item stands in Vulkan
 
-What is left to do in facet.library as of **1.63**, each item with where it
+What is left to do in facet.library as of **1.64**, each item with where it
 bites, what it would take, and **where it stands in Vulkan**, so that a
 morning's work is never spent on something Vulkan 1.0 never had.
 
@@ -32,25 +32,7 @@ In the order I would do them. "Size" is the shape of the work, not a
 promise: small is a day with its tests, medium is a revision of its own,
 large wants splitting first.
 
-### 1.1 A subpass cannot read the attachment it is drawing into
-
-- **Standing:** `1.0 core` for the fragment's own pixel: a subpass
-  self-dependency with `VK_DEPENDENCY_BY_REGION_BIT` and an input
-  attachment of the same image is how Vulkan 1.0 does programmable
-  blending. Reading *another* pixel of it is `above 1.0`
-  (`VK_EXT_shader_framebuffer_fetch`).
-- **Where:** `render/createrenderpass.zig` answers
-  `error_initialization_failed`, because an input attachment is read out of
-  the image's memory and a subpass's own attachment is not there yet.
-- **What it takes:** on the cores, read the *tile* instead of the image for
-  a self-referencing reference: `shader.Resources.input` pointing at the
-  tile's plane for that one attachment, the pass accepting the reference
-  where it names its own colour attachment by region, and the fragment
-  function's own place in the tile. The tiles are where the pixel already
-  is, so this is cheaper here than the copy it replaces.
-- **Size:** medium.
-
-### 1.2 Texel-buffer formats: `_snorm`, `_srgb`, the packed ones, three channels
+### 1.1 Texel-buffer formats: `_snorm`, `_srgb`, the packed ones, three channels
 
 - **Standing:** `1.0 format`.
 - **Where:** `shader.TexelFormat` (append only - it is an `enum(u8)` a
@@ -64,7 +46,7 @@ large wants splitting first.
   hardware carries either - and may stay out.
 - **Size:** small, and it splits by format.
 
-### 1.3 Textures and storage images of whole numbers, and of smaller channels
+### 1.2 Textures and storage images of whole numbers, and of smaller channels
 
 - **Standing:** `1.0 format`.
 - **Where:** `texture.Format` (a plain enum - **append at the end only**,
@@ -82,7 +64,7 @@ large wants splitting first.
 - **Size:** medium to large. Worth splitting: the unorm ones (`r8g8`, 16-bit
   channels) first, the integer read after.
 
-### 1.4 `unnormalized_coordinates` on a sampler
+### 1.3 `unnormalized_coordinates` on a sampler
 
 - **Standing:** `1.0 core`.
 - **Where:** `sampler/createsampler.zig` refuses it; coordinates are 0 to 1
@@ -93,7 +75,7 @@ large wants splitting first.
   A program reading a texture as a table of values is what asks for it.
 - **Size:** small.
 
-### 1.5 A point is one pixel, and no shader writes `PointSize`
+### 1.4 A point is one pixel, and no shader writes `PointSize`
 
 - **Standing:** `1.0 core` for `PointSize`; `1.0 feature` for points wider
   than one pixel (`largePoints`).
@@ -108,7 +90,7 @@ large wants splitting first.
   (`cl.pointSize`).
 - **Size:** small, once the SDK slot is decided.
 
-### 1.6 BC4 to BC7
+### 1.5 BC4 to BC7
 
 - **Standing:** `1.0 format`, under `textureCompressionBC` - which facet
   says yes to for BC1 to BC3 and no further.
@@ -120,7 +102,7 @@ large wants splitting first.
   feature of its own and a far larger decoder, ETC1 is not a Vulkan format.
 - **Size:** BC4/BC5 small; BC6H/BC7 medium each.
 
-### 1.7 `max_resource_size` answers the heap, not the image
+### 1.6 `max_resource_size` answers the heap, not the image
 
 - **Standing:** `1.0 core` wording:
   `VkImageFormatProperties.maxResourceSize` is what an image of that shape

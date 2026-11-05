@@ -29,7 +29,8 @@ const _surface = @import("../surface/_surface.zig");
 /// not draw (BEHAVIOR); `error_format_not_supported` for an attachment in
 /// a format it cannot draw into, or read as an input attachment;
 /// `error_initialization_failed` for a subpass that names an attachment
-/// there is not, or reads one it draws into itself;
+/// there is not, or reads one it draws into itself without saying so in a
+/// dependency by region (BEHAVIOR);
 /// `error_out_of_host_memory`.
 ///
 /// BEHAVIOR:
@@ -113,7 +114,23 @@ const _surface = @import("../surface/_surface.zig");
 /// memory behind it and not the tiles alone - a transient one is refused
 /// (CreateImage).
 ///
-/// Drawing into an attachment
+/// **A subpass may read the colour attachment it is drawing into** since
+/// 1.64, which is Vulkan's self-dependency by region: the subpass names
+/// one of its own colour attachments as an input attachment, and the pass
+/// carries a `SubpassDependency` of that subpass on itself with
+/// DEPENDENCY_BY_REGION. What the fragment function then reads is the
+/// fragment's own pixel as the tile already holds it
+/// (`shader.Fragments.keptAt`), so programmable blending costs no copy
+/// here: the pixel is where the tiles are. It comes with the quads and
+/// not through the descriptor, because every core draws a tile of its own
+/// and one descriptor could not say where each core's tile is - the
+/// `input_attachment` descriptor written for such an attachment still
+/// points at the image's memory, which is what the pass has not written
+/// yet. A subpass of several colour attachments drawn together reads the
+/// first of them this way and no other; reading the depth attachment it
+/// draws into is not among this, and neither is reading another pixel.
+///
+/// Without that dependency, drawing into an attachment
 /// and reading it in the same subpass is a loop, which is
 /// `error_initialization_failed`, and only a device whose
 /// `input_attachments` is true reads any - the cores, not the V3D -
@@ -144,8 +161,10 @@ const _surface = @import("../surface/_surface.zig");
 /// `error_feature_not_present` too.
 ///
 /// Attachments a subpass does not name are left as they are. The
-/// dependencies are not looked at: a queue's commands are done one after
-/// the other.
+/// dependencies say nothing of what waits for what - a queue's commands
+/// are done one after the other - and are read for one thing alone: a
+/// subpass's dependency on itself by region, which lets it read the
+/// attachment it draws into (since 1.64).
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -193,6 +212,10 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
         if (subpass.pipeline_bind_point != .graphics) return .error_feature_not_present;
         // A resolve attachment is multisampling's, which there is none of.
         if (subpass.resolve_attachments != null) return .error_feature_not_present;
+        // The colour attachments of its own this subpass reads: the
+        // fragment's own pixel, out of the tile (since 1.64).
+        var reads_own: [_render.most_attachments]bool = @splat(false);
+        var reads_any = false;
         if (subpass.input_attachment_count != 0) {
             if (!owner.physical.features.input_attachments) return .error_feature_not_present;
             if (subpass.input_attachment_count > _render.most_attachments) return .error_feature_not_present;
@@ -228,11 +251,21 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                     if (_image.hasDepth(read.format) and _image.hasStencil(read.format) and !owner.physical.features.stored_both) return .error_feature_not_present;
                 };
                 if (read.samples != 1) return .error_feature_not_present;
-                // Drawn and read in the same subpass is a loop: the
-                // pixels being read are the ones being written.
+                // Drawn and read in the same subpass: the pixels being
+                // read are the ones being written, which is the
+                // fragment's own pixel and nothing else. Since 1.64 that
+                // is drawn where it lies, in the tile - the pass saying
+                // so in a dependency of the subpass on itself, by region,
+                // as Vulkan wants - and the fragment function is given
+                // what is already there (`shader.Fragments.keptAt`).
+                // Without the dependency it is the loop it always was.
                 if (subpass.color_attachments) |colors| {
                     for (colors[0..subpass.color_attachment_count]) |drawn_now| {
-                        if (drawn_now.attachment == reference.attachment) return .error_initialization_failed;
+                        if (drawn_now.attachment != reference.attachment) continue;
+                        if (depth_read or !byRegion(info, @intCast(number))) return .error_initialization_failed;
+                        if (!owner.physical.features.input_attachments) return .error_feature_not_present;
+                        reads_own[reference.attachment] = true;
+                        reads_any = true;
                     }
                 }
                 if (subpass.depth_stencil_attachment) |depth| if (depth.attachment == reference.attachment) return .error_initialization_failed;
@@ -247,7 +280,10 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
         const together = subpass.flags & facet.SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER != 0;
         if (together and !owner.physical.features.several_outputs) return .error_feature_not_present;
         if (subpass.flags & ~facet.SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER != 0) return .error_feature_not_present;
-        if (number > 0 and sameTargets(info.subpasses[number - 1], subpass)) {
+        // A subpass that reads what it draws is a part of its own: what it
+        // reads is the tile as this part starts, so it does not go on in
+        // the part before it (since 1.64).
+        if (number > 0 and !reads_any and sameTargets(info.subpasses[number - 1], subpass)) {
             plan.subpasses[number] = plan.subpasses[number - 1];
             plan.subpasses[number].joined = true;
             continue;
@@ -341,7 +377,13 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
             const load: _render.ColorLoad = if (color.load_op == .clear and !drawn[color_index]) .clear else .keep;
             if (together) {
                 // The one part draws them all: a plane of each tile for
-                // each of them.
+                // each of them. What it reads of its own is the first of
+                // them, that being the one plane a fragment function is
+                // given; another of them read as well is the loop it was.
+                if (reads_own[color_index]) {
+                    if (k != 0) return .error_initialization_failed;
+                    whole.reads_target = true;
+                }
                 whole.colors[whole.color_count] = color_index;
                 whole.color_formats[whole.color_count] = color.format;
                 whole.color_loads[whole.color_count] = load;
@@ -352,6 +394,7 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                 part.color_formats[0] = color.format;
                 part.color_loads[0] = load;
                 part.color_count = 1;
+                part.reads_target = reads_own[color_index];
                 plan.parts[plan.part_count] = part;
                 plan.part_count += 1;
             }
@@ -372,6 +415,19 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
     made.* = plan;
     render_pass.* = _objects.handle(facet.RenderPass, made);
     return .success;
+}
+
+/// Whether the pass says this subpass depends on itself, by region: what
+/// Vulkan asks for of a subpass that reads the attachment it is drawing
+/// into, and what tells this library to hand the tile's pixels to the
+/// fragment function. (Since 1.64.)
+fn byRegion(info: *const facet.RenderPassCreateInfo, subpass: u32) bool {
+    const given = info.dependencies orelse return false;
+    for (given[0..info.dependency_count]) |one| {
+        if (one.src_subpass == subpass and one.dst_subpass == subpass and
+            one.dependency_flags & facet.DEPENDENCY_BY_REGION != 0) return true;
+    }
+    return false;
 }
 
 /// Whether a subpass draws into just what the one before it does, the

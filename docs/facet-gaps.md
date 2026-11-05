@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.63**, so that a program need not find out by failing. It covers the API.
+1.64**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -345,13 +345,23 @@ exist now. What is left out:
   shader compiler for the QPUs, not on a packet: an input attachment is
   read by a fragment function (`shader.Resources.input`), which is the
   program's own code.
-- **An attachment is read out of the image's memory, not out of the
-  tile.** So it is read where the image stands - what the subpass before
-  it drew and stored - and a subpass cannot read the attachment it is
-  drawing into, which would be a loop: that is
-  `error_initialization_failed`. Vulkan allows exactly that for the
-  fragment's own pixel, which is what `VK_EXT_shader_framebuffer_fetch`
-  and the subpass self-dependency are for.
+- **An attachment another subpass drew is read out of the image's
+  memory**, so it is read where the image stands: what that subpass drew
+  and stored.
+- **A subpass reads the attachment it draws into since 1.64**, which is
+  Vulkan's self-dependency by region: the subpass names its own colour
+  attachment as an input attachment and the pass carries a
+  `SubpassDependency` of that subpass on itself with
+  DEPENDENCY_BY_REGION. What the fragment function reads is the
+  fragment's own pixel as the tile holds it
+  (`shader.Fragments.keptAt`), not the image's memory - the tiles are
+  drawn on every core at once, so one descriptor could not say where
+  each core's tile is, and such a descriptor still points at the image.
+  Without the dependency it is the loop it was,
+  `error_initialization_failed`. What is left out: reading **another**
+  pixel of it, which is `VK_EXT_shader_framebuffer_fetch`'s and no part
+  of Vulkan 1.0; reading the depth attachment the subpass draws into;
+  and, of several colour attachments drawn together, any but the first.
 - **A depth attachment is readable since 1.62**
   (`PhysicalDeviceFeatures.sampled_depth` beside `input_attachments`):
   the image is made IMAGE_USAGE_INPUT_ATTACHMENT of one of the three
@@ -521,7 +531,7 @@ These can be asked for and are answered with `error_feature_not_present`.
 | Colour attachments that differ, on a device that blends them all alike: no device of this library is one (`independent_blend`) | `pipeline/creategraphicspipelines.zig` |
 | Resolve attachments in a subpass | `render/createrenderpass.zig` |
 | An input attachment on a device that reads none: the V3D (`input_attachments`) | `render/createrenderpass.zig` |
-| An input attachment of a colour format whose pixels are not kept in rows (a depth format is read since 1.62) | `render/createrenderpass.zig` |
+| An input attachment of a colour format whose pixels are not kept in rows (a depth format is read since 1.62); a subpass that reads what it draws without a dependency on itself by region (since 1.64) | `render/createrenderpass.zig` |
 | An image both INPUT_ATTACHMENT and SAMPLED, STORAGE or TRANSIENT_ATTACHMENT | `image/createimage.zig` |
 | A depth or stencil op for a plane the format has not, or on a device that keeps neither (`stored_depth`, `stored_stencil`) | `render/createrenderpass.zig` |
 | Present modes but `fifo`, though `immediate`, `mailbox` and `fifo_relaxed` are enumerated: a display shows a buffer from its next frame on, and there is no way to ask it for anything else | `swapchain/createswapchain.zig` |

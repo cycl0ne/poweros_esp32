@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.30 (05.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.31 (05.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -1723,6 +1723,19 @@ const Deferred = struct {
         }
     }
 
+    /// What the attachment being drawn into already holds at this very
+    /// pixel, read out of the tile, its green and blue the other way
+    /// round (since 1.64).
+    fn own(fragments: *const facet.shader.Fragments) callconv(.c) void {
+        for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
+            const kept = fragments.keptAt(quad);
+            inline for (0..4) |i| {
+                const color = kept[i];
+                out[i] = (color & 0xFFFF_0000) | (color & 0xFF) << 8 | (color >> 8 & 0xFF);
+            }
+        }
+    }
+
     const entries = [_]facet.shader.Entry{
         facet.shader.vertex("main", &vertex, 0),
         facet.shader.fragment("main", &write, 0),
@@ -1730,6 +1743,8 @@ const Deferred = struct {
         facet.shader.fragment("read", &read, 0),
         facet.shader.vertex("depth", &vertex, 0),
         facet.shader.fragment("depth", &readDepth, 0),
+        facet.shader.vertex("own", &vertex, 0),
+        facet.shader.fragment("own", &own, 0),
     };
     const code = facet.shader.Code{ .entry_count = entries.len, .entries = &entries };
 };
@@ -1917,6 +1932,37 @@ fn inputChecks(probe: *Probe) void {
     if (!probe.submit()) return probe.check(false, "the two subpasses submitted");
     checkNearColor(probe, 0xFF40_0000, pixelAt(second_pixels, second_pitch, 8, 8), "the depth the subpass before drew, read where the quad covered it");
     checkNearColor(probe, 0xFFFF_0000, pixelAt(second_pixels, second_pitch, 40, 52), "and the depth the clear left, where it did not");
+
+    // 1.64: a subpass that reads the colour attachment it draws into -
+    // the pixel as the tile holds it - where a dependency of the subpass
+    // on itself by region says so.
+    const reads_itself = facet.SubpassDescription{ .input_attachment_count = 1, .input_attachments = &to_first, .color_attachment_count = 1, .color_attachments = &to_first };
+    const by_region = facet.SubpassDependency{ .src_subpass = 0, .dst_subpass = 0, .src_stage_mask = 0, .dst_stage_mask = 0, .dependency_flags = facet.DEPENDENCY_BY_REGION };
+    const one_attachment = [1]facet.AttachmentDescription{.{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general }};
+    const own_pass = probe.renderPass(.{
+        .attachment_count = 1,
+        .attachments = &one_attachment,
+        .subpass_count = 1,
+        .subpasses = @ptrCast(&reads_itself),
+        .dependency_count = 1,
+        .dependencies = @ptrCast(&by_region),
+    }) orelse return probe.check(false, "a subpass that reads what it draws, by region");
+    probe.check(true, "a subpass that reads what it draws, by region");
+    const own_frame = probe.framebuffer(own_pass, &.{second[1]}) orelse return probe.check(false, "a framebuffer for it");
+    const fills = pipelineOf(probe, own_pass, module.?, layout.?, .{}) orelse return probe.check(false, "the pipeline that writes the colour");
+    const mixes = pipelineOf(probe, own_pass, module.?, layout.?, .{ .name = "own" }) orelse return probe.check(false, "the pipeline that reads it back");
+    const own_clear = [1]facet.ClearValue{.{ .color = .{ .float32 = .{ 0, 0, 1, 1 } } }};
+    const own_commands = probe.record() orelse return probe.check(false, "a recording of the two draws");
+    fb.CmdBeginRenderPass(own_commands, &.{ .render_pass = own_pass, .framebuffer = own_frame, .render_area = area, .clear_value_count = 1, .clear_values = &own_clear }, .@"inline");
+    fb.CmdBindVertexBuffers(own_commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdBindPipeline(own_commands, .graphics, fills);
+    fb.CmdDraw(own_commands, 6, 1, 0, 0);
+    fb.CmdBindPipeline(own_commands, .graphics, mixes);
+    fb.CmdDraw(own_commands, 6, 1, 0, 0);
+    fb.CmdEndRenderPass(own_commands);
+    if (!probe.submit()) return probe.check(false, "the two draws submitted");
+    probe.checkEqual(Deferred.swapped, pixelAt(second_pixels, second_pitch, 8, 8), "what the draw before it left at the pixel, read out of the tile");
+    probe.checkEqual(Deferred.swapped, pixelAt(second_pixels, second_pitch, 40, 52), "the same in another tile");
 }
 
 // --- 1.38: a stencil that outlives its pass ----------------------------------

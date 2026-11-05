@@ -5002,6 +5002,159 @@ test "a depth attachment read as an input attachment: what the subpass before dr
     }
 }
 
+/// A subpass that reads the attachment it draws into: one function writes
+/// a colour, the other reads what is already at the pixel and writes it
+/// back with its green and blue the other way round (1.64).
+const SelfRead = struct {
+    const half = [6][3]f32{ .{ -1, -1, 0.5 }, .{ 0, -1, 0.5 }, .{ -1, 1, 0.5 }, .{ -1, 1, 0.5 }, .{ 0, -1, 0.5 }, .{ 0, 1, 0.5 } };
+    const whole = [6][3]f32{ .{ -1, -1, 0.5 }, .{ 1, -1, 0.5 }, .{ -1, 1, 0.5 }, .{ -1, 1, 0.5 }, .{ 1, -1, 0.5 }, .{ 1, 1, 0.5 } };
+    const written: u32 = 0xFF11_2233;
+
+    fn vertex(vertices: *const shader.Vertices) callconv(.c) void {
+        for (0..vertices.count) |k| {
+            const p = vertices.input(@intCast(k), 0);
+            vertices.output(@intCast(k))[0..4].* = .{ p[0], p[1], p[2], 1 };
+        }
+    }
+
+    fn write(fragments: *const shader.Fragments) callconv(.c) void {
+        shader.fill(fragments, written);
+    }
+
+    fn mix(fragments: *const shader.Fragments) callconv(.c) void {
+        for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
+            const kept = fragments.keptAt(quad);
+            inline for (0..4) |i| {
+                const color = kept[i];
+                out[i] = (color & 0xFFFF_0000) | (color & 0xFF) << 8 | (color >> 8 & 0xFF);
+            }
+        }
+    }
+
+    const entries = [_]shader.Entry{
+        shader.vertex("write", &vertex, 0),
+        shader.fragment("write", &write, 0),
+        shader.vertex("mix", &vertex, 0),
+        shader.fragment("mix", &mix, 0),
+    };
+    const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
+};
+
+test "a subpass that reads the attachment it draws into: the pixel as the tile holds it, where a dependency by region says so" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+
+    const picture = try Picture.of(&bench, 64, 64);
+    const attachment = facet.AttachmentDescription{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general };
+    const its_own = [1]facet.AttachmentReference{.{ .attachment = 0, .layout = .general }};
+    const reads_itself = facet.SubpassDescription{
+        .input_attachment_count = 1,
+        .input_attachments = &its_own,
+        .color_attachment_count = 1,
+        .color_attachments = &its_own,
+    };
+    const by_region = facet.SubpassDependency{
+        .src_subpass = 0,
+        .dst_subpass = 0,
+        .src_stage_mask = 0,
+        .dst_stage_mask = 0,
+        .dependency_flags = facet.DEPENDENCY_BY_REGION,
+    };
+    const whole_pass = facet.RenderPassCreateInfo{
+        .attachment_count = 1,
+        .attachments = @ptrCast(&attachment),
+        .subpass_count = 1,
+        .subpasses = @ptrCast(&reads_itself),
+        .dependency_count = 1,
+        .dependencies = @ptrCast(&by_region),
+    };
+
+    // Without the dependency it is the loop it always was; with a
+    // dependency that is not by region, too.
+    var refused: ?*facet.RenderPass = null;
+    var without = whole_pass;
+    without.dependency_count = 0;
+    without.dependencies = null;
+    try testing.expectEqual(facet.Result.error_initialization_failed, fb.CreateRenderPass(device, &without, &refused));
+    const not_by_region = facet.SubpassDependency{ .src_subpass = 0, .dst_subpass = 0, .src_stage_mask = 0, .dst_stage_mask = 0 };
+    var whole_frame = whole_pass;
+    whole_frame.dependencies = @ptrCast(&not_by_region);
+    try testing.expectEqual(facet.Result.error_initialization_failed, fb.CreateRenderPass(device, &whole_frame, &refused));
+    try testing.expect(refused == null);
+
+    var pass_made: ?*facet.RenderPass = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &whole_pass, &pass_made));
+    defer fb.DestroyRenderPass(device, pass_made);
+    const pass = pass_made.?;
+
+    // Reading the depth attachment it draws into is not among this,
+    // dependency or no dependency.
+    const with_depth = [2]facet.AttachmentDescription{
+        attachment,
+        .{ .format = .d16_unorm, .final_layout = .general },
+    };
+    const of_depth = [1]facet.AttachmentReference{.{ .attachment = 1, .layout = .general }};
+    const reads_depth = facet.SubpassDescription{
+        .input_attachment_count = 1,
+        .input_attachments = &of_depth,
+        .color_attachment_count = 1,
+        .color_attachments = &its_own,
+        .depth_stencil_attachment = &of_depth[0],
+    };
+    try testing.expectEqual(facet.Result.error_initialization_failed, fb.CreateRenderPass(device, &.{
+        .attachment_count = 2,
+        .attachments = &with_depth,
+        .subpass_count = 1,
+        .subpasses = @ptrCast(&reads_depth),
+        .dependency_count = 1,
+        .dependencies = @ptrCast(&by_region),
+    }, &refused));
+    try testing.expect(refused == null);
+
+    const shaders = try module(&bench, &SelfRead.code);
+    defer fb.DestroyShaderModule(device, shaders);
+    const layout = try pipelineLayout(&bench, &.{}, 0);
+    defer fb.DestroyPipelineLayout(device, layout);
+    const frame = try framebuffer(&bench, pass, &.{picture.view}, 64, 64);
+    defer fb.DestroyFramebuffer(device, frame);
+    const made_writer, const writer = makePipeline(&bench, .{ .module = shaders, .name = "write", .layout = layout, .pass = pass });
+    try testing.expectEqual(facet.Result.success, made_writer);
+    defer fb.DestroyPipeline(device, writer);
+    const made_mixer, const mixer = makePipeline(&bench, .{ .module = shaders, .name = "mix", .layout = layout, .pass = pass });
+    try testing.expectEqual(facet.Result.success, made_mixer);
+    defer fb.DestroyPipeline(device, mixer);
+
+    const vertex_buffer, const vertex_bytes = try bench.buffer(256, facet.BUFFER_USAGE_VERTEX_BUFFER);
+    const quad_bytes = @sizeOf(@TypeOf(SelfRead.half));
+    @memcpy(vertex_bytes[0..quad_bytes], std.mem.asBytes(&SelfRead.half));
+    @memcpy(vertex_bytes[quad_bytes..][0..quad_bytes], std.mem.asBytes(&SelfRead.whole));
+    const first_quad: u64 = 0;
+    const second_quad: u64 = quad_bytes;
+    const blue = clears(0xFF00_00FF);
+
+    // The first draw writes its colour over the left half; the second
+    // draws over the whole of it, reading what is at each pixel - the
+    // first draw's colour on the left, the clear's on the right.
+    const commands = try bench.record();
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 1, .clear_values = &blue }, .@"inline");
+    fb.CmdBindPipeline(commands, .graphics, writer.?);
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&first_quad));
+    fb.CmdDraw(commands, 6, 1, 0, 0);
+    fb.CmdBindPipeline(commands, .graphics, mixer.?);
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&second_quad));
+    fb.CmdDraw(commands, 6, 1, 0, 0);
+    fb.CmdEndRenderPass(commands);
+    try bench.submit();
+
+    const swapped = SelfRead.written & 0xFFFF_0000 | (SelfRead.written & 0xFF) << 8 | (SelfRead.written >> 8 & 0xFF);
+    try testing.expectEqual(swapped, picture.at(16, 8));
+    try testing.expectEqual(swapped, picture.at(16, 40));
+    try testing.expectEqual(@as(u32, 0xFF00_FF00), picture.at(48, 8));
+    try testing.expectEqual(@as(u32, 0xFF00_FF00), picture.at(48, 40));
+}
+
 /// Two colours within `apart` of each other in every channel: what a
 /// blend by a constant may differ by between one rounding and another.
 fn nearColor(wanted: u32, found: u32, apart: u32) !void {

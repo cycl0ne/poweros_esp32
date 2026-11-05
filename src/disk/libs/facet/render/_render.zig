@@ -64,6 +64,12 @@ pub const Part = struct {
     /// (`PhysicalDeviceFeatures.stored_stencil`).
     loads_stencil: bool = false,
     stores_stencil: bool = false,
+    /// Whether the subpass reads the colour attachment this part draws
+    /// into: it named it as an input attachment of its own and the pass
+    /// has a self-dependency by region for it, so the fragment function
+    /// is given the pixels already in the tile
+    /// (`shader.Fragments.keptAt`, since 1.64).
+    reads_target: bool = false,
 };
 
 pub const Subpass = struct {

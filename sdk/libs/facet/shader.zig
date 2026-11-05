@@ -1335,6 +1335,14 @@ pub const Fragments = extern struct {
     /// stand for its pixels: each has to divide.
     exact: bool,
     resources: *const Resources,
+    /// The pixels already in the attachment this call writes, 0xAARRGGBB,
+    /// `target_pitch` of them from one row to the next, as the tile holds
+    /// them: what a subpass that reads the attachment it draws into sees
+    /// (since 1.64). Null for every other draw, which is all of them
+    /// until a subpass names its own colour attachment as an input
+    /// attachment. `keptAt` is the way to a quad's four.
+    target: ?[*]const u32 = null,
+    target_pitch: u32 = 0,
     /// The colour attachments the function writes in this call: 1 for
     /// every fragment function but one of a `shader.fragmentOutputs`
     /// entry drawing a subpass whose attachments go together
@@ -1349,6 +1357,29 @@ pub const Fragments = extern struct {
     pub inline fn colorsOf(fragments: *const Fragments, output: u32) [*][4]u32 {
         const at = @min(output, fragments.output_count - 1);
         return fragments.colors + at * fragments.count;
+    }
+
+    /// The four colours already in the attachment at a quad's pixels, in
+    /// the order its `colors` take them: what the subpasses before this
+    /// one left there, and what this draw itself left where a triangle
+    /// covered the pixel already. Transparent black for every draw that
+    /// does not read what it draws. (Since 1.64.)
+    ///
+    /// This is a subpass reading the attachment it is drawing into - the
+    /// fragment's own pixel, which is what Vulkan's self-dependency by
+    /// region allows - and it comes with the quads rather than through a
+    /// descriptor because the pixel is in the tile, and the tiles are
+    /// drawn on every core at once: one `input_attachment` descriptor
+    /// could not say where each core's tile is. `Resources.input` is for
+    /// an attachment another subpass drew, which is in the image's
+    /// memory.
+    pub inline fn keptAt(fragments: *const Fragments, quad: Quad) [4]u32 {
+        @setRuntimeSafety(false);
+        const from = fragments.target orelse return .{ 0, 0, 0, 0 };
+        const at = from + @as(u32, quad.y) * fragments.target_pitch + quad.x;
+        var made: [4]u32 = undefined;
+        inline for (&made, 0..) |*color, i| color.* = at[(i >> 1) * fragments.target_pitch + (i & 1)];
+        return made;
     }
 };
 

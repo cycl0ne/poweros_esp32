@@ -4710,7 +4710,8 @@ fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const facet.
 not draw (BEHAVIOR); `error_format_not_supported` for an attachment in
 a format it cannot draw into, or read as an input attachment;
 `error_initialization_failed` for a subpass that names an attachment
-there is not, or reads one it draws into itself;
+there is not, or reads one it draws into itself without saying so in a
+dependency by region (BEHAVIOR);
 `error_out_of_host_memory`.
 
 **BEHAVIOR**
@@ -4795,7 +4796,23 @@ is one made IMAGE_USAGE_INPUT_ATTACHMENT, which for a depth means
 memory behind it and not the tiles alone - a transient one is refused
 (CreateImage).
 
-Drawing into an attachment
+**A subpass may read the colour attachment it is drawing into** since
+1.64, which is Vulkan's self-dependency by region: the subpass names
+one of its own colour attachments as an input attachment, and the pass
+carries a `SubpassDependency` of that subpass on itself with
+DEPENDENCY_BY_REGION. What the fragment function then reads is the
+fragment's own pixel as the tile already holds it
+(`shader.Fragments.keptAt`), so programmable blending costs no copy
+here: the pixel is where the tiles are. It comes with the quads and
+not through the descriptor, because every core draws a tile of its own
+and one descriptor could not say where each core's tile is - the
+`input_attachment` descriptor written for such an attachment still
+points at the image's memory, which is what the pass has not written
+yet. A subpass of several colour attachments drawn together reads the
+first of them this way and no other; reading the depth attachment it
+draws into is not among this, and neither is reading another pixel.
+
+Without that dependency, drawing into an attachment
 and reading it in the same subpass is a loop, which is
 `error_initialization_failed`, and only a device whose
 `input_attachments` is true reads any - the cores, not the V3D -
@@ -4826,8 +4843,10 @@ drawn as it always was. Any other bit in `flags` is
 `error_feature_not_present` too.
 
 Attachments a subpass does not name are left as they are. The
-dependencies are not looked at: a queue's commands are done one after
-the other.
+dependencies say nothing of what waits for what - a queue's commands
+are done one after the other - and are read for one thing alone: a
+subpass's dependency on itself by region, which lets it read the
+attachment it draws into (since 1.64).
 
 **CONTEXT**
 

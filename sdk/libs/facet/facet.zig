@@ -1444,6 +1444,11 @@ pub const SubpassDescription = extern struct {
 /// SubpassDependency's subpass for the work outside the pass.
 pub const SUBPASS_EXTERNAL: u32 = ~@as(u32, 0);
 
+/// SubpassDependency.dependency_flags: the work depends on what was
+/// written at the same pixel alone, which is what lets a subpass read the
+/// attachment it is drawing into (`CreateRenderPass`, since 1.64).
+pub const DEPENDENCY_BY_REGION: u32 = 0x1;
+
 /// What one subpass's work waits for of another's, or of the work
 /// outside the pass.
 pub const SubpassDependency = extern struct {

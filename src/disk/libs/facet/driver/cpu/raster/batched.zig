@@ -191,6 +191,10 @@ pub const State = struct {
     discards: bool = false,
     fragment: shader.FragmentFn,
     resources: *const shader.Resources,
+    /// Whether the fragment function is given the pixels already in the
+    /// tile: a subpass that reads the attachment it draws into
+    /// (`shader.Fragments.keptAt`, since 1.64).
+    reads_target: bool = false,
     /// Where the pixels that passed the tests and were not dropped are
     /// counted - an occlusion query's samples - and where the pixels the
     /// fragment function was called for are. Null for a draw nothing is
@@ -249,6 +253,9 @@ const Shading = struct {
     /// What a query counts of the pixels (`State.samples`).
     samples: ?*u32,
     fragments: ?*u32,
+    /// The fragment function reads the attachment it writes, out of the
+    /// tile (since 1.64).
+    reads_target: bool,
 };
 
 /// A triangle set up for the tiles: its planes follow it.
@@ -323,6 +330,7 @@ fn setUpAll(target: *Target, state: *const State, vertices: []const f32, stride:
         .discards = state.discards,
         .samples = state.samples,
         .fragments = state.fragments,
+        .reads_target = state.reads_target,
     };
     const test_kind: Test = if (by_pixel) .stencil else if (!depth) .off else switch (compare) {
         .less => .less,
@@ -738,6 +746,14 @@ const Batch = struct {
         // tile keeps for its part; the one colour a draw usually writes
         // stays on the stack, where it always was. (Since 1.51.)
         if (shading.color_count > 1) batch.fragments.colors = tile.extra_colors.?;
+        // A subpass that reads the attachment it draws into is given the
+        // tile's own pixels for it, where they already are: the first
+        // plane, which is what the function writes as `colors`
+        // (since 1.64).
+        if (shading.reads_target) {
+            batch.fragments.target = tile.plane(0);
+            batch.fragments.target_pitch = tile_size;
+        }
     }
 
     /// The quads gathered coloured by the fragment function, and the

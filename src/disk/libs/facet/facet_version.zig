@@ -762,10 +762,35 @@ pub const LIBRARY_VERSION = 1;
 /// one reads the level it chose out of that level's rows rather than the
 /// first level's. So a shadow map and its smaller copies are the levels
 /// of one image, drawn into one by one and sampled as one texture.
+/// 64: a subpass reads the colour attachment it is drawing into. Before
+/// this `CreateRenderPass` answered `error_initialization_failed` for an
+/// input reference naming an attachment the subpass draws - a loop, the
+/// pixels being read the ones being written - so programmable blending
+/// meant a pass of its own and a copy.
+/// Now it is Vulkan's self-dependency by region: the subpass names its
+/// own colour attachment as an input attachment and the pass carries a
+/// `SubpassDependency` of that subpass on itself with
+/// DEPENDENCY_BY_REGION (which the dependencies are read for, and for
+/// nothing else). The fragment function is then given the fragment's own
+/// pixel as the tile already holds it - `shader.Fragments.target` and
+/// `keptAt`, the four colours of a quad - so the read costs nothing but
+/// the load: the pixel is where the tiles are, which is cheaper here than
+/// the copy it replaces.
+/// It comes with the quads and not through the descriptor because every
+/// core draws a tile of its own, and one `input_attachment` descriptor
+/// could not say where each core's tile is; such a descriptor still
+/// points at the image's memory, which the pass has not written yet.
+/// `Resources.input` stays what it is, for an attachment an earlier
+/// subpass drew.
+/// A subpass that reads what it draws is a part of its own, never joined
+/// to the part before it, since what it reads is the tile as that part
+/// starts. One of several colour attachments drawn together reads the
+/// first of them and no other; the depth attachment it draws into it
+/// does not read, and neither does it read another pixel.
 /// What stays: `fifo` is the one present mode, there being no way to ask a
 /// display to show a buffer before its next frame; one queue family of one
 /// queue; a counter of 32 bits, for want of a 64-bit atomic on every
 /// machine the library runs on; and no point mode in tessellation, the
 /// tessellator emitting triangles or the lines of `isolines` and nothing
 /// emitting a patch's points on their own.
-pub const LIBRARY_REVISION = 63;
+pub const LIBRARY_REVISION = 64;

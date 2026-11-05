@@ -213,6 +213,9 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
         .discards = pipeline.fixed.discards(),
         .fragment = pipeline.fragment,
         .resources = resources,
+        // The pixels already in the tile, for a subpass that reads the
+        // attachment it draws into (since 1.64).
+        .reads_target = player.reads_target,
         .samples = counters.samples,
         .fragments = counters.fragment_invocations,
     };
