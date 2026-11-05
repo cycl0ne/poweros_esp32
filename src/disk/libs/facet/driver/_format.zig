@@ -84,7 +84,7 @@ fn describe(format: facet.Format, keeps_blocks: bool) facet.FormatProperties {
         .s8_uint, .d16_unorm_s8_uint => .{ .linear_tiling_features = 0, .optimal_tiling_features = facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT | transfer, .buffer_features = 0 },
         // Compressed: sampled and written, and read back as well where the
         // blocks are kept, there being something of the format to read.
-        .bc1_rgb_unorm_block, .bc1_rgba_unorm_block, .bc2_unorm_block, .bc3_unorm_block, .bc4_unorm_block, .bc5_unorm_block => .{
+        .bc1_rgb_unorm_block, .bc1_rgba_unorm_block, .bc2_unorm_block, .bc3_unorm_block, .bc4_unorm_block, .bc5_unorm_block, .bc7_unorm_block => .{
             .linear_tiling_features = 0,
             .optimal_tiling_features = sampled | facet.FORMAT_FEATURE_TRANSFER_DST |
                 if (keeps_blocks) facet.FORMAT_FEATURE_TRANSFER_SRC else 0,

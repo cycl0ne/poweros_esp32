@@ -1000,10 +1000,43 @@ pub const LIBRARY_VERSION = 1;
 /// wants the read a whole number got in 1.70. BC6H and BC7 are still out,
 /// and they are decoders of their own rather than a block this library
 /// already had.
+/// 73: BC7, four channels in the same sixteen bytes. Where BC1 to BC5
+/// hold two endpoints and one index a texel, a BC7 block is cut into one,
+/// two or three subsets by one of 64 patterns, each subset with two
+/// endpoints of its own and each texel an index saying how far between
+/// them it stands. One of eight modes says how many bits every one of
+/// those takes, whether a p-bit stands under each endpoint or one is
+/// shared by a subset's pair, and whether a second set of indices moves
+/// the alpha apart from the colour - with a rotation that then swaps that
+/// alpha into the red, the green or the blue. It is the one block of
+/// these to hold a smooth alpha beside a sharp colour, which is what BC3
+/// cannot: a quarter of the memory the texels take, against BC1's eighth.
+/// `texture.bc7Block` reads one: the mode is the zeros of the low byte
+/// before its first 1, the fields follow it lowest bit first, a channel
+/// is scaled to a byte by putting the p-bit under it and repeating the
+/// top bits into what is left, and the one index each subset is anchored
+/// at has a bit fewer - the endpoints being ordered so its top bit would
+/// be 0. A low byte of nothing is reserved by the format, and reads as
+/// transparent black rather than refusing the block. The tables are the
+/// specification's: `bc7_two` and `bc7_three` for the patterns,
+/// `bc7_anchor_two`, `bc7_anchor_three_second` and
+/// `bc7_anchor_three_third` for the anchors, and the weights of 2, 3 and
+/// 4 bits out of 64.
+/// `bc7_unorm_block` is the facet format and `texture.Format` has `bc7`
+/// appended, 16 bytes a block against the 128 its texels take unpacked.
+/// It goes the way the others go: kept in its blocks on a device that
+/// samples them (`PhysicalDeviceFeatures.kept_compressed`, the cores),
+/// copied in and out as it lies, unpacked into 8888 on a device whose
+/// texture unit is fed texels (the V3D), and sampled by a form built for
+/// the format or through the run-time sampler by one built for 8888. It
+/// is no colour attachment and nothing compresses into one. The `_srgb`
+/// form is not here: a texture of this library is read as it lies. BC6H
+/// is still out: its endpoints are half-floats, and its texels run past
+/// 1, which is a float texture's ground rather than a colour's.
 /// What stays: `fifo` is the one present mode, there being no way to ask a
 /// display to show a buffer before its next frame; one queue family of one
 /// queue; a counter of 32 bits, for want of a 64-bit atomic on every
 /// machine the library runs on; and no point mode in tessellation, the
 /// tessellator emitting triangles or the lines of `isolines` and nothing
 /// emitting a patch's points on their own.
-pub const LIBRARY_REVISION = 72;
+pub const LIBRARY_REVISION = 73;

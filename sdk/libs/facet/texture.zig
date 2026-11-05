@@ -194,6 +194,18 @@ pub const Format = enum {
     /// (Since 1.72.)
     bc4,
     bc5,
+    /// BC7: four channels in 16 bytes a block, where BC1 to BC3 hold
+    /// three of 565 and a coarse alpha. A block is cut into one, two or
+    /// three subsets by one of 64 patterns, each with two endpoints and
+    /// an index for every texel saying how far between them it stands;
+    /// one of eight modes says how many bits each of those takes, whether
+    /// the endpoints carry an alpha of their own, and whether a second
+    /// set of indices moves the alpha apart from the colour. It is the
+    /// one block of these that holds a smooth alpha and a sharp colour at
+    /// once, at the same quarter of the memory `bc1` costs an eighth of.
+    /// Kept in its blocks on a device that samples them
+    /// (`PhysicalDeviceFeatures.kept_compressed`). (Since 1.73.)
+    bc7,
 
     /// The bytes a texel is kept in; 0 for a compressed format, whose
     /// texels have no size of their own (`blockLog2`).
@@ -210,7 +222,7 @@ pub const Format = enum {
             .rgba32f => 4,
             .argb8888, .rg11b10f, .rgb9e5, .r32f, .rg16 => 2,
             .rgb565, .d16, .rg8, .r16 => 1,
-            .r8, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5 => 0,
+            .r8, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc7 => 0,
             // The whole numbers of 1.70: one channel, two or four, of 8,
             // 16 or 32 bits, which is 1 to 16 bytes a texel.
             .r8u, .r8i => 0,
@@ -238,7 +250,7 @@ pub const Format = enum {
             .rg8u, .rg8i, .r16u, .r16i => 5,
             .r8u, .r8i => 4,
             // 16 texels of one byte, and the blocks of 8 and of 16.
-            .r8, .bc2, .bc3, .bc5 => 4,
+            .r8, .bc2, .bc3, .bc5, .bc7 => 4,
             .bc1, .bc1_rgb, .bc4 => 3,
         };
     }
@@ -253,7 +265,7 @@ pub const Format = enum {
     /// (`blockOf`). (Since 1.44.)
     pub fn compressed(format: Format) bool {
         return switch (format) {
-            .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5 => true,
+            .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc7 => true,
             .rgba8888, .argb8888, .rgb565, .r8, .d16, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => false,
             .rg8, .r16, .rg16, .rgba16 => false,
             .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => false,
@@ -269,7 +281,7 @@ pub const Format = enum {
     pub fn floats(format: Format) bool {
         return switch (format) {
             .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => true,
-            .rgba8888, .argb8888, .rgb565, .r8, .d16, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5 => false,
+            .rgba8888, .argb8888, .rgb565, .r8, .d16, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc7 => false,
             .rg8, .r16, .rg16, .rgba16 => false,
             .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => false,
         };
@@ -285,7 +297,7 @@ pub const Format = enum {
     pub fn channels(format: Format) bool {
         return switch (format) {
             .rg8, .r16, .rg16, .rgba16 => true,
-            .rgba8888, .argb8888, .rgb565, .r8, .d16, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5 => false,
+            .rgba8888, .argb8888, .rgb565, .r8, .d16, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc7 => false,
             .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => false,
             // Whole numbers are their own kind: `wholes` (since 1.70).
             .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => false,
@@ -359,7 +371,7 @@ pub const Format = enum {
     pub fn small(format: Format) bool {
         return switch (format) {
             .argb8888, .r8, .rg8, .r16, .rg16 => true,
-            .rgba8888, .rgb565, .d16, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => false,
+            .rgba8888, .rgb565, .d16, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc7, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => false,
             // Eight bytes, as a spread colour is, and still read channel
             // by channel (since 1.69).
             .rgba16 => false,
@@ -756,7 +768,7 @@ pub const Texture = struct {
             .r8 => at[0] = @truncate(texel),
             // Nothing is written a texel at a time into a texture that
             // keeps what it was given: `putTexels` moves the bytes.
-            .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => {},
+            .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc7, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => {},
             .rg8, .r16, .rg16, .rgba16 => {},
             .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => {},
         }
@@ -772,7 +784,7 @@ pub const Texture = struct {
             .argb8888 => @as(*const u32, @ptrCast(@alignCast(at))).*,
             .rgb565, .d16 => @as(*const u16, @ptrCast(@alignCast(at))).*,
             .r8 => at[0],
-            inline .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5 => |one| blockOf(one, at)[(y % block) * block + (x % block)],
+            inline .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc7 => |one| blockOf(one, at)[(y % block) * block + (x % block)],
             inline .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => |one| floatTexel(one, at),
             // The channels made into a colour, as a float texel is
             // (since 1.69): the top 8 bits of each.
@@ -869,7 +881,7 @@ pub const Texture = struct {
             .d16 => (color >> 16 & 0xFF) * 0x101,
             // Nothing is written a texel at a time into a compressed
             // texture: `putLayer` leaves it as it lies.
-            .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5 => 0,
+            .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc7 => 0,
             .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => unreachable,
             .rg8, .r16, .rg16, .rgba16 => unreachable,
             .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => unreachable,
@@ -1030,7 +1042,7 @@ pub const Texture = struct {
             .d16 => greyOf8(@truncate(texel >> 8)),
             // Decoded already: `peekLayer` read it out of its block, out
             // of its floats, or out of its channels.
-            .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => texel,
+            .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc7, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => texel,
             .rg8, .r16, .rg16, .rgba16 => texel,
             .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => texel,
         };
@@ -1180,7 +1192,7 @@ pub const Texture = struct {
                     .rgba8888, .argb8888 => std.mem.readInt(u32, row[x * 4 ..][0..4], .little),
                     .rgb565, .d16 => std.mem.readInt(u16, row[x * 2 ..][0..2], .little),
                     .r8 => row[x],
-                    .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => unreachable,
+                    .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc7, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => unreachable,
                     .rg8, .r16, .rg16, .rgba16 => unreachable,
                     .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => unreachable,
                 };
@@ -1878,8 +1890,13 @@ inline fn partsOf(value: f32, comptime bits: u5, comptime biased_by: i32) u32 {
 /// BC4 and BC5 are that alpha block over one channel and over two, and
 /// hold no endpoint colour: they read as (red, 0, 0, 1) and
 /// (red, green, 0, 1). (Since 1.72.)
+///
+/// BC7 is another block altogether, read by `bc7Block`: subsets, modes
+/// and up to four bits an index, in the same 16 bytes. (Since 1.73.)
 pub fn blockOf(comptime format: Format, at: [*]const u8) [16]u32 {
     @setRuntimeSafety(false);
+    // BC7 shares nothing with the others but its size (since 1.73).
+    if (format == .bc7) return bc7Block(at);
     // BC4 and BC5 hold no endpoint colour at all: one channel and two,
     // each the block BC3 keeps its alpha in, read as (red, 0, 0, 1) and
     // (red, green, 0, 1) (since 1.72).
@@ -1992,6 +2009,372 @@ inline fn blockAlphas(at: [*]const u8) [16]u8 {
     for (&made, 0..) |*alpha, k| alpha.* = table[@intCast(bits >> @intCast(k * 3) & 7)];
     return made;
 }
+
+
+// --- BC7 ---------------------------------------------------------------------
+
+/// What one of BC7's eight modes holds: the subsets its block is cut into,
+/// and the bits each field takes - the specification's Table.M. The fields
+/// lie in the block in this order, from the bit after the mode up: the
+/// partition, the rotation, the index selection, the colours, the alphas,
+/// the p-bits, the indices and the second indices. (Since 1.73.)
+const Bc7Mode = struct {
+    subsets: u5,
+    partition: u5,
+    rotation: u5,
+    selection: u5,
+    color: u5,
+    alpha: u5,
+    /// Whether each endpoint has a p-bit of its own, or the two endpoints
+    /// of a subset share one.
+    endpoint_pbits: u5,
+    shared_pbits: u5,
+    indices: u5,
+    indices2: u5,
+};
+
+const bc7_modes = [8]Bc7Mode{
+    .{ .subsets = 3, .partition = 4, .rotation = 0, .selection = 0, .color = 4, .alpha = 0, .endpoint_pbits = 1, .shared_pbits = 0, .indices = 3, .indices2 = 0 },
+    .{ .subsets = 2, .partition = 6, .rotation = 0, .selection = 0, .color = 6, .alpha = 0, .endpoint_pbits = 0, .shared_pbits = 1, .indices = 3, .indices2 = 0 },
+    .{ .subsets = 3, .partition = 6, .rotation = 0, .selection = 0, .color = 5, .alpha = 0, .endpoint_pbits = 0, .shared_pbits = 0, .indices = 2, .indices2 = 0 },
+    .{ .subsets = 2, .partition = 6, .rotation = 0, .selection = 0, .color = 7, .alpha = 0, .endpoint_pbits = 1, .shared_pbits = 0, .indices = 2, .indices2 = 0 },
+    .{ .subsets = 1, .partition = 0, .rotation = 2, .selection = 1, .color = 5, .alpha = 6, .endpoint_pbits = 0, .shared_pbits = 0, .indices = 2, .indices2 = 3 },
+    .{ .subsets = 1, .partition = 0, .rotation = 2, .selection = 0, .color = 7, .alpha = 8, .endpoint_pbits = 0, .shared_pbits = 0, .indices = 2, .indices2 = 2 },
+    .{ .subsets = 1, .partition = 0, .rotation = 0, .selection = 0, .color = 7, .alpha = 7, .endpoint_pbits = 1, .shared_pbits = 0, .indices = 4, .indices2 = 0 },
+    .{ .subsets = 2, .partition = 6, .rotation = 0, .selection = 0, .color = 5, .alpha = 5, .endpoint_pbits = 1, .shared_pbits = 0, .indices = 2, .indices2 = 0 },
+};
+
+/// How far between the two endpoints an index of 2, 3 or 4 bits stands,
+/// out of 64: the specification's interpolation factors. (Since 1.73.)
+const bc7_weights2 = [4]u32{ 0, 21, 43, 64 };
+const bc7_weights3 = [8]u32{ 0, 9, 18, 27, 37, 46, 55, 64 };
+const bc7_weights4 = [16]u32{ 0, 4, 9, 13, 17, 21, 26, 30, 34, 38, 43, 47, 51, 55, 60, 64 };
+
+inline fn bc7Weight(bits: u32, index: u32) u32 {
+    return switch (bits) {
+        2 => bc7_weights2[index & 3],
+        3 => bc7_weights3[index & 7],
+        else => bc7_weights4[index & 15],
+    };
+}
+
+/// Between two endpoint channels, `weight` of 64 of the way: the
+/// specification's interpolation, which rounds to the nearest.
+inline fn bc7Mix(a: u32, b: u32, weight: u32) u32 {
+    return (a * (64 - weight) + b * weight + 32) >> 6;
+}
+
+/// A block's bits, the lowest first: how BC7 keeps its fields, LSB to MSB
+/// in byte order. (Since 1.73.)
+const Bc7Bits = struct {
+    at: [*]const u8,
+    next: u32,
+
+    fn read(bits: *Bc7Bits, count: u32) u32 {
+        @setRuntimeSafety(false);
+        var made: u32 = 0;
+        for (0..count) |k| {
+            const bit = bits.next + @as(u32, @intCast(k));
+            made |= @as(u32, bits.at[bit >> 3] >> @intCast(bit & 7) & 1) << @intCast(k);
+        }
+        bits.next += count;
+        return made;
+    }
+};
+
+/// The sixteen texels of a BC7 block at `at`, in rows, each 0xAARRGGBB:
+/// 16 bytes read, and nothing past them.
+///
+/// The block is cut into one, two or three subsets by a pattern the
+/// partition number names (`bc7_two`, `bc7_three`); each subset has two
+/// endpoints, and each texel an index saying how far between them it
+/// stands. A mode says how many bits each of those takes
+/// (`bc7_modes`): the endpoints may carry an alpha of their own, a p-bit
+/// below the channel's bits, and a second set of indices for the alpha
+/// which a rotation then swaps into one of the three colour channels. A
+/// low byte of 0 is reserved by the format and reads as transparent
+/// black. (Since 1.73.)
+fn bc7Block(at: [*]const u8) [16]u32 {
+    @setRuntimeSafety(false);
+    var made: [16]u32 = @splat(0);
+    const low = at[0];
+    if (low == 0) return made;
+    // The mode is the zeros of the low byte before its first 1.
+    const number = @ctz(low);
+    const mode = bc7_modes[number];
+    var bits = Bc7Bits{ .at = at, .next = @as(u32, number) + 1 };
+    const partition = bits.read(mode.partition);
+    const rotation = bits.read(mode.rotation);
+    const selection = bits.read(mode.selection);
+
+    // Two endpoints for each subset, read a channel at a time: red for
+    // both ends of every subset, then green, then blue, then the alphas.
+    var ends: [3][2][4]u32 = @splat(@splat(@splat(0)));
+    for (0..3) |channel| {
+        for (0..mode.subsets) |subset| {
+            for (0..2) |end| ends[subset][end][channel] = bits.read(mode.color);
+        }
+    }
+    if (mode.alpha != 0) {
+        for (0..mode.subsets) |subset| {
+            for (0..2) |end| ends[subset][end][3] = bits.read(mode.alpha);
+        }
+    }
+
+    // A p-bit stands below the channel's own bits: one for each endpoint,
+    // or one shared by both endpoints of a subset - the lower bit the
+    // first subset's, as the specification has it.
+    var pbits: [3][2]u32 = @splat(@splat(0));
+    const has_pbit = mode.shared_pbits != 0 or mode.endpoint_pbits != 0;
+    if (mode.shared_pbits != 0) {
+        for (0..mode.subsets) |subset| {
+            const bit = bits.read(1);
+            pbits[subset][0] = bit;
+            pbits[subset][1] = bit;
+        }
+    } else if (mode.endpoint_pbits != 0) {
+        for (0..mode.subsets) |subset| {
+            for (0..2) |end| pbits[subset][end] = bits.read(1);
+        }
+    }
+
+    // Each channel to a whole byte: the p-bit under it, then the top bits
+    // repeated into what is left. A format with no alpha of its own is
+    // opaque.
+    const extra: u5 = if (has_pbit) 1 else 0;
+    const color_total: u5 = mode.color + extra;
+    const alpha_total: u5 = if (mode.alpha == 0) 8 else mode.alpha + extra;
+    for (0..mode.subsets) |subset| for (0..2) |end| {
+        inline for (0..4) |channel| {
+            if (channel == 3 and mode.alpha == 0) {
+                ends[subset][end][3] = 255;
+            } else {
+                const total = if (channel == 3) alpha_total else color_total;
+                var value = ends[subset][end][channel];
+                if (has_pbit) value = value << 1 | pbits[subset][end];
+                value <<= @intCast(8 - total);
+                ends[subset][end][channel] = value | value >> total;
+            }
+        }
+    };
+
+    // Which subset each texel is in, and the one index of each subset
+    // that has a bit fewer: its endpoints are ordered so that index's top
+    // bit is 0.
+    var subsets: [16]u32 = @splat(0);
+    var anchors: [3]u32 = .{ 0, 0, 0 };
+    if (mode.subsets == 2) {
+        const picks = bc7_two[partition];
+        for (&subsets, &picks) |*one, pick| one.* = pick;
+        anchors[1] = bc7_anchor_two[partition];
+    } else if (mode.subsets == 3) {
+        const picks = bc7_three[partition];
+        for (&subsets, &picks) |*one, pick| one.* = pick;
+        anchors[1] = bc7_anchor_three_second[partition];
+        anchors[2] = bc7_anchor_three_third[partition];
+    }
+
+    var primary: [16]u32 = @splat(0);
+    for (&primary, 0..) |*index, k| {
+        const anchored = k == anchors[subsets[k]];
+        index.* = bits.read(@as(u32, mode.indices) - @as(u32, if (anchored) 1 else 0));
+    }
+    var secondary: [16]u32 = @splat(0);
+    if (mode.indices2 != 0) {
+        // A mode with a second set of indices has one subset, so texel 0
+        // is the only anchor.
+        for (&secondary, 0..) |*index, k| index.* = bits.read(@as(u32, mode.indices2) - @as(u32, if (k == 0) 1 else 0));
+    }
+
+    // The colour takes the second index where the mode has an index
+    // selection bit and it is set; the alpha takes the second set
+    // otherwise, where there is one.
+    const color_second = mode.selection != 0 and selection == 1;
+    const alpha_second = mode.indices2 != 0 and !color_second;
+    const color_bits: u32 = if (color_second) mode.indices2 else mode.indices;
+    const alpha_bits: u32 = if (alpha_second) mode.indices2 else mode.indices;
+    for (&made, 0..) |*texel, k| {
+        const subset = subsets[k];
+        const color_index = if (color_second) secondary[k] else primary[k];
+        const alpha_index = if (alpha_second) secondary[k] else primary[k];
+        const color_weight = bc7Weight(color_bits, color_index);
+        const alpha_weight = bc7Weight(alpha_bits, alpha_index);
+        var channels: [4]u32 = undefined;
+        inline for (0..3) |channel| {
+            channels[channel] = bc7Mix(ends[subset][0][channel], ends[subset][1][channel], color_weight);
+        }
+        channels[3] = bc7Mix(ends[subset][0][3], ends[subset][1][3], alpha_weight);
+        // The rotation swaps the alpha with red, green or blue.
+        if (rotation != 0) {
+            const with = rotation - 1;
+            const kept = channels[3];
+            channels[3] = channels[with];
+            channels[with] = kept;
+        }
+        texel.* = channels[3] << 24 | channels[0] << 16 | channels[1] << 8 | channels[2];
+    }
+    return made;
+}
+
+/// Which subset each of a block's sixteen texels is in, for a block cut
+/// into two and into three: the specification's Table.P2 and Table.P3,
+/// the partition number picking the row and the texels running across
+/// then down. (Since 1.73.)
+const bc7_two = [64][16]u8{
+    .{ 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1 },
+    .{ 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1 },
+    .{ 0, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1 },
+    .{ 0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 1, 1 },
+    .{ 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 1 },
+    .{ 0, 0, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1 },
+    .{ 0, 0, 0, 1, 0, 0, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1 },
+    .{ 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 1, 0, 1, 1, 1 },
+    .{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 1 },
+    .{ 0, 0, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
+    .{ 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1 },
+    .{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 1 },
+    .{ 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
+    .{ 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1 },
+    .{ 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
+    .{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1 },
+    .{ 0, 0, 0, 0, 1, 0, 0, 0, 1, 1, 1, 0, 1, 1, 1, 1 },
+    .{ 0, 1, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0 },
+    .{ 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 1, 1, 0 },
+    .{ 0, 1, 1, 1, 0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0 },
+    .{ 0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0 },
+    .{ 0, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0, 1, 1, 1, 0 },
+    .{ 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0 },
+    .{ 0, 1, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 0, 1 },
+    .{ 0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0 },
+    .{ 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0 },
+    .{ 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0 },
+    .{ 0, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 1, 0, 0 },
+    .{ 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 0, 0 },
+    .{ 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0 },
+    .{ 0, 1, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 1, 0 },
+    .{ 0, 0, 1, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 1, 0, 0 },
+    .{ 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1 },
+    .{ 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1 },
+    .{ 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0 },
+    .{ 0, 0, 1, 1, 0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0 },
+    .{ 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0 },
+    .{ 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0 },
+    .{ 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1 },
+    .{ 0, 1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 1 },
+    .{ 0, 1, 1, 1, 0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 0 },
+    .{ 0, 0, 0, 1, 0, 0, 1, 1, 1, 1, 0, 0, 1, 0, 0, 0 },
+    .{ 0, 0, 1, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 1, 0, 0 },
+    .{ 0, 0, 1, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 0 },
+    .{ 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0 },
+    .{ 0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0, 0, 0, 1, 1 },
+    .{ 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1 },
+    .{ 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 0, 0, 0 },
+    .{ 0, 1, 0, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0 },
+    .{ 0, 0, 1, 0, 0, 1, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0 },
+    .{ 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 1, 1, 0, 0, 1, 0 },
+    .{ 0, 0, 0, 0, 0, 1, 0, 0, 1, 1, 1, 0, 0, 1, 0, 0 },
+    .{ 0, 1, 1, 0, 1, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 1 },
+    .{ 0, 0, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 1, 0, 0, 1 },
+    .{ 0, 1, 1, 0, 0, 0, 1, 1, 1, 0, 0, 1, 1, 1, 0, 0 },
+    .{ 0, 0, 1, 1, 1, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 0 },
+    .{ 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 0, 0, 1 },
+    .{ 0, 1, 1, 0, 0, 0, 1, 1, 0, 0, 1, 1, 1, 0, 0, 1 },
+    .{ 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 1 },
+    .{ 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 1, 0, 0, 1, 1, 1 },
+    .{ 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1 },
+    .{ 0, 0, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0 },
+    .{ 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 1, 0, 1, 1, 1, 0 },
+    .{ 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 1, 0, 1, 1, 1 },
+};
+const bc7_three = [64][16]u8{
+    .{ 0, 0, 1, 1, 0, 0, 1, 1, 0, 2, 2, 1, 2, 2, 2, 2 },
+    .{ 0, 0, 0, 1, 0, 0, 1, 1, 2, 2, 1, 1, 2, 2, 2, 1 },
+    .{ 0, 0, 0, 0, 2, 0, 0, 1, 2, 2, 1, 1, 2, 2, 1, 1 },
+    .{ 0, 2, 2, 2, 0, 0, 2, 2, 0, 0, 1, 1, 0, 1, 1, 1 },
+    .{ 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 2, 2, 1, 1, 2, 2 },
+    .{ 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 2, 2, 0, 0, 2, 2 },
+    .{ 0, 0, 2, 2, 0, 0, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1 },
+    .{ 0, 0, 1, 1, 0, 0, 1, 1, 2, 2, 1, 1, 2, 2, 1, 1 },
+    .{ 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2 },
+    .{ 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2 },
+    .{ 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2 },
+    .{ 0, 0, 1, 2, 0, 0, 1, 2, 0, 0, 1, 2, 0, 0, 1, 2 },
+    .{ 0, 1, 1, 2, 0, 1, 1, 2, 0, 1, 1, 2, 0, 1, 1, 2 },
+    .{ 0, 1, 2, 2, 0, 1, 2, 2, 0, 1, 2, 2, 0, 1, 2, 2 },
+    .{ 0, 0, 1, 1, 0, 1, 1, 2, 1, 1, 2, 2, 1, 2, 2, 2 },
+    .{ 0, 0, 1, 1, 2, 0, 0, 1, 2, 2, 0, 0, 2, 2, 2, 0 },
+    .{ 0, 0, 0, 1, 0, 0, 1, 1, 0, 1, 1, 2, 1, 1, 2, 2 },
+    .{ 0, 1, 1, 1, 0, 0, 1, 1, 2, 0, 0, 1, 2, 2, 0, 0 },
+    .{ 0, 0, 0, 0, 1, 1, 2, 2, 1, 1, 2, 2, 1, 1, 2, 2 },
+    .{ 0, 0, 2, 2, 0, 0, 2, 2, 0, 0, 2, 2, 1, 1, 1, 1 },
+    .{ 0, 1, 1, 1, 0, 1, 1, 1, 0, 2, 2, 2, 0, 2, 2, 2 },
+    .{ 0, 0, 0, 1, 0, 0, 0, 1, 2, 2, 2, 1, 2, 2, 2, 1 },
+    .{ 0, 0, 0, 0, 0, 0, 1, 1, 0, 1, 2, 2, 0, 1, 2, 2 },
+    .{ 0, 0, 0, 0, 1, 1, 0, 0, 2, 2, 1, 0, 2, 2, 1, 0 },
+    .{ 0, 1, 2, 2, 0, 1, 2, 2, 0, 0, 1, 1, 0, 0, 0, 0 },
+    .{ 0, 0, 1, 2, 0, 0, 1, 2, 1, 1, 2, 2, 2, 2, 2, 2 },
+    .{ 0, 1, 1, 0, 1, 2, 2, 1, 1, 2, 2, 1, 0, 1, 1, 0 },
+    .{ 0, 0, 0, 0, 0, 1, 1, 0, 1, 2, 2, 1, 1, 2, 2, 1 },
+    .{ 0, 0, 2, 2, 1, 1, 0, 2, 1, 1, 0, 2, 0, 0, 2, 2 },
+    .{ 0, 1, 1, 0, 0, 1, 1, 0, 2, 0, 0, 2, 2, 2, 2, 2 },
+    .{ 0, 0, 1, 1, 0, 1, 2, 2, 0, 1, 2, 2, 0, 0, 1, 1 },
+    .{ 0, 0, 0, 0, 2, 0, 0, 0, 2, 2, 1, 1, 2, 2, 2, 1 },
+    .{ 0, 0, 0, 0, 0, 0, 0, 2, 1, 1, 2, 2, 1, 2, 2, 2 },
+    .{ 0, 2, 2, 2, 0, 0, 2, 2, 0, 0, 1, 2, 0, 0, 1, 1 },
+    .{ 0, 0, 1, 1, 0, 0, 1, 2, 0, 0, 2, 2, 0, 2, 2, 2 },
+    .{ 0, 1, 2, 0, 0, 1, 2, 0, 0, 1, 2, 0, 0, 1, 2, 0 },
+    .{ 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 0, 0, 0, 0 },
+    .{ 0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2, 0 },
+    .{ 0, 1, 2, 0, 2, 0, 1, 2, 1, 2, 0, 1, 0, 1, 2, 0 },
+    .{ 0, 0, 1, 1, 2, 2, 0, 0, 1, 1, 2, 2, 0, 0, 1, 1 },
+    .{ 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 0, 0, 0, 0, 1, 1 },
+    .{ 0, 1, 0, 1, 0, 1, 0, 1, 2, 2, 2, 2, 2, 2, 2, 2 },
+    .{ 0, 0, 0, 0, 0, 0, 0, 0, 2, 1, 2, 1, 2, 1, 2, 1 },
+    .{ 0, 0, 2, 2, 1, 1, 2, 2, 0, 0, 2, 2, 1, 1, 2, 2 },
+    .{ 0, 0, 2, 2, 0, 0, 1, 1, 0, 0, 2, 2, 0, 0, 1, 1 },
+    .{ 0, 2, 2, 0, 1, 2, 2, 1, 0, 2, 2, 0, 1, 2, 2, 1 },
+    .{ 0, 1, 0, 1, 2, 2, 2, 2, 2, 2, 2, 2, 0, 1, 0, 1 },
+    .{ 0, 0, 0, 0, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1 },
+    .{ 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 2, 2, 2, 2 },
+    .{ 0, 2, 2, 2, 0, 1, 1, 1, 0, 2, 2, 2, 0, 1, 1, 1 },
+    .{ 0, 0, 0, 2, 1, 1, 1, 2, 0, 0, 0, 2, 1, 1, 1, 2 },
+    .{ 0, 0, 0, 0, 2, 1, 1, 2, 2, 1, 1, 2, 2, 1, 1, 2 },
+    .{ 0, 2, 2, 2, 0, 1, 1, 1, 0, 1, 1, 1, 0, 2, 2, 2 },
+    .{ 0, 0, 0, 2, 1, 1, 1, 2, 1, 1, 1, 2, 0, 0, 0, 2 },
+    .{ 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 2, 2, 2, 2 },
+    .{ 0, 0, 0, 0, 0, 0, 0, 0, 2, 1, 1, 2, 2, 1, 1, 2 },
+    .{ 0, 1, 1, 0, 0, 1, 1, 0, 2, 2, 2, 2, 2, 2, 2, 2 },
+    .{ 0, 0, 2, 2, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 2, 2 },
+    .{ 0, 0, 2, 2, 1, 1, 2, 2, 1, 1, 2, 2, 0, 0, 2, 2 },
+    .{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 1, 1, 2 },
+    .{ 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 1 },
+    .{ 0, 2, 2, 2, 1, 2, 2, 2, 0, 2, 2, 2, 1, 2, 2, 2 },
+    .{ 0, 1, 0, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2 },
+    .{ 0, 1, 1, 1, 2, 0, 1, 1, 2, 2, 0, 1, 2, 2, 2, 0 },
+};
+/// Which texel each subset is anchored at - the one index with a bit
+/// fewer - for the second subset of a two-subset block, and for the
+/// second and third of a three-subset one: the specification's Table.A2,
+/// Table.A3a and Table.A3b. The first subset is always anchored at texel
+/// 0. (Since 1.73.)
+const bc7_anchor_two = [64]u8{
+    15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
+    15, 2, 8, 2, 2, 8, 8, 15, 2, 8, 2, 2, 8, 8, 2, 2,
+    15, 15, 6, 8, 2, 8, 15, 15, 2, 8, 2, 2, 2, 15, 15, 6,
+    6, 2, 6, 8, 15, 15, 2, 2, 15, 15, 15, 15, 15, 2, 2, 15,
+};
+const bc7_anchor_three_second = [64]u8{
+    3, 3, 15, 15, 8, 3, 15, 15, 8, 8, 6, 6, 6, 5, 3, 3,
+    3, 3, 8, 15, 3, 3, 6, 10, 5, 8, 8, 6, 8, 5, 15, 15,
+    8, 15, 3, 5, 6, 10, 8, 15, 15, 3, 15, 5, 15, 15, 15, 15,
+    3, 15, 5, 5, 5, 8, 5, 10, 5, 10, 8, 13, 15, 12, 3, 3,
+};
+const bc7_anchor_three_third = [64]u8{
+    15, 8, 8, 3, 15, 15, 3, 8, 15, 15, 15, 15, 15, 15, 15, 8,
+    15, 8, 15, 3, 15, 8, 15, 8, 3, 15, 6, 10, 15, 15, 10, 8,
+    15, 3, 15, 10, 10, 8, 9, 10, 6, 15, 8, 15, 3, 6, 6, 8,
+    15, 3, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 3, 15, 15, 8,
+};
 
 /// `T` read from `at`, least significant byte first, whatever the alignment.
 inline fn readLittle(comptime T: type, at: [*]const u8) T {
@@ -2238,7 +2621,7 @@ inline fn fetch(comptime format: Format, at: [*]const u8) u32 {
         // is built for blocks and never reads a texture of this.
         .d16 => greyOf8(@truncate(@as(*const u16, @ptrCast(@alignCast(at))).* >> 8)),
         // Never read a texel at a time: `sampleBlocked` has the block.
-        .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5 => missing_texel,
+        .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc7 => missing_texel,
         // A float texel read and rounded where it lies (since 1.45): the
         // decoding is the cost of keeping the floats.
         .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => floatTexel(format, at),
@@ -2256,7 +2639,7 @@ inline fn fetchSpread(comptime format: Format, at: [*]const u8) u64 {
     @setRuntimeSafety(false);
     return switch (format) {
         .rgba8888 => @as(*const u64, @ptrCast(@alignCast(at))).*,
-        .argb8888, .r8, .rgb565, .d16, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => spread(fetch(format, at)),
+        .argb8888, .r8, .rgb565, .d16, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc7, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => spread(fetch(format, at)),
         .rg8, .r16, .rg16, .rgba16 => spread(fetch(format, at)),
         .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => spread(fetch(format, at)),
     };

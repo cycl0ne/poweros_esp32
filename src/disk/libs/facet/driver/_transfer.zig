@@ -383,7 +383,7 @@ fn texelOf(image: *const Image, color: u32, parts: [4]f32, words: [4]u32) ?Texel
             // CmdClearDepthStencilImage writes that one. Nor for a
             // compressed image, whose texels are written as whole blocks
             // and which nothing here compresses.
-            .d16, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5 => null,
+            .d16, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc7 => null,
         },
         // Its pixels are rows of depth, which a clear of a colour does
         // not write; a transient one's live in the tiles.

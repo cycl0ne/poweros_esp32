@@ -8330,6 +8330,9 @@ const BlockScene = struct {
         shader.fixedFragment("one", .{ .kind = .texture, .sampling = .{ .format = .bc4, .filter = .nearest } }),
         shader.vertex("two", &flat, 2),
         shader.fixedFragment("two", .{ .kind = .texture, .sampling = .{ .format = .bc5, .filter = .nearest } }),
+        // 1.73: four channels in the same sixteen bytes.
+        shader.vertex("full", &flat, 2),
+        shader.fixedFragment("full", .{ .kind = .texture, .sampling = .{ .format = .bc7, .filter = .nearest } }),
     };
     const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
 
@@ -8353,6 +8356,27 @@ const BlockScene = struct {
     fn block5(red: u8, green: u8, into: *[16]u8) void {
         block4(red, into[0..8]);
         block4(green, into[8..16]);
+    }
+
+    /// A BC7 block of one colour: mode 6, both endpoints the colour, so
+    /// every texel takes it whatever the indices say. Each channel must
+    /// be even - one p-bit stands under all four channels of an endpoint,
+    /// and it is 0 here. (Since 1.73.)
+    fn block7(color: u32, into: *[16]u8) void {
+        @memset(into, 0);
+        // Mode 6 is six zeros and a 1, then 7 bits a channel for each
+        // endpoint in turn, red first and the alpha last.
+        into[0] = 0x40;
+        var next: u32 = 7;
+        for ([4]u32{ color >> 16 & 0xFF, color >> 8 & 0xFF, color & 0xFF, color >> 24 }) |channel| {
+            for (0..2) |_| {
+                for (0..7) |bit| {
+                    const place = next + @as(u32, @intCast(bit));
+                    if (channel >> 1 >> @intCast(bit) & 1 != 0) into[place >> 3] |= @as(u8, 1) << @intCast(place & 7);
+                }
+                next += 7;
+            }
+        }
     }
 
     /// A BC3 block of one colour at one alpha: the alpha endpoints both it,
@@ -8546,6 +8570,47 @@ test "compressed textures kept in their blocks: copied as blocks, sampled out of
     try testing.expectEqual(@as(u32, 0xFFC8_0000), picture.at(8, 8));
     try drawn(&bench, two_view, "eight", layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
     try testing.expectEqual(@as(u32, 0xFF64_FA00), picture.at(56, 8));
+
+    // --- 1.73: BC7, four channels in the same sixteen bytes ---
+    // Subsets, modes and indices: the one block of these to hold a
+    // smooth alpha beside a sharp colour, and the only one whose texels
+    // are not two endpoints of 565.
+    fb.GetPhysicalDeviceFormatProperties(bench.physical, .bc7_unorm_block, &properties);
+    try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_SAMPLED_IMAGE != 0);
+    try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_TRANSFER_SRC != 0);
+    try testing.expectEqual(@as(u32, 0), properties.optimal_tiling_features & facet.FORMAT_FEATURE_COLOR_ATTACHMENT);
+    const full_image = try bench.bareImage(.{ .format = .bc7_unorm_block, .extent = side16, .usage = usage }, false);
+    fb.GetImageMemoryRequirements(device, full_image, &needs);
+    try testing.expectEqual(@as(u64, 256), needs.size);
+    const full_view = try bench.viewOf(.{ .image = full_image, .format = .bc7_unorm_block });
+
+    // Red at half alpha on the left and blue at a quarter on the right,
+    // each a mode-6 block of one colour.
+    const full_at = 640;
+    const half_red = 0x80FE_0000;
+    const quarter_blue = 0x4000_00FE;
+    for (0..16) |block| {
+        const color: u32 = if (block % 4 < 2) half_red else quarter_blue;
+        BlockScene.block7(color, staged[full_at + block * 16 ..][0..16]);
+    }
+    const full_blocks = facet.BufferImageCopy{ .buffer_offset = full_at, .image_extent = side16 };
+    @memset(read_back[0..256], 0);
+    const full_commands = try bench.record();
+    fb.CmdCopyBufferToImage(full_commands, staging, full_image, .transfer_dst_optimal, 1, @ptrCast(&full_blocks));
+    fb.CmdCopyImageToBuffer(full_commands, full_image, .general, read_buffer, 1, @ptrCast(&facet.BufferImageCopy{ .image_extent = side16 }));
+    try bench.submit();
+    // The blocks came back as they went in.
+    try testing.expectEqualSlices(u8, staged[full_at..][0..256], read_back[0..256]);
+
+    // Sampled through the form built for BC7, and through the one built
+    // for 8888, which takes the run-time sampler: the colour and the
+    // alpha the block holds.
+    try drawn(&bench, full_view, "full", layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
+    try testing.expectEqual(@as(u32, half_red), picture.at(8, 8));
+    try testing.expectEqual(@as(u32, quarter_blue), picture.at(56, 8));
+    try drawn(&bench, full_view, "eight", layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
+    try testing.expectEqual(@as(u32, half_red), picture.at(8, 8));
+    try testing.expectEqual(@as(u32, quarter_blue), picture.at(56, 56));
 
     // A copy whose offset is not on a block is left alone, as Vulkan asks
     // of one: the image keeps what it had.

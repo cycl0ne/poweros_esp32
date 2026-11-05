@@ -258,6 +258,8 @@ pub fn keptFormat(format: facet.Format, packed_texels: bool) ?texture.Format {
         // (since 1.72).
         .bc4_unorm_block => .bc4,
         .bc5_unorm_block => .bc5,
+        // Subsets, modes and indices, in the same 16 bytes (since 1.73).
+        .bc7_unorm_block => .bc7,
         // Kept as the floats they were copied in as, and rounded to 8 bits
         // a channel as they are sampled, on a device that says so
         // (`PhysicalDeviceFeatures.kept_floats`).

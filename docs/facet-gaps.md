@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.72**, so that a program need not find out by failing. It covers the API.
+1.73**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -751,12 +751,15 @@ Of textures:
   alpha and 11-bit channels. No sampler reads such a block where it lies,
   so the image takes the memory of its texels and cannot be copied out of.
   There is no ETC1 and no ASTC.
-- The compressed formats are the six BC ones: BC1 to BC3, and since 1.72
+- The compressed formats are the seven BC ones: BC1 to BC3; since 1.72
   BC4 and BC5 - one channel and two, each the block BC3 keeps its alpha
-  in, read as (red, 0, 0, 1) and (red, green, 0, 1). **No BC6H and no
-  BC7**, which are decoders of their own rather than a block the library
-  already had, and no `_snorm` pair of BC4 and BC5: a texture holds 0 to
-  1. No BC1 with 1-bit alpha told apart from the opaque one past the
+  in, read as (red, 0, 0, 1) and (red, green, 0, 1); and since 1.73 BC7,
+  four channels in the same sixteen bytes a block, with subsets, modes,
+  a rotation and up to two sets of indices, which is the one of them to
+  hold a smooth alpha beside a sharp colour. **No BC6H**, whose endpoints
+  are half-floats and whose texels run past 1 - a float texture's ground
+  rather than a colour's - and no `_snorm` pair of BC4 and BC5 and no
+  `_srgb` form of BC7: a texture holds 0 to 1 and is read as it lies. No BC1 with 1-bit alpha told apart from the opaque one past the
   punch-through rule, and nothing compresses - a blit or a copy into a
   compressed image from an uncompressed one takes nothing.
 - The float formats are the five Vulkan ones the library takes:

@@ -428,7 +428,8 @@ pub const PhysicalDeviceFeatures = extern struct {
     /// A compressed image is kept in its blocks and decoded as it is
     /// sampled, nothing unpacked: `bc1_rgb_unorm_block`,
     /// `bc1_rgba_unorm_block`, `bc2_unorm_block`, `bc3_unorm_block` and
-    /// since 1.72 `bc4_unorm_block` and `bc5_unorm_block`
+    /// since 1.72 `bc4_unorm_block` and `bc5_unorm_block`, and since
+    /// 1.73 `bc7_unorm_block`,
     /// lie as they were copied in, an eighth to a quarter of the memory
     /// the unpacked texels take, and the four texels a sample mixes come
     /// out of the one block where they share it. False where such an
@@ -708,6 +709,15 @@ pub const Format = enum(u32) {
     /// to 1. (Since 1.72.)
     bc4_unorm_block = 139,
     bc5_unorm_block = 141,
+    /// Four channels in the same 16 bytes a block: subsets cut out of the
+    /// block by one of 64 patterns, two endpoints for each, and an index
+    /// for every texel - one of eight modes saying how many bits each of
+    /// those takes and whether the alpha is indexed apart from the
+    /// colour. The one block of these to hold a smooth alpha and a sharp
+    /// colour at once, at a quarter of the memory the texels take. The
+    /// `_srgb` form is not here: a texture of this library is read as it
+    /// lies. (Since 1.73.)
+    bc7_unorm_block = 145,
     /// ETC2 and EAC, as textures: unpacked as they come in, into 8 bits a
     /// channel, on every device (since 1.46). A block is 4 x 4 texels in 8
     /// bytes, or 16 where there is an alpha or a second channel.

@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.39 (05.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.40 (05.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -3266,6 +3266,9 @@ const Blocks = struct {
         facet.shader.fixedFragment("one", .{ .kind = .texture, .sampling = .{ .format = .bc4, .filter = .nearest, .address = .clamp } }),
         facet.shader.vertex("two", &vertex, 2),
         facet.shader.fixedFragment("two", .{ .kind = .texture, .sampling = .{ .format = .bc5, .filter = .nearest, .address = .clamp } }),
+        // 1.73: BC7, four channels in the same sixteen bytes.
+        facet.shader.vertex("full", &vertex, 2),
+        facet.shader.fixedFragment("full", .{ .kind = .texture, .sampling = .{ .format = .bc7, .filter = .nearest, .address = .clamp } }),
     };
     const code = facet.shader.Code{ .entry_count = entries.len, .entries = &entries };
 
@@ -3290,6 +3293,27 @@ const Blocks = struct {
     fn channels(red: u8, green: u8, into: *[16]u8) void {
         channel(red, into[0..8]);
         channel(green, into[8..16]);
+    }
+
+    /// A BC7 block of one colour: mode 6, both endpoints the colour, so
+    /// every texel takes it whatever the indices say. Each channel must
+    /// be even - one p-bit stands under all four channels of an endpoint,
+    /// and it is 0 here (since 1.73).
+    fn full(color: u32, into: *[16]u8) void {
+        @memset(into, 0);
+        // Mode 6 is six zeros and a 1, then 7 bits a channel for each
+        // endpoint in turn, red first and the alpha last.
+        into[0] = 0x40;
+        var next: u32 = 7;
+        for ([4]u32{ color >> 16 & 0xFF, color >> 8 & 0xFF, color & 0xFF, color >> 24 }) |channel_value| {
+            for (0..2) |_| {
+                for (0..7) |bit| {
+                    const place = next + @as(u32, @intCast(bit));
+                    if (channel_value >> 1 >> @intCast(bit) & 1 != 0) into[place >> 3] |= @as(u8, 1) << @intCast(place & 7);
+                }
+                next += 7;
+            }
+        }
     }
 };
 
@@ -3338,10 +3362,15 @@ fn blockChecks(probe: *Probe) void {
     // left and 100 on the right, with a green of 10 and 250.
     const one_at = 256;
     const two_at = 384;
+    // And the BC7 blocks of 1.73: red at half alpha on the left and blue
+    // at a quarter on the right, which is the alpha no other block of
+    // these carries.
+    const full_at = 640;
     for (0..16) |k| {
         const left = k % 4 < 2;
         Blocks.channel(if (left) 200 else 100, block_bytes[one_at + k * 8 ..][0..8]);
         Blocks.channels(if (left) 200 else 100, if (left) 10 else 250, block_bytes[two_at + k * 16 ..][0..16]);
+        Blocks.full(if (left) 0x80FE_0000 else 0x4000_00FE, block_bytes[full_at + k * 16 ..][0..16]);
     }
     const back, const back_bytes = probe.buffer(1024, facet.BUFFER_USAGE_TRANSFER_DST) orelse
         return probe.check(false, "a buffer they are read back into");
@@ -3435,15 +3464,18 @@ fn blockChecks(probe: *Probe) void {
     // 1.72: BC4 and BC5, the block BC3 keeps its alpha in over one
     // channel and over two. 8 bytes a block and 16, read as
     // (red, 0, 0, 1) and (red, green, 0, 1).
-    for ([2]facet.Format{ .bc4_unorm_block, .bc5_unorm_block }) |format| {
+    for ([3]facet.Format{ .bc4_unorm_block, .bc5_unorm_block, .bc7_unorm_block }) |format| {
         fb.GetPhysicalDeviceFormatProperties(probe.physical, format, &properties);
-        probe.check(properties.optimal_tiling_features & facet.FORMAT_FEATURE_SAMPLED_IMAGE != 0, "one channel and two of a BC block are formats a texture may be of");
+        probe.check(properties.optimal_tiling_features & facet.FORMAT_FEATURE_SAMPLED_IMAGE != 0, "one channel and two of a BC block, and BC7's four, are formats a texture may be of");
         probe.check(properties.optimal_tiling_features & facet.FORMAT_FEATURE_COLOR_ATTACHMENT == 0, "and never ones an image is drawn into");
     }
-    for ([2]struct { facet.Format, u32, usize, u64, u64, [*:0]const u8 }{
+    for ([3]struct { facet.Format, u32, usize, u64, u64, [*:0]const u8 }{
         .{ .bc4_unorm_block, 8, one_at, 0xFFC8_0000, 0xFF64_0000, "BC4 reads red alone, the green and the blue 0 and the alpha whole" },
         .{ .bc5_unorm_block, 16, two_at, 0xFFC8_0A00, 0xFF64_FA00, "BC5 reads red and green, the blue 0 and the alpha whole" },
-    }, [2][*:0]const u8{ "one", "two" }) |one, name| {
+        // 1.73: the colour and the alpha both the block's own, where BC1
+        // to BC5 hold a punched-through alpha, a coarse one or none.
+        .{ .bc7_unorm_block, 16, full_at, 0x80FE_0000, 0x4000_00FE, "BC7 reads four channels out of its subsets, the alpha its own" },
+    }, [3][*:0]const u8{ "one", "two", "full" }) |one, name| {
         const format, const wide, const at, const want_left, const want_right, const says = one;
         const held = probe.image(.{ .format = format, .extent = .{ .width = across, .height = across }, .usage = sampled }, 0) orelse {
             probe.check(false, says);

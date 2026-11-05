@@ -29,6 +29,8 @@ pub fn blockBytes(format: facet.Format) u32 {
         // BC4 and BC5, one channel and two (since 1.72).
         .bc4_unorm_block => 8,
         .bc5_unorm_block => 16,
+        // BC7, four channels in the same 16 (since 1.73).
+        .bc7_unorm_block => 16,
         // ETC2 and EAC (since 1.46): one 64-bit word for colour, and a
         // second for an alpha or a second channel.
         .etc2_r8g8b8_unorm_block, .etc2_r8g8b8a1_unorm_block, .eac_r11_unorm_block => 8,
@@ -311,6 +313,7 @@ fn keptBlocks(format: facet.Format) ?texture.Format {
         .bc3_unorm_block => .bc3,
         .bc4_unorm_block => .bc4,
         .bc5_unorm_block => .bc5,
+        .bc7_unorm_block => .bc7,
         else => null,
     };
 }
@@ -345,7 +348,7 @@ pub fn block16(format: facet.Format, block: []const u8) [16]Rgba {
     }
     const kept = keptBlocks(format) orelse return made;
     switch (kept) {
-        inline .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5 => |one| {
+        inline .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc7 => |one| {
             const texels = texture.blockOf(one, block.ptr);
             for (&made, texels) |*each, color| each.* = .{
                 @intCast(color >> 16 & 0xFF),
@@ -482,6 +485,100 @@ test "BC4 and BC5: one channel and two, the block BC3 keeps its alpha in" {
     // And a block of each is 8 bytes and 16.
     try testing.expectEqual(@as(u32, 8), blockBytes(.bc4_unorm_block));
     try testing.expectEqual(@as(u32, 16), blockBytes(.bc5_unorm_block));
+}
+
+test "BC7: subsets, modes and indices in the same sixteen bytes" {
+    // A block written field by field, lowest bit first, the way BC7 keeps
+    // them.
+    const Put = struct {
+        bytes: [16]u8 = @splat(0),
+        next: u32 = 0,
+
+        fn put(writer: *@This(), count: u32, value: u32) void {
+            for (0..count) |k| {
+                const place = writer.next + @as(u32, @intCast(k));
+                if (value >> @intCast(k) & 1 != 0) writer.bytes[place >> 3] |= @as(u8, 1) << @intCast(place & 7);
+            }
+            writer.next += count;
+        }
+    };
+
+    // Mode 6: one subset, 7 bits a channel with a p-bit under each
+    // endpoint, and 4 bits an index. The first endpoint is transparent
+    // black (7 bits of 0, p-bit 0) and the second opaque white (0x7F,
+    // p-bit 1); index 0 is the first, 15 the second and 8 a little over
+    // half way. Texel 0 is the anchor, with a bit fewer.
+    var one = Put{};
+    one.put(7, 1 << 6);
+    for ([8]u32{ 0, 0x7F, 0, 0x7F, 0, 0x7F, 0, 0x7F }) |value| one.put(7, value);
+    one.put(1, 0);
+    one.put(1, 1);
+    one.put(3, 0);
+    one.put(4, 15);
+    one.put(4, 8);
+    var made = block16(.bc7_unorm_block, &one.bytes);
+    try testing.expectEqual(Rgba{ 0, 0, 0, 0 }, made[0]);
+    try testing.expectEqual(Rgba{ 255, 255, 255, 255 }, made[1]);
+    // 34 of 64 of the way from 0 to 255, rounded: the 4-bit weights.
+    try testing.expectEqual(Rgba{ 135, 135, 135, 135 }, made[2]);
+    try testing.expectEqual(Rgba{ 0, 0, 0, 0 }, made[15]);
+
+    // Mode 5: one subset, a rotation, 7 bits a colour channel with no
+    // p-bit, 8 bits of alpha, and two bits an index - the alpha indexed
+    // apart from the colour. The rotation of 1 swaps the alpha with the
+    // red, so the red the block holds comes out as the alpha and the
+    // alpha of 64 as the red.
+    var two = Put{};
+    two.put(6, 1 << 5);
+    two.put(2, 1);
+    for ([6]u32{ 0, 0x7F, 0, 0, 0, 0 }) |value| two.put(7, value);
+    two.put(8, 64);
+    two.put(8, 64);
+    two.put(1, 1);
+    two.put(2, 3);
+    two.next = 6 + 2 + 42 + 16 + 31;
+    two.put(1, 1);
+    made = block16(.bc7_unorm_block, &two.bytes);
+    try testing.expectEqual(Rgba{ 64, 0, 0, 84 }, made[0]);
+    try testing.expectEqual(Rgba{ 64, 0, 0, 255 }, made[1]);
+    try testing.expectEqual(Rgba{ 64, 0, 0, 0 }, made[2]);
+
+    // Mode 1: two subsets cut out by a partition, 6 bits a channel with
+    // one p-bit shared by both endpoints of a subset, and no alpha. The
+    // first subset is red at both ends and the second black, so every
+    // texel is one or the other, whatever its index: the partition is
+    // what the block says.
+    const parted = struct {
+        fn parted(partition: u32) [16]u8 {
+            var writer = Put{};
+            writer.put(2, 1 << 1);
+            writer.put(6, partition);
+            for ([12]u32{ 0x3F, 0x3F, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }) |value| writer.put(6, value);
+            writer.put(1, 1);
+            writer.put(1, 0);
+            return writer.bytes;
+        }
+    }.parted;
+    // The p-bit stands under every channel of its endpoint, so the first
+    // subset's green and blue are a p-bit of 1 and nothing above it: 2,
+    // not 0. The second subset's p-bit is 0, and it is black.
+    const red = Rgba{ 255, 2, 2, 255 };
+    const black = Rgba{ 0, 0, 0, 255 };
+    made = block16(.bc7_unorm_block, &parted(0));
+    for (made, [16]u1{ 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1 }) |each, subset| {
+        try testing.expectEqual(if (subset == 0) red else black, each);
+    }
+    made = block16(.bc7_unorm_block, &parted(1));
+    for (made, [16]u1{ 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1 }) |each, subset| {
+        try testing.expectEqual(if (subset == 0) red else black, each);
+    }
+
+    // A low byte of nothing is reserved by the format, and reads as
+    // transparent black; and a block is 16 bytes.
+    const empty: [16]u8 = @splat(0);
+    made = block16(.bc7_unorm_block, &empty);
+    for (made) |each| try testing.expectEqual(Rgba{ 0, 0, 0, 0 }, each);
+    try testing.expectEqual(@as(u32, 16), blockBytes(.bc7_unorm_block));
 }
 
 test "floats: cut to what 8 bits hold" {
