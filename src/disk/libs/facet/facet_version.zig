@@ -828,10 +828,33 @@ pub const LIBRARY_VERSION = 1;
 /// slices has its own. Every answer is a maximum, so each of them only
 /// grew; an extent, a level count or a layer count inside what is
 /// answered is made, and one outside it refused, as before.
+/// 67: a sampler places its sample in texels where it is asked to, rather
+/// than 0 to 1 across the texture: Vulkan's `unnormalizedCoordinates`, for
+/// a program that reads a texture as a table of values and knows which
+/// texel it wants. `CreateSampler` refused the bit outright since 1.28, so
+/// such a program scaled by the texture's size itself and sampled 0 to 1 -
+/// which is the size in two places, and loses the texel at the far edge to
+/// the rounding.
+/// `texture.Sampler` carries it (`unnormalized`), and the one place a
+/// sample turns a coordinate into texels reads it (`sampledAt`): a texture
+/// of any shape read through such a sampler takes the point as texels of
+/// the level, and a 3D one's `r` as slices, which keeps every axis in the
+/// same units. The fixed forms and a fragment function of the program's
+/// are untouched: what changes is the sampler the texture is bound beside.
+/// Vulkan asks five things of such a sampler and all five are held to,
+/// each an `error_initialization_failed`: one filter for both (which is
+/// why the filter a sample would choose from how fast the coordinates
+/// change need not be worked out at all), `nearest` mipmapping with
+/// `min_lod` and `max_lod` 0, no anisotropy, no comparison, and an edge
+/// held or bordered across and down. `address_mode_w` is taken as it is
+/// given, Vulkan having no 3D texture read this way.
+/// The cores say yes to it (`PhysicalDeviceFeatures.unnormalized_coordinates`);
+/// the V3D reads no sampler at all, so it says no, as it does to the rest
+/// of what a sampler says.
 /// What stays: `fifo` is the one present mode, there being no way to ask a
 /// display to show a buffer before its next frame; one queue family of one
 /// queue; a counter of 32 bits, for want of a 64-bit atomic on every
 /// machine the library runs on; and no point mode in tessellation, the
 /// tessellator emitting triangles or the lines of `isolines` and nothing
 /// emitting a patch's points on their own.
-pub const LIBRARY_REVISION = 66;
+pub const LIBRARY_REVISION = 67;

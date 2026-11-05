@@ -399,7 +399,9 @@ pub const PhysicalDeviceFeatures = extern struct {
     /// keeps the sampler, which is the library's doing and not a driver's.
     immutable_samplers: bool = false,
     /// `SamplerCreateInfo.unnormalized_coordinates`: a sample placed in
-    /// texels rather than 0 to 1 across the texture.
+    /// texels rather than 0 to 1 across the texture. The cores have it
+    /// since 1.67; the V3D reads no sampler at all
+    /// (`samplers`), so it has none of this either.
     unnormalized_coordinates: bool = false,
     /// Each colour attachment of a subpass blended its own way:
     /// `PipelineColorBlendStateCreateInfo.attachments` is taken one by one.
@@ -1111,8 +1113,14 @@ pub const SamplerCreateInfo = extern struct {
     /// `texture.lod_unclamped` (1000) for the texture's own last level.
     max_lod: f32 = 0,
     border_color: BorderColor = .float_transparent_black,
-    /// Coordinates in texels rather than 0 to 1: not here
-    /// (`error_feature_not_present`).
+    /// Coordinates in texels of the texture rather than 0 to 1 across it,
+    /// for a program that reads a texture as a table of values (since
+    /// 1.67, where `PhysicalDeviceFeatures.unnormalized_coordinates` says
+    /// which devices have it). Vulkan allows it beside little else: one
+    /// filter for both, `nearest` mipmapping, `min_lod` and `max_lod` 0,
+    /// no anisotropy, no comparison, and `address_mode_u` and
+    /// `address_mode_v` either `clamp_to_edge` or `clamp_to_border` -
+    /// anything else is `error_initialization_failed`.
     unnormalized_coordinates: bool = false,
 };
 

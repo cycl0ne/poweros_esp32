@@ -346,12 +346,27 @@ pub const Sampler = extern struct {
     anisotropy: f32 = 1,
     /// What a shadow sample does; `none` for a sample of the colour.
     compare: Compare = .none,
+    /// The point is in texels of the level read rather than 0 to 1 across
+    /// the texture: Vulkan's `unnormalizedCoordinates`, for a program that
+    /// reads a texture as a table of values. What it asks of the rest of
+    /// the sampler is Vulkan's too, and CreateSampler holds to it: one
+    /// filter for both, `nearest` mipmapping, no levels but the first
+    /// (`min_lod` and `max_lod` both 0), one sample (no anisotropy), no
+    /// comparison, and an edge held or bordered across and down.
+    /// (Since 1.67.)
+    unnormalized: bool = false,
 };
 
 /// A point in a texture, and how fast its coordinates change round it:
 /// what a sampler is given to choose a level and how many samples to take.
 /// The changes are a pixel's, 0 to 1 across the texture like the point
 /// itself; all 0 asks for level 0, one sample.
+///
+/// A sampler whose coordinates are not normalized (`Sampler.unnormalized`)
+/// reads `u` and `v` in texels instead - the first texel being 0 to 1, as
+/// Vulkan has it - and nothing else of the point: such a sampler is held
+/// to the first level and to one sample, so the changes say nothing.
+/// (Since 1.67.)
 pub const Point = extern struct {
     u: f32,
     v: f32,
@@ -1902,6 +1917,10 @@ pub fn levelOf(texture: *const Texture, point: Point) f32 {
 /// read alone or both are mixed. Anisotropy takes up to `anisotropy`
 /// samples along the longer axis, at a level chosen for the shorter, which
 /// is what keeps a surface seen edge-on from blurring into one colour.
+///
+/// Where `Sampler.unnormalized` says so the point is in texels of the
+/// first level, which is the only level such a sampler reads, and one
+/// sample is taken (since 1.67).
 pub fn sampleBy(texture: *const Texture, sampler: *const Sampler, layer: u32, point: Point) u32 {
     return sampledOver(texture, sampler, .{ .layer = layer }, point);
 }
@@ -2013,7 +2032,11 @@ pub fn sampleVolumeBy(texture: *const Texture, sampler: *const Sampler, point: P
 fn slicedBy(texture: *const Texture, sampler: *const Sampler, lod: u32, point: Point, r: f32, chosen: Chosen) u32 {
     const level = @min(lod, texture.levels - 1);
     const slices = texture.slicesAt(level);
-    const z = sane(r) * @as(f32, @floatFromInt(slices));
+    // In slices already, where the sampler's coordinates are not
+    // normalized: Vulkan has no 3D texture read that way, so this is the
+    // library's own answer rather than a rule of Vulkan's, and it is the
+    // one that keeps every axis in the same units (since 1.67).
+    const z = if (sampler.unnormalized) sane(r) else sane(r) * @as(f32, @floatFromInt(slices));
     if (chosen.filter == .nearest) {
         const slice = slicedIn(sampler, @intFromFloat(@floor(z)), slices) orelse return sampler.border;
         return tapped(texture, sampler, .{ .layer = slice }, level, point, chosen.taps, chosen.filter);
@@ -2072,8 +2095,11 @@ fn tapped(texture: *const Texture, sampler: *const Sampler, reads: Reads, lod: u
 fn sampledAt(texture: *const Texture, sampler: *const Sampler, reads: Reads, lod: u32, u: f32, v: f32, filter: Filter, reference: f32) u32 {
     const across: f32 = @floatFromInt(texture.width(lod));
     const down: f32 = @floatFromInt(texture.height(lod));
-    const x = sane(u) * across;
-    const y = sane(v) * down;
+    // In texels of this level already, where the sampler says so: the
+    // level is the first one, which CreateSampler holds such a sampler to
+    // (since 1.67).
+    const x = if (sampler.unnormalized) sane(u) else sane(u) * across;
+    const y = if (sampler.unnormalized) sane(v) else sane(v) * down;
     if (filter == .nearest) {
         const left: i32 = @intFromFloat(@floor(x));
         const top: i32 = @intFromFloat(@floor(y));

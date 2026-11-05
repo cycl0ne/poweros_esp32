@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.33 (05.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.34 (05.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -3857,6 +3857,167 @@ fn smallChecks(probe: *Probe) void {
     }
 }
 
+// --- 1.67: a sampler whose coordinates are the texture's own texels -------
+
+/// A quad whose s and t are the texture's columns and rows, read through
+/// the sampler bound beside it: what `unnormalized_coordinates` is for.
+const ByTexel = struct {
+    const entries = [_]facet.shader.Entry{
+        facet.shader.vertex("bytexel", &Shapes.flat, 2),
+        facet.shader.fixedFragment("bytexel", .{ .kind = .texture_sampled }),
+    };
+    const code = facet.shader.Code{ .entry_count = entries.len, .entries = &entries };
+};
+
+/// A sample placed in texels rather than 0 to 1 across the texture
+/// (1.67): what CreateSampler asks of such a sampler, and the texel it
+/// reads.
+fn texelChecks(probe: *Probe) void {
+    const fb = probe.fb;
+    const device = probe.device.?;
+    defer probe.give();
+    const across = 64;
+    const extent = facet.Extent3D{ .width = across, .height = across };
+    const in_texels = facet.SamplerCreateInfo{
+        .mag_filter = .nearest,
+        .min_filter = .nearest,
+        .address_mode_u = .clamp_to_edge,
+        .address_mode_v = .clamp_to_edge,
+        .unnormalized_coordinates = true,
+    };
+
+    var by_texel: ?*facet.Sampler = null;
+    const asked = fb.CreateSampler(device, &in_texels, &by_texel);
+    if (!probe.features.unnormalized_coordinates) {
+        probe.check(asked == .error_feature_not_present and by_texel == null, "a sampler in texels refused where the device reads none");
+        return;
+    }
+    probe.check(asked == .success and by_texel != null, "a sampler whose coordinates are texels");
+    if (asked != .success) return;
+    defer fb.DestroySampler(device, by_texel);
+
+    // What Vulkan allows beside it, and nothing else: one filter for
+    // both, the first level alone, one sample, no comparison, and an edge
+    // held or bordered.
+    var refused: ?*facet.Sampler = null;
+    var two_filters = in_texels;
+    two_filters.min_filter = .linear;
+    probe.check(fb.CreateSampler(device, &two_filters, &refused) == .error_initialization_failed, "two filters with it refused");
+    var levelled = in_texels;
+    levelled.max_lod = facet.texture.lod_unclamped;
+    probe.check(fb.CreateSampler(device, &levelled, &refused) == .error_initialization_failed, "and a level past the first");
+    var tapped = in_texels;
+    tapped.anisotropy_enable = true;
+    tapped.max_anisotropy = 4;
+    probe.check(fb.CreateSampler(device, &tapped, &refused) == .error_initialization_failed, "and several samples along an axis");
+    var tiled = in_texels;
+    tiled.address_mode_u = .repeat;
+    probe.check(fb.CreateSampler(device, &tiled, &refused) == .error_initialization_failed, "and an edge that is neither held nor bordered");
+    probe.check(refused == null, "and nothing given back for any of them");
+
+    // The texture of the small texels' two colours, its left half and its
+    // right, and a picture to draw it into.
+    const sampled = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST;
+    const table = probe.image(.{ .format = .b8g8r8a8_unorm, .extent = extent, .usage = sampled }, 0) orelse
+        return probe.check(false, "a texture of 64 by 64 to read by texel");
+    const texels, const texel_bytes = probe.buffer(across * across * 4, facet.BUFFER_USAGE_TRANSFER_SRC) orelse
+        return probe.check(false, "a buffer its texels come from");
+    for (0..across * across) |k| {
+        const color = if (k % across < across / 2) Smalls.left else Smalls.right;
+        std.mem.writeInt(u32, texel_bytes[k * 4 ..][0..4], color, .little);
+    }
+    var slot: usize = 0;
+    for (probe.memories, 0..) |each, k| if (each == null) {
+        slot = k;
+        break;
+    };
+    const shown = probe.image(.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = side, .height = side }, .tiling = .linear, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, facet.MEMORY_PROPERTY_HOST_VISIBLE) orelse
+        return probe.check(false, "a picture to draw it into");
+    const shown_memory = probe.memories[slot].?;
+    const whole = facet.BufferImageCopy{ .image_extent = extent };
+    var commands = probe.record() orelse return probe.check(false, "a recording");
+    fb.CmdCopyBufferToImage(commands, texels, table[0], .general, 1, @ptrCast(&whole));
+    if (!probe.submit()) return probe.check(false, "the texels copied in");
+
+    var module: ?*facet.ShaderModule = null;
+    if (fb.CreateShaderModule(device, &.{ .code = &ByTexel.code }, &module) != .success) return probe.check(false, "the shader module");
+    _ = Probe.keep(&probe.modules, module);
+    const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .combined_image_sampler, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    if (fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &set_layout) != .success) return probe.check(false, "a set layout of a texture and a sampler");
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    var layout: ?*facet.PipelineLayout = null;
+    if (fb.CreatePipelineLayout(device, &.{ .set_layout_count = 1, .set_layouts = @ptrCast(&set_layout) }, &layout) != .success) return probe.check(false, "the pipeline layout");
+    _ = Probe.keep(&probe.layouts, layout);
+    var pool: ?*facet.DescriptorPool = null;
+    if (fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool) != .success) return probe.check(false, "a descriptor pool");
+    defer fb.DestroyDescriptorPool(device, pool);
+    var sets: [1]?*facet.DescriptorSet = undefined;
+    if (fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &sets) != .success) return probe.check(false, "a descriptor set");
+
+    const pass = probe.renderPass(.{
+        .attachment_count = 1,
+        .attachments = @ptrCast(&facet.AttachmentDescription{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .color_attachment_optimal }),
+        .subpass_count = 1,
+        .subpasses = @ptrCast(&facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal }) }),
+    }) orelse return probe.check(false, "a pass to draw it in");
+    const onto = probe.framebuffer(pass, &.{shown[1]}) orelse return probe.check(false, "a framebuffer for it");
+    const attributes = [2]facet.VertexInputAttributeDescription{
+        .{ .location = 0, .binding = 0, .format = .r32g32b32_sfloat },
+        .{ .location = 1, .binding = 0, .format = .r32g32_sfloat, .offset = 12 },
+    };
+    const draws = pipelineOf(probe, pass, module.?, layout.?, .{ .attributes = &attributes, .stride = 20, .name = "bytexel" }) orelse
+        return probe.check(false, "a pipeline whose form reads a texture through a sampler");
+
+    // s and t are the texture's own texels, 0 to 64 over the quad.
+    const vertex_buffer, const vertex_bytes = probe.buffer(256, facet.BUFFER_USAGE_VERTEX_BUFFER) orelse
+        return probe.check(false, "a vertex buffer");
+    const quad = [6][5]f32{
+        .{ -1, -1, 0.5, 0, 0 },
+        .{ 1, -1, 0.5, across, 0 },
+        .{ -1, 1, 0.5, 0, across },
+        .{ -1, 1, 0.5, 0, across },
+        .{ 1, -1, 0.5, across, 0 },
+        .{ 1, 1, 0.5, across, across },
+    };
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(quad))], std.mem.asBytes(&quad));
+    const offset: u64 = 0;
+    const clear = [1]facet.ClearValue{.{ .color = .{ .float32 = .{ 0, 1, 0, 1 } } }};
+    const area = facet.Rect2D{ .extent = .{ .width = side, .height = side } };
+    const pixels, const pitch = probe.mapped(shown[0], shown_memory) orelse return probe.check(false, "the picture read back");
+
+    // The same quad through a sampler of 0 to 1: its coordinates are then
+    // sixty-four times across the texture, held at the edge, so the whole
+    // picture is the texture's last column - which is what says the other
+    // read texels.
+    var by_part: ?*facet.Sampler = null;
+    var normalized = in_texels;
+    normalized.unnormalized_coordinates = false;
+    if (fb.CreateSampler(device, &normalized, &by_part) != .success) return probe.check(false, "a sampler of 0 to 1 to tell it from");
+    defer fb.DestroySampler(device, by_part);
+
+    const quarter = side / 4;
+    for ([2]struct { ?*facet.Sampler, u32, u32, [*:0]const u8, [*:0]const u8 }{
+        .{ by_texel, Smalls.left, Smalls.right, "the texel the coordinates name, on the texture's left half", "and on its right half" },
+        .{ by_part, Smalls.right, Smalls.right, "the same coordinates as parts of the texture read its far edge", "there as well" },
+    }) |one| {
+        const with, const want_left, const want_right, const says_left, const says_right = one;
+        const info = facet.DescriptorImageInfo{ .sampler = with, .image_view = table[1] };
+        const write = facet.WriteDescriptorSet{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .combined_image_sampler, .descriptor_count = 1, .image_info = @ptrCast(&info) };
+        fb.UpdateDescriptorSets(device, 1, @ptrCast(&write), 0, null);
+        commands = probe.record() orelse return probe.check(false, "a recording of the draw");
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = onto, .render_area = area, .clear_value_count = 1, .clear_values = &clear }, .@"inline");
+        fb.CmdBindPipeline(commands, .graphics, draws);
+        fb.CmdBindDescriptorSets(commands, .graphics, layout.?, 0, 1, @ptrCast(&sets), 0, null);
+        fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+        fb.CmdDraw(commands, 6, 1, 0, 0);
+        fb.CmdEndRenderPass(commands);
+        if (!probe.submit()) return probe.check(false, "the frame submitted");
+        probe.checkEqual(want_left, pixelAt(pixels, pitch, quarter, quarter), says_left);
+        probe.checkEqual(want_right, pixelAt(pixels, pitch, side - quarter, side - quarter), says_right);
+    }
+}
+
 // --- 1.49: the shapes read through a sampler, and a sampler a layout holds -
 
 /// A quad over a texture of layers read through the sampler bound beside
@@ -4833,6 +4994,7 @@ fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical
     shapeChecks(&probe);
     samplesChecks(&probe);
     smallChecks(&probe);
+    texelChecks(&probe);
     heldChecks(&probe);
     cutChecks(&probe);
     togetherChecks(&probe);

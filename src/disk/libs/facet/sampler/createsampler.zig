@@ -29,10 +29,14 @@ const max_sampler_anisotropy = @import("../instance/_instance.zig").max_sampler_
 /// - `sampler` - where the sampler is written; null when it fails.
 ///
 /// RESULT:
-/// `success`; `error_feature_not_present` for `unnormalized_coordinates`,
-/// for an address mode that is none of Vulkan's five, or for a filter,
-/// mipmap mode, compare operation or border colour that is not one of
-/// Vulkan's; `error_out_of_host_memory`.
+/// `success`; `error_feature_not_present` for an address mode that is
+/// none of Vulkan's five, for a filter, mipmap mode, compare operation or
+/// border colour that is not one of Vulkan's, or for
+/// `unnormalized_coordinates` on a device that reads none
+/// (`PhysicalDeviceFeatures.unnormalized_coordinates`);
+/// `error_initialization_failed` for `unnormalized_coordinates` asked for
+/// beside something Vulkan does not allow with it;
+/// `error_out_of_host_memory`.
 ///
 /// BEHAVIOR:
 /// The sampler holds what it was given, in the terms the sampling is
@@ -47,6 +51,24 @@ const max_sampler_anisotropy = @import("../instance/_instance.zig").max_sampler_
 /// through it a shadow sample: what is read is compared with the reference
 /// the fragment function carries, and what comes out is how much of the
 /// sample passed, not a colour.
+///
+/// `unnormalized_coordinates` places the sample in texels of the texture
+/// rather than 0 to 1 across it, for a program that reads a texture as a
+/// table of values (since 1.67). Vulkan asks five things of such a
+/// sampler, and all five are held to here, an
+/// `error_initialization_failed` for each:
+/// - one filter for both: `mag_filter` and `min_filter` the same. Which of
+///   the two a sample would take is worked out from how fast the
+///   coordinates change, which says nothing in texels - so Vulkan has
+///   them equal and the question does not arise.
+/// - `mipmap_mode` `nearest`, and `min_lod` and `max_lod` both 0: the
+///   first level and no other, the coordinates being that level's texels.
+/// - no `anisotropy_enable`: one sample.
+/// - no `compare_enable`: a colour and not a comparison.
+/// - `address_mode_u` and `address_mode_v` either `clamp_to_edge` or
+///   `clamp_to_border`. `address_mode_w` is taken as it is given: Vulkan
+///   has no 3D texture read this way at all, and a 3D texture's `r` is
+///   counted in slices here, which is the library's own answer.
 ///
 /// All five of Vulkan's address modes are taken, `mirror_clamp_to_edge`
 /// among them since 1.49: the texture turned round once below 0 and held
@@ -94,11 +116,34 @@ const max_sampler_anisotropy = @import("../instance/_instance.zig").max_sampler_
 ///     .anisotropy_enable = true,
 ///     .max_anisotropy = 4,
 /// }, &sampler);
+///
+/// // A table of values, read at the texel the coordinates name.
+/// var table: ?*facet.Sampler = null;
+/// _ = fb.CreateSampler(device, &.{
+///     .mag_filter = .nearest,
+///     .min_filter = .nearest,
+///     .address_mode_u = .clamp_to_edge,
+///     .address_mode_v = .clamp_to_edge,
+///     .unnormalized_coordinates = true,
+/// }, &table);
 /// ```
 pub fn CreateSampler(base: *FacetBase, device: *facet.Device, info: *const facet.SamplerCreateInfo, sampler: *?*facet.Sampler) facet.Result {
     sampler.* = null;
     const owner = _objects.of(Device, device);
-    if (info.unnormalized_coordinates) return .error_feature_not_present;
+    // In texels rather than 0 to 1, where the device samples that way:
+    // what Vulkan asks of such a sampler is asked here too, since the
+    // sampling holds it to the first level and to one sample and so
+    // cannot answer for a sampler that says otherwise (since 1.67).
+    if (info.unnormalized_coordinates) {
+        if (!owner.physical.features.unnormalized_coordinates) return .error_feature_not_present;
+        if (info.mag_filter != info.min_filter) return .error_initialization_failed;
+        if (info.mipmap_mode != .nearest) return .error_initialization_failed;
+        if (info.min_lod != 0 or info.max_lod != 0) return .error_initialization_failed;
+        if (info.anisotropy_enable or info.compare_enable) return .error_initialization_failed;
+        for ([2]facet.SamplerAddressMode{ info.address_mode_u, info.address_mode_v }) |mode| {
+            if (mode != .clamp_to_edge and mode != .clamp_to_border) return .error_initialization_failed;
+        }
+    }
     const mag = _sampler.filterOf(info.mag_filter) orelse return .error_feature_not_present;
     const min = _sampler.filterOf(info.min_filter) orelse return .error_feature_not_present;
     const mipmap: texture.Mipmap = switch (info.mipmap_mode) {
@@ -126,6 +171,7 @@ pub fn CreateSampler(base: *FacetBase, device: *facet.Device, info: *const facet
             .max_lod = info.max_lod,
             .anisotropy = if (info.anisotropy_enable) anisotropyOf(info.max_anisotropy) else 1,
             .compare = compare,
+            .unnormalized = info.unnormalized_coordinates,
         },
     };
     sampler.* = _objects.handle(facet.Sampler, made);

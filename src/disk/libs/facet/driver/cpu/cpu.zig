@@ -115,6 +115,10 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // forms that read a sampler run, with everything one may ask for.
         .samplers = true,
         .sampler_anisotropy = true,
+        // A sample placed in texels rather than 0 to 1: the sampling here
+        // reads the point as the sampler says (`texture.Sampler.unnormalized`,
+        // since 1.67).
+        .unnormalized_coordinates = true,
         // The samples that passed are counted by the tiles as they are
         // drawn, and what each stage was given as the draw is played
         // (driver/cpu/_draw.zig, driver/cpu/raster/batched.zig).

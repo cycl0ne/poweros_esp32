@@ -149,6 +149,9 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // forms that want one are refused and drawn on the cores.
         .samplers = false,
         .sampler_anisotropy = false,
+        // Nothing here reads a sampler at all, so a sample in texels is
+        // refused with the rest of what a sampler says (since 1.67).
+        .unnormalized_coordinates = false,
         // The hardware's own counter, pointed at a word of the frame's by
         // the packet beside a draw and added to the query as the frame is
         // drawn (`cl.occlusionQuery`, since 1.47). What the QPUs were

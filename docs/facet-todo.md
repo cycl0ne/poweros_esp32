@@ -1,6 +1,6 @@
 # facet.library: the work list, by where each item stands in Vulkan
 
-What is left to do in facet.library as of **1.66**, each item with where it
+What is left to do in facet.library as of **1.67**, each item with where it
 bites, what it would take, and **where it stands in Vulkan**, so that a
 morning's work is never spent on something Vulkan 1.0 never had.
 
@@ -64,18 +64,7 @@ large wants splitting first.
 - **Size:** medium to large. Worth splitting: the unorm ones (`r8g8`, 16-bit
   channels) first, the integer read after.
 
-### 1.3 `unnormalized_coordinates` on a sampler
-
-- **Standing:** `1.0 core`.
-- **Where:** `sampler/createsampler.zig` refuses it; coordinates are 0 to 1
-  across the texture.
-- **What it takes:** carry the bit in `texture.Sampler`, multiply by the
-  size where the fraction is used now, and keep Vulkan's restrictions on
-  it: nearest only, one level, no compare, clamped edges, no array layer.
-  A program reading a texture as a table of values is what asks for it.
-- **Size:** small.
-
-### 1.4 A point is one pixel, and no shader writes `PointSize`
+### 1.3 A point is one pixel, and no shader writes `PointSize`
 
 - **Standing:** `1.0 core` for `PointSize`; `1.0 feature` for points wider
   than one pixel (`largePoints`).
@@ -90,7 +79,7 @@ large wants splitting first.
   (`cl.pointSize`).
 - **Size:** small, once the SDK slot is decided.
 
-### 1.5 BC4 to BC7
+### 1.4 BC4 to BC7
 
 - **Standing:** `1.0 format`, under `textureCompressionBC` - which facet
   says yes to for BC1 to BC3 and no further.

@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.66**, so that a program need not find out by failing. It covers the API.
+1.67**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -93,8 +93,16 @@ time. What is left out:
   border are the same here, a texel being read as 0 to 1 whatever its
   format. A border of the program's own choosing is an extension
   (VK_EXT_custom_border_color) and is not here.
-- `SamplerCreateInfo.unnormalized_coordinates` is refused: coordinates are
-  0 to 1 across the texture.
+- `SamplerCreateInfo.unnormalized_coordinates` places the sample in the
+  texture's own texels rather than 0 to 1 across it (since 1.67), where
+  the device says it reads them
+  (`PhysicalDeviceFeatures.unnormalized_coordinates`: the cores do, the
+  V3D reads no sampler at all). Vulkan allows little beside it, and each
+  of those is `error_initialization_failed`: one filter for both,
+  `nearest` mipmapping with `min_lod` and `max_lod` 0, no anisotropy, no
+  comparison, and `address_mode_u` and `address_mode_v` either
+  `clamp_to_edge` or `clamp_to_border`. A 3D texture's `r` is then counted
+  in slices, which Vulkan does not have at all.
 
 The cores and the V3D's texture units still choose a level and its sample
 point differently, which is why `C:test/FacetCube CHECK V3D` allows 5 % of

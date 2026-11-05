@@ -4910,10 +4910,14 @@ fn CreateSampler(base: *FacetBase, device: *facet.Device, info: *const facet.Sam
 
 **RESULT**
 
-`success`; `error_feature_not_present` for `unnormalized_coordinates`,
-for an address mode that is none of Vulkan's five, or for a filter,
-mipmap mode, compare operation or border colour that is not one of
-Vulkan's; `error_out_of_host_memory`.
+`success`; `error_feature_not_present` for an address mode that is
+none of Vulkan's five, for a filter, mipmap mode, compare operation or
+border colour that is not one of Vulkan's, or for
+`unnormalized_coordinates` on a device that reads none
+(`PhysicalDeviceFeatures.unnormalized_coordinates`);
+`error_initialization_failed` for `unnormalized_coordinates` asked for
+beside something Vulkan does not allow with it;
+`error_out_of_host_memory`.
 
 **BEHAVIOR**
 
@@ -4929,6 +4933,24 @@ leaves the sample on `min_lod`. `compare_enable` makes every sample
 through it a shadow sample: what is read is compared with the reference
 the fragment function carries, and what comes out is how much of the
 sample passed, not a colour.
+
+`unnormalized_coordinates` places the sample in texels of the texture
+rather than 0 to 1 across it, for a program that reads a texture as a
+table of values (since 1.67). Vulkan asks five things of such a
+sampler, and all five are held to here, an
+`error_initialization_failed` for each:
+- one filter for both: `mag_filter` and `min_filter` the same. Which of
+  the two a sample would take is worked out from how fast the
+  coordinates change, which says nothing in texels - so Vulkan has
+  them equal and the question does not arise.
+- `mipmap_mode` `nearest`, and `min_lod` and `max_lod` both 0: the
+  first level and no other, the coordinates being that level's texels.
+- no `anisotropy_enable`: one sample.
+- no `compare_enable`: a colour and not a comparison.
+- `address_mode_u` and `address_mode_v` either `clamp_to_edge` or
+  `clamp_to_border`. `address_mode_w` is taken as it is given: Vulkan
+  has no 3D texture read this way at all, and a 3D texture's `r` is
+  counted in slices here, which is the library's own answer.
 
 All five of Vulkan's address modes are taken, `mirror_clamp_to_edge`
 among them since 1.49: the texture turned round once below 0 and held
@@ -4982,6 +5004,16 @@ _ = fb.CreateSampler(device, &.{
     .anisotropy_enable = true,
     .max_anisotropy = 4,
 }, &sampler);
+
+// A table of values, read at the texel the coordinates name.
+var table: ?*facet.Sampler = null;
+_ = fb.CreateSampler(device, &.{
+    .mag_filter = .nearest,
+    .min_filter = .nearest,
+    .address_mode_u = .clamp_to_edge,
+    .address_mode_v = .clamp_to_edge,
+    .unnormalized_coordinates = true,
+}, &table);
 ```
 
 ## CreateScreenSurface

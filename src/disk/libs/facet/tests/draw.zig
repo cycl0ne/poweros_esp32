@@ -4265,11 +4265,22 @@ const SamplerScene = struct {
         }
     }
 
+    /// s and t in the texels of the 8 x 8 texture, 0 to 8 over the quad:
+    /// what a sampler of unnormalized coordinates is given (since 1.67).
+    fn texels(vertices: *const shader.Vertices) callconv(.c) void {
+        for (0..vertices.count) |k| {
+            const p = vertices.input(@intCast(k), 0);
+            vertices.output(@intCast(k))[0..6].* = .{ p[0], p[1], p[2], 1, (p[0] + 1) * 4, (p[1] + 1) * 4 };
+        }
+    }
+
     const entries = [_]shader.Entry{
         shader.vertex("wide", &wide, 2),
         shader.fixedFragment("wide", .{ .kind = .texture_sampled }),
         shader.vertex("shadow", &shadow, 3),
         shader.fixedFragment("shadow", .{ .kind = .texture_shadow }),
+        shader.vertex("texels", &texels, 2),
+        shader.fixedFragment("texels", .{ .kind = .texture_sampled }),
     };
     const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
 };
@@ -4286,15 +4297,13 @@ test "a sampler bound beside the texture: the wrap and the border it says, and a
     try testing.expect(features.samplers);
     try testing.expect(features.sampler_anisotropy);
     try testing.expect(features.immutable_samplers);
-    try testing.expect(!features.unnormalized_coordinates);
+    try testing.expect(features.unnormalized_coordinates);
     var properties: facet.PhysicalDeviceProperties = undefined;
     fb.GetPhysicalDeviceProperties(bench.physical, &properties);
     try testing.expectEqual(@as(u32, 16), properties.limits.max_sampler_anisotropy);
 
     // What CreateSampler has not got, and what it holds rather than refuses.
     var refused: ?*facet.Sampler = null;
-    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateSampler(device, &.{ .unnormalized_coordinates = true }, &refused));
-    try testing.expect(refused == null);
     try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateSampler(device, &.{ .address_mode_u = @enumFromInt(9) }, &refused));
     try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateSampler(device, &.{ .compare_enable = true, .compare_op = @enumFromInt(9) }, &refused));
     var most: ?*facet.Sampler = null;
@@ -4307,6 +4316,83 @@ test "a sampler bound beside the texture: the wrap and the border it says, and a
     fb.DestroySampler(device, most);
     fb.DestroySampler(device, one);
     fb.DestroySampler(device, null);
+
+    // 1.67: a sampler in texels, and the five things Vulkan asks of one -
+    // each of them refused, and the sampler itself made.
+    const in_texels = facet.SamplerCreateInfo{
+        .mag_filter = .nearest,
+        .min_filter = .nearest,
+        .address_mode_u = .clamp_to_edge,
+        .address_mode_v = .clamp_to_edge,
+        .unnormalized_coordinates = true,
+    };
+    for ([_]facet.SamplerCreateInfo{
+        shaped: {
+            var one_filter = in_texels;
+            one_filter.min_filter = .linear;
+            break :shaped one_filter;
+        },
+        shaped: {
+            var mipmapped = in_texels;
+            mipmapped.mipmap_mode = .linear;
+            break :shaped mipmapped;
+        },
+        shaped: {
+            var levelled = in_texels;
+            levelled.max_lod = texture_zig.lod_unclamped;
+            break :shaped levelled;
+        },
+        shaped: {
+            var held_off = in_texels;
+            held_off.min_lod = 1;
+            break :shaped held_off;
+        },
+        shaped: {
+            var wide_tap = in_texels;
+            wide_tap.anisotropy_enable = true;
+            wide_tap.max_anisotropy = 4;
+            break :shaped wide_tap;
+        },
+        shaped: {
+            var compared = in_texels;
+            compared.compare_enable = true;
+            compared.compare_op = .less;
+            break :shaped compared;
+        },
+        shaped: {
+            var tiled_edge = in_texels;
+            tiled_edge.address_mode_u = .repeat;
+            break :shaped tiled_edge;
+        },
+        shaped: {
+            var mirrored_edge = in_texels;
+            mirrored_edge.address_mode_v = .mirrored_repeat;
+            break :shaped mirrored_edge;
+        },
+    }) |asked| {
+        try testing.expectEqual(facet.Result.error_initialization_failed, fb.CreateSampler(device, &asked, &refused));
+        try testing.expect(refused == null);
+    }
+    // The w mode is taken as it is given: Vulkan has no 3D texture read
+    // this way, and a bordered edge is one of the two it does ask for.
+    for ([_]facet.SamplerCreateInfo{
+        shaped: {
+            var through = in_texels;
+            through.address_mode_w = .repeat;
+            break :shaped through;
+        },
+        shaped: {
+            var bordered = in_texels;
+            bordered.address_mode_u = .clamp_to_border;
+            bordered.address_mode_v = .clamp_to_border;
+            break :shaped bordered;
+        },
+    }) |asked| {
+        var taken: ?*facet.Sampler = null;
+        try testing.expectEqual(facet.Result.success, fb.CreateSampler(device, &asked, &taken));
+        try testing.expect(_objects.of(_sampler.Sampler, taken.?).kept.unnormalized);
+        fb.DestroySampler(device, taken);
+    }
 
     // An 8 x 8 texture, red on the left and blue on the right: the red is
     // where a shadow sample's depth is 1, the blue where it is 0.
@@ -4405,6 +4491,36 @@ test "a sampler bound beside the texture: the wrap and the border it says, and a
         try testing.expectEqual(red, picture.at(20, 32));
         try testing.expectEqual(blue, picture.at(44, 32));
     }
+
+    // 1.67: a sampler in texels reads the texel its coordinates name. The
+    // quad carries s and t from 0 to 8 - the texture's own columns and
+    // rows - so the left half of the picture is the texture's red half and
+    // the right half its blue one.
+    const texels_result, const texels_pipeline = makePipeline(&bench, .{ .module = scene_module, .name = "texels", .layout = layout, .pass = pass });
+    try testing.expectEqual(facet.Result.success, texels_result);
+    defer fb.DestroyPipeline(device, texels_pipeline);
+    var by_texel: ?*facet.Sampler = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateSampler(device, &in_texels, &by_texel));
+    defer fb.DestroySampler(device, by_texel);
+    try frames.draw(by_texel, texels_pipeline);
+    try testing.expectEqual(red, picture.at(8, 32));
+    try testing.expectEqual(red, picture.at(28, 32));
+    try testing.expectEqual(blue, picture.at(36, 32));
+    try testing.expectEqual(blue, picture.at(56, 32));
+    // The same coordinates through a sampler of 0 to 1 are eight times
+    // across the texture, held at its edge: blue everywhere but the first
+    // eighth of the picture, which is what says these are texels and not
+    // coordinates that happen to work out.
+    var by_part: ?*facet.Sampler = null;
+    var normalized = in_texels;
+    normalized.unnormalized_coordinates = false;
+    try testing.expectEqual(facet.Result.success, fb.CreateSampler(device, &normalized, &by_part));
+    defer fb.DestroySampler(device, by_part);
+    try frames.draw(by_part, texels_pipeline);
+    try testing.expectEqual(red, picture.at(2, 32));
+    try testing.expectEqual(blue, picture.at(8, 32));
+    try testing.expectEqual(blue, picture.at(28, 32));
+    try testing.expectEqual(blue, picture.at(56, 32));
 
     // A combined image sampler written with no sampler: the form says so
     // rather than sampling some other way.
