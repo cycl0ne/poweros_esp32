@@ -223,6 +223,7 @@ flowchart TB
     m_icon_library["icon.library"]
     m_iffparse_library["iffparse.library"]
     m_input_device["input.device"]
+    m_intelnet_device["intelnet.device"]
     m_intuition_library["intuition.library"]
     m_keyboard_device["keyboard.device"]
     m_keymap_library["keymap.library"]
@@ -358,6 +359,8 @@ flowchart TB
     m_icon_library --> m_dos_library
     m_iffparse_library --> m_clipboard_device
     m_iffparse_library --> m_dos_library
+    m_intelnet_device --> m_pci_library
+    m_intelnet_device --> m_timer_device
     m_locale_library --> m_dos_library
     m_media_library --> m_compression_library
     m_media_library --> m_dos_library
@@ -433,7 +436,7 @@ flowchart TB
     classDef lib fill:#dbeafe,stroke:#2563eb,color:#111827
     class m_aac_acodec,m_ac3_acodec,m_anvil_library,m_asl_library,m_audiocodec_library,m_battery_docklet,m_bsdsocket_library,m_chip_vcodec,m_clock_docklet,m_commodities_library,m_compression_library,m_crypto_library,m_datatypes_library,m_diskfont_library,m_dts_acodec,m_facet_library,m_filter_library,m_flac_acodec,m_http_library,m_icon_library,m_iffparse_library,m_locale_library,m_media_library,m_mkv_container,m_modbus_library,m_mp3_acodec,m_network_docklet,m_opus_acodec,m_pci_library,m_rdb_library,m_tls_library,m_truetype_library,m_usb_library,m_v3d_fdriver,m_videocodec_library,m_vorbis_acodec,m_wav_acodec,m_wpa_library lib
     classDef dev fill:#dcfce7,stroke:#16a34a,color:#111827
-    class m_acm_device,m_aic8800_device,m_clipboard_device,m_cyw43455_device,m_disk_device,m_ecm_device,m_emac_device,m_esp32s3wifi_device,m_ftdi_device,m_hid_device,m_nvme_device,m_openeth_device,m_rs485_device,m_sdcard_device,m_slip_device,m_ssh_device,m_telnet_device,m_uac_device,m_usbotg_device,m_xhci_device dev
+    class m_acm_device,m_aic8800_device,m_clipboard_device,m_cyw43455_device,m_disk_device,m_ecm_device,m_emac_device,m_esp32s3wifi_device,m_ftdi_device,m_hid_device,m_intelnet_device,m_nvme_device,m_openeth_device,m_rs485_device,m_sdcard_device,m_slip_device,m_ssh_device,m_telnet_device,m_uac_device,m_usbotg_device,m_xhci_device dev
     classDef hand fill:#fce7f3,stroke:#db2777,color:#111827
     class m_fat_handler,m_posfs_handler,m_smb_handler hand
     classDef cls fill:#ede9fe,stroke:#7c3aed,color:#111827

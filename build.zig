@@ -397,13 +397,14 @@ pub fn build(b: *std.Build) void {
         .esp32s3, .esp32p4 => 2,
     };
     if (most_cores != 0 and cores > most_cores) std.debug.panic("-Dcores={d}: this chip has {d} cores", .{ cores, most_cores });
-    const net = b.option([]const u8, "net", "The network of the qemu steps and the virt, virt64 and q35 display steps: none, or a QEMU network backend such as tap,ifname=tap0,script=no,downscript=no (default: QEMU's user network)");
-    const net_dump = b.option([]const u8, "net-dump", "Write every frame of the qemu, virt, virt64 and q35 display steps' network to this pcap file");
+    const net = b.option([]const u8, "net", "The network of the qemu, virt, virt64 and q35 steps: none, or a QEMU network backend such as tap,ifname=tap0,script=no,downscript=no (default: QEMU's user network)");
+    const net_dump = b.option([]const u8, "net-dump", "Write every frame of the qemu, virt, virt64 and q35 steps' network to this pcap file");
     const wifi = wifiDir(b, b.option([]const u8, "wifi", "The radio's vendor libraries for esp32s3wifi.device (default: toolchain/espressif-wifi, which scripts/fetch-wifi.sh fills)"));
     const telnet = b.option(u16, "telnet", "Forward this host port to the machine's port 23 (C:net/ShellServer) on the qemu, virt, virt64 and q35 display steps' user network; qemu-display forwards 2323 unless given, and 0 forwards none");
     const ssh_port = b.option(u16, "ssh", "Forward this host port to the machine's port 22 (C:net/ShellServer SSH) on the qemu, virt, virt64 and q35 display steps' user network; qemu-display forwards 2222 unless given, and 0 forwards none");
     const network = qemuNetwork(b, net, net_dump, telnet, ssh_port);
     const virt_network = virtNetwork(b, net, net_dump, telnet, ssh_port);
+    const q35_network = q35Network(b, net, net_dump, telnet, ssh_port);
     const rs485 = b.option([]const u8, "rs485", "Give the qemu steps' RS-485 port (UART1, rs485.device) to this QEMU serial backend, such as tcp::5020,server,nowait or a pty");
     const slip_line = b.option([]const u8, "slip", "Give the qemu steps' UART1 (serial.device unit 1, a SLIP line) to this QEMU serial backend, such as tcp::5021,server,nowait; not with -Drs485");
     if (rs485 != null and slip_line != null) std.debug.panic("-Drs485 and -Dslip: both are UART1", .{});
@@ -717,7 +718,7 @@ pub fn build(b: *std.Build) void {
     for (poweros_userland.a64_files) |file| {
         make_a64_disk.addPrefixedFileArg(b.fmt("{s}=", .{file.disk}), a64_disk_dep.namedLazyPath(file.source));
     }
-    for (poweros_userland.mac_files) |file| {
+    for (poweros_userland.x64_files) |file| {
         make_x64_disk.addPrefixedFileArg(b.fmt("{s}=", .{file.disk}), x64_disk_dep.namedLazyPath(file.source));
     }
     if (wifi != null) {
@@ -1304,6 +1305,7 @@ pub fn build(b: *std.Build) void {
     const q35_disks: VirtDisks = .{ .system = x64_system_disk, .work = keepWorkDisk(b, blank_work_disk, "q35.bin") };
     const run_q35 = b.addSystemCommand(&q35_machine);
     run_q35.addArgs(&.{ "-nographic", "-device", "qemu-xhci" });
+    run_q35.addArgs(q35_network);
     q35_disks.addTo(run_q35);
     run_q35.addArgs(&.{ "-drive", b.fmt("if=pflash,format=raw,readonly=on,file={s}", .{ovmf_code}) });
     run_q35.addArgs(&.{ "-drive", b.fmt("if=pflash,format=raw,file={s}", .{q35_vars.path}) });
@@ -1318,22 +1320,20 @@ pub fn build(b: *std.Build) void {
 
     // The same with the machine's window and what the board has around
     // it, as `virt-display` and `virt64-display`: USB with a keyboard, a
-    // tablet, whose pointer stays where the host's is, and an Ethernet
-    // adapter on the user network (`virtNetwork`); the console stays on
-    // the terminal. No speaker: this board's ROM carries no audio.device,
-    // so there is nothing to drive one with.
+    // tablet, whose pointer stays where the host's is; the console stays
+    // on the terminal. Its Ethernet is the card both q35 steps have
+    // (`q35Network`). No speaker: this board's ROM carries no
+    // audio.device, so there is nothing to drive one with.
     //
-    // `q35-display` adds nothing for the picture: the firmware lights the
-    // emulated display itself and hands the kernel the framebuffer, so
-    // the display is the one this machine has in any case and
-    // `-nographic` above only keeps the window shut. `q35-virtio` gives
-    // it QEMU's virtio GPU on PCI instead, which the board lists before
-    // the firmware's framebuffer and the same driver draws on over
-    // virtio's PCI transport - at the size the firmware's own picture
-    // has, so that both steps show a machine of one size.
+    // `q35-display` draws on the framebuffer the firmware lights, which
+    // on this machine is its emulated VGA; `q35-virtio` gives it QEMU's
+    // virtio GPU on PCI instead, which the board lists before the
+    // firmware's framebuffer, and the same driver draws on that over
+    // virtio's PCI transport. Both at 1920x1080, as the other emulated
+    // machines' windows are.
     for ([_][3][]const u8{
-        .{ "", "q35-display", "the firmware's framebuffer" },
-        .{ "virtio-gpu-pci,xres=1280,yres=800", "q35-virtio", "virtio GPU" },
+        .{ "VGA,xres=1920,yres=1080", "q35-display", "the firmware's framebuffer" },
+        .{ "virtio-gpu-pci,xres=1920,yres=1080", "q35-virtio", "virtio GPU" },
     }) |display| {
         const run_q35_display = b.addSystemCommand(&q35_machine);
         run_q35_display.addArgs(&.{
@@ -1341,11 +1341,15 @@ pub fn build(b: *std.Build) void {
             "-device",  "qemu-xhci",  "-device", "usb-kbd",
             "-device",  "usb-tablet",
         });
-        // With a display of its own the machine's emulated VGA goes: the
-        // firmware would light that one and leave the window on it, and
-        // the kernel draws on the GPU the board lists first.
-        if (display[0].len != 0) run_q35_display.addArgs(&.{ "-vga", "none", "-device", display[0] });
-        run_q35_display.addArgs(virt_network);
+        // The machine's own display goes and the one named here takes its
+        // place. Even for the VGA that is what gives it a size: the
+        // display a machine brings with it takes none, and `-global
+        // VGA.xres=` does not reach it ("not used"), so the firmware
+        // would light the 1280x800 its EDID offers by default - smaller
+        // than every other machine's window here. Named as a device it
+        // takes the size, and the firmware lights that.
+        run_q35_display.addArgs(&.{ "-vga", "none", "-device", display[0] });
+        run_q35_display.addArgs(q35_network);
         run_q35_display.addArgs(virt_monitor);
         q35_disks.addTo(run_q35_display);
         run_q35_display.addArgs(&.{ "-drive", b.fmt("if=pflash,format=raw,readonly=on,file={s}", .{ovmf_code}) });
@@ -2942,11 +2946,12 @@ fn qemuNetwork(b: *std.Build, net: ?[]const u8, dump: ?[]const u8, telnet: ?u16,
     return b.dupeStrings(&.{ "-nic", nic, "-object", b.fmt("filter-dump,id=dump0,netdev=net0,file={s}", .{file}) });
 }
 
-/// The emulated 64-bit machines' network, as QEMU's arguments: a USB
-/// Ethernet adapter (`usb-net`, a CDC-ECM function usb/ecm.device
-/// drives) on the machine's xHCI controller, on QEMU's user network as
-/// `qemuNetwork` has it - 10.0.2.15 by DHCP, the gateway 10.0.2.2, DNS
-/// at 10.0.2.3. It is the only network these machines have a driver for.
+/// The virt machines' network, as QEMU's arguments: a USB Ethernet
+/// adapter (`usb-net`, a CDC-ECM function usb/ecm.device drives) on the
+/// machine's xHCI controller, on QEMU's user network as `qemuNetwork`
+/// has it - 10.0.2.15 by DHCP, the gateway 10.0.2.2, DNS at 10.0.2.3.
+/// It is the only network those two machines have a driver for; the
+/// x86-64 machine has a card of its own (`q35Network`).
 /// `net`, `dump`, `telnet` and `ssh_port` are `qemuNetwork`'s; nothing is
 /// forwarded unless asked, so one of them starts beside a qemu-display,
 /// which holds 2323 and 2222.
@@ -2958,6 +2963,23 @@ fn virtNetwork(b: *std.Build, net: ?[]const u8, dump: ?[]const u8, telnet: ?u16,
     const adapter = [_][]const u8{ "-netdev", netdev, "-device", "usb-net,netdev=net0" };
     const file = dump orelse return b.dupeStrings(&adapter);
     return b.dupeStrings(&(adapter ++ [_][]const u8{ "-object", b.fmt("filter-dump,id=dump0,netdev=net0,file={s}", .{file}) }));
+}
+
+/// The x86-64 machine's network, as QEMU's arguments: an Intel 82576
+/// (`igb`), which intelnet.device drives as the machine's Ethernet port,
+/// on QEMU's user network as `qemuNetwork` has it. A PC's Ethernet is a
+/// card on PCI, not a USB adapter, so this machine is given the card;
+/// `-Dusb=usb-net` still plugs an adapter in beside it, on a user
+/// network of its own. `net`, `dump`, `telnet` and `ssh_port` are
+/// `qemuNetwork`'s.
+fn q35Network(b: *std.Build, net: ?[]const u8, dump: ?[]const u8, telnet: ?u16, ssh_port: ?u16) []const []const u8 {
+    if (net) |backend| {
+        if (std.mem.eql(u8, backend, "none")) return b.dupeStrings(&.{ "-nic", "none" });
+    }
+    const netdev = b.fmt("{s},id=net0{s}", .{ net orelse "user", if (net == null) hostForwards(b, telnet, ssh_port) else "" });
+    const card = [_][]const u8{ "-netdev", netdev, "-device", "igb,netdev=net0" };
+    const file = dump orelse return b.dupeStrings(&card);
+    return b.dupeStrings(&(card ++ [_][]const u8{ "-object", b.fmt("filter-dump,id=dump0,netdev=net0,file={s}", .{file}) }));
 }
 
 /// The virt machines' USB speaker, as QEMU's arguments: QEMU's

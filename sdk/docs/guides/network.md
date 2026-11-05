@@ -23,6 +23,7 @@ device requests are described in `sdk/devices/network.zig`,
 - [Configuration files](#configuration-files)
 - [The network device API](#the-network-device-api)
 - [Ethernet: emac.device](#ethernet-emacdevice)
+- [Ethernet on PCI: intelnet.device](#ethernet-on-pci-intelnetdevice)
 - [Wireless devices](#wireless-devices)
 - [A serial line: slip.device](#a-serial-line-slipdevice)
 - [Writing a network driver](#writing-a-network-driver)
@@ -48,7 +49,8 @@ device requests are described in `sdk/devices/network.zig`,
     |              discovery, IGMP, MLD, DHCP, DHCPv6, routes, names - interfaces
     |              eth0, wlan0, lo0
     |  IOSana2Req (CMD_READ, CMD_WRITE, S2_ONEVENT ...)
- network device    DEVS:networks/emac.device, DEVS:networks/openeth.device,
+ network device    DEVS:networks/emac.device, DEVS:networks/intelnet.device,
+    |              DEVS:networks/openeth.device,
     |              DEVS:networks/esp32s3wifi.device, DEVS:networks/slip.device
     |
  hardware          a MAC's rings and interrupts, a radio's libraries
@@ -589,6 +591,50 @@ the link, and a link that drops takes the unit off line until it is
 back; each change is in the system log (`C:Log`) with the speed and
 duplex the two ends agreed on.
 
+## Ethernet on PCI: intelnet.device
+
+`DEVS:networks/intelnet.device` is an Intel Ethernet controller on PCI
+Express: a unit per controller, with Ethernet framing, its station
+address the one the controller loads from its own storage. Unit 0 is the
+machine's first Ethernet port, in the order pci.library found them, and
+a second port is unit 1.
+
+Two generations are driven. The 82576 and the parts built like it go at
+a gigabit; the I225 and I226 go at 2.5. They differ in where the first
+interrupt register block sits - and in how its four registers are
+spaced inside it - and in the third speed the newer parts report, and in
+nothing else the device touches: the descriptor rings, the receive
+filter, the extended interrupt registers, the advanced descriptors and
+the PHY through MDIC are the same. `src/disk/devs/networks/intelnet/family/`
+holds that difference, a file per generation with its PCI IDs.
+
+The controllers are found by their PCI IDs under Intel's vendor, so a
+machine needs no board part for them: a card in a slot is driven wherever
+the machine has PCI. Each is claimed (`ClaimPCIDevice`), reset, given a
+ring of 128 receive and 64 send descriptors with a buffer of its own for
+every one, and asked for one interrupt vector; where the machine has no
+vectors to give, its interrupt line is used instead, and a controller
+that gets neither is left alone - nothing here polls.
+
+The link is the controller's own work. It is told once to bring its side
+up and the PHY is told to negotiate, and what the two ends agreed is
+read from the status register; the controller raises a cause when that
+changes, so a cable going in or out takes the unit on and off line with
+nothing polled. Each change is a line on the console with the speed and
+duplex.
+
+The controller checks an arriving packet's checksums itself. It reports
+`S2OFFLOADF_RX_CHECKSUMS` and `S2OFFLOADF_RX_CHECKSUMS_IPV6`, and a read
+of a packet whose checksums were all there and all right is answered
+with `SANA2IOF_CHECKSUM`, which lets the opener skip the sums over every
+byte: the sockets library does, and checks for itself anything that
+arrives without the flag. The controller abstains where there was
+nothing to check - a frame that is not an IP packet, and a packet whose
+transport part is neither TCP nor UDP - and so does the device.
+
+A machine with no such controller gets no device, so its `ETH0` is
+skipped. The x86-64 disk's `DEVS:NetInterfaces/ETH0` names this device.
+
 ## USB Ethernet: ecm.device
 
 `DEVS:usb/ecm.device` is a USB Ethernet adapter of the communications
@@ -714,7 +760,7 @@ made with the driver's `Link`, which it calls to work the hardware:
 
 | The Link provides | For |
 |---|---|
-| `bps` | the link's speed, answered by `S2_DEVICEQUERY` |
+| `bps` | the link's speed, answered by `S2_DEVICEQUERY`: a number where the hardware has one, or `bps(link)` where a link negotiates its own |
 | `setStation(link, address)` | the address the hardware answers to |
 | `setRunning(link, on)` | frames in and out, or neither |
 | `setFilter(link, groups, all)` | the multicast groups to take, and whether every frame |
@@ -743,20 +789,43 @@ caller's task, and queues everything else to the device's task, where
   so they never run under a spinlock or in an interrupt.
 - **Nothing polls.** A frame received, a frame sent and a change of the
   link are the hardware's interrupts, hooked with exec's `AddIntServer`
-  (the numbers from `sdk.hardware.intbits`); the interrupt code only
-  acknowledges the hardware and signals the task. Hardware that cannot
-  interrupt is polled from a timer.device request, and only while the
-  unit is online.
+  (the numbers from `sdk.hardware.intbits`), or with pci.library's
+  `AddPCIVectorServer` or `AddPCIIntServer` for a card on PCI; the
+  interrupt code only acknowledges the hardware and signals the task.
+  Hardware that cannot interrupt is polled from a timer.device request,
+  and only while the unit is online.
+- **The link's interrupt is not the rings'.** A unit that is off line
+  because its cable is out still has to hear the cable go back in, so
+  whatever tells the driver about the link stays on while the unit is
+  stopped: it is turned on once, when the device's task is there to take
+  it, and `setRunning` leaves it alone. A driver that masks it along with
+  the rings goes off line at the first moment the link is down and never
+  comes back.
+- **`setRunning` does not call `setCarrier`.** The unit calls
+  `setRunning` on its way on line, and a driver that answers by reporting
+  the carrier from inside is reporting into the middle of that. The
+  driver notes what it saw and lets its own interrupt path report it -
+  which is where every other change is reported from anyway.
 - **The hardware is found, not known.** The driver asks
   expansion.library for its part (`FindBoardPart(null, PARTKIND_NET,
   CHIP_...)`) and reads the
   registers, pins and interrupt from the part's tags; a board without the
   part gets no device, and the interface file for it is skipped.
-- **What the hardware reaches is internal memory.** A MAC that reads and
-  writes its buffers by DMA gets them in one block the init allocates
+- **The hardware is found, not known** - and a card on a bus is found on
+  the bus. A controller on PCI is walked for by its vendor and device IDs
+  or its class (`FindPCIDevice`, `FindPCIClass`), claimed
+  (`ClaimPCIDevice`), and read at the address its first base register was
+  placed at; no board says anything about it, so a card in a slot is
+  driven wherever the machine has PCI.
+- **What the hardware reaches is memory it can reach.** A MAC that reads
+  and writes its buffers by DMA gets them in one block the init allocates
   with `MEMF_INTERNAL` - and `MEMF_DMA` on a RISC-V 64 machine, whose
   DMA reaches only the RAM below 4 GiB - beside the interrupt server; the base, which
   MakeLibrary puts in external memory, holds only the pointer to it.
+  A card on PCI takes `MEMF_DMA` and asks pci.library whether what it
+  reads and writes sees the processors' caches (`PCIDevice.dma_coherent`,
+  from revision 1 on); where it does not, `CachePreDMA` and `CachePostDMA`
+  go around every descriptor and every buffer.
 - **A queued request is a message.** A request queued with `AddTail` has
   its node's type set to `.message`, or `WaitIO` on it returns at once.
 
@@ -767,6 +836,11 @@ registers (`ethmac.zig`). The unit's own tests in
 `src/disk/devs/networks/tests/` run it on the host over a link of the
 test's own - which read a frame goes to, orphans, filters, going offline,
 groups, aborts - so a new driver needs to test only its hardware.
+`src/disk/devs/networks/intelnet/` is a card on PCI: the device and its
+task (`intelnet.zig`, `sana.zig`), a card per controller with its rings
+(`_intelnet.zig`), the registers (`mac.zig`), the descriptors
+(`ring.zig`), the carrier and the speed (`link.zig`), the bus
+(`pci.zig`), and a file per generation of the hardware under `family/`.
 `src/disk/devs/networks/emac/` is a MAC on a chip: its descriptors and
 buffers in whole cache lines, written back (`CachePreDMA`) before the
 DMA engine reads them and invalidated (`CachePostDMA`) before the task
