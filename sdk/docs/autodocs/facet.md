@@ -4800,17 +4800,19 @@ memory behind it and not the tiles alone - a transient one is refused
 1.64, which is Vulkan's self-dependency by region: the subpass names
 one of its own colour attachments as an input attachment, and the pass
 carries a `SubpassDependency` of that subpass on itself with
-DEPENDENCY_BY_REGION. What the fragment function then reads is the
-fragment's own pixel as the tile already holds it
-(`shader.Fragments.keptAt`), so programmable blending costs no copy
-here: the pixel is where the tiles are. It comes with the quads and
-not through the descriptor, because every core draws a tile of its own
-and one descriptor could not say where each core's tile is - the
-`input_attachment` descriptor written for such an attachment still
-points at the image's memory, which is what the pass has not written
-yet. A subpass of several colour attachments drawn together reads the
-first of them this way and no other; reading the depth attachment it
-draws into is not among this, and neither is reading another pixel.
+DEPENDENCY_BY_REGION. It is read as any input attachment is - the
+`input_attachment` descriptor written with a view of it, and
+`shader.Fragments.input` then `colorAt` at the fragment's own place -
+and what it answers there is the tile, which already holds that pixel
+(since 1.65). So programmable blending costs no copy here: the pixel
+is where the tiles are.
+
+Only the fragment's own pixel is read: the rest of the attachment is
+in other tiles, drawn on other cores or not yet drawn, and reads as
+transparent black - which is all Vulkan's by-region dependency
+promises either. A subpass of several colour attachments drawn
+together reads the first of them this way and no other; reading the
+depth attachment it draws into is not among this.
 
 Without that dependency, drawing into an attachment
 and reading it in the same subpass is a loop, which is

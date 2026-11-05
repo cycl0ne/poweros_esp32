@@ -1,6 +1,6 @@
 # facet.library: the work list, by where each item stands in Vulkan
 
-What is left to do in facet.library as of **1.64**, each item with where it
+What is left to do in facet.library as of **1.65**, each item with where it
 bites, what it would take, and **where it stands in Vulkan**, so that a
 morning's work is never spent on something Vulkan 1.0 never had.
 

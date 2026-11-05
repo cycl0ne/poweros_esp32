@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.31 (05.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.32 (05.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -1724,13 +1724,16 @@ const Deferred = struct {
     }
 
     /// What the attachment being drawn into already holds at this very
-    /// pixel, read out of the tile, its green and blue the other way
-    /// round (since 1.64).
+    /// pixel, its green and blue the other way round: read through the
+    /// input attachment descriptor, which for the one being drawn is the
+    /// tile (since 1.64, this way since 1.65).
     fn own(fragments: *const facet.shader.Fragments) callconv(.c) void {
+        const from = fragments.input(0, 0, 0) orelse return facet.shader.fill(fragments, missing);
         for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
-            const kept = fragments.keptAt(quad);
             inline for (0..4) |i| {
-                const color = kept[i];
+                const x = fragments.x + @as(u32, quad.x) + @as(u32, i & 1);
+                const y = fragments.y + @as(u32, quad.y) + @as(u32, i >> 1);
+                const color = from.colorAt(x, y);
                 out[i] = (color & 0xFFFF_0000) | (color & 0xFF) << 8 | (color >> 8 & 0xFF);
             }
         }
@@ -1948,7 +1951,7 @@ fn inputChecks(probe: *Probe) void {
         .dependencies = @ptrCast(&by_region),
     }) orelse return probe.check(false, "a subpass that reads what it draws, by region");
     probe.check(true, "a subpass that reads what it draws, by region");
-    const own_frame = probe.framebuffer(own_pass, &.{second[1]}) orelse return probe.check(false, "a framebuffer for it");
+    const own_frame = probe.framebuffer(own_pass, &.{first[1]}) orelse return probe.check(false, "a framebuffer for it");
     const fills = pipelineOf(probe, own_pass, module.?, layout.?, .{}) orelse return probe.check(false, "the pipeline that writes the colour");
     const mixes = pipelineOf(probe, own_pass, module.?, layout.?, .{ .name = "own" }) orelse return probe.check(false, "the pipeline that reads it back");
     const own_clear = [1]facet.ClearValue{.{ .color = .{ .float32 = .{ 0, 0, 1, 1 } } }};
@@ -1958,11 +1961,15 @@ fn inputChecks(probe: *Probe) void {
     fb.CmdBindPipeline(own_commands, .graphics, fills);
     fb.CmdDraw(own_commands, 6, 1, 0, 0);
     fb.CmdBindPipeline(own_commands, .graphics, mixes);
+    // The set written with a view of the very attachment being drawn:
+    // what the descriptor names is the tile, and what the function reads
+    // is the fragment's own pixel.
+    fb.CmdBindDescriptorSets(own_commands, .graphics, layout.?, 0, 1, @ptrCast(&sets[0]), 0, null);
     fb.CmdDraw(own_commands, 6, 1, 0, 0);
     fb.CmdEndRenderPass(own_commands);
     if (!probe.submit()) return probe.check(false, "the two draws submitted");
-    probe.checkEqual(Deferred.swapped, pixelAt(second_pixels, second_pitch, 8, 8), "what the draw before it left at the pixel, read out of the tile");
-    probe.checkEqual(Deferred.swapped, pixelAt(second_pixels, second_pitch, 40, 52), "the same in another tile");
+    probe.checkEqual(Deferred.swapped, pixelAt(first_pixels, first_pitch, 8, 8), "what the draw before it left at the pixel, read through the descriptor of it");
+    probe.checkEqual(Deferred.swapped, pixelAt(first_pixels, first_pitch, 40, 52), "the same in another tile");
 }
 
 // --- 1.38: a stencil that outlives its pass ----------------------------------

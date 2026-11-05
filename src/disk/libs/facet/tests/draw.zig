@@ -5009,6 +5009,8 @@ const SelfRead = struct {
     const half = [6][3]f32{ .{ -1, -1, 0.5 }, .{ 0, -1, 0.5 }, .{ -1, 1, 0.5 }, .{ -1, 1, 0.5 }, .{ 0, -1, 0.5 }, .{ 0, 1, 0.5 } };
     const whole = [6][3]f32{ .{ -1, -1, 0.5 }, .{ 1, -1, 0.5 }, .{ -1, 1, 0.5 }, .{ -1, 1, 0.5 }, .{ 1, -1, 0.5 }, .{ 1, 1, 0.5 } };
     const written: u32 = 0xFF11_2233;
+    /// What it draws where there is no attachment to read.
+    const missing: u32 = 0xFF00_0000;
 
     fn vertex(vertices: *const shader.Vertices) callconv(.c) void {
         for (0..vertices.count) |k| {
@@ -5021,11 +5023,16 @@ const SelfRead = struct {
         shader.fill(fragments, written);
     }
 
+    /// What the attachment holds at the fragment's own pixel, its green
+    /// and blue the other way round: read through the input attachment
+    /// descriptor, which for the one being drawn is the tile.
     fn mix(fragments: *const shader.Fragments) callconv(.c) void {
+        const from = fragments.input(0, 0, 0) orelse return shader.fill(fragments, missing);
         for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
-            const kept = fragments.keptAt(quad);
             inline for (0..4) |i| {
-                const color = kept[i];
+                const x = fragments.x + @as(u32, quad.x) + @as(u32, i & 1);
+                const y = fragments.y + @as(u32, quad.y) + @as(u32, i >> 1);
+                const color = from.colorAt(x, y);
                 out[i] = (color & 0xFFFF_0000) | (color & 0xFF) << 8 | (color >> 8 & 0xFF);
             }
         }
@@ -5046,7 +5053,30 @@ test "a subpass that reads the attachment it draws into: the pixel as the tile h
     const fb = bench.rig.fb;
     const device = bench.device;
 
-    const picture = try Picture.of(&bench, 64, 64);
+    const image_zig = @import("../image/_image.zig");
+    // Drawn into and read: an attachment made to be read as one, as any
+    // input attachment's image is.
+    const shown, const shown_view = try bench.image(.{
+        .format = .b8g8r8a8_unorm,
+        .extent = .{ .width = 64, .height = 64 },
+        .tiling = .linear,
+        .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT,
+    }, false);
+    _ = shown;
+    const other, const other_view = try bench.image(.{
+        .format = .b8g8r8a8_unorm,
+        .extent = .{ .width = 64, .height = 64 },
+        .tiling = .linear,
+        .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT,
+    }, false);
+    _ = other;
+    const shown_kept = _objects.of(image_zig.ImageView, shown_view).image;
+    const other_kept = _objects.of(image_zig.ImageView, other_view).image;
+    const pixelOf = struct {
+        fn of(image: *const image_zig.Image, x: u32, y: u32) u32 {
+            return std.mem.readInt(u32, image.data.?[@as(usize, y) * image.pitch + x * 4 ..][0..4], .little);
+        }
+    }.of;
     const attachment = facet.AttachmentDescription{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general };
     const its_own = [1]facet.AttachmentReference{.{ .attachment = 0, .layout = .general }};
     const reads_itself = facet.SubpassDescription{
@@ -5115,9 +5145,29 @@ test "a subpass that reads the attachment it draws into: the pixel as the tile h
 
     const shaders = try module(&bench, &SelfRead.code);
     defer fb.DestroyShaderModule(device, shaders);
-    const layout = try pipelineLayout(&bench, &.{}, 0);
+    // The descriptor the function reads it through, which is the Vulkan
+    // way of saying which attachment it reads: a view of the image being
+    // drawn into, and one of another image to tell them apart by.
+    const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .input_attachment, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &set_layout));
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    const layout = try pipelineLayout(&bench, &.{set_layout.?}, 0);
     defer fb.DestroyPipelineLayout(device, layout);
-    const frame = try framebuffer(&bench, pass, &.{picture.view}, 64, 64);
+    var pool: ?*facet.DescriptorPool = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorPool(device, &.{ .max_sets = 2 }, &pool));
+    defer fb.DestroyDescriptorPool(device, pool);
+    const layouts = [2]*facet.DescriptorSetLayout{ set_layout.?, set_layout.? };
+    var sets: [2]?*facet.DescriptorSet = undefined;
+    try testing.expectEqual(facet.Result.success, fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 2, .set_layouts = &layouts }, &sets));
+    const infos = [2]facet.DescriptorImageInfo{
+        .{ .image_view = shown_view, .image_layout = .general },
+        .{ .image_view = other_view, .image_layout = .general },
+    };
+    var writes: [2]facet.WriteDescriptorSet = undefined;
+    for (&writes, 0..) |*one, k| one.* = .{ .dst_set = sets[k].?, .dst_binding = 0, .descriptor_type = .input_attachment, .image_info = @ptrCast(&infos[k]) };
+    fb.UpdateDescriptorSets(device, 2, &writes, 0, null);
+    const frame = try framebuffer(&bench, pass, &.{shown_view}, 64, 64);
     defer fb.DestroyFramebuffer(device, frame);
     const made_writer, const writer = makePipeline(&bench, .{ .module = shaders, .name = "write", .layout = layout, .pass = pass });
     try testing.expectEqual(facet.Result.success, made_writer);
@@ -5144,15 +5194,37 @@ test "a subpass that reads the attachment it draws into: the pixel as the tile h
     fb.CmdDraw(commands, 6, 1, 0, 0);
     fb.CmdBindPipeline(commands, .graphics, mixer.?);
     fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&second_quad));
+    fb.CmdBindDescriptorSets(commands, .graphics, layout, 0, 1, @ptrCast(&sets[0]), 0, null);
     fb.CmdDraw(commands, 6, 1, 0, 0);
     fb.CmdEndRenderPass(commands);
     try bench.submit();
 
+    // Every pixel is what was there with its green and blue swapped: the
+    // first draw's colour on the left, and the clear's on the right,
+    // which is the pixel's own and no other's. Two tiles of each, the
+    // tiles being drawn one at a time.
     const swapped = SelfRead.written & 0xFFFF_0000 | (SelfRead.written & 0xFF) << 8 | (SelfRead.written >> 8 & 0xFF);
-    try testing.expectEqual(swapped, picture.at(16, 8));
-    try testing.expectEqual(swapped, picture.at(16, 40));
-    try testing.expectEqual(@as(u32, 0xFF00_FF00), picture.at(48, 8));
-    try testing.expectEqual(@as(u32, 0xFF00_FF00), picture.at(48, 40));
+    try testing.expectEqual(swapped, pixelOf(shown_kept, 16, 8));
+    try testing.expectEqual(swapped, pixelOf(shown_kept, 16, 40));
+    try testing.expectEqual(@as(u32, 0xFF00_FF00), pixelOf(shown_kept, 48, 8));
+    try testing.expectEqual(@as(u32, 0xFF00_FF00), pixelOf(shown_kept, 48, 40));
+
+    // The same pass with a descriptor of another image: that is not the
+    // attachment being drawn, so it is read where it lies - its own
+    // memory, which nothing has written, rather than the tile.
+    @memset(other_kept.data.?[0 .. @as(usize, other_kept.pitch) * 64], 0);
+    for (0..64) |y| std.mem.writeInt(u32, other_kept.data.?[y * other_kept.pitch + 16 * 4 ..][0..4], 0xFF44_5566, .little);
+    const again = try bench.record();
+    fb.CmdBeginRenderPass(again, &.{ .render_pass = pass, .framebuffer = frame, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 1, .clear_values = &blue }, .@"inline");
+    fb.CmdBindPipeline(again, .graphics, mixer.?);
+    fb.CmdBindVertexBuffers(again, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&second_quad));
+    fb.CmdBindDescriptorSets(again, .graphics, layout, 0, 1, @ptrCast(&sets[1]), 0, null);
+    fb.CmdDraw(again, 6, 1, 0, 0);
+    fb.CmdEndRenderPass(again);
+    try bench.submit();
+    try testing.expectEqual(@as(u32, 0xFF44_6655), pixelOf(shown_kept, 16, 8));
+    // Where that other image holds nothing, nothing is what it reads.
+    try testing.expectEqual(@as(u32, 0), pixelOf(shown_kept, 48, 8));
 }
 
 /// Two colours within `apart` of each other in every channel: what a

@@ -851,27 +851,41 @@ pub const Attachment = extern struct {
     /// holds a stencil as well is read four bytes apart, its depth and
     /// its stencil two planes inside the same rows (since 1.62).
     stride: u32 = 0,
+    /// The pixel of the attachment its first column and its first row
+    /// stand for: 0 and 0 for the image's own rows, which is every
+    /// attachment an earlier subpass drew, and the tile's corner where
+    /// what is read is the tile - the attachment this part is drawing
+    /// into (`Fragments.input`, since 1.65). So a pixel is read at its
+    /// own place on the attachment either way, and what this does not
+    /// hold reads as transparent black.
+    left: u32 = 0,
+    top: u32 = 0,
 
-    /// The pixel at (x, y) as 0xAARRGGBB; transparent black outside it.
+    /// The pixel at (x, y) of the attachment as 0xAARRGGBB; transparent
+    /// black outside what this holds.
     pub fn colorAt(attachment: *const Attachment, x: u32, y: u32) u32 {
         const row = attachment.rowAt(y) orelse return 0;
-        return row.colorAt(x);
+        if (x < attachment.left) return 0;
+        return row.colorAt(x - attachment.left);
     }
 
     /// The same as x, y, z and w: the channels 0 to 1, what the format
     /// does not hold as 0 and w as 1. All zero outside it.
     pub fn at(attachment: *const Attachment, x: u32, y: u32) [4]f32 {
         const row = attachment.rowAt(y) orelse return .{ 0, 0, 0, 0 };
-        return row.at(x);
+        if (x < attachment.left) return .{ 0, 0, 0, 0 };
+        return row.at(x - attachment.left);
     }
 
-    /// Row `y` as texels, the pixels of one row: null past the last row,
-    /// or where there is nothing to read.
+    /// The attachment's row `y` as texels, from its first column: null
+    /// above or below what this holds, or where there is nothing to read.
     fn rowAt(attachment: *const Attachment, y: u32) ?Texels {
         const bytes = attachment.bytes orelse return null;
-        if (y >= attachment.height or attachment.format == .none) return null;
+        if (y < attachment.top or attachment.format == .none) return null;
+        const row = y - attachment.top;
+        if (row >= attachment.height) return null;
         return .{
-            .bytes = @constCast(bytes) + @as(usize, y) * attachment.pitch,
+            .bytes = @constCast(bytes) + @as(usize, row) * attachment.pitch,
             .count = attachment.width,
             .format = attachment.format,
             .writable = false,
@@ -1039,6 +1053,12 @@ pub const Resources = extern struct {
     /// kind's slot holds, read as an attachment: the layout says what a
     /// binding is, and a function has to ask for what is there, as it
     /// does for `sampled` and `texels`.
+    ///
+    /// A fragment function calls `Fragments.input` instead, which answers
+    /// the tile for the attachment its own part is drawing into (since
+    /// 1.65); this one is the descriptor as it was written, and for that
+    /// attachment that is the image's memory, which the pass has not
+    /// written yet.
     pub fn input(resources: *const Resources, set: u32, binding: u32, element: u32) ?*const Attachment {
         const found = resources.slot(set, binding, element) orelse return null;
         return @ptrCast(@alignCast(found.pointer orelse return null));
@@ -1335,14 +1355,18 @@ pub const Fragments = extern struct {
     /// stand for its pixels: each has to divide.
     exact: bool,
     resources: *const Resources,
-    /// The pixels already in the attachment this call writes, 0xAARRGGBB,
-    /// `target_pitch` of them from one row to the next, as the tile holds
-    /// them: what a subpass that reads the attachment it draws into sees
-    /// (since 1.64). Null for every other draw, which is all of them
-    /// until a subpass names its own colour attachment as an input
-    /// attachment. `keptAt` is the way to a quad's four.
-    target: ?[*]const u32 = null,
-    target_pitch: u32 = 0,
+    /// The attachment this call writes as the tile holds it, its `left`
+    /// and `top` the tile's corner: what `input` answers where a
+    /// descriptor names that same attachment, a subpass reading what it
+    /// draws (since 1.64, through `input` since 1.65). Null for every
+    /// other draw, which is all of them until a subpass names its own
+    /// colour attachment as an input attachment.
+    target: ?*const Attachment = null,
+    /// That attachment as the image holds it - its first pixel - which is
+    /// what a descriptor of it points at, and so how `input` tells it
+    /// from an attachment an earlier subpass drew. Null where the part
+    /// does not read what it draws. (Since 1.65.)
+    drawn: ?[*]const u8 = null,
     /// The colour attachments the function writes in this call: 1 for
     /// every fragment function but one of a `shader.fragmentOutputs`
     /// entry drawing a subpass whose attachments go together
@@ -1359,27 +1383,33 @@ pub const Fragments = extern struct {
         return fragments.colors + at * fragments.count;
     }
 
-    /// The four colours already in the attachment at a quad's pixels, in
-    /// the order its `colors` take them: what the subpasses before this
-    /// one left there, and what this draw itself left where a triangle
-    /// covered the pixel already. Transparent black for every draw that
-    /// does not read what it draws. (Since 1.64.)
+    /// Element `element` of binding `binding` of set `set`, an input
+    /// attachment, as this call reads one: the pixels of it an earlier
+    /// subpass drew, out of the image's memory - or, where the descriptor
+    /// names the attachment this very part is drawing into, that
+    /// attachment as the **tile** holds it, which is where the fragment's
+    /// own pixel already is (a subpass reading what it draws, since
+    /// 1.65). Null where the descriptor is not written or is of another
+    /// kind.
     ///
-    /// This is a subpass reading the attachment it is drawing into - the
-    /// fragment's own pixel, which is what Vulkan's self-dependency by
-    /// region allows - and it comes with the quads rather than through a
-    /// descriptor because the pixel is in the tile, and the tiles are
-    /// drawn on every core at once: one `input_attachment` descriptor
-    /// could not say where each core's tile is. `Resources.input` is for
-    /// an attachment another subpass drew, which is in the image's
-    /// memory.
-    pub inline fn keptAt(fragments: *const Fragments, quad: Quad) [4]u32 {
-        @setRuntimeSafety(false);
-        const from = fragments.target orelse return .{ 0, 0, 0, 0 };
-        const at = from + @as(u32, quad.y) * fragments.target_pitch + quad.x;
-        var made: [4]u32 = undefined;
-        inline for (&made, 0..) |*color, i| color.* = at[(i >> 1) * fragments.target_pitch + (i & 1)];
-        return made;
+    /// Either way a pixel is read at its own place on the attachment -
+    /// `colorAt(x, y)` and `at(x, y)`, the fragment's own place being the
+    /// tile's corner and the quad's place in it added (`Fragments.x`,
+    /// `Fragments.y`, `Quad.x`, `Quad.y`) - and what the attachment this
+    /// call holds does not cover reads as transparent black. For the one
+    /// being drawn that is everything outside this tile: the fragment's
+    /// own pixel is all Vulkan's self-dependency by region promises, and
+    /// all this answers.
+    ///
+    /// This is the call a fragment function reads an input attachment
+    /// with. `Resources.input` answers the descriptor as it was written,
+    /// which for the attachment being drawn is the image's memory - what
+    /// the pass has not written yet.
+    pub inline fn input(fragments: *const Fragments, set: u32, binding: u32, element: u32) ?*const Attachment {
+        const found = fragments.resources.input(set, binding, element) orelse return null;
+        const own = fragments.drawn orelse return found;
+        if (found.bytes != own) return found;
+        return fragments.target orelse found;
     }
 };
 

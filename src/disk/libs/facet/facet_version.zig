@@ -772,25 +772,49 @@ pub const LIBRARY_VERSION = 1;
 /// `SubpassDependency` of that subpass on itself with
 /// DEPENDENCY_BY_REGION (which the dependencies are read for, and for
 /// nothing else). The fragment function is then given the fragment's own
-/// pixel as the tile already holds it - `shader.Fragments.target` and
-/// `keptAt`, the four colours of a quad - so the read costs nothing but
-/// the load: the pixel is where the tiles are, which is cheaper here than
-/// the copy it replaces.
-/// It comes with the quads and not through the descriptor because every
-/// core draws a tile of its own, and one `input_attachment` descriptor
-/// could not say where each core's tile is; such a descriptor still
-/// points at the image's memory, which the pass has not written yet.
-/// `Resources.input` stays what it is, for an attachment an earlier
-/// subpass drew.
+/// pixel as the tile already holds it, so the read costs nothing but the
+/// load: the pixel is where the tiles are, which is cheaper here than the
+/// copy it replaces. It was handed over beside the quads at first
+/// (`shader.Fragments.keptAt`); 1.65 made it the descriptor's own read,
+/// which is what it should have been from the start.
 /// A subpass that reads what it draws is a part of its own, never joined
 /// to the part before it, since what it reads is the tile as that part
 /// starts. One of several colour attachments drawn together reads the
 /// first of them and no other; the depth attachment it draws into it
 /// does not read, and neither does it read another pixel.
+/// 65: a subpass reads what it draws through the descriptor of it, as
+/// every other input attachment is read. 1.64 handed the tile to the
+/// fragment function beside its quads (`shader.Fragments.keptAt`),
+/// because the tiles are drawn on every core at once and one descriptor
+/// cannot say where each core's tile is: so a program declared the
+/// attachment the Vulkan way and then read it another way, which is two
+/// ways of saying one thing.
+/// Now `shader.Fragments.input(set, binding, element)` is what a fragment
+/// function reads an input attachment with. It answers the descriptor as
+/// written for an attachment an earlier subpass drew - the image's rows,
+/// as before - and, where the descriptor names the attachment this very
+/// part is drawing into, the tile instead. What it compares is the
+/// attachment's own first pixel, which every view of that image points
+/// at, so any view of it is known for what it is.
+/// A `shader.Attachment` carries the pixel its first column and its first
+/// row stand for (`left` and `top`, the tile's corner for the tile), so
+/// `colorAt(x, y)` and `at(x, y)` read a pixel at its own place on the
+/// attachment whichever of the two it is, and what the tile does not
+/// cover reads as transparent black - the fragment's own pixel being all
+/// a dependency by region promises.
+/// `keptAt` and the `target_pitch` beside it are gone; `Resources.input`
+/// is unchanged and still answers the descriptor as written, which for
+/// the attachment being drawn is memory the pass has not written yet.
+/// `Fragments` points at that tile's attachment rather than holding one,
+/// and the rasterizer keeps it with the batch: a batch begins once for
+/// each triangle in each tile, so the two words it begins with are the
+/// two 1.64 had - 99856 triangles over 60 frames of 1920x1080 measured
+/// 11.2 to 11.6 ms with the pointer against 11.7 to 11.9 ms with the
+/// attachment itself.
 /// What stays: `fifo` is the one present mode, there being no way to ask a
 /// display to show a buffer before its next frame; one queue family of one
 /// queue; a counter of 32 bits, for want of a 64-bit atomic on every
 /// machine the library runs on; and no point mode in tessellation, the
 /// tessellator emitting triangles or the lines of `isolines` and nothing
 /// emitting a patch's points on their own.
-pub const LIBRARY_REVISION = 64;
+pub const LIBRARY_REVISION = 65;

@@ -254,8 +254,11 @@ const Shading = struct {
     samples: ?*u32,
     fragments: ?*u32,
     /// The fragment function reads the attachment it writes, out of the
-    /// tile (since 1.64).
-    reads_target: bool,
+    /// tile (since 1.64): the attachment's own first pixel, which is what
+    /// a descriptor of it points at and so how `shader.Fragments.input`
+    /// knows that descriptor (since 1.65). Null where the part does not
+    /// read what it draws.
+    drawn: ?[*]const u8,
 };
 
 /// A triangle set up for the tiles: its planes follow it.
@@ -330,7 +333,10 @@ fn setUpAll(target: *Target, state: *const State, vertices: []const f32, stride:
         .discards = state.discards,
         .samples = state.samples,
         .fragments = state.fragments,
-        .reads_target = state.reads_target,
+        // What the part draws into, as the image holds it: a descriptor
+        // of that attachment points there, and the fragment function is
+        // given the tile for it instead (since 1.65).
+        .drawn = if (state.reads_target and target.surface_count > 0) target.surfaceAt(0).pixels else null,
     };
     const test_kind: Test = if (by_pixel) .stencil else if (!depth) .off else switch (compare) {
         .less => .less,
@@ -707,6 +713,11 @@ const Batch = struct {
     /// The triangle's planes moved to the tile's top left, where their
     /// numbers are smallest.
     planes: [1 + most_varyings]shader.Plane,
+    /// The colour attachment being drawn into as this tile holds it, for
+    /// a subpass that reads what it draws: what `shader.Fragments.target`
+    /// points at, written only for such a part so that every other
+    /// batch starts no differently than it did (since 1.65).
+    target: shader.Attachment,
 
     fn start(batch: *Batch, tile: *const Tile, triangle: *const Triangle) void {
         const shading = triangle.shading;
@@ -748,11 +759,22 @@ const Batch = struct {
         if (shading.color_count > 1) batch.fragments.colors = tile.extra_colors.?;
         // A subpass that reads the attachment it draws into is given the
         // tile's own pixels for it, where they already are: the first
-        // plane, which is what the function writes as `colors`
-        // (since 1.64).
-        if (shading.reads_target) {
-            batch.fragments.target = tile.plane(0);
-            batch.fragments.target_pitch = tile_size;
+        // plane, which is what the function writes as `colors`. Its rows
+        // begin at the tile's corner, so a pixel is read at its own place
+        // on the attachment, as it is for one an earlier subpass drew.
+        // (Since 1.64, through `shader.Fragments.input` since 1.65.)
+        if (shading.drawn) |pixels| {
+            batch.target = .{
+                .bytes = @ptrCast(tile.plane(0)),
+                .pitch = tile_size * @sizeOf(u32),
+                .width = tile_size,
+                .height = tile_size,
+                .format = .bgra8888,
+                .left = tile.x,
+                .top = tile.y,
+            };
+            batch.fragments.drawn = pixels;
+            batch.fragments.target = &batch.target;
         }
     }
 

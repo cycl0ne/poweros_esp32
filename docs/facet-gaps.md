@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.64**, so that a program need not find out by failing. It covers the API.
+1.65**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -352,16 +352,22 @@ exist now. What is left out:
   Vulkan's self-dependency by region: the subpass names its own colour
   attachment as an input attachment and the pass carries a
   `SubpassDependency` of that subpass on itself with
-  DEPENDENCY_BY_REGION. What the fragment function reads is the
-  fragment's own pixel as the tile holds it
-  (`shader.Fragments.keptAt`), not the image's memory - the tiles are
-  drawn on every core at once, so one descriptor could not say where
-  each core's tile is, and such a descriptor still points at the image.
-  Without the dependency it is the loop it was,
+  DEPENDENCY_BY_REGION. It is read as any input attachment is - the
+  descriptor written with a view of it, then
+  `shader.Fragments.input(set, binding, element)` and `colorAt(x, y)` at
+  the fragment's own place - and what that answers for the attachment
+  being drawn is the **tile**, which already holds the pixel, rather than
+  the image's memory, which the pass has not written yet (since 1.65;
+  1.64 handed it over beside the quads instead). A fragment function
+  reads every input attachment through `Fragments.input` for that reason:
+  `Resources.input` is the descriptor as written, and for this one that
+  is the wrong memory. Without the dependency it is the loop it was,
   `error_initialization_failed`. What is left out: reading **another**
   pixel of it, which is `VK_EXT_shader_framebuffer_fetch`'s and no part
-  of Vulkan 1.0; reading the depth attachment the subpass draws into;
-  and, of several colour attachments drawn together, any but the first.
+  of Vulkan 1.0 - the rest of the attachment is in other tiles, on other
+  cores or not yet drawn, and reads as transparent black; reading the
+  depth attachment the subpass draws into; and, of several colour
+  attachments drawn together, any but the first.
 - **A depth attachment is readable since 1.62**
   (`PhysicalDeviceFeatures.sampled_depth` beside `input_attachments`):
   the image is made IMAGE_USAGE_INPUT_ATTACHMENT of one of the three
