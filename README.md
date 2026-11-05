@@ -347,6 +347,7 @@ scripts/prune-cache.sh --dir ~/.cache/zig --limit 8G  # the global one
 ./zig build q35-display      # the same with its window on the firmware's framebuffer, a keyboard, a tablet and network
 ./zig build q35-virtio       # the same with a virtio GPU as its display
 ./zig build flash-all -Dport=/dev/ttyACM0   # kernel and a fresh disk onto a board
+./zig build stick -Dboard=qemu_q35          # a bootable USB stick's image in release/, for a UEFI machine
 ./zig build package -Dboard=visionfive2     # a release package in release/package-visionfive2/
 ./zig build serve -Dboard=visionfive2       # hand that package out over HTTP (quit: Ctrl-C)
 ./zig build archive -Dboard=visionfive2     # what that board is handed over in
@@ -974,6 +975,8 @@ More build steps and options:
 | `./zig build fd` | regenerate the SDK's interfaces from its `.fd` files |
 | `./zig build autodoc` | regenerate the SDK's autodocs from the doc comments |
 | `./zig build modchart` | regenerate the charts of which module uses which (`sdk/docs/modules.md`) |
+| `./zig build stick -Dboard=qemu_q35` | the medium a UEFI machine starts from, into `release/stick-<board>.img`: a GPT with an EFI System partition holding the loader, the kernel and the disk image ([the install guide](sdk/docs/guides/install.md#the-medium-a-machine-is-first-reached-with)) |
+| `-Dstick-size=320` | how many mebibytes that medium is |
 | `./zig build archive -Dboard=olimex_p4pc` | what that board is handed over in, into `release/` |
 | `./zig build release` | every board's archive and package at once, into `release/` |
 | `./zig build sums` | `release/SHA256SUMS` over the archives in `release/`, in the form `sha256sum -c` and `C:Hash CHECK` read |

@@ -12,16 +12,70 @@ firmware reads filled with the kernel so that the machine starts from it.
 `C:Install` does all of that in one command, on a machine with nothing
 but a console, from the running system itself or from a release package.
 It is on the 64-bit machines' disks - the VisionFive 2, the Compute
-Module 5 and the two `virt` machines; the ESP32 boards' system lives in
-their flash and is written from the host (`./zig build flash-disk`).
+Module 5, the x86-64 machine and the two `virt` machines; the ESP32
+boards' system lives in their flash and is written from the host
+(`./zig build flash-disk`).
 
-This guide is what an install leaves on the disk, the command and each of
-its keywords, the two sources it copies from, the release package's form,
-what it writes down about itself, what the machine then starts from, how a
-system that is installed already is brought up to date from a later
-package (`C:Update`), how its kernel is replaced with a way back from
-one that does not come up, and how a machine looks for a newer system by
-itself.
+This guide is the medium a machine is first reached with, what an install
+leaves on the disk, the command and each of its keywords, the two sources
+it copies from, the release package's form, what it writes down about
+itself, what the machine then starts from, how a system that is installed
+already is brought up to date from a later package (`C:Update`), how its
+kernel is replaced with a way back from one that does not come up, and
+how a machine looks for a newer system by itself.
+
+## The medium a machine is first reached with
+
+A machine with nothing on its disk has to be started from something else,
+and on a machine whose firmware is UEFI that something is a USB stick.
+`./zig build stick -Dboard=<board>` makes its image:
+
+```sh
+./zig build stick -Dboard=qemu_q35      # release/stick-qemu_q35.img
+sudo dd if=release/stick-qemu_q35.img of=/dev/sdX bs=4M conv=fsync status=progress
+```
+
+The image holds a protective MBR, a GPT whose one partition is an EFI
+System partition over the medium from the first mebibyte, and a FAT32
+volume on it with three files: `EFI/BOOT/BOOTX64.EFI`, which is the one
+name such a firmware reads off a boot partition; `kernel.bin`, which that
+loader reads from beside itself; and `disk-x64.bin`, the disk image the
+machine runs on. So the stick carries a whole machine - it comes up to a
+console and a desktop with `SYS:` in RAM, and nothing has to be installed
+to try one.
+
+From there the machine installs itself onto a disk of its own with no
+network and no second machine, because the running system is a source
+`C:Install` can copy from:
+
+```
+3.System:> C:Install nvme.device FORCE
+Installing onto nvme.device unit 0, 2.0G:
+...
+576 files, 18.9M: the system on DH0.:, the boot files on BOOT:.
+The disk starts the machine at its next cold start.
+```
+
+Pull the stick out, start the machine again, and its firmware finds the
+EFI System partition the install wrote and starts the kernel from there.
+
+The medium is 320 MiB unless `-Dstick-size=` says otherwise - the least a
+FAT32 volume of 4 KiB clusters can be, with room over - and the image
+holds only the blocks that were written, so it takes some 35 MiB on the
+host until it is written out. Two builds of the same files give the same
+image, byte for byte: the identifiers and the one date everything on it
+carries are drawn from what the medium is, not from the clock.
+
+The volume is laid down by the file system's own format, the same code
+that mounts it on the machine
+(`src/disk/devs/handlers/fat/fat32/format.zig`); the tool adds the files
+itself, with names that fit a directory entry as it stands, and refuses
+one that does not rather than shortening it.
+
+The other boards are reached their own ways: the ESP32 boards over USB
+from the host (`./zig build flash-all`), the VisionFive 2 and the Compute
+Module 5 from a card or over the network with a release package
+([below](#a-release-package)).
 
 ## What it leaves on the disk
 

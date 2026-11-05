@@ -530,6 +530,28 @@ pub fn build(b: *std.Build) void {
         posfsck_step.dependOn(&run_posfsck.step);
     } else posfsck_step.dependOn(&b.addInstallArtifact(posfsck, .{}).step);
 
+    // tools/mkstick makes the medium a machine whose firmware is UEFI
+    // starts from. The FAT32 volume on it is laid down by the file
+    // system's own format, through the door that handler keeps for a tool
+    // on the host, so there is one implementation of the format and what
+    // the tool writes is what the handler mounts.
+    const fat32_mod = b.createModule(.{
+        .root_source_file = b.path("src/disk/devs/handlers/fat/host.zig"),
+        .target = b.graph.host,
+        .optimize = .ReleaseSafe,
+    });
+    fat32_mod.addImport("sdk", sdk);
+    const mkstick = b.addExecutable(.{
+        .name = "mkstick",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/mkstick/mkstick.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseSafe,
+        }),
+    });
+    mkstick.root_module.addImport("sdk", sdk);
+    mkstick.root_module.addImport("fat32", fat32_mod);
+
     // audio.device's mixer on the host: `audio-golden` writes the golden
     // mix's reference file again (src/rom/devs/audio/golden.zig, whose
     // test holds the mixer to it), and `audio-bench` says how fast the
@@ -1317,6 +1339,33 @@ pub fn build(b: *std.Build) void {
     run_q35.stdio = .inherit;
     run_q35.has_side_effects = true;
     b.step("q35", "Boot the x86-64 kernel in QEMU's q35 machine under UEFI firmware (quit with Ctrl-A X)").dependOn(&run_q35.step);
+
+    // `stick` - the medium a machine whose firmware is UEFI starts from,
+    // into release/stick-<board>.img, to be written to a USB stick with
+    // one `dd`. It holds what the firmware reads and what the loader
+    // reads beside it: the loader under the one name a firmware looks
+    // for, the kernel, and the disk image the machine runs on until
+    // `C:Install` puts a system on a disk of its own. So one stick
+    // carries a whole machine, and nothing has to be installed to try
+    // one.
+    const stick_step = b.step("stick", "Make the boot medium for -Dboard= (UEFI machines): release/stick-<board>.img");
+    const stick_size = b.option(u64, "stick-size", "How many mebibytes the `stick` step's medium is (default: 320, the least a FAT32 volume of 4 KiB clusters can be with room over)");
+    if (chipOf(board) != .x64uefi) {
+        stick_step.dependOn(&b.addFail(
+            "stick: this board's firmware does not read a partition. It is for a machine started by UEFI: -Dboard=qemu_q35.",
+        ).step);
+    } else {
+        const make_stick = b.addRunArtifact(mkstick);
+        const stick_name = b.fmt("stick-{s}.img", .{@tagName(board)});
+        const stick_image = make_stick.addPrefixedOutputFileArg("--into=", stick_name);
+        if (stick_size) |mib| make_stick.addArg(b.fmt("--size={d}", .{mib}));
+        // The one name a UEFI firmware reads off a boot partition, and
+        // the two the loader then reads from beside itself.
+        make_stick.addPrefixedFileArg("EFI/BOOT/BOOTX64.EFI=", uefi_stub.getEmittedBin());
+        make_stick.addPrefixedFileArg("kernel.bin=", built.image);
+        make_stick.addPrefixedFileArg(b.fmt("{s}=", .{ramDiskName(.x64uefi)}), x64_disk_bin);
+        stick_step.dependOn(&b.addInstallFileWithDir(stick_image, release_dir, stick_name).step);
+    }
 
     // The same with the machine's window and what the board has around
     // it, as `virt-display` and `virt64-display`: USB with a keyboard, a
