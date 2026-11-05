@@ -978,10 +978,32 @@ pub const LIBRARY_VERSION = 1;
 /// of triangles drawn as their corners (`POLYGON_MODE_POINT`); a pipeline
 /// that tessellates makes its points of vertices the vertex function
 /// never saw, so `sizes` is null there and such a point is one pixel.
+/// 72: BC4 and BC5, one channel and two. The block is the very block BC3
+/// keeps its alpha in - two endpoints of 8 bits and three bits for each
+/// of the sixteen texels, six values between the ends or four and the two
+/// past them, as the endpoints' order says - over red alone and over red
+/// and green. So the decoder was already here: `texture.blockOf` reads
+/// `blockAlphas` once for BC4 and twice for BC5, and the texels read as
+/// (red, 0, 0, 1) and (red, green, 0, 1), as Vulkan reads a format of
+/// fewer channels.
+/// `bc4_unorm_block` and `bc5_unorm_block` are the facet formats, 8 bytes
+/// a block and 16 against the 64 and 128 their texels take unpacked, and
+/// `texture.Format` has `bc4` and `bc5` appended. They go the way BC1 to
+/// BC3 go: kept in their blocks on a device that samples them
+/// (`PhysicalDeviceFeatures.kept_compressed`, the cores), copied in and
+/// out as they lie with their offsets on a multiple of 4, unpacked into
+/// 8888 on a device whose texture unit is fed texels (the V3D), and
+/// sampled by a form built for the format or through the run-time sampler
+/// by one built for 8888. Neither is a colour attachment and nothing
+/// compresses into one.
+/// The `_snorm` pair is not here: a texture holds 0 to 1, and -1 to 1
+/// wants the read a whole number got in 1.70. BC6H and BC7 are still out,
+/// and they are decoders of their own rather than a block this library
+/// already had.
 /// What stays: `fifo` is the one present mode, there being no way to ask a
 /// display to show a buffer before its next frame; one queue family of one
 /// queue; a counter of 32 bits, for want of a 64-bit atomic on every
 /// machine the library runs on; and no point mode in tessellation, the
 /// tessellator emitting triangles or the lines of `isolines` and nothing
 /// emitting a patch's points on their own.
-pub const LIBRARY_REVISION = 71;
+pub const LIBRARY_REVISION = 72;

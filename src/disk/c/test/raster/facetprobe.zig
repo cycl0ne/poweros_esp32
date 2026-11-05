@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.38 (05.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.39 (05.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -3261,6 +3261,11 @@ const Blocks = struct {
         facet.shader.fixedFragment("main", .{ .kind = .texture, .sampling = .{ .format = .bc1, .filter = .nearest, .address = .clamp } }),
         facet.shader.vertex("eight", &vertex, 2),
         facet.shader.fixedFragment("eight", .{ .kind = .texture, .sampling = .{ .filter = .nearest, .address = .clamp } }),
+        // 1.72: BC4 and BC5, one channel and two.
+        facet.shader.vertex("one", &vertex, 2),
+        facet.shader.fixedFragment("one", .{ .kind = .texture, .sampling = .{ .format = .bc4, .filter = .nearest, .address = .clamp } }),
+        facet.shader.vertex("two", &vertex, 2),
+        facet.shader.fixedFragment("two", .{ .kind = .texture, .sampling = .{ .format = .bc5, .filter = .nearest, .address = .clamp } }),
     };
     const code = facet.shader.Code{ .entry_count = entries.len, .entries = &entries };
 
@@ -3271,6 +3276,20 @@ const Blocks = struct {
         into[2] = into[0];
         into[3] = into[1];
         @memset(into[4..8], 0);
+    }
+
+    /// A BC4 block of one value: both endpoints it, so every texel takes
+    /// it whatever the indices say (since 1.72).
+    fn channel(value: u8, into: *[8]u8) void {
+        into[0] = value;
+        into[1] = value;
+        @memset(into[2..8], 0);
+    }
+
+    /// A BC5 block: the red's block, then the green's (since 1.72).
+    fn channels(red: u8, green: u8, into: *[16]u8) void {
+        channel(red, into[0..8]);
+        channel(green, into[8..16]);
     }
 };
 
@@ -3312,10 +3331,19 @@ fn blockChecks(probe: *Probe) void {
         return probe.check(false, "a picture to draw it into");
     const shown_memory = probe.memories[slot].?;
 
-    const blocks, const block_bytes = probe.buffer(256, facet.BUFFER_USAGE_TRANSFER_SRC) orelse
+    const blocks, const block_bytes = probe.buffer(1024, facet.BUFFER_USAGE_TRANSFER_SRC) orelse
         return probe.check(false, "a buffer the blocks come from");
     for (0..16) |k| Blocks.block(if (k % 4 < 2) 0xF800 else 0x001F, block_bytes[k * 8 ..][0..8]);
-    const back, const back_bytes = probe.buffer(256, facet.BUFFER_USAGE_TRANSFER_DST) orelse
+    // The BC4 and BC5 blocks of 1.72 beside them: a red of 200 on the
+    // left and 100 on the right, with a green of 10 and 250.
+    const one_at = 256;
+    const two_at = 384;
+    for (0..16) |k| {
+        const left = k % 4 < 2;
+        Blocks.channel(if (left) 200 else 100, block_bytes[one_at + k * 8 ..][0..8]);
+        Blocks.channels(if (left) 200 else 100, if (left) 10 else 250, block_bytes[two_at + k * 16 ..][0..16]);
+    }
+    const back, const back_bytes = probe.buffer(1024, facet.BUFFER_USAGE_TRANSFER_DST) orelse
         return probe.check(false, "a buffer they are read back into");
     @memset(back_bytes[0..128], 0);
     const whole = facet.BufferImageCopy{ .image_extent = .{ .width = across, .height = across } };
@@ -3402,6 +3430,50 @@ fn blockChecks(probe: *Probe) void {
         const left = pixelAt(pixels, pitch, quarter, quarter);
         const right = pixelAt(pixels, pitch, side - quarter, side - quarter);
         if (left == 0xFFFF_0000 and right == 0xFF00_00FF) probe.check(true, name) else probe.checkEqual(0xFFFF_0000_FF00_00FF, @as(u64, left) << 32 | right, name);
+    }
+
+    // 1.72: BC4 and BC5, the block BC3 keeps its alpha in over one
+    // channel and over two. 8 bytes a block and 16, read as
+    // (red, 0, 0, 1) and (red, green, 0, 1).
+    for ([2]facet.Format{ .bc4_unorm_block, .bc5_unorm_block }) |format| {
+        fb.GetPhysicalDeviceFormatProperties(probe.physical, format, &properties);
+        probe.check(properties.optimal_tiling_features & facet.FORMAT_FEATURE_SAMPLED_IMAGE != 0, "one channel and two of a BC block are formats a texture may be of");
+        probe.check(properties.optimal_tiling_features & facet.FORMAT_FEATURE_COLOR_ATTACHMENT == 0, "and never ones an image is drawn into");
+    }
+    for ([2]struct { facet.Format, u32, usize, u64, u64, [*:0]const u8 }{
+        .{ .bc4_unorm_block, 8, one_at, 0xFFC8_0000, 0xFF64_0000, "BC4 reads red alone, the green and the blue 0 and the alpha whole" },
+        .{ .bc5_unorm_block, 16, two_at, 0xFFC8_0A00, 0xFF64_FA00, "BC5 reads red and green, the blue 0 and the alpha whole" },
+    }, [2][*:0]const u8{ "one", "two" }) |one, name| {
+        const format, const wide, const at, const want_left, const want_right, const says = one;
+        const held = probe.image(.{ .format = format, .extent = .{ .width = across, .height = across }, .usage = sampled }, 0) orelse {
+            probe.check(false, says);
+            continue;
+        };
+        fb.GetImageMemoryRequirements(device, held[0], &needs);
+        const asked: u64 = if (kept) 16 * wide else across * across * 4;
+        if (needs.size >= asked) probe.check(true, "its memory is its blocks' where they are kept") else probe.checkEqual(asked, needs.size, "its memory is its blocks' where they are kept");
+        const region = facet.BufferImageCopy{ .buffer_offset = at, .image_extent = .{ .width = across, .height = across } };
+        const draws = pipelineOf(probe, pass, module.?, layout.?, .{ .attributes = &attributes, .stride = 20, .name = name }) orelse {
+            probe.check(false, says);
+            continue;
+        };
+        const to_held = facet.WriteDescriptorSet{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .sampled_image, .descriptor_count = 1, .image_info = @ptrCast(&facet.DescriptorImageInfo{ .image_view = held[1] }) };
+        commands = probe.record() orelse return probe.check(false, "a recording of the copy");
+        fb.CmdCopyBufferToImage(commands, blocks, held[0], .general, 1, @ptrCast(&region));
+        if (!probe.submit()) return probe.check(false, "the copy of the one-channel blocks submitted");
+        fb.UpdateDescriptorSets(device, 1, @ptrCast(&to_held), 0, null);
+        commands = probe.record() orelse return probe.check(false, "a recording of the draw");
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = onto, .render_area = area, .clear_value_count = 1, .clear_values = &clear }, .@"inline");
+        fb.CmdBindPipeline(commands, .graphics, draws);
+        fb.CmdBindDescriptorSets(commands, .graphics, layout.?, 0, 1, @ptrCast(&sets), 0, null);
+        fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+        fb.CmdDraw(commands, 6, 1, 0, 0);
+        fb.CmdEndRenderPass(commands);
+        if (!probe.submit()) return probe.check(false, "the frame submitted");
+        const quarter = side / 4;
+        const left = pixelAt(pixels, pitch, quarter, quarter);
+        const right = pixelAt(pixels, pitch, side - quarter, side - quarter);
+        if (left == want_left and right == want_right) probe.check(true, says) else probe.checkEqual(want_left << 32 | want_right, @as(u64, left) << 32 | right, says);
     }
 }
 

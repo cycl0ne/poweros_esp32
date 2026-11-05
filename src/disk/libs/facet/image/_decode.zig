@@ -26,6 +26,9 @@ pub fn blockBytes(format: facet.Format) u32 {
     return switch (format) {
         .bc1_rgb_unorm_block, .bc1_rgba_unorm_block => 8,
         .bc2_unorm_block, .bc3_unorm_block => 16,
+        // BC4 and BC5, one channel and two (since 1.72).
+        .bc4_unorm_block => 8,
+        .bc5_unorm_block => 16,
         // ETC2 and EAC (since 1.46): one 64-bit word for colour, and a
         // second for an alpha or a second channel.
         .etc2_r8g8b8_unorm_block, .etc2_r8g8b8a1_unorm_block, .eac_r11_unorm_block => 8,
@@ -306,6 +309,8 @@ fn keptBlocks(format: facet.Format) ?texture.Format {
         .bc1_rgba_unorm_block => .bc1,
         .bc2_unorm_block => .bc2,
         .bc3_unorm_block => .bc3,
+        .bc4_unorm_block => .bc4,
+        .bc5_unorm_block => .bc5,
         else => null,
     };
 }
@@ -340,7 +345,7 @@ pub fn block16(format: facet.Format, block: []const u8) [16]Rgba {
     }
     const kept = keptBlocks(format) orelse return made;
     switch (kept) {
-        inline .bc1, .bc1_rgb, .bc2, .bc3 => |one| {
+        inline .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5 => |one| {
             const texels = texture.blockOf(one, block.ptr);
             for (&made, texels) |*each, color| each.* = .{
                 @intCast(color >> 16 & 0xFF),
@@ -422,6 +427,61 @@ test "BC2 and BC3: the alpha apart" {
     try testing.expectEqual(@as(u8, 186), made[1][3]);
     try testing.expectEqual(@as(u8, 200), made[2][3]);
     try testing.expectEqual(Rgba{ 255, 0, 0, 200 }, made[2]);
+}
+
+test "BC4 and BC5: one channel and two, the block BC3 keeps its alpha in" {
+    // The six bytes of three-bit indices a block ends with, texel 0 first.
+    const indexed = struct {
+        fn indexed(each: []const u3) [6]u8 {
+            var word: u64 = 0;
+            for (each, 0..) |one, k| word |= @as(u64, one) << @intCast(k * 3);
+            var made: [6]u8 = undefined;
+            for (&made, 0..) |*byte, k| byte.* = @truncate(word >> @intCast(k * 8));
+            return made;
+        }
+    }.indexed;
+    const blockOf = struct {
+        fn blockOf(ends: [2]u8, each: []const u3) [8]u8 {
+            var made: [8]u8 = undefined;
+            made[0] = ends[0];
+            made[1] = ends[1];
+            @memcpy(made[2..8], &indexed(each));
+            return made;
+        }
+    }.blockOf;
+
+    // Two endpoints, 200 and 100, then an index a texel: 0 is the first
+    // endpoint, 1 the second, and 2 one seventh of the way back.
+    var one = blockOf(.{ 200, 100 }, &.{ 0, 1, 2 });
+    var made = block16(.bc4_unorm_block, &one);
+    try testing.expectEqual(Rgba{ 200, 0, 0, 255 }, made[0]);
+    try testing.expectEqual(Rgba{ 100, 0, 0, 255 }, made[1]);
+    try testing.expectEqual(Rgba{ 186, 0, 0, 255 }, made[2]);
+    // The first endpoint below the second: four values between, and 0 and
+    // 255 at indices 6 and 7.
+    one = blockOf(.{ 100, 200 }, &.{ 0, 1, 6, 7 });
+    made = block16(.bc4_unorm_block, &one);
+    try testing.expectEqual(Rgba{ 100, 0, 0, 255 }, made[0]);
+    try testing.expectEqual(Rgba{ 200, 0, 0, 255 }, made[1]);
+    try testing.expectEqual(Rgba{ 0, 0, 0, 255 }, made[2]);
+    try testing.expectEqual(Rgba{ 255, 0, 0, 255 }, made[3]);
+
+    // BC5 is two of those blocks, red's first and green's second.
+    var two: [16]u8 = @splat(0);
+    @memcpy(two[0..8], &blockOf(.{ 200, 100 }, &.{ 0, 1, 2 }));
+    @memcpy(two[8..16], &blockOf(.{ 10, 250 }, &.{ 0, 1, 0 }));
+    made = block16(.bc5_unorm_block, &two);
+    try testing.expectEqual(Rgba{ 200, 10, 0, 255 }, made[0]);
+    try testing.expectEqual(Rgba{ 100, 250, 0, 255 }, made[1]);
+    try testing.expectEqual(Rgba{ 186, 10, 0, 255 }, made[2]);
+    // The blue is 0 and the alpha whole, as Vulkan reads two channels.
+    for (made) |each| {
+        try testing.expectEqual(@as(u8, 0), each[2]);
+        try testing.expectEqual(@as(u8, 255), each[3]);
+    }
+    // And a block of each is 8 bytes and 16.
+    try testing.expectEqual(@as(u32, 8), blockBytes(.bc4_unorm_block));
+    try testing.expectEqual(@as(u32, 16), blockBytes(.bc5_unorm_block));
 }
 
 test "floats: cut to what 8 bits hold" {

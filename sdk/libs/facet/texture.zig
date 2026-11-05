@@ -184,6 +184,16 @@ pub const Format = enum {
     r32i,
     rg32i,
     rgba32i,
+    /// BC4 and BC5: one channel of red, and two of red and green, each a
+    /// block of two endpoints and three bits for every texel between
+    /// them - the very block BC3 keeps its alpha in. Read as
+    /// (red, 0, 0, 1) and (red, green, 0, 1), as Vulkan reads a format of
+    /// fewer channels, and kept in their blocks on a device that samples
+    /// them (`PhysicalDeviceFeatures.kept_compressed`): 8 bytes a block
+    /// and 16, against the 64 and 128 the unpacked texels take.
+    /// (Since 1.72.)
+    bc4,
+    bc5,
 
     /// The bytes a texel is kept in; 0 for a compressed format, whose
     /// texels have no size of their own (`blockLog2`).
@@ -200,7 +210,7 @@ pub const Format = enum {
             .rgba32f => 4,
             .argb8888, .rg11b10f, .rgb9e5, .r32f, .rg16 => 2,
             .rgb565, .d16, .rg8, .r16 => 1,
-            .r8, .bc1, .bc1_rgb, .bc2, .bc3 => 0,
+            .r8, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5 => 0,
             // The whole numbers of 1.70: one channel, two or four, of 8,
             // 16 or 32 bits, which is 1 to 16 bytes a texel.
             .r8u, .r8i => 0,
@@ -228,8 +238,8 @@ pub const Format = enum {
             .rg8u, .rg8i, .r16u, .r16i => 5,
             .r8u, .r8i => 4,
             // 16 texels of one byte, and the blocks of 8 and of 16.
-            .r8, .bc2, .bc3 => 4,
-            .bc1, .bc1_rgb => 3,
+            .r8, .bc2, .bc3, .bc5 => 4,
+            .bc1, .bc1_rgb, .bc4 => 3,
         };
     }
 
@@ -243,7 +253,7 @@ pub const Format = enum {
     /// (`blockOf`). (Since 1.44.)
     pub fn compressed(format: Format) bool {
         return switch (format) {
-            .bc1, .bc1_rgb, .bc2, .bc3 => true,
+            .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5 => true,
             .rgba8888, .argb8888, .rgb565, .r8, .d16, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => false,
             .rg8, .r16, .rg16, .rgba16 => false,
             .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => false,
@@ -259,7 +269,7 @@ pub const Format = enum {
     pub fn floats(format: Format) bool {
         return switch (format) {
             .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => true,
-            .rgba8888, .argb8888, .rgb565, .r8, .d16, .bc1, .bc1_rgb, .bc2, .bc3 => false,
+            .rgba8888, .argb8888, .rgb565, .r8, .d16, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5 => false,
             .rg8, .r16, .rg16, .rgba16 => false,
             .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => false,
         };
@@ -275,7 +285,7 @@ pub const Format = enum {
     pub fn channels(format: Format) bool {
         return switch (format) {
             .rg8, .r16, .rg16, .rgba16 => true,
-            .rgba8888, .argb8888, .rgb565, .r8, .d16, .bc1, .bc1_rgb, .bc2, .bc3 => false,
+            .rgba8888, .argb8888, .rgb565, .r8, .d16, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5 => false,
             .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => false,
             // Whole numbers are their own kind: `wholes` (since 1.70).
             .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => false,
@@ -349,7 +359,7 @@ pub const Format = enum {
     pub fn small(format: Format) bool {
         return switch (format) {
             .argb8888, .r8, .rg8, .r16, .rg16 => true,
-            .rgba8888, .rgb565, .d16, .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => false,
+            .rgba8888, .rgb565, .d16, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => false,
             // Eight bytes, as a spread colour is, and still read channel
             // by channel (since 1.69).
             .rgba16 => false,
@@ -746,7 +756,7 @@ pub const Texture = struct {
             .r8 => at[0] = @truncate(texel),
             // Nothing is written a texel at a time into a texture that
             // keeps what it was given: `putTexels` moves the bytes.
-            .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => {},
+            .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => {},
             .rg8, .r16, .rg16, .rgba16 => {},
             .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => {},
         }
@@ -762,7 +772,7 @@ pub const Texture = struct {
             .argb8888 => @as(*const u32, @ptrCast(@alignCast(at))).*,
             .rgb565, .d16 => @as(*const u16, @ptrCast(@alignCast(at))).*,
             .r8 => at[0],
-            inline .bc1, .bc1_rgb, .bc2, .bc3 => |one| blockOf(one, at)[(y % block) * block + (x % block)],
+            inline .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5 => |one| blockOf(one, at)[(y % block) * block + (x % block)],
             inline .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => |one| floatTexel(one, at),
             // The channels made into a colour, as a float texel is
             // (since 1.69): the top 8 bits of each.
@@ -859,7 +869,7 @@ pub const Texture = struct {
             .d16 => (color >> 16 & 0xFF) * 0x101,
             // Nothing is written a texel at a time into a compressed
             // texture: `putLayer` leaves it as it lies.
-            .bc1, .bc1_rgb, .bc2, .bc3 => 0,
+            .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5 => 0,
             .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => unreachable,
             .rg8, .r16, .rg16, .rgba16 => unreachable,
             .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => unreachable,
@@ -1020,7 +1030,7 @@ pub const Texture = struct {
             .d16 => greyOf8(@truncate(texel >> 8)),
             // Decoded already: `peekLayer` read it out of its block, out
             // of its floats, or out of its channels.
-            .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => texel,
+            .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => texel,
             .rg8, .r16, .rg16, .rgba16 => texel,
             .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => texel,
         };
@@ -1170,7 +1180,7 @@ pub const Texture = struct {
                     .rgba8888, .argb8888 => std.mem.readInt(u32, row[x * 4 ..][0..4], .little),
                     .rgb565, .d16 => std.mem.readInt(u16, row[x * 2 ..][0..2], .little),
                     .r8 => row[x],
-                    .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => unreachable,
+                    .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => unreachable,
                     .rg8, .r16, .rg16, .rgba16 => unreachable,
                     .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => unreachable,
                 };
@@ -1855,8 +1865,8 @@ inline fn partsOf(value: f32, comptime bits: u5, comptime biased_by: i32) u32 {
 // --- the compressed blocks --------------------------------------------------
 
 /// The sixteen texels of one compressed block at `at`, in rows, each
-/// 0xAARRGGBB. BC1 reads 8 bytes and the rest 16; nothing is read past
-/// them.
+/// 0xAARRGGBB. BC1 and BC4 read 8 bytes and the rest 16; nothing is read
+/// past them.
 ///
 /// The block holds two endpoint colours of 565 and two bits for each texel,
 /// which pick one of four: the endpoints and two between them. Where the
@@ -1864,8 +1874,25 @@ inline fn partsOf(value: f32, comptime bits: u5, comptime biased_by: i32) u32 {
 /// second, there are three colours and the fourth is clear. BC2 holds four
 /// bits of alpha for each texel before the colours, and BC3 two endpoint
 /// alphas with three bits for each texel between them. (Since 1.44.)
+///
+/// BC4 and BC5 are that alpha block over one channel and over two, and
+/// hold no endpoint colour: they read as (red, 0, 0, 1) and
+/// (red, green, 0, 1). (Since 1.72.)
 pub fn blockOf(comptime format: Format, at: [*]const u8) [16]u32 {
     @setRuntimeSafety(false);
+    // BC4 and BC5 hold no endpoint colour at all: one channel and two,
+    // each the block BC3 keeps its alpha in, read as (red, 0, 0, 1) and
+    // (red, green, 0, 1) (since 1.72).
+    if (format == .bc4 or format == .bc5) {
+        var channels: [16]u32 = undefined;
+        const reds = blockAlphas(at);
+        for (&channels, reds) |*texel, red| texel.* = 0xFF00_0000 | @as(u32, red) << 16;
+        if (format == .bc5) {
+            const greens = blockAlphas(at + 8);
+            for (&channels, greens) |*texel, green| texel.* |= @as(u32, green) << 8;
+        }
+        return channels;
+    }
     const colors_at = comptime if (format.blockBytes() == 16) 8 else 0;
     const colors = at + colors_at;
     const low = readLittle(u16, colors);
@@ -2211,7 +2238,7 @@ inline fn fetch(comptime format: Format, at: [*]const u8) u32 {
         // is built for blocks and never reads a texture of this.
         .d16 => greyOf8(@truncate(@as(*const u16, @ptrCast(@alignCast(at))).* >> 8)),
         // Never read a texel at a time: `sampleBlocked` has the block.
-        .bc1, .bc1_rgb, .bc2, .bc3 => missing_texel,
+        .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5 => missing_texel,
         // A float texel read and rounded where it lies (since 1.45): the
         // decoding is the cost of keeping the floats.
         .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => floatTexel(format, at),
@@ -2229,7 +2256,7 @@ inline fn fetchSpread(comptime format: Format, at: [*]const u8) u64 {
     @setRuntimeSafety(false);
     return switch (format) {
         .rgba8888 => @as(*const u64, @ptrCast(@alignCast(at))).*,
-        .argb8888, .r8, .rgb565, .d16, .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => spread(fetch(format, at)),
+        .argb8888, .r8, .rgb565, .d16, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => spread(fetch(format, at)),
         .rg8, .r16, .rg16, .rgba16 => spread(fetch(format, at)),
         .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => spread(fetch(format, at)),
     };

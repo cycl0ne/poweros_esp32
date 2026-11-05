@@ -427,7 +427,8 @@ pub const PhysicalDeviceFeatures = extern struct {
     independent_blend: bool = false,
     /// A compressed image is kept in its blocks and decoded as it is
     /// sampled, nothing unpacked: `bc1_rgb_unorm_block`,
-    /// `bc1_rgba_unorm_block`, `bc2_unorm_block` and `bc3_unorm_block`
+    /// `bc1_rgba_unorm_block`, `bc2_unorm_block`, `bc3_unorm_block` and
+    /// since 1.72 `bc4_unorm_block` and `bc5_unorm_block`
     /// lie as they were copied in, an eighth to a quarter of the memory
     /// the unpacked texels take, and the four texels a sample mixes come
     /// out of the one block where they share it. False where such an
@@ -698,6 +699,15 @@ pub const Format = enum(u32) {
     bc1_rgba_unorm_block = 133,
     bc2_unorm_block = 135,
     bc3_unorm_block = 137,
+    /// One channel of red, and two of red and green: a block is the very
+    /// block BC3 keeps its alpha in - two endpoints and three bits for
+    /// each texel between them - over one channel and over two. BC4 is 8
+    /// bytes for its sixteen texels and BC5 is 16, and they read as
+    /// (red, 0, 0, 1) and (red, green, 0, 1), as Vulkan reads a format of
+    /// fewer channels. The `_snorm` pair is not here: a texture holds 0
+    /// to 1. (Since 1.72.)
+    bc4_unorm_block = 139,
+    bc5_unorm_block = 141,
     /// ETC2 and EAC, as textures: unpacked as they come in, into 8 bits a
     /// channel, on every device (since 1.46). A block is 4 x 4 texels in 8
     /// bytes, or 16 where there is an alpha or a second channel.

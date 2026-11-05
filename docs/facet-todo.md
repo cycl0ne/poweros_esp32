@@ -1,6 +1,6 @@
 # facet.library: the work list, by where each item stands in Vulkan
 
-What is left to do in facet.library as of **1.71**, each item with where it
+What is left to do in facet.library as of **1.72**, each item with where it
 bites, what it would take, and **where it stands in Vulkan**, so that a
 morning's work is never spent on something Vulkan 1.0 never had.
 
@@ -32,17 +32,23 @@ In the order I would do them. "Size" is the shape of the work, not a
 promise: small is a day with its tests, medium is a revision of its own,
 large wants splitting first.
 
-### 1.1 BC4 to BC7
+### 1.1 BC6H and BC7
 
 - **Standing:** `1.0 format`, under `textureCompressionBC` - which facet
-  says yes to for BC1 to BC3 and no further.
+  says yes to for BC1 to BC5 and no further.
 - **Where:** `image/_decode.zig` beside the BC1/BC2/BC3 decoders,
-  `texture.Format`, `driver/_format.zig`.
-- **What it takes:** BC4 and BC5 are the BC3 alpha block over one and two
-  channels and are easy; BC6H (half-float) and BC7 (many modes) are
-  substantial decoders on their own. ASTC and ETC1 stay out - ASTC is a
-  feature of its own and a far larger decoder, ETC1 is not a Vulkan format.
-- **Size:** BC4/BC5 small; BC6H/BC7 medium each.
+  `texture.blockOf`, `texture.Format`, `driver/_format.zig`.
+- **Done in 1.72:** BC4 and BC5, which were the BC3 alpha block over one
+  channel and over two (`bc4_unorm_block`, `bc5_unorm_block`).
+- **What is left:** BC6H, whose endpoints are half-floats in several
+  layouts with delta encoding, and BC7, which has eight modes with
+  partitions, rotation and index selection. Each is a decoder of its own,
+  and BC6H wants deciding what it reads as: its channels run past 1,
+  which is a float texture's ground (`kept_floats`) rather than a block
+  decoded into 8 bits a channel. ASTC and ETC1 stay out - ASTC is a
+  feature of its own and a far larger decoder, ETC1 is not a Vulkan
+  format.
+- **Size:** medium each.
 
 ---
 

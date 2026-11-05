@@ -8324,6 +8324,12 @@ const BlockScene = struct {
         shader.fixedFragment("alpha", .{ .kind = .texture, .sampling = .{ .format = .bc3, .filter = .nearest } }),
         shader.vertex("eight", &flat, 2),
         shader.fixedFragment("eight", .{ .kind = .texture, .sampling = .{ .format = .rgba8888, .filter = .nearest } }),
+        // 1.72: one channel and two, each the block BC3 keeps its alpha
+        // in.
+        shader.vertex("one", &flat, 2),
+        shader.fixedFragment("one", .{ .kind = .texture, .sampling = .{ .format = .bc4, .filter = .nearest } }),
+        shader.vertex("two", &flat, 2),
+        shader.fixedFragment("two", .{ .kind = .texture, .sampling = .{ .format = .bc5, .filter = .nearest } }),
     };
     const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
 
@@ -8332,6 +8338,21 @@ const BlockScene = struct {
         std.mem.writeInt(u16, into[0..2], color, .little);
         std.mem.writeInt(u16, into[2..4], color, .little);
         std.mem.writeInt(u32, into[4..8], 0, .little);
+    }
+
+    /// A BC4 block of one value: both endpoints it, so every texel takes
+    /// it whatever the indices say. (Since 1.72.)
+    fn block4(value: u8, into: *[8]u8) void {
+        into[0] = value;
+        into[1] = value;
+        @memset(into[2..8], 0);
+    }
+
+    /// A BC5 block of one red and one green: the red's block, then the
+    /// green's. (Since 1.72.)
+    fn block5(red: u8, green: u8, into: *[16]u8) void {
+        block4(red, into[0..8]);
+        block4(green, into[8..16]);
     }
 
     /// A BC3 block of one colour at one alpha: the alpha endpoints both it,
@@ -8344,7 +8365,7 @@ const BlockScene = struct {
     }
 };
 
-test "compressed textures kept in their blocks: copied as blocks, sampled out of them" {
+test "compressed textures kept in their blocks: copied as blocks, sampled out of them, one channel and two" {
     var bench = try Bench.up();
     defer bench.down();
     const fb = bench.rig.fb;
@@ -8382,7 +8403,7 @@ test "compressed textures kept in their blocks: copied as blocks, sampled out of
     // same colours at half alpha for BC3.
     const red: u16 = 0xF800;
     const blue: u16 = 0x001F;
-    const staging, const staged = try bench.buffer(512, facet.BUFFER_USAGE_TRANSFER_SRC);
+    const staging, const staged = try bench.buffer(1024, facet.BUFFER_USAGE_TRANSFER_SRC);
     for (0..16) |block| {
         const color: u16 = if (block % 4 < 2) red else blue;
         BlockScene.block1(color, staged[block * 8 ..][0..8]);
@@ -8391,7 +8412,7 @@ test "compressed textures kept in their blocks: copied as blocks, sampled out of
     const blocks = facet.BufferImageCopy{ .image_extent = side16 };
     const alphas = facet.BufferImageCopy{ .buffer_offset = 128, .image_extent = side16 };
     const whole_copy = facet.ImageCopy{ .extent = side16 };
-    _, const read_back = try bench.buffer(256, facet.BUFFER_USAGE_TRANSFER_DST);
+    _, const read_back = try bench.buffer(512, facet.BUFFER_USAGE_TRANSFER_DST);
     const read_buffer = bench.buffers[bench.buffer_count - 1];
     const read_region = facet.BufferImageCopy{ .image_extent = side16 };
 
@@ -8470,6 +8491,61 @@ test "compressed textures kept in their blocks: copied as blocks, sampled out of
     try drawn(&bench, alpha_view, "alpha", layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
     try testing.expectEqual(@as(u32, 0x80FF_0000), picture.at(8, 8));
     try testing.expectEqual(@as(u32, 0x8000_00FF), picture.at(56, 56));
+
+    // --- 1.72: BC4 and BC5, one channel and two ---
+    // The block BC3 keeps its alpha in, over red alone and over red and
+    // green: 8 bytes a block and 16, kept as they lie and read as
+    // (red, 0, 0, 1) and (red, green, 0, 1).
+    for ([2]facet.Format{ .bc4_unorm_block, .bc5_unorm_block }) |format| {
+        fb.GetPhysicalDeviceFormatProperties(bench.physical, format, &properties);
+        try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_SAMPLED_IMAGE != 0);
+        try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_TRANSFER_SRC != 0);
+        try testing.expectEqual(@as(u32, 0), properties.optimal_tiling_features & facet.FORMAT_FEATURE_COLOR_ATTACHMENT);
+    }
+    const one_image = try bench.bareImage(.{ .format = .bc4_unorm_block, .extent = side16, .usage = usage }, false);
+    const two_image = try bench.bareImage(.{ .format = .bc5_unorm_block, .extent = side16, .usage = usage }, false);
+    fb.GetImageMemoryRequirements(device, one_image, &needs);
+    try testing.expectEqual(@as(u64, 128), needs.size);
+    fb.GetImageMemoryRequirements(device, two_image, &needs);
+    try testing.expectEqual(@as(u64, 256), needs.size);
+    const one_view = try bench.viewOf(.{ .image = one_image, .format = .bc4_unorm_block });
+    const two_view = try bench.viewOf(.{ .image = two_image, .format = .bc5_unorm_block });
+
+    // A red of 200 on the left and 100 on the right; and beside it a
+    // green of 10 and 250.
+    const one_at = 256;
+    const two_at = 384;
+    for (0..16) |block| {
+        const left = block % 4 < 2;
+        BlockScene.block4(if (left) 200 else 100, staged[one_at + block * 8 ..][0..8]);
+        BlockScene.block5(if (left) 200 else 100, if (left) 10 else 250, staged[two_at + block * 16 ..][0..16]);
+    }
+    const one_blocks = facet.BufferImageCopy{ .buffer_offset = one_at, .image_extent = side16 };
+    const two_blocks = facet.BufferImageCopy{ .buffer_offset = two_at, .image_extent = side16 };
+    @memset(read_back[0..256], 0);
+    const channel_commands = try bench.record();
+    fb.CmdCopyBufferToImage(channel_commands, staging, one_image, .transfer_dst_optimal, 1, @ptrCast(&one_blocks));
+    fb.CmdCopyBufferToImage(channel_commands, staging, two_image, .transfer_dst_optimal, 1, @ptrCast(&two_blocks));
+    fb.CmdCopyImageToBuffer(channel_commands, one_image, .general, read_buffer, 1, @ptrCast(&facet.BufferImageCopy{ .image_extent = side16 }));
+    try bench.submit();
+    // The blocks came back as they went in: nothing was decoded on the
+    // way.
+    try testing.expectEqualSlices(u8, staged[one_at..][0..128], read_back[0..128]);
+
+    // Sampled through the form built for each: red alone, and red and
+    // green with a blue of 0 and the alpha whole.
+    try drawn(&bench, one_view, "one", layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
+    try testing.expectEqual(@as(u32, 0xFFC8_0000), picture.at(8, 8));
+    try testing.expectEqual(@as(u32, 0xFF64_0000), picture.at(56, 8));
+    try drawn(&bench, two_view, "two", layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
+    try testing.expectEqual(@as(u32, 0xFFC8_0A00), picture.at(8, 8));
+    try testing.expectEqual(@as(u32, 0xFF64_FA00), picture.at(56, 8));
+    // And through a form built for 8888, which takes the run-time
+    // sampler: the same colours.
+    try drawn(&bench, one_view, "eight", layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
+    try testing.expectEqual(@as(u32, 0xFFC8_0000), picture.at(8, 8));
+    try drawn(&bench, two_view, "eight", layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
+    try testing.expectEqual(@as(u32, 0xFF64_FA00), picture.at(56, 8));
 
     // A copy whose offset is not on a block is left alone, as Vulkan asks
     // of one: the image keeps what it had.
