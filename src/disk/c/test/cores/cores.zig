@@ -18,10 +18,12 @@
 //!
 //! Beside them, each round: a library opened and closed - its open count
 //! has to come back to where it was, which it does only if no two Opens
-//! or Closes of it ever overlapped; a block from one pool every worker
-//! shares, filled and checked; and a message put on one port every
-//! worker shares and taken back off it with RemoveMsg, which has to find
-//! it every time however the others' puts and takes come in between.
+//! or Closes of it ever overlapped, and only if nothing outside the test
+//! opens it either, so it is one nothing else uses; a block from one
+//! pool every worker shares, filled and checked; and a message put on
+//! one port every worker shares and taken back off it with RemoveMsg,
+//! which has to find it every time however the others' puts and takes
+//! come in between.
 //!
 //! The workers are made first and started together: each waits for the
 //! go before it looks at the run, so none starts before all are counted
@@ -38,12 +40,17 @@ const Task = exec.Task;
 const Printf = dos.stdio.Printf;
 
 const NAME = "Cores";
-const VERSION_STRING = "\x00$VER: Cores 1.3 (04.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Cores 1.4 (05.11.2026)\r\n";
 const TEMPLATE = "SECONDS/N,TASKS/N,PIN/S,FREE/S";
 
-/// The library every worker opens and closes: one in the ROM, which
-/// stays.
-const test_library = "utility.library";
+/// The library every worker opens and closes. It has to be one that
+/// nothing else in the system opens, because the check at the end is
+/// that its open count has come back to where it started: a library the
+/// rest of the system uses - utility.library was this - has its count
+/// moved by whatever else is running, and the test then reports a fault
+/// that is none. This one is opened by nothing but `C:test/testlib`,
+/// and the test holds it open throughout so that it stays loaded.
+const test_library = "hello.library";
 
 const default_seconds = 5;
 const default_tasks = 4;
