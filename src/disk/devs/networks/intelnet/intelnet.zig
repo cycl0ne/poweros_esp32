@@ -21,36 +21,35 @@
 //! changes, so a cable going in or out takes the unit on and off line
 //! without anything being polled.
 //!
-//! **Checksums on the way in.** The controller works out an arriving
-//! packet's checksums for itself and says in the descriptor what it
-//! found, so a read of a packet whose checksums were all there and all
-//! right is answered as checked and the opener is spared the sums over
-//! every byte it is handed. It abstains where there was nothing it could
-//! check: a frame that is not an IP packet, and a packet whose transport
-//! part is neither TCP nor UDP.
+//! **Checksums.** The controller works them out both ways, so the sums
+//! over a packet's every byte - the one costly thing about handling one
+//! - fall to it rather than to the opener.
 //!
-//! **Three things are left out on purpose:**
+//! On the way in it checks what a packet carries and says in the
+//! descriptor what it found, so a read of a packet whose checksums were
+//! all there and all right is answered as checked. It abstains where
+//! there was nothing it could check: a frame that is not an IP packet,
+//! and a packet whose transport part is neither TCP nor UDP.
+//!
+//! On the way out it finishes the transport checksum of a write that
+//! asked for one, told by a context descriptor in front of the frame
+//! where the headers end. What it works out is seeded from the field it
+//! finds, so the pseudo-header's own sum goes in first, and the IP
+//! header's checksum is worked out at the same time - a dozen bytes and
+//! twenty against a payload of fifteen hundred (`checksum.zig`).
+//!
+//! **Two things are left out on purpose**, because what they need is in
+//! the parts' own documents and not in the register map:
 //!
 //! - The semaphore a controller keeps so that a driver and the board's
-//!   management firmware do not drive the PHY's management bus at once,
-//!   which needs what is in the parts' own documents and not in the
-//!   register map. This device makes one such access, at the start, to
-//!   begin the negotiation. A card whose firmware drives that bus as
-//!   well could collide with it.
-//! - A least time between interrupts, for the same reason. The throttle
-//!   register is written to 0, which is what the controller comes up
-//!   with: every frame raises its interrupt. That is what is wanted at a
-//!   gigabit, and at 2.5 it is a great many interrupts a second.
-//! - Filling in the checksums of a packet on its way out. The controller
-//!   will, given a context descriptor in front of the frame saying where
-//!   its headers end - but the sum it works out is seeded from the field
-//!   it finds there, so the pseudo-header's own sum has to be in it
-//!   already, and putting it there is the driver's work. That sum is a
-//!   dozen bytes against a payload of fifteen hundred, so the saving
-//!   would be real; what is missing is a way to show it is right, since
-//!   an emulated controller works the whole checksum out from scratch
-//!   and a wrong seed passes unnoticed. It wants a machine with the part
-//!   in it.
+//!   management firmware do not drive the PHY's management bus at once.
+//!   This device makes one such access, at the start, to begin the
+//!   negotiation. A card whose firmware drives that bus as well could
+//!   collide with it.
+//! - A least time between interrupts. The throttle register is written
+//!   to 0, which is what the controller comes up with: every frame
+//!   raises its interrupt. That is what is wanted at a gigabit, and at
+//!   2.5 it is a great many interrupts a second.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -70,7 +69,7 @@ const sana = @import("sana.zig");
 
 pub const DEVICE_NAME = _intelnet.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 0;
+const DEVICE_REVISION = 1;
 const BUILD_DATE = "05.11.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++

@@ -131,8 +131,48 @@ const send_advanced: u32 = 0x2000_0000;
 const send_data: u32 = 0x0030_0000;
 /// Where the whole packet's length sits in the second word.
 const send_length_shift = 14;
+/// Beside it, the one option asked for: the controller finishes the
+/// checksum of the packet's transport part, which the context descriptor
+/// in front of the frame told it where to find. The bit next to this one
+/// would have it fill in the IP header's checksum as well; that one is
+/// worked out before the frame is handed over (`checksum.zig`).
+const send_fill_transport: u32 = 0x0000_0200;
 /// Its status: the controller is done with it.
 pub const sent_done: u32 = 0x0000_0001;
+
+/// A context descriptor, which is the same sixteen bytes read another
+/// way. It carries no frame and the controller never writes it back: it
+/// says where the headers of the frames behind it end, so that the
+/// checksum they ask for covers the right bytes and goes in the right
+/// place.
+pub const Context = extern struct {
+    /// The Ethernet header's length and the IP header's.
+    lengths: u32 = 0,
+    /// A starting number for a packet the controller cuts up; nothing
+    /// here asks it to.
+    seed: u32 = 0,
+    /// That this is a context descriptor of the advanced kind, and what
+    /// the transport part is.
+    kind: u32 = 0,
+    /// A segment's size, for that same cutting up, and which of the two
+    /// contexts this is - the first, so nothing is set.
+    segment: u32 = 0,
+};
+
+comptime {
+    if (@sizeOf(Context) != @sizeOf(Transmit)) {
+        @compileError("a context descriptor takes the place of a send descriptor");
+    }
+}
+
+/// A context descriptor's own bits: that it is one, that it is of the
+/// advanced kind, and that the transport part is TCP rather than UDP.
+const context_descriptor: u32 = 0x0020_0000;
+const context_advanced: u32 = 0x2000_0000;
+const context_tcp: u32 = 0x0000_0800;
+/// Where the Ethernet header's length sits in the first word. The IP
+/// header's length is in the bits below it.
+const context_mac_shift = 9;
 
 /// A receive descriptor handed to the controller, empty: the address
 /// first, then the two words it writes its answer into cleared, so the
@@ -170,12 +210,27 @@ pub fn receivedChecked(descriptor: *volatile Receive) bool {
 }
 
 /// A send descriptor filled with one frame, which is the whole packet.
-pub fn send(descriptor: *volatile Transmit, address: u64, bytes: u32) void {
+/// With `fill` the controller finishes the checksum of the packet's
+/// transport part, which wants a context descriptor in front of this one.
+pub fn send(descriptor: *volatile Transmit, address: u64, bytes: u32, fill: bool) void {
     descriptor.address_low = @truncate(address);
     descriptor.address_high = @truncate(address >> 32);
     descriptor.command = send_data | send_advanced | send_last | send_checksum |
         send_report | bytes;
-    descriptor.status = bytes << send_length_shift;
+    descriptor.status = bytes << send_length_shift |
+        (if (fill) send_fill_transport else 0);
+}
+
+/// A context descriptor written over `descriptor`, for the frame in the
+/// descriptor behind it: `mac_bytes` is its Ethernet header, `ip_bytes`
+/// its IP header, and `tcp` whether its transport part is TCP rather
+/// than UDP.
+pub fn context(descriptor: *volatile Transmit, mac_bytes: u32, ip_bytes: u32, tcp: bool) void {
+    const into: *volatile Context = @ptrCast(descriptor);
+    into.lengths = mac_bytes << context_mac_shift | ip_bytes;
+    into.seed = 0;
+    into.kind = context_descriptor | context_advanced | (if (tcp) context_tcp else 0);
+    into.segment = 0;
 }
 
 // --- the rings --------------------------------------------------------------------

@@ -623,14 +623,26 @@ changes, so a cable going in or out takes the unit on and off line with
 nothing polled. Each change is a line on the console with the speed and
 duplex.
 
-The controller checks an arriving packet's checksums itself. It reports
-`S2OFFLOADF_RX_CHECKSUMS` and `S2OFFLOADF_RX_CHECKSUMS_IPV6`, and a read
-of a packet whose checksums were all there and all right is answered
-with `SANA2IOF_CHECKSUM`, which lets the opener skip the sums over every
-byte: the sockets library does, and checks for itself anything that
-arrives without the flag. The controller abstains where there was
+The controller works out a packet's checksums both ways, so the sums
+over every byte fall to it rather than to the opener. It reports
+`S2OFFLOADF_RX_CHECKSUMS`, `S2OFFLOADF_RX_CHECKSUMS_IPV6` and
+`S2OFFLOADF_TX_CHECKSUMS`.
+
+On the way in, a read of a packet whose checksums were all there and all
+right is answered with `SANA2IOF_CHECKSUM`, which lets the opener skip
+its own sums: the sockets library does, and checks for itself anything
+that arrives without the flag. The controller abstains where there was
 nothing to check - a frame that is not an IP packet, and a packet whose
 transport part is neither TCP nor UDP - and so does the device.
+
+On the way out, a write marked `SANA2IOF_CHECKSUM` has its transport
+checksum finished by the controller, which is told where the headers end
+by a context descriptor in front of the frame. What the controller works
+out is seeded from the checksum field it finds, so the device puts the
+pseudo-header's own sum there first and fills in the IP header's checksum
+at the same time - a dozen bytes and twenty against a payload of fifteen
+hundred. A write of anything else it cannot finish, such as a fragment,
+goes out whole with the checksums it came with.
 
 A machine with no such controller gets no device, so its `ETH0` is
 skipped. The x86-64 disk's `DEVS:NetInterfaces/ETH0` names this device.

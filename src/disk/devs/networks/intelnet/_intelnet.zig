@@ -35,6 +35,7 @@ const ethernet = sdk.devices.network.ethernet;
 const unit_file = sdk.devices.network.unit;
 const mac = @import("mac.zig");
 const ring = @import("ring.zig");
+const checksum = @import("checksum.zig");
 const link = @import("link.zig");
 const Family = @import("family/_family.zig").Family;
 
@@ -162,9 +163,12 @@ pub const Card = extern struct {
 
     /// The checksums the controller works out for itself. Both families'
     /// are checked on the way in, and a read whose packet came through
-    /// with every one of them right is answered as checked.
+    /// with every one of them right is answered as checked. On the way
+    /// out it finishes an IPv4 packet's, which is what the write
+    /// descriptors ask it for.
     pub fn offload(_: *Card) u32 {
-        return net.S2OFFLOADF_RX_CHECKSUMS | net.S2OFFLOADF_RX_CHECKSUMS_IPV6;
+        return net.S2OFFLOADF_RX_CHECKSUMS | net.S2OFFLOADF_RX_CHECKSUMS_IPV6 |
+            net.S2OFFLOADF_TX_CHECKSUMS;
     }
 
     /// The rings set up afresh and the controller started, or the
@@ -247,22 +251,47 @@ pub const Card = extern struct {
     }
 
     /// Every free send descriptor given a write, while there are writes.
+    ///
+    /// A write that asks for its checksums takes two descriptors: a
+    /// context descriptor saying where its headers end, and the frame's
+    /// own behind it. The two are written together and the controller is
+    /// told about both at once, so it never sees a context descriptor
+    /// with nothing behind it.
     pub fn startWrites(card: *Card) void {
         const work = card.work orelse return;
         var filled = false;
-        // One descriptor stays free: a ring whose tail catches its head
-        // is an empty one.
-        while (card.running != 0 and card.send_busy + 1 < send_count) {
+        // Two descriptors stay free: enough for a write that wants a
+        // context descriptor in front of it, and a ring whose tail
+        // catches its head is an empty one.
+        while (card.running != 0 and card.send_busy + 2 < send_count) {
             const req = card.net.nextWrite() orelse break;
-            const slot = card.send_next;
+            // Whether a context descriptor is wanted is the request's to
+            // say, and is known before the frame is built - the frame
+            // goes in the slot behind the context descriptor's.
+            const asked = req.req.flags & net.SANA2IOF_CHECKSUM != 0;
+            const front = card.send_next;
+            const slot = if (asked) (front + 1) % send_count else front;
             const length = card.net.buildFrame(req, &work.send[slot]);
             if (length == 0) continue;
+            const headers = if (asked) checksum.seed(work.send[slot][0..length]) else null;
+            if (asked) {
+                // A context descriptor goes in front whenever one was
+                // asked for, even where the frame turned out not to be a
+                // packet the controller can finish: the slot is spoken
+                // for by then, and a context descriptor nothing uses is
+                // the harmless thing to leave in it.
+                const lengths = headers orelse checksum.plain;
+                ring.context(&work.send_ring[front], lengths.mac, lengths.ip, lengths.tcp);
+                card.toDevice(@intFromPtr(&work.send_ring[front]), @sizeOf(ring.Transmit));
+                card.sending[front] = null;
+                card.send_busy += 1;
+            }
             card.sending[slot] = req;
             card.send_next = (slot + 1) % send_count;
             card.send_busy += 1;
             const buffer = @intFromPtr(&work.send[slot]);
             card.toDevice(buffer, length);
-            ring.send(&work.send_ring[slot], buffer, length);
+            ring.send(&work.send_ring[slot], buffer, length, headers != null);
             card.toDevice(@intFromPtr(&work.send_ring[slot]), @sizeOf(ring.Transmit));
             filled = true;
         }
@@ -314,23 +343,33 @@ pub const Card = extern struct {
 
     /// Every write whose descriptor has come back answered, and the
     /// writes that waited for a descriptor started.
+    ///
+    /// A context descriptor is never written back - it is not a frame -
+    /// so the pair is retired on the status of the frame's own
+    /// descriptor, which is the one behind it.
     pub fn sent(card: *Card) void {
         const work = card.work orelse return;
         while (card.send_busy > 0) {
-            const descriptor: *volatile ring.Transmit = &work.send_ring[card.send_done];
+            const context = card.sending[card.send_done] == null;
+            const slot = if (context) (card.send_done + 1) % send_count else card.send_done;
+            const descriptor: *volatile ring.Transmit = &work.send_ring[slot];
             card.fromDevice(@intFromPtr(descriptor), @sizeOf(ring.Transmit));
             if (descriptor.status & ring.sent_done == 0) break;
+            if (context) card.finishSend(true);
             card.finishSend(true);
         }
         card.startWrites();
     }
 
+    /// The descriptor at the head of the ring given up, and the write it
+    /// carried answered. A context descriptor carries none, and goes
+    /// with nothing said.
     fn finishSend(card: *Card, done: bool) void {
         const slot = card.send_done;
-        const req = card.sending[slot] orelse return;
-        card.sending[slot] = null;
         card.send_done = (slot + 1) % send_count;
         card.send_busy -= 1;
+        const req = card.sending[slot] orelse return;
+        card.sending[slot] = null;
         card.net.written(req, done);
     }
 

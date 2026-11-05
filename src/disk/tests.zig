@@ -38,6 +38,7 @@ test {
     _ = @import("devs/networks/tests/api.zig");
     _ = @import("devs/networks/tests/cyw43455.zig");
     _ = @import("devs/networks/tests/openeth.zig");
+    _ = @import("devs/networks/tests/intelnet.zig");
     _ = @import("devs/networks/tests/slip.zig");
     _ = @import("devs/ssh/tests/ssh.zig");
     _ = @import("devs/networks/esp32s3wifi/tests/wifi.zig");
