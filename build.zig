@@ -334,6 +334,16 @@ const disk_icons = [_]DiskIcon{
 /// the flash its kernel is written with and has no use for either.
 const ram_disk_dirs = [_][]const u8{ "Storage", "Storage/Boot" };
 
+/// The drawers under `Storage/Boot` a machine's firmware wants its files
+/// in. A UEFI firmware reads one name and no other: `EFI/BOOT/BOOTX64.EFI`
+/// on the partition it starts from, so the loader is kept under those two
+/// drawers here as well - that way `C:Install` copies the whole of
+/// `Storage/Boot` and the result is a partition that machine starts from.
+const uefi_boot_dirs = [_][]const u8{ "Storage/Boot/EFI", "Storage/Boot/EFI/BOOT" };
+/// Where that firmware looks for the loader, under `Storage/Boot` and in
+/// a package's `boot/`.
+const uefi_loader_path = "EFI/BOOT/BOOTX64.EFI";
+
 /// Whether the directory `dir` is made on `chip`'s image. LIBS:facet
 /// holds the drivers of the GPUs facet.library draws with, and the
 /// ESP32-S3's disk has neither it nor the library (`no_3d` there).
@@ -653,7 +663,11 @@ pub fn build(b: *std.Build) void {
         }
         switch (chip) {
             .esp32s3, .esp32p4 => {},
-            .rv64sbi, .a64psci, .x64uefi => run.addArgs(&ram_disk_dirs),
+            .rv64sbi, .a64psci => run.addArgs(&ram_disk_dirs),
+            .x64uefi => {
+                run.addArgs(&ram_disk_dirs);
+                run.addArgs(&uefi_boot_dirs);
+            },
         }
     }
     // The directories those files need, made before anything goes in
@@ -1075,6 +1089,15 @@ pub fn build(b: *std.Build) void {
             // from, and the list that says what it is.
             list.addPrefixedFileArg("boot/kernel.bin=", image);
             run.addPrefixedFileArg("Storage/Boot/kernel.bin=", image);
+            // The loader beside it on a machine whose firmware starts one:
+            // without it in both, a machine that installs itself - or one
+            // installed from a package - would write a boot partition its
+            // firmware finds nothing in.
+            if (chipOf(board) == .x64uefi) {
+                const loader = uefi_stub.getEmittedBin();
+                list.addPrefixedFileArg("boot/" ++ uefi_loader_path ++ "=", loader);
+                run.addPrefixedFileArg("Storage/Boot/" ++ uefi_loader_path ++ "=", loader);
+            }
             if (board == .rpi_cm5) {
                 const config = b.path("src/boards/rpi_cm5/config.txt");
                 list.addPrefixedFileArg("boot/config.txt=", config);
