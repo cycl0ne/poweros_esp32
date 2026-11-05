@@ -387,11 +387,11 @@ pub fn build(b: *std.Build) void {
         .esp32s3, .esp32p4 => 2,
     };
     if (most_cores != 0 and cores > most_cores) std.debug.panic("-Dcores={d}: this chip has {d} cores", .{ cores, most_cores });
-    const net = b.option([]const u8, "net", "The network of the qemu steps and the virt display steps: none, or a QEMU network backend such as tap,ifname=tap0,script=no,downscript=no (default: QEMU's user network)");
-    const net_dump = b.option([]const u8, "net-dump", "Write every frame of the qemu and virt display steps' network to this pcap file");
+    const net = b.option([]const u8, "net", "The network of the qemu steps and the virt, virt64 and q35 display steps: none, or a QEMU network backend such as tap,ifname=tap0,script=no,downscript=no (default: QEMU's user network)");
+    const net_dump = b.option([]const u8, "net-dump", "Write every frame of the qemu, virt, virt64 and q35 display steps' network to this pcap file");
     const wifi = wifiDir(b, b.option([]const u8, "wifi", "The radio's vendor libraries for esp32s3wifi.device (default: toolchain/espressif-wifi, which scripts/fetch-wifi.sh fills)"));
-    const telnet = b.option(u16, "telnet", "Forward this host port to the machine's port 23 (C:net/ShellServer) on the qemu and virt display steps' user network; qemu-display forwards 2323 unless given, and 0 forwards none");
-    const ssh_port = b.option(u16, "ssh", "Forward this host port to the machine's port 22 (C:net/ShellServer SSH) on the qemu and virt display steps' user network; qemu-display forwards 2222 unless given, and 0 forwards none");
+    const telnet = b.option(u16, "telnet", "Forward this host port to the machine's port 23 (C:net/ShellServer) on the qemu, virt, virt64 and q35 display steps' user network; qemu-display forwards 2323 unless given, and 0 forwards none");
+    const ssh_port = b.option(u16, "ssh", "Forward this host port to the machine's port 22 (C:net/ShellServer SSH) on the qemu, virt, virt64 and q35 display steps' user network; qemu-display forwards 2222 unless given, and 0 forwards none");
     const network = qemuNetwork(b, net, net_dump, telnet, ssh_port);
     const virt_network = virtNetwork(b, net, net_dump, telnet, ssh_port);
     const rs485 = b.option([]const u8, "rs485", "Give the qemu steps' RS-485 port (UART1, rs485.device) to this QEMU serial backend, such as tcp::5020,server,nowait or a pty");
@@ -401,11 +401,11 @@ pub fn build(b: *std.Build) void {
     const uart1 = rs485 orelse slip_line;
     const usb_devices = b.option([]const u8, "usb", "Plug these QEMU USB devices into the qemu steps' USB port, comma-separated (usb-hub,usb-kbd,usb-mouse); an item with '=' is a property of the device before it (usb-kbd,port=1,id=kbd)");
     const virt_speaker = virtSpeaker(b, b.option([]const u8, "audio", "The virt and virt64 steps' USB speaker on this QEMU audio backend - an -audiodev's driver and options: pa, pipewire, alsa, sdl, none, wav,path=out.wav (default: QEMU's own choice among the backends it has)"));
-    const virt_ui = b.option([]const u8, "virt-ui", "QEMU's -display for the virt and virt64 display steps (default: gtk,show-cursor=off,zoom-to-fit=off - GTK's window at the picture's size, 1:1; default,show-cursor=off takes SDL, or VNC, where there is no GTK)") orelse "gtk,show-cursor=off,zoom-to-fit=off";
-    const virt_monitor = virtMonitor(b, b.option([]const u8, "virt-qmp", "Open a QMP monitor on this Unix socket in the virt and virt64 display steps, which scripts/qemu-shot.py takes the running machine's picture through (such as /tmp/poweros.qmp)"));
+    const virt_ui = b.option([]const u8, "virt-ui", "QEMU's -display for the virt, virt64 and q35 display steps (default: gtk,show-cursor=off,zoom-to-fit=off - GTK's window at the picture's size, 1:1; default,show-cursor=off takes SDL, or VNC, where there is no GTK)") orelse "gtk,show-cursor=off,zoom-to-fit=off";
+    const virt_monitor = virtMonitor(b, b.option([]const u8, "virt-qmp", "Open a QMP monitor on this Unix socket in the virt, virt64 and q35 display steps, which scripts/qemu-shot.py takes the running machine's picture through (such as /tmp/poweros.qmp)"));
     const usb_disk = b.option([]const u8, "usb-disk", "Plug a USB stick into the qemu steps' USB port whose blocks are this raw image file (-snapshot runs keep it unchanged)");
-    const ovmf_code = b.option([]const u8, "ovmf-code", "The x64 UEFI firmware the q35 step starts (default: /usr/share/edk2/x64/OVMF_CODE.4m.fd)") orelse "/usr/share/edk2/x64/OVMF_CODE.4m.fd";
-    const ovmf_vars = b.option([]const u8, "ovmf-vars", "The firmware's variable store the q35 step starts from, copied into work/ on its first run (default: /usr/share/edk2/x64/OVMF_VARS.4m.fd)") orelse "/usr/share/edk2/x64/OVMF_VARS.4m.fd";
+    const ovmf_code = b.option([]const u8, "ovmf-code", "The x64 UEFI firmware the q35 steps start (default: /usr/share/edk2/x64/OVMF_CODE.4m.fd)") orelse "/usr/share/edk2/x64/OVMF_CODE.4m.fd";
+    const ovmf_vars = b.option([]const u8, "ovmf-vars", "The firmware's variable store the q35 steps start from, copied into work/ on its first run (default: /usr/share/edk2/x64/OVMF_VARS.4m.fd)") orelse "/usr/share/edk2/x64/OVMF_VARS.4m.fd";
     const usb = qemuUsb(b, usb_devices, usb_disk);
     // The display is the one a person sits at: `telnet localhost 2323`
     // and `ssh -p 2222 localhost` reach a ShellServer in it without asking
@@ -1293,27 +1293,48 @@ pub fn build(b: *std.Build) void {
     run_q35.has_side_effects = true;
     b.step("q35", "Boot the x86-64 kernel in QEMU's q35 machine under UEFI firmware (quit with Ctrl-A X)").dependOn(&run_q35.step);
 
-    // The same with the machine's window, as `virt64-display`: the
-    // firmware lights the emulated display itself and hands the kernel the
-    // framebuffer, so nothing is added for it - the display is the one
-    // this machine has in any case, and `-nographic` above only keeps the
-    // window shut. The console stays on the terminal.
-    const run_q35_display = b.addSystemCommand(&q35_machine);
-    run_q35_display.addArgs(&.{
-        "-display", virt_ui,      "-serial", "mon:stdio",
-        "-device",  "qemu-xhci",  "-device", "usb-kbd",
-        "-device",  "usb-tablet",
-    });
-    q35_disks.addTo(run_q35_display);
-    run_q35_display.addArgs(&.{ "-drive", b.fmt("if=pflash,format=raw,readonly=on,file={s}", .{ovmf_code}) });
-    run_q35_display.addArgs(&.{ "-drive", b.fmt("if=pflash,format=raw,file={s}", .{q35_vars.path}) });
-    run_q35_display.addArgs(virt_monitor);
-    run_q35_display.addArg("-drive");
-    run_q35_display.addPrefixedDirectoryArg("format=raw,file=fat:rw:", q35_boot.getDirectory());
-    run_q35_display.step.dependOn(q35_vars.step);
-    run_q35_display.stdio = .inherit;
-    run_q35_display.has_side_effects = true;
-    b.step("q35-display", "Boot QEMU's q35 machine with its display, the firmware's framebuffer drawn on").dependOn(&run_q35_display.step);
+    // The same with the machine's window and what the board has around
+    // it, as `virt-display` and `virt64-display`: USB with a keyboard, a
+    // tablet, whose pointer stays where the host's is, and an Ethernet
+    // adapter on the user network (`virtNetwork`); the console stays on
+    // the terminal. No speaker: this board's ROM carries no audio.device,
+    // so there is nothing to drive one with.
+    //
+    // `q35-display` adds nothing for the picture: the firmware lights the
+    // emulated display itself and hands the kernel the framebuffer, so
+    // the display is the one this machine has in any case and
+    // `-nographic` above only keeps the window shut. `q35-virtio` gives
+    // it QEMU's virtio GPU on PCI instead, which the board lists before
+    // the firmware's framebuffer and the same driver draws on over
+    // virtio's PCI transport - at the size the firmware's own picture
+    // has, so that both steps show a machine of one size.
+    for ([_][3][]const u8{
+        .{ "", "q35-display", "the firmware's framebuffer" },
+        .{ "virtio-gpu-pci,xres=1280,yres=800", "q35-virtio", "virtio GPU" },
+    }) |display| {
+        const run_q35_display = b.addSystemCommand(&q35_machine);
+        run_q35_display.addArgs(&.{
+            "-display", virt_ui,      "-serial", "mon:stdio",
+            "-device",  "qemu-xhci",  "-device", "usb-kbd",
+            "-device",  "usb-tablet",
+        });
+        // With a display of its own the machine's emulated VGA goes: the
+        // firmware would light that one and leave the window on it, and
+        // the kernel draws on the GPU the board lists first.
+        if (display[0].len != 0) run_q35_display.addArgs(&.{ "-vga", "none", "-device", display[0] });
+        run_q35_display.addArgs(virt_network);
+        run_q35_display.addArgs(virt_monitor);
+        q35_disks.addTo(run_q35_display);
+        run_q35_display.addArgs(&.{ "-drive", b.fmt("if=pflash,format=raw,readonly=on,file={s}", .{ovmf_code}) });
+        run_q35_display.addArgs(&.{ "-drive", b.fmt("if=pflash,format=raw,file={s}", .{q35_vars.path}) });
+        run_q35_display.addArg("-drive");
+        run_q35_display.addPrefixedDirectoryArg("format=raw,file=fat:rw:", q35_boot.getDirectory());
+        run_q35_display.step.dependOn(q35_vars.step);
+        run_q35_display.stdio = .inherit;
+        run_q35_display.has_side_effects = true;
+        b.step(display[1], b.fmt("Boot QEMU's q35 machine with its display ({s}), keyboard, tablet and network", .{display[2]})).dependOn(&run_q35_display.step);
+    }
+
     // `archive` - what a board is handed over in, for the board this
     // build is for: QEMU's machines get the kernel, the two disks and a
     // `run.sh` that starts them (`tools/qemupackage`); an ESP32 board the
@@ -2898,14 +2919,14 @@ fn qemuNetwork(b: *std.Build, net: ?[]const u8, dump: ?[]const u8, telnet: ?u16,
     return b.dupeStrings(&.{ "-nic", nic, "-object", b.fmt("filter-dump,id=dump0,netdev=net0,file={s}", .{file}) });
 }
 
-/// The virt machines' network, as QEMU's arguments: a USB Ethernet adapter
-/// (`usb-net`, a CDC-ECM function usb/ecm.device drives) on the machine's
-/// xHCI controller, on QEMU's user network as `qemuNetwork` has it -
-/// 10.0.2.15 by DHCP, the gateway 10.0.2.2, DNS at 10.0.2.3. It is the
-/// only network the machines have a driver for. `net`, `dump`, `telnet`
-/// and `ssh_port` are `qemuNetwork`'s; nothing is forwarded unless asked,
-/// so a virt machine starts beside a qemu-display, which holds 2323 and
-/// 2222.
+/// The emulated 64-bit machines' network, as QEMU's arguments: a USB
+/// Ethernet adapter (`usb-net`, a CDC-ECM function usb/ecm.device
+/// drives) on the machine's xHCI controller, on QEMU's user network as
+/// `qemuNetwork` has it - 10.0.2.15 by DHCP, the gateway 10.0.2.2, DNS
+/// at 10.0.2.3. It is the only network these machines have a driver for.
+/// `net`, `dump`, `telnet` and `ssh_port` are `qemuNetwork`'s; nothing is
+/// forwarded unless asked, so one of them starts beside a qemu-display,
+/// which holds 2323 and 2222.
 fn virtNetwork(b: *std.Build, net: ?[]const u8, dump: ?[]const u8, telnet: ?u16, ssh_port: ?u16) []const []const u8 {
     if (net) |backend| {
         if (std.mem.eql(u8, backend, "none")) return b.dupeStrings(&.{ "-nic", "none" });
