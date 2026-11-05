@@ -48,6 +48,7 @@ AArch64 `virt` machines and in its x86-64 q35 machine.
 | [Wi-Fi](docs/esp32s3wifi.md) | the ESP32-S3's radio's device, and how it is built |
 | [USB Wi-Fi](docs/aic8800.md) | the AIC8800 stick's device, and how it is built |
 | [posfs](docs/posfs.md) | the PowerOS file system: its format on the medium, field by field, and how it works |
+| [Porting](docs/porting.md) | the checklist for a new CPU, firmware or board: every place a machine has to be named, and what each of the five chips does there |
 | [Example programs](src/disk/c/) | every command on the disk, built the same way |
 | [Repository layout](#repository-layout) | where things are |
 | [License](#license) | MPL-2.0 for the system, MIT for the SDK and programs |
