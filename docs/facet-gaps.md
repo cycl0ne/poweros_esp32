@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.70**, so that a program need not find out by failing. It covers the API.
+1.71**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -635,7 +635,7 @@ Three more things cannot be asked for at all, having nothing to ask with:
 | A query's counter | 32 bits, held there |
 | A timestamp's unit | 1000 ns, 64 bits of it |
 | A line's width | `line_width` pixels, and `CmdSetLineWidth` |
-| A point's size | one pixel, whatever the line width says: Vulkan's `PointSize` is written by no shader here |
+| A point's size | what the vertex function says in pixels since 1.71 (`shader.Vertices.setPointSize`, Vulkan's `PointSize`), held inside `PhysicalDeviceLimits.point_size_range` - 1 to 256 on either device - and one pixel where it says nothing. A pipeline that tessellates makes its points of vertices that function never saw, so those are one pixel |
 
 Of textures:
 

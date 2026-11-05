@@ -205,7 +205,24 @@ const Flat = struct {
         shader.fill(fragments, fragments.resources.constants(u32).*);
     }
 
-    const entries = [_]shader.Entry{ shader.vertex("main", &vertex, 0), shader.fragment("main", &fragment, 0) };
+    /// The same, the point each vertex makes as wide as the vertex's own
+    /// z says in pixels: Vulkan's `PointSize` (since 1.70). Every vertex
+    /// is drawn at z = 0.5, so the size is read off the buffer and the
+    /// depth stays out of it.
+    fn sized(vertices: *const shader.Vertices) callconv(.c) void {
+        for (0..vertices.count) |k| {
+            const p = vertices.input(@intCast(k), 0);
+            vertices.output(@intCast(k))[0..4].* = .{ p[0], p[1], 0.5, 1 };
+            vertices.setPointSize(@intCast(k), p[2]);
+        }
+    }
+
+    const entries = [_]shader.Entry{
+        shader.vertex("main", &vertex, 0),
+        shader.fragment("main", &fragment, 0),
+        shader.vertex("sized", &sized, 0),
+        shader.fragment("sized", &fragment, 0),
+    };
     const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
 };
 
@@ -1040,6 +1057,132 @@ test "points and lines: where they should be, and as wide; a triangle's edges an
         };
         try testing.expectEqual(shows, seen);
     }
+}
+
+test "a point is as wide as its vertex says: PointSize, and held inside the range the limits give" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const picture = try Picture.of(&bench, 64, 64);
+    const cleared = try renderPass(&bench, .clear, false);
+    defer fb.DestroyRenderPass(device, cleared);
+    const frame = try framebuffer(&bench, cleared, &.{picture.view}, 64, 64);
+    defer fb.DestroyFramebuffer(device, frame);
+    const flat = try module(&bench, &Flat.code);
+    defer fb.DestroyShaderModule(device, flat);
+    const layout = try pipelineLayout(&bench, &.{}, 4);
+    defer fb.DestroyPipelineLayout(device, layout);
+
+    // The range the device gives: one pixel at the narrow end, and wider
+    // than one at the other, which is what Vulkan's `largePoints` says.
+    var properties: facet.PhysicalDeviceProperties = undefined;
+    fb.GetPhysicalDeviceProperties(bench.physical, &properties);
+    const range = properties.limits.point_size_range;
+    try testing.expectEqual(@as(f32, 1), range[0]);
+    try testing.expect(range[1] > 1);
+    try testing.expectEqual(@as(f32, 0), properties.limits.point_size_granularity);
+
+    // A point at the middle of pixel (16, 16), its size in z: one pixel,
+    // eight pixels, none at all, and far more than the range holds.
+    const at = struct {
+        fn at(x: u32, y: u32, size: f32) [3]f32 {
+            return .{ (@as(f32, @floatFromInt(x)) + 0.5) / 32 - 1, (@as(f32, @floatFromInt(y)) + 0.5) / 32 - 1, size };
+        }
+    }.at;
+    const vertices = [5][3]f32{
+        at(16, 16, 1),
+        at(48, 16, 8),
+        at(16, 48, 0),
+        at(48, 48, 1000),
+        at(32, 32, std.math.nan(f32)),
+    };
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
+    const offset: u64 = 0;
+    const red: u32 = 0xFFFF_0000;
+    const clear: u32 = 0xFF00_00FF;
+
+    const drawn = struct {
+        fn drawn(on: *Bench, pass: *facet.RenderPass, into: *facet.Framebuffer, shaders: *facet.ShaderModule, by: *facet.PipelineLayout, buffer: *facet.Buffer, first: u32, count: u32, color: *const u32) !void {
+            const facets = on.rig.fb;
+            const result, const pipeline = makePipeline(on, .{ .module = shaders, .name = "sized", .layout = by, .pass = pass, .topology = .point_list });
+            try testing.expectEqual(facet.Result.success, result);
+            defer facets.DestroyPipeline(on.device, pipeline);
+            const commands = try on.record();
+            facets.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = into, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 1, .clear_values = @ptrCast(&clears(0xFF00_00FF)) }, .@"inline");
+            facets.CmdBindPipeline(commands, .graphics, pipeline.?);
+            facets.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&buffer), @ptrCast(&offset));
+            facets.CmdPushConstants(commands, by, facet.SHADER_STAGE_FRAGMENT, 0, 4, color);
+            facets.CmdDraw(commands, count, 1, first, 0);
+            facets.CmdEndRenderPass(commands);
+            try on.submit();
+        }
+    }.drawn;
+
+    // A size of 1 is the one pixel every point was before 1.70.
+    try drawn(&bench, cleared, frame, flat, layout, vertex_buffer, 0, 1, &red);
+    try testing.expectEqual(red, picture.at(16, 16));
+    for ([_][2]u32{ .{ 15, 16 }, .{ 17, 16 }, .{ 16, 15 }, .{ 16, 17 } }) |near| try testing.expectEqual(clear, picture.at(near[0], near[1]));
+
+    // Eight pixels across and down, about the vertex: three pixels either
+    // way are inside it and six are not.
+    try drawn(&bench, cleared, frame, flat, layout, vertex_buffer, 1, 1, &red);
+    try testing.expectEqual(red, picture.at(48, 16));
+    for ([_][2]u32{ .{ 45, 16 }, .{ 51, 16 }, .{ 48, 13 }, .{ 48, 19 }, .{ 45, 13 }, .{ 51, 19 } }) |inside| try testing.expectEqual(red, picture.at(inside[0], inside[1]));
+    for ([_][2]u32{ .{ 42, 16 }, .{ 54, 16 }, .{ 48, 10 }, .{ 48, 22 } }) |outside| try testing.expectEqual(clear, picture.at(outside[0], outside[1]));
+
+    // A size of 0 comes to the one pixel: nothing is dropped and nothing
+    // is widened.
+    try drawn(&bench, cleared, frame, flat, layout, vertex_buffer, 2, 1, &red);
+    try testing.expectEqual(red, picture.at(16, 48));
+    for ([_][2]u32{ .{ 15, 48 }, .{ 17, 48 }, .{ 16, 47 }, .{ 16, 49 } }) |near| try testing.expectEqual(clear, picture.at(near[0], near[1]));
+
+    // And so does a NaN, which is no size at all.
+    try drawn(&bench, cleared, frame, flat, layout, vertex_buffer, 4, 1, &red);
+    try testing.expectEqual(red, picture.at(32, 32));
+    for ([_][2]u32{ .{ 31, 32 }, .{ 33, 32 }, .{ 32, 31 }, .{ 32, 33 } }) |near| try testing.expectEqual(clear, picture.at(near[0], near[1]));
+
+    // And a size far above the range's end is held to the end, which on
+    // this device covers the whole picture rather than drawing nothing.
+    try drawn(&bench, cleared, frame, flat, layout, vertex_buffer, 3, 1, &red);
+    try testing.expectEqual(red, picture.at(48, 48));
+    try testing.expectEqual(red, picture.at(2, 2));
+    try testing.expectEqual(red, picture.at(62, 62));
+
+    // All four at once, each its own size: the one-pixel point and the
+    // eight-pixel one both there.
+    try drawn(&bench, cleared, frame, flat, layout, vertex_buffer, 0, 3, &red);
+    try testing.expectEqual(red, picture.at(16, 16));
+    try testing.expectEqual(clear, picture.at(15, 16));
+    try testing.expectEqual(red, picture.at(48, 19));
+    try testing.expectEqual(red, picture.at(16, 48));
+    try testing.expectEqual(clear, picture.at(17, 48));
+
+    // A draw of lines takes no point size: the vertex function may say one
+    // whatever the pipeline draws, and nothing comes of it.
+    const lines = struct {
+        fn lines(on: *Bench, pass: *facet.RenderPass, into: *facet.Framebuffer, shaders: *facet.ShaderModule, by: *facet.PipelineLayout, buffer: *facet.Buffer, color: *const u32) !void {
+            const facets = on.rig.fb;
+            const result, const pipeline = makePipeline(on, .{ .module = shaders, .name = "sized", .layout = by, .pass = pass, .topology = .line_list });
+            try testing.expectEqual(facet.Result.success, result);
+            defer facets.DestroyPipeline(on.device, pipeline);
+            const commands = try on.record();
+            facets.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = into, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 1, .clear_values = @ptrCast(&clears(0xFF00_00FF)) }, .@"inline");
+            facets.CmdBindPipeline(commands, .graphics, pipeline.?);
+            facets.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&buffer), @ptrCast(&offset));
+            facets.CmdPushConstants(commands, by, facet.SHADER_STAGE_FRAGMENT, 0, 4, color);
+            facets.CmdDraw(commands, 2, 1, 0, 0);
+            facets.CmdEndRenderPass(commands);
+            try on.submit();
+        }
+    }.lines;
+    // The line from (16, 16) to (48, 16), one pixel high whatever the
+    // sizes those two vertices asked for.
+    try lines(&bench, cleared, frame, flat, layout, vertex_buffer, &red);
+    try testing.expectEqual(red, picture.at(32, 16));
+    try testing.expectEqual(clear, picture.at(32, 13));
+    try testing.expectEqual(clear, picture.at(32, 19));
 }
 
 test "the stencil: marked, then drawn only where marked; a face's own test; its own attachment and with depth" {

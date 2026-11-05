@@ -21,7 +21,8 @@ const Buffer = _buffer.Buffer;
 const _image = @import("../image/_image.zig");
 const _pipeline = @import("../pipeline/_pipeline.zig");
 const Pipeline = _pipeline.Pipeline;
-const max_vertex_input_bindings = @import("../instance/_instance.zig").max_vertex_input_bindings;
+const _instance = @import("../instance/_instance.zig");
+const max_vertex_input_bindings = _instance.max_vertex_input_bindings;
 const DescriptorSet = @import("../descriptor/_descriptor.zig").Set;
 
 /// A vertex buffer bound.
@@ -326,6 +327,20 @@ pub fn widens(pipeline: *const Pipeline) bool {
     };
 }
 
+/// Whether its draws make points, each of the size its own vertex says
+/// (`shader.Vertices.setPointSize`, since 1.70): a draw of `point_list`,
+/// or of triangles drawn as their corners. A pipeline that tessellates
+/// makes its points of vertices the vertex function never saw, so it says
+/// no here and such a point is one pixel.
+pub fn makesPoints(pipeline: *const Pipeline) bool {
+    if (pipeline.tessellated != null) return false;
+    return switch (pipeline.drawn_topology) {
+        .point_list => true,
+        .line_list, .line_strip => false,
+        else => pipeline.polygon_mode == .point,
+    };
+}
+
 /// What `widen` makes.
 pub const Wide = struct {
     vertices: u32 = 0,
@@ -360,6 +375,9 @@ const Widening = struct {
     outputs: [*]const f32,
     into: [*]f32,
     indices: [*]u32,
+    /// Each vertex's point size, or null where the draw says none: then
+    /// every point is the one pixel it was before 1.70.
+    sizes: ?[*]const f32 = null,
     made: Wide = .{},
 
     /// A rectangle whose corners are these two ends, each moved `by` pixels
@@ -387,6 +405,10 @@ const Widening = struct {
     fn point(widening: *Widening, k: u32) void {
         const at = widening.vertex(k);
         if (at[3] < nearest_w) return;
+        // Half the size its own vertex asked for, held inside the range
+        // the limits say (since 1.70), and half a pixel where the draw
+        // says no size at all.
+        const half = widening.halfPointOf(k);
         // Two ends the same, moved apart along x, then the whole along y:
         // the rectangle's corners have it moved both ways.
         var low: [most_stride]f32 = undefined;
@@ -394,9 +416,19 @@ const Widening = struct {
         const stride = widening.stride;
         @memcpy(low[0..stride], at);
         @memcpy(high[0..stride], at);
-        low[1] -= 0.5 / widening.half_height * at[3];
-        high[1] += 0.5 / widening.half_height * at[3];
-        widening.rectangle(low[0..stride], high[0..stride], .{ 0.5, 0 });
+        low[1] -= half / widening.half_height * at[3];
+        high[1] += half / widening.half_height * at[3];
+        widening.rectangle(low[0..stride], high[0..stride], .{ half, 0 });
+    }
+
+    /// Half vertex `k`'s point, in pixels: its size held inside
+    /// `PhysicalDeviceLimits.point_size_range`, so 0 and a NaN come to one
+    /// pixel and a size above the end to the end. (Since 1.70.)
+    fn halfPointOf(widening: *const Widening, k: u32) f32 {
+        const sizes = widening.sizes orelse return 0.5;
+        const asked = sizes[k];
+        if (!(asked > 1)) return 0.5;
+        return @min(asked, @as(f32, _instance.max_point_size)) / 2;
     }
 
     fn line(widening: *Widening, from: u32, to: u32) void {
@@ -443,8 +475,11 @@ const Widening = struct {
 
 /// A draw's primitives, `corners` of the vertices in `outputs`, made into
 /// rectangles in `into` - `stride` floats a vertex - and `indices` of three
-/// for each of their triangles. At `width` pixels, for lines.
-pub fn widen(pipeline: *const Pipeline, viewport: *const facet.Viewport, width: f32, outputs: [*]const f32, stride: u32, corners: []const u32, into: [*]f32, indices: [*]u32) Wide {
+/// for each of their triangles. At `width` pixels, for lines, and at
+/// `sizes[k]` pixels for the point vertex k makes
+/// (`shader.Vertices.setPointSize`, since 1.70); a null `sizes` draws
+/// every point one pixel, as a draw before 1.70 did.
+pub fn widen(pipeline: *const Pipeline, viewport: *const facet.Viewport, width: f32, outputs: [*]const f32, stride: u32, corners: []const u32, into: [*]f32, indices: [*]u32, sizes: ?[*]const f32) Wide {
     if (stride > most_stride or viewport.width == 0 or viewport.height == 0) return .{};
     var widening = Widening{
         .half_width = viewport.width / 2,
@@ -454,6 +489,7 @@ pub fn widen(pipeline: *const Pipeline, viewport: *const facet.Viewport, width: 
         .outputs = outputs,
         .into = into,
         .indices = indices,
+        .sizes = sizes,
     };
     switch (pipeline.drawn_topology) {
         .point_list => for (corners) |corner| {

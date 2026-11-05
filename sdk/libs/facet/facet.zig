@@ -211,6 +211,21 @@ pub const PhysicalDeviceLimits = extern struct {
     /// A field added at the end, so that none already there moves.
     /// (Since 1.50.)
     max_tessellation_patch_components: u32 = 0,
+    /// The narrowest and widest point a draw of points makes, in pixels
+    /// across and down: Vulkan's `pointSizeRange`. A vertex function says
+    /// the size of its own point (`shader.Vertices.setPointSize`, since
+    /// 1.70) and it is held inside this, so a size of 0 draws the one
+    /// pixel a point always was and one above the end draws the end.
+    /// `.{ 1, 1 }` where the device widens no point, which is what Vulkan's
+    /// `largePoints` says without a feature of its own here - both devices
+    /// widen a point on the cores, into the rectangle the rasterizer draws.
+    /// Fields added at the end, so that none already there moves.
+    /// (Since 1.70.)
+    point_size_range: [2]f32 = .{ 1, 1 },
+    /// The step between two point sizes the device tells apart, in pixels:
+    /// Vulkan's `pointSizeGranularity`, and 0 here, every size between the
+    /// ends of the range being drawn as it is. (Since 1.70.)
+    point_size_granularity: f32 = 0,
 };
 
 /// The longest name a device has, its NUL included.

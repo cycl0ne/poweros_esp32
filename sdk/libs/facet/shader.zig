@@ -1325,6 +1325,12 @@ pub const Vertices = extern struct {
     /// The instance drawn.
     instance: u32,
     resources: *const Resources,
+    /// Where each vertex's point size goes, one float a vertex, or null
+    /// where the draw makes no points: Vulkan's `PointSize`
+    /// (`setPointSize`, since 1.70). Each starts at 1, so a function that
+    /// writes none draws the one-pixel point a point always was. A field
+    /// added at the end, so that none already there moves.
+    sizes: ?[*]f32 = null,
 
     /// Vertex `k`'s attribute at `location`.
     pub inline fn input(vertices: *const Vertices, k: u32, location: u32) [4]f32 {
@@ -1334,6 +1340,27 @@ pub const Vertices = extern struct {
     /// Where vertex `k` goes: its position, then its varyings.
     pub inline fn output(vertices: *const Vertices, k: u32) [*]f32 {
         return vertices.outputs + k * vertices.output_stride;
+    }
+
+    /// Vertex `k`'s point set to `size` pixels across and down: Vulkan's
+    /// `PointSize`, for a draw of `point_list`, or of triangles drawn as
+    /// their corners (`POLYGON_MODE_POINT`). The size is held inside
+    /// `PhysicalDeviceLimits.point_size_range` as the point is widened,
+    /// so 0 draws one pixel and a size above the range's end draws the
+    /// end; a NaN draws one pixel. Nothing at all where the draw makes no
+    /// points - a function may call this whatever the pipeline draws -
+    /// and nothing where the pipeline tessellates, the points then being
+    /// made of vertices this function never saw. (Since 1.70.)
+    pub inline fn setPointSize(vertices: *const Vertices, k: u32, size: f32) void {
+        if (vertices.sizes) |sizes| sizes[k] = size;
+    }
+
+    /// Vertex `k`'s point size as it stands, before it is held to the
+    /// range: what `setPointSize` wrote, and 1 where nothing wrote one or
+    /// the draw makes no points. (Since 1.70.)
+    pub inline fn pointSize(vertices: *const Vertices, k: u32) f32 {
+        const sizes = vertices.sizes orelse return 1;
+        return sizes[k];
     }
 };
 

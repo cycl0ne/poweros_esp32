@@ -1026,12 +1026,17 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
     const inputs_bytes = @as(usize, vertices) * locations * @sizeOf([4]f32);
     const outputs_bytes = @as(usize, vertices) * point_stride * @sizeOf(f32);
     const corners_bytes = most_corners * @sizeOf(u32);
-    const scratch = scratchOf(queue, inputs_bytes + outputs_bytes + corners_bytes + wide_vertices_bytes + wide_indices_bytes) orelse return noRoom(queue, "a draw with no memory to work its vertices in");
+    // A float a vertex for the point it makes, where the draw makes points
+    // at all (`shader.Vertices.setPointSize`, since 1.70).
+    const points = _vertices.makesPoints(pipeline);
+    const sizes_bytes = if (points) @as(usize, vertices) * @sizeOf(f32) else 0;
+    const scratch = scratchOf(queue, inputs_bytes + outputs_bytes + corners_bytes + wide_vertices_bytes + wide_indices_bytes + sizes_bytes) orelse return noRoom(queue, "a draw with no memory to work its vertices in");
     const inputs: [*][4]f32 = @ptrCast(@alignCast(scratch));
     const outputs: [*]f32 = @ptrCast(@alignCast(scratch + inputs_bytes));
     const corners: [*]u32 = @ptrCast(@alignCast(scratch + inputs_bytes + outputs_bytes));
     const wide_vertices: [*]f32 = @ptrCast(@alignCast(scratch + inputs_bytes + outputs_bytes + corners_bytes));
     const wide_indices: [*]u32 = @ptrCast(@alignCast(scratch + inputs_bytes + outputs_bytes + corners_bytes + wide_vertices_bytes));
+    const sizes: ?[*]f32 = if (points) @ptrCast(@alignCast(scratch + inputs_bytes + outputs_bytes + corners_bytes + wide_vertices_bytes + wide_indices_bytes)) else null;
     const corner_count = _vertices.assemble(pipeline.topology, indices, lowest, corners[0..most_corners]);
     if (corner_count == 0) return;
 
@@ -1104,6 +1109,9 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
     for (0..instances) |k| {
         const instance = first_instance +% @as(u32, @intCast(k));
         _vertices.readInputs(player, pipeline, lowest, vertices, instance, inputs[0 .. @as(usize, vertices) * locations]);
+        // One pixel unless the function says otherwise, which is the
+        // point every draw made before 1.70.
+        if (sizes) |each| @memset(each[0..vertices], 1);
         const batch = shader.Vertices{
             .inputs = inputs,
             .input_stride = locations,
@@ -1113,6 +1121,7 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
             .first_vertex = lowest,
             .instance = instance,
             .resources = &player.resources,
+            .sizes = sizes,
         };
         pipeline.vertex(&batch);
         var drawn: [*]const f32 = outputs;
@@ -1141,7 +1150,7 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
             }
         }
         if (wide) {
-            const made = _vertices.widen(pipeline, &viewport, pipeline.line_width orelse player.line_width, drawn, stride, drawn_corners, into_vertices, into_indices);
+            const made = _vertices.widen(pipeline, &viewport, pipeline.line_width orelse player.line_width, drawn, stride, drawn_corners, into_vertices, into_indices, if (tessellated == null) sizes else null);
             if (made.indices == 0) continue;
             index_place = carve(queue, made.indices * 4, 4) orelse return noRoom(queue, "a draw with no memory for the indices of its lines or points");
             @memcpy(@as([*]u32, @ptrCast(@alignCast(index_place.cpu)))[0..made.indices], into_indices[0..made.indices]);

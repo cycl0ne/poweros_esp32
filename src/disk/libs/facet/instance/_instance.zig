@@ -50,6 +50,13 @@ pub const max_image_array_layers = 256;
 /// The samples a sampler takes along the longer axis at most
 /// (`texture.most_taps` is what the sampling itself will do).
 pub const max_sampler_anisotropy = 16;
+/// The widest point a draw of points makes, in pixels across and down
+/// (`shader.Vertices.setPointSize`, `PhysicalDeviceLimits.point_size_range`,
+/// since 1.70). A point is widened into a rectangle whatever the device, so
+/// nothing in the drawing holds it to a size; this is what the limit says
+/// and what the widening holds a program's size to, a point wider than
+/// this being a quad the program is better off drawing as one.
+pub const max_point_size = 256;
 
 /// A compute workgroup, which is what a compute function's entry holds room
 /// for: the invocations it may declare along each axis, the invocations of a

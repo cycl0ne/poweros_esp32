@@ -1,6 +1,6 @@
 # facet.library: the work list, by where each item stands in Vulkan
 
-What is left to do in facet.library as of **1.70**, each item with where it
+What is left to do in facet.library as of **1.71**, each item with where it
 bites, what it would take, and **where it stands in Vulkan**, so that a
 morning's work is never spent on something Vulkan 1.0 never had.
 
@@ -32,22 +32,7 @@ In the order I would do them. "Size" is the shape of the work, not a
 promise: small is a day with its tests, medium is a revision of its own,
 large wants splitting first.
 
-### 1.1 A point is one pixel, and no shader writes `PointSize`
-
-- **Standing:** `1.0 core` for `PointSize`; `1.0 feature` for points wider
-  than one pixel (`largePoints`).
-- **Where:** `driver/_vertices.zig`, `Widening.point`: a point is a
-  rectangle half a pixel either way, whatever `line_width` says, and the
-  vertex function has nowhere to say a size. Lines do take `line_width` and
-  `CmdSetLineWidth`.
-- **What it takes:** a place for the size in what a vertex carries
-  (`shader.Vertices.output` has the position and the varyings and nothing
-  else - this wants a slot, which is an SDK decision), then the widening to
-  use it. On the V3D the point size is a packet already written as 1.0
-  (`cl.pointSize`).
-- **Size:** small, once the SDK slot is decided.
-
-### 1.2 BC4 to BC7
+### 1.1 BC4 to BC7
 
 - **Standing:** `1.0 format`, under `textureCompressionBC` - which facet
   says yes to for BC1 to BC3 and no further.

@@ -949,10 +949,39 @@ pub const LIBRARY_VERSION = 1;
 /// for a function to read or to write - one that is only copied into and
 /// out of is refused - and the V3D refuses them all, its texture unit
 /// being fed what the library unpacked.
+/// 71: a point is as wide as its vertex says. Vulkan's `PointSize` was
+/// written by no function here: a point was one pixel, whatever
+/// `line_width` said, because `shader.Vertices` had the position and the
+/// varyings and nowhere to put a size - so a program that wanted a wide
+/// point drew a quad of its own, with the vertices, the indices and the
+/// matrix that costs.
+/// `shader.Vertices.setPointSize(k, size)` is that place: a float a
+/// vertex, in pixels across and down, written into `sizes` - an array of
+/// its own beside the outputs rather than a slot in them, so that no
+/// varying moves and a fragment function reads what it always read. The
+/// library fills it with 1 before the call, so a function that writes
+/// none draws the one-pixel point it always drew, and `pointSize(k)`
+/// reads back what was written.
+/// The widening is where it lands (`_vertices.Widening.point`): the
+/// rectangle a point becomes is the size across and down about the
+/// vertex, where it was half a pixel either way. The size is held inside
+/// `PhysicalDeviceLimits.point_size_range`, which is new beside
+/// `point_size_granularity` - Vulkan's `pointSizeRange` and
+/// `pointSizeGranularity` - so 0 and a NaN draw one pixel and 1000 draws
+/// 256, the widest the library makes. The granularity is 0: every size
+/// between the ends is drawn as it is.
+/// Both devices do it, and neither has a feature bit for it: a point is
+/// widened into a rectangle on the cores whichever device draws the
+/// frame, so the V3D's own point size (`cl.pointSize`, written as 1)
+/// never comes into it, and a range whose end is above 1 is what Vulkan's
+/// `largePoints` says. A draw of `point_list` has them, and so does one
+/// of triangles drawn as their corners (`POLYGON_MODE_POINT`); a pipeline
+/// that tessellates makes its points of vertices the vertex function
+/// never saw, so `sizes` is null there and such a point is one pixel.
 /// What stays: `fifo` is the one present mode, there being no way to ask a
 /// display to show a buffer before its next frame; one queue family of one
 /// queue; a counter of 32 bits, for want of a 64-bit atomic on every
 /// machine the library runs on; and no point mode in tessellation, the
 /// tessellator emitting triangles or the lines of `isolines` and nothing
 /// emitting a patch's points on their own.
-pub const LIBRARY_REVISION = 70;
+pub const LIBRARY_REVISION = 71;

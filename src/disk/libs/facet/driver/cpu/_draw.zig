@@ -145,12 +145,17 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
     const inputs_bytes = @as(usize, vertices) * locations * @sizeOf([4]f32);
     const outputs_bytes = @as(usize, vertices) * point_stride * @sizeOf(f32);
     const corners_bytes = most_corners * @sizeOf(u32);
-    const scratch = scratchOf(queue, inputs_bytes + outputs_bytes + corners_bytes + wide_vertices_bytes + wide_indices_bytes) orelse return;
+    // A float a vertex for the point it makes, where the draw makes
+    // points at all (`shader.Vertices.setPointSize`, since 1.70).
+    const points = _vertices.makesPoints(pipeline);
+    const sizes_bytes = if (points) @as(usize, vertices) * @sizeOf(f32) else 0;
+    const scratch = scratchOf(queue, inputs_bytes + outputs_bytes + corners_bytes + wide_vertices_bytes + wide_indices_bytes + sizes_bytes) orelse return;
     const inputs: [*][4]f32 = @ptrCast(@alignCast(scratch));
     const outputs: [*]f32 = @ptrCast(@alignCast(scratch + inputs_bytes));
     const corners: [*]u32 = @ptrCast(@alignCast(scratch + inputs_bytes + outputs_bytes));
     const wide_vertices: [*]f32 = @ptrCast(@alignCast(scratch + inputs_bytes + outputs_bytes + corners_bytes));
     const wide_indices: [*]u32 = @ptrCast(@alignCast(scratch + inputs_bytes + outputs_bytes + corners_bytes + wide_vertices_bytes));
+    const sizes: ?[*]f32 = if (points) @ptrCast(@alignCast(scratch + inputs_bytes + outputs_bytes + corners_bytes + wide_vertices_bytes + wide_indices_bytes)) else null;
     const corner_count = _vertices.assemble(pipeline.topology, indices, lowest, corners[0..most_corners]);
 
     const target = &player.target.?;
@@ -234,6 +239,9 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
     for (0..instances) |k| {
         const instance = first_instance +% @as(u32, @intCast(k));
         _vertices.readInputs(player, pipeline, lowest, vertices, instance, inputs[0 .. @as(usize, vertices) * locations]);
+        // One pixel unless the function says otherwise, which is the
+        // point every draw made before 1.70.
+        if (sizes) |each| @memset(each[0..vertices], 1);
         const batch = shader.Vertices{
             .inputs = inputs,
             .input_stride = locations,
@@ -243,13 +251,14 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
             .first_vertex = lowest,
             .instance = instance,
             .resources = resources,
+            .sizes = sizes,
         };
         pipeline.vertex(&batch);
         if (pipeline.tessellated != null) {
             const made = _tessellate.run(queue.device.sys, pipeline, resources, outputs, corners[0..corner_count], instance, most_vertices, counters) orelse continue;
             defer made.free(queue.device.sys);
             if (wide) {
-                const widened = _vertices.widen(pipeline, &viewport, pipeline.line_width orelse player.line_width, made.vertices, stride, made.corners(), made.wide_vertices, made.wide_indices);
+                const widened = _vertices.widen(pipeline, &viewport, pipeline.line_width orelse player.line_width, made.vertices, stride, made.corners(), made.wide_vertices, made.wide_indices, null);
                 raster.batched.draw(target, &state, made.wide_vertices[0 .. @as(usize, widened.vertices) * stride], stride, made.wide_indices[0..widened.indices]) catch return;
             } else {
                 raster.batched.draw(target, &state, made.vertices[0 .. @as(usize, made.vertex_count) * stride], stride, made.corners()) catch return;
@@ -259,7 +268,7 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
         // Out of the frame's memory: what was set up is drawn, the rest
         // not, as Vulkan leaves a device that runs out mid-frame.
         if (wide) {
-            const made = _vertices.widen(pipeline, &viewport, pipeline.line_width orelse player.line_width, outputs, stride, corners[0..corner_count], wide_vertices, wide_indices);
+            const made = _vertices.widen(pipeline, &viewport, pipeline.line_width orelse player.line_width, outputs, stride, corners[0..corner_count], wide_vertices, wide_indices, sizes);
             raster.batched.draw(target, &state, wide_vertices[0 .. @as(usize, made.vertices) * stride], stride, wide_indices[0..made.indices]) catch return;
             continue;
         }

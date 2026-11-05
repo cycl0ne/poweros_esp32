@@ -98,6 +98,9 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
             .cores = @min(cores, raster.most_parts),
             .max_sampler_anisotropy = _instance.max_sampler_anisotropy,
             .timestamp_period_ns = _instance.timestamp_period_ns,
+            // A point is widened into a rectangle on the cores for
+            // either device, so both draw one of any size (since 1.70).
+            .point_size_range = .{ 1, _instance.max_point_size },
         },
     };
     const shared = physical.properties.limits.cores;

@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.37 (05.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.38 (05.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -350,6 +350,8 @@ const Shape = struct {
     /// What the vertices carry past their place, and how wide one is.
     attributes: []const facet.VertexInputAttributeDescription = &.{.{ .location = 0, .binding = 0, .format = .r32g32b32_sfloat }},
     stride: u32 = 12,
+    /// What it draws: triangles unless it says otherwise (since 1.70).
+    topology: facet.PrimitiveTopology = .triangle_list,
     /// The whole depth state, where `depth_tested` is not enough.
     depth_state: ?facet.PipelineDepthStencilStateCreateInfo = null,
     /// Where z = 0 and z = 1 land in the depth.
@@ -386,7 +388,7 @@ fn pipelineOf(probe: *Probe, pass: *facet.RenderPass, module: *facet.ShaderModul
         .vertex_attribute_description_count = @intCast(shape.attributes.len),
         .vertex_attribute_descriptions = shape.attributes.ptr,
     };
-    const assembly = facet.PipelineInputAssemblyStateCreateInfo{ .topology = .triangle_list };
+    const assembly = facet.PipelineInputAssemblyStateCreateInfo{ .topology = shape.topology };
     const viewport = facet.Viewport{ .width = side, .height = side, .min_depth = shape.min_depth, .max_depth = shape.max_depth };
     const scissor = facet.Rect2D{ .extent = .{ .width = side, .height = side } };
     const view = facet.PipelineViewportStateCreateInfo{ .viewports = @ptrCast(&viewport), .scissors = @ptrCast(&scissor) };
@@ -4577,6 +4579,173 @@ fn wholeChecks(probe: *Probe) void {
     }
 }
 
+// --- 1.70: a point as wide as its vertex says ------------------------------
+
+/// Points of a size each vertex carries, drawn in the colour the vertices
+/// carry: a fixed form of `shader.FixedKind.color`, so that every device
+/// draws them.
+const Points = struct {
+    fn vertex(vertices: *const facet.shader.Vertices) callconv(.c) void {
+        const full = facet.shader.channel(1);
+        for (0..vertices.count) |k| {
+            const p = vertices.input(@intCast(k), 0);
+            const size = vertices.input(@intCast(k), 1);
+            vertices.output(@intCast(k))[0..8].* = .{ p[0], p[1], 0.5, 1, full, 0, 0, full };
+            vertices.setPointSize(@intCast(k), size[0]);
+        }
+    }
+
+    const entries = [_]facet.shader.Entry{
+        facet.shader.vertex("main", &vertex, 4),
+        facet.shader.fixedFragment("main", .{ .kind = .color }),
+    };
+    const code = facet.shader.Code{ .entry_count = entries.len, .entries = &entries };
+
+    const attributes = [2]facet.VertexInputAttributeDescription{
+        .{ .location = 0, .binding = 0, .format = .r32g32b32_sfloat },
+        .{ .location = 1, .binding = 0, .format = .r32_sfloat, .offset = 12 },
+    };
+    const stride: u32 = 16;
+
+    /// A vertex at the middle of pixel (x, y) of a `side` by `side`
+    /// picture, asking for a point `size` pixels across and down.
+    fn at(x: f32, y: f32, size: f32) [4]f32 {
+        const half: f32 = side / 2;
+        return .{ (x + 0.5) / half - 1, (y + 0.5) / half - 1, 0.5, size };
+    }
+};
+
+/// The point sizes of 1.70: what the limits say, and the pixels a point of
+/// each size covers.
+fn pointChecks(probe: *Probe) void {
+    const fb = probe.fb;
+    const device = probe.device.?;
+    defer probe.give();
+
+    // The range the device gives: one pixel at the narrow end and wider
+    // than one at the other, which is what Vulkan's `largePoints` says,
+    // and every size between them drawn as it is.
+    var properties: facet.PhysicalDeviceProperties = undefined;
+    fb.GetPhysicalDeviceProperties(probe.physical, &properties);
+    const range = properties.limits.point_size_range;
+    probe.check(range[0] == 1, "the narrowest point is one pixel");
+    probe.check(range[1] > 1, "and the widest is wider than one, as largePoints says");
+    probe.check(properties.limits.point_size_granularity == 0, "every size between them is drawn as it is");
+
+    var slot: usize = 0;
+    for (probe.memories, 0..) |each, k| if (each == null) {
+        slot = k;
+        break;
+    };
+    const shown = probe.image(.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = side, .height = side }, .tiling = .linear, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, facet.MEMORY_PROPERTY_HOST_VISIBLE) orelse
+        return probe.check(false, "a picture to draw the points into");
+    const shown_memory = probe.memories[slot].?;
+
+    var module: ?*facet.ShaderModule = null;
+    if (fb.CreateShaderModule(device, &.{ .code = &Points.code }, &module) != .success) return probe.check(false, "the shader module");
+    _ = Probe.keep(&probe.modules, module);
+    var layout: ?*facet.PipelineLayout = null;
+    if (fb.CreatePipelineLayout(device, &.{}, &layout) != .success) return probe.check(false, "the pipeline layout");
+    _ = Probe.keep(&probe.layouts, layout);
+
+    const pass = probe.renderPass(.{
+        .attachment_count = 1,
+        .attachments = @ptrCast(&facet.AttachmentDescription{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .color_attachment_optimal }),
+        .subpass_count = 1,
+        .subpasses = @ptrCast(&facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal }) }),
+    }) orelse return probe.check(false, "a pass to draw them in");
+    const onto = probe.framebuffer(pass, &.{shown[1]}) orelse return probe.check(false, "a framebuffer for it");
+    const draws = pipelineOf(probe, pass, module.?, layout.?, .{ .attributes = &Points.attributes, .stride = Points.stride, .topology = .point_list }) orelse
+        return probe.check(false, "a pipeline that draws points");
+
+    // One pixel, eight pixels, no size at all, and far more than the
+    // range holds.
+    const vertices = [4][4]f32{
+        Points.at(16, 16, 1),
+        Points.at(48, 16, 8),
+        Points.at(16, 48, 0),
+        Points.at(48, 48, 1000),
+    };
+    const vertex_buffer, const vertex_bytes = probe.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER) orelse
+        return probe.check(false, "a vertex buffer");
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
+    const offset: u64 = 0;
+    const clear = [1]facet.ClearValue{.{ .color = .{ .float32 = .{ 0, 0, 1, 1 } } }};
+    const area = facet.Rect2D{ .extent = .{ .width = side, .height = side } };
+    const pixels, const pitch = probe.mapped(shown[0], shown_memory) orelse return probe.check(false, "the picture read back");
+    const red: u32 = 0xFFFF_0000;
+    const blue: u32 = 0xFF00_00FF;
+
+    const Case = struct {
+        first: u32,
+        /// The pixel the point is at, pixels inside it and pixels past it.
+        at: [2]u32,
+        inside: []const [2]u32,
+        outside: []const [2]u32,
+        says: [*:0]const u8,
+    };
+    for ([4]Case{
+        .{
+            .first = 0,
+            .at = .{ 16, 16 },
+            .inside = &.{},
+            .outside = &.{ .{ 15, 16 }, .{ 17, 16 }, .{ 16, 15 }, .{ 16, 17 } },
+            .says = "a point of one pixel covers the one pixel, as every point did before 1.70",
+        },
+        .{
+            .first = 1,
+            .at = .{ 48, 16 },
+            .inside = &.{ .{ 46, 16 }, .{ 50, 16 }, .{ 48, 14 }, .{ 48, 18 }, .{ 46, 14 } },
+            .outside = &.{ .{ 42, 16 }, .{ 54, 16 }, .{ 48, 10 }, .{ 48, 22 } },
+            .says = "a point of eight covers eight pixels across and down, about its vertex",
+        },
+        .{
+            .first = 2,
+            .at = .{ 16, 48 },
+            .inside = &.{},
+            .outside = &.{ .{ 15, 48 }, .{ 17, 48 }, .{ 16, 47 }, .{ 16, 49 } },
+            .says = "a size of 0 comes to the one pixel, nothing dropped and nothing widened",
+        },
+        .{
+            .first = 3,
+            .at = .{ 48, 48 },
+            .inside = &.{ .{ 2, 2 }, .{ side - 2, side - 2 } },
+            .outside = &.{},
+            .says = "and a size far above the range is held to the range's end",
+        },
+    }) |case| {
+        const commands = probe.record() orelse return probe.check(false, "a recording of the draw");
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = onto, .render_area = area, .clear_value_count = 1, .clear_values = &clear }, .@"inline");
+        fb.CmdBindPipeline(commands, .graphics, draws);
+        fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+        fb.CmdDraw(commands, 1, 1, case.first, 0);
+        fb.CmdEndRenderPass(commands);
+        if (!probe.submit()) return probe.check(false, "the frame submitted");
+        var right = pixelAt(pixels, pitch, case.at[0], case.at[1]) == red;
+        for (case.inside) |one| if (pixelAt(pixels, pitch, one[0], one[1]) != red) {
+            right = false;
+        };
+        for (case.outside) |one| if (pixelAt(pixels, pitch, one[0], one[1]) != blue) {
+            right = false;
+        };
+        probe.check(right, case.says);
+    }
+
+    // All four at once, each its own size: the one-pixel point stays one
+    // pixel beside the eight-pixel one.
+    const commands = probe.record() orelse return probe.check(false, "a recording of the last draw");
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = onto, .render_area = area, .clear_value_count = 1, .clear_values = &clear }, .@"inline");
+    fb.CmdBindPipeline(commands, .graphics, draws);
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdDraw(commands, 3, 1, 0, 0);
+    fb.CmdEndRenderPass(commands);
+    if (!probe.submit()) return probe.check(false, "the frame of three points submitted");
+    var apart = pixelAt(pixels, pitch, 16, 16) == red and pixelAt(pixels, pitch, 15, 16) == blue;
+    if (pixelAt(pixels, pitch, 48, 18) != red) apart = false;
+    if (pixelAt(pixels, pitch, 16, 48) != red or pixelAt(pixels, pitch, 17, 48) != blue) apart = false;
+    probe.check(apart, "three points of three sizes in the one draw, each the size its own vertex asked for");
+}
+
 // --- 1.49: the shapes read through a sampler, and a sampler a layout holds -
 
 /// A quad over a texture of layers read through the sampler bound beside
@@ -5556,6 +5725,7 @@ fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical
     texelChecks(&probe);
     wideChecks(&probe);
     wholeChecks(&probe);
+    pointChecks(&probe);
     heldChecks(&probe);
     cutChecks(&probe);
     togetherChecks(&probe);
