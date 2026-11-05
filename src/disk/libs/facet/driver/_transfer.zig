@@ -204,7 +204,7 @@ fn mixed(a: u32, b: u32, part: f32) u32 {
 pub fn clearColorImage(command: *const _command.ClearColorImage) bool {
     const image = command.image;
     const data = image.data orelse return true;
-    const texel = texelOf(image, command.color, command.parts) orelse return false;
+    const texel = texelOf(image, command.color, command.parts, command.words) orelse return false;
     for (_stream.items(_command.ClearColorImage, facet.ImageSubresourceRange, command, command.count)) |range| {
         const first_level = range.base_mip_level;
         if (first_level >= image.levels) continue;
@@ -330,7 +330,14 @@ const Texel = union(enum) { one: u8, two: u16, four: u32, eight: u64, sixteen: u
 /// image's kind and not only on its format: a `texture` keeps an 8888 texel
 /// spread over 64 bits, ready for the filter to mix, which is what
 /// `texture.spread` makes of it.
-fn texelOf(image: *const Image, color: u32, parts: [4]f32) ?Texel {
+fn texelOf(image: *const Image, color: u32, parts: [4]f32, words: [4]u32) ?Texel {
+    // An image of whole numbers reads the colour's own words, signed
+    // where its format is (since 1.70): a number above 1 is what such a
+    // format carries and `float32` cannot say.
+    var wholes = [4]i64{ 0, 0, 0, 0 };
+    if (image.kind == .texture) if (image.texels.format.wholesOf()) |one| {
+        for (&wholes, words) |*whole, word| whole.* = if (one.signed) @as(i32, @bitCast(word)) else word;
+    };
     return switch (image.kind) {
         .rows => switch (image.format) {
             .b8g8r8a8_unorm => .{ .four = color },
@@ -363,6 +370,15 @@ fn texelOf(image: *const Image, color: u32, parts: [4]f32) ?Texel {
             .r16 => .{ .two = channelPattern(.r16, u16, parts) },
             .rg16 => .{ .four = channelPattern(.rg16, u32, parts) },
             .rgba16 => .{ .eight = channelPattern(.rgba16, u64, parts) },
+            // A texture of whole numbers takes the numbers themselves
+            // (since 1.70), each held to what its channel holds: a clear
+            // of such an image reads `uint32` or `int32` of the colour
+            // rather than `float32`, as Vulkan has it.
+            .r8u, .r8i => .{ .one = wholePattern(image.texels.format, u8, wholes) },
+            .rg8u, .rg8i, .r16u, .r16i => .{ .two = wholePattern(image.texels.format, u16, wholes) },
+            .rgba8u, .rgba8i, .rg16u, .rg16i, .r32u, .r32i => .{ .four = wholePattern(image.texels.format, u32, wholes) },
+            .rgba16u, .rgba16i, .rg32u, .rg32i => .{ .eight = wholePattern(image.texels.format, u64, wholes) },
+            .rgba32u, .rgba32i => .{ .sixteen = wholePattern(image.texels.format, u128, wholes) },
             // A clear of a colour is not for a depth texture:
             // CmdClearDepthStencilImage writes that one. Nor for a
             // compressed image, whose texels are written as whole blocks
@@ -390,6 +406,15 @@ fn pattern(comptime format: texture.Format, comptime Word: type, parts: [4]f32) 
 fn channelPattern(format: texture.Format, comptime Word: type, parts: [4]f32) Word {
     var bytes: [@sizeOf(Word)]u8 = @splat(0);
     texture.putChannelParts(format, &bytes, parts);
+    return @bitCast(bytes);
+}
+
+/// The same for a format of whole numbers: the four numbers put into
+/// their own bytes, red first, by the encoder a copy into such an image
+/// uses. (Since 1.70.)
+fn wholePattern(format: texture.Format, comptime Word: type, wholes: [4]i64) Word {
+    var bytes: [@sizeOf(Word)]u8 = @splat(0);
+    texture.putWholeParts(format, &bytes, wholes);
     return @bitCast(bytes);
 }
 

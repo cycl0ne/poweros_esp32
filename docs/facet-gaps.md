@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.69**, so that a program need not find out by failing. It covers the API.
+1.70**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -233,11 +233,11 @@ is left out:
   texel, sampled as (red, 0, 0, 1). Since 1.69 the channels a texture
   keeps as its own are among them as well (`wide_channels`): a function
   writes 16 bits of a channel through `setParts` and reads its own 16
-  bits back. **A compressed image asked for as a storage image is still
-  unpacked to 8888**: nothing writes one texel of a
+  bits back, and since 1.70 the whole numbers (`whole_textures`), written
+  by `setWholes` and read by `wholesAt`. **A compressed image asked for
+  as a storage image is still unpacked to 8888**: nothing writes one texel of a
   BC block, which is the format and not the library, and such an image
-  wants SAMPLED beside it. There is no `r32_uint` or `r32_sint` image: a
-  texture reads a colour or floats, not whole numbers.
+  wants SAMPLED beside it.
 - A function names the level and the layer it writes since 1.55
   (`texture.Texture.setColor` and `colorAt` take both, level 0 of layer 0
   being the view's first of each), and a level, a layer or a place the
@@ -697,8 +697,28 @@ Of textures:
   that is only copied into and out of is refused, as is a colour
   attachment of the format, and the V3D refuses them all, its TMU being
   fed what the library unpacked. A texel buffer has read all four since
-  1.54, on either device. What is still out: the signed and the integer
-  channels, and the three-channel formats.
+  1.54, on either device. What is still out: the signed channels
+  (`_snorm`), and the three-channel formats.
+- A texture keeps whole numbers since 1.70
+  (`PhysicalDeviceFeatures.whole_textures`, the cores): Vulkan's `_uint`
+  and `_sint` formats, one channel, two or four, of 8, 16 or 32 bits, for
+  a counter, an index into a table, an object id or a bitfield a function
+  reads or writes a texel at a time. `texture.Texture.wholesAt` gives the
+  four numbers a texel keeps and `setWholes` writes them, each held to
+  what its channel holds, where `partsAt` and `setParts` give and take
+  the same numbers as floats - which carry 24 bits of one exactly, so
+  2^24 + 1 wants `wholesAt`. The texels lie as they were copied in, so a
+  copy out reads them back to the bit. A sample holds each number to 0 to
+  1 and over 255, the way a texel buffer of the format reads one, so a
+  number above 0 is its channel at the full: a whole number is no colour,
+  which is what these formats are for. **No such format is filtered
+  linearly or drawn into**, on any device - there is nothing to mix
+  between two whole numbers and nothing blends one - and
+  `CmdClearColorImage` reads `uint32` of the colour for such an image, or
+  `int32` where the format is signed. Like a small texel, such an image
+  is for a function to read or to write: one that is only copied into and
+  out of is refused, and the V3D refuses them all. A texel buffer has
+  read all eighteen since 1.54, on either device.
 - A fixed form says the format it samples (`texture.Sampling.format`), and
   that is the one its fast path reads. Since 1.44 a texture of another
   format is drawn all the same, through the run-time sampler, a pixel at a

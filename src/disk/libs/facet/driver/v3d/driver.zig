@@ -180,6 +180,9 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // channel: a texture of its own channels is refused here (since
         // 1.69).
         .wide_channels = false,
+        // Nor a texture of whole numbers, for the same reason (since
+        // 1.70).
+        .whole_textures = false,
         // No QPU program reads a fourth coordinate, so a cube of an array
         // is refused here: the view as well as the pipeline.
         .cube_arrays = false,

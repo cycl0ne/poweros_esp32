@@ -1159,7 +1159,9 @@ fn CmdClearColorImage(base: *FacetBase, buffer: *facet.CommandBuffer, image: *fa
   being recorded: this is a transfer, not a draw.
 - `layout` - what the image is in, which this library does not act on.
 - `color` - the colour, as `float32`: 0 to 1 a channel for a format of
-  whole numbers, and since 1.61 whatever it says for a float one.
+  bytes, and since 1.61 whatever it says for a float one. An image of
+  whole numbers reads `uint32` instead, or `int32` where its format is
+  signed, as Vulkan has it (since 1.70).
 - `range_count`, `ranges` - which levels and layers, by
   `base_mip_level`, `level_count`, `base_array_layer` and `layer_count`;
   `facet.REMAINING`, which both counts default to, reaches to the end.

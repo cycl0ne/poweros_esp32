@@ -1,6 +1,6 @@
 # facet.library: the work list, by where each item stands in Vulkan
 
-What is left to do in facet.library as of **1.69**, each item with where it
+What is left to do in facet.library as of **1.70**, each item with where it
 bites, what it would take, and **where it stands in Vulkan**, so that a
 morning's work is never spent on something Vulkan 1.0 never had.
 
@@ -32,30 +32,7 @@ In the order I would do them. "Size" is the shape of the work, not a
 promise: small is a day with its tests, medium is a revision of its own,
 large wants splitting first.
 
-### 1.1 Textures and storage images of whole numbers
-
-- **Standing:** `1.0 format`.
-- **Where:** `texture.Format` (a plain enum - **append at the end only**,
-  its values moved once in 1.48 and broke every program on the disk),
-  `texture.zig`'s `channelParts`/`setParts`/`partsAt`,
-  `image/_image.zig`'s `keptFormat`/`wideChannels`, `driver/_format.zig`.
-- **Done in 1.69:** the unorm half, the smaller and wider channels -
-  `r8g8_unorm`, `r16_unorm`, `r16g16_unorm` and `r16g16b16a16_unorm`,
-  kept as they lie behind `PhysicalDeviceFeatures.wide_channels`,
-  sampled as the colour of their top 8 bits and read and written whole
-  by `partsAt`/`setParts`.
-- **What is left:** the `_uint`/`_sint` formats, `r32_uint` and
-  `r32_sint` among them. The hard half is not the memory but the *read*:
-  a texture answers a colour or four floats, and a whole number above 1
-  is neither, so a sampled integer image wants an integer read the way
-  `shader.Texels.intAt` got one in 1.54 - say `shader.Resources.sampled`
-  handing back something with a `wholesAt` of its own, saturating as
-  `Texels.colorAt` does - behind a feature of its own on the cores. The
-  sampler's filtering has no meaning for one (Vulkan says nearest only).
-- **Size:** medium, the channels of 1.69 having laid the memory side of
-  it out.
-
-### 1.2 A point is one pixel, and no shader writes `PointSize`
+### 1.1 A point is one pixel, and no shader writes `PointSize`
 
 - **Standing:** `1.0 core` for `PointSize`; `1.0 feature` for points wider
   than one pixel (`largePoints`).
@@ -70,7 +47,7 @@ large wants splitting first.
   (`cl.pointSize`).
 - **Size:** small, once the SDK slot is decided.
 
-### 1.3 BC4 to BC7
+### 1.2 BC4 to BC7
 
 - **Standing:** `1.0 format`, under `textureCompressionBC` - which facet
   says yes to for BC1 to BC3 and no further.

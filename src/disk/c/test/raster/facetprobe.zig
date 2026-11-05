@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.36 (05.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.37 (05.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -648,12 +648,36 @@ const Paint = struct {
         out[9] = @intFromBool(image.holds(0, image.levels, 0, 0));
     }
 
+    /// The same with whole numbers (1.70): group (x, y) writes texel
+    /// (x, y) from four of them the push constants carry as i32, and the
+    /// first group reads texel (0, 0) back with `wholesAt` - the numbers
+    /// themselves, which neither a colour nor a float carries.
+    fn numbers(groups: *const facet.shader.Groups) callconv(.c) void {
+        const image = groups.resources.written(0, 0, 0) orelse return;
+        const out = groups.resources.storage(i64, 0, 1) orelse return;
+        const given = groups.resources.constants([4]i32).*;
+        var parts: [4]i64 = undefined;
+        for (&parts, given) |*part, one| part.* = one;
+        const x = groups.group[0];
+        const y = groups.group[1];
+        image.setWholes(0, 0, x, y, parts);
+        if (x != 0 or y != 0) return;
+        const read = image.wholesAt(0, 0, 0, 0);
+        for (read, 0..) |one, k| out[k] = one;
+        out[4] = image.colorAt(0, 0, 0, 0);
+        // A place past the level reads all zero, as any storage image has
+        // it: the four together, for the one slot.
+        const none = image.wholesAt(0, 0, image.width(0), 0);
+        out[5] = none[0] | none[1] | none[2] | none[3];
+    }
+
     const entries = [_]facet.shader.Entry{
         facet.shader.compute("main", &run),
         facet.shader.compute("told", &told),
         facet.shader.compute("named", &named),
         facet.shader.compute("shape", &shape),
         facet.shader.compute("floats", &floats),
+        facet.shader.compute("numbers", &numbers),
     };
     const code = facet.shader.Code{ .entry_count = entries.len, .entries = &entries };
 };
@@ -718,15 +742,16 @@ fn storageImageChecks(probe: *Probe) void {
     };
     fb.UpdateDescriptorSets(device, 2, &writes, 0, null);
 
-    const infos = [5]facet.ComputePipelineCreateInfo{
+    const infos = [6]facet.ComputePipelineCreateInfo{
         .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.? }, .layout = layout.? },
         .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.?, .name = "told" }, .layout = layout.? },
         .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.?, .name = "named" }, .layout = layout.? },
         .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.?, .name = "shape" }, .layout = layout.? },
         .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.?, .name = "floats" }, .layout = layout.? },
+        .{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.?, .name = "numbers" }, .layout = layout.? },
     };
-    var pipelines: [5]?*facet.Pipeline = undefined;
-    if (fb.CreateComputePipelines(device, null, 5, &infos, &pipelines) != .success) return probe.check(false, "the compute pipelines");
+    var pipelines: [6]?*facet.Pipeline = undefined;
+    if (fb.CreateComputePipelines(device, null, 6, &infos, &pipelines) != .success) return probe.check(false, "the compute pipelines");
     for (pipelines) |one| _ = Probe.keep(&probe.pipelines, one);
 
     const four: u32 = 4;
@@ -971,6 +996,51 @@ fn storageImageChecks(probe: *Probe) void {
             alike = false;
         };
         probe.check(alike, kind.says);
+    }
+
+    // 1.70: the whole numbers a function writes and reads back, each held
+    // to what its channel holds. 300 is above a byte, -5 below what an
+    // unsigned channel holds, and 70000 above 16 bits: nothing is scaled
+    // on the way, so each comes back as itself or at its channel's end.
+    if (probe.features.whole_textures) {
+        const numbers_out: [*]const i64 = @ptrCast(@alignCast(told_bytes));
+        const given_numbers = [4]i32{ 300, -5, 70000, 1 };
+        const Whole = struct { format: facet.Format, want: [4]i64, says: [*:0]const u8 };
+        for ([3]Whole{
+            .{ .format = .r8g8b8a8_uint, .want = .{ 255, 0, 255, 1 }, .says = "four bytes of whole number, 300 and 70000 held to 255 and -5 to 0" },
+            .{ .format = .r16g16b16a16_sint, .want = .{ 300, -5, 32767, 1 }, .says = "16 bits a channel, signed: 300 and -5 as they are, 70000 held to 32767" },
+            .{ .format = .r32g32b32a32_uint, .want = .{ 300, 0, 70000, 1 }, .says = "32 bits a channel: 70000 as it is, and -5 held to 0" },
+        }) |kind| {
+            const held = probe.image(.{
+                .format = kind.format,
+                .extent = .{ .width = 8, .height = 8 },
+                .usage = facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_SRC,
+            }, 0) orelse {
+                probe.check(false, kind.says);
+                continue;
+            };
+            const to_held = facet.WriteDescriptorSet{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .storage_image, .descriptor_count = 1, .image_info = @ptrCast(&facet.DescriptorImageInfo{ .image_view = held[1] }) };
+            fb.UpdateDescriptorSets(device, 1, @ptrCast(&to_held), 0, null);
+            @memset(told_bytes[0..64], 0);
+            commands = probe.record() orelse return probe.check(false, "a recording of the whole-number write");
+            fb.CmdBindPipeline(commands, .compute, pipelines[5].?);
+            fb.CmdBindDescriptorSets(commands, .compute, layout.?, 0, 1, @ptrCast(&sets), 0, null);
+            fb.CmdPushConstants(commands, layout.?, facet.SHADER_STAGE_COMPUTE, 0, 16, &given_numbers);
+            fb.CmdDispatch(commands, 8, 8, 1);
+            if (!probe.submit()) return probe.check(false, "the whole-number write submitted");
+            var alike = true;
+            for (kind.want, 0..) |want, k| if (numbers_out[k] != want) {
+                alike = false;
+            };
+            // The colour such a texel reads as: each number held to 0 to
+            // 1 and over 255, so a red of 300 is a red at the full and a
+            // green of 0 or -5 nothing.
+            const as_color: u32 = @truncate(@as(u64, @bitCast(numbers_out[4])));
+            if (as_color >> 16 & 0xFF != 0xFF or as_color >> 8 & 0xFF != 0) alike = false;
+            // And a place past the level reads all zero.
+            if (numbers_out[5] != 0) alike = false;
+            probe.check(alike, kind.says);
+        }
     }
 
     // A compressed image asked for as a storage image is still unpacked
@@ -4339,6 +4409,174 @@ fn wideChecks(probe: *Probe) void {
     }
 }
 
+// --- 1.70: a texture of whole numbers --------------------------------------
+
+/// A quad over a texture of whole numbers, and the spread 8888 form
+/// beside it: the one reads the format directly, the other through the
+/// run-time sampler.
+const Numbers = struct {
+    const entries = [_]facet.shader.Entry{
+        facet.shader.vertex("whole", &Shapes.flat, 2),
+        facet.shader.fixedFragment("whole", .{ .kind = .texture, .sampling = .{ .format = .rgba8u, .filter = .nearest, .address = .clamp } }),
+        facet.shader.vertex("spread", &Shapes.flat, 2),
+        facet.shader.fixedFragment("spread", .{ .kind = .texture, .sampling = .{ .format = .rgba8888, .filter = .nearest, .address = .clamp } }),
+    };
+    const code = facet.shader.Code{ .entry_count = entries.len, .entries = &entries };
+};
+
+/// The whole numbers of 1.70 as a texture: copied in and out as they lie,
+/// and sampled as the colour each number holds to.
+fn wholeChecks(probe: *Probe) void {
+    const fb = probe.fb;
+    const device = probe.device.?;
+    defer probe.give();
+    const wholes = probe.features.whole_textures;
+    const sampled = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST | facet.IMAGE_USAGE_TRANSFER_SRC;
+    const across = 8;
+    const extent = facet.Extent3D{ .width = across, .height = across };
+
+    // What the device does with the format, and what no device does with
+    // it: no linear filter, there being nothing to mix between two whole
+    // numbers, and no attachment, nothing blending one.
+    var properties: facet.FormatProperties = undefined;
+    fb.GetPhysicalDeviceFormatProperties(probe.physical, .r8g8b8a8_uint, &properties);
+    const reads = properties.optimal_tiling_features & facet.FORMAT_FEATURE_SAMPLED_IMAGE != 0;
+    probe.check(reads == wholes, if (wholes) "whole numbers are a format a texture may be of" else "whole numbers are no texture here, the device keeping a colour of 8 bits a channel");
+    probe.check(properties.optimal_tiling_features & facet.FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR == 0, "and never one a sample filters linearly");
+    probe.check(properties.optimal_tiling_features & facet.FORMAT_FEATURE_COLOR_ATTACHMENT == 0, "nor one an image is drawn into");
+    probe.check(properties.buffer_features & facet.FORMAT_FEATURE_UNIFORM_TEXEL_BUFFER != 0, "a buffer reads them as texels whatever the device");
+
+    // An image of whole numbers is for a function to read or to write, as
+    // a wide channel is: one that is copied into and out of and nothing
+    // else is refused on either device, and so is a colour attachment.
+    var refused: ?*facet.Image = null;
+    const copies = facet.ImageCreateInfo{ .format = .r8g8b8a8_uint, .extent = extent, .usage = facet.IMAGE_USAGE_TRANSFER_DST | facet.IMAGE_USAGE_TRANSFER_SRC };
+    probe.check(fb.CreateImage(device, &copies, &refused) != .success, "an image of them that nothing samples is refused");
+    const drawn_into = facet.ImageCreateInfo{ .format = .r32_uint, .extent = extent, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT };
+    probe.check(fb.CreateImage(device, &drawn_into, &refused) != .success, "and a colour attachment of them as well");
+
+    if (!wholes) {
+        const texture_info = facet.ImageCreateInfo{ .format = .r8g8b8a8_uint, .extent = extent, .usage = sampled };
+        probe.check(fb.CreateImage(device, &texture_info, &refused) != .success, "a texture of whole numbers refused where the device keeps a colour");
+        const signed = facet.ImageCreateInfo{ .format = .r16g16b16a16_sint, .extent = extent, .usage = sampled };
+        probe.check(fb.CreateImage(device, &signed, &refused) != .success, "and a signed one refused there too");
+        return;
+    }
+
+    const numbers = probe.image(.{ .format = .r8g8b8a8_uint, .extent = extent, .usage = sampled }, 0) orelse
+        return probe.check(false, "a texture of 8 by 8 of four bytes of whole number");
+
+    // Four bytes a texel, as they lie: not the eight an unpacked 8888
+    // colour is kept spread in.
+    var needs: facet.MemoryRequirements = undefined;
+    fb.GetImageMemoryRequirements(device, numbers[0], &needs);
+    probe.check(needs.size >= across * across * 4 and needs.size < across * across * 8, "its memory is its numbers' own, four bytes a texel");
+
+    const texels, const texel_bytes = probe.buffer(1024, facet.BUFFER_USAGE_TRANSFER_SRC) orelse
+        return probe.check(false, "a buffer the texels come from");
+    for (0..across * across) |k| {
+        // Red at 255 on the left; on the right a blue of 128, which is a
+        // blue at the full as a whole number, not half a blue.
+        const left = k % across < across / 2;
+        const four: [4]u8 = if (left) .{ 255, 0, 0, 255 } else .{ 0, 0, 128, 255 };
+        @memcpy(texel_bytes[k * 4 ..][0..4], &four);
+    }
+    const back, const back_bytes = probe.buffer(1024, facet.BUFFER_USAGE_TRANSFER_DST) orelse
+        return probe.check(false, "a buffer they are read back into");
+    @memset(back_bytes[0 .. across * across * 4], 0);
+    const whole = facet.BufferImageCopy{ .image_extent = extent };
+
+    var slot: usize = 0;
+    for (probe.memories, 0..) |each, k| if (each == null) {
+        slot = k;
+        break;
+    };
+    const shown = probe.image(.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = side, .height = side }, .tiling = .linear, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, facet.MEMORY_PROPERTY_HOST_VISIBLE) orelse
+        return probe.check(false, "a picture to draw them into");
+    const shown_memory = probe.memories[slot].?;
+
+    var commands = probe.record() orelse return probe.check(false, "a recording");
+    fb.CmdCopyBufferToImage(commands, texels, numbers[0], .general, 1, @ptrCast(&whole));
+    fb.CmdCopyImageToBuffer(commands, numbers[0], .general, back, 1, @ptrCast(&whole));
+    if (!probe.submit()) return probe.check(false, "the copy into the texture submitted");
+    var same = true;
+    for (0..across * across * 4) |k| if (texel_bytes[k] != back_bytes[k]) {
+        same = false;
+        break;
+    };
+    probe.check(same, "the numbers read back are the ones copied in, nothing scaled on the way");
+
+    var module: ?*facet.ShaderModule = null;
+    if (fb.CreateShaderModule(device, &.{ .code = &Numbers.code }, &module) != .success) return probe.check(false, "the shader module");
+    _ = Probe.keep(&probe.modules, module);
+    const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .sampled_image, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    if (fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &set_layout) != .success) return probe.check(false, "a set layout of a sampled image");
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    var layout: ?*facet.PipelineLayout = null;
+    if (fb.CreatePipelineLayout(device, &.{ .set_layout_count = 1, .set_layouts = @ptrCast(&set_layout) }, &layout) != .success) return probe.check(false, "the pipeline layout");
+    _ = Probe.keep(&probe.layouts, layout);
+    var pool: ?*facet.DescriptorPool = null;
+    if (fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool) != .success) return probe.check(false, "a descriptor pool");
+    defer fb.DestroyDescriptorPool(device, pool);
+    var sets: [1]?*facet.DescriptorSet = undefined;
+    if (fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &sets) != .success) return probe.check(false, "a descriptor set");
+
+    const pass = probe.renderPass(.{
+        .attachment_count = 1,
+        .attachments = @ptrCast(&facet.AttachmentDescription{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .color_attachment_optimal }),
+        .subpass_count = 1,
+        .subpasses = @ptrCast(&facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal }) }),
+    }) orelse return probe.check(false, "a pass to draw them in");
+    const onto = probe.framebuffer(pass, &.{shown[1]}) orelse return probe.check(false, "a framebuffer for it");
+    const attributes = [2]facet.VertexInputAttributeDescription{
+        .{ .location = 0, .binding = 0, .format = .r32g32b32_sfloat },
+        .{ .location = 1, .binding = 0, .format = .r32g32_sfloat, .offset = 12 },
+    };
+    const of_whole = pipelineOf(probe, pass, module.?, layout.?, .{ .attributes = &attributes, .stride = 20, .name = "whole" }) orelse
+        return probe.check(false, "a pipeline whose form samples whole numbers");
+    const of_spread = pipelineOf(probe, pass, module.?, layout.?, .{ .attributes = &attributes, .stride = 20, .name = "spread" }) orelse
+        return probe.check(false, "a pipeline whose form samples a spread 8888 texel");
+
+    const vertex_buffer, const vertex_bytes = probe.buffer(256, facet.BUFFER_USAGE_VERTEX_BUFFER) orelse
+        return probe.check(false, "a vertex buffer");
+    const quad = [6][5]f32{
+        .{ -1, -1, 0.5, 0, 0 },
+        .{ 1, -1, 0.5, 1, 0 },
+        .{ -1, 1, 0.5, 0, 1 },
+        .{ -1, 1, 0.5, 0, 1 },
+        .{ 1, -1, 0.5, 1, 0 },
+        .{ 1, 1, 0.5, 1, 1 },
+    };
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(quad))], std.mem.asBytes(&quad));
+    const offset: u64 = 0;
+    const clear = [1]facet.ClearValue{.{ .color = .{ .float32 = .{ 0, 1, 0, 1 } } }};
+    const area = facet.Rect2D{ .extent = .{ .width = side, .height = side } };
+    const pixels, const pitch = probe.mapped(shown[0], shown_memory) orelse return probe.check(false, "the picture read back");
+
+    for ([2]struct { *facet.Pipeline, [*:0]const u8 }{
+        .{ of_whole, "a number above 0 samples as its channel at the full: red on the left, blue on the right" },
+        .{ of_spread, "and a form built for 8888 reads them the same, through the run-time sampler" },
+    }) |one| {
+        const pipeline, const name = one;
+        const info = facet.DescriptorImageInfo{ .image_view = numbers[1] };
+        const write = facet.WriteDescriptorSet{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .sampled_image, .descriptor_count = 1, .image_info = @ptrCast(&info) };
+        fb.UpdateDescriptorSets(device, 1, @ptrCast(&write), 0, null);
+        commands = probe.record() orelse return probe.check(false, "a recording of the draw");
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = onto, .render_area = area, .clear_value_count = 1, .clear_values = &clear }, .@"inline");
+        fb.CmdBindPipeline(commands, .graphics, pipeline);
+        fb.CmdBindDescriptorSets(commands, .graphics, layout.?, 0, 1, @ptrCast(&sets), 0, null);
+        fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+        fb.CmdDraw(commands, 6, 1, 0, 0);
+        fb.CmdEndRenderPass(commands);
+        if (!probe.submit()) return probe.check(false, "the frame submitted");
+        const quarter = side / 4;
+        const drawn_left = pixelAt(pixels, pitch, quarter, quarter);
+        const drawn_right = pixelAt(pixels, pitch, side - quarter, side - quarter);
+        if (drawn_left == 0xFFFF_0000 and drawn_right == 0xFF00_00FF) probe.check(true, name) else probe.checkEqual(0xFFFF_0000_FF00_00FF, @as(u64, drawn_left) << 32 | drawn_right, name);
+    }
+}
+
 // --- 1.49: the shapes read through a sampler, and a sampler a layout holds -
 
 /// A quad over a texture of layers read through the sampler bound beside
@@ -5317,6 +5555,7 @@ fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical
     smallChecks(&probe);
     texelChecks(&probe);
     wideChecks(&probe);
+    wholeChecks(&probe);
     heldChecks(&probe);
     cutChecks(&probe);
     togetherChecks(&probe);

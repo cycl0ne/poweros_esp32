@@ -152,6 +152,38 @@ pub const Format = enum {
     r16,
     rg16,
     rgba16,
+    /// Whole numbers rather than a colour or a part of one: Vulkan's
+    /// `_uint` and `_sint` formats, one channel, two or four, of 8, 16 or
+    /// 32 bits. A counter, an index into a table, an object id or a
+    /// bitfield a function reads or writes a texel at a time - what a
+    /// colour of 8 bits a channel cannot carry at all, 300 being no
+    /// colour.
+    ///
+    /// `Texture.wholesAt` reads them and `setWholes` writes them, each as
+    /// the number it is; `partsAt` and `setParts` give and take the same
+    /// numbers as floats, which carry 24 bits of one exactly; and a
+    /// sample holds each to 0 to 1 and over 255, the way a texel buffer's
+    /// `shader.Texels.colorAt` reads one, so that a whole number above 0
+    /// is a channel at the full (`PhysicalDeviceFeatures.whole_textures`).
+    /// (Since 1.70.)
+    r8u,
+    rg8u,
+    rgba8u,
+    r8i,
+    rg8i,
+    rgba8i,
+    r16u,
+    rg16u,
+    rgba16u,
+    r16i,
+    rg16i,
+    rgba16i,
+    r32u,
+    rg32u,
+    rgba32u,
+    r32i,
+    rg32i,
+    rgba32i,
 
     /// The bytes a texel is kept in; 0 for a compressed format, whose
     /// texels have no size of their own (`blockLog2`).
@@ -169,6 +201,13 @@ pub const Format = enum {
             .argb8888, .rg11b10f, .rgb9e5, .r32f, .rg16 => 2,
             .rgb565, .d16, .rg8, .r16 => 1,
             .r8, .bc1, .bc1_rgb, .bc2, .bc3 => 0,
+            // The whole numbers of 1.70: one channel, two or four, of 8,
+            // 16 or 32 bits, which is 1 to 16 bytes a texel.
+            .r8u, .r8i => 0,
+            .rg8u, .rg8i, .r16u, .r16i => 1,
+            .rgba8u, .rgba8i, .rg16u, .rg16i, .r32u, .r32i => 2,
+            .rgba16u, .rgba16i, .rg32u, .rg32i => 3,
+            .rgba32u, .rgba32i => 4,
         };
     }
 
@@ -182,6 +221,12 @@ pub const Format = enum {
             .rgba32f => 8,
             .argb8888, .rg11b10f, .rgb9e5, .r32f, .rg16 => 6,
             .rgb565, .d16, .rg8, .r16 => 5,
+            // The whole numbers of 1.70, 16 texels of each width.
+            .rgba32u, .rgba32i => 8,
+            .rgba16u, .rgba16i, .rg32u, .rg32i => 7,
+            .rgba8u, .rgba8i, .rg16u, .rg16i, .r32u, .r32i => 6,
+            .rg8u, .rg8i, .r16u, .r16i => 5,
+            .r8u, .r8i => 4,
             // 16 texels of one byte, and the blocks of 8 and of 16.
             .r8, .bc2, .bc3 => 4,
             .bc1, .bc1_rgb => 3,
@@ -201,6 +246,7 @@ pub const Format = enum {
             .bc1, .bc1_rgb, .bc2, .bc3 => true,
             .rgba8888, .argb8888, .rgb565, .r8, .d16, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => false,
             .rg8, .r16, .rg16, .rgba16 => false,
+            .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => false,
         };
     }
 
@@ -215,6 +261,7 @@ pub const Format = enum {
             .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => true,
             .rgba8888, .argb8888, .rgb565, .r8, .d16, .bc1, .bc1_rgb, .bc2, .bc3 => false,
             .rg8, .r16, .rg16, .rgba16 => false,
+            .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => false,
         };
     }
 
@@ -230,6 +277,47 @@ pub const Format = enum {
             .rg8, .r16, .rg16, .rgba16 => true,
             .rgba8888, .argb8888, .rgb565, .r8, .d16, .bc1, .bc1_rgb, .bc2, .bc3 => false,
             .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => false,
+            // Whole numbers are their own kind: `wholes` (since 1.70).
+            .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => false,
+        };
+    }
+
+    /// Whether a texel holds whole numbers rather than a colour, a part
+    /// of one or a float: Vulkan's `_uint` and `_sint` formats, one
+    /// channel, two or four, of 8, 16 or 32 bits. The texel is kept as it
+    /// was copied in, as a float one and a channel one are, so nothing of
+    /// it is lost on the way out again: `Texture.wholesAt` reads the
+    /// numbers and `setWholes` writes them, while a sample holds each to
+    /// 0 to 1 and over 255, a whole number being no colour
+    /// (`PhysicalDeviceFeatures.whole_textures`). (Since 1.70.)
+    pub fn wholes(format: Format) bool {
+        return format.wholesOf() != null;
+    }
+
+    /// How many whole numbers a `wholes` format holds, how many bits each
+    /// takes and whether it is signed: nothing for every other format.
+    /// (Since 1.70.)
+    pub fn wholesOf(format: Format) ?struct { parts: u32, bits: u32, signed: bool } {
+        return switch (format) {
+            .r8u => .{ .parts = 1, .bits = 8, .signed = false },
+            .rg8u => .{ .parts = 2, .bits = 8, .signed = false },
+            .rgba8u => .{ .parts = 4, .bits = 8, .signed = false },
+            .r8i => .{ .parts = 1, .bits = 8, .signed = true },
+            .rg8i => .{ .parts = 2, .bits = 8, .signed = true },
+            .rgba8i => .{ .parts = 4, .bits = 8, .signed = true },
+            .r16u => .{ .parts = 1, .bits = 16, .signed = false },
+            .rg16u => .{ .parts = 2, .bits = 16, .signed = false },
+            .rgba16u => .{ .parts = 4, .bits = 16, .signed = false },
+            .r16i => .{ .parts = 1, .bits = 16, .signed = true },
+            .rg16i => .{ .parts = 2, .bits = 16, .signed = true },
+            .rgba16i => .{ .parts = 4, .bits = 16, .signed = true },
+            .r32u => .{ .parts = 1, .bits = 32, .signed = false },
+            .rg32u => .{ .parts = 2, .bits = 32, .signed = false },
+            .rgba32u => .{ .parts = 4, .bits = 32, .signed = false },
+            .r32i => .{ .parts = 1, .bits = 32, .signed = true },
+            .rg32i => .{ .parts = 2, .bits = 32, .signed = true },
+            .rgba32i => .{ .parts = 4, .bits = 32, .signed = true },
+            else => null,
         };
     }
 
@@ -249,7 +337,7 @@ pub const Format = enum {
     /// colour of 8 bits a channel: a compressed format's blocks and a
     /// float one's texels. (Since 1.45.)
     pub fn kept(format: Format) bool {
-        return format.compressed() or format.floats() or format.channels();
+        return format.compressed() or format.floats() or format.channels() or format.wholes();
     }
 
     /// Whether a texel is kept in fewer bytes than the colour it reads as:
@@ -265,6 +353,10 @@ pub const Format = enum {
             // Eight bytes, as a spread colour is, and still read channel
             // by channel (since 1.69).
             .rgba16 => false,
+            // The whole numbers of 1.70 under eight bytes a texel, and
+            // the three above it.
+            .r8u, .r8i, .rg8u, .rg8i, .rgba8u, .rgba8i, .r16u, .r16i, .rg16u, .rg16i, .r32u, .r32i => true,
+            .rgba16u, .rgba16i, .rg32u, .rg32i, .rgba32u, .rgba32i => false,
         };
     }
 
@@ -656,6 +748,7 @@ pub const Texture = struct {
             // keeps what it was given: `putTexels` moves the bytes.
             .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => {},
             .rg8, .r16, .rg16, .rgba16 => {},
+            .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => {},
         }
     }
 
@@ -674,6 +767,9 @@ pub const Texture = struct {
             // The channels made into a colour, as a float texel is
             // (since 1.69): the top 8 bits of each.
             .rg8, .r16, .rg16, .rgba16 => channelColor(texture.format, at),
+            // And a texel of whole numbers as the colour they hold to
+            // (since 1.70): nothing, or the channel at the full.
+            .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => wholeColor(texture.format, at),
         };
     }
 
@@ -748,6 +844,12 @@ pub const Texture = struct {
         // The same of a texel of channels of its own (since 1.69): the
         // colour's channels as 0 to 1, which is all a colour ever said.
         if (texture.format.channels()) return texture.putChannels(layer, lod, x, y, partsOfColor(color));
+        // A texel of whole numbers takes the colour's four channels as
+        // the numbers 0 to 255 they are (since 1.70), which is what
+        // `shader.Texels.setInt` writes an 8888 texel from as well;
+        // `setWholes` is what such a texture is written with where a
+        // number of its own is meant.
+        if (texture.format.wholes()) return texture.putWholes(layer, lod, x, y, wholesOfColor(color));
         texture.putLayer(layer, lod, x, y, switch (texture.format) {
             .rgba8888, .argb8888 => color,
             .rgb565 => as565(color),
@@ -760,6 +862,7 @@ pub const Texture = struct {
             .bc1, .bc1_rgb, .bc2, .bc3 => 0,
             .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => unreachable,
             .rg8, .r16, .rg16, .rgba16 => unreachable,
+            .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => unreachable,
         });
     }
 
@@ -775,6 +878,13 @@ pub const Texture = struct {
         // Channels of its own, the whole of each (since 1.69): 16 bits a
         // channel keeps what a colour of 8 could not.
         if (texture.format.channels()) return texture.putChannels(layer, lod, x, y, parts);
+        // Whole numbers, rounded (since 1.70): a float carries 24 bits of
+        // one exactly, and `setWholes` is the way to write a larger one.
+        if (texture.format.wholes()) {
+            var made: [4]i64 = undefined;
+            for (&made, parts) |*one, part| one.* = wholeOfFloat(part);
+            return texture.putWholes(layer, lod, x, y, made);
+        }
         // A depth takes x as 0 to 1 over all 16 bits, where a colour of 8
         // bits a channel would keep the top 8 of them (since 1.58).
         if (texture.format == .d16) return texture.putLayer(layer, lod, x, y, @intFromFloat(@round(heldAt(parts[0], 1) * 65535)));
@@ -786,6 +896,59 @@ pub const Texture = struct {
     /// to 1 and written at the width the channel has. (Since 1.69.)
     fn putChannels(texture: *Texture, layer: u32, lod: u32, x: u32, y: u32, parts: [4]f32) void {
         putChannelParts(texture.format, texture.memory + texture.placeOf(layer, lod, x, y), parts);
+    }
+
+    /// The same for a format of whole numbers, without holding to
+    /// anything. (Since 1.70.)
+    fn putWholes(texture: *Texture, layer: u32, lod: u32, x: u32, y: u32, parts: [4]i64) void {
+        putWholeParts(texture.format, texture.memory + texture.placeOf(layer, lod, x, y), parts);
+    }
+
+    /// A texel of a layer as the four whole numbers its channels keep: an
+    /// integer format's as they lie, where `partsAt`'s floats carry only
+    /// 24 bits of a 32-bit one; a format whose channels are its own (1.69)
+    /// the numbers those channels hold, 0 to 255 or 0 to 65535; and every
+    /// other format the four channels of its colour, 0 to 255. What the
+    /// format has not got reads as 0 and its alpha as 1, and a texel the
+    /// texture has not got reads all zero, as `colorAt` has it.
+    /// `shader.Texels.intAt` is the same read of a texel buffer.
+    /// (Since 1.70.)
+    pub fn wholesAt(texture: *const Texture, layer: u32, lod: u32, x: u32, y: u32) [4]i64 {
+        if (!texture.holds(layer, lod, x, y)) return .{ 0, 0, 0, 0 };
+        if (texture.format.wholes()) return wholeParts(texture.format, texture.memory + texture.placeOf(layer, lod, x, y));
+        if (texture.format.channelsOf()) |one| {
+            const at = texture.memory + texture.placeOf(layer, lod, x, y);
+            var made = [4]i64{ 0, 0, 0, 1 };
+            for (0..one.parts) |k| made[k] = channelAt(at, one.bits, k);
+            return made;
+        }
+        const color = texture.texelColor(layer, lod, x, y);
+        var made: [4]i64 = undefined;
+        inline for (&made, [4]u5{ 16, 8, 0, 24 }) |*one, shift| one.* = color >> shift & 0xFF;
+        return made;
+    }
+
+    /// A texel of a layer set from four whole numbers: an integer
+    /// format's as they are, each held to what its channel holds; a
+    /// format whose channels are its own as the numbers those channels
+    /// hold; and every other format as the colour of their low 8 bits.
+    /// The level, the layer and the place are held to what the texture
+    /// has, as `setColor` has them, and a compressed texture takes
+    /// nothing. (Since 1.70.)
+    pub fn setWholes(texture: *Texture, layer: u32, lod: u32, x: u32, y: u32, parts: [4]i64) void {
+        if (!texture.holds(layer, lod, x, y)) return;
+        if (texture.format.wholes()) return texture.putWholes(layer, lod, x, y, parts);
+        if (texture.format.channelsOf()) |one| {
+            const most: f32 = if (one.bits == 8) 255 else 65535;
+            var made: [4]f32 = undefined;
+            for (&made, parts) |*part, whole| part.* = @as(f32, @floatFromInt(heldWhole(whole, one.bits, false))) / most;
+            return texture.putChannels(layer, lod, x, y, made);
+        }
+        var color: u32 = 0;
+        inline for (parts, [4]u5{ 16, 8, 0, 24 }) |one, shift| {
+            color |= @as(u32, @intCast(heldWhole(one, 8, false))) << shift;
+        }
+        texture.setColor(layer, lod, x, y, color);
     }
 
     /// The same without holding to anything, for a format of floats.
@@ -817,6 +980,14 @@ pub const Texture = struct {
         // than a colour does (since 1.69): a sample reads the top 8 bits,
         // and this reads all 16.
         if (texture.format.channels()) return channelParts(texture.format, texture.memory + texture.placeOf(layer, lod, x, y));
+        // The whole numbers as they are, not 0 to 1 (since 1.70): a float
+        // carries 24 bits of one exactly, and `wholesAt` all 32.
+        if (texture.format.wholes()) {
+            const wholes = wholeParts(texture.format, texture.memory + texture.placeOf(layer, lod, x, y));
+            var made: [4]f32 = undefined;
+            for (&made, wholes) |*part, one| part.* = @floatFromInt(one);
+            return made;
+        }
         return partsOfColor(texture.texelColor(layer, lod, x, y));
     }
 
@@ -851,6 +1022,7 @@ pub const Texture = struct {
             // of its floats, or out of its channels.
             .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => texel,
             .rg8, .r16, .rg16, .rgba16 => texel,
+            .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => texel,
         };
     }
 
@@ -1000,6 +1172,7 @@ pub const Texture = struct {
                     .r8 => row[x],
                     .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => unreachable,
                     .rg8, .r16, .rg16, .rgba16 => unreachable,
+                    .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => unreachable,
                 };
                 texture.put(lod, @intCast(x), @intCast(y), texel);
             }
@@ -1439,6 +1612,71 @@ inline fn channelAt(at: [*]const u8, bits: u32, k: usize) u32 {
     return if (bits == 8) at[k] else readLittle(u16, at + k * 2);
 }
 
+/// The whole numbers a texel of a `Format.wholes` format at `at` keeps,
+/// as they lie: what the format has not got reads as 0, and an alpha it
+/// has not got as 1, as `shader.Texels.intAt` has them. What
+/// `Texture.wholesAt` gives a shader function of such a texture.
+/// (Since 1.70.)
+pub fn wholeParts(format: Format, at: [*]const u8) [4]i64 {
+    @setRuntimeSafety(false);
+    const one = format.wholesOf() orelse return .{ 0, 0, 0, 0 };
+    var made = [4]i64{ 0, 0, 0, 1 };
+    for (0..one.parts) |k| made[k] = wholeAt(at, one.bits, one.signed, k);
+    return made;
+}
+
+/// The same written back, each held to what its channel holds - 255,
+/// 65535 or 4294967295 unsigned, -128 to 127 and so on signed - and
+/// written at the width it has. What `Texture.setWholes` writes such a
+/// texel with. (Since 1.70.)
+pub fn putWholeParts(format: Format, at: [*]u8, parts: [4]i64) void {
+    @setRuntimeSafety(false);
+    const one = format.wholesOf() orelse return;
+    for (0..one.parts) |k| {
+        const bits: u64 = @bitCast(heldWhole(parts[k], one.bits, one.signed));
+        switch (one.bits) {
+            8 => at[k] = @truncate(bits),
+            16 => writeLittle(u16, at + k * 2, @truncate(bits)),
+            else => writeLittle(u32, at + k * 4, @truncate(bits)),
+        }
+    }
+}
+
+/// The colour a sample makes of such a texel, 0xAARRGGBB: each number
+/// held to 0 to 1 and over 255, which is how a texel buffer of the format
+/// reads one (`shader.Texels.colorAt`) - so 0 is nothing and any number
+/// above it is the channel at the full, a whole number being no colour.
+/// What the format has not got is 0, and an alpha it has not got whole.
+/// (Since 1.70.)
+pub fn wholeColor(format: Format, at: [*]const u8) u32 {
+    @setRuntimeSafety(false);
+    const one = format.wholesOf() orelse return 0;
+    var channels = [4]u32{ 0, 0, 0, 255 };
+    for (0..one.parts) |k| channels[k] = if (wholeAt(at, one.bits, one.signed, k) > 0) 255 else 0;
+    return channels[3] << 24 | channels[0] << 16 | channels[1] << 8 | channels[2];
+}
+
+/// Whole number `k` of a texel at `at`, as it lies. (Since 1.70.)
+inline fn wholeAt(at: [*]const u8, bits: u32, signed: bool, k: usize) i64 {
+    const from = at + k * (bits / 8);
+    return switch (bits) {
+        8 => if (signed) @as(i8, @bitCast(from[0])) else @as(i64, from[0]),
+        16 => if (signed) @as(i16, @bitCast(readLittle(u16, from))) else @as(i64, readLittle(u16, from)),
+        else => if (signed) @as(i32, @bitCast(readLittle(u32, from))) else @as(i64, readLittle(u32, from)),
+    };
+}
+
+/// A whole number held to what a channel of `bits` holds: 0 to 255,
+/// 65535 or 4294967295 where it is unsigned, and -128 to 127, -32768 to
+/// 32767 or the 32-bit pair where it is signed. (Since 1.70.)
+inline fn heldWhole(value: i64, bits: u32, signed: bool) i64 {
+    if (signed) {
+        const most = (@as(i64, 1) << @intCast(bits - 1)) - 1;
+        return @max(@min(value, most), -most - 1);
+    }
+    return @max(@min(value, (@as(i64, 1) << @intCast(bits)) - 1), 0);
+}
+
 /// Four channels written as a float texel at `at`, `floatParts` undone:
 /// what the format has not got is dropped, and what it cannot hold is cut
 /// to the largest it can. What `Texture.setParts` writes with.
@@ -1490,6 +1728,24 @@ inline fn heldAt(value: f32, most: f32) f32 {
 /// A word of `T` written at `at`, little-endian and on no alignment.
 inline fn writeLittle(comptime T: type, at: [*]u8, value: T) void {
     std.mem.writeInt(T, at[0..@sizeOf(T)], value, .little);
+}
+
+/// 0xAARRGGBB as the four whole numbers its channels are, 0 to 255, red
+/// first. (Since 1.70.)
+pub inline fn wholesOfColor(color: u32) [4]i64 {
+    var parts: [4]i64 = undefined;
+    inline for (&parts, [4]u5{ 16, 8, 0, 24 }) |*part, shift| {
+        part.* = color >> shift & 0xFF;
+    }
+    return parts;
+}
+
+/// A float as the whole number nearest it, a NaN as 0 and anything past
+/// what 64 bits hold as the end of it. (Since 1.70.)
+inline fn wholeOfFloat(value: f32) i64 {
+    if (!(value > -9.2e18)) return if (value < 0) std.math.minInt(i64) else 0;
+    if (value > 9.2e18) return std.math.maxInt(i64);
+    return @intFromFloat(@round(value));
 }
 
 /// 0xAARRGGBB as x, y, z and w, each channel 0 to 1. (Since 1.57.)
@@ -1962,6 +2218,9 @@ inline fn fetch(comptime format: Format, at: [*]const u8) u32 {
         // Channels of its own read and made into a colour (since 1.69):
         // the top 8 bits of each, which is all a tile's colour holds.
         .rg8, .r16, .rg16, .rgba16 => channelColor(format, at),
+        // Whole numbers held to the colour they stand for (since 1.70):
+        // nothing, or the channel at the full.
+        .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => wholeColor(format, at),
     };
 }
 
@@ -1972,6 +2231,7 @@ inline fn fetchSpread(comptime format: Format, at: [*]const u8) u64 {
         .rgba8888 => @as(*const u64, @ptrCast(@alignCast(at))).*,
         .argb8888, .r8, .rgb565, .d16, .bc1, .bc1_rgb, .bc2, .bc3, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => spread(fetch(format, at)),
         .rg8, .r16, .rg16, .rgba16 => spread(fetch(format, at)),
+        .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => spread(fetch(format, at)),
     };
 }
 

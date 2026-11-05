@@ -145,6 +145,9 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // bits and as the whole of them by a function
         // (`texture.channelColor`, `channelParts`, since 1.69).
         .wide_channels = true,
+        // And whole numbers, read and written as the numbers they are
+        // (`texture.Texture.wholesAt`, `setWholes`, since 1.70).
+        .whole_textures = true,
         // One cube of an array, the fourth coordinate saying which
         // (`texture.Texture.sampleCubeIn`).
         .cube_arrays = true,

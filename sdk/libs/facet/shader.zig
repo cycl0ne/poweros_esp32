@@ -1184,6 +1184,14 @@ pub const Resources = extern struct {
     /// image: its texture, or null where it is not written. A combined
     /// image sampler's texture is read the same way, its sampler by
     /// `samplerOf`.
+    ///
+    /// A texel is read by `colorAt` as 0xAARRGGBB whatever the format, by
+    /// `partsAt` as four floats - a float texture's channels as they lie
+    /// (1.57), and since 1.69 the whole of each channel of a texture that
+    /// keeps its own - and since 1.70 by `wholesAt` as the four whole
+    /// numbers a texture of Vulkan's `_uint` or `_sint` formats keeps,
+    /// which no colour and no float carries exactly
+    /// (`PhysicalDeviceFeatures.whole_textures`).
     pub fn sampled(resources: *const Resources, set: u32, binding: u32, element: u32) ?*const texture.Texture {
         const found = resources.slot(set, binding, element) orelse return null;
         return @ptrCast(@alignCast(found.pointer orelse return null));
@@ -1197,7 +1205,10 @@ pub const Resources = extern struct {
     /// and read by `colorAt`; a texture of floats is set by `setParts` from
     /// four floats and read by `partsAt` into them, which is what such a
     /// texel holds and what a colour of 8 bits a channel could never carry
-    /// (since 1.57). Both pairs take a level and a layer: the function
+    /// (since 1.57), and so is a texture whose channels are its own
+    /// (since 1.69). A texture of whole numbers is set by `setWholes` and
+    /// read by `wholesAt`, each channel the number it is rather than
+    /// 0 to 1 (since 1.70). Every pair takes a level and a layer: the function
     /// names which of the view's it writes (since 1.55), level 0 of layer
     /// 0 being the view's first of each, and one the view has not got
     /// writes nothing and reads transparent black

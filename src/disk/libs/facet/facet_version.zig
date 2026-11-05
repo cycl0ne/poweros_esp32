@@ -911,10 +911,48 @@ pub const LIBRARY_VERSION = 1;
 /// texture unit being fed what the library unpacked -
 /// `GetPhysicalDeviceFormatProperties` says the format is sampled by
 /// nothing there, while the texel buffer stands on either device.
+/// 70: a texture keeps whole numbers where the device says so
+/// (`PhysicalDeviceFeatures.whole_textures`): Vulkan's `_uint` and
+/// `_sint` formats, one channel, two or four, of 8, 16 or 32 bits. That
+/// clears the other half of 1.69's work - a texel buffer has read all
+/// eighteen since 1.54, while an image of one was refused, because a
+/// texture answered a colour or four floats and a whole number is
+/// neither: 300 is no colour, and 2^24 + 1 is no float.
+/// So the read is the new part. `texture.Texture.wholesAt` gives the four
+/// numbers a texel keeps, as `shader.Texels.intAt` gives a texel
+/// buffer's, and `setWholes` writes them, each held to what its channel
+/// holds - 300 into a byte is 255, -5 into an unsigned channel is 0, and
+/// 70000 into 16 bits signed is 32767. Both answer every format, not only
+/// the new ones: a texture of 8888 gives its colour's four channels as 0
+/// to 255, and one whose channels are its own gives the numbers those
+/// channels hold. `partsAt` and `setParts` give and take the same numbers
+/// as floats, which carry 24 bits of one exactly, and a sample holds each
+/// to 0 to 1 and over 255, the way a texel buffer of the format reads one
+/// (`texture.wholeColor`): a number above 0 is its channel at the full.
+/// The texels lie as they were copied in, as a float one's and a
+/// channel one's do (`_image.keptTexels`), so a copy in and a copy out
+/// agree to the bit and a copy between two images of the one format moves
+/// them whole. `CmdClearColorImage` reads `uint32` of the colour for such
+/// an image, or `int32` where the format is signed, as Vulkan has it:
+/// `float32` could not say 70000 at all.
+/// `texture.Format` has the eighteen appended - `r8u` to `rgba32i` -
+/// beside `wholes` and `wholesOf`, which say how many numbers a format
+/// holds, how wide each is and whether it is signed, and
+/// `wholeParts`/`putWholeParts` are where those bits become numbers and
+/// back. A fixed fragment form built for one of them samples it directly
+/// (`shader.Sampling.format`), and one built for 8888 draws it through
+/// the run-time sampler as before.
+/// `GetPhysicalDeviceFormatProperties` says such a format is sampled and
+/// written through where the device keeps it, and never filtered linearly
+/// or drawn into on any device: there is nothing to mix between two whole
+/// numbers, and nothing blends one. Like a small texel, such an image is
+/// for a function to read or to write - one that is only copied into and
+/// out of is refused - and the V3D refuses them all, its texture unit
+/// being fed what the library unpacked.
 /// What stays: `fifo` is the one present mode, there being no way to ask a
 /// display to show a buffer before its next frame; one queue family of one
 /// queue; a counter of 32 bits, for want of a 64-bit atomic on every
 /// machine the library runs on; and no point mode in tessellation, the
 /// tessellator emitting triangles or the lines of `isolines` and nothing
 /// emitting a patch's points on their own.
-pub const LIBRARY_REVISION = 69;
+pub const LIBRARY_REVISION = 70;

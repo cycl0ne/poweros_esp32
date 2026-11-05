@@ -2048,8 +2048,10 @@ test "storage images of floats and of channels of their own: a texel written and
     fb.GetPhysicalDeviceFeatures(bench.physical, &features);
     try testing.expect(features.storage_images);
     try testing.expect(features.kept_floats);
-    // And since 1.69 a texture whose channels are its own.
+    // And since 1.69 a texture whose channels are its own, since 1.70
+    // one of whole numbers.
     try testing.expect(features.wide_channels);
+    try testing.expect(features.whole_textures);
 
     // Every float format says it may be written through since 1.57, and
     // one float a texel is a format of its own: R32_SFLOAT as an image.
@@ -2059,6 +2061,18 @@ test "storage images of floats and of channels of their own: a texel written and
         fb.GetPhysicalDeviceFormatProperties(bench.physical, format, &properties);
         try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_STORAGE_IMAGE != 0);
         try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_SAMPLED_IMAGE != 0);
+    }
+    // The whole numbers of 1.70 say the same, but are never filtered
+    // linearly and never drawn into: there is nothing to mix between two
+    // whole numbers, and nothing blends one.
+    for ([6]facet.Format{ .r8_uint, .r8g8b8a8_uint, .r8g8b8a8_sint, .r16g16b16a16_uint, .r32_sint, .r32g32b32a32_uint }) |format| {
+        var properties: facet.FormatProperties = undefined;
+        fb.GetPhysicalDeviceFormatProperties(bench.physical, format, &properties);
+        try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_STORAGE_IMAGE != 0);
+        try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_SAMPLED_IMAGE != 0);
+        try testing.expectEqual(@as(u32, 0), properties.optimal_tiling_features & facet.FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR);
+        try testing.expectEqual(@as(u32, 0), properties.optimal_tiling_features & facet.FORMAT_FEATURE_COLOR_ATTACHMENT);
+        try testing.expect(properties.buffer_features & facet.FORMAT_FEATURE_UNIFORM_TEXEL_BUFFER != 0);
     }
 
     const module_made = try module(&bench, &Floats.code);
@@ -2206,6 +2220,181 @@ test "storage images of floats and of channels of their own: a texel written and
     // And one of them is no colour attachment.
     try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{
         .format = .r16g16_unorm,
+        .extent = .{ .width = 8, .height = 8 },
+        .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT,
+    }, &denied));
+    try testing.expect(denied == null);
+}
+
+test "storage images of whole numbers: a texel written and read back as the numbers it keeps" {
+    const Wholes = struct {
+        /// Group (x, y) writes texel (x, y) of the image bound at set 0
+        /// binding 0 from four whole numbers the push constants carry as
+        /// i32, and then reads texel (0, 0) back into the buffer at
+        /// binding 1 with `wholesAt`: the numbers themselves, where a
+        /// colour and a float carry neither 70000 nor 2^24 + 1 - which is
+        /// the point of keeping whole numbers. (Since 1.70.)
+        fn run(groups: *const shader.Groups) callconv(.c) void {
+            const image = groups.resources.written(0, 0, 0) orelse return;
+            const out = groups.resources.storage(i64, 0, 1) orelse return;
+            const given = groups.resources.constants([4]i32).*;
+            var parts: [4]i64 = undefined;
+            for (&parts, given) |*part, one| part.* = one;
+            const x = groups.group[0];
+            const y = groups.group[1];
+            image.setWholes(0, 0, x, y, parts);
+            if (x != 0 or y != 0) return;
+            const read = image.wholesAt(0, 0, 0, 0);
+            for (read, 0..) |one, k| out[k] = one;
+            // The colour the same texel reads as, and the numbers a place
+            // past the level reads as: all zero, as any storage image has
+            // it.
+            out[4] = image.colorAt(0, 0, 0, 0);
+            const none = image.wholesAt(0, 0, image.width(0), 0);
+            for (none, 0..) |one, k| out[5 + k] = one;
+        }
+
+        const entries = [_]shader.Entry{shader.compute("main", &run)};
+        const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
+    };
+
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    var features: facet.PhysicalDeviceFeatures = undefined;
+    fb.GetPhysicalDeviceFeatures(bench.physical, &features);
+    try testing.expect(features.storage_images);
+    try testing.expect(features.whole_textures);
+
+    const module_made = try module(&bench, &Wholes.code);
+    defer fb.DestroyShaderModule(device, module_made);
+    const bindings = [2]facet.DescriptorSetLayoutBinding{
+        .{ .binding = 0, .descriptor_type = .storage_image, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+        .{ .binding = 1, .descriptor_type = .storage_buffer, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+    };
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 2, .bindings = &bindings }, &set_layout));
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    const layout = try pipelineLayout(&bench, &.{set_layout.?}, 16);
+    defer fb.DestroyPipelineLayout(device, layout);
+    var pool: ?*facet.DescriptorPool = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool));
+    defer fb.DestroyDescriptorPool(device, pool);
+    var sets: [1]?*facet.DescriptorSet = undefined;
+    try testing.expectEqual(facet.Result.success, fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &sets));
+    const told, const told_bytes = try bench.buffer(128, facet.BUFFER_USAGE_STORAGE_BUFFER);
+    const buffer_info = facet.DescriptorBufferInfo{ .buffer = told, .range = facet.WHOLE_SIZE };
+    const to_buffer = facet.WriteDescriptorSet{ .dst_set = sets[0].?, .dst_binding = 1, .descriptor_type = .storage_buffer, .descriptor_count = 1, .buffer_info = @ptrCast(&buffer_info) };
+    fb.UpdateDescriptorSets(device, 1, @ptrCast(&to_buffer), 0, null);
+    const info = facet.ComputePipelineCreateInfo{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module_made }, .layout = layout };
+    var whole_pipeline: [1]?*facet.Pipeline = undefined;
+    try testing.expectEqual(facet.Result.success, fb.CreateComputePipelines(device, null, 1, @ptrCast(&info), &whole_pipeline));
+    defer fb.DestroyPipeline(device, whole_pipeline[0]);
+    const whole_out: [*]const i64 = @ptrCast(@alignCast(told_bytes));
+    var denied: ?*facet.Image = null;
+
+    // Every such format says it may be written through and sampled, and
+    // never filtered linearly or drawn into: there is nothing to mix
+    // between two whole numbers, and nothing blends one.
+    for ([6]facet.Format{ .r8_uint, .r8g8b8a8_uint, .r8g8b8a8_sint, .r16g16b16a16_uint, .r32_sint, .r32g32b32a32_uint }) |format| {
+        var properties: facet.FormatProperties = undefined;
+        fb.GetPhysicalDeviceFormatProperties(bench.physical, format, &properties);
+        try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_STORAGE_IMAGE != 0);
+        try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_SAMPLED_IMAGE != 0);
+        try testing.expectEqual(@as(u32, 0), properties.optimal_tiling_features & facet.FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR);
+        try testing.expectEqual(@as(u32, 0), properties.optimal_tiling_features & facet.FORMAT_FEATURE_COLOR_ATTACHMENT);
+        try testing.expect(properties.buffer_features & facet.FORMAT_FEATURE_UNIFORM_TEXEL_BUFFER != 0);
+    }
+
+    // The same four numbers written into every format: 300 is above a
+    // byte, -5 below what an unsigned channel holds, and 70000 above 16
+    // bits. Nothing is scaled on the way: a whole number goes in as
+    // itself and comes back as itself, held to the channel's ends.
+    const Whole = struct { format: facet.Format, want: [4]i64, says: []const u8 };
+    const wholes = [_]Whole{
+        // One channel of 8 bits: 300 held to 255, and the three it has
+        // not got read as 0, 0 and 1.
+        .{ .format = .r8_uint, .want = .{ 255, 0, 0, 1 }, .says = "one byte, unsigned" },
+        .{ .format = .r8g8b8a8_uint, .want = .{ 255, 0, 255, 1 }, .says = "four bytes, unsigned" },
+        // Signed: 127 is as far as a byte goes, and -5 fits.
+        .{ .format = .r8g8b8a8_sint, .want = .{ 127, -5, 127, 1 }, .says = "four bytes, signed" },
+        .{ .format = .r16g16b16a16_uint, .want = .{ 300, 0, 65535, 1 }, .says = "16 bits a channel, unsigned" },
+        .{ .format = .r16g16b16a16_sint, .want = .{ 300, -5, 32767, 1 }, .says = "16 bits a channel, signed" },
+        .{ .format = .r32_uint, .want = .{ 300, 0, 0, 1 }, .says = "one number of 32 bits" },
+        .{ .format = .r32g32_sint, .want = .{ 300, -5, 0, 1 }, .says = "two of 32 bits, signed" },
+        // 32 bits hold all three as they are.
+        .{ .format = .r32g32b32a32_uint, .want = .{ 300, 0, 70000, 1 }, .says = "four of 32 bits, unsigned" },
+        .{ .format = .r32g32b32a32_sint, .want = .{ 300, -5, 70000, 1 }, .says = "four of 32 bits, signed" },
+    };
+    const whole_given = [4]i32{ 300, -5, 70000, 1 };
+    for (wholes) |kind| {
+        const image = try bench.bareImage(.{
+            .format = kind.format,
+            .extent = .{ .width = 8, .height = 8 },
+            .usage = facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_SRC,
+        }, false);
+        const view = try bench.viewOf(.{ .image = image, .format = kind.format });
+        const image_info = facet.DescriptorImageInfo{ .image_view = view };
+        const to_image = facet.WriteDescriptorSet{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .storage_image, .descriptor_count = 1, .image_info = @ptrCast(&image_info) };
+        fb.UpdateDescriptorSets(device, 1, @ptrCast(&to_image), 0, null);
+        @memset(told_bytes[0..128], 0);
+        const commands = try bench.record();
+        fb.CmdBindPipeline(commands, .compute, whole_pipeline[0].?);
+        fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+        fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_COMPUTE, 0, 16, &whole_given);
+        fb.CmdDispatch(commands, 8, 8, 1);
+        try bench.submit();
+        for (kind.want, 0..) |want, k| {
+            testing.expectEqual(want, whole_out[k]) catch |failed| {
+                std.debug.print("{s}: channel {d}\n", .{ kind.says, k });
+                return failed;
+            };
+        }
+        // The colour such a texel reads as: each number held to 0 to 1
+        // and over 255, the way a texel buffer of the format reads one -
+        // so a red of 300 is a red at the full and a green of 0 nothing.
+        const color: u32 = @intCast(whole_out[4] & 0xFFFF_FFFF);
+        try testing.expectEqual(@as(u32, 255), color >> 16 & 0xFF);
+        try testing.expectEqual(@as(u32, 0), color >> 8 & 0xFF);
+        // And a place past the level: all zero.
+        for (0..4) |k| try testing.expectEqual(@as(i64, 0), whole_out[5 + k]);
+    }
+
+    // What 32 bits of whole number keep that a float cannot: 2^24 + 1 is
+    // the first whole number a float rounds, and `wholesAt` reads it
+    // back as it is where `partsAt` would give 2^24.
+    const exact = try bench.bareImage(.{
+        .format = .r32_sint,
+        .extent = .{ .width = 8, .height = 8 },
+        .usage = facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_SRC,
+    }, false);
+    const exact_view = try bench.viewOf(.{ .image = exact, .format = .r32_sint });
+    const exact_info = facet.DescriptorImageInfo{ .image_view = exact_view };
+    const to_exact = facet.WriteDescriptorSet{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .storage_image, .descriptor_count = 1, .image_info = @ptrCast(&exact_info) };
+    fb.UpdateDescriptorSets(device, 1, @ptrCast(&to_exact), 0, null);
+    @memset(told_bytes[0..128], 0);
+    const odd = [4]i32{ (1 << 24) + 1, -1, 0, 0 };
+    const exact_commands = try bench.record();
+    fb.CmdBindPipeline(exact_commands, .compute, whole_pipeline[0].?);
+    fb.CmdBindDescriptorSets(exact_commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdPushConstants(exact_commands, layout, facet.SHADER_STAGE_COMPUTE, 0, 16, &odd);
+    fb.CmdDispatch(exact_commands, 8, 8, 1);
+    try bench.submit();
+    try testing.expectEqual(@as(i64, (1 << 24) + 1), whole_out[0]);
+    try testing.expect(@as(f32, @floatFromInt(whole_out[0])) == @as(f32, 1 << 24));
+
+    // An image of whole numbers that no function reads or writes is
+    // refused, as a wide one is, and one of them is no colour attachment
+    // either: nothing blends a whole number.
+    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{
+        .format = .r32g32b32a32_uint,
+        .extent = .{ .width = 8, .height = 8 },
+        .usage = facet.IMAGE_USAGE_TRANSFER_DST | facet.IMAGE_USAGE_TRANSFER_SRC,
+    }, &denied));
+    try testing.expect(denied == null);
+    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{
+        .format = .r8g8b8a8_uint,
         .extent = .{ .width = 8, .height = 8 },
         .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT,
     }, &denied));
@@ -8171,6 +8360,9 @@ const FloatScene = struct {
         shader.fixedFragment("wide", .{ .kind = .texture, .sampling = .{ .format = .rgba16, .filter = .nearest } }),
         shader.vertex("two", &flat, 2),
         shader.fixedFragment("two", .{ .kind = .texture, .sampling = .{ .format = .rg8, .filter = .nearest } }),
+        // 1.70: one built for a texture of whole numbers.
+        shader.vertex("whole", &flat, 2),
+        shader.fixedFragment("whole", .{ .kind = .texture, .sampling = .{ .format = .rgba8u, .filter = .nearest } }),
     };
     const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
 
@@ -8184,7 +8376,7 @@ const FloatScene = struct {
     }
 };
 
-test "float textures kept as their floats: copied in and out as they lie, sampled rounded" {
+test "textures kept as they lie: floats, channels of their own and whole numbers, copied in and out and sampled rounded" {
     var bench = try Bench.up();
     defer bench.down();
     const fb = bench.rig.fb;
@@ -8369,6 +8561,38 @@ test "float textures kept as their floats: copied in and out as they lie, sample
     try testing.expectEqual(@as(u32, 0xFF00_8000), picture.at(56, 56));
     try drawn(&bench, two_view, "eight", layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
     try testing.expectEqual(@as(u32, 0xFF00_8000), picture.at(56, 56));
+
+    // --- 1.70: a texture of whole numbers ---
+    // Four bytes a texel, read as the numbers they are: copied in and out
+    // as they lie, and sampled as the colour each number holds to - 0 or
+    // the channel at the full, a whole number being no colour.
+    const whole_image = try bench.bareImage(.{ .format = .r8g8b8a8_uint, .extent = side4, .usage = usage }, false);
+    fb.GetImageMemoryRequirements(device, whole_image, &needs);
+    try testing.expectEqual(@as(u64, 64), needs.size);
+    const whole_view = try bench.viewOf(.{ .image = whole_image, .format = .r8g8b8a8_uint });
+    const whole_at = 160;
+    for (0..16) |k| {
+        const left = k % 4 < 2;
+        const numbers: [4]u8 = if (left) .{ 255, 0, 0, 255 } else .{ 0, 0, 128, 255 };
+        @memcpy(staged[whole_at + k * 4 ..][0..4], &numbers);
+    }
+    const numbers_copy = facet.BufferImageCopy{ .buffer_offset = whole_at, .image_extent = side4 };
+    @memset(read_back[whole_at..][0..64], 0);
+    const number_commands = try bench.record();
+    fb.CmdCopyBufferToImage(number_commands, staging, whole_image, .transfer_dst_optimal, 1, @ptrCast(&numbers_copy));
+    fb.CmdCopyImageToBuffer(number_commands, whole_image, .general, read_buffer, 1, @ptrCast(&numbers_copy));
+    try bench.submit();
+    try testing.expectEqualSlices(u8, staged[whole_at..][0..64], read_back[whole_at..][0..64]);
+
+    // Sampled through a form built for the format, and through one built
+    // for 8888 by way of the run-time sampler: a red of 255 and a blue of
+    // 128 are both their channel at the full.
+    try drawn(&bench, whole_view, "whole", layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), picture.at(8, 8));
+    try testing.expectEqual(@as(u32, 0xFF00_00FF), picture.at(56, 56));
+    try drawn(&bench, whole_view, "eight", layout, pass, frame, shaders, &set, vertex_buffer, &offset, &black);
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), picture.at(8, 8));
+    try testing.expectEqual(@as(u32, 0xFF00_00FF), picture.at(56, 56));
 }
 test "a clear of a float image writes its floats: the channels as given, into each format's own texel" {
     var bench = try Bench.up();
@@ -8435,6 +8659,23 @@ test "a clear of a float image writes its floats: the channels as given, into ea
     }
     // Nothing was written past the last texel of the last image.
     try testing.expectEqual(@as(u8, 0xAA), read_back[at_reds + 64]);
+
+    // --- 1.70: a clear of an image of whole numbers ---
+    // Such an image reads `uint32` of the colour, or `int32` where its
+    // format is signed, as Vulkan has it: `float32` could not say 70000
+    // at all. Each number is held to what its channel holds.
+    const at_numbers = 640;
+    const numbers = try bench.bareImage(.{ .format = .r16g16b16a16_sint, .extent = side4, .usage = usage }, false);
+    const number_color = facet.ClearColorValue{ .int32 = .{ 300, -5, 70000, 1 } };
+    const number_copy = facet.BufferImageCopy{ .buffer_offset = at_numbers, .image_extent = side4 };
+    const number_commands = try bench.record();
+    fb.CmdClearColorImage(number_commands, numbers, .transfer_dst_optimal, &number_color, 1, @ptrCast(&whole));
+    fb.CmdCopyImageToBuffer(number_commands, numbers, .general, read_buffer, 1, @ptrCast(&number_copy));
+    try bench.submit();
+    var want_numbers: [8]u8 = undefined;
+    inline for ([4]i16{ 300, -5, 32767, 1 }, 0..) |one, k| std.mem.writeInt(i16, want_numbers[k * 2 ..][0..2], one, .little);
+    for (0..16) |k| try testing.expectEqualSlices(u8, &want_numbers, read_back[at_numbers + k * 8 ..][0..8]);
+    try testing.expectEqual(@as(u8, 0xAA), read_back[at_numbers + 128]);
 }
 
 /// A quad over the whole target, and the forms that sample a texture kept

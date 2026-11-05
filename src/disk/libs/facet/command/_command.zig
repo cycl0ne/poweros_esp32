@@ -126,6 +126,10 @@ pub const ClearColorImage = extern struct {
     /// texels hold what they were told rather than a byte a channel
     /// (since 1.61).
     parts: [4]f32,
+    /// The same bits as `uint32` of the colour, for an image of whole
+    /// numbers: a signed format reads each word as `int32`, which is
+    /// Vulkan's rule for a clear of such an image (since 1.70).
+    words: [4]u32,
     image: *Image,
 };
 

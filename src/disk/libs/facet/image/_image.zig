@@ -182,6 +182,19 @@ pub fn wideChannels(format: facet.Format) bool {
     };
 }
 
+/// Whether a texture of `format` keeps whole numbers rather than a colour
+/// or a part of one: Vulkan's `_uint` and `_sint` formats, one channel,
+/// two or four, of 8, 16 or 32 bits
+/// (`PhysicalDeviceFeatures.whole_textures`, since 1.70).
+pub fn wholeNumbers(format: facet.Format) bool {
+    return switch (format) {
+        .r8_uint, .r8g8_uint, .r8g8b8a8_uint, .r8_sint, .r8g8_sint, .r8g8b8a8_sint => true,
+        .r16_uint, .r16g16_uint, .r16g16b16a16_uint, .r16_sint, .r16g16_sint, .r16g16b16a16_sint => true,
+        .r32_uint, .r32g32_uint, .r32g32b32a32_uint, .r32_sint, .r32g32_sint, .r32g32b32a32_sint => true,
+        else => false,
+    };
+}
+
 /// Whether an image kept in rows is written through as a storage image:
 /// drawn into and written through at once, its rows being the texture a
 /// function writes (`rowTexture`, since 1.56).
@@ -200,6 +213,13 @@ pub fn bytesOf(format: facet.Format) u32 {
         .r8g8_unorm, .r16_unorm => 2,
         .r16g16_unorm => 4,
         .r16g16b16a16_unorm => 8,
+        // The whole numbers of 1.70: one channel, two or four, of 8, 16
+        // or 32 bits.
+        .r8_uint, .r8_sint => 1,
+        .r8g8_uint, .r8g8_sint, .r16_uint, .r16_sint => 2,
+        .r8g8b8a8_uint, .r8g8b8a8_sint, .r16g16_uint, .r16g16_sint, .r32_uint, .r32_sint => 4,
+        .r16g16b16a16_uint, .r16g16b16a16_sint, .r32g32_uint, .r32g32_sint => 8,
+        .r32g32b32a32_uint, .r32g32b32a32_sint => 16,
         .d16_unorm_s8_uint => 4,
         .r8g8b8a8_unorm, .b8g8r8a8_unorm, .r32_sfloat => 4,
         // The float formats a texture keeps as they lie (since 1.45), and
@@ -252,6 +272,26 @@ pub fn keptFormat(format: facet.Format, packed_texels: bool) ?texture.Format {
         .r16_unorm => .r16,
         .r16g16_unorm => .rg16,
         .r16g16b16a16_unorm => .rgba16,
+        // Whole numbers, likewise kept as they lie, on a device that says
+        // so (`PhysicalDeviceFeatures.whole_textures`, since 1.70).
+        .r8_uint => .r8u,
+        .r8g8_uint => .rg8u,
+        .r8g8b8a8_uint => .rgba8u,
+        .r8_sint => .r8i,
+        .r8g8_sint => .rg8i,
+        .r8g8b8a8_sint => .rgba8i,
+        .r16_uint => .r16u,
+        .r16g16_uint => .rg16u,
+        .r16g16b16a16_uint => .rgba16u,
+        .r16_sint => .r16i,
+        .r16g16_sint => .rg16i,
+        .r16g16b16a16_sint => .rgba16i,
+        .r32_uint => .r32u,
+        .r32g32_uint => .rg32u,
+        .r32g32b32a32_uint => .rgba32u,
+        .r32_sint => .r32i,
+        .r32g32_sint => .rg32i,
+        .r32g32b32a32_sint => .rgba32i,
         // A depth sampled where it lies, in rows
         // (`PhysicalDeviceFeatures.sampled_depth`).
         .d16_unorm => .d16,
@@ -314,6 +354,12 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
     // function to read or to write, as a small texel is, and a device
     // that keeps 8 bits a channel refuses it.
     if (wideChannels(info.format) and !(physical.features.wide_channels and in_texels)) return null;
+    // And a texture of whole numbers, which a function reads with
+    // `texture.Texture.wholesAt` and writes with `setWholes`
+    // (`PhysicalDeviceFeatures.whole_textures`, since 1.70): no colour
+    // carries one, so an image of such a format is for a function and
+    // nothing else.
+    if (wholeNumbers(info.format) and !(physical.features.whole_textures and in_texels)) return null;
     // Layers are for a function to read or to write: an attachment or
     // rows have one, and both want the layout a sample reads, which is
     // `optimal` tiling. An image of layers written through and never
@@ -666,7 +712,7 @@ pub fn floatTexels(image: *const Image) bool {
 /// channels are its own (`wideChannels`, since 1.69). Both keep what they
 /// were copied in as, so a copy out reads it back unchanged.
 pub fn keptTexels(image: *const Image) bool {
-    return floatTexels(image) or wideChannels(image.format);
+    return floatTexels(image) or wideChannels(image.format) or wholeNumbers(image.format);
 }
 
 /// The block holding texel (x, y) of a level of a layer, into `into`;
@@ -934,7 +980,12 @@ pub fn colorOfBytes(format: facet.Format, bytes: []const u8) u32 {
         // The channels a texture keeps as they lie, as the colour of
         // their top 8 bits (since 1.69).
         .r8g8_unorm, .r16_unorm, .r16g16_unorm, .r16g16b16a16_unorm => texture.channelColor(keptFormat(format, false).?, bytes.ptr),
-        else => 0,
+        else => if (wholeNumbers(format))
+            // The whole numbers held to the colour they stand for (since
+            // 1.70): nothing, or the channel at the full.
+            texture.wholeColor(keptFormat(format, false).?, bytes.ptr)
+        else
+            0,
     };
 }
 
@@ -945,6 +996,9 @@ pub fn bytesOfColor(format: facet.Format, color: u32, into: []u8) void {
         // Each channel of the colour at the width that channel has
         // (since 1.69).
         .r8g8_unorm, .r16_unorm, .r16g16_unorm, .r16g16b16a16_unorm => texture.putChannelParts(keptFormat(format, false).?, into.ptr, texture.partsOfColor(color)),
+        // And the colour's four channels as the whole numbers 0 to 255
+        // they are (since 1.70).
+        .r8_uint, .r8g8_uint, .r8g8b8a8_uint, .r8_sint, .r8g8_sint, .r8g8b8a8_sint, .r16_uint, .r16g16_uint, .r16g16b16a16_uint, .r16_sint, .r16g16_sint, .r16g16b16a16_sint, .r32_uint, .r32g32_uint, .r32g32b32a32_uint, .r32_sint, .r32g32_sint, .r32g32b32a32_sint => texture.putWholeParts(keptFormat(format, false).?, into.ptr, texture.wholesOfColor(color)),
         .r5g6b5_unorm_pack16 => {
             const r = ((color >> 16 & 0xFF) * 31 + 127) / 255;
             const g = ((color >> 8 & 0xFF) * 63 + 127) / 255;

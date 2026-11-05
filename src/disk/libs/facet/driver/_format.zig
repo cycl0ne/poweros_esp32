@@ -25,6 +25,10 @@ fn describe(format: facet.Format, keeps_blocks: bool) facet.FormatProperties {
     const transfer = facet.FORMAT_FEATURE_TRANSFER_SRC | facet.FORMAT_FEATURE_TRANSFER_DST;
     const attachment = facet.FORMAT_FEATURE_COLOR_ATTACHMENT | facet.FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND;
     const sampled = facet.FORMAT_FEATURE_SAMPLED_IMAGE | facet.FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR | facet.FORMAT_FEATURE_TRANSFER_DST;
+    // A format of whole numbers is sampled without the linear filter:
+    // Vulkan has no integer format filtered, there being nothing to mix
+    // between two whole numbers (since 1.70).
+    const nearest = facet.FORMAT_FEATURE_SAMPLED_IMAGE | facet.FORMAT_FEATURE_TRANSFER_DST;
     // The formats a texture is kept in are the ones a function can write
     // through as well; the unpacked ones are not, being kept as 8888.
     const storage = facet.FORMAT_FEATURE_STORAGE_IMAGE;
@@ -145,6 +149,12 @@ fn describe(format: facet.Format, keeps_blocks: bool) facet.FormatProperties {
             .optimal_tiling_features = if (keeps_blocks) sampled | storage | transfer else 0,
             .buffer_features = texels,
         },
+        // The whole numbers of 1.70, where the device keeps what it was
+        // given: a texture a function reads with
+        // `texture.Texture.wholesAt` and writes with `setWholes`, and
+        // read back, there being something of the format to read. No
+        // linear filter and never an attachment: a whole number is no
+        // colour, and nothing blends one.
         .r8_uint,
         .r8g8_uint,
         .r8g8b8a8_uint,
@@ -157,14 +167,19 @@ fn describe(format: facet.Format, keeps_blocks: bool) facet.FormatProperties {
         .r16_sint,
         .r16g16_sint,
         .r16g16b16a16_sint,
-        .r16_sfloat,
-        .r16g16_sfloat,
         .r32_uint,
         .r32g32_uint,
         .r32g32b32a32_uint,
         .r32_sint,
         .r32g32_sint,
         .r32g32b32a32_sint,
+        => .{
+            .linear_tiling_features = 0,
+            .optimal_tiling_features = if (keeps_blocks) nearest | storage | transfer else 0,
+            .buffer_features = texels,
+        },
+        .r16_sfloat,
+        .r16g16_sfloat,
         // The rest of them since 1.68: `_snorm` read as -1 to 1, `_srgb`
         // read through the transfer function, the words whose channels
         // are packed into them, and three channels of 32 bits. An

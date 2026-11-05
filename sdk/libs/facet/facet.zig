@@ -501,6 +501,22 @@ pub const PhysicalDeviceFeatures = extern struct {
     /// GetPhysicalDeviceFormatProperties says the format is sampled by
     /// nothing. (Since 1.69.)
     wide_channels: bool = false,
+    /// A texture may keep whole numbers rather than a colour: an image of
+    /// Vulkan's `_uint` and `_sint` formats, one channel, two or four, of
+    /// 8, 16 or 32 bits. `texture.Texture.wholesAt` reads the four
+    /// numbers a texel keeps and `setWholes` writes them, each held to
+    /// what its channel holds; `partsAt` and `setParts` give and take the
+    /// same numbers as floats, which carry 24 bits of one exactly; and a
+    /// sample holds each to 0 to 1 and over 255, the way a texel buffer
+    /// of the format reads one (`shader.Texels.colorAt`), a whole number
+    /// being no colour. For a counter, an index into a table, an object
+    /// id or a bitfield a function reads or writes a texel at a time.
+    /// True on the cores; false on the V3D, where CreateImage answers
+    /// `error_format_not_supported` for such an image and
+    /// GetPhysicalDeviceFormatProperties says the format is sampled by
+    /// nothing. No such format is filtered linearly or drawn into, on any
+    /// device. (Since 1.70.)
+    whole_textures: bool = false,
 };
 
 /// QueueFamilyProperties.queue_flags: what a family's queues do.
