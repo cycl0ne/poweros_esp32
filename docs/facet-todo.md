@@ -1,6 +1,6 @@
 # facet.library: the work list, by where each item stands in Vulkan
 
-What is left to do in facet.library as of **1.67**, each item with where it
+What is left to do in facet.library as of **1.68**, each item with where it
 bites, what it would take, and **where it stands in Vulkan**, so that a
 morning's work is never spent on something Vulkan 1.0 never had.
 
@@ -32,21 +32,7 @@ In the order I would do them. "Size" is the shape of the work, not a
 promise: small is a day with its tests, medium is a revision of its own,
 large wants splitting first.
 
-### 1.1 Texel-buffer formats: `_snorm`, `_srgb`, the packed ones, three channels
-
-- **Standing:** `1.0 format`.
-- **Where:** `shader.TexelFormat` (append only - it is an `enum(u8)` a
-  program compiles against), `buffer/_bufferview.zig`'s `texelsOf`,
-  `driver/_format.zig`'s `describe`, and `shader.Texels.at`/`intAt`.
-- **What it takes:** `_snorm` is the `_sint` number over its largest and is
-  nearly free beside 1.54's integer grid. `_srgb` wants the transfer
-  function on the way out (a table of 256 is enough for 8 bits).
-  `a2b10g10r10` and friends are a shift and a mask. Three-channel 8- and
-  16-bit formats are the awkward ones - 3 bytes a texel, which almost no
-  hardware carries either - and may stay out.
-- **Size:** small, and it splits by format.
-
-### 1.2 Textures and storage images of whole numbers, and of smaller channels
+### 1.1 Textures and storage images of whole numbers, and of smaller channels
 
 - **Standing:** `1.0 format`.
 - **Where:** `texture.Format` (a plain enum - **append at the end only**,
@@ -64,7 +50,7 @@ large wants splitting first.
 - **Size:** medium to large. Worth splitting: the unorm ones (`r8g8`, 16-bit
   channels) first, the integer read after.
 
-### 1.3 A point is one pixel, and no shader writes `PointSize`
+### 1.2 A point is one pixel, and no shader writes `PointSize`
 
 - **Standing:** `1.0 core` for `PointSize`; `1.0 feature` for points wider
   than one pixel (`largePoints`).
@@ -79,7 +65,7 @@ large wants splitting first.
   (`cl.pointSize`).
 - **Size:** small, once the SDK slot is decided.
 
-### 1.4 BC4 to BC7
+### 1.3 BC4 to BC7
 
 - **Standing:** `1.0 format`, under `textureCompressionBC` - which facet
   says yes to for BC1 to BC3 and no further.

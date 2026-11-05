@@ -64,6 +64,30 @@ pub fn texelsOf(format: facet.Format) shader.TexelFormat {
         .r32_sint => .r32i,
         .r32g32_sint => .rg32i,
         .r32g32b32a32_sint => .rgba32i,
+        // The rest of them, since 1.68: `_snorm`, `_srgb`, the words
+        // whose channels are packed into them, and three channels of 32
+        // bits.
+        .r8_snorm => .r8n,
+        .r8g8_snorm => .rg8n,
+        .r8g8b8a8_snorm => .rgba8n,
+        .r16_snorm => .r16n,
+        .r16g16_snorm => .rg16n,
+        .r16g16b16a16_snorm => .rgba16n,
+        .r8_srgb => .r8srgb,
+        .r8g8_srgb => .rg8srgb,
+        .r8g8b8a8_srgb, .a8b8g8r8_srgb_pack32 => .rgba8srgb,
+        .b8g8r8a8_srgb => .bgra8srgb,
+        // A8B8G8R8_PACK32 is 0xAABBGGRR, which is where R8G8B8A8 keeps
+        // its bytes on a little-endian machine: the same texels.
+        .a8b8g8r8_unorm_pack32 => .rgba8888,
+        .a2b10g10r10_unorm_pack32 => .rgb10a2,
+        .a2r10g10b10_unorm_pack32 => .bgr10a2,
+        .a2b10g10r10_uint_pack32 => .rgb10a2u,
+        .a2r10g10b10_uint_pack32 => .bgr10a2u,
+        .b10g11r11_ufloat_pack32 => .rg11b10f,
+        .e5b9g9r9_ufloat_pack32 => .rgb9e5,
+        .r32g32b32_uint => .rgb32u,
+        .r32g32b32_sint => .rgb32i,
         else => .none,
     };
 }

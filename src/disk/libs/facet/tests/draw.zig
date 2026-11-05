@@ -2402,6 +2402,27 @@ test "texel buffers of whole numbers and of 16 bits a channel: every format of t
         .{ .format = .r32_sint, .size = 4 },
         .{ .format = .r32g32_sint, .size = 8 },
         .{ .format = .r32g32b32a32_sint, .size = 16 },
+        // The rest of them, since 1.68.
+        .{ .format = .r8_snorm, .size = 1 },
+        .{ .format = .r8g8_snorm, .size = 2 },
+        .{ .format = .r8g8b8a8_snorm, .size = 4 },
+        .{ .format = .r16_snorm, .size = 2 },
+        .{ .format = .r16g16_snorm, .size = 4 },
+        .{ .format = .r16g16b16a16_snorm, .size = 8 },
+        .{ .format = .r8_srgb, .size = 1 },
+        .{ .format = .r8g8_srgb, .size = 2 },
+        .{ .format = .r8g8b8a8_srgb, .size = 4 },
+        .{ .format = .b8g8r8a8_srgb, .size = 4 },
+        .{ .format = .a8b8g8r8_unorm_pack32, .size = 4 },
+        .{ .format = .a8b8g8r8_srgb_pack32, .size = 4 },
+        .{ .format = .a2r10g10b10_unorm_pack32, .size = 4 },
+        .{ .format = .a2r10g10b10_uint_pack32, .size = 4 },
+        .{ .format = .a2b10g10r10_unorm_pack32, .size = 4 },
+        .{ .format = .a2b10g10r10_uint_pack32, .size = 4 },
+        .{ .format = .b10g11r11_ufloat_pack32, .size = 4 },
+        .{ .format = .e5b9g9r9_ufloat_pack32, .size = 4 },
+        .{ .format = .r32g32b32_uint, .size = 12 },
+        .{ .format = .r32g32b32_sint, .size = 12 },
     };
 
     // Every one of them says a texel buffer and nothing else - no image
@@ -2598,6 +2619,175 @@ test "texel buffers of whole numbers and of 16 bits a channel: every format of t
     fb.CmdDispatch(commands, 1, 1, 1);
     try bench.submit();
     try testing.expectEqual(@as(u16, 65535), std.mem.readInt(u16, target_bytes[0..2], .little));
+
+    // --- 1.68: `_snorm`, `_srgb`, the packed words, three channels ---
+
+    // `_snorm`: -128, -127, 0 and 127 of r8g8b8a8_snorm read as -1, -1, 0
+    // and 1 - the value below the largest the channel holds standing for
+    // -1 as well - and copied by floats into 16 bits they are -32767 and
+    // 32767, the largest those channels hold.
+    source_bytes[0] = 0x80;
+    source_bytes[1] = 0x81;
+    source_bytes[2] = 0;
+    source_bytes[3] = 127;
+    @memset(target_bytes[0..span], 0);
+    const from_i8n = try bind(&bench, source, .r8g8b8a8_snorm, 0, .uniform_texel_buffer, &sets);
+    defer fb.DestroyBufferView(device, from_i8n);
+    const into_i16n = try bind(&bench, target, .r16g16b16a16_snorm, 1, .storage_texel_buffer, &sets);
+    defer fb.DestroyBufferView(device, into_i16n);
+    commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, pipelines[2].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    try bench.submit();
+    try testing.expectEqual(@as(f32, -1), @as(f32, @bitCast(out[1])));
+    try testing.expectEqual(@as(f32, -1), @as(f32, @bitCast(out[2])));
+    try testing.expectEqual(@as(f32, 0), @as(f32, @bitCast(out[3])));
+    try testing.expectEqual(@as(f32, 1), @as(f32, @bitCast(out[4])));
+    // Its whole numbers are what it keeps, signed.
+    try testing.expectEqual(@as(i32, -128), @as(i32, @bitCast(out[5])));
+    commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, pipelines[0].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    try bench.submit();
+    try testing.expectEqual(@as(i16, -32767), std.mem.readInt(i16, target_bytes[0..2], .little));
+    try testing.expectEqual(@as(i16, 0), std.mem.readInt(i16, target_bytes[4..6], .little));
+    try testing.expectEqual(@as(i16, 32767), std.mem.readInt(i16, target_bytes[6..8], .little));
+
+    // `_srgb`: 188 of 255 is about half the light, not three quarters of
+    // it, and the alpha is straight whatever the colour channels do.
+    source_bytes[0] = 188;
+    source_bytes[1] = 188;
+    source_bytes[2] = 188;
+    source_bytes[3] = 128;
+    const from_srgb = try bind(&bench, source, .r8g8b8a8_srgb, 0, .uniform_texel_buffer, &sets);
+    defer fb.DestroyBufferView(device, from_srgb);
+    commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, pipelines[2].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    try bench.submit();
+    try testing.expectApproxEqAbs(@as(f32, 0.5), @as(f32, @bitCast(out[1])), 0.005);
+    try testing.expectApproxEqAbs(@as(f32, 128.0 / 255.0), @as(f32, @bitCast(out[4])), 0.0001);
+    // Its whole numbers are the bytes it keeps, the transfer function not
+    // among them.
+    try testing.expectEqual(@as(u32, 188), out[5]);
+    // And written back the other way: half the light is 188 again.
+    @memset(target_bytes[0..span], 0);
+    const into_srgb = try bind(&bench, target, .r8g8b8a8_srgb, 1, .storage_texel_buffer, &sets);
+    defer fb.DestroyBufferView(device, into_srgb);
+    commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, pipelines[0].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    try bench.submit();
+    try testing.expect(target_bytes[0] == 188 or target_bytes[0] == 187);
+    try testing.expectEqual(@as(u8, 128), target_bytes[3]);
+    // The same bytes read as `_unorm` are 188 of 255, the light of them
+    // being another question.
+    const from_plain = try bind(&bench, source, .r8g8b8a8_unorm, 0, .uniform_texel_buffer, &sets);
+    defer fb.DestroyBufferView(device, from_plain);
+    commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, pipelines[2].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    try bench.submit();
+    try testing.expectApproxEqAbs(@as(f32, 188.0 / 255.0), @as(f32, @bitCast(out[1])), 0.0001);
+
+    // A word of three channels of 10 bits and an alpha of 2: red whole,
+    // green half, blue nothing, alpha whole. a2b10g10r10 keeps red in the
+    // low bits and a2r10g10b10 keeps blue there, so the one word reads
+    // the two ways round.
+    const packed_word: u32 = 3 << 30 | 0 << 20 | 512 << 10 | 1023;
+    std.mem.writeInt(u32, source_bytes[0..4], packed_word, .little);
+    for ([2]facet.Format{ .a2b10g10r10_unorm_pack32, .a2r10g10b10_unorm_pack32 }) |one| {
+        const view = try bind(&bench, source, one, 0, .uniform_texel_buffer, &sets);
+        defer fb.DestroyBufferView(device, view);
+        commands = try bench.record();
+        fb.CmdBindPipeline(commands, .compute, pipelines[2].?);
+        fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+        fb.CmdDispatch(commands, 1, 1, 1);
+        try bench.submit();
+        const red: f32 = @bitCast(out[1]);
+        const blue: f32 = @bitCast(out[3]);
+        try testing.expectEqual(@as(u32, 1), out[0] * 0 + 1);
+        if (one == .a2b10g10r10_unorm_pack32) {
+            try testing.expectEqual(@as(f32, 1), red);
+            try testing.expectEqual(@as(f32, 0), blue);
+        } else {
+            try testing.expectEqual(@as(f32, 0), red);
+            try testing.expectEqual(@as(f32, 1), blue);
+        }
+        try testing.expectApproxEqAbs(@as(f32, 512.0 / 1023.0), @as(f32, @bitCast(out[2])), 0.0001);
+        try testing.expectEqual(@as(f32, 1), @as(f32, @bitCast(out[4])));
+    }
+    // The `_uint` pair gives the whole numbers themselves, the alpha's 3
+    // among them.
+    const from_packed_u = try bind(&bench, source, .a2b10g10r10_uint_pack32, 0, .uniform_texel_buffer, &sets);
+    defer fb.DestroyBufferView(device, from_packed_u);
+    commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, pipelines[2].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    try bench.submit();
+    try testing.expectEqual(@as(f32, 1023), @as(f32, @bitCast(out[1])));
+    try testing.expectEqual(@as(f32, 512), @as(f32, @bitCast(out[2])));
+    try testing.expectEqual(@as(f32, 3), @as(f32, @bitCast(out[4])));
+    try testing.expectEqual(@as(u32, 1023), out[5]);
+    // Written back through the unorm one: 1, half and nothing again, and
+    // the word itself the one it came from.
+    @memset(target_bytes[0..span], 0);
+    const from_packed = try bind(&bench, source, .a2b10g10r10_unorm_pack32, 0, .uniform_texel_buffer, &sets);
+    defer fb.DestroyBufferView(device, from_packed);
+    const into_packed = try bind(&bench, target, .a2b10g10r10_unorm_pack32, 1, .storage_texel_buffer, &sets);
+    defer fb.DestroyBufferView(device, into_packed);
+    commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, pipelines[0].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    try bench.submit();
+    try testing.expectEqual(packed_word, std.mem.readInt(u32, target_bytes[0..4], .little));
+
+    // The floats of one word: 2, a half and a quarter written and read
+    // back, each format to what it carries. Neither holds an alpha, which
+    // reads as 1.
+    for ([2]facet.Format{ .b10g11r11_ufloat_pack32, .e5b9g9r9_ufloat_pack32 }) |one| {
+        @memset(source_bytes[0..span], 0);
+        const floats = [4]f32{ 2, 0.5, 0.25, 1 };
+        const kept: shader.TexelFormat = if (one == .b10g11r11_ufloat_pack32) .rg11b10f else .rgb9e5;
+        var writing = shader.Texels{ .bytes = source_bytes, .count = 4, .format = kept, .writable = true };
+        writing.set(0, floats);
+        const view = try bind(&bench, source, one, 0, .uniform_texel_buffer, &sets);
+        defer fb.DestroyBufferView(device, view);
+        commands = try bench.record();
+        fb.CmdBindPipeline(commands, .compute, pipelines[2].?);
+        fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+        fb.CmdDispatch(commands, 1, 1, 1);
+        try bench.submit();
+        try testing.expectApproxEqAbs(@as(f32, 2), @as(f32, @bitCast(out[1])), 0.02);
+        try testing.expectApproxEqAbs(@as(f32, 0.5), @as(f32, @bitCast(out[2])), 0.01);
+        try testing.expectApproxEqAbs(@as(f32, 0.25), @as(f32, @bitCast(out[3])), 0.01);
+        try testing.expectEqual(@as(f32, 1), @as(f32, @bitCast(out[4])));
+    }
+
+    // Three channels of 32 bits, whole: a number past 2^24 in each, read
+    // and written by whole numbers, with the alpha the format has not got
+    // 1 and the fourth channel left alone.
+    const high: u32 = 3_000_000_007;
+    for (0..3) |k| std.mem.writeInt(u32, source_bytes[k * 4 ..][0..4], high, .little);
+    @memset(target_bytes[0..span], 0);
+    const from_three = try bind(&bench, source, .r32g32b32_uint, 0, .uniform_texel_buffer, &sets);
+    defer fb.DestroyBufferView(device, from_three);
+    const into_three = try bind(&bench, target, .r32g32b32_uint, 1, .storage_texel_buffer, &sets);
+    defer fb.DestroyBufferView(device, into_three);
+    commands = try bench.record();
+    fb.CmdBindPipeline(commands, .compute, pipelines[1].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    try bench.submit();
+    for (0..3) |k| try testing.expectEqual(high, std.mem.readInt(u32, target_bytes[k * 4 ..][0..4], .little));
+    try testing.expectEqual(@as(u32, 0), std.mem.readInt(u32, target_bytes[12..16], .little));
 }
 
 test "tessellation: patches made into triangles and lines, on the picture where the evaluation function puts them" {

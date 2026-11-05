@@ -97,11 +97,14 @@ fn describe(format: facet.Format, keeps_blocks: bool) facet.FormatProperties {
         // Float: sampled, and written through by a function since 1.57
         // (`texture.Texture.setParts`), and read back as well where the
         // floats are kept, there being something of the format to read.
+        // And a texel buffer of either since 1.68, read where it lies by
+        // the same code a texture of the format is read with
+        // (`shader.TexelFormat.rg11b10f`, `rgb9e5`).
         .b10g11r11_ufloat_pack32, .e5b9g9r9_ufloat_pack32 => .{
             .linear_tiling_features = 0,
             .optimal_tiling_features = sampled | storage | facet.FORMAT_FEATURE_TRANSFER_DST |
                 if (keeps_blocks) facet.FORMAT_FEATURE_TRANSFER_SRC else 0,
-            .buffer_features = 0,
+            .buffer_features = texels,
         },
         // The same, and a texel buffer of half-floats as well since 1.54.
         .r16g16b16a16_sfloat => .{
@@ -155,6 +158,30 @@ fn describe(format: facet.Format, keeps_blocks: bool) facet.FormatProperties {
         .r32_sint,
         .r32g32_sint,
         .r32g32b32a32_sint,
+        // The rest of them since 1.68: `_snorm` read as -1 to 1, `_srgb`
+        // read through the transfer function, the words whose channels
+        // are packed into them, and three channels of 32 bits. An
+        // `a8b8g8r8_..._pack32` word is where `r8g8b8a8_...` keeps its
+        // bytes on a little-endian machine, so those two are the same
+        // texels read twice over.
+        .r8_snorm,
+        .r8g8_snorm,
+        .r8g8b8a8_snorm,
+        .r16_snorm,
+        .r16g16_snorm,
+        .r16g16b16a16_snorm,
+        .r8_srgb,
+        .r8g8_srgb,
+        .r8g8b8a8_srgb,
+        .b8g8r8a8_srgb,
+        .a8b8g8r8_unorm_pack32,
+        .a8b8g8r8_srgb_pack32,
+        .a2r10g10b10_unorm_pack32,
+        .a2r10g10b10_uint_pack32,
+        .a2b10g10r10_unorm_pack32,
+        .a2b10g10r10_uint_pack32,
+        .r32g32b32_uint,
+        .r32g32b32_sint,
         => .{ .linear_tiling_features = 0, .optimal_tiling_features = 0, .buffer_features = texels },
         else => .{ .linear_tiling_features = 0, .optimal_tiling_features = 0, .buffer_features = 0 },
     };

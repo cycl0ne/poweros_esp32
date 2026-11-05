@@ -464,6 +464,46 @@ pub const TexelFormat = enum(u8) {
     r32i = 31,
     rg32i = 32,
     rgba32i = 33,
+    /// The grid's last kind, since 1.68: `_snorm`, a whole number read as
+    /// -1 to 1, the largest the channel holds either way standing for 1.
+    /// `r8_snorm`, `r8g8_snorm`, `r8g8b8a8_snorm`, and the same of 16
+    /// bits.
+    r8n = 34,
+    rg8n = 35,
+    rgba8n = 36,
+    r16n = 37,
+    rg16n = 38,
+    rgba16n = 39,
+    /// `_srgb`, since 1.68: 8 bits a channel, kept the way a picture is
+    /// written down and read as linear 0 to 1 - the three colour channels
+    /// through sRGB's transfer function, the alpha straight.
+    /// `r8_srgb`, `r8g8_srgb`, `r8g8b8a8_srgb` (which is
+    /// `a8b8g8r8_srgb_pack32` as well) and `b8g8r8a8_srgb`.
+    r8srgb = 40,
+    rg8srgb = 41,
+    rgba8srgb = 42,
+    bgra8srgb = 43,
+    /// Three channels of 10 bits and an alpha of 2 in one word, since
+    /// 1.68: `a2b10g10r10_unorm_pack32` with red in the low bits,
+    /// `a2r10g10b10_unorm_pack32` with blue there, and the `_uint` pair of
+    /// them, whose channels are the whole numbers themselves.
+    rgb10a2 = 44,
+    bgr10a2 = 45,
+    rgb10a2u = 46,
+    bgr10a2u = 47,
+    /// Floats in one word, since 1.68, as a texture of the format keeps
+    /// them: `b10g11r11_ufloat_pack32`, three unsigned floats of 11, 11
+    /// and 10 bits, and `e5b9g9r9_ufloat_pack32`, three mantissas of 9
+    /// bits over one exponent of 5. Neither holds an alpha, which reads
+    /// as 1, and neither holds a negative value.
+    rg11b10f = 48,
+    rgb9e5 = 49,
+    /// Three channels of 32 bits, whole, since 1.68: `r32g32b32_uint` and
+    /// `r32g32b32_sint`, beside the `rgb32f` that was there already. The
+    /// three-channel formats of 8 and of 16 bits are not here: 3 or 6
+    /// bytes a texel is what almost no hardware carries either.
+    rgb32u = 50,
+    rgb32i = 51,
 
     /// The bytes one texel takes; 0 for `.none`.
     pub fn bytes(format: TexelFormat) u32 {
@@ -471,6 +511,8 @@ pub const TexelFormat = enum(u8) {
             .none => 0,
             .rgb565 => 2,
             .rgba8888, .bgra8888, .r32f => 4,
+            // One word, whatever its channels are (since 1.68).
+            .rgba8srgb, .bgra8srgb, .rgb10a2, .bgr10a2, .rgb10a2u, .bgr10a2u, .rg11b10f, .rgb9e5 => 4,
             .rg32f => 8,
             .rgb32f => 12,
             .rgba32f => 16,
@@ -488,6 +530,12 @@ pub const TexelFormat = enum(u8) {
             .rgb565, .rgb32f => 3,
             .rgba8888, .bgra8888, .rgba32f => 4,
             .rgba8u, .rgba8i, .rgba16, .rgba16u, .rgba16i, .rgba16f, .rgba32u, .rgba32i => 4,
+            // Since 1.68.
+            .r8n, .r16n, .r8srgb => 1,
+            .rg8n, .rg16n, .rg8srgb => 2,
+            .rg11b10f, .rgb9e5, .rgb32u, .rgb32i => 3,
+            .rgba8n, .rgba16n, .rgba8srgb, .bgra8srgb => 4,
+            .rgb10a2, .bgr10a2, .rgb10a2u, .bgr10a2u => 4,
         };
     }
 
@@ -502,6 +550,11 @@ pub const TexelFormat = enum(u8) {
             .r8, .rg8, .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i => 8,
             .r16, .rg16, .rgba16, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r16f, .rg16f, .rgba16f => 16,
             .r32f, .rg32f, .rgb32f, .rgba32f, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => 32,
+            // Since 1.68: the grid's own widths, and one word of 32 bits
+            // for every format whose channels are packed into one.
+            .r8n, .rg8n, .rgba8n, .r8srgb, .rg8srgb, .rgba8srgb, .bgra8srgb => 8,
+            .r16n, .rg16n, .rgba16n => 16,
+            .rgb10a2, .bgr10a2, .rgb10a2u, .bgr10a2u, .rg11b10f, .rgb9e5, .rgb32u, .rgb32i => 32,
         };
     }
 
@@ -514,14 +567,59 @@ pub const TexelFormat = enum(u8) {
             .r8u, .rg8u, .rgba8u, .r16u, .rg16u, .rgba16u, .r32u, .rg32u, .rgba32u => .uint,
             .r8i, .rg8i, .rgba8i, .r16i, .rg16i, .rgba16i, .r32i, .rg32i, .rgba32i => .sint,
             .r16f, .rg16f, .rgba16f, .r32f, .rg32f, .rgb32f, .rgba32f => .sfloat,
+            // Since 1.68. The packed words are `packed_bits` whether
+            // their channels are bit fields (`packing`) or small floats
+            // (`rg11b10f`, `rgb9e5`).
+            .r8n, .rg8n, .rgba8n, .r16n, .rg16n, .rgba16n => .snorm,
+            .r8srgb, .rg8srgb, .rgba8srgb, .bgra8srgb => .srgb,
+            .rgb10a2, .bgr10a2, .rgb10a2u, .bgr10a2u, .rg11b10f, .rgb9e5 => .packed_bits,
+            .rgb32u => .uint,
+            .rgb32i => .sint,
         };
     }
 
-    /// The largest whole number a channel of a `.unorm` format holds: 255
-    /// of 8 bits, 65535 of 16. (Since 1.54.)
+    /// The largest whole number a channel of a `.unorm` or `.srgb` format
+    /// holds: 255 of 8 bits, 65535 of 16. Of a `.snorm` one it is what is
+    /// left once the sign has its bit, 127 and 32767, and the value below
+    /// that - -128, -32768 - reads as -1 as well (since 1.68).
+    /// (Since 1.54.)
     pub fn channelMost(format: TexelFormat) f32 {
-        return if (format.channelBits() == 8) 255 else 65535;
+        const signed = format.kind() == .snorm;
+        if (format.channelBits() == 8) return if (signed) 127 else 255;
+        return if (signed) 32767 else 65535;
     }
+
+    /// Where each channel of a packed format lies in the texel's one word
+    /// - its low bit and how many bits it takes, in x, y, z, w order,
+    /// with 0 bits for a channel the format has not got - and what the
+    /// channels hold. Null for every other format, `rg11b10f` and
+    /// `rgb9e5` among them: their channels are small floats and not bit
+    /// fields, and a texture of the format reads them
+    /// (`texture.floatParts`). (Since 1.68, where `rgb565` became one of
+    /// these rather than a case of its own.)
+    pub fn packing(format: TexelFormat) ?Packing {
+        return switch (format) {
+            .rgb565 => .{ .at = .{ 11, 5, 0, 0 }, .bits = .{ 5, 6, 5, 0 } },
+            .rgb10a2 => .{ .at = .{ 0, 10, 20, 30 }, .bits = .{ 10, 10, 10, 2 } },
+            .bgr10a2 => .{ .at = .{ 20, 10, 0, 30 }, .bits = .{ 10, 10, 10, 2 } },
+            .rgb10a2u => .{ .at = .{ 0, 10, 20, 30 }, .bits = .{ 10, 10, 10, 2 }, .whole = true },
+            .bgr10a2u => .{ .at = .{ 20, 10, 0, 30 }, .bits = .{ 10, 10, 10, 2 }, .whole = true },
+            else => null,
+        };
+    }
+};
+
+/// A packed format's channels, as `TexelFormat.packing` has them.
+/// (Since 1.68.)
+pub const Packing = struct {
+    /// Each channel's low bit in the word.
+    at: [4]u5,
+    /// How many bits each takes; 0 for one the format has not got, which
+    /// reads as 0, and as 1 for the alpha.
+    bits: [4]u5,
+    /// Whether the channels are the whole numbers themselves rather than
+    /// 0 to 1 over the largest each holds.
+    whole: bool = false,
 };
 
 /// What a channel of a `TexelFormat` holds. (Since 1.54.)
@@ -533,6 +631,13 @@ pub const TexelKind = enum {
     packed_bits,
     /// A whole number read as 0 to 1, the largest it holds as 1.
     unorm,
+    /// The same, signed: -1 to 1, the largest either way as 1.
+    /// (Since 1.68.)
+    snorm,
+    /// 8 bits kept the way a picture is written down: read as linear 0 to
+    /// 1, the three colour channels through sRGB's transfer function and
+    /// the alpha straight. (Since 1.68.)
+    srgb,
     /// A whole number read as itself, unsigned.
     uint,
     /// The same, signed, in two's complement.
@@ -588,6 +693,47 @@ fn floatAt(from: [*]const u8, bits: u32) f32 {
     return @bitCast(std.mem.readInt(u32, from[0..4], .little));
 }
 
+/// The one word of a packed texel: two bytes or four, little-endian.
+/// (Since 1.68.)
+fn wordAt(from: [*]const u8, size: u32) u32 {
+    return if (size == 2) std.mem.readInt(u16, from[0..2], .little) else std.mem.readInt(u32, from[0..4], .little);
+}
+
+/// `word` written back, two bytes or four. (Since 1.68.)
+fn putWord(into: [*]u8, size: u32, word: u32) void {
+    if (size == 2) return std.mem.writeInt(u16, into[0..2], @truncate(word), .little);
+    std.mem.writeInt(u32, into[0..4], word, .little);
+}
+
+/// sRGB's transfer function, as Vulkan has it: the 8 bits a texel keeps
+/// read as linear 0 to 1 - the low values a straight line, the rest a
+/// power of 2.4. A table of the 256 of them, worked out as the program is
+/// compiled. (Since 1.68.)
+const srgb_linear: [256]f32 = made: {
+    @setEvalBranchQuota(1 << 20);
+    var table: [256]f32 = undefined;
+    for (&table, 0..) |*one, k| {
+        const part = @as(f32, @floatFromInt(k)) / 255;
+        one.* = if (part <= 0.04045) part / 12.92 else std.math.pow(f32, (part + 0.055) / 1.055, 2.4);
+    }
+    break :made table;
+};
+
+/// The other way: linear 0 to 1 as the 0 to 1 a texel of an `.srgb`
+/// format keeps. (Since 1.68.)
+fn srgbOf(part: f32) f32 {
+    const value = if (part >= 0) @min(part, 1) else 0;
+    if (value <= 0.0031308) return value * 12.92;
+    return std.math.pow(f32, value, 1.0 / 2.4) * 1.055 - 0.055;
+}
+
+/// A whole number from -1 to 1 over `most`, its sign kept: what a
+/// `.snorm` channel holds, cut to -1 and 1 outside them. (Since 1.68.)
+fn signedWhole(part: f32, most: f32) i64 {
+    const value = if (part != part) 0 else @min(@max(part, -1), 1);
+    return @intFromFloat(@round(value * most));
+}
+
 /// `value` written as a float of `bits` bits. (Since 1.54.)
 fn putFloat(into: [*]u8, bits: u32, value: f32) void {
     if (bits == 16) {
@@ -634,24 +780,42 @@ pub const Texels = struct {
         var made = [4]f32{ 0, 0, 0, 1 };
         switch (texels.format) {
             .none => {},
-            .rgba8888, .bgra8888 => {
+            // The four bytes of an 8888 word, in the order the format
+            // keeps them; `.srgb` reads its three colour channels through
+            // the transfer function and its alpha straight (since 1.68).
+            .rgba8888, .bgra8888, .rgba8srgb, .bgra8srgb => {
                 const packed_texel = std.mem.readInt(u32, from[0..4], .little);
-                const order: [4]u5 = if (texels.format == .rgba8888) .{ 0, 8, 16, 24 } else .{ 16, 8, 0, 24 };
-                for (&made, order) |*part, shift| part.* = @as(f32, @floatFromInt(packed_texel >> shift & 0xFF)) / 255;
+                const red_first = texels.format == .rgba8888 or texels.format == .rgba8srgb;
+                const order: [4]u5 = if (red_first) .{ 0, 8, 16, 24 } else .{ 16, 8, 0, 24 };
+                const written = texels.format.kind() == .srgb;
+                for (&made, order, 0..) |*part, shift, k| {
+                    const byte: u8 = @truncate(packed_texel >> shift);
+                    part.* = if (written and k < 3) srgb_linear[byte] else @as(f32, @floatFromInt(byte)) / 255;
+                }
             },
-            .rgb565 => {
-                const packed_texel = std.mem.readInt(u16, from[0..2], .little);
-                made[0] = @as(f32, @floatFromInt(packed_texel >> 11 & 0x1F)) / 31;
-                made[1] = @as(f32, @floatFromInt(packed_texel >> 5 & 0x3F)) / 63;
-                made[2] = @as(f32, @floatFromInt(packed_texel & 0x1F)) / 31;
-            },
+            // Small floats in one word, as a texture of the format reads
+            // them (since 1.68).
+            .rg11b10f => made = texture.floatParts(.rg11b10f, from),
+            .rgb9e5 => made = texture.floatParts(.rgb9e5, from),
             .r32f, .rg32f, .rgb32f, .rgba32f => {
                 const floats: [*]align(1) const f32 = @ptrCast(from);
                 for (0..texels.format.parts()) |k| made[k] = floats[k];
             },
-            // The regular grid of 1.54: every channel the same width, and
-            // all of one kind.
+            // Bit fields in one word: `rgb565` and the 10-10-10-2 ones
+            // (`TexelFormat.packing`, since 1.68), or else the regular
+            // grid of 1.54 - every channel the same width, and all of one
+            // kind.
             else => {
+                if (texels.format.packing()) |one| {
+                    const word = wordAt(from, texels.format.bytes());
+                    for (&made, one.at, one.bits) |*part, shift, width| {
+                        if (width == 0) continue;
+                        const most = (@as(u32, 1) << width) - 1;
+                        const value = word >> shift & most;
+                        part.* = if (one.whole) @floatFromInt(value) else @as(f32, @floatFromInt(value)) / @as(f32, @floatFromInt(most));
+                    }
+                    return made;
+                }
                 const bits = texels.format.channelBits();
                 const step = bits / 8;
                 const sort = texels.format.kind();
@@ -659,6 +823,10 @@ pub const Texels = struct {
                     const part_at = from + k * step;
                     made[k] = switch (sort) {
                         .unorm => @as(f32, @floatFromInt(wholeAt(part_at, bits, false))) / texels.format.channelMost(),
+                        // -1 to 1, and never below -1: the value under the
+                        // largest the channel holds stands for -1 as well.
+                        .snorm => @max(@as(f32, @floatFromInt(wholeAt(part_at, bits, true))) / texels.format.channelMost(), -1),
+                        .srgb => srgb_linear[@as(u8, @intCast(wholeAt(part_at, bits, false)))],
                         .uint => @floatFromInt(wholeAt(part_at, bits, false)),
                         .sint => @floatFromInt(wholeAt(part_at, bits, true)),
                         .sfloat => floatAt(part_at, bits),
@@ -682,26 +850,36 @@ pub const Texels = struct {
         var made = [4]i64{ 0, 0, 0, 1 };
         switch (texels.format) {
             .none => {},
-            .rgba8888, .bgra8888 => {
+            // The bytes as they lie, the transfer function of an `.srgb`
+            // format not among them: these are the numbers it keeps.
+            .rgba8888, .bgra8888, .rgba8srgb, .bgra8srgb => {
                 const packed_texel = std.mem.readInt(u32, from[0..4], .little);
-                const order: [4]u5 = if (texels.format == .rgba8888) .{ 0, 8, 16, 24 } else .{ 16, 8, 0, 24 };
+                const red_first = texels.format == .rgba8888 or texels.format == .rgba8srgb;
+                const order: [4]u5 = if (red_first) .{ 0, 8, 16, 24 } else .{ 16, 8, 0, 24 };
                 for (&made, order) |*part, shift| part.* = packed_texel >> shift & 0xFF;
             },
-            .rgb565 => {
-                const packed_texel = std.mem.readInt(u16, from[0..2], .little);
-                made[0] = packed_texel >> 11 & 0x1F;
-                made[1] = packed_texel >> 5 & 0x3F;
-                made[2] = packed_texel & 0x1F;
+            // Small floats, rounded as a float format's channels are.
+            .rg11b10f, .rgb9e5 => {
+                const parts = texels.at(index);
+                for (&made, parts) |*part, one| part.* = wholeFrom(one, 32, true);
             },
             else => {
+                if (texels.format.packing()) |one| {
+                    const word = wordAt(from, texels.format.bytes());
+                    for (&made, one.at, one.bits) |*part, shift, width| {
+                        if (width == 0) continue;
+                        part.* = word >> shift & ((@as(u32, 1) << width) - 1);
+                    }
+                    return made;
+                }
                 const bits = texels.format.channelBits();
                 const step = bits / 8;
                 const sort = texels.format.kind();
                 for (0..texels.format.parts()) |k| {
                     const part_at = from + k * step;
                     made[k] = switch (sort) {
-                        .unorm, .uint => wholeAt(part_at, bits, false),
-                        .sint => wholeAt(part_at, bits, true),
+                        .unorm, .uint, .srgb => wholeAt(part_at, bits, false),
+                        .snorm, .sint => wholeAt(part_at, bits, true),
                         .sfloat => wholeFrom(floatAt(part_at, bits), 32, true),
                         .none, .packed_bits => 0,
                     };
@@ -729,24 +907,41 @@ pub const Texels = struct {
         const into = texels.bytes + @as(usize, index) * texels.apart();
         switch (texels.format) {
             .none => {},
-            .rgba8888, .bgra8888 => {
-                const order: [4]u5 = if (texels.format == .rgba8888) .{ 0, 8, 16, 24 } else .{ 16, 8, 0, 24 };
+            .rgba8888, .bgra8888, .rgba8srgb, .bgra8srgb => {
+                const red_first = texels.format == .rgba8888 or texels.format == .rgba8srgb;
+                const order: [4]u5 = if (red_first) .{ 0, 8, 16, 24 } else .{ 16, 8, 0, 24 };
+                const written = texels.format.kind() == .srgb;
                 var made: u32 = 0;
-                for (parts, order) |part, shift| made |= @as(u32, @intFromFloat(@round(held(part) * 255))) << shift;
+                for (parts, order, 0..) |part, shift, k| {
+                    const value = if (written and k < 3) srgbOf(part) else held(part);
+                    made |= @as(u32, @intFromFloat(@round(value * 255))) << shift;
+                }
                 std.mem.writeInt(u32, into[0..4], made, .little);
             },
-            .rgb565 => {
-                const r: u32 = @intFromFloat(@round(held(parts[0]) * 31));
-                const g: u32 = @intFromFloat(@round(held(parts[1]) * 63));
-                const b: u32 = @intFromFloat(@round(held(parts[2]) * 31));
-                std.mem.writeInt(u16, into[0..2], @intCast(r << 11 | g << 5 | b), .little);
-            },
+            // Small floats in one word, as a texture of the format writes
+            // them: what the format cannot hold is cut to what it can.
+            .rg11b10f => texture.putFloatTexel(.rg11b10f, into, parts),
+            .rgb9e5 => texture.putFloatTexel(.rgb9e5, into, parts),
             .r32f, .rg32f, .rgb32f, .rgba32f => {
                 const floats: [*]align(1) f32 = @ptrCast(into);
                 for (0..texels.format.parts()) |k| floats[k] = parts[k];
             },
-            // The regular grid of 1.54, as `at` reads it.
+            // Bit fields in one word, or the regular grid of 1.54, as
+            // `at` reads either.
             else => {
+                if (texels.format.packing()) |one| {
+                    var made: u32 = 0;
+                    for (parts, one.at, one.bits) |part, shift, width| {
+                        if (width == 0) continue;
+                        const most = (@as(u32, 1) << width) - 1;
+                        const value: u32 = if (one.whole)
+                            @intCast(heldWhole(wholeFrom(part, 32, false), @as(i64, most)))
+                        else
+                            @intFromFloat(@round(held(part) * @as(f32, @floatFromInt(most))));
+                        made |= value << shift;
+                    }
+                    return putWord(into, texels.format.bytes(), made);
+                }
                 const bits = texels.format.channelBits();
                 const step = bits / 8;
                 const sort = texels.format.kind();
@@ -754,6 +949,8 @@ pub const Texels = struct {
                     const part_at = into + k * step;
                     switch (sort) {
                         .unorm => putWhole(part_at, bits, wholeFrom(held(parts[k]) * texels.format.channelMost(), bits, false)),
+                        .snorm => putWhole(part_at, bits, signedWhole(parts[k], texels.format.channelMost())),
+                        .srgb => putWhole(part_at, bits, wholeFrom(@round(srgbOf(parts[k]) * 255), bits, false)),
                         .uint => putWhole(part_at, bits, wholeFrom(parts[k], bits, false)),
                         .sint => putWhole(part_at, bits, wholeFrom(parts[k], bits, true)),
                         .sfloat => putFloat(part_at, bits, parts[k]),
@@ -773,26 +970,36 @@ pub const Texels = struct {
         const into = texels.bytes + @as(usize, index) * texels.apart();
         switch (texels.format) {
             .none => {},
-            .rgba8888, .bgra8888 => {
-                const order: [4]u5 = if (texels.format == .rgba8888) .{ 0, 8, 16, 24 } else .{ 16, 8, 0, 24 };
+            // The numbers as they are kept, an `.srgb` format's among
+            // them: `intAt` reads them back unchanged.
+            .rgba8888, .bgra8888, .rgba8srgb, .bgra8srgb => {
+                const red_first = texels.format == .rgba8888 or texels.format == .rgba8srgb;
+                const order: [4]u5 = if (red_first) .{ 0, 8, 16, 24 } else .{ 16, 8, 0, 24 };
                 var made: u32 = 0;
                 for (parts, order) |part, shift| made |= @as(u32, @intCast(heldWhole(part, 255))) << shift;
                 std.mem.writeInt(u32, into[0..4], made, .little);
             },
-            .rgb565 => {
-                const r: u32 = @intCast(heldWhole(parts[0], 31));
-                const g: u32 = @intCast(heldWhole(parts[1], 63));
-                const b: u32 = @intCast(heldWhole(parts[2], 31));
-                std.mem.writeInt(u16, into[0..2], @intCast(r << 11 | g << 5 | b), .little);
-            },
+            .rg11b10f => texture.putFloatTexel(.rg11b10f, into, floatsOf(parts)),
+            .rgb9e5 => texture.putFloatTexel(.rgb9e5, into, floatsOf(parts)),
             else => {
+                if (texels.format.packing()) |one| {
+                    var made: u32 = 0;
+                    for (parts, one.at, one.bits) |part, shift, width| {
+                        if (width == 0) continue;
+                        const most = (@as(u32, 1) << width) - 1;
+                        made |= @as(u32, @intCast(heldWhole(part, @as(i64, most)))) << shift;
+                    }
+                    return putWord(into, texels.format.bytes(), made);
+                }
                 const bits = texels.format.channelBits();
                 const step = bits / 8;
                 const sort = texels.format.kind();
                 for (0..texels.format.parts()) |k| {
                     const part_at = into + k * step;
                     switch (sort) {
-                        .unorm => putWhole(part_at, bits, heldWhole(parts[k], @intFromFloat(texels.format.channelMost()))),
+                        .unorm, .srgb => putWhole(part_at, bits, heldWhole(parts[k], @intFromFloat(texels.format.channelMost()))),
+                        // Held inside what the channel carries either way.
+                        .snorm => putWhole(part_at, bits, heldBetween(parts[k], @intFromFloat(texels.format.channelMost()))),
                         .uint => putWhole(part_at, bits, wholeFrom(@floatFromInt(parts[k]), bits, false)),
                         .sint => putWhole(part_at, bits, wholeFrom(@floatFromInt(parts[k]), bits, true)),
                         .sfloat => putFloat(part_at, bits, @floatFromInt(parts[k])),
@@ -801,6 +1008,20 @@ pub const Texels = struct {
                 }
             },
         }
+    }
+
+    /// -`most` to `most`, a whole number: what a `.snorm` channel holds.
+    /// (Since 1.68.)
+    fn heldBetween(value: i64, most: i64) i64 {
+        return @min(@max(value, -most), most);
+    }
+
+    /// Four whole numbers as four floats, for the formats whose channels
+    /// are floats however they were given. (Since 1.68.)
+    fn floatsOf(parts: [4]i64) [4]f32 {
+        var made: [4]f32 = undefined;
+        for (&made, parts) |*one, part| one.* = @floatFromInt(part);
+        return made;
     }
 
     /// 0 to `most`, a whole number. (Since 1.54.)

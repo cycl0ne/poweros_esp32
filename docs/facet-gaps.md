@@ -9,7 +9,7 @@ enough to be read, with the parts a machine of this size cannot pay for
 left out.
 
 This document is the list of what is left out, as of **facet.library
-1.67**, so that a program need not find out by failing. It covers the API.
+1.68**, so that a program need not find out by failing. It covers the API.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
@@ -275,14 +275,37 @@ numbers and `setInt` writes it from them, which the 32-bit integer formats
 want: `at`'s float carries 24 bits exactly, so a larger whole number
 copied through it comes out changed.
 
+Since 1.68 the rest of Vulkan 1.0's texel-buffer kinds are there too:
+
+- `_snorm`, of 8 and of 16 bits, one channel, two or four: a whole number
+  read as -1 to 1 over the largest the channel holds, and the value below
+  that - -128, -32768 - reading as -1 as well, as Vulkan has it.
+- `_srgb` of 8 bits (`r8_srgb`, `r8g8_srgb`, `r8g8b8a8_srgb`,
+  `b8g8r8a8_srgb` and `a8b8g8r8_srgb_pack32`): the three colour channels
+  through sRGB's transfer function on the way out and back on the way in,
+  the alpha straight. `intAt` and `setInt` are the bytes as they lie, the
+  function not among them.
+- The words whose channels are packed into them:
+  `a2b10g10r10_unorm_pack32` and `a2r10g10b10_unorm_pack32` with their
+  `_uint` pair, `a8b8g8r8_unorm_pack32` (the same bytes as
+  `r8g8b8a8_unorm` on a little-endian machine, which is every machine
+  this library runs on), and the two whose channels are small floats,
+  `b10g11r11_ufloat_pack32` and `e5b9g9r9_ufloat_pack32`, read by the
+  same code a texture of the format is read with.
+- `r32g32b32_uint` and `r32g32b32_sint`, beside the `r32g32b32_sfloat`
+  that was there already.
+
+`shader.TexelFormat.packing` says where a packed format's channels lie,
+and `TexelKind` has `snorm` and `srgb` beside the kinds it had.
+
 What is left out:
 
-- **No three-channel format but `r5g6b5_unorm_pack16` and
-  `r32g32b32_sfloat`**: nothing of `r8g8b8` or `r16g16b16`, which almost
-  no hardware carries either.
-- **No compressed format, no `_snorm`, no `_srgb` and no packed one but
-  565.** A `_snorm` channel would be the `_sint` number divided by its
-  largest, and is not here; nor are `a2r10g10b10` and the like.
+- **No three-channel format of 8 or of 16 bits**: nothing of `r8g8b8` or
+  `r16g16b16`, 3 or 6 bytes a texel being what almost no hardware carries
+  either. `r5g6b5_unorm_pack16`, `r32g32b32_sfloat`, `r32g32b32_uint` and
+  `r32g32b32_sint` are the three-channel formats there are.
+- **No compressed format**, and none of the `_uscaled` or `_sscaled`
+  kinds, which no device of this library has a use for.
 - **A `_uint` or a `_sint` texel read by `colorAt` saturates**: that call
   holds its parts to 0 and 1 before it makes bytes of them, so any whole
   number above 1 is white. `at` and `intAt` are what such a format is read

@@ -851,10 +851,38 @@ pub const LIBRARY_VERSION = 1;
 /// The cores say yes to it (`PhysicalDeviceFeatures.unnormalized_coordinates`);
 /// the V3D reads no sampler at all, so it says no, as it does to the rest
 /// of what a sampler says.
+/// 68: the rest of the formats a texel buffer reads. 1.54 laid out a
+/// regular grid - one channel, two or four, of 8, 16 or 32 bits, as 0 to
+/// 1, as a whole number or as a float - and left four kinds outside it,
+/// which a program reading a file or another machine's bytes is as likely
+/// to meet as any: `_snorm`, `_srgb`, the words whose channels are packed
+/// into them, and three channels of 32 bits.
+/// `_snorm` is the signed number over the largest the channel holds, -1
+/// to 1, with the value below that reading as -1 as well, as Vulkan has
+/// it. `_srgb` reads its three colour channels through sRGB's transfer
+/// function and its alpha straight - a table of the 256 values worked out
+/// as the program is compiled - so a picture written down the way a file
+/// keeps it is read as light; `intAt` and `setInt` are still the bytes as
+/// they lie. `a2b10g10r10` and `a2r10g10b10`, unorm and uint, are a shift
+/// and a mask, and `shader.TexelFormat.packing` is where every packed
+/// format's channels lie - `rgb565` became one of those rather than a
+/// case of its own. `a8b8g8r8_unorm_pack32` and `a8b8g8r8_srgb_pack32`
+/// are the same bytes as `r8g8b8a8_unorm` and `r8g8b8a8_srgb` on a
+/// little-endian machine, so they are those texels read under another
+/// name. `b10g11r11_ufloat_pack32` and `e5b9g9r9_ufloat_pack32` are read
+/// and written by the very code a texture of the format uses
+/// (`texture.floatParts`, `putFloatTexel`), so a buffer and an image of
+/// one of them agree to the bit.
+/// `TexelKind` has `snorm` and `srgb` beside its kinds, and
+/// `channelMost` answers 127 and 32767 for a signed channel, the sign
+/// having its bit.
+/// What is still out: the three-channel formats of 8 and of 16 bits, 3 or
+/// 6 bytes a texel being what almost no hardware carries either, and the
+/// `_uscaled` and `_sscaled` kinds, which nothing here has a use for.
 /// What stays: `fifo` is the one present mode, there being no way to ask a
 /// display to show a buffer before its next frame; one queue family of one
 /// queue; a counter of 32 bits, for want of a 64-bit atomic on every
 /// machine the library runs on; and no point mode in tessellation, the
 /// tessellator emitting triangles or the lines of `isolines` and nothing
 /// emitting a patch's points on their own.
-pub const LIBRARY_REVISION = 67;
+pub const LIBRARY_REVISION = 68;

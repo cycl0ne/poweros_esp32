@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.34 (05.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.35 (05.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -1171,6 +1171,28 @@ fn texelBufferChecks(probe: *Probe) void {
         .{ .format = .r32_sint, .size = 4 },
         .{ .format = .r32g32_sint, .size = 8 },
         .{ .format = .r32g32b32a32_sint, .size = 16 },
+        // 1.68: `_snorm`, `_srgb`, the words whose channels are packed
+        // into them, and three channels of 32 bits.
+        .{ .format = .r8_snorm, .size = 1 },
+        .{ .format = .r8g8_snorm, .size = 2 },
+        .{ .format = .r8g8b8a8_snorm, .size = 4 },
+        .{ .format = .r16_snorm, .size = 2 },
+        .{ .format = .r16g16_snorm, .size = 4 },
+        .{ .format = .r16g16b16a16_snorm, .size = 8 },
+        .{ .format = .r8_srgb, .size = 1 },
+        .{ .format = .r8g8_srgb, .size = 2 },
+        .{ .format = .r8g8b8a8_srgb, .size = 4 },
+        .{ .format = .b8g8r8a8_srgb, .size = 4 },
+        .{ .format = .a8b8g8r8_unorm_pack32, .size = 4 },
+        .{ .format = .a8b8g8r8_srgb_pack32, .size = 4 },
+        .{ .format = .a2r10g10b10_unorm_pack32, .size = 4 },
+        .{ .format = .a2r10g10b10_uint_pack32, .size = 4 },
+        .{ .format = .a2b10g10r10_unorm_pack32, .size = 4 },
+        .{ .format = .a2b10g10r10_uint_pack32, .size = 4 },
+        .{ .format = .b10g11r11_ufloat_pack32, .size = 4 },
+        .{ .format = .e5b9g9r9_ufloat_pack32, .size = 4 },
+        .{ .format = .r32g32b32_uint, .size = 12 },
+        .{ .format = .r32g32b32_sint, .size = 12 },
     };
     var all_made = true;
     var all_counted = true;
@@ -1198,7 +1220,7 @@ fn texelBufferChecks(probe: *Probe) void {
         if (out[0] != 64 / grain.size) all_counted = false;
         fb.DestroyBufferView(device, view);
     }
-    probe.check(all_made, "a view of every format the grid of 1.54 added");
+    probe.check(all_made, "a view of every format a texel buffer takes, 1.68's among them");
     probe.check(all_counted, "each counting its texels by its own size");
     probe.check(all_told, "and each saying UNIFORM_TEXEL_BUFFER and STORAGE_TEXEL_BUFFER");
     probe.check(all_bare, "and none of them a vertex format");
@@ -1289,6 +1311,118 @@ fn texelBufferChecks(probe: *Probe) void {
     fb.CmdDispatch(commands, 1, 1, 1);
     if (!probe.submit()) return probe.check(false, "the float copy submitted");
     probe.check(std.mem.readInt(u32, color_bytes[0..4], .little) != big, "and changed where the float carried it");
+
+    // --- 1.68: `_snorm`, `_srgb` and the packed words ---
+    // What the function sees of texel 0 of binding 0, for each format in
+    // turn: four floats at out[5] and four whole numbers at out[9].
+    const sees = struct {
+        fn sees(on: *Probe, pipeline: *facet.Pipeline, set: *[1]?*facet.DescriptorSet, where: *facet.PipelineLayout, buffer: *facet.Buffer, format: facet.Format, told: [*]u8) bool {
+            var view: ?*facet.BufferView = null;
+            if (on.fb.CreateBufferView(on.device.?, &.{ .buffer = buffer, .format = format }, &view) != .success) return false;
+            defer on.fb.DestroyBufferView(on.device.?, view);
+            const one = facet.WriteDescriptorSet{ .dst_set = set[0].?, .dst_binding = 0, .descriptor_type = .uniform_texel_buffer, .descriptor_count = 1, .texel_buffer_view = @ptrCast(&view) };
+            on.fb.UpdateDescriptorSets(on.device.?, 1, @ptrCast(&one), 0, null);
+            @memset(told[0..64], 0);
+            const recorded = on.record() orelse return false;
+            on.fb.CmdBindPipeline(recorded, .compute, pipeline);
+            on.fb.CmdBindDescriptorSets(recorded, .compute, where, 0, 1, @ptrCast(set), 0, null);
+            on.fb.CmdDispatch(recorded, 1, 1, 1);
+            return on.submit();
+        }
+    }.sees;
+
+    // `_snorm`: the lowest value a channel holds and the one above it are
+    // both -1, and the largest is 1.
+    float_bytes[0] = 0x80;
+    float_bytes[1] = 0x81;
+    float_bytes[2] = 0;
+    float_bytes[3] = 127;
+    if (!sees(probe, pipelines[1].?, &sets, layout.?, floats, .r8g8b8a8_snorm, told_bytes)) return probe.check(false, "what the function saw of a snorm texel");
+    probe.check(@as(f32, @bitCast(out[5])) == -1, "the lowest a snorm channel holds read as -1");
+    probe.check(@as(f32, @bitCast(out[6])) == -1, "and the one above it as -1 as well");
+    probe.check(@as(f32, @bitCast(out[7])) == 0, "and its zero as 0");
+    probe.check(@as(f32, @bitCast(out[8])) == 1, "and the largest as 1");
+    probe.checkEqual(@as(u32, @bitCast(@as(i32, -128))), out[9], "its whole number signed, as it lies");
+
+    // `_srgb`: 188 of 255 is about half the light, and the alpha is
+    // straight whatever the colour channels do.
+    float_bytes[0] = 188;
+    float_bytes[1] = 188;
+    float_bytes[2] = 188;
+    float_bytes[3] = 128;
+    if (!sees(probe, pipelines[1].?, &sets, layout.?, floats, .r8g8b8a8_srgb, told_bytes)) return probe.check(false, "what the function saw of an srgb texel");
+    const lit: f32 = @bitCast(out[5]);
+    probe.check(lit > 0.495 and lit < 0.505, "an srgb byte of 188 read as about half the light");
+    const straight: f32 = @bitCast(out[8]);
+    probe.check(straight > 0.5 and straight < 0.505, "and its alpha straight, not through the function");
+    probe.checkEqual(188, out[9], "and its whole number the byte it keeps");
+    if (!sees(probe, pipelines[1].?, &sets, layout.?, floats, .r8g8b8a8_unorm, told_bytes)) return probe.check(false, "the same bytes as unorm");
+    const plain: f32 = @bitCast(out[5]);
+    probe.check(plain > 0.73 and plain < 0.74, "the same byte as unorm read as 188 of 255");
+
+    // Three channels of 10 bits and an alpha of 2, in one word: red
+    // whole, green half, blue nothing. a2b10g10r10 keeps red in the low
+    // bits and a2r10g10b10 keeps blue there.
+    const packed_word: u32 = 3 << 30 | 0 << 20 | 512 << 10 | 1023;
+    std.mem.writeInt(u32, float_bytes[0..4], packed_word, .little);
+    if (!sees(probe, pipelines[1].?, &sets, layout.?, floats, .a2b10g10r10_unorm_pack32, told_bytes)) return probe.check(false, "what it saw of a packed word");
+    probe.check(@as(f32, @bitCast(out[5])) == 1, "the packed word's red channel whole");
+    const half: f32 = @bitCast(out[6]);
+    probe.check(half > 0.5 and half < 0.502, "its green half of what the channel holds");
+    probe.check(@as(f32, @bitCast(out[7])) == 0, "its blue nothing");
+    probe.check(@as(f32, @bitCast(out[8])) == 1, "and its alpha of two bits whole");
+    if (!sees(probe, pipelines[1].?, &sets, layout.?, floats, .a2r10g10b10_unorm_pack32, told_bytes)) return probe.check(false, "the same word the other way round");
+    probe.check(@as(f32, @bitCast(out[5])) == 0, "the same word with blue in the low bits reads red as 0");
+    probe.check(@as(f32, @bitCast(out[7])) == 1, "and blue as 1");
+    if (!sees(probe, pipelines[1].?, &sets, layout.?, floats, .a2b10g10r10_uint_pack32, told_bytes)) return probe.check(false, "and as whole numbers");
+    probe.check(@as(f32, @bitCast(out[5])) == 1023, "the uint pair gives the numbers themselves");
+    probe.checkEqual(512, out[10], "its green among them");
+    probe.checkEqual(3, out[12], "and the alpha's 3");
+
+    // The floats of one word, written by the SDK's own `set` and read
+    // back: 2, a half and a quarter, with an alpha of 1 neither holds.
+    for ([2]facet.Format{ .b10g11r11_ufloat_pack32, .e5b9g9r9_ufloat_pack32 }) |one| {
+        @memset(float_bytes[0..16], 0);
+        const kept: facet.shader.TexelFormat = if (one == .b10g11r11_ufloat_pack32) .rg11b10f else .rgb9e5;
+        var writing_floats = facet.shader.Texels{ .bytes = float_bytes, .count = 4, .format = kept, .writable = true };
+        writing_floats.set(0, .{ 2, 0.5, 0.25, 1 });
+        if (!sees(probe, pipelines[1].?, &sets, layout.?, floats, one, told_bytes)) return probe.check(false, "what it saw of a word of floats");
+        const red: f32 = @bitCast(out[5]);
+        const green: f32 = @bitCast(out[6]);
+        const blue: f32 = @bitCast(out[7]);
+        probe.check(red > 1.96 and red < 2.04, "a word of floats read as the 2 it was given");
+        probe.check(green > 0.49 and green < 0.51, "its half as a half");
+        probe.check(blue > 0.24 and blue < 0.26, "and its quarter as a quarter");
+        probe.check(@as(f32, @bitCast(out[8])) == 1, "and an alpha of 1 where it holds none");
+    }
+
+    // Three channels of 32 bits, whole: a number past 2^24 in each, read
+    // and written as it lies.
+    const three: u32 = 3_000_000_007;
+    for (0..3) |k| std.mem.writeInt(u32, float_bytes[k * 4 ..][0..4], three, .little);
+    @memset(color_bytes[0..16], 0);
+    var from_three: ?*facet.BufferView = null;
+    var into_three: ?*facet.BufferView = null;
+    if (fb.CreateBufferView(device, &.{ .buffer = floats, .format = .r32g32b32_uint }, &from_three) != .success) return probe.check(false, "a view of three whole words");
+    defer fb.DestroyBufferView(device, from_three);
+    if (fb.CreateBufferView(device, &.{ .buffer = colors, .format = .r32g32b32_uint }, &into_three) != .success) return probe.check(false, "and one written through");
+    defer fb.DestroyBufferView(device, into_three);
+    const threes = [2]facet.WriteDescriptorSet{
+        .{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .uniform_texel_buffer, .descriptor_count = 1, .texel_buffer_view = @ptrCast(&from_three) },
+        .{ .dst_set = sets[0].?, .dst_binding = 1, .descriptor_type = .storage_texel_buffer, .descriptor_count = 1, .texel_buffer_view = @ptrCast(&into_three) },
+    };
+    fb.UpdateDescriptorSets(device, 2, &threes, 0, null);
+    commands = probe.record() orelse return probe.check(false, "a recording of the three-channel copy");
+    fb.CmdBindPipeline(commands, .compute, pipelines[3].?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout.?, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 1, 1, 1);
+    if (!probe.submit()) return probe.check(false, "the three-channel copy submitted");
+    var all_three = true;
+    for (0..3) |k| if (std.mem.readInt(u32, color_bytes[k * 4 ..][0..4], .little) != three) {
+        all_three = false;
+    };
+    probe.check(all_three, "three channels of 32 bits copied by whole numbers");
+    probe.checkEqual(0, std.mem.readInt(u32, color_bytes[12..16], .little), "and nothing written past them");
 }
 
 // --- the run -----------------------------------------------------------------

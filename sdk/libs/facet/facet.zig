@@ -695,6 +695,41 @@ pub const Format = enum(u32) {
     r32_sint = 99,
     r32g32_sint = 102,
     r32g32b32a32_sint = 108,
+    /// The rest of the texel-buffer formats, since 1.68, read where they
+    /// lie as the others are (`shader.TexelFormat`), and no image kept in
+    /// any of them either.
+    /// `_snorm`: a whole number read as -1 to 1, the largest the channel
+    /// holds either way standing for 1.
+    r8_snorm = 10,
+    r8g8_snorm = 17,
+    r8g8b8a8_snorm = 38,
+    r16_snorm = 71,
+    r16g16_snorm = 78,
+    r16g16b16a16_snorm = 92,
+    /// `_srgb`: 8 bits a channel kept the way a picture is written down,
+    /// read as linear 0 to 1 - the three colour channels through sRGB's
+    /// transfer function, the alpha straight.
+    r8_srgb = 15,
+    r8g8_srgb = 22,
+    r8g8b8a8_srgb = 43,
+    b8g8r8a8_srgb = 50,
+    /// The same bytes as `r8g8b8a8_unorm` and `r8g8b8a8_srgb` on a
+    /// little-endian machine, which is every machine this library runs
+    /// on: a word of 0xAABBGGRR.
+    a8b8g8r8_unorm_pack32 = 51,
+    a8b8g8r8_srgb_pack32 = 57,
+    /// Three channels of 10 bits and an alpha of 2 in one word, as 0 to 1
+    /// or as the whole numbers themselves.
+    a2r10g10b10_unorm_pack32 = 58,
+    a2r10g10b10_uint_pack32 = 62,
+    a2b10g10r10_unorm_pack32 = 64,
+    a2b10g10r10_uint_pack32 = 68,
+    /// Three channels of 32 bits, whole, beside the `r32g32b32_sfloat`
+    /// that was there already. The three-channel formats of 8 and of 16
+    /// bits are not here, 3 or 6 bytes a texel being what almost no
+    /// hardware carries either.
+    r32g32b32_uint = 104,
+    r32g32b32_sint = 105,
     _,
 };
 
