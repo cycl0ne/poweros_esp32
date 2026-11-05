@@ -5,7 +5,9 @@
 //! behind its first one (`bcm2712.zig`), which read it out of RAM by
 //! themselves, QEMU's virtio GPU (`virtio.zig`), which is told what
 //! changed, and the framebuffer a UEFI firmware has already lit
-//! (`uefi.zig`), which reads the one buffer it was given.
+//! (`uefi.zig`), which reads the one buffer it was given - behind which
+//! the engine doing the reading is looked at where it is one this knows
+//! (`dcn.zig`), so far only to say what it is.
 //!
 //! A module of its own, on the same footing as the other drivers: it
 //! opens rtg.library at cold start and hands in a driver called "fb",
@@ -169,6 +171,7 @@ const jh7110 = @import("jh7110.zig");
 const bcm2712 = @import("bcm2712.zig");
 const virtio = @import("virtio.zig");
 const uefi = @import("uefi.zig");
+const dcn = @import("dcn.zig");
 const monitor = @import("monitor.zig");
 const edid = @import("../edid.zig");
 const engine = @import("engine.zig");
@@ -179,8 +182,8 @@ const timer = sdk.devices.timer;
 const MODULE_NAME = "rtg-fb";
 const DRIVER_NAME = "fb";
 const VERSION = 1;
-const REVISION = 23;
-const BUILD_DATE = "04.11.2026";
+const REVISION = 24;
+const BUILD_DATE = "05.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
@@ -250,6 +253,12 @@ const Screen = struct {
     mode_count: u32 = 0,
     current: u32 = 0,
     frame_us: u32 = 16_667,
+    /// Behind the firmware's framebuffer, the display engine reading it
+    /// where that engine is one this driver knows: what it says of itself,
+    /// read when the board is made, with nothing written to it
+    /// (`dcn.zig`). Null on every other display, and on a machine whose
+    /// engine this is not.
+    dcn: ?dcn.Engine = null,
     /// Behind an HDMI port: what the monitor says of itself - HDMI or DVI,
     /// sound, range, its fastest clock - from its EDID; whether it was on
     /// the port when last looked at, how many looks in a row have seen
@@ -1878,6 +1887,13 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
             }
         }
     }
+    if (scanout == .uefi) {
+        // The engine reading the firmware's framebuffer, where it is one
+        // this driver knows. What it says of itself goes in the boot's
+        // lines; nothing is written to it, and the picture is copied into
+        // the framebuffer as before either way.
+        screen.dcn = dcn.find(sys, screen.scanout.uefi);
+    }
     if (isHdmi(scanout)) {
         // The modes the monitor takes, the part's size at 60 Hz without
         // one, and the display's frame interrupt.
@@ -1955,6 +1971,8 @@ fn destroy(board: *rtg.RtgBoard) callconv(.c) void {
     const screen = screenOf(board);
     // The GPU lets go of the buffers before they are given back.
     if (screen.scanout == .virtio) virtio.stop(&screen.scanout.virtio);
+    if (screen.dcn) |*found| dcn.forget(found);
+    screen.dcn = null;
     stopFlipping(screen);
     if (screen.frame_hooked) screen.sys.RemIntServer(screen.frame_irq, &screen.frame_int);
     screen.frame_hooked = false;

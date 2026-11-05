@@ -480,10 +480,11 @@ export fn kmain(at: usize) callconv(.c) noreturn {
             @as(u64, screen.base),
         });
     } else {
-        note("screen %dx%d, stride %d, at 0x%lx, writes %s", .{
+        note("screen %dx%d, stride %d, %ldK at 0x%lx, writes %s", .{
             screen.width,
             screen.height,
             screen.stride,
+            @as(u64, screen.size / 1024),
             @as(u64, screen.base),
             @as([*:0]const u8, if (screen_gathered) "gathered" else "one by one: the map could not gather them"),
         });
