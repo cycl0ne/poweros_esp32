@@ -24,8 +24,7 @@ const List = sdk.exec.List;
 ///
 /// INPUTS:
 /// - `which` - `EXECLIST_MEMORY`, `_LIBRARIES`, `_DEVICES`, `_RESOURCES`,
-///   `_PORTS`, `_SEMAPHORES`, `_TASK_READY`, `_TASK_WAIT` or
-///   `_MEM_HANDLERS`.
+///   `_PORTS`, `_SEMAPHORES` or `_MEM_HANDLERS`.
 ///
 /// RESULT:
 /// The list, or null - with nothing taken - for a number exec has no list
@@ -42,8 +41,11 @@ const List = sdk.exec.List;
 /// - the memory regions, the public ports and the public semaphores: a
 ///   spinlock each (exec's memory, port and semaphore locks). This core
 ///   switches no task while it is held, and the port lock masks its
-///   interrupts;
-/// - the two task queues: Disable.
+///   interrupts.
+///
+/// There are no task numbers to ask for: a task is on the ready or wait
+/// list of the core that owns it, and `LockCoreTasks` hands those two
+/// back with that core's lock taken.
 ///
 /// **The caller's side of the bargain**: write nothing, and keep no node
 /// past `UnlockExecList` - copy out the fields wanted and give the list back
@@ -72,7 +74,8 @@ const List = sdk.exec.List;
 /// None known.
 ///
 /// SEE ALSO:
-/// `UnlockExecList`, `FindName`, `IntVector`, `ResModules`
+/// `UnlockExecList`, `FindName`, `IntVector`, `ResModules`,
+/// `LockCoreTasks`
 ///
 /// EXAMPLES:
 /// ```zig
@@ -93,7 +96,6 @@ pub fn LockExecList(base: *ExecBase, which: u32) ?*List {
         .memory => sys.AcquireLock(&base.lock_memory),
         .ports => sys.AcquireLock(&base.lock_ports),
         .semaphores => sys.AcquireLock(&base.lock_semaphores),
-        .tasks => sys.Disable(),
     }
     return found.list;
 }

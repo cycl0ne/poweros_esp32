@@ -34,8 +34,8 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no - it is the running task's.
-/// - Locks: takes Disable. With a spinlock held the exception is postponed to
-///   the `ReleaseLock`.
+/// - Locks: takes the task lists' lock. With a spinlock held the exception
+///   is postponed to the `ReleaseLock`.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -59,11 +59,11 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// ```
 pub fn SetExcept(base: *ExecBase, new_signals: u32, signal_set: u32) u32 {
     const sys = base.iface();
-    sys.Disable();
+    _task.lockTaskLists(base);
     const task = sys.FindTask(null).?;
     const old = task.sig_except;
     task.sig_except = (old & ~signal_set) | (new_signals & signal_set);
     if (_task.exceptionPending(task)) base.cpu().sys_flags |= _task.SFF_SAR;
-    sys.Enable(); // raises it now if pending
+    _task.unlockTaskLists(base); // raises it now if pending
     return old;
 }

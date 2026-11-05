@@ -287,4 +287,12 @@ u32 ShareWork(exec.WorkFn work, ?*anyopaque data, u32 parts)
 /// the poster holds, and no waiting - a job that waits keeps a core's
 /// worker from the queue.
 void PostWork(*exec.WorkJob job)
+/// Core `core`'s tasks with that core's lock taken (SINCE 1.31): the
+/// tasks ready to run there, by priority, and the tasks waiting for a
+/// signal there. Null past the last core the machine runs, which is how a
+/// walk over every task in the machine ends.
+?*exec.CoreTasks LockCoreTasks(u32 core)
+/// The lock `LockCoreTasks` took on core `core` given back (SINCE 1.31),
+/// and a switch that came due meanwhile taken.
+void UnlockCoreTasks(u32 core)
 ##end

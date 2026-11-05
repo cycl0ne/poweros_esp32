@@ -42,9 +42,9 @@ const Task = sdk.exec.Task;
 /// CONTEXT:
 /// - Waits: no, but the caller may switch - to the other core, when it
 ///   pinned itself away from this one.
-/// - Interrupts: no. It takes Disable.
-/// - Locks: takes Disable. With a spinlock held the move waits for the
-///   `ReleaseLock`, as every switch does.
+/// - Interrupts: no. It takes the task lists' lock.
+/// - Locks: takes the task lists' lock. With a spinlock held the move
+///   waits for the `ReleaseLock`, as every switch does.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -75,14 +75,19 @@ const Task = sdk.exec.Task;
 /// _ = sys.SetTaskAffinity(task, sdk.exec.ANY_CORE);
 /// ```
 pub fn SetTaskAffinity(base: *ExecBase, task: ?*Task, core: u32) u32 {
-    const sys = base.iface();
-    sys.Disable();
-    defer sys.Enable(); // where a move of the caller is taken
     const target = task orelse base.cpu().this_task;
+    _ = _task.lockOwner(base, target);
+    defer _task.unlockTaskLists(base); // where a move of the caller is taken
     const old = target.core;
     target.core = core;
     switch (target.state) {
-        .ready => _task.wakeFor(base, target),
+        // It stays on the lists of the core that owns it; the core it is
+        // pinned to now is asked to come and take it (`stealReady`),
+        // which is also how it leaves a core it may no longer run on.
+        .ready => {
+            _task.wakeFor(base, target);
+            _task.askCore(base, core);
+        },
         .run => _task.askCoreOf(base, target),
         else => {},
     }

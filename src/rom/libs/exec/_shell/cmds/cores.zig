@@ -9,6 +9,7 @@ const timer = @import("../../../../../arch/arch.zig").timer;
 const rendezvous = @import("../../../../../arch/arch.zig").rendezvous;
 const trap = @import("../../../../../arch/arch.zig").trap;
 const _cache = @import("../../cache/_cache.zig");
+const _task = @import("../../task/_task.zig");
 const exec_base = @import("../../exec_base.zig");
 const ExecBase = @import("../../exec.zig").ExecBase;
 const Shell = _shell.Shell;
@@ -46,9 +47,12 @@ pub fn run(shell: *Shell, args: *Args) anyerror!void {
             pokeOthers(base);
         } else if (_shell.same(word, "reset")) {
             sys.Disable();
+            _task.lockTaskLists(base);
             for (base.cpus(), 0..) |*cpu, core| {
                 cpu.lock_held_max = 0;
                 cpu.lock_wait_max = 0;
+                cpu.lists_held_max = 0;
+                cpu.lists_wait_max = 0;
                 cpu.engine_wait_max = 0;
                 cpu.engine_held_max = 0;
                 // The chips' own figures are kept per core as well, in
@@ -58,13 +62,14 @@ pub fn run(shell: *Shell, args: *Args) anyerror!void {
                 rendezvous.parked_max[core] = 0;
             }
             intmatrix.source_longest = @splat(0);
+            _task.unlockTaskLists(base);
             sys.Enable();
         } else if (_shell.same(word, "share")) {
             const setting = args.next() orelse return error.Usage;
             const share: u32 = if (_shell.same(setting, "on")) 1 else if (_shell.same(setting, "off")) 0 else return error.Usage;
-            sys.Disable();
+            _task.lockTaskLists(base);
             base.share_cores = share;
-            sys.Enable();
+            _task.unlockTaskLists(base);
             // The others look at the ready list again.
             pokeOthers(base);
         } else return error.Usage;
@@ -79,9 +84,10 @@ pub fn run(shell: *Shell, args: *Args) anyerror!void {
     }
     shell.print("\n", .{});
     for (0..base.cores_running) |core| {
-        // Copied under Disable: the task may end once it is let go.
+        // Copied under the task lists' lock: the task may end once it is
+        // let go.
         var running: [24]u8 = undefined;
-        sys.Disable();
+        _task.lockTaskLists(base);
         const cpu = &base.cpus_at[core];
         const task_name = cpu.this_task.name();
         const length = @min(task_name.len, running.len - 1);
@@ -89,7 +95,7 @@ pub fn run(shell: *Shell, args: *Args) anyerror!void {
         running[length] = 0;
         const dispatches = cpu.disp_count;
         const idle_rounds = cpu.idle_count;
-        sys.Enable();
+        _task.unlockTaskLists(base);
         shell.print("core %u: running %s; %u ticks, %u dispatches, %u idle rounds, %u cross-core interrupts\n", .{
             @as(u32, @intCast(core)),
             @as([*:0]const u8, @ptrCast(&running)),
@@ -104,6 +110,12 @@ pub fn run(shell: *Shell, args: *Args) anyerror!void {
             @as(u32, @truncate(cpu.lock_held_where)),
             cpu.lock_wait_max / per_us,
             @as(u32, @truncate(cpu.lock_wait_where)),
+        });
+        shell.print("  task lists held up to %u us (0x%08x), waited up to %u us (0x%08x)\n", .{
+            cpu.lists_held_max / per_us,
+            @as(u32, @truncate(cpu.lists_held_where)),
+            cpu.lists_wait_max / per_us,
+            @as(u32, @truncate(cpu.lists_wait_where)),
         });
         shell.print("  cache engine waited up to %u us, held up to %u us; parked up to %u us\n", .{
             cpu.engine_wait_max / per_us,
@@ -131,9 +143,8 @@ fn ticksOf(core: u32) u32 {
 
 /// The cross-core interrupt raised on every running core but this one.
 fn pokeOthers(base: *ExecBase) void {
-    const sys = base.iface();
-    sys.Disable();
-    defer sys.Enable();
+    _task.lockTaskLists(base);
+    defer _task.unlockTaskLists(base);
     const me = exec_base.coreId();
     for (0..base.cores_running) |core| {
         if (core != me) intmatrix.raiseCrossCore(@intCast(core));

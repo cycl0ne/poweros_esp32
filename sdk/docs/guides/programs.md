@@ -823,7 +823,15 @@ each for its own case:
 |---|---|---|---|
 | `ObtainSemaphore`/`ReleaseSemaphore` | as long as needed, waits included | a task that wants it sleeps until it is given back | a file, a screen, a device's unit: what its holder works on at length |
 | `AcquireLock`/`ReleaseLock` | a few hundred cycles | one that wants it tries again until it is free | a few fields or a list changed in a few lines - and with `LOCKF_INTERRUPT`, what an interrupt touches too |
-| `Disable`/`Enable` | a few lines | no interrupt runs, on any core | what exec's own interrupts touch: vectors, task queues |
+| `Disable`/`Enable` | a few lines | no interrupt runs, on any core | what exec's own interrupts touch: the vectors, the server chains, the software interrupt queues |
+
+The task queues are **not** among them. Each core has ready and waiting
+lists of its own, and those lists, the state and signals of the tasks on
+them, and what that core runs are under **that core's** lock, which
+`LockCoreTasks(core)` takes and `Signal`, `Wait` and the rest take for
+themselves. So a signal sent waits for no interrupt handler, a core
+choosing what to run next waits for no `Disable`, and two cores
+signalling tasks of their own wait for nothing at all.
 
 Which one is a question of what the holder does:
 
@@ -938,17 +946,20 @@ code goes. exec says when it is:
 
 The kernel runs on every core of the chip - the ESP32s' two, the
 VisionFive 2's four U74s and QEMU virt's four harts - and `-Dcores=1`
-builds one that keeps to one. Each core has a dispatcher of its own, all
-take tasks from one ready list, and a task runs on whichever core is free
-- so tasks really do run at once, and what keeps them apart has to hold
-on every core:
+builds one that keeps to one. Each core has a dispatcher of its own and
+ready and waiting lists of its own, a core with nothing worth running
+takes work from another's, and a task runs on whichever core is free - so
+tasks really do run at once, and what keeps them apart has to hold on
+every core:
 
 - **Nothing stops the whole machine.** exec's lists, every library's
   vectors and every module's own data are under locks of their own, which
   hold on every core; a task made ready runs as soon as a core is free.
 - **Disable** masks this core's interrupts and holds off the other cores'
   interrupts and Disables as well. The devices' interrupts are all core
-  0's.
+  0's. It does not hold off the other cores' dispatchers: each core's
+  task queues have a lock of their own, which `LockCoreTasks(core)`
+  takes.
 - **A spinlock** stops task switching on its own core only, which is all
   it needs: another core spins until it is free.
 - **The cycle counter** (`sdk.hardware.cpu.ccount`) is each core's own,
@@ -975,10 +986,18 @@ _ = sys.AddTask(&radio.task, &radioCode, null);
 ```
 
 The idle tasks are pinned one to each core, and so is the Wi-Fi vendor
-code, to core 0. A running task is on neither of exec's task queues:
-`CoreTask(core)` answers what a core runs - asked inside `Disable`, from
-core 0 up until it answers null - which is how `ShowInfo TASKS` lists every
-task once, with the core it runs on and the core it is pinned to.
+code, to core 0. A task is on the lists of the core that owns it - the
+core it last ran on - and a core with nothing worth running takes the
+best task it may run from another core's list, which is how the work
+spreads. There is no one list of the machine's tasks, so a program that
+wants them all walks the cores: `LockCoreTasks(core)` answers one core's
+ready and waiting lists with that core's lock held, from core 0 up until
+it answers null, and `CoreTask(core)` answers what that core runs - a
+running task is on neither list. That is how `ShowInfo TASKS` lists every
+task once, with the core it is on and the core it is pinned to. A task
+that moves between cores while such a walk is made may be seen twice or
+not at all: one core's lists are held at a time, so a listing of the
+machine is a sweep and not one moment.
 `ReadCoreTimes(core, &times)` answers how a core has spent its time since
 it started - in tasks, idle, in interrupts, in cycles of its clock, counted
 at every exception rather than sampled (the VisionFive 2's U74s stop
@@ -986,7 +1005,7 @@ their cycle counters while they sleep, so there an idle core's sleep is
 timed on the timebase and counted as idle as well); read it twice and
 divide the differences for how busy the core was in between, which is what
 `SYS:System/CPULoad` charts. Each task's own share is its `timeRun()`,
-counted at the same moments - read under the task lists' lock, as
+counted at the same moments - read under its core's lock, as
 `ShowInfo TASKS` reads the tasks - which `C:Top` shows: the running
 tasks, then the ready ones, then the waiting ones, the busiest first in
 each. On the `s3>` console `cores` shows what each

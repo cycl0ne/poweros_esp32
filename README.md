@@ -671,16 +671,22 @@ cores, and 16 and 32 come up on that image unchanged, with
 turn. `C:ShowInfo TASKS` shows an idle task and a cache worker on every
 one of them.
 
-**How many cores are worth having is another question.** There is one
-ready list for every core, and `Disable` takes one lock that every
-exception on every core takes as well, so a round through the contended
-paths costs more the more cores there are. Measured in the emulator with
-more tasks than cores, the work done in five seconds peaks at four cores
-and falls away above eight - sixteen cores do a fifth of what four do and
-32 a fortieth - while the longest a core waits for that lock grows from
-0.4 ms to 25 ms. Ready lists per core are what that asks for. The figures
-are an emulator's and a real machine's are the ones to design against,
-but the shape of them is the system's own.
+**What the cores cost each other** is what `C:test/cores` measures: 64
+worker tasks pass a token round and hold one another off through
+`Disable`, a semaphore and a spinlock, for five seconds. The chain is
+serial, so more cores cannot make it faster - the figure says how much
+the machine loses to its own scheduling as cores are added. Each core has
+ready and waiting lists of its own under a lock of its own, and a core
+with nothing worth running takes the best task it may run from another
+core's list, so a signal waits only for the core that owns the task it
+wakes and a dispatcher waits for no handler and for no other core: 32
+cores do 61% of what one core does, and the longest a core waits for a
+lock grows from 1.0 ms at two cores to 3.4 ms at 32. What a core pays for
+lists it may be the only one on is about 2.4% of the work done, measured
+with the emulator's clock tied to instructions so that the host's own
+load cannot move the figure. The figures are an emulator's and a real
+machine's are the ones to design against, but the shape of them is the
+system's own.
 
 **The machine's power** is its firmware's as well. A UEFI firmware keeps
 half of itself in memory for the system that follows it, and that half is

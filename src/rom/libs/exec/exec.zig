@@ -164,6 +164,8 @@ pub const ResetWaitable = @import("waitable/resetwaitable.zig").ResetWaitable;
 pub const WaitForAny = @import("waitable/waitforany.zig").WaitForAny;
 pub const ShareWork = @import("task/sharework.zig").ShareWork;
 pub const PostWork = @import("task/postwork.zig").PostWork;
+pub const LockCoreTasks = @import("task/lockcoretasks.zig").LockCoreTasks;
+pub const UnlockCoreTasks = @import("task/unlockcoretasks.zig").UnlockCoreTasks;
 pub const CreateTask = @import("task/createtask.zig").CreateTask;
 pub const NewStackRun = @import("task/newstackrun.zig").NewStackRun;
 pub const startMultitasking = _task.startMultitasking;
@@ -408,6 +410,8 @@ pub const LIBRARY_REVISION = exec_init.LIBRARY_REVISION;
 /// struct ExecBase (exec_base.zig).
 pub const ExecBase = exec_base.ExecBase;
 pub const CpuState = exec_base.CpuState;
+pub const coresStateSize = exec_base.coresStateSize;
+pub const coresStateAt = exec_base.coresStateAt;
 
 /// Where exec routes interrupt numbers and masks interrupts; the kernel
 /// sets it before the bootstrap (the default does nothing, for host tests).
@@ -483,9 +487,8 @@ pub fn deinit() void {
         if (start >= @intFromPtr(mh.lower) and start < @intFromPtr(mh.upper)) {
             // The cores' state first, while the base is still there to
             // say where it is and how much of it there is.
-            const cpus_start = @intFromPtr(sys.cpus_at);
-            const cpus_header = sdk.exec.MemBlock.of(@ptrFromInt(cpus_start));
-            const cpus_whole = _memory.alignUp(sys.cores_state * @sizeOf(CpuState), MEM_BLOCKSIZE) + MEM_BLOCKSIZE;
+            const cpus_header = sdk.exec.MemBlock.of(sys.cpus_block.?);
+            const cpus_whole = _memory.alignUp(exec_base.coresStateSize(sys.cores_state), MEM_BLOCKSIZE) + MEM_BLOCKSIZE;
             cpus_header.size = 0;
             SysBase.iface().Deallocate(mh, cpus_header, cpus_whole);
             // Through the table like everything else: the vector is read
@@ -733,7 +736,7 @@ fn testBoot(regions: []const MemRegion, boot: ?*const BootInfo) error{OutOfMemor
         const mh = CreateMemHeader(no_base, r.size, r.attributes, r.pri, r.base, r.name) orelse continue;
         if (block == null) {
             block = allocateExecBlock(mh, sizes.neg + sizes.pos);
-            if (block != null) cpus = allocateExecBlock(mh, @sizeOf(CpuState));
+            if (block != null) cpus = allocateExecBlock(mh, exec_base.coresStateSize(1));
         }
         Enqueue(no_base, &pending, &mh.node);
     }
@@ -743,7 +746,9 @@ fn testBoot(regions: []const MemRegion, boot: ?*const BootInfo) error{OutOfMemor
     lib.version = exec_init.exec_tag.version;
     lib.id_string = exec_init.exec_tag.id_string;
     const sys: *ExecBase = @fieldParentPtr("lib", lib);
-    sys.cpus_at = @ptrCast(@alignCast(cpus orelse return error.OutOfMemory));
+    const cpus_block = cpus orelse return error.OutOfMemory;
+    sys.cpus_block = cpus_block;
+    sys.cpus_at = exec_base.coresStateAt(cpus_block);
     sys.cores_state = 1;
     sys.mem_list.init(.memory);
     while (RemHead(sys, &pending)) |node| Enqueue(sys, &sys.mem_list, node);
@@ -1087,10 +1092,12 @@ test "LockExecList takes each list's own lock, and UnlockExecList gives it back"
     UnlockExecList(SysBase, sdk.exec.EXECLIST_MEMORY);
     try testing.expectEqual(@as(u32, 0), SysBase.lock_memory.state);
 
-    _ = LockExecList(SysBase, sdk.exec.EXECLIST_TASK_READY).?;
-    try testing.expect(SysBase.cpu().id_nest_cnt >= 0);
-    UnlockExecList(SysBase, sdk.exec.EXECLIST_TASK_READY);
-    try testing.expect(SysBase.cpu().id_nest_cnt < 0);
+    // The tasks are each core's own, under that core's lock.
+    try testing.expect(LockExecList(SysBase, sdk.exec.EXECLIST_TASK_READY) == null);
+    _ = LockCoreTasks(SysBase, 0).?;
+    try testing.expect(SysBase.cpus_at[0].tasks_lock != 0);
+    UnlockCoreTasks(SysBase, 0);
+    try testing.expectEqual(@as(u32, 0), SysBase.cpus_at[0].tasks_lock);
 
     // No list, nothing taken - and nothing to give back.
     try testing.expect(LockExecList(SysBase, 9999) == null);

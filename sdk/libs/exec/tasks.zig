@@ -6,9 +6,27 @@ const std = @import("std");
 const Node = @import("nodes.zig").Node;
 const MinNode = @import("nodes.zig").MinNode;
 const MinList = @import("lists.zig").MinList;
+const List = @import("lists.zig").List;
 const ExecBase = @import("../../interface/exec.zig").ExecBase;
 const Message = @import("ports.zig").Message;
 const semaphores = @import("semaphores.zig");
+
+/// The tasks of one core, which `LockCoreTasks` answers with that core's
+/// lock taken: the tasks ready to run there, by priority, and the tasks
+/// waiting for a signal there. Every task that exists is on one core's
+/// pair of lists or running on a core, and which core that is, is the
+/// task's `owner`.
+///
+/// There is no one list of the machine's ready tasks: each core has its
+/// own, and a core with nothing ready takes a task from another's. So a
+/// program that wants every task walks the cores, from 0 until
+/// `LockCoreTasks` answers null.
+pub const CoreTasks = extern struct {
+    /// Ready to run on this core, highest priority first.
+    ready: List = .{},
+    /// Waiting for a signal, in the order they came to wait.
+    wait: List = .{},
+};
 
 /// tc_State
 pub const TaskState = enum(u8) {
@@ -148,6 +166,11 @@ pub const Task = extern struct {
     /// tc_IDNestCnt: the task's Disable nesting, kept here while it is
     /// switched out.
     id_nest_cnt: i8 = -1,
+    /// The core whose lists this task is on, and which runs it: what
+    /// says whose lock covers its state, its signals and its place in a
+    /// list. A task keeps the core it last ran on until that core's work
+    /// is taken by another (`stealReady`) or it is pinned elsewhere.
+    owner: u32 = 0,
     /// The core it keeps to (`SetTaskAffinity`), or ANY_CORE for whichever
     /// core is free. A core the machine does not have is a task that waits
     /// for one that never comes, so a core is named only once it is known

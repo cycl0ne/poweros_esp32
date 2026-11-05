@@ -46,7 +46,7 @@ const FileHandle = dos.FileHandle;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Top";
-const VERSION_STRING = "\x00$VER: Top 1.3 (17.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Top 1.4 (04.11.2026)\r\n";
 
 const template = "INTERVAL/K/N,COUNT/K/N";
 const arg_interval = 0;
@@ -332,28 +332,30 @@ fn stopClock(clock: *timer.TimeRequest) bool {
     return false;
 }
 
-/// The cores' times and every task, copied out under one Disable: what
-/// each core runs (CoreTask, from core 0 up until one is not running),
-/// then the two queues, whose own lock is Disable too and nests.
+/// The cores' times and every task, copied out a core at a time: its
+/// times, what it runs (CoreTask), and its own ready and waiting tasks,
+/// each core under its own lock. A task that moves between cores while
+/// this walks them may be seen twice or not at all, which is a line in a
+/// listing that refreshes every second.
 fn look(into: *Look) void {
     into.count = 0;
     into.missed = 0;
-    sys.Disable();
     var core: u32 = 0;
     while (core < max_cores and sys.ReadCoreTimes(core, &into.cores[core])) core += 1;
     into.core_count = core;
     core = 0;
-    while (sys.CoreTask(core)) |task| : (core += 1) take(into, task, .run, core);
-    for ([_]struct { state: State, which: u32 }{
-        .{ .state = .ready, .which = exec.EXECLIST_TASK_READY },
-        .{ .state = .wait, .which = exec.EXECLIST_TASK_WAIT },
-    }) |queue| {
-        const list = sys.LockExecList(queue.which).?;
-        var it = list.iterator();
-        while (it.next()) |node| take(into, @fieldParentPtr("node", node), queue.state, null);
-        sys.UnlockExecList(queue.which);
+    while (core < max_cores) : (core += 1) {
+        const tasks = sys.LockCoreTasks(core) orelse break;
+        defer sys.UnlockCoreTasks(core);
+        if (sys.CoreTask(core)) |task| take(into, task, .run, core);
+        for ([_]struct { state: State, list: *exec.List }{
+            .{ .state = .ready, .list = &tasks.ready },
+            .{ .state = .wait, .list = &tasks.wait },
+        }) |queue| {
+            var it = queue.list.iterator();
+            while (it.next()) |node| take(into, @fieldParentPtr("node", node), queue.state, core);
+        }
     }
-    sys.Enable();
     holders.take(sys);
     for (into.seen[0..into.count]) |*task| {
         task.memory = if (holders.of(task.id)) |owner| owner.bytes else 0;

@@ -53,7 +53,7 @@ pub fn bootStrap(regions: []const exec.MemRegion, cores: u32) Error!*exec.ExecBa
         const mh = exec.CreateMemHeader(no_base, r.size, r.attributes, r.pri, r.base, r.name) orelse continue;
         if (block == null) {
             block = exec.allocateExecBlock(mh, sizes.neg + sizes.pos);
-            if (block != null) cpus = exec.allocateExecBlock(mh, kept * @sizeOf(exec.CpuState));
+            if (block != null) cpus = exec.allocateExecBlock(mh, exec.coresStateSize(kept));
         }
         exec.Enqueue(no_base, &pending, &mh.node);
     }
@@ -63,7 +63,9 @@ pub fn bootStrap(regions: []const exec.MemRegion, cores: u32) Error!*exec.ExecBa
     lib.version = tag.version;
     lib.id_string = tag.id_string;
     const sys: *exec.ExecBase = @fieldParentPtr("lib", lib);
-    sys.cpus_at = @ptrCast(@alignCast(cpus orelse return error.NoMemory));
+    const cpus_block = cpus orelse return error.NoMemory;
+    sys.cpus_block = cpus_block;
+    sys.cpus_at = exec.coresStateAt(cpus_block);
     sys.cores_state = kept;
     sys.mem_list.init(.memory);
     while (exec.RemHead(sys, &pending)) |node| exec.Enqueue(sys, &sys.mem_list, node);

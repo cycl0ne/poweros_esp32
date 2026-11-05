@@ -111,8 +111,16 @@ pub const LIBRARY_VERSION = 1;
 /// every core the kernel found, in place of an array of a fixed size -
 /// with the raw port's line and the cache engine's figures in it, which
 /// were arrays of their own - so what exec keeps is what the machine has.
-pub const LIBRARY_REVISION = 30;
-const BUILD_DATE = "04.11.2026";
+/// 31: every core has ready and waiting lists of its own, under a lock of
+/// its own, in place of the one ready list every core shared under
+/// Disable - a task is on the lists of the core that owns it, a core with
+/// nothing worth running takes the best task it may run from another's
+/// (LockCoreTasks answers one core's), and the two numbers that named the
+/// machine's ready and waiting lists answer no list now. So a signal to a
+/// task waits only for the core that owns it, and a core choosing what to
+/// run next waits for no handler and for no other core's signal.
+pub const LIBRARY_REVISION = 31;
+const BUILD_DATE = "05.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

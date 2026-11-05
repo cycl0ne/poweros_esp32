@@ -32,9 +32,10 @@ const List = sdk.exec.List;
 // --- exec's own lists -------------------------------------------------------
 
 /// How one of exec's lists is locked: the semaphore for the lists whose
-/// holder runs other code, a spinlock for those taken on every call, and
-/// Disable for the task queues, which the scheduler moves in exceptions.
-pub const ListLock = enum { libraries, mem_handlers, memory, ports, semaphores, tasks };
+/// holder runs other code, and a spinlock for those taken on every call.
+/// The tasks are not among them: each core has its own ready and wait
+/// lists under its own lock, which `LockCoreTasks` answers.
+pub const ListLock = enum { libraries, mem_handlers, memory, ports, semaphores };
 
 /// One of exec's lists by number (`EXECLIST_*`), and its lock; null for a
 /// number exec has no list for.
@@ -50,8 +51,6 @@ pub fn execList(base: *ExecBase, which: u32) ?struct { list: *List, lock: ListLo
         sdk.exec.EXECLIST_RESOURCES => .{ .list = &base.resource_list, .lock = .libraries },
         sdk.exec.EXECLIST_PORTS => .{ .list = &base.port_list, .lock = .ports },
         sdk.exec.EXECLIST_SEMAPHORES => .{ .list = &base.sem_list, .lock = .semaphores },
-        sdk.exec.EXECLIST_TASK_READY => .{ .list = &base.task_ready, .lock = .tasks },
-        sdk.exec.EXECLIST_TASK_WAIT => .{ .list = &base.task_wait, .lock = .tasks },
         sdk.exec.EXECLIST_MEM_HANDLERS => .{ .list = &base.mem_handlers, .lock = .mem_handlers },
         else => null,
     };

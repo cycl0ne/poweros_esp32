@@ -36,7 +36,7 @@ const Task = sdk.exec.Task;
 ///
 /// CONTEXT:
 /// - Waits: no, but it may switch.
-/// - Interrupts: no. It takes Disable.
+/// - Interrupts: no. It takes the task lists' lock.
 /// - Locks: none needed.
 /// - Process: a Task will do.
 ///
@@ -62,21 +62,23 @@ const Task = sdk.exec.Task;
 /// ```
 pub fn SetTaskPri(base: *ExecBase, task: *Task, pri: i8) i8 {
     const sys = base.iface();
-    sys.Disable();
+    const owner = _task.lockOwner(base, task);
     const old = task.node.pri;
     task.node.pri = pri;
     if (task.state == .ready) {
         sys.Remove(&task.node);
-        sys.Enqueue(&base.task_ready, &task.node);
+        sys.Enqueue(&base.cpus_at[owner].tasks.ready, &task.node);
+        _task.noteReady(&base.cpus_at[owner]);
         _task.wakeFor(base, task);
     } else if (task == base.cpu().this_task) {
+        @atomicStore(i32, &base.cpu().running_pri, pri, .release);
         const core = @import("../exec_base.zig").coreId();
         if (_task.bestReady(base, core)) |best| {
             if (best.node.pri > pri) base.cpu().sys_flags |= _task.SFF_SAR;
         }
     } else if (task.state == .run) {
-        _task.askCoreOf(base, task); // running on the other core
+        _task.askCoreOf(base, task); // running on another core
     }
-    sys.Enable();
+    _task.unlockTaskLists(base);
     return old;
 }

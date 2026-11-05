@@ -32,7 +32,7 @@ const DosBase = sdk.interface.dos.DosBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "ShowInfo";
-const VERSION_STRING = "\x00$VER: ShowInfo 1.3 (19.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: ShowInfo 1.4 (04.11.2026)\r\n";
 
 const template = "TASKS/S,DEVS/S,LIBS/S,RESOURCES/S,PORTS/S,SEMAPHORES/S," ++
     "HANDLERS/S,RESIDENTS/S,INTS/S,MEM/S,SEGMENTS/S,ALL/S";
@@ -176,8 +176,8 @@ fn summary() i32 {
     _ = Printf(dl, "%-12s %d running, %d ready, %d waiting\n", .{
         "Tasks",
         countRunning(),
-        countOf(exec.EXECLIST_TASK_READY),
-        countOf(exec.EXECLIST_TASK_WAIT),
+        countTasks(true),
+        countTasks(false),
     });
     _ = Printf(dl, "%-12s %d\n", .{ "Libraries", countOf(exec.EXECLIST_LIBRARIES) });
     _ = Printf(dl, "%-12s %d\n", .{ "Devices", countOf(exec.EXECLIST_DEVICES) });
@@ -196,12 +196,12 @@ fn summary() i32 {
 // --- exec's lists -------------------------------------------------------------
 
 /// What each core runs, then the two task queues. A task moves between
-/// them from an interrupt and from the other core all the time, so they
-/// are copied out together, under one Disable - a walk a node at a time
-/// would follow a task that moved into the other queue - and printed
-/// after, since printing waits on a handler. A running task is on no
-/// queue: each core is asked for its own (CoreTask), from core 0 up until
-/// one is not running.
+/// them from an interrupt and from another core all the time, so they are
+/// copied out together, under one hold of the queues' lock - a walk a
+/// node at a time would follow a task that moved into the other queue -
+/// and printed after, since printing waits on a handler. A running task
+/// is on no queue: each core is asked for its own (CoreTask), from core 0
+/// up until one is not running.
 fn tasks() void {
     _ = dl.PutStr("\nTasks\n");
     const block = sys.AllocVec(max_seen * @sizeOf(Seen), 0) orelse {
@@ -212,21 +212,21 @@ fn tasks() void {
     var copied: Copied = .{ .seen = @as([*]Seen, @ptrCast(@alignCast(block)))[0..max_seen] };
     const self = sys.FindTask(null);
 
-    // One Disable around all of it, so no task is seen twice or missed as
-    // it moves; the queues' own lock is Disable too, and nests.
-    sys.Disable();
+    // One core at a time, each under its own lock: there is no one list
+    // of the machine's tasks, and a task that moves between cores while
+    // this walks them may be seen twice or not at all.
     var core: u32 = 0;
-    while (sys.CoreTask(core)) |task| : (core += 1) copied.take(task, "run", core, task == self);
-    for ([_]struct { state: [*:0]const u8, which: u32 }{
-        .{ .state = "ready", .which = exec.EXECLIST_TASK_READY },
-        .{ .state = "wait", .which = exec.EXECLIST_TASK_WAIT },
-    }) |queue| {
-        const list = sys.LockExecList(queue.which).?;
-        var it = list.iterator();
-        while (it.next()) |n| copied.take(@fieldParentPtr("node", n), queue.state, null, false);
-        sys.UnlockExecList(queue.which);
+    while (sys.LockCoreTasks(core)) |of_core| : (core += 1) {
+        defer sys.UnlockCoreTasks(core);
+        if (sys.CoreTask(core)) |task| copied.take(task, "run", core, task == self);
+        for ([_]struct { state: [*:0]const u8, list: *exec.List }{
+            .{ .state = "ready", .list = &of_core.ready },
+            .{ .state = "wait", .list = &of_core.wait },
+        }) |queue| {
+            var it = queue.list.iterator();
+            while (it.next()) |n| copied.take(@fieldParentPtr("node", n), queue.state, core, false);
+        }
     }
-    sys.Enable();
 
     _ = dl.PutStr("state    core  pinned   pri  address     name\n");
     for (copied.seen[0..copied.count]) |*seen| seen.show();
@@ -256,11 +256,21 @@ const Copied = struct {
 fn countRunning() u32 {
     var core: u32 = 0;
     while (true) : (core += 1) {
-        sys.Disable();
-        const task = sys.CoreTask(core);
-        sys.Enable();
-        if (task == null) return core;
+        if (sys.CoreTask(core) == null) return core;
     }
+}
+
+/// How many tasks are ready, or waiting, over all the cores: each core's
+/// own list, counted under that core's lock.
+fn countTasks(ready: bool) u32 {
+    var total: u32 = 0;
+    var core: u32 = 0;
+    while (sys.LockCoreTasks(core)) |of_core| : (core += 1) {
+        defer sys.UnlockCoreTasks(core);
+        var it = (if (ready) &of_core.ready else &of_core.wait).iterator();
+        while (it.next()) |_| total += 1;
+    }
+    return total;
 }
 
 /// `value` in decimal into `text`, which the NUL ends: a core is a number

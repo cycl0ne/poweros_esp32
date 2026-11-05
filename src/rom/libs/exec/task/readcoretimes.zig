@@ -48,7 +48,9 @@ const CoreTimes = sdk.exec.CoreTimes;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: yes.
-/// - Locks: takes Disable to read a core's figures whole.
+/// - Locks: takes the core's own task lists' lock, which keeps its task
+///   where it is; the figures themselves are the core's own, counted at
+///   its exceptions and read here as they stand.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -59,15 +61,15 @@ const CoreTimes = sdk.exec.CoreTimes;
 /// stays on.
 ///
 /// Each task's share of the time in tasks is its own `timeRun()`,
-/// counted at the same moments; a listing reads it under the task lists'
-/// lock (`LockExecList(EXECLIST_TASK_READY)`, `CoreTask` for the running
-/// ones), and `C:Top` does.
+/// counted at the same moments; a listing reads it under the owning
+/// core's lock (`LockCoreTasks`, `CoreTask` for the running ones), and
+/// `C:Top` does.
 ///
 /// BUGS:
 /// None known.
 ///
 /// SEE ALSO:
-/// `CoreTask`, `SetTaskAffinity`, `LockExecList`
+/// `CoreTask`, `SetTaskAffinity`, `LockCoreTasks`
 ///
 /// EXAMPLES:
 /// ```zig
@@ -81,10 +83,11 @@ const CoreTimes = sdk.exec.CoreTimes;
 /// const busy_percent = if (all == 0) 0 else tasks * 100 / all;
 /// ```
 pub fn ReadCoreTimes(base: *ExecBase, core: u32, times: *CoreTimes) bool {
-    const sys = base.iface();
-    sys.Disable();
-    defer sys.Enable();
+    // The core first, then its lock: a core the machine does not run has
+    // no state to take a lock in.
     if (core >= base.cores_running) return false;
+    _task.lockTasksOf(base, core);
+    defer _task.unlockTaskLists(base);
     const cpu = &base.cpus_at[core];
     times.* = .{ .tasks = cpu.time_tasks, .idle = cpu.time_idle, .interrupts = cpu.time_interrupts };
     // The caller's own core: since its last exception it has been running

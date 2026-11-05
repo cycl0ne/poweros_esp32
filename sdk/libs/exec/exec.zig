@@ -132,6 +132,9 @@ pub const EXECLIST_DEVICES: u32 = 2;
 pub const EXECLIST_RESOURCES: u32 = 3;
 pub const EXECLIST_PORTS: u32 = 4;
 pub const EXECLIST_SEMAPHORES: u32 = 5;
+/// The two task numbers are refused: a task is on the lists of the core
+/// that owns it, which `LockCoreTasks` answers. The numbers stay where
+/// they are so that the ones after them keep their values.
 pub const EXECLIST_TASK_READY: u32 = 6;
 pub const EXECLIST_TASK_WAIT: u32 = 7;
 pub const EXECLIST_MEM_HANDLERS: u32 = 8;
@@ -140,6 +143,7 @@ pub const IntServerFn = interrupts.IntServerFn;
 pub const SoftIntFn = interrupts.SoftIntFn;
 
 pub const Task = tasks.Task;
+pub const CoreTasks = tasks.CoreTasks;
 pub const TaskState = tasks.TaskState;
 pub const TaskFn = tasks.TaskFn;
 pub const TaskEndFn = tasks.TaskEndFn;

@@ -51,15 +51,33 @@
 //! `taskEntry` and `exceptionEntry` are where the CPU starts a task and an
 //! exception; they are handed no base, and take the kernel's `SysBase`.
 //!
-//! **Two cores share one ready list.** Each core has its running task, its
-//! slice and its flags (`CpuState`), and its own dispatcher, which takes
-//! the best ready task that may run there: one pinned to it or to no
-//! core. The lists and every core's flags are kept under the system's interrupt
-//! lock, which a core holds in every exception and while its task is
-//! inside Disable. A task made ready goes to the core it should run on
-//! now - this one's dispatcher asked to look, or the other core poked
-//! with its cross-core interrupt, whose exit runs its dispatcher. A core
-//! writes only its own flags: the other is poked, never written.
+//! **Every core has ready and waiting lists of its own.** Each core has
+//! its running task, its slice and its flags, and its two lists
+//! (`CpuState`), and its own dispatcher, which takes the first task of
+//! its own ready list it may run. A task is on the lists of the core
+//! that owns it - the core it last ran on (`Task.owner`) - and those
+//! lists, the states and signals of the tasks on them, and that core's
+//! running task are kept under **that core's lock** (`tasks_lock`,
+//! `takeTasks` below). So a signal to a task waits only for the core
+//! that owns it, and two cores signalling tasks of their own wait for
+//! nothing at all.
+//!
+//! It is not the interrupt lock: a core deciding what to run next waits
+//! for no handler on another core, and a signal sent waits for no
+//! exception. **A core holds one core's lists at a time** - its own or
+//! another's - which is what keeps two cores from waiting on each other;
+//! a core that wants another's lets its own go first.
+//!
+//! **The cores spread the work by taking it.** A core whose own list has
+//! nothing worth running takes the highest-priority task it may run from
+//! another core's list (`stealReady`) and owns it from then on, so the
+//! highest priority ready in the machine is the one that runs, whichever
+//! core it was made ready on. What each core has ready is read from one
+//! word of its own (`ready_pri`), never from a list the reader does not
+//! hold. A task made ready outranking what runs on its core has that
+//! core asked to look - this one's dispatcher through its flags, another
+//! through its cross-core interrupt. A core writes only its own flags:
+//! the others are poked, never written.
 //!
 //! **What keeps a task on its core**: Disable, and a spinlock held
 //! (`hold_count`) - each for its own core only. Nothing stops the machine:
@@ -290,14 +308,23 @@ pub fn numberedName(buffer: []u8, word: []const u8, number: u32) [*:0]const u8 {
 /// `error.OutOfMemory` if either task cannot be allocated, which the caller
 /// turns into a failed init.
 pub fn initTasks(base: *ExecBase) error{OutOfMemory}!void {
-    base.task_ready.init(.task);
-    base.task_wait.init(.task);
+    // Every core's state, not only this one's: a task pinned to a core
+    // goes on that core's lists as soon as it is added, which is before
+    // the core is started (`prepareCore`), and the memory the states
+    // were cut from holds whatever was there.
+    for (base.cpus_at[0..base.cores_state]) |*state| {
+        state.* = .{};
+        state.tasks.ready.init(.task);
+        state.tasks.wait.init(.task);
+    }
     base.quantum = default_quantum;
     base.cpu().elapsed = default_quantum;
     const boot = newTask(base, "kernel", 0, 0) orelse return error.OutOfMemory;
     boot.state = .run;
     boot.core = 0;
+    boot.owner = 0;
     base.cpu().this_task = boot;
+    base.cpu().running_pri = boot.node.pri;
     base.cpu().time_mark = cycles();
     base.boot_task = boot;
     const idle = base.iface().CreateTask("idle", -128, &idleLoop, idle_stack_size) orelse
@@ -305,6 +332,7 @@ pub fn initTasks(base: *ExecBase) error{OutOfMemory}!void {
     makeSystemTask(idle);
     // Pinned once it is on the ready list: no other core runs yet.
     idle.core = 0;
+    idle.owner = 0;
     base.cpu().idle_task = idle;
 }
 
@@ -331,11 +359,15 @@ pub fn prepareCore(base: *ExecBase, core: u32, stack_lower: usize, stack_upper: 
     task.sp_lower = stack_lower;
     task.sp_upper = stack_upper;
     task.core = core;
+    task.owner = core;
     task.sig_alloc |= sdk.exec.tasks.system_signals;
     task.state = .run;
     guardStack(task);
-    base.cpus_at[core] = .{};
+    // The state was made ready for every core at exec's own start
+    // (`initTasks`), and tasks pinned to this one are on its lists
+    // already: only what the core itself needs is written here.
     base.cpus_at[core].this_task = task;
+    base.cpus_at[core].running_pri = task.node.pri;
     base.cpus_at[core].elapsed = base.quantum;
     base.cpus_at[core].idle_task = task;
     return true;
@@ -346,12 +378,13 @@ pub fn prepareCore(base: *ExecBase, core: u32, stack_lower: usize, stack_upper: 
 /// `idleHere`.
 ///
 /// INPUTS:
-/// - `base` - exec: how many cores take tasks.
+/// - `base` - exec: how many cores take tasks, which the dispatchers read
+///   under the task lists' lock.
 pub fn coreStarted(base: *ExecBase) void {
     base.cpu().time_mark = cycles();
-    _interrupt.takeSystemInterrupts(base, @returnAddress());
+    takeTaskLists(base, @returnAddress());
     base.cores_running = exec_base.coreId() + 1;
-    _interrupt.dropSystemInterrupts(base);
+    dropTaskLists(base);
 }
 
 /// The idle task's loop, for the code of a core that became its idle
@@ -372,7 +405,10 @@ pub fn idleHere(base: *ExecBase) noreturn {
 pub fn deinitTasks(base: *ExecBase) void {
     for ([_]?*Task{ base.cpus_at[0].idle_task, base.boot_task }) |maybe| {
         const task = maybe orelse continue;
-        if (task.state == .ready or task.state == .wait) base.iface().Remove(&task.node);
+        if (task.state == .ready or task.state == .wait) {
+            base.iface().Remove(&task.node);
+            noteReady(&base.cpus_at[task.owner]);
+        }
         freeTaskMemory(base, task);
     }
     base.cpus_at[0].idle_task = null;
@@ -485,22 +521,23 @@ pub fn endHooks(task: *Task) void {
 }
 
 /// Every end hook of `task` run, in the order they were put on, each taken
-/// off under Disable before it runs and nothing held while it does.
+/// off under the task lists' lock before it runs and nothing held while
+/// it does.
 pub fn runEndHooks(base: *ExecBase, task: *Task) void {
     const sys = base.iface();
     while (true) {
-        sys.Disable();
+        lockTaskLists(base);
         if (task.end_hooks.head == null) {
-            sys.Enable();
+            unlockTaskLists(base);
             return;
         }
         const node = sys.RemHead(@ptrCast(&task.end_hooks)) orelse {
-            sys.Enable();
+            unlockTaskLists(base);
             return;
         };
         const hook: *sdk.exec.TaskEndHook = @ptrCast(node);
         hook.task = null;
-        sys.Enable();
+        unlockTaskLists(base);
         hook.code(sys, task, hook);
     }
 }
@@ -630,9 +667,14 @@ pub fn killTask(base: *ExecBase, task: *Task) bool {
     stopElsewhere(base, task);
     _locks.withdraw(base, task);
     _waitable.withdraw(base, task);
-    sys.Disable();
-    defer sys.Enable();
-    if (task.state == .ready or task.state == .wait) sys.Remove(&task.node);
+    // The lists of the core that owns it: it is taken off them and put
+    // back on that core's ready list, started again from the top.
+    const owner = lockOwner(base, task);
+    defer unlockTaskLists(base);
+    if (task.state == .ready or task.state == .wait) {
+        sys.Remove(&task.node);
+        noteReady(&base.cpus_at[owner]);
+    }
     // Its own stack, if NewStackRun had it on another.
     if (task.home_upper != 0) {
         task.sp_lower = task.home_lower;
@@ -652,7 +694,8 @@ pub fn killTask(base: *ExecBase, task: *Task) bool {
     task.id_saved = 0;
     task.sp_reg = task_hardware.init_context(task.sp_upper, vec(killEntry), task);
     task.state = .ready;
-    sys.Enqueue(&base.task_ready, &task.node);
+    sys.Enqueue(&base.cpus_at[owner].tasks.ready, &task.node);
+    noteReady(&base.cpus_at[owner]);
     wakeFor(base, task);
     return true;
 }
@@ -685,11 +728,16 @@ pub fn findById(base: *ExecBase, id: u32) ?*Task {
     for (base.cpus_at[0..base.cores_running]) |*cpu| {
         if (cpu.this_task.id == id) return cpu.this_task;
     }
-    for ([_]*sdk.exec.List{ &base.task_ready, &base.task_wait }) |list| {
-        var it = list.iterator();
-        while (it.next()) |node| {
-            const task: *Task = @fieldParentPtr("node", node);
-            if (task.id == id) return task;
+    for (0..base.cores_running) |number| {
+        const core: u32 = @intCast(number);
+        takeTasks(base, core, @returnAddress());
+        defer dropTaskLists(base);
+        for ([_]*sdk.exec.List{ &base.cpus_at[core].tasks.ready, &base.cpus_at[core].tasks.wait }) |list| {
+            var it = list.iterator();
+            while (it.next()) |node| {
+                const task: *Task = @fieldParentPtr("node", node);
+                if (task.id == id) return task;
+            }
         }
     }
     return null;
@@ -745,8 +793,8 @@ fn keptFrom(task: *const Task, block: *anyopaque) ?usize {
 /// context, where the memory lock - a plain one, so that allocating never
 /// masks interrupts - is not taken through AcquireLock. It is tried here
 /// directly, once: its holder - a task on this core the exception
-/// interrupted, or one on the other core, which may itself be waiting for
-/// this core's interrupt lock - cannot be waited for. A lock held is
+/// interrupted, or one on another core, which may itself be waiting for
+/// one of this core's locks - cannot be waited for. A lock held is
 /// false, and the task is tried again at a later exit. And directly, not
 /// through the table, as everything here: the dispatcher runs on a
 /// half-switched machine (codex rule 1).
@@ -766,10 +814,11 @@ fn freeRemovedTask(base: *ExecBase, task: *Task) bool {
 
 /// A task's end message replied, from an exception exit. The port's list
 /// is exec's port lock's, and every holder of that lock holds the system's
-/// interrupt lock as well - which the exception holds - so the list is
-/// changed here without it, and directly, as everything in the dispatcher
-/// is. A port that signals has its task woken; one that causes a software
-/// interrupt is not served from here.
+/// interrupt lock as well (a LOCKF_INTERRUPT lock is taken inside
+/// Disable) - which the exit takes around this - so the list is changed
+/// here without the port lock, and directly, as everything in the
+/// dispatcher is. A port that signals has its task woken; one that causes
+/// a software interrupt is not served from here.
 fn replyEnded(base: *ExecBase, msg: *sdk.exec.Message) void {
     const port = msg.reply_port orelse return;
     msg.node.type = .replymsg;
@@ -855,12 +904,24 @@ fn nextReaped(task: *Task) ?*Task {
 /// made ready if it waits for one of them. Directly, not through the
 /// table (codex rule 1); the caller is in an exception.
 fn wake(base: *ExecBase, task: *Task, signals: u32) void {
+    // The task is whichever core's owns it, and this one holds its own
+    // lists here (the exit's reap). A core holds one core's at a time, so
+    // its own go and are taken again around the owner's.
+    const cpu = base.cpu();
+    const held = cpu.tasks_depth == 1;
+    const here = cpu.tasks_which;
+    if (held) dropTaskLists(base);
+    const owner = takeOwner(base, task, 2);
     task.sig_recvd |= signals;
-    if (task.state != .wait or task.sig_recvd & task.sig_wait == 0) return;
-    Remove(base, &task.node);
-    task.state = .ready;
-    Enqueue(base, &base.task_ready, &task.node);
-    wakeFor(base, task);
+    if (task.state == .wait and task.sig_recvd & task.sig_wait != 0) {
+        Remove(base, &task.node);
+        task.state = .ready;
+        Enqueue(base, &base.cpus_at[owner].tasks.ready, &task.node);
+        noteReady(&base.cpus_at[owner]);
+        wakeFor(base, task);
+    }
+    dropTaskLists(base);
+    if (held) takeTasks(base, here, 2);
 }
 
 /// Where every task really starts. It runs the task's code and then
@@ -906,8 +967,208 @@ pub fn runCode(base: *ExecBase, task: *Task) void {
 pub fn blockCurrent(base: *ExecBase, task: *Task, signal_set: u32) void {
     task.sig_wait = signal_set;
     task.state = .wait;
-    base.iface().AddTail(&base.task_wait, &task.node);
+    // The task stays this core's while it waits: the core it last ran on
+    // is the one whose lock covers it, and whose list its signal puts it
+    // back on.
+    base.iface().AddTail(&base.cpu().tasks.wait, &task.node);
     base.cpu().sys_flags |= SFF_SAR;
+}
+
+// --- a core's task lists and their lock -------------------------------------
+
+/// Whether this core holds a core's task lists - its own or another's.
+/// Its own count says so, and not a lock word every core writes: asking
+/// is a load of a line no other core touches.
+///
+/// INPUTS:
+/// - `base` - exec: this core's state.
+pub inline fn taskListsHeld(base: *ExecBase) bool {
+    return base.cpu().tasks_depth != 0;
+}
+
+/// Core `which`'s task lists taken by this core: spun for while another
+/// core has them, answering a hold as it goes round. **This core's
+/// interrupts are masked already** - a core that held them with its
+/// interrupts on would have its own handler wait for itself. The longest
+/// wait and the code that waited are kept in the core's state.
+///
+/// Taking the same core's again counts a nesting, as an exception taken
+/// while the core's task holds them does, which is also what tells the
+/// dispatcher to leave that task where it is (`reschedule`).
+///
+/// **A core holds one core's lists at a time.** Nothing asks for a second
+/// core's while it holds one - that is what keeps two cores from waiting
+/// on each other - so a core that wants another's lets its own go first
+/// (`stealReady`), and a caller that must reach a task of another core's
+/// goes through `takeOwner`.
+///
+/// INPUTS:
+/// - `base` - exec: the cores' states.
+/// - `which` - whose lists.
+/// - `where` - the code taking them, or 1 for the dispatcher, 2 for what
+///   a switch left behind, 3 for the time slice, 4 for a core taking work
+///   from this one.
+pub fn takeTasks(base: *ExecBase, which: u32, where: usize) void {
+    const cpu = base.cpu();
+    if (cpu.tasks_depth != 0) {
+        cpu.tasks_depth += 1;
+        return;
+    }
+    const me = exec_base.coreId() + 1;
+    const lock = &base.cpus_at[which].tasks_lock;
+    const before = cycles();
+    while (@cmpxchgWeak(u32, lock, 0, me, .acquire, .monotonic) != null) {
+        _interrupt.interrupt_hardware.park_if_asked();
+    }
+    const now = cycles();
+    const waited = now -% before;
+    if (waited > cpu.lists_wait_max) {
+        cpu.lists_wait_max = waited;
+        cpu.lists_wait_where = where;
+    }
+    cpu.lists_taken_at = now;
+    cpu.lists_taker = where;
+    cpu.tasks_depth = 1;
+    cpu.tasks_which = which;
+}
+
+/// This core's own task lists taken, which is what the dispatcher, the
+/// time slice and a task blocking itself want.
+///
+/// INPUTS:
+/// - `base` - exec: the cores' states.
+/// - `where` - the code taking them.
+pub fn takeTaskLists(base: *ExecBase, where: usize) void {
+    takeTasks(base, exec_base.coreId(), where);
+}
+
+/// The lists of the core that owns `task` taken, and `task` still that
+/// core's once they are: another core may take it over between the read
+/// and the lock, and then the lock is let go again and the new owner's
+/// taken. **This core's interrupts are masked already**, and it holds no
+/// other core's lists.
+///
+/// INPUTS:
+/// - `base` - exec: the cores' states.
+/// - `task` - the task to reach.
+/// - `where` - the code taking them.
+///
+/// RESULT:
+/// The core whose lists are now held.
+pub fn takeOwner(base: *ExecBase, task: *Task, where: usize) u32 {
+    while (true) {
+        const owner = @atomicLoad(u32, &task.owner, .acquire);
+        takeTasks(base, owner, where);
+        if (@atomicLoad(u32, &task.owner, .acquire) == owner) return owner;
+        dropTaskLists(base);
+    }
+}
+
+/// The task lists this core holds let go, everything written under them
+/// seen first; the longest hold and the code that took them kept in the
+/// core's state. A nested take is counted back instead, and a core that
+/// holds none lets nothing go.
+///
+/// INPUTS:
+/// - `base` - exec: the cores' states.
+pub fn dropTaskLists(base: *ExecBase) void {
+    const cpu = base.cpu();
+    if (cpu.tasks_depth == 0) return;
+    if (cpu.tasks_depth > 1) {
+        cpu.tasks_depth -= 1;
+        return;
+    }
+    const held = cycles() -% cpu.lists_taken_at;
+    if (held > cpu.lists_held_max) {
+        cpu.lists_held_max = held;
+        cpu.lists_held_where = cpu.lists_taker;
+    }
+    cpu.tasks_depth = 0;
+    @atomicStore(u32, &base.cpus_at[cpu.tasks_which].tasks_lock, 0, .release);
+}
+
+/// The highest priority ready on `cpu`, kept as its list is changed so
+/// that another core can see what is waiting here without reading a list
+/// it does not hold - a node it read could be a task already freed. Below
+/// every priority when nothing is ready.
+pub const nothing_ready: i32 = -129;
+
+/// `cpu`'s summary of what is ready on it written again: its own core
+/// does this under its lists, each time they change.
+pub fn noteReady(cpu: *exec_base.CpuState) void {
+    const head = cpu.tasks.ready.first();
+    const pri: i32 = if (head) |node| node.pri else nothing_ready;
+    @atomicStore(i32, &cpu.ready_pri, pri, .release);
+}
+
+/// This core's own task lists held from task level: its interrupts masked
+/// - so the caller keeps its core and nothing it half-changed is seen by
+/// an interrupt here - and the lists taken. What `Disable` is for the
+/// interrupt side, this is for the lists.
+///
+/// INPUTS:
+/// - `base` - exec: the cores' states.
+pub fn lockTaskLists(base: *ExecBase) void {
+    const state = _interrupt.mask();
+    // Masked, the caller stays on this core.
+    if (taskListsHeld(base)) {
+        base.cpu().tasks_depth += 1;
+        return;
+    }
+    base.cpu().lists_saved = state;
+    takeTaskLists(base, @returnAddress());
+}
+
+/// Core `which`'s task lists held from task level, the same way as this
+/// core's own: for a caller that knows whose they are.
+///
+/// INPUTS:
+/// - `base` - exec: the cores' states.
+/// - `which` - whose lists.
+pub fn lockTasksOf(base: *ExecBase, which: u32) void {
+    const state = _interrupt.mask();
+    if (taskListsHeld(base)) {
+        base.cpu().tasks_depth += 1;
+        return;
+    }
+    base.cpu().lists_saved = state;
+    takeTasks(base, which, @returnAddress());
+}
+
+/// The lists of the core that owns `task` held from task level, the same
+/// way: the answer is that core, which `unlockTaskLists` lets go again.
+///
+/// INPUTS:
+/// - `base` - exec: the cores' states.
+/// - `task` - the task to reach.
+pub fn lockOwner(base: *ExecBase, task: *Task) u32 {
+    const state = _interrupt.mask();
+    if (taskListsHeld(base)) {
+        base.cpu().tasks_depth += 1;
+        return base.cpu().tasks_which;
+    }
+    base.cpu().lists_saved = state;
+    return takeOwner(base, task, @returnAddress());
+}
+
+/// The lists let go again, the interrupts put back as they were, and a
+/// switch that fell due while they were held taken - so this is a point
+/// at which the caller may lose the processor, as `Enable` is.
+///
+/// INPUTS:
+/// - `base` - exec: the cores' states.
+pub fn unlockTaskLists(base: *ExecBase) void {
+    const cpu = base.cpu();
+    if (cpu.tasks_depth > 1) {
+        cpu.tasks_depth -= 1;
+        return;
+    }
+    const state = cpu.lists_saved;
+    dropTaskLists(base);
+    // A Signal of its own, or an AddTask, may have asked for a switch.
+    const due = switchDue(base);
+    _interrupt.unmask(state);
+    if (due) task_hardware.switch_now();
 }
 
 // --- the scheduler ----------------------------------------------------------
@@ -916,15 +1177,17 @@ pub fn blockCurrent(base: *ExecBase, task: *Task, signal_set: u32) void {
 /// exception - interrupt, syscall or trap - and `interruptExit` at the end.
 /// The depth is what makes the scheduler run only at the **outermost**
 /// exit: an interrupt that arrives inside another must not switch tasks.
-/// The outermost entry takes the system's interrupt lock, unless the core
-/// holds it already for a task inside Disable: what an exception does is
-/// kept from a Disable on the other core, as it is from one on this.
+///
+/// **It takes no lock.** What a core does going into and out of an
+/// exception - the depth, the times, the registers the kernel saved - is
+/// its own, and what the exception goes on to do takes the lock it needs:
+/// the interrupt one for a handler's chain (`dispatchInterrupt`), the
+/// task lists' for the dispatcher.
 ///
 /// INPUTS:
-/// - `base` - exec: this core's exception depth, and the lock.
+/// - `base` - exec: this core's exception depth and times.
 pub fn interruptEnter(base: *ExecBase) void {
     const cpu = base.cpu();
-    if (cpu.int_depth == 0 and cpu.id_nest_cnt < 0) _interrupt.takeSystemInterrupts(base, 1);
     // The time since the last exit was the task's it resumed - or idle -
     // and that task's own.
     if (cpu.int_depth == 0) {
@@ -951,28 +1214,53 @@ pub fn cycles() u32 {
 /// scheduler runs only at the outermost exit and only when a switch is
 /// due, so an interrupt inside an interrupt always resumes exactly what it
 /// interrupted. The outermost exit first deals with what earlier switches
-/// left behind (`reap`), and lets the interrupt lock go unless the task
-/// it resumes is inside Disable.
+/// left behind (`reap`).
+///
+/// **What it takes.** The dispatcher runs under the task lists' lock, and
+/// nothing else - a core deciding what to run next waits for no handler
+/// on another core. What a switch left behind is given back under the
+/// interrupt lock as well, since a task's end message goes on a port's
+/// list, which only Disable's holders touch.
+///
+/// A task switched out inside Disable loses the interrupt lock here: it
+/// is let go once the core no longer runs it, and the task's Enable finds
+/// nothing to let go. That is what `Disable` says of a wait - what it
+/// guards is not guarded across one.
 ///
 /// INPUTS:
-/// - `base` - exec: this core's exception depth and scheduling flags.
+/// - `base` - exec: this core's exception depth, scheduling flags and
+///   both locks.
 /// - `context` - what the kernel saved on entry.
 pub fn interruptExit(base: *ExecBase, context: *anyopaque) *anyopaque {
     const cpu = base.cpu();
     var resumed = context;
     if (cpu.int_depth == 1) {
-        if (cpu.reap != null or cpu.stopped != null) reap(base);
+        // Not while the interrupted code holds the task lists itself:
+        // this takes the interrupt lock, which comes before them - so it
+        // waits for the next exit, which is what a reap does anyway.
+        if ((cpu.reap != null or cpu.stopped != null) and !taskListsHeld(base)) {
+            _interrupt.takeSystemInterrupts(base, 3);
+            takeTaskLists(base, 2);
+            reap(base);
+            dropTaskLists(base);
+            _interrupt.dropSystemInterrupts(base);
+        }
         // A slice spent with nothing to take over: no switch, but the
         // task's stack checked as a switch would check it - a task alone
         // on its core would otherwise run off its stack unseen.
         if (cpu.sys_flags & (SFF_SAR | SFF_TQE) == SFF_TQE) checkStack(cpu.this_task, context);
-        if (cpu.sys_flags & SFF_SAR != 0) resumed = reschedule(base, context);
+        if (cpu.sys_flags & SFF_SAR != 0) {
+            takeTaskLists(base, 1);
+            resumed = reschedule(base, context);
+            dropTaskLists(base);
+        }
     }
     cpu.int_depth -= 1;
     if (cpu.int_depth == 0) {
         const now = cycles();
         cpu.time_interrupts +%= now -% cpu.time_mark;
         cpu.time_mark = now;
+        // Held for a task this core no longer runs: let go here.
         if (cpu.id_nest_cnt < 0) _interrupt.dropSystemInterrupts(base);
     }
     return resumed;
@@ -994,22 +1282,36 @@ pub fn tickQuantum(base: *ExecBase) void {
     if (cpu.elapsed > 0) cpu.elapsed -= 1;
     if (cpu.elapsed != 0) return;
     cpu.sys_flags |= SFF_TQE;
+    // The ready list read under its own lock; the core's own slice and
+    // flags need none.
+    takeTaskLists(base, 3);
+    defer dropTaskLists(base);
+    const here: i32 = cpu.this_task.node.pri;
     if (bestReady(base, core)) |best| {
-        if (best.node.pri >= cpu.this_task.node.pri) cpu.sys_flags |= SFF_SAR;
+        if (best.node.pri >= here) {
+            cpu.sys_flags |= SFF_SAR;
+            return;
+        }
     }
+    // Nothing of its own worth a switch: what the other cores have is
+    // looked at too, which is how a core with an empty list comes for
+    // work instead of waiting to be poked.
+    if (othersHaveMore(base, core, here)) cpu.sys_flags |= SFF_SAR;
 }
 
-/// Whether a switch is due on the core and allowed now: at task level, with
-/// no Disable and no spinlock outstanding. `Enable` and `ReleaseLock` ask
-/// it with their interrupts masked and take the switch once they are back,
-/// which is what makes each of them a point where the caller may lose the
+/// Whether a switch is due on the core and allowed now: at task level,
+/// with no Disable, no spinlock and not the task lists outstanding.
+/// `Enable`, `ReleaseLock` and `unlockTaskLists` ask it with their
+/// interrupts masked and take the switch once they are back, which is
+/// what makes each of them a point where the caller may lose the
 /// processor.
 ///
 /// INPUTS:
-/// - `cpu` - this core's state.
-pub fn switchDue(cpu: *const exec_base.CpuState) bool {
+/// - `base` - exec: this core's state, and the task lists' lock.
+pub fn switchDue(base: *ExecBase) bool {
+    const cpu = base.cpu();
     return cpu.sys_flags & SFF_SAR != 0 and cpu.int_depth == 0 and
-        cpu.id_nest_cnt < 0 and cpu.hold_count == 0;
+        cpu.id_nest_cnt < 0 and cpu.hold_count == 0 and !taskListsHeld(base);
 }
 
 /// Multitasking started: from here on a core switches away from a running
@@ -1024,7 +1326,7 @@ pub fn startMultitasking(base: *ExecBase) void {
     const hardware = _interrupt.interrupt_hardware;
     const state = hardware.disable();
     @atomicStore(u32, &base.multitasking, 1, .release);
-    const due = switchDue(base.cpu());
+    const due = switchDue(base);
     hardware.restore(state);
     if (due) task_hardware.switch_now();
 }
@@ -1060,7 +1362,10 @@ fn reschedule(base: *ExecBase, context: *anyopaque) *anyopaque {
     const cpu = &base.cpus_at[core];
     const current = cpu.this_task;
     const started = @atomicLoad(u32, &base.multitasking, .acquire) != 0;
-    const held = !started or cpu.id_nest_cnt >= 0 or cpu.hold_count != 0;
+    // A depth above the dispatcher's own take means the interrupted code
+    // holds task lists itself: switching away from it would leave the
+    // lock with no owner, as a spinlock would (`hold_count`).
+    const held = !started or cpu.id_nest_cnt >= 0 or cpu.hold_count != 0 or cpu.tasks_depth > 1;
     const stopping = cpu.stopping == current;
     if (current.state == .run and held) return context;
     if (current.state == .run and !stopping) {
@@ -1070,16 +1375,30 @@ fn reschedule(base: *ExecBase, context: *anyopaque) *anyopaque {
             if (bestReady(base, core)) |best| {
                 stays = best.node.pri < current.node.pri or (best.node.pri == current.node.pri and !time_up);
             }
+            // What the other cores have counts as well: a core whose own
+            // list holds nothing better than what it runs still looks at
+            // theirs, which is how it comes for work instead of waiting
+            // to be given some. The dispatcher below decides what it may
+            // actually take, and takes this task back when that is
+            // nothing.
+            if (stays and othersHaveMore(base, core, current.node.pri)) stays = false;
         }
         if (stays) {
             cpu.sys_flags &= ~SFF_SAR;
             return raiseException(base, current, context);
         }
         current.state = .ready;
+        // Marked as leaving before it goes on a list any other core can
+        // reach: a core looking for work leaves it alone until this one
+        // is off its stack (`leavingNow`). The kernel clears the word at
+        // this exception's exit, whether the task was switched away or
+        // not.
+        markLeaving(core, current);
         // Direct, not through the table: the dispatcher runs at the
         // outermost exception exit on a half-switched machine, so it
         // cannot call a vector something may have replaced (codex rule 1).
-        Enqueue(base, &base.task_ready, &current.node);
+        Enqueue(base, &cpu.tasks.ready, &current.node);
+        noteReady(cpu);
         offerOthers(base, current, core);
     }
     cpu.sys_flags &= ~(SFF_SAR | SFF_TQE);
@@ -1111,27 +1430,31 @@ fn reschedule(base: *ExecBase, context: *anyopaque) *anyopaque {
         if (current.flags & sdk.exec.TF_SWITCH != 0) {
             if (current.switch_code) |switch_code| switch_code(current, base.iface());
         }
+        // Marked before this core's lists are let go below: a task that
+        // waited may be signalled and made ready while this core is
+        // still on its stack, and a core that takes it then waits for
+        // this one to be off it.
+        markLeaving(core, current);
     }
+    // The task that held the lists at task level does not keep them
+    // across the switch: the lock is the core's, and the core is about to
+    // run another task. The depth goes back to the dispatcher's own hold
+    // before it looks - a core that takes work from another lets its own
+    // lists go while it does - and the exit lets the lock go. What the
+    // task comes back to is a hold it no longer has, which is what a wait
+    // inside Disable comes back to as well.
+    cpu.tasks_depth = 1;
     const next = takeReady(base, core);
-    // The task left stays this core's until the switch is done: the CPU
-    // still writes to its stack on the way out.
-    if (next != current and current.state != .removed and !stopping) markLeaving(core, current);
     next.state = .run;
+    @atomicStore(u32, &next.owner, core, .release);
     cpu.this_task = next;
+    @atomicStore(i32, &cpu.running_pri, next.node.pri, .release);
     cpu.elapsed = base.quantum;
     cpu.disp_count +%= 1;
     cpu.id_nest_cnt = next.id_nest_cnt;
     cpu.id_saved = next.id_saved;
     if (next.flags & sdk.exec.TF_LAUNCH != 0) {
         if (next.launch_code) |launch_code| launch_code(next, base.iface());
-    }
-    // What is left ready may be another core's to run.
-    for (0..base.cores_running) |number| {
-        const other: u32 = @intCast(number);
-        if (other == core) continue;
-        if (bestReady(base, other)) |waiting| {
-            if (waiting.node.pri > base.cpus_at[other].this_task.node.pri) pokeCore(other);
-        }
     }
     return raiseException(base, next, next.sp_reg.?);
 }
@@ -1142,17 +1465,18 @@ fn markLeaving(core: u32, task: *Task) void {
     @atomicStore(usize, &words[core], @intFromPtr(task), .release);
 }
 
-/// Until no other core is still switching away from `task`: a few hundred
-/// cycles at most, as that core is on its way out of an exception with
-/// its interrupts masked. A hold asked meanwhile is answered.
-fn waitLeft(task: *const Task, core: u32) void {
-    const words = task_hardware.leaving orelse return;
+/// Whether another core is still switching away from `task` - its
+/// context not yet saved for good, however its state reads. A core that
+/// takes work from another leaves such a task alone instead of waiting
+/// for it: the core switching away may itself be waiting for this core's
+/// lists, and two cores waiting on each other is a machine that stops.
+fn leavingNow(task: *const Task, core: u32) bool {
+    const words = task_hardware.leaving orelse return false;
     for (words, 0..) |*word, other| {
         if (other == core) continue;
-        while (@atomicLoad(usize, word, .acquire) == @intFromPtr(task)) {
-            _interrupt.interrupt_hardware.park_if_asked();
-        }
+        if (@atomicLoad(usize, word, .acquire) == @intFromPtr(task)) return true;
     }
+    return false;
 }
 
 // --- the cores --------------------------------------------------------------
@@ -1176,7 +1500,7 @@ pub fn runnableOn(base: *const ExecBase, task: *const Task, core: u32) bool {
 /// - `base` - exec: its ready list.
 /// - `core` - the core asking.
 pub fn bestReady(base: *ExecBase, core: u32) ?*Task {
-    var it = base.task_ready.iterator();
+    var it = base.cpus_at[core].tasks.ready.iterator();
     while (it.next()) |node| {
         const task: *Task = @fieldParentPtr("node", node);
         if (runnableOn(base, task, core)) return task;
@@ -1191,39 +1515,134 @@ pub fn bestReady(base: *ExecBase, core: u32) ?*Task {
 /// - `base` - exec: the ready list.
 /// - `core` - this core.
 fn takeReady(base: *ExecBase, core: u32) *Task {
-    var it = base.task_ready.iterator();
+    const own = bestReady(base, core);
+    // What another core has may outrank it: a core takes the best task it
+    // can see, so that the highest priority ready in the machine is the
+    // one that runs, whichever core it was made ready on.
+    const above: i32 = if (own) |task| task.node.pri else nothing_ready;
+    if (stealReady(base, core, above)) |stolen| return stolen;
+    // The list read again rather than the task found above taken: this
+    // core's lists were let go while another core's were held, and what
+    // was first then may be that core's task now.
+    var it = base.cpus_at[core].tasks.ready.iterator();
     while (it.next()) |node| {
         const task: *Task = @fieldParentPtr("node", node);
         if (!runnableOn(base, task, core)) continue;
-        waitLeft(task, core);
+        if (leavingNow(task, core)) continue;
         Remove(base, node);
+        noteReady(&base.cpus_at[core]);
         return task;
     }
     // The core's idle task is pinned to it, and always ready or running.
     unreachable;
 }
 
+/// Whether another core has a task ready that outranks `here` - the
+/// priority this core would otherwise run. One word of each core's is
+/// read (`ready_pri`), never a list this core does not hold.
+///
+/// INPUTS:
+/// - `base` - exec: the cores' states.
+/// - `core` - this core.
+/// - `here` - the priority to beat.
+fn othersHaveMore(base: *ExecBase, core: u32, here: i32) bool {
+    for (0..base.cores_running) |number| {
+        const other: u32 = @intCast(number);
+        if (other == core) continue;
+        if (@atomicLoad(i32, &base.cpus_at[other].ready_pri, .monotonic) > here) return true;
+    }
+    return false;
+}
+
+/// A task taken from another core's ready list for `core` to run: of the
+/// cores that have one above `above` this core may run, the one with the
+/// highest, taken off its list and made this core's. Null when no other
+/// core has work worth taking.
+///
+/// What each core has is read from its own summary word (`ready_pri`),
+/// never from a list this core does not hold: a node read without its
+/// lock could be a task already freed. The word may be a moment old,
+/// which costs a round and never a wrong task - what is taken is taken
+/// under the core's own lists and looked at again there.
+///
+/// **This core's lists are let go while another's are held** and taken
+/// again before this returns, since a core holds one core's at a time.
+/// The task it is switching away from is already marked as leaving
+/// (`markLeaving`), so another core looking for work leaves that one
+/// alone until this core is off its stack.
+///
+/// INPUTS:
+/// - `base` - exec: the cores' states.
+/// - `core` - this core.
+/// - `above` - the priority to beat: what this core would run otherwise.
+fn stealReady(base: *ExecBase, core: u32, above: i32) ?*Task {
+    const running = base.cores_running;
+    if (running < 2) return null;
+    var found: ?u32 = null;
+    var best = above;
+    for (0..running) |number| {
+        const other: u32 = @intCast(number);
+        if (other == core) continue;
+        const there = @atomicLoad(i32, &base.cpus_at[other].ready_pri, .monotonic);
+        if (there > best) {
+            best = there;
+            found = other;
+        }
+    }
+    const victim = found orelse return null;
+    dropTaskLists(base);
+    takeTasks(base, victim, 4);
+    var taken: ?*Task = null;
+    var it = base.cpus_at[victim].tasks.ready.iterator();
+    while (it.next()) |node| {
+        const task: *Task = @fieldParentPtr("node", node);
+        if (task.node.pri <= above) break; // by priority: nothing below is better
+        if (!runnableOn(base, task, core)) continue;
+        if (leavingNow(task, core)) continue; // its own core has not let go of it
+        Remove(base, node);
+        @atomicStore(u32, &task.owner, core, .release);
+        taken = task;
+        break;
+    }
+    noteReady(&base.cpus_at[victim]);
+    dropTaskLists(base);
+    takeTaskLists(base, 5);
+    return taken;
+}
+
 /// `task`, just made ready, brought to a core that should run it now:
 /// of the other cores it may run on and outranks what runs there, the one
 /// running the least poked, when that is less than what runs here or the
 /// task may not run here; else this core's dispatcher asked to look when
-/// it may run here and outranks what runs here. The caller holds the
-/// interrupt lock, which keeps every core's running task where it is.
+/// it may run here and outranks what runs here. The caller holds the task
+/// lists' lock, which keeps every core's running task where it is.
 ///
 /// INPUTS:
 /// - `base` - exec: the cores' running tasks and flags.
 /// - `task` - the task made ready.
 pub fn wakeFor(base: *ExecBase, task: *Task) void {
     const core = exec_base.coreId();
-    const here = base.cpus_at[core].this_task.node.pri;
-    const may_here = runnableOn(base, task, core);
-    if (leastOutranked(base, task, core)) |other| {
-        if (!may_here or base.cpus_at[other].this_task.node.pri < here) {
-            pokeCore(other);
-            return;
+    const owner = @atomicLoad(u32, &task.owner, .monotonic);
+    // Its own core runs it next if it outranks what runs there: this one
+    // through its flags, another through its cross-core interrupt.
+    if (task.node.pri > @atomicLoad(i32, &base.cpus_at[owner].running_pri, .monotonic)) {
+        if (owner == core) {
+            base.cpus_at[core].sys_flags |= SFF_SAR;
+        } else {
+            pokeCore(owner);
         }
+        return;
     }
-    if (may_here and task.node.pri > here) base.cpus_at[core].sys_flags |= SFF_SAR;
+    // A task its own core may not run at all waits there until the core
+    // it is pinned to comes for it: that core is asked, whatever it is
+    // running.
+    if (!runnableOn(base, task, owner)) {
+        askCore(base, task.core);
+        return;
+    }
+    // Its own core is busy with something higher. Another running less
+    // may come and take it instead, which is what the offer is for.
+    offerOthers(base, task, owner);
 }
 
 /// `task`, ready, offered to the cores that are not `core`: the one
@@ -1237,11 +1656,11 @@ fn offerOthers(base: *ExecBase, task: *const Task, core: u32) void {
 /// one; null for none.
 fn leastOutranked(base: *const ExecBase, task: *const Task, core: u32) ?u32 {
     var found: ?u32 = null;
-    var least = task.node.pri;
+    var least: i32 = task.node.pri;
     for (0..base.cores_running) |number| {
         const other: u32 = @intCast(number);
         if (other == core) continue;
-        const there = base.cpus_at[other].this_task.node.pri;
+        const there = @atomicLoad(i32, &base.cpus_at[other].running_pri, .monotonic);
         if (there < least and runnableOn(base, task, other)) {
             found = other;
             least = there;
@@ -1250,10 +1669,26 @@ fn leastOutranked(base: *const ExecBase, task: *const Task, core: u32) ?u32 {
     return found;
 }
 
+/// Core `core`'s dispatcher asked to look again: this core's through its
+/// flags, another's through its cross-core interrupt. A core the machine
+/// does not run is not asked.
+///
+/// INPUTS:
+/// - `base` - exec: how many cores run.
+/// - `core` - the core to ask.
+pub fn askCore(base: *ExecBase, core: u32) void {
+    if (core >= base.cores_running) return;
+    if (core == exec_base.coreId()) {
+        base.cpu().sys_flags |= SFF_SAR;
+    } else {
+        pokeCore(core);
+    }
+}
+
 /// The dispatcher of the core running `task` asked to look again: this
 /// core's through its flags, another's through its cross-core interrupt.
-/// Nothing for a task that is not running. The caller holds the
-/// interrupt lock.
+/// Nothing for a task that is not running. The caller holds the task's
+/// own core's lists.
 ///
 /// INPUTS:
 /// - `base` - exec: the cores' running tasks.
@@ -1268,13 +1703,12 @@ pub fn askCoreOf(base: *ExecBase, task: *const Task) void {
 }
 
 /// The other core `task` is running on, if it is running on one. The
-/// caller holds the interrupt lock.
+/// caller holds the task lists' lock.
 pub fn runningOn(base: *ExecBase, task: *const Task) ?u32 {
     const core = exec_base.coreId();
-    for (0..base.cores_running) |other| {
-        if (other != core and base.cpus_at[other].this_task == task) return @intCast(other);
-    }
-    return null;
+    const owner = @atomicLoad(u32, &task.owner, .monotonic);
+    if (owner == core or owner >= base.cores_running) return null;
+    return if (base.cpus_at[owner].this_task == task) owner else null;
 }
 
 /// Core `core` asked to run its dispatcher: its cross-core interrupt.
@@ -1304,14 +1738,26 @@ pub fn crossCorePoke(base: *ExecBase) void {
 pub fn stopElsewhere(base: *ExecBase, task: *Task) void {
     const sys = base.iface();
     _ = sys.SetSignal(0, sdk.exec.SIGF_SINGLE);
-    sys.Disable();
-    defer sys.Enable();
+    // The caller's own word, on its stack: the lists are let go around
+    // each wait, and the caller may come back on another core.
+    const state = _interrupt.mask();
+    defer _interrupt.unmask(state);
+    // The task's own core's lists: what it runs, and the words that tell
+    // it to stop, are that core's and are written under its lock.
+    _ = takeOwner(base, task, @returnAddress());
+    defer dropTaskLists(base);
     const core = runningOn(base, task) orelse return;
     const cpu = &base.cpus_at[core];
     cpu.stopping = task;
     cpu.stop_waiter = base.cpu().this_task;
     pokeCore(core);
-    while (cpu.stopping == task or cpu.stopped == task) _ = sys.Wait(sdk.exec.SIGF_SINGLE);
+    while (cpu.stopping == task or cpu.stopped == task) {
+        dropTaskLists(base);
+        _interrupt.unmask(state);
+        _ = sys.Wait(sdk.exec.SIGF_SINGLE);
+        _ = _interrupt.mask();
+        takeTasks(base, core, @returnAddress());
+    }
 }
 
 // --- task exceptions --------------------------------------------------------
@@ -1328,34 +1774,30 @@ pub fn exceptionPending(task: *const Task) bool {
 /// Runs a task's exception code for every exception signal that has
 /// arrived, and repeats while more are pending.
 ///
-/// The caller holds Disable, at task level. The signals are taken out of
-/// both the received and the exception sets before the code runs, so it
-/// cannot be re-entered for the same signal; the code runs with interrupts
-/// on and the interrupt lock let go whatever the Disable nesting was,
-/// since it is the task's own code and may do the things a task does; and
-/// the bits it answers are put back into the exception set, which is how
-/// it says which signals it still wants.
+/// The caller holds the task lists once, at task level, and not nested.
+/// The signals are taken out of both the received and the exception sets
+/// before the code runs, so it cannot be re-entered for the same signal;
+/// the code runs with the lists let go and the interrupts as `state` has
+/// them, since it is the task's own code and may do the things a task
+/// does; and the bits it answers are put back into the exception set,
+/// which is how it says which signals it still wants.
 ///
 /// INPUTS:
-/// - `base` - exec: the Disable nesting it steps out of.
+/// - `base` - exec: the lists lock it steps out of.
 /// - `task` - the running task.
-pub fn runExceptions(base: *ExecBase, task: *Task) void {
+/// - `state` - the interrupts as the caller found them, which the task's
+///   own code runs under. It is the caller's own word, on its stack, so
+///   it is still the task's after a move to another core.
+pub fn runExceptions(base: *ExecBase, task: *Task, state: u32) void {
     while (exceptionPending(task)) {
         const signals = task.sig_recvd & task.sig_except;
         task.sig_recvd &= ~signals;
         task.sig_except &= ~signals;
-        const cpu = base.cpu();
-        const nest = cpu.id_nest_cnt;
-        cpu.id_nest_cnt = -1;
-        _interrupt.dropSystemInterrupts(base);
-        _interrupt.interrupt_hardware.restore(cpu.id_saved);
+        dropTaskLists(base);
+        _interrupt.unmask(state);
         const enable = task.except_code.?(signals, task.except_data);
-        const saved = _interrupt.interrupt_hardware.disable();
-        // The task may have moved to the other core while its code ran.
-        const now = base.cpu();
-        now.id_saved = saved;
-        now.id_nest_cnt = nest;
-        _interrupt.takeSystemInterrupts(base, @returnAddress());
+        _ = _interrupt.mask();
+        takeTaskLists(base, @returnAddress());
         task.sig_except |= enable;
     }
 }
@@ -1377,9 +1819,12 @@ fn exceptionEntry(context: *anyopaque) callconv(.c) noreturn {
 ///   through.
 pub fn exceptionBody(base: *ExecBase) void {
     const sys = base.iface();
-    sys.Disable();
-    runExceptions(base, sys.FindTask(null).?);
-    sys.Enable();
+    const task = sys.FindTask(null).?;
+    const state = _interrupt.mask();
+    takeTaskLists(base, @returnAddress());
+    runExceptions(base, task, state);
+    dropTaskLists(base);
+    _interrupt.unmask(state);
 }
 
 /// The dispatcher, on the way into `task`: if an exception is pending and

@@ -8,6 +8,7 @@
 
 const sdk = @import("sdk");
 const _task = @import("_task.zig");
+const _interrupt = @import("../interrupt/_interrupt.zig");
 const _locks = @import("../locks/_locks.zig");
 const _waitable = @import("../waitable/_waitable.zig");
 
@@ -68,7 +69,7 @@ const Task = sdk.exec.Task;
 /// - Waits: for a task running on the other core, until that core has
 ///   switched it out (its `SIGF_SINGLE`); in end hooks that wait. For null
 ///   it never returns, which is not the same thing.
-/// - Interrupts: no. It takes Disable, may free memory, and runs the
+/// - Interrupts: no. It takes the task lists' lock, may free memory, and runs the
 ///   task's end hooks.
 /// - Locks: none needed.
 /// - Process: a Task will do.
@@ -108,18 +109,27 @@ pub fn RemTask(base: *ExecBase, task: ?*Task) void {
     _task.releaseSemaphores(base, ending);
     _task.runEndHooks(base, ending);
     _task.freePrivateMemory(base, ending, ending == current);
-    sys.Disable();
+    const state = _interrupt.mask();
+    // The lists of the core that owns it: its own while it ends itself,
+    // another core's when something else takes it off.
+    _ = _task.takeOwner(base, ending, @returnAddress());
     if (ending == current) {
         // Freed by reschedule once it no longer runs on it.
         ending.state = .removed;
         base.cpu().sys_flags |= _task.SFF_SAR;
+        // Held across the switch, as `Wait` holds it: the task is this
+        // core's until its context is saved. The exit lets it go.
         _task.task_hardware.switch_now();
-        sys.Enable(); // only reached without task hardware
+        _interrupt.unmask(state); // only reached without task hardware
         return;
     }
-    if (ending.state == .ready or ending.state == .wait) sys.Remove(&ending.node);
+    if (ending.state == .ready or ending.state == .wait) {
+        sys.Remove(&ending.node);
+        _task.noteReady(&base.cpus_at[@atomicLoad(u32, &ending.owner, .monotonic)]);
+    }
     ending.state = .removed;
-    sys.Enable();
+    _task.dropTaskLists(base);
+    _interrupt.unmask(state);
     // Read before the memory goes; whoever asked hears once it has.
     const ended = ending.end_msg;
     _task.freeTaskMemory(base, ending);

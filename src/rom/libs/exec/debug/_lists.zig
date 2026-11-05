@@ -208,10 +208,12 @@ fn eachTask(reader: Reader, base: *const ExecBase, sink: anytype, comptime take:
     for (base.cpus_at[0..cores], 0..) |*cpu, core| {
         if (taskAt(reader, cpu.this_task)) |task| take(reader, task, @intCast(core), sink);
     }
-    for ([_]*const List{ &base.task_ready, &base.task_wait }) |list| {
-        var queue = walkOf(Task, "node", reader, list);
-        while (queue.next()) |task| take(reader, task, 0, sink);
-        if (queue.broken_at != 0) sink.brokenOff(queue.broken_at);
+    for (base.cpus_at[0..cores], 0..) |*cpu, core| {
+        for ([_]*const List{ &cpu.tasks.ready, &cpu.tasks.wait }) |list| {
+            var queue = walkOf(Task, "node", reader, list);
+            while (queue.next()) |task| take(reader, task, @intCast(core), sink);
+            if (queue.broken_at != 0) sink.brokenOff(queue.broken_at);
+        }
     }
 }
 

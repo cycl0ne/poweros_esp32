@@ -328,7 +328,8 @@ priorities take turns, four ticks each. A program normally runs at 0, and
 the system's own tasks above it - input at 20, motion.library's clock at
 10 - so a program that never waits starves everything below it and
 nothing above it. `SetTaskPri` changes a priority and answers the old
-one. Every core takes tasks from one ready list, so tasks do run at
+one. Each core has ready and waiting lists of its own and takes work
+from another core's when it has none worth running, so tasks do run at
 once; [Several cores](programs.md#several-cores) has what that changes.
 
 **Starting one.** `CreateTask(name, pri, code, stack_size)` allocates the
