@@ -294,13 +294,11 @@ const Rig = @import("facet.zig").Rig;
 /// overrides about eighteen of them downward) and only the board can say
 /// whether it meets them.
 ///
-/// The eighteen, and the item of docs/facet-vulkan10.md each belongs to,
+/// The sixteen, and the item of docs/facet-vulkan10.md each belongs to,
 /// so that the number is auditable rather than merely pinned:
 ///
 ///   - item 17, the varyings: maxVertexOutputComponents and
 ///     maxFragmentInputComponents, both 8 against 64.
-///   - item 18, vertex input: maxVertexInputBindings 4 and
-///     maxVertexInputAttributes 8, both against 16.
 ///   - item 19, dynamic descriptors: maxDescriptorSetUniformBuffersDynamic
 ///     and ...StorageBuffersDynamic, the one combined cap of 2 against 8
 ///     and 4.
@@ -315,7 +313,11 @@ const Rig = @import("facet.zig").Rig;
 ///     maxSampleMaskWords is 0 against 1.
 ///
 /// Nothing else falls short, and nothing in that list is unaccounted for.
-const shortfalls_on_the_cores = 18;
+///
+/// Closed since this count was first taken: **item 18** in 1.84, which
+/// was maxVertexInputBindings 4 and maxVertexInputAttributes 8 against 16
+/// apiece - two of the eighteen it started at.
+const shortfalls_on_the_cores = 16;
 
 test "the check itself: Vulkan's floor passes, and a step below it is caught" {
     // A check that passes is worth nothing on its own: one whose loop never

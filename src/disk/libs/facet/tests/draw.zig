@@ -407,6 +407,9 @@ const PipelineState = struct {
     pass: *facet.RenderPass,
     stride: u32 = 12,
     attributes: []const facet.VertexInputAttributeDescription = &.{.{ .location = 0, .binding = 0, .format = .r32g32b32_sfloat }},
+    /// Several vertex buffers, where a test needs them; null for the one
+    /// binding of `stride` that almost every test wants.
+    bindings: ?[]const facet.VertexInputBindingDescription = null,
     topology: facet.PrimitiveTopology = .triangle_list,
     restart: bool = false,
     raster: facet.PipelineRasterizationStateCreateInfo = .{},
@@ -437,8 +440,8 @@ fn makePipeline(bench: *Bench, state: PipelineState) struct { facet.Result, ?*fa
     };
     const binding = facet.VertexInputBindingDescription{ .binding = 0, .stride = state.stride };
     const input = facet.PipelineVertexInputStateCreateInfo{
-        .vertex_binding_description_count = 1,
-        .vertex_binding_descriptions = @ptrCast(&binding),
+        .vertex_binding_description_count = if (state.bindings) |many| @intCast(many.len) else 1,
+        .vertex_binding_descriptions = if (state.bindings) |many| many.ptr else @ptrCast(&binding),
         .vertex_attribute_description_count = @intCast(state.attributes.len),
         .vertex_attribute_descriptions = state.attributes.ptr,
     };
@@ -1370,6 +1373,140 @@ test "a frame drawn: a triangle coloured by its fragment function, the clear col
     try testing.expectEqual(red, picture.at(62, 62));
     try testing.expectEqual(red, picture.at(33, 62));
     try testing.expectEqual(red, picture.at(62, 33));
+}
+
+/// Sixteen attributes from sixteen bindings: the floor Vulkan puts under
+/// `maxVertexInputBindings` and `maxVertexInputAttributes`, which facet
+/// reported as 4 and 8 until 1.84 (item 18 of docs/facet-vulkan10.md).
+///
+/// Location 0 is the position and comes from binding 0; locations 1 to 15
+/// each come from a binding of their own and must hold that location's own
+/// number. Where one does not, the vertex goes to z = 2 - past the far
+/// plane, so it is clipped - which makes "the triangle is there" the whole
+/// test, and makes it fail if any one of the sixteen did not arrive.
+const Sixteen = struct {
+    fn vertex(vertices: *const shader.Vertices) callconv(.c) void {
+        for (0..vertices.count) |k| {
+            const p = vertices.input(@intCast(k), 0);
+            var right = true;
+            for (1..16) |location| {
+                const value = vertices.input(@intCast(k), @intCast(location))[0];
+                if (value != @as(f32, @floatFromInt(location))) right = false;
+            }
+            vertices.output(@intCast(k))[0..4].* = .{ p[0], p[1], if (right) p[2] else 2, 1 };
+        }
+    }
+
+    const entries = [_]shader.Entry{
+        shader.vertex("main", &vertex, 0),
+        shader.fragment("main", &Flat.fragment, 0),
+    };
+    const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
+};
+
+/// One triangle drawn with all sixteen vertex buffers bound.
+fn drawnWithSixteen(
+    bench: *Bench,
+    pass: *facet.RenderPass,
+    onto: *facet.Framebuffer,
+    with: ?*facet.Pipeline,
+    by: *facet.PipelineLayout,
+    buffers: *const [16]*facet.Buffer,
+    offsets: *const [16]u64,
+    colour: *const u32,
+    clear: *const [2]facet.ClearValue,
+) !void {
+    const fb = bench.rig.fb;
+    const commands = try bench.record();
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = onto, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 1, .clear_values = clear }, .@"inline");
+    fb.CmdBindPipeline(commands, .graphics, with.?);
+    fb.CmdBindVertexBuffers(commands, 0, 16, buffers, offsets);
+    fb.CmdPushConstants(commands, by, facet.SHADER_STAGE_FRAGMENT, 0, 4, colour);
+    fb.CmdDraw(commands, 3, 1, 0, 0);
+    fb.CmdEndRenderPass(commands);
+    try bench.submit();
+}
+
+test "sixteen vertex bindings and sixteen attributes, which is the floor Vulkan puts under both" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+
+    // What the device says first: a test of sixteen is worth nothing if
+    // the limits still publish fewer, and the limit is what an
+    // application reads before it builds a pipeline like this.
+    var properties: facet.PhysicalDeviceProperties = undefined;
+    fb.GetPhysicalDeviceProperties(bench.physical, &properties);
+    try testing.expect(properties.limits.max_vertex_input_bindings >= 16);
+    try testing.expect(properties.limits.max_vertex_input_attributes >= 16);
+
+    const picture = try Picture.of(&bench, 64, 64);
+    const cleared = try renderPass(&bench, .clear, false);
+    defer fb.DestroyRenderPass(device, cleared);
+    const frame = try framebuffer(&bench, cleared, &.{picture.view}, 64, 64);
+    defer fb.DestroyFramebuffer(device, frame);
+    const sixteen = try module(&bench, &Sixteen.code);
+    defer fb.DestroyShaderModule(device, sixteen);
+    const layout = try pipelineLayout(&bench, &.{}, 4);
+    defer fb.DestroyPipelineLayout(device, layout);
+
+    // Twenty floats a vertex: the position in the first three, and from
+    // the fifth on one float for each of locations 1 to 15.
+    var bindings: [16]facet.VertexInputBindingDescription = undefined;
+    for (&bindings, 0..) |*each, i| each.* = .{ .binding = @intCast(i), .stride = 80 };
+    var attributes: [16]facet.VertexInputAttributeDescription = undefined;
+    attributes[0] = .{ .location = 0, .binding = 0, .format = .r32g32b32_sfloat };
+    for (attributes[1..], 1..) |*each, i| each.* = .{
+        .location = @intCast(i),
+        .binding = @intCast(i),
+        .format = .r32_sfloat,
+        .offset = @intCast((3 + i) * 4),
+    };
+    const result, const pipeline = makePipeline(&bench, .{
+        .module = sixteen,
+        .layout = layout,
+        .pass = cleared,
+        .stride = 80,
+        .bindings = &bindings,
+        .attributes = &attributes,
+    });
+    // Until 1.84 this was `error_feature_not_present`, at the fifth
+    // binding and the ninth attribute.
+    try testing.expectEqual(facet.Result.success, result);
+    defer fb.DestroyPipeline(device, pipeline);
+
+    var vertices: [3][20]f32 = @splat(@splat(0));
+    const corners = [3][3]f32{ .{ -1, -1, 0.5 }, .{ 1, -1, 0.5 }, .{ -1, 1, 0.5 } };
+    for (&vertices, corners) |*each, corner| {
+        each[0..3].* = corner;
+        for (1..16) |location| each[3 + location] = @floatFromInt(location);
+    }
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
+
+    // The same buffer at every binding: what is being tested is that
+    // sixteen bindings are kept and read, not sixteen allocations.
+    const buffers: [16]*facet.Buffer = @splat(vertex_buffer);
+    const offsets: [16]u64 = @splat(0);
+    const green: u32 = 0xFF00_FF00;
+    const blue = clears(0xFF00_00FF);
+
+    try drawnWithSixteen(&bench, cleared, frame, pipeline, layout, &buffers, &offsets, &green, &blue);
+    try testing.expectEqual(green, picture.at(2, 2));
+    try testing.expectEqual(green, picture.at(60, 2));
+    try testing.expectEqual(green, picture.at(2, 60));
+    try testing.expectEqual(@as(u32, 0xFF00_00FF), picture.at(62, 62));
+
+    // And it does depend on all sixteen: the last location's value made
+    // wrong and the triangle goes past the far plane, so the clear
+    // stands. Without this the test above would pass on a library that
+    // read eight attributes and left the rest at (0, 0, 0, 1).
+    var wrong = vertices;
+    for (&wrong) |*each| each[3 + 15] = 99;
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(wrong))], std.mem.asBytes(&wrong));
+    try drawnWithSixteen(&bench, cleared, frame, pipeline, layout, &buffers, &offsets, &green, &blue);
+    try testing.expectEqual(@as(u32, 0xFF00_00FF), picture.at(2, 2));
 }
 
 test "points and lines: where they should be, and as wide; a triangle's edges and corners, culled as its fill is" {

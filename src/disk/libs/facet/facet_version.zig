@@ -1428,4 +1428,43 @@ pub const LIBRARY_VERSION = 1;
 /// answer, which is what two plausible pictures would have been. Item 54
 /// of docs/facet-vulkan10.md is that half - a QPU program that reads the
 /// bound sampler - and closing it ends the difference.
-pub const LIBRARY_REVISION = 83;
+///
+/// 84: **sixteen vertex bindings and sixteen attributes, which is the
+/// floor Vulkan puts under both.**
+///
+/// `maxVertexInputBindings` and `maxVertexInputAttributes` were 4 and 8
+/// against a required 16 apiece, and only an implementation advertising
+/// `VK_KHR_portability_subset` may report fewer, which this is not. A
+/// pipeline asking for a fifth binding or a ninth attribute was turned
+/// away with `error_feature_not_present`. Item 18 of
+/// docs/facet-vulkan10.md.
+///
+/// The two constants in `instance/_instance.zig` are the change. Every
+/// array they size grew with them - `Pipeline.bindings` and
+/// `Pipeline.attributes` in the plan, `_vertices.Bound.vertex_buffers` in
+/// the record of what a draw was bound with, the same field in each
+/// driver's player, and the array `CmdBindVertexBuffers` copies through -
+/// and every refusal already read the constants rather than a literal.
+/// About 224 bytes a pipeline and 192 a bound state.
+///
+/// Nothing else needed touching, for two reasons worth writing down. The
+/// cores' fetch, `_vertices.readInputs`, was already general: it loops
+/// `attribute_count` and indexes the two arrays, and the per-vertex input
+/// block is sized `vertices * locations` out of a scratch allocation that
+/// grows on demand, so the array was the only cap. And the V3D fetches no
+/// Vulkan attribute at all - the vertex stage runs on the cores for both
+/// devices and the hardware takes a stream already transformed, so the
+/// "attributes" in its shader record are the position and the varyings.
+///
+/// The test draws with all sixteen: location 0 the position from binding
+/// 0, locations 1 to 15 each from a binding of its own and each carrying
+/// its own location's number, and a vertex function that sends the
+/// triangle past the far plane unless every one arrived. Then the last
+/// value is made wrong and the triangle has to vanish, because a test
+/// that only checks the triangle is there would pass on a library that
+/// read eight attributes and left the rest at (0, 0, 0, 1).
+///
+/// `tests/vulkan_limits.zig` counts sixteen shortfalls now where it
+/// counted eighteen, which is how this revision is held: the number is
+/// pinned and the file says which item each remaining one belongs to.
+pub const LIBRARY_REVISION = 84;

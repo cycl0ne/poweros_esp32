@@ -367,8 +367,19 @@ pub const Capabilities = extern struct {
 /// The most vertex buffers, attributes and floats a vertex function hands
 /// on, and what the rest of the limits are: what the library's own objects
 /// have room for, whatever the driver.
-pub const max_vertex_input_bindings = 4;
-pub const max_vertex_input_attributes = 8;
+///
+/// The first two are Vulkan's floor and not a choice: `maxVertexInputBindings`
+/// and `maxVertexInputAttributes` must each be at least 16, and only an
+/// implementation advertising `VK_KHR_portability_subset` may report fewer,
+/// which this is not. They were 4 and 8 until 1.84 (item 18 of
+/// docs/facet-vulkan10.md). Raising them costs a `Binding` and an
+/// `Attribute` each in every pipeline's plan and a `VertexBuffer` in every
+/// record of what a draw was bound with - about 224 bytes a pipeline and
+/// 192 a bound state - and nothing else: the V3D fetches no Vulkan
+/// attribute, because the vertex stage runs on the cores for both devices
+/// and the hardware is handed a stream already transformed.
+pub const max_vertex_input_bindings = 16;
+pub const max_vertex_input_attributes = 16;
 pub const max_vertex_output_components = 8;
 /// The vertices of a tessellated patch, and the floats its control
 /// function may write for the whole of it (`shader.Patch.ownValues`,

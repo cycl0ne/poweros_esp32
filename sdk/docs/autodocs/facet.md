@@ -4109,7 +4109,9 @@ it empty where it has no constants is not turned away.
 
 Attributes are read as floats - r32_sfloat to r32g32b32a32_sfloat - or
 as bytes 0 to 1, r8g8b8a8_unorm and b8g8r8a8_unorm, into four floats
-each, up to four bindings and eight locations.
+each, up to sixteen bindings and sixteen locations, which is the floor
+Vulkan puts under `maxVertexInputBindings` and
+`maxVertexInputAttributes`. It was four and eight until 1.84.
 
 **CONTEXT**
 

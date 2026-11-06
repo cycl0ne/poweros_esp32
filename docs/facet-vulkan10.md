@@ -115,7 +115,8 @@ analysis put them. Items marked *critical path* are the ones the second
 refinement - finish the compiler, no fallback - moves onto the main line.
 
 **Items 2, 3, 4, 5 and 7 were done in revision 1.80, item 78 in 1.81,
-items 14, 16, 49 and 77 in 1.82, and item 52's half of two in 1.83.** Each
+items 14, 16, 49 and 77 in 1.82, item 52's half of two in 1.83, and item
+18 in 1.84.** Each
 carries a *Done* note below saying what was actually built and where the
 item's own description turned out to be wrong - and several did. Things
 found while doing them became the items at the end of the list: 77 and 78
@@ -495,6 +496,35 @@ Found independently by: limits, conformance-path.
 *limits / vertex input* &mdash; conformance-blocking, medium
 
 After: The limits reshape
+
+**Done in 1.84, and it was as mechanical as this said.** Both constants in
+`_instance.zig` are 16, which is the whole change: every array they size
+grew with them - `Pipeline.bindings` and `Pipeline.attributes` in the
+plan, `_vertices.Bound.vertex_buffers` in the record of what a draw was
+bound with, the same field in each driver's player, and the stack array
+`CmdBindVertexBuffers` copies through - and every refusal in
+CreateGraphicsPipelines already read the constants rather than a literal.
+About 224 bytes a pipeline and 192 a bound state, and nothing else.
+
+Two things this item did not know. The cores' attribute fetch
+(`_vertices.readInputs`) was already general: it loops `attribute_count`
+and indexes the two arrays, and the per-vertex input block it fills is
+sized `vertices * locations` out of a scratch allocation that grows on
+demand, so nothing capped the locations but the array. And **the V3D
+needed no change at all**, because it fetches no Vulkan attribute: the
+vertex stage runs on the cores for both devices and the hardware is handed
+a stream already transformed, so the "attributes" in its shader record are
+the position and the varyings. This item's claim of "both drivers'
+attribute fetch" was wrong, and in the easy direction.
+
+A drawing test holds it: sixteen bindings and sixteen attributes, location
+0 the position from binding 0 and locations 1 to 15 each from a binding of
+their own, each carrying its own location's number. The vertex function
+sends the triangle past the far plane unless all fifteen arrived, so "the
+triangle is there" is the test - and the last value is then made wrong on
+purpose and the triangle has to vanish, because otherwise the test would
+pass on a library that read eight attributes and left the rest at
+(0, 0, 0, 1).
 
 Both below the required minimum of 16. These are the sizes of fixed arrays in the pipeline's vertex-input state, in the command player's bound-buffer table and in both drivers' attribute fetch, so it is mechanical but grows several per-pipeline arrays. maxVertexInputBindingStride is 2048 and exactly meets its floor. Note the spec's footnote: only an implementation enabling VK_KHR_portability_subset may report fewer, and facet is not that.
 
