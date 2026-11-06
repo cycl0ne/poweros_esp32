@@ -632,9 +632,13 @@ description as its panel; the fb display driver takes it as a display
 whose address cannot be moved and copies the picture into it, which is
 what the desktop is drawn on. Those pages are mapped so that the writes
 to them are gathered into bursts rather than each reaching the machine on
-its own. Nothing of the display's own is driven - no mode is set and no
-register written - and a firmware that lit none leaves the machine on its
-serial console, which is what `./zig build q35` runs it as.
+its own. Nothing of the picture is driven - no mode is set and no
+register of it written - and a firmware that lit none leaves the machine
+on its serial console, which is what `./zig build q35` runs it as. Behind
+an AMD display engine the driver writes one part of it: the audio side of
+the link the firmware lit, which the firmware leaves switched off, so
+that a monitor's speakers can be played over HDMI
+(`rtg_driver/fbboard/dcn.zig`).
 
 **A virtio GPU is taken where the machine has one.** The display driver
 speaks virtio over two transports now: a block of registers at an address

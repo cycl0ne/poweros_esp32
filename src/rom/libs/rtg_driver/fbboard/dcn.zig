@@ -12,8 +12,10 @@
 //!
 //! **What is written, and what is not.** Nothing of the picture is
 //! written: the mode the firmware chose, the link it trained and the
-//! buffer the pipe reads are left exactly as they were found, and the
-//! picture is still copied into the firmware's framebuffer as before.
+//! buffer the pipe reads are left as they were found - the one change to
+//! the link is that one driven for a picture alone is moved to the kind
+//! that carries packets as well (`soundUp`) - and the picture is still
+//! copied into the firmware's framebuffer as before.
 //! Writing the address a pipe reads from instead of copying wants two
 //! more things first: a buffer of the device's own memory for the picture
 //! to live in, which the firmware's framebuffer has no room for - it is
@@ -77,10 +79,12 @@
 //! So those registers are read here, along with what each link's packet
 //! part is doing and where the sample clock comes from - and then
 //! written: the endpoint is told what the far end has and allowed to
-//! answer, the link's packet part is told whose samples to carry, and the
-//! clock the samples are counted out by is set from the pixel clock. The
-//! audio driver then needs nothing new, because what it was missing was
-//! never its own to write.
+//! answer, the link's packet part is told whose samples to carry, its
+//! store for them is switched on and the description of the sound is
+//! sent, and the clock the samples are counted out by is set from the
+//! pixel clock, timed off the pipe's own frames. What is left is the
+//! audio driver's: the codec's converter and slots, which it reaches
+//! through verbs like any other codec's.
 //!
 //! ## Which pipe
 //!
@@ -221,6 +225,7 @@ const otg_v_total = 0x1b2f;
 const otg_v_blank = 0x1b36;
 const otg_control = 0x1b41;
 const otg_position = 0x1b4a;
+const otg_frame_count = 0x1b4c;
 const otg_pipe_stride = 0x80;
 
 /// The part of a pipe that fetches the picture: how far apart its rows
@@ -306,6 +311,31 @@ const acr_44_samples = 0x20ab;
 const acr_48_cycle = 0x20ac;
 const acr_48_samples = 0x20ad;
 
+/// What a link of this kind sends between the pictures besides the
+/// samples: which of the packets that fill the blanking go out, which
+/// descriptions go out and on which line of the blanking, and what the
+/// general control packet says.
+const hdmi_general_packet = 0x2098;
+const hdmi_sending = 0x2099;
+const hdmi_sending_line = 0x209a;
+const hdmi_general = 0x209e;
+
+/// The store a link's packet part keeps the samples in on their way into
+/// the packets. A firmware that lit the link for a picture can leave it
+/// forced into its low-power state, in which no sample passes through it,
+/// so it is switched on - the low-power state not allowed and none
+/// forced - before the rest of the link's sound is set.
+const afmt_memory = 0x2087;
+const memory_low_power_off: u32 = 1 << 0;
+const memory_force_shift = 4;
+const memory_force_mask: u32 = 0x3;
+
+/// What the rest of the channels are called in the status that goes with
+/// the samples, a nibble each from the third channel on.
+const afmt_status_rest = 0x207f;
+const status_rest_mask: u32 = 0xffffff;
+const status_rest_channels: u32 = 3 | 4 << 4 | 5 << 8 | 6 << 12 | 7 << 16 | 8 << 20;
+
 // --- the fields written, each a shift and the field's own width --------------------
 
 /// In a link's front: which pipe's pixels it takes, and that its clock is
@@ -353,6 +383,10 @@ const description_stereo_channels = 2;
 const samples_sending: u32 = 1 << 0;
 const samples_status_again: u32 = 1 << 26;
 
+/// In what the link is told about the sound: that the description of it
+/// is to be taken up again.
+const description_again: u32 = 1 << 7;
+
 /// In a link's layout: that neither the layout nor the oversampling is
 /// being overridden, and which channels are on - the first two.
 const layout_override: u32 = 1 << 0;
@@ -370,6 +404,46 @@ const status_accuracy_mask: u32 = 0x3;
 
 /// In a link's own clock: that it is to run.
 const link_clock_on: u32 = 1 << 0;
+
+/// In what a link sends between the pictures: that the description of the
+/// sound is among it, that it goes out with every frame rather than once -
+/// which is also what has a later change to it sent at all - and which
+/// line of the blanking it goes on, the second, which is where there is
+/// room for it. The description itself is the codec's, which is what the
+/// engine takes it from unless it is told to take it from registers of
+/// its own, and it is not told to.
+const sending_sound_description: u32 = 1 << 4;
+const sending_sound_description_always: u32 = 1 << 5;
+const sending_line_shift = 8;
+const sending_line_mask: u32 = 0x3f;
+const sending_line = 2;
+
+/// In a link's control of this kind: that it adds no empty packets of its
+/// own beyond the ones it is asked for, which is how the engine is set
+/// wherever a link carries sound.
+const control_no_extra_empty: u32 = 1 << 3;
+
+/// In the general control the link carries: that the far end is to mute.
+/// Cleared, since the point of all of this is that it does not.
+const general_mute: u32 = 1 << 0;
+
+/// In the general control packet: that it is sent, that it keeps being
+/// sent, and that the gaps between packets are filled with empty ones -
+/// which is what makes the blanking of this kind of link a place packets
+/// can live at all.
+const packet_empty: u32 = 1 << 0;
+const packet_general: u32 = 1 << 4;
+const packet_general_always: u32 = 1 << 5;
+
+/// In a link's back end: which kind of link it is driving. A wire of this
+/// shape carries either kind, and the two differ in exactly what this is
+/// about - the one has blanking with nothing in it, the other has packets
+/// there, which is where sound goes. A firmware that only wants a picture
+/// has no reason to choose the second, and leaves the first.
+const back_kind_shift = 16;
+const back_kind_mask: u32 = 0x7;
+const back_kind_picture_only = 2;
+const back_kind_with_packets = 3;
 
 /// In what tells the far end how to rebuild the sample clock: that the
 /// numbers are sent by themselves, that the engine works out the cycle
@@ -399,7 +473,7 @@ const acr_rate_48 = 48;
 const dto_pipe_shift = 0;
 const dto_pipe_mask: u32 = 0xf;
 const dto_which_shift = 4;
-const dto_which_mask: u32 = 0x1;
+const dto_which_mask: u32 = 0x7;
 const dto_phase_hundreds = 240_000;
 const hundreds_in_a_kilohertz = 10;
 
@@ -897,25 +971,27 @@ fn writeRegister(engine: Engine, offset: u32, value: u32) void {
 ///
 /// - the clock the samples are counted out by, set from the pixel clock
 ///   the pipe is scanning at;
-/// - the link's packet part, told which endpoint's samples to carry, how
-///   many channels there are, what to say in the status that rides with
-///   them, and how the far end is to rebuild the sample clock;
+/// - the link's packet part: driven as the kind of link that carries
+///   packets, its store for the samples out of its low-power state, told
+///   which endpoint's samples to carry, how many channels there are, what
+///   to say in the status that rides with them and how the far end is to
+///   rebuild the sample clock, and sending the description of the sound;
 /// - the endpoint itself, told which speakers the far end has and what it
 ///   takes, and then allowed to answer.
 ///
 /// The endpoint is allowed to answer last, so that the pin never reports
 /// a monitor before the rest of the way is standing.
 ///
-/// After this the audio driver needs nothing new: its pin reports a
-/// monitor, it takes its converter, sets the format and the stream and
-/// sends the description of the sound as it already does, and the samples
-/// it writes leave the machine. What the far end does with them is the
-/// far end's to say.
+/// After this the link is the audio driver's like any other: its pin
+/// reports a monitor, and the driver takes the converter, sets the shape
+/// and the stream, switches the converter's digital output on and gives
+/// the link's slots their channels, and the samples it writes leave the
+/// machine. What the far end does with them is the far end's to say.
 ///
 /// False where there was nothing to do it to - no link takes the pipe
-/// that is scanning, no endpoint is wired to a socket, or the picture is
-/// one no standard times, so that no pixel clock can be had without
-/// guessing one. Each is said out loud.
+/// that is scanning, no endpoint is wired to a socket, or the pipe's
+/// frames cannot be timed, so that no pixel clock can be had. Each is
+/// said out loud.
 pub fn soundUp(engine: Engine) bool {
     const link = litLink(engine) orelse {
         exec.kprintf(engine.sys, "%s: no link takes pipe %d, so its sound is left alone\n", .{ owner, engine.pipe });
@@ -926,8 +1002,8 @@ pub fn soundUp(engine: Engine) bool {
         return false;
     };
     const pixel_khz = pixelClock(engine) orelse {
-        exec.kprintf(engine.sys, "%s: %dx%d of %dx%d is not a picture any standard times, so link %d's sound is left alone\n", .{
-            owner, engine.width, engine.height, engine.h_total + 1, engine.v_total + 1, link,
+        exec.kprintf(engine.sys, "%s: pipe %d's frames cannot be timed, so link %d's sound is left alone\n", .{
+            owner, engine.pipe, link,
         });
         return false;
     };
@@ -970,19 +1046,71 @@ fn wiredEndpoint(engine: Engine) ?u32 {
     return null;
 }
 
-/// The pixel clock of the picture the pipe is scanning, in kilohertz,
-/// from the standard that times it: the engine does not hold the number,
-/// and the one standard mode whose line and frame are as long as the
-/// pipe's does. Null where no mode matches, which is a picture to leave
-/// alone rather than count a clock for.
+/// The pixel clock of the picture the pipe is scanning, in kilohertz. The
+/// engine does not hold the number - the firmware set the clock and kept
+/// it - so it is timed: a frame is the pipe's line times its frame in
+/// pixels, and how long one takes is read off the pipe's own count of
+/// frames against the machine's clock. Each of a few frames is timed on
+/// its own and the middle one taken, so that a frame the reading was held
+/// up in does not count.
+///
+/// Where a standard mode has the same picture, the same totals and a
+/// clock within half a percent of that, the standard's number is taken
+/// instead: it is the clock the firmware set, and the timing is not as
+/// exact as the standard. Null where the pipe's count does not move,
+/// which is a pipe to leave alone.
 fn pixelClock(engine: Engine) ?u32 {
+    const h_total = engine.h_total + 1;
+    const v_total = engine.v_total + 1;
+    const timer = sdk.hardware.systimer;
+    var periods: [frames_timed]u64 = undefined;
+    var timed: usize = 0;
+    var last = readPipe(engine, engine.pipe, otg_frame_count);
+    var since: u64 = 0;
+    var started = false;
+    const deadline = timer.uptimeUs() + timing_limit_us;
+    // The first frame that begins starts the clock; each one after it
+    // ends a period and begins the next.
+    while (timed < frames_timed) {
+        const now = timer.uptimeUs();
+        if (now > deadline) return null;
+        const count = readPipe(engine, engine.pipe, otg_frame_count);
+        if (count == last) continue;
+        last = count;
+        if (started) {
+            periods[timed] = now - since;
+            timed += 1;
+        }
+        started = true;
+        since = now;
+    }
+    // The middle of them, by sorting a handful in place.
+    var at: usize = 1;
+    while (at < frames_timed) : (at += 1) {
+        var back = at;
+        while (back > 0 and periods[back - 1] > periods[back]) : (back -= 1) {
+            const held = periods[back];
+            periods[back] = periods[back - 1];
+            periods[back - 1] = held;
+        }
+    }
+    const frame_us = periods[frames_timed / 2];
+    if (frame_us == 0) return null;
+    const timed_khz: u32 = @intCast(@as(u64, h_total) * v_total * 1000 / frame_us);
     for (&edid.known) |*timing| {
         if (timing.width != engine.width or timing.height != engine.height) continue;
-        if (timing.htotal() != engine.h_total + 1 or timing.vtotal() != engine.v_total + 1) continue;
-        return timing.pixel_khz;
+        if (timing.htotal() != h_total or timing.vtotal() != v_total) continue;
+        const apart = if (timing.pixel_khz > timed_khz) timing.pixel_khz - timed_khz else timed_khz - timing.pixel_khz;
+        if (apart * 200 <= timing.pixel_khz) return timing.pixel_khz;
     }
-    return null;
+    return timed_khz;
 }
+
+/// How many frames are timed, and how long the timing may take before
+/// the pipe is taken not to be counting: five frames of the slowest
+/// picture a link carries, and the one before them.
+const frames_timed = 5;
+const timing_limit_us: u64 = 300_000;
 
 /// The clock the samples are counted out by: 24 MHz divided out of the
 /// pixel clock. Which pipe it follows and which of the two clocks is in
@@ -997,8 +1125,32 @@ fn clockUp(engine: Engine, pixel_khz: u32) void {
 
 /// One link's packet part set to carry the samples of one endpoint.
 fn linkUp(engine: Engine, link: u32, endpoint: u32, pixel_khz: u32) void {
+    // The kind of link it is driven as. Where the firmware left it driving
+    // a picture and nothing else, its blanking carries nothing and no
+    // amount of telling the rest of the engine about sound puts anything
+    // there, so it is moved to the kind that carries packets - which is
+    // the same wire, the same mode and the same picture, with the blanking
+    // put to use. Nothing else of the picture is touched: the timing, the
+    // front end and the buffer the pipe reads are left alone. Whether the
+    // monitor takes packets is not asked - nothing on this path reads what
+    // the monitor says of itself - so one that takes a picture alone is
+    // sent them too.
+    const kind = readLink(engine, link, dig_back) >> back_kind_shift & back_kind_mask;
+    if (kind == back_kind_picture_only) {
+        setLink(engine, link, dig_back, back_kind_shift, back_kind_mask, back_kind_with_packets);
+        exec.kprintf(engine.sys, "%s: link %d was driving a picture only; it now carries packets too\n", .{ owner, link });
+    }
+    // Nothing of its own between the packets it is asked to send.
+    orLink(engine, link, hdmi_control, control_no_extra_empty);
+    // The blanking filled: the general control sent and kept being sent,
+    // and empty packets where there is nothing else, so that what is sent
+    // between the pictures is a stream the far end can follow.
+    orLink(engine, link, hdmi_general_packet, packet_empty | packet_general | packet_general_always);
     // The part's own clock, without which none of the rest of it moves.
     orLink(engine, link, afmt_clock, link_clock_on);
+    // The store the samples pass through, out of its low-power state.
+    setLink(engine, link, afmt_memory, memory_force_shift, memory_force_mask, 0);
+    orLink(engine, link, afmt_memory, memory_low_power_off);
     // The packets wait for the pixels of the line they belong to.
     orLink(engine, link, hdmi_audio, 1 << 4);
     // The status that rides with the samples is taken up as written.
@@ -1026,6 +1178,17 @@ fn linkUp(engine: Engine, link: u32, endpoint: u32, pixel_khz: u32) void {
     setLink(engine, link, afmt_status_left, status_channel_shift, status_channel_mask, 1);
     setLink(engine, link, afmt_status_left, status_accuracy_shift, status_accuracy_mask, 0);
     setLink(engine, link, afmt_status_right, status_channel_shift, status_channel_mask, 2);
+    setLink(engine, link, afmt_status_rest, 0, status_rest_mask, status_rest_channels);
+    // The description of the sound - how many channels there are and what
+    // kind they are - goes out between the pictures, on the second line of
+    // the blanking. Without it a monitor has not been told what is coming
+    // and stays quiet whatever arrives. The description is the one the
+    // codec wrote, taken up again now that it is being sent.
+    orLink(engine, link, hdmi_sending, sending_sound_description | sending_sound_description_always);
+    setLink(engine, link, hdmi_sending_line, sending_line_shift, sending_line_mask, sending_line);
+    orLink(engine, link, afmt_infoframe, description_again);
+    // And the far end is not told to mute.
+    andLink(engine, link, hdmi_general, ~general_mute);
     // Whose samples they are, and that they are being sent.
     writeLink(engine, link, afmt_source, (endpoint & link_from_mask) << link_from_shift);
     orLink(engine, link, afmt_audio, samples_sending);

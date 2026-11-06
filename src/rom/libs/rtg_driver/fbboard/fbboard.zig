@@ -7,7 +7,8 @@
 //! changed, and the framebuffer a UEFI firmware has already lit
 //! (`uefi.zig`), which reads the one buffer it was given - behind which
 //! the engine doing the reading is looked at where it is one this knows
-//! (`dcn.zig`), so far only to say what it is.
+//! (`dcn.zig`), to say what it is and to switch on the sound the link it
+//! lit can carry.
 //!
 //! A module of its own, on the same footing as the other drivers: it
 //! opens rtg.library at cold start and hands in a driver called "fb",
@@ -182,7 +183,7 @@ const timer = sdk.devices.timer;
 const MODULE_NAME = "rtg-fb";
 const DRIVER_NAME = "fb";
 const VERSION = 1;
-const REVISION = 25;
+const REVISION = 26;
 const BUILD_DATE = "06.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
