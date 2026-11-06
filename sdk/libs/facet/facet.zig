@@ -56,6 +56,11 @@ pub const shader = @import("shader.zig");
 /// format alone - it knows nothing of facet's own shaders. (Since 1.75.)
 pub const spirv = @import("spirv.zig");
 
+/// A shader written once as a comptime graph, for both kinds of device:
+/// the words for one that compiles, and a function for the cores.
+/// (Since 1.75.)
+pub const ir = @import("ir.zig");
+
 const intuition = @import("../intuition/intuition.zig");
 
 // --- handles ----------------------------------------------------------------
