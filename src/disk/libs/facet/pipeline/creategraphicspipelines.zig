@@ -37,7 +37,8 @@ const _instance = @import("../instance/_instance.zig");
 /// control and evaluation function, whose varyings then the fragment
 /// function's have to be, or for a fragment function that writes other
 /// than the subpass's colour attachments (`shader.fragmentOutputs`, since
-/// 1.51); `error_feature_not_present`
+/// 1.51), or for a fragment entry whose `varyings` word names no fixed
+/// form (since 1.75); `error_feature_not_present`
 /// for state facet.library does not draw (see BEHAVIOR);
 /// `error_format_not_supported` for an attribute in a format it does not
 /// read; `error_initialization_failed` for state that does not hold
@@ -232,6 +233,10 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
     if ((control == null) != (evaluation == null)) return .error_invalid_shader_nv;
     const last_entry = evaluation orelse vertex_entry;
     if (last_entry.varyingCount() != fragment_entry.varyingCount()) return .error_invalid_shader_nv;
+    // The fixed form is in the fragment entry's own `varyings` word, which
+    // the program wrote: a kind byte that names no form is refused here
+    // rather than read as whichever form it lands on (since 1.75).
+    const fixed_form = fragment_entry.fixed() orelse return .error_invalid_shader_nv;
     const pass = _objects.of(_render.RenderPass, info.render_pass);
     if (info.subpass >= pass.subpass_count) return .error_initialization_failed;
     const subpass = pass.subpasses[info.subpass];
@@ -250,7 +255,7 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         .device = device,
         .vertex = @ptrCast(@alignCast(vertex_entry.function)),
         .fragment = @ptrCast(@alignCast(fragment_entry.function)),
-        .fixed = fragment_entry.fixed(),
+        .fixed = fixed_form,
         // What is drawn carries, which with tessellation is the
         // evaluation function's output and not the vertex function's: the
         // patch's own vertices are as wide as `Tessellated.vertex_varyings`
@@ -270,7 +275,7 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         .depth_write = false,
         .biased = false,
         .bias = null,
-        .prepass = info.flags & facet.PIPELINE_CREATE_DEPTH_PREPASS != 0 and !fragment_entry.fixed().discards(),
+        .prepass = info.flags & facet.PIPELINE_CREATE_DEPTH_PREPASS != 0 and !fixed_form.discards(),
         .stencil = null,
         .dynamic_stencil_compare = false,
         .dynamic_stencil_write = false,

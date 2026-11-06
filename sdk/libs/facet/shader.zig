@@ -69,8 +69,11 @@ pub const Entry = extern struct {
         return entry.varyings & 0xFF;
     }
 
-    /// Its fixed form.
-    pub fn fixed(entry: *const Entry) Fixed {
+    /// Its fixed form, or null where those bits name none: a word a
+    /// program made up, or one of a revision later than the library's.
+    /// (Since 1.75 it answers with a null rather than reading the byte as
+    /// a kind whatever it holds.)
+    pub fn fixed(entry: *const Entry) ?Fixed {
         return Fixed.fromBits(entry.varyings);
     }
 
@@ -316,9 +319,16 @@ pub const Fixed = struct {
             @as(u32, @intFromEnum(fixed.sampling.address)) << 17;
     }
 
-    fn fromBits(bits_given: u32) Fixed {
+    /// The form `bits_given` names, or null where its kind byte names no
+    /// kind. That byte is the program's own, so it is read and not
+    /// trusted: `@enumFromInt` of a value the enumeration has not got is
+    /// illegal behaviour, which is a panic where there are checks and
+    /// nothing at all where there are none. The filter and the address are
+    /// one bit each and so are always a value. (Since 1.75.)
+    fn fromBits(bits_given: u32) ?Fixed {
+        const named = std.enums.fromInt(FixedKind, @as(u8, @truncate(bits_given >> 8))) orelse return null;
         return .{
-            .kind = @enumFromInt(@as(u8, @truncate(bits_given >> 8))),
+            .kind = named,
             .sampling = .{
                 .filter = @enumFromInt(@as(u1, @truncate(bits_given >> 16))),
                 .address = @enumFromInt(@as(u1, @truncate(bits_given >> 17))),

@@ -3137,7 +3137,8 @@ facet.library/WaitForFences
 	control and evaluation function, whose varyings then the fragment
 	function's have to be, or for a fragment function that writes other
 	than the subpass's colour attachments (`shader.fragmentOutputs`, since
-	1.51); `error_feature_not_present`
+	1.51), or for a fragment entry whose `varyings` word names no fixed
+	form (since 1.75); `error_feature_not_present`
 	for state facet.library does not draw (see BEHAVIOR);
 	`error_format_not_supported` for an attribute in a format it does not
 	read; `error_initialization_failed` for state that does not hold

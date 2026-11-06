@@ -1081,4 +1081,15 @@ pub const LIBRARY_VERSION = 1;
 /// machine the library runs on; and no point mode in tessellation, the
 /// tessellator emitting triangles or the lines of `isolines` and nothing
 /// emitting a patch's points on their own.
-pub const LIBRARY_REVISION = 74;
+/// 75: a fragment entry's fixed form is read and not trusted. The kind is
+/// a byte of the program's own `varyings` word, and `Fixed.fromBits` read
+/// it as a `FixedKind` whatever it held: `@enumFromInt` of a value the
+/// enumeration has not got, which is a panic where there are checks and
+/// nothing at all where there are none, reached by any program that passes
+/// a word of its own making to `shader.fragment`. It answers with a null
+/// now, `Entry.fixed` with it, and `CreateGraphicsPipelines` refuses such
+/// a pipeline with `error_invalid_shader_nv`. Nothing a program wrote with
+/// `shader.fixedFragment` reads differently - those bits always named a
+/// form - but `Entry.fixed` answers an optional, so a program that reads it
+/// itself says `orelse`.
+pub const LIBRARY_REVISION = 75;
