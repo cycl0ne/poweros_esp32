@@ -24,6 +24,7 @@ device requests are described in `sdk/devices/network.zig`,
 - [The network device API](#the-network-device-api)
 - [Ethernet: emac.device](#ethernet-emacdevice)
 - [Ethernet on PCI: intelnet.device](#ethernet-on-pci-intelnetdevice)
+- [Ethernet on PCI: realnet.device](#ethernet-on-pci-realnetdevice)
 - [Wireless devices](#wireless-devices)
 - [A serial line: slip.device](#a-serial-line-slipdevice)
 - [Writing a network driver](#writing-a-network-driver)
@@ -50,7 +51,7 @@ device requests are described in `sdk/devices/network.zig`,
     |              eth0, wlan0, lo0
     |  IOSana2Req (CMD_READ, CMD_WRITE, S2_ONEVENT ...)
  network device    DEVS:networks/emac.device, DEVS:networks/intelnet.device,
-    |              DEVS:networks/openeth.device,
+    |              DEVS:networks/realnet.device, DEVS:networks/openeth.device,
     |              DEVS:networks/esp32s3wifi.device, DEVS:networks/slip.device
     |
  hardware          a MAC's rings and interrupts, a radio's libraries
@@ -454,7 +455,7 @@ minutes.
 | `ENVARC:Sys/net/timeserver` | where `C:net/TimeSync` asks the time, when DHCP names no server |
 | `ENVARC:Sys/net/networks/<network>` | a Wi-Fi network's passphrase, its first line |
 | `ENVARC:Sys/net/syslog` | a syslog server: `S:Network-Startup` starts `C:Log SYSLOG` to it |
-| `ENVARC:Sys/net/shellserver` | `C:net/ShellServer`'s password, its first line (Telnet and SSH) |
+| `ENVARC:Sys/net/shellserver` | `C:net/ShellServer`'s password, its first line (Telnet and SSH); the file is also what `S:Network-Startup` reads to decide whether to start a shell server at all, so a machine without one listens on nothing |
 | `ENVARC:Sys/net/authorized_keys` | the ssh-ed25519 keys that may log in over SSH, OpenSSH's lines |
 | `ENVARC:Sys/net/ssh_host_key` | the SSH host key, made at the first start; `.pub` beside it |
 | `ENVARC:Sys/net/id_ed25519` | the key `C:net/SSH` and `C:net/SCP` log in with, made by `SSH KEYGEN`; `.pub` beside it |
@@ -646,6 +647,84 @@ goes out whole with the checksums it came with.
 
 A machine with no such controller gets no device, so its `ETH0` is
 skipped. The x86-64 disk's `DEVS:NetInterfaces/ETH0` names this device.
+
+## Ethernet on PCI: realnet.device
+
+`DEVS:networks/realnet.device` is Realtek's 2.5 gigabit Ethernet
+controllers on PCI Express: a unit per controller, with Ethernet framing,
+its station address the one the controller loads from its own storage.
+Unit 0 is the machine's first port of this kind. It is the Ethernet a
+mini PC usually has, where a server board has the Intel card above.
+
+Four parts are driven - the RTL8125 in its three revisions and the
+RTL8126 - and they share one PCI device ID between them, so which one a
+function is comes from the revision field of its send configuration
+register, the one register that says. They differ in two settings and in
+the speeds they reach, and `mac.Part` holds the difference; a revision
+that is not among them is named in the system log and the function is
+left alone.
+
+Most of what these parts have is not reached by address. A small block of
+registers is, and behind it sit three more spaces, each an address written
+to a register, a busy bit to wait on, and sixteen bits of data: the MAC's
+own extended registers, the PHY's, and the function's PCI Express
+configuration space reached from inside. The bring-up is mostly writes to
+the first two
+(`src/disk/devs/networks/realnet/setup.zig`).
+
+**No microcode is loaded.** These controllers have an on-chip processor
+whose patch area a driver may fill with a block the maker supplies. This
+device clears that area and loads nothing, so the part runs the code it
+came up with: what a patch is for is errata and power saving, not the
+paths a frame takes.
+
+The rings are 128 receive and 64 send descriptors, 32 bytes each, with a
+buffer of its own for every descriptor. Neither ring has a register
+saying where it ends - the last descriptor carries a mark, and the
+controller starts again at it - so both are walked by the ownership bit
+alone, which goes in last with a barrier in front of it. A frame arrives
+with its frame check sequence behind it, which the device takes off.
+
+The link is the PHY's work: it is told what to offer - ten, a hundred, a
+gigabit and 2.5, with flow control - and to negotiate, and one register
+says what came of it. The controller raises a cause when that changes, so
+a cable going in or out takes the unit on and off line with nothing
+polled.
+
+The controller checks an arriving packet's checksums and says in the
+descriptor what it found, so a read of a packet that came through with
+every one of them right is answered with `SANA2IOF_CHECKSUM`; it
+abstains where there was nothing to check. Nothing is asked of it on the
+way out, so the device reports `S2OFFLOADF_RX_CHECKSUMS` and
+`S2OFFLOADF_RX_CHECKSUMS_IPV6` alone.
+
+**One interrupt for a pass of the rings.** The part has a moderation
+timer per cause and every one of them is written to zero; what keeps the
+interrupts down instead is that the controller's causes are turned off
+as its interrupt is taken and back on when the device's task has emptied
+both rings. A line carrying frames back to back therefore raises one
+interrupt for each pass the task makes and not one for each frame, which
+costs the part nothing and holds no frame back: a cause is a level, so
+one still standing when the causes go back on raises its interrupt
+again.
+
+**A controller that stops is started again.** This part can stop
+working, and nothing above it would hear of it by itself: what says a
+send is done is the controller's own interrupt, so one that has stopped
+is silent rather than wrong. Two things are watched for it. The cause by
+which it reports that its own working went wrong starts it again at
+once. And a write offered to a controller that has held writes for three
+seconds with none of them finishing starts it again before that write
+goes into a ring it would never leave - the write path is where
+something is known to be wanted of the controller, so it is where this
+is noticed, and no timer of its own is needed for it. Starting again is
+the rings and the receiver: the writes it was holding are answered as
+failed, the PHY is not touched, and the unit stays on line with the
+openers' reads still theirs, because the link is not what went wrong.
+
+A machine with no such controller gets no device, so its `ETH1` is
+skipped. The x86-64 disk's `DEVS:NetInterfaces/ETH1` names this device,
+beside `ETH0` for the Intel card.
 
 ## USB Ethernet: ecm.device
 
@@ -853,6 +932,9 @@ task (`intelnet.zig`, `sana.zig`), a card per controller with its rings
 (`_intelnet.zig`), the registers (`mac.zig`), the descriptors
 (`ring.zig`), the carrier and the speed (`link.zig`), the bus
 (`pci.zig`), and a file per generation of the hardware under `family/`.
+`src/disk/devs/networks/realnet/` is the same shape for a card whose
+registers are mostly behind an indirect register, with the bring-up
+sequence in a file of its own (`setup.zig`).
 `src/disk/devs/networks/emac/` is a MAC on a chip: its descriptors and
 buffers in whole cache lines, written back (`CachePreDMA`) before the
 DMA engine reads them and invalidated (`CachePostDMA`) before the task

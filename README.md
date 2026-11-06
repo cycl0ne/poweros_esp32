@@ -670,6 +670,22 @@ over TCP at about 140 MB/s with nothing dropped and nothing damaged - an
 emulator's figure, which says the rings and the interrupt keep up, not
 what a machine does.
 
+**A second kind of card** is driven beside it:
+`DEVS:networks/realnet.device` is Realtek's 2.5 gigabit controllers on
+PCI - the RTL8125 in its three revisions and the RTL8126, which is the
+Ethernet a mini PC of this kind usually has. They share one PCI device ID
+between them, so which one a function is comes from the revision field of
+its send configuration register. A controller is claimed, taken away from
+whatever drove it before the machine started, given a ring of 128 receive
+and 64 send descriptors with a buffer for each, and asked for an
+interrupt vector of its own. Its interface is `DEVS:NetInterfaces/ETH1`,
+beside `ETH0` for the Intel card; a machine has one kind or the other,
+and the interface whose card is not there is not added. What it checks
+for itself is the checksums of an arriving packet. **Not yet on such a
+card**: the driver is built and the parts that can be proved without one
+are - the walk that finds a Realtek function, the revision it reads, the
+descriptors and the receive filter's hash - but no machine here has one.
+
 **The checksums are the controller's**, both ways. An arriving packet it
 has checked is handed up marked, and the sockets library then skips its
 own sums; a write asks it to finish the transport checksum, which saves
@@ -1000,6 +1016,7 @@ More build steps and options:
 | `-Dcores=1` | the cores the kernel runs on: 1 or 2, up to 4 on a 64-bit board (default: what the board says - two on the ESP32 boards and in `qemu`, four on the 64-bit boards) |
 | `-Dselftest` | the ESP32-P4's boot task checks the chip (its blocks, DMA, PSRAM, the flash) and runs test tasks on both cores, rather than the shell |
 | `-Dmemdebug=true` | memory debugging on from exec's start, so the blocks the system makes as it comes up are walled too (`C:MemDebug` and `s3> memdebug` switch it while running) |
+| `-Dlogdebug` | the log keeps its debug lines from exec's start, and the cold start names each module as it starts it: what a boot that stops before the picture is read with (`Log LEVEL debug` switches it while running) |
 
 ## Repository layout
 

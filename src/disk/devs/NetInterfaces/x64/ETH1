@@ -1,0 +1,17 @@
+/* DEVS:NetInterfaces/ETH1 - the interface C:net/AddNetInterface ETH1
+ * brings up as eth1. The startup-sequence brings up every file here.
+ *
+ * This one is a 2.5 gigabit Ethernet card of the kind realnet.device
+ * drives, its address from the network's DHCP server. ETH0 beside it is
+ * a card of the other kind this system drives on PCI; a machine has one
+ * or the other, and the interface whose card is not there is not added,
+ * with nothing said. A fixed address instead would be, for example
+ *   Configure = FIXED; Address = 192.168.1.50; NetMask = 255.255.255.0
+ *   Gateway = 192.168.1.1; NameServer = 192.168.1.1
+ * A second port of the same kind is unit 1, which ETH2 beside this file
+ * is. A keyword this file does not know is an error,
+ * with its line and column; see C:net/AddNetInterface for the list.
+ */
+Device     = networks/realnet.device
+Unit       = 0
+Configure  = DHCP

@@ -36,6 +36,15 @@ If EXISTS DEVS:Shares
   C:net/MountShare ALL QUIET
 EndIf
 
+; A shell for each connection to a TCP port, where
+; ENVARC:Sys/net/shellserver holds a password: that file is what says
+; whether to listen at all, so a machine without one listens on nothing.
+; On a machine whose console is its screen alone, this is how a shell is
+; reached from another machine.
+If EXISTS ENV:Sys/net/shellserver
+  Run >NIL: C:net/ShellServer QUIET
+EndIf
+
 ; The system log to a syslog server, when ENVARC:Sys/net/syslog names one
 ; (host or host:port): what the log holds now, then every line as it
 ; comes, in a task of its own.

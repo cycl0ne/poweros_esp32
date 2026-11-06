@@ -276,6 +276,7 @@ const modules = [_]Program{
     .{ .disk = "devs/rs485.device", .source = "devs/rs485/rs485.zig", .name = "rs485.device" },
     .{ .disk = "devs/networks/openeth.device", .source = "devs/networks/openeth/openeth.zig", .name = "openeth.device" },
     .{ .disk = "devs/networks/intelnet.device", .source = "devs/networks/intelnet/intelnet.zig", .name = "intelnet.device" },
+    .{ .disk = "devs/networks/realnet.device", .source = "devs/networks/realnet/realnet.zig", .name = "realnet.device" },
     .{ .disk = "devs/networks/emac.device", .source = "devs/networks/emac/emac.zig", .name = "emac.device" },
     .{ .disk = "devs/networks/slip.device", .source = "devs/networks/slip/slip.zig", .name = "slip.device" },
     .{ .disk = "devs/networks/cyw43455.device", .source = "devs/networks/cyw43455/cyw43455.zig", .name = "cyw43455.device" },
@@ -319,7 +320,7 @@ const esp_only = [_][]const u8{ "usbotg.device", "sdcard.device", "programs/Dock
 /// video decoder, DTS's module with its large tables, and the video codecs
 /// in software: the ESP32s have neither the room for them on their flash
 /// disks nor the speed, and the 64-bit machines' disks are RAM.
-const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device", "nvme.device", "intelnet.device", "install", "update", "WBStartup/Dock", "videodec", "dts.acodec", "h264.vcodec", "hevc.vcodec", "vp8.vcodec", "vp9.vcodec", "av1.vcodec" };
+const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device", "nvme.device", "intelnet.device", "realnet.device", "install", "update", "WBStartup/Dock", "videodec", "dts.acodec", "h264.vcodec", "hevc.vcodec", "vp8.vcodec", "vp9.vcodec", "av1.vcodec" };
 /// Drivers of what only the Raspberry Pi CM5 has among the AArch64
 /// machines and no other chip does: its radio, a CYW43455 on the
 /// BCM2712's SD host.
@@ -426,10 +427,15 @@ pub const p4_files = [_]File{
 };
 
 /// The x86-64 machines' disk has this in place of the shared file of the
-/// same name: their Ethernet is a card on PCI, so the interface names
-/// intelnet.device.
+/// same name, and two more beside it: their Ethernet is a card on PCI,
+/// and the interfaces name the two kinds of card this system drives
+/// there, with a second port for the kind that often has two. A machine
+/// has what it has, and an interface whose port is not there is not
+/// added.
 pub const x64_files = [_]File{
     .{ .disk = "devs/NetInterfaces/ETH0", .source = "devs/NetInterfaces/x64/ETH0" },
+    .{ .disk = "devs/NetInterfaces/ETH1", .source = "devs/NetInterfaces/x64/ETH1" },
+    .{ .disk = "devs/NetInterfaces/ETH2", .source = "devs/NetInterfaces/x64/ETH2" },
 };
 
 /// The AArch64 machines' disk has these in place of the shared files of
