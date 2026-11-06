@@ -1596,9 +1596,14 @@ pub const LIBRARY_VERSION = 1;
 /// malformed.
 ///
 /// One defect fell out of it, item 82. `CreateShaderModule` did
-/// `@ptrCast(@alignCast(info.code))`, and `@alignCast` *panics* in a safe
-/// build when the pointer is not already aligned - so a program handing
-/// facet the 4-aligned `pCode` Vulkan promises aborted inside the
-/// library. It checks the alignment and answers `error_invalid_shader_nv`
-/// now, which closes the crash without yet accepting the module.
+/// `@ptrCast(@alignCast(info.code))` before reading `magic`, and
+/// `@alignCast` *panics* in a safe build when the pointer is not already
+/// aligned - so the call that exists to refuse memory that is not a
+/// `shader.Code` aborted inside the library for the one kind of garbage
+/// that is 4-aligned, which a word array often is. It checks
+/// `@intFromPtr(info.code) % @alignOf(shader.Code)` and answers
+/// `error_invalid_shader_nv` now. Eight is what this API asks of that
+/// pointer: it points at a struct holding a pointer, not at Vulkan's
+/// `pCode`, which is only ever read as `[]const u32` behind
+/// `Spirv.words`.
 pub const LIBRARY_REVISION = 87;

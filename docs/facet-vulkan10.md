@@ -1359,31 +1359,39 @@ list it.
 > above. `src/disk/libs/facet/device/createdevice.zig` is the conformant
 > one, since 1.82.
 
-### 82. vkCreateShaderModule aligns pCode to 4 bytes, and facet's cast assumed 8
+### 82. CreateShaderModule panicked on an under-aligned `code` instead of refusing it
 
-*entry points / shaders* &mdash; conformance-blocking, small, found while doing item 28
+*entry points / shaders* &mdash; **done in 1.87**, small, found while doing item 28
 
 Found by a test crash in 1.87, from an unrelated change that moved a SPIR-V
 word array four bytes. `CreateShaderModule` did
-`@ptrCast(@alignCast(info.code))` to a `*const shader.Code`, and
-`@alignCast` is a *panic* in a safe build when the pointer does not already
-carry the alignment - so any program handing facet a 4-aligned `pCode`
-aborted inside the library rather than being answered. Vulkan promises 4
-bytes and no more: `pCode` is `const uint32_t*`, and the valid-usage text
-says codeSize must be a multiple of 4, nothing about 8.
+`@ptrCast(@alignCast(info.code))` to a `*const shader.Code` before reading
+`magic`, and `@alignCast` is a *panic* in a safe build when the pointer
+does not already carry the alignment. `info.code` is a `*const anyopaque`
+and `@alignOf(shader.Code)` is 8, so the call that exists to *refuse*
+memory that is not a `shader.Code` aborted inside the library for the one
+kind of garbage that is 4-aligned - which a word array often is. The test
+at tests/draw.zig:649, whose whole point is that a bare `[N]u32` is turned
+away, had been passing only because its array happened to land on 8.
 
 1.87 checks `@intFromPtr(info.code) % @alignOf(shader.Code)` and answers
-`error_invalid_shader_nv` instead of panicking, which is the code this call
-already uses for a module it cannot read. That is the honest minimum and it
-closes the crash, but it is not conformant: a 4-aligned module is *valid*
-Vulkan and must be accepted, not refused. Accepting it means either reading
-the words through an unaligned accessor or copying them into aligned
-storage at module creation - a copy the call is entitled to make, since
-`pCode` need not outlive it.
+`error_invalid_shader_nv`, the code this call already uses for memory it
+cannot read as a module. That closes it: eight bytes is what facet's own
+API asks of this pointer, because what it points at is a struct holding a
+pointer, not a word array.
+
+Worth writing down because it *looks* like a conformance hole and is not.
+Vulkan's `pCode` is `const uint32_t*` and promises 4 bytes - but `pCode` is
+never this pointer. facet's `code` is a `shader.Code`, and under
+`SHADER_MODULE_CREATE_SPIRV` a `shader.Module`, with the words reached
+through `Spirv.words` behind it; a shim would build that struct from
+`pCode` in storage of its own, correctly aligned by construction, and the
+words themselves are only ever read as `[]const u32`. The structure
+question this belongs to is item 51's.
 
 > Verified by the crash: `src/disk/libs/facet/shader/createshadermodule.zig`
-> before 1.87, against `vkCreateShaderModule`'s
-> `const uint32_t* pCode` and VUID-VkShaderModuleCreateInfo-codeSize-01085.
+> before 1.87; `sdk/libs/facet/shader.zig:123` `Code` holds
+> `entries: [*]const Entry`, so its alignment is a pointer's.
 
 ## Deferred by the decision, not out of reach
 

@@ -653,6 +653,29 @@ test "a shader module: the entries of a shader.Code, found by stage and name; SP
     const too_many = [1]shader.Entry{shader.vertex("main", &Flat.vertex, 9)};
     try testing.expectEqual(facet.Result.error_invalid_shader_nv, fb.CreateShaderModule(device, &.{ .code = &shader.Code{ .entry_count = 1, .entries = &too_many } }, &none));
     try testing.expect(none == null);
+
+    // The same bytes at two addresses, four bytes apart. `code` is a
+    // `*const anyopaque` whose alignment is the caller's to get right,
+    // and `shader.Code` holds a pointer, so it wants eight; the library
+    // read it as one with an `@alignCast`, which is a *panic* in a safe
+    // build rather than a refusal. The word array above is what found it
+    // - a bare `[5]u32` is often 4-aligned, and that case was passing
+    // only because the compiler had put it on 8. So this writes a module
+    // nothing else is wrong with, and asks for it twice: refused at
+    // four, made at eight. Item 82 of docs/facet-vulkan10.md.
+    const upright = [1]shader.Entry{shader.vertex("main", &Flat.vertex, 2)};
+    const well_formed = shader.Code{ .entry_count = 1, .entries = &upright };
+    const room_size = @sizeOf(shader.Code) + 8;
+    var room: [room_size]u8 align(8) = [_]u8{0} ** room_size;
+    @memcpy(room[4..][0..@sizeOf(shader.Code)], std.mem.asBytes(&well_formed));
+    const askew: *const anyopaque = @ptrCast(&room[4]);
+    try testing.expectEqual(@as(usize, 4), @intFromPtr(askew) % 8);
+    try testing.expectEqual(facet.Result.error_invalid_shader_nv, fb.CreateShaderModule(device, &.{ .code_size = @sizeOf(shader.Code), .code = askew }, &none));
+    try testing.expect(none == null);
+    @memcpy(room[0..@sizeOf(shader.Code)], std.mem.asBytes(&well_formed));
+    try testing.expectEqual(facet.Result.success, fb.CreateShaderModule(device, &.{ .code_size = @sizeOf(shader.Code), .code = @as(*const anyopaque, @ptrCast(&room[0])) }, &none));
+    try testing.expect(none != null);
+    fb.DestroyShaderModule(device, none);
 }
 
 test "a module that ships SPIR-V beside its functions: the words kept, carried to the pipeline, and drawn by the cores all the same" {
