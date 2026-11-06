@@ -388,6 +388,7 @@ pub fn build(b: *std.Build) void {
     // null when nothing was said about it.
     const disk_tree_option = b.option(bool, "disk-tree", "Put the disk/ tree on the disk images (default: yes, when there is one)");
     const memdebug = b.option(bool, "memdebug", "Memory debugging on from exec's start: walls behind blocks, patterns in new and freed memory, wide stack guards (default: false; s3> memdebug and C:MemDebug switch it at run time)") orelse false;
+    const logdebug = b.option(bool, "logdebug", "The log keeps the debug lines from exec's start, among them every module's name as it is started: what a boot that stops before there is a shell says for itself (default: false; C:Log LEVEL switches it at run time)") orelse false;
     const posfs_soak = b.option(u32, "posfs-soak", "`zig build test`: run posfs's power-cut test on this many more seeds, each on flash, a card and a stick (default: 0)") orelse 0;
     const most_cores: u32 = switch (chipOf(board)) {
         // The machine's own tables say how many cores it has, so there is
@@ -458,7 +459,7 @@ pub fn build(b: *std.Build) void {
     // against it like any program does.
     const sdk_dep = b.dependency("poweros_sdk", .{});
     const sdk = sdk_dep.module("sdk");
-    const kernel = addKernel(b, kernel_target, optimize, sdk, board, disk_offset, cores, selftest, memdebug);
+    const kernel = addKernel(b, kernel_target, optimize, sdk, board, disk_offset, cores, selftest, memdebug, logdebug);
 
     // What goes on the disk (src/disk, a package of its own): the
     // commands, the test programs, the modules loaded from LIBS:, DEVS:
@@ -1043,6 +1044,14 @@ pub fn build(b: *std.Build) void {
     });
     serve.root_module.addImport("sdk", sdk);
     const serve_port = b.option(u16, "serve-port", "The port `serve` hands a release package out on (default: 8080)") orelse 8080;
+    // The x86-64 machine's loader: a PE32+ of its own that the firmware
+    // starts, and which then reads the kernel (src/boot/uefi/stub.zig).
+    // It is made here because everything that writes a boot partition
+    // has to carry it - the package below, the image further down and
+    // the stick - and it is one of that board's build products
+    // (`zig-out/bin/BOOTX64.EFI`), because it is a file that has to be
+    // on the partition the firmware reads, as much as the kernel is.
+    const uefi_stub = addUefiStub(b, optimize);
     const package_step = b.step("package", "Gather a release package for -Dboard= into release/package-<board>/");
     const serve_step = b.step("serve", "Gather the release package and hand it out over HTTP (quit with Ctrl-C)");
     switch (chipOf(board)) {
@@ -1066,6 +1075,7 @@ pub fn build(b: *std.Build) void {
                     else => x64_disk_bin,
                 },
                 .boot_files = boot_files,
+                .boot_loader = if (chipOf(board) == .x64uefi) uefi_stub.getEmittedBin() else null,
             });
             // `serve` hands out the package it has just gathered, so one
             // command is the whole of the host's side.
@@ -1079,12 +1089,7 @@ pub fn build(b: *std.Build) void {
         },
     }
 
-    // The x86-64 machine's loader: a PE32+ of its own that the firmware
-    // starts, and which then reads the kernel (src/boot/uefi/stub.zig).
-    // It is one of that board's build products - `zig-out/bin/BOOTX64.EFI`
-    // - because it is a file that has to be on the partition the firmware
-    // reads, as much as the kernel is.
-    const uefi_stub = addUefiStub(b, optimize);
+    // The loader beside the kernel in this board's build products.
     if (board == .qemu_q35) {
         b.getInstallStep().dependOn(&b.addInstallBinFile(uefi_stub.getEmittedBin(), "BOOTX64.EFI").step);
     }
@@ -1137,7 +1142,7 @@ pub fn build(b: *std.Build) void {
 
     // The emulator is a board of its own: the `qemu*` steps run its image,
     // with the same disk.
-    const emulated = if (board == .qemu) built else addImage(b, esptool, ressize, addKernel(b, target, optimize, sdk, .qemu, disk_offset, cores, false, memdebug), disk_bin, disk_offset);
+    const emulated = if (board == .qemu) built else addImage(b, esptool, ressize, addKernel(b, target, optimize, sdk, .qemu, disk_offset, cores, false, memdebug, logdebug), disk_bin, disk_offset);
     const flash_image = emulated.flash_image;
 
     const run_qemu = qemuRun(b, qemu, flash_image, network, usb, qemuConsole(b, &.{"-nographic"}, uart1));
@@ -1169,7 +1174,7 @@ pub fn build(b: *std.Build) void {
 
     // The ESP32-P4 in esp-emulator (scripts/fetch-esp-emu.sh), a board of
     // its own: the `emu` step runs its image on the boards' v1.x ROM.
-    const p4_emulated = if (board == .esp32p4_emu) built else addP4Image(b, esptool, ramimage, addKernel(b, p4_target, optimize, sdk, .esp32p4_emu, disk_offset, cores, selftest, memdebug), p4_disk_bin, disk_offset);
+    const p4_emulated = if (board == .esp32p4_emu) built else addP4Image(b, esptool, ramimage, addKernel(b, p4_target, optimize, sdk, .esp32p4_emu, disk_offset, cores, selftest, memdebug, logdebug), p4_disk_bin, disk_offset);
     const run_emu = b.addSystemCommand(&.{
         b.pathFromRoot("toolchain/esp-emu/esp-emu"), "--chip",                                                 "esp32p4",
         "--rom",                                     b.pathFromRoot("toolchain/esp-emu/esp32p4_rev0_rom.elf"), "--psram-size",
@@ -1193,7 +1198,7 @@ pub fn build(b: *std.Build) void {
     // which enters it in supervisor mode at 0x80200000, and it starts
     // from its system disk, an NVMe SSD (`virtDisks`). A USB speaker
     // (`virtSpeaker`) is on its xHCI controller, as on every virt step.
-    const virt_kernel = if (board == .qemu_virt) kernel else addKernel(b, rv64_target, optimize, sdk, .qemu_virt, disk_offset, cores, selftest, memdebug);
+    const virt_kernel = if (board == .qemu_virt) kernel else addKernel(b, rv64_target, optimize, sdk, .qemu_virt, disk_offset, cores, selftest, memdebug, logdebug);
     const virt_disks: VirtDisks = .{ .system = rv64_system_disk, .work = keepWorkDisk(b, blank_work_disk, "virt.bin") };
     const run_virt = b.addSystemCommand(&.{
         "qemu-system-riscv64", "-M", "virt",       "-m",    "512M",
@@ -1243,7 +1248,7 @@ pub fn build(b: *std.Build) void {
     // device tree in x0, PSCI by HVC - with Cortex-A76 cores and a GICv2
     // as the Pi's BCM2712 has them, everything below 4 GiB, and the same
     // two NVMe SSDs, its own system disk and work disk.
-    const virt64_kernel = if (board == .qemu_virt_a64) built else addA64Image(b, addKernel(b, a64_target, optimize, sdk, .qemu_virt_a64, disk_offset, cores, selftest, memdebug));
+    const virt64_kernel = if (board == .qemu_virt_a64) built else addA64Image(b, addKernel(b, a64_target, optimize, sdk, .qemu_virt_a64, disk_offset, cores, selftest, memdebug, logdebug));
     const virt64_machine = [_][]const u8{
         "qemu-system-aarch64", "-M",         "virt,gic-version=2,highmem=off",
         "-cpu",                "cortex-a76", "-m",
@@ -1311,7 +1316,7 @@ pub fn build(b: *std.Build) void {
     // first serial port, which the stub writes by hand and exec's raw port
     // drives afterwards, so the stub's lines and the kernel's first lines
     // come out of the same place.
-    const q35_kernel = if (board == .qemu_q35) built else addX64Image(b, addKernel(b, x64_target, optimize, sdk, .qemu_q35, disk_offset, cores, selftest, memdebug));
+    const q35_kernel = if (board == .qemu_q35) built else addX64Image(b, addKernel(b, x64_target, optimize, sdk, .qemu_q35, disk_offset, cores, selftest, memdebug, logdebug));
     const q35_boot = b.addWriteFiles();
     _ = q35_boot.addCopyFile(uefi_stub.getEmittedBin(), "EFI/BOOT/BOOTX64.EFI");
     _ = q35_boot.addCopyFile(q35_kernel.image, "kernel.bin");
@@ -1358,13 +1363,32 @@ pub fn build(b: *std.Build) void {
         const make_stick = b.addRunArtifact(mkstick);
         const stick_name = b.fmt("stick-{s}.img", .{@tagName(board)});
         const stick_image = make_stick.addPrefixedOutputFileArg("--into=", stick_name);
+        // The medium is written into the build's cache and put in
+        // release/ afterwards, so the report is told where it will be
+        // found: a line that writes a stick is one that can be run.
+        make_stick.addArg(b.fmt("--as=release/{s}", .{stick_name}));
         if (stick_size) |mib| make_stick.addArg(b.fmt("--size={d}", .{mib}));
         // The one name a UEFI firmware reads off a boot partition, and
         // the two the loader then reads from beside itself.
         make_stick.addPrefixedFileArg("EFI/BOOT/BOOTX64.EFI=", uefi_stub.getEmittedBin());
         make_stick.addPrefixedFileArg("kernel.bin=", built.image);
         make_stick.addPrefixedFileArg(b.fmt("{s}=", .{ramDiskName(.x64uefi)}), x64_disk_bin);
-        stick_step.dependOn(&b.addInstallFileWithDir(stick_image, release_dir, stick_name).step);
+        // What the tool says of the medium it made. A run the build
+        // caches has its standard output sent nowhere, so the report is
+        // captured and read back out by a step of its own, after the
+        // medium is in release/ - whether the run happened this time or
+        // the cache answered for it.
+        const stick_report = make_stick.captureStdOut(.{ .basename = "report.txt" });
+        const stick_put = b.addInstallFileWithDir(stick_image, release_dir, stick_name);
+        // Which kernel is on it, which the image itself cannot be looked
+        // at for: a medium written from a quiet build says nothing on a
+        // machine whose boot stops, and looks like a machine that stops
+        // earlier than it does.
+        const stick_tail = if (logdebug)
+            "\nThe kernel on it names every module as the cold start starts it, and\nsays so on the screen: `(-Dlogdebug)` in the lines before the cores.\n"
+        else
+            "\nThe kernel on it is a quiet one. Build it with -Dlogdebug to have it\nname every module as the cold start starts it, which is how a boot that\nstops somewhere is read.\n";
+        stick_step.dependOn(&addReport(b, stick_report, stick_tail, &stick_put.step).step);
     }
 
     // The same with the machine's window and what the board has around
@@ -1449,6 +1473,7 @@ pub fn build(b: *std.Build) void {
         .disk_offset = disk_offset,
         .cores = cores,
         .memdebug = memdebug,
+        .logdebug = logdebug,
     };
     for (release_boards) |one| {
         // The board this build is for is already built; the rest are
@@ -1473,6 +1498,7 @@ pub fn build(b: *std.Build) void {
                         else => x64_disk_bin,
                     },
                     .boot_files = boot_files,
+                    .boot_loader = if (chipOf(one) == .x64uefi) uefi_stub.getEmittedBin() else null,
                 });
             },
         }
@@ -1715,7 +1741,7 @@ pub fn build(b: *std.Build) void {
             .a64psci => a64_target,
             .x64uefi => x64_target,
         };
-        if (other != board) test_step.dependOn(&addKernel(b, other_target, optimize, sdk, other, disk_offset, cores, false, false).step);
+        if (other != board) test_step.dependOn(&addKernel(b, other_target, optimize, sdk, other, disk_offset, cores, false, false, false).step);
     }
 
     // The SDK's interfaces (sdk/interface) come from its .fd files
@@ -1909,6 +1935,50 @@ const release_boards = [_]Board{
 /// are the builder's own files, and the network settings among them hold
 /// a passphrase. Nothing is refused when that tree is empty, or when
 /// `-Ddisk-tree` has said what to do with it either way.
+/// A tool's report, read back out of the file the build captured it in
+/// and written to the terminal.
+///
+/// A run whose output file the build caches has its standard output sent
+/// nowhere, and what it writes to the error stream is printed under a
+/// banner that says a command failed. So a tool that has something to say
+/// to whoever asked for its output says it on the standard output, the
+/// run captures it, and this step prints it once the output is in place.
+const Report = struct {
+    step: std.Build.Step,
+    text: std.Build.LazyPath,
+    /// Printed after the tool's own report: what the kernel on the medium
+    /// will say about itself, which is the one thing the medium cannot be
+    /// looked at for.
+    tail: []const u8,
+
+    fn make(step: *std.Build.Step, options: std.Build.Step.MakeOptions) anyerror!void {
+        const one: *Report = @fieldParentPtr("step", step);
+        const b = step.owner;
+        const at = one.text.getPath3(b, step);
+        const said = try at.root_dir.handle.readFileAlloc(b.graph.io, at.sub_path, options.gpa, .limited(64 * 1024));
+        defer options.gpa.free(said);
+        std.debug.print("{s}{s}", .{ said, one.tail });
+    }
+};
+
+/// The step that prints `text`, and `tail` after it, once `after` has run.
+fn addReport(b: *std.Build, text: std.Build.LazyPath, tail: []const u8, after: *std.Build.Step) *Report {
+    const one = b.allocator.create(Report) catch @panic("OOM");
+    one.* = .{
+        .step = .init(.{
+            .id = .custom,
+            .name = "report",
+            .owner = b,
+            .makeFn = Report.make,
+        }),
+        .text = text,
+        .tail = tail,
+    };
+    text.addStepDependencies(&one.step);
+    one.step.dependOn(after);
+    return one;
+}
+
 fn refusePrivateTree(b: *std.Build, step: *std.Build.Step, said: ?bool, tree: Tree, what: []const u8) void {
     if (said != null or tree.files.len == 0) return;
     step.dependOn(&b.addFail(b.fmt(
@@ -1931,13 +2001,14 @@ const BoardBuild = struct {
     disk_offset: u32,
     cores: u32,
     memdebug: bool,
+    logdebug: bool,
 };
 
 /// `board`'s kernel, and the image of it that board is started from.
 fn addBoardImage(b: *std.Build, with: BoardBuild, board: Board) Image {
     const chip = chipOf(board);
     const slot = @intFromEnum(chip);
-    const kernel = addKernel(b, with.targets[slot], with.optimize, with.sdk, board, with.disk_offset, with.cores, false, with.memdebug);
+    const kernel = addKernel(b, with.targets[slot], with.optimize, with.sdk, board, with.disk_offset, with.cores, false, with.memdebug, with.logdebug);
     return switch (chip) {
         .esp32s3 => addImage(b, with.esptool, with.ressize, kernel, with.disks[slot], with.disk_offset),
         .esp32p4 => addP4Image(b, with.esptool, with.ramimage, kernel, with.disks[slot], with.disk_offset),
@@ -1966,6 +2037,13 @@ const PackageParts = struct {
     tree: std.Build.LazyPath,
     ram_disk: std.Build.LazyPath,
     boot_files: []const BootFile,
+    /// The loader a machine whose firmware is UEFI starts, where there
+    /// is one. It belongs in the package's `boot/` as much as in the
+    /// image's `SYS:Storage/Boot`: a machine installed or brought up to
+    /// date from a package writes the boot partition from this drawer,
+    /// and one written without the loader is one the firmware finds
+    /// nothing in.
+    boot_loader: ?std.Build.LazyPath = null,
 };
 
 /// A release package for `board` - `system/` the volume, `boot/` what the
@@ -1993,6 +2071,7 @@ fn addPackage(
     gather.addPrefixedDirectoryArg("--system=", parts.tree);
     gather.addPrefixedFileArg("boot/kernel.bin=", kernel_image);
     gather.addPrefixedFileArg(b.fmt("boot/{s}=", .{ramDiskName(chip)}), parts.ram_disk);
+    if (parts.boot_loader) |loader| gather.addPrefixedFileArg("boot/" ++ uefi_loader_path ++ "=", loader);
     // What the firmware of this board reads beside them.
     if (board == .rpi_cm5) gather.addPrefixedFileArg("boot/config.txt=", b.path("src/boards/rpi_cm5/config.txt"));
     for (parts.boot_files) |file| {
@@ -2844,7 +2923,7 @@ fn addP4Image(b: *std.Build, esptool: []const u8, ramimage: *std.Build.Step.Comp
 /// leaves the number of cores to the board; `selftest` makes an ESP32-P4's
 /// boot task the chip's checks rather than the shell; `memdebug` has exec
 /// switch memory debugging on as it starts.
-fn addKernel(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, sdk: *std.Build.Module, board: Board, disk_offset: u32, cores: u32, selftest: bool, memdebug: bool) *std.Build.Step.Compile {
+fn addKernel(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, sdk: *std.Build.Module, board: Board, disk_offset: u32, cores: u32, selftest: bool, memdebug: bool, logdebug: bool) *std.Build.Step.Compile {
     const chip = chipOf(board);
     const kernel_mod = b.createModule(.{
         .root_source_file = b.path(switch (chip) {
@@ -2880,6 +2959,7 @@ fn addKernel(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.buil
     options.addOption(u32, "cores", cores);
     options.addOption(bool, "selftest", selftest);
     options.addOption(bool, "memdebug", memdebug);
+    options.addOption(bool, "logdebug", logdebug);
     kernel_mod.addOptions("build_options", options);
     switch (chip) {
         .esp32s3 => {

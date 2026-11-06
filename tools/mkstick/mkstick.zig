@@ -3,8 +3,9 @@
 //! from - an image to write to a USB stick - out of the files that
 //! firmware and the loader read.
 //!
-//! usage: mkstick --into=<image> [--size=<MiB>] [--label=<name>]
-//!                [--name=<partition>] <path on the stick>=<file> ...
+//! usage: mkstick --into=<image> [--as=<path>] [--size=<MiB>]
+//!                [--label=<name>] [--name=<partition>]
+//!                <path on the stick>=<file> ...
 //!
 //! What it writes: a protective MBR, a GPT whose one partition is an EFI
 //! System partition over the medium from the first mebibyte on, and a
@@ -104,6 +105,7 @@ pub fn main(init: std.process.Init) !void {
     const cwd = std.Io.Dir.cwd();
 
     var into: ?[]const u8 = null;
+    var called: ?[]const u8 = null;
     var size_mib: u64 = default_size_mib;
     var label_text: []const u8 = default_label;
     var name_text: []const u8 = default_name;
@@ -112,6 +114,8 @@ pub fn main(init: std.process.Init) !void {
         if (index == 0) continue;
         if (mem.startsWith(u8, arg, "--into=")) {
             into = arg["--into=".len..];
+        } else if (mem.startsWith(u8, arg, "--as=")) {
+            called = arg["--as=".len..];
         } else if (mem.startsWith(u8, arg, "--size=")) {
             size_mib = std.fmt.parseInt(u64, arg["--size=".len..], 10) catch
                 fatal("--size: {s} is not a number of mebibytes", .{arg["--size=".len..]});
@@ -133,7 +137,7 @@ pub fn main(init: std.process.Init) !void {
         }
     }
     const path = into orelse fatal(
-        "usage: mkstick --into=<image> [--size=<MiB>] [--label=<name>] [--name=<partition>] <path on the stick>=<file> ...",
+        "usage: mkstick --into=<image> [--as=<path>] [--size=<MiB>] [--label=<name>] [--name=<partition>] <path on the stick>=<file> ...",
         .{},
     );
     if (given.items.len == 0) fatal("nothing to put on it: give at least the loader the firmware reads", .{});
@@ -163,9 +167,11 @@ pub fn main(init: std.process.Init) !void {
         fatal("{s}: the volume could not be laid down: {t}", .{ path, e });
     writeFiles(&image, made.plan, root, made.clusters_used);
 
-    // The report goes to the standard output: a tool run by hand says
-    // what it made, and a build that runs it for its output file keeps
-    // its own summary clean.
+    // The report, by the name the medium will be found under: a build
+    // writes it into its cache and puts it somewhere else afterwards, so
+    // `--as` is the path to say, and the line that writes the medium to a
+    // stick is a line that can be run.
+    const shown = called orelse path;
     const used = (made.clusters_used - 1) * @as(u64, made.plan.sectors_per_cluster) * block_bytes;
     var out_buffer: [1024]u8 = undefined;
     var out = std.Io.File.stdout().writerStreaming(io, &out_buffer);
@@ -180,7 +186,7 @@ pub fn main(init: std.process.Init) !void {
         \\  sudo dd if={s} of=/dev/sdX bs=4M conv=fsync status=progress
         \\
     , .{
-        path,
+        shown,
         blocks * block_bytes / (1024 * 1024),
         block_bytes,
         made.plan.first,
@@ -192,7 +198,7 @@ pub fn main(init: std.process.Init) !void {
         used,
         count(root, false),
         count(root, true),
-        path,
+        shown,
     }) catch |e| fatal("the report could not be written: {t}", .{e});
     out.flush() catch |e| fatal("the report could not be written: {t}", .{e});
 }

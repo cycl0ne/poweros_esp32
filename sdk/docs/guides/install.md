@@ -35,6 +35,13 @@ and on a machine whose firmware is UEFI that something is a USB stick.
 sudo dd if=release/stick-qemu_q35.img of=/dev/sdX bs=4M conv=fsync status=progress
 ```
 
+The step prints what it made - the medium's size, the partition, the
+volume and what is on it - and the `dd` line above with the path the image
+was put at. Which device `/dev/sdX` is, `lsblk` says: the removable one of
+the size of the stick. Everything on it is written over, so look at what
+is there first, and unmount the volume the desktop mounted before writing
+(`udisksctl unmount -b /dev/sdX1`).
+
 The image holds a protective MBR, a GPT whose one partition is an EFI
 System partition over the medium from the first mebibyte, and a FAT32
 volume on it with three files: `EFI/BOOT/BOOTX64.EFI`, which is the one
@@ -58,6 +65,9 @@ The disk starts the machine at its next cold start.
 
 Pull the stick out, start the machine again, and its firmware finds the
 EFI System partition the install wrote and starts the kernel from there.
+The loader on it is beside no disk image, so the machine comes up with
+nothing in RAM to boot from and dos takes the system partition instead -
+which is why nothing has to be said to make the disk the system.
 
 The medium is 320 MiB unless `-Dstick-size=` says otherwise - the least a
 FAT32 volume of 4 KiB clusters can be, with room over - and the image
@@ -223,8 +233,11 @@ boot/...              what that board's firmware reads
 
 Each path begins with the half it is in, so one list covers both halves
 and one walk compares them. What is in `boot/` is the board's business: a
-kernel, and where the board wants them a device tree, a `config.txt` or
-the disk image. `-Dboot=[<name>=]<file>` adds a file this tree does not
+kernel, and where the board wants them a device tree, a `config.txt`, the
+disk image or - on a machine whose firmware is UEFI -
+`EFI/BOOT/BOOTX64.EFI`, the loader that firmware starts. The loader has
+to be there as surely as the kernel: a boot partition written without it
+is one the firmware finds nothing in. `-Dboot=[<name>=]<file>` adds a file this tree does not
 hold - the Compute Module 5's device tree is Raspberry Pi's own - and it
 goes into the list with the rest.
 
@@ -301,6 +314,7 @@ reads itself, not from posfs:
 | VisionFive 2 | U-Boot, from the card's FAT partition | the machine itself: sdcard.device and FAT's handler are in its ROM |
 | Compute Module 5 | the bootloader in its EEPROM, from a FAT partition in the order `BOOT_ORDER` gives ([bundle notes](../../../tools/bootpackage/bundle.md)) | the eMMC or `rpiboot`, from another machine; no driver here reaches the eMMC |
 | QEMU's `virt` machines | the kernel is handed to QEMU | the host's command line |
+| A machine whose firmware is UEFI | the loader `EFI/BOOT/BOOTX64.EFI` in an EFI System partition, and `kernel.bin` beside it | the machine itself: both are on its own disk, under `SYS:Storage/Boot`, and the install writes them into the partition it makes |
 
 Where the firmware can be sent to the other of a pair of boot partitions
 for one start, both are made and both are filled, so a machine that does
