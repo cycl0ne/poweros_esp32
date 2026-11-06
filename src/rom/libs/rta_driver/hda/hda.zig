@@ -63,7 +63,7 @@ const err = rta.errors;
 const MODULE_NAME = "rta-hda";
 const DRIVER_NAME = "hda";
 const VERSION = 1;
-const REVISION = 1;
+const REVISION = 2;
 const BUILD_DATE = "06.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -121,7 +121,35 @@ const Card = struct {
     /// bit is claimed with one read-modify-write, so that two sinks
     /// started at once cannot both take the same descriptor.
     busy: u32 = 0,
+    /// Its interrupt, which every stream of it shares: one server on the
+    /// controller, not one per sink. A controller's streams raise one
+    /// interrupt between them, and a function has one message to send
+    /// however many sinks are made of it.
+    int: exec.Interrupt = .{},
+    signalling: Signalling = .none,
+    /// Which sink is playing on which of its stream descriptors, for the
+    /// server to find from the bit that was raised. Written before a
+    /// stream is started and cleared after it is stopped.
+    playing: [max_descriptors]?*Instance = @splat(null),
 };
+
+/// How a controller's interrupt reaches the driver.
+const Signalling = enum {
+    /// A message of its own, which is what a machine's own controllers
+    /// mostly have.
+    vector,
+    /// Its INTx line, shared with whatever else is on it.
+    intx,
+    /// Neither, which is a controller nothing can be played through: the
+    /// ring is run by the interrupt.
+    none,
+};
+
+/// How many stream descriptors of a controller are reached. The
+/// interrupt registers hold a bit per descriptor and a machine's
+/// controller has four of each kind; this is past them, and a descriptor
+/// beyond it is left alone rather than counted wrong.
+const max_descriptors = 16;
 
 /// How many codecs on one controller are read.
 const max_codecs = 4;
@@ -180,8 +208,6 @@ const Instance = struct {
     /// is what is freed, the second is where the buffers start inside it.
     memory: ?*anyopaque = null,
     ring: usize = 0,
-    int: exec.Interrupt = .{},
-    int_added: bool = false,
     /// The gain the sink was given last, which a start sets the
     /// amplifier to again.
     gain: u32 = rta.sinks.AUDIOGAIN_UNITY,
@@ -278,6 +304,7 @@ fn giveBack(state: *State) void {
     const sys = state.sys;
     for (state.cards[0..state.card_count]) |maybe| {
         const card = maybe orelse continue;
+        unhook(state, card);
         state.pb.ReleasePCIDevice(card.function);
         sys.FreeMem(card, @sizeOf(Card));
     }
@@ -358,7 +385,7 @@ fn findAll(state: *State) void {
 fn make(state: *State, function: *pci.PCIDevice) ?*Card {
     const sys = state.sys;
     const at = place(state, function) orelse return null;
-    const memory = sys.AllocMem(@sizeOf(Card), exec.MEMF_CLEAR | exec.MEMF_SYSTEM) orelse return null;
+    const memory = sys.AllocMem(@sizeOf(Card), exec.MEMF_CLEAR | exec.MEMF_SYSTEM | exec.MEMF_INTERNAL) orelse return null;
     const card: *Card = @ptrCast(@alignCast(memory));
     card.* = .{
         .function = function,
@@ -377,8 +404,57 @@ fn make(state: *State, function: *pci.PCIDevice) ?*Card {
         return null;
     };
     card.codecs = answered;
+    if (!hook(state, card)) {
+        sdk.exec.kprintf(sys, "%s: the controller at %x has no interrupt to be driven by\n", .{
+            MODULE_NAME, @as(u32, function.device_id),
+        });
+        sys.FreeMem(memory, @sizeOf(Card));
+        return null;
+    }
     report(state, card);
     return card;
+}
+
+/// The controller's interrupt hooked, once, for every sink made of it: a
+/// message of its own where the function and the host bridge have one,
+/// its INTx line otherwise. False where it has neither - then there is
+/// nothing to run a ring with and no sink is made of the controller at
+/// all, rather than one that is silent when it is started.
+fn hook(state: *State, card: *Card) bool {
+    const pb = state.pb;
+    const function = card.function;
+    card.int = .{
+        .node = .{ .type = .interrupt, .pri = 0, .name = MODULE_NAME },
+        .data = card,
+        .code = &server,
+    };
+    if (pb.AllocPCIVectors(function, 1) >= 1 and pb.AddPCIVectorServer(function, 0, &card.int)) {
+        card.signalling = .vector;
+        return true;
+    }
+    pb.FreePCIVectors(function);
+    if (pb.AddPCIIntServer(function, &card.int)) {
+        const command = pb.ReadPCIConfig(function, pci.PCI_COMMAND, 2);
+        pb.WritePCIConfig(function, pci.PCI_COMMAND, 2, command & ~@as(u32, pci.PCI_COMMAND_INTX_DISABLE));
+        card.signalling = .intx;
+        return true;
+    }
+    card.signalling = .none;
+    return false;
+}
+
+/// The controller's interrupt let go of, which happens only where a
+/// controller is given back.
+fn unhook(state: *State, card: *Card) void {
+    switch (card.signalling) {
+        .vector => {
+            state.pb.RemPCIVectorServer(card.function, 0, &card.int);
+            state.pb.FreePCIVectors(card.function);
+        },
+        .intx => state.pb.RemPCIIntServer(card.function, &card.int),
+        .none => {},
+    }
+    card.signalling = .none;
 }
 
 /// What a controller is, as the log has it: which function, what it says
@@ -573,11 +649,6 @@ fn createSink(made_by: *rta.sinks.RtaDriver, sink: *rta.AudioSink, tag_list: ?[*
         .output = making.output,
         .out = .{ .hw = &making.card.hw, .count = buffers, .bytes = buffer_bytes },
     };
-    instance.int = .{
-        .node = .{ .type = .interrupt, .pri = 0, .name = MODULE_NAME },
-        .data = instance,
-        .code = &server,
-    };
     if (addModes(instance, sink) == 0) return err.RTAERR_BAD_MODE;
     sink.ops = &ops;
     sink.buffer_frames = buffer_frames;
@@ -662,13 +733,12 @@ fn busyConverter(instance: *Instance) bool {
 }
 
 /// The stream started, in the order the parts want it: the ring's
-/// memory, a stream descriptor of the controller, the interrupt, the
-/// codec's way out switched on with the converter told what to play, and
-/// the descriptor set going. It starts on silence, which is what the
-/// cleared memory is.
+/// memory, a stream descriptor of the controller, the codec's way out
+/// switched on with the converter told what to play, and the descriptor
+/// set going. It starts on silence, which is what the cleared memory is;
+/// the controller's interrupt was hooked when the controller was found.
 fn streamUp(instance: *Instance, shape: u16) i32 {
     const sys = instance.sys;
-    const state = instance.state;
     const card = instance.card;
     // The buffers and the list that describes them in one block the
     // controller reaches, with room to put the buffers on the boundary
@@ -698,21 +768,16 @@ fn streamUp(instance: *Instance, shape: u16) i32 {
     instance.taken = 0;
     stream_file.describe(&instance.out);
     card.hw.toDevice(ring, ring_bytes);
-
-    if (!state.pb.AddPCIIntServer(card.function, &instance.int)) {
-        sdk.exec.kprintf(sys, "%s: the controller's interrupt cannot be hooked\n", .{MODULE_NAME});
-        return err.RTAERR_NO_OUTPUT;
-    }
-    instance.int_added = true;
-    const command = state.pb.ReadPCIConfig(card.function, pci.PCI_COMMAND, 2);
-    state.pb.WritePCIConfig(card.function, pci.PCI_COMMAND, 2, command & ~@as(u32, pci.PCI_COMMAND_INTX_DISABLE));
+    // The controller's server finds this sink by the descriptor that was
+    // raised, so it is there to be found before the stream can raise it.
+    @atomicStore(?*Instance, &card.playing[instance.out.descriptor], instance, .release);
 
     codec_file.routeOn(&card.hw, instance.codec, instance.output);
     codec_file.feed(&card.hw, instance.codec, instance.output, instance.out.tag, shape);
     _ = codec_file.gainTo(&card.hw, instance.codec, instance.output, instance.gain);
     // Running before it is started: an interrupt that arrives between
-    // the two has to find a sink that will answer for it, or the line
-    // stays raised with nobody to clear it.
+    // the two has to find a sink that will answer for it, or an INTx
+    // line stays raised with nobody to clear it.
     instance.up = true;
     if (!stream_file.up(&instance.out, shape)) {
         instance.up = false;
@@ -733,9 +798,10 @@ fn streamDown(instance: *Instance) void {
     if (instance.held) stream_file.down(&instance.out);
     if (instance.up) codec_file.routeOff(&card.hw, instance.codec, instance.output);
     instance.up = false;
-    if (instance.int_added) instance.state.pb.RemPCIIntServer(card.function, &instance.int);
-    instance.int_added = false;
-    if (instance.held) giveStream(card, instance.out.descriptor - card.hw.in_streams);
+    if (instance.held) {
+        @atomicStore(?*Instance, &card.playing[instance.out.descriptor], null, .release);
+        giveStream(card, instance.out.descriptor - card.hw.in_streams);
+    }
     instance.held = false;
     if (instance.memory) |memory| sys.FreeVec(memory);
     instance.memory = null;
@@ -750,8 +816,9 @@ fn takeStream(card: *Card) ?u32 {
     while (which < card.hw.out_streams) : (which += 1) {
         // A stream's tag is its number and one, and a tag is four bits
         // with zero meaning none, so the fifteenth output stream of a
-        // controller that had one could not be told apart on the link.
-        if (which >= 15) return null;
+        // controller that had one could not be told apart on the link;
+        // and its descriptor has to be one the server reaches.
+        if (which >= 15 or card.hw.in_streams + which >= max_descriptors) return null;
         const bit = @as(u32, 1) << @intCast(which);
         if (@atomicRmw(u32, &card.busy, .Or, bit, .acq_rel) & bit == 0) return which;
     }
@@ -762,21 +829,32 @@ fn giveStream(card: *Card, which: u32) void {
     _ = @atomicRmw(u32, &card.busy, .And, ~(@as(u32, 1) << @intCast(which)), .acq_rel);
 }
 
-/// The controller's interrupt, which this sink's stream shares with the
-/// controller's other streams and with whatever else is on the line: a
-/// buffer has been played, so the task has one to fill. What this
-/// stream raised is cleared here, which is also the answer to whether
-/// the interrupt was this sink's at all.
+/// The controller's interrupt, which all of its streams share: which of
+/// them raised it is a bit in the controller's own register, and the
+/// sink playing on that one is signalled - a buffer has been played, so
+/// its task has one to fill.
+///
+/// What a stream raised is cleared here, and that is also the answer to
+/// whether the interrupt was this controller's at all, which an INTx
+/// line shared with other functions needs.
 fn server(is_data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
     _ = int_number;
-    const instance: *Instance = @ptrCast(@alignCast(is_data.?));
-    if (!instance.up) return 0;
-    const raised = stream_file.served(&instance.out);
-    if (raised.played) {
-        _ = @atomicRmw(u32, &instance.ended, .Add, 1, .release);
-        if (instance.task) |task| instance.sys.Signal(task, instance.signal_mask);
+    const card: *Card = @ptrCast(@alignCast(is_data.?));
+    const raised = regs.read32(card.hw.at, regs.intsts);
+    if (raised == 0) return 0;
+    var answered: i32 = 0;
+    var which: u32 = 0;
+    while (which < max_descriptors) : (which += 1) {
+        if (raised & (@as(u32, 1) << @intCast(which)) == 0) continue;
+        const instance = @atomicLoad(?*Instance, &card.playing[which], .acquire) orelse continue;
+        const what = stream_file.served(&instance.out);
+        if (what.played) {
+            _ = @atomicRmw(u32, &instance.ended, .Add, 1, .release);
+            if (instance.task) |task| instance.sys.Signal(task, instance.signal_mask);
+        }
+        if (what.any()) answered = 1;
     }
-    return @intFromBool(raised.any());
+    return answered;
 }
 
 /// The buffer the controller finished last, which is the one to fill: it
