@@ -186,6 +186,7 @@ replaces.
 | `src/disk/libs/facet/tests/ir.zig` | a generated function against the hand-written fixed form it mirrors | as above |
 | `src/disk/libs/facet/driver/v3d/compile.zig` | the QPU back end: SPIR-V words to `u64` instructions | the `v3d` module, host-tested from `v3d.zig` |
 | `scripts/spirv-check.sh` | emits the library's modules and runs `spirv-val` over them, skipping with a message where the tool is absent | - |
+| `scripts/vulkan-check.sh`, `.c`, `.vert` | the same modules drawn with by every Vulkan driver the machine has, every pixel checked; skips the same way | - |
 
 A test in `sdk/libs/facet/` never runs: `sdk` is always an imported
 module and never a test root, which is why `texture.zig`'s own test has
@@ -297,16 +298,29 @@ Each rung is a thing that can fail on its own, cheapest first:
    handful of pixels apart - 14 of 230400 across a cube's edge, 11 in a
    subpass - which is the cores' rasteriser against the V3D's, in draws
    that ship no SPIR-V at all and go nowhere near `compile.zig`.
-8. **A desktop Vulkan driver.** The same module through Mesa on this PC,
-   rendering the same triangle, compared with facet's own picture under
-   the slack `FacetBoth` already uses. This is the rung that makes the
-   choice of SPIR-V pay for itself, and the one that catches a wrong
-   reading of the spec rather than a wrong implementation of facet's
-   reading of it.
+8. **A desktop Vulkan driver.** `scripts/vulkan-check.sh` makes a real
+   pipeline out of the modules on every Vulkan device the machine has,
+   draws one triangle with each, and holds every pixel against the shares
+   worked out in the harness - the same arithmetic rungs 4 and 6 hold
+   facet to, under the slack `FacetBoth` uses. facet's picture is that
+   arithmetic and the driver's picture is that arithmetic, so the two are
+   the same picture. This is the rung that makes the choice of SPIR-V pay
+   for itself, and the one that catches a wrong reading of the spec
+   rather than a wrong implementation of facet's reading of it: a
+   Location on the wrong variable, an execution mode left out, or an
+   interface facet alone agrees with passes `spirv-val` and draws the
+   wrong picture.
 
-Rungs 1 to 5 run in `./zig build test`. Rung 2 is a script because a
-build step that fails where a tool is missing would break the build for
-anyone without SPIRV-Tools.
+   Four cases: `min_flat`, `min_interp` and `min_scaled` over a vertex
+   shader of the script's own, and `min_vert` with `min_interp`, which is
+   facet's SPIR-V on both sides of the pipeline, matrix in a uniform
+   block and all. Run here against NVIDIA's own driver (RTX 5090, API
+   1.4.351) and Mesa's RADV (Ryzen 9 9950X, API 1.4.354): 0 wrong of
+   63088 pixels a case, 1 of 255 at worst, on both.
+
+Rungs 1 to 5 run in `./zig build test`. Rungs 2 and 8 are scripts
+because a build step that fails where a tool is missing would break the
+build for anyone without SPIRV-Tools, glslc or a Vulkan driver.
 
 ## The order of the work
 
@@ -319,15 +333,17 @@ anyone without SPIRV-Tools.
 | 5 | the library: `Module`, the flag, `CreateShaderModule`, `settle`, `Pipeline`'s words, `PhysicalDeviceFeatures` | 1.75 |
 | 6 | `compile.zig`: the interpolated colour to QPU words; rung 5 | - |
 | 7 | the V3D driver: code per pipeline, the shader record, `make_pipeline`; rungs 6 and 7 | 1.76 |
-| 8 | rung 8, and a form a family at a time after it - discard and samplers first, since those are what send most draws to the cores today | - |
+| 8 | rung 8: `scripts/vulkan-check.sh`, facet's modules through a driver that has never seen facet | - |
+| 9 | a form a family at a time - discard and samplers first, since those are what send most draws to the cores today | - |
 
 Step 6 changes nothing a program can see - `compile.zig` is reached from
 its own host tests and from nowhere else yet - so it is not a revision.
 The driver begins to compile in step 7, and that is.
 
-Steps 1 to 7 are done and on the board: rungs 1 to 5 in `./zig build
-test`, rungs 6 and 7 run on the CM5 as the ladder above records. What is
-left is step 8.
+Steps 1 to 8 are done: rungs 1 to 5 in `./zig build test`, rungs 6 and 7
+on the CM5 and rung 8 on this PC's two drivers, as the ladder above
+records. What is left is step 9, which is the long one - every fragment
+form the fixed kinds cover, taken a family at a time.
 
 Steps 2 to 5 are the library's side and are provable on the host. Step 6
 is where the days go. `facet-todo.md` section 4 says months for the whole
