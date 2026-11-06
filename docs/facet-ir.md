@@ -284,10 +284,19 @@ Each rung is a thing that can fail on its own, cheapest first:
    the existing suite does not make: every destination of every
    instruction below rf16 on **both** the add and the mul side, and
    exactly one `last_section`, in the right place.
-6. **The board, standalone.** `C:test/v3dtest` renders with generated code
-   and checks every pixel against the arithmetic in the test.
+6. **The board, standalone.** `C:test/v3dtest GENERATED` renders with
+   generated code and checks every pixel against the arithmetic in the
+   test. Run on the CM5: the interpolated colour, a colour of its own from
+   four uniforms, and a colour dimmed by a fifth varying - 0 wrong of
+   866813, 902720 and 885760 pixels, about 750 us a frame each.
 7. **The board, in the library.** `C:test/FacetProbe`, `FacetBoth` on both
-   devices, `FacetCube CHECK`, `FacetMany` for the draw time.
+   devices, `FacetCube CHECK`, `FacetMany` for the draw time. Run on the
+   CM5 at 1.76: FacetProbe 726 checks and none failed, FacetCube `CHECK`
+   alike, FacetMany 99856 triangles in 11.6 ms a frame of 1920x1080.
+   FacetBoth draws every case on both devices and a few of them are a
+   handful of pixels apart - 14 of 230400 across a cube's edge, 11 in a
+   subpass - which is the cores' rasteriser against the V3D's, in draws
+   that ship no SPIR-V at all and go nowhere near `compile.zig`.
 8. **A desktop Vulkan driver.** The same module through Mesa on this PC,
    rendering the same triangle, compared with facet's own picture under
    the slack `FacetBoth` already uses. This is the rung that makes the
@@ -315,6 +324,10 @@ anyone without SPIRV-Tools.
 Step 6 changes nothing a program can see - `compile.zig` is reached from
 its own host tests and from nowhere else yet - so it is not a revision.
 The driver begins to compile in step 7, and that is.
+
+Steps 1 to 7 are done and on the board: rungs 1 to 5 in `./zig build
+test`, rungs 6 and 7 run on the CM5 as the ladder above records. What is
+left is step 8.
 
 Steps 2 to 5 are the library's side and are provable on the host. Step 6
 is where the days go. `facet-todo.md` section 4 says months for the whole
