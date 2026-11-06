@@ -1150,4 +1150,42 @@ pub const LIBRARY_VERSION = 1;
 /// anisotropy, a comparison, a border - is not drawn wrongly: the draw
 /// paints `shader.missing`'s colour, as it does for a texture that is
 /// not bound at all.
-pub const LIBRARY_REVISION = 77;
+/// 78: what the V3D's compiler takes and what it draws, corrected. Eight
+/// adversarial reviews of 77 found six defects, three of them a wrong
+/// picture and all three reachable from a module a compiler writes.
+///
+/// A texel drawn as it comes went to the tile buffer in the form it
+/// arrived in, which is right only while all four of its floats are
+/// still in their pairs; a program that drew the texel *and* read a
+/// float out of it moved a single f32, or a register handed out again,
+/// out as two half-floats. The two floats sharing a word now also die
+/// together when the colour names one of them and not the other. And a
+/// product no longer takes the register of an operand that a later part
+/// of the same step still reads, which `vec4(l) * colour` - the
+/// commonest line of GLSL there is - did.
+///
+/// Three things are now taken that were refused: a constant as a
+/// constituent of `OpCompositeConstruct`, so `vec4(uv, 0.25, 1.0)`
+/// compiles; more combined image samplers declared than are sampled,
+/// since this device's limit is one *sample*; and `OpDecorate` with a
+/// literal of 65535, which used to land on an in-band sentinel. Two
+/// refusals are newly named - `Declared` for the table's own bound and
+/// `Numbered` for a literal past it - and a shader that always drops its
+/// pixel is refused as a discard rather than as a word nobody knows.
+///
+/// A module read without being trusted no longer panics: `look` added
+/// one to a `Location` literal unguarded, so `Location 4294967295`
+/// overflowed inside `CreateShaderModule` in a ReleaseSafe build.
+///
+/// Where a program samples, every float of its own is now read before
+/// the thread switch rather than where it is first wanted. No
+/// hand-written program reads the uniform stream in the last thread
+/// section, and 77 emitted up to four such reads while refusing to emit
+/// one. It costs registers held across the sample, so a program with a
+/// vec4 varying, a vec4 of its own and a texel is refused for want of
+/// registers and the cores draw it.
+///
+/// And the cores can draw a generated shader that samples at all: the
+/// function such a graph generates did not compile, which no test had
+/// found because every sampling graph had been asked only for its words.
+pub const LIBRARY_REVISION = 78;

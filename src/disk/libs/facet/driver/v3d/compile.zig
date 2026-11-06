@@ -43,15 +43,24 @@
 //! compiled. `Code.uniforms` is by value for that reason: a pipeline
 //! keeps its floats for as long as it lives.
 //!
-//! **Where this will have to grow.** `settle` lays the program out as
-//! straight-line phases - the varyings, the body, the splice, the colour
-//! - which is the shape of a program that does not sample. A sampling
-//! program interleaves: the coordinate writes, `wrtmuc`, the write to S
-//! that starts the lookup, *then* the splice, and the arithmetic over the
-//! texel after it (`qpu.texture_color_code`). So the splice is not a
-//! boundary between the body and the colour; its rule is "after the last
-//! varying read and the last TMU write, before the first tile-buffer
-//! write". Samplers will rewrite that function rather than add to it.
+//! **Where the splice goes.** `settle` does not lay the program out as
+//! straight-line phases, although a program that does not sample reads
+//! like it: the varyings, the body, the splice, the colour. A sampling
+//! program interleaves, and the splice lands inside the body - the
+//! coordinate writes, `wrtmuc`, the write to S that starts the lookup,
+//! *then* the splice, then the two words back and the arithmetic over
+//! them (`qpu.texture_color_code`). So the rule is not "between the body
+//! and the colour" but **after the last varying read and the last TMU
+//! write, before the first tile-buffer write**, and the straight-line
+//! reading is what that rule comes to when there is no TMU write to wait
+//! for. `sound` reads the distance back off every compiled program
+//! rather than trusting the plan to have kept it.
+//!
+//! Two things follow from the splice being inside the body. Every
+//! uniform a sampling program reads is loaded in front of it, because no
+//! hand-written program reads the stream in the last thread section. And
+//! nothing may touch the tile buffer before it, which is why a texel
+//! drawn as it comes is moved out after it and not where the step sits.
 //!
 //! **The colour convention.** The graph's colours are 0 to 1, as Vulkan
 //! has them, and the tile buffer takes half-floats of 0 to 1: a generated
