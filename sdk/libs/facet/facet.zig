@@ -51,6 +51,11 @@ pub const texture = @import("texture.zig");
 /// carries, what they are given, and the helpers they are written with.
 pub const shader = @import("shader.zig");
 
+/// SPIR-V: the form a shader is shipped in for a device that compiles it,
+/// built at comptime beside the Zig function and read by a driver. The
+/// format alone - it knows nothing of facet's own shaders. (Since 1.75.)
+pub const spirv = @import("spirv.zig");
+
 const intuition = @import("../intuition/intuition.zig");
 
 // --- handles ----------------------------------------------------------------

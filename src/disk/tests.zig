@@ -73,6 +73,7 @@ test {
     _ = @import("libs/rdb/tests/rdb.zig");
     _ = @import("libs/rdb/tests/gpt.zig");
     _ = @import("libs/pci/tests/pci.zig");
+    _ = @import("libs/facet/tests/spirv.zig");
     _ = @import("libs/facet/tests/facet.zig");
     _ = @import("libs/facet/tests/draw.zig");
     _ = @import("libs/facet/tests/present.zig");
