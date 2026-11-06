@@ -234,6 +234,14 @@ pub const Card = extern struct {
         mac.raise(card.regs, card.family, mac.cause_lsc);
     }
 
+    /// The causes turned back on after a pass of the rings, the way
+    /// `startInterrupts` turned them on: which of the two ways they are
+    /// raised is the card's, not the caller's.
+    pub fn unmaskCauses(card: *Card) void {
+        if (card.signalling == .none) return;
+        mac.unmaskCauses(card.regs, card.family, card.signalling == .vector);
+    }
+
     /// The groups the controller takes: the hash table written from
     /// those that were joined, and the blunt bits where every group or
     /// every frame is wanted.

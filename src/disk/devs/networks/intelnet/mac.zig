@@ -285,7 +285,10 @@ pub fn vectorInterrupts(at: usize, family: *const Family) void {
     // is everything else.
     write(at, ivar0, ivar_valid | (ivar_valid << 8));
     write(at, ivar_misc, ivar_valid << 8);
-    // No throttle: a frame should reach the task as soon as it is there.
+    // No throttle of the part's own: what keeps the interrupts down is
+    // that the causes go off while a pass of the rings is being made
+    // (`maskCauses`), which holds no frame back and needs no interval
+    // guessed at here.
     write(at, eitr0, 0);
     // The queues' causes clear themselves as the interrupt is taken; the
     // mapped ones are cleared by reading the cause register.
@@ -300,6 +303,29 @@ pub fn vectorInterrupts(at: usize, family: *const Family) void {
 pub fn lineInterrupts(at: usize, family: *const Family) void {
     write(at, gpie, gpie_nsicr);
     write(at, family.ims, cause_lsc | cause_rxdw | cause_txdw | cause_rxo | cause_rxdmt0);
+}
+
+/// Every cause turned off, with what has been raised left standing: the
+/// part is quiet from here until `unmaskCauses`. What is wanted from
+/// that while is one interrupt for a pass of the rings however many
+/// frames the pass finds, rather than one interrupt per frame - at a
+/// gigabit a frame arrives every twelve microseconds, and an interrupt
+/// apiece leaves the task no room to empty the ring the interrupts are
+/// about. A cause that comes up while they are off is raised when they
+/// go back on, so nothing is lost by the while.
+pub fn maskCauses(at: usize, family: *const Family) void {
+    write(at, family.imc, 0xFFFF_FFFF);
+    write(at, eimc, 0xFFFF_FFFF);
+}
+
+/// The causes turned back on, the way they were turned on to begin with.
+pub fn unmaskCauses(at: usize, family: *const Family, vector: bool) void {
+    if (vector) {
+        write(at, family.ims, cause_lsc);
+        write(at, eims, 1 | eicr_other);
+    } else {
+        write(at, family.ims, cause_lsc | cause_rxdw | cause_txdw | cause_rxo | cause_rxdmt0);
+    }
 }
 
 /// A cause raised by hand, so that the task comes and looks without

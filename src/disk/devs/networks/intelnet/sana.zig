@@ -39,7 +39,16 @@ pub const task_pri = 5;
 pub fn intServer(is_data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
     _ = int_number;
     const card: *Card = @ptrCast(@alignCast(is_data.?));
-    const causes = mac.takeCauses(card.regs, card.family) orelse return 0;
+    // The causes go off before they are read and back on when the task
+    // has emptied the rings, so one interrupt stands for a pass of the
+    // rings however many frames that pass finds. A line carrying frames
+    // back to back raises one interrupt apiece otherwise, which leaves
+    // the task no room to empty the ring the interrupts are about.
+    mac.maskCauses(card.regs, card.family);
+    const causes = mac.takeCauses(card.regs, card.family) orelse {
+        card.unmaskCauses();
+        return 0;
+    };
     var raised = _intelnet.raised_work;
     if (causes & mac.cause_lsc != 0) raised |= _intelnet.raised_link;
     // The descriptor threshold is a nudge, not a loss: it says the ring
@@ -93,6 +102,10 @@ pub fn netTask(sys: *ExecBase) callconv(.c) void {
             if (raised & _intelnet.raised_link != 0) card.linkChanged();
             card.received();
             card.sent();
+            // The rings are empty: the controller may raise its causes
+            // again. The interrupt that turned them off is answered by
+            // this and by nothing sooner.
+            card.unmaskCauses();
         }
         while (sys.GetMsg(port)) |msg| {
             const io = _intelnet.requestOf(msg);
