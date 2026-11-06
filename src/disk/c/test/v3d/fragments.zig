@@ -840,7 +840,12 @@ const Dimmed = ir.Fragment(struct {
 /// `Scene.draw` copies it into the V3D's objects as it records the draw.
 fn compiled(work: *compile.Work, words: []const u32, stream: *[compile.most_uniforms]u32) ?struct { qpu.Fragment, []const u32 } {
     const code = compile.compile(work, words) catch return null;
-    for (code.stream(), 0..) |each, k| stream[k] = @bitCast(each);
+    for (code.stream(), 0..) |word, k| stream[k] = switch (word) {
+        .float => |each| @bitCast(each),
+        // Nothing here samples yet: a program that does wants the TMU's
+        // configuration, which only a draw with a texture bound can say.
+        .texture, .sampler => return null,
+    };
     return .{
         .{ .code = code.words, .varyings = code.varyings, .uniforms = code.uniform_count },
         stream[0..code.uniform_count],

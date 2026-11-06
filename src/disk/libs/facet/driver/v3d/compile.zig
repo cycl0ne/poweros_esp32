@@ -80,6 +80,11 @@ pub const most_varyings = qpu.most_varyings;
 pub const most_uniforms = 32;
 /// The constants a module may declare, read or not.
 pub const most_constants = 32;
+/// The combined image samplers a module may declare. One is read: the
+/// TMU is written once and read once here, as in every hand-written
+/// program, and a module that declares one it never samples costs
+/// nothing.
+pub const most_samplers = 4;
 /// One for each float a step answers.
 pub const most_slots = 4 * most_steps;
 /// Instructions chosen, before they are words.
@@ -93,6 +98,14 @@ pub const most_words = 256;
 /// (`qpu.zig`); a longer wait cannot hurt and a shorter one is not
 /// written down, so the plan is padded out to it rather than guessed at.
 pub const uniform_latency = 6;
+
+/// The instructions a program waits between an `ldtmu` and a read of the
+/// register it wrote. Every hand-written program that samples issues its
+/// two `ldtmu` back to back and reads the first of them in the
+/// instruction after the second, which is two; reading one in the very
+/// next instruction has never been done on this board, so it is not done
+/// here either.
+pub const texel_latency = 2;
 
 /// The registers a program of its own keeps values in: rf4 to rf13, since
 /// rf0 to rf2 are the hardware's, rf3 is W, and rf14 and rf15 are what
@@ -138,6 +151,16 @@ pub const Error = error{
     Registers,
     /// More instructions than the code buffer holds.
     TooLong,
+    /// More than one combined image sampler, or more than one sample: the
+    /// TMU is written once and read once here, as every hand-written
+    /// program writes it once and reads it once.
+    Samplers,
+};
+
+/// The combined image sampler a module reads, by where the draw binds it.
+pub const Sampler = struct {
+    set: u32,
+    binding: u32,
 };
 
 /// What this back end takes. It is narrower than `spirv.facet_profile` on
@@ -153,9 +176,10 @@ pub const profile: spirv.Profile = .{
         .variable,     .function,            .label,               .load,
         .store,        .composite_extract,   .composite_construct, .f_add,
         .f_mul,        .vector_times_scalar, .returns,             .function_end,
+        .type_image,   .type_sampled_image,  .image_sample_implicit_lod,
     },
-    .storage_classes = &.{ .input, .output, .function },
-    .image_dims = &.{},
+    .storage_classes = &.{ .input, .output, .function, .uniform_constant },
+    .image_dims = &.{.dim_2d},
     .stages = &.{.fragment},
     .most_ids = most_ids,
 };
@@ -190,7 +214,15 @@ pub const Tag = enum {
     construct,
     add,
     mul,
+    /// A texel, read through the TMU. Its four floats are not four
+    /// registers: the TMU hands back two words of two half-floats each,
+    /// and `Work.slot_half` says which half of which word a float is.
+    sample,
 };
+
+/// Which half of a packed pair of half-floats a float is, where it is one
+/// at all. The TMU's two words are the only ones here.
+pub const Half = enum { none, low, high };
 
 pub const Step = struct {
     tag: Tag,
@@ -199,7 +231,8 @@ pub const Step = struct {
     a: u16 = 0,
     b: u16 = 0,
     /// `input`: which varying its first float is. `component`: which
-    /// float of `a`. `constant`: where its floats start in `floats`.
+    /// float of `a`. `constant`: where its floats start in `pool`.
+    /// `sample`: which sampler it reads.
     at: u32 = 0,
     /// `construct`: the step each of its floats comes from, and which
     /// float of it.
@@ -227,6 +260,21 @@ pub const none: u16 = 0xFFFF;
 
 pub const Three = struct { to: qpu.Rf, a: qpu.Rf, b: qpu.Rf };
 
+/// Which of the TMU's coordinate addresses a write goes to. S is the one
+/// that starts the lookup, which is why every hand-written program writes
+/// it last.
+pub const Coordinate = enum {
+    s,
+    t,
+
+    pub fn waddr(which: Coordinate) u64 {
+        return switch (which) {
+            .s => qpu.WADDR_TMUS,
+            .t => qpu.WADDR_TMUT,
+        };
+    }
+};
+
 /// One instruction, or one shape of them, chosen but not encoded.
 pub const Act = union(enum) {
     /// The next varying into `to`: three instructions, since its constant
@@ -246,8 +294,26 @@ pub const Act = union(enum) {
     /// spliced from `qpu.last_section`. Exactly one, and nothing may
     /// touch the tile buffer before it.
     last_section,
+    /// A coordinate to the TMU. The write to S is the one that starts
+    /// the lookup, so it comes last (`qpu.texture_code`).
+    tmu: struct { which: Coordinate, from: qpu.Rf },
+    /// The next uniform to the TMU as its next configuration parameter
+    /// (`wrtmuc`). Two of them, the texture's state and the sampler's.
+    config,
+    /// The next word the TMU has for this pixel: two half-floats, which
+    /// is what the tile buffer takes and what `fmulLow`/`fmulHigh` read.
+    texel: qpu.Rf,
+    /// Half of a packed pair as a float, times another float
+    /// (`qpu.fmulLow`, `qpu.fmulHigh`). It is the only way to read one
+    /// half of a texel: a multiply by a float the program wanted anyway
+    /// where there is one, and by a uniform 1 where there is not.
+    half: struct { to: qpu.Rf, from: qpu.Rf, high: bool, by: qpu.Rf },
     /// Two floats to the tile buffer as two half-floats.
     color: struct { low: qpu.Rf, high: qpu.Rf },
+    /// A pair of half-floats already in the form the tile buffer takes,
+    /// moved out as it is: a texel drawn with no arithmetic over it
+    /// (`qpu.texture_code`).
+    color_packed: qpu.Rf,
     /// The thread switch that ends it and its two delay slots, spliced
     /// from `qpu.end_of_program`.
     end,
@@ -257,6 +323,7 @@ pub const Act = union(enum) {
         return switch (made) {
             .varying => 3,
             .uniform, .fadd, .fmul, .color, .nop => 1,
+            .tmu, .config, .texel, .half, .color_packed => 1,
             .last_section => qpu.last_section.len,
             .end => qpu.end_of_program.len,
         };
@@ -274,19 +341,34 @@ pub const Code = struct {
     /// program issues exactly this many `ldvary`, as the hand-written
     /// programs do.
     varyings: u32,
-    /// The floats the draw hands over, at the head of the uniform stream.
-    /// By value, not a slice: a pipeline keeps them for as long as it
-    /// lives, and `Work` is one block a driver compiles everything
-    /// through.
-    uniforms: [most_uniforms]f32,
+    /// The uniform stream, in the order the program reads it. By value,
+    /// not a slice: a pipeline keeps it for as long as it lives, and
+    /// `Work` is one block a driver compiles everything through.
+    uniforms: [most_uniforms]Word,
     uniform_count: u32,
+    /// The combined image sampler the program reads, where it reads one.
+    /// The draw looks it up in its descriptor sets and writes the two
+    /// `.texture` and `.sampler` words of the stream from what it finds.
+    sampler: ?Sampler,
     /// The registers it keeps values in, for a test to read.
     registers: u32,
 
     /// The uniform stream, in the order the program reads it.
-    pub fn stream(code: *const Code) []const f32 {
+    pub fn stream(code: *const Code) []const Word {
         return code.uniforms[0..code.uniform_count];
     }
+};
+
+/// One word of the uniform stream. A program of its own reads floats it
+/// holds; one that samples also reads the TMU's two configuration
+/// parameters, which only a draw can fill in - the texture bound to it
+/// and the sampler beside it are not known until then.
+pub const Word = union(enum) {
+    float: f32,
+    /// The texture's state, as the first `wrtmuc` takes it.
+    texture,
+    /// The sampler's state, as the second takes it.
+    sampler,
 };
 
 // --- the work ----------------------------------------------------------------
@@ -307,6 +389,13 @@ pub const Work = struct {
     class: [most_ids]u8 = @splat(0),
     /// From OpDecorate Location, or `none`.
     location: [most_ids]u16 = @splat(none),
+    /// From OpDecorate DescriptorSet and Binding, or `none`.
+    set: [most_ids]u16 = @splat(none),
+    binding: [most_ids]u16 = @splat(none),
+    /// Which sampler an id names: the variable, and the value an OpLoad
+    /// of it answers. A sampler is not a value a step can hold, so it is
+    /// carried beside the steps rather than among them.
+    sampler_of: [most_ids]u16 = @splat(none),
     /// Which step a value id answers.
     step_of: [most_ids]u16 = @splat(none),
 
@@ -315,10 +404,18 @@ pub const Work = struct {
     /// never read: only what the body asks for costs a uniform.
     pool: [4 * most_constants]f32 = @splat(0),
     pool_count: u32 = 0,
-    /// The floats the draw hands over, in the order the program reads
-    /// them: the uniform stream.
-    floats: [most_uniforms]f32 = @splat(0),
-    float_count: u32 = 0,
+    /// The uniform stream, in the order the program reads it: filled as
+    /// the plan is laid out, not as the words are read, because where a
+    /// sampler's two configuration words sit among the floats is the
+    /// order the instructions ask for them.
+    stream: [most_uniforms]Word = @splat(.{ .float = 0 }),
+    stream_count: u32 = 0,
+
+    /// The combined image samplers the module declares.
+    samplers: [most_samplers]Sampler = undefined,
+    sampler_count: u32 = 0,
+    /// How many times the body samples. One, where it samples at all.
+    sample_count: u32 = 0,
 
     inputs: [most_varyings]Input = undefined,
     input_count: u32 = 0,
@@ -330,6 +427,8 @@ pub const Work = struct {
     step_count: u32 = 0,
     /// The step the body stored into the colour out.
     stored: u16 = none,
+    /// The one step that samples, where there is one.
+    sampled: u16 = none,
     varyings: u32 = 0,
 
     // The plan.
@@ -337,25 +436,47 @@ pub const Work = struct {
     slot_of: [most_steps][4]u16 = undefined,
     slot_last: [most_slots]u32 = @splat(0),
     slot_reg: [most_slots]qpu.Rf = @splat(0),
+    /// Which half of a packed pair the float is, for the two words the
+    /// TMU hands back. Everything else is a register of its own. It is
+    /// cleared where the float has been read out into one of its own.
+    slot_half: [most_slots]Half = @splat(.none),
+    /// Whether the float is a texel's at all, which `slot_half` stops
+    /// saying once it has been read out. Settled before anything is
+    /// emitted, so that what the program will want can be worked out
+    /// ahead of emitting it.
+    slot_texel: [most_slots]bool = @splat(false),
+    /// The other float of the pair, for one that is packed: the two
+    /// share a register, so neither may give it back while the other
+    /// still wants it.
+    slot_pair: [most_slots]u16 = @splat(none),
     /// Its register is back in the pool: it is given back once, however
     /// many steps come after the one that read it last.
     slot_back: [most_slots]bool = @splat(false),
     slot_count: u32 = 0,
     taken: [registers]bool = @splat(false),
     high_water: u32 = 0,
+    /// The register holding the 1 that a packed float is multiplied by to
+    /// be read as a float of its own, where one was wanted. It is taken
+    /// once and never given back: a program that unpacks a texel once
+    /// usually unpacks the rest of it too.
+    one: ?qpu.Rf = null,
 
     acts: [most_acts]Act = undefined,
     act_count: u32 = 0,
-    /// The instructions the plan comes to so far, and where each register
-    /// was last loaded from the uniform stream: what `wait` is measured
-    /// against.
+    /// The instructions the plan comes to so far, and the first word at
+    /// which each register may be read: what `wait` is measured against.
+    /// A register an instruction computed may be read by the next one,
+    /// so its word is 0; one a signal fills has to be waited out.
     at_word: u32 = 0,
-    loaded_at: [registers]?u32 = @splat(null),
+    ready: [registers]u32 = @splat(0),
+    /// Whether the splice is behind us. A uniform has never been read
+    /// past it on this board.
+    spliced: bool = false,
 
     code: [most_words]u64 = undefined,
     word_count: u32 = 0,
 
-    pub const Thing = enum(u8) { none, other, float, vector, pointer, constant, variable, function, value };
+    pub const Thing = enum(u8) { none, other, float, vector, image, sampled_image, pointer, constant, variable, function, value };
 
     /// The steps the body came to, for a test to read.
     pub fn program(work: *const Work) []const Step {
@@ -388,8 +509,9 @@ pub fn compile(work: *Work, words: []const u32) Error!Code {
     return .{
         .words = work.code[0..work.word_count],
         .varyings = work.varyings,
-        .uniforms = work.floats,
-        .uniform_count = work.float_count,
+        .uniforms = work.stream,
+        .uniform_count = work.stream_count,
+        .sampler = if (work.sample_count == 0) null else work.samplers[work.steps[work.sampled].at],
         .registers = work.high_water,
     };
 }
@@ -427,14 +549,20 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 if (operands.len < 3) return Error.Body;
                 const id = try idOf(operands[0]);
                 const what = std.enums.fromInt(spirv.Decoration, operands[1]) orelse return Error.Refused;
-                // A Location is read; every other decoration is refused
-                // rather than ignored. `Flat` and `NoPerspective` are the
-                // reason: a varying decorated either way is not the
-                // perspective-correct one `qpu.varying` interpolates, and
-                // taking the decoration and dropping it would draw the
-                // wrong pixels and say nothing.
-                if (what != .location) return Error.Refused;
-                work.location[id] = std.math.cast(u16, operands[2]) orelse return Error.Location;
+                // A Location, a DescriptorSet and a Binding are read;
+                // every other decoration is refused rather than ignored.
+                // `Flat` and `NoPerspective` are the reason: a varying
+                // decorated either way is not the perspective-correct one
+                // `qpu.varying` interpolates, and taking the decoration
+                // and dropping it would draw the wrong pixels and say
+                // nothing.
+                const value = std.math.cast(u16, operands[2]) orelse return Error.Location;
+                switch (what) {
+                    .location => work.location[id] = value,
+                    .descriptor_set => work.set[id] = value,
+                    .binding => work.binding[id] = value,
+                    else => return Error.Refused,
+                }
             },
             .type_float => {
                 if (operands.len < 2) return Error.Body;
@@ -451,6 +579,30 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 if (operands[2] < 2 or operands[2] > 4) return Error.Type;
                 work.thing[id] = .vector;
                 work.wide[id] = @intCast(operands[2]);
+            },
+            .type_image => {
+                // Result, SampledType, Dim, Depth, Arrayed, MS, Sampled,
+                // ImageFormat. `look` has held the dimensionality to the
+                // profile's and Sampled to 1 already; what is left is the
+                // three that say this is the plain 2D texture the TMU is
+                // written for here. A depth image compares rather than
+                // reads, an arrayed one wants a layer in TMUI and a
+                // multisampled one is not a texture at all - each is its
+                // own family, with its own hand-written program to be
+                // held against, and none of them is this one.
+                if (operands.len < 8) return Error.Body;
+                const id = try idOf(operands[0]);
+                if (work.thing[try idOf(operands[1])] != .float) return Error.Type;
+                if (operands[3] != 0 or operands[4] != 0 or operands[5] != 0) return Error.Refused;
+                work.thing[id] = .image;
+            },
+            .type_sampled_image => {
+                if (operands.len < 2) return Error.Body;
+                const id = try idOf(operands[0]);
+                const image = try idOf(operands[1]);
+                if (work.thing[image] != .image) return Error.Type;
+                work.thing[id] = .sampled_image;
+                work.points[id] = image;
             },
             .type_pointer => {
                 if (operands.len < 3) return Error.Body;
@@ -500,6 +652,21 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 const class = std.enums.fromInt(spirv.StorageClass, operands[2]) orelse return Error.Refused;
                 if (@as(u8, @intCast(@intFromEnum(class))) != work.class[type_id]) return Error.Body;
                 const pointee = work.points[type_id];
+                if (class == .uniform_constant) {
+                    // A combined image sampler and nothing else. There is
+                    // one TMU, it is configured from two words of the
+                    // uniform stream, and where those words come from is
+                    // the set and the binding the draw looks up.
+                    if (work.thing[pointee] != .sampled_image) return Error.Storage;
+                    if (work.sampler_count == most_samplers) return Error.Samplers;
+                    if (work.set[id] == none or work.binding[id] == none) return Error.Location;
+                    work.thing[id] = .variable;
+                    work.class[id] = @intCast(@intFromEnum(class));
+                    work.sampler_of[id] = @intCast(work.sampler_count);
+                    work.samplers[work.sampler_count] = .{ .set = work.set[id], .binding = work.binding[id] };
+                    work.sampler_count += 1;
+                    continue;
+                }
                 const floats = try kindOf(work, pointee);
                 work.thing[id] = .variable;
                 work.class[id] = @intCast(@intFromEnum(class));
@@ -613,6 +780,13 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             const id = try idOf(operands[1]);
             const from = try idOf(operands[2]);
             if (work.thing[from] != .variable) return Error.Body;
+            if (work.class[from] == @intFromEnum(spirv.StorageClass.uniform_constant)) {
+                // The sampler itself, which is no value: it says which
+                // texture the TMU is to be pointed at, and the only
+                // instruction that may read it is a sample.
+                work.sampler_of[id] = work.sampler_of[from];
+                return;
+            }
             if (work.class[from] != @intFromEnum(spirv.StorageClass.input)) return Error.Body;
             const which = work.points[from];
             // A varying is handed over once: two loads of the one
@@ -664,6 +838,27 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             const tag: Tag = if (instruction.op == .f_add) .add else .mul;
             work.step_of[id] = try put(work, .{ .tag = tag, .kind = kind, .a = a, .b = b });
         },
+        .image_sample_implicit_lod => {
+            // ResultType, Result, SampledImage, Coordinate. An image
+            // operand past those would be a bias, an offset or a lod,
+            // each of which is a different TMU write: none is emitted
+            // here, so a module that asks for one is refused.
+            if (operands.len != 4) return Error.Body;
+            const type_id = try idOf(operands[0]);
+            const id = try idOf(operands[1]);
+            if (try kindOf(work, type_id) != .f32x4) return Error.Type;
+            const which = work.sampler_of[try idOf(operands[2])];
+            if (which == none) return Error.Body;
+            // The coordinate before the count is raised, so that a second
+            // sample is refused for being a second and not for anything
+            // its coordinate does.
+            const where = try operand(work, operands[3], .f32x2);
+            if (work.sample_count != 0) return Error.Samplers;
+            const made = try put(work, .{ .tag = .sample, .kind = .f32x4, .a = where, .at = which });
+            work.step_of[id] = made;
+            work.sampled = made;
+            work.sample_count = 1;
+        },
         .vector_times_scalar => {
             if (operands.len != 4) return Error.Body;
             const type_id = try idOf(operands[0]);
@@ -688,13 +883,10 @@ fn operand(work: *Work, word: u32, kind: Kind) Error!u16 {
     }
     if (work.thing[id] != .constant) return Error.Body;
     if (work.wide[id] != kind.parts()) return Error.Type;
-    if (work.float_count + kind.parts() > most_uniforms) return Error.Uniforms;
-    const at = work.float_count;
-    for (0..kind.parts()) |part| {
-        work.floats[at + part] = work.pool[work.points[id] + part];
-        work.float_count += 1;
-    }
-    const made = try put(work, .{ .tag = .constant, .kind = kind, .at = at });
+    // Where its floats are in the pool, not in the stream: what place
+    // they take in the stream is the order the instructions ask for them,
+    // which is not known until the plan is laid out.
+    const made = try put(work, .{ .tag = .constant, .kind = kind, .at = work.points[id] });
     work.step_of[id] = made;
     return made;
 }
@@ -739,6 +931,11 @@ fn settle(work: *Work) Error!void {
         }
         try act(work, .{ .varying = try take(work, work.slot_of[each.step][varying - each.first]) });
     }
+    // The 1 a texel's half is multiplied by to be read as a float of its
+    // own, where the program will want one. It is loaded here, with the
+    // varyings, and not where it is first wanted: that would be past the
+    // splice, and no hand-written program reads a uniform there.
+    if (wantsOne(work)) _ = try one(work);
     // Then the body, in its own order.
     for (work.steps[0..work.step_count], 0..) |each, at| {
         switch (each.tag) {
@@ -752,9 +949,11 @@ fn settle(work: *Work) Error!void {
             .constant => {
                 var part: u32 = 0;
                 while (part < each.kind.parts()) : (part += 1) {
+                    try streamed(work, .{ .float = work.pool[each.at + part] });
                     try act(work, .{ .uniform = try take(work, work.slot_of[at][part]) });
                 }
             },
+            .sample => try sample(work, each, @intCast(at)),
             .add, .mul => {
                 const wide = each.kind.parts();
                 var part: u32 = 0;
@@ -764,8 +963,34 @@ fn settle(work: *Work) Error!void {
                     // scalar for each of the vector's.
                     const b_part = if (work.steps[each.b].kind == .f32x1) 0 else part;
                     const b_slot = work.slot_of[each.b][b_part];
-                    const a = work.slot_reg[a_slot];
-                    const b = work.slot_reg[b_slot];
+                    // A texel's float is half of a packed pair, and
+                    // `fmulLow`/`fmulHigh` is the only instruction that
+                    // reads one. Where the step is that float times one
+                    // that is already in a register, the instruction
+                    // *is* the step - which is what
+                    // `qpu.texture_color_code` does, and it is why a
+                    // texture modulated by the vertices' colour costs
+                    // four instructions and not eight.
+                    const a_packed = work.slot_half[a_slot] != .none;
+                    const b_packed = work.slot_half[b_slot] != .none;
+                    if (fuses(each.tag, a_packed, b_packed)) {
+                        const from = if (a_packed) a_slot else b_slot;
+                        const by = work.slot_reg[if (a_packed) b_slot else a_slot];
+                        try wait(work, &.{ by, work.slot_reg[from] }, 0);
+                        const to = try destination(work, each, @intCast(at), part, a_slot, b_slot);
+                        try act(work, .{ .half = .{
+                            .to = to,
+                            .from = work.slot_reg[from],
+                            .high = work.slot_half[from] == .high,
+                            .by = by,
+                        } });
+                        continue;
+                    }
+                    // Anything else wants the float in a register of its
+                    // own first, which is the same instruction against a
+                    // 1 the program reads as a uniform.
+                    const a = try plain(work, a_slot);
+                    const b = try plain(work, b_slot);
                     try wait(work, &.{ a, b }, 0);
                     const to = try destination(work, each, @intCast(at), part, a_slot, b_slot);
                     try act(work, if (each.tag == .add) .{ .fadd = .{ .to = to, .a = a, .b = b } } else .{ .fmul = .{ .to = to, .a = a, .b = b } });
@@ -775,21 +1000,155 @@ fn settle(work: *Work) Error!void {
         release(work, @intCast(at));
     }
     // The wait on the scoreboard, and then the colour: nothing may touch
-    // the tile buffer before it. What the colour waits for is waited out
-    // first, so that the two writes stay next to the splice as they are
-    // in `flat_code`.
+    // the tile buffer before it. Where the body sampled, the splice is
+    // already behind us - it is between the write to S and the words
+    // coming back, which is where every hand-written program that
+    // samples puts it. Where it did not, it goes here, and what the
+    // colour waits for is waited out first so that the two writes stay
+    // next to it as they are in `flat_code`.
     const slots = work.slot_of[work.stored];
-    const colour = [4]qpu.Rf{
-        work.slot_reg[slots[0]],
-        work.slot_reg[slots[1]],
-        work.slot_reg[slots[2]],
-        work.slot_reg[slots[3]],
-    };
-    try wait(work, &colour, qpu.last_section.len);
-    try act(work, .last_section);
+    if (work.steps[work.stored].tag == .sample) {
+        // A texel drawn as it is: the two words the TMU handed back are
+        // already two pairs of half-floats, which is what the tile
+        // buffer takes, so nothing unpacks them and nothing packs them
+        // again (`qpu.texture_code`).
+        const first = work.slot_reg[slots[0]];
+        const second = work.slot_reg[slots[2]];
+        try wait(work, &.{first}, 0);
+        try act(work, .{ .color_packed = first });
+        try wait(work, &.{second}, 0);
+        try act(work, .{ .color_packed = second });
+        try act(work, .end);
+        return;
+    }
+    var colour: [4]qpu.Rf = undefined;
+    for (&colour, 0..) |*reg, part| reg.* = try plain(work, slots[part]);
+    if (work.sample_count == 0) {
+        try wait(work, &colour, qpu.last_section.len);
+        try act(work, .last_section);
+    } else {
+        try wait(work, &colour, 0);
+    }
     try act(work, .{ .color = .{ .low = colour[0], .high = colour[1] } });
     try act(work, .{ .color = .{ .low = colour[2], .high = colour[3] } });
     try act(work, .end);
+}
+
+/// One word onto the uniform stream, in the order the instructions ask
+/// for it: `ldunifrf` and `wrtmuc` each take the next there is.
+fn streamed(work: *Work, word: Word) Error!void {
+    if (work.stream_count == most_uniforms) return Error.Uniforms;
+    work.stream[work.stream_count] = word;
+    work.stream_count += 1;
+}
+
+/// A texel. The coordinate goes to the TMU, T first and S last because
+/// the write to S is what starts the lookup; the two configuration words
+/// are taken off the uniform stream between them; and then the splice,
+/// which is where every hand-written program that samples puts it - the
+/// words come back five instructions after S, and the splice is four of
+/// them (`qpu.texture_code`, `qpu.texture_color_code`). What comes back
+/// is two words of two half-floats, which is the form the tile buffer
+/// takes.
+fn sample(work: *Work, each: Step, at: u16) Error!void {
+    const coordinate = work.slot_of[each.a];
+    const s = try plain(work, coordinate[0]);
+    const t = try plain(work, coordinate[1]);
+    try wait(work, &.{ s, t }, 0);
+    try act(work, .{ .tmu = .{ .which = .t, .from = t } });
+    try streamed(work, .texture);
+    try act(work, .config);
+    try streamed(work, .sampler);
+    try act(work, .config);
+    try act(work, .{ .tmu = .{ .which = .s, .from = s } });
+    try act(work, .last_section);
+    const slots = work.slot_of[at];
+    const first = try take(work, slots[0]);
+    const second = try take(work, slots[2]);
+    work.slot_reg[slots[1]] = first;
+    work.slot_reg[slots[3]] = second;
+    for ([4]Half{ .low, .high, .low, .high }, 0..) |half, part| work.slot_half[slots[part]] = half;
+    for ([4]u8{ 1, 0, 3, 2 }, 0..) |mate, part| work.slot_pair[slots[part]] = slots[mate];
+    try act(work, .{ .texel = first });
+    try act(work, .{ .texel = second });
+}
+
+/// `slot`'s float in a register of its own. Every float but a texel's
+/// already is one; a texel's is half of a packed pair, and the only
+/// instruction that reads one is a multiply - so it is multiplied by a 1
+/// the program reads as a uniform like any other float it holds.
+fn plain(work: *Work, slot: u16) Error!qpu.Rf {
+    const half = work.slot_half[slot];
+    if (half == .none) return work.slot_reg[slot];
+    const from = work.slot_reg[slot];
+    const by = try one(work);
+    try wait(work, &.{ by, from }, 0);
+    const to = try take(work, slot);
+    work.slot_half[slot] = .none;
+    // The pair's register goes back once neither float is in it any
+    // more. While the other half is still packed it is that float's, and
+    // `release` gives it back through it.
+    const mate = work.slot_pair[slot];
+    if (mate == none or work.slot_half[mate] == .none) {
+        if (held(from)) |k| work.taken[k] = false;
+    }
+    try act(work, .{ .half = .{ .to = to, .from = from, .high = half == .high, .by = by } });
+    return to;
+}
+
+/// The register holding a 1, taken the first time a texel's half has to
+/// be read as a float of its own. It is a uniform like any other float
+/// the program holds, and it is never given back: a program that unpacks
+/// one half usually unpacks the rest.
+fn one(work: *Work) Error!qpu.Rf {
+    if (work.one) |each| return each;
+    // `wantsOne` is meant to have loaded it before the splice. Past the
+    // splice a uniform has never been read on this board, so a plan that
+    // asks for one here is a mistake in `wantsOne`, and a refusal says
+    // so where a hang would not.
+    if (work.spliced) return Error.Body;
+    if (work.slot_count == most_slots) return Error.Steps;
+    const slot: u16 = @intCast(work.slot_count);
+    work.slot_count += 1;
+    work.slot_last[slot] = most_steps;
+    try streamed(work, .{ .float = 1 });
+    const to = try take(work, slot);
+    try act(work, .{ .uniform = to });
+    work.one = to;
+    return to;
+}
+
+/// Whether this part of a step is the one instruction that reads half of
+/// a packed pair and multiplies it in the same breath, which is what
+/// `qpu.texture_color_code` does: a multiply with a texel's float on
+/// exactly one side.
+fn fuses(tag: Tag, a_packed: bool, b_packed: bool) bool {
+    return tag == .mul and a_packed != b_packed;
+}
+
+/// Whether the program will read a texel's float as a float of its own,
+/// which wants the 1 it is multiplied by. It is answered before anything
+/// is emitted so the load can sit with the varyings. It may say yes
+/// where the plan then finds a fusion for every read - a uniform read
+/// and not used costs one instruction, and reading one past the splice
+/// costs what nobody here knows.
+fn wantsOne(work: *const Work) bool {
+    if (work.sample_count == 0) return false;
+    for (work.steps[0..work.step_count]) |each| {
+        if (each.tag != .add and each.tag != .mul) continue;
+        var part: u32 = 0;
+        while (part < each.kind.parts()) : (part += 1) {
+            const a = work.slot_texel[work.slot_of[each.a][part]];
+            const b_part = if (work.steps[each.b].kind == .f32x1) 0 else part;
+            const b = work.slot_texel[work.slot_of[each.b][b_part]];
+            if ((a or b) and !fuses(each.tag, a, b)) return true;
+        }
+    }
+    // The texel drawn as it is goes to the tile buffer packed, which is
+    // the form it came in.
+    if (work.steps[work.stored].tag == .sample) return false;
+    for (work.slot_of[work.stored][0..4]) |slot| if (work.slot_texel[slot]) return true;
+    return false;
 }
 
 /// Which input carries varying `which`.
@@ -841,7 +1200,29 @@ fn live(work: *Work) Error!void {
                     }
                 }
             },
+            // A sample reads its coordinate and nothing else.
+            .sample => {
+                var part: u32 = 0;
+                while (part < work.steps[each.a].kind.parts()) : (part += 1) {
+                    const slot = work.slot_of[each.a][part];
+                    work.slot_last[slot] = @max(work.slot_last[slot], @as(u32, @intCast(at)));
+                }
+            },
             else => {},
+        }
+    }
+    // A texel's four floats are two registers, a pair of half-floats
+    // each. The two that share a register have to die together, or
+    // giving one back would take the other's with it.
+    for (work.steps[0..work.step_count], 0..) |each, at| {
+        if (each.tag != .sample) continue;
+        for (work.slot_of[at][0..4]) |slot| work.slot_texel[slot] = true;
+        for ([2][2]u8{ .{ 0, 1 }, .{ 2, 3 } }) |pair| {
+            const one_slot = work.slot_of[at][pair[0]];
+            const other = work.slot_of[at][pair[1]];
+            const last = @max(work.slot_last[one_slot], work.slot_last[other]);
+            work.slot_last[one_slot] = last;
+            work.slot_last[other] = last;
         }
     }
     // The colour out is read after every step there is.
@@ -873,8 +1254,10 @@ fn take(work: *Work, slot: u32) Error!qpu.Rf {
 fn destination(work: *Work, each: Step, at: u16, part: u32, a_slot: u16, b_slot: u16) Error!qpu.Rf {
     const slot = work.slot_of[at][part];
     const wide = each.kind.parts();
-    if (work.steps[each.a].kind.parts() == wide and dying(work, a_slot, at)) return again(work, a_slot, slot);
-    if (work.steps[each.b].kind.parts() == wide and dying(work, b_slot, at)) return again(work, b_slot, slot);
+    // A texel's register is never written over: it holds two floats, and
+    // the other one may still be wanted.
+    if (work.slot_half[a_slot] == .none and work.steps[each.a].kind.parts() == wide and dying(work, a_slot, at)) return again(work, a_slot, slot);
+    if (work.slot_half[b_slot] == .none and work.steps[each.b].kind.parts() == wide and dying(work, b_slot, at)) return again(work, b_slot, slot);
     return take(work, slot);
 }
 
@@ -908,34 +1291,40 @@ fn act(work: *Work, made: Act) Error!void {
     if (work.act_count == most_acts) return Error.TooLong;
     work.acts[work.act_count] = made;
     work.act_count += 1;
-    // Where a register was loaded from the uniform stream, so that `wait`
-    // can measure the distance; anything else written into a register
-    // ends that.
+    // When each register it wrote may be read. A value an instruction
+    // computed is there for the next one; a value a signal brings has a
+    // latency, and `wait` is what pays it.
     switch (made) {
         .uniform => |to| if (held(to)) |k| {
-            work.loaded_at[k] = work.at_word;
+            work.ready[k] = work.at_word + uniform_latency;
+        },
+        .texel => |to| if (held(to)) |k| {
+            work.ready[k] = work.at_word + texel_latency;
         },
         .varying => |to| if (held(to)) |k| {
-            work.loaded_at[k] = null;
+            work.ready[k] = 0;
         },
         .fadd, .fmul => |three| if (held(three.to)) |k| {
-            work.loaded_at[k] = null;
+            work.ready[k] = 0;
         },
-        .last_section, .color, .end, .nop => {},
+        .half => |it| if (held(it.to)) |k| {
+            work.ready[k] = 0;
+        },
+        .last_section => work.spliced = true,
+        .color, .color_packed, .tmu, .config, .end, .nop => {},
     }
     work.at_word += made.words();
 }
 
-/// Nops enough that every register in `from` was loaded from the uniform
-/// stream at least `uniform_latency` instructions before it is read,
-/// which is `after` instructions past the ones planned so far.
+/// Nops enough that every register in `from` may be read `after`
+/// instructions past the ones planned so far. There is no scheduler
+/// here: where a value is not ready, the program waits.
 fn wait(work: *Work, from: []const qpu.Rf, after: u32) Error!void {
     var most: u32 = 0;
     for (from) |reg| {
         const k = held(reg) orelse continue;
-        const when = work.loaded_at[k] orelse continue;
-        const gone = work.at_word + after - when;
-        if (gone < uniform_latency) most = @max(most, uniform_latency - gone);
+        const at = work.at_word + after;
+        if (at < work.ready[k]) most = @max(most, work.ready[k] - at);
     }
     var k: u32 = 0;
     while (k < most) : (k += 1) try act(work, .nop);
@@ -992,6 +1381,32 @@ fn encode(work: *Work) Error!void {
                 work.code[used] = qpu.vfpackMagic(qpu.WADDR_TLB, pair.low, pair.high);
                 used += 1;
             },
+            .tmu => |it| {
+                try thread(it.from);
+                work.code[used] = qpu.movMagic(it.which.waddr(), it.from);
+                used += 1;
+            },
+            .config => {
+                work.code[used] = qpu.wrtmuc;
+                used += 1;
+            },
+            .texel => |to| {
+                try thread(to);
+                work.code[used] = qpu.ldtmu(to);
+                used += 1;
+            },
+            .half => |it| {
+                try thread(it.to);
+                try thread(it.from);
+                try thread(it.by);
+                work.code[used] = if (it.high) qpu.fmulHigh(it.to, it.from, it.by) else qpu.fmulLow(it.to, it.from, it.by);
+                used += 1;
+            },
+            .color_packed => |from| {
+                try thread(from);
+                work.code[used] = qpu.movMagic(qpu.WADDR_TLB, from);
+                used += 1;
+            },
             .end => {
                 for (qpu.end_of_program) |word| {
                     work.code[used] = word;
@@ -1035,10 +1450,37 @@ const Plain = ir.Fragment(struct {
     }
 });
 
-/// A texture, which wants the TMU: refused until there is a plan for it.
+/// A texture sampled at the coordinate the vertices carry, drawn as it
+/// comes: `qpu.texture_code`'s shape.
 const Textured = ir.Fragment(struct {
     pub fn body(b: *ir.Build) void {
         b.color(b.sample(0, 0, b.input(0, .f32x2)));
+    }
+});
+
+/// That texel times the colour the vertices carry beside it, which is
+/// what `qpu.texture_color_code` does.
+const Modulated = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        b.color(b.mul(b.sample(0, 0, b.input(0, .f32x2)), b.input(1, .f32x4)));
+    }
+});
+
+/// A texel with something added to it. No hand-written program adds to
+/// one, so each of its floats has to be read out of the pair it came in
+/// before the add can have it.
+const Tinted = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        b.color(b.add(b.sample(0, 0, b.input(0, .f32x2)), b.constant(.{ 0.1, 0.2, 0.3, 0 })));
+    }
+});
+
+/// Two textures at once: there is one TMU, and every hand-written
+/// program writes it once and reads it once.
+const Twice = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const uv = b.input(0, .f32x2);
+        b.color(b.mul(b.sample(0, 0, uv), b.sample(0, 1, uv)));
     }
 });
 
@@ -1169,26 +1611,88 @@ fn sound(work: *const Work, code: Code) !void {
     try testing.expectEqual(@as(u32, 1), waits);
     const end = code.words[code.words.len - 3 ..];
     try testing.expectEqualSlices(u64, &qpu.end_of_program, end);
-    // And in the plan: one `last_section`, with every colour after it.
+    // And in the plan: one `last_section`, with every colour after it
+    // and every write to the TMU before it.
     var waited = false;
     var colors: u32 = 0;
-    for (work.plan()) |each| switch (each) {
-        .last_section => {
-            try testing.expect(!waited);
-            waited = true;
-        },
-        .color => |pair| {
-            try testing.expect(waited);
-            try testing.expect(pair.low < qpu.registers and pair.high < qpu.registers);
-            colors += 1;
-        },
-        .varying => |to| try testing.expect(to >= qpu.rf_first and to < qpu.rf_last or to == qpu.rf_scaled),
-        .uniform => |to| try testing.expect(to >= qpu.rf_first and to < qpu.rf_last),
-        .fadd, .fmul => |three| try testing.expect(three.to >= qpu.rf_first and three.to < qpu.rf_last),
-        .end, .nop => {},
-    };
+    var configs: u32 = 0;
+    var texels: u32 = 0;
+    var started: ?u32 = null;
+    var came_back: ?u32 = null;
+    var word: u32 = 0;
+    for (work.plan()) |each| {
+        switch (each) {
+            .last_section => {
+                try testing.expect(!waited);
+                waited = true;
+            },
+            .color => |pair| {
+                try testing.expect(waited);
+                try testing.expect(pair.low < qpu.registers and pair.high < qpu.registers);
+                colors += 1;
+            },
+            .color_packed => |from| {
+                try testing.expect(waited);
+                try testing.expect(from < qpu.registers);
+                colors += 1;
+            },
+            .varying => |to| try testing.expect(to >= qpu.rf_first and to < qpu.rf_last or to == qpu.rf_scaled),
+            .uniform => |to| try testing.expect(to >= qpu.rf_first and to < qpu.rf_last),
+            .fadd, .fmul => |three| try testing.expect(three.to >= qpu.rf_first and three.to < qpu.rf_last),
+            // The coordinate reaches the TMU before the splice, and the
+            // write to S is the last thing before it: that write starts
+            // the lookup and the splice is the wait for it.
+            .tmu => |it| {
+                try testing.expect(!waited);
+                try testing.expect(it.from >= qpu.rf_first and it.from < qpu.rf_last);
+                if (it.which == .s) started = word;
+            },
+            .config => {
+                try testing.expect(!waited);
+                configs += 1;
+            },
+            .texel => |to| {
+                try testing.expect(waited);
+                try testing.expect(to >= qpu.rf_first and to < qpu.rf_last);
+                if (came_back == null) came_back = word;
+                texels += 1;
+            },
+            .half => |it| try testing.expect(it.to >= qpu.rf_first and it.to < qpu.rf_last and
+                it.from >= qpu.rf_first and it.from < qpu.rf_last and
+                it.by >= qpu.rf_first and it.by < qpu.rf_last),
+            .end, .nop => {},
+        }
+        word += each.words();
+    }
     try testing.expect(waited);
     try testing.expectEqual(@as(u32, 2), colors);
+    // A sample is one write to S, two configuration parameters and two
+    // words back, the first of them five instructions after the write -
+    // four of which are the splice, as `qpu.texture_code` leaves it.
+    if (code.sampler == null) {
+        try testing.expectEqual(@as(u32, 0), configs);
+        try testing.expectEqual(@as(u32, 0), texels);
+        try testing.expectEqual(@as(?u32, null), started);
+    } else {
+        try testing.expectEqual(@as(u32, 2), configs);
+        try testing.expectEqual(@as(u32, 2), texels);
+        try testing.expectEqual(@as(u32, 5), came_back.? - started.?);
+    }
+    // One word of the stream for each `wrtmuc`, and in the order they
+    // are issued: the texture's state, then the sampler's.
+    var configured: u32 = 0;
+    for (code.stream()) |each| switch (each) {
+        .float => {},
+        .texture => {
+            try testing.expectEqual(@as(u32, 0), configured);
+            configured += 1;
+        },
+        .sampler => {
+            try testing.expectEqual(@as(u32, 1), configured);
+            configured += 1;
+        },
+    };
+    try testing.expectEqual(configs, configured);
     // One `ldvary` for each varying the record declares, as every
     // hand-written program has: what the hardware makes of a program that
     // reads fewer is written down nowhere.
@@ -1231,7 +1735,9 @@ test "a colour of its own reads four uniforms and no varyings" {
     var work: Work = .{};
     const code = try compile(&work, Plain.words);
     try testing.expectEqual(@as(u32, 0), code.varyings);
-    try testing.expectEqualSlices(f32, &[_]f32{ 1, 0.5, 0, 1 }, code.stream());
+    try testing.expectEqualSlices(Word, &[_]Word{
+        .{ .float = 1 }, .{ .float = 0.5 }, .{ .float = 0 }, .{ .float = 1 },
+    }, code.stream());
     try testing.expectEqual(@as(u32, 4), code.registers);
     try sound(&work, code);
     try testing.expectEqualSlices(Act, &[_]Act{
@@ -1278,7 +1784,9 @@ test "eight varyings and four floats of its own fit the ten registers there are"
     var work: Work = .{};
     const code = try compile(&work, Lit.words);
     try testing.expectEqual(@as(u32, 8), code.varyings);
-    try testing.expectEqualSlices(f32, &[_]f32{ 0.1, 0.2, 0.3, 0 }, code.stream());
+    try testing.expectEqualSlices(Word, &[_]Word{
+        .{ .float = 0.1 }, .{ .float = 0.2 }, .{ .float = 0.3 }, .{ .float = 0 },
+    }, code.stream());
     try testing.expect(code.registers <= registers);
     try sound(&work, code);
     // The eight varyings, the product over the first four, the uniforms
@@ -1366,10 +1874,85 @@ test "what would draw the wrong pixels is refused and not taken and dropped" {
     _ = try compile(&work, Smooth.words);
 }
 
+test "a texture sampled at a varying is the hand-written program, with the texel where this takes it" {
+    var work: Work = .{};
+    const code = try compile(&work, Textured.words);
+    try testing.expectEqual(@as(u32, 2), code.varyings);
+    try testing.expectEqual(Sampler{ .set = 0, .binding = 0 }, code.sampler.?);
+    try sound(&work, code);
+    // `qpu.texture_code` instruction for instruction, with the two words
+    // the TMU hands back in rf6 and rf7 rather than its rf10 and rf11:
+    // that program is spliced from a shared `sample_end` whose registers
+    // are fixed, and this takes the lowest two free once the coordinate
+    // has been written and let go.
+    const want = qpu.varying(4) ++ qpu.varying(5) ++ [_]u64{
+        qpu.movMagic(qpu.WADDR_TMUT, 5),
+        qpu.wrtmuc,
+        qpu.wrtmuc,
+        qpu.movMagic(qpu.WADDR_TMUS, 4),
+    } ++ qpu.last_section ++ [_]u64{
+        qpu.ldtmu(6),
+        qpu.ldtmu(7),
+        qpu.movMagic(qpu.WADDR_TLB, 6),
+        qpu.movMagic(qpu.WADDR_TLB, 7),
+    } ++ qpu.end_of_program;
+    try testing.expectEqualSlices(u64, &want, code.words);
+    // Nothing of its own in the stream: the two words are the TMU's, and
+    // only a draw knows what they are.
+    try testing.expectEqualSlices(Word, &[_]Word{ .texture, .sampler }, code.stream());
+}
+
+test "a texture times the colour the vertices carry comes to the program that was written by hand, word for word" {
+    var work: Work = .{};
+    const code = try compile(&work, Modulated.words);
+    try testing.expectEqual(@as(u32, 6), code.varyings);
+    try testing.expectEqual(qpu.texture_color_fragment.varyings, code.varyings);
+    try sound(&work, code);
+    // Six varyings hold rf4 to rf9, so the texel lands in rf10 and rf11
+    // as it does in the hand-written program - and each product is
+    // written over the colour that went into it, which dies at it.
+    try testing.expectEqualSlices(u64, qpu.texture_color_fragment.code, code.words);
+    try testing.expectEqualSlices(Word, &[_]Word{ .texture, .sampler }, code.stream());
+}
+
+test "a texel added to is read out of its pair first, by a 1 loaded before the splice" {
+    var work: Work = .{};
+    const code = try compile(&work, Tinted.words);
+    try testing.expectEqual(@as(u32, 2), code.varyings);
+    try sound(&work, code);
+    // The 1 first, then the TMU's two, then its own floats: the order
+    // the instructions ask for them.
+    try testing.expectEqualSlices(Word, &[_]Word{
+        .{ .float = 1 },   .texture,          .sampler,
+        .{ .float = 0.1 }, .{ .float = 0.2 }, .{ .float = 0.3 },
+        .{ .float = 0 },
+    }, code.stream());
+    var halves: u32 = 0;
+    var adds: u32 = 0;
+    var before: u32 = 0;
+    var spliced = false;
+    for (work.plan()) |each| switch (each) {
+        .half => halves += 1,
+        .fadd => adds += 1,
+        .last_section => spliced = true,
+        .uniform => if (!spliced) {
+            before += 1;
+        },
+        else => {},
+    };
+    // One read per float of the texel, and the four adds over them.
+    try testing.expectEqual(@as(u32, 4), halves);
+    try testing.expectEqual(@as(u32, 4), adds);
+    // The 1 is the only uniform read before the splice: the four floats
+    // of its own are wanted after it, which is where the adds are.
+    try testing.expectEqual(@as(u32, 1), before);
+}
+
 test "what this back end has no program for is refused by name, and nothing is mis-compiled" {
     var work: Work = .{};
-    // A texture: the TMU, which wants the sample's own shape.
-    try testing.expectError(Error.Refused, compile(&work, Textured.words));
+    // Two textures: there is one TMU, and every hand-written program
+    // writes it once and reads it once.
+    try testing.expectError(Error.Samplers, compile(&work, Twice.words));
     // A pixel dropped: the flag registers.
     try testing.expectError(Error.Refused, compile(&work, Cutout.words));
     // A vertex program: the V3D runs the library's own for those.

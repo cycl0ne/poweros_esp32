@@ -6,6 +6,9 @@
 // It writes more than `min_flat` and `min_interp` read, which Vulkan
 // allows: an output nothing consumes is dropped, while an input nothing
 // writes is not a pipeline at all.
+//
+// vulkan-check-uv.vert is the other one, for the sampler modules, which
+// read a coordinate at location 0 where these read a colour.
 #version 450
 
 layout(location = 0) in vec4 position;

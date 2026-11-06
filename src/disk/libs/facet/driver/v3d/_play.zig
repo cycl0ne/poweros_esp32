@@ -1097,10 +1097,17 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
             const made: *const driver.Shader = @ptrCast(@alignCast(pipeline.driver orelse return));
             fragment = made.address;
             carried = .as_they_are;
-            const floats = made.stream();
-            const bytes: u32 = @max(4, @as(u32, @intCast(floats.len * 4)));
+            const stream = made.stream();
+            const bytes: u32 = @max(4, @as(u32, @intCast(stream.len * 4)));
             const place = carve(queue, bytes, 4) orelse return noRoom(queue, "a draw with no memory for its uniforms");
-            if (floats.len != 0) @memcpy(@as([*]f32, @ptrCast(@alignCast(place.cpu)))[0..floats.len], floats);
+            const words: [*]u32 = @ptrCast(@alignCast(place.cpu));
+            for (stream, 0..) |word, k| words[k] = switch (word) {
+                .float => |each| @bitCast(each),
+                // A program that samples is refused in `make_pipeline`
+                // until a draw can say what the TMU's configuration is,
+                // so a stream that reaches here holds floats alone.
+                .texture, .sampler => 0,
+            };
             uniforms = place.address;
         },
         // Refused when the pipeline was made (driver.zig): no program drops

@@ -60,16 +60,19 @@ for name, body in re.findall(r"pub const (\w+) = \[_\]u32\{(.*?)\};", text, re.S
         file.write(struct.pack("<%dI" % len(words), *words))
 PY
 
-for module in min_flat min_interp min_scaled min_vert; do
+for module in min_flat min_interp min_scaled min_vert min_tex min_texmod; do
     if [ ! -e "$out/$module.spv" ]; then
         echo "$module is not in $reference" >&2
         exit 1
     fi
 done
 
-# The vertex shader for the fragment modules whose varyings facet's own
-# vertex module does not hand on.
+# The vertex shaders for the fragment modules whose varyings facet's own
+# vertex module does not hand on. There are two because they disagree
+# about location 0: the sampler modules read a vec2 coordinate where the
+# colour ones read a vec4 colour, and one shader cannot write both.
 glslc -fshader-stage=vert -o "$out/own_vert.spv" "$root/scripts/vulkan-check.vert"
+glslc -fshader-stage=vert -o "$out/uv_vert.spv" "$root/scripts/vulkan-check-uv.vert"
 
 cc -O2 -Wall -Wextra -o "$out/vulkan-check" "$root/scripts/vulkan-check.c" -lvulkan
 
