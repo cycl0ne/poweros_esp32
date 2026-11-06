@@ -430,6 +430,16 @@ Each rung is a thing that can fail on its own, cheapest first:
    handful of pixels apart - 14 of 230400 across a cube's edge, 11 in a
    subpass - which is the cores' rasteriser against the V3D's, in draws
    that ship no SPIR-V at all and go nowhere near `compile.zig`.
+
+   Re-run at 1.79: FacetProbe 726 and none failed, FacetCube alike with
+   the same counts, and FacetBoth's half-floats, floats, packed floats
+   and shared exponent exact, with the subpass and two-attachment cases
+   8 to 11 of 230400 apart as before. **Those numbers are the baseline,
+   and the reason they are written down here**: FacetBoth instantiates
+   no `ir.Fragment` at all - every one of its fragment entries is a
+   fixed form - so a change to the SPIR-V compiler or to a generated
+   function cannot move them, and one that does has broken something
+   else.
 8. **A desktop Vulkan driver.** `scripts/vulkan-check.sh` makes a real
    pipeline out of the modules on every Vulkan device the machine has,
    draws one triangle with each, and holds every pixel against the shares
