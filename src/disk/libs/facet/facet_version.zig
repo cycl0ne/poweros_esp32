@@ -1295,4 +1295,35 @@ pub const LIBRARY_VERSION = 1;
 /// to Khronos' validator with the other seven reference modules, so this
 /// back end is now held against a real compiler's output and not only
 /// against facet's own emitter's.
-pub const LIBRARY_REVISION = 81;
+/// 82: **the version encoding is Vulkan's.**
+///
+/// `makeVersion` was `major << 16 | minor`, carrying the library's own
+/// version and revision rather than an interface version. Vulkan packs a
+/// version as `variant << 29 | major << 22 | minor << 12 | patch`, so
+/// Vulkan's own `VK_API_VERSION_1_0` is 4194304 where facet's
+/// `API_VERSION_1_0` was 65536 - and CreateInstance refused anything above
+/// `makeVersion(LIBRARY_VERSION, LIBRARY_REVISION)`, 65617 at 1.81. A
+/// program that filled `InstanceCreateInfo.api_version` with the constant
+/// Vulkan told it to use was therefore turned away at the first call it
+/// made, with `error_incompatible_driver`. facet's own default hid it: the
+/// field defaults to facet's value, so only a program saying what Vulkan
+/// says was hurt.
+///
+/// `makeApiVersion(variant, major, minor, patch)` and
+/// `makeVersion(major, minor, patch)` pack one now, and
+/// `apiVersionVariant`, `apiVersionMajor`, `apiVersionMinor` and
+/// `apiVersionPatch` take one apart - Vulkan's four macros, with Vulkan's
+/// field widths, held to the header's own numbers by a test.
+///
+/// The comparison in CreateInstance changed with them, and that was the
+/// larger of the two faults. It compared the whole word against the
+/// library's revision; it now compares the interface's major and minor
+/// version against the `API_VERSION_1_0` this library has, leaves the
+/// patch out of it - Vulkan asks that an implementation take any patch of
+/// a version it supports - and refuses a variant that is not Vulkan's 0.
+/// What the old comparison answered was a function of the library's
+/// revision and not of the interface asked for: every Vulkan-shaped
+/// version number, 1.0 among them, sat above a ceiling of 65617, so all
+/// of them were refused together and raising the revision moved the
+/// ceiling without ever reaching one of them.
+pub const LIBRARY_REVISION = 82;

@@ -4,7 +4,6 @@
 const sdk = @import("sdk");
 const facet = sdk.facet;
 const FacetBase = @import("../facet_base.zig").FacetBase;
-const facet_version = @import("../facet_version.zig");
 const _objects = @import("../_objects.zig");
 const _instance = @import("_instance.zig");
 const Instance = _instance.Instance;
@@ -28,6 +27,14 @@ const Instance = _instance.Instance;
 /// library's, which is what Vulkan answers where nothing present can
 /// provide the version asked for (`error_initialization_failed` before
 /// 1.80); `error_out_of_host_memory`.
+///
+/// An interface is newer when its major version, or its minor version
+/// within the same major, is above the `API_VERSION_1_0` this library has.
+/// The patch is not compared, Vulkan asking that any patch of a version an
+/// implementation has be taken, and a variant other than Vulkan's own 0 is
+/// refused (since 1.82; before it the comparison was against the library's
+/// own revision in an encoding of facet's own, which refused Vulkan's
+/// `VK_API_VERSION_1_0` itself).
 ///
 /// BEHAVIOR:
 /// The instance's physical devices are described as it is made. The first is
@@ -74,7 +81,23 @@ pub fn CreateInstance(base: *FacetBase, info: *const facet.InstanceCreateInfo, i
     const wanted = if (info.api_version == 0) facet.API_VERSION_1_0 else info.api_version;
     // Vulkan's answer for a version nothing here can provide is
     // INCOMPATIBLE_DRIVER, not INITIALIZATION_FAILED (since 1.80).
-    if (wanted > facet.makeVersion(facet_version.LIBRARY_VERSION, facet_version.LIBRARY_REVISION)) return .error_incompatible_driver;
+    //
+    // What is compared is the interface's major and minor version against
+    // the one this library has, which is Vulkan 1.0. The patch is left out
+    // of it: Vulkan asks that an implementation not refuse a version whose
+    // major and minor it supports, so 1.0.57 is 1.0. A variant other than
+    // Vulkan's own 0 names a different API and is refused.
+    //
+    // Until 1.82 the comparison was against `makeVersion(LIBRARY_VERSION,
+    // LIBRARY_REVISION)` - the library's own revision, in an encoding of
+    // facet's own - which refused `VK_API_VERSION_1_0` itself and would
+    // have taken Vulkan 1.1 once the revision passed 1 in the old packing.
+    if (facet.apiVersionVariant(wanted) != 0) return .error_incompatible_driver;
+    const major = facet.apiVersionMajor(wanted);
+    const minor = facet.apiVersionMinor(wanted);
+    const had_major = facet.apiVersionMajor(facet.API_VERSION_1_0);
+    const had_minor = facet.apiVersionMinor(facet.API_VERSION_1_0);
+    if (major > had_major or (major == had_major and minor > had_minor)) return .error_incompatible_driver;
     const sys = base.sys_base;
     const made = _objects.create(sys, Instance) orelse return .error_out_of_host_memory;
     made.* = .{ .base = base, .physicals = undefined };

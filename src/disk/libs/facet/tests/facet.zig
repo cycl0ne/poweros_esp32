@@ -90,7 +90,7 @@ test "an instance lists one physical device: the cores, its memory made from exe
     rig.fb.GetPhysicalDeviceProperties(physical, &properties);
     try testing.expectEqual(facet.PhysicalDeviceType.cpu, properties.device_type);
     try testing.expectEqual(facet.API_VERSION_1_0, properties.api_version);
-    try testing.expectEqual(facet.makeVersion(facet_init.LIBRARY_VERSION, facet_init.LIBRARY_REVISION), properties.driver_version);
+    try testing.expectEqual(facet.makeVersion(facet_init.LIBRARY_VERSION, facet_init.LIBRARY_REVISION, 0), properties.driver_version);
     try testing.expect(properties.limits.cores >= 1 and properties.limits.cores <= 4);
     try testing.expectEqual(@as(u32, 64), properties.limits.tile_size);
     try testing.expect(std.mem.startsWith(u8, &properties.device_name, "facet.library rasterizer, "));
@@ -120,14 +120,62 @@ test "an instance lists one physical device: the cores, its memory made from exe
     try testing.expectEqual(facet.MEMORY_PROPERTY_DEVICE_LOCAL | facet.MEMORY_PROPERTY_LAZILY_ALLOCATED, memory.memory_types[2].property_flags);
 }
 
+// Measured against Vulkan's own macros on the machine this was written on:
+// `VK_API_VERSION_1_0` and the three after it, and a round trip through the
+// widest value each field holds. The numbers are the header's, not this
+// file's arithmetic repeated.
+test "the version encoding is Vulkan's, field for field" {
+    try testing.expectEqual(@as(u32, 4194304), facet.makeApiVersion(0, 1, 0, 0));
+    try testing.expectEqual(@as(u32, 4198400), facet.makeApiVersion(0, 1, 1, 0));
+    try testing.expectEqual(@as(u32, 4202496), facet.makeApiVersion(0, 1, 2, 0));
+    try testing.expectEqual(@as(u32, 4206592), facet.makeApiVersion(0, 1, 3, 0));
+    try testing.expectEqual(@as(u32, 4202627), facet.makeApiVersion(0, 1, 2, 131));
+    // The highest patch of 1.0 is one below 1.1, which is only true if the
+    // minor version really is ten bits and the patch twelve.
+    try testing.expectEqual(@as(u32, 4198399), facet.makeApiVersion(0, 1, 0, 4095));
+    try testing.expectEqual(facet.makeApiVersion(0, 1, 1, 0), facet.makeApiVersion(0, 1, 0, 4095) + 1);
+    // makeVersion is the same with no variant, which is Vulkan's own.
+    try testing.expectEqual(facet.makeApiVersion(0, 1, 81, 0), facet.makeVersion(1, 81, 0));
+    // Every field at its widest, packed and taken back out.
+    const packed_all = facet.makeApiVersion(3, 77, 1023, 4095);
+    try testing.expectEqual(@as(u32, 1937768447), packed_all);
+    try testing.expectEqual(@as(u32, 3), facet.apiVersionVariant(packed_all));
+    try testing.expectEqual(@as(u32, 77), facet.apiVersionMajor(packed_all));
+    try testing.expectEqual(@as(u32, 1023), facet.apiVersionMinor(packed_all));
+    try testing.expectEqual(@as(u32, 4095), facet.apiVersionPatch(packed_all));
+    // And the library's own revision fits the minor version with room to
+    // spare: ten bits is 1023, where 1.81 is the revision today.
+    try testing.expect(facet_init.LIBRARY_REVISION <= 1023);
+    try testing.expectEqual(facet_init.LIBRARY_REVISION, facet.apiVersionMinor(facet.makeVersion(facet_init.LIBRARY_VERSION, facet_init.LIBRARY_REVISION, 0)));
+}
+
 test "an interface newer than the library's is refused; the library stays while an instance lasts" {
     var rig = try Rig.up();
     defer rig.down() catch |err| std.debug.panic("{}", .{err});
     var instance: ?*facet.Instance = null;
-    const newer = facet.makeVersion(facet_init.LIBRARY_VERSION, facet_init.LIBRARY_REVISION + 1);
-    // Vulkan's code for a version nothing present can provide (1.80).
-    try testing.expectEqual(facet.Result.error_incompatible_driver, rig.fb.CreateInstance(&.{ .api_version = newer }, &instance));
-    try testing.expect(instance == null);
+    // Vulkan's own VK_API_VERSION_1_0, which is what a ported program fills
+    // this in with, and the number the comparison refused until 1.82.
+    try testing.expectEqual(@as(u32, 4194304), facet.API_VERSION_1_0);
+    try testing.expectEqual(facet.Result.success, rig.fb.CreateInstance(&.{ .api_version = 4194304 }, &instance));
+    rig.fb.DestroyInstance(instance);
+    // The patch is not compared: any patch of a version the library has is
+    // taken, which is what Vulkan asks of an implementation.
+    instance = null;
+    try testing.expectEqual(facet.Result.success, rig.fb.CreateInstance(&.{ .api_version = facet.makeApiVersion(0, 1, 0, 4095) }, &instance));
+    rig.fb.DestroyInstance(instance);
+    // A newer minor version, a newer major version, and a variant that is
+    // not Vulkan's: Vulkan's code for a version nothing present can provide
+    // (1.80).
+    for ([_]u32{
+        facet.makeApiVersion(0, 1, 1, 0),
+        facet.makeApiVersion(0, 2, 0, 0),
+        facet.makeApiVersion(1, 1, 0, 0),
+    }) |newer| {
+        instance = null;
+        try testing.expectEqual(facet.Result.error_incompatible_driver, rig.fb.CreateInstance(&.{ .api_version = newer }, &instance));
+        try testing.expect(instance == null);
+    }
+    instance = null;
     try testing.expectEqual(facet.Result.success, rig.fb.CreateInstance(&.{ .api_version = 0 }, &instance));
 
     const lib = rig.fb.lib();

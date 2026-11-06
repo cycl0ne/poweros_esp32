@@ -173,14 +173,60 @@ pub const WHOLE_SIZE: u64 = ~@as(u64, 0);
 
 // --- the instance -----------------------------------------------------------
 
-/// The facet.library version a program asks for: `major` is the
-/// library's version, `minor` its revision.
-pub fn makeVersion(major: u32, minor: u32) u32 {
-    return major << 16 | minor;
+/// A version packed into one word the way Vulkan packs one: a variant in
+/// the top three bits, then seven bits of major version, ten of minor and
+/// twelve of patch. `VK_MAKE_API_VERSION`.
+///
+/// The variant is 0 for Vulkan itself and names another API built on the
+/// same encoding where it is not; nothing here answers for one, and
+/// CreateInstance refuses an instance asked for with a variant of its own.
+///
+/// Until 1.82 this was `major << 16 | minor`, with the library's own
+/// version and revision in it rather than an interface version - so
+/// Vulkan's own `VK_API_VERSION_1_0`, which is 4194304, was a number far
+/// above anything the comparison in CreateInstance would take, and a
+/// program that filled `InstanceCreateInfo.api_version` with the constant
+/// Vulkan told it to use was turned away at the door with
+/// `error_incompatible_driver`. facet's default hid it: `api_version`
+/// defaults to this library's own value, so only a program saying what
+/// Vulkan says was hurt by it.
+pub fn makeApiVersion(variant: u32, major: u32, minor: u32, patch: u32) u32 {
+    return variant << 29 | major << 22 | minor << 12 | patch;
 }
 
-/// The first version of the interface.
-pub const API_VERSION_1_0: u32 = makeVersion(1, 0);
+/// The same with no variant, which is every version of Vulkan itself:
+/// `VK_MAKE_VERSION`. This is what a `driver_version` is made with, where
+/// the library's own version and revision go in the major and the minor -
+/// Vulkan leaves a driver's version to whoever wrote the driver, and asks
+/// only that it be packed like this so that a tool can print it.
+pub fn makeVersion(major: u32, minor: u32, patch: u32) u32 {
+    return makeApiVersion(0, major, minor, patch);
+}
+
+/// The four parts of a packed version, taken back out:
+/// `VK_API_VERSION_VARIANT`, `_MAJOR`, `_MINOR` and `_PATCH`.
+pub fn apiVersionVariant(version: u32) u32 {
+    return version >> 29;
+}
+
+pub fn apiVersionMajor(version: u32) u32 {
+    return version >> 22 & 0x7F;
+}
+
+pub fn apiVersionMinor(version: u32) u32 {
+    return version >> 12 & 0x3FF;
+}
+
+pub fn apiVersionPatch(version: u32) u32 {
+    return version & 0xFFF;
+}
+
+/// The interface this library has, and the only one it answers for:
+/// `VK_API_VERSION_1_0`, which is 4194304. A program asking for a major
+/// and minor version no higher than this is taken, whatever its patch -
+/// Vulkan asks that the patch not be compared - and one asking for more
+/// is refused with `error_incompatible_driver`.
+pub const API_VERSION_1_0: u32 = makeApiVersion(0, 1, 0, 0);
 
 /// What a program is, for an Instance.
 pub const InstanceCreateInfo = extern struct {
@@ -189,10 +235,15 @@ pub const InstanceCreateInfo = extern struct {
     /// the library; may be null.
     application_name: ?[*:0]const u8 = null,
     application_version: u32 = 0,
-    /// The interface the program was written for: no newer than the
-    /// library's, or the instance is refused
+    /// The interface version the program was written for
+    /// (`makeApiVersion`), which is `API_VERSION_1_0` here and in Vulkan
+    /// is `VkApplicationInfo.apiVersion`. Its major and minor version may
+    /// be no higher than this library's or the instance is refused
     /// (`error_incompatible_driver`, since 1.80;
-    /// `error_initialization_failed` before it). 0 is `API_VERSION_1_0`.
+    /// `error_initialization_failed` before it); the patch is not
+    /// compared, because Vulkan asks that an implementation take any
+    /// patch of a version it has. A variant of its own is refused: this
+    /// is Vulkan's encoding and no other API's. 0 is `API_VERSION_1_0`.
     api_version: u32 = API_VERSION_1_0,
 };
 

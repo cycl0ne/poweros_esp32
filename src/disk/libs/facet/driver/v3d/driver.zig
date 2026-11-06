@@ -97,7 +97,7 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
     if (v3d.Gpu.find(sys) == null) return false;
     physical.properties = .{
         .api_version = facet.API_VERSION_1_0,
-        .driver_version = facet.makeVersion(facet_version.LIBRARY_VERSION, facet_version.LIBRARY_REVISION),
+        .driver_version = facet.makeVersion(facet_version.LIBRARY_VERSION, facet_version.LIBRARY_REVISION, 0),
         .vendor_id = 0x14E4,
         .device_id = 0x2712,
         .device_type = .integrated_gpu,

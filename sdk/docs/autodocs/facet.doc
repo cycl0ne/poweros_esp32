@@ -3609,6 +3609,14 @@ facet.library/WaitForFences
 	provide the version asked for (`error_initialization_failed` before
 	1.80); `error_out_of_host_memory`.
 
+	An interface is newer when its major version, or its minor version
+	within the same major, is above the `API_VERSION_1_0` this library has.
+	The patch is not compared, Vulkan asking that any patch of a version an
+	implementation has be taken, and a variant other than Vulkan's own 0 is
+	refused (since 1.82; before it the comparison was against the library's
+	own revision in an encoding of facet's own, which refused Vulkan's
+	`VK_API_VERSION_1_0` itself).
+
    BEHAVIOR
 	The instance's physical devices are described as it is made. The first is
 	the cores: those it draws on are counted, and its memory types made from

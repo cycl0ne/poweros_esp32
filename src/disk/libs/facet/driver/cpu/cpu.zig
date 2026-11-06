@@ -71,7 +71,7 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
     const cores = runningCores(sys);
     physical.properties = .{
         .api_version = facet.API_VERSION_1_0,
-        .driver_version = facet.makeVersion(facet_version.LIBRARY_VERSION, facet_version.LIBRARY_REVISION),
+        .driver_version = facet.makeVersion(facet_version.LIBRARY_VERSION, facet_version.LIBRARY_REVISION, 0),
         .vendor_id = 0,
         .device_id = 0,
         .device_type = .cpu,
