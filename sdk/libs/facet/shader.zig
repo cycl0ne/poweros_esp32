@@ -424,18 +424,35 @@ pub fn fixedFragment(name: [*:0]const u8, comptime fixed: Fixed) Entry {
 /// push constants.
 pub const MAX_SETS = 4;
 /// The dynamic buffer descriptors one set may hold: each takes an offset
-/// from CmdBindDescriptorSets (`Resources.offsets`), so two of them is
-/// eight across the four sets - which is Vulkan's guarantee for the
-/// uniform ones of a pipeline layout, and twice it for the storage ones.
-/// It is low because the offsets are part of what a draw was bound with,
-/// which is copied for every draw that changed it. Four a set were tried
-/// again for 1.43: FacetMany drew a frame in 11.61 and 11.62 ms with them,
-/// and in 11.18 to 11.58 ms with two over seven runs - above every reading
-/// two gave, by about 2 per cent of the mean, though by less than that
-/// test drifts from batch to batch. Two is kept: nothing has asked for
-/// more, and a program that wants eight ranges can bind eight offsets
-/// across the four sets.
-pub const MAX_DYNAMIC_OFFSETS = 2;
+/// from CmdBindDescriptorSets (`Resources.offsets`).
+///
+/// **Twelve, which is Vulkan's floor for a whole pipeline layout, in one
+/// set.** Vulkan's two limits are per *layout* -
+/// `maxDescriptorSetUniformBuffersDynamic` at least 8 and
+/// `maxDescriptorSetStorageBuffersDynamic` at least 4 - and they put no
+/// limit on one set, so a layout is entitled to spend all twelve of them
+/// on a single set layout. That is what this has to hold, and why it is
+/// twelve rather than the eight and four read separately: a set holding
+/// 8 uniform and 4 storage dynamic descriptors is a legal layout, and
+/// before 1.85 it was refused at the third (item 19 of
+/// docs/facet-vulkan10.md).
+///
+/// It was 2 until then, on the reasoning that four sets of two is the
+/// eight a layout may hold, which is true of a layout and false of a set:
+/// CreateDescriptorSetLayout refused the third dynamic descriptor of one
+/// set whatever the other three held.
+///
+/// The cost it was kept low for is real but small. The offsets are part
+/// of what a draw was bound with, which the cores copy into the frame's
+/// arena once for each draw whose bindings changed, so this array's size
+/// is in that copy: `[MAX_SETS][12]u32` is 192 bytes where two a set was
+/// 32, and `Resources` goes from about 200 bytes to about 360. Four a set
+/// were measured for 1.43 - FacetMany drew a frame in 11.61 and 11.62 ms
+/// with them against 11.18 to 11.58 ms with two over seven runs, about 2
+/// per cent of the mean, by less than that test drifts between batches -
+/// so the measurement never separated the copy from the noise, and
+/// conformance is not a thing to trade against it either way.
+pub const MAX_DYNAMIC_OFFSETS = 12;
 pub const MAX_PUSH_CONSTANTS_SIZE = 128;
 
 /// A descriptor as a shader reads it: a uniform or storage buffer's bytes

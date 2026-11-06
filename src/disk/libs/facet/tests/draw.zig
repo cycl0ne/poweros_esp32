@@ -7047,10 +7047,14 @@ test "a buffer binding that is an array: every element reached, each dynamic one
 
     const picker = try module(&bench, &Pick.code);
     defer fb.DestroyShaderModule(device, picker);
-    // Four dynamic buffers in one binding, which is all a set holds, and
-    // two plain ones in the next.
+    // Four dynamic buffers in one binding - which is what the shader
+    // above reads, element by element, and it checks that the fifth is
+    // not there - and two plain ones in the next. Four, and not
+    // `shader.MAX_DYNAMIC_OFFSETS`, because what is being tested here is
+    // an array binding and not how many dynamic descriptors a set holds.
+    const dynamic_elements = 4;
     const bindings = [2]facet.DescriptorSetLayoutBinding{
-        .{ .binding = 0, .descriptor_type = .uniform_buffer_dynamic, .descriptor_count = shader.MAX_DYNAMIC_OFFSETS, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+        .{ .binding = 0, .descriptor_type = .uniform_buffer_dynamic, .descriptor_count = dynamic_elements, .stage_flags = facet.SHADER_STAGE_COMPUTE },
         .{ .binding = 1, .descriptor_type = .storage_buffer, .descriptor_count = 2, .stage_flags = facet.SHADER_STAGE_COMPUTE },
     };
     var set_layout: ?*facet.DescriptorSetLayout = null;
@@ -7073,7 +7077,7 @@ test "a buffer binding that is an array: every element reached, each dynamic one
     const out: [*]u32 = @ptrCast(@alignCast(out_bytes));
     for (0..64) |k| in[k] = @intCast(k);
     @memset(out[0..64], 0);
-    var uniforms: [shader.MAX_DYNAMIC_OFFSETS]facet.DescriptorBufferInfo = undefined;
+    var uniforms: [dynamic_elements]facet.DescriptorBufferInfo = undefined;
     for (&uniforms, 0..) |*info, k| info.* = .{ .buffer = uniform, .offset = k * 16, .range = 16 };
     const storages = [2]facet.DescriptorBufferInfo{
         .{ .buffer = out_buffer, .offset = 0, .range = 64 },
@@ -7090,7 +7094,7 @@ test "a buffer binding that is an array: every element reached, each dynamic one
     try testing.expectEqual(facet.Result.success, fb.CreateComputePipelines(device, null, 1, @ptrCast(&info), &pipelines));
     defer fb.DestroyPipeline(device, pipelines[0]);
 
-    var offsets: [shader.MAX_DYNAMIC_OFFSETS]u32 = undefined;
+    var offsets: [dynamic_elements]u32 = undefined;
     for (&offsets, 0..) |*shift, k| shift.* = @intCast(k * 4);
     const commands = try bench.record();
     fb.CmdBindPipeline(commands, .compute, pipelines[0].?);
@@ -7099,7 +7103,7 @@ test "a buffer binding that is an array: every element reached, each dynamic one
     try bench.submit();
 
     // Element k read byte 16k + 4k, which holds 4k + k.
-    for (0..shader.MAX_DYNAMIC_OFFSETS) |k| try testing.expectEqual(@as(u32, @intCast(k * 5)), out[k]);
+    for (0..dynamic_elements) |k| try testing.expectEqual(@as(u32, @intCast(k * 5)), out[k]);
     try testing.expectEqual(@as(u32, 8), out[4]);
     try testing.expectEqual(@as(u32, 1), out[5]);
     try testing.expectEqual(@as(u32, 0), out[6]);
@@ -7136,10 +7140,44 @@ test "dynamic buffer descriptors: one set read from where the bind says, draw af
     var properties: facet.PhysicalDeviceProperties = undefined;
     fb.GetPhysicalDeviceProperties(bench.physical, &properties);
     // Vulkan counts the dynamic descriptors of each kind apart, where
-    // facet folded both into one number until 1.82. The library's cap is
-    // per set layout, so each kind may carry the whole of it.
-    try testing.expectEqual(@as(u32, shader.MAX_DYNAMIC_OFFSETS), properties.limits.max_descriptor_set_uniform_buffers_dynamic);
-    try testing.expectEqual(@as(u32, shader.MAX_DYNAMIC_OFFSETS), properties.limits.max_descriptor_set_storage_buffers_dynamic);
+    // facet folded both into one number until 1.82, and counts them over
+    // a whole pipeline layout. These two are Vulkan's floor exactly and
+    // they add up to what one set holds, so a layout within them fits in
+    // a set however it spreads them (item 19, done in 1.85; they were 2
+    // and 2 before).
+    try testing.expectEqual(@as(u32, 8), properties.limits.max_descriptor_set_uniform_buffers_dynamic);
+    try testing.expectEqual(@as(u32, 4), properties.limits.max_descriptor_set_storage_buffers_dynamic);
+    try testing.expectEqual(
+        properties.limits.max_descriptor_set_uniform_buffers_dynamic + properties.limits.max_descriptor_set_storage_buffers_dynamic,
+        @as(u32, shader.MAX_DYNAMIC_OFFSETS),
+    );
+
+    // And a set layout carrying the whole of both is made, which is the
+    // layout Vulkan entitles a program to: all eight uniform and all four
+    // storage in one set. Until 1.85 this was refused at the third.
+    {
+        const whole = [2]facet.DescriptorSetLayoutBinding{
+            .{ .binding = 0, .descriptor_type = .uniform_buffer_dynamic, .descriptor_count = 8, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+            .{ .binding = 1, .descriptor_type = .storage_buffer_dynamic, .descriptor_count = 4, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+        };
+        var held: ?*facet.DescriptorSetLayout = null;
+        try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = whole.len, .bindings = &whole }, &held));
+        defer fb.DestroyDescriptorSetLayout(device, held);
+        var whole_pool: ?*facet.DescriptorPool = null;
+        try testing.expectEqual(facet.Result.success, fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &whole_pool));
+        defer fb.DestroyDescriptorPool(device, whole_pool);
+        var whole_sets: [1]?*facet.DescriptorSet = undefined;
+        try testing.expectEqual(facet.Result.success, fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = whole_pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&held) }, &whole_sets));
+        // Every one of the twelve was given an offset of its own, in the
+        // order the bindings and their elements run, which is the number
+        // a shift is looked up by (`shader.Resources.shiftOf`). With a cap
+        // of two the last ten were left saying "not shifted".
+        const made = _objects.of(_descriptor.Set, whole_sets[0].?);
+        try testing.expectEqual(@as(u32, shader.MAX_DYNAMIC_OFFSETS), made.dynamic_count);
+        for (made.view.slots[0..shader.MAX_DYNAMIC_OFFSETS], 1..) |slot, nth| {
+            try testing.expectEqual(@as(u8, @intCast(nth)), slot.dynamic);
+        }
+    }
 
     const reader = try module(&bench, &Reader.code);
     defer fb.DestroyShaderModule(device, reader);

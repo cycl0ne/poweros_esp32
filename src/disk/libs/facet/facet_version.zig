@@ -1467,4 +1467,45 @@ pub const LIBRARY_VERSION = 1;
 /// `tests/vulkan_limits.zig` counts sixteen shortfalls now where it
 /// counted eighteen, which is how this revision is held: the number is
 /// pinned and the file says which item each remaining one belongs to.
-pub const LIBRARY_REVISION = 84;
+///
+/// 85: **one set layout holds twelve dynamic buffer descriptors, and the
+/// two limits report Vulkan's own eight and four.**
+///
+/// `shader.MAX_DYNAMIC_OFFSETS` was 2 and CreateDescriptorSetLayout
+/// refused the third dynamic buffer descriptor of a set, whatever the
+/// other three sets held. The reasoning written beside the constant was
+/// that four sets of two is the eight a pipeline layout may hold - which
+/// is true of a layout and false of a set. Vulkan's two limits,
+/// `maxDescriptorSetUniformBuffersDynamic` (at least 8) and
+/// `maxDescriptorSetStorageBuffersDynamic` (at least 4), are per layout
+/// and put no limit on one set, so a program is entitled to spend all
+/// twelve on a single set layout and facet turned that layout away. Item
+/// 19 of docs/facet-vulkan10.md.
+///
+/// Twelve now, which is those two added together: a layout within
+/// Vulkan's floor fits in one set however it spreads them. The two limits
+/// report 8 and 4 rather than the constant. The library in fact takes
+/// twelve in *each* of its four sets, 48 over a layout, but 48 would be a
+/// promise it cannot keep - a layout may put all 48 in one set, and a set
+/// holds twelve - so what is reported is the pair that is true of every
+/// arrangement, which is Vulkan's own.
+///
+/// `Resources.offsets` is `[MAX_SETS][12]u32`, 192 bytes where two a set
+/// was 32, so `Resources` goes from about 200 bytes to about 360. The
+/// cores copy it into the frame's arena once for each draw whose bindings
+/// changed, which is the cost the constant was held at 2 for. The 1.43
+/// measurement of four a set - FacetMany at 11.61 and 11.62 ms against
+/// 11.18 to 11.58 ms with two, about 2 per cent of the mean and less than
+/// that test's drift between batches - never separated the copy from the
+/// noise, and a conformance floor is not a thing to trade against it
+/// either way.
+///
+/// Two tests moved with it. The array-binding test asked for
+/// `MAX_DYNAMIC_OFFSETS` elements where what it tests is an array of four
+/// - its shader reads four and checks the fifth is absent - so it says
+/// four now and no longer moves when the cap does. And the dynamic-offset
+/// test makes the layout Vulkan entitles a program to, 8 uniform and 4
+/// storage in one set, allocates a set from it and reads back that all
+/// twelve slots were numbered 1 to 12: with the old cap the last ten said
+/// "not shifted" instead.
+pub const LIBRARY_REVISION = 85;

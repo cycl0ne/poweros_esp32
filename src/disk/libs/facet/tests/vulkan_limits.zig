@@ -294,14 +294,11 @@ const Rig = @import("facet.zig").Rig;
 /// overrides about eighteen of them downward) and only the board can say
 /// whether it meets them.
 ///
-/// The sixteen, and the item of docs/facet-vulkan10.md each belongs to,
+/// The fourteen, and the item of docs/facet-vulkan10.md each belongs to,
 /// so that the number is auditable rather than merely pinned:
 ///
 ///   - item 17, the varyings: maxVertexOutputComponents and
 ///     maxFragmentInputComponents, both 8 against 64.
-///   - item 19, dynamic descriptors: maxDescriptorSetUniformBuffersDynamic
-///     and ...StorageBuffersDynamic, the one combined cap of 2 against 8
-///     and 4.
 ///   - item 21, 1D images: maxImageDimension1D 0 against 4096.
 ///   - item 22, layered framebuffers: maxFramebufferLayers 1 against 256.
 ///   - item 28, constant-offset sampling: minTexelOffset 0 against -8 and
@@ -314,10 +311,12 @@ const Rig = @import("facet.zig").Rig;
 ///
 /// Nothing else falls short, and nothing in that list is unaccounted for.
 ///
-/// Closed since this count was first taken: **item 18** in 1.84, which
-/// was maxVertexInputBindings 4 and maxVertexInputAttributes 8 against 16
-/// apiece - two of the eighteen it started at.
-const shortfalls_on_the_cores = 16;
+/// Closed since this count was first taken, which began at eighteen:
+/// **item 18** in 1.84, maxVertexInputBindings 4 and
+/// maxVertexInputAttributes 8 against 16 apiece; and **item 19** in 1.85,
+/// the one combined cap of 2 dynamic buffer descriptors a set against
+/// Vulkan's 8 uniform and 4 storage a pipeline layout.
+const shortfalls_on_the_cores = 14;
 
 test "the check itself: Vulkan's floor passes, and a step below it is caught" {
     // A check that passes is worth nothing on its own: one whose loop never

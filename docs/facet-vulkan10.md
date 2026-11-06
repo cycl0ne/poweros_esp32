@@ -115,8 +115,8 @@ analysis put them. Items marked *critical path* are the ones the second
 refinement - finish the compiler, no fallback - moves onto the main line.
 
 **Items 2, 3, 4, 5 and 7 were done in revision 1.80, item 78 in 1.81,
-items 14, 16, 49 and 77 in 1.82, item 52's half of two in 1.83, and item
-18 in 1.84.** Each
+items 14, 16, 49 and 77 in 1.82, item 52's half of two in 1.83, item 18
+in 1.84 and item 19 in 1.85.** Each
 carries a *Done* note below saying what was actually built and where the
 item's own description turned out to be wrong - and several did. Things
 found while doing them became the items at the end of the list: 77 and 78
@@ -537,6 +537,37 @@ Found independently by: limits (2 items), conformance-path.
 *limits / descriptors* &mdash; conformance-blocking, medium
 
 After: The limits reshape
+
+**Done in 1.85, and the diagnosis here was right about the cap and wrong
+about the shape of the fix.** `shader.MAX_DYNAMIC_OFFSETS` is 12, which is
+Vulkan's 8 and 4 added together, and the two limits report 8 and 4. The
+reason it is one number and not two: Vulkan's limits are per *pipeline
+layout* and put no limit on one set, so a program may spend all twelve on
+a single set layout, and that is what a set has to hold. Splitting the
+constant in two would have let a set hold 8 uniform or 4 storage but not
+8 and 4 together, which is a legal layout.
+
+The field was already split by the 1.82 reshape, so nothing had to be
+split here. `Resources.offsets` grew from `[4][2]u32` to `[4][12]u32` -
+192 bytes where it was 32, `Resources` from about 200 to about 360 - and
+nothing else changed: `shiftOf` already bounded the index by the constant,
+`makeSet` already numbered the slots by it, and `CmdBindDescriptorSets`
+already allowed `MAX_SETS * MAX_DYNAMIC_OFFSETS` offsets in one call.
+
+**The per-submission arena this item asked for was not needed.** The
+offsets are copied once for each draw whose bindings changed, not once a
+draw, and the arena they are copied into already exists
+(`cpu/_draw.zig`'s `player.drawn orelse target.arena.create`). The 1.43
+measurement this item leans on - 11.61 and 11.62 ms against 11.18 to
+11.58, about 2 per cent - is a 32-byte difference in that copy, and the
+note recording it says the gap is smaller than the test's drift between
+batches, so it never separated the copy from the noise.
+
+The library in fact takes twelve in *each* of its four sets, 48 over a
+layout, and reports 8 and 4 anyway: 48 would be a promise it cannot keep,
+because a layout may put all 48 in one set. A pair that is true of every
+arrangement is the only honest report, and Vulkan's floor is exactly that
+pair.
 
 facet has one combined cap of 2, enforced per descriptor-set layout and published as a single field. Vulkan has two limits with minimums of 8 (uniform) and 4 (storage), counted per pipeline layout, and a single set layout may legally hold 8 dynamic uniform buffers — which facet refuses at the third. Needs MAX_DYNAMIC_OFFSETS raised, Resources.offsets widened from [MAX_SETS][2]u32, and the field split. It costs what the 1.43 measurement recorded: the offsets are part of what a draw was bound with and are copied for every draw that changed them, so making them a pointer into a per-submission arena is the shape that avoids the copy.
 

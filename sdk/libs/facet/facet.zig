@@ -383,9 +383,10 @@ pub const PhysicalDeviceLimits = extern struct {
     /// stage may read.
     max_per_stage_resources: u32,
     /// The same counted over a whole pipeline layout rather than one
-    /// stage of it, with the two dynamic kinds counted apart:
-    /// a dynamic descriptor takes an offset from
-    /// CmdBindDescriptorSets (`shader.MAX_DYNAMIC_OFFSETS`).
+    /// stage of it, with the two dynamic kinds counted apart: a dynamic
+    /// descriptor takes an offset from CmdBindDescriptorSets, and one set
+    /// holds `shader.MAX_DYNAMIC_OFFSETS` of them, which is these two
+    /// added together so that a layout within them always fits in a set.
     max_descriptor_set_samplers: u32,
     max_descriptor_set_uniform_buffers: u32,
     max_descriptor_set_uniform_buffers_dynamic: u32,

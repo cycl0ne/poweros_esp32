@@ -482,15 +482,20 @@ pub const limits: facet.PhysicalDeviceLimits = .{
     .max_per_stage_resources = 0xFFFF,
     .max_descriptor_set_samplers = facet.shader.MAX_SETS * 0xFFFF,
     .max_descriptor_set_uniform_buffers = facet.shader.MAX_SETS * 0xFFFF,
-    // A dynamic descriptor takes an offset from CmdBindDescriptorSets, and a
-    // set layout is refused past two of them (`facet.shader.MAX_DYNAMIC_OFFSETS`).
-    // Vulkan counts these over a whole pipeline layout, where four sets of
-    // two would be eight; the library counts them per set layout, so two is
-    // what one layout may carry and the honest number to report. Vulkan asks
-    // for 8 uniform and 4 storage (item 19).
-    .max_descriptor_set_uniform_buffers_dynamic = facet.shader.MAX_DYNAMIC_OFFSETS,
+    // A dynamic descriptor takes an offset from CmdBindDescriptorSets, and
+    // one set layout holds `facet.shader.MAX_DYNAMIC_OFFSETS` of them, 12.
+    //
+    // Vulkan counts these over a whole pipeline layout and these two are
+    // its floor exactly, which is 8 + 4 = 12: a layout within them fits
+    // in one set however it spreads them, so the numbers hold in every
+    // arrangement. The library in fact takes 12 *in each* of its four
+    // sets, 48 over a layout, but reporting 48 would be a promise it
+    // cannot keep - a layout is entitled to put all 48 in one set, and
+    // that set holds 12. So the pair that is true of any arrangement is
+    // what is reported, which is Vulkan's own (item 19, done in 1.85).
+    .max_descriptor_set_uniform_buffers_dynamic = 8,
     .max_descriptor_set_storage_buffers = facet.shader.MAX_SETS * 0xFFFF,
-    .max_descriptor_set_storage_buffers_dynamic = facet.shader.MAX_DYNAMIC_OFFSETS,
+    .max_descriptor_set_storage_buffers_dynamic = 4,
     .max_descriptor_set_sampled_images = facet.shader.MAX_SETS * 0xFFFF,
     .max_descriptor_set_storage_images = facet.shader.MAX_SETS * 0xFFFF,
     .max_descriptor_set_input_attachments = facet.shader.MAX_SETS * 0xFFFF,
