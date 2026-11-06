@@ -39,24 +39,16 @@ const screen = struct {
     pub const height: u32 = 800;
 };
 
-/// The USB bus of an xHCI controller added with `-device qemu-xhci`, and
-/// of one on a real machine: the first xHCI function on PCI. Without one,
-/// xhci.device finds none and the bus does not start. The machine's own
-/// older keyboard and mouse ports are not driven: what is plugged into a
-/// machine of this kind today is USB.
-const usb = [_]Tag{
-    .value(st.PART_Kind, st.PARTKIND_USB),
-    .value(st.PART_Chip, st.CHIP_XHCI),
-    .pointer(st.PART_ChipName, "xhci"),
-    .value(st.PART_Bus, st.BUS_PCI),
-    .value(st.PART_BusUnit, 0),
-    .value(st.PART_UsbRoles, st.USBROLE_HOST),
-    .value(st.PART_UsbSpeed, st.USBSPEED_HIGH),
-    .value(st.PART_UsbVbus, st.USBVBUS_ALWAYS),
-    .pointer(st.PART_Label, "USB"),
-    .done,
-};
-
+/// **The USB buses are not here.** A controller of this machine's is an
+/// xHCI function on PCI, which usb.library finds for itself: the sockets
+/// of a PC are in groups with a controller each - some at the front,
+/// some at the back, more behind the chip's internal bridges - and how
+/// many there are is the machine's answer, not a list's. A board part
+/// describes a controller only where nothing can find it, which is a
+/// controller of a chip's own.
+///
+/// The machine's own older keyboard and mouse ports are not driven
+/// either: what is plugged into a machine of this kind today is USB.
 /// QEMU's virtio GPU on PCI, there when the machine is started with
 /// `-device virtio-gpu-pci`: a function of its own, which the driver
 /// finds by what it is rather than by where it lies, so nothing here says
@@ -118,7 +110,6 @@ pub const root = [_]Tag{
     .value(st.SYSTAG_ScreenWidth, screen.width),
     .value(st.SYSTAG_ScreenHeight, screen.height),
     .pointer(st.SYSTAG_Part, &gpu),
-    .pointer(st.SYSTAG_Part, &usb),
     .done,
 };
 

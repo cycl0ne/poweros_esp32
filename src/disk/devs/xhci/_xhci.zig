@@ -60,8 +60,6 @@ const regs = @import("regs.zig");
 
 pub const DEVICE_NAME = "xhci.device";
 
-/// How many controllers the device drives at most.
-pub const max_units = 4;
 /// The device slots a controller is given at most: devices on its bus,
 /// hubs among them.
 pub const max_slots = 32;
@@ -102,11 +100,14 @@ pub const XhciBase = extern struct {
     seg_list: ?*anyopaque = null,
     pci_base: ?*PCIBase = null,
     /// The units there are: the board's controllers, the first
-    /// `board_units`, and the xHCI functions pci.library has.
+    /// `board_units`, and the xHCI functions pci.library has. Counted at
+    /// the init, and the two blocks below allocated for them - a machine
+    /// says how many controllers it has, and a PC has one per group of
+    /// sockets, with nothing fixing the number.
     units: u32 = 0,
     board_units: u32 = 0,
-    board: [max_units]BoardController = @splat(.{}),
-    hosts: [max_units]?*Host = @splat(null),
+    board: ?[*]BoardController = null,
+    hosts: ?[*]?*Host = null,
     /// Who may start and stop a unit: one opener at a time.
     open_lock: exec.SignalSemaphore = .{},
 };
