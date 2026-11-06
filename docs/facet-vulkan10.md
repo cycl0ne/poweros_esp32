@@ -19,6 +19,15 @@ Two refinements were taken with it:
    compiler is on the critical path rather than beside it, and the feature
    bits that exist to say "this device only runs a fixed set of shapes"
    are temporary.
+3. **The API is not frozen.** PowerOS is at v0.2, so a changed signature,
+   a changed structure or a shifted `_driver.stamp` costs nothing but a
+   rebuild: the library and the driver module always ship together in one
+   package, and nothing outside this tree depends on either shape. No item
+   below should be made worse, or scheduled as though it were expensive,
+   to preserve an ABI. A stamp change is still worth *reporting*, because
+   the board's `LIBS:facet/v3d.fdriver` goes stale and both files have to
+   be replaced in the same `C:Update` - a deployment fact, not a design
+   constraint.
 
 `facet-gaps.md` is the companion to this: it records what is absent and
 why. This one records what to do about it, in an order. Where the two
@@ -260,6 +269,8 @@ Found independently by: entry-points, semantics.
 *limits / API shape* &mdash; structural, large, also serves the shim
 
 This cannot be fixed by raising numbers, and it gates every limits item below it. facet's struct has 26 fields; Vulkan's has about 106. Roughly 25 Vulkan limits have a counterpart and about 81 do not; two facet fields (tile_size, cores) have no Vulkan counterpart; max_descriptor_set_dynamic_buffers folds two Vulkan limits into one; and three types differ — min_memory_map_alignment is u32 where Vulkan uses size_t, max_sampler_anisotropy is u32 where Vulkan's is float, and timestamp_period_ns is u32 nanoseconds where timestampPeriod is a float (1000 maps cleanly; a fractional period cannot be expressed). Worse for any translation, facet's struct is append-only by contract — the comments repeatedly say "a field added at the end, so that none already there moves" — which is how an LVO library keeps its ABI and the exact opposite of Vulkan's frozen layout. So either facet's struct is revised wholesale once, or the shim owns a VkPhysicalDeviceLimits filled from facet plus new sources. Decide before items 17-30, because they all land in whichever struct wins.
+
+**Decided (2026-11-06): revise facet's struct wholesale, and drop the append-only contract with it.** The API is not frozen at v0.2, so the reason the contract existed - an LVO library keeping its ABI across releases - does not apply yet, and it is the one thing standing between this structure and Vulkan's own layout. `PhysicalDeviceLimits` becomes `VkPhysicalDeviceLimits`: Vulkan's ~106 members, in Vulkan's order, with Vulkan's types - so `min_memory_map_alignment` becomes `size_t`-shaped, `max_sampler_anisotropy` and `timestamp_period_ns` become floats (`timestampPeriod`, which also fixes the fractional period that 1000 nanoseconds cannot express), and `max_descriptor_set_dynamic_buffers` splits into Vulkan's two. facet's two extra fields, `tile_size` and `cores`, have no Vulkan counterpart and move out of this structure rather than sitting inside Vulkan's layout. The same decision applies to `PhysicalDeviceFeatures` (item 49) and `PhysicalDeviceProperties` (item 14). Items 17-30 land in Vulkan's struct.
 
 > Verified by script: PhysicalDeviceLimits has exactly 26 fields (sdk/libs/facet/facet.zig), listed — max_image_dimension_2d, max_framebuffer_width/height, max_image_dimension_3d, max_image_array_layers, max_color_attachments, max_vertex_input_bindings/attributes/binding_stride, max_vertex_output_components, max_push_constants_size, max_bound_descriptor_sets, max_per_stage_descriptor_sampled_images/uniform_buffers, min_memory_map_alignment, tile_size, cores, max_sampler_anisotropy, timestamp_period_ns, max_descriptor_set_dynamic_buffers, the three compute limits, max_tessellation_patch_components, point_size_range, point_size_granularity. The append-only contract is stated at facet.zig:207 and :232-234.
 
