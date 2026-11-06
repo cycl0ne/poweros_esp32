@@ -452,7 +452,7 @@ fn lvoCmdCopyQueryPoolResults(base: *FacetBase, buffer: *facet.CommandBuffer, po
     return CmdCopyQueryPoolResults(base, buffer, pool, first, count, destination, offset, stride, flags);
 }
 
-fn lvoCmdClearDepthStencilImage(base: *FacetBase, buffer: *facet.CommandBuffer, image: *facet.Image, layout: u32, value: *const facet.ClearDepthStencilValue, range_count: u32, ranges: [*]const facet.ImageSubresourceRange) callconv(.c) void {
+fn lvoCmdClearDepthStencilImage(base: *FacetBase, buffer: *facet.CommandBuffer, image: *facet.Image, layout: facet.ImageLayout, value: *const facet.ClearDepthStencilValue, range_count: u32, ranges: [*]const facet.ImageSubresourceRange) callconv(.c) void {
     return CmdClearDepthStencilImage(base, buffer, image, layout, value, range_count, ranges);
 }
 

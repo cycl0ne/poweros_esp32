@@ -76,6 +76,21 @@ const max_vertex_output_components = @import("../instance/_instance.zig").max_ve
 /// A shader runs on every core at once and on the queue's task: see
 /// sdk.facet.shader for what it may do.
 ///
+/// `error_invalid_shader_nv` is the one result this call answers that
+/// core Vulkan 1.0 does not list for `vkCreateShaderModule`: there the
+/// whole list is success and the two out-of-memory codes, because code
+/// that is not valid SPIR-V breaks that call's valid usage and so is
+/// undefined behaviour rather than a reportable error. Core Vulkan 1.0
+/// therefore has no code at all that means "these words are malformed",
+/// and facet keeps the refusal on purpose rather than take the undefined
+/// behaviour: a program's own bug in its words is told to it here, at the
+/// call that read them, which is the first of the two tiers above. The
+/// number is Khronos's own for that meaning (-1000012000,
+/// `VK_ERROR_INVALID_SHADER_NV`, contributed by VK_NV_glsl_shader), not
+/// one invented here, and the layer that has to translate it is a Vulkan
+/// shim running without that extension enabled - not this call. (Said in
+/// 1.80; the behaviour is 1.75's.)
+///
 /// BUGS:
 /// None known.
 ///

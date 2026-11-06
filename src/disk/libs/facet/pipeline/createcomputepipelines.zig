@@ -33,7 +33,8 @@ const _shader = @import("../shader/_shader.zig");
 /// `success`; else what the first that could not be made came to:
 /// `error_invalid_shader_nv` for a stage that is not of a compute function
 /// the module has; `error_feature_not_present` for a workgroup over the
-/// device's limits; `error_out_of_host_memory`. Those made are made either
+/// device's limits, or for a stage whose `specialization_info` names a
+/// constant (since 1.80); `error_out_of_host_memory`. Those made are made either
 /// way.
 ///
 /// BEHAVIOR:
@@ -49,6 +50,15 @@ const _shader = @import("../shader/_shader.zig");
 /// than `max_compute_work_group_invocations`, or sharing more than
 /// `max_compute_shared_memory_size` bytes, is refused here rather than cut
 /// to what fits.
+///
+/// Specialization constants are not honoured: a stage whose
+/// `specialization_info` names any (`map_entry_count` above 0) is refused
+/// with `error_feature_not_present` rather than made with the constants
+/// dropped, which would run what the program did not ask for (since 1.80;
+/// before it the pointer was read by nothing and no one was told). A
+/// `SpecializationInfo` of no entries specializes nothing, as in Vulkan,
+/// and is made: a program that fills the struct for every stage and leaves
+/// it empty where it has no constants is not turned away.
 ///
 /// CONTEXT:
 /// - Waits: yes, for memory.
@@ -81,6 +91,17 @@ pub fn CreateComputePipelines(base: *FacetBase, device: *facet.Device, cache: ?*
     var result: facet.Result = .success;
     for (infos[0..count], pipelines[0..count]) |*info, *pipeline| {
         pipeline.* = null;
+        // Specialization constants are not honoured, and a pipeline that
+        // ran with them dropped would run something the program did not
+        // ask for: refused instead (since 1.80). A `SpecializationInfo` of
+        // no entries specializes nothing, which is what a program that
+        // fills the struct unconditionally gives: that is not refused.
+        if (info.stage.specialization_info) |asked| {
+            if (asked.map_entry_count != 0) {
+                if (result == .success) result = .error_feature_not_present;
+                continue;
+            }
+        }
         const module = _objects.of(_shader.ShaderModule, info.stage.module);
         const entry = (if (info.stage.stage == facet.SHADER_STAGE_COMPUTE) _shader.find(module, facet.SHADER_STAGE_COMPUTE, info.stage.name) else null) orelse {
             if (result == .success) result = .error_invalid_shader_nv;

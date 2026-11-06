@@ -568,7 +568,7 @@ fn depthChecks(probe: *Probe) void {
     const value = facet.ClearDepthStencilValue{ .depth = 1 };
     const subresource = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH };
     commands = probe.record() orelse return probe.check(false, "a third recording");
-    fb.CmdClearDepthStencilImage(commands, depth[0], 0, &value, 1, @ptrCast(&subresource));
+    fb.CmdClearDepthStencilImage(commands, depth[0], .undefined, &value, 1, @ptrCast(&subresource));
     fb.CmdCopyImageToBuffer(commands, depth[0], .general, read_back, 1, @ptrCast(&whole));
     if (!probe.submit()) return probe.check(false, "the clear submitted");
     checkDepth(probe, 0xFFFF, depthAt(back_bytes, 4, 4), "CmdClearDepthStencilImage set the whole image");
@@ -2359,7 +2359,7 @@ fn stencilChecks(probe: *Probe) void {
         const only_stencil = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_STENCIL };
         @memset(back_bytes[0..bytes], 0xAA);
         commands = probe.record() orelse return probe.check(false, "a third recording");
-        fb.CmdClearDepthStencilImage(commands, stencil[0], 0, &value, 1, @ptrCast(&only_stencil));
+        fb.CmdClearDepthStencilImage(commands, stencil[0], .undefined, &value, 1, @ptrCast(&only_stencil));
         fb.CmdCopyImageToBuffer(commands, stencil[0], .general, read_back, 1, @ptrCast(&whole));
         if (!probe.submit()) return probe.check(false, "the clear submitted");
         probe.checkEqual(9, back_bytes[(8 * side + 16) * stride + inside], "cleared without a pass over it");
@@ -2556,7 +2556,7 @@ fn sampledDepthChecks(probe: *Probe) void {
             const filled = facet.ClearDepthStencilValue{ .depth = 0.75, .stencil = 0xFF };
             const planes = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH | facet.IMAGE_ASPECT_STENCIL };
             commands = probe.record() orelse return probe.check(false, "a recording of the plane cleared");
-            fb.CmdClearDepthStencilImage(commands, held, 0, &filled, 1, @ptrCast(&planes));
+            fb.CmdClearDepthStencilImage(commands, held, .undefined, &filled, 1, @ptrCast(&planes));
             if (!probe.submit()) return probe.check(false, "the plane cleared");
             probe.checkEqual(0xFFFF_FFFF, sampledWith(probe, plane, sampler.?, sets[0].?, layout.?, reading, onto, shade, vertex_buffer, vertex_bytes, pixels, pitch, 0.5), "the depth plane of such an image sampled at 16 bits");
         }
@@ -2649,7 +2649,7 @@ fn sampledDepthChecks(probe: *Probe) void {
             const far = facet.ClearDepthStencilValue{ .depth = 0.75 };
             const every_level = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH };
             commands = probe.record() orelse return probe.check(false, "a recording of both levels cleared");
-            fb.CmdClearDepthStencilImage(commands, held, 0, &far, 1, @ptrCast(&every_level));
+            fb.CmdClearDepthStencilImage(commands, held, .undefined, &far, 1, @ptrCast(&every_level));
             if (!probe.submit()) return probe.check(false, "both its levels cleared");
             if (probe.framebuffer(storing, &.{ color[1], first_view.? })) |frame_of| {
                 const quad = quadAt(0.25);

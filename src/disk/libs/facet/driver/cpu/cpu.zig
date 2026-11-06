@@ -43,7 +43,11 @@ const _draw = @import("_draw.zig");
 
 pub const ops = Ops{
     .describe = &describe,
-    .format_properties = &_format.keptProperties,
+    // The one answer every driver gives, read off the features `describe`
+    // sets below: the cores keep every format they were given and sample
+    // a depth where its rows lie, so they say the most of it (since 1.80,
+    // where this took the format alone - driver/_format.zig).
+    .format_properties = &_format.properties,
     .allocate_memory = &allocateMemory,
     .free_memory = &freeMemory,
     .make_pipeline = &makePipeline,

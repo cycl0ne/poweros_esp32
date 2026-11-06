@@ -516,7 +516,11 @@ pub const Compare = enum(u8) {
 };
 
 /// The samples a point takes along its longer axis at most, however much
-/// anisotropy it asks for: `PhysicalDeviceLimits.max_sampler_anisotropy`.
+/// anisotropy it asks for. This is what the sampling here will do at
+/// most; what a sampler is held to is the device's own
+/// `PhysicalDeviceLimits.max_sampler_anisotropy`, which is 1 on a device
+/// without `PhysicalDeviceFeatures.sampler_anisotropy` and need not be
+/// this number (since 1.80).
 pub const most_taps = 16;
 
 /// A `Sampler.max_lod` held by nothing but the levels the texture has.

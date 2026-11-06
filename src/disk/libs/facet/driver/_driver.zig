@@ -67,8 +67,16 @@ pub const Ops = extern struct {
     /// where the machine has not got what the driver drives, and the
     /// instance lists no device of it.
     describe: *const fn (sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool,
-    /// What the device does with a format.
-    format_properties: *const fn (format: facet.Format) callconv(.c) facet.FormatProperties,
+    /// What the device does with a format. `physical` is the device being
+    /// asked, as its own `describe` left it: what a format does differs
+    /// between two devices of a machine only by the features it said it
+    /// has - whether it keeps a compressed or a float texture, a texture's
+    /// own channels or its whole numbers as it was given them, and whether
+    /// it samples a depth image where its rows lie - so both drivers point
+    /// at `_format.properties` (since 1.80; the format alone before, with
+    /// one bool standing in for the four kept features and nothing for
+    /// `sampled_depth`).
+    format_properties: *const fn (physical: *const PhysicalDevice, format: facet.Format) callconv(.c) facet.FormatProperties,
     /// `memory.size` bytes of `memory.type_index` behind `memory`: its
     /// `data` set, or the error AllocateMemory answers with. Never asked
     /// for the lazily allocated type, which has nothing behind it.
@@ -158,7 +166,15 @@ fn named(sum: u64, name: []const u8) u64 {
     return made;
 }
 
-/// A struct's size, and each field's name, place and size.
+/// A struct's size, and each field's name, place and size - and, where the
+/// field points at a function, that call as well (since 1.80). A pointer is
+/// the same size whatever it points at, so a driver call that gained a
+/// parameter left every name, place and size of `Ops` as it was: the stamp
+/// took no notice, and a module built before the change would be loaded and
+/// then called with the wrong arguments. What `callOf` adds catches a
+/// parameter gained or lost, one whose measure changed, and one swapped for
+/// another type of the same size and alignment, which no measure tells
+/// apart.
 fn shapeOf(sum: u64, comptime T: type) u64 {
     var made = mixed(mixed(sum, @sizeOf(T)), @alignOf(T));
     if (@typeInfo(T) != .@"struct") return made;
@@ -167,8 +183,45 @@ fn shapeOf(sum: u64, comptime T: type) u64 {
         made = named(made, field.name);
         made = mixed(made, @offsetOf(T, field.name));
         made = mixed(made, @sizeOf(field.type));
+        made = callOf(made, field.type);
     }
     return made;
+}
+
+/// The call a field points at, where it points at a function: how many
+/// parameters it takes, and the measure of each of them and of its answer.
+/// An optional pointer is read through, and a field that points at no
+/// function left alone.
+///
+/// The measure is a size, an alignment and the type's own name. The name is
+/// what catches a parameter swapped for another type of the same shape - a
+/// `*const PhysicalDevice` for a `*const Device`, both one pointer - which
+/// a size and an alignment read alike. It costs a module rebuilt where a
+/// type was only renamed, and the library and its drivers are built from
+/// the one source and shipped in the one package anyway.
+fn callOf(sum: u64, comptime T: type) u64 {
+    const Pointed = switch (@typeInfo(T)) {
+        .pointer => |pointer| pointer.child,
+        .optional => |optional| switch (@typeInfo(optional.child)) {
+            .pointer => |pointer| pointer.child,
+            else => return sum,
+        },
+        else => return sum,
+    };
+    if (@typeInfo(Pointed) != .@"fn") return sum;
+    const call = @typeInfo(Pointed).@"fn";
+    var made = mixed(sum, call.params.len);
+    for (call.params) |param| made = measured(made, param.type);
+    return measured(made, call.return_type);
+}
+
+/// A parameter's or an answer's size and alignment: 0 for one of no type,
+/// and 1 for an opaque one, which has neither.
+fn measured(sum: u64, comptime T: ?type) u64 {
+    const Given = T orelse return mixed(sum, 0);
+    const made = named(sum, @typeName(Given));
+    if (@typeInfo(Given) == .@"opaque") return mixed(made, 1);
+    return mixed(mixed(made, @sizeOf(Given)), @alignOf(Given));
 }
 
 /// What a file opened as a module turned out to be.
@@ -237,6 +290,36 @@ pub fn lookForModules(base: *FacetBase) void {
 }
 
 const testing = std.testing;
+
+test "the shape sum reads a driver call's own parameters, which no name, place or size shows" {
+    const Format = extern struct { call: *const fn (format: facet.Format) callconv(.c) facet.FormatProperties };
+    const Asked = extern struct { call: *const fn (physical: *const PhysicalDevice, format: facet.Format) callconv(.c) facet.FormatProperties };
+    const Answers = extern struct { call: *const fn (physical: *const PhysicalDevice, format: facet.Format) callconv(.c) bool };
+    const Perhaps = extern struct { call: ?*const fn (format: facet.Format) callconv(.c) facet.FormatProperties };
+    const Otherwise = extern struct { call: ?*const fn (format: facet.Format) callconv(.c) bool };
+    // One pointer swapped for a pointer at something else: the same size
+    // and the same alignment, so only the type's name tells them apart.
+    const Elsewhere = extern struct { what: u64 };
+    const Swapped = extern struct { call: *const fn (elsewhere: *const Elsewhere, format: facet.Format) callconv(.c) facet.FormatProperties };
+    // A shape is summed as the stamp is, which is at comptime: the fields
+    // of a type are no runtime value. A type's name is walked a byte at a
+    // time, so the quota the stamp sets for itself is wanted here too.
+    @setEvalBranchQuota(1_000_000);
+    const sums = comptime [6]u64{ shapeOf(0, Format), shapeOf(0, Asked), shapeOf(0, Answers), shapeOf(0, Perhaps), shapeOf(0, Otherwise), shapeOf(0, Swapped) };
+    // One pointer each, at the one offset, under the one name: what tells
+    // the first two apart is the call, which is why `callOf` is there.
+    try testing.expectEqual(@sizeOf(Format), @sizeOf(Asked));
+    try testing.expect(sums[0] != sums[1]);
+    // What the call answers counts as well, and an optional pointer - the
+    // shape a driver's own calls are declared with - is read through.
+    try testing.expect(sums[1] != sums[2]);
+    try testing.expect(sums[3] != sums[4]);
+    // And a parameter swapped for another type of the one size and
+    // alignment, which the measure alone reads alike: the name catches it.
+    try testing.expectEqual(@sizeOf(*const PhysicalDevice), @sizeOf(*const Elsewhere));
+    try testing.expectEqual(@alignOf(*const PhysicalDevice), @alignOf(*const Elsewhere));
+    try testing.expect(sums[1] != sums[5]);
+}
 
 test "a module is taken only with the library's stamp" {
     var memory: [@sizeOf(ModuleBase)]u8 align(@alignOf(ModuleBase)) = undefined;

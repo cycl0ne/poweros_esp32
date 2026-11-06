@@ -85,6 +85,13 @@ pub const Result = enum(i32) {
     not_ready = 1,
     /// A wait ran out of time first.
     timeout = 2,
+    /// An event is signalled. Vulkan's `VK_EVENT_SET`, and the name is
+    /// here for a program that was written against it: this library has
+    /// no events yet, so no call answers it. (Since 1.80.)
+    event_set = 3,
+    /// An event is not signalled. Vulkan's `VK_EVENT_RESET`, and as with
+    /// `event_set` no call of this library answers it yet. (Since 1.80.)
+    event_reset = 4,
     /// An array was too short for all there is: as much as fits is in it.
     incomplete = 5,
     /// The library's own memory ran out.
@@ -97,17 +104,57 @@ pub const Result = enum(i32) {
     /// The memory cannot be mapped: it is lazily allocated, or mapped
     /// already.
     error_memory_map_failed = -5,
+    /// A layer asked for is not there. Vulkan's
+    /// `VK_ERROR_LAYER_NOT_PRESENT`: this library has no layers and no
+    /// call that takes a list of them, so the name is here for a program
+    /// written against Vulkan rather than for an answer it will get.
+    /// (Since 1.80.)
+    error_layer_not_present = -6,
+    /// An extension asked for is not there. Vulkan's
+    /// `VK_ERROR_EXTENSION_NOT_PRESENT`, and as with
+    /// `error_layer_not_present` no call takes a list of them yet.
+    /// (Since 1.80.)
+    error_extension_not_present = -7,
     /// What was asked for is not something this library does.
     error_feature_not_present = -8,
+    /// There is nothing here that provides the interface asked for: the
+    /// version a program gives CreateInstance is newer than the
+    /// library's. Vulkan's `VK_ERROR_INCOMPATIBLE_DRIVER`, and what that
+    /// call answered with `error_initialization_failed` before 1.80.
+    /// (Since 1.80.)
+    error_incompatible_driver = -9,
     error_too_many_objects = -10,
     /// The format is not one this library does for what it was asked.
     error_format_not_supported = -11,
     /// A descriptor pool has room for the sets, but not in one piece.
     error_fragmented_pool = -12,
+    /// Something failed that no valid use of this library explains.
+    /// Vulkan's `VK_ERROR_UNKNOWN`, which any call that answers a result
+    /// may give: it carries no name in the header for a version, every
+    /// one of them being allowed to return it. Nothing here answers it
+    /// yet - a call that cannot say what went wrong is a defect to find,
+    /// not a code to hand back - and the name is here for a program
+    /// written against Vulkan that switches on it. (Since 1.80.)
+    error_unknown = -13,
     /// A descriptor pool has no room for another set.
     error_out_of_pool_memory = -1000069000,
     /// A shader module's code is not a `shader.Code`, or names no
     /// function a pipeline's stage asks for.
+    ///
+    /// One of the two results this library answers that core Vulkan 1.0
+    /// does not list for the call that gives it (`error_out_of_pool_memory`
+    /// is the other): `vkCreateShaderModule`'s whole list in core 1.0 is
+    /// success and the two out-of-memory codes, words that are not SPIR-V
+    /// being undefined behaviour there rather than a reportable error.
+    /// Khronos's own reference page does list this code for the call,
+    /// because the extension below contributes it. facet refuses instead, and keeps Khronos's own number for
+    /// the refusal - `VK_ERROR_INVALID_SHADER_NV`, which the extension
+    /// VK_NV_glsl_shader contributes for exactly this meaning - rather
+    /// than inventing a code of its own. It is the first of
+    /// CreateShaderModule's two tiers: malformed words here, well formed
+    /// words a device will not compile at the pipeline
+    /// (`error_feature_not_present`). A Vulkan shim running without that
+    /// extension enabled is the layer that has to translate it.
     error_invalid_shader_nv = -1000012000,
     /// A swapchain's image was shown, but the surface has changed under
     /// it: it still works, and is better made again.
@@ -144,7 +191,8 @@ pub const InstanceCreateInfo = extern struct {
     application_version: u32 = 0,
     /// The interface the program was written for: no newer than the
     /// library's, or the instance is refused
-    /// (`error_initialization_failed`). 0 is `API_VERSION_1_0`.
+    /// (`error_incompatible_driver`, since 1.80;
+    /// `error_initialization_failed` before it). 0 is `API_VERSION_1_0`.
     api_version: u32 = API_VERSION_1_0,
 };
 
@@ -944,6 +992,10 @@ pub const ImageLayout = enum(u32) {
     general = 1,
     color_attachment_optimal = 2,
     depth_stencil_attachment_optimal = 3,
+    /// A depth or stencil attachment read and not written: tested
+    /// against, or read by a function, after the pass that stored it.
+    /// (Since 1.80.)
+    depth_stencil_read_only_optimal = 4,
     shader_read_only_optimal = 5,
     transfer_src_optimal = 6,
     transfer_dst_optimal = 7,
@@ -1399,25 +1451,53 @@ pub const DrawIndexedIndirectCommand = extern struct {
 pub const COMMAND_BUFFER_RESET_RELEASE_RESOURCES: u32 = 1 << 0;
 
 /// The stages of the work a command does, in the order they run: where a
-/// barrier or a semaphore's wait takes effect.
+/// barrier or a semaphore's wait takes effect. The bits are Vulkan's, all
+/// of VkPipelineStageFlagBits' core ones since 1.80 - a program ported
+/// from Vulkan finds every name, including the stages this library has
+/// not got.
 pub const PIPELINE_STAGE_TOP_OF_PIPE: u32 = 1 << 0;
+/// Where a draw or a dispatch reads its own numbers out of a buffer
+/// (CmdDrawIndirect, CmdDrawIndexedIndirect, CmdDispatchIndirect).
+/// (Since 1.80.)
+pub const PIPELINE_STAGE_DRAW_INDIRECT: u32 = 1 << 1;
 pub const PIPELINE_STAGE_VERTEX_INPUT: u32 = 1 << 2;
 pub const PIPELINE_STAGE_VERTEX_SHADER: u32 = 1 << 3;
+/// Where a patch's control function runs (`shader.control`).
+/// (Since 1.80.)
+pub const PIPELINE_STAGE_TESSELLATION_CONTROL_SHADER: u32 = 1 << 4;
+/// Where a patch's evaluation function runs. (Since 1.80.)
+pub const PIPELINE_STAGE_TESSELLATION_EVALUATION_SHADER: u32 = 1 << 5;
+/// Vulkan's name for a stage this library has not got: there are no
+/// geometry functions. (Since 1.80.)
+pub const PIPELINE_STAGE_GEOMETRY_SHADER: u32 = 1 << 6;
 pub const PIPELINE_STAGE_FRAGMENT_SHADER: u32 = 1 << 7;
 pub const PIPELINE_STAGE_EARLY_FRAGMENT_TESTS: u32 = 1 << 8;
 pub const PIPELINE_STAGE_LATE_FRAGMENT_TESTS: u32 = 1 << 9;
 pub const PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT: u32 = 1 << 10;
+/// Where a dispatched function runs (CmdDispatch). (Since 1.80.)
+pub const PIPELINE_STAGE_COMPUTE_SHADER: u32 = 1 << 11;
 pub const PIPELINE_STAGE_TRANSFER: u32 = 1 << 12;
 pub const PIPELINE_STAGE_BOTTOM_OF_PIPE: u32 = 1 << 13;
 pub const PIPELINE_STAGE_HOST: u32 = 1 << 14;
 pub const PIPELINE_STAGE_ALL_GRAPHICS: u32 = 1 << 15;
 pub const PIPELINE_STAGE_ALL_COMMANDS: u32 = 1 << 16;
 
-/// What work reads or writes, on either side of a barrier.
+/// What work reads or writes, on either side of a barrier. The bits are
+/// Vulkan's, all of VkAccessFlagBits' core ones since 1.80.
+///
+/// This first bit is what a draw or a dispatch reads of its own numbers
+/// out of a buffer (CmdDrawIndirect, CmdDispatchIndirect). (Since 1.80.)
+pub const ACCESS_INDIRECT_COMMAND_READ: u32 = 1 << 0;
 pub const ACCESS_INDEX_READ: u32 = 1 << 1;
 pub const ACCESS_VERTEX_ATTRIBUTE_READ: u32 = 1 << 2;
 pub const ACCESS_UNIFORM_READ: u32 = 1 << 3;
+/// What a fragment function reads of an input attachment, pixel by pixel
+/// (`shader.Attachment`, IMAGE_USAGE_INPUT_ATTACHMENT). (Since 1.80.)
+pub const ACCESS_INPUT_ATTACHMENT_READ: u32 = 1 << 4;
 pub const ACCESS_SHADER_READ: u32 = 1 << 5;
+/// What a function writes through a storage image or a storage buffer
+/// (IMAGE_USAGE_STORAGE). (Since 1.80.)
+pub const ACCESS_SHADER_WRITE: u32 = 1 << 6;
 pub const ACCESS_COLOR_ATTACHMENT_READ: u32 = 1 << 7;
 pub const ACCESS_COLOR_ATTACHMENT_WRITE: u32 = 1 << 8;
 pub const ACCESS_DEPTH_STENCIL_ATTACHMENT_READ: u32 = 1 << 9;
@@ -1687,6 +1767,10 @@ pub const PipelineCache = opaque {};
 pub const SHADER_STAGE_VERTEX: u32 = 0x01;
 pub const SHADER_STAGE_TESSELLATION_CONTROL: u32 = 0x02;
 pub const SHADER_STAGE_TESSELLATION_EVALUATION: u32 = 0x04;
+/// Vulkan's name for a stage this library has not got: there are no
+/// geometry functions, and `SHADER_STAGE_ALL_GRAPHICS` has always
+/// included this bit without a name for it. (Since 1.80.)
+pub const SHADER_STAGE_GEOMETRY: u32 = 0x08;
 pub const SHADER_STAGE_FRAGMENT: u32 = 0x10;
 pub const SHADER_STAGE_COMPUTE: u32 = 0x20;
 pub const SHADER_STAGE_ALL_GRAPHICS: u32 = 0x1F;
@@ -1709,6 +1793,36 @@ pub const ShaderModuleCreateInfo = extern struct {
 /// functions, so a program may always pass it. (Since 1.75.)
 pub const SHADER_MODULE_CREATE_SPIRV: u32 = 0x01;
 
+/// Where one specialization constant's value is: which constant, where
+/// in `SpecializationInfo.data` its bytes start, and how many of them.
+/// Vulkan's `VkSpecializationMapEntry`. (Since 1.80.)
+pub const SpecializationMapEntry = extern struct {
+    /// The constant's id, as the SPIR-V's `SpecId` decoration gives it.
+    constant_id: u32,
+    /// Where its value starts in `SpecializationInfo.data`.
+    offset: u32,
+    /// Its bytes there.
+    size: usize,
+};
+
+/// The specialization constants one stage of a pipeline is made with:
+/// the entries and the bytes they point into. Vulkan's
+/// `VkSpecializationInfo`.
+///
+/// facet.library does not specialise a shader yet, so a stage that
+/// carries one is **refused**, with `error_feature_not_present`, rather
+/// than made with the constants quietly dropped: a pipeline that ignored
+/// them would draw something the program did not ask for
+/// (CreateGraphicsPipelines, CreateComputePipelines). The type is here so
+/// a program may be written against Vulkan's shape now and work when the
+/// constants are honoured. (Since 1.80.)
+pub const SpecializationInfo = extern struct {
+    map_entry_count: u32 = 0,
+    map_entries: ?[*]const SpecializationMapEntry = null,
+    data_size: usize = 0,
+    data: ?*const anyopaque = null,
+};
+
 /// A shader stage of a pipeline: the module's function for it.
 pub const PipelineShaderStageCreateInfo = extern struct {
     flags: u32 = 0,
@@ -1717,7 +1831,13 @@ pub const PipelineShaderStageCreateInfo = extern struct {
     module: *ShaderModule,
     /// The entry's name in the module.
     name: [*:0]const u8 = "main",
-    specialization_info: ?*const anyopaque = null,
+    /// The constants this stage is specialised with, or null. Not
+    /// honoured: a stage that carries one has its pipeline refused with
+    /// `error_feature_not_present` (since 1.80, which also gave the
+    /// field Vulkan's own type - it was `?*const anyopaque`, and read by
+    /// nothing, before; a nullable pointer either way, so the shape of
+    /// this struct has not changed).
+    specialization_info: ?*const SpecializationInfo = null,
 };
 
 /// Whether a binding's data goes a vertex at a time or an instance.

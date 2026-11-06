@@ -108,6 +108,16 @@ These are the items that serve the decision above, in the order the
 analysis put them. Items marked *critical path* are the ones the second
 refinement - finish the compiler, no fallback - moves onto the main line.
 
+**Items 2, 3, 4, 5 and 7 were done in revision 1.80**, and each carries a
+*Done* note below saying what was actually built and where the item's own
+description turned out to be wrong. Two things found while doing them are
+a new item at the end of the list (77).
+
+The line and file references in the evidence blockquotes were measured at
+commit `af42edb7`, before 1.80 moved code around. They are evidence of
+what was found, not a current index: read them as "this is where it was",
+and grep for the name if a number no longer lands.
+
 ### 1. Re-base docs/facet-gaps.md and facet-todo.md on 1.79 and correct the four headline numbers
 
 *documentation* &mdash; structural, small, also serves the shim
@@ -126,6 +136,19 @@ One line. The V3D reports the library-wide 16 in the same describe() call that s
 
 > src/disk/libs/facet/driver/v3d/driver.zig:130-131 `.max_sampler_anisotropy = _instance.max_sampler_anisotropy` (= 16, _instance.zig:52) with `.sampler_anisotropy = false` at :155; cores set it true at cpu.zig:120. Verified by reading both describe() blocks.
 
+**Done in 1.80**, and it was two lines, not one. The spec reading was
+confirmed: the Limit Requirements table gives feature-dependent limits two
+required values, and `maxSamplerAnisotropy` is `1 | 16 | min` - 1 is the
+required value when `samplerAnisotropy` is false, so reporting 1 is right
+and not a conformance regression. The second line is the one the item
+missed: `CreateSampler` held `max_anisotropy` to the library's cap of 16
+and its BEHAVIOR block claimed it held it to
+`PhysicalDeviceLimits.max_sampler_anisotropy`, so dropping the V3D's
+report to 1 alone would have made that doc false and left a sampler
+holding 16 on a device whose limit said 1. `anisotropyOf` now takes the
+device's own limit. Tested in `createsampler.zig` (ten cases, including a
+NaN and a limit of 0).
+
 ### 3. Stop the V3D advertising a sampled D16_UNORM it then refuses, and give format_properties the device
 
 *formats / driver interface* &mdash; conformance-blocking, small
@@ -133,6 +156,43 @@ One line. The V3D reports the library-wide 16 in the same describe() call that s
 Two linked fixes. The `.d16_unorm` arm of describe() sets SAMPLED_IMAGE and SAMPLED_IMAGE_FILTER_LINEAR unconditionally, outside the `keeps_blocks` guard every other device-dependent arm uses, while the V3D answers sampled_depth = false and CreateImage refuses a sampled depth image there — so the format query contradicts the refusal. The root cause is that `Ops.format_properties` is a function of the format alone, and one bool stands in for four feature bits with no access to sampled_depth. Change the signature to take the physical device (or its features) and drive describe() off the feature struct. Gating turns the lie into an honest conformance failure that only the TMU work closes, so do both.
 
 > src/disk/libs/facet/driver/_format.zig:75-79 — verified: the d16_unorm arm has no `if (keeps_blocks)` and no sampled_depth test, unlike the compressed arms at :87-100. src/disk/libs/facet/driver/_driver.zig:71 `format_properties: *const fn (format: facet.Format) callconv(.c) facet.FormatProperties`; _format.zig:11-22 the two wrappers differ only in one bool; driver/v3d/driver.zig:54 and :178; image/_image.zig:433.
+
+**Done in 1.80**, wider than the item describes, and with one consequence
+the item did not see.
+
+`Ops.format_properties` takes the physical device, both drivers point at
+the one `_format.properties`, and the one bool is gone: each of
+`kept_compressed`, `kept_floats`, `wide_channels` and `whole_textures` now
+answers for its own formats. D16_UNORM's sampled bits follow
+`sampled_depth`.
+
+The item stopped at D16_UNORM, but the same contradiction was in the
+stencil arm: `s8_uint` and `d16_unorm_s8_uint` shared one arm promising
+DEPTH_STENCIL_ATTACHMENT unconditionally, while `CreateRenderPass` refuses
+an attachment of the first without `stored_stencil` and of the second
+without `stored_both` - and the V3D has the one and not the other. They
+are two arms now, each reading its feature.
+
+The consequence: a driver call gained a parameter, and a pointer is the
+same size whatever it points at, so `_driver.stamp` did not change and a
+stale `LIBS:facet/v3d.fdriver` on the board would have been loaded and
+then called with the wrong arguments. The shape sum now reads each call a
+field points at - its parameter count and the measure of each parameter
+and of its answer - so that module is turned away instead. Two types of
+the one size and alignment still read alike; the doc says so.
+
+Confirmed while doing it, and it is the item's own last sentence: **Vulkan
+1.0 does require FORMAT_FEATURE_SAMPLED_IMAGE of D16_UNORM** (the Required
+Format Support table; a Mesa bug was filed and fixed for exactly this in
+2017). Linear filtering is *not* required. So the V3D is short of
+conformance here either way - it is now visibly short rather than lying
+about it, and only the TMU learning a depth format closes it. That is
+tracked by item 56 and named here so nothing records the gating as the end
+of the matter.
+
+Tested in `_format.zig`: four tests over synthetic feature structs, one of
+them asserting that no single bool could have answered for all four kept
+features.
 
 ### 4. Add the five missing VkResult codes and stop returning an extension code from a core path
 
@@ -144,6 +204,36 @@ facet.Result is enum(i32), non-exhaustive, and its values are Vulkan's where the
 
 Found independently by: entry-points, conformance-path.
 
+**Done in 1.80 — six codes, not five, and the extension-code half of the
+item was wrong.**
+
+The five are there, and so is `error_unknown` (-13), which the item
+missed: the header carries it with no version tag, every call that answers
+a result being allowed to return it. Nothing here answers it yet.
+CreateInstance gives `error_incompatible_driver`.
+
+The item says CreateShaderModule "returns error_invalid_shader_nv
+(-1000012000), an extension result code a core-only implementation must
+not return — remap it". That was not done, and on checking it should not
+be: **Khronos's own reference page for `vkCreateShaderModule` does list
+VK_ERROR_INVALID_SHADER_NV**, because `VK_NV_glsl_shader` contributes it
+for exactly this meaning. Core 1.0 without that extension lists only
+success and the two out-of-memory codes - words that are not SPIR-V are
+undefined behaviour there rather than a reportable error - so facet is
+answering something core 1.0 does not list. But the alternative is
+inventing a facet-private number for "this is not a shader", which is
+precisely what the decision at the top of this document forbids. Keeping
+Khronos's number and letting the shim translate it is the compatible
+choice. The enum's doc comment says this, and the one false claim it made
+is fixed: `error_invalid_shader_nv` is **one of two** such codes, not the
+only one.
+
+The other is `error_out_of_pool_memory` (-1000069000) at
+`allocatedescriptorsets.zig:63`, a `VK_KHR_maintenance1` code promoted in
+Vulkan 1.1, where core 1.0's `vkAllocateDescriptorSets` lists
+`VK_ERROR_FRAGMENTED_POOL`. Same reasoning, same decision, now recorded
+rather than unnoticed.
+
 ### 5. Refuse specialization_info instead of silently ignoring it
 
 *pipelines* &mdash; conformance-blocking, medium, also serves the shim
@@ -151,6 +241,17 @@ Found independently by: entry-points, conformance-path.
 PipelineShaderStageCreateInfo.specialization_info exists as an untyped pointer and is read by nothing in the tree — not honoured and not refused, so a pipeline silently ignores the constants it was given, which is the one failure mode worse than a refusal. Minimum honest step is error_feature_not_present on a non-null pointer; the real step is specialising the SPIR-V before compiling it, and the CTS has a large dEQP-VK.pipeline.*.spec_constant family.
 
 > Verified: `grep -rn specialization_info sdk/libs/facet/ src/disk/libs/facet/` returns exactly one line, sdk/libs/facet/facet.zig:1720 `specialization_info: ?*const anyopaque = null,`.
+
+**The minimum honest step was done in 1.80**, with one correction to the
+item's wording. The item asks for "`error_feature_not_present` on a
+non-null pointer"; refusing on the pointer alone rejects legal Vulkan. A
+`VkSpecializationInfo` with `mapEntryCount` 0 specializes nothing, and a
+program that fills the struct for every stage and leaves it empty where it
+has no constants is doing nothing wrong. The refusal is on
+`map_entry_count != 0`, in both CreateGraphicsPipelines and
+CreateComputePipelines. The real step - specialising the SPIR-V before
+compiling it - is still open and still has the large
+`dEQP-VK.pipeline.*.spec_constant` family behind it.
 
 ### 6. Say somewhere that the V3D compiles SPIR-V, because the feature contract is now broken
 
@@ -173,6 +274,22 @@ Three trivial additions, grouped because each is a name a Vulkan-ported program 
 > sdk/libs/facet/facet.zig:1403-1414 (stage bits 0,2,3,7-10,12-16 defined; 1,4,5,6,11 skipped), :1417-1430 (access bits 1,2,3,5,7-16; 0,4,6 skipped), :942-953 (ImageLayout 0,1,2,3,5,... — 4 skipped); sdk/fd/facet_lib.fd:264 against :242.
 
 Found independently by: objects-commands, entry-points.
+
+**Done in 1.80**, all four parts, plus one name the item did not count.
+
+The eight stage and access bits and `depth_stencil_read_only_optimal` are
+in. `SHADER_STAGE_GEOMETRY` (0x08) was missing too, which matters more
+than the rest of its family: `SHADER_STAGE_ALL_GRAPHICS` is 0x1F and has
+always *included* that bit with no name for it, so a program masking
+against it was reading a bit it could not spell.
+
+`CmdClearDepthStencilImage` takes `facet.ImageLayout`. The authority for
+that signature is `sdk/fd/facet_lib.fd`, not the generated
+`sdk/interface/facet.zig`, so the change goes in the `.fd` and
+`./zig build fd` regenerates the interface. Twelve call sites passed a
+bare `0` and now pass `.undefined`; the parameter is discarded in the
+body, so nothing else moved, and `ImageLayout` is `enum(u32)`, so the ABI
+is unchanged.
 
 ### 8. Record the refusal surface the gap list has never covered
 
@@ -765,6 +882,36 @@ The last doc item, and it is the one that keeps this list honest after the first
 > Verified: `grep -n 'minimum|conforman|required limit|Vulkan requires' docs/facet-gaps.md` returns nothing; `grep -n '1.0 format' docs/facet-todo.md` returns only its definition at :19; docs/facet-todo.md:30-36 "**Nothing is left here.**". Spot-checked the limits table against the tree and it holds: _instance.zig:36-59, _render.zig:34-36, memory/_memory.zig:12.
 
 Found independently by: limits, formats (2 strands).
+
+### 77. Make makeVersion Vulkan's version encoding, so VK_API_VERSION_1_0 is not refused
+
+*versions* &mdash; conformance-blocking, small, also serves the shim
+
+Found while doing item 4, and it is the first call a ported program makes.
+`facet.makeVersion(major, minor)` is `major << 16 | minor`. Vulkan's
+`VK_MAKE_API_VERSION(variant, major, minor, patch)` is
+`variant << 29 | major << 22 | minor << 12 | patch`, so Vulkan's own
+`VK_API_VERSION_1_0` is 4194304 where facet's `API_VERSION_1_0` is 65536.
+`CreateInstance` refuses anything above
+`makeVersion(LIBRARY_VERSION, LIBRARY_REVISION)` — 65616 at 1.80 — so a
+program that fills `InstanceCreateInfo.api_version` with Vulkan's constant
+is turned away with `error_incompatible_driver` at the door. facet's
+default hides it: `api_version` defaults to facet's own value, so only a
+program that says what Vulkan told it to say is hurt.
+
+This is not a regression from item 4, which only changed the code the
+refusal answers with (`error_initialization_failed` before 1.80); the
+refusal itself is as old as the comparison. It is a divergence the
+decision at the top of this document turns into work.
+
+The change is `major << 22 | minor << 12`, which keeps the ordering the
+comparison relies on and leaves 10 bits for a revision (80 fits, and 1023
+is the ceiling). It moves every `api_version` number a program may pass,
+so it wants the three `makeVersion` callers, `API_VERSION_1_0` and the
+`InstanceCreateInfo` default read together — and a patch field decided,
+since Vulkan has one and facet's revision is not it.
+
+> sdk/libs/facet/facet.zig:168 `pub fn makeVersion(major: u32, minor: u32) u32 { return major << 16 | minor; }`, :173 `API_VERSION_1_0: u32 = makeVersion(1, 0)`, :186 the default; src/disk/libs/facet/instance/createinstance.zig:77 the refusal. Measured, not inferred: `makeVersion(1, 80)` = 65616 < 4194304.
 
 ## Deferred by the decision, not out of reach
 

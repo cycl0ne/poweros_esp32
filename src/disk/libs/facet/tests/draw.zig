@@ -4060,7 +4060,7 @@ test "a depth attachment that outlives its pass: stored as the tiles are drawn, 
     const value = facet.ClearDepthStencilValue{ .depth = 1 };
     const range = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH };
     commands = try bench.record();
-    fb.CmdClearDepthStencilImage(commands, depth_image, 0, &value, 1, @ptrCast(&range));
+    fb.CmdClearDepthStencilImage(commands, depth_image, .undefined, &value, 1, @ptrCast(&range));
     fb.CmdCopyImageToBuffer(commands, depth_image, .general, read_back, 1, @ptrCast(&whole));
     try bench.submit();
     try testing.expectEqual(0xFFFF, depthAt(back_bytes, 4, 4));
@@ -4614,7 +4614,7 @@ test "a sampled depth image of layers: a pass draws into the layer its view name
     const furthest = facet.ClearDepthStencilValue{ .depth = 1 };
     const one_layer = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH, .base_array_layer = 1, .layer_count = 1 };
     const clearing = try bench.record();
-    fb.CmdClearDepthStencilImage(clearing, layered, 0, &furthest, 1, @ptrCast(&one_layer));
+    fb.CmdClearDepthStencilImage(clearing, layered, .undefined, &furthest, 1, @ptrCast(&one_layer));
     try bench.submit();
     try testing.expectEqual(@as(u16, 0xFFFF), layerDepth(kept, 1, 32, 32));
     try testing.expectEqual(stored[0], layerDepth(kept, 0, 32, 32));
@@ -4716,7 +4716,7 @@ test "a sampled depth image of layers: a pass draws into the layer its view name
     const filled = facet.ClearDepthStencilValue{ .depth = 0.25, .stencil = 0x60 };
     const both_aspects = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH | facet.IMAGE_ASPECT_STENCIL };
     const filling = try bench.record();
-    fb.CmdClearDepthStencilImage(filling, both, 0, &filled, 1, @ptrCast(&both_aspects));
+    fb.CmdClearDepthStencilImage(filling, both, .undefined, &filled, 1, @ptrCast(&both_aspects));
     try bench.submit();
     try sample(&bench, vertex_bytes, vertex_buffer, depth_plane, sampler, sets[0].?, reading, onto, plane, layout);
     try testing.expectEqual(@as(u32, 0xFF40_4040), into.at(16, 8));
@@ -4734,7 +4734,7 @@ test "a sampled depth image of layers: a pass draws into the layer its view name
     try testing.expectEqual(_objects.of(image_zig.Image, stencil_only).data.?, alone_texels.memory);
     const greyed = facet.ClearDepthStencilValue{ .depth = 0, .stencil = 0x30 };
     const graying = try bench.record();
-    fb.CmdClearDepthStencilImage(graying, stencil_only, 0, &greyed, 1, @ptrCast(&both_aspects));
+    fb.CmdClearDepthStencilImage(graying, stencil_only, .undefined, &greyed, 1, @ptrCast(&both_aspects));
     try bench.submit();
     try sample(&bench, vertex_bytes, vertex_buffer, alone, sampler, sets[0].?, reading, onto, plane, layout);
     try testing.expectEqual(@as(u32, 0xFF30_0000), into.at(16, 8));
@@ -4878,7 +4878,7 @@ test "a stencil attachment that outlives its pass: stored as the tiles are drawn
         const value = facet.ClearDepthStencilValue{ .depth = 1, .stencil = 9 };
         const range = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_STENCIL };
         commands = try bench.record();
-        fb.CmdClearDepthStencilImage(commands, stencil_image, 0, &value, 1, @ptrCast(&range));
+        fb.CmdClearDepthStencilImage(commands, stencil_image, .undefined, &value, 1, @ptrCast(&range));
         try bench.submit();
         try testing.expectEqual(@as(u8, 9), stencilAt(kept, stride, 16, 8));
         try testing.expectEqual(@as(u8, 9), stencilAt(kept, stride, 48, 40));
@@ -4890,7 +4890,7 @@ test "a stencil attachment that outlives its pass: stored as the tiles are drawn
         const both_aspects = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH | facet.IMAGE_ASPECT_STENCIL };
         const other = facet.ClearDepthStencilValue{ .depth = 1, .stencil = 3 };
         commands = try bench.record();
-        fb.CmdClearDepthStencilImage(commands, stencil_image, 0, &other, 1, @ptrCast(&both_aspects));
+        fb.CmdClearDepthStencilImage(commands, stencil_image, .undefined, &other, 1, @ptrCast(&both_aspects));
         try bench.submit();
         try testing.expectEqual(@as(u8, 3), stencilAt(kept, stride, 16, 8));
         if (stride == 4) try testing.expectEqual(@as(u8, 0xFF), kept.data.?[depth_word]);
@@ -4929,7 +4929,7 @@ test "a depth kept wants memory behind it: a transient image is refused the fram
     const value = facet.ClearDepthStencilValue{ .depth = 0.5 };
     const range = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH };
     const commands = try bench.record();
-    fb.CmdClearDepthStencilImage(commands, transient_image, 0, &value, 1, @ptrCast(&range));
+    fb.CmdClearDepthStencilImage(commands, transient_image, .undefined, &value, 1, @ptrCast(&range));
     try bench.submit();
 }
 
@@ -4960,6 +4960,63 @@ test "a device that keeps no depth, as the V3D keeps none: the pass that asks fo
     try testing.expectEqual(facet.Result.error_feature_not_present, bench.rig.fb.CreateRenderPass(bench.device, &.{ .attachment_count = 2, .attachments = &loading, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &refused));
     const tiles_only = try renderPass(&bench, .clear, true);
     bench.rig.fb.DestroyRenderPass(bench.device, tiles_only);
+}
+
+test "a device that samples no depth, as the V3D samples none: the format query says so too, and every kept feature answers for its own formats" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
+    const sampled = facet.FORMAT_FEATURE_SAMPLED_IMAGE | facet.FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR;
+    var properties: facet.FormatProperties = undefined;
+
+    // The cores sample a depth where its rows lie, and say so.
+    try testing.expect(physical.features.sampled_depth);
+    fb.GetPhysicalDeviceFormatProperties(bench.physical, .d16_unorm, &properties);
+    try testing.expectEqual(sampled, properties.optimal_tiling_features & sampled);
+
+    // The physical device as the V3D describes itself: its texture unit
+    // knows no depth format, so CreateImage refuses a sampled depth image
+    // there. The format query has to agree with that refusal rather than
+    // promise a shadow map the create call turns down (since 1.80, where
+    // this arm said sampled and filtered on every device).
+    physical.features.sampled_depth = false;
+    defer physical.features.sampled_depth = true;
+    fb.GetPhysicalDeviceFormatProperties(bench.physical, .d16_unorm, &properties);
+    try testing.expectEqual(@as(u32, 0), properties.optimal_tiling_features & sampled);
+    // A depth attachment it still is, and still copied both ways: a pass
+    // stores its rows whatever samples them (`stored_depth`).
+    try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT != 0);
+    try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_TRANSFER_SRC != 0);
+    var refused: ?*facet.Image = null;
+    const depth_usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED;
+    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(bench.device, &.{ .format = .d16_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = depth_usage }, &refused));
+    try testing.expect(refused == null);
+
+    // And each of the four features a device keeps what it was given by
+    // answers for its own formats, where one bool answered for all four
+    // until 1.80: with the feature off, the format is not read back out of
+    // an image, there being nothing of it left to read, and with it on it
+    // is. TRANSFER_SRC is what tells them apart on every one of them -
+    // a format whose channels or whole numbers are not kept says nothing
+    // at all of an image, and a compressed or a float one is still
+    // unpacked and sampled.
+    const Kept = struct { feature: []const u8, format: facet.Format };
+    const kept = [4]Kept{
+        .{ .feature = "kept_compressed", .format = .bc1_rgba_unorm_block },
+        .{ .feature = "kept_floats", .format = .r16g16b16a16_sfloat },
+        .{ .feature = "wide_channels", .format = .r16g16b16a16_unorm },
+        .{ .feature = "whole_textures", .format = .r16g16b16a16_uint },
+    };
+    inline for (kept) |one| {
+        try testing.expect(@field(physical.features, one.feature));
+        fb.GetPhysicalDeviceFormatProperties(bench.physical, one.format, &properties);
+        try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_TRANSFER_SRC != 0);
+        @field(physical.features, one.feature) = false;
+        fb.GetPhysicalDeviceFormatProperties(bench.physical, one.format, &properties);
+        try testing.expectEqual(@as(u32, 0), properties.optimal_tiling_features & facet.FORMAT_FEATURE_TRANSFER_SRC);
+        @field(physical.features, one.feature) = true;
+    }
 }
 
 test "depths in order: nearer kept whatever was drawn first, with the depth pre-pass or without; a scissor and a render area cut what is drawn" {
@@ -5866,7 +5923,7 @@ test "a depth attachment of levels: a pass draws into the level its view names, 
     const furthest = facet.ClearDepthStencilValue{ .depth = 1 };
     const everything = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH };
     const clearing = try bench.record();
-    fb.CmdClearDepthStencilImage(clearing, mipped, 0, &furthest, 1, @ptrCast(&everything));
+    fb.CmdClearDepthStencilImage(clearing, mipped, .undefined, &furthest, 1, @ptrCast(&everything));
     try bench.submit();
     for (0..2) |layer| for (0..3) |level| {
         const far = levelDepth(kept.data.?, @intCast(level), @intCast(layer), 0, 0);

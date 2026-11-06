@@ -24,8 +24,10 @@ const Instance = _instance.Instance;
 /// - `instance` - where the instance is written; null when it fails.
 ///
 /// RESULT:
-/// `success`; `error_initialization_failed` for an interface newer than
-/// the library's; `error_out_of_host_memory`.
+/// `success`; `error_incompatible_driver` for an interface newer than the
+/// library's, which is what Vulkan answers where nothing present can
+/// provide the version asked for (`error_initialization_failed` before
+/// 1.80); `error_out_of_host_memory`.
 ///
 /// BEHAVIOR:
 /// The instance's physical devices are described as it is made. The first is
@@ -70,7 +72,9 @@ const Instance = _instance.Instance;
 pub fn CreateInstance(base: *FacetBase, info: *const facet.InstanceCreateInfo, instance: *?*facet.Instance) facet.Result {
     instance.* = null;
     const wanted = if (info.api_version == 0) facet.API_VERSION_1_0 else info.api_version;
-    if (wanted > facet.makeVersion(facet_version.LIBRARY_VERSION, facet_version.LIBRARY_REVISION)) return .error_initialization_failed;
+    // Vulkan's answer for a version nothing here can provide is
+    // INCOMPATIBLE_DRIVER, not INITIALIZATION_FAILED (since 1.80).
+    if (wanted > facet.makeVersion(facet_version.LIBRARY_VERSION, facet_version.LIBRARY_REVISION)) return .error_incompatible_driver;
     const sys = base.sys_base;
     const made = _objects.create(sys, Instance) orelse return .error_out_of_host_memory;
     made.* = .{ .base = base, .physicals = undefined };

@@ -39,7 +39,8 @@ const _instance = @import("../instance/_instance.zig");
 /// than the subpass's colour attachments (`shader.fragmentOutputs`, since
 /// 1.51), or for a fragment entry whose `varyings` word names no fixed
 /// form (since 1.75); `error_feature_not_present`
-/// for state facet.library does not draw (see BEHAVIOR);
+/// for state facet.library does not draw (see BEHAVIOR), among it a
+/// stage whose `specialization_info` names a constant (since 1.80);
 /// `error_format_not_supported` for an attribute in a format it does not
 /// read; `error_initialization_failed` for state that does not hold
 /// together - an attribute of a binding not given, no viewport where it is
@@ -105,6 +106,15 @@ const _instance = @import("../instance/_instance.zig");
 /// driver with the pipeline, and a driver that cannot make code of them
 /// answers `error_feature_not_present` all the same: a shader may be well
 /// formed SPIR-V and still ask for more than the device has.
+///
+/// Specialization constants are not honoured: a stage whose
+/// `specialization_info` names any (`map_entry_count` above 0) is refused
+/// with `error_feature_not_present` rather than made with the constants
+/// dropped, which would draw what the program did not ask for (since
+/// 1.80; before it the pointer was read by nothing and no one was told).
+/// A `SpecializationInfo` of no entries specializes nothing, as in Vulkan,
+/// and is made: a program that fills the struct for every stage and leaves
+/// it empty where it has no constants is not turned away.
 ///
 /// Attributes are read as floats - r32_sfloat to r32g32b32a32_sfloat - or
 /// as bytes 0 to 1, r8g8b8a8_unorm and b8g8r8a8_unorm, into four floats
@@ -227,6 +237,14 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
     // calling the function (since 1.75).
     var fragment_words: []const u32 = &.{};
     for (info.stages[0..info.stage_count]) |stage| {
+        // Specialization constants are not honoured, and a pipeline that
+        // drew with them dropped would draw something the program did
+        // not ask for: refused instead (since 1.80). A `SpecializationInfo`
+        // of no entries specializes nothing, which is what a program that
+        // fills the struct unconditionally gives: that is not refused.
+        if (stage.specialization_info) |asked| {
+            if (asked.map_entry_count != 0) return .error_feature_not_present;
+        }
         const module = _objects.of(_shader.ShaderModule, stage.module);
         const at = _shader.findAt(module, stage.stage, stage.name) orelse return .error_invalid_shader_nv;
         const entry = &module.entries()[at];

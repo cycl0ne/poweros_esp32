@@ -31,7 +31,11 @@ const PhysicalDevice = @import("_instance.zig").PhysicalDevice;
 ///   from; a vertex's value.
 /// - R5G6B5_UNORM_PACK16: colour attachments, blended, in either tiling;
 ///   sampled, filtered, in optimal tiling; copied.
-/// - D16_UNORM: a depth attachment, in optimal tiling.
+/// - D16_UNORM: a depth attachment, in optimal tiling, and copied both
+///   ways; sampled and filtered as well on a device that samples a depth
+///   where its rows lie (`PhysicalDeviceFeatures.sampled_depth`), and not
+///   on one that does not, which refuses such an image at CreateImage
+///   (since 1.80).
 /// - R32_SFLOAT to R32G32B32A32_SFLOAT: a vertex's value.
 /// - R8_UNORM: sampled, filtered, written through as a storage image, in
 ///   optimal tiling, and copied both ways. One byte a texel, read as
@@ -49,6 +53,15 @@ const PhysicalDevice = @import("_instance.zig").PhysicalDevice;
 ///   EAC_R11G11: sampled, filtered, in optimal tiling, and copied into.
 ///   No sampler of this library reads such a block, so they are always
 ///   unpacked to 8 bits a channel and never copied out of (since 1.46).
+///
+/// Every answer that differs between two devices of one machine is read
+/// off that device's `PhysicalDeviceFeatures` (since 1.80): what it keeps
+/// as it was given it - a compressed image's blocks, a float one's floats,
+/// a texture's own channels, its whole numbers - and whether it samples a
+/// depth where its rows lie. A format the device keeps none of says nothing
+/// of an image here, only of a buffer where it has one, which is the same
+/// answer CreateImage gives. Before that the reply depended on the format
+/// alone but for one bool, and said a sampled D16_UNORM on every device.
 ///
 /// An image to be sampled may have sides of any size (since 1.42). One of
 /// B8G8R8A8 or R8G8B8A8 may keep its texel in the 32 bits of its word
@@ -72,7 +85,7 @@ const PhysicalDevice = @import("_instance.zig").PhysicalDevice;
 /// None known.
 ///
 /// SEE ALSO:
-/// `CreateImage`
+/// `CreateImage`, `GetPhysicalDeviceFeatures`
 ///
 /// EXAMPLES:
 /// ```zig
@@ -82,5 +95,6 @@ const PhysicalDevice = @import("_instance.zig").PhysicalDevice;
 /// ```
 pub fn GetPhysicalDeviceFormatProperties(base: *FacetBase, physical: *facet.PhysicalDevice, format: facet.Format, properties: *facet.FormatProperties) void {
     _ = base;
-    properties.* = _objects.of(PhysicalDevice, physical).ops.format_properties(format);
+    const asked = _objects.of(PhysicalDevice, physical);
+    properties.* = asked.ops.format_properties(asked, format);
 }

@@ -1,27 +1,38 @@
 // SPDX-License-Identifier: MIT
 //! What the drivers do with a format: all alike, what they draw into and read
-//! being kept in the same formats.
+//! being kept in the same formats. What differs between two devices of one
+//! machine is what each keeps as it was given it and what it samples, which
+//! its own `PhysicalDeviceFeatures` say, so there is one answer here, read
+//! off those (since 1.80).
 
 const sdk = @import("sdk");
 const facet = sdk.facet;
+const PhysicalDevice = @import("../instance/_instance.zig").PhysicalDevice;
 
-/// What `format` does on a device that unpacks a compressed or a float
-/// image as it is copied in: it can be written and sampled, and not read
-/// back.
-pub fn properties(format: facet.Format) callconv(.c) facet.FormatProperties {
-    return describe(format, false);
+/// What `format` does on `physical`, whose driver has described it: both
+/// drivers point at this, the features the device said it has deciding
+/// every answer that differs between two of them.
+///
+/// A device that keeps what it was given - a compressed image in its
+/// blocks, a float one in its floats, a texture's own channels or its whole
+/// numbers as they lie (`PhysicalDeviceFeatures.kept_compressed`,
+/// `kept_floats`, `wide_channels`, `whole_textures`) - says so of those
+/// formats, and a copy out of such an image reads them back as well. One
+/// that unpacks them into 8 bits a channel as they are copied in says
+/// nothing of the formats it keeps none of, which is what CreateImage
+/// refuses there. And a depth image is sampled where its rows lie only on a
+/// device with `sampled_depth`, for the same reason.
+///
+/// Until 1.80 this was a function of the format alone, with one bool
+/// standing in for the four kept features and nothing at all for
+/// `sampled_depth`: D16_UNORM was answered for as sampled and filtered on
+/// every device, which contradicted the CreateImage that refuses a sampled
+/// depth image where the feature is false.
+pub fn properties(physical: *const PhysicalDevice, format: facet.Format) callconv(.c) facet.FormatProperties {
+    return describe(&physical.features, format);
 }
 
-/// The same on a device that keeps what it was given - a compressed image
-/// in its blocks, a float one in its floats
-/// (`PhysicalDeviceFeatures.kept_compressed`, `kept_floats`): they lie as
-/// they were copied in, so a copy out of such an image reads them back as
-/// well.
-pub fn keptProperties(format: facet.Format) callconv(.c) facet.FormatProperties {
-    return describe(format, true);
-}
-
-fn describe(format: facet.Format, keeps_blocks: bool) facet.FormatProperties {
+fn describe(features: *const facet.PhysicalDeviceFeatures, format: facet.Format) facet.FormatProperties {
     const transfer = facet.FORMAT_FEATURE_TRANSFER_SRC | facet.FORMAT_FEATURE_TRANSFER_DST;
     const attachment = facet.FORMAT_FEATURE_COLOR_ATTACHMENT | facet.FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND;
     const sampled = facet.FORMAT_FEATURE_SAMPLED_IMAGE | facet.FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR | facet.FORMAT_FEATURE_TRANSFER_DST;
@@ -32,6 +43,9 @@ fn describe(format: facet.Format, keeps_blocks: bool) facet.FormatProperties {
     // The formats a texture is kept in are the ones a function can write
     // through as well; the unpacked ones are not, being kept as 8888.
     const storage = facet.FORMAT_FEATURE_STORAGE_IMAGE;
+    // What a depth image adds on a device that samples one where its rows
+    // lie (`PhysicalDeviceFeatures.sampled_depth`).
+    const depth_sampled = facet.FORMAT_FEATURE_SAMPLED_IMAGE | facet.FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR;
     // A BufferView of these reads a buffer's bytes as texels, and a
     // storage one is written through as well (CreateBufferView).
     const texels = facet.FORMAT_FEATURE_UNIFORM_TEXEL_BUFFER | facet.FORMAT_FEATURE_STORAGE_TEXEL_BUFFER;
@@ -71,23 +85,46 @@ fn describe(format: facet.Format, keeps_blocks: bool) facet.FormatProperties {
         // them (`PhysicalDeviceFeatures.stored_depth`).
         // Sampled as well since 1.39, where the device has it
         // (`PhysicalDeviceFeatures.sampled_depth`): a shadow map drawn
-        // into and sampled out of without a copy.
+        // into and sampled out of without a copy. Where it has not, the
+        // sampled bits are left out, as they have been since 1.80: a
+        // device whose texture unit knows no depth format refuses such an
+        // image at CreateImage, and this said otherwise.
         .d16_unorm => .{
             .linear_tiling_features = 0,
-            .optimal_tiling_features = facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT | transfer | facet.FORMAT_FEATURE_SAMPLED_IMAGE | facet.FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR,
+            .optimal_tiling_features = facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT | transfer |
+                if (features.sampled_depth) depth_sampled else 0,
             .buffer_features = 0,
         },
         // Since 1.38 these two keep their stencil the same way, each
         // pixel's depth and stencil beside each other in the rows
         // (`PhysicalDeviceFeatures.stored_stencil`), and a copy reads or
         // writes both at once, 1 byte a pixel or 4.
-        .s8_uint, .d16_unorm_s8_uint => .{ .linear_tiling_features = 0, .optimal_tiling_features = facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT | transfer, .buffer_features = 0 },
+        //
+        // Since 1.80 each says it is an attachment only where the device
+        // stores one: a stencil alone wants `stored_stencil`, and a format
+        // of both planes `stored_both`, which is what CreateRenderPass
+        // holds an attachment to. The V3D stores a stencil and not both,
+        // and this promised an attachment of both there that a pass then
+        // refused. A copy stands either way: a transfer reads and writes
+        // the rows whatever a pass can do with them.
+        .s8_uint => .{
+            .linear_tiling_features = 0,
+            .optimal_tiling_features = transfer |
+                if (features.stored_stencil) facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT else 0,
+            .buffer_features = 0,
+        },
+        .d16_unorm_s8_uint => .{
+            .linear_tiling_features = 0,
+            .optimal_tiling_features = transfer |
+                if (features.stored_both) facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT else 0,
+            .buffer_features = 0,
+        },
         // Compressed: sampled and written, and read back as well where the
         // blocks are kept, there being something of the format to read.
         .bc1_rgb_unorm_block, .bc1_rgba_unorm_block, .bc2_unorm_block, .bc3_unorm_block, .bc4_unorm_block, .bc5_unorm_block, .bc7_unorm_block, .bc6h_ufloat_block, .bc6h_sfloat_block => .{
             .linear_tiling_features = 0,
             .optimal_tiling_features = sampled | facet.FORMAT_FEATURE_TRANSFER_DST |
-                if (keeps_blocks) facet.FORMAT_FEATURE_TRANSFER_SRC else 0,
+                if (features.kept_compressed) facet.FORMAT_FEATURE_TRANSFER_SRC else 0,
             .buffer_features = 0,
         },
         // ETC2 and EAC are unpacked as they are copied in, on every
@@ -107,20 +144,20 @@ fn describe(format: facet.Format, keeps_blocks: bool) facet.FormatProperties {
         .b10g11r11_ufloat_pack32, .e5b9g9r9_ufloat_pack32 => .{
             .linear_tiling_features = 0,
             .optimal_tiling_features = sampled | storage | facet.FORMAT_FEATURE_TRANSFER_DST |
-                if (keeps_blocks) facet.FORMAT_FEATURE_TRANSFER_SRC else 0,
+                if (features.kept_floats) facet.FORMAT_FEATURE_TRANSFER_SRC else 0,
             .buffer_features = texels,
         },
         // The same, and a texel buffer of half-floats as well since 1.54.
         .r16g16b16a16_sfloat => .{
             .linear_tiling_features = 0,
             .optimal_tiling_features = sampled | storage | facet.FORMAT_FEATURE_TRANSFER_DST |
-                if (keeps_blocks) facet.FORMAT_FEATURE_TRANSFER_SRC else 0,
+                if (features.kept_floats) facet.FORMAT_FEATURE_TRANSFER_SRC else 0,
             .buffer_features = texels,
         },
         .r32g32b32a32_sfloat => .{
             .linear_tiling_features = 0,
             .optimal_tiling_features = sampled | storage | facet.FORMAT_FEATURE_TRANSFER_DST |
-                if (keeps_blocks) facet.FORMAT_FEATURE_TRANSFER_SRC else 0,
+                if (features.kept_floats) facet.FORMAT_FEATURE_TRANSFER_SRC else 0,
             .buffer_features = vertices | texels,
         },
         // One float a texel as an image since 1.57, sampled as
@@ -130,7 +167,7 @@ fn describe(format: facet.Format, keeps_blocks: bool) facet.FormatProperties {
         .r32_sfloat => .{
             .linear_tiling_features = 0,
             .optimal_tiling_features = sampled | storage | facet.FORMAT_FEATURE_TRANSFER_DST |
-                if (keeps_blocks) facet.FORMAT_FEATURE_TRANSFER_SRC else 0,
+                if (features.kept_floats) facet.FORMAT_FEATURE_TRANSFER_SRC else 0,
             .buffer_features = vertices | texels,
         },
         .r32g32_sfloat, .r32g32b32_sfloat => .{ .linear_tiling_features = 0, .optimal_tiling_features = 0, .buffer_features = vertices | texels },
@@ -146,7 +183,7 @@ fn describe(format: facet.Format, keeps_blocks: bool) facet.FormatProperties {
         // and CreateImage refuses such an image there.
         .r8g8_unorm, .r16_unorm, .r16g16_unorm, .r16g16b16a16_unorm => .{
             .linear_tiling_features = 0,
-            .optimal_tiling_features = if (keeps_blocks) sampled | storage | transfer else 0,
+            .optimal_tiling_features = if (features.wide_channels) sampled | storage | transfer else 0,
             .buffer_features = texels,
         },
         // The whole numbers of 1.70, where the device keeps what it was
@@ -175,7 +212,7 @@ fn describe(format: facet.Format, keeps_blocks: bool) facet.FormatProperties {
         .r32g32b32a32_sint,
         => .{
             .linear_tiling_features = 0,
-            .optimal_tiling_features = if (keeps_blocks) nearest | storage | transfer else 0,
+            .optimal_tiling_features = if (features.whole_textures) nearest | storage | transfer else 0,
             .buffer_features = texels,
         },
         .r16_sfloat,
@@ -207,4 +244,106 @@ fn describe(format: facet.Format, keeps_blocks: bool) facet.FormatProperties {
         => .{ .linear_tiling_features = 0, .optimal_tiling_features = 0, .buffer_features = texels },
         else => .{ .linear_tiling_features = 0, .optimal_tiling_features = 0, .buffer_features = 0 },
     };
+}
+
+const std = @import("std");
+const testing = std.testing;
+
+/// A device that keeps nothing it was given and samples no depth: what the
+/// V3D says of itself for the features read here.
+const unpacking = facet.PhysicalDeviceFeatures{
+    .kept_compressed = false,
+    .kept_floats = false,
+    .wide_channels = false,
+    .whole_textures = false,
+    .sampled_depth = false,
+    .stored_stencil = true,
+    .stored_both = false,
+};
+
+/// One that keeps all of it and samples a depth where its rows lie: the
+/// cores.
+const keeping = facet.PhysicalDeviceFeatures{
+    .kept_compressed = true,
+    .kept_floats = true,
+    .wide_channels = true,
+    .whole_textures = true,
+    .sampled_depth = true,
+    .stored_stencil = true,
+    .stored_both = true,
+};
+
+test "a depth format says it is sampled only where the device samples one" {
+    const sampled = facet.FORMAT_FEATURE_SAMPLED_IMAGE | facet.FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR;
+
+    // The cores sample a depth image where its rows lie, so D16_UNORM says
+    // so; the V3D's texture unit knows no depth format and CreateImage
+    // refuses such an image there, so it says nothing of sampling. Before
+    // 1.80 both answered alike and the V3D's answer was a promise it broke.
+    const on_cores = describe(&keeping, .d16_unorm);
+    const on_v3d = describe(&unpacking, .d16_unorm);
+    try testing.expectEqual(sampled, on_cores.optimal_tiling_features & sampled);
+    try testing.expectEqual(@as(u32, 0), on_v3d.optimal_tiling_features & sampled);
+
+    // A depth attachment either way, and copied either way: what differs is
+    // the sampling alone.
+    const attachment = facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT | facet.FORMAT_FEATURE_TRANSFER_SRC | facet.FORMAT_FEATURE_TRANSFER_DST;
+    try testing.expectEqual(attachment, on_cores.optimal_tiling_features & attachment);
+    try testing.expectEqual(attachment, on_v3d.optimal_tiling_features & attachment);
+
+    // Nothing is in linear tiling or in a buffer for a depth format.
+    try testing.expectEqual(@as(u32, 0), on_v3d.linear_tiling_features);
+    try testing.expectEqual(@as(u32, 0), on_v3d.buffer_features);
+}
+
+test "a stencil format says it is an attachment only where the device stores that plane" {
+    const attachment = facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT;
+
+    // The V3D stores a stencil alone and not a pixel's depth and stencil
+    // together (`stored_both`), which is what CreateRenderPass holds an
+    // attachment of `d16_unorm_s8_uint` to: so it says the one and not the
+    // other. Both said attachment before 1.80, and a pass refused the one.
+    try testing.expectEqual(attachment, describe(&unpacking, .s8_uint).optimal_tiling_features & attachment);
+    try testing.expectEqual(@as(u32, 0), describe(&unpacking, .d16_unorm_s8_uint).optimal_tiling_features & attachment);
+    try testing.expectEqual(attachment, describe(&keeping, .s8_uint).optimal_tiling_features & attachment);
+    try testing.expectEqual(attachment, describe(&keeping, .d16_unorm_s8_uint).optimal_tiling_features & attachment);
+
+    // Copied either way, a transfer reading the rows whatever a pass can do
+    // with them.
+    const copied = facet.FORMAT_FEATURE_TRANSFER_SRC | facet.FORMAT_FEATURE_TRANSFER_DST;
+    try testing.expectEqual(copied, describe(&unpacking, .d16_unorm_s8_uint).optimal_tiling_features & copied);
+}
+
+test "each of the four kept features answers for its own formats" {
+    // A device that unpacks an image as it is copied in cannot be copied out
+    // of; one that keeps the blocks or the floats can. Each format reads the
+    // feature for what it is kept as, where one bool stood for all four
+    // before 1.80.
+    const src = facet.FORMAT_FEATURE_TRANSFER_SRC;
+    try testing.expectEqual(@as(u32, 0), describe(&unpacking, .bc1_rgb_unorm_block).optimal_tiling_features & src);
+    try testing.expectEqual(src, describe(&keeping, .bc1_rgb_unorm_block).optimal_tiling_features & src);
+    try testing.expectEqual(@as(u32, 0), describe(&unpacking, .r16g16b16a16_sfloat).optimal_tiling_features & src);
+    try testing.expectEqual(src, describe(&keeping, .r16g16b16a16_sfloat).optimal_tiling_features & src);
+
+    // A texture's own channels and its whole numbers are not an image at all
+    // on a device that keeps neither, which is the CreateImage there.
+    try testing.expectEqual(@as(u32, 0), describe(&unpacking, .r16g16_unorm).optimal_tiling_features);
+    try testing.expect(describe(&keeping, .r16g16_unorm).optimal_tiling_features != 0);
+    try testing.expectEqual(@as(u32, 0), describe(&unpacking, .r8g8b8a8_uint).optimal_tiling_features);
+    try testing.expect(describe(&keeping, .r8g8b8a8_uint).optimal_tiling_features != 0);
+
+    // A buffer's texels are the same on either: the bytes are read as they
+    // lie, with no image to keep.
+    try testing.expectEqual(describe(&keeping, .r16g16_unorm).buffer_features, describe(&unpacking, .r16g16_unorm).buffer_features);
+}
+
+// The one format whose four features a single bool used to stand for is
+// not the only one a device differs on, so each is read where it belongs:
+// a device that keeps nothing says nothing of an image it cannot keep.
+test "one bool could not have answered for all of them" {
+    // Had `kept_floats` stood in for `wide_channels` as well, these two
+    // would move together; they do not.
+    const halved = facet.PhysicalDeviceFeatures{ .kept_floats = true, .wide_channels = false, .stored_stencil = true };
+    try testing.expect(describe(&halved, .r16g16b16a16_sfloat).optimal_tiling_features & facet.FORMAT_FEATURE_TRANSFER_SRC != 0);
+    try testing.expectEqual(@as(u32, 0), describe(&halved, .r16g16_unorm).optimal_tiling_features);
 }

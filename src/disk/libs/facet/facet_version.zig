@@ -1214,4 +1214,61 @@ pub const LIBRARY_VERSION = 1;
 /// device's pipeline handed the hardware whatever lay there. Vulkan
 /// requires the two to come from one device; both drivers are covered by
 /// the one check.
-pub const LIBRARY_REVISION = 79;
+/// 80: five of `docs/facet-vulkan10.md`'s items, which are all about
+/// being the Vulkan 1.0 a program was written against rather than
+/// something near it.
+///
+/// **What a format does is the device's answer, not the format's.**
+/// `Ops.format_properties` is given the physical device being asked, and
+/// both drivers point at the one `_format.properties`, which reads every
+/// answer that differs between two devices off the features that device
+/// described itself with: whether it keeps a compressed image's blocks, a
+/// float one's floats, a texture's own channels or its whole numbers as it
+/// was given them, and whether it samples a depth image where its rows
+/// lie. One bool used to stand in for those four and nothing at all for
+/// `sampled_depth`, so GetPhysicalDeviceFormatProperties said D16_UNORM
+/// was sampled and filtered on every device while CreateImage refused
+/// such an image on the V3D; `s8_uint` and `d16_unorm_s8_uint` likewise
+/// said they were attachments where CreateRenderPass turns them down
+/// without `stored_stencil` and `stored_both`. The query and the refusal
+/// now agree. Vulkan 1.0 does require SAMPLED_IMAGE of D16_UNORM, so the
+/// V3D is short of conformance here either way: it is short of it visibly
+/// now, and the way to close it is for the TMU to learn a depth format.
+///
+/// Because that driver call gained a parameter and a pointer is the same
+/// size whatever it points at, the shape sum behind `_driver.stamp` now
+/// reads each call a field points at - how many parameters it takes and
+/// the measure of each and of its answer - so a module built against the
+/// old call is turned away rather than loaded and called wrongly.
+///
+/// **A device without anisotropy says 1.** The V3D's
+/// `max_sampler_anisotropy` was the library's 16 while
+/// `sampler_anisotropy` was false, which promised a program samples it
+/// would then not get; Vulkan's required value for a device without the
+/// feature is 1, and that is what it says. CreateSampler holds a sampler
+/// to the device's own limit instead of the library's cap, so the two
+/// cannot disagree again.
+///
+/// **The core result codes that were missing**, so that a program
+/// switching on Vulkan's names finds them: `event_set`, `event_reset`,
+/// `error_layer_not_present`, `error_extension_not_present`,
+/// `error_incompatible_driver` and `error_unknown`. CreateInstance
+/// answers `error_incompatible_driver` for an interface newer than the
+/// library's, which is Vulkan's code for it, rather than
+/// `error_initialization_failed`.
+///
+/// **Specialization constants are refused, not dropped.** A pipeline
+/// stage carrying them was made with them ignored, which drew or ran
+/// something the program had not asked for; it is now
+/// `error_feature_not_present`. Only where there are any: a
+/// `SpecializationInfo` of no entries specializes nothing in Vulkan, and
+/// a program that fills the struct for every stage is not turned away.
+///
+/// **The core enum values and bit names that were missing**:
+/// `ImageLayout.depth_stencil_read_only_optimal`, the rest of
+/// VkPipelineStageFlagBits' and VkAccessFlagBits' core bits, and
+/// `SHADER_STAGE_GEOMETRY`, whose bit `SHADER_STAGE_ALL_GRAPHICS` had
+/// always included without a name for it. CmdClearDepthStencilImage takes
+/// a `facet.ImageLayout` like its five sibling commands rather than a bare
+/// `u32`; the enum is `enum(u32)`, so no call changes.
+pub const LIBRARY_REVISION = 80;

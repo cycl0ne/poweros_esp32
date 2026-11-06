@@ -125,7 +125,8 @@ test "an interface newer than the library's is refused; the library stays while 
     defer rig.down() catch |err| std.debug.panic("{}", .{err});
     var instance: ?*facet.Instance = null;
     const newer = facet.makeVersion(facet_init.LIBRARY_VERSION, facet_init.LIBRARY_REVISION + 1);
-    try testing.expectEqual(facet.Result.error_initialization_failed, rig.fb.CreateInstance(&.{ .api_version = newer }, &instance));
+    // Vulkan's code for a version nothing present can provide (1.80).
+    try testing.expectEqual(facet.Result.error_incompatible_driver, rig.fb.CreateInstance(&.{ .api_version = newer }, &instance));
     try testing.expect(instance == null);
     try testing.expectEqual(facet.Result.success, rig.fb.CreateInstance(&.{ .api_version = 0 }, &instance));
 
@@ -135,6 +136,85 @@ test "an interface newer than the library's is refused; the library stays while 
     try testing.expect(lib.flags & exec.LIBF_DELEXP != 0);
     rig.fb.DestroyInstance(instance);
     rig.fb.DestroyInstance(null);
+}
+
+test "the result codes, the barrier masks and the image layouts carry Vulkan's own numbers" {
+    // VkResult. The five 1.80 added are in place, and their neighbours
+    // have not moved to make room for them.
+    try testing.expectEqual(@as(i32, 2), @intFromEnum(facet.Result.timeout));
+    try testing.expectEqual(@as(i32, 3), @intFromEnum(facet.Result.event_set));
+    try testing.expectEqual(@as(i32, 4), @intFromEnum(facet.Result.event_reset));
+    try testing.expectEqual(@as(i32, 5), @intFromEnum(facet.Result.incomplete));
+    try testing.expectEqual(@as(i32, -5), @intFromEnum(facet.Result.error_memory_map_failed));
+    try testing.expectEqual(@as(i32, -6), @intFromEnum(facet.Result.error_layer_not_present));
+    try testing.expectEqual(@as(i32, -7), @intFromEnum(facet.Result.error_extension_not_present));
+    try testing.expectEqual(@as(i32, -8), @intFromEnum(facet.Result.error_feature_not_present));
+    try testing.expectEqual(@as(i32, -9), @intFromEnum(facet.Result.error_incompatible_driver));
+    try testing.expectEqual(@as(i32, -10), @intFromEnum(facet.Result.error_too_many_objects));
+
+    // VkPipelineStageFlagBits, every core bit of it (1.80).
+    try testing.expectEqual(@as(u32, 1 << 1), facet.PIPELINE_STAGE_DRAW_INDIRECT);
+    try testing.expectEqual(@as(u32, 1 << 4), facet.PIPELINE_STAGE_TESSELLATION_CONTROL_SHADER);
+    try testing.expectEqual(@as(u32, 1 << 5), facet.PIPELINE_STAGE_TESSELLATION_EVALUATION_SHADER);
+    try testing.expectEqual(@as(u32, 1 << 6), facet.PIPELINE_STAGE_GEOMETRY_SHADER);
+    try testing.expectEqual(@as(u32, 1 << 11), facet.PIPELINE_STAGE_COMPUTE_SHADER);
+    const stages = [_]u32{
+        facet.PIPELINE_STAGE_TOP_OF_PIPE,                 facet.PIPELINE_STAGE_DRAW_INDIRECT,
+        facet.PIPELINE_STAGE_VERTEX_INPUT,                facet.PIPELINE_STAGE_VERTEX_SHADER,
+        facet.PIPELINE_STAGE_TESSELLATION_CONTROL_SHADER, facet.PIPELINE_STAGE_TESSELLATION_EVALUATION_SHADER,
+        facet.PIPELINE_STAGE_GEOMETRY_SHADER,             facet.PIPELINE_STAGE_FRAGMENT_SHADER,
+        facet.PIPELINE_STAGE_EARLY_FRAGMENT_TESTS,        facet.PIPELINE_STAGE_LATE_FRAGMENT_TESTS,
+        facet.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT,     facet.PIPELINE_STAGE_COMPUTE_SHADER,
+        facet.PIPELINE_STAGE_TRANSFER,                    facet.PIPELINE_STAGE_BOTTOM_OF_PIPE,
+        facet.PIPELINE_STAGE_HOST,                        facet.PIPELINE_STAGE_ALL_GRAPHICS,
+        facet.PIPELINE_STAGE_ALL_COMMANDS,
+    };
+    // The seventeen are bits 0 to 16, each of them once: the sum says no
+    // two are the same bit, the or says none is missing.
+    try testing.expectEqual(@as(u32, (1 << 17) - 1), orAndSum(&stages).ored);
+    try testing.expectEqual(@as(u32, (1 << 17) - 1), orAndSum(&stages).sum);
+
+    // VkAccessFlagBits, likewise.
+    try testing.expectEqual(@as(u32, 1 << 0), facet.ACCESS_INDIRECT_COMMAND_READ);
+    try testing.expectEqual(@as(u32, 1 << 4), facet.ACCESS_INPUT_ATTACHMENT_READ);
+    try testing.expectEqual(@as(u32, 1 << 6), facet.ACCESS_SHADER_WRITE);
+    const accesses = [_]u32{
+        facet.ACCESS_INDIRECT_COMMAND_READ,          facet.ACCESS_INDEX_READ,
+        facet.ACCESS_VERTEX_ATTRIBUTE_READ,          facet.ACCESS_UNIFORM_READ,
+        facet.ACCESS_INPUT_ATTACHMENT_READ,          facet.ACCESS_SHADER_READ,
+        facet.ACCESS_SHADER_WRITE,                   facet.ACCESS_COLOR_ATTACHMENT_READ,
+        facet.ACCESS_COLOR_ATTACHMENT_WRITE,         facet.ACCESS_DEPTH_STENCIL_ATTACHMENT_READ,
+        facet.ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE, facet.ACCESS_TRANSFER_READ,
+        facet.ACCESS_TRANSFER_WRITE,                 facet.ACCESS_HOST_READ,
+        facet.ACCESS_HOST_WRITE,                     facet.ACCESS_MEMORY_READ,
+        facet.ACCESS_MEMORY_WRITE,
+    };
+    try testing.expectEqual(@as(u32, (1 << 17) - 1), orAndSum(&accesses).ored);
+    try testing.expectEqual(@as(u32, (1 << 17) - 1), orAndSum(&accesses).sum);
+
+    // VkImageLayout's nine core values are 0 to 8 in order, which is
+    // where `depth_stencil_read_only_optimal` lands (1.80): added in the
+    // middle, so this is also the check that nothing after it shifted.
+    const layouts = [_]facet.ImageLayout{
+        .undefined,                       .general,
+        .color_attachment_optimal,        .depth_stencil_attachment_optimal,
+        .depth_stencil_read_only_optimal, .shader_read_only_optimal,
+        .transfer_src_optimal,            .transfer_dst_optimal,
+        .preinitialized,
+    };
+    for (layouts, 0..) |layout, k| try testing.expectEqual(@as(u32, @intCast(k)), @intFromEnum(layout));
+}
+
+/// The or of `bits` and their sum: equal only where no two of them are
+/// the same bit.
+fn orAndSum(bits: []const u32) struct { ored: u32, sum: u32 } {
+    var ored: u32 = 0;
+    var sum: u32 = 0;
+    for (bits) |bit| {
+        ored |= bit;
+        sum += bit;
+    }
+    return .{ .ored = ored, .sum = sum };
 }
 
 test "a device with its queue, and queues the family has not got refused" {
@@ -960,4 +1040,129 @@ test "semaphores order one submission after another; a fence alone follows all b
     try testing.expectEqual(@as(u64, 1), @import("../sync/_sync.zig").microseconds(1));
     try testing.expectEqual(@as(u64, 2), @import("../sync/_sync.zig").microseconds(1001));
     try testing.expectEqual(exec.WAIT_FOREVER, @import("../sync/_sync.zig").microseconds(facet.WAIT_FOREVER_NS));
+}
+
+/// A vertex, a fragment and a compute function, each as plain as the
+/// pipelines that specialization constants are refused on need.
+const Specialized = struct {
+    fn vertex(vertices: *const facet.shader.Vertices) callconv(.c) void {
+        for (0..vertices.count) |k| vertices.output(@intCast(k))[0..4].* = .{ 0, 0, 0, 1 };
+    }
+
+    fn fragment(fragments: *const facet.shader.Fragments) callconv(.c) void {
+        facet.shader.fill(fragments, 0xFF00_0000);
+    }
+
+    fn group(groups: *const facet.shader.Groups) callconv(.c) void {
+        _ = groups;
+    }
+
+    const entries = [_]facet.shader.Entry{
+        facet.shader.vertex("main", &vertex, 0),
+        facet.shader.fragment("main", &fragment, 0),
+        facet.shader.compute("main", &group),
+    };
+    const code = facet.shader.Code{ .entry_count = entries.len, .entries = &entries };
+};
+
+test "a stage that names specialization constants is refused, not made with them dropped, and an empty SpecializationInfo is made" {
+    var rig = try Rig.up();
+    defer rig.down() catch |err| std.debug.panic("{}", .{err});
+    const instance, const physical = try rig.instance();
+    defer rig.fb.DestroyInstance(instance);
+    const device = try rig.device(physical);
+    defer rig.fb.DestroyDevice(device);
+
+    var module: ?*facet.ShaderModule = null;
+    try testing.expectEqual(facet.Result.success, rig.fb.CreateShaderModule(device, &.{ .code = &Specialized.code }, &module));
+    defer rig.fb.DestroyShaderModule(device, module);
+    var layout: ?*facet.PipelineLayout = null;
+    try testing.expectEqual(facet.Result.success, rig.fb.CreatePipelineLayout(device, &.{}, &layout));
+    defer rig.fb.DestroyPipelineLayout(device, layout);
+
+    // Nothing reads them, so a pipeline made with them would run what the
+    // program did not ask for.
+    const value: u32 = 7;
+    const entry = facet.SpecializationMapEntry{ .constant_id = 0, .offset = 0, .size = @sizeOf(u32) };
+    const constants = facet.SpecializationInfo{
+        .map_entry_count = 1,
+        .map_entries = @ptrCast(&entry),
+        .data_size = @sizeOf(u32),
+        .data = &value,
+    };
+    // One naming no constant specializes nothing, as in Vulkan: a program
+    // that fills the struct for every stage and leaves it empty where it
+    // has none is not turned away by it.
+    const none = facet.SpecializationInfo{};
+
+    // A compute pipeline.
+    {
+        var pipeline: [1]?*facet.Pipeline = .{null};
+        const asked = facet.ComputePipelineCreateInfo{
+            .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.?, .specialization_info = &constants },
+            .layout = layout.?,
+        };
+        try testing.expectEqual(facet.Result.error_feature_not_present, rig.fb.CreateComputePipelines(device, null, 1, @ptrCast(&asked), &pipeline));
+        try testing.expect(pipeline[0] == null);
+
+        // The same one without them is made, so the refusal is the
+        // constants' and not the stage's or the module's.
+        const plain = facet.ComputePipelineCreateInfo{
+            .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.? },
+            .layout = layout.?,
+        };
+        try testing.expectEqual(facet.Result.success, rig.fb.CreateComputePipelines(device, null, 1, @ptrCast(&plain), &pipeline));
+        rig.fb.DestroyPipeline(device, pipeline[0]);
+
+        // And one that points at a `SpecializationInfo` naming no
+        // constant is made as well: the pointer alone is not the refusal.
+        const empty = facet.ComputePipelineCreateInfo{
+            .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.?, .specialization_info = &none },
+            .layout = layout.?,
+        };
+        try testing.expectEqual(facet.Result.success, rig.fb.CreateComputePipelines(device, null, 1, @ptrCast(&empty), &pipeline));
+        try testing.expect(pipeline[0] != null);
+        rig.fb.DestroyPipeline(device, pipeline[0]);
+    }
+
+    // A graphics pipeline, the fragment stage alone carrying them.
+    {
+        const color = facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal };
+        const attachment = facet.AttachmentDescription{ .format = .b8g8r8a8_unorm, .load_op = .clear, .final_layout = .color_attachment_optimal };
+        const subpass = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&color) };
+        var pass: ?*facet.RenderPass = null;
+        const pass_info = facet.RenderPassCreateInfo{ .attachment_count = 1, .attachments = @ptrCast(&attachment), .subpass_count = 1, .subpasses = @ptrCast(&subpass) };
+        try testing.expectEqual(facet.Result.success, rig.fb.CreateRenderPass(device, &pass_info, &pass));
+        defer rig.fb.DestroyRenderPass(device, pass);
+
+        const raster = facet.PipelineRasterizationStateCreateInfo{};
+        const viewport = facet.Viewport{ .width = 8, .height = 8 };
+        const scissor = facet.Rect2D{ .extent = .{ .width = 8, .height = 8 } };
+        const viewport_state = facet.PipelineViewportStateCreateInfo{ .viewports = @ptrCast(&viewport), .scissors = @ptrCast(&scissor) };
+        var stages = [2]facet.PipelineShaderStageCreateInfo{
+            .{ .stage = facet.SHADER_STAGE_VERTEX, .module = module.? },
+            .{ .stage = facet.SHADER_STAGE_FRAGMENT, .module = module.?, .specialization_info = &constants },
+        };
+        const info = facet.GraphicsPipelineCreateInfo{
+            .stage_count = stages.len,
+            .stages = &stages,
+            .viewport_state = &viewport_state,
+            .rasterization_state = &raster,
+            .layout = layout.?,
+            .render_pass = pass.?,
+        };
+        var pipeline: ?*facet.Pipeline = null;
+        try testing.expectEqual(facet.Result.error_feature_not_present, rig.fb.CreateGraphicsPipelines(device, null, 1, @ptrCast(&info), @ptrCast(&pipeline)));
+        try testing.expect(pipeline == null);
+
+        stages[1].specialization_info = null;
+        try testing.expectEqual(facet.Result.success, rig.fb.CreateGraphicsPipelines(device, null, 1, @ptrCast(&info), @ptrCast(&pipeline)));
+        rig.fb.DestroyPipeline(device, pipeline);
+
+        // The empty one here too.
+        stages[1].specialization_info = &none;
+        try testing.expectEqual(facet.Result.success, rig.fb.CreateGraphicsPipelines(device, null, 1, @ptrCast(&info), @ptrCast(&pipeline)));
+        try testing.expect(pipeline != null);
+        rig.fb.DestroyPipeline(device, pipeline);
+    }
 }

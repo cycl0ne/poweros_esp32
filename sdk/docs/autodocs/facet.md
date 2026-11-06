@@ -1248,6 +1248,9 @@ fn CmdClearDepthStencilImage(base: *FacetBase, buffer: *facet.CommandBuffer, ima
   `s8_uint` or `d16_unorm_s8_uint`, which is not an attachment of the
   pass being recorded: this is a transfer, not a draw.
 - `layout` - what the image is in, which this library does not act on.
+  A `facet.ImageLayout`, as its five sibling commands take (since
+  1.80; a bare `u32` before, so the layout had to be spelled as a
+  number here and as a name there).
 - `value` - the depth, 0 to 1, as the tiles hold one: 0 nearest, and
   the stencil, a byte, for a format that holds one (since 1.38).
 - `range_count`, `ranges` - which levels and layers, by
@@ -1308,7 +1311,7 @@ None known.
 ```zig
 const value = facet.ClearDepthStencilValue{ .depth = 1 };
 const range = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH };
-fb.CmdClearDepthStencilImage(commands, depth.?, 0, &value, 1, @ptrCast(&range));
+fb.CmdClearDepthStencilImage(commands, depth.?, .undefined, &value, 1, @ptrCast(&range));
 ```
 
 ## CmdCopyBuffer
@@ -3580,7 +3583,8 @@ fn CreateComputePipelines(base: *FacetBase, device: *facet.Device, cache: ?*face
 `success`; else what the first that could not be made came to:
 `error_invalid_shader_nv` for a stage that is not of a compute function
 the module has; `error_feature_not_present` for a workgroup over the
-device's limits; `error_out_of_host_memory`. Those made are made either
+device's limits, or for a stage whose `specialization_info` names a
+constant (since 1.80); `error_out_of_host_memory`. Those made are made either
 way.
 
 **BEHAVIOR**
@@ -3597,6 +3601,15 @@ invocations itself. A group over `PhysicalDeviceLimits`'
 than `max_compute_work_group_invocations`, or sharing more than
 `max_compute_shared_memory_size` bytes, is refused here rather than cut
 to what fits.
+
+Specialization constants are not honoured: a stage whose
+`specialization_info` names any (`map_entry_count` above 0) is refused
+with `error_feature_not_present` rather than made with the constants
+dropped, which would run what the program did not ask for (since 1.80;
+before it the pointer was read by nothing and no one was told). A
+`SpecializationInfo` of no entries specializes nothing, as in Vulkan,
+and is made: a program that fills the struct for every stage and leaves
+it empty where it has no constants is not turned away.
 
 **CONTEXT**
 
@@ -4016,7 +4029,8 @@ function's have to be, or for a fragment function that writes other
 than the subpass's colour attachments (`shader.fragmentOutputs`, since
 1.51), or for a fragment entry whose `varyings` word names no fixed
 form (since 1.75); `error_feature_not_present`
-for state facet.library does not draw (see BEHAVIOR);
+for state facet.library does not draw (see BEHAVIOR), among it a
+stage whose `specialization_info` names a constant (since 1.80);
 `error_format_not_supported` for an attribute in a format it does not
 read; `error_initialization_failed` for state that does not hold
 together - an attribute of a binding not given, no viewport where it is
@@ -4083,6 +4097,15 @@ listed, take any. Where the words are there they are handed to the
 driver with the pipeline, and a driver that cannot make code of them
 answers `error_feature_not_present` all the same: a shader may be well
 formed SPIR-V and still ask for more than the device has.
+
+Specialization constants are not honoured: a stage whose
+`specialization_info` names any (`map_entry_count` above 0) is refused
+with `error_feature_not_present` rather than made with the constants
+dropped, which would draw what the program did not ask for (since
+1.80; before it the pointer was read by nothing and no one was told).
+A `SpecializationInfo` of no entries specializes nothing, as in Vulkan,
+and is made: a program that fills the struct for every stage and leaves
+it empty where it has no constants is not turned away.
 
 Attributes are read as floats - r32_sfloat to r32g32b32a32_sfloat - or
 as bytes 0 to 1, r8g8b8a8_unorm and b8g8r8a8_unorm, into four floats
@@ -4499,8 +4522,10 @@ fn CreateInstance(base: *FacetBase, info: *const facet.InstanceCreateInfo, insta
 
 **RESULT**
 
-`success`; `error_initialization_failed` for an interface newer than
-the library's; `error_out_of_host_memory`.
+`success`; `error_incompatible_driver` for an interface newer than the
+library's, which is what Vulkan answers where nothing present can
+provide the version asked for (`error_initialization_failed` before
+1.80); `error_out_of_host_memory`.
 
 **BEHAVIOR**
 
@@ -4937,7 +4962,9 @@ The sampler holds what it was given, in the terms the sampling is
 written in (`texture.Sampler`): nothing is worked out again for each
 sample.
 
-`max_anisotropy` is held to `PhysicalDeviceLimits.max_sampler_anisotropy`
+`max_anisotropy` is held to the device's own
+`PhysicalDeviceLimits.max_sampler_anisotropy` (since 1.80; the
+library's cap of 16 before, whatever the device said)
 rather than refused above it, and is taken only where
 `PhysicalDeviceFeatures.sampler_anisotropy` says so; without
 `anisotropy_enable` it is 1, one sample. `max_lod` below `min_lod`
@@ -5235,6 +5262,21 @@ code does.
 
 A shader runs on every core at once and on the queue's task: see
 sdk.facet.shader for what it may do.
+
+`error_invalid_shader_nv` is the one result this call answers that
+core Vulkan 1.0 does not list for `vkCreateShaderModule`: there the
+whole list is success and the two out-of-memory codes, because code
+that is not valid SPIR-V breaks that call's valid usage and so is
+undefined behaviour rather than a reportable error. Core Vulkan 1.0
+therefore has no code at all that means "these words are malformed",
+and facet keeps the refusal on purpose rather than take the undefined
+behaviour: a program's own bug in its words is told to it here, at the
+call that read them, which is the first of the two tiers above. The
+number is Khronos's own for that meaning (-1000012000,
+`VK_ERROR_INVALID_SHADER_NV`, contributed by VK_NV_glsl_shader), not
+one invented here, and the layer that has to translate it is a Vulkan
+shim running without that extension enabled - not this call. (Said in
+1.80; the behaviour is 1.75's.)
 
 **BUGS**
 
@@ -7448,7 +7490,11 @@ None.
   from; a vertex's value.
 - R5G6B5_UNORM_PACK16: colour attachments, blended, in either tiling;
   sampled, filtered, in optimal tiling; copied.
-- D16_UNORM: a depth attachment, in optimal tiling.
+- D16_UNORM: a depth attachment, in optimal tiling, and copied both
+  ways; sampled and filtered as well on a device that samples a depth
+  where its rows lie (`PhysicalDeviceFeatures.sampled_depth`), and not
+  on one that does not, which refuses such an image at CreateImage
+  (since 1.80).
 - R32_SFLOAT to R32G32B32A32_SFLOAT: a vertex's value.
 - R8_UNORM: sampled, filtered, written through as a storage image, in
   optimal tiling, and copied both ways. One byte a texel, read as
@@ -7466,6 +7512,15 @@ None.
   EAC_R11G11: sampled, filtered, in optimal tiling, and copied into.
   No sampler of this library reads such a block, so they are always
   unpacked to 8 bits a channel and never copied out of (since 1.46).
+
+Every answer that differs between two devices of one machine is read
+off that device's `PhysicalDeviceFeatures` (since 1.80): what it keeps
+as it was given it - a compressed image's blocks, a float one's floats,
+a texture's own channels, its whole numbers - and whether it samples a
+depth where its rows lie. A format the device keeps none of says nothing
+of an image here, only of a buffer where it has one, which is the same
+answer CreateImage gives. Before that the reply depended on the format
+alone but for one bool, and said a sampled D16_UNORM on every device.
 
 An image to be sampled may have sides of any size (since 1.42). One of
 B8G8R8A8 or R8G8B8A8 may keep its texel in the 32 bits of its word
@@ -7494,7 +7549,7 @@ None known.
 
 **SEE ALSO**
 
-`CreateImage`
+`CreateImage`, `GetPhysicalDeviceFeatures`
 
 **EXAMPLES**
 

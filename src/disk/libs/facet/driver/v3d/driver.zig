@@ -126,9 +126,14 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
             .min_memory_map_alignment = _memory.alignment,
             .tile_size = v3d.frame.tile_pixels,
             .cores = 1,
-            // The limit is the library's sampling, not this device's TMU:
-            // `sampler_anisotropy` below says who takes it.
-            .max_sampler_anisotropy = _instance.max_sampler_anisotropy,
+            // Nothing here takes a sampler's anisotropy: the TMU is given
+            // the state a fixed form's own `sampling` says, and no program
+            // of the QPUs reads a sampler (`sampler_anisotropy` below).
+            // Vulkan's value for a device without that feature is 1, so
+            // that is what this says rather than the library's 16, which
+            // promised a program samples it would then be refused
+            // (since 1.80).
+            .max_sampler_anisotropy = 1,
             .timestamp_period_ns = _instance.timestamp_period_ns,
             // A point is widened into a rectangle on the cores for
             // either device, so both draw one of any size (since 1.70).
@@ -152,6 +157,8 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // draw is played: there is no program that reads a sampler, so the
         // forms that want one are refused and drawn on the cores.
         .samplers = false,
+        // And the limit says 1 with it, as Vulkan asks of a device without
+        // the feature (since 1.80).
         .sampler_anisotropy = false,
         // Nothing here reads a sampler at all, so a sample in texels is
         // refused with the rest of what a sampler says (since 1.67).
@@ -174,7 +181,10 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         .stored_stencil = true,
         .stored_both = false,
         // Its texture unit keeps a texture its own way, and knows no
-        // depth format: a sampled depth image is refused.
+        // depth format: a sampled depth image is refused. Since 1.80
+        // GetPhysicalDeviceFormatProperties agrees with that refusal,
+        // leaving the sampled bits out of D16_UNORM here rather than
+        // promising a shadow map CreateImage turns down.
         .sampled_depth = false,
         // Its TMU is fed texels the library unpacked, so a compressed or a
         // float image is unpacked on the copy here as before.

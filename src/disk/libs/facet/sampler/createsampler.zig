@@ -9,7 +9,6 @@ const _objects = @import("../_objects.zig");
 const Device = @import("../device/_device.zig").Device;
 const _sampler = @import("_sampler.zig");
 const Sampler = _sampler.Sampler;
-const max_sampler_anisotropy = @import("../instance/_instance.zig").max_sampler_anisotropy;
 
 /// A sampler: the filter, the levels, the edges and the comparison a
 /// texture bound beside it is sampled with.
@@ -43,7 +42,9 @@ const max_sampler_anisotropy = @import("../instance/_instance.zig").max_sampler_
 /// written in (`texture.Sampler`): nothing is worked out again for each
 /// sample.
 ///
-/// `max_anisotropy` is held to `PhysicalDeviceLimits.max_sampler_anisotropy`
+/// `max_anisotropy` is held to the device's own
+/// `PhysicalDeviceLimits.max_sampler_anisotropy` (since 1.80; the
+/// library's cap of 16 before, whatever the device said)
 /// rather than refused above it, and is taken only where
 /// `PhysicalDeviceFeatures.sampler_anisotropy` says so; without
 /// `anisotropy_enable` it is 1, one sample. `max_lod` below `min_lod`
@@ -169,7 +170,7 @@ pub fn CreateSampler(base: *FacetBase, device: *facet.Device, info: *const facet
             .lod_bias = info.mip_lod_bias,
             .min_lod = info.min_lod,
             .max_lod = info.max_lod,
-            .anisotropy = if (info.anisotropy_enable) anisotropyOf(info.max_anisotropy) else 1,
+            .anisotropy = if (info.anisotropy_enable) anisotropyOf(info.max_anisotropy, owner.physical.properties.limits.max_sampler_anisotropy) else 1,
             .compare = compare,
             .unnormalized = info.unnormalized_coordinates,
         },
@@ -179,8 +180,38 @@ pub fn CreateSampler(base: *FacetBase, device: *facet.Device, info: *const facet
 }
 
 /// The samples along the longer axis a sampler takes: what it asked for,
-/// held between one and the limit. A NaN takes one.
-fn anisotropyOf(asked: f32) f32 {
+/// held between one and `limit`, which is the device's own
+/// `PhysicalDeviceLimits.max_sampler_anisotropy` and not the library's cap
+/// (since 1.80; the cap before, which on a device without the feature
+/// promised 16 where the limit said 1). A NaN takes one.
+fn anisotropyOf(asked: f32, limit: u32) f32 {
     if (!(asked > 1)) return 1;
-    return @min(asked, @as(f32, max_sampler_anisotropy));
+    return @min(asked, @max(@as(f32, @floatFromInt(limit)), 1));
+}
+
+const std = @import("std");
+const testing = std.testing;
+
+test "a sampler's anisotropy is held to the device's limit, not the library's cap" {
+    // A device without `PhysicalDeviceFeatures.sampler_anisotropy` has
+    // Vulkan's required `max_sampler_anisotropy` of 1, which the V3D says
+    // since 1.80: a sampler there takes one sample however many it asked
+    // for. Before 1.80 this was the library's cap of 16 whatever the device
+    // said, so a sampler held 16 on a device whose limit was 1.
+    try testing.expectEqual(@as(f32, 1), anisotropyOf(16, 1));
+    try testing.expectEqual(@as(f32, 1), anisotropyOf(2, 1));
+
+    // On a device that takes them, what it asked for, up to the limit.
+    try testing.expectEqual(@as(f32, 4), anisotropyOf(4, 16));
+    try testing.expectEqual(@as(f32, 16), anisotropyOf(64, 16));
+    try testing.expectEqual(@as(f32, 16), anisotropyOf(16, 16));
+
+    // One sample at or below 1, and for a NaN, which no comparison orders.
+    try testing.expectEqual(@as(f32, 1), anisotropyOf(1, 16));
+    try testing.expectEqual(@as(f32, 1), anisotropyOf(0, 16));
+    try testing.expectEqual(@as(f32, 1), anisotropyOf(-8, 16));
+    try testing.expectEqual(@as(f32, 1), anisotropyOf(std.math.nan(f32), 16));
+
+    // A limit of 0 would still leave one sample rather than none.
+    try testing.expectEqual(@as(f32, 1), anisotropyOf(8, 0));
 }
