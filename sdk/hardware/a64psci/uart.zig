@@ -165,6 +165,11 @@ fn set(port: Port, offset: usize, value: u32) void {
     at(geometryOf(port), offset).* = value;
 }
 
+/// Whether a UART answers at `port`. The chip's own are always there.
+pub fn present(_: Port) bool {
+    return true;
+}
+
 /// The UART as serial.device takes it over: the firmware's line kept, the
 /// FIFOs on with the receive side interrupting at an eighth full (and on
 /// its timeout below that), DTR and RTS on.

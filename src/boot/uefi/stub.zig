@@ -10,13 +10,25 @@
 //! with that structure's address, as a device tree's address is passed on
 //! the other two 64-bit chips.
 //!
-//! **Its own output goes to the serial line, by hand.** The firmware's
-//! console is the firmware's, and it is gone after `exitBootServices`,
-//! while the port is there before, during and after - so the stub's lines
-//! and the kernel's first lines come out of the same place, which is what
-//! makes a machine that stops between them readable. The port is written
-//! with `out`/`in` on the 16550 the kernel will drive as its console
-//! later.
+//! **What it says goes where the machine's own output goes.** While the
+//! firmware is there that is the firmware's console, which is the screen
+//! on a machine that has one and the serial line on a machine set up that
+//! way - and on a machine with no serial port at all, those lines are the
+//! only sign that the firmware started this loader rather than something
+//! else, or nothing. What the console was shown stays on the screen while
+//! the kernel comes up, until something draws over it.
+//!
+//! **After `exitBootServices` it is the serial port, by hand.** The
+//! firmware's console goes with the firmware, while the port is there
+//! before, during and after - and it is the port the kernel's first lines
+//! come out of, so a machine that stops between them is readable. It is
+//! written with `out`/`in` on the 16550 the kernel will drive as its
+//! console later, and it is where the stub's lines go when the firmware
+//! offers no console of its own.
+//!
+//! Both at once would say everything twice on a machine whose firmware
+//! console is that same serial line, which is what a firmware does when
+//! it has no screen to write to.
 //!
 //! It uses the firmware's declarations from `std.os.uefi`, which is the
 //! only place they are, and nothing else of std at run time: the numbers
@@ -46,6 +58,12 @@ const LSR_THRE: u8 = 0x20; // the holding register is empty
 /// memory out. A page of its own would do as well and cost a page.
 var machine: Handover = .{};
 
+/// The firmware's console while the firmware is there: where a machine
+/// with no serial port shows the stub's lines. Taken when the stub
+/// starts and forgotten the moment the firmware is left, since calling it
+/// after that would be calling code that is gone.
+var console: ?*uefi.protocol.SimpleTextOutput = null;
+
 // --- the serial line ---------------------------------------------------------------
 
 fn out8(port: u16, value: u8) void {
@@ -70,7 +88,36 @@ fn putByte(byte: u8) void {
     out8(COM1 + THR, byte);
 }
 
+/// `text` on the firmware's console, in the sixteen-bit characters it
+/// takes. A chunk at a time out of one buffer: the stub allocates nothing,
+/// and the firmware wants both characters at the end of a line.
+fn putConsole(one: *uefi.protocol.SimpleTextOutput, text: []const u8) void {
+    var wide: [80]u16 = undefined;
+    var filled: usize = 0;
+    for (text) |byte| {
+        if (filled + 3 > wide.len) {
+            wide[filled] = 0;
+            _ = one.outputString(wide[0..filled :0].ptr) catch {};
+            filled = 0;
+        }
+        if (byte == '\n') {
+            wide[filled] = '\r';
+            filled += 1;
+        }
+        wide[filled] = byte;
+        filled += 1;
+    }
+    if (filled != 0) {
+        wide[filled] = 0;
+        _ = one.outputString(wide[0..filled :0].ptr) catch {};
+    }
+}
+
 fn put(text: []const u8) void {
+    if (console) |one| {
+        putConsole(one, text);
+        return;
+    }
     for (text) |byte| {
         if (byte == '\n') putByte('\r');
         putByte(byte);
@@ -439,6 +486,9 @@ fn handOver(boot: *uefi.tables.BootServices) uefi.Status {
             return .load_error;
         };
     };
+    // The firmware is gone, and its console with it: what is left to say
+    // goes out of the port, which is there whatever the firmware used.
+    console = null;
     asm volatile ("cli");
     // The kernel is built for the ordinary 64-bit calling convention, not
     // the firmware's: the handover's address goes in RDI.
@@ -451,10 +501,16 @@ fn handOver(boot: *uefi.tables.BootServices) uefi.Status {
 
 pub fn main() uefi.Status {
     const system_table = uefi.system_table;
+    // The console first of all, so that everything below is said on a
+    // machine whose only output is its screen.
+    console = system_table.con_out;
     const boot = system_table.boot_services orelse {
         line("the firmware offers no boot services");
         return .load_error;
     };
+    // A line before anything is asked of the firmware: it is what says
+    // that the loader the firmware started is this one.
+    line("started by the firmware");
 
     machine.system_table = @intFromPtr(system_table);
     machine.console_port = COM1;

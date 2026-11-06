@@ -22,6 +22,7 @@ const builtin = @import("builtin");
 const alert = @import("arch/x64uefi/alert.zig");
 const apic = @import("arch/x64uefi/apic.zig");
 const bootstrap = @import("bootstrap.zig");
+const build_options = @import("build_options");
 const clock = @import("arch/x64uefi/clock.zig");
 const context = @import("arch/x64uefi/context.zig");
 const cpu = @import("arch/x64uefi/cpu.zig");
@@ -34,6 +35,7 @@ const handover = @import("boot/uefi/handover.zig");
 const layout = @import("arch/x64uefi/layout.zig");
 const mmu = @import("arch/x64uefi/mmu.zig");
 const ram = @import("arch/x64uefi/ram.zig");
+const screentext = @import("arch/x64uefi/screen.zig");
 const timer = @import("arch/x64uefi/timer.zig");
 const trap = @import("arch/x64uefi/trap.zig");
 const shell = @import("rom/libs/exec/_shell/shell.zig");
@@ -413,6 +415,12 @@ export fn kmain(at: usize) callconv(.c) noreturn {
     if (screen.base != 0) {
         screen_gathered = mmu.gather(.{ .start = @intCast(screen.base), .end = @intCast(screen.base + screen.size) });
     }
+    // The kernel's lines on that screen as well, until the cold start is
+    // over and the display driver has it. A machine started by UEFI may
+    // have no serial port at all - most made in the last ten years have
+    // none - and then the screen is the only place its boot can be read.
+    const screen_mine = screentext.take(screen);
+    if (screen_mine) exec.setBoardMirror(&screentext.hardware);
     exec.log_ring.* = &log_ring;
     exec.log_clock.* = uptimeUs;
     exec.interrupt_hardware.* = apic.interrupt_hardware;
@@ -493,6 +501,7 @@ export fn kmain(at: usize) callconv(.c) noreturn {
         @as([*:0]const u8, if (hardware.rng.fromHardware()) "the core's own generator" else "timing jitter: no generator"),
     });
     if (exec.SysBase.mem_debug.on) note("memory debugging on since exec started (-Dmemdebug)", .{});
+    if (build_options.logdebug) note("the log keeps its debug lines, and cold start names each module (-Dlogdebug)", .{});
     // Who asks about a task that failed, so the machine need not stop.
     exec.failure.startHelper(exec.SysBase);
     timer.init(100);
@@ -511,11 +520,57 @@ export fn kmain(at: usize) callconv(.c) noreturn {
     if (cpu.dcacheLine() != hardware.DCACHE_LINE_SIZE) {
         note("data cache lines of %d bytes, not the %d the kernel was built for", .{ cpu.dcacheLine(), @as(u32, hardware.DCACHE_LINE_SIZE) });
     }
+    // The display driver has the screen once the cold-start modules have
+    // run, which is when the exec task that starts them ends: a hook on
+    // that task, rather than this one waiting for it. The exec task waits
+    // for its workers before it starts a single module, so the switch
+    // below comes back here long before the cold start is over - and a
+    // module that never finishes still leaves the `s3>` shell to ask
+    // with, with the screen's lines still saying how far the boot came.
+    var screen_hooked = false;
+    if (screen_mine) {
+        if (sys.FindTask("exec")) |exec_task| {
+            sys.AddTaskEndHook(exec_task, &screen_given);
+            screen_hooked = true;
+        }
+    }
     cpu.enableInterrupts();
+    // The first thing the machine's own interrupt hardware is asked for,
+    // and what every timed wait rests on: a system whose tick never
+    // arrives comes up all the same and then stops at the first module
+    // that waits for a time, with nothing said about why. It is waited
+    // for here instead - one tick, no longer - and said outright.
+    const ticks_before = timer.tickCount();
+    var waited_ms: u32 = 0;
+    while (timer.tickCount() == ticks_before and waited_ms < 50) : (waited_ms += 1) timer.spinUs(1000);
+    if (timer.tickCount() == ticks_before) {
+        note("the tick on vector %d does not arrive: a timed wait will wait for good", .{timer.tick_irq});
+    } else {
+        step("interrupts on, the tick after %d ms", .{waited_ms});
+    }
+    // And the alarms on the same comparator, which are what a driver's
+    // timed wait is made of: timer.device's units are two of them. One is
+    // set here and waited for, since a module that waits for a time
+    // cannot say from where it waits that nothing ever comes.
+    const systimer = hardware.systimer;
+    systimer.setAlarm(0, systimer.read() + systimer.fromUs(5_000), 0);
+    var alarm_ms: u32 = 0;
+    while (!systimer.takeAlarm(0) and alarm_ms < 50) : (alarm_ms += 1) timer.spinUs(1000);
+    systimer.setAlarm(0, systimer.never, 0);
+    if (alarm_ms == 50) {
+        note("the alarms on that comparator do not come due: a timed wait will wait for good", .{});
+    } else {
+        step("the alarm set for 5 ms came due after %d ms", .{alarm_ms});
+    }
 
     // Multitasking starts. The exec task runs first: it starts the
     // RTF_COLDSTART residents and ends. This task goes on as the boot task.
     exec.startMultitasking(exec.SysBase);
+    step("multitasking", .{});
+    // No exec task to hang that hook on, which is a system that will not
+    // come up anyway: the screen goes back here, before a driver that has
+    // it could be drawn over.
+    if (screen_mine and !screen_hooked) exec.setBoardMirror(null);
     // Until here the other cores ran only their idle tasks; from here they
     // take any task that is not pinned.
     if (cpu1.isUp()) {
@@ -528,6 +583,15 @@ export fn kmain(at: usize) callconv(.c) noreturn {
     // CreateTask do, and when it returns, the task ends.
     const shell_code: exec.TaskFn = &shell.run;
     shell_code(sys);
+    // The debug shell found no console to run on, which a machine
+    // started by UEFI may well not have: no serial port, and the screen
+    // the only place anything can be read. Where the kernel was asked to
+    // keep its debug lines the screen goes back to being the system's
+    // output - what was logged while it came up is put there, and what is
+    // logged from now on follows it. Otherwise the screen stays the
+    // display driver's: a machine that came up has a desktop to show, and
+    // `C:Log` says what it said while it did.
+    if (screen_mine and build_options.logdebug) showLog(sys);
     sys.RemTask(null);
     unreachable;
 }
@@ -553,4 +617,98 @@ fn uptimeUs() u64 {
 /// A kernel status line; the raw port puts the uptime in front.
 fn note(comptime format: [:0]const u8, args: anytype) void {
     exec.kprintf(std.fmt.comptimePrint("{s}\n", .{format}), args);
+}
+
+/// The screen given back: what the kernel drew on it stops when the task
+/// that ran the cold-start modules has ended, since the display driver
+/// has the screen from then on. What was drawn is in the log as well,
+/// which `Log` shows.
+var screen_given: sdk.exec.TaskEndHook = .{ .code = &screenGiven };
+
+fn screenGiven(_: *exec.interface.ExecBase, _: *sdk.exec.Task, _: *sdk.exec.TaskEndHook) callconv(.c) void {
+    step("the screen is the display driver's", .{});
+    exec.setBoardMirror(null);
+}
+
+/// The system log on the screen, and the screen kept as its output.
+/// Everything the machine said while it came up is in the log, and on a
+/// machine with no console there is nothing else to show it with. The
+/// lines go straight to the screen, without the marks the log's own
+/// output would put in front of them again.
+///
+/// **After the rest of the boot**, not at once: what the display driver
+/// draws would go over it, and the last thing the machine says about
+/// itself is worth more than the first. Whatever is logged after this
+/// follows it on the screen.
+///
+/// **Only where the kernel was asked for its debug lines**
+/// (`-Dlogdebug`), since it draws over whatever the display driver has
+/// put there: a machine that came up is better off showing its desktop,
+/// and a boot that stops is read from the lines the kernel mirrors as it
+/// writes them, which is a different path and always there.
+fn showLog(sys: *exec.interface.ExecBase) void {
+    waitSeconds(sys, log_after_seconds);
+    screentext.restart();
+    exec.setBoardMirror(&screentext.hardware);
+    var number: u32 = 1;
+    heading(number);
+    var position: u64 = 0;
+    var buffer: [512]u8 = undefined;
+    while (true) {
+        const count = sys.ReadLog(&position, &buffer, buffer.len);
+        if (count == 0) break;
+        for (buffer[0..count], 0..) |character, at| {
+            screentext.show(buffer[at .. at + 1]);
+            if (character != '\n') continue;
+            if (screentext.rowsWritten() + 1 < screentext.rows()) continue;
+            waitSeconds(sys, page_seconds);
+            number += 1;
+            screentext.turn();
+            heading(number);
+        }
+    }
+}
+
+/// A page's first line, under two rows of nothing: a desktop's menu bar
+/// is across the top of the screen and is drawn again whenever anything
+/// in it changes, so what is written there does not stay. A row has to
+/// hold something to be a row, so those two hold a space.
+fn heading(number: u32) void {
+    screentext.show(" \n \n");
+    exec.kprintf("the system log, page %ld\n", .{@as(i64, number)});
+}
+
+/// How long the log waits for the rest of the boot before it is put on
+/// the screen: long enough for the display driver, the disks and what
+/// USB finds to have had their say.
+const log_after_seconds = 12;
+
+/// How long a page of it stays on the screen before the next one is
+/// written over it: long enough to be read, and to be photographed on a
+/// machine whose log can leave it no other way. The last page stays.
+const page_seconds = 12;
+
+/// `seconds` waited out on timer.device, or spun out where there is
+/// none: this runs on the boot task, which has nothing else to do.
+fn waitSeconds(sys: *exec.interface.ExecBase, seconds: u32) void {
+    const micros = @as(u64, seconds) * 1_000_000;
+    const port = sys.CreateMsgPort() orelse return timer.spinUs(micros);
+    defer sys.DeleteMsgPort(port);
+    var io: sdk.devices.timer.TimeRequest = .{};
+    io.node.message.reply_port = port;
+    io.node.message.length = @sizeOf(sdk.devices.timer.TimeRequest);
+    if (sys.OpenDevice(sdk.interface.timer.NAME, sdk.devices.timer.UNIT_MICROHZ, &io.node, 0) != 0) {
+        return timer.spinUs(micros);
+    }
+    defer sys.CloseDevice(&io.node);
+    io.node.command = sdk.devices.timer.TR_ADDREQUEST;
+    io.time = sdk.devices.timer.TimeVal.fromMicros(micros);
+    _ = sys.DoIO(&io.node);
+}
+
+/// A line for a boot that stops: the places between the last status line
+/// and the first module's own, which a machine that gets there says
+/// nothing about. Only a kernel built with -Dlogdebug writes them.
+fn step(comptime format: [:0]const u8, args: anytype) void {
+    exec.klog(sdk.exec.LOG_DEBUG, std.fmt.comptimePrint("{s}\n", .{format}), args);
 }

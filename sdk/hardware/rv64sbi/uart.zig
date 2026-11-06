@@ -166,6 +166,11 @@ fn set(port: Port, n: u8, value: u8) void {
     writeReg(geometryOf(port), n, value);
 }
 
+/// Whether a UART answers at `port`. The chip's own are always there.
+pub fn present(_: Port) bool {
+    return true;
+}
+
 /// The UART as serial.device takes it over: the firmware's line kept,
 /// the FIFOs on with the receive side interrupting at every byte, DTR,
 /// RTS and the interrupt gate (OUT2) on.

@@ -9,6 +9,7 @@ const sdk = @import("sdk");
 const exec = @import("../exec.zig");
 const exec_init = @import("../exec_init.zig");
 const _library = @import("../library/_library.zig");
+const _rawio = @import("../rawio/_rawio.zig");
 
 const ExecBase = exec.ExecBase;
 const InitTable = sdk.exec.InitTable;
@@ -81,6 +82,12 @@ const ResidentInitFn = sdk.exec.ResidentInitFn;
 pub fn InitResident(base: *ExecBase, tag: *const Resident, seg_list: ?*anyopaque) ?*anyopaque {
     if (tag.match_word != sdk.exec.RTC_MATCHWORD) return null;
     if (tag == &exec_init.exec_tag) return null; // exec is made once, by the bootstrap
+    // Which module the machine is in the hands of, for a boot that stops
+    // inside one and has nothing left to ask with. Here rather than in
+    // InitCode, so that a module made on its own is named as well: the
+    // ROM's copy of a library a driver opens before ramlib runs is made
+    // from the driver's own init.
+    _rawio.klog(sdk.exec.LOG_DEBUG, "starting %s\n", .{tag.name});
     const sys = base.iface();
     sys.BeginSystemMemory();
     defer sys.EndSystemMemory();

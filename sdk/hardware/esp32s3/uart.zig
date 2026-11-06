@@ -254,6 +254,11 @@ fn busClockIsOn(port: Port) bool {
     };
 }
 
+/// Whether a UART answers at `port`. The chip's own are always there.
+pub fn present(_: Port) bool {
+    return true;
+}
+
 /// Set the UART up: its bus clock on, reset, the crystal as its clock,
 /// the boot-up line (115200 8N1, no flow control). The core is held
 /// in reset across the bus reset, as ESP-IDF's uart_ll_reset_register does

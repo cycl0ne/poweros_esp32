@@ -113,6 +113,9 @@ pub const kprintf = _rawio.kprintf;
 pub const klog = _rawio.klog;
 pub const PutChProc = sdk.exec.PutChProc;
 pub const RawIOHardware = _rawio.RawIOHardware;
+/// A second place the kernel sends the raw output to, where the machine
+/// has one: the screen a firmware lit, on a machine with no serial port.
+pub const setBoardMirror = _rawio.setBoardMirror;
 /// The raw port's hardware: exec's own UART0 driver (rawio/_rawio.zig). Host
 /// tests put their stub here.
 pub const raw_io_hardware = &_rawio.raw_io_hardware;
@@ -454,6 +457,12 @@ pub const BootInfo = extern struct {
 /// soon as exec's own first tasks exist - the kernel built with
 /// -Dmemdebug=true.
 pub const BOOTF_MEMDEBUG: u32 = 1 << 0;
+
+/// In BootInfo.flags: the log keeps the debug lines from exec's start -
+/// the kernel built with -Dlogdebug=true. What a boot that stops before
+/// there is a shell to ask with says for itself, above all which module
+/// it was in the hands of.
+pub const BOOTF_LOGDEBUG: u32 = 1 << 1;
 
 /// exec.library's own block, cut by the bootstrap from the first region
 /// with room, before there is an exec to allocate with: a block like any

@@ -76,7 +76,8 @@ pub fn bootStrap(regions: []const exec.MemRegion, cores: u32) Error!*exec.ExecBa
         .rom_start = rom_start,
         .rom_end = rom_end,
         .abs_exec_base = @intFromPtr(sdk.exec.AbsExecBase),
-        .flags = if (build_options.memdebug) exec.BOOTF_MEMDEBUG else 0,
+        .flags = (if (build_options.memdebug) exec.BOOTF_MEMDEBUG else 0) |
+            (if (build_options.logdebug) exec.BOOTF_LOGDEBUG else 0),
     };
     _ = init(lib, @constCast(&info), @ptrCast(sys)) orelse return error.ExecInitFailed;
     return sys;

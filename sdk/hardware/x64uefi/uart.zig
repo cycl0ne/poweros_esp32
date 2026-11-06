@@ -157,6 +157,25 @@ fn set(port: Port, n: u8, value: u8) void {
     writeReg(geometryOf(port), n, value);
 }
 
+/// Whether a UART answers at `port`: what is written to the scratch
+/// register is what is read back from it, which is the one register of a
+/// 16550 that holds whatever it is given. A port with nothing behind it
+/// reads as all ones and keeps nothing.
+///
+/// A machine whose firmware tables name a port it does not have is
+/// ordinary - most machines made in the last ten years have no serial
+/// port at all - and a driver that takes one for granted waits on a
+/// status bit that is set because nothing is driving the bus.
+pub fn present(port: Port) bool {
+    const was = get(port, SCR);
+    set(port, SCR, 0xAA);
+    const first = get(port, SCR);
+    set(port, SCR, 0x55);
+    const second = get(port, SCR);
+    set(port, SCR, was);
+    return first == 0xAA and second == 0x55;
+}
+
 /// The UART as serial.device takes it over: the firmware's line kept, the
 /// FIFOs on with the receive side interrupting at every byte, DTR, RTS and
 /// the interrupt gate (OUT2) on.

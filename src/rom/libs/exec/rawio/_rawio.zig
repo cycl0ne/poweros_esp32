@@ -187,10 +187,11 @@ fn startLine(line: *exec_base.OutLine, level: u32) void {
 }
 
 /// The USB console's copy set as the log's settings say: the port itself
-/// while the log is wanted there and no driver has the port, else none.
-/// An alert that took the port for itself puts it back with this.
+/// while the log is wanted there and no driver has the port, else what
+/// the board put there. An alert that took the port for itself puts it
+/// back with this.
 pub fn setMirror() void {
-    mirror = if (_log.mirror_wanted and !_log.usb_taken and !builtin.is_test) &usb_jtag_raw_io else null;
+    mirror = if (_log.mirror_wanted and !_log.usb_taken and !builtin.is_test) &usb_jtag_raw_io else board_mirror;
 }
 
 /// A second port the raw output is copied to while this is set.
@@ -201,6 +202,19 @@ pub fn setMirror() void {
 /// runs, and two writers on one FIFO tear each other's packets. By the
 /// time a dead-end alert sets it, nothing else is running.
 pub var mirror: ?*const RawIOHardware = null;
+
+/// The second place the kernel put the raw output while the machine has
+/// one of its own: the screen a firmware lit, on a machine whose only
+/// output that is. It is what the mirror falls back to, so the log's own
+/// setting and an alert leave it where it was, and the kernel takes it
+/// away when something else has the screen.
+pub var board_mirror: ?*const RawIOHardware = null;
+
+/// The board's second port, set or taken away.
+pub fn setBoardMirror(second: ?*const RawIOHardware) void {
+    board_mirror = second;
+    setMirror();
+}
 
 /// A character to the log and the port, with nothing in front.
 fn emit(character: u8) void {

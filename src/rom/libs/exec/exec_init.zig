@@ -119,7 +119,7 @@ pub const LIBRARY_VERSION = 1;
 /// machine's ready and waiting lists answer no list now. So a signal to a
 /// task waits only for the core that owns it, and a core choosing what to
 /// run next waits for no handler and for no other core's signal.
-pub const LIBRARY_REVISION = 31;
+pub const LIBRARY_REVISION = 32;
 const BUILD_DATE = "05.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
@@ -202,6 +202,10 @@ fn initExec(lib: *Library, seg_list: ?*anyopaque, _: *exec.interface.ExecBase) c
     // first blocks walled are the library list's and the residents'.
     if (boot_info) |boot| {
         if (boot.flags & exec.BOOTF_MEMDEBUG != 0) _ = sys_base.MemDebug(sdk.exec.MEMDEBUG_ON, null, null, 0);
+        // The debug lines kept from here, where the kernel was built for
+        // it: what the modules say as they start is then in the log and
+        // on whatever the machine's output is.
+        if (boot.flags & exec.BOOTF_LOGDEBUG != 0) _ = sys_base.LogControl(sdk.exec.LOGCTRL_LEVEL, sdk.exec.LOG_DEBUG);
     }
     sys_base.AddLibrary(lib);
     // When memory runs out, the libraries and devices nobody has open are
@@ -254,6 +258,8 @@ const exec_task_stack = 16 * 1024;
 /// init starts the RTF_AFTERDOS residents. Then the task returns and ends
 /// quietly: RemTask frees it.
 pub fn execTask(_: *exec.interface.ExecBase) callconv(.c) void {
+    exec.klog(sdk.exec.LOG_DEBUG, "a worker on each core\n", .{});
     _workers.setUp(exec.SysBase);
+    exec.klog(sdk.exec.LOG_DEBUG, "cold start\n", .{});
     _ = exec.SysBase.iface().InitCode(sdk.exec.RTF_COLDSTART, 0);
 }
