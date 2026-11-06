@@ -1052,7 +1052,9 @@ pub const LIBRARY_VERSION = 1;
 /// first wrapped at the first's width, and the endpoints are then
 /// unquantized over the 16 bits of a half float, interpolated as whole
 /// numbers, and scaled by 31/64 unsigned or 31/32 signed into the half
-/// float the format means. So the interpolation is linear in what a half
+/// float the format means - the scaling first and the sign after it, so
+/// that a small negative value whose magnitude scales to nothing is 0 and
+/// not -0, which is what the hardware references do. So the interpolation is linear in what a half
 /// float's bits stand for rather than in its value, which is the format's
 /// own doing. A mode the format reserves - 19, 23, 27 and 31 - reads as
 /// opaque black.

@@ -2531,11 +2531,15 @@ fn bc6Unquantize(comptime signed: bool, value: i32, bits: u8) i32 {
 /// where the format is unsigned and by 31/32 where it is signed, the sign
 /// going back on afterwards. What comes out is a legal half float, the
 /// largest of them for the largest value.
+///
+/// The scaling comes first and the sign after it, which is what the
+/// hardware references do: a small negative value whose magnitude scales
+/// to nothing is 0 rather than the -0 the other order would give.
 inline fn bc6Finish(comptime signed: bool, value: i32) u16 {
     if (!signed) return @intCast(value * 31 >> 6);
-    const negative = value < 0;
-    const whole = (if (negative) -value else value) * 31 >> 5;
-    return @intCast(if (negative) whole | 0x8000 else whole);
+    const scaled = if (value < 0) -((-value * 31) >> 5) else (value * 31) >> 5;
+    if (scaled < 0) return @intCast(-scaled | 0x8000);
+    return @intCast(scaled);
 }
 
 /// The three channels of each of a BC6H block's sixteen texels, as the
