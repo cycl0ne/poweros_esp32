@@ -319,6 +319,9 @@ pub fn Fragment(comptime Declare: type) type {
         pub const graph = graphOf(Declare.body);
         /// The module, for a device that compiles.
         pub const words: []const u32 = wordsOf(graph);
+        /// The same, for a shader module's table: `shader.Module.spirv`
+        /// wants one of these for each entry, in the entries' own order.
+        pub const spirv: shader.Spirv = shader.Spirv.of(words);
         /// The function, for the cores.
         pub const function: shader.FragmentFn = functionOf(graph);
         /// The floats the vertex function writes past the position.

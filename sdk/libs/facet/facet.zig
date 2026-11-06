@@ -1693,12 +1693,21 @@ pub const SHADER_STAGE_ALL_GRAPHICS: u32 = 0x1F;
 
 /// What a shader module is made with.
 pub const ShaderModuleCreateInfo = extern struct {
+    /// `SHADER_MODULE_CREATE_SPIRV` where `code` is a `shader.Module`.
     flags: u32 = 0,
-    /// The bytes of `code`: @sizeOf(shader.Code).
+    /// The bytes of `code`: @sizeOf(shader.Code), or
+    /// @sizeOf(shader.Module) where the words are there too.
     code_size: usize = @sizeOf(shader.Code),
-    /// A `shader.Code`. SPIR-V is not something facet.library reads.
+    /// A `shader.Code` - the Zig functions - or, with the flag above, a
+    /// `shader.Module`, which is those and the SPIR-V beside them.
     code: *const anyopaque,
 };
+
+/// `code` is a `shader.Module` and not a `shader.Code`: the entries ship
+/// their SPIR-V as well, for a device that compiles. A library without
+/// this flag reads the same memory as a `shader.Code` and runs the Zig
+/// functions, so a program may always pass it. (Since 1.75.)
+pub const SHADER_MODULE_CREATE_SPIRV: u32 = 0x01;
 
 /// A shader stage of a pipeline: the module's function for it.
 pub const PipelineShaderStageCreateInfo = extern struct {

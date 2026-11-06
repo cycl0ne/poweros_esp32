@@ -126,6 +126,57 @@ pub const Code = extern struct {
     entries: [*]const Entry,
 };
 
+/// One entry's shader as a device that compiles wants it: a SPIR-V 1.0
+/// module, header and all, in the program's own memory for as long as the
+/// shader module lives - as an entry's name and function already are.
+/// A null, or a `count` of 0, is an entry that ships none: the vertex
+/// entries of a program whose fragment shaders alone are compiled say
+/// `.{}` and nothing else. (Since 1.75.)
+pub const Spirv = extern struct {
+    words: ?[*]const u32 = null,
+    count: u32 = 0,
+
+    /// An entry's words, from what `ir.Fragment` wrote.
+    pub fn of(given: []const u32) Spirv {
+        return .{ .words = given.ptr, .count = @intCast(given.len) };
+    }
+
+    /// The words as a slice; empty where the entry ships none.
+    pub fn module(each: Spirv) []const u32 {
+        const first = each.words orelse return &.{};
+        if (each.count == 0) return &.{};
+        return first[0..each.count];
+    }
+};
+
+/// What `ShaderModuleCreateInfo.code` points to where the entries ship
+/// their SPIR-V as well, with `SHADER_MODULE_CREATE_SPIRV` in `flags` and
+/// a `code_size` this wide. The words are a side of the entries, index
+/// for index: entry k's are `spirv[k]`, and `spirv_count` is
+/// `entry_count`.
+///
+/// Its first three fields **are** `Code`'s, asserted below rather than
+/// intended, and the magic is the same. So a library that has not got the
+/// flag reads such a module as a `Code` and runs the Zig functions: a
+/// program offers its words to every revision and loses nothing but the
+/// GPU path on an older one. (Since 1.75.)
+pub const Module = extern struct {
+    magic: u32 = MAGIC,
+    entry_count: u32,
+    entries: [*]const Entry,
+    spirv: [*]const Spirv,
+    spirv_count: u32,
+};
+
+comptime {
+    // The prefix is the whole of the compatibility, so it is checked on
+    // every target the SDK is built for rather than reasoned about once.
+    if (@offsetOf(Module, "magic") != @offsetOf(Code, "magic")) @compileError("shader.Module's prefix is not shader.Code's");
+    if (@offsetOf(Module, "entry_count") != @offsetOf(Code, "entry_count")) @compileError("shader.Module's prefix is not shader.Code's");
+    if (@offsetOf(Module, "entries") != @offsetOf(Code, "entries")) @compileError("shader.Module's prefix is not shader.Code's");
+    if (@sizeOf(Module) <= @sizeOf(Code)) @compileError("shader.Module has to be wider than shader.Code");
+}
+
 /// An entry for a vertex function.
 pub fn vertex(name: [*:0]const u8, function: VertexFn, varyings: u32) Entry {
     return .{ .name = name, .stage = facet.SHADER_STAGE_VERTEX, .function = function, .varyings = varyings };

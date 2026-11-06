@@ -11,6 +11,7 @@ const std = @import("std");
 const sdk = @import("sdk");
 const facet = sdk.facet;
 const shader = facet.shader;
+const ir = facet.ir;
 const texture_zig = facet.texture;
 const rig_zig = @import("facet.zig");
 const Rig = rig_zig.Rig;
@@ -225,6 +226,84 @@ const Flat = struct {
     };
     const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
 };
+
+/// A program that ships its fragment shaders as SPIR-V as well as
+/// functions: the one graph writes the words for a device that compiles
+/// and the function the cores call (`shader.Module`, since 1.75).
+const Shipped = struct {
+    /// A colour of its own, and the same colour interpolated from the
+    /// vertices: the first reads no varyings, the second four.
+    const Plain = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            b.color(b.constant(.{ 1, 0.5, 0, 1 }));
+        }
+    });
+
+    const Smooth = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            b.color(b.input(0, .f32x4));
+        }
+    });
+
+    /// The positions through, and nothing else.
+    fn position(vertices: *const shader.Vertices) callconv(.c) void {
+        for (0..vertices.count) |k| {
+            const p = vertices.input(@intCast(k), 0);
+            vertices.output(@intCast(k))[0..4].* = .{ p[0], p[1], p[2], 1 };
+        }
+    }
+
+    /// The positions through, and the colour each vertex carries: 0 to 1,
+    /// as Vulkan has it, which the generated function scales where it
+    /// writes the pixel.
+    fn lit(vertices: *const shader.Vertices) callconv(.c) void {
+        for (0..vertices.count) |k| {
+            const p = vertices.input(@intCast(k), 0);
+            const out = vertices.output(@intCast(k));
+            out[0..4].* = .{ p[0], p[1], p[2], 1 };
+            out[4..8].* = .{ 1, 0.5, 0, 1 };
+        }
+    }
+
+    /// A vertex entry and a fragment entry of the one name, so that a
+    /// pipeline takes both by it.
+    const entries = [_]shader.Entry{
+        shader.vertex("plain", &position, 0),
+        Plain.entry("plain"),
+        shader.vertex("smooth", &lit, 4),
+        Smooth.entry("smooth"),
+    };
+
+    /// Index for index with the entries: a vertex entry ships none.
+    const table = [_]shader.Spirv{ .{}, Plain.spirv, .{}, Smooth.spirv };
+
+    const code = shader.Module{ .entry_count = entries.len, .entries = &entries, .spirv = &table, .spirv_count = table.len };
+};
+
+/// `words` with the first OpLoad made an OpDPdx, which is of the same
+/// three operands and so leaves the module readable an instruction at a
+/// time: well formed SPIR-V that facet's own format has not got. The
+/// library keeps such a module - another device may compile it - and the
+/// driver is the one to turn it down.
+fn beyondProfile(comptime words: []const u32) [words.len]u32 {
+    comptime {
+        var copy: [words.len]u32 = words[0..words.len].*;
+        var at: usize = 5;
+        while (at < copy.len) {
+            const count = copy[at] >> 16;
+            if (count == 0) @compileError("a word count of zero");
+            if (copy[at] & 0xFFFF == 61) { // OpLoad, four words as OpDPdx is
+                copy[at] = (4 << 16) | 207; // OpDPdx
+                return copy;
+            }
+            at += count;
+        }
+        @compileError("no OpLoad to make an OpDPdx of");
+    }
+}
+
+/// The interpolated colour's module, one instruction beyond the profile.
+const beyond_words = beyondProfile(Shipped.Smooth.words);
 
 // --- a driver watched ---------------------------------------------------------
 
@@ -571,6 +650,120 @@ test "a shader module: the entries of a shader.Code, found by stage and name; SP
     const too_many = [1]shader.Entry{shader.vertex("main", &Flat.vertex, 9)};
     try testing.expectEqual(facet.Result.error_invalid_shader_nv, fb.CreateShaderModule(device, &.{ .code = &shader.Code{ .entry_count = 1, .entries = &too_many } }, &none));
     try testing.expect(none == null);
+}
+
+test "a module that ships SPIR-V beside its functions: the words kept, carried to the pipeline, and drawn by the cores all the same" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+
+    // The flag says the code is a `shader.Module`, and `code_size`
+    // proves the program's memory is that wide.
+    var made: ?*facet.ShaderModule = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateShaderModule(device, &.{
+        .flags = facet.SHADER_MODULE_CREATE_SPIRV,
+        .code_size = @sizeOf(shader.Module),
+        .code = &Shipped.code,
+    }, &made));
+    const kept = _objects.of(_shader.ShaderModule, made.?);
+    try testing.expectEqual(@as(u32, 4), kept.count);
+    try testing.expectEqual(@as(u32, 4), kept.spirv_count);
+    // The table is copied; the words are not, and stay the program's.
+    const smooth_at = _shader.findAt(kept, facet.SHADER_STAGE_FRAGMENT, "smooth").?;
+    try testing.expectEqual(Shipped.Smooth.words.ptr, kept.wordsAt(smooth_at).ptr);
+    try testing.expectEqualSlices(u32, Shipped.Smooth.words, kept.wordsAt(smooth_at));
+    try testing.expectEqualSlices(u32, Shipped.Plain.words, kept.wordsAt(_shader.findAt(kept, facet.SHADER_STAGE_FRAGMENT, "plain").?));
+    // A vertex entry ships none, and so does a place past the table.
+    try testing.expectEqual(@as(usize, 0), kept.wordsAt(_shader.findAt(kept, facet.SHADER_STAGE_VERTEX, "smooth").?).len);
+    try testing.expectEqual(@as(usize, 0), kept.wordsAt(4).len);
+
+    // The same memory read as a `shader.Code`, which is what a library
+    // without the flag does with it: the entries are there, the words are
+    // not, and the functions run. That is the whole of the
+    // compatibility, so it is checked rather than reasoned about.
+    var older: ?*facet.ShaderModule = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateShaderModule(device, &.{ .code = &Shipped.code }, &older));
+    const as_code = _objects.of(_shader.ShaderModule, older.?);
+    try testing.expectEqual(@as(u32, 4), as_code.count);
+    try testing.expectEqual(@as(u32, 0), as_code.spirv_count);
+    try testing.expectEqual(@as(usize, 0), as_code.wordsAt(0).len);
+    try testing.expectEqualSlices(u8, "plain", std.mem.span(as_code.entries()[0].name));
+
+    // What the first tier refuses: a `code_size` that does not reach the
+    // table, a count that is not the entries', and words that are not
+    // SPIR-V. What it keeps: a module beyond this device's own format.
+    var none: ?*facet.ShaderModule = null;
+    const spirv_flag = facet.SHADER_MODULE_CREATE_SPIRV;
+    try testing.expectEqual(facet.Result.error_invalid_shader_nv, fb.CreateShaderModule(device, &.{ .flags = spirv_flag, .code = &Shipped.code }, &none));
+    const miscounted = shader.Module{ .entry_count = Shipped.entries.len, .entries = &Shipped.entries, .spirv = &Shipped.table, .spirv_count = 2 };
+    try testing.expectEqual(facet.Result.error_invalid_shader_nv, fb.CreateShaderModule(device, &.{ .flags = spirv_flag, .code_size = @sizeOf(shader.Module), .code = &miscounted }, &none));
+    const nonsense = [_]u32{ 0xDEAD_BEEF, 0x0001_0000, 0, 8, 0 };
+    const bad_table = [_]shader.Spirv{ .{}, shader.Spirv.of(&nonsense), .{}, Shipped.Smooth.spirv };
+    const bad = shader.Module{ .entry_count = Shipped.entries.len, .entries = &Shipped.entries, .spirv = &bad_table, .spirv_count = bad_table.len };
+    try testing.expectEqual(facet.Result.error_invalid_shader_nv, fb.CreateShaderModule(device, &.{ .flags = spirv_flag, .code_size = @sizeOf(shader.Module), .code = &bad }, &none));
+    try testing.expect(none == null);
+
+    // The second tier is the driver's: the library takes these words.
+    switch (facet.spirv.look(&beyond_words, facet.spirv.facet_profile)) {
+        .seen => return error.TestUnexpectedResult,
+        .fault => |fault| {
+            try testing.expectEqual(facet.spirv.Fault.opcode_refused, fault);
+            try testing.expect(!fault.malformed());
+        },
+    }
+    const richer_table = [_]shader.Spirv{ .{}, Shipped.Plain.spirv, .{}, shader.Spirv.of(&beyond_words) };
+    const richer = shader.Module{ .entry_count = Shipped.entries.len, .entries = &Shipped.entries, .spirv = &richer_table, .spirv_count = richer_table.len };
+    var taken: ?*facet.ShaderModule = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateShaderModule(device, &.{ .flags = spirv_flag, .code_size = @sizeOf(shader.Module), .code = &richer }, &taken));
+    fb.DestroyShaderModule(device, taken);
+
+    // A pipeline carries the fragment entry's words to its driver, and
+    // nothing where the entry shipped none.
+    const picture = try Picture.of(&bench, 64, 64);
+    const pass = try renderPass(&bench, .clear, false);
+    defer fb.DestroyRenderPass(device, pass);
+    const frame = try framebuffer(&bench, pass, &.{picture.view}, 64, 64);
+    defer fb.DestroyFramebuffer(device, frame);
+    const layout = try pipelineLayout(&bench, &.{}, 4);
+    defer fb.DestroyPipelineLayout(device, layout);
+    _, const plain = makePipeline(&bench, .{ .module = made.?, .name = "plain", .layout = layout, .pass = pass });
+    defer fb.DestroyPipeline(device, plain);
+    _, const smooth = makePipeline(&bench, .{ .module = made.?, .name = "smooth", .layout = layout, .pass = pass });
+    defer fb.DestroyPipeline(device, smooth);
+    try testing.expectEqualSlices(u32, Shipped.Plain.words, _objects.of(_pipeline.Pipeline, plain.?).fragment_words);
+    try testing.expectEqualSlices(u32, Shipped.Smooth.words, _objects.of(_pipeline.Pipeline, smooth.?).fragment_words);
+    // From the module read as a `shader.Code`: the same function, and no
+    // words for the driver - which is what an older library hands it.
+    _, const wordless = makePipeline(&bench, .{ .module = older.?, .name = "plain", .layout = layout, .pass = pass });
+    defer fb.DestroyPipeline(device, wordless);
+    try testing.expectEqual(_objects.of(_pipeline.Pipeline, plain.?).fragment, _objects.of(_pipeline.Pipeline, wordless.?).fragment);
+    try testing.expectEqual(@as(usize, 0), _objects.of(_pipeline.Pipeline, wordless.?).fragment_words.len);
+
+    // And the cores draw with the generated function, words or no words:
+    // the colour of its own exactly, the interpolated one to a channel.
+    const vertices = [_][3]f32{ .{ -1, -1, 0.5 }, .{ 3, -1, 0.5 }, .{ -1, 3, 0.5 } };
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
+    const offset: u64 = 0;
+    const blue = clears(0xFF00_00FF);
+    const orange: u32 = 0xFFFF_8000;
+
+    for ([2]?*facet.Pipeline{ plain, smooth }) |which| {
+        const commands = try bench.record();
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 1, .clear_values = &blue }, .@"inline");
+        fb.CmdBindPipeline(commands, .graphics, which.?);
+        fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+        fb.CmdDraw(commands, 3, 1, 0, 0);
+        fb.CmdEndRenderPass(commands);
+        try bench.submit();
+        try nearColor(orange, picture.at(2, 2), 1);
+        try nearColor(orange, picture.at(32, 32), 1);
+        try nearColor(orange, picture.at(60, 60), 1);
+    }
+
+    fb.DestroyShaderModule(device, older);
+    fb.DestroyShaderModule(device, made);
 }
 
 test "descriptor sets: a layout's bindings as slots, written and copied as shaders read them; a pool's most" {

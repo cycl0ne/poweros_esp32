@@ -132,6 +132,15 @@ pub const Pipeline = struct {
     fragment: shader.FragmentFn,
     /// The fragment function's fixed form, if it has one.
     fixed: shader.Fixed,
+    /// Its fragment shader as a device with a processor of its own wants
+    /// it: the SPIR-V the program shipped beside the function (a
+    /// `shader.Module`), or nothing where it shipped none. A driver that
+    /// compiles reads it in `make_pipeline` and refuses what it cannot
+    /// make code of (`error_feature_not_present`); one that does not, and
+    /// one that finds nothing here, calls `fragment` as it always has.
+    /// The words are the program's own memory and live as long as it
+    /// keeps them there (since 1.75).
+    fragment_words: []const u32 = &.{},
     varyings: u32,
     /// The locations the vertex function's inputs take: the highest an
     /// attribute reads into, and one.

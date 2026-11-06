@@ -97,9 +97,14 @@ const _instance = @import("../instance/_instance.zig");
 /// blending; ignored otherwise. Other flags are taken and do nothing.
 ///
 /// On a device with a processor of its own, the fragment function has to be
-/// one of the fixed forms (`shader.fixedFragment`), or the pipeline is
-/// refused with `error_feature_not_present`; the cores, always the first
-/// device listed, take any.
+/// one of the fixed forms (`shader.fixedFragment`), or the shader has to
+/// come with its SPIR-V (a `shader.Module` and
+/// `SHADER_MODULE_CREATE_SPIRV`, since 1.75), or the pipeline is refused
+/// with `error_feature_not_present`; the cores, always the first device
+/// listed, take any. Where the words are there they are handed to the
+/// driver with the pipeline, and a driver that cannot make code of them
+/// answers `error_feature_not_present` all the same: a shader may be well
+/// formed SPIR-V and still ask for more than the device has.
 ///
 /// Attributes are read as floats - r32_sfloat to r32g32b32a32_sfloat - or
 /// as bytes 0 to 1, r8g8b8a8_unorm and b8g8r8a8_unorm, into four floats
@@ -217,12 +222,20 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
     var fragment: ?*const shader.Entry = null;
     var control: ?*const shader.Entry = null;
     var evaluation: ?*const shader.Entry = null;
+    // The words beside the fragment function, where the module shipped
+    // them: what a device with a processor of its own compiles instead of
+    // calling the function (since 1.75).
+    var fragment_words: []const u32 = &.{};
     for (info.stages[0..info.stage_count]) |stage| {
         const module = _objects.of(_shader.ShaderModule, stage.module);
-        const entry = _shader.find(module, stage.stage, stage.name) orelse return .error_invalid_shader_nv;
+        const at = _shader.findAt(module, stage.stage, stage.name) orelse return .error_invalid_shader_nv;
+        const entry = &module.entries()[at];
         switch (stage.stage) {
             facet.SHADER_STAGE_VERTEX => vertex = entry,
-            facet.SHADER_STAGE_FRAGMENT => fragment = entry,
+            facet.SHADER_STAGE_FRAGMENT => {
+                fragment = entry;
+                fragment_words = module.wordsAt(at);
+            },
             facet.SHADER_STAGE_TESSELLATION_CONTROL => control = entry,
             facet.SHADER_STAGE_TESSELLATION_EVALUATION => evaluation = entry,
             else => return .error_invalid_shader_nv,
@@ -256,6 +269,7 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         .vertex = @ptrCast(@alignCast(vertex_entry.function)),
         .fragment = @ptrCast(@alignCast(fragment_entry.function)),
         .fixed = fixed_form,
+        .fragment_words = fragment_words,
         // What is drawn carries, which with tessellation is the
         // evaluation function's output and not the vertex function's: the
         // patch's own vertices are as wide as `Tessellated.vertex_varyings`

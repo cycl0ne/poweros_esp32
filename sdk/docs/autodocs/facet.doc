@@ -3197,9 +3197,14 @@ facet.library/WaitForFences
 	blending; ignored otherwise. Other flags are taken and do nothing.
 
 	On a device with a processor of its own, the fragment function has to be
-	one of the fixed forms (`shader.fixedFragment`), or the pipeline is
-	refused with `error_feature_not_present`; the cores, always the first
-	device listed, take any.
+	one of the fixed forms (`shader.fixedFragment`), or the shader has to
+	come with its SPIR-V (a `shader.Module` and
+	`SHADER_MODULE_CREATE_SPIRV`, since 1.75), or the pipeline is refused
+	with `error_feature_not_present`; the cores, always the first device
+	listed, take any. Where the words are there they are handed to the
+	driver with the pipeline, and a driver that cannot make code of them
+	answers `error_feature_not_present` all the same: a shader may be well
+	formed SPIR-V and still ask for more than the device has.
 
 	Attributes are read as floats - r32_sfloat to r32g32b32a32_sfloat - or
 	as bytes 0 to 1, r8g8b8a8_unorm and b8g8r8a8_unorm, into four floats
@@ -4146,23 +4151,43 @@ facet.library/WaitForFences
 
    INPUTS
 	- `device` - the device.
-	- `info` - `code`, a shader.Code, and its size.
+	- `info` - `code`, a shader.Code, and its size; `flags`, which with
+	  `SHADER_MODULE_CREATE_SPIRV` says the code is a `shader.Module`
+	  instead and carries SPIR-V beside the entries (since 1.75).
 	- `module` - where the module is written; null when it fails.
 
    RESULT
 	`success`; `error_invalid_shader_nv` for code that is not a
-	shader.Code - SPIR-V among it - or an entry of a stage that is neither
-	vertex nor fragment, or with more varyings than a vertex carries;
-	`error_out_of_host_memory`. Two stages carry something else in that
-	word: a compute entry its workgroup (`shader.computeGroup`), and a
-	tessellation control entry the floats its patch carries to its
-	evaluation function (`shader.control`, since 1.50). What those may
-	hold is CreateComputePipelines' and CreateGraphicsPipelines' to say.
+	shader.Code, or an entry of a stage that is neither vertex nor
+	fragment, or with more varyings than a vertex carries, or - with
+	`SHADER_MODULE_CREATE_SPIRV` - for a `code_size` narrower than a
+	`shader.Module`, a `spirv_count` that is not the entry count, or words
+	that are not SPIR-V at all; `error_out_of_host_memory`. Two stages
+	carry something else in that word: a compute entry its workgroup
+	(`shader.computeGroup`), and a tessellation control entry the floats
+	its patch carries to its evaluation function (`shader.control`, since
+	1.50). What those may hold is CreateComputePipelines' and
+	CreateGraphicsPipelines' to say.
 
    BEHAVIOR
 	The entries are copied. The functions they name are the program's
 	own, compiled into it: CreateGraphicsPipelines takes a pipeline's from
 	them by stage and name.
+
+	With `SHADER_MODULE_CREATE_SPIRV` the code is a `shader.Module`: a
+	`shader.Code` with a second array behind it, one `shader.Spirv` for
+	each entry, holding the SPIR-V of that entry's shader or nothing
+	(since 1.75). The table is copied like the entries; the words
+	themselves stay the program's.
+
+	Those words are looked over here only for what no device could ever
+	run - a header that is not SPIR-V's, a word count that walks off the
+	end, an instruction that is none - and such a module is refused. A
+	module that is merely richer than this device's own format is kept:
+	CreateGraphicsPipelines hands it to the driver, and a driver that
+	cannot make code of it is the one to say so
+	(`error_feature_not_present`). A device without a processor of its own
+	ignores the words and calls the function.
 
    CONTEXT
 	- Waits: no.
@@ -4184,7 +4209,7 @@ facet.library/WaitForFences
 	None known.
 
    SEE ALSO
-	`CreateGraphicsPipelines`, `DestroyShaderModule`
+	`CreateGraphicsPipelines`, `DestroyShaderModule`, `sdk.facet.spirv`
 
    EXAMPLES
 	    const entries = [_]facet.shader.Entry{

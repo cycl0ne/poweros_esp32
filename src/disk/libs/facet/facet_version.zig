@@ -1092,4 +1092,21 @@ pub const LIBRARY_VERSION = 1;
 /// `shader.fixedFragment` reads differently - those bits always named a
 /// form - but `Entry.fixed` answers an optional, so a program that reads it
 /// itself says `orelse`.
+/// 75: a shader can ship as SPIR-V beside its function. A program that
+/// wants a device with a processor of its own to compile its fragment
+/// shader passes a `shader.Module` where it passed a `shader.Code` and
+/// sets `SHADER_MODULE_CREATE_SPIRV` in `ShaderModuleCreateInfo.flags`,
+/// which no library read before. `Module` begins in the three fields of
+/// `Code`, asserted at compile time to lie at the same offsets, so an
+/// older library reads the entries out of it and calls the functions,
+/// knowing nothing of the words; and a program that ships no words is
+/// unchanged. `CreateShaderModule` looks the words over and refuses only
+/// what no device could ever run - a bad header, a word count that walks
+/// off the end, an instruction that is not one - with
+/// `error_invalid_shader_nv`; what is well formed but beyond this device
+/// it keeps, and `CreateGraphicsPipelines` carries it to the driver in
+/// `Pipeline.fragment_words`, where `make_pipeline` answers
+/// `error_feature_not_present` for a shader it cannot make code of. A
+/// device without a processor of its own, and one handed a module with no
+/// words, calls the Zig function as it always has.
 pub const LIBRARY_REVISION = 75;
