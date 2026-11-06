@@ -292,6 +292,30 @@ const Mixed = ir.Fragment(struct {
     }
 });
 
+/// The nearest texel at a constant offset from it, in texels: SPIR-V's
+/// `ConstOffset`, which every Vulkan 1.0 implementation takes on an
+/// `OpImageSample*` (item 28). A type for each offset, because the offset
+/// is part of the graph and the graph is comptime.
+fn Offset(comptime at: [2]i32) type {
+    return ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            b.color(b.sampleOffsetBy(0, 0, b.input(0, .f32x2), nearest, at));
+        }
+    });
+}
+
+/// The same through whatever sampler is bound, for the slow path: a
+/// sampler no `Sampling` can say sends the sample through
+/// `texture.sampleBy`, which applies the offset in a different place
+/// again (`sampledAt`), so both paths have to be held.
+fn OffsetAnyhow(comptime at: [2]i32) type {
+    return ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            b.color(b.sampleOffset(0, 0, b.input(0, .f32x2), at));
+        }
+    });
+}
+
 var texels: [64 * 8]u8 align(8) = undefined;
 
 /// Eight by eight, no two alike and no two a swap of x and y apart, so
@@ -578,5 +602,134 @@ test "a sampler no Sampling can say is drawn by the cores, as the fixed form dra
         const mixed_fixed, const mixed_generated = bothThroughSampler(Mixed, &each.sampler, u, v);
         try std.testing.expectEqualSlices(u32, &mixed_fixed, &mixed_generated);
         try std.testing.expectEqualSlices(u32, &generated, &mixed_generated);
+    }
+}
+
+// --- 1.87: a constant texel offset -----------------------------------------
+
+/// The offsets held: the four unit steps, a pair of each sign, and the two
+/// ends of Vulkan's required range, which reaches one further down than up.
+const offsets = [_][2]i32{
+    .{ 1, 0 },  .{ 0, 1 },  .{ -1, 0 }, .{ 0, -1 },
+    .{ 2, -3 }, .{ -3, 2 }, .{ 7, 7 },  .{ -8, -8 },
+    .{ -8, 7 }, .{ 7, -8 },
+};
+
+test "a generated shader samples at the constant offset it was built with, on both paths" {
+    // The test is a coordinate moved against a texel offset: on an 8-wide
+    // texture, sampling at (u, v) with an offset of (dx, dy) must read
+    // exactly the texel that sampling at (u + dx/8, v + dy/8) with no
+    // offset reads, because `nearest` takes floor(u * 8) and
+    // floor(u * 8 + dx) is floor(u * 8) + dx for a whole dx.
+    //
+    // This is the test the feature can be shipped green without. The
+    // offset lives in `ir.Op`, which is comptime, and every other
+    // sampling test in this file compares a generated function against a
+    // fixed form - and no fixed form has an offset. So if the offset were
+    // recorded in the graph, emitted into the words, reported in the
+    // limits and never once passed to `sampleLayerAt`, all of them would
+    // still pass and the cores would quietly ignore it.
+    const u = shader.Plane{ .origin = 0.3125, .dx = 0.07, .dy = 0.11 };
+    const v = shader.Plane{ .origin = 0.4375, .dx = 0.13, .dy = 0.03 };
+
+    // The fast path: a sampler `texture.samplingOf` collapses, so the
+    // sample goes through `Texture.sampleLayerAt`.
+    const collapses: texture.Sampler = .{ .mag_filter = .nearest, .min_filter = .nearest };
+    // And the slow path: `mirrored_repeat` is one of the three wraps a
+    // `Sampling` has no word for, so the whole sampler is carried and the
+    // sample goes through `texture.sampleBy` instead (1.83).
+    const does_not: texture.Sampler = .{
+        .wrap = @splat(.mirrored_repeat),
+        .mag_filter = .nearest,
+        .min_filter = .nearest,
+    };
+    try std.testing.expectEqual(@as(?texture.Sampling, null), texture.samplingOf(&does_not, .argb8888));
+    try std.testing.expect(texture.samplingOf(&collapses, .argb8888) != null);
+
+    inline for (offsets) |at| {
+        const moved_u = shader.Plane{ .origin = u.origin + @as(f32, @floatFromInt(at[0])) / 8, .dx = u.dx, .dy = u.dy };
+        const moved_v = shader.Plane{ .origin = v.origin + @as(f32, @floatFromInt(at[1])) / 8, .dx = v.dx, .dy = v.dy };
+        inline for ([2]*const texture.Sampler{ &collapses, &does_not }) |each| {
+            const offset_drawn = throughSampler(Offset(at), each, u, v);
+            const coordinate_moved = throughSampler(Near, each, moved_u, moved_v);
+            if (!std.mem.eql(u32, &offset_drawn, &coordinate_moved)) {
+                std.debug.print("offset ({d}, {d}): drew {any}, where moving the coordinate drew {any}\n", .{ at[0], at[1], offset_drawn, coordinate_moved });
+            }
+            try std.testing.expectEqualSlices(u32, &coordinate_moved, &offset_drawn);
+            // And it is not the un-offset picture, or the whole test
+            // would hold for an offset that was thrown away. Not for an
+            // offset that is a whole turn of this texture on both axes,
+            // though: -8 on an eight-wide texture that repeats reads the
+            // very texel it started from, and reading it is right.
+            if (at[0] & 7 != 0 or at[1] & 7 != 0) {
+                try std.testing.expect(!std.mem.eql(u32, &offset_drawn, &throughSampler(Near, each, u, v)));
+            }
+        }
+    }
+}
+
+test "a constant texel offset is in the words, as the one image operand facet writes" {
+    const Shape = Offset(.{ 1, -2 });
+    // The library's own profile takes it, because the cores apply it:
+    // `CreateShaderModule` must not turn away a module this library's own
+    // builder writes.
+    switch (spirv.look(Shape.words, spirv.facet_profile)) {
+        .seen => {},
+        .fault => |fault| {
+            std.debug.print("the library refused a module it wrote itself: {s}\n", .{@tagName(fault)});
+            return error.TestUnexpectedResult;
+        },
+    }
+
+    // The instruction carries the mask and one id where a graph with no
+    // offset carries neither, and there is exactly one sample either way.
+    var found: u32 = 0;
+    var reader = spirv.Reader.of(Shape.words);
+    while (try reader.next()) |instruction| {
+        if (instruction.op != .image_sample_implicit_lod) continue;
+        found += 1;
+        const operands = instruction.operands();
+        try std.testing.expectEqual(@as(usize, 6), operands.len);
+        try std.testing.expectEqual(@intFromEnum(spirv.ImageOperands.const_offset), operands[4]);
+    }
+    try std.testing.expectEqual(@as(u32, 1), found);
+
+    var plain: u32 = 0;
+    var walk = spirv.Reader.of(Textured.words);
+    while (try walk.next()) |instruction| {
+        if (instruction.op != .image_sample_implicit_lod) continue;
+        plain += 1;
+        try std.testing.expectEqual(@as(usize, 4), instruction.operands().len);
+    }
+    try std.testing.expectEqual(@as(u32, 1), plain);
+
+    // Word for word against a module written by hand as SPIR-V assembly,
+    // assembled by Khronos' own tool and accepted by Khronos' own
+    // validator under Vulkan 1.0 - so these are not facet's idea of a
+    // ConstOffset module, they are one (`tests/spirv_reference.zig`,
+    // `scripts/spirv-check.sh`).
+    try expectWords(&reference.min_offset, Shape.words);
+
+    // An offset of nothing is no operand at all: the reference modules
+    // are held word for word, the id bound among them, so a `.{ 0, 0 }`
+    // that allocated an integer type would fail every one of them.
+    try expectWords(Textured.words, Offset(.{ 0, 0 }).words);
+
+    // The reader is what refuses the operands no device here answers for,
+    // and it refuses them by the profile and not by the opcode: the same
+    // module with the mask changed to a lod, or to a lod beside the
+    // offset, comes back refused.
+    var patched: [256]u32 = undefined;
+    try std.testing.expect(Shape.words.len <= patched.len);
+    const sample_word: u32 = 7 << 16 | @as(u32, @intFromEnum(spirv.Op.image_sample_implicit_lod));
+    const at = std.mem.indexOfScalar(u32, Shape.words, sample_word) orelse return error.TestUnexpectedResult;
+    for ([_]u32{ 2, 2 | 8, 1, 16 }) |mask| {
+        @memcpy(patched[0..Shape.words.len], Shape.words);
+        patched[at + 5] = mask;
+        const answer = spirv.look(patched[0..Shape.words.len], spirv.facet_profile);
+        try std.testing.expectEqual(spirv.Fault.image_operand_refused, answer.fault);
+        // And it is the unsupported tier, not the malformed one: another
+        // device may yet run those words.
+        try std.testing.expect(!answer.fault.malformed());
     }
 }

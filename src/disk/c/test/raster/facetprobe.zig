@@ -83,6 +83,12 @@ const Can = struct {
     depth_clamp: bool,
     stored_both: bool,
     etc2_textures: bool,
+    /// Whether a generated shader may sample at a constant texel offset:
+    /// SPIR-V's `ConstOffset`. Read off `max_texel_offset`, which Vulkan
+    /// requires of every implementation and no feature gates, so a 0
+    /// there is a device saying it cannot. The cores can since 1.87 and
+    /// the V3D refuses the operand (item 28).
+    texel_offsets: bool,
 
     fn formatOf(fb: *FacetBase, physical: *facet.PhysicalDevice, format: facet.Format) facet.FormatProperties {
         var said: facet.FormatProperties = undefined;
@@ -149,6 +155,7 @@ const Can = struct {
             // five are here, so what a device really does with ETC2 is
             // read off the format itself.
             .etc2_textures = formatOf(fb, physical, .etc2_r8g8b8_unorm_block).optimal_tiling_features != 0,
+            .texel_offsets = limits.max_texel_offset != 0,
         };
     }
 };
@@ -2020,6 +2027,26 @@ fn queryChecks(probe: *Probe) void {
         fb.DestroyImage(device, row);
     } else probe.check(false, "a 1D image made");
     probe.check(fb.CreateImage(device, &.{ .image_type = .@"1d", .format = .b8g8r8a8_unorm, .extent = .{ .width = 256, .height = 2 }, .usage = sampled }, &row) == .error_format_not_supported, "a 1D image two rows high refused");
+
+    // A constant texel offset on a sample (item 28, since 1.87). Vulkan
+    // asks -8 and 7 of every implementation and no feature gates it, so a
+    // device either reaches the pair or reports neither - and the thing
+    // that must never happen is a device advertising a range it refuses
+    // every use of, which is what the V3D would do if it inherited the
+    // cores' numbers. Only this board can see that: the host count in
+    // tests/vulkan_limits.zig is the cores' alone.
+    if (probe.can.texel_offsets) {
+        probe.check(limits.min_texel_offset <= -8, "a device that offsets reaches -8");
+        probe.check(limits.max_texel_offset >= 7, "and reaches 7");
+    } else {
+        probe.check(limits.min_texel_offset == 0, "a device that does not offset says 0");
+        probe.check(limits.max_texel_offset == 0, "at both ends");
+    }
+    // The gather pair rides on `shader_image_gather_extended`, which this
+    // library reports false, so 0 is their mandatory value rather than a
+    // shortfall of either device.
+    probe.check(limits.min_texel_gather_offset == 0, "and no gather offset");
+    probe.check(limits.max_texel_gather_offset == 0, "at either end");
     probe.check(fb.GetPhysicalDeviceImageFormatProperties(probe.physical, .b8g8r8a8_unorm, .@"2d", .optimal, sampled | facet.IMAGE_USAGE_COLOR_ATTACHMENT, 0, &shape) == .error_format_not_supported, "an attachment that is sampled too refused");
 
     // What the query says is what CreateImage does.

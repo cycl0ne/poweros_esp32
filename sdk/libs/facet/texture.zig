@@ -533,6 +533,16 @@ pub const most_taps = 16;
 /// A `Sampler.max_lod` held by nothing but the levels the texture has.
 pub const lod_unclamped: f32 = 1000;
 
+/// How far a constant texel offset may reach: Vulkan 1.0's required range
+/// for SPIR-V's `ConstOffset` on an `OpImageSample*`, which is what
+/// `PhysicalDeviceLimits.min_texel_offset` and `max_texel_offset` report.
+/// Nothing gates it - there is no feature that makes a texel offset
+/// optional - so this is a floor every Vulkan device is held to and not a
+/// choice. The low end reaches one further out than the high end, which
+/// is Vulkan's own asymmetry and not a slip here. (Since 1.87.)
+pub const least_texel_offset: i32 = -8;
+pub const most_texel_offset: i32 = 7;
+
 /// What a sampler does, as CreateSampler was given it: how a point between
 /// texels is filtered, how its level is chosen and held, what lies past the
 /// edges, and what a shadow sample compares with.
@@ -595,6 +605,22 @@ pub const Point = extern struct {
     /// What a shadow sample compares with, 0 to 1: the red channel's value
     /// is what it is compared against.
     reference: f32 = 0,
+    /// A constant offset in texels of the level read, added to the texel
+    /// the point falls on after the level is chosen and before the
+    /// addressing wraps or holds it - which is the order Vulkan asks for.
+    /// SPIR-V's `ConstOffset` image operand, held to
+    /// `least_texel_offset`..`most_texel_offset`. (Since 1.87.)
+    ///
+    /// It is here, beside `reference`, because both are operands of the
+    /// *instruction* that samples and not state of the sampler: a
+    /// `Sampling` cannot carry one, and `samplingOf` has nothing to build
+    /// one from.
+    ///
+    /// Two axes and not three: the only samples that carry an offset are
+    /// a generated shader's, and this library's IR samples a 2D image
+    /// alone (`ir.Build.sampleOffsetBy` takes two coordinates). A 3D
+    /// sample through `sampleVolumeBy` is not offset.
+    offset: [2]i32 = .{ 0, 0 },
 };
 
 /// The most levels a texture has: 32768 across, down to 1.
@@ -1118,17 +1144,29 @@ pub const Texture = struct {
     /// The colour at (u, v) of a level of a layer. A pixel at a time and by
     /// floats: what `textured` does for a texture of one layer, far faster.
     pub fn sampleLayer(texture: *const Texture, sampling: Sampling, layer: u32, lod: u32, u: f32, v: f32) u32 {
+        return texture.sampleLayerAt(sampling, layer, lod, u, v, .{ 0, 0 });
+    }
+
+    /// The same at a constant offset in texels of this level, added to the
+    /// texel the point falls on and not to the point: SPIR-V's
+    /// `ConstOffset`, which a generated shader may carry
+    /// (`ir.Op.offset`). The offset moves the texel read and leaves the
+    /// weights a mix uses alone, which is what makes it a texel offset
+    /// rather than a shifted coordinate. (Since 1.87.)
+    pub fn sampleLayerAt(texture: *const Texture, sampling: Sampling, layer: u32, lod: u32, u: f32, v: f32, offset: [2]i32) u32 {
         const across = texture.width(lod);
         const down = texture.height(lod);
         const x = sane(u) * @as(f32, @floatFromInt(across));
         const y = sane(v) * @as(f32, @floatFromInt(down));
         if (sampling.filter == .nearest) {
-            return texture.texelColor(layer, lod, placeIn(sampling.address, @intFromFloat(@floor(x)), across), placeIn(sampling.address, @intFromFloat(@floor(y)), down));
+            const at_x = @as(i32, @intFromFloat(@floor(x))) + offset[0];
+            const at_y = @as(i32, @intFromFloat(@floor(y))) + offset[1];
+            return texture.texelColor(layer, lod, placeIn(sampling.address, at_x, across), placeIn(sampling.address, at_y, down));
         }
         const low_x = @floor(x - 0.5);
         const low_y = @floor(y - 0.5);
-        const left: i32 = @intFromFloat(low_x);
-        const top: i32 = @intFromFloat(low_y);
+        const left: i32 = @as(i32, @intFromFloat(low_x)) + offset[0];
+        const top: i32 = @as(i32, @intFromFloat(low_y)) + offset[1];
         const x0 = placeIn(sampling.address, left, across);
         const x1 = placeIn(sampling.address, left + 1, across);
         const y0 = placeIn(sampling.address, top, down);
@@ -3176,7 +3214,7 @@ inline fn held(level: f32, sampler: *const Sampler, last: f32) f32 {
 /// own where there is one.
 fn tapped(texture: *const Texture, sampler: *const Sampler, reads: Reads, lod: u32, point: Point, taps: u32, filter: Filter) u32 {
     const level = @min(lod, texture.levels - 1);
-    if (taps <= 1) return sampledAt(texture, sampler, reads, level, point.u, point.v, filter, point.reference);
+    if (taps <= 1) return sampledAt(texture, sampler, reads, level, point.u, point.v, filter, point.reference, point.offset);
     const sides = sidesOf(texture);
     const across = axisLength(point.du_dx * sides[0], point.dv_dx * sides[1]);
     const down = axisLength(point.du_dy * sides[0], point.dv_dy * sides[1]);
@@ -3187,7 +3225,7 @@ fn tapped(texture: *const Texture, sampler: *const Sampler, reads: Reads, lod: u
     var sums: [4]u32 = @splat(0);
     for (0..taps) |k| {
         const at = (@as(f32, @floatFromInt(k)) + 0.5) / count - 0.5;
-        const color = sampledAt(texture, sampler, reads, level, point.u + du * at, point.v + dv * at, filter, point.reference);
+        const color = sampledAt(texture, sampler, reads, level, point.u + du * at, point.v + dv * at, filter, point.reference, point.offset);
         inline for (&sums, [4]u5{ 0, 8, 16, 24 }) |*sum, shift| sum.* += color >> shift & 0xFF;
     }
     var made: u32 = 0;
@@ -3197,7 +3235,7 @@ fn tapped(texture: *const Texture, sampler: *const Sampler, reads: Reads, lod: u
 
 /// One sample of a level at (u, v), filtered as `filter` says and compared
 /// where the sampler asks for it.
-fn sampledAt(texture: *const Texture, sampler: *const Sampler, reads: Reads, lod: u32, u: f32, v: f32, filter: Filter, reference: f32) u32 {
+fn sampledAt(texture: *const Texture, sampler: *const Sampler, reads: Reads, lod: u32, u: f32, v: f32, filter: Filter, reference: f32, offset: [2]i32) u32 {
     const across: f32 = @floatFromInt(texture.width(lod));
     const down: f32 = @floatFromInt(texture.height(lod));
     // In texels of this level already, where the sampler says so: the
@@ -3206,16 +3244,21 @@ fn sampledAt(texture: *const Texture, sampler: *const Sampler, reads: Reads, lod
     const x = if (sampler.unnormalized) sane(u) else sane(u) * across;
     const y = if (sampler.unnormalized) sane(v) else sane(v) * down;
     if (filter == .nearest) {
-        const left: i32 = @intFromFloat(@floor(x));
-        const top: i32 = @intFromFloat(@floor(y));
+        // The offset is added to the texel and not to the coordinate: it
+        // is in texels of the level this sample chose, and it must leave
+        // the weights of a mix untouched. (Since 1.87.)
+        const left: i32 = @as(i32, @intFromFloat(@floor(x))) + offset[0];
+        const top: i32 = @as(i32, @intFromFloat(@floor(y))) + offset[1];
         if (sampler.compare == .none) return texelAt(texture, sampler, reads, lod, left, top);
         const value = valueAt(texture, sampler, reads, lod, left, top);
         return greyOf(if (sampler.compare.passes(value, reference)) 1 else 0);
     }
     const low_x = @floor(x - 0.5);
     const low_y = @floor(y - 0.5);
-    const left: i32 = @intFromFloat(low_x);
-    const top: i32 = @intFromFloat(low_y);
+    const left: i32 = @as(i32, @intFromFloat(low_x)) + offset[0];
+    const top: i32 = @as(i32, @intFromFloat(low_y)) + offset[1];
+    // Off `x` and `low_x`, which the offset never touched: the four
+    // texels move together and the point keeps its place between them.
     const part_x = x - 0.5 - low_x;
     const part_y = y - 0.5 - low_y;
     const corners = [4]u32{

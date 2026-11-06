@@ -1547,4 +1547,58 @@ pub const LIBRARY_VERSION = 1;
 /// the levels of a 1D image with several, a 1D array and its view type,
 /// and the four shapes that are not 1D images. facetprobe, which asserted
 /// "a 1D image refused", asserts the shape and the view rules instead.
-pub const LIBRARY_REVISION = 86;
+///
+/// 87: **Sampling at a constant texel offset, on the cores.**
+///
+/// Vulkan requires `minTexelOffset` at most -8 and `maxTexelOffset` at
+/// least 7 of every implementation, with no feature to gate them, because
+/// SPIR-V's `ConstOffset` image operand needs no capability. facet
+/// reported 0 at both ends and had neither the operand nor the offset.
+/// Item 28 of docs/facet-vulkan10.md.
+///
+/// `spirv.look` had never read an operand word out of
+/// `OpImageSampleImplicitLod`: it took the four-operand form and refused
+/// anything longer as `truncated_instruction`, so a module carrying
+/// ConstOffset was turned away for its length rather than for the
+/// operand. It decodes the image-operands mask now, bit by bit, counting
+/// the ids each bit brings - two for Grad - holding every one against the
+/// id bound, and refusing a bit the profile does not list with a fault of
+/// its own, `image_operand_refused`. That fault sits after `too_many_ids`
+/// so `malformed()` keeps it in the *unsupported* tier: an operand this
+/// device will not take is not a broken module.
+///
+/// The offset is an instruction operand and not sampler state, which is
+/// what SPIR-V makes it. `texture.Point.offset` sits beside `reference`,
+/// two axes because the IR samples 2D only, and `sampledAt` adds it to
+/// the floored texel coordinates before the wrap: in the bilinear branch
+/// the offset moves `left` and `top` while the fractions are still taken
+/// from the untouched coordinate, so a half-texel sample one texel over
+/// is still a half-texel sample. `ir.sampleOffset`/`sampleOffsetBy` carry
+/// it, and `@compileError` outside -8 to 7 naming the two limits.
+///
+/// The V3D refuses it rather than getting it wrong. The QPUs take no
+/// offset, so `compile.profile` does not list the bit and
+/// `vkCreateGraphicsPipelines` answers `error_feature_not_present` - at
+/// pipeline creation, where a program can still do something about it,
+/// not at draw time. The device's two limits are *derived* from
+/// `profile.takesImageOperand(.const_offset)` rather than written down, so
+/// they cannot drift from what the compiler accepts, and facetprobe holds
+/// a device that offsets to -8 and 7 and one that does not to 0 at both
+/// ends.
+///
+/// The words are held against Khronos' own tools:
+/// tests/spirv_reference.zig gained `min_offset`, hand-written assembly
+/// through `spirv-as` and clean under `spirv-val --target-env vulkan1.0`,
+/// and the IR's emitted module is compared to it word for word. Ten
+/// offsets are sampled through both paths - a sampler
+/// `texture.samplingOf` collapses and a `mirrored_repeat` one it cannot -
+/// and four patched operand masks each come back refused and not
+/// malformed.
+///
+/// One defect fell out of it, item 82. `CreateShaderModule` did
+/// `@ptrCast(@alignCast(info.code))`, and `@alignCast` *panics* in a safe
+/// build when the pointer is not already aligned - so a program handing
+/// facet the 4-aligned `pCode` Vulkan promises aborted inside the
+/// library. It checks the alignment and answers `error_invalid_shader_nv`
+/// now, which closes the crash without yet accepting the module.
+pub const LIBRARY_REVISION = 87;

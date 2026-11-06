@@ -116,15 +116,18 @@ refinement - finish the compiler, no fallback - moves onto the main line.
 
 **Items 2, 3, 4, 5 and 7 were done in revision 1.80, item 78 in 1.81,
 items 14, 16, 49 and 77 in 1.82, item 52's half of two in 1.83, item 18
-in 1.84, item 19 in 1.85 and item 21 in 1.86.** Each
+in 1.84, item 19 in 1.85, item 21 in 1.86 and item 28's half of two in
+1.87.** Each
 carries a *Done* note below saying what was actually built and where the
 item's own description turned out to be wrong - and several did. Things
 found while doing them became the items at the end of the list: 77 and 78
 from 1.80 and 1.81, and 79, 80 and 81 from 1.82.
 
-Item 52 is the one split between devices: the cores draw every sampler as
-of 1.83 and the V3D does not, so the magenta that item is about now
-belongs to item 54 alone.
+Items 52 and 28 are the ones split between devices: the cores draw every
+sampler as of 1.83 and sample at a constant texel offset as of 1.87, and
+the V3D does neither - so the magenta item 52 is about now belongs to item
+54 alone, and item 28's remainder is a QPU back end that refuses the
+operand at pipeline creation.
 
 Item 16's *Done* note is the one to read first if you are picking this up,
 because the limits reshape it settles is what items 17 to 30 were waiting
@@ -689,6 +692,49 @@ Found independently by: limits, conformance-path (whose "maxViewports min 16" cl
 *limits / sampling* &mdash; conformance-blocking, medium
 
 After: The SPIR-V reader and the IR need the offset operand before the QPU back end can honour it
+
+**The cores' half is done in 1.87, and the item was right that the reader
+and the IR came first.** `OpImageSampleImplicitLod` had never had an
+operand word read from it: `spirv.look` accepted the four-operand form and
+nothing else, so a module carrying ConstOffset was refused for its *length*
+rather than for the operand, which is the wrong refusal and says nothing
+useful. The reader now decodes the image-operands mask bit by bit, counts
+the ids each bit brings (two for Grad), checks every one against the id
+bound, and refuses any bit the profile does not list with a fault of its
+own, `image_operand_refused`. The fault sits after `too_many_ids` so
+`malformed()` keeps it in the *unsupported* tier: a module with an operand
+this device will not take is a module this device will not take, not a
+broken module.
+
+ConstOffset is the one bit `facet_profile` lists. It needs no SPIR-V
+capability - which is exactly why Vulkan requires minTexelOffset and
+maxTexelOffset unconditionally and gates the gather pair on
+shaderImageGatherExtended, settling the unknown this item pointed at: the
+non-constant `Offset` operand is the one that wants the feature, and facet
+refuses it.
+
+The offset reaches the sampler as an *instruction* operand, not sampler
+state, because that is what SPIR-V makes it: `texture.Point.offset` sits
+beside `reference` rather than in `Sampling`, two axes because the IR
+samples 2D only, and `sampledAt` adds it to the floored texel coordinates
+before the wrap - under the bilinear branch the offset moves `left` and
+`top` while the fractions are still taken from the untouched coordinate, so
+a half-texel sample one texel to the left is still a half-texel sample.
+`ir.Op.offset` carries it from `sampleOffset`/`sampleOffsetBy`, which
+`@compileError` outside -8 to 7 and name the two limits in the message.
+
+The V3D's half is not done, and it is refused rather than wrong. The QPUs
+take no offset, so `compile.profile` does not list the bit, and the module
+is refused at `vkCreateGraphicsPipelines` with `error_feature_not_present` -
+at pipeline creation, where a program can still do something about it,
+which is strictly better than item 52's draw-time magenta. The device's
+`min_texel_offset`/`max_texel_offset` are *derived* from
+`profile.takesImageOperand(.const_offset)` rather than written by hand, so
+the day the back end learns the operand the limit follows, and until then
+the number cannot drift away from what the compiler accepts. That was the
+one way this could have shipped broken - the cores' -8/7 inherited by a
+device that refuses every use of it - and `facetprobe` checks it on the
+board as well, since `describe` does not run on the host.
 
 minTexelOffset (<=-8) and maxTexelOffset (>=7) are required unconditionally: nothing gates SPIR-V's ConstOffset operand on OpImageSample. facet has neither the operand nor the fields, so this is a sampling-path feature on both devices — an offset applied in texels before the fetch — plus the two fields. The gather pair (minTexelGatherOffset, maxTexelGatherOffset) and OpImageGather belong with it, with the caveat in unknowns about whether they are unconditional or ride on shaderImageGatherExtended.
 
@@ -1313,6 +1359,32 @@ list it.
 > above. `src/disk/libs/facet/device/createdevice.zig` is the conformant
 > one, since 1.82.
 
+### 82. vkCreateShaderModule aligns pCode to 4 bytes, and facet's cast assumed 8
+
+*entry points / shaders* &mdash; conformance-blocking, small, found while doing item 28
+
+Found by a test crash in 1.87, from an unrelated change that moved a SPIR-V
+word array four bytes. `CreateShaderModule` did
+`@ptrCast(@alignCast(info.code))` to a `*const shader.Code`, and
+`@alignCast` is a *panic* in a safe build when the pointer does not already
+carry the alignment - so any program handing facet a 4-aligned `pCode`
+aborted inside the library rather than being answered. Vulkan promises 4
+bytes and no more: `pCode` is `const uint32_t*`, and the valid-usage text
+says codeSize must be a multiple of 4, nothing about 8.
+
+1.87 checks `@intFromPtr(info.code) % @alignOf(shader.Code)` and answers
+`error_invalid_shader_nv` instead of panicking, which is the code this call
+already uses for a module it cannot read. That is the honest minimum and it
+closes the crash, but it is not conformant: a 4-aligned module is *valid*
+Vulkan and must be accepted, not refused. Accepting it means either reading
+the words through an unaligned accessor or copying them into aligned
+storage at module creation - a copy the call is entitled to make, since
+`pCode` need not outlive it.
+
+> Verified by the crash: `src/disk/libs/facet/shader/createshadermodule.zig`
+> before 1.87, against `vkCreateShaderModule`'s
+> `const uint32_t* pCode` and VUID-VkShaderModuleCreateInfo-codeSize-01085.
+
 ## Deferred by the decision, not out of reach
 
 A drop-in `libvulkan.so.1` was not chosen, so these are not scheduled.
@@ -1463,7 +1535,7 @@ an item above:
 
 - There is no Vulkan registry anywhere in this tree: no vk.xml, no vulkan_core.h. So the ~137 core-command denominator, every required-limit minimum and every mandatory-format row quoted in this list comes from outside the tree. The 126 numerator is measured three ways; the 113/24 split follows from a command list I cannot cite from here. Any number in this list that is a *spec* number should be re-checked against the registry before it is scheduled.
 - ~~VkPhysicalDeviceLimits' member count: the limits strand counted 106 from Vulkan-Headers, the conformance-path strand said "about 110".~~ **Settled: 106.** Counted from `/usr/include/vulkan/vulkan_core.h` (VK_HEADER_VERSION 363) by `scripts/vulkan-struct-check.sh`, which also settles the other three: 55 features, 5 sparse properties, 9 properties. The old "26 of ~106" figure was right.
-- Whether minTexelGatherOffset and maxTexelGatherOffset are required unconditionally or ride on the optional shaderImageGatherExtended. minTexelOffset and maxTexelOffset (ConstOffset on OpImageSample) I am confident are unconditional; if the gather pair is gated, item 28 shrinks by half.
+- ~~Whether minTexelGatherOffset and maxTexelGatherOffset are required unconditionally or ride on the optional shaderImageGatherExtended.~~ **Settled: they ride on the feature, and item 28 does shrink by half.** The spec's Required Limits table makes both of the gather pair depend on `shaderImageGatherExtended` with an unsupported value of 0, where minTexelOffset and maxTexelOffset carry no feature at all - which is what `src/disk/libs/facet/tests/vulkan_limits.zig` holds, measured from the table rather than remembered (rows `min_texel_gather_offset` and `max_texel_gather_offset` name the feature; `min_texel_offset` and `max_texel_offset` do not). facet reports `shaderImageGatherExtended` false and has no OpImageGather, so 0 is the mandatory value for the gather pair and the two counted shortfalls are the sample pair alone.
 - Whether Vulkan 1.0 strictly requires vkQueueBindSparse's entry point to be *present* when no queue family advertises VK_QUEUE_SPARSE_BINDING_BIT. I kept it conformance-blocking because all 137 core commands are in the 1.0 dispatch table, but 1.0's wording about vkGetDeviceProcAddr and unsupported-feature commands is looser than the 1.2+ text and I found no clause settling it.
 - Whether the V3D can honour the 8192 maxImageDimension2D it reports. I found no clamp anywhere under driver/v3d/ and the value is the library-wide constant shared with the cores. Mesa's v3d_limits.h defines V3D_MAX_IMAGE_DIMENSION as 4096 with a comment that the hardware can address 16384 but hangs when that is exposed. This would be a limit reported too *high*, which is off the below-minimum axis but would fail the CTS, and it wants measuring on the board before the 8192 is trusted on that device.
 - Whether the HOST_CACHED memory types (MEMF_EXTERNAL regions) are genuinely coherent against the RP1's DMA engines on the CM5. If they are not, FlushMappedMemoryRanges and InvalidateMappedMemoryRanges become real work rather than no-ops, and nonCoherentAtomSize becomes a number that matters. A hardware question; this analysis was read-only and did not touch the board.

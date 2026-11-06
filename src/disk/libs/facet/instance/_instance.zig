@@ -622,12 +622,20 @@ pub const limits: facet.PhysicalDeviceLimits = .{
     .min_storage_buffer_offset_alignment = _buffer.alignment,
 
     // --- sampling at an offset from the coordinate given ---
-    // No constant offset is sampled at and no gather of four texels is
-    // taken: neither is in the SPIR-V profile and no fixed form asks for
-    // one. Vulkan asks for -8 and 7 on the first pair (item 28); the gather
-    // pair is required only of a device with `shader_image_gather_extended`.
-    .min_texel_offset = 0,
-    .max_texel_offset = 0,
+    // A constant offset is sampled at since 1.87 (item 28): SPIR-V's
+    // `ConstOffset` on an `OpImageSample*`, which a generated shader
+    // carries and the cores apply in texels of the level they chose
+    // (`texture.sampleLayerAt`). Vulkan asks for -8 and 7 of every
+    // implementation, with no feature to gate it, so this is the range it
+    // asks for and the range this takes. **The V3D overrides both to 0**,
+    // because it refuses the operand (`compile.Error.Operands`).
+    //
+    // No gather of four texels is taken: `OpImageGather` is in no profile
+    // here and `shader_image_gather_extended` is reported false, which is
+    // what makes 0 the mandatory value for the gather pair rather than a
+    // shortfall.
+    .min_texel_offset = facet.texture.least_texel_offset,
+    .max_texel_offset = facet.texture.most_texel_offset,
     .min_texel_gather_offset = 0,
     .max_texel_gather_offset = 0,
     // What was mixed over a triangle is read at the pixel's centre and

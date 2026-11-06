@@ -294,14 +294,12 @@ const Rig = @import("facet.zig").Rig;
 /// overrides about eighteen of them downward) and only the board can say
 /// whether it meets them.
 ///
-/// The thirteen, and the item of docs/facet-vulkan10.md each belongs to,
+/// The eleven, and the item of docs/facet-vulkan10.md each belongs to,
 /// so that the number is auditable rather than merely pinned:
 ///
 ///   - item 17, the varyings: maxVertexOutputComponents and
 ///     maxFragmentInputComponents, both 8 against 64.
 ///   - item 22, layered framebuffers: maxFramebufferLayers 1 against 256.
-///   - item 28, constant-offset sampling: minTexelOffset 0 against -8 and
-///     maxTexelOffset 0 against 7.
 ///   - item 61, multisampling, which is eight of the eighteen on its own:
 ///     the three framebuffer and three sampled-image sample-count masks
 ///     must include VK_SAMPLE_COUNT_4_BIT and hold only _1_BIT,
@@ -314,9 +312,16 @@ const Rig = @import("facet.zig").Rig;
 /// **item 18** in 1.84, maxVertexInputBindings 4 and
 /// maxVertexInputAttributes 8 against 16 apiece; and **item 19** in 1.85,
 /// the one combined cap of 2 dynamic buffer descriptors a set against
-/// Vulkan's 8 uniform and 4 storage a pipeline layout; and **item 21** in
-/// 1.86, maxImageDimension1D 0 because there were no 1D images.
-const shortfalls_on_the_cores = 13;
+/// Vulkan's 8 uniform and 4 storage a pipeline layout; **item 21** in
+/// 1.86, maxImageDimension1D 0 because there were no 1D images; and
+/// **item 28's half of two** in 1.87, minTexelOffset and maxTexelOffset
+/// both 0 because no sample took a constant texel offset.
+///
+/// Item 28 is split the way item 52 was: the cores sample at an offset and
+/// the V3D refuses the operand, so **this count is the cores' and the V3D
+/// still reports 0 for those two** - it reads them off its own SPIR-V
+/// profile, so the number follows the capability.
+const shortfalls_on_the_cores = 11;
 
 test "the check itself: Vulkan's floor passes, and a step below it is caught" {
     // A check that passes is worth nothing on its own: one whose loop never

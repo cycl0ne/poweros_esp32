@@ -137,6 +137,16 @@ pub const Op = struct {
     /// is filtered is the device's own business, and on the cores it is
     /// this, as a fixed form's is.
     sampling: texture.Sampling = .{},
+    /// What a sample adds to the texel it reads, in texels of the level
+    /// the sample chose: SPIR-V's `ConstOffset` image operand, applied
+    /// after the level is picked and before the addressing wraps or holds
+    /// it. Held to `texture.least_texel_offset`..`most_texel_offset`,
+    /// which is Vulkan's required range.
+    ///
+    /// `.{ 0, 0 }` is no offset at all and emits no image operand, so a
+    /// graph that does not ask for one is word for word the module it
+    /// always was. (Since 1.87.)
+    offset: [2]i32 = .{ 0, 0 },
 };
 
 /// A varying the shader reads.
@@ -214,13 +224,44 @@ pub const Build = struct {
     /// A texture, bound at `set` and `binding`, read at `coordinate`. The
     /// coordinate is two floats; the answer is four.
     pub fn sample(build: *Build, comptime set: u32, comptime binding: u32, coordinate: u16) u16 {
-        return build.sampleBy(set, binding, coordinate, .{});
+        return build.sampleOffsetBy(set, binding, coordinate, .{}, .{ 0, 0 });
     }
 
     /// The same, saying how the cores are to filter it.
     pub fn sampleBy(build: *Build, comptime set: u32, comptime binding: u32, coordinate: u16, comptime sampling: texture.Sampling) u16 {
+        return build.sampleOffsetBy(set, binding, coordinate, sampling, .{ 0, 0 });
+    }
+
+    /// The same at a constant offset in texels from the texel the
+    /// coordinate falls on: SPIR-V's `ConstOffset`, which every Vulkan 1.0
+    /// implementation takes on an `OpImageSample*` - no feature gates it,
+    /// which is why `min_texel_offset` and `max_texel_offset` are required
+    /// limits. (Since 1.87.)
+    pub fn sampleOffset(build: *Build, comptime set: u32, comptime binding: u32, coordinate: u16, comptime offset: [2]i32) u16 {
+        return build.sampleOffsetBy(set, binding, coordinate, .{}, offset);
+    }
+
+    /// Both at once: the filter the cores fall back on, and the offset.
+    pub fn sampleOffsetBy(
+        build: *Build,
+        comptime set: u32,
+        comptime binding: u32,
+        coordinate: u16,
+        comptime sampling: texture.Sampling,
+        comptime offset: [2]i32,
+    ) u16 {
         if (build.ops[coordinate].kind != .f32x2) @compileError("a texture is read at two coordinates");
-        return build.put(.{ .tag = .sample, .kind = .f32x4, .a = coordinate, .at = set << 16 | binding, .sampling = sampling });
+        for (offset) |each| if (each < texture.least_texel_offset or each > texture.most_texel_offset) {
+            @compileError("a texel offset is -8 to 7: PhysicalDeviceLimits.min_texel_offset and max_texel_offset");
+        };
+        return build.put(.{
+            .tag = .sample,
+            .kind = .f32x4,
+            .a = coordinate,
+            .at = set << 16 | binding,
+            .sampling = sampling,
+            .offset = offset,
+        });
     }
 
     fn pair(build: *Build, tag: Tag, a: u16, b: u16) u16 {
@@ -415,6 +456,30 @@ fn wordsOf(comptime graph: Graph) []const u32 {
             }
         };
 
+        // The constant offsets, for the samples that ask for one: a vector
+        // of two signed 32-bit integers, which is what `ConstOffset`
+        // takes for a 2D image.
+        //
+        // Lazy in every part. A graph with no offset must allocate no id,
+        // because the header's third word is the id bound and the
+        // reference modules in tests/ir.zig are held to it word for word
+        // - so an eager `typeInt` here would fail all five of them on one
+        // word that reads like nothing.
+        var offset_ids: [most_ops]u32 = @splat(0);
+        var int_type: u32 = 0;
+        var offset_type: u32 = 0;
+        for (graph.ops, 0..) |op, k| if (op.tag == .sample and (op.offset[0] != 0 or op.offset[1] != 0)) {
+            if (int_type == 0) {
+                int_type = emit.typeInt(32, true);
+                offset_type = emit.typeVector(int_type, 2);
+            }
+            const parts = [2]u32{
+                emit.constant(int_type, @bitCast(op.offset[0])),
+                emit.constant(int_type, @bitCast(op.offset[1])),
+            };
+            offset_ids[k] = emit.constantComposite(offset_type, &parts);
+        };
+
         emit.function(void_type, main_id, function_type);
         emit.label(emit.id());
 
@@ -431,7 +496,14 @@ fn wordsOf(comptime graph: Graph) []const u32 {
                     emit.at(.load, &.{ sampled_type, held, sampler_ids[which] });
                     const where = loadInput(&emit, graph, &value_ids, &input_ids, &vector_types, float_type, op.a);
                     const taken = emit.id();
-                    emit.at(.image_sample_implicit_lod, &.{ vec4, taken, held, where });
+                    if (offset_ids[k] == 0) {
+                        emit.at(.image_sample_implicit_lod, &.{ vec4, taken, held, where });
+                    } else {
+                        // One literal mask word, then the id of the
+                        // offset: the shape `spirv.look` reads back and
+                        // the V3D's profile refuses.
+                        emit.at(.image_sample_implicit_lod, &.{ vec4, taken, held, where, @intFromEnum(spirv.ImageOperands.const_offset), offset_ids[k] });
+                    }
                     value_ids[k] = taken;
                 },
                 .multiply, .add, .subtract => {
@@ -645,9 +717,9 @@ fn functionOf(comptime graph: Graph) shader.FragmentFn {
                     .sample => {
                         const which = comptime sampledBefore(graph, i);
                         values[i] = if (sampled_by[which]) |whole|
-                            sampleThrough(whole, pictures[which], quad.*, values[op.a][0], values[op.a][1])
+                            sampleThrough(whole, pictures[which], quad.*, values[op.a][0], values[op.a][1], op.offset)
                         else
-                            sampleAt(sampled_how[which] orelse op.sampling, pictures[which], quad.*, values[op.a][0], values[op.a][1]);
+                            sampleAt(sampled_how[which] orelse op.sampling, pictures[which], quad.*, values[op.a][0], values[op.a][1], op.offset);
                     },
                     .multiply => inline for (0..comptime op.kind.parts()) |part| {
                         values[i][part] = values[op.a][part] * values[op.b][part];
@@ -718,7 +790,7 @@ inline fn channelsOf(colour: u32) [4]f32 {
 /// filter, one of two wraps, the level chosen from the quad's own steps
 /// and read on its own. The fast of the two paths, and the one a sampler
 /// `texture.samplingOf` could collapse takes.
-inline fn sampleAt(sampling: texture.Sampling, picture: ?*const texture.Texture, quad: shader.Quad, u: Pixels, v: Pixels) [4]Pixels {
+inline fn sampleAt(sampling: texture.Sampling, picture: ?*const texture.Texture, quad: shader.Quad, u: Pixels, v: Pixels, comptime offset: [2]i32) [4]Pixels {
     @setRuntimeSafety(false);
     var made: [4]Pixels = @splat(@splat(0));
     const given = picture orelse {
@@ -727,6 +799,9 @@ inline fn sampleAt(sampling: texture.Sampling, picture: ?*const texture.Texture,
         return made;
     };
     const texels = [2]f32{ @floatFromInt(given.width(0)), @floatFromInt(given.height(0)) };
+    // The offset is not in this: Vulkan picks the level from how fast the
+    // coordinates run, and a constant whole-texel shift does not change
+    // that. It is applied to the texel of the level this chooses.
     const lod = if (given.levels == 1) 0 else texture.levelFor(given, (u[1] - u[0]) * texels[0], (v[1] - v[0]) * texels[1], (u[2] - u[0]) * texels[0], (v[2] - v[0]) * texels[1]);
     // The condition is runtime and the loop is unrolled, so this is an
     // `if` around the body and not a `continue` out of it: a `continue`
@@ -736,7 +811,7 @@ inline fn sampleAt(sampling: texture.Sampling, picture: ?*const texture.Texture,
     // sat here uncompiled until a test asked the cores to draw one.
     inline for (0..4) |pixel| {
         if (quad.covered >> @intCast(pixel) & 1 != 0) {
-            const colour = channelsOf(given.sampleLayer(sampling, 0, lod, u[pixel], v[pixel]));
+            const colour = channelsOf(given.sampleLayerAt(sampling, 0, lod, u[pixel], v[pixel], offset));
             inline for (0..4) |channel| made[channel][pixel] = colour[channel];
         }
     }
@@ -759,7 +834,7 @@ inline fn sampleAt(sampling: texture.Sampling, picture: ?*const texture.Texture,
 /// and as `texturedBy` takes it: across from the left pixel to the right,
 /// down from the top row to the bottom, 0 to 1 across the texture like
 /// the point itself. So a quad's four samples share a level.
-inline fn sampleThrough(sampler: *const texture.Sampler, picture: ?*const texture.Texture, quad: shader.Quad, u: Pixels, v: Pixels) [4]Pixels {
+inline fn sampleThrough(sampler: *const texture.Sampler, picture: ?*const texture.Texture, quad: shader.Quad, u: Pixels, v: Pixels, comptime offset: [2]i32) [4]Pixels {
     @setRuntimeSafety(false);
     var made: [4]Pixels = @splat(@splat(0));
     const given = picture orelse {
@@ -780,6 +855,7 @@ inline fn sampleThrough(sampler: *const texture.Sampler, picture: ?*const textur
                 .dv_dx = dv_dx,
                 .du_dy = du_dy,
                 .dv_dy = dv_dy,
+                .offset = offset,
             }));
             inline for (0..4) |channel| made[channel][pixel] = colour[channel];
         }

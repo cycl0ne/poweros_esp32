@@ -153,6 +153,37 @@ pub const ImageFormat = enum(u32) { unknown = 0, _ };
 pub const FunctionControl = enum(u32) { none = 0, _ };
 pub const SelectionControl = enum(u32) { none = 0, _ };
 
+/// The optional operands an image instruction may carry past its four: one
+/// literal word of these bits, and then an id for each bit set, in the
+/// order the bits run. (Since 1.87.)
+///
+/// `const_offset` is the only one facet writes and the only one a profile
+/// here takes. It is also the only *offset* that needs no capability,
+/// which is why Vulkan requires `minTexelOffset` and `maxTexelOffset` of
+/// every implementation unconditionally and the gather pair only with
+/// `shaderImageGatherExtended`: `offset`, the one that is not constant,
+/// wants ImageGatherExtended.
+pub const ImageOperands = enum(u32) {
+    bias = 1,
+    lod = 2,
+    grad = 4,
+    const_offset = 8,
+    offset = 16,
+    const_offsets = 32,
+    sample = 64,
+    min_lod = 128,
+    _,
+
+    /// How many ids follow the mask for this one. Every operand a profile
+    /// here takes carries one; `grad` carries two, and is not taken.
+    pub fn ids(operand: ImageOperands) u32 {
+        return switch (operand) {
+            .grad => 2,
+            else => 1,
+        };
+    }
+};
+
 /// How many words a literal string takes: its bytes, a zero, and up to
 /// three more to the word. A length that is a multiple of four costs a
 /// whole word of zeroes.
@@ -475,6 +506,11 @@ pub const Fault = enum {
     image_refused,
     stage_refused,
     too_many_ids,
+    /// An image operand this device has no answer for: a bias, a lod, a
+    /// gradient, a non-constant offset. A constant texel offset is taken
+    /// by the library's own profile, because the cores apply one, and
+    /// refused by the V3D's. (Since 1.87.)
+    image_operand_refused,
 
     /// Whether this is a module that is not a module, rather than one this
     /// device will not take. The library refuses the first and keeps the
@@ -525,6 +561,11 @@ pub const Profile = struct {
     image_dims: []const Dim = &.{.dim_2d},
     /// The stages this device runs a program of the module's own for.
     stages: []const ExecutionModel = &.{ .vertex, .fragment },
+    /// The optional operands this device takes on an image instruction.
+    /// Empty by default, so a profile that says nothing refuses every
+    /// one of them - which is what a back end wants, and what the V3D's
+    /// profile relies on. (Since 1.87.)
+    image_operands: []const ImageOperands = &.{},
     /// How many ids it will make room for.
     most_ids: u32 = 1024,
 
@@ -546,6 +587,10 @@ pub const Profile = struct {
     }
     pub fn takesStage(profile: Profile, stage: ExecutionModel) bool {
         for (profile.stages) |each| if (each == stage) return true;
+        return false;
+    }
+    pub fn takesImageOperand(profile: Profile, operand: ImageOperands) bool {
+        for (profile.image_operands) |each| if (each == operand) return true;
         return false;
     }
 };
@@ -590,6 +635,11 @@ pub const facet_opcodes: []const Op = &.{
 pub const facet_profile: Profile = .{
     .capabilities = &.{.shader},
     .opcodes = facet_opcodes,
+    // A constant texel offset, which the cores apply (`ir.Op.offset`,
+    // since 1.87) and the V3D refuses. Every other image operand is a
+    // different write to a sampler than any device here makes, so none
+    // of them is in this list and the library turns them away.
+    .image_operands = &.{.const_offset},
     .most_ids = 1024,
 };
 
@@ -746,6 +796,32 @@ pub fn look(words: []const u32, profile: Profile) Outcome {
             .function => {
                 if (operands.len < 4) return .{ .fault = .truncated_instruction };
                 functions += 1;
+            },
+            // The four an OpImageSample* must have - ResultType, Result,
+            // SampledImage, Coordinate - and then the optional operands:
+            // one literal mask word and an id for each bit set. Until
+            // 1.87 none of this was read anywhere in the tree, so a
+            // module asking for a bias, a lod or an offset walked
+            // through `look` untouched and was sampled without it.
+            .image_sample_implicit_lod => {
+                if (operands.len < 4) return .{ .fault = .truncated_instruction };
+                if (operands.len > 4) {
+                    var mask = operands[4];
+                    var ids: u32 = 0;
+                    while (mask != 0) {
+                        // The lowest bit set, and then that bit cleared.
+                        const bit = mask & ~(mask -% 1);
+                        mask &= mask -% 1;
+                        const which: ImageOperands = @enumFromInt(bit);
+                        if (!profile.takesImageOperand(which)) return .{ .fault = .image_operand_refused };
+                        ids += which.ids();
+                    }
+                    // One id for each bit, no more and no fewer: a mask
+                    // whose ids are missing is a truncated instruction
+                    // and not an operand this device refuses.
+                    if (operands.len != 5 + ids) return .{ .fault = .truncated_instruction };
+                    for (operands[5..]) |id| if (id >= bound) return .{ .fault = .id_over_bound };
+                }
             },
             .kill => seen.discards = true,
             else => {},

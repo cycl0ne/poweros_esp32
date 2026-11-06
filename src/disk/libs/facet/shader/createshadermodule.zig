@@ -111,6 +111,14 @@ pub fn CreateShaderModule(base: *FacetBase, device: *facet.Device, info: *const 
     module.* = null;
     const owner = _objects.of(Device, device);
     if (info.code_size < @sizeOf(shader.Code)) return .error_invalid_shader_nv;
+    // Aligned for a `shader.Code` before it is read as one. `code` is a
+    // `*const anyopaque` and the alignment is the caller's to get right,
+    // so an `@alignCast` of it is a panic inside the library rather than
+    // a refusal - and a program handing this a buffer of words has every
+    // reason to think that is allowed, because 4 is all Vulkan asks of
+    // `pCode`. The test that feeds it a SPIR-V header found this the day
+    // an unrelated change moved that array four bytes.
+    if (@intFromPtr(info.code) % @alignOf(shader.Code) != 0) return .error_invalid_shader_nv;
     const code: *const shader.Code = @ptrCast(@alignCast(info.code));
     if (code.magic != shader.MAGIC) return .error_invalid_shader_nv;
     const entries = code.entries[0..code.entry_count];

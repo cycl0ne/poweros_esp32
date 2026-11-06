@@ -127,6 +127,14 @@ pub const Error = error{
     /// The module asks for something outside `profile` - an opcode, a
     /// capability, a storage class, an image, a stage.
     Refused,
+    /// An optional image operand on a sample: a constant texel offset
+    /// above all, which the cores apply (`ir.Op.offset`, item 28 of
+    /// docs/facet-vulkan10.md) and this device cannot. The TMU is told a
+    /// filter and a wrap and nothing else (`tiling.writeSamplerState`),
+    /// and an offset would be a third configuration parameter no program
+    /// here has ever written. A bias, a lod and a gradient come back the
+    /// same way, each being a different write again. (Since 1.87.)
+    Operands,
     /// Not a fragment program.
     Stage,
     /// A type other than a 32-bit float and its vectors of 2 to 4.
@@ -205,6 +213,15 @@ pub const profile: spirv.Profile = .{
         // `Error.Discards` says which family is missing where
         // `Error.Refused` would only say that some word was not known.
         .kill,
+        // The same: taken here so that a module carrying a constant texel
+        // offset is refused for the operand and not for the integer type
+        // the offset's constant is declared with. `profile.image_operands`
+        // is empty, so `look` turns the operand away and `compile` answers
+        // `Error.Operands`; this list taking `.type_int` is what lets the
+        // walk get that far. A module that declares an integer for any
+        // other reason is refused in the body with `Error.Type`, this
+        // back end holding 32-bit floats and their vectors alone.
+                   .type_int,
     },
     .storage_classes = &.{ .input, .output, .function, .uniform_constant },
     .image_dims = &.{.dim_2d},
@@ -526,6 +543,10 @@ pub fn compile(work: *Work, words: []const u32) Error!Code {
         .seen => |each| each,
         .fault => |fault| return switch (fault) {
             .stage_refused => Error.Stage,
+            // An image operand, which this device's profile takes none of:
+            // said by name so that it can be told from a word the walk
+            // simply did not know (since 1.87).
+            .image_operand_refused => Error.Operands,
             else => Error.Refused,
         },
     };
@@ -1633,6 +1654,14 @@ const Cutout = ir.Fragment(struct {
     }
 });
 
+/// The texel a constant offset away, which the cores read (item 28, since
+/// 1.87) and this device refuses: `Error.Operands`.
+const Offset = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        b.color(b.sampleOffset(0, 0, b.input(0, .f32x2), .{ 1, -2 }));
+    }
+});
+
 /// The colour the vertices carry, dimmed by a float they carry beside it:
 /// a vector times a scalar, where the scalar is read again by every part
 /// and so may not be written over.
@@ -2184,6 +2213,17 @@ test "what this back end has no program for is refused by name, and nothing is m
     try testing.expectError(Error.Samplers, compile(&work, Twice.words));
     // A pixel dropped: the flag registers.
     try testing.expectError(Error.Refused, compile(&work, Cutout.words));
+    // A constant texel offset on the sample: the cores apply one, and the
+    // TMU here is told a filter and a wrap and nothing else. Said by
+    // name, which is what tells it from a word this walk simply did not
+    // know - and this is also the only test in the tree that proves the
+    // operand reached the *words* at all: the cores read the offset from
+    // `ir.Op`, so every test on that side would pass with the emitter
+    // writing nothing.
+    try testing.expectError(Error.Operands, compile(&work, Offset.words));
+    // The same graph with no offset is a program this device compiles,
+    // so the refusal above is the operand and not the shape.
+    _ = try compile(&work, Textured.words);
     // A vertex program: the V3D runs the library's own for those.
     try testing.expectError(Error.Stage, compile(&work, &vertex_words));
     // Not a module at all, which `CreateShaderModule` turns down before

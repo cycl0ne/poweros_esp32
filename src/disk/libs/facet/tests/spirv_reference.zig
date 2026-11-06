@@ -165,6 +165,80 @@ pub const min_tex = [_]u32{
     0x0003003E, 0x00000002, 0x00000012, 0x000100FD, 0x00010038,
 };
 
+/// The same sample taken a constant offset away in texels: one across and
+/// two up, SPIR-V's `ConstOffset` image operand. The only optional image
+/// operand facet writes, and the only one of the offsets that needs no
+/// capability - which is why Vulkan requires `minTexelOffset` and
+/// `maxTexelOffset` of every implementation and the gather pair only with
+/// `shaderImageGatherExtended`. (Since 1.87, item 28.)
+///
+/// `min_tex` with five declarations inserted after the sampler variable
+/// and two operands on the sample: the mask word, `ConstOffset` being
+/// 0x8, and then the id of the vector. The id bound goes from 0x13 to
+/// 0x18 and the sample's word count from 5 to 7.
+///
+/// ```
+///                OpCapability Shader
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %1 "main" %2 %3
+///                OpExecutionMode %1 OriginUpperLeft
+///                OpDecorate %2 Location 0
+///                OpDecorate %3 Location 0
+///                OpDecorate %4 DescriptorSet 0
+///                OpDecorate %4 Binding 0
+///           %5 = OpTypeVoid
+///           %6 = OpTypeFunction %5
+///           %7 = OpTypeFloat 32
+///           %8 = OpTypeVector %7 4
+///           %9 = OpTypePointer Output %8
+///           %2 = OpVariable %9 Output
+///          %10 = OpTypeVector %7 2
+///          %11 = OpTypePointer Input %10
+///           %3 = OpVariable %11 Input
+///          %12 = OpTypeImage %7 2D 0 0 0 1 Unknown
+///          %13 = OpTypeSampledImage %12
+///          %14 = OpTypePointer UniformConstant %13
+///           %4 = OpVariable %14 UniformConstant
+///          %15 = OpTypeInt 32 1
+///          %16 = OpTypeVector %15 2
+///          %17 = OpConstant %15 1
+///          %18 = OpConstant %15 -2
+///          %19 = OpConstantComposite %16 %17 %18
+///           %1 = OpFunction %5 None %6
+///          %20 = OpLabel
+///          %21 = OpLoad %13 %4
+///          %22 = OpLoad %10 %3
+///          %23 = OpImageSampleImplicitLod %8 %21 %22 ConstOffset %19
+///                OpStore %2 %23
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const min_offset = [_]u32{
+    0x07230203, 0x00010000, 0x00070000, 0x00000018, 0x00000000, 0x00020011,
+    0x00000001, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000001, 0x6E69616D, 0x00000000, 0x00000002, 0x00000003, 0x00030010,
+    0x00000001, 0x00000007, 0x00040047, 0x00000002, 0x0000001E, 0x00000000,
+    0x00040047, 0x00000003, 0x0000001E, 0x00000000, 0x00040047, 0x00000004,
+    0x00000022, 0x00000000, 0x00040047, 0x00000004, 0x00000021, 0x00000000,
+    0x00020013, 0x00000005, 0x00030021, 0x00000006, 0x00000005, 0x00030016,
+    0x00000007, 0x00000020, 0x00040017, 0x00000008, 0x00000007, 0x00000004,
+    0x00040020, 0x00000009, 0x00000003, 0x00000008, 0x0004003B, 0x00000009,
+    0x00000002, 0x00000003, 0x00040017, 0x0000000A, 0x00000007, 0x00000002,
+    0x00040020, 0x0000000B, 0x00000001, 0x0000000A, 0x0004003B, 0x0000000B,
+    0x00000003, 0x00000001, 0x00090019, 0x0000000C, 0x00000007, 0x00000001,
+    0x00000000, 0x00000000, 0x00000000, 0x00000001, 0x00000000, 0x0003001B,
+    0x0000000D, 0x0000000C, 0x00040020, 0x0000000E, 0x00000000, 0x0000000D,
+    0x0004003B, 0x0000000E, 0x00000004, 0x00000000, 0x00040015, 0x0000000F,
+    0x00000020, 0x00000001, 0x00040017, 0x00000010, 0x0000000F, 0x00000002,
+    0x0004002B, 0x0000000F, 0x00000011, 0x00000001, 0x0004002B, 0x0000000F,
+    0x00000012, 0xFFFFFFFE, 0x0005002C, 0x00000010, 0x00000013, 0x00000011,
+    0x00000012, 0x00050036, 0x00000005, 0x00000001, 0x00000000, 0x00000006,
+    0x000200F8, 0x00000014, 0x0004003D, 0x0000000D, 0x00000015, 0x00000004,
+    0x0004003D, 0x0000000A, 0x00000016, 0x00000003, 0x00070057, 0x00000008,
+    0x00000017, 0x00000015, 0x00000016, 0x00000008, 0x00000013, 0x0003003E,
+    0x00000002, 0x00000017, 0x000100FD, 0x00010038,
+};
+
 /// That sample multiplied by the colour at location 1.
 ///
 /// ```

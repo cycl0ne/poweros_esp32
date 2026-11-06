@@ -160,6 +160,25 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
             // corner may lie is -32768 and 16383.996, the largest the
             // encoding holds.
             said.viewport_bounds_range = .{ -32768, 16383 };
+            // A constant texel offset, which the cores apply and this
+            // device refuses: `spirv.look` turns the `ConstOffset` image
+            // operand away against this driver's own profile and
+            // `compile` answers `Error.Operands`, so a pipeline asking
+            // for one is refused where it is made. Vulkan asks -8 and 7
+            // of every implementation unconditionally, so a zero here is
+            // a shortfall of this device and not a choice - the shape
+            // `samplers` is in, and item 28's remaining half.
+            //
+            // **Read off the profile rather than written down.** Without
+            // something here this device would inherit the cores' range
+            // from `_instance.limits` and advertise an offset it refuses
+            // every use of, which is worse than advertising none; and a
+            // number written here by hand would have to be remembered on
+            // the day the QPUs learn the operand. The limit follows the
+            // capability instead, and cannot fall out of step with it.
+            const offsets = compile.profile.takesImageOperand(.const_offset);
+            said.min_texel_offset = if (offsets) _instance.limits.min_texel_offset else 0;
+            said.max_texel_offset = if (offsets) _instance.limits.max_texel_offset else 0;
             break :said said;
         },
     };
