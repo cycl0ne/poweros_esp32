@@ -985,6 +985,33 @@ fn settle(work: *Work) Error!void {
     // varyings, and not where it is first wanted: that would be past the
     // splice, and no hand-written program reads a uniform there.
     if (wantsOne(work)) _ = try one(work);
+    // And, where the program samples, every float of its own, for the
+    // same reason and not only the 1.
+    //
+    // A program that does not sample reads each where it is first
+    // wanted: the splice is then the last thing before the colour, so
+    // nothing can fall past it, and reading late is what lets eight
+    // varyings and four floats of its own fit ten registers. A sampling
+    // program's splice is inside its body - between the write to S and
+    // the two words coming back - so a float first wanted after the
+    // texel would be an `ldunifrf` in the last thread section. No
+    // hand-written program reads the uniform stream there: `flat_code`
+    // takes both of its uniforms before `last_section`, and all five
+    // sampling programs take their two `wrtmuc` before it. Rather than
+    // emit the one shape the file refuses thirty lines below, every
+    // uniform goes in front of the splice and `sound` holds the whole
+    // program to it. It costs registers held across the sample, and a
+    // program that then does not fit is refused as any other is.
+    if (work.sample_count != 0) {
+        for (work.steps[0..work.step_count], 0..) |each, at| {
+            if (each.tag != .constant) continue;
+            var part: u32 = 0;
+            while (part < each.kind.parts()) : (part += 1) {
+                try streamed(work, .{ .float = work.pool[each.at + part] });
+                try act(work, .{ .uniform = try take(work, work.slot_of[at][part]) });
+            }
+        }
+    }
     // Then the body, in its own order.
     for (work.steps[0..work.step_count], 0..) |each, at| {
         switch (each.tag) {
@@ -994,8 +1021,10 @@ fn settle(work: *Work) Error!void {
             // A float of its own, read where it is first wanted rather
             // than at the top: a uniform is the next one in the stream
             // wherever the instruction sits, and holding them to the end
-            // of the program would keep registers for nothing.
-            .constant => {
+            // of the program would keep registers for nothing. Where the
+            // program samples they are all loaded above instead, because
+            // the splice falls inside the body there.
+            .constant => if (work.sample_count == 0) {
                 var part: u32 = 0;
                 while (part < each.kind.parts()) : (part += 1) {
                     try streamed(work, .{ .float = work.pool[each.at + part] });
@@ -1751,6 +1780,11 @@ fn sound(work: *const Work, code: Code) !void {
             .varying => |to| try testing.expect(to >= qpu.rf_first and to < qpu.rf_last or to == qpu.rf_scaled),
             .uniform => |to| {
                 try testing.expect(to >= qpu.rf_first and to < qpu.rf_last);
+                // Every uniform is read before the splice, whether the
+                // program samples or not. No hand-written program reads
+                // the stream in the last thread section, so nothing here
+                // emits that shape.
+                try testing.expect(!waited);
                 try testing.expect(popped < stream.len);
                 try testing.expect(stream[popped] == .float);
                 popped += 1;
@@ -2044,12 +2078,14 @@ test "a texel added to is read out of its pair first, by a 1 loaded before the s
     const code = try compile(&work, Tinted.words);
     try testing.expectEqual(@as(u32, 2), code.varyings);
     try sound(&work, code);
-    // The 1 first, then the TMU's two, then its own floats: the order
-    // the instructions ask for them.
+    // The 1 first, then its own floats, then the TMU's two: every float
+    // is loaded in front of the splice where the program samples, so
+    // they are all asked for before the write to S that configures the
+    // TMU.
     try testing.expectEqualSlices(Word, &[_]Word{
-        .{ .float = 1 },   .texture,          .sampler,
-        .{ .float = 0.1 }, .{ .float = 0.2 }, .{ .float = 0.3 },
-        .{ .float = 0 },
+        .{ .float = 1 },   .{ .float = 0.1 }, .{ .float = 0.2 },
+        .{ .float = 0.3 }, .{ .float = 0 },   .texture,
+        .sampler,
     }, code.stream());
     var halves: u32 = 0;
     var adds: u32 = 0;
@@ -2067,9 +2103,11 @@ test "a texel added to is read out of its pair first, by a 1 loaded before the s
     // One read per float of the texel, and the four adds over them.
     try testing.expectEqual(@as(u32, 4), halves);
     try testing.expectEqual(@as(u32, 4), adds);
-    // The 1 is the only uniform read before the splice: the four floats
-    // of its own are wanted after it, which is where the adds are.
-    try testing.expectEqual(@as(u32, 1), before);
+    // Every uniform is read before the splice - the 1 and the four
+    // floats of its own - although the adds that want them are all past
+    // it. `sound` holds every program to that; this says the number for
+    // the one program the suite pins word for word.
+    try testing.expectEqual(@as(u32, 5), before);
 }
 
 test "what this back end has no program for is refused by name, and nothing is mis-compiled" {
@@ -2119,10 +2157,19 @@ fn built(comptime what: struct {
     /// `vec4(l) * colour`, and the product of part 0 may not be written
     /// over `l` while parts 1 to 3 still read it.
     splat_times: bool = false,
-    /// `vec4(texel.r, m.g, m.b, m.a)` with `m = colour + k`: the colour
-    /// out names one float of the texel's first word and not the other,
-    /// so the two that share that register have to die together.
+    /// `vec4(texel.r, texel.b, texel.g, l)`: the colour out names three
+    /// of the texel's four floats, so one of the two words has a float
+    /// nothing names - and the two that share a register have to die
+    /// together or the live one's register is handed out while it is
+    /// still in it. Three floats and a scalar varying, so it fits the
+    /// ten registers there are where a vec4 of its own would not.
     construct_texel: bool = false,
+    /// `vec4(texel.r, m.g, m.b, m.a)` with `m = colour + k`: the same,
+    /// with a vec4 varying and a vec4 of its own beside the texel. Eleven
+    /// floats are live at once, which is one more than there are
+    /// registers, so this is refused - and has to be refused for *that*,
+    /// not drawn wrongly.
+    crowded_texel: bool = false,
     /// How many combined image samplers to declare. One is sampled
     /// whatever the count: the device's limit is one *sample*, and a
     /// module may declare more and sample one of them.
@@ -2142,8 +2189,11 @@ fn built(comptime what: struct {
         const main_id = emit.id();
         const out_id = emit.id();
         const uv_id = emit.id();
-        const wants_colour = what.splat_times or what.construct_texel;
-        const colour_id = if (wants_colour) emit.id() else 0;
+        const wants_colour = what.splat_times or what.crowded_texel;
+        // `vec4(texel.r, l, l, l)` reads a coordinate at location 0 and
+        // one float at location 1.
+        const wants_scalar = what.construct_texel;
+        const colour_id = if (what.splat_times or what.crowded_texel or what.construct_texel) emit.id() else 0;
         var tex_ids: [most_samplers + 1]u32 = @splat(0);
         for (0..what.samplers) |k| tex_ids[k] = emit.id();
 
@@ -2157,6 +2207,7 @@ fn built(comptime what: struct {
         // Locations run from 0 upwards with no gap either way.
         emit.decorate(uv_id, .location, &.{if (wants_colour) 1 else 0});
         if (wants_colour) emit.decorate(colour_id, .location, &.{0});
+        if (wants_scalar) emit.decorate(colour_id, .location, &.{1});
         if (what.bare_flat) emit.decorate(uv_id, .flat, &.{});
         for (0..what.samplers) |k| {
             emit.decorate(tex_ids[k], .descriptor_set, &.{0});
@@ -2174,6 +2225,7 @@ fn built(comptime what: struct {
         const in_type = if (what.splat_times) float_type else vec2;
         emit.variable(emit.typePointer(.input, in_type), uv_id, .input);
         if (wants_colour) emit.variable(emit.typePointer(.input, vec4), colour_id, .input);
+        if (wants_scalar) emit.variable(emit.typePointer(.input, float_type), colour_id, .input);
         var sampled_type: u32 = 0;
         if (what.samplers != 0) {
             const image = emit.typeImage(float_type, .dim_2d, 0, 0, 0, 1, .unknown);
@@ -2229,6 +2281,20 @@ fn built(comptime what: struct {
             emit.at(.f_mul, &.{ vec4, made, splat, colour });
             emit.at(.store, &.{ out_id, made });
         } else if (what.construct_texel) {
+            const light = emit.id();
+            emit.at(.load, &.{ float_type, light, colour_id });
+            // Red and green are one word, blue and alpha the other. The
+            // colour names red, blue and green and leaves alpha out, so
+            // alpha is the float nothing reads.
+            var floats: [3]u32 = undefined;
+            for (&floats, [3]u32{ 0, 2, 1 }) |*each, which| {
+                each.* = emit.id();
+                emit.at(.composite_extract, &.{ float_type, each.*, taken, which });
+            }
+            const made = emit.id();
+            emit.at(.composite_construct, &.{ vec4, made, floats[0], floats[1], floats[2], light });
+            emit.at(.store, &.{ out_id, made });
+        } else if (what.crowded_texel) {
             const colour = emit.id();
             emit.at(.load, &.{ vec4, colour, colour_id });
             const mixed = emit.id();
@@ -2341,13 +2407,36 @@ test "a float named by all four parts of a construct is not written over by the 
 
 test "a construct that names one float of a texel's word keeps the other alive" {
     var work: Work = .{};
-    // `vec4(texel.r, m.g, m.b, m.a)`: the colour out names the texel's
-    // red and not its green, and the two share a register. Before `live`
-    // carried the colour's bump across the pair, green's slot died at
-    // the sample and the register was handed out to the constant.
+    // `vec4(texel.r, texel.b, texel.g, l)`: alpha is the one float
+    // nothing names, and it shares its register with blue. Before `live`
+    // carried the colour's bump across the pair, alpha's slot died at
+    // the sample, `release` gave that register back, and the first half
+    // read out for the colour was handed it - destroying blue before
+    // anything read it.
     const code = try compile(&work, comptime built(.{ .construct_texel = true, .samplers = 1 }));
     try sound(&work, code);
     try testing.expectEqual(@as(?Sampler, .{ .set = 0, .binding = 0 }), code.sampler);
+    // The rule, read off the plan rather than waited for as a symptom:
+    // whether the wrongly freed register is then handed out depends on
+    // which one is lowest and free, so a program can carry the mistake
+    // and draw right by luck. The two floats of a word have one last
+    // reader between them, and here the colour names three of the four,
+    // so both words are read to the end of the program.
+    var sampled: ?usize = null;
+    for (work.program(), 0..) |each, at| if (each.tag == .sample) {
+        sampled = at;
+    };
+    const texel = work.slot_of[sampled.?];
+    for ([2][2]u8{ .{ 0, 1 }, .{ 2, 3 } }) |pair| {
+        try testing.expectEqual(work.slot_last[texel[pair[0]]], work.slot_last[texel[pair[1]]]);
+        try testing.expectEqual(@as(u32, most_steps), work.slot_last[texel[pair[0]]]);
+    }
+    // The same with a vec4 varying and a vec4 of its own beside the
+    // texel: eleven floats live at once, one more than there are
+    // registers. Refused for that, and not drawn wrongly - which is the
+    // thing to check, because every uniform of a sampling program is
+    // held in front of the splice and that is what makes it eleven.
+    try testing.expectError(Error.Registers, compile(&work, comptime built(.{ .crowded_texel = true, .samplers = 1 })));
 }
 
 test "a constant may be a constituent of a construct, whatever read it first" {
