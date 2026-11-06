@@ -182,8 +182,8 @@ const timer = sdk.devices.timer;
 const MODULE_NAME = "rtg-fb";
 const DRIVER_NAME = "fb";
 const VERSION = 1;
-const REVISION = 24;
-const BUILD_DATE = "05.11.2026";
+const REVISION = 25;
+const BUILD_DATE = "06.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
@@ -1890,9 +1890,15 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
     if (scanout == .uefi) {
         // The engine reading the firmware's framebuffer, where it is one
         // this driver knows. What it says of itself goes in the boot's
-        // lines; nothing is written to it, and the picture is copied into
-        // the framebuffer as before either way.
+        // lines, and the picture is copied into the framebuffer as before
+        // either way: nothing of the picture is written.
         screen.dcn = dcn.find(sys, screen.scanout.uefi);
+        // The sound the link it lit can carry, which the firmware leaves
+        // switched off and which no other driver can reach. The machine's
+        // audio driver has its sinks already and asks the codec what is
+        // at the far end of a link when a sink is started, so switching
+        // this on here is all that is wanted of this side.
+        if (screen.dcn) |found| _ = dcn.soundUp(found);
     }
     if (isHdmi(scanout)) {
         // The modes the monitor takes, the part's size at 60 Hz without
