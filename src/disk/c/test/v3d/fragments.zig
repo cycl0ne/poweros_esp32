@@ -835,16 +835,45 @@ const Dimmed = ir.Fragment(struct {
     }
 });
 
+/// A texture sampled at the coordinate the vertices carry, drawn as it
+/// comes: `qpu.texture_code`'s shape, and the first generated program that
+/// writes the TMU and reads it back. The TMU hands over two words of two
+/// half-floats each, which is the form the tile buffer takes, so nothing
+/// here touches the texel.
+const Textured = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        b.color(b.sample(0, 0, b.input(0, .f32x2)));
+    }
+});
+
+/// That texel times the colour the vertices carry beside it, which is
+/// `qpu.texture_color_fragment` word for word: the multiply is where a
+/// half of a word can be read as a float, so each product reads one.
+const Modulated = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        b.color(b.mul(b.sample(0, 0, b.input(0, .f32x2)), b.input(1, .f32x4)));
+    }
+});
+
 /// A module compiled and made ready to draw with. The code is in
 /// `work.code` and lives until the next `compile`, which is long enough:
 /// `Scene.draw` copies it into the V3D's objects as it records the draw.
-fn compiled(work: *compile.Work, words: []const u32, stream: *[compile.most_uniforms]u32) ?struct { qpu.Fragment, []const u32 } {
+///
+/// `tmu` is what `sampling` answered for the draw, for a program that
+/// samples: the back end says where in the stream the TMU's two
+/// configuration parameters go, and only a draw with a texture bound
+/// knows what they are. A program that wants them where the caller has
+/// none is not drawn with a stream it cannot read - it is refused here,
+/// as a program the back end would not compile is.
+fn compiled(work: *compile.Work, words: []const u32, stream: *[compile.most_uniforms]u32, tmu: ?[2]u32) ?struct { qpu.Fragment, []const u32 } {
     const code = compile.compile(work, words) catch return null;
     for (code.stream(), 0..) |word, k| stream[k] = switch (word) {
         .float => |each| @bitCast(each),
-        // Nothing here samples yet: a program that does wants the TMU's
-        // configuration, which only a draw with a texture bound can say.
-        .texture, .sampler => return null,
+        // The texture's state, as the first `wrtmuc` takes it, and the
+        // sampler's as the second does: by the word's tag and not by
+        // where it sits, because the order is the back end's to pick.
+        .texture => (tmu orelse return null)[0],
+        .sampler => (tmu orelse return null)[1],
     };
     return .{
         .{ .code = code.words, .varyings = code.varyings, .uniforms = code.uniform_count },
@@ -852,12 +881,21 @@ fn compiled(work: *compile.Work, words: []const u32, stream: *[compile.most_unif
     };
 }
 
-/// Three fragment programs compiled from their SPIR-V and drawn with, each
-/// picture checked against the arithmetic worked out here. This is the
-/// first thing the QPUs run that nobody wrote by hand, and it is a command
-/// of its own rather than a pipeline on purpose: a program that hangs the
-/// renderer here costs a reboot, and one that hangs it inside the library
-/// costs the display.
+/// Where two programs of the same length first differ, or null where they
+/// are the same program word for word.
+fn differingAt(made: []const u64, want: []const u64) ?u32 {
+    for (made, want, 0..) |one, other, which| if (one != other) return @intCast(which);
+    return null;
+}
+
+/// Five fragment programs compiled from their SPIR-V and drawn with, each
+/// picture checked against the arithmetic worked out here. The last two
+/// sample a texture, and what they read the TMU with is the stream the
+/// back end laid out with the draw's two parameters written into it. This
+/// is the first thing the QPUs run that nobody wrote by hand, and it is a
+/// command of its own rather than a pipeline on purpose: a program that
+/// hangs the renderer here costs a reboot, and one that hangs it inside
+/// the library costs the display.
 pub fn generatedTest(scene: *Scene, sys: *ExecBase) i32 {
     const memory = sys.AllocVec(@sizeOf(compile.Work), exec.MEMF_CLEAR) orelse {
         _ = Printf(scene.dl, "No memory for the compiler\n", .{});
@@ -871,7 +909,7 @@ pub fn generatedTest(scene: *Scene, sys: *ExecBase) i32 {
     // The interpolated colour, over the same triangle `smoothTest` draws:
     // three colours mixed as w has them.
     {
-        const fragment, const uniforms = compiled(work, Interpolated.words, &stream) orelse {
+        const fragment, const uniforms = compiled(work, Interpolated.words, &stream, null) orelse {
             _ = Printf(scene.dl, "generated smooth: the back end would not compile it\n", .{});
             return dos.RETURN_FAIL;
         };
@@ -905,7 +943,7 @@ pub fn generatedTest(scene: *Scene, sys: *ExecBase) i32 {
 
     // A colour of its own: four uniforms read, packed and written out.
     {
-        const fragment, const uniforms = compiled(work, OwnColour.words, &stream) orelse {
+        const fragment, const uniforms = compiled(work, OwnColour.words, &stream, null) orelse {
             _ = Printf(scene.dl, "generated flat: the back end would not compile it\n", .{});
             return dos.RETURN_FAIL;
         };
@@ -942,7 +980,7 @@ pub fn generatedTest(scene: *Scene, sys: *ExecBase) i32 {
     // A vector times a scalar: five varyings, and the light each corner
     // carries dimming the colour it carries.
     {
-        const fragment, const uniforms = compiled(work, Dimmed.words, &stream) orelse {
+        const fragment, const uniforms = compiled(work, Dimmed.words, &stream, null) orelse {
             _ = Printf(scene.dl, "generated scaled: the back end would not compile it\n", .{});
             return dos.RETURN_FAIL;
         };
@@ -973,6 +1011,107 @@ pub fn generatedTest(scene: *Scene, sys: *ExecBase) i32 {
             }
         };
         worst = @max(worst, tally.report(scene.dl, "generated scaled", scene.took_us));
+    }
+
+    // A texture drawn one texel to a pixel, as `textureTest` draws it with
+    // the program written by hand: every texel says where it was put, so
+    // the picture is the TMU's answer against where it went in. Nothing
+    // multiplies the texel, so it goes to the tile buffer as the two words
+    // it came back as, and the pixels are exact.
+    {
+        const side: u32 = 256;
+        var picture = makePicture(scene, side, side, 1) orelse return dos.RETURN_FAIL;
+        defer scene.space.free(&picture.block);
+        for (0..side) |y| for (0..side) |x| picture.put(0, @intCast(x), @intCast(y), placeTexel(0, @intCast(x), @intCast(y)));
+        scene.space.toGpu(&picture.block);
+        var corners: [6]Vertex = undefined;
+        rectangle(&corners, 0, 0, @floatFromInt(side), @floatFromInt(side), 0.5, Across{});
+        // The frame is begun first: `sampling` places the texture's state
+        // and the sampler's in it, and hands back the two words the stream
+        // wants, which is what `compiled` has been given them for.
+        scene.begin(.{});
+        const tmu = sampling(scene, &picture, .nearest, .repeat);
+        const fragment, const uniforms = compiled(work, Textured.words, &stream, tmu) orelse {
+            _ = Printf(scene.dl, "generated textured: the back end would not compile it\n", .{});
+            return dos.RETURN_FAIL;
+        };
+        // The same instructions as the hand-written program, in the same
+        // places: only the two registers the texel comes back in differ,
+        // which is rf6 and rf7 here because that is what the varyings left
+        // free. The host test holds the words themselves to it.
+        if (fragment.code.len != qpu.texture_fragment.code.len) {
+            _ = Printf(scene.dl, "generated textured: %ld instructions, not the %ld of the one written by hand\n", .{ @as(u64, fragment.code.len), @as(u64, qpu.texture_fragment.code.len) });
+            return dos.RETURN_FAIL;
+        }
+        // Two varyings for the coordinate, and the TMU's two words and
+        // nothing else in the stream.
+        if (fragment.varyings != 2 or uniforms.len != 2) {
+            _ = Printf(scene.dl, "generated textured: %ld varyings and %ld uniforms, not two and two\n", .{ @as(u64, fragment.varyings), @as(u64, uniforms.len) });
+            return dos.RETURN_FAIL;
+        }
+        scene.draw(.{ .fragment = fragment, .uniforms = uniforms, .vertices = &corners });
+        if (!scene.finish()) return dos.RETURN_FAIL;
+        var tally = Tally{};
+        for (0..side) |row| for (0..side) |column| {
+            const x: u32 = @intCast(column);
+            const y: u32 = @intCast(row);
+            tally.check(x, y, scene.pixel(x, y), placeTexel(0, x, y), 0);
+        };
+        worst = @max(worst, tally.report(scene.dl, "generated textured", scene.took_us));
+    }
+
+    // That texel times the colour the vertices carry, over the geometry
+    // `modulateTest` draws: the same texture, the same colour in the same
+    // varyings, and the same sum here, because the code is the same code.
+    {
+        const side: u32 = 64;
+        var picture = makePicture(scene, side, side, 1) orelse return dos.RETURN_FAIL;
+        defer scene.space.free(&picture.block);
+        for (0..side) |y| for (0..side) |x| picture.put(0, @intCast(x), @intCast(y), 0xFF80_0000 | @as(u32, @intCast(x * 4)) | @as(u32, @intCast(y * 4)) << 8);
+        scene.space.toGpu(&picture.block);
+        // What `modulateTest` carries: the coordinate, then the colour.
+        const Carry = struct {
+            fn of(_: @This(), x: f32, y: f32) [6]f32 {
+                return .{ x, y, 0.5, 1, 0.25, 0.75 };
+            }
+        };
+        var corners: [6]Vertex = undefined;
+        rectangle(&corners, 0, 0, @floatFromInt(side), @floatFromInt(side), 0.5, Carry{});
+        scene.begin(.{});
+        const tmu = sampling(scene, &picture, .nearest, .repeat);
+        const fragment, const uniforms = compiled(work, Modulated.words, &stream, tmu) orelse {
+            _ = Printf(scene.dl, "generated modulated: the back end would not compile it\n", .{});
+            return dos.RETURN_FAIL;
+        };
+        // This one is the hand-written program word for word, so it is
+        // held to it before it is run: the host test says the same, and a
+        // board that disagrees with the host is what this is here to say.
+        // A wrong instruction hangs the renderer, so it is said before the
+        // draw and not after it.
+        if (fragment.code.len != qpu.texture_color_fragment.code.len) {
+            _ = Printf(scene.dl, "generated modulated: %ld instructions, not the %ld of the one written by hand\n", .{ @as(u64, fragment.code.len), @as(u64, qpu.texture_color_fragment.code.len) });
+            return dos.RETURN_FAIL;
+        }
+        if (differingAt(fragment.code, qpu.texture_color_fragment.code)) |which| {
+            _ = Printf(scene.dl, "generated modulated: instruction %ld is %016lx, not the %016lx of the one written by hand\n", .{ @as(u64, which), fragment.code[which], qpu.texture_color_fragment.code[which] });
+            return dos.RETURN_FAIL;
+        }
+        if (fragment.varyings != 6 or uniforms.len != 2) {
+            _ = Printf(scene.dl, "generated modulated: %ld varyings and %ld uniforms, not six and two\n", .{ @as(u64, fragment.varyings), @as(u64, uniforms.len) });
+            return dos.RETURN_FAIL;
+        }
+        scene.draw(.{ .fragment = fragment, .uniforms = uniforms, .vertices = &corners });
+        if (!scene.finish()) return dos.RETURN_FAIL;
+        var tally = Tally{};
+        for (0..side) |row| for (0..side) |column| {
+            const x: u32 = @intCast(column);
+            const y: u32 = @intCast(row);
+            // The texel's red times 0.5 and its green times 1, its blue
+            // 0x80 times 0.25, and the alpha 1 times 0.75.
+            const want = rgba(@as(f32, @floatFromInt(x * 4)) / 255 * 0.5, @as(f32, @floatFromInt(y * 4)) / 255, 128.0 / 255.0 * 0.25, 0.75);
+            tally.check(x, y, scene.pixel(x, y), want, 2);
+        };
+        worst = @max(worst, tally.report(scene.dl, "generated modulated", scene.took_us));
     }
 
     return worst;
