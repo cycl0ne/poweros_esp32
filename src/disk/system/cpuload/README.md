@@ -17,12 +17,15 @@ CPULoad INTERVAL/K/N,HISTORY/K/N
 
 ## What the window shows
 
-- A bar for each core with how busy it was over the last interval,
-  running tasks and serving interrupts together, and a line under it
-  saying how much of that was each.
-- A chart with two lines per core: how busy it was, and, lighter, how
-  much of that was interrupts. So a load that a program makes and one
-  that the hardware makes look different at once.
+- A bar for each core the machine runs with how busy it was over the last
+  interval, running tasks and serving interrupts together, and a line
+  under it saying how much of that was each. They stand in a grid kept
+  roughly square, so sixteen cores are four rows of four.
+- A chart with a line per core: how busy it was, and - up to eight cores -
+  a second, lighter line for how much of that was interrupts. So a load
+  that a program makes and one that the hardware makes look different at
+  once. Past eight cores each keeps the one line, which is as many as can
+  be told apart on one chart.
 
 The figures are the system's own count of each core's time in tasks, idle
 and in interrupts. They are exact rather than sampled: a task that runs

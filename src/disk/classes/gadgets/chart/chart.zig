@@ -35,7 +35,8 @@ const Pen = graphics.Pen;
 pub const Library = gadgets.ClassLibrary(.{
     .name = cr.CHART_CLASS,
     .version = 1,
-    .date = "17.10.2026",
+    .revision = 1,
+    .date = "06.11.2026",
     .super = classusr.GADGETCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -68,8 +69,11 @@ pub const Data = extern struct {
     values: ?[*]i32 = null,
 };
 
-/// The colours of the series after the first.
-const series_colours = [cr.CHART_MAX_SERIES]Pen{ 0, 0xFFC8_3C3C, 0xFF3C_A050, 0xFFE0_9020, 0xFF8C_50C8, 0xFF30_A0A8, 0xFFA0_7040, 0xFFD0_60A0 };
+/// The colours of the series after the first, which a chart of more
+/// series than there are colours goes round again: a caller that wants
+/// every one of many series told apart gives each its own
+/// (`CHART_ColourRGB`), as `CPULoad` does.
+const series_colours = [_]Pen{ 0, 0xFFC8_3C3C, 0xFF3C_A050, 0xFFE0_9020, 0xFF8C_50C8, 0xFF30_A0A8, 0xFFA0_7040, 0xFFD0_60A0 };
 const nominal = gc.Box{ .width = 200, .height = 100 };
 
 /// The `i`th value of a series, oldest first.
@@ -213,7 +217,7 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
         const s: u32 = @intCast(si);
         const ring = own.rings[s];
         if (ring.count == 0) continue;
-        const colour = if (ring.coloured != 0) ring.colour else if (s == 0) first else series_colours[s];
+        const colour = if (ring.coloured != 0) ring.colour else if (s == 0) first else series_colours[s % series_colours.len];
         support.setPen(gb, rp, colour);
         // The newest value at the right.
         const skip: i32 = @intCast(own.capacity - ring.count);

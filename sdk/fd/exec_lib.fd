@@ -295,4 +295,8 @@ void PostWork(*exec.WorkJob job)
 /// The lock `LockCoreTasks` took on core `core` given back (SINCE 1.31),
 /// and a switch that came due meanwhile taken.
 void UnlockCoreTasks(u32 core)
+/// How many cores the machine runs on (SINCE 1.33): their numbers are 0 to
+/// one less than this, which is what ReadCoreTimes, CoreTask and
+/// LockCoreTasks answer for. Never 0, and 1 on a machine with one core.
+u32 CoreCount()
 ##end

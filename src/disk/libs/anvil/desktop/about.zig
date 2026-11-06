@@ -19,9 +19,6 @@ const drawer_path = @import("../drawer/path.zig");
 const _desktop = @import("_desktop.zig");
 const Desktop = _desktop.Desktop;
 
-/// The most cores counted.
-const max_cores = 8;
-
 /// The requester's text as it is put together: NUL after it, since the
 /// buffer starts cleared and is never filled to its end.
 const Text = struct {
@@ -97,16 +94,17 @@ fn board(d: *Desktop, text: *Text) void {
 }
 
 /// "Processor: ESP32-S3, 2 Xtensa LX7 cores at 240 MHz": the chip and its
-/// core as platform.resource names them, the cores exec keeps times for,
-/// and the clock as measured.
+/// core as platform.resource names them, how many cores the machine runs
+/// on, and the clock as measured.
 fn processor(d: *Desktop, text: *Text) void {
     const resource = d.sys.OpenResource(platform.PLATFORMNAME) orelse return;
     const pr: *PlatformBase = @ptrCast(@alignCast(resource));
     var info: platform.PlatformInfo = .{};
     _ = pr.GetPlatformInfo(&info, @sizeOf(platform.PlatformInfo));
-    var cores: u32 = 0;
-    var times: exec.CoreTimes = .{};
-    while (cores < max_cores and d.sys.ReadCoreTimes(cores, &times)) cores += 1;
+    // What the machine says it runs on, not a number counted up to a
+    // ceiling of this file's own: a machine with sixteen cores has
+    // sixteen.
+    const cores = d.sys.CoreCount();
     text.add("\nProcessor: ");
     text.addString(pr.PlatformName());
     if (info.core) |core| {

@@ -9,10 +9,16 @@
 //!
 //! Each core has a bar with how busy it was over the last interval - in
 //! tasks and in interrupts together - and a line under it saying how much
-//! of that was each, two cores to a row. The chart under them has two
-//! lines per core, for as many cores as it has room for (four): how
-//! busy it was, and, lighter, how much of that was interrupts. A load a
-//! task makes and one the hardware makes look different at once.
+//! of that was each. Every core the machine runs gets one, in a grid kept
+//! roughly square, so a machine with sixteen cores is four rows of four
+//! rather than eight rows of two.
+//!
+//! The chart under them holds a line per core: how busy it was, and -
+//! while there are eight cores or fewer - a second, lighter line for how
+//! much of that was interrupts, so a load a task makes and one the
+//! hardware makes look different at once. Past eight cores the second
+//! line goes and each core keeps one, which is as many as can be told
+//! apart on one chart.
 //!
 //! The figures are exec's (`ReadCoreTimes`): each core's time in tasks,
 //! idle and in interrupts, read at every interval; what changed in between
@@ -44,8 +50,8 @@ const tx = sdk.gadgets.text;
 const cr = sdk.gadgets.chart;
 
 pub const COMMAND_NAME = "CPULoad";
-const VERSION = "1.2";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (17.10.2026)\r\n";
+const VERSION = "1.3";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (06.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while one of its windows is active.
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
@@ -57,22 +63,66 @@ const arg_history = 1;
 const MSG_NOLIBRARY = "%s: can't open %s\n";
 const MSG_NOMEMORY = "%s: no memory for the gadgets\n";
 const MSG_NOWINDOW = "%s: no window\n";
+const MSG_MORECORES = "%s: this machine runs %u cores; the first %u are shown\n";
 
-/// The chart holds two lines a core, so this many cores fit on it.
-const max_cores = cr.CHART_MAX_SERIES / 2;
+/// The most cores shown: a line each on the chart, which holds that many
+/// series. A machine with more says so and shows the first of them.
+const max_cores = cr.CHART_MAX_SERIES;
 
-/// How many cores go side by side, in the grid of their bars.
-const per_row = 2;
+/// Up to this many cores the chart draws each core's interrupts as a
+/// second line beside its load; past it, one line a core.
+const both_lines_to = 8;
 
-/// A core's line and, lighter, its interrupts' line: blue, green, orange,
-/// purple.
-const colours = [max_cores][2]u32{
+/// A core's line and, lighter, its interrupts' line. Sixteen of them, so
+/// every core of a machine with sixteen has a colour of its own; a
+/// machine with more goes round the list again, and those cores are told
+/// apart by where they are in the grid rather than by colour.
+const colours = [_][2]u32{
     .{ 0xFF3070C0, 0xFF9DB8E0 },
     .{ 0xFF2E9E4F, 0xFF9FD3AE },
     .{ 0xFFD07A1E, 0xFFEBC08F },
     .{ 0xFF8A4FC0, 0xFFC9ADE3 },
+    .{ 0xFF1F9E9E, 0xFF9ED6D6 },
+    .{ 0xFFC83C3C, 0xFFE89D9D },
+    .{ 0xFF8A9E1F, 0xFFCDD69E },
+    .{ 0xFFC84F9E, 0xFFE3ADD1 },
+    .{ 0xFF3CA0D0, 0xFFA8D5EA },
+    .{ 0xFF6EC03C, 0xFFBCE0A8 },
+    .{ 0xFFC0A03C, 0xFFE0D3A8 },
+    .{ 0xFF6A4FC8, 0xFFB6ADE6 },
+    .{ 0xFF2EB0A0, 0xFFA0DDD6 },
+    .{ 0xFFD0607A, 0xFFEAB0BD },
+    .{ 0xFF4F8A5F, 0xFFADC9B4 },
+    .{ 0xFF9E4F6E, 0xFFD6ADBB },
 };
-const colour_names = [max_cores][*:0]const u8{ "blue", "green", "orange", "purple" };
+const colour_names = [colours.len][*:0]const u8{
+    "blue", "green", "orange", "purple",
+    "teal", "red",   "olive",  "pink",
+    "sky",  "lime",  "amber",  "violet",
+    "cyan", "rose",  "moss",   "plum",
+};
+
+/// How many cores go side by side in the grid of their bars: as many as
+/// keeps it roughly square, so the window grows in both directions
+/// rather than only downwards.
+fn perRow(count: usize) usize {
+    var columns: usize = 2;
+    while (columns * columns < count and columns < 6) columns += 1;
+    return @min(columns, count);
+}
+
+/// How wide a core's bar is, which narrows as the grid widens so that a
+/// machine with many cores still has a window that fits on a screen.
+fn gaugeWidth(columns: usize) usize {
+    if (columns <= 2) return 220;
+    if (columns <= 4) return 170;
+    return 130;
+}
+
+/// How many lines the chart holds for each core.
+fn linesPer(count: usize) usize {
+    return if (count <= both_lines_to) 2 else 1;
+}
 
 fn pair(t: sdk.utility.Tag, data: usize) TagItem {
     return .{ .tag = t, .data = data };
@@ -122,36 +172,73 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const ib: *IntuitionBase = @ptrCast(libraries[0].?);
     const motion_base: *MotionBase = @ptrCast(libraries[1].?);
 
-    // The cores there are: asked from 0 up until one does not answer.
-    var cores: [max_cores]Core = @splat(.{});
-    var count: usize = 0;
-    while (count < max_cores and sys.ReadCoreTimes(@intCast(count), &cores[count].last)) count += 1;
+    // The cores the machine runs, as the machine says itself, and room
+    // for that many: how many cores there are is not something this
+    // program should hold a number for.
+    const told: usize = sys.CoreCount();
+    const count: usize = @min(told, max_cores);
+    if (told > count) {
+        _ = Printf(dl, MSG_MORECORES, .{ COMMAND_NAME, @as(u32, @intCast(told)), @as(u32, @intCast(count)) });
+    }
+    const room = sys.AllocVec(count * @sizeOf(Core), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse {
+        _ = Printf(dl, MSG_NOMEMORY, .{COMMAND_NAME});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.FreeVec(room);
+    const held: [*]Core = @ptrCast(@alignCast(room));
+    const cores = held[0..count];
+    const columns = perRow(count);
+    const width = gaugeWidth(columns);
+    const lines = linesPer(count);
 
     // A bar and a line of figures for each.
     var made_all = true;
-    for (cores[0..count], 0..) |*core, index| {
-        const title_stream = exec.fmtStream(.{ @as(u32, @intCast(index)), colour_names[index] });
-        comptime exec.checkFormat("Core %u, %s", @TypeOf(.{ @as(u32, 0), colour_names[0] }));
-        _ = sys.RawDoFmt("Core %u, %s", &title_stream, null, &core.title);
+    for (cores, 0..) |*core, index| {
+        core.* = .{};
+        _ = sys.ReadCoreTimes(@intCast(index), &core.last);
+        // Its colour is in its frame's title, which is how a bar is told
+        // from the line it has on the chart. A core past the colours
+        // there are has only its number.
+        if (index < colour_names.len) {
+            const title_stream = exec.fmtStream(.{ @as(u32, @intCast(index)), colour_names[index] });
+            comptime exec.checkFormat("Core %u, %s", @TypeOf(.{ @as(u32, 0), colour_names[0] }));
+            _ = sys.RawDoFmt("Core %u, %s", &title_stream, null, &core.title);
+        } else {
+            const title_stream = exec.fmtStream(.{@as(u32, @intCast(index))});
+            comptime exec.checkFormat("Core %u", @TypeOf(.{@as(u32, 0)}));
+            _ = sys.RawDoFmt("Core %u", &title_stream, null, &core.title);
+        }
         const none = "Tasks -, interrupts -";
         @memcpy(core.text[0..none.len], none);
         core.gauge = ib.NewObjectTagList(null, fg.GAUGE_CLASS, &[_]TagItem{
             pair(fg.GAUGE_Format, @intFromPtr("%ld%%")),
-            pair(gc.GA_Width, 220),
+            pair(gc.GA_Width, width),
             .{},
         });
         core.figures = ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
             pair(tx.TEXT_Text, @intFromPtr(&core.text)),
-            pair(gc.GA_Width, 220),
+            pair(gc.GA_Width, width),
             .{},
         });
         if (core.gauge == null or core.figures == null) made_all = false;
     }
 
-    // The chart: per core its load and, lighter, its interrupts.
-    var chart_tags: [8 + 4 * max_cores]TagItem = undefined;
+    // The chart: a line per core, with its interrupts beside it while
+    // there are few enough cores for two lines each to be told apart.
+    // Its tags and the ones a look adds with are one block, both being
+    // as long as the machine has cores.
+    const chart_room = 8 + 2 * lines * count;
+    const add_room = 2 + 2 * lines * count;
+    const tags_memory = sys.AllocVec((chart_room + add_room) * @sizeOf(TagItem), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse {
+        _ = Printf(dl, MSG_NOMEMORY, .{COMMAND_NAME});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.FreeVec(tags_memory);
+    const tags: [*]TagItem = @ptrCast(@alignCast(tags_memory));
+    const chart_tags = tags[0..chart_room];
+    const add_tags = tags[chart_room..][0..add_room];
     var n: usize = 0;
-    chart_tags[n] = pair(cr.CHART_Series, 2 * count);
+    chart_tags[n] = pair(cr.CHART_Series, lines * count);
     n += 1;
     chart_tags[n] = pair(cr.CHART_Capacity, history);
     n += 1;
@@ -162,19 +249,19 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     chart_tags[n] = pair(cr.CHART_Lines, 4);
     n += 1;
     for (0..count) |index| {
-        for (0..2) |line| {
-            chart_tags[n] = pair(cr.CHART_Current, 2 * index + line);
-            chart_tags[n + 1] = pair(cr.CHART_ColourRGB, colours[index][line]);
+        for (0..lines) |line| {
+            chart_tags[n] = pair(cr.CHART_Current, lines * index + line);
+            chart_tags[n + 1] = pair(cr.CHART_ColourRGB, colours[index % colours.len][line]);
             n += 2;
         }
     }
-    chart_tags[n] = pair(gc.GA_Width, 460);
+    chart_tags[n] = pair(gc.GA_Width, @max(460, columns * width));
     chart_tags[n + 1] = pair(gc.GA_Height, 160);
     chart_tags[n + 2] = .{};
-    const plot = ib.NewObjectTagList(null, cr.CHART_CLASS, &chart_tags);
+    const plot = ib.NewObjectTagList(null, cr.CHART_CLASS, chart_tags.ptr);
     if (plot == null) made_all = false;
     if (!made_all) {
-        for (cores[0..count]) |core| {
+        for (cores) |core| {
             ib.DisposeObject(core.gauge);
             ib.DisposeObject(core.figures);
         }
@@ -183,9 +270,9 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         return dos.RETURN_FAIL;
     }
 
-    // The cores side by side, `per_row` to a row, the chart under them.
+    // The cores side by side, `columns` to a row, the chart under them.
     var groups: [max_cores]?*Object = @splat(null);
-    for (cores[0..count], 0..) |*core, index| {
+    for (cores, 0..) |*core, index| {
         groups[index] = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
             pair(lg.LAYOUTA_FrameTitle, @intFromPtr(&core.title)),
             pair(lg.LAYOUTA_Margin, 6),
@@ -201,7 +288,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     var r: usize = 0;
     grid_list[r] = pair(lg.LAYOUTA_Orientation, lg.LORIENT_GRID);
     r += 1;
-    grid_list[r] = pair(lg.LAYOUTA_Columns, @min(count, per_row));
+    grid_list[r] = pair(lg.LAYOUTA_Columns, columns);
     r += 1;
     grid_list[r] = pair(lg.LAYOUTA_Spacing, 6);
     r += 1;
@@ -214,7 +301,9 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     var chart_title: [48:0]u8 = @splat(0);
     const chart_stream = exec.fmtStream(.{history * interval});
     comptime exec.checkFormat("Busy and interrupts, last %u s", @TypeOf(.{@as(u32, 0)}));
-    _ = sys.RawDoFmt("Busy and interrupts, last %u s", &chart_stream, null, &chart_title);
+    comptime exec.checkFormat("Busy, last %u s", @TypeOf(.{@as(u32, 0)}));
+    const chart_form: [*:0]const u8 = if (lines == 2) "Busy and interrupts, last %u s" else "Busy, last %u s";
+    _ = sys.RawDoFmt(chart_form, &chart_stream, null, &chart_title);
     const layout = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
         pair(lg.LAYOUTA_Margin, 6),
         pair(lg.LAYOUTA_Spacing, 6),
@@ -276,7 +365,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     while (true) {
         const got = ib.WaitIMsg(window, tick_mask | exec.SIGBREAKF_CTRL_C);
         if (got & exec.SIGBREAKF_CTRL_C != 0) return dos.RETURN_OK;
-        if (got & tick_mask != 0) look(sys, ib, window, plot.?, cores[0..count]);
+        if (got & tick_mask != 0) look(sys, ib, window, plot.?, cores, lines, add_tags);
         while (true) {
             const word = ib.SendMessage(object, @ptrCast(&handle));
             if (word == wc.WMHI_LASTMSG) break;
@@ -287,8 +376,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 
 /// One look: each core's times read again, the interval's share worked
 /// out, and the bars, the figures and the chart brought up to it.
-fn look(sys: *ExecBase, ib: *IntuitionBase, window: *intuition.Window, plot: *Object, cores: []Core) void {
-    var add: [2 + 4 * max_cores]TagItem = undefined;
+fn look(sys: *ExecBase, ib: *IntuitionBase, window: *intuition.Window, plot: *Object, cores: []Core, lines: usize, add: []TagItem) void {
     var n: usize = 0;
     for (cores, 0..) |*core, index| {
         var now: exec.CoreTimes = .{};
@@ -305,12 +393,15 @@ fn look(sys: *ExecBase, ib: *IntuitionBase, window: *intuition.Window, plot: *Ob
         _ = sys.RawDoFmt("Tasks %u%%, interrupts %u%%", &stream, null, &core.text);
         _ = ib.SetGadgetAttrsTagList(core.gauge.?, window, &[_]TagItem{ pair(fg.GAUGE_Level, busy), .{} });
         _ = ib.SetGadgetAttrsTagList(core.figures.?, window, &[_]TagItem{ pair(tx.TEXT_Text, @intFromPtr(&core.text)), .{} });
-        add[n] = pair(cr.CHART_Current, 2 * index);
+        add[n] = pair(cr.CHART_Current, lines * index);
         add[n + 1] = pair(cr.CHART_Add, busy);
-        add[n + 2] = pair(cr.CHART_Current, 2 * index + 1);
-        add[n + 3] = pair(cr.CHART_Add, in_interrupts);
-        n += 4;
+        n += 2;
+        if (lines == 2) {
+            add[n] = pair(cr.CHART_Current, lines * index + 1);
+            add[n + 1] = pair(cr.CHART_Add, in_interrupts);
+            n += 2;
+        }
     }
     add[n] = .{};
-    _ = ib.SetGadgetAttrsTagList(plot, window, &add);
+    _ = ib.SetGadgetAttrsTagList(plot, window, add.ptr);
 }

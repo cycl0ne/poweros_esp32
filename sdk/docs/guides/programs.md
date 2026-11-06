@@ -997,7 +997,10 @@ running task is on neither list. That is how `ShowInfo TASKS` lists every
 task once, with the core it is on and the core it is pinned to. A task
 that moves between cores while such a walk is made may be seen twice or
 not at all: one core's lists are held at a time, so a listing of the
-machine is a sweep and not one moment.
+machine is a sweep and not one moment. `CoreCount()` answers how many
+cores the machine runs - the numbers 0 to one less than it are the ones
+those calls take - so a program keeps room per core by what the machine
+says rather than by a number of its own.
 `ReadCoreTimes(core, &times)` answers how a core has spent its time since
 it started - in tasks, idle, in interrupts, in cycles of its clock, counted
 at every exception rather than sampled (the VisionFive 2's U74s stop

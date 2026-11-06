@@ -156,6 +156,7 @@ pub const LVO = struct {
     pub const PostWork = libraries.lvo(144);
     pub const LockCoreTasks = libraries.lvo(145);
     pub const UnlockCoreTasks = libraries.lvo(146);
+    pub const CoreCount = libraries.lvo(147);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -302,6 +303,7 @@ pub const Fn = struct {
     pub const PostWork = *const fn (*ExecBase, *exec.WorkJob) callconv(.c) void;
     pub const LockCoreTasks = *const fn (*ExecBase, u32) callconv(.c) ?*exec.CoreTasks;
     pub const UnlockCoreTasks = *const fn (*ExecBase, u32) callconv(.c) void;
+    pub const CoreCount = *const fn (*ExecBase) callconv(.c) u32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -997,5 +999,12 @@ pub const ExecBase = opaque {
     /// and a switch that came due meanwhile taken.
     pub fn UnlockCoreTasks(self: *ExecBase, core: u32) void {
         return libraries.call(self, LVO.UnlockCoreTasks, Fn.UnlockCoreTasks, .{core});
+    }
+
+    /// How many cores the machine runs on (SINCE 1.33): their numbers are 0 to
+    /// one less than this, which is what ReadCoreTimes, CoreTask and
+    /// LockCoreTasks answer for. Never 0, and 1 on a machine with one core.
+    pub fn CoreCount(self: *ExecBase) u32 {
+        return libraries.call(self, LVO.CoreCount, Fn.CoreCount, .{});
     }
 };

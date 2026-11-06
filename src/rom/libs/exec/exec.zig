@@ -167,6 +167,7 @@ pub const ResetWaitable = @import("waitable/resetwaitable.zig").ResetWaitable;
 pub const WaitForAny = @import("waitable/waitforany.zig").WaitForAny;
 pub const ShareWork = @import("task/sharework.zig").ShareWork;
 pub const PostWork = @import("task/postwork.zig").PostWork;
+pub const CoreCount = @import("task/corecount.zig").CoreCount;
 pub const LockCoreTasks = @import("task/lockcoretasks.zig").LockCoreTasks;
 pub const UnlockCoreTasks = @import("task/unlockcoretasks.zig").UnlockCoreTasks;
 pub const CreateTask = @import("task/createtask.zig").CreateTask;
