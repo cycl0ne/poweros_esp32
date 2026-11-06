@@ -509,13 +509,14 @@ build for anyone without SPIRV-Tools, glslc or a Vulkan driver.
 | 9 | the sampler family, the host half: `compile.zig` compiles a module that samples, rung 5 against the two hand-written programs it answers, rung 8 on this PC's two drivers | - |
 | 10 | the sampler family, the draw half: the TMU's two configuration words out of the descriptor set the module names, and the magenta where there is nothing there | 1.77 |
 | 11 | the family held to the board and to eight reviews: rungs 4, 6 and 7 over a generated program that samples, and the six defects they found | 1.78 |
-| 12 | the rest, a form a family at a time - discard next, since `OpKill` is what sends most of the draws that are left to the cores | - |
+| 12 | the two devices made to agree: a generated shader samples as the sampler the draw bound says on whichever one draws it, and `CmdBindPipeline` turns down a pipeline from another device | 1.79 |
+| 13 | the rest, a form a family at a time - discard next, since `OpKill` is what sends most of the draws that are left to the cores | - |
 
 Step 6 changes nothing a program can see - `compile.zig` is reached from
 its own host tests and from nowhere else yet - so it is not a revision.
 The driver begins to compile in step 7, and that is.
 
-Steps 1 to 11 are done: rungs 1 to 5 in `./zig build test`, rungs 6 and 7
+Steps 1 to 12 are done: rungs 1 to 5 in `./zig build test`, rungs 6 and 7
 on the CM5 and rung 8 on this PC's two drivers, as the ladder above
 records.
 
@@ -545,7 +546,15 @@ to four, which is now one rule and a checked one. What `sound` reads off
 every compiled program grew by two invariants as a result, so the next
 two of that kind are caught without a test having to name them.
 
-What is left is step 12, the long one: every fragment form the fixed
+Step 12 came out of the same reviews but is not the back end's: the two
+devices disagreed about a generated shader's filtering. Vulkan puts it
+in the sampler object and SPIR-V has nowhere to carry what a graph
+asked, so the V3D read the bound sampler and the cores read the graph -
+one pipeline, two pictures. Both read `texture.samplingOf` now, which is
+in neither of them for that reason, and a sampler it cannot answer for
+is drawn by neither.
+
+What is left is step 13, the long one: every fragment form the fixed
 kinds cover, taken a family at a time. Discard is next, and it is the
 first that has no hand-written QPU program to be held against - so rung
 5 has nothing to say about it, and rungs 4, 6 and 8 carry it alone.
