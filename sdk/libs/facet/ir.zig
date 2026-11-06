@@ -381,9 +381,11 @@ fn wordsOf(comptime graph: Graph) []const u32 {
         var vector_types: [5]u32 = @splat(0);
         vector_types[4] = vec4;
         for (graph.inputs, 0..) |each, k| {
-            const wide = each.kind.parts();
-            if (vector_types[wide] == 0) vector_types[wide] = emit.typeVector(float_type, wide);
-            emit.variable(emit.typePointer(.input, vector_types[wide]), input_ids[k], .input);
+            // A varying of one float is a float and not a vector of one:
+            // SPIR-V has no such vector, and `spirv.Emit.typeVector`
+            // refuses to write one.
+            const of_type = vectorFor(&emit, &vector_types, float_type, each.kind);
+            emit.variable(emit.typePointer(.input, of_type), input_ids[k], .input);
         }
         var sampled_type: u32 = 0;
         for (graph.sampled, 0..) |_, k| {

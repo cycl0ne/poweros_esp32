@@ -155,6 +155,27 @@ pub fn vfpackMagic(waddr: u64, low: Rf, high: Rf) u64 {
         @as(u64, low) << RADDR_A_SHIFT | high;
 }
 
+/// The register an instruction writes on each side, the add side first,
+/// and null where that side writes none: a nop, or one of the magic
+/// addresses, which are not the thread's registers at all. What a
+/// generated program is held to reads this (`compile.zig`).
+pub fn destinations(instruction: u64) [2]?Rf {
+    return .{
+        if (instruction & MA != 0) null else @truncate(instruction >> WADDR_A_SHIFT),
+        if (instruction & MM != 0) null else @truncate(instruction >> WADDR_M_SHIFT),
+    };
+}
+
+/// The register an instruction's signal writes, where it has one:
+/// `ldunifrf`, `ldvary` and `ldtmu` name it in the signal's own address
+/// field and not on either side.
+pub fn signalled(instruction: u64) ?Rf {
+    return switch (instruction >> SIG_SHIFT & 0x1F) {
+        SIG_LDUNIFRF, SIG_LDVARY, SIG_LDTMU => @truncate(instruction >> SIG_ADDRESS_SHIFT),
+        else => null,
+    };
+}
+
 /// A program that copies its `count` first inputs to its first outputs,
 /// each through one register: the two share their place in the VPM.
 fn PassThrough(comptime count: u4) type {
@@ -218,16 +239,26 @@ pub const Fragment = struct {
     uniforms: u32,
 };
 
-/// W, as the hardware hands it to a fragment.
-const rf_w: Rf = 3;
+/// How many registers a threaded fragment program has. A destination at
+/// or past this is another thread's, on either side of an instruction.
+pub const registers = 16;
+
+/// W, as the hardware hands it to a fragment. rf0 to rf2 are the
+/// hardware's as well: rf0 carries a varying's constant part.
+pub const rf_w: Rf = 3;
+/// The first register a program of its own may keep a value in.
+pub const rf_first: Rf = 4;
 /// Scratch: a varying's two parts, and the depth of the first program's
 /// registers. In a threaded program there are 16 of them.
-const rf_slope: Rf = 14;
-const rf_scaled: Rf = 15;
+pub const rf_slope: Rf = 14;
+pub const rf_scaled: Rf = 15;
+/// One past the last register a program of its own may keep a value in:
+/// the scratch above is written by every varying it reads.
+pub const rf_last: Rf = rf_slope;
 
 /// A varying into `to`: three instructions, as the constant reaches rf0
 /// only by the third.
-fn varying(comptime to: Rf) [3]u64 {
+pub fn varying(to: Rf) [3]u64 {
     return .{
         ldvary(rf_slope),
         fmul(rf_scaled, rf_slope, rf_w),
@@ -235,7 +266,7 @@ fn varying(comptime to: Rf) [3]u64 {
     };
 }
 
-const end_of_program = [3]u64{ thrsw, nop, nop };
+pub const end_of_program = [3]u64{ thrsw, nop, nop };
 
 /// The switch to the last section: two thread switches in a row are what
 /// tells the hardware it is the last. Every fragment program has it, sampling
@@ -243,7 +274,7 @@ const end_of_program = [3]u64{ thrsw, nop, nop };
 /// reaches the tile buffer ahead of one drawn before it at the same place,
 /// and the renderer hangs. Two instructions must follow before that buffer
 /// is touched, which are the switch's delay slots.
-const last_section = [4]u64{ thrsw, thrsw, nop, nop };
+pub const last_section = [4]u64{ thrsw, thrsw, nop, nop };
 
 /// The sample at two floats, in `s` and `t`: T first, the configuration
 /// from two uniforms, and the write to S that starts it. Then the last
@@ -387,18 +418,40 @@ test "fmul and fadd read and write where qpu_pack.c puts them" {
     try std.testing.expectEqual(@as(u64, 0), fadd(4, 15, 0) >> RADDR_A_SHIFT & 63);
 }
 
-test "a program keeps to the registers a thread has" {
-    for ([_]Fragment{ flat_fragment, color_fragment, texture_fragment, texture_color_fragment }) |fragment| {
-        for (fragment.code) |instruction| {
-            const op_add = instruction >> OP_ADD_SHIFT & 0xFF;
-            if (op_add == OP_ADD_FADD) try std.testing.expect(instruction >> WADDR_A_SHIFT & 63 < 16);
+test "a program keeps to the registers a thread has, on both sides and in its signals" {
+    const programs = [_]Fragment{ flat_fragment, color_fragment, texture_fragment, texture_color_fragment, array_fragment, cube_fragment, volume_fragment };
+    for (programs) |fragment| {
+        var waits: u32 = 0;
+        for (fragment.code, 0..) |instruction, at| {
+            for (destinations(instruction)) |side| if (side) |to| try std.testing.expect(to < registers);
+            if (signalled(instruction)) |to| try std.testing.expect(to < registers);
+            // The wait on the scoreboard: two thread switches in a row,
+            // and exactly one of them in a program.
+            if (instruction == thrsw and at + 1 < fragment.code.len and fragment.code[at + 1] == thrsw) waits += 1;
         }
+        try std.testing.expectEqual(@as(u32, 1), waits);
         // Each ends in a thread switch and its two delay slots.
         const end = fragment.code[fragment.code.len - 3 ..];
         try std.testing.expectEqual(thrsw, end[0]);
         try std.testing.expectEqual(nop, end[1]);
         try std.testing.expectEqual(nop, end[2]);
     }
+}
+
+test "the destinations of the instructions that have them are read off where qpu_pack.c has them" {
+    try std.testing.expectEqual([2]?Rf{ 9, null }, destinations(fadd(9, 1, 2)));
+    try std.testing.expectEqual([2]?Rf{ null, 11 }, destinations(fmul(11, 1, 2)));
+    try std.testing.expectEqual([2]?Rf{ null, null }, destinations(nop));
+    // A magic address is not a register, on either side.
+    try std.testing.expectEqual([2]?Rf{ null, null }, destinations(movMagic(WADDR_TLB, 4)));
+    try std.testing.expectEqual([2]?Rf{ null, null }, destinations(vfpackMagic(WADDR_TLB, 4, 5)));
+    // The loads name their register in the signal's own field.
+    try std.testing.expectEqual(@as(?Rf, 7), signalled(ldunifrf(7)));
+    try std.testing.expectEqual(@as(?Rf, 8), signalled(ldvary(8)));
+    try std.testing.expectEqual(@as(?Rf, 10), signalled(ldtmu(10)));
+    try std.testing.expectEqual(@as(?Rf, null), signalled(nop));
+    try std.testing.expectEqual(@as(?Rf, null), signalled(thrsw));
+    try std.testing.expectEqual(@as(?Rf, null), signalled(wrtmuc));
 }
 
 test "a value read and written has its offset and registers in place" {

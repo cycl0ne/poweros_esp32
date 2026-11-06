@@ -17,10 +17,12 @@ pub const Engine = @import("engine.zig").Engine;
 pub const cl = @import("cl.zig");
 pub const frame = @import("frame.zig");
 pub const qpu = @import("qpu.zig");
+pub const compile = @import("compile.zig");
 pub const tiling = @import("tiling.zig");
 
 test {
     _ = qpu;
+    _ = compile;
     _ = cl;
     _ = tiling;
 }

@@ -401,3 +401,65 @@ pub const min_vert = [_]u32{
     0x0000001F, 0x0000001E, 0x0003003E, 0x00000004, 0x0000001D, 0x000100FD,
     0x00010038,
 };
+
+/// The colour the vertices carry, dimmed by one float they carry beside
+/// it: a varying of one float, which is a float and not a vector of one.
+/// SPIR-V has no vector of one component, and facet wrote one here until
+/// the QPU back end's reader turned the module down (`spirv.Emit.typeVector`
+/// refuses to write one now).
+///
+/// Facet's own output, like `min_vert` above: there is no assembled
+/// counterpart, because the ids of a module with decorated inputs cannot
+/// be an assembler's. Khronos' validator says it is a module:
+///
+/// ```sh
+/// spirv-val --target-env vulkan1.0 facet_scaled.spv   # no output, and 0
+/// ```
+///
+/// Read back with `spirv-dis --raw-id --no-header`:
+///
+/// ```
+///                OpCapability Shader
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %1 "main" %2 %3 %4
+///                OpExecutionMode %1 OriginUpperLeft
+///                OpDecorate %2 Location 0
+///                OpDecorate %3 Location 0
+///                OpDecorate %4 Location 1
+///           %5 = OpTypeVoid
+///           %6 = OpTypeFunction %5
+///           %7 = OpTypeFloat 32
+///           %8 = OpTypeVector %7 4
+///           %9 = OpTypePointer Output %8
+///           %2 = OpVariable %9 Output
+///          %10 = OpTypePointer Input %8
+///           %3 = OpVariable %10 Input
+///          %11 = OpTypePointer Input %7
+///           %4 = OpVariable %11 Input
+///           %1 = OpFunction %5 None %6
+///          %12 = OpLabel
+///          %13 = OpLoad %8 %3
+///          %14 = OpLoad %7 %4
+///          %15 = OpVectorTimesScalar %8 %13 %14
+///                OpStore %2 %15
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const min_scaled = [_]u32{
+    0x07230203, 0x00010000, 0x0000004B, 0x00000010, 0x00000000, 0x00020011,
+    0x00000001, 0x0003000E, 0x00000000, 0x00000001, 0x0008000F, 0x00000004,
+    0x00000001, 0x6E69616D, 0x00000000, 0x00000002, 0x00000003, 0x00000004,
+    0x00030010, 0x00000001, 0x00000007, 0x00040047, 0x00000002, 0x0000001E,
+    0x00000000, 0x00040047, 0x00000003, 0x0000001E, 0x00000000, 0x00040047,
+    0x00000004, 0x0000001E, 0x00000001, 0x00020013, 0x00000005, 0x00030021,
+    0x00000006, 0x00000005, 0x00030016, 0x00000007, 0x00000020, 0x00040017,
+    0x00000008, 0x00000007, 0x00000004, 0x00040020, 0x00000009, 0x00000003,
+    0x00000008, 0x0004003B, 0x00000009, 0x00000002, 0x00000003, 0x00040020,
+    0x0000000A, 0x00000001, 0x00000008, 0x0004003B, 0x0000000A, 0x00000003,
+    0x00000001, 0x00040020, 0x0000000B, 0x00000001, 0x00000007, 0x0004003B,
+    0x0000000B, 0x00000004, 0x00000001, 0x00050036, 0x00000005, 0x00000001,
+    0x00000000, 0x00000006, 0x000200F8, 0x0000000C, 0x0004003D, 0x00000008,
+    0x0000000D, 0x00000003, 0x0004003D, 0x00000007, 0x0000000E, 0x00000004,
+    0x0005008E, 0x00000008, 0x0000000F, 0x0000000D, 0x0000000E, 0x0003003E,
+    0x00000002, 0x0000000F, 0x000100FD, 0x00010038,
+};

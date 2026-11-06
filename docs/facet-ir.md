@@ -218,6 +218,34 @@ intention:
 - No scheduler. The latencies are honoured by emitting the same shapes
   the hand-written programs use: `varying()`'s three instructions,
   `ldtmu` after the TMU write, two `nop`s after `recip`.
+- Ten registers, not sixteen: rf0 to rf2 are the hardware's, rf3 is W,
+  and rf14 and rf15 are what every varying read passes through. So a
+  value lives in rf4 to rf13, and `compile.zig`'s `registers` is 10.
+- A varying is taken in order and cannot be stepped over: `ldvary` hands
+  over the next one there is. So every varying up to the last one the body
+  reads costs its three instructions, read or not, and the input locations
+  have to be 0 upwards without a gap - that is the numbering a vertex
+  function writes (`ir.Build.input` holds a shader to it), and a module
+  that means another one is refused rather than mis-compiled.
+- A uniform is read where it is first wanted, not at the top: `ldunifrf`
+  takes the next one in the stream wherever its instruction sits, so the
+  order of the stream is the order the body asks, and a constant does not
+  hold a register from the start of the program. It is what lets eight
+  varyings and four floats of its own fit ten registers.
+- Two things the source does not settle, paid for rather than guessed: how
+  long an `ldunifrf` is before its register may be read, and what the
+  hardware makes of a program that reads fewer varyings than its record
+  declares. The first is waited out to the six instructions `flat_code`
+  leaves, with `nop`s where the plan is tighter; the second never arises,
+  because every varying the draw carries costs its three instructions
+  whether the body reads it or not, as in all seven hand-written programs.
+- A decoration the back end does not understand is **refused**, not
+  ignored. `Flat` and `NoPerspective` are the reason: a varying decorated
+  either way is not what `qpu.varying` interpolates, and a wrong colour
+  with no fault behind it is the hardest failure to find. So is
+  `OpExecutionMode`: `OriginLowerLeft` compiles to the same words as
+  `OriginUpperLeft` and draws the picture upside down, so the mode is read
+  and only the one facet emits is taken.
 - The first form to reach the GPU is the **interpolated colour**, not flat
   colour: `driver.Programs` has no `flat` field and `loadPrograms` loads
   six programs, so flat has no preloaded program to diff against at run
@@ -236,10 +264,12 @@ resets them.
 
 Each rung is a thing that can fail on its own, cheapest first:
 
-1. **Byte-exact words.** The emitter's output against six modules
-   assembled with `spirv-as` and validated with `spirv-val`: `min_flat`
+1. **Byte-exact words.** The emitter's output against five modules
+   assembled with `spirv-as` and validated with `spirv-val` - `min_flat`
    70 words, `min_interp` 72, `min_tex` 113, `min_texmod` 135,
-   `min_discard` 141, `min_vert` 200. Host test, no tools needed.
+   `min_discard` 141 - and two of facet's own that an assembler cannot
+   give the same ids, validated all the same: `min_vert` 193 against the
+   assembler's 200, and `min_scaled` 94. Host test, no tools needed.
 2. **`spirv-val`.** `scripts/spirv-check.sh` over every module the library
    can emit. Skips with a message where SPIRV-Tools is not installed.
 3. **The reader's refusals.** A malformed module per rule - bad magic,
@@ -278,9 +308,13 @@ anyone without SPIRV-Tools.
 | 3 | `spirv.zig`: the format, the emitter, the reader, `Profile`; rungs 1 to 3 | 1.75 |
 | 4 | `ir.zig`: the graph, the words, the generated core function; rung 4 | 1.75 |
 | 5 | the library: `Module`, the flag, `CreateShaderModule`, `settle`, `Pipeline`'s words, `PhysicalDeviceFeatures` | 1.75 |
-| 6 | `compile.zig`: the interpolated colour to QPU words; rung 5 | 1.76 |
+| 6 | `compile.zig`: the interpolated colour to QPU words; rung 5 | - |
 | 7 | the V3D driver: code per pipeline, the shader record, `make_pipeline`; rungs 6 and 7 | 1.76 |
 | 8 | rung 8, and a form a family at a time after it - discard and samplers first, since those are what send most draws to the cores today | - |
+
+Step 6 changes nothing a program can see - `compile.zig` is reached from
+its own host tests and from nowhere else yet - so it is not a revision.
+The driver begins to compile in step 7, and that is.
 
 Steps 2 to 5 are the library's side and are provable on the host. Step 6
 is where the days go. `facet-todo.md` section 4 says months for the whole

@@ -254,3 +254,17 @@ test "a graph of its own is still a module a reader takes" {
     Lit.function(&made);
     try std.testing.expectEqual(@as(u32, 0x8080_8080), batch.colors[0][0]);
 }
+
+/// A varying of one float, which is a float and not a vector of one:
+/// SPIR-V has no vector of one component, and facet wrote one until the
+/// QPU back end's reader turned such a module down.
+const Dimmed = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        b.color(b.scale(b.input(0, .f32x4), b.input(1, .f32x1)));
+    }
+});
+
+test "a varying of one float is a float: the module Khronos' validator takes" {
+    try expectWords(&reference.min_scaled, Dimmed.words);
+    try std.testing.expectEqual(@as(u32, 5), Dimmed.varyings);
+}

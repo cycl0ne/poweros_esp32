@@ -362,7 +362,12 @@ pub const Emit = struct {
     pub fn typeInt(emit: *Emit, width: u32, signed: bool) u32 {
         return emit.once(.type_int, &.{ width, @intFromBool(signed) });
     }
+    /// A vector is of 2, 3 or 4 components: there is no vector of one,
+    /// and a module that declares one is not SPIR-V. A caller with a
+    /// width it took from somewhere says `if (wide == 1)` first - or
+    /// better, asks for the component type instead.
     pub fn typeVector(emit: *Emit, component: u32, count: u32) u32 {
+        if (count < 2 or count > 4) @compileError("a vector is of 2 to 4 components");
         return emit.once(.type_vector, &.{ component, count });
     }
     pub fn typeMatrix(emit: *Emit, column: u32, count: u32) u32 {
