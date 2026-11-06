@@ -168,6 +168,55 @@ static const float identity[16] = {
 static const char *module_dir = ".";
 static const char *picture_dir = NULL;
 
+/// How the arithmetic may be spoiled on purpose.
+///
+/// A rung is worth having only if it is able to fail, and "it passed" is
+/// no evidence of that: a check that compares a picture with itself
+/// passes too, and so does one whose loop never runs. So each of these
+/// is a named, small, plausible lie about what the pixel should hold -
+/// the kind of mistake a back end makes - and a run told to tell one
+/// must come back with wrong pixels. `vulkan-check.sh --prove` tells
+/// each in turn and fails if any goes unnoticed.
+///
+/// Two of the three are lies about the sampler alone, so they leave the
+/// four colour cases right and are caught in the two that sample. That
+/// is the point rather than a weakness: a lie is caught exactly where
+/// the thing it lies about is looked at.
+enum Spoiling {
+    spoil_none,
+    spoil_channels, ///< red and green the wrong way round in the answer
+    spoil_filter,   ///< the texel LINEAR's lower-left weight would reach
+    spoil_flip      ///< u and v the wrong way round before the lookup
+};
+
+static const struct {
+    const char *name;
+    enum Spoiling which;
+    const char *what;
+} spoilings[] = {
+    { "channels", spoil_channels, "red and green swapped in the answer" },
+    { "filter", spoil_filter, "the texel at floor(c*size - 0.5), which is LINEAR's lower-left" },
+    { "flip", spoil_flip, "u and v swapped before the lookup" },
+};
+#define spoiling_count ((int)(sizeof spoilings / sizeof spoilings[0]))
+
+static enum Spoiling spoiling = spoil_none;
+
+/// Cases whose pixels were all right, and cases that held a wrong one.
+/// Counted rather than inferred from the exit status, because a run told
+/// a lie about the sampler is meant to leave the colour cases alone.
+static int cases_run = 0;
+static int cases_wrong = 0;
+
+/// What the run was told, for the line at the end.
+static const char *spoiled_what(void) {
+    int k;
+
+    for (k = 0; k < spoiling_count; k++)
+        if (spoilings[k].which == spoiling) return spoilings[k].what;
+    return "nothing";
+}
+
 static int failed = 0;
 
 /// Who made the device, by the number Vulkan gives: the short name the
@@ -315,6 +364,17 @@ static const unsigned char *texel_at(const struct Case *each, const double b[3])
     int x = 0, y = 0;
 
     mixed_uv(each, b, uv);
+    if (spoiling == spoil_flip) {
+        double swap = uv[0];
+        uv[0] = uv[1];
+        uv[1] = swap;
+    }
+    // Half a texel back along both axes, which is where LINEAR's
+    // lower-left weight sits and NEAREST's answer is not.
+    if (spoiling == spoil_filter) {
+        uv[0] -= 0.5 / (double)TEX_W;
+        uv[1] -= 0.5 / (double)TEX_H;
+    }
     lands(uv[0], TEX_W, &x, NULL);
     lands(uv[1], TEX_H, &y, NULL);
     return texels[y][x];
@@ -372,6 +432,11 @@ static void wanted(const struct Case *each, const double b[3], unsigned char out
         texel = texel_at(each, b);
         for (k = 0; k < 4; k++) channel[k] = (double)texel[k] / 255.0 * mixed(each, b, k, 0);
         break;
+    }
+    if (spoiling == spoil_channels) {
+        double swap = channel[0];
+        channel[0] = channel[1];
+        channel[1] = swap;
     }
     for (k = 0; k < 4; k++) {
         double held = channel[k] < 0 ? 0 : (channel[k] > 1 ? 1 : channel[k]);
@@ -1044,6 +1109,8 @@ static int run_case(struct Bench *bench, const char *driver, const struct Case *
                first_x, first_y, first_got[0], first_got[1], first_got[2], first_got[3],
                first_want[0], first_want[1], first_want[2], first_want[3]);
     }
+    cases_run++;
+    if (wrong != 0) cases_wrong++;
     ok = wrong == 0;
 
 done:
@@ -1125,6 +1192,23 @@ int main(int argc, char **argv) {
     for (at = 1; at < argc; at++) {
         if (strcmp(argv[at], "-o") == 0 && at + 1 < argc) {
             picture_dir = argv[++at];
+        } else if (strcmp(argv[at], "-w") == 0 && at + 1 < argc) {
+            const char *name = argv[++at];
+            int found = 0;
+            int which;
+
+            for (which = 0; which < spoiling_count; which++) {
+                if (strcmp(spoilings[which].name, name) != 0) continue;
+                spoiling = spoilings[which].which;
+                found = 1;
+            }
+            if (!found) {
+                fprintf(stderr, "no spoiling called %s. There are:", name);
+                for (which = 0; which < spoiling_count; which++)
+                    fprintf(stderr, " %s", spoilings[which].name);
+                fprintf(stderr, "\n");
+                return 2;
+            }
         } else {
             module_dir = argv[at];
         }
@@ -1153,6 +1237,13 @@ int main(int argc, char **argv) {
     }
     for (k = 0; k < count; k++) run_device(physicals[k]);
     vkDestroyInstance(instance, NULL);
+    if (spoiling != spoil_none) {
+        // Being told a lie, a run that finds nothing wrong has found out
+        // something worse: that it is not looking at what it says it is.
+        printf("%d devices, told %s: %d of %d cases caught it - %s\n", (int)count, spoiled_what(),
+               cases_wrong, cases_run, cases_wrong > 0 ? "the check can fail" : "NOT CAUGHT");
+        return cases_wrong > 0 ? 0 : 1;
+    }
     printf("%d devices, %d cases each: %s\n", (int)count, case_count,
            failed ? "something is wrong" : "every pixel as the arithmetic says");
     return failed ? 1 : 0;

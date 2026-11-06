@@ -15,13 +15,27 @@
 # is: a machine with no Vulkan driver, no glslc and no C compiler must
 # still be able to build PowerOS.
 #
+# A check that passes is worth nothing on its own: one whose loop never
+# runs passes too. So --prove runs it again three times over, each time
+# having told it a small lie about what the pixel should hold, and every
+# lie has to come back caught. That is the negative control, and it is
+# here rather than in a commit message so that a reader can run it.
+#
 #   sh scripts/vulkan-check.sh            check, and say what came out
 #   sh scripts/vulkan-check.sh /tmp/shots the pictures as .ppm as well
+#   sh scripts/vulkan-check.sh --prove    check, then show it can fail
 set -eu
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 reference="$root/src/disk/libs/facet/tests/spirv_reference.zig"
-pictures="${1:-}"
+pictures=""
+prove=""
+for arg in "$@"; do
+    case $arg in
+        --prove) prove=yes ;;
+        *) pictures=$arg ;;
+    esac
+done
 
 for tool in cc glslc; do
     if ! command -v "$tool" > /dev/null 2>&1; then
@@ -82,4 +96,16 @@ if [ -n "$pictures" ]; then
     echo "The pictures are in $pictures."
 else
     "$out/vulkan-check" "$out"
+fi
+
+# Each lie in turn. The program inverts its own verdict under -w, so it
+# exits 0 where it was caught and 1 where it was not, and `set -e` ends
+# the script on the first lie that got through.
+if [ -n "$prove" ]; then
+    for lie in channels filter flip; do
+        echo
+        "$out/vulkan-check" "$out" -w "$lie"
+    done
+    echo
+    echo "Every lie caught: the check above is looking at the pixels."
 fi
