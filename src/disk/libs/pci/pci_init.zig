@@ -15,6 +15,13 @@
 //! **The library stays** once it is loaded: the buses are numbered and
 //! the BARs placed as it found them, and a library loaded again would
 //! walk them afresh under drivers that know where their registers are.
+//!
+//! **In a ROM it comes up with the cold start**, as soon as everything
+//! its init asks for is there: utility.library and expansion.library,
+//! whose board parts say where the host bridges are, and timer.device,
+//! which its waits are measured by. Every driver that wants PCI then
+//! finds the library made, the buses walked and the BARs placed, instead
+//! of the first one to ask paying for all of it inside its own init.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -35,8 +42,8 @@ const _state = @import("host/_state.zig");
 
 pub const LIBRARY_NAME = pci.PCINAME;
 pub const LIBRARY_VERSION = 2;
-pub const LIBRARY_REVISION = 6;
-const BUILD_DATE = "04.11.2026";
+pub const LIBRARY_REVISION = 7;
+const BUILD_DATE = "05.11.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
@@ -126,6 +133,7 @@ fn findHosts(base: *PCIBase) bool {
             sys.FreeMem(memory, @sizeOf(Host));
             continue;
         }
+        sdk.exec.klog(sys, exec.LOG_DEBUG, "%s: host bridge %d: its configuration space at 0x%lx\n", .{ LIBRARY_NAME, @as(u32, host.segment), config });
         hosts[count] = host;
         count += 1;
     }
@@ -134,6 +142,7 @@ fn findHosts(base: *PCIBase) bool {
 
     var tail: *?*pci.PCIDevice = &base.first;
     for (hosts[0..count]) |host| walkHost(host, nodes, &tail, &delay);
+    sdk.exec.klog(sys, exec.LOG_DEBUG, "%s: every bus walked\n", .{LIBRARY_NAME});
     return true;
 }
 
@@ -163,7 +172,8 @@ fn windowsOf(node: *const scan.Node) u8 {
 fn walkHost(host: *Host, nodes: []scan.Node, tail: **?*pci.PCIDevice, delay: *Delay) void {
     const sys = host.sys;
     const space = _host.Space{ .host = host };
-    const result = scan.walk(space, delay, nodes, .{ .root_devices = _host.rootDevices(host) }, 0);
+    sdk.exec.klog(sys, exec.LOG_DEBUG, "%s: host bridge %d: walking its buses\n", .{ LIBRARY_NAME, @as(u32, host.segment) });
+    const result = scan.walk(space, delay, nodes, .{ .root_devices = _host.rootDevices(host), .sys = sys, .placed = host.placed }, 0);
     if (result.full) {
         sdk.exec.kprintf(sys, "%s: more than %ld functions behind host bridge %ld, the rest left out\n", .{ LIBRARY_NAME, @as(i64, max_nodes), @as(i64, host.segment) });
     }
@@ -171,6 +181,12 @@ fn walkHost(host: *Host, nodes: []scan.Node, tail: **?*pci.PCIDevice, delay: *De
     const found = nodes[0..result.count];
     // A machine whose firmware placed everything keeps those places: see
     // `place.keep`.
+    sdk.exec.klog(sys, exec.LOG_DEBUG, "%s: host bridge %d: %ld function(s), %s\n", .{
+        LIBRARY_NAME,
+        @as(u32, host.segment),
+        @as(i64, @intCast(found.len)),
+        @as([*:0]const u8, if (host.placed) "the firmware's places kept" else "placing them"),
+    });
     if (host.placed) place.keep(space, found) else place.place(space, found, &host.windows);
 
     const bytes = found.len * @sizeOf(Entry);
@@ -237,19 +253,20 @@ const init_table = exec.InitTable{
     .init = &init,
 };
 
-/// AUTOINIT: the library is on the disk, in LIBS:, and is made when
-/// something opens it - ramlib loads the file and hands this tag to
-/// InitResident. In the ROM the same: ramlib makes it from the tag when
-/// it is first opened, so the ports' links are trained when a driver
-/// first asks - at cold start where the ROM's nvme.device, a cold-start
-/// device, makes it from the tag itself. In `.resident`, which program.ld
-/// KEEPs.
+/// AUTOINIT: on the disk, in LIBS:, the library is made when something
+/// opens it - ramlib loads the file and hands this tag to InitResident.
+///
+/// COLDSTART: in a ROM it is made with the rest, at the first priority
+/// below timer.device's - the last of the three its init opens, after
+/// utility.library and expansion.library - so that the ports are trained
+/// and the buses walked once, as a step of its own, before any driver
+/// asks for them. In `.resident`, which program.ld KEEPs.
 pub export const pci_library_tag: exec.Resident linksection(".resident") = .{
     .match_tag = &pci_library_tag,
-    .flags = exec.RTF_AUTOINIT,
+    .flags = exec.RTF_AUTOINIT | exec.RTF_COLDSTART,
     .version = LIBRARY_VERSION,
     .type = .library,
-    .pri = 0,
+    .pri = 49,
     .name = LIBRARY_NAME,
     .id_string = LIBRARY_VERSION_STRING[1..], // past the NUL: a C string
     .init = &init_table,

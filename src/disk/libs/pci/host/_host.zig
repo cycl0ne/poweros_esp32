@@ -215,9 +215,12 @@ pub fn bringUp(hosts: []const *Host, delay: anytype) void {
     var links = false;
     for (hosts) |host| links = links or hasLink(host);
     if (!links) return;
+    const sys = hosts[0].sys;
+    exec.klog(sys, exec.LOG_DEBUG, "%s: the ports held in reset\n", .{pci.PCINAME});
     delay.wait(perst_us);
     for (hosts) |host| release(host);
     delay.wait(settle_us);
+    exec.klog(sys, exec.LOG_DEBUG, "%s: waiting for the links\n", .{pci.PCINAME});
     var waited: u32 = 0;
     while (true) {
         var all = true;

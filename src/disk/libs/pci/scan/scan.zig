@@ -139,6 +139,12 @@ pub const Limits = struct {
     /// The devices asked on the host bridge's own bus: 32, or 1 where it
     /// is a root port and nothing else.
     root_devices: u8 = 32,
+    /// exec, for the walk's debug lines: a walk that stops says where it
+    /// was. Null says nothing, which is what a test wants.
+    sys: ?*sdk.interface.exec.ExecBase = null,
+    /// Whether the firmware placed what is behind this host bridge, and
+    /// its places are being kept (`place.keep`).
+    placed: bool = false,
 };
 
 /// What the walk did.
@@ -169,6 +175,8 @@ pub fn walk(space: anytype, delay: anytype, nodes: []Node, limits: Limits, root_
         .space = space,
         .delay = delay,
         .nodes = nodes,
+        .sys = limits.sys,
+        .placed = limits.placed,
         .result = .{ .last_bus = root_bus },
     };
     walker.bus(root_bus, limits.root_devices, null, false);
@@ -182,11 +190,20 @@ fn Walker(comptime Space: type, comptime Delay: type) type {
         space: Space,
         delay: Delay,
         nodes: []Node,
+        sys: ?*sdk.interface.exec.ExecBase = null,
+        placed: bool = false,
         result: Walk,
         /// The device numbers of the bridges between the host bridge's bus
         /// and the one being walked.
         path: [max_depth]u8 = undefined,
         depth: u8 = 0,
+
+        /// A line of the walk's own, where there is an exec to write it
+        /// with: what the walk was at, for one that does not come back.
+        fn say(self: *Self, comptime format: [:0]const u8, args: anytype) void {
+            const sys = self.sys orelse return;
+            sdk.exec.klog(sys, sdk.exec.LOG_DEBUG, format, args);
+        }
 
         fn read(self: *Self, at: Address, offset: u32, size: u32) u32 {
             return self.space.read(at, offset, size);
@@ -200,6 +217,7 @@ fn Walker(comptime Space: type, comptime Delay: type) type {
         /// `expected`: a link above it is up, so device 0 is there and is
         /// given time to answer.
         fn bus(self: *Self, number: u8, devices: u8, parent: ?u16, expected: bool) void {
+            self.say("%s: bus %d, up to %d device(s)\n", .{ pci.PCINAME, @as(u32, number), @as(u32, devices) });
             var device: u8 = 0;
             while (device < devices and !self.result.full) : (device += 1) {
                 const first = Address{ .bus = number, .device = device, .function = 0 };
@@ -224,6 +242,7 @@ fn Walker(comptime Space: type, comptime Delay: type) type {
                 const vendor: u16 = @truncate(self.read(at, pci.PCI_VENDOR_ID, 2));
                 const again = vendor == vendor_retry or (expected and vendor == 0xFFFF);
                 if (!again) return vendor != 0xFFFF and vendor != 0;
+                if (waited == 0) self.say("%s: %d.%d.%d does not answer yet; waiting\n", .{ pci.PCINAME, @as(u32, at.bus), @as(u32, at.device), @as(u32, at.function) });
                 if (waited >= retry_us) return false;
                 self.delay.wait(retry_step_us);
                 waited += retry_step_us;
@@ -257,6 +276,11 @@ fn Walker(comptime Space: type, comptime Delay: type) type {
                 },
             };
             const info = &node.info;
+            self.say("%s: %d.%d.%d is %lx:%lx, class %lx\n", .{
+                pci.PCINAME,                  @as(u32, at.bus),             @as(u32, at.device),
+                @as(u32, at.function),        @as(i64, info.vendor_id),     @as(i64, info.device_id),
+                @as(i64, info.class_code),
+            });
             if (info.interrupt_pin != 0) {
                 const line = self.rootLine(at.device, info.interrupt_pin);
                 info.root_device = line.device;
@@ -267,9 +291,25 @@ fn Walker(comptime Space: type, comptime Delay: type) type {
             self.capabilities(at, info);
             self.wake(at, info);
 
-            // Nothing decoded while its BARs are sized.
+            // Nothing decoded while its BARs are sized, so that a BAP
+            // holding all ones claims nothing in the meantime - unless
+            // the firmware placed everything and its places are kept.
+            //
+            // **Why the firmware's machine is left decoding.** Nothing is
+            // moved on such a machine, so the only thing the sizing needs
+            // is the number it reads back; and what is switched off for
+            // those two writes stops answering - the screen the firmware
+            // lit among it, which is the one output a machine like that
+            // may have. A whole walk with the display switched off is a
+            // boot that says nothing about itself. What is left open is
+            // the pair of writes while a BAR reads as all ones: nothing
+            // is placed at the top of the address space, so nothing else
+            // is claimed by it.
+            self.say("%s: %d.%d.%d: sizing its BARs\n", .{ pci.PCINAME, @as(u32, at.bus), @as(u32, at.device), @as(u32, at.function) });
             const command: u16 = @truncate(self.read(at, pci.PCI_COMMAND, 2));
-            self.write(at, pci.PCI_COMMAND, 2, command & ~(pci.PCI_COMMAND_IO | pci.PCI_COMMAND_MEMORY | pci.PCI_COMMAND_MASTER));
+            if (!self.placed) {
+                self.write(at, pci.PCI_COMMAND, 2, command & ~(pci.PCI_COMMAND_IO | pci.PCI_COMMAND_MEMORY | pci.PCI_COMMAND_MASTER));
+            }
             const bar_count: u32 = switch (header) {
                 pci.PCI_HEADER_NORMAL => 6,
                 pci.PCI_HEADER_BRIDGE => 2,
@@ -277,6 +317,7 @@ fn Walker(comptime Space: type, comptime Delay: type) type {
                 else => 0,
             };
             self.bars(at, bar_count, &info.bars);
+            self.say("%s: %d.%d.%d: its BARs are sized\n", .{ pci.PCINAME, @as(u32, at.bus), @as(u32, at.device), @as(u32, at.function) });
             switch (header) {
                 pci.PCI_HEADER_NORMAL => {
                     info.subsystem_vendor = @truncate(self.read(at, pci.PCI_SUBSYSTEM_VENDOR_ID, 2));
@@ -335,6 +376,7 @@ fn Walker(comptime Space: type, comptime Delay: type) type {
             info.found_power = @truncate(control & pci.PCI_PM_CTRL_STATE_MASK);
             if (info.found_power == 0) return;
             self.write(at, pm + pci.PCI_PM_CTRL, 2, control & ~@as(u32, pci.PCI_PM_CTRL_STATE_MASK));
+            self.say("%s: %d.%d.%d was in D%d; waking it\n", .{ pci.PCINAME, @as(u32, at.bus), @as(u32, at.device), @as(u32, at.function), @as(u32, info.found_power) });
             self.delay.wait(wake_us);
         }
 
@@ -376,6 +418,7 @@ fn Walker(comptime Space: type, comptime Delay: type) type {
                         .size = (~io_mask +% 1) & 0xFFFF_FFFF,
                         .flags = pci.PCIBAR_IO,
                     };
+                    self.sayBar(at, i, into[i]);
                     i += 1;
                     continue;
                 }
@@ -394,8 +437,21 @@ fn Walker(comptime Space: type, comptime Delay: type) type {
                 if (wide) flags |= pci.PCIBAR_64;
                 if (mask & pci.PCI_BASE_ADDRESS_MEM_PREFETCH != 0) flags |= pci.PCIBAR_PREFETCH;
                 into[i] = .{ .address = had, .size = ~full +% 1, .flags = flags };
+                self.sayBar(at, i, into[i]);
                 i += if (wide) 2 else 1;
             }
+        }
+
+        /// One BAR as it was found: where the firmware put it and how far
+        /// it reaches. What the screen the firmware lit is behind is one
+        /// of these.
+        fn sayBar(self: *Self, at: Address, which: u32, bar: pci.PCIBar) void {
+            if (bar.address == 0 and bar.size == 0) return;
+            self.say("%s: %d.%d.%d: BAR %d at 0x%lx, 0x%lx byte(s)%s\n", .{
+                pci.PCINAME,            @as(u32, at.bus), @as(u32, at.device),
+                @as(u32, at.function),  which,            bar.address,
+                @as(u64, bar.size),     @as([*:0]const u8, if (bar.flags & pci.PCIBAR_IO != 0) ", in the port space" else ""),
+            });
         }
 
         /// The expansion ROM at `offset`, sized; size 0 for none.
@@ -414,6 +470,8 @@ fn Walker(comptime Space: type, comptime Delay: type) type {
             const node = &self.nodes[index];
             const at = node.at;
             node.bridge = true;
+            if (self.placed) return self.asFound(node, index);
+            self.say("%s: %d.%d.%d: numbering the buses behind it\n", .{ pci.PCINAME, @as(u32, at.bus), @as(u32, at.device), @as(u32, at.function) });
             self.windowsOf(node);
             if (self.depth == max_depth or self.result.last_bus == 0xFF) return;
             self.result.last_bus += 1;
@@ -445,6 +503,56 @@ fn Walker(comptime Space: type, comptime Delay: type) type {
             }
             node.subordinate = self.result.last_bus;
             self.write(at, pci.PCI_SUBORDINATE_BUS, 1, node.subordinate);
+        }
+
+        /// A bridge of a machine the firmware placed: its bus numbers and
+        /// its windows are the firmware's and are read, never written,
+        /// and nothing of it is closed while the walk is below it.
+        ///
+        /// **Why it must not be closed.** Numbering a bridge afresh means
+        /// forwarding nothing through it while what is behind it is
+        /// looked for, and opening its windows again afterwards - which
+        /// is `place.place`'s work, and a machine whose places are kept
+        /// never asks for it. Everything behind that bridge would stop
+        /// answering for good: on this machine the screen the firmware
+        /// lit is behind one, and a walk that closed it would take the
+        /// only output the machine has with it.
+        fn asFound(self: *Self, node: *Node, index: u16) void {
+            const at = node.at;
+            // A window the firmware gave something is one the bridge has.
+            const io = self.read(at, pci.PCI_IO_BASE, 1);
+            node.has_io = io & 0xF0 != 0 or self.read(at, pci.PCI_IO_LIMIT, 1) & 0xF0 != 0;
+            node.io32 = io & pci.PCI_IO_RANGE_TYPE_MASK == pci.PCI_IO_RANGE_TYPE_32;
+            const pref = self.read(at, pci.PCI_PREF_MEMORY_BASE, 2);
+            node.has_pref = pref & 0xFFF0 != 0 or self.read(at, pci.PCI_PREF_MEMORY_LIMIT, 2) & 0xFFF0 != 0;
+            node.pref64 = pref & pci.PCI_PREF_RANGE_TYPE_MASK == pci.PCI_PREF_RANGE_TYPE_64;
+
+            const secondary: u8 = @truncate(self.read(at, pci.PCI_SECONDARY_BUS, 1));
+            const subordinate: u8 = @truncate(self.read(at, pci.PCI_SUBORDINATE_BUS, 1));
+            node.secondary = secondary;
+            node.subordinate = subordinate;
+            if (subordinate > self.result.last_bus) self.result.last_bus = subordinate;
+            self.say("%s: %d.%d.%d: it forwards buses %d to %d, as the firmware left it\n", .{
+                pci.PCINAME,          @as(u32, at.bus), @as(u32, at.device),
+                @as(u32, at.function), @as(u32, secondary), @as(u32, subordinate),
+            });
+            if (secondary <= at.bus or self.depth == max_depth) return;
+
+            const kind = node.info.express_type;
+            const one_below = kind == pci.PCI_EXP_TYPE_ROOT_PORT or kind == pci.PCI_EXP_TYPE_DOWNSTREAM;
+            var expected = false;
+            if (one_below) switch (self.linkState(node)) {
+                .down => {
+                    self.say("%s: %d.%d.%d: its link is down (0x%lx)\n", .{ pci.PCINAME, @as(u32, at.bus), @as(u32, at.device), @as(u32, at.function), @as(i64, self.read(at, node.info.cap_express + pci.PCI_EXP_LNKSTA, 2)) });
+                    return;
+                },
+                .up => expected = true,
+                .unknown => {},
+            };
+            self.path[self.depth] = at.device;
+            self.depth += 1;
+            self.bus(secondary, if (one_below) 1 else 32, index, expected);
+            self.depth -= 1;
         }
 
         /// Which windows the bridge has: what sticks of a value written
