@@ -49,6 +49,8 @@ const Hardware = driver.Hardware;
 const regs = v3d.regs;
 const cl = v3d.cl;
 const qpu = v3d.qpu;
+const compile = v3d.compile;
+const texture = facet.texture;
 const tiling = v3d.tiling;
 const frames = v3d.frame;
 const Frame = frames.Frame;
@@ -824,11 +826,18 @@ fn sendVertices(queue: *Queue, vertices: u32, varyings: u32, fragment: u32, unif
     return true;
 }
 
-/// The two uniforms of a program that samples: the texture's state and the
-/// sampler's, carved beside them. Null without a texture bound, or no memory.
-fn textureUniforms(queue: *Queue, fixed: shader.Fixed) ?u32 {
+/// The two words a program that samples reads as the TMU's
+/// configuration. A fixed form has them in a place of their own; a
+/// generated program has them among the floats it holds, where its own
+/// `wrtmuc` fall - so this answers the words and the caller places them.
+const Configuration = struct { texture: u32, sampler: u32 };
+
+/// The TMU's two words for the texture bound at `set`, `binding`, read
+/// as `filter` and `wrap` say. Null without a texture bound, with one of
+/// a format the TMU does not read, or with no memory.
+fn tmuConfiguration(queue: *Queue, set: u32, binding: u32, filter: tiling.Filter, wrap: tiling.Wrap) ?Configuration {
     const player = playerOf(queue);
-    const sampled = player.resources.sampled(0, 0, 0) orelse return null;
+    const sampled = player.resources.sampled(set, binding, 0) orelse return null;
     const view: *const _image.ImageView = @fieldParentPtr("texels", sampled);
     const image = view.image;
     if (image.kind != .texture or image.data == null) return null;
@@ -844,6 +853,14 @@ fn textureUniforms(queue: *Queue, fixed: shader.Fixed) ?u32 {
     const state = carve(queue, tiling.texture_state_bytes, tiling.texture_state_alignment) orelse return null;
     tiling.writeTextureState(state.cpu[0..tiling.texture_state_bytes], &layout, texels, @intCast(@intFromPtr(image.data) + view.base_layer * image.layer_bytes), view.base_level, view.base_level + view.level_count - 1, view.layer_count, @intCast(image.layer_bytes));
     const sampler = carve(queue, tiling.sampler_state_bytes, tiling.sampler_state_alignment) orelse return null;
+    tiling.writeSamplerState(sampler.cpu[0..tiling.sampler_state_bytes], filter, wrap);
+    return .{ .texture = tiling.parameter0(state.address), .sampler = tiling.parameter1(sampler.address) };
+}
+
+/// The two uniforms of a fixed form that samples, in a place of their
+/// own: the form says how it is sampled, and the texture is the one
+/// bound at set 0, binding 0, which is where a fixed form's is.
+fn textureUniforms(queue: *Queue, fixed: shader.Fixed) ?u32 {
     const filter: tiling.Filter = switch (fixed.sampling.filter) {
         .nearest => .nearest,
         .bilinear => .bilinear,
@@ -852,12 +869,50 @@ fn textureUniforms(queue: *Queue, fixed: shader.Fixed) ?u32 {
         .wrap => .repeat,
         .clamp => .clamp,
     };
-    tiling.writeSamplerState(sampler.cpu[0..tiling.sampler_state_bytes], filter, wrap);
+    const made = tmuConfiguration(queue, 0, 0, filter, wrap) orelse return null;
     const place = carve(queue, 8, 4) orelse return null;
     const words: [*]u32 = @ptrCast(@alignCast(place.cpu));
-    words[0] = tiling.parameter0(state.address);
-    words[1] = tiling.parameter1(sampler.address);
+    words[0] = made.texture;
+    words[1] = made.sampler;
     return place.address;
+}
+
+/// How the TMU would sample through `sampler`, or null where the sampler
+/// asks for something its state cannot say. The state holds one filter
+/// for both directions and one wrap for every axis, and two of facet's
+/// five wraps; it says nothing of mipmapping, of a level held or shifted,
+/// of anisotropy, of a comparison or of a border. A sampler past that is
+/// not drawn wrongly here - it is not drawn here at all, and the draw
+/// says so in the colour.
+fn samplingBy(sampler: *const texture.Sampler) ?struct { filter: tiling.Filter, wrap: tiling.Wrap } {
+    if (sampler.mag_filter != sampler.min_filter) return null;
+    if (sampler.wrap[0] != sampler.wrap[1]) return null;
+    if (sampler.mipmap != .nearest) return null;
+    if (sampler.lod_bias != 0 or sampler.min_lod != 0 or sampler.max_lod != texture.lod_unclamped) return null;
+    if (sampler.anisotropy != 1 or sampler.compare != .none or sampler.unnormalized) return null;
+    return .{
+        .filter = switch (sampler.mag_filter) {
+            .nearest => .nearest,
+            .bilinear => .bilinear,
+        },
+        .wrap = switch (sampler.wrap[0]) {
+            .repeat => .repeat,
+            .clamp_to_edge => .clamp,
+            else => return null,
+        },
+    };
+}
+
+/// The TMU's two words for a generated program's sampler: the texture
+/// and the sampler the draw bound where the module named them. The
+/// module carries the set and the binding; the sampler carries how,
+/// which is the difference from a fixed form, whose `Fixed.sampling`
+/// says it instead.
+fn sampledBy(queue: *Queue, which: compile.Sampler) ?Configuration {
+    const player = playerOf(queue);
+    const sampler = player.resources.samplerOf(which.set, which.binding, 0) orelse return null;
+    const how = samplingBy(sampler) orelse return null;
+    return tmuConfiguration(queue, which.set, which.binding, how.filter, how.wrap);
 }
 
 /// A stencil operation as the hardware numbers them: keep and zero the other
@@ -1095,20 +1150,36 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
         // scaling the way a fixed form's are.
         .none => {
             const made: *const driver.Shader = @ptrCast(@alignCast(pipeline.driver orelse return));
-            fragment = made.address;
-            carried = .as_they_are;
-            const stream = made.stream();
-            const bytes: u32 = @max(4, @as(u32, @intCast(stream.len * 4)));
-            const place = carve(queue, bytes, 4) orelse return noRoom(queue, "a draw with no memory for its uniforms");
-            const words: [*]u32 = @ptrCast(@alignCast(place.cpu));
-            for (stream, 0..) |word, k| words[k] = switch (word) {
-                .float => |each| @bitCast(each),
-                // A program that samples is refused in `make_pipeline`
-                // until a draw can say what the TMU's configuration is,
-                // so a stream that reaches here holds floats alone.
-                .texture, .sampler => 0,
-            };
-            uniforms = place.address;
+            // Where the program samples, the TMU's two words come from
+            // the texture and the sampler bound at the set and binding
+            // the module named - which a draw knows and a pipeline does
+            // not. Null where there is no texture there, or where the
+            // sampler asks for something the TMU's state cannot say.
+            const tmu: ?Configuration = if (made.sampler) |each| sampledBy(queue, each) else null;
+            if (made.sampler != null and tmu == null) {
+                // As `shader.missing`, and as a fixed form does: the
+                // colour says what has gone wrong.
+                varyings = 4;
+                carried = .{ .constant = missing_color };
+                fragment = programs.color;
+                const place = carve(queue, 4, 4) orelse return noRoom(queue, "a draw with no memory for its uniforms");
+                uniforms = place.address;
+            } else {
+                fragment = made.address;
+                carried = .as_they_are;
+                const stream = made.stream();
+                const bytes: u32 = @max(4, @as(u32, @intCast(stream.len * 4)));
+                const place = carve(queue, bytes, 4) orelse return noRoom(queue, "a draw with no memory for its uniforms");
+                const words: [*]u32 = @ptrCast(@alignCast(place.cpu));
+                for (stream, 0..) |word, k| words[k] = switch (word) {
+                    .float => |each| @bitCast(each),
+                    // `Code.sampler` is set for exactly the streams that
+                    // hold these, so `tmu` is there whenever they are.
+                    .texture => if (tmu) |each| each.texture else 0,
+                    .sampler => if (tmu) |each| each.sampler else 0,
+                };
+                uniforms = place.address;
+            }
         },
         // Refused when the pipeline was made (driver.zig): no program drops
         // pixels, and none reads a sampler, so none of these reaches a

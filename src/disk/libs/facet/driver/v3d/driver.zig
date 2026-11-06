@@ -426,11 +426,14 @@ pub const Shader = struct {
     varyings: u32,
     /// The head of its uniform stream, by value, because a draw copies it
     /// into the stream it carves and the compiler's own memory is one
-    /// block every pipeline is compiled through. Every word of it is a
-    /// float today: a program that samples wants two words only a draw
-    /// can fill in, and `compiled` refuses one until the draw can.
+    /// block every pipeline is compiled through. Two of its words may be
+    /// the TMU's configuration, which only a draw can fill in.
     uniforms: [compile.most_uniforms]compile.Word,
     uniform_count: u32,
+    /// The combined image sampler it reads, where it reads one: where
+    /// the draw is to look for the texture and the sampler whose state
+    /// those two words are.
+    sampler: ?compile.Sampler,
 
     pub fn stream(made: *const Shader) []const compile.Word {
         return made.uniforms[0..made.uniform_count];
@@ -474,12 +477,6 @@ fn compiled(pipeline: *Pipeline) facet.Result {
     // count, so this is the words disagreeing with the entry that shipped
     // them rather than a pipeline that was put together wrongly.
     if (code.varyings != pipeline.varyings) return .error_feature_not_present;
-    // A program that samples wants the TMU's two configuration words in
-    // its uniform stream, and only a draw can say what they are: the
-    // texture and the sampler are bound to the descriptor set the module
-    // names, not to the pipeline. Until the draw builds them, such a
-    // program is refused here and the cores draw it.
-    if (code.sampler != null) return .error_feature_not_present;
     const kept = _objects.create(sys, Shader) orelse return .error_out_of_host_memory;
     const hardware = hold(base) orelse {
         _objects.destroy(sys, kept);
@@ -505,6 +502,7 @@ fn compiled(pipeline: *Pipeline) facet.Result {
         .varyings = code.varyings,
         .uniforms = code.uniforms,
         .uniform_count = code.uniform_count,
+        .sampler = code.sampler,
     };
     pipeline.driver = kept;
     return .success;

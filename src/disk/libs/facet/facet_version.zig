@@ -1128,4 +1128,26 @@ pub const LIBRARY_VERSION = 1;
 /// function does the scaling where it writes a pixel. So a program with a
 /// generated fragment entry does not call `shader.channel` in its vertex
 /// function.
-pub const LIBRARY_REVISION = 76;
+/// 77: the V3D's compiler reads a texture. A fragment module that
+/// declares a combined image sampler and samples it with
+/// `OpImageSampleImplicitLod` now makes QPU instructions like the ones
+/// written by hand: a texture drawn as it comes is `qpu.texture_code`'s
+/// shape, and that texel times the colour the vertices carry is
+/// `qpu.texture_color_code` word for word. The texel is not four
+/// registers - the TMU hands back two words of two half-floats, which is
+/// the form the tile buffer takes - so a program that does arithmetic
+/// over it reads each float out with `fmulLow`/`fmulHigh` against a 1 it
+/// holds as a uniform, which is the one instruction on this hardware
+/// that reads half of a pair.
+///
+/// Two words of such a program's uniform stream are the TMU's
+/// configuration, and only a draw can fill them in: the texture and the
+/// sampler are bound to the set and the binding the module names, not to
+/// the pipeline. So the draw looks them up where the module said and
+/// writes them where the program reads them. A sampler asking for
+/// something the TMU's state cannot say - a different filter each way,
+/// a wrap that is none of its two, mipmapping, a level held or shifted,
+/// anisotropy, a comparison, a border - is not drawn wrongly: the draw
+/// paints `shader.missing`'s colour, as it does for a texture that is
+/// not bound at all.
+pub const LIBRARY_REVISION = 77;
