@@ -561,10 +561,54 @@ first that has no hand-written QPU program to be held against - so rung
 
 Steps 2 to 5 are the library's side and are provable on the host. Step 6
 is where the days go. `facet-todo.md` section 4 says months for the whole
-of it and that is not an exaggeration: what is here is steps 1 and 2 of
-its own five, and the scheduler and allocator it describes are deliberately
-not attempted - the generated programs are macro expansions of shapes the
-hand-written ones already prove.
+of it and that is not an exaggeration. Section 4 has two numbered lists -
+seven things it takes, and five it would be split into - and it is the
+**split** this table is walking: what is here is its steps 1 and 2, step
+3 is deliberately not attempted, and steps 6 to 13 above are its step 4.
+
+### What comes after step 13
+
+Step 13 is a long tail rather than a step, and the families in it are not
+alike. The order is the one section 4 gives, and the first of them is
+where the cheap part ends:
+
+- **Discard**, and it breaks the method. Every generated program so far
+  is a macro expansion of a shape a hand-written program already proves,
+  which is what lets rung 5 compare them instruction for instruction and
+  what lets `settle` get away with no scheduler. There is **no
+  hand-written discard program** - `qpu.zig` has seven and none of them
+  drops a pixel - so rung 5 goes blind for it, and rungs 4, 6 and 8 carry
+  it alone. It also wants the encoder to grow: condition flags, a flag
+  push, `setmsf`, and either branches with their three delay slots or
+  flag-conditioned writes instead. On the words' side it wants
+  `OpTypeBool`, a comparison, `OpSelectionMerge` and
+  `OpBranchConditional`, all of which `Error.Branches` turns down today
+  because the back end takes one basic block.
+- **The sampler's other three kinds** - an array layer, a 3D slice, a
+  cube face - which *do* have hand-written programs, so they are the
+  cheap kind again: rung 5 has an oracle and the TMU's configuration is
+  the part that differs.
+- **Then the forms with no fixed equivalent at all**, which is the point
+  of the exercise and the first time the compiler is doing something the
+  library could not already do.
+
+Past the whole of that lie the two things section 4 lists and this
+document has deliberately left alone:
+
+- **A real allocator and a real scheduler** (its step 3). Today there is
+  liveness and allocation but **no spilling** - over the ten registers a
+  pipeline is refused and the cores draw it - and no scheduler at all,
+  the latencies being paid in `nop`s. Both are fine while programs are
+  macro expansions of proven shapes and stop being fine when they are
+  not.
+- **Compute on the QPUs** (its step 5), "if ever": it wants everything
+  above plus the dispatch path.
+
+The feature bits still dark are `input_attachments`, `storage_images`,
+`several_outputs`, `cube_arrays` and `pipeline_statistics_queries`; each
+is a form or two of the above. What **no** amount of this reaches is in
+"What this is not" below - the Khronos CTS, which wants a
+`libvulkan`-shaped shim over facet before a single test of it can run.
 
 ## What this is not
 
