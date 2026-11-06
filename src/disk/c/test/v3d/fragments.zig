@@ -909,7 +909,9 @@ pub fn generatedTest(scene: *Scene, sys: *ExecBase) i32 {
             return dos.RETURN_FAIL;
         }
         var quad: [6]Vertex = undefined;
-        rectangle(&quad, -0.5, 0.5, 0.5, -0.5, 0.5, Nothing{});
+        // In pixels, as `rectangle` wants them: the middle half of the
+        // image, which is -0.5 to 0.5 of it where the check below looks.
+        rectangle(&quad, 320, 180, 960, 540, 0.5, Nothing{});
         scene.begin(.{});
         scene.draw(.{ .fragment = fragment, .uniforms = uniforms, .vertices = &quad });
         if (!scene.finish()) return dos.RETURN_FAIL;
