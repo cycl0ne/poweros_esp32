@@ -10,6 +10,16 @@ left out.
 
 This document is the list of what is left out, as of **facet.library
 1.74**, so that a program need not find out by failing. It covers the API.
+
+> **Stale as of 1.79, and four of its numbers are wrong.** The jump table
+> holds 126 entries and not 124; core coverage is 113 of ~137, so 24 core
+> commands are absent and not 2 (the "137 against 124" below double-counts
+> thirteen non-core names); twenty feature fields differ between the cores
+> and the V3D, not sixteen; and the headline immediately after this - that
+> there is no shader compiler - has been false since 1.76. See
+> **`facet-vulkan10.md`**, which is written against 1.79 and carries the
+> corrections and the work that follows from them. Re-basing this document
+> is item 1 of that list.
 What a program *can* do is in the function documentation, one file a call,
 and in the generated reference (`sdk/docs/autodocs/facet.md`).
 
