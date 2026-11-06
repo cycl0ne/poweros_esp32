@@ -32,7 +32,7 @@ const Sampler = _sampler.Sampler;
 /// none of Vulkan's five, for a filter, mipmap mode, compare operation or
 /// border colour that is not one of Vulkan's, or for
 /// `unnormalized_coordinates` on a device that reads none
-/// (`PhysicalDeviceFeatures.unnormalized_coordinates`);
+/// (`Capabilities.unnormalized_coordinates`);
 /// `error_initialization_failed` for `unnormalized_coordinates` asked for
 /// beside something Vulkan does not allow with it;
 /// `error_out_of_host_memory`.
@@ -46,7 +46,7 @@ const Sampler = _sampler.Sampler;
 /// `PhysicalDeviceLimits.max_sampler_anisotropy` (since 1.80; the
 /// library's cap of 16 before, whatever the device said)
 /// rather than refused above it, and is taken only where
-/// `PhysicalDeviceFeatures.sampler_anisotropy` says so; without
+/// `Capabilities.sampler_anisotropy` says so; without
 /// `anisotropy_enable` it is 1, one sample. `max_lod` below `min_lod`
 /// leaves the sample on `min_lod`. `compare_enable` makes every sample
 /// through it a shadow sample: what is read is compared with the reference
@@ -83,7 +83,7 @@ const Sampler = _sampler.Sampler;
 /// (`shader.FixedKind.texture_sampled`, `texture_shadow`, since 1.49
 /// `texture_array_sampled`, `texture_cube_sampled` and `texture_3d_sampled`,
 /// and since 1.53 `texture_cube_array_sampled`)
-/// is refused on a device whose `PhysicalDeviceFeatures.samplers` is false.
+/// is refused on a device whose `Capabilities.samplers` is false.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -136,7 +136,7 @@ pub fn CreateSampler(base: *FacetBase, device: *facet.Device, info: *const facet
     // sampling holds it to the first level and to one sample and so
     // cannot answer for a sampler that says otherwise (since 1.67).
     if (info.unnormalized_coordinates) {
-        if (!owner.physical.features.unnormalized_coordinates) return .error_feature_not_present;
+        if (!owner.physical.can.unnormalized_coordinates) return .error_feature_not_present;
         if (info.mag_filter != info.min_filter) return .error_initialization_failed;
         if (info.mipmap_mode != .nearest) return .error_initialization_failed;
         if (info.min_lod != 0 or info.max_lod != 0) return .error_initialization_failed;
@@ -183,17 +183,19 @@ pub fn CreateSampler(base: *FacetBase, device: *facet.Device, info: *const facet
 /// held between one and `limit`, which is the device's own
 /// `PhysicalDeviceLimits.max_sampler_anisotropy` and not the library's cap
 /// (since 1.80; the cap before, which on a device without the feature
-/// promised 16 where the limit said 1). A NaN takes one.
-fn anisotropyOf(asked: f32, limit: u32) f32 {
+/// promised 16 where the limit said 1). A NaN takes one. The limit is
+/// Vulkan's float since 1.82, so a device may report a fractional one and
+/// nothing has to be converted here.
+fn anisotropyOf(asked: f32, limit: f32) f32 {
     if (!(asked > 1)) return 1;
-    return @min(asked, @max(@as(f32, @floatFromInt(limit)), 1));
+    return @min(asked, @max(limit, 1));
 }
 
 const std = @import("std");
 const testing = std.testing;
 
 test "a sampler's anisotropy is held to the device's limit, not the library's cap" {
-    // A device without `PhysicalDeviceFeatures.sampler_anisotropy` has
+    // A device without `Capabilities.sampler_anisotropy` has
     // Vulkan's required `max_sampler_anisotropy` of 1, which the V3D says
     // since 1.80: a sampler there takes one sample however many it asked
     // for. Before 1.80 this was the library's cap of 16 whatever the device

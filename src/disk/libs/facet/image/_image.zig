@@ -65,7 +65,7 @@ pub const Image = struct {
     cube: bool = false,
     /// IMAGE_CREATE_PACKED_TEXELS: an 8888 texel kept in the 32 bits of
     /// its word rather than spread over 64 (`texture.Format.argb8888`,
-    /// `PhysicalDeviceFeatures.small_texels`, since 1.48).
+    /// `Capabilities.small_texels`, since 1.48).
     packed_texels: bool = false,
     usage: u32,
     kind: Kind,
@@ -174,7 +174,7 @@ pub fn rowTexture(format: facet.Format) ?texture.Format {
 
 /// Whether a texture of `format` keeps channels of its own rather than
 /// the 8888 colour a sample makes of them
-/// (`PhysicalDeviceFeatures.wide_channels`, since 1.69).
+/// (`Capabilities.wide_channels`, since 1.69).
 pub fn wideChannels(format: facet.Format) bool {
     return switch (format) {
         .r8g8_unorm, .r16_unorm, .r16g16_unorm, .r16g16b16a16_unorm => true,
@@ -185,7 +185,7 @@ pub fn wideChannels(format: facet.Format) bool {
 /// Whether a texture of `format` keeps whole numbers rather than a colour
 /// or a part of one: Vulkan's `_uint` and `_sint` formats, one channel,
 /// two or four, of 8, 16 or 32 bits
-/// (`PhysicalDeviceFeatures.whole_textures`, since 1.70).
+/// (`Capabilities.whole_textures`, since 1.70).
 pub fn wholeNumbers(format: facet.Format) bool {
     return switch (format) {
         .r8_uint, .r8g8_uint, .r8g8b8a8_uint, .r8_sint, .r8g8_sint, .r8g8b8a8_sint => true,
@@ -240,7 +240,7 @@ pub fn textureFormat(format: facet.Format) ?texture.Format {
 
 /// The same, with IMAGE_CREATE_PACKED_TEXELS: an 8888 texel is then kept
 /// in the 32 bits of its word rather than spread over 64, which is the
-/// same colour in half the memory (`PhysicalDeviceFeatures.small_texels`,
+/// same colour in half the memory (`Capabilities.small_texels`,
 /// since 1.48). The flag means nothing to any other format.
 pub fn keptFormat(format: facet.Format, packed_texels: bool) ?texture.Format {
     return switch (format) {
@@ -249,7 +249,7 @@ pub fn keptFormat(format: facet.Format, packed_texels: bool) ?texture.Format {
         // One byte of red a texel, read as (red, 0, 0, 1) (since 1.48).
         .r8_unorm => .r8,
         // Kept in their blocks and decoded as they are sampled, on a
-        // device that says so (`PhysicalDeviceFeatures.kept_compressed`).
+        // device that says so (`Capabilities.kept_compressed`).
         .bc1_rgba_unorm_block => .bc1,
         .bc1_rgb_unorm_block => .bc1_rgb,
         .bc2_unorm_block => .bc2,
@@ -265,7 +265,7 @@ pub fn keptFormat(format: facet.Format, packed_texels: bool) ?texture.Format {
         .bc6h_sfloat_block => .bc6hs,
         // Kept as the floats they were copied in as, and rounded to 8 bits
         // a channel as they are sampled, on a device that says so
-        // (`PhysicalDeviceFeatures.kept_floats`).
+        // (`Capabilities.kept_floats`).
         .r16g16b16a16_sfloat => .rgba16f,
         .r32g32b32a32_sfloat => .rgba32f,
         .b10g11r11_ufloat_pack32 => .rg11b10f,
@@ -275,14 +275,14 @@ pub fn keptFormat(format: facet.Format, packed_texels: bool) ?texture.Format {
         // writes through.
         .r32_sfloat => .r32f,
         // Channels of the texture's own, kept as they lie, on a device
-        // that says so (`PhysicalDeviceFeatures.wide_channels`, since
+        // that says so (`Capabilities.wide_channels`, since
         // 1.69): two bytes of red and green, and 16 bits a channel.
         .r8g8_unorm => .rg8,
         .r16_unorm => .r16,
         .r16g16_unorm => .rg16,
         .r16g16b16a16_unorm => .rgba16,
         // Whole numbers, likewise kept as they lie, on a device that says
-        // so (`PhysicalDeviceFeatures.whole_textures`, since 1.70).
+        // so (`Capabilities.whole_textures`, since 1.70).
         .r8_uint => .r8u,
         .r8g8_uint => .rg8u,
         .r8g8b8a8_uint => .rgba8u,
@@ -302,7 +302,7 @@ pub fn keptFormat(format: facet.Format, packed_texels: bool) ?texture.Format {
         .r32g32_sint => .rg32i,
         .r32g32b32a32_sint => .rgba32i,
         // A depth sampled where it lies, in rows
-        // (`PhysicalDeviceFeatures.sampled_depth`).
+        // (`Capabilities.sampled_depth`).
         .d16_unorm => .d16,
         else => null,
     };
@@ -345,7 +345,7 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
     const cube = info.flags & facet.IMAGE_CREATE_CUBE_COMPATIBLE != 0;
     if (cube and (volume or layers < 6 or extent.width != extent.height)) return null;
     // A texel kept smaller than the colour it reads as, on a device that
-    // keeps one (`PhysicalDeviceFeatures.small_texels`, since 1.48): an
+    // keeps one (`Capabilities.small_texels`, since 1.48): an
     // 8888 texel in the 32 bits of its word rather than spread over 64,
     // and a texel of one byte of red. Both are for an image a function
     // reads or writes; nothing else is kept in a texture's layout.
@@ -355,20 +355,20 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
         .r8g8b8a8_unorm, .b8g8r8a8_unorm => true,
         else => false,
     };
-    if (packed_texels and !(physical.features.small_texels and in_texels and packs)) return null;
-    if (info.format == .r8_unorm and !(physical.features.small_texels and in_texels)) return null;
+    if (packed_texels and !(physical.can.small_texels and in_texels and packs)) return null;
+    if (info.format == .r8_unorm and !(physical.can.small_texels and in_texels)) return null;
     // A texture whose channels are its own, kept as they lie
-    // (`PhysicalDeviceFeatures.wide_channels`, since 1.69): two bytes of
+    // (`Capabilities.wide_channels`, since 1.69): two bytes of
     // red and green, or 16 bits a channel. Such an image is for a
     // function to read or to write, as a small texel is, and a device
     // that keeps 8 bits a channel refuses it.
-    if (wideChannels(info.format) and !(physical.features.wide_channels and in_texels)) return null;
+    if (wideChannels(info.format) and !(physical.can.wide_channels and in_texels)) return null;
     // And a texture of whole numbers, which a function reads with
     // `texture.Texture.wholesAt` and writes with `setWholes`
-    // (`PhysicalDeviceFeatures.whole_textures`, since 1.70): no colour
+    // (`Capabilities.whole_textures`, since 1.70): no colour
     // carries one, so an image of such a format is for a function and
     // nothing else.
-    if (wholeNumbers(info.format) and !(physical.features.whole_textures and in_texels)) return null;
+    if (wholeNumbers(info.format) and !(physical.can.whole_textures and in_texels)) return null;
     // Layers are for a function to read or to write: an attachment or
     // rows have one, and both want the layout a sample reads, which is
     // `optimal` tiling. An image of layers written through and never
@@ -377,17 +377,17 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
     if (layers > 1 and !in_texels) return null;
     // A compressed image is kept in its blocks, and a float one in its
     // floats, where this device samples them
-    // (`PhysicalDeviceFeatures.kept_compressed`, `kept_floats`); where it
+    // (`Capabilities.kept_compressed`, `kept_floats`); where it
     // does not they are unpacked into 8 bits a channel. A storage image is
     // written texel by texel, which neither kind takes.
     const writes_texels = info.usage & facet.IMAGE_USAGE_STORAGE != 0;
     // An ETC2 or EAC block is never kept: no sampler of this library reads
     // one, so such an image is unpacked whatever the device says.
-    const keeps_blocks = physical.features.kept_compressed and _decode.blockBytes(info.format) != 0 and !_decode.etc(info.format) and !writes_texels;
+    const keeps_blocks = physical.can.kept_compressed and _decode.blockBytes(info.format) != 0 and !_decode.etc(info.format) and !writes_texels;
     // A float image keeps its floats even where a function writes it
     // through, since 1.57: `texture.Texture.setParts` writes one texel of
     // floats, where nothing writes one texel of a compressed block.
-    const keeps_floats = physical.features.kept_floats and _decode.texelBytes(info.format) != 0;
+    const keeps_floats = physical.can.kept_floats and _decode.texelBytes(info.format) != 0;
     const kept_format: facet.Format = if (_decode.unpacks(info.format) and !(keeps_blocks or keeps_floats)) .r8g8b8a8_unorm else info.format;
     // What is unpacked on the way in is unpacked to be sampled: a format
     // kept as it lies - a compressed image's blocks, a float one's floats
@@ -430,7 +430,7 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
         const sampled = info.usage & facet.IMAGE_USAGE_SAMPLED != 0;
         const read_back = info.usage & facet.IMAGE_USAGE_INPUT_ATTACHMENT != 0;
         if (sampled or read_back) {
-            if (!physical.features.sampled_depth) return null;
+            if (!physical.can.sampled_depth) return null;
             if (info.usage & facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT != 0) return null;
         }
         var allowed = depth_usage;
@@ -698,7 +698,7 @@ pub fn unpacks(image: *const Image) bool {
 }
 
 /// Whether an image's texels lie compressed where they were copied in, in
-/// blocks of 4 x 4 texels (`PhysicalDeviceFeatures.kept_compressed`): a
+/// blocks of 4 x 4 texels (`Capabilities.kept_compressed`): a
 /// sample decodes the block it reads, and a copy moves whole blocks.
 pub fn blocked(image: *const Image) bool {
     return _decode.blockBytes(image.format) != 0;
@@ -710,7 +710,7 @@ pub fn blockBytes(image: *const Image) u32 {
 }
 
 /// Whether an image's texels are the floats they were copied in as
-/// (`PhysicalDeviceFeatures.kept_floats`): a sample rounds one to 8 bits a
+/// (`Capabilities.kept_floats`): a sample rounds one to 8 bits a
 /// channel as it reads it, and a copy moves its bytes as they lie.
 pub fn floatTexels(image: *const Image) bool {
     return _decode.texelBytes(image.format) != 0;

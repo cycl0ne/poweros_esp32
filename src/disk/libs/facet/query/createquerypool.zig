@@ -25,7 +25,7 @@ const _query = @import("_query.zig");
 ///
 /// RESULT:
 /// `success`; `error_feature_not_present` for a kind this device has not
-/// got (`PhysicalDeviceFeatures.occlusion_queries`,
+/// got (`Capabilities.occlusion_queries`,
 /// `pipeline_statistics_queries`, `timestamp_queries`), or for a bit that
 /// is none of Vulkan's; `error_initialization_failed` for no queries at
 /// all, or a statistics pool that counts nothing;
@@ -78,15 +78,15 @@ const _query = @import("_query.zig");
 pub fn CreateQueryPool(base: *FacetBase, device: *facet.Device, info: *const facet.QueryPoolCreateInfo, pool: *?*facet.QueryPool) facet.Result {
     pool.* = null;
     const owner = _objects.of(Device, device);
-    const features = owner.physical.features;
+    const can = owner.physical.can;
     switch (info.query_type) {
-        .occlusion => if (!features.occlusion_queries) return .error_feature_not_present,
+        .occlusion => if (!can.occlusion_queries) return .error_feature_not_present,
         .pipeline_statistics => {
-            if (!features.pipeline_statistics_queries) return .error_feature_not_present;
+            if (!can.pipeline_statistics_queries) return .error_feature_not_present;
             if (info.pipeline_statistics & ~facet.QUERY_PIPELINE_STATISTIC_ALL != 0) return .error_feature_not_present;
             if (info.pipeline_statistics == 0) return .error_initialization_failed;
         },
-        .timestamp => if (!features.timestamp_queries) return .error_feature_not_present,
+        .timestamp => if (!can.timestamp_queries) return .error_feature_not_present,
         else => return .error_feature_not_present,
     }
     if (info.query_count == 0) return .error_initialization_failed;

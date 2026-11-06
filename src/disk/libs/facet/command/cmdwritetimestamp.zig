@@ -51,7 +51,7 @@ const Pool = @import("../query/_query.zig").Pool;
 ///
 /// NOTES:
 /// Without timer.device there is no clock to read:
-/// `PhysicalDeviceFeatures.timestamp_queries` is false then and
+/// `Capabilities.timestamp_queries` is false then and
 /// CreateQueryPool refuses the kind, so this cannot be reached.
 ///
 /// BUGS:

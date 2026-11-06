@@ -4,7 +4,7 @@
 //! the 8 bits a channel the image is kept in.
 //!
 //! A compressed image is unpacked here only on a device that samples texels
-//! rather than blocks (`PhysicalDeviceFeatures.kept_compressed`, false on the
+//! rather than blocks (`Capabilities.kept_compressed`, false on the
 //! V3D): it then takes the memory of an uncompressed one, and holds what
 //! sampling the blocks would have read, the one decoder being the SDK's
 //! (`texture.blockOf`). What is above 1 in a float image is cut to 1, and

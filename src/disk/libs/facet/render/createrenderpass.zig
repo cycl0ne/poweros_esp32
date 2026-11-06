@@ -103,7 +103,7 @@ const _surface = @import("../surface/_surface.zig");
 /// subpass drew, or what its load op left there.
 ///
 /// **A depth attachment is read that way too** since 1.62
-/// (`PhysicalDeviceFeatures.sampled_depth`): one plane of it, the one the
+/// (`Capabilities.sampled_depth`): one plane of it, the one the
 /// view's aspect names, the depth as 0 to 1 and the stencil as the whole
 /// number it is (`CreateImageView`, `shader.Attachment`). Where an
 /// earlier subpass drew that depth, the part which drew it last writes it
@@ -219,7 +219,7 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
         var reads_own: [_render.most_attachments]bool = @splat(false);
         var reads_any = false;
         if (subpass.input_attachment_count != 0) {
-            if (!owner.physical.features.input_attachments) return .error_feature_not_present;
+            if (!owner.physical.can.input_attachments) return .error_feature_not_present;
             if (subpass.input_attachment_count > _render.most_attachments) return .error_feature_not_present;
             const inputs = subpass.input_attachments orelse return .error_initialization_failed;
             for (inputs[0..subpass.input_attachment_count]) |reference| {
@@ -231,9 +231,9 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                 // was loaded): a colour format kept in rows, or since
                 // 1.62 a depth format, one plane of which is read where
                 // it lies, as a sampled depth image's is
-                // (`PhysicalDeviceFeatures.sampled_depth`).
+                // (`Capabilities.sampled_depth`).
                 const depth_read = _image.hasDepth(read.format) or _image.hasStencil(read.format);
-                if (depth_read and !owner.physical.features.sampled_depth) return .error_feature_not_present;
+                if (depth_read and !owner.physical.can.sampled_depth) return .error_feature_not_present;
                 if (!depth_read and _image.rowFormat(read.format) == .none) return .error_format_not_supported;
                 // A depth another subpass drew is in that subpass's
                 // tiles, so the part that drew it last writes it into
@@ -243,14 +243,14 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                 // where the format holds both.
                 if (depth_read) if (depths[reference.attachment]) |earlier| {
                     if (_image.hasDepth(read.format)) {
-                        if (!owner.physical.features.stored_depth) return .error_feature_not_present;
+                        if (!owner.physical.can.stored_depth) return .error_feature_not_present;
                         plan.parts[earlier].stores_depth = true;
                     }
                     if (_image.hasStencil(read.format)) {
-                        if (!owner.physical.features.stored_stencil) return .error_feature_not_present;
+                        if (!owner.physical.can.stored_stencil) return .error_feature_not_present;
                         plan.parts[earlier].stores_stencil = true;
                     }
-                    if (_image.hasDepth(read.format) and _image.hasStencil(read.format) and !owner.physical.features.stored_both) return .error_feature_not_present;
+                    if (_image.hasDepth(read.format) and _image.hasStencil(read.format) and !owner.physical.can.stored_both) return .error_feature_not_present;
                 };
                 if (read.samples != 1) return .error_feature_not_present;
                 // Drawn and read in the same subpass: the pixels being
@@ -265,7 +265,7 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                     for (colors[0..subpass.color_attachment_count]) |drawn_now| {
                         if (drawn_now.attachment != reference.attachment) continue;
                         if (depth_read or !byRegion(info, @intCast(number))) return .error_initialization_failed;
-                        if (!owner.physical.features.input_attachments) return .error_feature_not_present;
+                        if (!owner.physical.can.input_attachments) return .error_feature_not_present;
                         reads_own[reference.attachment] = true;
                         reads_any = true;
                     }
@@ -280,7 +280,7 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
         // function that writes all of them at once (since 1.51). Without
         // it the subpass is a part for each of them, played over again.
         const together = subpass.flags & facet.SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER != 0;
-        if (together and !owner.physical.features.several_outputs) return .error_feature_not_present;
+        if (together and !owner.physical.can.several_outputs) return .error_feature_not_present;
         if (subpass.flags & ~facet.SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER != 0) return .error_feature_not_present;
         // A subpass that reads what it draws is a part of its own: what it
         // reads is the tile as this part starts, so it does not go on in
@@ -327,13 +327,13 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                     // image's rows and read back from them, which only a
                     // device that draws in the rasterizer's tiles can do,
                     // and only for a format whose rows hold a depth.
-                    if (!owner.physical.features.stored_depth) return .error_feature_not_present;
+                    if (!owner.physical.can.stored_depth) return .error_feature_not_present;
                     if (!tests_depth) return .error_feature_not_present;
                 }
                 // The stencil keeps its own, in its own plane of those
                 // rows, by its own two ops (1.38).
                 if (loads_stencil or stores_stencil or (shared != null and tests_stencil)) {
-                    if (!owner.physical.features.stored_stencil) return .error_feature_not_present;
+                    if (!owner.physical.can.stored_stencil) return .error_feature_not_present;
                     if (!tests_stencil) return .error_feature_not_present;
                 }
                 // A format of both planes keeps either only where the
@@ -342,7 +342,7 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                 // buffer whole writes a plane's own pixels one after
                 // another, which those rows are not.
                 if ((loads_depth or stores_depth or loads_stencil or stores_stencil or shared != null) and
-                    tests_depth and tests_stencil and !owner.physical.features.stored_both) return .error_feature_not_present;
+                    tests_depth and tests_stencil and !owner.physical.can.stored_both) return .error_feature_not_present;
                 // The part that drew it last keeps what it left, so that
                 // this subpass can read it in.
                 if (shared) |earlier| {

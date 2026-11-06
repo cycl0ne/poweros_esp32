@@ -22,7 +22,7 @@ pub fn copyImage(command: *const _command.CopyImage) void {
     if (!_image.readable(source) or !_image.readable(destination)) return;
     if (_image.unpacks(source) or _image.unpacks(destination)) return;
     // Both keeping their blocks, of the one format: the blocks go as they
-    // lie, nothing decoded (`PhysicalDeviceFeatures.kept_compressed`).
+    // lie, nothing decoded (`Capabilities.kept_compressed`).
     if (_image.blocked(source) or _image.blocked(destination)) {
         if (source.format == destination.format) copyBlocks(command);
         return;

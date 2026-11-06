@@ -45,10 +45,10 @@ const ImageView = _image.ImageView;
 /// such an image, for `texture_cube_array` and, since 1.53,
 /// `texture_cube_array_sampled`: its layers are a multiple of six
 /// and its first layer begins a cube, so `base_array_layer` is a multiple of
-/// six as well (`PhysicalDeviceFeatures.cube_arrays`, since 1.46).
+/// six as well (`Capabilities.cube_arrays`, since 1.46).
 ///
 /// **A view of a sampled depth image takes one of its planes** since 1.58
-/// (`PhysicalDeviceFeatures.sampled_depth`): IMAGE_ASPECT_DEPTH is the
+/// (`Capabilities.sampled_depth`): IMAGE_ASPECT_DEPTH is the
 /// depth, read at all 16 bits by a sampler that compares and as a grey of
 /// its top 8 by one that does not, and IMAGE_ASPECT_STENCIL is the
 /// stencil, read as (red, 0, 0, 1) the way a texel of one byte is. Both
@@ -115,7 +115,7 @@ pub fn CreateImageView(base: *FacetBase, device: *facet.Device, info: *const fac
         .cube => if (!image.cube or layers != 6) return .error_format_not_supported,
         // Cubes one after another: six layers to each, and the first layer
         // of the view is the first face of a cube (since 1.46).
-        .cube_array => if (!image.device.physical.features.cube_arrays or !image.cube or layers % 6 != 0 or range.base_array_layer % 6 != 0) return .error_format_not_supported,
+        .cube_array => if (!image.device.physical.can.cube_arrays or !image.cube or layers % 6 != 0 or range.base_array_layer % 6 != 0) return .error_format_not_supported,
         .@"3d" => if (!image.volume or range.base_array_layer != 0 or layers != image.layers) return .error_format_not_supported,
         else => return .error_format_not_supported,
     }

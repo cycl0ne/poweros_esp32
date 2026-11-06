@@ -76,6 +76,7 @@ test {
     _ = @import("libs/facet/tests/spirv.zig");
     _ = @import("libs/facet/tests/ir.zig");
     _ = @import("libs/facet/tests/facet.zig");
+    _ = @import("libs/facet/tests/vulkan_limits.zig");
     _ = @import("libs/facet/tests/draw.zig");
     _ = @import("libs/facet/tests/present.zig");
     _ = @import("libs/facet/facet_lvo.zig");

@@ -37,7 +37,8 @@ const _pipeline = @import("../../pipeline/_pipeline.zig");
 const Pipeline = _pipeline.Pipeline;
 const Queue = @import("../../queue/_queue.zig").Queue;
 const CommandBuffer = @import("../../command/_command.zig").CommandBuffer;
-const Ops = @import("../_driver.zig").Ops;
+const _driver = @import("../_driver.zig");
+const Ops = _driver.Ops;
 const _play = @import("_play.zig");
 const _draw = @import("_draw.zig");
 
@@ -76,40 +77,24 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         .device_id = 0,
         .device_type = .cpu,
         .device_name = @splat(0),
-        .limits = .{
-            .max_image_dimension_2d = _instance.max_image_dimension,
-            .max_framebuffer_width = _instance.max_image_dimension,
-            .max_framebuffer_height = _instance.max_image_dimension,
-            .max_image_dimension_3d = _instance.max_image_dimension_3d,
-            .max_image_array_layers = _instance.max_image_array_layers,
-            .max_color_attachments = _render.most_colors,
-            .max_vertex_input_bindings = _instance.max_vertex_input_bindings,
-            .max_vertex_input_attributes = _instance.max_vertex_input_attributes,
-            .max_vertex_input_binding_stride = 2048,
-            .max_vertex_output_components = _instance.max_vertex_output_components,
-            .max_push_constants_size = _instance.max_push_constants_size,
-            .max_bound_descriptor_sets = _instance.max_bound_descriptor_sets,
-            .max_per_stage_descriptor_sampled_images = 16,
-            .max_per_stage_descriptor_uniform_buffers = 12,
-            .max_descriptor_set_dynamic_buffers = facet.shader.MAX_DYNAMIC_OFFSETS,
-            // A compute function runs on the cores for either device.
-            .max_compute_work_group_size = _instance.max_compute_work_group_size,
-            .max_compute_work_group_invocations = _instance.max_compute_work_group_invocations,
-            .max_compute_shared_memory_size = _instance.max_compute_shared_memory_size,
-            .max_tessellation_patch_components = _instance.max_tessellation_patch_components,
-            .min_memory_map_alignment = _memory.alignment,
-            .tile_size = raster.tile_size,
-            .cores = @min(cores, raster.most_parts),
-            .max_sampler_anisotropy = _instance.max_sampler_anisotropy,
-            .timestamp_period_ns = _instance.timestamp_period_ns,
-            // A point is widened into a rectangle on the cores for
-            // either device, so both draw one of any size (since 1.70).
-            .point_size_range = .{ 1, _instance.max_point_size },
-        },
+        // Filled from the properties themselves once they are all here,
+        // just below, so the UUID cannot fall out of step with them.
+        .pipeline_cache_uuid = undefined,
+        .sparse_properties = .{},
+        // Every number is the library's own or this rasterizer's, and this
+        // device is that rasterizer, so there is nothing here it would say
+        // differently from what `_instance.limits` says.
+        .limits = _instance.limits,
     };
-    const shared = physical.properties.limits.cores;
+    physical.properties.pipeline_cache_uuid = _driver.cacheUuid(&physical.properties);
+    // The tile and the cores are the library's own two numbers, which
+    // VkPhysicalDeviceLimits has no member for: they left the limits at 1.82
+    // and sit on the device record instead.
+    physical.tile_size = raster.tile_size;
+    physical.cores = @min(cores, raster.most_parts);
+    const shared = physical.cores;
     _ = std.fmt.bufPrint(physical.properties.device_name[0 .. facet.MAX_PHYSICAL_DEVICE_NAME_SIZE - 1], "facet.library rasterizer, {d} core{s}", .{ shared, if (shared == 1) "" else "s" }) catch {};
-    physical.features = .{
+    physical.can = .{
         // The rasterizer calls whatever function the pipeline carries.
         .own_fragment_functions = true,
         .sampling_format = true,

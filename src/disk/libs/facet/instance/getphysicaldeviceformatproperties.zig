@@ -33,13 +33,13 @@ const PhysicalDevice = @import("_instance.zig").PhysicalDevice;
 ///   sampled, filtered, in optimal tiling; copied.
 /// - D16_UNORM: a depth attachment, in optimal tiling, and copied both
 ///   ways; sampled and filtered as well on a device that samples a depth
-///   where its rows lie (`PhysicalDeviceFeatures.sampled_depth`), and not
+///   where its rows lie (`Capabilities.sampled_depth`), and not
 ///   on one that does not, which refuses such an image at CreateImage
 ///   (since 1.80).
 /// - R32_SFLOAT to R32G32B32A32_SFLOAT: a vertex's value.
 /// - R8_UNORM: sampled, filtered, written through as a storage image, in
 ///   optimal tiling, and copied both ways. One byte a texel, read as
-///   (red, 0, 0, 1) (`PhysicalDeviceFeatures.small_texels`, since 1.48);
+///   (red, 0, 0, 1) (`Capabilities.small_texels`, since 1.48);
 ///   never an attachment and never a buffer's.
 /// - BC1, BC2, BC3, R16G16B16A16_SFLOAT, R32G32B32A32_SFLOAT,
 ///   B10G11R11_UFLOAT and E5B9G9R9_UFLOAT: sampled, filtered, in optimal

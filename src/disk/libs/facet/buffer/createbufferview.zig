@@ -100,7 +100,7 @@ const Device = @import("../device/_device.zig").Device;
 pub fn CreateBufferView(base: *FacetBase, device: *facet.Device, info: *const facet.BufferViewCreateInfo, view: *?*facet.BufferView) facet.Result {
     view.* = null;
     const owner = _objects.of(Device, device);
-    if (!owner.physical.features.texel_buffers) return .error_feature_not_present;
+    if (!owner.physical.can.texel_buffers) return .error_feature_not_present;
     const texels = _bufferview.texelsOf(info.format);
     if (texels == .none) return .error_format_not_supported;
     const buffer = _objects.of(Buffer, info.buffer);

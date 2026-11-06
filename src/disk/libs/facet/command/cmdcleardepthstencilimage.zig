@@ -65,7 +65,7 @@ const Image = @import("../image/_image.zig").Image;
 ///
 /// NOTES:
 /// This is for a depth or stencil image a render pass stores into
-/// (`PhysicalDeviceFeatures.stored_depth`, `stored_stencil`): it is how
+/// (`Capabilities.stored_depth`, `stored_stencil`): it is how
 /// one is put back to the furthest depth, or to a stencil of its own,
 /// without a pass over it. Where the pass clears its attachment itself
 /// there is nothing for this to do.

@@ -28,7 +28,7 @@ const Set = @import("../descriptor/_descriptor.zig").Set;
 ///   sets, their bindings and the elements of each run; null and 0 where
 ///   there is none. Offsets past what the sets want are left alone, and a
 ///   descriptor whose offset is missing is read from where it was written
-///   (since 1.35, `PhysicalDeviceFeatures.dynamic_descriptors`).
+///   (since 1.35, `Capabilities.dynamic_descriptors`).
 ///
 /// RESULT:
 /// None.

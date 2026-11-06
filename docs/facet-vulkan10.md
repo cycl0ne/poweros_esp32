@@ -67,18 +67,24 @@ reason.
 
 Measured against the tree at 1.79. Every count on the left was taken from
 the source; every requirement on the right came from the Vulkan 1.0
-specification, **which is not in this tree** - there is no `vk.xml` and no
-`vulkan_core.h` anywhere under it, so the right-hand column is quoted from
-Khronos' published spec and cannot be checked offline. Vendoring the
-registry is item 76's companion and would make all of this verifiable.
+specification, which is not in this tree - there is no `vk.xml` and no
+`vulkan_core.h` anywhere under it.
+
+**That last sentence was read for a long time as meaning the right-hand
+column could not be checked. It only meant it could not be checked *from
+the tree*.** This machine has the registry header installed, because
+`scripts/vulkan-check.sh` compiles against it, and the header is the
+registry's own output. Since 1.82 `scripts/vulkan-struct-check.sh` reads it
+and holds facet's four physical-device structures against it member for
+member; the counts below were confirmed by it, 106 and 55 exactly.
 
 | | facet 1.79 | Vulkan 1.0 |
 |---|---|---|
 | jump table entries | 126 | - |
 | of those, core commands | 113 | ~137 |
 | core commands absent | **24** | - |
-| `PhysicalDeviceFeatures` | 49 fields, facet's names, Zig `bool` | 55 fields, `VkBool32` |
-| `PhysicalDeviceLimits` | 26 fields | ~106 |
+| `PhysicalDeviceFeatures` | 49 fields, facet's names, Zig `bool` (**1.82: Vulkan's 55 `Bool32`**) | 55 fields, `VkBool32` |
+| `PhysicalDeviceLimits` | 26 fields (**1.82: Vulkan's 106, in Vulkan's order**) | 106, measured from the header |
 | limits below the required minimum | **9** | - |
 | required limits with no field at all | **~50** | - |
 | mandatory colour-attachment formats | 3 | 38 |
@@ -108,10 +114,16 @@ These are the items that serve the decision above, in the order the
 analysis put them. Items marked *critical path* are the ones the second
 refinement - finish the compiler, no fallback - moves onto the main line.
 
-**Items 2, 3, 4, 5 and 7 were done in revision 1.80**, and each carries a
-*Done* note below saying what was actually built and where the item's own
-description turned out to be wrong. Two things found while doing them are
-a new item at the end of the list (77).
+**Items 2, 3, 4, 5 and 7 were done in revision 1.80, item 78 in 1.81, and
+items 14, 16, 49 and 77 in 1.82.** Each carries a *Done* note below saying
+what was actually built and where the item's own description turned out to
+be wrong - and several did. Things found while doing them became the items
+at the end of the list: 77 and 78 from 1.80 and 1.81, and 79, 80 and 81
+from 1.82.
+
+Item 16's *Done* note is the one to read first if you are picking this up,
+because the limits reshape it settles is what items 17 to 30 were waiting
+for: they are value changes in a structure that has the fields now.
 
 The line and file references in the evidence blockquotes were measured at
 commit `af42edb7`, before 1.80 moved code around. They are evidence of
@@ -363,6 +375,25 @@ Found independently by: entry-points, objects-commands, semantics, features, con
 
 *device properties* &mdash; conformance-blocking, small, also serves the shim
 
+**Done in 1.82.** `PhysicalDeviceProperties` is `VkPhysicalDeviceProperties`,
+all nine members in Vulkan's order: `device_name` is 256 bytes as
+`VK_MAX_PHYSICAL_DEVICE_NAME_SIZE` always asked, `pipeline_cache_uuid` and
+`sparse_properties` are there, and `limits` therefore sits where a
+conformant caller expects it. `PhysicalDeviceSparseProperties` is a new
+structure of five `Bool32`, all false, since no device binds memory a piece
+at a time.
+
+The UUID is not filled with zeroes. Vulkan asks that it change whenever
+anything that could make a cached pipeline wrong changes, and the driver
+module's own `stamp` is already exactly that - the sum of the library's
+version and of every shape a module and the library share - so the UUID is
+that stamp mixed with what names the device, which makes it move when the
+library is rebuilt, when a driver is rebuilt against another library, or
+when the device is a different one (`driver/_driver.zig` `cacheUuid`). The
+item's worry that this had to wait for the pipeline cache was unfounded:
+the member is required whether or not the cache commands exist, and the
+stamp is a better source than a cache would have been.
+
 After: The pipeline cache (for the UUID) and the sparse queries (for sparseProperties)
 
 GetPhysicalDeviceProperties has Vulkan's name and arity but fills a struct short of VkPhysicalDeviceProperties by pipelineCacheUUID[16] and sparseProperties, with deviceName 64 bytes where VK_MAX_PHYSICAL_DEVICE_NAME_SIZE is 256 — so `limits` sits at the wrong offset for a conformant caller and two members are absent. Adding them is small but moves `limits`, breaking every program that reads the struct, so it wants doing at the same moment as the limits reshape (item 16) rather than on its own.
@@ -384,6 +415,56 @@ Found independently by: entry-points, semantics.
 ### 16. Decide what PhysicalDeviceLimits is: 26 facet fields against VkPhysicalDeviceLimits' ~106
 
 *limits / API shape* &mdash; structural, large, also serves the shim
+
+**Done in 1.82, and the counts were right: 106 and 55 exactly.** They are no
+longer quoted from the published spec either - this machine has the registry
+header installed, because `scripts/vulkan-check.sh` compiles against it, so
+`scripts/vulkan-struct-check.sh` reads `vulkan_core.h` and holds all four
+structures against it member for member, name for name, type for type and
+array length for array length. It has a `--prove` run that tells the
+comparison five lies and requires each to come back caught, and the build
+carries a test of its own for the counts and the layout so the shape is held
+even where no Vulkan header exists.
+
+`PhysicalDeviceLimits` is Vulkan's 106 in Vulkan's order and types.
+`min_memory_map_alignment` is `usize`, `max_sampler_anisotropy` and
+`timestamp_period` are floats, and
+`max_descriptor_set_dynamic_buffers` has split into Vulkan's two.
+`tile_size` and `cores` left for the library's own `PhysicalDevice` record;
+GetRenderAreaGranularity is Vulkan's way to ask the tile and answers from
+there, and the core count was never Vulkan's business.
+
+**One divergence found doing it, and it is not optional.** `sdk/sdk.zig`
+requires every structure of the SDK to be 4-byte aligned, 64-bit fields
+included, because the ESP32's compiler moves the stack pointer by exactly
+the bytes of a call's stack arguments and a call with an odd number of them
+leaves what it calls 4 bytes off an 8-byte boundary. So the nine 64-bit
+members carry `align(4)`, and C pads before them where this does not: 492
+bytes against 504 for the limits, 804 against 824 for the properties.
+Features and the sparse properties are byte for byte Vulkan's, 220 and 20,
+every member being four bytes. Nothing casts one onto the other and item 68
+marshals field by field in any case, so the difference costs nothing - but
+it means "Vulkan's layout" is true of the member list and not of the bytes.
+
+The ninety-odd numbers the two devices share live in `_instance.limits`,
+which each driver starts from and sets only what its own hardware decides
+over; that is what keeps them from drifting apart. Items 17 to 30 are now
+value changes in a structure that has the fields.
+
+**And the shortfalls are counted, which is what the reshape was for.**
+`src/disk/libs/facet/tests/vulkan_limits.zig` carries Vulkan 1.0's required
+value for all 106 - the two-column requirement, so it knows that a feature
+reported false *mandates* the Unsupported value rather than permitting
+anything, and it reads the device's features to pick between them - and
+counts the ones the cores do not meet. **Eighteen**, pinned, and they
+account for themselves: two to item 17, two to 18, two to 19, one to 21,
+one to 22, two to 28, and eight to item 61's multisampling, with nothing
+left over and nothing in the table unaccounted for. Closing an item lowers
+the number and the test says so; a limit reported worse than before raises
+it and the test says that too. The check proves itself as well: a device
+built from the table, on Vulkan's floor everywhere, must pass, and one step
+the wrong way in each of the five kinds of requirement must be caught -
+which is what says `at_most` is not being read as `at_least`.
 
 This cannot be fixed by raising numbers, and it gates every limits item below it. facet's struct has 26 fields; Vulkan's has about 106. Roughly 25 Vulkan limits have a counterpart and about 81 do not; two facet fields (tile_size, cores) have no Vulkan counterpart; max_descriptor_set_dynamic_buffers folds two Vulkan limits into one; and three types differ — min_memory_map_alignment is u32 where Vulkan uses size_t, max_sampler_anisotropy is u32 where Vulkan's is float, and timestamp_period_ns is u32 nanoseconds where timestampPeriod is a float (1000 maps cleanly; a fractional period cannot be expressed). Worse for any translation, facet's struct is append-only by contract — the comments repeatedly say "a field added at the end, so that none already there moves" — which is how an LVO library keeps its ABI and the exact opposite of Vulkan's frozen layout. So either facet's struct is revised wholesale once, or the shim owns a VkPhysicalDeviceLimits filled from facet plus new sources. Decide before items 17-30, because they all land in whichever struct wins.
 
@@ -719,6 +800,62 @@ Found independently by: semantics, formats (2 strands, both calling it structura
 
 *features / struct shape* &mdash; structural, months, also serves the shim
 
+**Done in 1.82, and the item's framing was wrong in a way worth recording.**
+`PhysicalDeviceFeatures` is `VkPhysicalDeviceFeatures`, 55 `Bool32` members,
+220 bytes where facet's 49 Zig `bool` were 49. facet's 49 are the library's
+own record now - `_instance.Capabilities`, read as `physical.can.X` - and
+still decide what every create call refuses, which is what they were for.
+
+What the item got wrong: it says "about 35 of facet's fields gate things
+Vulkan 1.0 requires unconditionally", which is true of the *functionality*
+and says nothing about the features. Measured against the specification's
+own "Feature Requirements" section, **Vulkan 1.0 requires exactly one of
+the 55** - `robustBufferAccess`, of an implementation not advertising
+`VK_KHR_portability_subset` - and the section ends "All other features
+defined in the Specification are optional". So reporting a false is usually
+honest rather than a defect, and the 49 were never a list of Vulkan
+features at all.
+
+And facet has that one feature, which was the surprise. Every buffer a
+function reaches is bounded by the descriptor's own range -
+`shader.Resources.bufferAt` answers null where the range does not hold the
+type, `storageAt` hands back a Zig slice of `range / @sizeOf(T)` elements,
+`texels` carries a count worked out the same way - and an attribute read
+past the end of its vertex buffer is left at the `(0, 0, 0, 1)` the inputs
+were cleared to, which is the behaviour Vulkan's robustness rules name for
+exactly that case (`driver/_vertices.zig` `readInputs`).
+
+**A false is not free, though**, and this is the part the item does not
+mention: Vulkan's required-limits table gives most limits two values, one
+for the feature off and one for it on, and the off value is *mandatory*. So
+each answer ties a limit too - `sampler_anisotropy` false forces
+`maxSamplerAnisotropy` to 1, `multi_viewport` false forces `maxViewports`
+to 1, `shader_clip_distance` false forces `maxClipDistances` to 0, and
+`tessellation_shader` false forces all eight `maxTessellation*` to 0.
+
+That last one cost a capability on paper. The library tessellates, but
+`spirv.facet_profile` leaves `Profile.stages` at vertex and fragment, so
+`takesStage` refuses a tessellation entry point and a program bringing
+SPIR-V cannot declare either stage - which is what this call is asked by.
+So `tessellation_shader` is false, the eight limits read 0, and what
+facet's own Zig surface does is said by `shader.Patch` instead. Item 60 is
+the SPIR-V side of it.
+
+Two more were nearly overclaimed and are worth the warning:
+`texture_compression_etc2` and `texture_compression_bc` are promises about
+a *whole family* of formats, and measured against the header the ETC2 and
+EAC family is ten formats where five are here and the BC family is sixteen
+where nine are. Neither bit may be set however much of each is decoded;
+GetPhysicalDeviceFormatProperties is where a program should look.
+
+**The enable step exists now.** `DeviceCreateInfo.enabled_features` is
+Vulkan's `pEnabledFeatures`, compared member by member against what the
+device has, answering `error_feature_not_present` - which is the one call
+Vulkan lists that code for, and item 81 is the dozen calls facet answers it
+from that Vulkan does not. What Vulkan leaves undefined, using a feature
+without having enabled it, this library still refuses at the call, which is
+a permitted way to implement undefined behaviour and the useful one.
+
 The entry point has Vulkan's name and arity and writes a structure of facet's own: 49 bool fields chosen so there is one wherever a create call can refuse something, against VkPhysicalDeviceFeatures' 55 VkBool32 members overlapping in about 14 places. A conformant caller reading a VkPhysicalDeviceFeatures out of it gets nonsense. Worse, about 35 of facet's fields gate things Vulkan 1.0 requires unconditionally — depth_test, stencil_test, blending, indirect_draws, several_subpasses, texture_arrays, cube_maps, textures_3d, samplers, input_attachments, several_outputs, storage_images, texel_buffers, dynamic_descriptors and the rest — and six are facet's own idea with no Vulkan meaning (own_fragment_functions, sampling_format, compute_on_device, tessellation_on_device, depth_prepass, discarding_fragment_forms). All 35 read true on the cores, so the cores are not blocked by the gates existing; on the V3D eleven read false and each is a conformance block for that device. And VkDeviceCreateInfo's pEnabledFeatures has no counterpart at all, so there is no step at which a program enables a feature — facet simply refuses what a device cannot do at the call that would use it. Vulkan's model, enable at device creation with undefined behaviour if used unenabled, is a different contract for the whole surface and cannot be bolted on. Also fold in the two fields that displace real Vulkan features (tessellation_on_device and compute_on_device answer "where", which Vulkan has no notion of, while tessellationShader has no field) and CommandBufferInheritanceInfo's three missing query members, which mean facet cannot express inheritedQueries rather than merely decline it.
 
 > Verified by script: 49 bool fields; cores set 46 true, V3D 26; 20 differ; 3 false on both. The design is stated at facet.zig:257-268 "There is a field here where a create call can refuse something." facet.zig:663-667 DeviceCreateInfo carries flags and the queue infos only — no enabled-features pointer. facet.zig:1368-1372 CommandBufferInheritanceInfo is render_pass, subpass, framebuffer and nothing else. cpu.zig:113-114 and driver/v3d/driver.zig:147-148 for the two "where it runs" fields.
@@ -835,7 +972,7 @@ The back end is fragment-only and refuses any other stage by name; the vertex an
 
 *rasterisation* &mdash; conformance-blocking, months
 
-The largest item Goal A cannot skip, and the only one Vulkan 1.0 gives no way to refuse — not through a feature bit, since sampleRateShading, alphaToOne and variableMultisampleRate are all optional, but through the required limits: framebufferColorSampleCounts, framebufferDepthSampleCounts, framebufferStencilSampleCounts, sampledImageColorSampleCounts, sampledImageDepthSampleCounts and sampledImageStencilSampleCounts must each include VK_SAMPLE_COUNT_4_BIT; framebufferNoAttachmentsSampleCounts, framebufferIntegerColorSampleCounts, sampledImageIntegerSampleCounts and storageImageSampleCounts must include 1; and maxSampleMaskWords must be at least 1. facet publishes none of those ten fields and no device has the capability: rasterization_samples above 1, sample shading, alpha-to-coverage and alpha-to-one are refused in CreateGraphicsPipelines; an attachment with samples != 1 and any resolve_attachments are refused in CreateRenderPass; and CreateImage refuses samples != 1 in the same line that refuses 1D images, so a multisampled image cannot be made at all. On the cores: per-sample colour, depth and stencil in the tile store, a sample loop in every load, store, clear and resolve path, the quad walk writing four pixels under one coverage mask, the sample mask, and alpha-to-coverage in the blend path — the to-do document works the budget through: a 64x64 tile is about 114 KiB live across four parts and 4x makes it ~456 KiB, past the A76's 64 KiB L1 data cache, which is the point of tiling. On the V3D the hardware has 4x coverage and the driver writes one sample's worth in all four bits today, so that side is frame setup, the tile store and resolve rather than new silicon.
+The largest item Goal A cannot skip, and the only one Vulkan 1.0 gives no way to refuse — not through a feature bit, since sampleRateShading, alphaToOne and variableMultisampleRate are all optional, but through the required limits: framebufferColorSampleCounts, framebufferDepthSampleCounts, framebufferStencilSampleCounts, sampledImageColorSampleCounts, sampledImageDepthSampleCounts and sampledImageStencilSampleCounts must each include VK_SAMPLE_COUNT_4_BIT; framebufferNoAttachmentsSampleCounts, framebufferIntegerColorSampleCounts, sampledImageIntegerSampleCounts and storageImageSampleCounts must include 1; and maxSampleMaskWords must be at least 1. facet published none of those ten fields until 1.82 and now publishes all of them, at their one-sample values - which is exactly why eight of the eighteen limit shortfalls counted by tests/vulkan_limits.zig are this item - and no device has the capability: rasterization_samples above 1, sample shading, alpha-to-coverage and alpha-to-one are refused in CreateGraphicsPipelines; an attachment with samples != 1 and any resolve_attachments are refused in CreateRenderPass; and CreateImage refuses samples != 1 in the same line that refuses 1D images, so a multisampled image cannot be made at all. On the cores: per-sample colour, depth and stencil in the tile store, a sample loop in every load, store, clear and resolve path, the quad walk writing four pixels under one coverage mask, the sample mask, and alpha-to-coverage in the blend path — the to-do document works the budget through: a 64x64 tile is about 114 KiB live across four parts and 4x makes it ~456 KiB, past the A76's 64 KiB L1 data cache, which is the point of tiling. On the V3D the hardware has 4x coverage and the driver writes one sample's worth in all four bits today, so that side is frame setup, the tile store and resolve rather than new silicon.
 
 > Verified verbatim: creategraphicspipelines.zig:378 `if (multisample.rasterization_samples > 1 or multisample.sample_shading_enable or multisample.alpha_to_coverage_enable or multisample.alpha_to_one_enable) return .error_feature_not_present;`; createrenderpass.zig:216 and :255/:307/:378; image/_image.zig:338 `... or info.samples != 1) return null;`; multisampling verified absent from both driver tables so false by default; facet.zig:317 `multisampling: bool = false,` ("No device of this library has it.") and :572-573 `sample_counts: u32 = 0,`; one-sample coverage at driver/v3d/cl.zig:336-341. docs/facet-todo.md section 2 states the conformance point correctly and is not stale.
 
@@ -886,6 +1023,18 @@ Found independently by: limits, formats (2 strands).
 ### 77. Make makeVersion Vulkan's version encoding, so VK_API_VERSION_1_0 is not refused
 
 *versions* &mdash; conformance-blocking, small, also serves the shim
+
+**Done in 1.82, and the comparison was the larger of the two faults.**
+`makeApiVersion(variant, major, minor, patch)` and `makeVersion(major,
+minor, patch)` pack a version Vulkan's way, with `apiVersionVariant`,
+`apiVersionMajor`, `apiVersionMinor` and `apiVersionPatch` to take one
+apart. CreateInstance now compares the interface's major and minor version
+against the `API_VERSION_1_0` the library has, leaves the patch out of it as
+Vulkan asks, and refuses a variant that is not Vulkan's 0. The old
+comparison answered a function of the library's revision rather than of the
+interface asked for: every Vulkan-shaped number, 1.0 among them, sat above
+the ceiling, so all were refused together and raising the revision moved
+the ceiling without ever reaching one of them.
 
 Found while doing item 4, and it is the first call a ported program makes.
 `facet.makeVersion(major, minor)` is `major << 16 | minor`. Vulkan's
@@ -958,6 +1107,90 @@ seven.
 > `src/disk/libs/facet/driver/v3d/compile.zig`'s `profile.opcodes`; the body
 > arm that would have answered `Error.Body` for a header instruction is the
 > reason they needed naming in the walk as well as in the list.
+
+### 79. CreateBufferView asks a texel buffer's offset for something no Vulkan limit can say
+
+*buffers / limits* &mdash; conformance-blocking, small
+
+Found while filling `minTexelBufferOffsetAlignment` for item 16. Vulkan asks
+only that `VkBufferViewCreateInfo::offset` be a multiple of
+`minTexelBufferOffsetAlignment`, which the spec requires to be a power of
+two. facet asks that it be a multiple of **the format's own texel size**,
+and three of the formats a view takes are 12 bytes - `rgb32f`, `rgb32u` and
+`rgb32i`. Twelve is not a power of two, so no value of the limit describes
+the rule: facet reports 16, and a program that dutifully aligns its offset
+to 16 is still refused for a 12-byte format, because 16 is not a multiple of
+12.
+
+The number is not the defect; the check is. Either the check uses the limit
+it publishes, or the limit stops being publishable - and the first is right,
+since nothing about reading three floats from a buffer needs the offset to
+be a multiple of twelve.
+
+> `src/disk/libs/facet/buffer/createbufferview.zig` - the refusal is
+> `info.offset % size != 0` where `size` is the format's texel bytes, not
+> the limit. `sdk/libs/facet/shader.zig` gives `rgb32f` 12 bytes, and
+> `rgb32u`/`rgb32i` the same. The limit is `_buffer.alignment`, 16.
+
+### 80. A Vulkan subpass with several colour attachments is drawn in several parts, so one fragment function may write one colour
+
+*render passes / fragment outputs* &mdash; conformance-blocking, large
+
+Found while filling `maxFragmentOutputAttachments` for item 16, and it is
+the cores' half of item 55.
+
+CreateRenderPass gives each colour attachment a part of its own unless the
+subpass carries facet's own `SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER`, and
+CreateGraphicsPipelines then refuses a fragment function whose output count
+is not that part's - which is one. A program using Vulkan's own surface has
+no such flag, so a conformant subpass with four colour attachments and a
+fragment shader writing four is refused with `error_invalid_shader_nv`,
+although `maxColorAttachments` says four and `maxFragmentOutputAttachments`
+says four on the cores.
+
+The limits are not where to fix it. Reporting 1 would leave
+`maxColorAttachments` saying 4 and would make the two devices
+indistinguishable to the probe; the defect is that the flag exists at all,
+a Vulkan subpass with several colour attachments meaning what the flag
+means. Fold into item 51's decision about facet's own fields and flags.
+
+> `src/disk/libs/facet/render/createrenderpass.zig` splits a subpass into
+> parts; `src/disk/libs/facet/pipeline/creategraphicspipelines.zig` refuses
+> on `outputs != pass.parts[subpass.first_part].color_count` and gates
+> `outputs > 1` on `can.several_outputs`.
+> `sdk/libs/facet/facet.zig`'s `SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER` is bit
+> 31, where Vulkan reserves the high flag bits.
+
+### 81. error_feature_not_present is returned from calls Vulkan does not list it for
+
+*result codes* &mdash; conformance-blocking, medium, also serves the shim
+
+Found while measuring item 49 against the specification. Vulkan lists
+`VK_ERROR_FEATURE_NOT_PRESENT` for `vkCreateDevice` alone: "If any requested
+feature is not supported, vkCreateDevice must return
+VK_ERROR_FEATURE_NOT_PRESENT." facet answers it from a dozen other calls -
+CreateGraphicsPipelines, CreateComputePipelines, CreateRenderPass,
+CreateDescriptorSetLayout, CreateBufferView, CreateSampler,
+CreateQueryPool - where Vulkan's lists do not have it, which is the same
+shape of fault item 4 fixed for `error_format_not_supported`.
+
+It is not a small fix, because there is nothing obviously better to answer.
+Vulkan's model is that a program enables what it means to use and the
+implementation's behaviour is undefined if it uses more; facet refuses at
+the call instead, which is a *permitted* way to implement undefined
+behaviour and a far more useful one, but the code it refuses with is not a
+code Vulkan allows there. The honest options are a code Vulkan does list
+for those calls, or accepting the divergence and writing it down - and this
+item is the writing down.
+
+Item 49's own work went in at 1.82: `DeviceCreateInfo.enabled_features`
+exists, is compared member by member against what the device has, and
+answers `error_feature_not_present` - which is the one place Vulkan does
+list it.
+
+> `grep -rn 'error_feature_not_present' src/disk/libs/facet/` - the calls
+> above. `src/disk/libs/facet/device/createdevice.zig` is the conformant
+> one, since 1.82.
 
 ## Deferred by the decision, not out of reach
 
@@ -1108,7 +1341,7 @@ Carried forward verbatim rather than resolved, because each would change
 an item above:
 
 - There is no Vulkan registry anywhere in this tree: no vk.xml, no vulkan_core.h. So the ~137 core-command denominator, every required-limit minimum and every mandatory-format row quoted in this list comes from outside the tree. The 126 numerator is measured three ways; the 113/24 split follows from a command list I cannot cite from here. Any number in this list that is a *spec* number should be re-checked against the registry before it is scheduled.
-- VkPhysicalDeviceLimits' member count: the limits strand counted 106 from Vulkan-Headers, the conformance-path strand said "about 110". I could not settle it here, so the "26 of ~106" and "~81 absent" figures carry that uncertainty. The shape of the finding does not change either way.
+- ~~VkPhysicalDeviceLimits' member count: the limits strand counted 106 from Vulkan-Headers, the conformance-path strand said "about 110".~~ **Settled: 106.** Counted from `/usr/include/vulkan/vulkan_core.h` (VK_HEADER_VERSION 363) by `scripts/vulkan-struct-check.sh`, which also settles the other three: 55 features, 5 sparse properties, 9 properties. The old "26 of ~106" figure was right.
 - Whether minTexelGatherOffset and maxTexelGatherOffset are required unconditionally or ride on the optional shaderImageGatherExtended. minTexelOffset and maxTexelOffset (ConstOffset on OpImageSample) I am confident are unconditional; if the gather pair is gated, item 28 shrinks by half.
 - Whether Vulkan 1.0 strictly requires vkQueueBindSparse's entry point to be *present* when no queue family advertises VK_QUEUE_SPARSE_BINDING_BIT. I kept it conformance-blocking because all 137 core commands are in the 1.0 dispatch table, but 1.0's wording about vkGetDeviceProcAddr and unsupported-feature commands is looser than the 1.2+ text and I found no clause settling it.
 - Whether the V3D can honour the 8192 maxImageDimension2D it reports. I found no clamp anywhere under driver/v3d/ and the value is the library-wide constant shared with the cores. Mesa's v3d_limits.h defines V3D_MAX_IMAGE_DIMENSION as 4096 with a comment that the hardware can address 16384 but hangs when that is exposed. This would be a limit reported too *high*, which is off the below-minimum axis but would fail the CTS, and it wants measuring on the board before the 8192 is trusted on that device.

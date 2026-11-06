@@ -33,7 +33,7 @@ pub const Area = struct {
 
 /// A plane of the tiles kept in an image's rows: the depth or the stencil,
 /// loaded as a tile starts and stored as it ends
-/// (`PhysicalDeviceFeatures.stored_depth`, `stored_stencil`, since 1.47).
+/// (`Capabilities.stored_depth`, `stored_stencil`, since 1.47).
 /// The hardware stores a plane as its own pixels one after another, so the
 /// image's format holds that plane alone - `d16_unorm` or `s8_uint` - and a
 /// format that holds both is refused on this device.

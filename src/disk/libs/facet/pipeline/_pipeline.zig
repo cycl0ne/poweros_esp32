@@ -171,7 +171,7 @@ pub const Pipeline = struct {
     bias: ?Bias,
     /// Whether what lies past the near plane is drawn all the same, its
     /// depth held inside the viewport's range a pixel at a time
-    /// (`depth_clamp_enable`, `PhysicalDeviceFeatures.depth_clamp`).
+    /// (`depth_clamp_enable`, `Capabilities.depth_clamp`).
     clamped: bool = false,
     /// Whether a pixel is drawn only where the depth already there lies
     /// between two bounds (`depth_bounds_test_enable`), and which: null
@@ -188,7 +188,7 @@ pub const Pipeline = struct {
     prepass: bool,
     /// What each colour attachment of the subpass is mixed with what is
     /// there by: one for each, `mixingAt` giving the one being drawn
-    /// (`PhysicalDeviceFeatures.independent_blend`, since 1.33). All hold
+    /// (`Capabilities.independent_blend`, since 1.33). All hold
     /// the default where the create info gave no attachment state.
     mixings: [_render.most_colors]Mixing,
     /// The colour attachments the fragment function writes in the one

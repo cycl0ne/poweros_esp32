@@ -413,7 +413,7 @@ const PipelineState = struct {
     depth: facet.PipelineDepthStencilStateCreateInfo = .{},
     blend: facet.PipelineColorBlendAttachmentState = .{},
     /// What the subpass's second colour attachment is blended by, where it
-    /// is not the first's (`PhysicalDeviceFeatures.independent_blend`).
+    /// is not the first's (`Capabilities.independent_blend`).
     second_blend: ?facet.PipelineColorBlendAttachmentState = null,
     width: f32 = 64,
     height: f32 = 64,
@@ -583,8 +583,8 @@ test "a render pass: one subpass, a colour attachment and perhaps a depth one; w
     // A device that keeps no stencil refuses either of its ops, and keeps
     // taking the depth's.
     const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
-    physical.features.stored_stencil = false;
-    defer physical.features.stored_stencil = true;
+    physical.can.stored_stencil = false;
+    defer physical.can.stored_stencil = true;
     var refused_stencil: ?*facet.RenderPass = null;
     try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &stencil_only, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &refused_stencil));
     try testing.expect(refused_stencil == null);
@@ -1512,7 +1512,16 @@ test "a point is as wide as its vertex says: PointSize, and held inside the rang
     const range = properties.limits.point_size_range;
     try testing.expectEqual(@as(f32, 1), range[0]);
     try testing.expect(range[1] > 1);
-    try testing.expectEqual(@as(f32, 0), properties.limits.point_size_granularity);
+    // The step between two sizes the device tells apart, which is the
+    // rasterizer's own sub-pixel precision - 1/256 of a pixel on the cores.
+    // It was 0 until 1.82, meaning "every size between the ends is drawn as
+    // it is"; Vulkan reads 0 as the value an implementation *without*
+    // `largePoints` must report, where the only size supported is the
+    // narrow end of the range, so 0 said the opposite of what happens.
+    const step = @as(f32, 1) / @as(f32, @floatFromInt(@as(u32, 1) << @intCast(properties.limits.sub_pixel_precision_bits)));
+    try testing.expectEqual(step, properties.limits.point_size_granularity);
+    try testing.expect(properties.limits.point_size_granularity > 0);
+    try testing.expect(properties.limits.point_size_granularity <= 1);
 
     // A point at the middle of pixel (16, 16), its size in z: one pixel,
     // eight pixels, none at all, and far more than the range holds.
@@ -2089,9 +2098,8 @@ test "a storage image written through by a compute function and by a fragment fu
     defer bench.down();
     const fb = bench.rig.fb;
     const device = bench.device;
-    var features: facet.PhysicalDeviceFeatures = undefined;
-    fb.GetPhysicalDeviceFeatures(bench.physical, &features);
-    try testing.expect(features.storage_images);
+    const can = _objects.of(_instance.PhysicalDevice, bench.physical).can;
+    try testing.expect(can.storage_images);
     var properties: facet.FormatProperties = undefined;
     fb.GetPhysicalDeviceFormatProperties(bench.physical, .r8g8b8a8_unorm, &properties);
     try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_STORAGE_IMAGE != 0);
@@ -2264,9 +2272,8 @@ test "a storage image's level and layer named from inside the function, and one 
     defer bench.down();
     const fb = bench.rig.fb;
     const device = bench.device;
-    var features: facet.PhysicalDeviceFeatures = undefined;
-    fb.GetPhysicalDeviceFeatures(bench.physical, &features);
-    try testing.expect(features.storage_images);
+    const can = _objects.of(_instance.PhysicalDevice, bench.physical).can;
+    try testing.expect(can.storage_images);
 
     // Three layers and three levels, written through and never sampled:
     // since 1.55 an image of layers needs no SAMPLED beside STORAGE.
@@ -2467,9 +2474,8 @@ test "a colour attachment written through as a storage image: its rows, before t
     defer bench.down();
     const fb = bench.rig.fb;
     const device = bench.device;
-    var features: facet.PhysicalDeviceFeatures = undefined;
-    fb.GetPhysicalDeviceFeatures(bench.physical, &features);
-    try testing.expect(features.storage_images);
+    const can = _objects.of(_instance.PhysicalDevice, bench.physical).can;
+    try testing.expect(can.storage_images);
 
     // The linear features say the rows of a format may be written
     // through: b8g8r8a8's are, r8g8b8a8's are not - no texture reads a
@@ -2618,14 +2624,13 @@ test "storage images of floats and of channels of their own: a texel written and
     defer bench.down();
     const fb = bench.rig.fb;
     const device = bench.device;
-    var features: facet.PhysicalDeviceFeatures = undefined;
-    fb.GetPhysicalDeviceFeatures(bench.physical, &features);
-    try testing.expect(features.storage_images);
-    try testing.expect(features.kept_floats);
+    const can = _objects.of(_instance.PhysicalDevice, bench.physical).can;
+    try testing.expect(can.storage_images);
+    try testing.expect(can.kept_floats);
     // And since 1.69 a texture whose channels are its own, since 1.70
     // one of whole numbers.
-    try testing.expect(features.wide_channels);
-    try testing.expect(features.whole_textures);
+    try testing.expect(can.wide_channels);
+    try testing.expect(can.whole_textures);
 
     // Every float format says it may be written through since 1.57, and
     // one float a texel is a format of its own: R32_SFLOAT as an image.
@@ -2836,10 +2841,9 @@ test "storage images of whole numbers: a texel written and read back as the numb
     defer bench.down();
     const fb = bench.rig.fb;
     const device = bench.device;
-    var features: facet.PhysicalDeviceFeatures = undefined;
-    fb.GetPhysicalDeviceFeatures(bench.physical, &features);
-    try testing.expect(features.storage_images);
-    try testing.expect(features.whole_textures);
+    const can = _objects.of(_instance.PhysicalDevice, bench.physical).can;
+    try testing.expect(can.storage_images);
+    try testing.expect(can.whole_textures);
 
     const module_made = try module(&bench, &Wholes.code);
     defer fb.DestroyShaderModule(device, module_made);
@@ -3008,9 +3012,8 @@ test "a buffer read as texels of a format: a uniform one read, a storage one wri
     defer bench.down();
     const fb = bench.rig.fb;
     const device = bench.device;
-    var features: facet.PhysicalDeviceFeatures = undefined;
-    fb.GetPhysicalDeviceFeatures(bench.physical, &features);
-    try testing.expect(features.texel_buffers);
+    const can = _objects.of(_instance.PhysicalDevice, bench.physical).can;
+    try testing.expect(can.texel_buffers);
 
     // Four texels of four floats read, four of 8888 written.
     const floats, const float_bytes = try bench.buffer(4 * 16, facet.BUFFER_USAGE_UNIFORM_TEXEL_BUFFER);
@@ -3192,9 +3195,8 @@ test "texel buffers of whole numbers and of 16 bits a channel: every format of t
     defer bench.down();
     const fb = bench.rig.fb;
     const device = bench.device;
-    var features: facet.PhysicalDeviceFeatures = undefined;
-    fb.GetPhysicalDeviceFeatures(bench.physical, &features);
-    try testing.expect(features.texel_buffers);
+    const can = _objects.of(_instance.PhysicalDevice, bench.physical).can;
+    try testing.expect(can.texel_buffers);
 
     // Every format the grid of 1.54 added, with the bytes a texel takes:
     // one channel, two or four, of 8, 16 or 32 bits.
@@ -4170,8 +4172,8 @@ test "the depth bounds test: a pixel drawn only where the depth already there li
 
     // A device that has no such test refuses the pipeline.
     const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
-    physical.features.depth_bounds = false;
-    defer physical.features.depth_bounds = true;
+    physical.can.depth_bounds = false;
+    defer physical.can.depth_bounds = true;
     const refused, const none = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = pass, .depth = .{ .depth_bounds_test_enable = true } });
     try testing.expectEqual(facet.Result.error_feature_not_present, refused);
     try testing.expect(none == null);
@@ -4278,8 +4280,8 @@ test "the depth clamp: what lies past the near plane is drawn all the same, its 
 
     // A device that does not clamp refuses the pipeline.
     const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
-    physical.features.depth_clamp = false;
-    defer physical.features.depth_clamp = true;
+    physical.can.depth_clamp = false;
+    defer physical.can.depth_clamp = true;
     const refused, const none = makePipeline(&bench, clamping);
     try testing.expectEqual(facet.Result.error_feature_not_present, refused);
     try testing.expect(none == null);
@@ -4938,10 +4940,9 @@ test "a device that keeps no depth, as the V3D keeps none: the pass that asks fo
     defer bench.down();
     // The physical device as the V3D describes itself: it draws in tiles of
     // its own and stores none of their depth.
-    _objects.of(_instance.PhysicalDevice, bench.physical).features.stored_depth = false;
-    var features: facet.PhysicalDeviceFeatures = undefined;
-    bench.rig.fb.GetPhysicalDeviceFeatures(bench.physical, &features);
-    try testing.expect(!features.stored_depth);
+    _objects.of(_instance.PhysicalDevice, bench.physical).can.stored_depth = false;
+    const can = _objects.of(_instance.PhysicalDevice, bench.physical).can;
+    try testing.expect(!can.stored_depth);
     const attachments = [2]facet.AttachmentDescription{
         .{ .format = .b8g8r8a8_unorm, .final_layout = .general },
         .{ .format = .d16_unorm, .store_op = .store, .final_layout = .general },
@@ -4971,7 +4972,7 @@ test "a device that samples no depth, as the V3D samples none: the format query 
     var properties: facet.FormatProperties = undefined;
 
     // The cores sample a depth where its rows lie, and say so.
-    try testing.expect(physical.features.sampled_depth);
+    try testing.expect(physical.can.sampled_depth);
     fb.GetPhysicalDeviceFormatProperties(bench.physical, .d16_unorm, &properties);
     try testing.expectEqual(sampled, properties.optimal_tiling_features & sampled);
 
@@ -4980,8 +4981,8 @@ test "a device that samples no depth, as the V3D samples none: the format query 
     // there. The format query has to agree with that refusal rather than
     // promise a shadow map the create call turns down (since 1.80, where
     // this arm said sampled and filtered on every device).
-    physical.features.sampled_depth = false;
-    defer physical.features.sampled_depth = true;
+    physical.can.sampled_depth = false;
+    defer physical.can.sampled_depth = true;
     fb.GetPhysicalDeviceFormatProperties(bench.physical, .d16_unorm, &properties);
     try testing.expectEqual(@as(u32, 0), properties.optimal_tiling_features & sampled);
     // A depth attachment it still is, and still copied both ways: a pass
@@ -5009,13 +5010,13 @@ test "a device that samples no depth, as the V3D samples none: the format query 
         .{ .feature = "whole_textures", .format = .r16g16b16a16_uint },
     };
     inline for (kept) |one| {
-        try testing.expect(@field(physical.features, one.feature));
+        try testing.expect(@field(physical.can, one.feature));
         fb.GetPhysicalDeviceFormatProperties(bench.physical, one.format, &properties);
         try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_TRANSFER_SRC != 0);
-        @field(physical.features, one.feature) = false;
+        @field(physical.can, one.feature) = false;
         fb.GetPhysicalDeviceFormatProperties(bench.physical, one.format, &properties);
         try testing.expectEqual(@as(u32, 0), properties.optimal_tiling_features & facet.FORMAT_FEATURE_TRANSFER_SRC);
-        @field(physical.features, one.feature) = true;
+        @field(physical.can, one.feature) = true;
     }
 }
 
@@ -5191,9 +5192,8 @@ test "a cut-out texture drops its pixels and leaves no depth behind them" {
     const device = bench.device;
 
     // The cores hold a dropping form's depths back; this is what says so.
-    var features: facet.PhysicalDeviceFeatures = undefined;
-    fb.GetPhysicalDeviceFeatures(bench.physical, &features);
-    try testing.expect(features.discarding_fragment_forms);
+    const can = _objects.of(_instance.PhysicalDevice, bench.physical).can;
+    try testing.expect(can.discarding_fragment_forms);
     try testing.expectEqual(@as(u32, 2), CutoutScene.entries[1].varyingCount());
 
     // An 8 x 8 texture: its left half clear, its right half opaque red.
@@ -5362,12 +5362,11 @@ test "a sampler bound beside the texture: the wrap and the border it says, and a
     const device = bench.device;
 
     // The cores do the sampling, so they take everything a sampler says.
-    var features: facet.PhysicalDeviceFeatures = undefined;
-    fb.GetPhysicalDeviceFeatures(bench.physical, &features);
-    try testing.expect(features.samplers);
-    try testing.expect(features.sampler_anisotropy);
-    try testing.expect(features.immutable_samplers);
-    try testing.expect(features.unnormalized_coordinates);
+    const can = _objects.of(_instance.PhysicalDevice, bench.physical).can;
+    try testing.expect(can.samplers);
+    try testing.expect(can.sampler_anisotropy);
+    try testing.expect(can.immutable_samplers);
+    try testing.expect(can.unnormalized_coordinates);
     var properties: facet.PhysicalDeviceProperties = undefined;
     fb.GetPhysicalDeviceProperties(bench.physical, &properties);
     try testing.expectEqual(@as(u32, 16), properties.limits.max_sampler_anisotropy);
@@ -5725,11 +5724,10 @@ test "a device that blends every colour attachment the same way: the pipeline wh
     const device = bench.device;
     // A device as one without the feature describes itself.
     const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
-    physical.features.independent_blend = false;
-    defer physical.features.independent_blend = true;
-    var features: facet.PhysicalDeviceFeatures = undefined;
-    fb.GetPhysicalDeviceFeatures(bench.physical, &features);
-    try testing.expect(!features.independent_blend);
+    physical.can.independent_blend = false;
+    defer physical.can.independent_blend = true;
+    const can = _objects.of(_instance.PhysicalDevice, bench.physical).can;
+    try testing.expect(!can.independent_blend);
 
     const attachments = [2]facet.AttachmentDescription{
         .{ .format = .b8g8r8a8_unorm, .store_op = .store, .final_layout = .general },
@@ -6067,9 +6065,8 @@ test "a depth attachment read as an input attachment: what the subpass before dr
     const fb = bench.rig.fb;
     const device = bench.device;
 
-    var features: facet.PhysicalDeviceFeatures = undefined;
-    fb.GetPhysicalDeviceFeatures(bench.physical, &features);
-    try testing.expect(features.input_attachments and features.sampled_depth and features.stored_both);
+    const can = _objects.of(_instance.PhysicalDevice, bench.physical).can;
+    try testing.expect(can.input_attachments and can.sampled_depth and can.stored_both);
 
     const picture = try Picture.of(&bench, 64, 64);
     const depth_usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT;
@@ -6676,8 +6673,8 @@ test "a device whose fragment programs write the one colour, as the V3D's do: th
     const fb = bench.rig.fb;
     const device = bench.device;
     const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
-    physical.features.several_outputs = false;
-    defer physical.features.several_outputs = true;
+    physical.can.several_outputs = false;
+    defer physical.can.several_outputs = true;
     const descriptions = [2]facet.AttachmentDescription{
         .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general },
         .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general },
@@ -6858,8 +6855,8 @@ test "a device that reads no attachment, as the V3D reads none: the subpass and 
     const fb = bench.rig.fb;
     const device = bench.device;
     const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
-    physical.features.input_attachments = false;
-    defer physical.features.input_attachments = true;
+    physical.can.input_attachments = false;
+    defer physical.can.input_attachments = true;
 
     const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .input_attachment };
     var none: ?*facet.DescriptorSetLayout = null;
@@ -6997,12 +6994,15 @@ test "dynamic buffer descriptors: one set read from where the bind says, draw af
     defer bench.down();
     const fb = bench.rig.fb;
     const device = bench.device;
-    var features: facet.PhysicalDeviceFeatures = undefined;
-    fb.GetPhysicalDeviceFeatures(bench.physical, &features);
-    try testing.expect(features.dynamic_descriptors);
+    const can = _objects.of(_instance.PhysicalDevice, bench.physical).can;
+    try testing.expect(can.dynamic_descriptors);
     var properties: facet.PhysicalDeviceProperties = undefined;
     fb.GetPhysicalDeviceProperties(bench.physical, &properties);
-    try testing.expectEqual(@as(u32, shader.MAX_DYNAMIC_OFFSETS), properties.limits.max_descriptor_set_dynamic_buffers);
+    // Vulkan counts the dynamic descriptors of each kind apart, where
+    // facet folded both into one number until 1.82. The library's cap is
+    // per set layout, so each kind may carry the whole of it.
+    try testing.expectEqual(@as(u32, shader.MAX_DYNAMIC_OFFSETS), properties.limits.max_descriptor_set_uniform_buffers_dynamic);
+    try testing.expectEqual(@as(u32, shader.MAX_DYNAMIC_OFFSETS), properties.limits.max_descriptor_set_storage_buffers_dynamic);
 
     const reader = try module(&bench, &Reader.code);
     defer fb.DestroyShaderModule(device, reader);
@@ -7119,8 +7119,8 @@ test "a device without dynamic buffer descriptors: the set layout that asks for 
     const fb = bench.rig.fb;
     const device = bench.device;
     const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
-    physical.features.dynamic_descriptors = false;
-    defer physical.features.dynamic_descriptors = true;
+    physical.can.dynamic_descriptors = false;
+    defer physical.can.dynamic_descriptors = true;
     var none: ?*facet.DescriptorSetLayout = null;
     for ([2]facet.DescriptorType{ .uniform_buffer_dynamic, .storage_buffer_dynamic }) |kind| {
         const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = kind };
@@ -7321,11 +7321,10 @@ test "a device that moves no depth, as the V3D moves none: the pipeline that ask
     const fb = bench.rig.fb;
     const device = bench.device;
     const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
-    physical.features.depth_bias = false;
-    defer physical.features.depth_bias = true;
-    var features: facet.PhysicalDeviceFeatures = undefined;
-    fb.GetPhysicalDeviceFeatures(bench.physical, &features);
-    try testing.expect(!features.depth_bias);
+    physical.can.depth_bias = false;
+    defer physical.can.depth_bias = true;
+    const can = _objects.of(_instance.PhysicalDevice, bench.physical).can;
+    try testing.expect(!can.depth_bias);
 
     const pass = try renderPass(&bench, .clear, true);
     defer fb.DestroyRenderPass(device, pass);
@@ -7395,10 +7394,9 @@ test "an occlusion query counts the samples that passed, and a statistics query 
     defer fb.DestroyPipeline(device, list);
 
     // The cores count both; a device that counts neither says so instead.
-    var features: facet.PhysicalDeviceFeatures = undefined;
-    fb.GetPhysicalDeviceFeatures(bench.physical, &features);
-    try testing.expect(features.occlusion_queries);
-    try testing.expect(features.pipeline_statistics_queries);
+    const can = _objects.of(_instance.PhysicalDevice, bench.physical).can;
+    try testing.expect(can.occlusion_queries);
+    try testing.expect(can.pipeline_statistics_queries);
 
     const occlusion = try queryPool(&bench, .occlusion, 2, 0);
     defer fb.DestroyQueryPool(device, occlusion);
@@ -7579,21 +7577,20 @@ test "a query pool refused: a kind the device does not count, a statistic no sta
     // A timestamp is the E-clock, which the library opens as timer.device:
     // the host's ROM has none, so no device of it writes one, and what the
     // device says of itself says the same.
-    var features: facet.PhysicalDeviceFeatures = undefined;
-    fb.GetPhysicalDeviceFeatures(bench.physical, &features);
+    const can = _objects.of(_instance.PhysicalDevice, bench.physical).can;
     var properties: facet.PhysicalDeviceProperties = undefined;
     fb.GetPhysicalDeviceProperties(bench.physical, &properties);
     var family: facet.QueueFamilyProperties = undefined;
     var count: u32 = 1;
     fb.GetPhysicalDeviceQueueFamilyProperties(bench.physical, &count, @ptrCast(&family));
-    if (features.timestamp_queries) {
+    if (can.timestamp_queries) {
         try testing.expect(family.timestamp_valid_bits > 0);
-        try testing.expect(properties.limits.timestamp_period_ns > 0);
+        try testing.expect(properties.limits.timestamp_period > 0);
         const pool = try queryPool(&bench, .timestamp, 1, 0);
         fb.DestroyQueryPool(device, pool);
     } else {
         try testing.expectEqual(0, family.timestamp_valid_bits);
-        try testing.expectEqual(0, properties.limits.timestamp_period_ns);
+        try testing.expectEqual(@as(f32, 0), properties.limits.timestamp_period);
         try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateQueryPool(device, &.{ .query_type = .timestamp, .query_count = 1 }, &made));
         try testing.expectEqual(null, made);
     }
@@ -7853,9 +7850,9 @@ test "a stencil shared by two subpasses with another in between: marked in the f
 
     // A device that keeps no stencil in an image's rows cannot share one
     // between two subpasses of different tiles.
-    physical.features.stored_stencil = false;
+    physical.can.stored_stencil = false;
     try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateRenderPass(device, &info, &pass_made));
-    physical.features.stored_stencil = true;
+    physical.can.stored_stencil = true;
 
     try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &info, &pass_made));
     defer fb.DestroyRenderPass(device, pass_made);
@@ -8279,10 +8276,9 @@ test "the shapes past 2D read through a sampler, an array of cubes among them, a
     const fb = bench.rig.fb;
     const device = bench.device;
 
-    var features: facet.PhysicalDeviceFeatures = undefined;
-    fb.GetPhysicalDeviceFeatures(bench.physical, &features);
-    try testing.expect(features.samplers);
-    try testing.expect(features.immutable_samplers);
+    const can = _objects.of(_instance.PhysicalDevice, bench.physical).can;
+    try testing.expect(can.samplers);
+    try testing.expect(can.immutable_samplers);
 
     const usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST;
     const side16 = facet.Extent3D{ .width = 16, .height = 16 };
@@ -8904,9 +8900,8 @@ test "compressed textures kept in their blocks: copied as blocks, sampled out of
 
     // The cores keep the blocks, and so there are blocks of the format to
     // read back as well as to write.
-    var features: facet.PhysicalDeviceFeatures = undefined;
-    fb.GetPhysicalDeviceFeatures(bench.physical, &features);
-    try testing.expect(features.kept_compressed);
+    const can = _objects.of(_instance.PhysicalDevice, bench.physical).can;
+    try testing.expect(can.kept_compressed);
     var properties: facet.FormatProperties = undefined;
     fb.GetPhysicalDeviceFormatProperties(bench.physical, .bc1_rgba_unorm_block, &properties);
     try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_TRANSFER_SRC != 0);
@@ -9212,9 +9207,8 @@ test "textures kept as they lie: floats, channels of their own and whole numbers
     const fb = bench.rig.fb;
     const device = bench.device;
 
-    var features: facet.PhysicalDeviceFeatures = undefined;
-    fb.GetPhysicalDeviceFeatures(bench.physical, &features);
-    try testing.expect(features.kept_floats);
+    const can = _objects.of(_instance.PhysicalDevice, bench.physical).can;
+    try testing.expect(can.kept_floats);
     var properties: facet.FormatProperties = undefined;
     fb.GetPhysicalDeviceFormatProperties(bench.physical, .r16g16b16a16_sfloat, &properties);
     try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_TRANSFER_SRC != 0);
@@ -9529,9 +9523,8 @@ test "a texel kept smaller than its colour: 8888 in its word, and one byte of re
     const fb = bench.rig.fb;
     const device = bench.device;
 
-    var features: facet.PhysicalDeviceFeatures = undefined;
-    fb.GetPhysicalDeviceFeatures(bench.physical, &features);
-    try testing.expect(features.small_texels);
+    const can = _objects.of(_instance.PhysicalDevice, bench.physical).can;
+    try testing.expect(can.small_texels);
     var properties: facet.FormatProperties = undefined;
     fb.GetPhysicalDeviceFormatProperties(bench.physical, .r8_unorm, &properties);
     try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_SAMPLED_IMAGE != 0);

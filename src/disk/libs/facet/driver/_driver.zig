@@ -166,6 +166,30 @@ fn named(sum: u64, name: []const u8) u64 {
     return made;
 }
 
+/// What `PhysicalDeviceProperties.pipeline_cache_uuid` holds for a device a
+/// driver has just described: `stamp`, and what names the device, mixed.
+///
+/// Vulkan asks that this change whenever anything that could make a cached
+/// pipeline wrong changes, so that a program keeping a cache between runs
+/// knows when to throw it away. `stamp` is already that: it moves when the
+/// library's version moves and when any shape a module and the library
+/// share moves, which covers every way the compiled form of a pipeline
+/// could change here. The device's own numbers go in after it so that two
+/// devices of one machine do not answer with the same UUID.
+///
+/// Called with the properties the driver has just filled rather than with
+/// the three numbers written out again, so that it cannot fall out of step
+/// with them. (Since 1.82.)
+pub fn cacheUuid(properties: *const facet.PhysicalDeviceProperties) [facet.UUID_SIZE]u8 {
+    var low = mixed(stamp, properties.vendor_id);
+    low = mixed(low, properties.device_id);
+    low = mixed(low, @intFromEnum(properties.device_type));
+    var out: [facet.UUID_SIZE]u8 = undefined;
+    std.mem.writeInt(u64, out[0..8], stamp, .big);
+    std.mem.writeInt(u64, out[8..16], low, .big);
+    return out;
+}
+
 /// A struct's size, and each field's name, place and size - and, where the
 /// field points at a function, that call as well (since 1.80). A pointer is
 /// the same size whatever it points at, so a driver call that gained a

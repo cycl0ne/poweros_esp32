@@ -55,13 +55,13 @@ pub const Part = struct {
     color_loads: [most_colors]ColorLoad = @splat(.keep),
     /// Whether the depth attachment is read from its image as the part
     /// starts, and written into it as the part ends: a depth that outlives
-    /// the pass (`PhysicalDeviceFeatures.stored_depth`). Both are false for
+    /// the pass (`Capabilities.stored_depth`). Both are false for
     /// a depth that lives in the tiles alone.
     loads_depth: bool = false,
     stores_depth: bool = false,
     /// The same for its stencil, which has its own two ops and its own
     /// plane in the image's rows
-    /// (`PhysicalDeviceFeatures.stored_stencil`).
+    /// (`Capabilities.stored_stencil`).
     loads_stencil: bool = false,
     stores_stencil: bool = false,
     /// Whether the subpass reads the colour attachment this part draws

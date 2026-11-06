@@ -38,6 +38,121 @@ const template = "CORES/S,V3D/S,QUIET/S";
 /// written back tile by tile is seen as well.
 const side = 64;
 
+/// What one device can do, as the probe works it out for itself.
+///
+/// Until 1.82 these were fields of `facet.PhysicalDeviceFeatures` and the
+/// probe read them straight out of GetPhysicalDeviceFeatures. That call
+/// answers Vulkan's 55 features now, and most of these are not among them:
+/// they were facet's own record of what a device refuses, which is the
+/// library's and not a program's.
+///
+/// So the probe asks the way a Vulkan program would have to, and that is
+/// an improvement rather than a loss - it is now held to what the public
+/// surface *says*, not to a private field, and a device whose limits or
+/// format properties disagreed with its own refusals would be caught here
+/// instead of agreeing with itself.
+///
+/// Two have no counterpart on Vulkan's surface at all, `samplers` and
+/// `unnormalized_coordinates`, because Vulkan requires both of every
+/// implementation and so has no feature bit to turn off. They are taken
+/// from `sampler_anisotropy`, which on both of this library's devices is
+/// true exactly where they are; a device that broke that would need a
+/// trial of its own here.
+const Can = struct {
+    stored_depth: bool,
+    stored_stencil: bool,
+    sampled_depth: bool,
+    storage_images: bool,
+    texel_buffers: bool,
+    input_attachments: bool,
+    dynamic_descriptors: bool,
+    depth_bias: bool,
+    independent_blend: bool,
+    occlusion_queries: bool,
+    pipeline_statistics_queries: bool,
+    cube_arrays: bool,
+    several_outputs: bool,
+    samplers: bool,
+    unnormalized_coordinates: bool,
+    kept_compressed: bool,
+    kept_floats: bool,
+    wide_channels: bool,
+    whole_textures: bool,
+    small_texels: bool,
+    depth_bounds: bool,
+    depth_clamp: bool,
+    stored_both: bool,
+    etc2_textures: bool,
+
+    fn formatOf(fb: *FacetBase, physical: *facet.PhysicalDevice, format: facet.Format) facet.FormatProperties {
+        var said: facet.FormatProperties = undefined;
+        fb.GetPhysicalDeviceFormatProperties(physical, format, &said);
+        return said;
+    }
+
+    /// Worked out from this device's features, limits and format
+    /// properties: every line says which public answer it reads.
+    fn of(fb: *FacetBase, physical: *facet.PhysicalDevice) Can {
+        var features: facet.PhysicalDeviceFeatures = undefined;
+        fb.GetPhysicalDeviceFeatures(physical, &features);
+        var properties: facet.PhysicalDeviceProperties = undefined;
+        fb.GetPhysicalDeviceProperties(physical, &properties);
+        const limits = &properties.limits;
+        // A format's own features say what may be done with an image of it,
+        // which is where the four depth and stencil answers live.
+        const depth = formatOf(fb, physical, .d16_unorm).optimal_tiling_features;
+        const stencil = formatOf(fb, physical, .s8_uint).optimal_tiling_features;
+        const blocks = formatOf(fb, physical, .bc1_rgb_unorm_block).optimal_tiling_features;
+        const halves = formatOf(fb, physical, .r16g16b16a16_sfloat).optimal_tiling_features;
+        const wide = formatOf(fb, physical, .r16g16_unorm).optimal_tiling_features;
+        const whole = formatOf(fb, physical, .r16g16_uint).optimal_tiling_features;
+        const small = formatOf(fb, physical, .r8_unorm).optimal_tiling_features;
+        const texels = formatOf(fb, physical, .r8g8b8a8_unorm).buffer_features;
+        return .{
+            .stored_depth = depth & facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT != 0,
+            .stored_stencil = stencil & facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT != 0,
+            .sampled_depth = depth & facet.FORMAT_FEATURE_SAMPLED_IMAGE != 0,
+            // A device that takes no storage image a stage has none.
+            .storage_images = limits.max_per_stage_descriptor_storage_images != 0,
+            .texel_buffers = texels & facet.FORMAT_FEATURE_UNIFORM_TEXEL_BUFFER != 0,
+            .input_attachments = limits.max_per_stage_descriptor_input_attachments != 0,
+            .dynamic_descriptors = limits.max_descriptor_set_uniform_buffers_dynamic != 0,
+            // Vulkan's `depthBiasClamp` comes with the bias here: the depth
+            // offset packet takes its three numbers together.
+            .depth_bias = features.depth_bias_clamp == facet.TRUE,
+            .independent_blend = features.independent_blend == facet.TRUE,
+            // An occlusion query counts its samples exactly where it has
+            // one at all, so the precise bit is the query's.
+            .occlusion_queries = features.occlusion_query_precise == facet.TRUE,
+            .pipeline_statistics_queries = features.pipeline_statistics_query == facet.TRUE,
+            .cube_arrays = features.image_cube_array == facet.TRUE,
+            // What one fragment function may write.
+            .several_outputs = limits.max_fragment_output_attachments > 1,
+            .samplers = features.sampler_anisotropy == facet.TRUE,
+            .unnormalized_coordinates = features.sampler_anisotropy == facet.TRUE,
+            // A device that keeps a format's bytes as it was given them can
+            // copy them back out, which is the transfer bit on a format it
+            // cannot otherwise do anything with.
+            .kept_compressed = blocks & facet.FORMAT_FEATURE_TRANSFER_SRC != 0,
+            .kept_floats = halves & facet.FORMAT_FEATURE_TRANSFER_SRC != 0,
+            .wide_channels = wide != 0,
+            .whole_textures = whole != 0,
+            .small_texels = small != 0,
+            .depth_bounds = features.depth_bounds == facet.TRUE,
+            .depth_clamp = features.depth_clamp == facet.TRUE,
+            // One image holding depth and stencil together, kept past the
+            // pass that drew it.
+            .stored_both = formatOf(fb, physical, .d16_unorm_s8_uint).optimal_tiling_features &
+                facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT != 0,
+            // `texture_compression_etc2` is false on both devices, Vulkan
+            // asking for the whole ten-format family behind that bit where
+            // five are here, so what a device really does with ETC2 is
+            // read off the format itself.
+            .etc2_textures = formatOf(fb, physical, .etc2_r8g8b8_unorm_block).optimal_tiling_features != 0,
+        };
+    }
+};
+
 /// Everything made through facet.library on one device, given back by
 /// `down` in the order it goes.
 const Probe = struct {
@@ -47,6 +162,7 @@ const Probe = struct {
     instance: *facet.Instance,
     physical: *facet.PhysicalDevice,
     features: facet.PhysicalDeviceFeatures = undefined,
+    can: Can = undefined,
     memory: facet.PhysicalDeviceMemoryProperties = undefined,
     device: ?*facet.Device = null,
     queue: *facet.Queue = undefined,
@@ -69,6 +185,7 @@ const Probe = struct {
     fn up(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical: *facet.PhysicalDevice, quiet: bool) ?Probe {
         var probe = Probe{ .fb = fb, .dl = dl, .quiet = quiet, .instance = instance, .physical = physical };
         fb.GetPhysicalDeviceFeatures(physical, &probe.features);
+        probe.can = Can.of(fb, physical);
         fb.GetPhysicalDeviceMemoryProperties(physical, &probe.memory);
         const queue_info = facet.DeviceQueueCreateInfo{};
         if (fb.CreateDevice(physical, &.{ .queue_create_info_count = 1, .queue_create_infos = @ptrCast(&queue_info) }, &probe.device) != .success) return null;
@@ -458,7 +575,7 @@ fn checkDepth(probe: *Probe, wanted: u16, found: u16, name: [*:0]const u8) void 
 fn depthChecks(probe: *Probe) void {
     const fb = probe.fb;
     defer probe.give();
-    if (!probe.features.stored_depth) {
+    if (!probe.can.stored_depth) {
         // The device keeps no depth: the pass that asks for one is refused,
         // and one that keeps none is made.
         probe.check(passKeeping(probe, .clear, .clear, .store) == null, "a stored depth refused where the device keeps none");
@@ -694,7 +811,7 @@ fn storageImageChecks(probe: *Probe) void {
     };
     var set_layout: ?*facet.DescriptorSetLayout = null;
     const made = fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 2, .bindings = &bindings }, &set_layout);
-    if (!probe.features.storage_images) {
+    if (!probe.can.storage_images) {
         probe.check(made == .error_feature_not_present, "a storage image refused where the device writes none");
         probe.check(set_layout == null, "and nothing given back for it");
         return;
@@ -1004,7 +1121,7 @@ fn storageImageChecks(probe: *Probe) void {
     // to what its channel holds. 300 is above a byte, -5 below what an
     // unsigned channel holds, and 70000 above 16 bits: nothing is scaled
     // on the way, so each comes back as itself or at its channel's end.
-    if (probe.features.whole_textures) {
+    if (probe.can.whole_textures) {
         const numbers_out: [*]const i64 = @ptrCast(@alignCast(told_bytes));
         const given_numbers = [4]i32{ 300, -5, 70000, 1 };
         const Whole = struct { format: facet.Format, want: [4]i64, says: [*:0]const u8 };
@@ -1129,7 +1246,7 @@ fn texelBufferChecks(probe: *Probe) void {
 
     var reading: ?*facet.BufferView = null;
     const made = fb.CreateBufferView(device, &.{ .buffer = floats, .format = .r32g32b32a32_sfloat }, &reading);
-    if (!probe.features.texel_buffers) {
+    if (!probe.can.texel_buffers) {
         probe.check(made == .error_feature_not_present, "a buffer view refused where the device has none");
         return;
     }
@@ -1531,7 +1648,7 @@ fn blendChecks(probe: *Probe) void {
     const takes = facet.PipelineColorBlendAttachmentState{};
     const differing = [2]facet.PipelineColorBlendAttachmentState{ keeps, takes };
     const each_own = pipelineOf(probe, pass, module.?, layout.?, .{ .blends = &differing });
-    if (!probe.features.independent_blend) {
+    if (!probe.can.independent_blend) {
         probe.check(each_own == null, "attachments that differ refused where a device blends them alike");
         const alike = [2]facet.PipelineColorBlendAttachmentState{ keeps, keeps };
         probe.check(pipelineOf(probe, pass, module.?, layout.?, .{ .blends = &alike }) != null, "the same state for both still taken");
@@ -1604,7 +1721,7 @@ fn biasChecks(probe: *Probe) void {
     const depth_only = [1]facet.PipelineColorBlendAttachmentState{.{ .color_write_mask = 0 }};
     const nearer = facet.PipelineRasterizationStateCreateInfo{ .depth_bias_enable = true, .depth_bias_constant_factor = -3 };
     const biased = pipelineOf(probe, pass, module.?, layout.?, .{ .depth_tested = true, .raster = nearer });
-    if (!probe.features.depth_bias) {
+    if (!probe.can.depth_bias) {
         probe.check(biased == null, "a depth bias refused where the device moves none");
         probe.check(pipelineOf(probe, pass, module.?, layout.?, .{ .depth_tested = true }) != null, "a pipeline without one is still taken");
         return;
@@ -1720,7 +1837,7 @@ fn dynamicChecks(probe: *Probe) void {
     };
     var set_layout: ?*facet.DescriptorSetLayout = null;
     const made = fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 2, .bindings = &bindings }, &set_layout);
-    if (!probe.features.dynamic_descriptors) {
+    if (!probe.can.dynamic_descriptors) {
         probe.check(made == .error_feature_not_present, "a dynamic buffer descriptor refused where the device has none");
         probe.check(set_layout == null, "and nothing given back for it");
         return;
@@ -1732,7 +1849,11 @@ fn dynamicChecks(probe: *Probe) void {
     // A set holds only so many of them, as the limit says.
     var properties: facet.PhysicalDeviceProperties = undefined;
     fb.GetPhysicalDeviceProperties(probe.physical, &properties);
-    const most = properties.limits.max_descriptor_set_dynamic_buffers;
+    // Vulkan counts the two dynamic kinds apart, where facet folded them
+    // into one number until 1.82. The library's cap is per set layout, so
+    // each kind carries the whole of it.
+    const most = properties.limits.max_descriptor_set_uniform_buffers_dynamic;
+    probe.checkEqual(most, properties.limits.max_descriptor_set_storage_buffers_dynamic, "the two dynamic kinds are capped alike");
     probe.check(most != 0, "the limit says how many a set holds");
     var none: ?*facet.DescriptorSetLayout = null;
     const too_many = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .uniform_buffer_dynamic, .descriptor_count = most + 1 };
@@ -1851,7 +1972,7 @@ fn queryChecks(probe: *Probe) void {
     }
     probe.check(shape.max_mip_levels > 1, "a depth attachment has levels of its own");
     probe.checkEqual(1, shape.max_array_layers, "and one layer until it is read back");
-    if (probe.features.sampled_depth) {
+    if (probe.can.sampled_depth) {
         const read_back = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED;
         if (fb.GetPhysicalDeviceImageFormatProperties(probe.physical, .d16_unorm, .@"2d", .optimal, read_back, 0, &shape) != .success) {
             return probe.check(false, "the largest sampled depth attachment");
@@ -1896,8 +2017,13 @@ fn queryChecks(probe: *Probe) void {
     const pass = passKeeping(probe, .clear, .clear, .dont_care) orelse return probe.check(false, "a pass to ask about");
     var granularity: facet.Extent2D = undefined;
     fb.GetRenderAreaGranularity(device, pass, &granularity);
-    probe.checkEqual(limits.tile_size, granularity.width, "the render area's granularity is the tile");
-    probe.checkEqual(limits.tile_size, granularity.height, "square");
+    // `limits.tile_size` left PhysicalDeviceLimits at 1.82, Vulkan having
+    // no member for it, so this call is the only way to ask - and there is
+    // nothing beside it to check it against. What must hold of it: it is
+    // square, a power of two, and no larger than the framebuffer.
+    probe.checkEqual(granularity.width, granularity.height, "the render area's granularity is square");
+    probe.check(granularity.width != 0 and granularity.width & (granularity.width - 1) == 0, "and a power of two");
+    probe.check(granularity.width <= limits.max_framebuffer_width, "and no wider than a framebuffer");
 
     // What a block has behind it: all of a plain one, none of a lazily
     // allocated one.
@@ -2015,7 +2141,7 @@ fn inputChecks(probe: *Probe) void {
     };
     const pass_info = facet.RenderPassCreateInfo{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 2, .subpasses = &subpasses };
 
-    if (!probe.features.input_attachments) {
+    if (!probe.can.input_attachments) {
         probe.check(layout_made == .error_feature_not_present, "an input attachment layout refused where the device reads none");
         probe.check(set_layout == null, "and nothing given back for it");
         probe.check(probe.renderPass(pass_info) == null, "a subpass that reads one refused there too");
@@ -2041,7 +2167,7 @@ fn inputChecks(probe: *Probe) void {
     // 1.62: a depth attachment is read as an input attachment, where
     // the device keeps a depth to be read at all.
     const depth_pass = probe.renderPass(.{ .attachment_count = 2, .attachments = &with_depth, .subpass_count = 1, .subpasses = @ptrCast(&reads_depth) });
-    probe.check((depth_pass != null) == probe.features.sampled_depth, if (probe.features.sampled_depth) "a depth attachment read as an input attachment" else "a depth attachment read as an input attachment refused where none is kept");
+    probe.check((depth_pass != null) == probe.can.sampled_depth, if (probe.can.sampled_depth) "a depth attachment read as an input attachment" else "a depth attachment read as an input attachment refused where none is kept");
 
     // The pictures: the one read is made to be read, and one that is not.
     const extent = facet.Extent3D{ .width = side, .height = side };
@@ -2120,7 +2246,7 @@ fn inputChecks(probe: *Probe) void {
 
     // 1.62: the depth the first subpass drew, read pixel by pixel by the
     // next - the plane the view's aspect names, out of the image's rows.
-    if (!probe.features.sampled_depth or !probe.features.stored_depth) return;
+    if (!probe.can.sampled_depth or !probe.can.stored_depth) return;
     const deep = probe.image(.{ .format = .d16_unorm, .extent = extent, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT }, 0) orelse
         return probe.check(false, "a depth attachment made to be read");
     var transient: ?*facet.Image = null;
@@ -2238,7 +2364,7 @@ fn passStenciling(probe: *Probe, format: facet.Format, ops: *const [4:0]u8) ?*fa
 fn stencilChecks(probe: *Probe) void {
     const fb = probe.fb;
     defer probe.give();
-    if (!probe.features.stored_stencil) {
+    if (!probe.can.stored_stencil) {
         probe.check(passStenciling(probe, .s8_uint, "cdcs") == null, "a stored stencil refused where the device keeps none");
         probe.check(passStenciling(probe, .d16_unorm_s8_uint, "cdld") == null, "a loaded stencil refused the same way");
         probe.check(passStenciling(probe, .s8_uint, "cdcd") != null, "a stencil that stays in the tiles is still taken");
@@ -2285,14 +2411,14 @@ fn stencilChecks(probe: *Probe) void {
     // where the device writes a pixel's planes where they lie in it
     // (`stored_both`, since 1.47); a device that stores a tile buffer
     // whole - the V3D - takes the format of a stencil alone.
-    if (!probe.features.stored_both) {
+    if (!probe.can.stored_both) {
         probe.check(passStenciling(probe, .d16_unorm_s8_uint, "cdcs") == null, "a stored stencil refused for a format that holds a depth too");
         probe.check(passStenciling(probe, .d16_unorm_s8_uint, "cdcd") != null, "one that stays in the tiles is still taken");
     }
 
     // One format of stencil alone, and one that holds a depth beside it
     // where the device keeps either of the two.
-    const formats: []const facet.Format = if (probe.features.stored_both) &.{ .s8_uint, .d16_unorm_s8_uint } else &.{.s8_uint};
+    const formats: []const facet.Format = if (probe.can.stored_both) &.{ .s8_uint, .d16_unorm_s8_uint } else &.{.s8_uint};
     for (formats) |format| {
         const stride: u32 = if (format == .s8_uint) 1 else 4;
         const inside: u32 = if (stride == 1) 0 else 2;
@@ -2406,7 +2532,7 @@ fn sampledDepthChecks(probe: *Probe) void {
     const usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED;
     var made: ?*facet.Image = null;
     const asked = fb.CreateImage(device, &.{ .format = .d16_unorm, .extent = extent, .usage = usage }, &made);
-    if (!probe.features.sampled_depth) {
+    if (!probe.can.sampled_depth) {
         probe.check(asked != .success and made == null, "a sampled depth image refused where the device samples none");
         return;
     }
@@ -2729,7 +2855,7 @@ fn boundsChecks(probe: *Probe) void {
     // The depth stored where the device keeps one, so that what the clamp
     // left can be read back; in the tiles alone otherwise, which is all
     // the bounds test needs.
-    const stores = probe.features.stored_depth;
+    const stores = probe.can.stored_depth;
     const pass = passKeeping(probe, .clear, .clear, if (stores) .store else .dont_care) orelse
         return probe.check(false, "a pass of a colour and a depth");
     // The colour comes from the vertices, not from a push constant: these
@@ -2743,13 +2869,13 @@ fn boundsChecks(probe: *Probe) void {
     _ = Probe.keep(&probe.layouts, layout);
     const painted = Shape{ .attributes = &Painted.attributes, .stride = Painted.stride, .depth_tested = true };
 
-    if (!probe.features.depth_bounds) {
+    if (!probe.can.depth_bounds) {
         probe.check(pipelineOf(probe, pass, module.?, layout.?, shapeWith(painted, .{ .depth_state = bounded })) == null, "a depth bounds test refused where the device has none");
     }
-    if (!probe.features.depth_clamp) {
+    if (!probe.can.depth_clamp) {
         probe.check(pipelineOf(probe, pass, module.?, layout.?, shapeWith(painted, .{ .raster = clamping })) == null, "a depth clamp refused where the device has none");
     }
-    if (!probe.features.depth_bounds and !probe.features.depth_clamp) return;
+    if (!probe.can.depth_bounds and !probe.can.depth_clamp) return;
 
     const color = probe.image(.{ .format = .b8g8r8a8_unorm, .extent = extent, .tiling = .linear, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, facet.MEMORY_PROPERTY_HOST_VISIBLE) orelse
         return probe.check(false, "a picture to draw into");
@@ -2784,7 +2910,7 @@ fn boundsChecks(probe: *Probe) void {
     const area = facet.Rect2D{ .extent = .{ .width = side, .height = side } };
     const pixels, const pitch = probe.mapped(color[0], color_memory) orelse return probe.check(false, "the picture read back");
 
-    if (probe.features.depth_bounds) {
+    if (probe.can.depth_bounds) {
         const marks = pipelineOf(probe, pass, module.?, layout.?, painted) orelse return probe.check(false, "a pipeline that writes the depth");
         const in_bounds = pipelineOf(probe, pass, module.?, layout.?, shapeWith(painted, .{ .depth_state = bounded })) orelse
             return probe.check(false, "a pipeline whose bounds are tested");
@@ -2814,7 +2940,7 @@ fn boundsChecks(probe: *Probe) void {
         }
     }
 
-    if (probe.features.depth_clamp) {
+    if (probe.can.depth_clamp) {
         // The viewport's own range, so what a clamped depth is held at is
         // not the whole of it.
         const low: f32 = 0.25;
@@ -3169,7 +3295,7 @@ fn edgeChecks(probe: *Probe) void {
         facet.QUERY_PIPELINE_STATISTIC_GEOMETRY_SHADER_PRIMITIVES;
     var pool: ?*facet.QueryPool = null;
     const asked = fb.CreateQueryPool(device, &.{ .query_type = .pipeline_statistics, .query_count = 1, .pipeline_statistics = wanted }, &pool);
-    if (!probe.features.pipeline_statistics_queries) {
+    if (!probe.can.pipeline_statistics_queries) {
         probe.check(asked != .success and pool == null, "a statistics pool refused where the device counts none");
     } else if (asked != .success or pool == null) {
         probe.check(false, "a statistics pool that counts a geometry shader's two");
@@ -3344,7 +3470,7 @@ fn blockChecks(probe: *Probe) void {
     const fb = probe.fb;
     const device = probe.device.?;
     defer probe.give();
-    const kept = probe.features.kept_compressed;
+    const kept = probe.can.kept_compressed;
     const sampled = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST | facet.IMAGE_USAGE_TRANSFER_SRC;
     const across = 16;
 
@@ -3575,7 +3701,7 @@ fn floatChecks(probe: *Probe) void {
     const fb = probe.fb;
     const device = probe.device.?;
     defer probe.give();
-    const kept = probe.features.kept_floats;
+    const kept = probe.can.kept_floats;
     const sampled = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST | facet.IMAGE_USAGE_TRANSFER_SRC;
     const across = 4;
 
@@ -3770,14 +3896,14 @@ fn shapeChecks(probe: *Probe) void {
     const fb = probe.fb;
     const device = probe.device.?;
     defer probe.give();
-    const arrays = probe.features.cube_arrays;
+    const arrays = probe.can.cube_arrays;
     const sampled = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST;
     const across = 4;
     const square = facet.Extent3D{ .width = across, .height = across };
 
     // ETC2 is taken on every device, sampled and copied into but never read
     // back: the blocks are gone once they are unpacked.
-    probe.check(probe.features.etc2_textures, "ETC2 and EAC are taken, unpacked as they are copied in");
+    probe.check(probe.can.etc2_textures, "ETC2 and EAC are taken, unpacked as they are copied in");
     var properties: facet.FormatProperties = undefined;
     fb.GetPhysicalDeviceFormatProperties(probe.physical, .etc2_r8g8b8a8_unorm_block, &properties);
     const features = properties.optimal_tiling_features;
@@ -3940,7 +4066,7 @@ fn samplesChecks(probe: *Probe) void {
 
     var pool: ?*facet.QueryPool = null;
     const asked = fb.CreateQueryPool(device, &.{ .query_type = .occlusion, .query_count = 2 }, &pool);
-    if (!probe.features.occlusion_queries) {
+    if (!probe.can.occlusion_queries) {
         return probe.check(asked != .success and pool == null, "an occlusion pool refused where the device counts no samples");
     }
     if (asked != .success or pool == null) return probe.check(false, "an occlusion pool of two queries");
@@ -4028,7 +4154,7 @@ fn smallChecks(probe: *Probe) void {
     const fb = probe.fb;
     const device = probe.device.?;
     defer probe.give();
-    const small = probe.features.small_texels;
+    const small = probe.can.small_texels;
     const sampled = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST | facet.IMAGE_USAGE_TRANSFER_SRC;
     // Large enough that what each format asks for is above the page a
     // device with a layout of its own rounds an image up to.
@@ -4225,7 +4351,7 @@ fn texelChecks(probe: *Probe) void {
 
     var by_texel: ?*facet.Sampler = null;
     const asked = fb.CreateSampler(device, &in_texels, &by_texel);
-    if (!probe.features.unnormalized_coordinates) {
+    if (!probe.can.unnormalized_coordinates) {
         probe.check(asked == .error_feature_not_present and by_texel == null, "a sampler in texels refused where the device reads none");
         return;
     }
@@ -4379,7 +4505,7 @@ fn wideChecks(probe: *Probe) void {
     const fb = probe.fb;
     const device = probe.device.?;
     defer probe.give();
-    const wide = probe.features.wide_channels;
+    const wide = probe.can.wide_channels;
     const sampled = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST | facet.IMAGE_USAGE_TRANSFER_SRC;
     const across = 8;
     const extent = facet.Extent3D{ .width = across, .height = across };
@@ -4563,7 +4689,7 @@ fn wholeChecks(probe: *Probe) void {
     const fb = probe.fb;
     const device = probe.device.?;
     defer probe.give();
-    const wholes = probe.features.whole_textures;
+    const wholes = probe.can.whole_textures;
     const sampled = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST | facet.IMAGE_USAGE_TRANSFER_SRC;
     const across = 8;
     const extent = facet.Extent3D{ .width = across, .height = across };
@@ -5039,7 +5165,7 @@ fn heldChecks(probe: *Probe) void {
 
     // Where the device runs no form that reads a sampler, every one of
     // them is refused there and the program draws on the cores instead.
-    if (!probe.features.samplers) {
+    if (!probe.can.samplers) {
         var refused = false;
         for ([4][*:0]const u8{ "arrayby", "cubeby", "volumeby", "cubesby" }) |name| {
             if (pipelineOf(probe, pass, module.?, written_pipes.?, .{ .attributes = &attributes, .stride = 12, .name = name }) == null) refused = true else refused = false;
@@ -5405,8 +5531,16 @@ fn cutChecks(probe: *Probe) void {
     defer probe.give();
     var properties: facet.PhysicalDeviceProperties = undefined;
     fb.GetPhysicalDeviceProperties(probe.physical, &properties);
-    const held = properties.limits.max_tessellation_patch_components;
-    probe.check(held >= 4, "the device says how many floats a patch may carry");
+    // The eight maxTessellation* limits read 0 since 1.82, because
+    // `tessellation_shader` is false: a program bringing SPIR-V cannot
+    // declare either tessellation stage (`spirv.facet_profile` leaves
+    // `Profile.stages` at vertex and fragment), and Vulkan makes the
+    // unsupported value mandatory once the feature says false. What the
+    // library's own Zig surface tessellates is said by `shader.Patch`, and
+    // the checks below exercise it through that surface.
+    probe.check(probe.features.tessellation_shader == facet.FALSE, "the device says it runs no SPIR-V tessellation stage");
+    probe.checkEqual(0, properties.limits.max_tessellation_patch_size, "so the patch limits read Vulkan's unsupported value");
+    probe.checkEqual(0, properties.limits.max_tessellation_control_per_patch_output_components, "all of them");
 
     const color_attachment = facet.AttachmentDescription{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .color_attachment_optimal };
     const reference = facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal };
@@ -5563,7 +5697,7 @@ fn togetherChecks(probe: *Probe) void {
     // The flag is the cores': a device whose fragment programs each write
     // the one colour refuses the pass outright, and the subpass without
     // it is drawn once for each attachment as it always was.
-    if (!probe.features.several_outputs) {
+    if (!probe.can.several_outputs) {
         probe.check(togetherPass(probe, true) == null, "a subpass drawn together refused where a fragment program writes the one colour");
         const apart = togetherPass(probe, false) orelse return probe.check(false, "the same subpass drawn once for each");
         probe.check(true, "the same subpass drawn once for each");

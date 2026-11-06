@@ -171,6 +171,13 @@ pub const Result = enum(i32) {
 /// The size that means all of a memory or a buffer from the offset given.
 pub const WHOLE_SIZE: u64 = ~@as(u64, 0);
 
+/// Vulkan's boolean: a `uint32_t` and not a one-byte bool, which is why
+/// `VkPhysicalDeviceFeatures` is 220 bytes where a structure of Zig `bool`
+/// would be 55. `VkBool32`, with `VK_TRUE` and `VK_FALSE`.
+pub const Bool32 = u32;
+pub const TRUE: Bool32 = 1;
+pub const FALSE: Bool32 = 0;
+
 // --- the instance -----------------------------------------------------------
 
 /// A version packed into one word the way Vulkan packs one: a variant in
@@ -260,390 +267,546 @@ pub const PhysicalDeviceType = enum(u32) {
     _,
 };
 
-/// The most a device does.
+/// The samples a pixel may hold, as a bit: `VkSampleCountFlagBits`. The
+/// limits below say which of these a device has for a colour attachment, a
+/// depth attachment and the rest, each as a mask of them, and
+/// `ImageCreateInfo.samples` is one of them - the numbers are the counts
+/// themselves, so a `samples` of 4 and `SAMPLE_COUNT_4` are the same word.
+///
+/// Every device of this library has `SAMPLE_COUNT_1` and nothing else:
+/// CreateImage refuses an image of more (image/_image.zig). Vulkan 1.0
+/// requires 4 of every implementation, so the single bit is a defect
+/// written down in docs/facet-vulkan10.md item 61 and not a choice.
+/// (Since 1.82; there was no name for any of these before it.)
+pub const SAMPLE_COUNT_1: u32 = 1 << 0;
+pub const SAMPLE_COUNT_2: u32 = 1 << 1;
+pub const SAMPLE_COUNT_4: u32 = 1 << 2;
+pub const SAMPLE_COUNT_8: u32 = 1 << 3;
+pub const SAMPLE_COUNT_16: u32 = 1 << 4;
+pub const SAMPLE_COUNT_32: u32 = 1 << 5;
+pub const SAMPLE_COUNT_64: u32 = 1 << 6;
+
+/// The most a device does: `VkPhysicalDeviceLimits`, member for member, as
+/// `scripts/vulkan-struct-check.sh` holds it.
+///
+/// Vulkan's 106 members, in Vulkan's order, with Vulkan's types. Until 1.82
+/// this was 26 fields of facet's own, append-only by contract - "a field
+/// added at the end, so that none already there moves" - which is how an LVO
+/// library keeps its ABI across releases and the exact opposite of Vulkan's
+/// frozen layout. PowerOS is at v0.2 and the interface is not frozen, so the
+/// contract was the one thing standing between this structure and Vulkan's,
+/// and it is gone: about 25 of facet's fields had a counterpart here and the
+/// other 81 members had no field at all.
+///
+/// Two of facet's fields had no Vulkan counterpart and have left:
+/// `tile_size`, which GetRenderAreaGranularity answers for in Vulkan's own
+/// way, and `cores`, which was never Vulkan's business. Both are on the
+/// library's own `PhysicalDevice` record now.
+///
+/// Three changed type to match: `min_memory_map_alignment` is Vulkan's
+/// `size_t`, `max_sampler_anisotropy` is a float, and `timestamp_period_ns`
+/// has become `timestamp_period`, a float of nanoseconds - which also
+/// settles a period that is not a whole number of nanoseconds, something a
+/// u32 could not say. `max_descriptor_set_dynamic_buffers` folded two
+/// Vulkan limits into one and has split back into them.
+///
+/// The 64-bit members carry `align(4)`, as every 64-bit field of this SDK
+/// does: the ESP32's compiler moves the stack pointer by exactly the bytes
+/// of a call's stack arguments, so a call with an odd number of them leaves
+/// what it calls 4 bytes off an 8-byte boundary and a structure wanting 8
+/// would sit where `@alignCast` refuses it (sdk/sdk.zig). So this is
+/// Vulkan's structure member for member, name for name and type for type,
+/// but not byte for byte: on a 64-bit chip C pads before
+/// `bufferImageGranularity` where this does not. Nothing in this library
+/// casts one onto the other, and the shim that would one day speak to a
+/// Vulkan program marshals every structure field by field in any case
+/// (docs/facet-vulkan10.md item 68), so the difference costs nothing and
+/// saying it out loud costs less than finding it later.
+///
+/// **A number here is what the device does, not what Vulkan requires.**
+/// Where this library falls short of a required minimum the real number is
+/// reported and the shortfall is written down in docs/facet-vulkan10.md,
+/// items 17 to 30; where Vulkan names the value an implementation without
+/// some feature must report - 1 for `max_sampler_anisotropy` without
+/// `sampler_anisotropy`, 0 for the tessellation and geometry limits without
+/// those stages, `SAMPLE_COUNT_1` alone for the sample masks - that is what
+/// it says. Each driver's `describe` says where its own numbers come from.
 pub const PhysicalDeviceLimits = extern struct {
-    /// The widest and highest image, and framebuffer.
+
+    // --- images, and the texels a buffer may hold ---
+    /// The widest 1D image, the widest and highest 2D image and
+    /// framebuffer, the deepest 3D image, the side of a cube, and the
+    /// layers of an array.
+    max_image_dimension_1d: u32,
     max_image_dimension_2d: u32,
-    max_framebuffer_width: u32,
-    max_framebuffer_height: u32,
-    /// The deepest 3D image, and the layers of an array.
     max_image_dimension_3d: u32,
+    max_image_dimension_cube: u32,
     max_image_array_layers: u32,
-    /// The colour attachments of a subpass.
-    max_color_attachments: u32,
-    /// The vertex buffers bound at once, and the attributes and the
-    /// stride of a vertex in them.
-    max_vertex_input_bindings: u32,
-    max_vertex_input_attributes: u32,
-    max_vertex_input_binding_stride: u32,
-    /// The floats a vertex function hands the fragment function, past
-    /// the position: what is mixed over a triangle.
-    max_vertex_output_components: u32,
-    /// The bytes of push constants.
+    /// The texels a uniform or storage texel buffer may hold
+    /// (`CreateBufferView`).
+    max_texel_buffer_elements: u32,
+
+    // --- buffers, memory and what one allocation may be ---
+    /// The bytes of a uniform buffer and of a storage buffer one
+    /// descriptor reaches.
+    max_uniform_buffer_range: u32,
+    max_storage_buffer_range: u32,
+    /// The bytes of push constants a pipeline's layout may hold.
     max_push_constants_size: u32,
-    /// The descriptor sets bound at once, and the descriptors of each
-    /// kind in a pipeline's layout.
+    /// The allocations and the samplers that may be alive at once.
+    /// Nothing here keeps a count of either, so these say what the
+    /// machine's memory will bear rather than a number the library
+    /// enforces.
+    max_memory_allocation_count: u32,
+    max_sampler_allocation_count: u32,
+    /// How far apart a buffer and an image must lie in one memory
+    /// allocation to be sure of not disturbing each other: 1 where
+    /// they may be packed together.
+    buffer_image_granularity: u64 align(4),
+    /// The address space a sparse resource may cover. 0 where no
+    /// memory is bound a piece at a time, which is the case here.
+    sparse_address_space_size: u64 align(4),
+
+    // --- descriptors: a stage's, and a whole set's ---
+    /// The descriptor sets bound at once.
     max_bound_descriptor_sets: u32,
-    max_per_stage_descriptor_sampled_images: u32,
+    /// The descriptors of each kind one stage may read: samplers,
+    /// uniform buffers, storage buffers, sampled images, storage
+    /// images and input attachments.
+    max_per_stage_descriptor_samplers: u32,
     max_per_stage_descriptor_uniform_buffers: u32,
-    /// How a buffer's or an image's offset in its memory is aligned at
-    /// most, and a mapping's address at least.
-    min_memory_map_alignment: u32,
-    /// The side of a tile the rasterizer draws in, in pixels, and the
-    /// cores it shares a frame's tiles between.
-    tile_size: u32,
-    cores: u32,
+    max_per_stage_descriptor_storage_buffers: u32,
+    max_per_stage_descriptor_sampled_images: u32,
+    max_per_stage_descriptor_storage_images: u32,
+    max_per_stage_descriptor_input_attachments: u32,
+    /// The descriptors and attachments of every kind together that one
+    /// stage may read.
+    max_per_stage_resources: u32,
+    /// The same counted over a whole pipeline layout rather than one
+    /// stage of it, with the two dynamic kinds counted apart:
+    /// a dynamic descriptor takes an offset from
+    /// CmdBindDescriptorSets (`shader.MAX_DYNAMIC_OFFSETS`).
+    max_descriptor_set_samplers: u32,
+    max_descriptor_set_uniform_buffers: u32,
+    max_descriptor_set_uniform_buffers_dynamic: u32,
+    max_descriptor_set_storage_buffers: u32,
+    max_descriptor_set_storage_buffers_dynamic: u32,
+    max_descriptor_set_sampled_images: u32,
+    max_descriptor_set_storage_images: u32,
+    max_descriptor_set_input_attachments: u32,
+
+    // --- the vertex stage ---
+    /// The attributes of a vertex and the vertex buffers bound at
+    /// once, the offset of an attribute within its vertex, and the
+    /// stride from one vertex to the next.
+    max_vertex_input_attributes: u32,
+    max_vertex_input_bindings: u32,
+    max_vertex_input_attribute_offset: u32,
+    max_vertex_input_binding_stride: u32,
+    /// The floats a vertex function hands on, past the position:
+    /// what is mixed over a triangle.
+    max_vertex_output_components: u32,
+
+    // --- the tessellation stages ---
+    /// How finely a patch may be cut up, and the vertices a patch
+    /// may have (`_instance.max_patch_points`).
+    max_tessellation_generation_level: u32,
+    max_tessellation_patch_size: u32,
+    /// The floats a control function reads of each vertex and writes
+    /// for each vertex, the floats it writes for the whole patch
+    /// (`shader.Patch.ownValues`), and all of its output together.
+    max_tessellation_control_per_vertex_input_components: u32,
+    max_tessellation_control_per_vertex_output_components: u32,
+    max_tessellation_control_per_patch_output_components: u32,
+    max_tessellation_control_total_output_components: u32,
+    /// The floats an evaluation function reads of each vertex and
+    /// writes for each vertex it makes.
+    max_tessellation_evaluation_input_components: u32,
+    max_tessellation_evaluation_output_components: u32,
+
+    // --- the geometry stage ---
+    /// The geometry stage's limits. All zero: there is no geometry
+    /// stage here, which is what `geometry_shader` says, and Vulkan
+    /// asks for these numbers only of an implementation that has one.
+    max_geometry_shader_invocations: u32,
+    max_geometry_input_components: u32,
+    max_geometry_output_components: u32,
+    max_geometry_output_vertices: u32,
+    max_geometry_total_output_components: u32,
+
+    // --- the fragment stage ---
+    /// The floats a fragment function reads of what was mixed over
+    /// the triangle: the other end of `max_vertex_output_components`.
+    max_fragment_input_components: u32,
+    /// The colour attachments one fragment function may write, the
+    /// two it may write for dual-source blending, and its
+    /// attachments and storage resources counted together.
+    max_fragment_output_attachments: u32,
+    max_fragment_dual_src_attachments: u32,
+    max_fragment_combined_output_resources: u32,
+
+    // --- a compute dispatch ---
+    /// A compute workgroup: the bytes its invocations share
+    /// (`shader.Groups.shared`), the groups a dispatch may hold along
+    /// each axis, the invocations one group may hold in all - a group
+    /// runs on one core, one call of the function, so this is how long
+    /// a loop it is - and the invocations it may declare along each
+    /// axis (`shader.computeGroup`).
+    max_compute_shared_memory_size: u32,
+    max_compute_work_group_count: [3]u32,
+    max_compute_work_group_invocations: u32,
+    max_compute_work_group_size: [3]u32,
+
+    // --- how finely a thing is placed and sampled ---
+    /// The fraction bits a vertex's position, a texel's coordinate and
+    /// a mipmap level are worked out to.
+    sub_pixel_precision_bits: u32,
+    sub_texel_precision_bits: u32,
+    mipmap_precision_bits: u32,
+    /// The largest index value a draw may use, and the draws one
+    /// indirect buffer may hold.
+    max_draw_indexed_index_value: u32,
+    max_draw_indirect_count: u32,
+    /// The mipmap levels a sampler may be biased by
+    /// (`SamplerCreateInfo.lod_bias`).
+    max_sampler_lod_bias: f32,
     /// The samples a sampler may take along the longer axis
     /// (`SamplerCreateInfo.max_anisotropy`); 1 where there is no
-    /// anisotropic filtering.
-    max_sampler_anisotropy: u32,
-    /// The nanoseconds one step of a timestamp is (CmdWriteTimestamp): a
-    /// difference of two times this many nanoseconds. 0 where the device
-    /// writes no timestamps.
-    timestamp_period_ns: u32,
-    /// The dynamic buffer descriptors one set layout may hold, each
-    /// taking an offset from CmdBindDescriptorSets; 0 where the device
-    /// has none (`PhysicalDeviceFeatures.dynamic_descriptors`). A field
-    /// added at the end, so that none already there moves.
-    max_descriptor_set_dynamic_buffers: u32 = 0,
-    /// A compute workgroup: the invocations a compute function's entry may
-    /// declare along each axis (`shader.computeGroup`), the invocations a
-    /// group may hold in all, and the bytes its invocations may share
-    /// (`shader.Groups.shared`). All zero where the device runs no compute
-    /// function. Fields added at the end, so that none already there moves.
-    max_compute_work_group_size: [3]u32 = .{ 0, 0, 0 },
-    max_compute_work_group_invocations: u32 = 0,
-    max_compute_shared_memory_size: u32 = 0,
-    /// The floats a tessellation control function may write for the whole
-    /// patch, which its evaluation function reads back (`shader.control`,
-    /// `shader.Patch.ownValues`); 0 where the library tessellates nothing.
-    /// A field added at the end, so that none already there moves.
-    /// (Since 1.50.)
-    max_tessellation_patch_components: u32 = 0,
-    /// The narrowest and widest point a draw of points makes, in pixels
-    /// across and down: Vulkan's `pointSizeRange`. A vertex function says
-    /// the size of its own point (`shader.Vertices.setPointSize`, since
-    /// 1.70) and it is held inside this, so a size of 0 draws the one
-    /// pixel a point always was and one above the end draws the end.
-    /// `.{ 1, 1 }` where the device widens no point, which is what Vulkan's
-    /// `largePoints` says without a feature of its own here - both devices
-    /// widen a point on the cores, into the rectangle the rasterizer draws.
-    /// Fields added at the end, so that none already there moves.
-    /// (Since 1.70.)
-    point_size_range: [2]f32 = .{ 1, 1 },
-    /// The step between two point sizes the device tells apart, in pixels:
-    /// Vulkan's `pointSizeGranularity`, and 0 here, every size between the
-    /// ends of the range being drawn as it is. (Since 1.70.)
-    point_size_granularity: f32 = 0,
+    /// anisotropic filtering, which is the value Vulkan asks for of a
+    /// device without `sampler_anisotropy`.
+    max_sampler_anisotropy: f32,
+
+    // --- viewports ---
+    /// The viewports and scissor rectangles bound at once, how wide and
+    /// high one may be, how far outside the framebuffer its corners may
+    /// lie, and the fraction bits its position is worked out to.
+    max_viewports: u32,
+    max_viewport_dimensions: [2]u32,
+    viewport_bounds_range: [2]f32,
+    viewport_sub_pixel_bits: u32,
+
+    // --- how memory and offsets are aligned ---
+    /// What MapMemory's address is aligned to at least: Vulkan's
+    /// `size_t`, so `usize` here, four bytes wide on a 32-bit chip and
+    /// eight on this one.
+    min_memory_map_alignment: usize align(4),
+    /// What a texel buffer's, a uniform buffer's and a storage
+    /// buffer's offset in its memory must be aligned to.
+    min_texel_buffer_offset_alignment: u64 align(4),
+    min_uniform_buffer_offset_alignment: u64 align(4),
+    min_storage_buffer_offset_alignment: u64 align(4),
+
+    // --- sampling at an offset from the coordinate given ---
+    /// How far a constant offset may reach from the coordinate a
+    /// sample was taken at, and the same for a gather of four texels.
+    /// The lowest is negative and the highest one less in magnitude,
+    /// which is Vulkan's asymmetry and not a slip.
+    min_texel_offset: i32,
+    max_texel_offset: u32,
+    min_texel_gather_offset: i32,
+    max_texel_gather_offset: u32,
+    /// How far from a pixel's centre a fragment function may ask for
+    /// what was mixed, and the fraction bits of that offset. All zero
+    /// where only the centre is sampled.
+    min_interpolation_offset: f32,
+    max_interpolation_offset: f32,
+    sub_pixel_interpolation_offset_bits: u32,
+
+    // --- framebuffers, and the samples a pixel may hold ---
+    /// The widest and highest framebuffer, and the layers one may have.
+    max_framebuffer_width: u32,
+    max_framebuffer_height: u32,
+    max_framebuffer_layers: u32,
+    /// The samples a pixel may hold, as a bitmask of
+    /// `SampleCountFlagBits` and not a count: for a colour, a
+    /// depth, a stencil attachment, and for a subpass with no
+    /// attachment at all. `SAMPLE_COUNT_1` alone where there is no
+    /// multisampling, which is where this library stands - Vulkan
+    /// requires four, so that single bit is a defect and not a
+    /// choice (docs/facet-vulkan10.md item 61).
+    framebuffer_color_sample_counts: u32,
+    framebuffer_depth_sample_counts: u32,
+    framebuffer_stencil_sample_counts: u32,
+    framebuffer_no_attachments_sample_counts: u32,
+    /// The colour attachments of a subpass (`_render.most_colors`).
+    max_color_attachments: u32,
+    /// The samples an image may hold to be sampled from, by what it
+    /// holds: a colour format, a whole-number format, a depth, a
+    /// stencil, and a storage image. One bit each here, as above.
+    sampled_image_color_sample_counts: u32,
+    sampled_image_integer_sample_counts: u32,
+    sampled_image_depth_sample_counts: u32,
+    sampled_image_stencil_sample_counts: u32,
+    storage_image_sample_counts: u32,
+    /// The 32-bit words of a sample mask.
+    max_sample_mask_words: u32,
+    /// Whether every queue that draws or computes also writes
+    /// timestamps, which saves a program looking at each queue
+    /// family's `timestamp_valid_bits`.
+    timestamp_compute_and_graphics: Bool32,
+    /// The nanoseconds one step of a timestamp is (CmdWriteTimestamp):
+    /// a difference of two times this many nanoseconds. Vulkan's float,
+    /// so a period that is not a whole number of nanoseconds can be
+    /// said - `timestamp_period_ns`, a u32, could not. 0 where the
+    /// device writes no timestamps.
+    timestamp_period: f32,
+
+    // --- clipping, culling, and the queue's priorities ---
+    /// The clip distances, cull distances, and the two together a
+    /// shader may write. All zero: neither built-in is in the SPIR-V
+    /// profile (`shader_clip_distance`, `shader_cull_distance`).
+    max_clip_distances: u32,
+    max_cull_distances: u32,
+    max_combined_clip_and_cull_distances: u32,
+    /// How many priorities a queue may be made with that the device
+    /// tells apart: 2 means the ends of the range and nothing
+    /// between.
+    discrete_queue_priorities: u32,
+
+    // --- points and lines wider than one pixel ---
+    /// The narrowest and widest point a draw of points makes, and the
+    /// same for the width of a line, in pixels. A vertex function says
+    /// the size of its own point (`shader.Vertices.setPointSize`) and it
+    /// is held inside this, so a size of 0 draws the one pixel a point
+    /// always was and one above the end draws the end.
+    point_size_range: [2]f32,
+    line_width_range: [2]f32,
+    /// The step between two sizes the device tells apart, in pixels,
+    /// and 0 here: every size between the ends of the range is drawn
+    /// as it is, the widening working in floats.
+    point_size_granularity: f32,
+    line_width_granularity: f32,
+    /// Whether a line is rasterized exactly as the specification draws
+    /// one, and whether a multisampled pixel's sample positions are
+    /// Vulkan's standard ones.
+    strict_lines: Bool32,
+    standard_sample_locations: Bool32,
+
+    // --- copies, and memory the host shares ---
+    /// What a buffer's offset and a row's length should be aligned to
+    /// for a copy between a buffer and an image to go the fast way.
+    optimal_buffer_copy_offset_alignment: u64 align(4),
+    optimal_buffer_copy_row_pitch_alignment: u64 align(4),
+    /// The bytes FlushMappedMemoryRanges and
+    /// InvalidateMappedMemoryRanges work in: an offset and a size are
+    /// rounded out to this.
+    non_coherent_atom_size: u64 align(4),
 };
 
-/// The longest name a device has, its NUL included.
-pub const MAX_PHYSICAL_DEVICE_NAME_SIZE = 64;
+/// The longest name a device has, its NUL included:
+/// `VK_MAX_PHYSICAL_DEVICE_NAME_SIZE`. 64 until 1.82, where Vulkan has
+/// always asked for 256.
+pub const MAX_PHYSICAL_DEVICE_NAME_SIZE = 256;
 
-/// What a physical device is.
+/// The bytes of a UUID: `VK_UUID_SIZE`.
+pub const UUID_SIZE = 16;
+
+/// What a device does with memory bound a piece at a time, as
+/// `PhysicalDeviceProperties.sparse_properties` says:
+/// `VkPhysicalDeviceSparseProperties`.
+///
+/// Every one of these is false here, and says nothing more than that,
+/// because no device of this library binds memory sparsely - `sparse_binding`
+/// and the eight `sparse_residency_*` features are all false, and Vulkan
+/// leaves these five meaningless where they are. Vulkan 1.0 requires the
+/// structure all the same, so a program reading one gets five honest falses
+/// rather than whatever lay past the end of the properties.
+pub const PhysicalDeviceSparseProperties = extern struct {
+    /// Standard sparse block shapes for 2D, multisampled 2D and 3D images.
+    residency_standard_2d_block_shape: Bool32 = FALSE,
+    residency_standard_2d_multisample_block_shape: Bool32 = FALSE,
+    residency_standard_3d_block_shape: Bool32 = FALSE,
+    /// Mip levels smaller than the sparse block are aligned, rather than
+    /// gathered into one tail.
+    residency_aligned_mip_size: Bool32 = FALSE,
+    /// Reading an unbound texel gives zero rather than something undefined.
+    residency_non_resident_strict: Bool32 = FALSE,
+};
+
+/// What a physical device is: `VkPhysicalDeviceProperties`, member for
+/// member, as `scripts/vulkan-struct-check.sh` holds it.
 pub const PhysicalDeviceProperties = extern struct {
-    /// The interface it has (`makeVersion`), and the library's own
-    /// version and revision the same way.
+    /// The interface it has (`makeApiVersion`), which is
+    /// `API_VERSION_1_0`, and the library's own version and revision
+    /// packed the same way - Vulkan leaves a driver's version to whoever
+    /// wrote the driver.
     api_version: u32,
     driver_version: u32,
     vendor_id: u32,
     device_id: u32,
     device_type: PhysicalDeviceType,
     device_name: [MAX_PHYSICAL_DEVICE_NAME_SIZE]u8,
+    /// What a pipeline cache made on this device belongs to. Vulkan asks
+    /// that it change whenever anything that could make a cached pipeline
+    /// wrong changes, so a program may keep a cache across runs and know
+    /// when to throw it away. Here it is the driver module's own stamp -
+    /// the sum of the library's version and of every shape a module and
+    /// the library share (`driver/_driver.zig`) - mixed with what names the
+    /// device, so it moves when the library is rebuilt, when a driver is
+    /// rebuilt against another library, or when the device is a different
+    /// one. (Since 1.82; there was no such member before it.)
+    pipeline_cache_uuid: [UUID_SIZE]u8,
     limits: PhysicalDeviceLimits,
+    sparse_properties: PhysicalDeviceSparseProperties,
 };
 
-/// What a physical device does, as GetPhysicalDeviceFeatures answers.
+/// What a physical device does, as GetPhysicalDeviceFeatures answers:
+/// `VkPhysicalDeviceFeatures`, member for member, as
+/// `scripts/vulkan-struct-check.sh` holds it.
 ///
-/// There is a field here where a create call can refuse something: a `false`
-/// is what it would answer `error_feature_not_present` to, so that a program
-/// can ask instead of being told. What the library has no call for at all -
-/// events, a pipeline cache, sparse memory - has no field: its absence is in
-/// the jump table, not here.
+/// Vulkan's 55 members in Vulkan's order, each a `Bool32` and so four bytes
+/// wide: 220 bytes in all. Until 1.82 this was 49 fields of facet's own
+/// naming, Zig `bool` and one byte each, 49 bytes - a structure a conformant
+/// caller could not read at all. Those 49 are the library's own record of
+/// what each device cannot do and live on as `Capabilities`
+/// (instance/_instance.zig), which is what the library's refusals read;
+/// about thirty-five of them gate things Vulkan 1.0 requires
+/// unconditionally, so they are defects written down rather than features
+/// offered.
 ///
-/// The first few differ between the devices of one machine, and so do
-/// `samplers` and `sampler_anisotropy` at the end - a field added later goes
-/// there, where it moves nothing a program already reads. The rest are the
-/// library's and the same on each.
+/// Where each of these comes from on each device, and why, is written in
+/// instance/getphysicaldevicefeatures.zig: the answers are made from the
+/// device's `Capabilities` and from what the library implements at all,
+/// never from what would be convenient to claim.
+///
+/// There is no `DeviceCreateInfo.pEnabledFeatures` step in Vulkan's sense
+/// here. `DeviceCreateInfo.enabled_features` is read and anything asked for
+/// that the device does not have is refused with
+/// `error_feature_not_present`, which Vulkan requires; what Vulkan leaves
+/// undefined - using a feature without having enabled it - this library
+/// refuses at the call instead, which is a permitted way to implement
+/// undefined behaviour and the more useful one.
 pub const PhysicalDeviceFeatures = extern struct {
-    /// A pipeline's fragment function may be one the program wrote, any Zig
-    /// function. False where only the fixed forms run and a pipeline with its
-    /// own is refused: `shader.fixedFragment` then says what it may do. The
-    /// cores have it; the BCM2712's V3D has not.
-    own_fragment_functions: bool = false,
-    /// `texture.Sampling.format` is the format the fast path reads. False
-    /// where the device reads a texture's format from its image instead, so
-    /// a pipeline built for one format samples an image of another at full
-    /// speed. Either way the picture is drawn: since 1.44 a texture whose
-    /// format is not the form's goes through the run-time sampler here, a
-    /// pixel at a time, rather than painting `shader.missing` as it did
-    /// before. So this says what a form costs, not what it may sample.
-    sampling_format: bool = false,
-    /// Compute functions run on the device itself. False says they run - on
-    /// the cores behind it, whichever device the pipeline was made on.
-    compute_on_device: bool = false,
-    /// Tessellation likewise.
-    tessellation_on_device: bool = false,
-    /// The fixed forms that drop a pixel rather than colour it run here -
-    /// `shader.FixedKind.texture_cutout`, for cut-out textures. A device
-    /// without it refuses a pipeline that asks for one.
-    discarding_fragment_forms: bool = false,
 
-    /// Points and lines, and triangles drawn as their edges or corners.
-    points_and_lines: bool = false,
-    depth_test: bool = false,
-    stencil_test: bool = false,
-    /// Any blend factors and operation, the alpha's its own.
-    blending: bool = false,
-    /// `PIPELINE_CREATE_DEPTH_PREPASS`.
-    depth_prepass: bool = false,
-    indirect_draws: bool = false,
-    secondary_command_buffers: bool = false,
-    several_subpasses: bool = false,
-    several_color_attachments: bool = false,
-    texture_arrays: bool = false,
-    cube_maps: bool = false,
-    textures_3d: bool = false,
-    /// BC1, BC2 and BC3 are taken: unpacked to 8 bits a channel as they
-    /// are copied in, or kept in their blocks where `kept_compressed`
-    /// says so.
-    compressed_textures: bool = false,
-    /// The float formats, the same way.
-    float_textures: bool = false,
-
-    /// More than one sample a pixel, sample shading, alpha to coverage or to
-    /// one. No device of this library has it.
-    multisampling: bool = false,
+    // --- the draw and its state ---
+    /// Reading or writing outside a buffer's bound range is caught rather
+    /// than undefined: a read gives zero or a value from somewhere in the
+    /// same buffer, and a write outside is dropped.
+    robust_buffer_access: Bool32 = FALSE,
+    /// A 32-bit index may use its whole range. Without it the largest index
+    /// value is 2^24-1 (`maxDrawIndexedIndexValue`).
+    full_draw_index_uint32: Bool32 = FALSE,
+    /// A cube image may be an array of cubes, and a view of one.
+    image_cube_array: Bool32 = FALSE,
+    /// Each colour attachment blends by its own state, rather than every one
+    /// of them by the first's.
+    independent_blend: Bool32 = FALSE,
+    /// The geometry stage.
+    geometry_shader: Bool32 = FALSE,
+    /// The tessellation control and evaluation stages.
+    tessellation_shader: Bool32 = FALSE,
+    /// A fragment function run once a sample rather than once a pixel
+    /// (`min_sample_shading`).
+    sample_rate_shading: Bool32 = FALSE,
+    /// The blend factors that read a second source colour.
+    dual_src_blend: Bool32 = FALSE,
     /// `PipelineColorBlendStateCreateInfo.logic_op_enable`.
-    logic_ops: bool = false,
-    several_viewports: bool = false,
-    /// `PipelineRasterizationStateCreateInfo.depth_bias_enable` and
-    /// CmdSetDepthBias: a triangle's depth moved before it is tested and
-    /// written, for the shadow map that would shade itself and the decal
-    /// that would fight the wall it is on. False where a pipeline that asks
-    /// for one is refused. The cores have it since 1.34; the BCM2712's V3D
-    /// since 1.47, through its depth offset packet, which takes Vulkan's
-    /// three numbers as they are.
-    depth_bias: bool = false,
-    /// `PipelineDepthStencilStateCreateInfo.depth_bounds_test_enable`,
-    /// `min_depth_bounds`, `max_depth_bounds` and CmdSetDepthBounds: a
-    /// pixel is drawn only where the depth already there lies between the
-    /// two, whatever the depth being drawn. False where a pipeline that
-    /// asks for it is refused. The cores have it since 1.40, the V3D since
-    /// 1.47: its depth bounds packet holds the tiles' test to the two.
-    depth_bounds: bool = false,
-    /// `PipelineRasterizationStateCreateInfo.depth_clamp_enable`: what
-    /// lies past the near plane is drawn all the same, each pixel's depth
-    /// held inside the viewport's `min_depth` and `max_depth`, rather than
-    /// cut away - which is what a shadow volume wants. False where a
-    /// pipeline that asks for it is refused. The cores have it since 1.40,
-    /// the V3D since 1.47: asking for it turns its clip to the z planes
-    /// off, as Vulkan's does.
-    depth_clamp: bool = false,
-    /// A depth attachment of `d16_unorm` that may `load` or `store`: depth
-    /// outliving the pass it was drawn in, written into the image's memory
-    /// as each tile is drawn and read back from it, to be copied out or
-    /// made into a shadow map. False where the depth lives in the device's
-    /// tiles alone and CreateRenderPass refuses both ops. The cores have it
-    /// since 1.30, the V3D since 1.47, which loads and stores the tiles'
-    /// depth as it does their colour - one plane an image, so `stored_both`
-    /// is what a pass keeping depth and stencil together asks for.
-    stored_depth: bool = false,
-    /// `input_attachment` descriptors and `SubpassDescription`'s
-    /// `input_attachments`: an attachment a later subpass reads pixel by
-    /// pixel, out of the image's memory, which is how a deferred pass
-    /// reads what the pass before it drew (`shader.Resources.input`).
-    /// False where a set layout with the kind, and a subpass with input
-    /// attachments, are both refused. The cores have it since 1.37; on
-    /// the V3D no fragment program reads one.
-    input_attachments: bool = false,
-    /// Whether a render pass may keep its stencil attachment: the stencil
-    /// load and store ops, a plane of the image's rows beside the depth's
-    /// (`s8_uint`, `d16_unorm_s8_uint`), so a stencil outlives its pass
-    /// and can be read back, written and cleared. The cores have it since
-    /// 1.38, the V3D since 1.47 for a stencil of its own (`s8_uint`); a
-    /// pass that keeps both planes of `d16_unorm_s8_uint` asks for
-    /// `stored_both` as well, which the V3D has not.
-    stored_stencil: bool = false,
-    /// A depth attachment's image may be sampled where it lies: an image
-    /// of `d16_unorm` with IMAGE_USAGE_SAMPLED, kept in rows as a depth
-    /// attachment is, sampled through a sampler
-    /// (`combined_image_sampler`, `sampled_image`), and compared with a
-    /// reference at all 16 bits where the sampler asks for it
-    /// (`CompareOp`). So a shadow map is drawn into an image and sampled
-    /// out of it with nothing copied. The cores have it since 1.39; the
-    /// V3D's texture unit keeps a texture its own way and knows no depth
-    /// format, so there it is refused.
-    sampled_depth: bool = false,
-    /// `storage_image` descriptors, and the texel buffer kinds.
-    storage_images: bool = false,
-    texel_buffers: bool = false,
-    /// `uniform_buffer_dynamic` and `storage_buffer_dynamic`: a buffer
-    /// descriptor whose bytes start where CmdBindDescriptorSets'
-    /// `dynamic_offsets` says, so one set serves draw after draw with a
-    /// range of its own for each. Every device has it since 1.35; false
-    /// where a set layout with either kind is refused.
-    dynamic_descriptors: bool = false,
-    /// The fixed forms that sample through the sampler bound beside the
-    /// texture run here - `shader.FixedKind.texture_sampled`,
-    /// `texture_shadow`, since 1.49 `texture_array_sampled`,
-    /// `texture_cube_sampled` and `texture_3d_sampled`, and since 1.53
-    /// `texture_cube_array_sampled` - and with them
-    /// everything a sampler says: the two
-    /// levels round a point mixed, a bias on the level and a clamp,
-    /// mirrored and bordered edges, and a comparison with a reference. A
-    /// device without it refuses such a pipeline, as with a dropping form;
-    /// samplers are made and written into sets on either. This one differs
-    /// between the devices of a machine, though it is down here: a field is
-    /// added at the end so that none already there moves.
-    samplers: bool = false,
-    /// A sampler's `max_anisotropy` is taken: several samples along the
-    /// longer axis, up to `PhysicalDeviceLimits.max_sampler_anisotropy`.
-    /// False where one sample is taken whatever a sampler asks for. This
-    /// differs between the devices as well.
-    sampler_anisotropy: bool = false,
-    /// Occlusion queries: the samples that passed the tests counted where
-    /// this device draws (`QueryType.occlusion`). The cores count in the
-    /// rasterizer; the V3D since 1.47 reads the counter of its own its
-    /// draws point at. False where CreateQueryPool refuses the kind.
-    /// Differs between the devices of a machine.
-    occlusion_queries: bool = false,
-    /// `QueryType.pipeline_statistics`, the same way: what the stages were
-    /// given is counted where they run.
-    pipeline_statistics_queries: bool = false,
-    /// `QueryType.timestamp` and CmdWriteTimestamp: the clock read as the
-    /// command is played. Every device has it where the machine has
-    /// timer.device.
-    timestamp_queries: bool = false,
-    /// `DescriptorSetLayoutBinding.immutable_samplers`: a sampler the
-    /// layout holds, which a write into the set cannot change. Every set
-    /// made of such a layout starts with it in the slot; a write of a
-    /// combined image sampler then brings the texture alone, and a write
-    /// of a sampler nothing. Every device has it since 1.49: the layout
-    /// keeps the sampler, which is the library's doing and not a driver's.
-    immutable_samplers: bool = false,
-    /// `SamplerCreateInfo.unnormalized_coordinates`: a sample placed in
-    /// texels rather than 0 to 1 across the texture. The cores have it
-    /// since 1.67; the V3D reads no sampler at all
-    /// (`samplers`), so it has none of this either.
-    unnormalized_coordinates: bool = false,
-    /// Each colour attachment of a subpass blended its own way:
-    /// `PipelineColorBlendStateCreateInfo.attachments` is taken one by one.
-    /// False where a pipeline whose attachments do not all say the same
-    /// thing is refused. Every device of this library has it since 1.33: a
-    /// colour attachment is drawn as a pass of its own, so each takes its
-    /// own mixing as it is drawn.
-    independent_blend: bool = false,
-    /// A compressed image is kept in its blocks and decoded as it is
-    /// sampled, nothing unpacked: `bc1_rgb_unorm_block`,
-    /// `bc1_rgba_unorm_block`, `bc2_unorm_block`, `bc3_unorm_block` and
-    /// since 1.72 `bc4_unorm_block` and `bc5_unorm_block`, since 1.73
-    /// `bc7_unorm_block` and since 1.74 `bc6h_ufloat_block` and
-    /// `bc6h_sfloat_block`,
-    /// lie as they were copied in, an eighth to a quarter of the memory
-    /// the unpacked texels take, and the four texels a sample mixes come
-    /// out of the one block where they share it. False where such an
-    /// image is unpacked into `r8g8b8a8_unorm` on the copy
-    /// (`compressed_textures` alone), which reads the same and costs the
-    /// memory. GetImageMemoryRequirements says which was done. The cores
-    /// have it since 1.44; the V3D's texture unit is fed unpacked texels
-    /// here, so there an image is unpacked as before.
-    kept_compressed: bool = false,
-    /// A float image is kept as the floats it was copied in as, nothing
-    /// unpacked: `r16g16b16a16_sfloat`, `r32g32b32a32_sfloat`,
-    /// `b10g11r11_ufloat_pack32` and `e5b9g9r9_ufloat_pack32` lie as they
-    /// were given, so a copy out of such an image gives back what went in,
-    /// and the two packed ones take half of what their texels unpacked
-    /// would (4 bytes against the 8 an 8888 texel is kept spread in). A
-    /// sample holds each channel inside 0 to 1 and rounds it to 8 bits, the
-    /// tiles having no more, so what is drawn is the same either way; what
-    /// is above 1 or below 0 is still lost there, and only on the way into
-    /// the tiles. False where such an image is unpacked into
-    /// `r8g8b8a8_unorm` on the copy, as it was before, and cannot be copied
-    /// out of. The cores have it since 1.45; the V3D's TMU is fed unpacked
-    /// texels, so there an image is unpacked as before.
-    kept_floats: bool = false,
-    /// Cubes in an array: an image of CUBE_COMPATIBLE whose layers are a
-    /// multiple of six, a view of `ImageViewType.cube_array` over them, and
-    /// the fixed forms that sample one of them
-    /// (`shader.FixedKind.texture_cube_array`, varyings x, y, z and which
-    /// cube, and since 1.53 `texture_cube_array_sampled`, the same through
-    /// a sampler). False where both the view and such a pipeline are
-    /// refused - Vulkan's `imageCubeArray`. The cores have it since 1.46;
-    /// no QPU program of the V3D reads the fourth coordinate.
-    cube_arrays: bool = false,
-    /// ETC2 and EAC: `etc2_r8g8b8_unorm_block`,
-    /// `etc2_r8g8b8a1_unorm_block`, `etc2_r8g8b8a8_unorm_block`,
-    /// `eac_r11_unorm_block` and `eac_r11g11_unorm_block`, unpacked to 8
-    /// bits a channel as they are copied in - Vulkan's
-    /// `textureCompressionETC2`. No device of this library samples such a
-    /// block where it lies, so this is true on every device from 1.46 and
-    /// says only that the formats are taken.
-    etc2_textures: bool = false,
-    /// Whether a format that holds a depth **and** a stencil may keep
-    /// either of them in its image's rows (`stored_depth`,
-    /// `stored_stencil`): the cores write each pixel's planes where they
-    /// lie in its four bytes, while a device that stores the whole of a
-    /// tile buffer writes one plane's pixels one after another and so
-    /// keeps only a format of that plane alone - `d16_unorm` or
-    /// `s8_uint`. False on the V3D, where a load or a store op of
-    /// `d16_unorm_s8_uint` is `error_feature_not_present`
-    /// (CreateRenderPass). (Since 1.47.)
-    stored_both: bool = false,
-    /// A texel may be kept in fewer bytes than the colour it reads as: an
-    /// image of `r8_unorm`, one byte a texel, read as (red, 0, 0, 1); and
-    /// IMAGE_CREATE_PACKED_TEXELS on a sampled image of R8G8B8A8 or
-    /// B8G8R8A8, whose texel is then the 32 bits of its word rather than
-    /// the 64 it is spread over. An eighth and a half of the memory, for
-    /// the spread a sample does itself. False where CreateImage refuses
-    /// both the format and the flag with `error_format_not_supported`.
-    /// Every device has it since 1.48: the cores keep such a texel in
-    /// their own layout, the V3D's TMU reads R8 with a swizzle of its own
-    /// and has never spread an 8888 texel, so the flag costs it nothing
-    /// and changes nothing there. (Since 1.48.)
-    small_texels: bool = false,
-    /// A fragment function may write all the colour attachments of its
-    /// subpass in the one call, the subpass drawn once rather than once
-    /// for each of them (`shader.fragmentOutputs`,
-    /// SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER): a G-buffer's three or four
-    /// planes cost one pass over the vertices, one binning and one call a
-    /// quad instead of as many as there are attachments. True on the
-    /// cores, where the tiles hold a colour plane for each attachment of
-    /// such a subpass. False on the V3D, whose fragment programs are the
-    /// fixed forms and each writes the one colour: there a subpass of
-    /// several is drawn once for each, as it was before, and the flag is
-    /// `error_feature_not_present` (CreateRenderPass). (Since 1.51.)
-    several_outputs: bool = false,
-    /// A texture may keep channels of its own rather than the 8888 colour
-    /// a sample makes of them: an image of `r8g8_unorm`, two bytes a
-    /// texel, read as (red, green, 0, 1), and of `r16_unorm`,
-    /// `r16g16_unorm` or `r16g16b16a16_unorm`, 16 bits a channel. A
-    /// sample reads the top 8 bits of each, which is all a tile's colour
-    /// holds, while `texture.Texture.partsAt` gives the whole of them and
-    /// `setParts` writes the whole of them - a height field, a shadow map
-    /// of a program's own, or a texture a function writes through at more
-    /// than 8 bits a channel. True on the cores; false on the V3D, whose
-    /// texture unit is fed what the library unpacked, where CreateImage
-    /// answers `error_format_not_supported` for such an image and
-    /// GetPhysicalDeviceFormatProperties says the format is sampled by
-    /// nothing. (Since 1.69.)
-    wide_channels: bool = false,
-    /// A texture may keep whole numbers rather than a colour: an image of
-    /// Vulkan's `_uint` and `_sint` formats, one channel, two or four, of
-    /// 8, 16 or 32 bits. `texture.Texture.wholesAt` reads the four
-    /// numbers a texel keeps and `setWholes` writes them, each held to
-    /// what its channel holds; `partsAt` and `setParts` give and take the
-    /// same numbers as floats, which carry 24 bits of one exactly; and a
-    /// sample holds each to 0 to 1 and over 255, the way a texel buffer
-    /// of the format reads one (`shader.Texels.colorAt`), a whole number
-    /// being no colour. For a counter, an index into a table, an object
-    /// id or a bitfield a function reads or writes a texel at a time.
-    /// True on the cores; false on the V3D, where CreateImage answers
-    /// `error_format_not_supported` for such an image and
-    /// GetPhysicalDeviceFormatProperties says the format is sampled by
-    /// nothing. No such format is filtered linearly or drawn into, on any
-    /// device. (Since 1.70.)
-    whole_textures: bool = false,
+    logic_op: Bool32 = FALSE,
+    /// More than one draw in an indirect buffer.
+    multi_draw_indirect: Bool32 = FALSE,
+    /// A `first_instance` other than zero in an indirect draw.
+    draw_indirect_first_instance: Bool32 = FALSE,
+    /// `PipelineRasterizationStateCreateInfo.depth_clamp_enable`: what lies
+    /// past the near plane is drawn all the same, each pixel's depth held
+    /// inside the viewport's, rather than cut away.
+    depth_clamp: Bool32 = FALSE,
+    /// `depth_bias_clamp`: a bound on how far a triangle's depth is moved.
+    depth_bias_clamp: Bool32 = FALSE,
+    /// A triangle drawn as its edges or its corners: `POLYGON_MODE_LINE`
+    /// and `POLYGON_MODE_POINT`.
+    fill_mode_non_solid: Bool32 = FALSE,
+    /// `depth_bounds_test_enable`: a pixel is drawn only where the depth
+    /// already there lies between two numbers, whatever depth is being drawn.
+    depth_bounds: Bool32 = FALSE,
+    /// A line wider than one pixel (`line_width`, `lineWidthRange`).
+    wide_lines: Bool32 = FALSE,
+    /// A point wider than one pixel (`point_size_range`).
+    large_points: Bool32 = FALSE,
+    /// `alpha_to_one_enable`: the alpha a fragment wrote is forced to one.
+    alpha_to_one: Bool32 = FALSE,
+    /// More than one viewport and scissor rectangle at once.
+    multi_viewport: Bool32 = FALSE,
+    /// A sampler that takes more than one sample along the longer axis
+    /// (`SamplerCreateInfo.max_anisotropy`, `maxSamplerAnisotropy`).
+    sampler_anisotropy: Bool32 = FALSE,
+    /// The ETC2 and EAC formats, sampled from their blocks.
+    texture_compression_etc2: Bool32 = FALSE,
+    /// The ASTC LDR formats, sampled from their blocks.
+    texture_compression_astc_ldr: Bool32 = FALSE,
+    /// The BC formats, sampled from their blocks.
+    texture_compression_bc: Bool32 = FALSE,
+    /// An occlusion query that counts the samples which passed, rather than
+    /// only saying whether any did.
+    occlusion_query_precise: Bool32 = FALSE,
+    /// `QueryType.pipeline_statistics`.
+    pipeline_statistics_query: Bool32 = FALSE,
+    /// A vertex, tessellation or geometry function writing a storage buffer
+    /// or a storage image, and the atomic operations on them.
+    vertex_pipeline_stores_and_atomics: Bool32 = FALSE,
+    /// The same from a fragment function.
+    fragment_stores_and_atomics: Bool32 = FALSE,
+    /// `PointSize` written from a tessellation or a geometry function.
+    shader_tessellation_and_geometry_point_size: Bool32 = FALSE,
+
+    // --- what a shader may contain ---
+    /// `OpImage*Gather` with a component chosen and with offsets.
+    shader_image_gather_extended: Bool32 = FALSE,
+    /// The storage-image formats past the small set Vulkan requires.
+    shader_storage_image_extended_formats: Bool32 = FALSE,
+    /// A storage image of more than one sample.
+    shader_storage_image_multisample: Bool32 = FALSE,
+    /// A storage image read without its format given in the shader.
+    shader_storage_image_read_without_format: Bool32 = FALSE,
+    /// The same for a write.
+    shader_storage_image_write_without_format: Bool32 = FALSE,
+    /// An array of uniform-buffer descriptors indexed by a value the shader
+    /// works out rather than a constant.
+    shader_uniform_buffer_array_dynamic_indexing: Bool32 = FALSE,
+    /// The same for sampled images and samplers.
+    shader_sampled_image_array_dynamic_indexing: Bool32 = FALSE,
+    /// The same for storage buffers.
+    shader_storage_buffer_array_dynamic_indexing: Bool32 = FALSE,
+    /// The same for storage images.
+    shader_storage_image_array_dynamic_indexing: Bool32 = FALSE,
+    /// The `ClipDistance` built-in.
+    shader_clip_distance: Bool32 = FALSE,
+    /// The `CullDistance` built-in.
+    shader_cull_distance: Bool32 = FALSE,
+    /// 64-bit floats in a shader.
+    shader_float64: Bool32 = FALSE,
+    /// 64-bit integers in a shader.
+    shader_int64: Bool32 = FALSE,
+    /// 16-bit integers in a shader.
+    shader_int16: Bool32 = FALSE,
+    /// A shader asking whether a sparse resource's texel is bound.
+    shader_resource_residency: Bool32 = FALSE,
+    /// `MinLod` on an image operation.
+    shader_resource_min_lod: Bool32 = FALSE,
+
+    // --- memory bound a piece at a time ---
+    /// Memory bound to a resource a piece at a time.
+    sparse_binding: Bool32 = FALSE,
+    /// A buffer only partly bound.
+    sparse_residency_buffer: Bool32 = FALSE,
+    /// A 2D image only partly bound.
+    sparse_residency_image_2d: Bool32 = FALSE,
+    /// A 3D image only partly bound.
+    sparse_residency_image_3d: Bool32 = FALSE,
+    /// A partly bound image of 2, 4, 8 and 16 samples.
+    sparse_residency_2_samples: Bool32 = FALSE,
+    sparse_residency_4_samples: Bool32 = FALSE,
+    sparse_residency_8_samples: Bool32 = FALSE,
+    sparse_residency_16_samples: Bool32 = FALSE,
+    /// Two sparse resources sharing the memory bound behind them.
+    sparse_residency_aliased: Bool32 = FALSE,
+
+    // --- the rest ---
+    /// A subpass with no attachments may be drawn at a sample rate other
+    /// than another subpass's.
+    variable_multisample_rate: Bool32 = FALSE,
+    /// A secondary command buffer run inside a query its primary began
+    /// (`CommandBufferInheritanceInfo`).
+    inherited_queries: Bool32 = FALSE,
 };
 
 /// QueueFamilyProperties.queue_flags: what a family's queues do.
@@ -763,6 +926,23 @@ pub const DeviceCreateInfo = extern struct {
     flags: u32 = 0,
     queue_create_info_count: u32 = 0,
     queue_create_infos: ?[*]const DeviceQueueCreateInfo = null,
+    /// The features the program means to use, as
+    /// GetPhysicalDeviceFeatures answered them for this device:
+    /// `VkDeviceCreateInfo.pEnabledFeatures`. Null asks for none, which is
+    /// what Vulkan's null means too.
+    ///
+    /// Any feature asked for that the device has not got makes the device
+    /// `error_feature_not_present`, which Vulkan requires of vkCreateDevice.
+    /// What Vulkan then leaves *undefined* - using a feature without having
+    /// asked for it - this library does not: every call that would use one
+    /// checks the device and refuses, as it did before this field existed,
+    /// so a program that asks for nothing is not thereby given a device
+    /// that behaves unpredictably. Vulkan permits an implementation to do
+    /// anything at all in that case, and refusing is the useful thing to do.
+    ///
+    /// (Since 1.82; there was no counterpart to Vulkan's enable step before
+    /// it, which is docs/facet-vulkan10.md item 49.)
+    enabled_features: ?*const PhysicalDeviceFeatures = null,
 };
 
 // --- memory -----------------------------------------------------------------
@@ -784,7 +964,7 @@ pub const Format = enum(u32) {
     r5g6b5_unorm_pack16 = 4,
     /// One byte of red, as a texture: read as (red, 0, 0, 1), one byte a
     /// texel in memory, where an 8888 texel takes eight
-    /// (`PhysicalDeviceFeatures.small_texels`, since 1.48).
+    /// (`Capabilities.small_texels`, since 1.48).
     r8_unorm = 9,
     /// Bytes red, green, blue, alpha: 0xAABBGGRR as a 32-bit word.
     r8g8b8a8_unorm = 37,
@@ -1060,7 +1240,7 @@ pub const IMAGE_USAGE_TRANSFER_SRC: u32 = 1 << 0;
 pub const IMAGE_USAGE_TRANSFER_DST: u32 = 1 << 1;
 pub const IMAGE_USAGE_SAMPLED: u32 = 1 << 2;
 /// Written through by a shader function, as a `storage_image` descriptor
-/// (`PhysicalDeviceFeatures.storage_images`). It is kept the way a sampled
+/// (`Capabilities.storage_images`). It is kept the way a sampled
 /// image is, so an image may be both.
 pub const IMAGE_USAGE_STORAGE: u32 = 1 << 3;
 pub const IMAGE_USAGE_COLOR_ATTACHMENT: u32 = 1 << 4;
@@ -1085,7 +1265,7 @@ pub const IMAGE_CREATE_CUBE_COMPATIBLE: u32 = 1 << 4;
 /// fixed form reads it at full speed where it was compiled for
 /// `argb8888`; one compiled for `rgba8888` draws it through the run-time
 /// sampler, a pixel at a time, as it does any other format it was not
-/// built for. Refused where `PhysicalDeviceFeatures.small_texels` is
+/// built for. Refused where `Capabilities.small_texels` is
 /// false, and on an image that is neither sampled nor a storage image.
 /// (Since 1.48.)
 pub const IMAGE_CREATE_PACKED_TEXELS: u32 = 1 << 31;
@@ -1100,7 +1280,7 @@ pub const IMAGE_CREATE_PACKED_TEXELS: u32 = 1 << 31;
 /// a fragment function writing the one colour.
 ///
 /// Refused with `error_feature_not_present` where
-/// `PhysicalDeviceFeatures.several_outputs` is false, and with
+/// `Capabilities.several_outputs` is false, and with
 /// `error_invalid_shader_nv` for a pipeline of such a subpass whose
 /// fragment entry does not write exactly the subpass's colour
 /// attachments. (Since 1.51.)
@@ -1325,7 +1505,7 @@ pub const SamplerCreateInfo = extern struct {
     /// Added to the level a sample falls on.
     mip_lod_bias: f32 = 0,
     /// Several samples along the longer axis, up to `max_anisotropy`:
-    /// `PhysicalDeviceFeatures.sampler_anisotropy` says where that happens,
+    /// `Capabilities.sampler_anisotropy` says where that happens,
     /// and `PhysicalDeviceLimits.max_sampler_anisotropy` how many at most.
     anisotropy_enable: bool = false,
     max_anisotropy: f32 = 1,
@@ -1341,7 +1521,7 @@ pub const SamplerCreateInfo = extern struct {
     border_color: BorderColor = .float_transparent_black,
     /// Coordinates in texels of the texture rather than 0 to 1 across it,
     /// for a program that reads a texture as a table of values (since
-    /// 1.67, where `PhysicalDeviceFeatures.unnormalized_coordinates` says
+    /// 1.67, where `Capabilities.unnormalized_coordinates` says
     /// which devices have it). Vulkan allows it beside little else: one
     /// filter for both, `nearest` mipmapping, `min_lod` and `max_lod` 0,
     /// no anisotropy, no comparison, and `address_mode_u` and
@@ -2002,7 +2182,7 @@ pub const PipelineRasterizationStateCreateInfo = extern struct {
     /// depth attachment holds, held inside `depth_bias_clamp` where that
     /// is not 0 - a positive one the most it may be moved, a negative one
     /// the least. Since 1.34, on a device whose
-    /// `PhysicalDeviceFeatures.depth_bias` is true; what
+    /// `Capabilities.depth_bias` is true; what
     /// `DynamicState.depth_bias` leaves to CmdSetDepthBias is the three
     /// numbers, never whether there is a bias at all.
     depth_bias_enable: bool = false,
@@ -2152,7 +2332,7 @@ pub const PipelineColorBlendStateCreateInfo = extern struct {
     attachment_count: u32 = 0,
     /// One for each colour attachment of the subpass the pipeline is made
     /// for, or none for the default over all of them. Each is taken on its
-    /// own since 1.33 (`PhysicalDeviceFeatures.independent_blend`).
+    /// own since 1.33 (`Capabilities.independent_blend`).
     attachments: ?[*]const PipelineColorBlendAttachmentState = null,
     blend_constants: [4]f32 = @splat(0),
     /// One set of blend constants for each colour attachment of the
@@ -2276,7 +2456,7 @@ pub const DescriptorSetLayoutBinding = extern struct {
     descriptor_count: u32 = 1,
     stage_flags: u32 = SHADER_STAGE_ALL_GRAPHICS,
     /// A sampler of the layout's own for each descriptor, which a write
-    /// cannot change (`PhysicalDeviceFeatures.immutable_samplers`, since
+    /// cannot change (`Capabilities.immutable_samplers`, since
     /// 1.49): `descriptor_count` of them, for a `sampler` or
     /// `combined_image_sampler` binding and passed over on any other
     /// kind. Every set made of the layout starts with them, so a write of

@@ -94,7 +94,7 @@ pub const LIBRARY_VERSION = 1;
 /// quad at a time - which is why both are here and the fixed forms are
 /// untouched. No QPU program reads a sampler, so such a pipeline is refused
 /// on the V3D and drawn on the cores, as a dropping form is
-/// (`PhysicalDeviceFeatures.samplers`). A layout's `immutable_samplers` and
+/// (`Capabilities.samplers`). A layout's `immutable_samplers` and
 /// a sampler's `unnormalized_coordinates` are refused rather than passed
 /// over, so that no program is left thinking they took.
 /// 29: query pools - CreateQueryPool, DestroyQueryPool,
@@ -157,7 +157,7 @@ pub const LIBRARY_VERSION = 1;
 /// for the attachment it is drawing, which is what an attachment being a
 /// pass of its own already gave both drivers; the blend constants stay the
 /// pipeline's, shared, as Vulkan has them. Every device has it
-/// (`PhysicalDeviceFeatures.independent_blend`), and a device without it
+/// (`Capabilities.independent_blend`), and a device without it
 /// goes on refusing attachments that differ.
 /// 34: the depth bias: `depth_bias_enable` and its three numbers taken as
 /// a pipeline is made, `DynamicState.depth_bias` and CmdSetDepthBias
@@ -212,7 +212,7 @@ pub const LIBRARY_VERSION = 1;
 /// 38: a stencil that outlives its pass: `stencil_load_op` LOAD and
 /// `stencil_store_op` STORE, a byte a pixel read into each tile before it
 /// is drawn and written back after, as 1.30's depth is
-/// (`PhysicalDeviceFeatures.stored_stencil`). `s8_uint` keeps it at each
+/// (`Capabilities.stored_stencil`). `s8_uint` keeps it at each
 /// pixel's only byte and `d16_unorm_s8_uint` after that pixel's depth,
 /// which is what the planes' stride is for, so the four ops are taken on
 /// their own: a pass may keep the stencil and leave the depth in the
@@ -222,7 +222,7 @@ pub const LIBRARY_VERSION = 1;
 /// plane by the range's aspects. The cores keep it; the V3D stores
 /// neither.
 /// 39: a depth image sampled where it lies
-/// (`PhysicalDeviceFeatures.sampled_depth`): `d16_unorm` with
+/// (`Capabilities.sampled_depth`): `d16_unorm` with
 /// IMAGE_USAGE_SAMPLED, its rows both what a pass stores its depth into
 /// and the texture a sampler reads (`texture.Format.d16`, a texture of
 /// one level kept in rows rather than blocks, `texture.Texture.linear`).
@@ -240,7 +240,7 @@ pub const LIBRARY_VERSION = 1;
 /// 40: the depth clamp and the depth bounds test, the last two of
 /// `PipelineRasterizationStateCreateInfo` and
 /// `PipelineDepthStencilStateCreateInfo` that were refused
-/// (`PhysicalDeviceFeatures.depth_clamp`, `depth_bounds`), with
+/// (`Capabilities.depth_clamp`, `depth_bounds`), with
 /// CmdSetDepthBounds and `DynamicState.depth_bounds` for the two numbers.
 /// A draw that clamps is cut just in front of the eye rather than at the
 /// near plane (`setup.ClipPlane.ahead`), keeps the triangle's own depth
@@ -315,7 +315,7 @@ pub const LIBRARY_VERSION = 1;
 /// it.
 /// 44: compressed textures kept compressed. A sampled image of BC1, BC2 or
 /// BC3 lies in its blocks as it was copied in on a device that samples them
-/// (`PhysicalDeviceFeatures.kept_compressed`, the cores; the V3D is fed
+/// (`Capabilities.kept_compressed`, the cores; the V3D is fed
 /// unpacked texels and unpacks as before): an eighth to a quarter of the
 /// memory the texels take - 16 x 16 of BC1 is 128 bytes against 1024 - and
 /// a sample decodes the block it reads, the four texels it mixes coming out
@@ -334,7 +334,7 @@ pub const LIBRARY_VERSION = 1;
 /// 45: float textures kept as their floats. A sampled image of
 /// `r16g16b16a16_sfloat`, `r32g32b32a32_sfloat`, `b10g11r11_ufloat_pack32`
 /// or `e5b9g9r9_ufloat_pack32` lies as it was copied in on a device that
-/// samples it (`PhysicalDeviceFeatures.kept_floats`, the cores): the two
+/// samples it (`Capabilities.kept_floats`, the cores): the two
 /// packed formats take 4 bytes a texel against the 8 an unpacked 8888 one
 /// is kept spread in, and what went in comes out again - the floats are
 /// copied in and out as they lie, by CmdCopyBufferToImage,
@@ -362,7 +362,7 @@ pub const LIBRARY_VERSION = 1;
 /// first layer beginning a cube: a form of `shader.FixedKind`
 /// `texture_cube_array` reads it at four coordinates - the direction and
 /// then which cube, the nearest there is, held inside the array
-/// (`PhysicalDeviceFeatures.cube_arrays`, the cores;
+/// (`Capabilities.cube_arrays`, the cores;
 /// `texture.Texture.sampleCubeIn`, `cubeNear`). No QPU program reads a
 /// fourth coordinate, so the V3D refuses the view and the pipeline, and
 /// such a draw goes to the cores. ETC2 and EAC are taken as well -
@@ -377,7 +377,7 @@ pub const LIBRARY_VERSION = 1;
 /// GetPhysicalDeviceFormatProperties says.
 /// 47: the V3D catching up on the depth and the counting. Its own depth
 /// offset packet is written where a pipeline asks for a bias
-/// (`PhysicalDeviceFeatures.depth_bias`): the units are the depth buffer's
+/// (`Capabilities.depth_bias`): the units are the depth buffer's
 /// smallest differences and the factor the triangle's slope, each the top
 /// 16 bits of a float as the hardware takes them, with the clamp as its
 /// limit - Vulkan's three numbers, unscaled. Its configuration has a depth
@@ -403,7 +403,7 @@ pub const LIBRARY_VERSION = 1;
 /// V3D runs none of the program's functions, only the fixed forms. Neither
 /// is a packet this driver could write.
 /// 48: a texel kept smaller than the colour it reads as
-/// (`PhysicalDeviceFeatures.small_texels`, on every device). An image of
+/// (`Capabilities.small_texels`, on every device). An image of
 /// `r8_unorm` keeps one byte of red a texel and reads as (red, 0, 0, 1),
 /// the way Vulkan reads a one-channel format - an eighth of what the same
 /// texels kept as 8888 take, which is what a mask, a height field or a
@@ -443,7 +443,7 @@ pub const LIBRARY_VERSION = 1;
 /// border and a float border are the same here, a texel being read as 0
 /// to 1 whatever its format.
 /// And `DescriptorSetLayoutBinding.immutable_samplers` is taken on every
-/// device (`PhysicalDeviceFeatures.immutable_samplers`): the layout holds
+/// device (`Capabilities.immutable_samplers`): the layout holds
 /// one sampler for each descriptor of a `sampler` or
 /// `combined_image_sampler` binding, every set made of it starts with them
 /// in its slots (`shader.Slot.fixed_sampler`), a write of a combined image
@@ -496,7 +496,7 @@ pub const LIBRARY_VERSION = 1;
 /// a frame of the one colour keeps the 24 KiB buffer and the stack it had,
 /// and pays nothing for this. Each attachment is still blended its own
 /// way, by its own mixing, into its own plane. Only the cores do it
-/// (`PhysicalDeviceFeatures.several_outputs`); on the V3D the flag is
+/// (`Capabilities.several_outputs`); on the V3D the flag is
 /// `error_feature_not_present`, its fragment programs being the fixed
 /// forms and each writing the one colour.
 /// Blend constants may be one set for each attachment as well - facet's
@@ -536,7 +536,7 @@ pub const LIBRARY_VERSION = 1;
 /// `texture_cube_array` reads over the seam into the next face of the same
 /// cube. The cube is picked a pixel at a time, so a quad may read four
 /// cubes, and the level is the quad's.
-/// Only the cores (`PhysicalDeviceFeatures.samplers` and `cube_arrays`):
+/// Only the cores (`Capabilities.samplers` and `cube_arrays`):
 /// the V3D has no QPU program that reads a sampler, nor one that reads a
 /// fourth coordinate, so it refuses such a pipeline twice over.
 /// 54: the formats a texel buffer reads, a regular grid of them. Before
@@ -606,7 +606,7 @@ pub const LIBRARY_VERSION = 1;
 /// without a barrier. Nothing is refused for it, there being no barrier
 /// here to ask for.
 /// Only the cores, as every storage image is
-/// (`PhysicalDeviceFeatures.storage_images`).
+/// (`Capabilities.storage_images`).
 /// 57: the formats a storage image is written through in. Before this a
 /// float image asked for as one was unpacked into 8888, whatever the
 /// device kept for a sampled one, because `putLayer`'s one word of a
@@ -661,7 +661,7 @@ pub const LIBRARY_VERSION = 1;
 /// no depth image of type `3d`. A pass draws into rows, and a level or a
 /// slice is nothing it draws into.
 /// Only the cores: the V3D's texture unit knows no depth format
-/// (`PhysicalDeviceFeatures.sampled_depth`).
+/// (`Capabilities.sampled_depth`).
 /// 59: a 3D texture of levels read through a sampler. Before this the
 /// coordinate through the texture was taken over the whole depth whatever
 /// level the sample read, while a level has half the slices of the one
@@ -726,7 +726,7 @@ pub const LIBRARY_VERSION = 1;
 /// when a sampled depth gained memory of its own, nor since 1.58, when
 /// each of the three formats gained planes and layers.
 /// Now an image made IMAGE_USAGE_INPUT_ATTACHMENT of a depth format is
-/// the same rows a sampler reads (`PhysicalDeviceFeatures.sampled_depth`,
+/// the same rows a sampler reads (`Capabilities.sampled_depth`,
 /// and no transient one), a view of it carries the plane its aspect
 /// names as `shader.Attachment` (`_image.depthRows`), and
 /// `UpdateDescriptorSets` writes that into an `input_attachment`
@@ -848,7 +848,7 @@ pub const LIBRARY_VERSION = 1;
 /// `min_lod` and `max_lod` 0, no anisotropy, no comparison, and an edge
 /// held or bordered across and down. `address_mode_w` is taken as it is
 /// given, Vulkan having no 3D texture read this way.
-/// The cores say yes to it (`PhysicalDeviceFeatures.unnormalized_coordinates`);
+/// The cores say yes to it (`Capabilities.unnormalized_coordinates`);
 /// the V3D reads no sampler at all, so it says no, as it does to the rest
 /// of what a sampler says.
 /// 68: the rest of the formats a texel buffer reads. 1.54 laid out a
@@ -880,7 +880,7 @@ pub const LIBRARY_VERSION = 1;
 /// 6 bytes a texel being what almost no hardware carries either, and the
 /// `_uscaled` and `_sscaled` kinds, which nothing here has a use for.
 /// 69: a texture keeps channels of its own where the device says so
-/// (`PhysicalDeviceFeatures.wide_channels`): `r8g8_unorm`, two bytes a
+/// (`Capabilities.wide_channels`): `r8g8_unorm`, two bytes a
 /// texel, and `r16_unorm`, `r16g16_unorm` and `r16g16b16a16_unorm`, 16
 /// bits a channel. A texel buffer has read all four since 1.54, but an
 /// image of one of them was refused: a texture held an 8888 colour and
@@ -912,7 +912,7 @@ pub const LIBRARY_VERSION = 1;
 /// `GetPhysicalDeviceFormatProperties` says the format is sampled by
 /// nothing there, while the texel buffer stands on either device.
 /// 70: a texture keeps whole numbers where the device says so
-/// (`PhysicalDeviceFeatures.whole_textures`): Vulkan's `_uint` and
+/// (`Capabilities.whole_textures`): Vulkan's `_uint` and
 /// `_sint` formats, one channel, two or four, of 8, 16 or 32 bits. That
 /// clears the other half of 1.69's work - a texel buffer has read all
 /// eighteen since 1.54, while an image of one was refused, because a
@@ -990,7 +990,7 @@ pub const LIBRARY_VERSION = 1;
 /// a block and 16 against the 64 and 128 their texels take unpacked, and
 /// `texture.Format` has `bc4` and `bc5` appended. They go the way BC1 to
 /// BC3 go: kept in their blocks on a device that samples them
-/// (`PhysicalDeviceFeatures.kept_compressed`, the cores), copied in and
+/// (`Capabilities.kept_compressed`, the cores), copied in and
 /// out as they lie with their offsets on a multiple of 4, unpacked into
 /// 8888 on a device whose texture unit is fed texels (the V3D), and
 /// sampled by a form built for the format or through the run-time sampler
@@ -1025,7 +1025,7 @@ pub const LIBRARY_VERSION = 1;
 /// `bc7_unorm_block` is the facet format and `texture.Format` has `bc7`
 /// appended, 16 bytes a block against the 128 its texels take unpacked.
 /// It goes the way the others go: kept in its blocks on a device that
-/// samples them (`PhysicalDeviceFeatures.kept_compressed`, the cores),
+/// samples them (`Capabilities.kept_compressed`, the cores),
 /// copied in and out as it lies, unpacked into 8888 on a device whose
 /// texture unit is fed texels (the V3D), and sampled by a form built for
 /// the format or through the run-time sampler by one built for 8888. It
@@ -1295,7 +1295,8 @@ pub const LIBRARY_VERSION = 1;
 /// to Khronos' validator with the other seven reference modules, so this
 /// back end is now held against a real compiler's output and not only
 /// against facet's own emitter's.
-/// 82: **the version encoding is Vulkan's.**
+/// 82: **the version encoding is Vulkan's, and so are the four
+/// physical-device structures.**
 ///
 /// `makeVersion` was `major << 16 | minor`, carrying the library's own
 /// version and revision rather than an interface version. Vulkan packs a
@@ -1326,4 +1327,55 @@ pub const LIBRARY_VERSION = 1;
 /// version number, 1.0 among them, sat above a ceiling of 65617, so all
 /// of them were refused together and raising the revision moved the
 /// ceiling without ever reaching one of them.
+///
+/// **The structures.** `PhysicalDeviceLimits` carried 26 fields of this
+/// library's own choosing where Vulkan has 106. `PhysicalDeviceFeatures`
+/// carried 49 Zig `bool`s where Vulkan has 55 `VkBool32`, which is 49
+/// bytes against 220. `PhysicalDeviceProperties` carried five members
+/// where Vulkan has nine, with no `pipelineCacheUUID` and no
+/// `sparseProperties`, and `VkPhysicalDeviceSparseProperties` had no
+/// counterpart at all. A program written against Vulkan's own headers and
+/// bound to this library's jump table therefore read a different field
+/// from the one it named, in three structures out of four, and nothing
+/// said so: the shapes agreed on their first member and diverged after it.
+///
+/// All four are Vulkan's now - member for member, in Vulkan's order, with
+/// Vulkan's types. `Bool32 = u32` with `TRUE` and `FALSE` rather than
+/// Zig's `bool`, `UUID_SIZE`, `MAX_PHYSICAL_DEVICE_NAME_SIZE` 256 rather
+/// than 64, and the `SAMPLE_COUNT_*` bits this library had none of at all.
+/// `_driver.cacheUuid` fills `pipelineCacheUUID` from the driver stamp, so
+/// a cache one build wrote is not taken up by another.
+/// `scripts/vulkan-struct-check.sh` holds the four against the installed
+/// `vulkan_core.h`, which is the registry's own output, and the build's
+/// own gate is the test block in sdk/libs/facet/facet.zig, which pins the
+/// member counts and the sizes without needing a header to be installed.
+///
+/// They are not *byte* for byte, and cannot be. sdk/sdk.zig forbids an
+/// 8-byte-aligned extern struct anywhere in this SDK, because the Xtensa
+/// compiler moves the stack pointer by exactly the bytes of a call's stack
+/// arguments and an odd count would leave the callee 4 bytes off an
+/// 8-byte boundary. So the nine 64-bit limits are `u64 align(4)`, this
+/// SDK's house style, and the structure is 492 bytes against Vulkan's
+/// 504. Features, at 220, and SparseProperties, at 20, are identical.
+///
+/// The 49 capability bits the features structure used to carry were never
+/// Vulkan's and are not lost: they are `_instance.Capabilities` now, which
+/// is what the library's own code asks, and
+/// `instance/getphysicaldevicefeatures.zig` maps them onto Vulkan's 55
+/// with a reason written against each. Filling them honestly turned up two
+/// things worth knowing. Vulkan 1.0 requires exactly one of the 55 -
+/// `robustBufferAccess`, unless an implementation advertises
+/// `VK_KHR_portability_subset`, which this one does not - and a feature
+/// reported false *mandates* the matching Unsupported limit value rather
+/// than merely permitting it. That is why `tessellationShader` false puts
+/// all eight tessellation limits at 0 and `samplerAnisotropy` false puts
+/// `maxSamplerAnisotropy` at 1. The ninety-odd numbers both devices agree
+/// on sit in `_instance.limits`, with the V3D overriding about eighteen of
+/// them downward, so the two cannot drift apart unnoticed.
+///
+/// What the reshape was for was to make the shortfalls countable, and
+/// src/disk/libs/facet/tests/vulkan_limits.zig counts them: Vulkan 1.0's
+/// required value for every one of the 106, the feature each one hangs
+/// on, and the number the cores do not meet - eighteen, pinned, and
+/// accounted for item by item against docs/facet-vulkan10.md.
 pub const LIBRARY_REVISION = 82;

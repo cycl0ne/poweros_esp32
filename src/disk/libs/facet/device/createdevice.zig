@@ -5,6 +5,7 @@ const sdk = @import("sdk");
 const facet = sdk.facet;
 const FacetBase = @import("../facet_base.zig").FacetBase;
 const _objects = @import("../_objects.zig");
+const _features = @import("../instance/getphysicaldevicefeatures.zig");
 const PhysicalDevice = @import("../instance/_instance.zig").PhysicalDevice;
 const _device = @import("_device.zig");
 const Device = _device.Device;
@@ -70,6 +71,18 @@ pub fn CreateDevice(base: *FacetBase, physical: *facet.PhysicalDevice, info: *co
         if (queue.queue_family_index != 0 or queue.queue_count > 1) return .error_initialization_failed;
         if (queue.queue_count == 1) {
             if (queue.queue_priorities) |priorities| priority = priorities[0];
+        }
+    }
+    // Vulkan's enable step: a feature asked for that this device has not
+    // got makes the whole device error_feature_not_present. Compared member
+    // by member over the structure rather than by name, so a feature added
+    // later is covered without this being touched.
+    if (info.enabled_features) |wanted| {
+        const had = _features.vulkanOf(&owner.can);
+        inline for (@typeInfo(facet.PhysicalDeviceFeatures).@"struct".fields) |field| {
+            if (@field(wanted, field.name) != facet.FALSE and @field(had, field.name) == facet.FALSE) {
+                return .error_feature_not_present;
+            }
         }
     }
     const has_queue = asked.len == 1 and asked[0].queue_count == 1;

@@ -543,7 +543,7 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
 /// The depth or the stencil a part keeps in its image's rows, or null where
 /// both live in the tiles alone. One plane at most: a format that holds
 /// them both is refused on this device, the hardware storing a plane as its
-/// own pixels one after another (`PhysicalDeviceFeatures.stored_both`).
+/// own pixels one after another (`Capabilities.stored_both`).
 fn keptOf(queue: *Queue, part: *const _render.Part, framebuffer: *const _render.Target) ?frames.Kept {
     const keeps_depth = part.loads_depth or part.stores_depth;
     const keeps_stencil = part.loads_stencil or part.stores_stencil;

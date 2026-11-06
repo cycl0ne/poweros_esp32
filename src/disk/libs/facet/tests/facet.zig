@@ -91,9 +91,33 @@ test "an instance lists one physical device: the cores, its memory made from exe
     try testing.expectEqual(facet.PhysicalDeviceType.cpu, properties.device_type);
     try testing.expectEqual(facet.API_VERSION_1_0, properties.api_version);
     try testing.expectEqual(facet.makeVersion(facet_init.LIBRARY_VERSION, facet_init.LIBRARY_REVISION, 0), properties.driver_version);
-    try testing.expect(properties.limits.cores >= 1 and properties.limits.cores <= 4);
-    try testing.expectEqual(@as(u32, 64), properties.limits.tile_size);
     try testing.expect(std.mem.startsWith(u8, &properties.device_name, "facet.library rasterizer, "));
+    // The tile and the core count left PhysicalDeviceLimits at 1.82, Vulkan
+    // having no member for either, and are the library's own record's now.
+    // The tile is still asked for in Vulkan's way, by
+    // GetRenderAreaGranularity (see the render pass tests).
+    const record = _objects.of(_instance.PhysicalDevice, physical);
+    try testing.expect(record.cores >= 1 and record.cores <= 4);
+    try testing.expectEqual(@as(u32, 64), record.tile_size);
+    // Vulkan's own members, which the structure had none of before 1.82.
+    try testing.expectEqual(@as(usize, 256), facet.MAX_PHYSICAL_DEVICE_NAME_SIZE);
+    try testing.expectEqual(@as(usize, 256), properties.device_name.len);
+    // A pipeline cache UUID has to say which implementation made a cache,
+    // so it must not be all zeroes and the two devices must not share one.
+    try testing.expect(!std.mem.allEqual(u8, &properties.pipeline_cache_uuid, 0));
+    // Nothing here binds memory a piece at a time, so every one of the five
+    // is false - and they are read as `Bool32`, four bytes, not a Zig bool.
+    try testing.expectEqual(@as(u32, 0), properties.sparse_properties.residency_standard_2d_block_shape);
+    try testing.expectEqual(@as(u32, 0), properties.sparse_properties.residency_non_resident_strict);
+    try testing.expectEqual(@as(u64, 0), properties.limits.sparse_address_space_size);
+    // The three members whose type changed to Vulkan's: a float period, a
+    // float anisotropy, and a `usize` map alignment.
+    // The period is cleared with the queue family's timestamp bits on a
+    // machine with no timer.device, which is this rig: what must hold is
+    // that the two agree, not which way they went.
+    try testing.expectEqual(properties.limits.timestamp_period > 0, record.queue_family.timestamp_valid_bits > 0);
+    try testing.expectEqual(@as(f32, 16), properties.limits.max_sampler_anisotropy);
+    try testing.expectEqual(@as(usize, 64), properties.limits.min_memory_map_alignment);
 
     count = 0;
     rig.fb.GetPhysicalDeviceQueueFamilyProperties(physical, &count, null);
@@ -118,6 +142,125 @@ test "an instance lists one physical device: the cores, its memory made from exe
     try testing.expectEqual(everywhere, memory.memory_types[1].property_flags);
     try testing.expectEqual(@as(u32, 1), memory.memory_types[1].heap_index);
     try testing.expectEqual(facet.MEMORY_PROPERTY_DEVICE_LOCAL | facet.MEMORY_PROPERTY_LAZILY_ALLOCATED, memory.memory_types[2].property_flags);
+}
+
+test "a device asked for a feature it has not got is refused, which is Vulkan's enable step" {
+    var rig = try Rig.up();
+    defer rig.down() catch |err| std.debug.panic("{}", .{err});
+    var instance: ?*facet.Instance = null;
+    try testing.expectEqual(facet.Result.success, rig.fb.CreateInstance(&.{}, &instance));
+    defer rig.fb.DestroyInstance(instance);
+    var count: u32 = 1;
+    var physicals: [1]*facet.PhysicalDevice = undefined;
+    try testing.expectEqual(facet.Result.success, rig.fb.EnumeratePhysicalDevices(instance.?, &count, &physicals));
+    const physical = physicals[0];
+    var features: facet.PhysicalDeviceFeatures = undefined;
+    rig.fb.GetPhysicalDeviceFeatures(physical, &features);
+
+    const queue_info = facet.DeviceQueueCreateInfo{};
+    const one_queue = facet.DeviceCreateInfo{ .queue_create_info_count = 1, .queue_create_infos = @ptrCast(&queue_info) };
+
+    // Asking for nothing is what Vulkan's null pEnabledFeatures means, and
+    // every call still refuses what the device cannot do, so a program that
+    // asks for nothing is not given a device that behaves unpredictably.
+    var device: ?*facet.Device = null;
+    try testing.expectEqual(facet.Result.success, rig.fb.CreateDevice(physical, &one_queue, &device));
+    rig.fb.DestroyDevice(device);
+
+    // Asking for exactly what it said it has.
+    device = null;
+    var wanted = features;
+    var asking = one_queue;
+    asking.enabled_features = &wanted;
+    try testing.expectEqual(facet.Result.success, rig.fb.CreateDevice(physical, &asking, &device));
+    rig.fb.DestroyDevice(device);
+
+    // Asking for a geometry stage, which no device of this library has.
+    try testing.expectEqual(facet.FALSE, features.geometry_shader);
+    device = null;
+    wanted = features;
+    wanted.geometry_shader = facet.TRUE;
+    try testing.expectEqual(facet.Result.error_feature_not_present, rig.fb.CreateDevice(physical, &asking, &device));
+    try testing.expect(device == null);
+
+    // And the one feature Vulkan 1.0 requires of every implementation is
+    // there to be asked for on its own.
+    try testing.expectEqual(facet.TRUE, features.robust_buffer_access);
+    device = null;
+    wanted = .{ .robust_buffer_access = facet.TRUE };
+    try testing.expectEqual(facet.Result.success, rig.fb.CreateDevice(physical, &asking, &device));
+    rig.fb.DestroyDevice(device);
+}
+
+// The shape of the three structures a physical device is described by,
+// held without needing a Vulkan header - which the build cannot count on,
+// and `scripts/vulkan-struct-check.sh` is for. What that script does and
+// this cannot is say the *names* are Vulkan's; what this does and the
+// script cannot is run on every build.
+test "the physical-device structures keep Vulkan's shape" {
+    const Limits = facet.PhysicalDeviceLimits;
+    const Features = facet.PhysicalDeviceFeatures;
+    const Sparse = facet.PhysicalDeviceSparseProperties;
+    const Properties = facet.PhysicalDeviceProperties;
+
+    // Vulkan's member counts. A field added or dropped lands here first.
+    try testing.expectEqual(106, @typeInfo(Limits).@"struct".fields.len);
+    try testing.expectEqual(55, @typeInfo(Features).@"struct".fields.len);
+    try testing.expectEqual(5, @typeInfo(Sparse).@"struct".fields.len);
+    try testing.expectEqual(9, @typeInfo(Properties).@"struct".fields.len);
+
+    // Not one Zig `bool` anywhere in them. A VkBool32 is four bytes, and a
+    // one-byte bool is how facet's old features structure came to be 49
+    // bytes where Vulkan's is 220 - the single mistake that made the call
+    // unreadable to a conformant caller.
+    inline for (.{ Limits, Features, Sparse, Properties }) |T| {
+        inline for (@typeInfo(T).@"struct".fields) |field| {
+            try testing.expect(field.type != bool);
+        }
+    }
+    inline for (@typeInfo(Features).@"struct".fields) |field| {
+        try testing.expectEqual(@as(usize, 4), @sizeOf(field.type));
+    }
+    inline for (@typeInfo(Sparse).@"struct".fields) |field| {
+        try testing.expectEqual(@as(usize, 4), @sizeOf(field.type));
+    }
+
+    // Vulkan's order, at the ends and at the one member that was added in
+    // the middle.
+    try testing.expectEqualStrings("max_image_dimension_1d", @typeInfo(Limits).@"struct".fields[0].name);
+    try testing.expectEqualStrings("non_coherent_atom_size", @typeInfo(Limits).@"struct".fields[105].name);
+    try testing.expectEqualStrings("robust_buffer_access", @typeInfo(Features).@"struct".fields[0].name);
+    try testing.expectEqualStrings("inherited_queries", @typeInfo(Features).@"struct".fields[54].name);
+    try testing.expectEqualStrings("pipeline_cache_uuid", @typeInfo(Properties).@"struct".fields[6].name);
+    try testing.expectEqualStrings("sparse_properties", @typeInfo(Properties).@"struct".fields[8].name);
+
+    // Vulkan's array lengths, which were 64 and absent before 1.82.
+    try testing.expectEqual(@as(usize, 256), @typeInfo(@FieldType(Properties, "device_name")).array.len);
+    try testing.expectEqual(@as(usize, 16), @typeInfo(@FieldType(Properties, "pipeline_cache_uuid")).array.len);
+
+    // Four-byte aligned, every one, which is what sdk/sdk.zig asks of every
+    // structure of this SDK for the ESP32's stack - and the reason these are
+    // Vulkan's member for member but not byte for byte.
+    try testing.expectEqual(@as(usize, 4), @alignOf(Limits));
+    try testing.expectEqual(@as(usize, 4), @alignOf(Features));
+    try testing.expectEqual(@as(usize, 4), @alignOf(Sparse));
+    try testing.expectEqual(@as(usize, 4), @alignOf(Properties));
+
+    // The sizes. Features and the sparse properties are byte for byte
+    // Vulkan's, every member of each being four bytes wide, and measured
+    // against the header on the machine this was written on they are 220
+    // and 20. The limits and the properties are 492 and 804 where C makes
+    // them 504 and 824: the twelve and twenty bytes are padding C inserts
+    // before an eight-byte member and `align(4)` does not. A 32-bit chip
+    // has a shorter `min_memory_map_alignment`, so these hold where a
+    // pointer is eight bytes.
+    try testing.expectEqual(@as(usize, 220), @sizeOf(Features));
+    try testing.expectEqual(@as(usize, 4 * 55), @sizeOf(Features));
+    try testing.expectEqual(@as(usize, 20), @sizeOf(Sparse));
+    if (@sizeOf(usize) == 8) {
+        try testing.expectEqual(@as(usize, 492), @sizeOf(Limits));
+        try testing.expectEqual(@as(usize, 804), @sizeOf(Properties));
+    }
 }
 
 // Measured against Vulkan's own macros on the machine this was written on:
@@ -359,6 +502,7 @@ test "memory: from its type's heap, aligned to a cache line, mapped once; the la
 // --- buffers and images -------------------------------------------------------
 
 const _objects = @import("../_objects.zig");
+const _instance = @import("../instance/_instance.zig");
 const _image = @import("../image/_image.zig");
 const texture = facet.texture;
 
@@ -772,8 +916,12 @@ test "the three device queries: the largest image of a shape, the render area's 
     fb.GetPhysicalDeviceProperties(physical, &device_properties);
     var granularity: facet.Extent2D = undefined;
     fb.GetRenderAreaGranularity(device, pass.?, &granularity);
-    try testing.expectEqual(device_properties.limits.tile_size, granularity.width);
-    try testing.expectEqual(device_properties.limits.tile_size, granularity.height);
+    // GetRenderAreaGranularity is Vulkan's way to ask the tile, and since
+    // 1.82 it is the only way: the number left PhysicalDeviceLimits with
+    // `cores`, Vulkan having no member for either.
+    const tile = _objects.of(_instance.PhysicalDevice, physical).tile_size;
+    try testing.expectEqual(tile, granularity.width);
+    try testing.expectEqual(tile, granularity.height);
     try testing.expect(granularity.width != 0);
 
     // What a block has behind it: all of a plain one, none of a lazily
@@ -845,29 +993,28 @@ test "a device says what it does, and a false is what a create call refuses" {
     const device = try rig.device(physical);
     defer rig.fb.DestroyDevice(device);
 
-    var features: facet.PhysicalDeviceFeatures = undefined;
-    rig.fb.GetPhysicalDeviceFeatures(physical, &features);
+    const can = _objects.of(_instance.PhysicalDevice, physical).can;
 
     // The cores: the rasterizer calls whatever function the pipeline carries,
     // and compute and tessellation are on this device because it is them.
-    try testing.expect(features.own_fragment_functions);
-    try testing.expect(features.sampling_format);
-    try testing.expect(features.compute_on_device);
-    try testing.expect(features.tessellation_on_device);
-    try testing.expect(features.depth_prepass);
-    try testing.expect(features.blending);
-    try testing.expect(features.stencil_test);
-    try testing.expect(features.several_subpasses);
-    try testing.expect(features.cube_maps);
+    try testing.expect(can.own_fragment_functions);
+    try testing.expect(can.sampling_format);
+    try testing.expect(can.compute_on_device);
+    try testing.expect(can.tessellation_on_device);
+    try testing.expect(can.depth_prepass);
+    try testing.expect(can.blending);
+    try testing.expect(can.stencil_test);
+    try testing.expect(can.several_subpasses);
+    try testing.expect(can.cube_maps);
     // The cores hold the depth in their tiles, so they can keep it.
-    try testing.expect(features.stored_depth);
+    try testing.expect(can.stored_depth);
     // A fragment function of the program's can read an attachment's rows.
-    try testing.expect(features.input_attachments);
+    try testing.expect(can.input_attachments);
 
     // And what it says it does not do, it refuses: a false here is worth
     // having only if the call agrees with it.
-    try testing.expect(!features.multisampling);
-    try testing.expect(!features.logic_ops);
+    try testing.expect(!can.multisampling);
+    try testing.expect(!can.logic_ops);
 
     const color = facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal };
     var pass: ?*facet.RenderPass = null;
@@ -888,7 +1035,7 @@ test "a device says what it does, and a false is what a create call refuses" {
 
     // Logic operations, which features deny.
     {
-        try testing.expect(!features.logic_ops);
+        try testing.expect(!can.logic_ops);
     }
 
     // More than one sample, likewise.

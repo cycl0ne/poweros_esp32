@@ -102,47 +102,74 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         .device_id = 0x2712,
         .device_type = .integrated_gpu,
         .device_name = @splat(0),
-        .limits = .{
-            .max_image_dimension_2d = _instance.max_image_dimension,
-            .max_framebuffer_width = _instance.max_image_dimension,
-            .max_framebuffer_height = _instance.max_image_dimension,
-            .max_image_dimension_3d = _instance.max_image_dimension_3d,
-            .max_image_array_layers = _instance.max_image_array_layers,
-            .max_color_attachments = _render.most_colors,
-            .max_vertex_input_bindings = _instance.max_vertex_input_bindings,
-            .max_vertex_input_attributes = _instance.max_vertex_input_attributes,
-            .max_vertex_input_binding_stride = 2048,
-            .max_vertex_output_components = _instance.max_vertex_output_components,
-            .max_push_constants_size = _instance.max_push_constants_size,
-            .max_bound_descriptor_sets = _instance.max_bound_descriptor_sets,
-            .max_per_stage_descriptor_sampled_images = 1,
-            .max_per_stage_descriptor_uniform_buffers = 12,
-            .max_descriptor_set_dynamic_buffers = facet.shader.MAX_DYNAMIC_OFFSETS,
-            // A compute function runs on the cores for either device.
-            .max_compute_work_group_size = _instance.max_compute_work_group_size,
-            .max_compute_work_group_invocations = _instance.max_compute_work_group_invocations,
-            .max_compute_shared_memory_size = _instance.max_compute_shared_memory_size,
-            .max_tessellation_patch_components = _instance.max_tessellation_patch_components,
-            .min_memory_map_alignment = _memory.alignment,
-            .tile_size = v3d.frame.tile_pixels,
-            .cores = 1,
-            // Nothing here takes a sampler's anisotropy: the TMU is given
-            // the state a fixed form's own `sampling` says, and no program
-            // of the QPUs reads a sampler (`sampler_anisotropy` below).
-            // Vulkan's value for a device without that feature is 1, so
-            // that is what this says rather than the library's 16, which
-            // promised a program samples it would then be refused
-            // (since 1.80).
-            .max_sampler_anisotropy = 1,
-            .timestamp_period_ns = _instance.timestamp_period_ns,
-            // A point is widened into a rectangle on the cores for
-            // either device, so both draw one of any size (since 1.70).
-            .point_size_range = .{ 1, _instance.max_point_size },
+        // Filled from the properties themselves once they are all here,
+        // just below, so the UUID cannot fall out of step with them.
+        .pipeline_cache_uuid = undefined,
+        .sparse_properties = .{},
+        // The library's own numbers, with what this hardware decides for
+        // itself set over them. Everything not named here the V3D answers
+        // for exactly as the cores do, because the library's own objects
+        // decide it (`_instance.limits`).
+        .limits = said: {
+            var said = _instance.limits;
+            // No program of the QPUs reads a sampler: the TMU is given the
+            // state a fixed form's own `sampling` says, so the forms that
+            // want a sampler are refused here and drawn on the cores
+            // (`can.samplers` below). A sampler descriptor is of no use to
+            // this device, and nor is a bias, and the mipmap level is
+            // written as `mip_nearest` whatever the sampler asks
+            // (`tiling.zig`). Vulkan's value for a device without
+            // `sampler_anisotropy` is 1.
+            said.max_per_stage_descriptor_samplers = 0;
+            said.max_descriptor_set_samplers = 0;
+            said.max_sampler_lod_bias = 0;
+            said.max_sampler_anisotropy = 1;
+            said.mipmap_precision_bits = 0;
+            // The texture unit takes one texture a stage.
+            said.max_per_stage_descriptor_sampled_images = 1;
+            said.max_descriptor_set_sampled_images = facet.shader.MAX_SETS;
+            // No storage image and no input attachment here
+            // (`can.storage_images`, `can.input_attachments`).
+            said.max_per_stage_descriptor_storage_images = 0;
+            said.max_descriptor_set_storage_images = 0;
+            said.max_per_stage_descriptor_input_attachments = 0;
+            // A QPU fragment program writes one colour: the forms that
+            // write several are refused here and drawn on the cores
+            // (`can.several_outputs`). docs/facet-vulkan10.md item 55.
+            said.max_fragment_output_attachments = 1;
+            said.max_fragment_combined_output_resources = 1;
+            said.max_descriptor_set_input_attachments = 0;
+            // What this device will sample from, by what the image holds: a
+            // colour, and nothing else. No depth through the TMU
+            // (`can.sampled_depth`), no whole-number format
+            // (`can.whole_textures`), no storage image. A mask of no bits
+            // says the device samples no image of that kind at all, which
+            // is what Vulkan means by it.
+            said.sampled_image_integer_sample_counts = 0;
+            said.sampled_image_depth_sample_counts = 0;
+            said.sampled_image_stencil_sample_counts = 0;
+            said.storage_image_sample_counts = 0;
+            // The rasterizer places an edge in 1/64 of a pixel, not 1/256,
+            // and a point's or a line's width is told apart that finely
+            // with it.
+            said.sub_pixel_precision_bits = 6;
+            said.point_size_granularity = 1.0 / 64.0;
+            said.line_width_granularity = 1.0 / 64.0;
+            // A viewport's position is written as a signed 16-bit whole
+            // part and a 6-bit fraction (`cl.zig`), so the furthest a
+            // corner may lie is -32768 and 16383.996, the largest the
+            // encoding holds.
+            said.viewport_bounds_range = .{ -32768, 16383 };
+            break :said said;
         },
     };
+    physical.properties.pipeline_cache_uuid = _driver.cacheUuid(&physical.properties);
+    // The library's own two numbers, which left the limits at 1.82.
+    physical.tile_size = v3d.frame.tile_pixels;
+    physical.cores = 1;
     const name = "VideoCore VII V3D 7.1";
     @memcpy(physical.properties.device_name[0..name.len], name);
-    physical.features = .{
+    physical.can = .{
         // Only the fixed forms have QPU programs; a pipeline with a function
         // of its own is refused here and runs on the cores instead.
         .own_fragment_functions = false,

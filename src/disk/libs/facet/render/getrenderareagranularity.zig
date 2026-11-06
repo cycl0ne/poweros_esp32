@@ -66,6 +66,6 @@ const Device = @import("../device/_device.zig").Device;
 pub fn GetRenderAreaGranularity(base: *FacetBase, device: *facet.Device, pass: *facet.RenderPass, granularity: *facet.Extent2D) void {
     _ = base;
     _ = pass;
-    const tile = _objects.of(Device, device).physical.properties.limits.tile_size;
+    const tile = _objects.of(Device, device).physical.tile_size;
     granularity.* = .{ .width = tile, .height = tile };
 }

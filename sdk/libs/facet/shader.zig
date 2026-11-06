@@ -193,7 +193,7 @@ pub fn fragment(name: [*:0]const u8, function: FragmentFn, varyings: u32) Entry 
 /// `fragment` entry writes. 1 to 4, and the pipeline is refused where it
 /// is not the subpass's colour attachment count exactly.
 /// `Fragments.colorsOf` is where each one's colours go.
-/// (Since 1.51. `PhysicalDeviceFeatures.several_outputs`.)
+/// (Since 1.51. `Capabilities.several_outputs`.)
 pub fn fragmentOutputs(name: [*:0]const u8, function: FragmentFn, varyings: u32, outputs: u32) Entry {
     const held: u32 = @min(@max(outputs, 1), 4) - 1;
     return .{ .name = name, .stage = facet.SHADER_STAGE_FRAGMENT, .function = function, .varyings = varyings | held << 18 };
@@ -346,7 +346,7 @@ pub const Fixed = struct {
     /// Whether the form samples through a sampler bound with the texture,
     /// rather than as `sampling` says. A device whose fragment programs are
     /// its own has one for each form it can draw, so such a pipeline is
-    /// refused where `PhysicalDeviceFeatures.samplers` is false.
+    /// refused where `Capabilities.samplers` is false.
     pub fn needsSampler(fixed: Fixed) bool {
         return switch (fixed.kind) {
             .texture_sampled, .texture_shadow => true,
@@ -1252,7 +1252,7 @@ pub const Resources = extern struct {
     /// keeps its own - and since 1.70 by `wholesAt` as the four whole
     /// numbers a texture of Vulkan's `_uint` or `_sint` formats keeps,
     /// which no colour and no float carries exactly
-    /// (`PhysicalDeviceFeatures.whole_textures`).
+    /// (`Capabilities.whole_textures`).
     pub fn sampled(resources: *const Resources, set: u32, binding: u32, element: u32) ?*const texture.Texture {
         const found = resources.slot(set, binding, element) orelse return null;
         return @ptrCast(@alignCast(found.pointer orelse return null));
@@ -1340,7 +1340,7 @@ pub const Resources = extern struct {
     /// Element `element` of binding `binding` of set `set`, an input
     /// attachment: its pixels, or null where it is not written. What
     /// another subpass drew, read from the image's memory
-    /// (`PhysicalDeviceFeatures.input_attachments`).
+    /// (`Capabilities.input_attachments`).
     ///
     /// Asking this of a binding of another kind gives back whatever that
     /// kind's slot holds, read as an attachment: the layout says what a
@@ -1640,7 +1640,7 @@ pub const Quad = extern struct {
     /// form that drops pixels may clear a bit to drop that one: a pipeline
     /// whose form can do it has its depth written after the function has run,
     /// for the pixels left, so a dropped one leaves behind no depth to hide
-    /// what is past it. `PhysicalDeviceFeatures.discarding_fragment_forms`
+    /// what is past it. `Capabilities.discarding_fragment_forms`
     /// says where that happens.
     kept: u8,
 };

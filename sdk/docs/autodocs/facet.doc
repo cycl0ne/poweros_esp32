@@ -624,7 +624,7 @@ facet.library/WaitForFences
 	  sets, their bindings and the elements of each run; null and 0 where
 	  there is none. Offsets past what the sets want are left alone, and a
 	  descriptor whose offset is missing is read from where it was written
-	  (since 1.35, `PhysicalDeviceFeatures.dynamic_descriptors`).
+	  (since 1.35, `Capabilities.dynamic_descriptors`).
 
    RESULT
 	None.
@@ -940,7 +940,7 @@ facet.library/WaitForFences
 	`CmdClearDepthStencilImage` writes instead.
 
 	**A float image takes the channels as they were given** since 1.61
-	(`PhysicalDeviceFeatures.kept_floats`): the four floats are put into
+	(`Capabilities.kept_floats`): the four floats are put into
 	the format's own texel the way a copy of one would be, so a channel
 	above 1 or below 0 goes in as far as the format reaches instead of
 	being rounded to a byte. Before 1.61 such an image was the one this
@@ -1031,7 +1031,7 @@ facet.library/WaitForFences
 
    NOTES
 	This is for a depth or stencil image a render pass stores into
-	(`PhysicalDeviceFeatures.stored_depth`, `stored_stencil`): it is how
+	(`Capabilities.stored_depth`, `stored_stencil`): it is how
 	one is put back to the furthest depth, or to a stencil of its own,
 	without a pass over it. Where the pass clears its attachment itself
 	there is nothing for this to do.
@@ -1122,7 +1122,7 @@ facet.library/WaitForFences
 	buffer, is left out. A depth attachment takes nothing.
 
 	An image of a compressed format kept in its blocks
-	(`PhysicalDeviceFeatures.kept_compressed`, since 1.44) takes them as
+	(`Capabilities.kept_compressed`, since 1.44) takes them as
 	they lie, nothing decoded: the buffer holds a row of blocks every
 	`buffer_row_length` texels, as Vulkan counts them, and the offsets are
 	on a multiple of 4 or the region is left out. One that is unpacked
@@ -1178,7 +1178,7 @@ facet.library/WaitForFences
 	left out, and so are images of depth or stencil, which live in the tiles.
 
 	Two images that keep their blocks, of the one format, are copied block by
-	block (`PhysicalDeviceFeatures.kept_compressed`, since 1.44), their
+	block (`Capabilities.kept_compressed`, since 1.44), their
 	offsets on a multiple of 4; a compressed image and an uncompressed one,
 	either way round, take nothing. Two that keep their floats, of the one
 	format, are copied texel by texel as they lie (`kept_floats`, since
@@ -1233,7 +1233,7 @@ facet.library/WaitForFences
 
 	An image kept in its blocks gives them back as they lie, a row of them
 	every `buffer_row_length` texels, its offsets on a multiple of 4
-	(`PhysicalDeviceFeatures.kept_compressed`, since 1.44). A float image
+	(`Capabilities.kept_compressed`, since 1.44). A float image
 	kept as its floats gives its texels back the same way (`kept_floats`,
 	since 1.45). One that was unpacked as it was copied in, either kind,
 	has nothing of its format to give and takes nothing.
@@ -2578,7 +2578,7 @@ facet.library/WaitForFences
 
    NOTES
 	Without timer.device there is no clock to read:
-	`PhysicalDeviceFeatures.timestamp_queries` is false then and
+	`Capabilities.timestamp_queries` is false then and
 	CreateQueryPool refuses the kind, so this cannot be reached.
 
    BUGS
@@ -2919,7 +2919,7 @@ facet.library/WaitForFences
    RESULT
 	`success`; `error_feature_not_present` for a kind of descriptor
 	facet.library does not have, for samplers of the layout's own on a
-	device without `PhysicalDeviceFeatures.immutable_samplers`, a binding
+	device without `Capabilities.immutable_samplers`, a binding
 	numbered past 255, or more than 65535 descriptors;
 	`error_initialization_failed` for a binding given twice;
 	`error_out_of_host_memory`.
@@ -2959,7 +2959,7 @@ facet.library/WaitForFences
 	every binding.
 
 	**A sampler of the layout's own** is taken since 1.49
-	(`immutable_samplers`, `PhysicalDeviceFeatures.immutable_samplers`): on
+	(`immutable_samplers`, `Capabilities.immutable_samplers`): on
 	a `sampler` or `combined_image_sampler` binding the layout holds one
 	sampler for each of the binding's descriptors, and every set made of
 	the layout starts with them in its slots. A write of a combined image
@@ -3253,7 +3253,7 @@ facet.library/WaitForFences
 	it, nor a stencil test on one without stencil. Lines and points use the
 	front's stencil test, and take no depth bias: only triangles are moved,
 	as in Vulkan, and `depth_bias_enable` wants a device whose
-	`PhysicalDeviceFeatures.depth_bias` is true (since 1.34).
+	`Capabilities.depth_bias` is true (since 1.34).
 
 	`depth_clamp_enable` draws what lies past the near plane instead of
 	cutting it away, each pixel's depth held inside the viewport's
@@ -3262,7 +3262,7 @@ facet.library/WaitForFences
 	**already** in the attachment lies between `min_depth_bounds` and
 	`max_depth_bounds`, whatever the depth being drawn; `DynamicState`'s
 	`depth_bounds` leaves the two to CmdSetDepthBounds. Both want a device
-	whose `PhysicalDeviceFeatures.depth_clamp` or `depth_bounds` is true -
+	whose `Capabilities.depth_clamp` or `depth_bounds` is true -
 	every device since 1.47, the V3D's own configuration having both - and
 	on the cores both have a draw's pixels walked one at a time, as a
 	stencil test does, so they cost more there than the quads the fast
@@ -3272,7 +3272,7 @@ facet.library/WaitForFences
 	opaque. `color_blend_state.attachments` holds one state for each colour
 	attachment of the subpass, or none for the default over all of them; a
 	subpass of several has each blended its own way (since 1.33,
-	`PhysicalDeviceFeatures.independent_blend`). The blend constants are
+	`Capabilities.independent_blend`). The blend constants are
 	the pipeline's and shared, as in Vulkan, unless
 	`attachment_constants` gives one set for each attachment instead -
 	facet.library's own, since 1.51 - and with `blend_constants` among the
@@ -3353,7 +3353,7 @@ facet.library/WaitForFences
 	  allocated type. With a load or a store op it is kept in rows instead
 	  (CreateRenderPass), and with SAMPLED as well those rows are the
 	  texture a sampler reads: a shadow map drawn into and sampled out of
-	  with nothing copied (`PhysicalDeviceFeatures.sampled_depth`, since
+	  with nothing copied (`Capabilities.sampled_depth`, since
 	  1.39). One sampled wants memory something is behind and is not
 	  written through as a storage image.
 	  Any of the three formats is sampled since 1.58, and such an image
@@ -3413,7 +3413,7 @@ facet.library/WaitForFences
 	A SAMPLED image may be of BC1, BC2, BC3, R16G16B16A16_SFLOAT,
 	R32G32B32A32_SFLOAT, B10G11R11_UFLOAT or E5B9G9R9_UFLOAT, in optimal tiling.
 	A float one is kept as the floats it was copied in as on a device that
-	samples them (`PhysicalDeviceFeatures.kept_floats`, since 1.45): the two
+	samples them (`Capabilities.kept_floats`, since 1.45): the two
 	packed formats then take 4 bytes a texel rather than the 8 an unpacked
 	texel is kept spread in, and a copy out gives back what went in. A sample
 	holds each channel inside 0 to 1 and rounds it to 8 bits, the tiles having
@@ -3424,7 +3424,7 @@ facet.library/WaitForFences
 	It may also be of ETC2 or EAC - ETC2_R8G8B8, ETC2_R8G8B8A1, ETC2_R8G8B8A8,
 	EAC_R11 or EAC_R11G11 - which no sampler of this library reads: such an
 	image is always kept as R8G8B8A8, its blocks unpacked as they are copied
-	in (`PhysicalDeviceFeatures.etc2_textures`, since 1.46).
+	in (`Capabilities.etc2_textures`, since 1.46).
 
 	R32_SFLOAT is an image since 1.57, in optimal tiling: one float a texel,
 	sampled as (red, 0, 0, 1) the way R8_UNORM is read, with the float held
@@ -3434,7 +3434,7 @@ facet.library/WaitForFences
 	attachment and not a vertex's value.
 
 	A compressed one - BC1, BC2, BC3 - is kept in its blocks on a device that
-	samples them (`PhysicalDeviceFeatures.kept_compressed`, since 1.44): an
+	samples them (`Capabilities.kept_compressed`, since 1.44): an
 	eighth to a quarter of that memory, and the blocks are copied in and out
 	as they lie, by CmdCopyBufferToImage, CmdCopyImageToBuffer and CmdCopyImage
 	between two images of the one format, their offsets and extents on a
@@ -3448,7 +3448,7 @@ facet.library/WaitForFences
 	either.
 
 	**A texel may be kept smaller than the colour it reads as** on a device
-	that says so (`PhysicalDeviceFeatures.small_texels`, since 1.48), which
+	that says so (`Capabilities.small_texels`, since 1.48), which
 	is where a texture is large enough that the memory it fills is what it
 	costs:
 	- R8_UNORM is one byte a texel, read as (red, 0, 0, 1) the way Vulkan
@@ -3534,10 +3534,10 @@ facet.library/WaitForFences
 	such an image, for `texture_cube_array` and, since 1.53,
 	`texture_cube_array_sampled`: its layers are a multiple of six
 	and its first layer begins a cube, so `base_array_layer` is a multiple of
-	six as well (`PhysicalDeviceFeatures.cube_arrays`, since 1.46).
+	six as well (`Capabilities.cube_arrays`, since 1.46).
 
 	**A view of a sampled depth image takes one of its planes** since 1.58
-	(`PhysicalDeviceFeatures.sampled_depth`): IMAGE_ASPECT_DEPTH is the
+	(`Capabilities.sampled_depth`): IMAGE_ASPECT_DEPTH is the
 	depth, read at all 16 bits by a sampler that compares and as a grey of
 	its top 8 by one that does not, and IMAGE_ASPECT_STENCIL is the
 	stencil, read as (red, 0, 0, 1) the way a texel of one byte is. Both
@@ -3723,7 +3723,7 @@ facet.library/WaitForFences
 
    RESULT
 	`success`; `error_feature_not_present` for a kind this device has not
-	got (`PhysicalDeviceFeatures.occlusion_queries`,
+	got (`Capabilities.occlusion_queries`,
 	`pipeline_statistics_queries`, `timestamp_queries`), or for a bit that
 	is none of Vulkan's; `error_initialization_failed` for no queries at
 	all, or a statistics pool that counts nothing;
@@ -3866,7 +3866,7 @@ facet.library/WaitForFences
 	subpass drew, or what its load op left there.
 
 	**A depth attachment is read that way too** since 1.62
-	(`PhysicalDeviceFeatures.sampled_depth`): one plane of it, the one the
+	(`Capabilities.sampled_depth`): one plane of it, the one the
 	view's aspect names, the depth as 0 to 1 and the stencil as the whole
 	number it is (`CreateImageView`, `shader.Attachment`). Where an
 	earlier subpass drew that depth, the part which drew it last writes it
@@ -3981,7 +3981,7 @@ facet.library/WaitForFences
 	none of Vulkan's five, for a filter, mipmap mode, compare operation or
 	border colour that is not one of Vulkan's, or for
 	`unnormalized_coordinates` on a device that reads none
-	(`PhysicalDeviceFeatures.unnormalized_coordinates`);
+	(`Capabilities.unnormalized_coordinates`);
 	`error_initialization_failed` for `unnormalized_coordinates` asked for
 	beside something Vulkan does not allow with it;
 	`error_out_of_host_memory`.
@@ -3995,7 +3995,7 @@ facet.library/WaitForFences
 	`PhysicalDeviceLimits.max_sampler_anisotropy` (since 1.80; the
 	library's cap of 16 before, whatever the device said)
 	rather than refused above it, and is taken only where
-	`PhysicalDeviceFeatures.sampler_anisotropy` says so; without
+	`Capabilities.sampler_anisotropy` says so; without
 	`anisotropy_enable` it is 1, one sample. `max_lod` below `min_lod`
 	leaves the sample on `min_lod`. `compare_enable` makes every sample
 	through it a shadow sample: what is read is compared with the reference
@@ -4032,7 +4032,7 @@ facet.library/WaitForFences
 	(`shader.FixedKind.texture_sampled`, `texture_shadow`, since 1.49
 	`texture_array_sampled`, `texture_cube_sampled` and `texture_3d_sampled`,
 	and since 1.53 `texture_cube_array_sampled`)
-	is refused on a device whose `PhysicalDeviceFeatures.samplers` is false.
+	is refused on a device whose `Capabilities.samplers` is false.
 
    CONTEXT
 	- Waits: no.
@@ -5860,28 +5860,49 @@ facet.library/WaitForFences
 	None.
 
    BEHAVIOR
-	Every field is what the device's driver said of it as the instance was
-	made, and holds while the instance lasts. A `false` is what a create call
-	would answer `error_feature_not_present` to, so a program may choose
-	another way instead of failing; a `true` is a promise for this device, not
-	for the next one listed.
+	Vulkan's 55 members, in Vulkan's order and four bytes each, made from
+	what the device's driver said of itself as the instance was made. They
+	hold while the instance lasts.
 
-	Sixteen of the fields differ between the devices of one machine, and are
-	the reason to look. `own_fragment_functions`, `sampling_format`,
-	`depth_prepass`, `discarding_fragment_forms`, `input_attachments`,
-	`sampled_depth`, `storage_images`, `samplers`, `sampler_anisotropy`,
-	`pipeline_statistics_queries`, `kept_compressed`, `kept_floats`,
-	`cube_arrays` and `stored_both` are the cores' and not the V3D's.
-	`compute_on_device` and `tessellation_on_device` are the cores' too, and
-	for the plain reason that the cores are that device: both kinds of work
-	run on them whichever device made the pipeline, so on the V3D they are
-	false while the work still happens. The limits say the rest of
-	what parts differ: a CM5's V3D takes one sampled image a stage where the
-	cores take sixteen (`GetPhysicalDeviceProperties`).
+	Until 1.82 this handed out a structure of facet's own: 49 Zig `bool`
+	fields, one byte each, chosen so there was one wherever a create call
+	could refuse something. A program reading a `VkPhysicalDeviceFeatures`
+	out of that read 49 bytes of something else. Those 49 are the library's
+	own record now (`_instance.Capabilities`) and still decide what every
+	create call refuses; this call answers Vulkan's question instead, which
+	is a different question.
 
-	What the library has no call for at all - samplers, events, query pools, a
-	pipeline cache, sparse memory - has no field here. That a call is missing
-	is in the jump table, not in a feature.
+	**Vulkan 1.0 requires exactly one of these 55**, `robust_buffer_access`,
+	of an implementation that does not advertise
+	`VK_KHR_portability_subset`; its "Feature Requirements" section ends
+	"All other features defined in the Specification are optional". So a
+	`FALSE` here is usually a real choice a program may work around, which
+	is the opposite of facet's old 49, where most of the fields gated
+	something Vulkan requires unconditionally and a false was a defect.
+
+	**But a `FALSE` is not free.** Vulkan's required-limits table gives most
+	limits two values, one for the feature being off and one for it on, and
+	the off value is *mandatory*: say `sampler_anisotropy` is false and
+	`max_sampler_anisotropy` must read 1, say `multi_viewport` is false and
+	`max_viewports` must read 1, say `shader_clip_distance` is false and
+	`max_clip_distances` must read 0. Each `of(...)` below therefore ties a
+	limit as well, and `_instance.limits` says which.
+
+	What a program may usefully branch on per device is `sampler_anisotropy`
+	and `image_cube_array`, which the cores have and a CM5's V3D has not,
+	with the limits saying the rest of what differs - that V3D takes one
+	sampled image a stage where the cores take as many as a set will hold
+	(`GetPhysicalDeviceProperties`).
+
+	**What is no longer asked here.** Six of facet's 49 were facet's own
+	idea with no Vulkan meaning - `own_fragment_functions`,
+	`sampling_format`, `compute_on_device`, `tessellation_on_device`,
+	`depth_prepass` and `discarding_fragment_forms` - and they described the
+	fixed forms, which are facet's own surface rather than Vulkan's. There
+	is no member for them, so a program that wants a fixed form asks for the
+	pipeline and is answered `error_feature_not_present` if the device has
+	not got it, which it was answered before as well. Where those belong is
+	the open question of docs/facet-vulkan10.md item 51.
 
    CONTEXT
 	- Waits: no.
@@ -5905,8 +5926,8 @@ facet.library/WaitForFences
    EXAMPLES
 	    var features: facet.PhysicalDeviceFeatures = undefined;
 	    fb.GetPhysicalDeviceFeatures(physical, &features);
-	    if (!features.own_fragment_functions) {
-	        // This device runs only the fixed forms: shader.fixedFragment.
+	    if (features.sampler_anisotropy == facet.TRUE) {
+	        // This device samples along the longer axis: maxSamplerAnisotropy.
 	    }
 facet.library/GetPhysicalDeviceFormatProperties facet.library/GetPhysicalDeviceFormatProperties
 
@@ -5936,13 +5957,13 @@ facet.library/WaitForFences
 	  sampled, filtered, in optimal tiling; copied.
 	- D16_UNORM: a depth attachment, in optimal tiling, and copied both
 	  ways; sampled and filtered as well on a device that samples a depth
-	  where its rows lie (`PhysicalDeviceFeatures.sampled_depth`), and not
+	  where its rows lie (`Capabilities.sampled_depth`), and not
 	  on one that does not, which refuses such an image at CreateImage
 	  (since 1.80).
 	- R32_SFLOAT to R32G32B32A32_SFLOAT: a vertex's value.
 	- R8_UNORM: sampled, filtered, written through as a storage image, in
 	  optimal tiling, and copied both ways. One byte a texel, read as
-	  (red, 0, 0, 1) (`PhysicalDeviceFeatures.small_texels`, since 1.48);
+	  (red, 0, 0, 1) (`Capabilities.small_texels`, since 1.48);
 	  never an attachment and never a buffer's.
 	- BC1, BC2, BC3, R16G16B16A16_SFLOAT, R32G32B32A32_SFLOAT,
 	  B10G11R11_UFLOAT and E5B9G9R9_UFLOAT: sampled, filtered, in optimal

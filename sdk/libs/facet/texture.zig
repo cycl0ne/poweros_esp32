@@ -87,7 +87,7 @@ pub const Format = enum {
     /// The same 0xAARRGGBB in 32 bits, one word a texel: half the memory
     /// `rgba8888` takes, for the spread a sample does as it reads each of
     /// its four texels. An image asks to be kept this way with
-    /// IMAGE_CREATE_PACKED_TEXELS (`PhysicalDeviceFeatures.small_texels`,
+    /// IMAGE_CREATE_PACKED_TEXELS (`Capabilities.small_texels`,
     /// since 1.48). (Since 1.48.)
     argb8888,
     /// 16 bits, red in the top 5, green in the middle 6, blue in the low 5.
@@ -97,7 +97,7 @@ pub const Format = enum {
     /// whole, as Vulkan reads a one-channel format. An eighth of the
     /// memory of the same texels kept as `rgba8888`, which is what a mask,
     /// a height field or a lightmap of one channel costs there
-    /// (`PhysicalDeviceFeatures.small_texels`). (Since 1.48.)
+    /// (`Capabilities.small_texels`). (Since 1.48.)
     r8,
     /// 16 bits of depth, 0 nearest, as a depth attachment holds one: a
     /// texture of this is kept in rows (`Texture.pitch`) and sampled by
@@ -140,7 +140,7 @@ pub const Format = enum {
     /// (red, green, 0, 1). A quarter of the memory of the same texels
     /// spread as `rgba8888`, for a normal map of two channels, a flow
     /// field or a pair of masks
-    /// (`PhysicalDeviceFeatures.wide_channels`). (Since 1.69.)
+    /// (`Capabilities.wide_channels`). (Since 1.69.)
     rg8,
     /// 16 bits a channel, as they lie: Vulkan's R16_UNORM, read as
     /// (red, 0, 0, 1), R16G16_UNORM and R16G16B16A16_UNORM. A sample
@@ -148,7 +148,7 @@ pub const Format = enum {
     /// holds, while `Texture.partsAt` gives the whole of them - a height
     /// field, a shadow map of a program's own or a texture a function
     /// writes through at more than 8 bits
-    /// (`PhysicalDeviceFeatures.wide_channels`). (Since 1.69.)
+    /// (`Capabilities.wide_channels`). (Since 1.69.)
     r16,
     rg16,
     rgba16,
@@ -164,7 +164,7 @@ pub const Format = enum {
     /// numbers as floats, which carry 24 bits of one exactly; and a
     /// sample holds each to 0 to 1 and over 255, the way a texel buffer's
     /// `shader.Texels.colorAt` reads one, so that a whole number above 0
-    /// is a channel at the full (`PhysicalDeviceFeatures.whole_textures`).
+    /// is a channel at the full (`Capabilities.whole_textures`).
     /// (Since 1.70.)
     r8u,
     rg8u,
@@ -189,7 +189,7 @@ pub const Format = enum {
     /// them - the very block BC3 keeps its alpha in. Read as
     /// (red, 0, 0, 1) and (red, green, 0, 1), as Vulkan reads a format of
     /// fewer channels, and kept in their blocks on a device that samples
-    /// them (`PhysicalDeviceFeatures.kept_compressed`): 8 bytes a block
+    /// them (`Capabilities.kept_compressed`): 8 bytes a block
     /// and 16, against the 64 and 128 the unpacked texels take.
     /// (Since 1.72.)
     bc4,
@@ -204,7 +204,7 @@ pub const Format = enum {
     /// one block of these that holds a smooth alpha and a sharp colour at
     /// once, at the same quarter of the memory `bc1` costs an eighth of.
     /// Kept in its blocks on a device that samples them
-    /// (`PhysicalDeviceFeatures.kept_compressed`). (Since 1.73.)
+    /// (`Capabilities.kept_compressed`). (Since 1.73.)
     bc7,
     /// BC6H, the one block of these to hold floats: three channels of
     /// half float in 16 bytes, with no alpha, for a texture whose
@@ -306,7 +306,7 @@ pub const Format = enum {
     /// one is, so nothing of it is lost on the way out again: a sample
     /// reads the top 8 bits of each channel and `Texture.partsAt` the
     /// whole of them, and `setParts` writes the whole of them
-    /// (`PhysicalDeviceFeatures.wide_channels`). (Since 1.69.)
+    /// (`Capabilities.wide_channels`). (Since 1.69.)
     pub fn channels(format: Format) bool {
         return switch (format) {
             .rg8, .r16, .rg16, .rgba16 => true,
@@ -324,7 +324,7 @@ pub const Format = enum {
     /// it is lost on the way out again: `Texture.wholesAt` reads the
     /// numbers and `setWholes` writes them, while a sample holds each to
     /// 0 to 1 and over 255, a whole number being no colour
-    /// (`PhysicalDeviceFeatures.whole_textures`). (Since 1.70.)
+    /// (`Capabilities.whole_textures`). (Since 1.70.)
     pub fn wholes(format: Format) bool {
         return format.wholesOf() != null;
     }
@@ -378,7 +378,7 @@ pub const Format = enum {
     /// Whether a texel is kept in fewer bytes than the colour it reads as:
     /// `argb8888` in the four of its word rather than the eight it is
     /// spread in, and `r8` in one
-    /// (`PhysicalDeviceFeatures.small_texels`). A sample reads such a
+    /// (`Capabilities.small_texels`). A sample reads such a
     /// texel and makes the colour of it, where the others are read as they
     /// lie. (Since 1.48.)
     pub fn small(format: Format) bool {
@@ -519,7 +519,7 @@ pub const Compare = enum(u8) {
 /// anisotropy it asks for. This is what the sampling here will do at
 /// most; what a sampler is held to is the device's own
 /// `PhysicalDeviceLimits.max_sampler_anisotropy`, which is 1 on a device
-/// without `PhysicalDeviceFeatures.sampler_anisotropy` and need not be
+/// without `Capabilities.sampler_anisotropy` and need not be
 /// this number (since 1.80).
 pub const most_taps = 16;
 

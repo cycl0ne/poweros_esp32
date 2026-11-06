@@ -46,7 +46,7 @@ const _image = @import("_image.zig");
 ///   allocated type. With a load or a store op it is kept in rows instead
 ///   (CreateRenderPass), and with SAMPLED as well those rows are the
 ///   texture a sampler reads: a shadow map drawn into and sampled out of
-///   with nothing copied (`PhysicalDeviceFeatures.sampled_depth`, since
+///   with nothing copied (`Capabilities.sampled_depth`, since
 ///   1.39). One sampled wants memory something is behind and is not
 ///   written through as a storage image.
 ///   Any of the three formats is sampled since 1.58, and such an image
@@ -106,7 +106,7 @@ const _image = @import("_image.zig");
 /// A SAMPLED image may be of BC1, BC2, BC3, R16G16B16A16_SFLOAT,
 /// R32G32B32A32_SFLOAT, B10G11R11_UFLOAT or E5B9G9R9_UFLOAT, in optimal tiling.
 /// A float one is kept as the floats it was copied in as on a device that
-/// samples them (`PhysicalDeviceFeatures.kept_floats`, since 1.45): the two
+/// samples them (`Capabilities.kept_floats`, since 1.45): the two
 /// packed formats then take 4 bytes a texel rather than the 8 an unpacked
 /// texel is kept spread in, and a copy out gives back what went in. A sample
 /// holds each channel inside 0 to 1 and rounds it to 8 bits, the tiles having
@@ -117,7 +117,7 @@ const _image = @import("_image.zig");
 /// It may also be of ETC2 or EAC - ETC2_R8G8B8, ETC2_R8G8B8A1, ETC2_R8G8B8A8,
 /// EAC_R11 or EAC_R11G11 - which no sampler of this library reads: such an
 /// image is always kept as R8G8B8A8, its blocks unpacked as they are copied
-/// in (`PhysicalDeviceFeatures.etc2_textures`, since 1.46).
+/// in (`Capabilities.etc2_textures`, since 1.46).
 ///
 /// R32_SFLOAT is an image since 1.57, in optimal tiling: one float a texel,
 /// sampled as (red, 0, 0, 1) the way R8_UNORM is read, with the float held
@@ -127,7 +127,7 @@ const _image = @import("_image.zig");
 /// attachment and not a vertex's value.
 ///
 /// A compressed one - BC1, BC2, BC3 - is kept in its blocks on a device that
-/// samples them (`PhysicalDeviceFeatures.kept_compressed`, since 1.44): an
+/// samples them (`Capabilities.kept_compressed`, since 1.44): an
 /// eighth to a quarter of that memory, and the blocks are copied in and out
 /// as they lie, by CmdCopyBufferToImage, CmdCopyImageToBuffer and CmdCopyImage
 /// between two images of the one format, their offsets and extents on a
@@ -141,7 +141,7 @@ const _image = @import("_image.zig");
 /// either.
 ///
 /// **A texel may be kept smaller than the colour it reads as** on a device
-/// that says so (`PhysicalDeviceFeatures.small_texels`, since 1.48), which
+/// that says so (`Capabilities.small_texels`, since 1.48), which
 /// is where a texture is large enough that the memory it fills is what it
 /// costs:
 /// - R8_UNORM is one byte a texel, read as (red, 0, 0, 1) the way Vulkan

@@ -136,7 +136,7 @@ const _instance = @import("../instance/_instance.zig");
 /// it, nor a stencil test on one without stencil. Lines and points use the
 /// front's stencil test, and take no depth bias: only triangles are moved,
 /// as in Vulkan, and `depth_bias_enable` wants a device whose
-/// `PhysicalDeviceFeatures.depth_bias` is true (since 1.34).
+/// `Capabilities.depth_bias` is true (since 1.34).
 ///
 /// `depth_clamp_enable` draws what lies past the near plane instead of
 /// cutting it away, each pixel's depth held inside the viewport's
@@ -145,7 +145,7 @@ const _instance = @import("../instance/_instance.zig");
 /// **already** in the attachment lies between `min_depth_bounds` and
 /// `max_depth_bounds`, whatever the depth being drawn; `DynamicState`'s
 /// `depth_bounds` leaves the two to CmdSetDepthBounds. Both want a device
-/// whose `PhysicalDeviceFeatures.depth_clamp` or `depth_bounds` is true -
+/// whose `Capabilities.depth_clamp` or `depth_bounds` is true -
 /// every device since 1.47, the V3D's own configuration having both - and
 /// on the cores both have a draw's pixels walked one at a time, as a
 /// stencil test does, so they cost more there than the quads the fast
@@ -155,7 +155,7 @@ const _instance = @import("../instance/_instance.zig");
 /// opaque. `color_blend_state.attachments` holds one state for each colour
 /// attachment of the subpass, or none for the default over all of them; a
 /// subpass of several has each blended its own way (since 1.33,
-/// `PhysicalDeviceFeatures.independent_blend`). The blend constants are
+/// `Capabilities.independent_blend`). The blend constants are
 /// the pipeline's and shared, as in Vulkan, unless
 /// `attachment_constants` gives one set for each attachment instead -
 /// facet.library's own, since 1.51 - and with `blend_constants` among the
@@ -280,7 +280,7 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
     // together, and one where they do not.
     const outputs = fragment_entry.outputCount();
     if (outputs != pass.parts[subpass.first_part].color_count) return .error_invalid_shader_nv;
-    if (outputs > 1 and !device.physical.features.several_outputs) return .error_feature_not_present;
+    if (outputs > 1 and !device.physical.can.several_outputs) return .error_feature_not_present;
 
     made.* = .{
         .device = device,
@@ -367,11 +367,11 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
     // The rasterization.
     const rasterization = info.rasterization_state;
     if (rasterization.depth_clamp_enable) {
-        if (!device.physical.features.depth_clamp) return .error_feature_not_present;
+        if (!device.physical.can.depth_clamp) return .error_feature_not_present;
         made.clamped = true;
     }
     if (rasterization.depth_bias_enable) {
-        if (!device.physical.features.depth_bias) return .error_feature_not_present;
+        if (!device.physical.can.depth_bias) return .error_feature_not_present;
         made.biased = true;
         made.bias = .{
             .constant = rasterization.depth_bias_constant_factor,
@@ -397,7 +397,7 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
     }
     if (info.depth_stencil_state) |depth| {
         if (depth.depth_bounds_test_enable) {
-            if (!device.physical.features.depth_bounds) return .error_feature_not_present;
+            if (!device.physical.can.depth_bounds) return .error_feature_not_present;
             made.bounded = true;
             made.bounds = .{ depth.min_depth_bounds, depth.max_depth_bounds };
         }
@@ -431,7 +431,7 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         if (blend.attachment_count != 0 and blend.attachment_count != colors) return .error_initialization_failed;
         // A device without `independent_blend` wants them all alike, and
         // says so rather than drawing what was not asked for.
-        if (blend.attachment_count > 1 and !device.physical.features.independent_blend) {
+        if (blend.attachment_count > 1 and !device.physical.can.independent_blend) {
             for (blend.attachments.?[1..blend.attachment_count]) |other| {
                 if (!std.mem.eql(u8, std.mem.asBytes(&other), std.mem.asBytes(&blend.attachments.?[0]))) return .error_feature_not_present;
             }

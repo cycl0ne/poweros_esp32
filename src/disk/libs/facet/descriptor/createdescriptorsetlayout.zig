@@ -29,7 +29,7 @@ const Sampler = @import("../sampler/_sampler.zig").Sampler;
 /// RESULT:
 /// `success`; `error_feature_not_present` for a kind of descriptor
 /// facet.library does not have, for samplers of the layout's own on a
-/// device without `PhysicalDeviceFeatures.immutable_samplers`, a binding
+/// device without `Capabilities.immutable_samplers`, a binding
 /// numbered past 255, or more than 65535 descriptors;
 /// `error_initialization_failed` for a binding given twice;
 /// `error_out_of_host_memory`.
@@ -69,7 +69,7 @@ const Sampler = @import("../sampler/_sampler.zig").Sampler;
 /// every binding.
 ///
 /// **A sampler of the layout's own** is taken since 1.49
-/// (`immutable_samplers`, `PhysicalDeviceFeatures.immutable_samplers`): on
+/// (`immutable_samplers`, `Capabilities.immutable_samplers`): on
 /// a `sampler` or `combined_image_sampler` binding the layout holds one
 /// sampler for each of the binding's descriptors, and every set made of
 /// the layout starts with them in its slots. A write of a combined image
@@ -104,17 +104,17 @@ pub fn CreateDescriptorSetLayout(base: *FacetBase, device: *facet.Device, info: 
         if (!_descriptor.known(binding.descriptor_type) or binding.binding > 255) return .error_feature_not_present;
         // A storage image is written through the texture the library keeps,
         // which a device with a layout of its own does not use.
-        if (binding.descriptor_type == .storage_image and !owner.physical.features.storage_images) return .error_feature_not_present;
-        if (_descriptor.ofTexels(binding.descriptor_type) and !owner.physical.features.texel_buffers) return .error_feature_not_present;
-        if (_descriptor.ofDynamic(binding.descriptor_type) and !owner.physical.features.dynamic_descriptors) return .error_feature_not_present;
+        if (binding.descriptor_type == .storage_image and !owner.physical.can.storage_images) return .error_feature_not_present;
+        if (_descriptor.ofTexels(binding.descriptor_type) and !owner.physical.can.texel_buffers) return .error_feature_not_present;
+        if (_descriptor.ofDynamic(binding.descriptor_type) and !owner.physical.can.dynamic_descriptors) return .error_feature_not_present;
         // An input attachment is read by a fragment function of the
         // program's, which a device with programs of its own has not got.
-        if (binding.descriptor_type == .input_attachment and !owner.physical.features.input_attachments) return .error_feature_not_present;
+        if (binding.descriptor_type == .input_attachment and !owner.physical.can.input_attachments) return .error_feature_not_present;
         // A sampler the layout holds, which a write cannot change (since
         // 1.49): for a kind that carries one, and on a device that keeps
         // them.
         if (binding.immutable_samplers != null and binding.descriptor_count != 0 and _descriptor.ofSampler(binding.descriptor_type)) {
-            if (!owner.physical.features.immutable_samplers) return .error_feature_not_present;
+            if (!owner.physical.can.immutable_samplers) return .error_feature_not_present;
             holds_samplers = true;
             held_slots += @min(binding.descriptor_count, 0xFFFF);
         }
