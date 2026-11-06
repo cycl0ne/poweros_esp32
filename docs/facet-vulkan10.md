@@ -913,6 +913,52 @@ since Vulkan has one and facet's revision is not it.
 
 > sdk/libs/facet/facet.zig:168 `pub fn makeVersion(major: u32, minor: u32) u32 { return major << 16 | minor; }`, :173 `API_VERSION_1_0: u32 = makeVersion(1, 0)`, :186 the default; src/disk/libs/facet/instance/createinstance.zig:77 the refusal. Measured, not inferred: `makeVersion(1, 80)` = 65616 < 4194304.
 
+### 78. Admit the declaration and annotation opcodes, because every real toolchain's module was refused
+
+*SPIR-V front end* &mdash; conformance-blocking, small, critical path
+
+**Done in 1.81.** Not on this list when it was written, and the most
+consequential thing found while working through it: no module any real
+toolchain produces could be loaded at all.
+
+`OpExtInstImport`, `OpSource`, `OpSourceExtension`, `OpName` and
+`OpMemberName` carry no computation - an extended instruction set declared,
+and the names and source strings glslang puts around the instructions - and
+not one of them was in either opcode list, the library's `facet_profile` or
+the V3D's `profile`. The simplest fragment shader glslc can be given,
+`ocolor = vcolor;`, imports GLSL.std.450 at its **sixth word**, so every
+glslc module was refused there and nothing behind that wall had ever been
+reached. `tests/spirv_reference.zig`'s own header had recorded for a long
+time that glslc emits exactly these and that they were stripped to make the
+minimal hand-written forms - the fact was written down, and the conclusion
+that the profile therefore rejected real output was never drawn.
+
+Measured before and after, with glslc on this PC: a trivial fragment shader
+is 111 words at `-O0` and at the default, 78 at `-O`, and all three are
+`spirv-val --target-env vulkan1.0` clean. Before 1.81 all three were refused;
+after it, none of the opcodes any of them uses is outside the V3D's profile.
+
+`ext_inst` - the *use* of an imported set, as against its declaration - is
+deliberately still absent, so a module that calls one of GLSL.std.450's
+functions is refused for the call and not for the import, which is the
+honest answer and the two-tier rule working as intended.
+
+What it buys immediately is evidence, not just reach: glslc's own module for
+the interpolated colour now compiles to `qpu.color_fragment`, the program
+written by hand and drawn on the board, **word for word**, with an identical
+plan. It is kept as `driver/v3d/glslc_reference.zig` - a file of the V3D
+module's own, because a Zig module cannot import above its root and
+`compile.zig`'s tests are the V3D's - and `scripts/spirv-check.sh` now scans
+both reference files, so Khronos' validator vouches for it with the other
+seven.
+
+> Measured: `glslc -fshader-stage=frag` on a `#version 450` shader with one
+> `vec4` in and one out; opcodes diffed against both profiles. The gate is
+> `sdk/libs/facet/spirv.zig`'s `facet_opcodes` and
+> `src/disk/libs/facet/driver/v3d/compile.zig`'s `profile.opcodes`; the body
+> arm that would have answered `Error.Body` for a header instruction is the
+> reason they needed naming in the walk as well as in the list.
+
 ## Deferred by the decision, not out of reach
 
 A drop-in `libvulkan.so.1` was not chosen, so these are not scheduled.

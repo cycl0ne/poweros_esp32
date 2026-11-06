@@ -1,7 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: MIT
-# The SPIR-V modules in src/disk/libs/facet/tests/spirv_reference.zig,
-# handed back to Khronos' validator.
+# The SPIR-V modules in src/disk/libs/facet/tests/spirv_reference.zig and
+# src/disk/libs/facet/driver/v3d/glslc_reference.zig, handed back to
+# Khronos' validator.
 #
 # Those arrays are what `spirv.Emit` is held to, word for word, by
 # `./zig build test`. That comparison is only worth what the arrays are
@@ -17,6 +18,9 @@ set -eu
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 reference="$root/src/disk/libs/facet/tests/spirv_reference.zig"
+# glslc's own module sits in the V3D driver's module, which is the only
+# place compile.zig's tests can import it from.
+glslc="$root/src/disk/libs/facet/driver/v3d/glslc_reference.zig"
 show=no
 [ "${1:-}" = "-d" ] && show=yes
 
@@ -29,16 +33,17 @@ fi
 out=$(mktemp -d)
 trap 'rm -rf "$out"' EXIT
 
-python3 -I - "$reference" "$out" <<'PY'
+python3 -I - "$out" "$reference" "$glslc" <<'PY'
 import re, struct, sys
-text = open(sys.argv[1], encoding="utf-8").read()
-for name, body in re.findall(r"pub const (\w+) = \[_\]u32\{(.*?)\};", text, re.S):
-    words = [int(w, 16) for w in re.findall(r"0x([0-9A-Fa-f]{8})", body)]
-    if not words:
-        continue
-    with open("%s/%s.spv" % (sys.argv[2], name), "wb") as file:
-        file.write(struct.pack("<%dI" % len(words), *words))
-    print("%s %d" % (name, len(words)))
+for source in sys.argv[2:]:
+    text = open(source, encoding="utf-8").read()
+    for name, body in re.findall(r"pub const (\w+) = \[_\]u32\{(.*?)\};", text, re.S):
+        words = [int(w, 16) for w in re.findall(r"0x([0-9A-Fa-f]{8})", body)]
+        if not words:
+            continue
+        with open("%s/%s.spv" % (sys.argv[1], name), "wb") as file:
+            file.write(struct.pack("<%dI" % len(words), *words))
+        print("%s %d" % (name, len(words)))
 PY
 
 count=0

@@ -188,13 +188,18 @@ pub const Sampler = struct {
 pub const profile: spirv.Profile = .{
     .capabilities = &.{.shader},
     .opcodes = &.{
-        .capability,   .memory_model,        .entry_point,               .execution_mode,
-        .decorate,     .type_void,           .type_float,                .type_vector,
-        .type_pointer, .type_function,       .constant,                  .constant_composite,
-        .variable,     .function,            .label,                     .load,
-        .store,        .composite_extract,   .composite_construct,       .f_add,
-        .f_mul,        .vector_times_scalar, .returns,                   .function_end,
-        .type_image,   .type_sampled_image,  .image_sample_implicit_lod,
+        .capability,      .memory_model,  .entry_point,         .execution_mode,
+        .decorate,        .type_void,     .type_float,          .type_vector,
+        .type_pointer,    .type_function, .constant,            .constant_composite,
+        .variable,        .function,      .label,               .load,
+        // What a real toolchain writes around the instructions: an
+        // extended set imported but not used (`ext_inst` is absent, so a
+        // call into one is still refused) and the names and source
+        // strings glslc always emits. None of them is computation.
+        .ext_inst_import, .source,        .source_extension,    .name,
+        .member_name,     .store,         .composite_extract,   .composite_construct,
+        .f_add,           .f_mul,         .vector_times_scalar, .returns,
+        .function_end,    .type_image,    .type_sampled_image,  .image_sample_implicit_lod,
         // Taken here and refused by name below. It is not a thing this
         // device can do - a dropped pixel wants the flag registers - but
         // `Error.Discards` says which family is missing where
@@ -558,7 +563,12 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
             continue;
         }
         switch (instruction.op) {
+            // Nothing to plan for: the module's own declarations, and the
+            // annotations a toolchain puts in front of them. They arrive
+            // before any function, so they must be named here rather than
+            // fall to the body arm below, which would answer Error.Body.
             .capability, .memory_model, .entry_point, .type_void, .type_function => {},
+            .ext_inst_import, .source, .source_extension, .name, .member_name => {},
             .execution_mode => {
                 // Which mode it is matters: a program compiled as if its
                 // origin were the top left and run with it at the bottom
@@ -1561,6 +1571,12 @@ const testing = std.testing;
 /// The colour the vertices carry: the one form the V3D already has a
 /// hand-written program for, so the generated one is held to it word for
 /// word.
+/// A module glslc produced, so that a real toolchain's words are held
+/// against this back end rather than only facet's own emitter's. It is a
+/// file of this module's own because `tests/spirv_reference.zig` is above
+/// this module's root and Zig will not import across that.
+const reference = @import("glslc_reference.zig");
+
 const Smooth = ir.Fragment(struct {
     pub fn body(b: *ir.Build) void {
         b.color(b.input(0, .f32x4));
@@ -1886,6 +1902,44 @@ test "the interpolated colour comes to the program that was written by hand, wor
 
     // The plan: a varying into each of rf4 to rf7, the wait, the two
     // packs to the tile buffer, the end.
+    try testing.expectEqualSlices(Act, &[_]Act{
+        .{ .varying = 4 },
+        .{ .varying = 5 },
+        .{ .varying = 6 },
+        .{ .varying = 7 },
+        .last_section,
+        .{ .color = .{ .low = 4, .high = 5 } },
+        .{ .color = .{ .low = 6, .high = 7 } },
+        .end,
+    }, work.plan());
+}
+
+test "glslc's own module for the interpolated colour comes to the hand-written program, word for word" {
+    // The same shader as `Smooth`, compiled by glslc instead of emitted by
+    // `ir.Build`: 111 words against the 72 of the minimal form, the extra
+    // ones being an unused `OpExtInstImport "GLSL.std.450"`, the debug
+    // names and source strings, and a `Function` variable the colour goes
+    // through. Every one of those was refused before 1.81 - the import at
+    // the module's sixth word - so no module any real toolchain produces
+    // ever reached this compiler. What it must come to is not merely
+    // "something": it is `qpu.color_fragment`, the program written by hand
+    // and drawn on the board, which the test above holds `Smooth` to.
+    // Both gates take it. `facet_profile` is what CreateShaderModule reads
+    // a module against and `profile` is this device's; the import at word
+    // six was refused by each of them before 1.81, so the words never got
+    // as far as being compiled badly - they got no further than the gate.
+    try testing.expect(spirv.look(&reference.glslc_interp, spirv.facet_profile) == .seen);
+    try testing.expect(spirv.look(&reference.glslc_interp, profile) == .seen);
+
+    var work: Work = .{};
+    const code = try compile(&work, &reference.glslc_interp);
+    try testing.expectEqualSlices(u64, qpu.color_fragment.code, code.words);
+    try testing.expectEqual(qpu.color_fragment.varyings, code.varyings);
+    try testing.expectEqual(@as(usize, 0), code.stream().len);
+    try sound(&work, code);
+
+    // And the plan is the same plan, so the extra words cost nothing: they
+    // are read and dropped rather than planned around.
     try testing.expectEqualSlices(Act, &[_]Act{
         .{ .varying = 4 },
         .{ .varying = 5 },

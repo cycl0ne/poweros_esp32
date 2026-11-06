@@ -572,14 +572,47 @@ Step 13 is a long tail rather than a step, and the families in it are not
 alike. The order is the one section 4 gives, and the first of them is
 where the cheap part ends:
 
-- **Discard**, and it breaks the method. Every generated program so far
-  is a macro expansion of a shape a hand-written program already proves,
-  which is what lets rung 5 compare them instruction for instruction and
-  what lets `settle` get away with no scheduler. There is **no
-  hand-written discard program** - `qpu.zig` has seven and none of them
-  drops a pixel - so rung 5 goes blind for it, and rungs 4, 6 and 8 carry
-  it alone. It also wants the encoder to grow: condition flags, a flag
-  push, `setmsf`, and either branches with their three delay slots or
+- **Discard**, and it bends the method rather than breaking it. Every
+  generated program so far is a macro expansion of a shape a hand-written
+  program already proves, which is what lets rung 5 compare them
+  instruction for instruction and what lets `settle` get away with no
+  scheduler. There is still **no hand-written discard program** -
+  `qpu.zig` has seven and none of them drops a pixel - so rung 5 has
+  nothing to compare a discarding program against until one is written.
+
+  What this section said before, that rung 5 "goes blind" and rungs 4, 6
+  and 8 carry discard alone, was too pessimistic. Three things measured on
+  06.11.2026 say so, and all three are off the board:
+
+  - **Rung 4 has a bit-exact oracle already.** `texture_cutout` is a fixed
+    form that drops a pixel, and it drops it under `shader.cutout_alpha`,
+    128 of 255. `floor(a * 255 + 0.5) < 128` exactly when `a < 0.5`, so
+    that fixed form and a generated `a < 0.5` discard agree pixel for
+    pixel with no slack at all, and the cores run both on the host.
+  - **Rung 8 takes a discard case with no new oracle.** The sixteen texels
+    of `scripts/vulkan-check.c` carry four alphas - 0xFF, 0xD0, 0xA0 and
+    0x70, four texels each - so exactly four of the sixteen fall under
+    128, and the nearest alpha to the threshold is 16 away from it. A
+    discard case needs no change to the pattern and has no pixel near the
+    boundary to be unsure about, which is the property the existing six
+    cases already rely on.
+  - **The encoder's new fields have a host oracle too.** The condition
+    field, the flag push and `setmsf` are encodings, and `qpu.zig` already
+    holds its fields against Mesa's own `qpu_disasm` samples on this PC -
+    `test "the fields lie where Mesa's samples have them"`. A hand-written
+    discard program can be built from the `qpu.*` builders the way the
+    plan assertions are; written from the same reading of Mesa's packing
+    as the encoder, though, it catches a plan-to-encoder slip and not a
+    wrong field, which is what the Mesa vectors are for.
+
+  What is genuinely left for the board is narrow: whether a conditional
+  `setmsf` issued after the two `thrsw` of `last_section` suppresses the
+  write as intended. That is the same kind of unwritten-down timing fact
+  that `uniform_latency` 6 and `texel_latency` 2 were paid for rather than
+  guessed.
+
+  It still wants the encoder to grow: condition flags, a flag push,
+  `setmsf`, and either branches with their three delay slots or
   flag-conditioned writes instead. On the words' side it wants
   `OpTypeBool`, a comparison, `OpSelectionMerge` and
   `OpBranchConditional`, all of which `Error.Branches` turns down today

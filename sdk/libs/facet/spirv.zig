@@ -550,10 +550,20 @@ pub const Profile = struct {
     }
 };
 
-/// The opcodes facet's own format holds: what the SDK's builder emits, and
-/// what a reader is prepared to walk. It is deliberately a list and not a
-/// range - a module richer than this is not refused by the library, only
-/// by a driver that cannot compile it.
+/// The opcodes facet's own format holds: what the SDK's builder emits,
+/// what a real toolchain puts around that, and what a reader is prepared
+/// to walk. It is deliberately a list and not a range - a module richer
+/// than this is not refused by the library, only by a driver that cannot
+/// compile it.
+///
+/// The declarations and annotations at the end carry no computation and
+/// are what made every glslc module refused before 1.81: a trivial
+/// `ocolor = vcolor;` emits OpExtInstImport, OpSource, OpSourceExtension
+/// and OpName around instructions that were all already here, so the
+/// module was turned away at its sixth word. `ext_inst_import` is the
+/// declaration alone - `ext_inst`, which is the use of an imported set,
+/// is still not here, so a module that calls one of GLSL.std.450's
+/// functions is refused for that and not for importing it.
 pub const facet_opcodes: []const Op = &.{
     .capability,                .memory_model,        .entry_point,              .execution_mode,
     .decorate,                  .member_decorate,     .type_void,                .type_bool,
@@ -567,6 +577,9 @@ pub const facet_opcodes: []const Op = &.{
     .f_ord_less_than,           .f_ord_greater_than,  .f_ord_greater_than_equal, .select,
     .image_sample_implicit_lod, .selection_merge,     .label,                    .branch,
     .branch_conditional,        .kill,                .returns,
+    // Declarations and annotations, which say nothing a device runs.
+                     .ext_inst_import,
+    .source,                    .source_extension,    .name,                     .member_name,
 };
 
 /// The format's own profile, which is what `CreateShaderModule` reads a

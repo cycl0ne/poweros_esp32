@@ -1271,4 +1271,28 @@ pub const LIBRARY_VERSION = 1;
 /// always included without a name for it. CmdClearDepthStencilImage takes
 /// a `facet.ImageLayout` like its five sibling commands rather than a bare
 /// `u32`; the enum is `enum(u32)`, so no call changes.
-pub const LIBRARY_REVISION = 80;
+/// 81: **a module a real toolchain made is no longer refused at its
+/// sixth word.** `OpExtInstImport`, `OpSource`, `OpSourceExtension`,
+/// `OpName` and `OpMemberName` say nothing a device runs - an extended
+/// instruction set declared, and the names and source strings glslang
+/// puts around the instructions - and not one of them was in either
+/// opcode list, the library's `facet_profile` or the V3D's. The simplest
+/// fragment shader glslc can be given, `ocolor = vcolor;`, imports
+/// GLSL.std.450 at its sixth word, so *every* module any real toolchain
+/// produces was turned away there, and nothing behind that wall had ever
+/// been reached. The five are taken now. `ext_inst`, which is the use of
+/// an imported set rather than its declaration, is still absent: a module
+/// that calls one of GLSL.std.450's functions is refused for the call,
+/// which is the honest answer, and no longer for the import.
+///
+/// What that buys immediately is evidence rather than a capability.
+/// glslc's own 111-word module for the interpolated colour - against the
+/// 72 of the hand-written minimal form - now compiles to
+/// `qpu.color_fragment`, the program written by hand and drawn on the
+/// board, **word for word**, with the same plan: the extra words are read
+/// and dropped rather than planned around. It is kept as
+/// `driver/v3d/glslc_reference.zig` and `scripts/spirv-check.sh` hands it
+/// to Khronos' validator with the other seven reference modules, so this
+/// back end is now held against a real compiler's output and not only
+/// against facet's own emitter's.
+pub const LIBRARY_REVISION = 81;
