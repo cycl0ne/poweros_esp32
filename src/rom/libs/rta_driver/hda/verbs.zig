@@ -181,6 +181,22 @@ pub fn formatSet(format: u16) u20 {
     return 0x2_0000 | @as(u20, format);
 }
 
+/// What a converter that leaves the chip as a digital stream does with
+/// it. The first bit is the one that matters: a digital converter passes
+/// nothing at all until it is set, whatever stream and shape the
+/// converter has been given, which is the one thing a digital way out
+/// wants that an analog one does not. The rest say what the samples are
+/// to be called in the status that goes with them.
+pub const digital_get: u20 = 0xf_0d00;
+pub fn digitalSet(bits: u8) u20 {
+    return 0x7_0d00 | @as(u20, bits);
+}
+pub const digital_enable: u8 = 1 << 0;
+pub const digital_validity: u8 = 1 << 1;
+pub const digital_validity_set: u8 = 1 << 2;
+pub const digital_copyright: u8 = 1 << 4;
+pub const digital_not_audio: u8 = 1 << 5;
+
 /// A node's power state, which has to be the working one before it does
 /// anything.
 pub const power_get: u20 = 0xf_0500;
@@ -305,3 +321,75 @@ pub fn dipTransmitSet(bits: u8) u20 {
 }
 /// The packet is sent with every frame.
 pub const dip_transmit_best: u8 = 0xc0;
+
+// --- the display links of one vendor's codec --------------------------------------
+
+/// The vendor whose codec sits in front of its display engine and takes
+/// a link's slots, the speakers its packet names and the ramp of its
+/// converters through verbs of its own. The standard slot and packet
+/// verbs above fall on nothing there: the engine behind the codec builds
+/// the packet itself, out of these and the shape of the samples.
+pub const vendor_amd: u16 = 0x1002;
+
+/// The device of that vendor's whose codec takes the slots one at a time
+/// from revision 3 on - the revision id in the second byte of the root's
+/// `param_revision` - and is told how fast to ramp. Every other codec of
+/// the vendor takes them in pairs, the first channel of a pair naming
+/// both, and has no ramp to set.
+pub const amd_single_device: u16 = 0xaa01;
+pub const amd_single_revision: u32 = 0x0300;
+pub const amd_revision_mask: u32 = 0xff00;
+
+/// Which channel of the stream one of the link's slots carries, and
+/// whether it carries one at all: the channel in the high four bits of
+/// the payload, the slot switched on in the lowest. A slot that is not
+/// switched on carries nothing, whatever the stream holds. The slots'
+/// verbs are not in order: the even ones come first, a verb each, and
+/// the odd ones fourteen verbs on.
+pub fn amdSlotSet(slot: u3, channel: u4) u20 {
+    return amdSlot(0x777, slot) | @as(u20, channel) << 4 | amd_slot_on;
+}
+pub fn amdSlotOff(slot: u3) u20 {
+    return amdSlot(0x777, slot);
+}
+pub fn amdSlotGet(slot: u3) u20 {
+    return amdSlot(0xf77, slot);
+}
+pub const amd_slot_on: u20 = 1 << 0;
+
+fn amdSlot(verb: u12, slot: u3) u20 {
+    const step = @as(u12, slot / 2) + @as(u12, slot % 2) * 0xe;
+    return @as(u20, verb + step) << 8;
+}
+
+/// How the slots are given out: in pairs, or one at a time.
+pub const amd_mode_get: u20 = 0xf_8900;
+pub fn amdModeSet(mode: u8) u20 {
+    return 0x7_8900 | @as(u20, mode);
+}
+pub const amd_mode_paired: u8 = 0;
+pub const amd_mode_single: u8 = 1;
+
+/// Which speakers the link's packet says the channels are for: the
+/// allocation number the packet carries, zero being the front left and
+/// right.
+pub const amd_speakers_get: u20 = 0xf_7100;
+pub fn amdSpeakersSet(allocation: u8) u20 {
+    return 0x7_7100 | @as(u20, allocation);
+}
+
+/// What the packet says about mixing the channels down at the far end:
+/// that it may, at no level shift.
+pub fn amdDownmixSet(bits: u8) u20 {
+    return 0x7_7200 | @as(u20, bits);
+}
+
+/// How fast a converter ramps its sound in when a stream starts and out
+/// when it stops, so that neither is a click. A converter's own register,
+/// not the pin's. Samples of sound take this rate; a stream that is not
+/// sound - coded audio passed through - takes none.
+pub const amd_ramp_get: u20 = 0xf_7000;
+pub fn amdRampSet(rate: u8) u20 {
+    return 0x7_7000 | @as(u20, rate);
+}
+pub const amd_ramp_sound: u8 = 180;

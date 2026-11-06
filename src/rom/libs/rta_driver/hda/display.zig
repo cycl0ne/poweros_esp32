@@ -11,6 +11,16 @@
 //! in which of the link's slots, and the infoframe, which is written a
 //! byte at a time into the pin's packet buffer and then switched on.
 //!
+//! **One vendor's codec is told the same through verbs of its own.** The
+//! codec in front of that vendor's display engine has no packet buffer
+//! and no standard slot verb: the engine builds the infoframe itself out
+//! of the shape of the samples and what the codec was told, and the
+//! codec is told which channel each slot carries - with each slot
+//! switched on, since a slot that is not carries nothing - and which
+//! speakers the packet names, through verbs only it has. Which codec it
+//! is comes from its vendor; whether it takes the slots one at a time or
+//! in pairs, from its device and revision.
+//!
 //! **The far end describes itself**, in the data the display driver's
 //! link left in the pin: its name, how many channels it takes and at
 //! which rates, as a baseline block of the kind a monitor's capability
@@ -146,6 +156,10 @@ fn ratesOf(bits: u8) u32 {
 pub fn prepare(c: *Controller, codec: *codec_file.Codec, output: *const codec_file.Output, channels: u8) void {
     const address = codec.address;
     _ = ask(c, address, output.converter, verbs.channelCountSet(channels));
+    if (codec.vendor == verbs.vendor_amd) {
+        prepareAmd(c, codec, output, channels);
+        return;
+    }
     // Channel n in slot n, which is what the infoframe's allocation of
     // nothing says as well: a link of two channels is the left in the
     // first slot and the right in the second.
@@ -185,6 +199,55 @@ fn infoframe(c: *Controller, codec: *codec_file.Codec, output: *const codec_file
     _ = ask(c, address, output.pin, verbs.dipIndexSet(0));
     for (packet) |byte| _ = ask(c, address, output.pin, verbs.dipDataSet(byte));
     _ = ask(c, address, output.pin, verbs.dipTransmitSet(verbs.dip_transmit_best));
+}
+
+/// The same told to the codec that takes it through verbs of its own:
+/// channel n in slot n with every slot that carries a channel switched on
+/// and the rest switched off, the allocation of nothing - the first
+/// channel left, the second right - and nothing said against mixing
+/// down. The packet that says so at the far end is the engine's to build.
+///
+/// A codec that takes the slots one at a time is put in that mode first
+/// and has its converter's ramp set; one that takes them in pairs has a
+/// verb for every other slot, the pair's first channel naming both.
+fn prepareAmd(c: *Controller, codec: *codec_file.Codec, output: *const codec_file.Output, channels: u8) void {
+    const address = codec.address;
+    const single = codec.device == verbs.amd_single_device and
+        codec.revision & verbs.amd_revision_mask >= verbs.amd_single_revision;
+    _ = ask(c, address, output.pin, verbs.amdDownmixSet(0));
+    var slot: u4 = 0;
+    if (single) {
+        _ = ask(c, address, output.pin, verbs.amdModeSet(verbs.amd_mode_single));
+        while (slot < 8) : (slot += 1) {
+            const at: u3 = @intCast(slot);
+            _ = ask(c, address, output.pin, if (slot < channels) verbs.amdSlotSet(at, slot) else verbs.amdSlotOff(at));
+        }
+        _ = ask(c, address, output.converter, verbs.amdRampSet(verbs.amd_ramp_sound));
+    } else {
+        while (slot < 8) : (slot += 2) {
+            const at: u3 = @intCast(slot);
+            _ = ask(c, address, output.pin, if (slot < channels) verbs.amdSlotSet(at, slot) else verbs.amdSlotOff(at));
+        }
+    }
+    _ = ask(c, address, output.pin, verbs.amdSpeakersSet(0));
+    tellAmd(c, codec, output, single);
+}
+
+/// What the codec answers for the slots it was just told about, read
+/// back. Debug: it is read every time a stream starts on a link.
+fn tellAmd(c: *Controller, codec: *codec_file.Codec, output: *const codec_file.Output, single: bool) void {
+    const address = codec.address;
+    sdk.exec.klog(c.sys, exec.LOG_DEBUG, "rta-hda: pin %d: slots %s (mode %x), the first two %x and %x, speakers %x; converter %d ramps at %x; revision %x\n", .{
+        @as(u32, output.pin),
+        @as([*:0]const u8, if (single) "one at a time" else "in pairs"),
+        ask(c, address, output.pin, verbs.amd_mode_get) orelse 0,
+        ask(c, address, output.pin, verbs.amdSlotGet(0)) orelse 0,
+        ask(c, address, output.pin, verbs.amdSlotGet(1)) orelse 0,
+        ask(c, address, output.pin, verbs.amd_speakers_get) orelse 0,
+        @as(u32, output.converter),
+        ask(c, address, output.converter, verbs.amd_ramp_get) orelse 0,
+        codec.revision,
+    });
 }
 
 /// The packet's header: which packet it is, the version of it this

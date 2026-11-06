@@ -64,7 +64,7 @@ const err = rta.errors;
 const MODULE_NAME = "rta-hda";
 const DRIVER_NAME = "hda";
 const VERSION = 1;
-const REVISION = 4;
+const REVISION = 5;
 const BUILD_DATE = "06.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -806,7 +806,36 @@ fn streamUp(instance: *Instance, asked: *const rta.AudioMode, shape: u16) i32 {
         });
         return err.RTAERR_NO_OUTPUT;
     }
+    // What the converter and the pin were left holding, read back from
+    // the codec rather than assumed: the shape of the samples, which
+    // stream and channel they are taken from, whether a converter that
+    // leaves the chip digitally is passing anything, and what the pin is
+    // driving. A way out that is silent with a stream running is one of
+    // these answering something other than what it was told.
+    tellRoute(instance);
     return err.RTAERR_OK;
+}
+
+/// A line of what the codec answers for the way out a stream was just
+/// started on. Debug: it is read every time a stream starts.
+fn tellRoute(instance: *Instance) void {
+    const sys = instance.sys;
+    const card = instance.card;
+    const codec = instance.codec;
+    const output = instance.output;
+    const shape = controller.verb(&card.hw, codec.address, output.converter, verbs.format_get) orelse 0;
+    const stream = controller.verb(&card.hw, codec.address, output.converter, verbs.stream_channel_get) orelse 0;
+    const digital = controller.verb(&card.hw, codec.address, output.converter, verbs.digital_get) orelse 0;
+    const pin = controller.verb(&card.hw, codec.address, output.pin, verbs.pin_control_get) orelse 0;
+    sdk.exec.klog(sys, exec.LOG_DEBUG, "%s: converter %d holds shape %x, stream %x, digital %x; pin %d drives %x\n", .{
+        MODULE_NAME,
+        @as(u32, output.converter),
+        shape,
+        stream,
+        digital,
+        @as(u32, output.pin),
+        pin,
+    });
 }
 
 /// Everything the stream took given back: the descriptor stopped, the

@@ -195,6 +195,7 @@ file or a station's address in the shell, each title said as it changes
 | `es8311` | the ES8311 codec, and its microphone input |
 | `i2samp` | I2S amplifiers, as the CrowPanel's two speakers |
 | `hdmi` | the VisionFive 2's and the Compute Module 5's HDMI ports, 48000 Hz stereo |
+| `hda` | a PC's high definition audio controllers on PCI: its speakers, its jacks, and HDMI to a monitor's speakers behind an AMD display engine |
 | `uac` | USB speakers and headsets (`DEVS:usb/uac.device`) |
 | `file` | a WAV file, written in time |
 | `null` | in the emulators, an output into nothing that keeps time |

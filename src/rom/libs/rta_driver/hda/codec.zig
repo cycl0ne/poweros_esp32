@@ -99,9 +99,10 @@ pub const Output = struct {
 pub const Codec = struct {
     /// Which codec on the link it is.
     address: u4 = 0,
-    /// What it says it is.
+    /// What it says it is, and which revision of it.
     vendor: u16 = 0,
     device: u16 = 0,
+    revision: u32 = 0,
     /// Its audio function group, which everything below is under. Zero
     /// where it has none, which is a codec with nothing to play through.
     group: u8 = 0,
@@ -119,6 +120,7 @@ pub fn read(c: *Controller, codec: *Codec, address: u4) bool {
     };
     codec.vendor = @truncate(id >> 16);
     codec.device = @truncate(id);
+    codec.revision = ask(c, address, 0, verbs.parameter(verbs.param_revision)) orelse 0;
 
     // The root node's children are the function groups; the audio one is
     // what everything below hangs off.
@@ -340,6 +342,13 @@ pub fn routeOn(c: *Controller, codec: *Codec, output: *const Output) void {
     _ = ask(c, address, codec.group, verbs.powerSet(verbs.power_d0));
     _ = ask(c, address, output.converter, verbs.powerSet(verbs.power_d0));
     unmuteOut(c, codec, output.converter);
+    // A converter that leaves the chip as a digital stream passes nothing
+    // until it is told to, which is asked of the converter itself and of
+    // nothing else on the way. An analog one has no such bit and is not
+    // asked. Whether it is one is the converter's own answer.
+    if (isDigital(c, codec, output.converter)) {
+        _ = ask(c, address, output.converter, verbs.digitalSet(verbs.digital_enable));
+    }
     for (output.path[0..output.path_len]) |step| {
         _ = ask(c, address, step.node, verbs.powerSet(verbs.power_d0));
         const capability = ask(c, address, step.node, verbs.parameter(verbs.param_widget_cap)) orelse continue;
@@ -376,6 +385,9 @@ pub fn routeOn(c: *Controller, codec: *Codec, output: *const Output) void {
 pub fn routeOff(c: *Controller, codec: *Codec, output: *const Output) void {
     const address = codec.address;
     _ = ask(c, address, output.pin, verbs.pinControlSet(0));
+    if (isDigital(c, codec, output.converter)) {
+        _ = ask(c, address, output.converter, verbs.digitalSet(0));
+    }
     _ = ask(c, address, output.converter, verbs.streamChannelSet(0, 0));
     _ = ask(c, address, output.converter, verbs.powerSet(verbs.power_d3));
 }
@@ -385,6 +397,13 @@ pub fn routeOff(c: *Controller, codec: *Codec, output: *const Output) void {
 pub fn feed(c: *Controller, codec: *Codec, output: *const Output, tag: u4, shape: u16) void {
     _ = ask(c, codec.address, output.converter, verbs.formatSet(shape));
     _ = ask(c, codec.address, output.converter, verbs.streamChannelSet(tag, 0));
+}
+
+/// Whether a node leaves the chip as a digital stream, which is what it
+/// says of itself.
+fn isDigital(c: *Controller, codec: *Codec, node: u8) bool {
+    const capability = ask(c, codec.address, node, verbs.parameter(verbs.param_widget_cap)) orelse return false;
+    return capability & verbs.widget_digital != 0;
 }
 
 /// A node's output amplifier opened: unmuted, and set to the step that
