@@ -57,13 +57,14 @@ const controller = @import("controller.zig");
 const Controller = controller.Controller;
 const codec_file = @import("codec.zig");
 const stream_file = @import("stream.zig");
+const display = @import("display.zig");
 const verbs = @import("verbs.zig");
 const err = rta.errors;
 
 const MODULE_NAME = "rta-hda";
 const DRIVER_NAME = "hda";
 const VERSION = 1;
-const REVISION = 2;
+const REVISION = 4;
 const BUILD_DATE = "06.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -708,7 +709,7 @@ fn start(sink: *rta.AudioSink, asked: *const rta.AudioMode, task: *exec.Task, si
     if (busyConverter(instance)) return err.RTAERR_IN_USE;
     instance.signal_mask = signal_mask;
     instance.task = task;
-    const code = streamUp(instance, shape);
+    const code = streamUp(instance, asked, shape);
     if (code != err.RTAERR_OK) streamDown(instance);
     return code;
 }
@@ -737,9 +738,23 @@ fn busyConverter(instance: *Instance) bool {
 /// switched on with the converter told what to play, and the descriptor
 /// set going. It starts on silence, which is what the cleared memory is;
 /// the controller's interrupt was hooked when the controller was found.
-fn streamUp(instance: *Instance, shape: u16) i32 {
+fn streamUp(instance: *Instance, asked: *const rta.AudioMode, shape: u16) i32 {
     const sys = instance.sys;
     const card = instance.card;
+    // A display link is asked what is at the far end of it before
+    // anything is taken for it: a socket with nothing in it is not an
+    // output, and the machine is better off moving to the next one.
+    if (instance.output.display) {
+        const far = display.look(&card.hw, instance.codec, instance.output);
+        if (!far.present) return err.RTAERR_NO_OUTPUT;
+        if (far.described) {
+            sdk.exec.klog(sys, exec.LOG_DEBUG, "%s: the link holds \"%s\", %d channel(s)\n", .{
+                MODULE_NAME, @as([*:0]const u8, @ptrCast(&far.name)), @as(u32, far.channels),
+            });
+            const wanted = verbs.rateBit(asked.rate);
+            if (far.rates != 0 and wanted != 0 and far.rates & wanted == 0) return err.RTAERR_BAD_MODE;
+        }
+    }
     // The buffers and the list that describes them in one block the
     // controller reaches, with room to put the buffers on the boundary
     // the controller wants them on; the list follows them on another,
@@ -774,6 +789,11 @@ fn streamUp(instance: *Instance, shape: u16) i32 {
 
     codec_file.routeOn(&card.hw, instance.codec, instance.output);
     codec_file.feed(&card.hw, instance.codec, instance.output, instance.out.tag, shape);
+    // A link is told how many channels are coming and which slot each
+    // goes in, and sends the packet that says so at the far end.
+    if (instance.output.display) {
+        display.prepare(&card.hw, instance.codec, instance.output, @intCast(asked.channels));
+    }
     _ = codec_file.gainTo(&card.hw, instance.codec, instance.output, instance.gain);
     // Running before it is started: an interrupt that arrives between
     // the two has to find a sink that will answer for it, or an INTx

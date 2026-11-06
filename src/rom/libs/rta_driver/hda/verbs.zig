@@ -233,17 +233,58 @@ pub const pcm_rate_88200: u32 = 1 << 7;
 pub const pcm_rate_96000: u32 = 1 << 8;
 pub const pcm_rate_176400: u32 = 1 << 9;
 pub const pcm_rate_192000: u32 = 1 << 10;
+/// Which of those bits a rate is, so that what a converter says it
+/// takes and what something else says it takes can be held against each
+/// other. Zero for a rate none of them names.
+pub fn rateBit(rate: u32) u32 {
+    return switch (rate) {
+        8_000 => pcm_rate_8000,
+        11_025 => pcm_rate_11025,
+        16_000 => pcm_rate_16000,
+        22_050 => pcm_rate_22050,
+        32_000 => pcm_rate_32000,
+        44_100 => pcm_rate_44100,
+        48_000 => pcm_rate_48000,
+        88_200 => pcm_rate_88200,
+        96_000 => pcm_rate_96000,
+        176_400 => pcm_rate_176400,
+        192_000 => pcm_rate_192000,
+        else => 0,
+    };
+}
+
 pub const pcm_bits_8: u32 = 1 << 16;
 pub const pcm_bits_16: u32 = 1 << 17;
 pub const pcm_bits_20: u32 = 1 << 18;
 pub const pcm_bits_24: u32 = 1 << 19;
 pub const pcm_bits_32: u32 = 1 << 20;
 
+/// Whether anything is plugged into a pin. A pin whose capability asks
+/// for it is triggered first, which has it look rather than answer what
+/// it last saw.
+pub const pin_sense_get: u20 = 0xf_0900;
+pub const pin_sense_trigger: u20 = 0x7_0900;
+pub const pin_sense_present: u32 = 1 << 31;
+/// For a display pin: the data about the far end has arrived.
+pub const pin_sense_described: u32 = 1 << 30;
+
 /// The data a display pin holds about what is at the far end of the
-/// link: how long it is, and a byte of it at a time.
-pub const eld_size: u20 = 0xf_2e00;
+/// link: how long it is - the payload asks for that buffer's size and
+/// not another's - and a byte of it at a time, each answer saying
+/// whether there was anything to read.
+pub const eld_size: u20 = 0xf_2e08;
 pub fn eldByte(at: u8) u20 {
     return 0xf_2f00 | @as(u20, at);
+}
+pub const eld_byte_valid: u32 = 1 << 31;
+pub const eld_byte_data: u32 = 0xff;
+
+/// How many channels a converter sends, less one. A display link is told
+/// this as well as the shape of the samples: the link carries the count
+/// in its own packets, which is not read out of the format.
+pub const channel_count_get: u20 = 0xf_2d00;
+pub fn channelCountSet(channels: u8) u20 {
+    return 0x7_2d00 | @as(u20, channels - 1);
 }
 
 /// Which channels of the stream go to which of a display pin's slots.
