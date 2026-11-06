@@ -13,6 +13,14 @@
 //! own, built in as they are. The machine has no flash: SYS: is the system
 //! disk's DH0:, and the firmware's boot partition carries the kernel
 //! alone.
+//!
+//! And sound: rta.library, the machine's own audio controllers
+//! (rta-hda), the sink that plays into a file, the one that plays into
+//! nothing, and audio.device over them. An audio controller of this
+//! architecture is a function on PCI that the driver finds for itself,
+//! so a machine with one has sound of its own and a machine with none
+//! falls through to the file sink and the null one, and a program that
+//! plays runs either way.
 
 pub const modules = .{
     @import("../../rom/libs/rtg_driver/fbboard/fbboard.zig"),
@@ -21,4 +29,9 @@ pub const modules = .{
     @import("../../disk/libs/pci/pci.zig"),
     @import("../../disk/devs/nvme/nvme.zig"),
     @import("../../disk/devs/handlers/posfs/posfs.zig"),
+    @import("../../rom/libs/rta/rta.zig"),
+    @import("../../rom/libs/rta_driver/hda/hda.zig"),
+    @import("../../rom/libs/rta_driver/null/null.zig"),
+    @import("../../rom/libs/rta_driver/file/file.zig"),
+    @import("../../rom/devs/audio/audio.zig"),
 };
