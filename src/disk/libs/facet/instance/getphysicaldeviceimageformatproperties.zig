@@ -22,7 +22,8 @@ const _image = @import("../image/_image.zig");
 /// INPUTS:
 /// - `physical` - a physical device EnumeratePhysicalDevices listed.
 /// - `format` - the format the image would be made with.
-/// - `image_type` - `2d` or `3d`; `1d` has no images.
+/// - `image_type` - `1d`, `2d` or `3d`; a `1d` image is a texture of
+///   one row, and asks for height and depth 1 (since 1.86).
 /// - `tiling` - `optimal` or `linear`.
 /// - `usage` - the IMAGE_USAGE_* bits it would be made with.
 /// - `flags` - the IMAGE_CREATE_* flags, CUBE_COMPATIBLE among them.
@@ -108,10 +109,18 @@ pub fn GetPhysicalDeviceImageFormatProperties(base: *FacetBase, physical: *facet
     properties.* = .{};
     const device = _objects.of(PhysicalDevice, physical);
     const volume = image_type == .@"3d";
+    // A 1D image is a texture of one row, so its height is 1 and its
+    // width comes from its own limit (since 1.86).
+    const line = image_type == .@"1d";
     const cube = flags & facet.IMAGE_CREATE_CUBE_COMPATIBLE != 0;
     // What the device said its images may be (GetPhysicalDeviceProperties).
     const limits = &device.properties.limits;
-    const side: u32 = if (volume) limits.max_image_dimension_3d else limits.max_image_dimension_2d;
+    const side: u32 = if (volume)
+        limits.max_image_dimension_3d
+    else if (line)
+        limits.max_image_dimension_1d
+    else
+        limits.max_image_dimension_2d;
     // The largest image of the shape asked about, written as CreateImage
     // would be asked for it: that extent, one level, and the fewest
     // layers the shape has - the six a cube wants, the depth a 3D image's
@@ -122,7 +131,7 @@ pub fn GetPhysicalDeviceImageFormatProperties(base: *FacetBase, physical: *facet
         .flags = flags,
         .image_type = image_type,
         .format = format,
-        .extent = .{ .width = side, .height = side, .depth = if (volume) side else 1 },
+        .extent = .{ .width = side, .height = if (line) 1 else side, .depth = if (volume) side else 1 },
         .mip_levels = 1,
         .array_layers = if (cube and !volume) 6 else 1,
         .samples = 1,

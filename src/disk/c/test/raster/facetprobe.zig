@@ -2001,7 +2001,25 @@ fn queryChecks(probe: *Probe) void {
     // Shapes there is no image of at all.
     probe.check(fb.GetPhysicalDeviceImageFormatProperties(probe.physical, .d16_unorm, .@"2d", .linear, facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT, 0, &shape) == .error_format_not_supported, "a depth image in rows refused");
     probe.checkEqual(0, shape.max_mip_levels, "and nothing written for it");
-    probe.check(fb.GetPhysicalDeviceImageFormatProperties(probe.physical, .b8g8r8a8_unorm, .@"1d", .optimal, sampled, 0, &shape) == .error_format_not_supported, "a 1D image refused");
+
+    // A 1D image, which is an image since 1.86: a texture of one row, as
+    // wide as a 2D image, and its levels halve that width alone - which
+    // is Vulkan's own rule for one. The 1D view types are its own and the
+    // 2D ones are not, a 2D image a row high being a different image.
+    probe.check(fb.GetPhysicalDeviceImageFormatProperties(probe.physical, .b8g8r8a8_unorm, .@"1d", .optimal, sampled, 0, &shape) == .success, "a 1D image is a shape");
+    probe.checkEqual(limits.max_image_dimension_1d, shape.max_extent.width, "as wide as the limit says");
+    probe.checkEqual(1, shape.max_extent.height, "one row high");
+    probe.checkEqual(1, shape.max_extent.depth, "and one deep");
+    var row: ?*facet.Image = null;
+    if (fb.CreateImage(device, &.{ .image_type = .@"1d", .format = .b8g8r8a8_unorm, .extent = .{ .width = 256, .height = 1 }, .usage = sampled }, &row) == .success) {
+        var row_view: ?*facet.ImageView = null;
+        probe.check(fb.CreateImageView(device, &.{ .image = row.?, .view_type = .@"1d", .format = .b8g8r8a8_unorm, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_COLOR } }, &row_view) == .success, "a 1D view of it made");
+        fb.DestroyImageView(device, row_view);
+        var flat_view: ?*facet.ImageView = null;
+        probe.check(fb.CreateImageView(device, &.{ .image = row.?, .view_type = .@"2d", .format = .b8g8r8a8_unorm, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_COLOR } }, &flat_view) == .error_format_not_supported, "and a 2D view of it refused");
+        fb.DestroyImage(device, row);
+    } else probe.check(false, "a 1D image made");
+    probe.check(fb.CreateImage(device, &.{ .image_type = .@"1d", .format = .b8g8r8a8_unorm, .extent = .{ .width = 256, .height = 2 }, .usage = sampled }, &row) == .error_format_not_supported, "a 1D image two rows high refused");
     probe.check(fb.GetPhysicalDeviceImageFormatProperties(probe.physical, .b8g8r8a8_unorm, .@"2d", .optimal, sampled | facet.IMAGE_USAGE_COLOR_ATTACHMENT, 0, &shape) == .error_format_not_supported, "an attachment that is sampled too refused");
 
     // What the query says is what CreateImage does.

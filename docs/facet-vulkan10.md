@@ -116,7 +116,7 @@ refinement - finish the compiler, no fallback - moves onto the main line.
 
 **Items 2, 3, 4, 5 and 7 were done in revision 1.80, item 78 in 1.81,
 items 14, 16, 49 and 77 in 1.82, item 52's half of two in 1.83, item 18
-in 1.84 and item 19 in 1.85.** Each
+in 1.84, item 19 in 1.85 and item 21 in 1.86.** Each
 carries a *Done* note below saying what was actually built and where the
 item's own description turned out to be wrong - and several did. Things
 found while doing them became the items at the end of the list: 77 and 78
@@ -588,6 +588,31 @@ The V3D's shader record holds exactly one combined image sampler as an optional 
 *limits / images* &mdash; conformance-blocking, medium
 
 After: The limits reshape
+
+**Done in 1.86, and smaller than this said.** A 1D image is a texture one
+row high, and that is not a shortcut: the layout this library keeps halves
+the longer side alone and allows as many levels as halving it gives
+(`texture.Sizes.of`), which for a texture of height 1 is
+floor(log2(width)) + 1 - Vulkan's own rule for a 1D image. So the levels,
+the layers, the copies, the memory requirements and the sampling are the
+ones every texture already had, and `maxImageDimension1D` is the 2D width,
+8192. No new image kind and no 1D sampler path were needed.
+
+What did have to be said is which image is which. `Image.line` tells a 1D
+image from a 2D image one row high, because Vulkan makes them different
+images however alike their texels lie: each refuses the other's view
+types. `ImageViewType` gained `1d_array` at 4, which Vulkan has and this
+enum was missing. A 1D image is held to a height and a depth of 1, and
+CUBE_COMPATIBLE is refused for one.
+
+One trap worth recording. GetPhysicalDeviceImageFormatProperties shapes
+its probe image with height = width, so it would have gone on refusing 1D
+images after they existed, and `maxImageDimension1D` would have been a
+number with nothing behind it - the test that asserted the refusal would
+have kept passing and said so. It shapes one row now.
+
+`maxImageDimensionCube` was already met: a cube is six layers of a square
+2D image, so the 2D width governs it, which is what this item suspected.
 
 facet has no 1D images at all: shapeFor refuses any image_type that is not 2d or 3d in one line, so maxImageDimension1D would be 0 against a required 4096, and no Vulkan 1.0 feature makes 1D images optional. The spec's mandatory format tables are also scoped "for every VkImageType unless otherwise noted", and only the depth/stencil and compressed tables are noted, so every mandatory colour format currently fails the table for 1D. Needs a 1D image kind (rows of one line, or 2D of height 1), the 1D and 1D_ARRAY view types, a 1D sampler path, and both limit fields — a cube is governed today by the 2D limit with nothing said.
 

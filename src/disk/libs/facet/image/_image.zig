@@ -61,6 +61,12 @@ pub const Image = struct {
     layer_bytes: u64 = 0,
     /// A 3D image: its slices are reached by z, not by layer.
     volume: bool = false,
+    /// A 1D image, which this library keeps as a texture of one row: its
+    /// height and depth are 1 and its levels halve its width alone. The
+    /// flag is what tells it from a 2D image a row high, which is a
+    /// different thing to Vulkan and takes different view types.
+    /// (Since 1.86.)
+    line: bool = false,
     /// IMAGE_CREATE_CUBE_COMPATIBLE.
     cube: bool = false,
     /// IMAGE_CREATE_PACKED_TEXELS: an 8888 texel kept in the 32 bits of
@@ -335,7 +341,16 @@ pub fn shapeOf(device: *Device, info: *const facet.ImageCreateInfo) ?Image {
 pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCreateInfo) ?Image {
     const extent = info.extent;
     const volume = info.image_type == .@"3d";
-    if ((info.image_type != .@"2d" and !volume) or info.samples != 1) return null;
+    // A 1D image is a texture of one row (since 1.86). Vulkan asks that
+    // its height and depth be 1, and the layout this library keeps halves
+    // the longer side alone, so such a texture's levels come to
+    // floor(log2(width)) + 1 of themselves (`texture.Sizes.of`) - which
+    // is Vulkan's own rule for a 1D image. Nothing else about it is
+    // special: it is sampled, copied and laid out as any texture of its
+    // width is.
+    const line = info.image_type == .@"1d";
+    if ((info.image_type != .@"2d" and !volume and !line) or info.samples != 1) return null;
+    if (line and (extent.height != 1 or extent.depth != 1)) return null;
     const layers = if (volume) extent.depth else info.array_layers;
     if (layers == 0 or (!volume and extent.depth != 1)) return null;
     // A 3D image's depth is its layers, and may be any number since 1.46;
@@ -343,7 +358,7 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
     if (volume and (info.array_layers != 1 or layers > _instance.max_image_dimension_3d)) return null;
     if (layers > _instance.max_image_array_layers) return null;
     const cube = info.flags & facet.IMAGE_CREATE_CUBE_COMPATIBLE != 0;
-    if (cube and (volume or layers < 6 or extent.width != extent.height)) return null;
+    if (cube and (volume or line or layers < 6 or extent.width != extent.height)) return null;
     // A texel kept smaller than the colour it reads as, on a device that
     // keeps one (`Capabilities.small_texels`, since 1.48): an
     // 8888 texel in the 32 bits of its word rather than spread over 64,
@@ -407,6 +422,7 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
         .given_format = info.format,
         .layers = layers,
         .volume = volume,
+        .line = line,
         .cube = cube,
         .packed_texels = packed_texels,
         .width = extent.width,

@@ -6031,7 +6031,8 @@ facet.library/WaitForFences
    INPUTS
 	- `physical` - a physical device EnumeratePhysicalDevices listed.
 	- `format` - the format the image would be made with.
-	- `image_type` - `2d` or `3d`; `1d` has no images.
+	- `image_type` - `1d`, `2d` or `3d`; a `1d` image is a texture of
+	  one row, and asks for height and depth 1 (since 1.86).
 	- `tiling` - `optimal` or `linear`.
 	- `usage` - the IMAGE_USAGE_* bits it would be made with.
 	- `flags` - the IMAGE_CREATE_* flags, CUBE_COMPATIBLE among them.

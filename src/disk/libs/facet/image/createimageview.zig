@@ -110,8 +110,13 @@ pub fn CreateImageView(base: *FacetBase, device: *facet.Device, info: *const fac
     const layers = if (range.layer_count == facet.REMAINING) image.layers - range.base_array_layer else range.layer_count;
     if (layers == 0 or layers > image.layers - range.base_array_layer) return .error_format_not_supported;
     switch (info.view_type) {
-        .@"2d" => if (layers != 1 or image.volume) return .error_format_not_supported,
-        .@"2d_array" => if (image.volume) return .error_format_not_supported,
+        // A 1D image takes the 1D view types and no other, and a 2D image
+        // a row high is not one: the two are different kinds of image to
+        // Vulkan however alike their texels lie (since 1.86).
+        .@"1d" => if (layers != 1 or !image.line) return .error_format_not_supported,
+        .@"1d_array" => if (!image.line) return .error_format_not_supported,
+        .@"2d" => if (layers != 1 or image.volume or image.line) return .error_format_not_supported,
+        .@"2d_array" => if (image.volume or image.line) return .error_format_not_supported,
         .cube => if (!image.cube or layers != 6) return .error_format_not_supported,
         // Cubes one after another: six layers to each, and the first layer
         // of the view is the first face of a cube (since 1.46).

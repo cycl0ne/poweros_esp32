@@ -8220,6 +8220,138 @@ const LayerScene = struct {
     }
 };
 
+test "1D images: a texture of one row, written and read back, sampled, and the view types that are and are not its own" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const _img = @import("../image/_image.zig");
+
+    // Vulkan's floor, and no feature of Vulkan 1.0 makes 1D images
+    // optional: 4096 at least. It was 0 until 1.86, because
+    // CreateImage took `2d` and `3d` only (item 21).
+    var properties: facet.PhysicalDeviceProperties = undefined;
+    fb.GetPhysicalDeviceProperties(bench.physical, &properties);
+    try testing.expect(properties.limits.max_image_dimension_1d >= 4096);
+
+    const width = 8;
+    const line = try bench.bareImage(.{
+        .image_type = .@"1d",
+        .format = .b8g8r8a8_unorm,
+        .extent = .{ .width = width, .height = 1 },
+        .usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST | facet.IMAGE_USAGE_TRANSFER_SRC,
+    }, false);
+    const made = _objects.of(_img.Image, line);
+    try testing.expect(made.line);
+    try testing.expectEqual(@as(u32, 1), made.height);
+    try testing.expectEqual(@as(u32, 1), made.layers);
+
+    // A height or a depth that is not 1 is no 1D image, and nor is a
+    // width of 0 or one past the limit.
+    for ([_]facet.ImageCreateInfo{
+        .{ .image_type = .@"1d", .format = .b8g8r8a8_unorm, .extent = .{ .width = width, .height = 2 }, .usage = facet.IMAGE_USAGE_SAMPLED },
+        .{ .image_type = .@"1d", .format = .b8g8r8a8_unorm, .extent = .{ .width = width, .height = 1, .depth = 2 }, .usage = facet.IMAGE_USAGE_SAMPLED },
+        .{ .image_type = .@"1d", .format = .b8g8r8a8_unorm, .extent = .{ .width = 0, .height = 1 }, .usage = facet.IMAGE_USAGE_SAMPLED },
+        .{ .image_type = .@"1d", .format = .b8g8r8a8_unorm, .extent = .{ .width = properties.limits.max_image_dimension_1d + 1, .height = 1 }, .usage = facet.IMAGE_USAGE_SAMPLED },
+    }) |info| {
+        var refused: ?*facet.Image = null;
+        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &info, &refused));
+        try testing.expect(refused == null);
+    }
+
+    // The 1D view types are its own, and the 2D ones are not: a 1D image
+    // and a 2D image one row high are different images to Vulkan however
+    // alike their texels lie.
+    const view = try bench.viewOf(.{ .image = line, .view_type = .@"1d", .format = .b8g8r8a8_unorm, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_COLOR } });
+    for ([_]facet.ImageViewType{ .@"2d", .@"2d_array", .@"3d", .cube }) |kind| {
+        var refused: ?*facet.ImageView = null;
+        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImageView(device, &.{ .image = line, .view_type = kind, .format = .b8g8r8a8_unorm, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_COLOR } }, &refused));
+        try testing.expect(refused == null);
+    }
+    // And the other way about: a 2D image a row high takes no 1D view.
+    const flat = try bench.bareImage(.{
+        .format = .b8g8r8a8_unorm,
+        .extent = .{ .width = width, .height = 1 },
+        .usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST,
+    }, false);
+    try testing.expect(!_objects.of(_img.Image, flat).line);
+    for ([_]facet.ImageViewType{ .@"1d", .@"1d_array" }) |kind| {
+        var refused: ?*facet.ImageView = null;
+        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImageView(device, &.{ .image = flat, .view_type = kind, .format = .b8g8r8a8_unorm, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_COLOR } }, &refused));
+        try testing.expect(refused == null);
+    }
+
+    // Eight texels in, through the same CmdCopyBufferToImage any image
+    // takes, and eight out again.
+    const bytes = width * 4;
+    const staging, const staging_bytes = try bench.buffer(bytes, facet.BUFFER_USAGE_TRANSFER_SRC);
+    const back, const back_bytes = try bench.buffer(bytes, facet.BUFFER_USAGE_TRANSFER_DST);
+    const texels: [*]u32 = @ptrCast(@alignCast(staging_bytes));
+    for (0..width) |k| texels[k] = 0xFF00_0000 | @as(u32, @intCast(k)) * 0x0011_0000 | @as(u32, @intCast(width - k)) * 0x0000_0011;
+    @memset(back_bytes[0..bytes], 0);
+    const region = facet.BufferImageCopy{ .image_extent = .{ .width = width, .height = 1 } };
+    const commands = try bench.record();
+    fb.CmdCopyBufferToImage(commands, staging, line, .transfer_dst_optimal, 1, @ptrCast(&region));
+    fb.CmdCopyImageToBuffer(commands, line, .transfer_src_optimal, back, 1, @ptrCast(&region));
+    try bench.submit();
+    const read: [*]const u32 = @ptrCast(@alignCast(back_bytes));
+    for (0..width) |k| try testing.expectEqual(texels[k], read[k]);
+
+    // And the row is the texture a sample reads: the view's own texels,
+    // texel by texel, and a sample across the middle of each.
+    const row = &_objects.of(_img.ImageView, view).texels;
+    try testing.expectEqual(@as(u32, width), row.width(0));
+    try testing.expectEqual(@as(u32, 1), row.height(0));
+    for (0..width) |k| {
+        try testing.expectEqual(texels[k], row.colorAt(0, 0, @intCast(k), 0));
+        const u = (@as(f32, @floatFromInt(k)) + 0.5) / width;
+        try testing.expectEqual(texels[k], row.sampleLayer(.{ .format = .argb8888, .filter = .nearest, .address = .clamp }, 0, 0, u, 0.5));
+    }
+
+    // Levels halve the width alone, which is Vulkan's rule for a 1D
+    // image and falls out of the layout this library keeps: eight texels
+    // across gives four levels, and nine would be refused.
+    const levelled_width = 8;
+    const levelled = try bench.bareImage(.{
+        .image_type = .@"1d",
+        .format = .b8g8r8a8_unorm,
+        .extent = .{ .width = levelled_width, .height = 1 },
+        .mip_levels = 4,
+        .usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST,
+    }, false);
+    const stack = try bench.viewOf(.{ .image = levelled, .view_type = .@"1d", .format = .b8g8r8a8_unorm, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_COLOR } });
+    const levels = &_objects.of(_img.ImageView, stack).texels;
+    for (0..4) |lod| {
+        try testing.expectEqual(@as(u32, levelled_width) >> @intCast(lod), levels.width(@intCast(lod)));
+        try testing.expectEqual(@as(u32, 1), levels.height(@intCast(lod)));
+    }
+
+    // Layers of rows, and the 1D array view type they take.
+    const stacked = try bench.bareImage(.{
+        .image_type = .@"1d",
+        .format = .b8g8r8a8_unorm,
+        .extent = .{ .width = width, .height = 1 },
+        .array_layers = 3,
+        .usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST,
+    }, false);
+    const rows = try bench.viewOf(.{ .image = stacked, .view_type = .@"1d_array", .format = .b8g8r8a8_unorm, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_COLOR, .layer_count = facet.REMAINING } });
+    try testing.expectEqual(@as(u32, 3), _objects.of(_img.ImageView, rows).layer_count);
+    // One layer is not an array of them, and a cube is no 1D image.
+    var refused: ?*facet.ImageView = null;
+    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImageView(device, &.{ .image = stacked, .view_type = .@"1d", .format = .b8g8r8a8_unorm, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_COLOR, .layer_count = facet.REMAINING } }, &refused));
+    try testing.expect(refused == null);
+    var no_cube: ?*facet.Image = null;
+    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{
+        .flags = facet.IMAGE_CREATE_CUBE_COMPATIBLE,
+        .image_type = .@"1d",
+        .format = .b8g8r8a8_unorm,
+        .extent = .{ .width = 1, .height = 1 },
+        .array_layers = 6,
+        .usage = facet.IMAGE_USAGE_SAMPLED,
+    }, &no_cube));
+    try testing.expect(no_cube == null);
+}
+
 test "textures of layers: arrays, cube maps, 3D, copied a layer at a time; compressed and float ones sampled through a form of another format" {
     var bench = try Bench.up();
     defer bench.down();

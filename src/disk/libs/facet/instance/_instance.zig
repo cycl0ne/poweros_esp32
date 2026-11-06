@@ -434,10 +434,10 @@ pub const max_draw_vertices = 1 << 20;
 /// that is what this says.
 pub const limits: facet.PhysicalDeviceLimits = .{
     // --- images, and the texels a buffer may hold ---
-    // There are no 1D images: CreateImage takes `2d` and `3d` only
-    // (image/_image.zig), so there is no width to report. Vulkan asks for
-    // 4096 (item 21).
-    .max_image_dimension_1d = 0,
+    // A 1D image is a texture of one row (since 1.86, item 21), and the
+    // row is as wide as a 2D image: the same layout holds it, and its
+    // levels halve the width alone.
+    .max_image_dimension_1d = max_image_dimension,
     .max_image_dimension_2d = max_image_dimension,
     .max_image_dimension_3d = max_image_dimension_3d,
     // A cube is six layers of a square 2D image, so its side is the 2D side.

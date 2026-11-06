@@ -1508,4 +1508,43 @@ pub const LIBRARY_VERSION = 1;
 /// storage in one set, allocates a set from it and reads back that all
 /// twelve slots were numbered 1 to 12: with the old cap the last ten said
 /// "not shifted" instead.
-pub const LIBRARY_REVISION = 85;
+///
+/// 86: **1D images, which are textures of one row.**
+///
+/// `shapeFor` refused any `image_type` but `2d` and `3d` in one line, so
+/// facet had no 1D images at all, `maxImageDimension1D` read 0 against a
+/// required 4096, and no feature of Vulkan 1.0 makes them optional. The
+/// mandatory format tables are scoped "for every VkImageType unless
+/// otherwise noted", and only the depth/stencil and compressed tables are
+/// noted, so every mandatory colour format failed its table for 1D. Item
+/// 21 of docs/facet-vulkan10.md.
+///
+/// A 1D image is a texture one row high. That is not a shortcut: the
+/// layout this library keeps halves the longer side alone and allows as
+/// many levels as halving it gives (`texture.Sizes.of`), which comes to
+/// floor(log2(width)) + 1 for a texture of height 1 - Vulkan's own rule
+/// for a 1D image. So the levels, the layers, the copies, the memory
+/// requirements and the sampling are the ones every texture already has,
+/// and `max_image_dimension_1d` is the 2D width, 8192.
+///
+/// What had to be said is which image is which. `Image.line` tells a 1D
+/// image from a 2D image one row high, because Vulkan makes them
+/// different images however alike their texels lie: the 1D view types are
+/// the one's and the 2D view types are the other's, and each refuses the
+/// other's. `ImageViewType` gained `1d_array` at 4, which Vulkan has and
+/// this enum was missing. A 1D image is held to a height and a depth of
+/// 1, and `IMAGE_CREATE_CUBE_COMPATIBLE` is refused for one.
+///
+/// GetPhysicalDeviceImageFormatProperties shaped its probe image with
+/// height = width, so it would have gone on refusing 1D images after they
+/// existed and the limit would have been a number with nothing behind it.
+/// It shapes one row now and answers from `max_image_dimension_1d`.
+///
+/// The test writes eight texels in through CmdCopyBufferToImage and reads
+/// them back out through CmdCopyImageToBuffer, then reads the view's own
+/// texture texel by texel and samples across the middle of each; it holds
+/// the four view types a 1D image refuses and the two a 2D image refuses,
+/// the levels of a 1D image with several, a 1D array and its view type,
+/// and the four shapes that are not 1D images. facetprobe, which asserted
+/// "a 1D image refused", asserts the shape and the view rules instead.
+pub const LIBRARY_REVISION = 86;

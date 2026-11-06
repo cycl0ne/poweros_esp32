@@ -1345,6 +1345,8 @@ pub const ImageViewType = enum(u32) {
     @"2d" = 1,
     @"3d" = 2,
     cube = 3,
+    /// The layers of a 1D image, one row each (since 1.86).
+    @"1d_array" = 4,
     @"2d_array" = 5,
     /// Cubes one after another, six layers to each: the view's layers are a
     /// multiple of six and its first a multiple of six, for

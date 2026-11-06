@@ -888,7 +888,17 @@ test "the three device queries: the largest image of a shape, the render area's 
     properties = .{ .max_mip_levels = 9 };
     try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(physical, .d16_unorm, .@"2d", .linear, facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT, 0, &properties));
     try testing.expectEqual(@as(u32, 0), properties.max_mip_levels);
-    try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"1d", .optimal, sampled, 0, &properties));
+    // A 1D image is an image here since 1.86: a texture of one row, as
+    // wide as a 2D image and with the levels halving that width alone,
+    // which is Vulkan's own rule for one (item 21).
+    try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"1d", .optimal, sampled, 0, &properties));
+    var limits: facet.PhysicalDeviceProperties = undefined;
+    fb.GetPhysicalDeviceProperties(physical, &limits);
+    try testing.expect(limits.limits.max_image_dimension_1d >= 4096);
+    try testing.expectEqual(limits.limits.max_image_dimension_1d, properties.max_extent.width);
+    try testing.expectEqual(@as(u32, 1), properties.max_extent.height);
+    try testing.expectEqual(@as(u32, 1), properties.max_extent.depth);
+    try testing.expectEqual(std.math.log2_int(u32, limits.limits.max_image_dimension_1d) + 1, properties.max_mip_levels);
     // A colour attachment that is sampled as well is no image here.
     try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"2d", .optimal, sampled | facet.IMAGE_USAGE_COLOR_ATTACHMENT, 0, &properties));
     // And a format nothing is made of.
