@@ -279,15 +279,31 @@ intention:
   else - an add, a texel against a texel - is the same instruction
   against a 1 the program holds as a uniform like any other float of its
   own (`plain`, `one`).
-- That 1 is loaded with the varyings and not where it is first wanted,
-  because where it is first wanted is past the splice and no
-  hand-written program reads a uniform there. So `wantsOne` is a
-  pre-pass over the steps, and `fuses` - which says whether a multiply
-  reads a half in its own breath - is shared between it and the plan, so
-  the two cannot drift and leave the program asking for a uniform past
-  the splice. `wantsOne` may say yes where the plan then finds a fusion
-  for every read: a uniform loaded and not used costs one instruction,
-  and the other way round costs what nobody here knows.
+- **Where a program samples, every uniform is loaded with the
+  varyings** - the 1 and the program's own floats alike - and not where
+  it is first wanted. The splice falls inside such a program's body, so
+  a float first wanted after the texel would be an `ldunifrf` in the
+  last thread section, and no hand-written program reads the stream
+  there: `flat_code` takes both of its uniforms before `last_section`,
+  and all five sampling programs take their two `wrtmuc` before it.
+  `sound` holds every compiled program to it, so it is a checked rule
+  and not a comment. For the 1 in particular, `wantsOne` is a pre-pass
+  over the steps and `fuses` - which says whether a multiply reads a
+  half in its own breath - is shared between it and the plan, so the two
+  cannot drift; `wantsOne` may say yes where the plan then fuses every
+  read, and a uniform loaded and not used costs one instruction where
+  the other way round costs what nobody here knows.
+
+  A program that does **not** sample keeps the lazy loads: its splice is
+  the last thing before the colour, nothing can fall past it, and
+  reading a float where it is wanted is what lets eight varyings and
+  four floats of its own fit ten registers. The cost of the eager loads
+  is registers held across the sample, so a sampling program with a vec4
+  varying and a vec4 of its own beside the texel wants eleven and is
+  refused - the cores draw it and the picture is right. Refusing every
+  sampling program with a float of its own would have been the other
+  safe answer; it would have lost the common one, a texture tinted by a
+  constant, which fits.
 - Latency is a readiness per register (`Work.ready`), not one constant. A
   value an instruction computed may be read by the instruction after it.
   A value a signal brings has to be waited out: a uniform six
@@ -298,6 +314,15 @@ intention:
   on this board). `wait` pays whatever is owed in `nop`s before the
   instruction that wants the register, so a plan that is long enough
   already costs nothing.
+- A decoration's literal, a `DescriptorSet` and a `Binding` are the
+  module's own numbers, so each is held against the table that keeps it
+  before it is stored: `none` is 0xFFFF, and a literal of exactly 65535
+  would otherwise be read back as "never decorated"
+  (`Error.Numbered`). How many samplers a module *declares* is this back
+  end's table and not the device's limit - the device can do one
+  *sample*, and a module may declare sixteen and sample one - so that
+  has a refusal of its own (`Error.Declared`), and a log line can tell a
+  bound another build could raise from a limit no build can.
 - Three things the source does not settle, paid for rather than guessed:
   how long an `ldunifrf` is before its register may be read, how long an
   `ldtmu` is, and what the hardware makes of a program that reads fewer
@@ -346,6 +371,22 @@ Each rung is a thing that can fail on its own, cheapest first:
 4. **The generated function against the fixed form.** The same scene
    through `shader.smooth` with pre-scaled planes and through the
    generated function with unscaled ones, pixel for pixel, on the host.
+   For the sampler family, against `shader.textured` over 289 planes:
+   **equal, bit for bit** at the nearest texel, and within two of 255
+   where it mixes. The nearest case is held as equality and not as
+   nearness on purpose - the fixed form picks its texel in 1/256ths and
+   the generated one in floats, scaling by 256 is exact in binary, and a
+   byte through `bytesOf(b / 255)` comes back as that byte for all 256 -
+   so a rounding that crept into either would be seen. The mix cannot be
+   exact: `sampleLayer` mixes across and then down, rounding at each
+   step, where the graph takes the result out into floats and back.
+
+   This rung did not exist for a sampling graph until 1.78, and not
+   because nobody had written it: `ir.Fragment(...).function` **did not
+   compile** for a graph with a `.sample` op, and no test had found out,
+   because every sampling graph in the tree had been asked only for its
+   `.words`. A lazy declaration nothing instantiates is a declaration
+   nothing checks.
 5. **The QPU words against the hand-written program.** `compile.zig`'s
    output for the interpolated colour against `qpu.color_fragment`,
    instruction for instruction, on the host - plus the structural checks
@@ -364,6 +405,23 @@ Each rung is a thing that can fail on its own, cheapest first:
    test. Run on the CM5: the interpolated colour, a colour of its own from
    four uniforms, and a colour dimmed by a fifth varying - 0 wrong of
    866813, 902720 and 885760 pixels, about 750 us a frame each.
+
+   And, since 1.78, the two sampling programs: a texture drawn as it
+   comes, one texel to a pixel over a 256x256 image, and that texture
+   times the colour the vertices carry over `modulateTest`'s own
+   geometry. **0 wrong of 65536 and of 4096 pixels, and 0 at worst** -
+   not within a step but exactly the texel, which is what a NEAREST
+   sample of a byte texture through half-floats comes to and what the
+   hand-written programs already got. 726 and 725 us.
+
+   The modulated case is held to `qpu.texture_color_fragment.code` word
+   for word *before* the draw, and the draw is skipped on a mismatch: a
+   wrong instruction in a program the TMU is waiting on hangs the
+   renderer, which costs the display and wants a power cycle. The
+   textured case is held to the hand-written program's length only,
+   because this allocator takes the lowest free registers and puts the
+   texel in rf6/rf7 where that program's shared `sample_end` fixes
+   rf10/rf11; rung 5 is where those words are pinned.
 7. **The board, in the library.** `C:test/FacetProbe`, `FacetBoth` on both
    devices, `FacetCube CHECK`, `FacetMany` for the draw time. Run on the
    CM5 at 1.76: FacetProbe 726 checks and none failed, FacetCube `CHECK`
@@ -440,13 +498,14 @@ build for anyone without SPIRV-Tools, glslc or a Vulkan driver.
 | 8 | rung 8: `scripts/vulkan-check.sh`, facet's modules through a driver that has never seen facet | - |
 | 9 | the sampler family, the host half: `compile.zig` compiles a module that samples, rung 5 against the two hand-written programs it answers, rung 8 on this PC's two drivers | - |
 | 10 | the sampler family, the draw half: the TMU's two configuration words out of the descriptor set the module names, and the magenta where there is nothing there | 1.77 |
-| 11 | the rest, a form a family at a time - discard next, since `OpKill` is what sends most of the draws that are left to the cores | - |
+| 11 | the family held to the board and to eight reviews: rungs 4, 6 and 7 over a generated program that samples, and the six defects they found | 1.78 |
+| 12 | the rest, a form a family at a time - discard next, since `OpKill` is what sends most of the draws that are left to the cores | - |
 
 Step 6 changes nothing a program can see - `compile.zig` is reached from
 its own host tests and from nowhere else yet - so it is not a revision.
 The driver begins to compile in step 7, and that is.
 
-Steps 1 to 9 are done: rungs 1 to 5 in `./zig build test`, rungs 6 and 7
+Steps 1 to 11 are done: rungs 1 to 5 in `./zig build test`, rungs 6 and 7
 on the CM5 and rung 8 on this PC's two drivers, as the ladder above
 records.
 
@@ -460,14 +519,26 @@ sampling program, and the draw turns the set and binding the module
 named into the TMU's two words, or draws the magenta where there is
 nothing there.
 
-What the family has **not** had is the board. Rungs 6 and 7 have never
-run over a generated program that samples: no picture on the CM5 has yet
-been drawn by one. Until they have, step 10 is written and not proven,
-and the only evidence the generated sampling programs are right is that
-they are the hand-written ones instruction for instruction (rung 5) and
-that two desktop drivers draw their SPIR-V as the arithmetic says (rung
-8). What is left after that is step 11, which is the long one - every
-fragment form the fixed kinds cover, taken a family at a time.
+Step 11 is where the family stopped being written and started being
+proven. The board draws it: `v3dtest GENERATED`'s two sampling cases are
+0 wrong of 65536 and 4096 pixels and 0 at worst, `FacetProbe` is 726
+checks and 0 failed, and `FacetCube CHECK` is as alike as it was. Rung 4
+runs at last, which took fixing a function that had never compiled, and
+rung 8 draws the same two modules with on two desktop drivers.
+
+Eight adversarial reviews of the back end came between, and found six
+defects - three of them a wrong picture reachable from a module a
+compiler writes, one a panic on an untrusted module, two refusals of
+words this device can run. Three reviews converged on the same one. The
+file also both forbade a uniform past the thread switch and emitted up
+to four, which is now one rule and a checked one. What `sound` reads off
+every compiled program grew by two invariants as a result, so the next
+two of that kind are caught without a test having to name them.
+
+What is left is step 12, the long one: every fragment form the fixed
+kinds cover, taken a family at a time. Discard is next, and it is the
+first that has no hand-written QPU program to be held against - so rung
+5 has nothing to say about it, and rungs 4, 6 and 8 carry it alone.
 
 Steps 2 to 5 are the library's side and are provable on the host. Step 6
 is where the days go. `facet-todo.md` section 4 says months for the whole
