@@ -802,3 +802,171 @@ pub fn insideTest(scene: *Scene) i32 {
     };
     return tally.report(scene.dl, "inside", scene.took_us);
 }
+
+// --- what the back end compiles ----------------------------------------------
+
+const compile = v3d.compile;
+const ir = sdk.facet.ir;
+
+/// The colour the vertices carry, as a graph: the module facet's own
+/// emitter writes for it compiles to `qpu.color_fragment` word for word
+/// (the host test says so), so this draw is the whole path from a
+/// program's SPIR-V to a picture.
+const Interpolated = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        b.color(b.input(0, .f32x4));
+    }
+});
+
+/// A colour of its own, which the draw hands over as four uniforms: the
+/// first generated program whose words no hand-written one matches.
+const OwnColour = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        b.color(b.constant(.{ 0.25, 0.5, 0.75, 1 }));
+    }
+});
+
+/// The colour the vertices carry, dimmed by a fifth varying they carry
+/// beside it: five varyings, a vector times a scalar, and a scalar that
+/// every part of the product reads and none may write over.
+const Dimmed = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        b.color(b.scale(b.input(0, .f32x4), b.input(1, .f32x1)));
+    }
+});
+
+/// A module compiled and made ready to draw with. The code is in
+/// `work.code` and lives until the next `compile`, which is long enough:
+/// `Scene.draw` copies it into the V3D's objects as it records the draw.
+fn compiled(work: *compile.Work, words: []const u32, stream: *[compile.most_uniforms]u32) ?struct { qpu.Fragment, []const u32 } {
+    const code = compile.compile(work, words) catch return null;
+    for (code.stream(), 0..) |each, k| stream[k] = @bitCast(each);
+    return .{
+        .{ .code = code.words, .varyings = code.varyings, .uniforms = code.uniform_count },
+        stream[0..code.uniform_count],
+    };
+}
+
+/// Three fragment programs compiled from their SPIR-V and drawn with, each
+/// picture checked against the arithmetic worked out here. This is the
+/// first thing the QPUs run that nobody wrote by hand, and it is a command
+/// of its own rather than a pipeline on purpose: a program that hangs the
+/// renderer here costs a reboot, and one that hangs it inside the library
+/// costs the display.
+pub fn generatedTest(scene: *Scene, sys: *ExecBase) i32 {
+    const memory = sys.AllocVec(@sizeOf(compile.Work), exec.MEMF_CLEAR) orelse {
+        _ = Printf(scene.dl, "No memory for the compiler\n", .{});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.FreeVec(memory);
+    const work: *compile.Work = @ptrCast(@alignCast(memory));
+    var stream: [compile.most_uniforms]u32 = @splat(0);
+    var worst: i32 = dos.RETURN_OK;
+
+    // The interpolated colour, over the same triangle `smoothTest` draws:
+    // three colours mixed as w has them.
+    {
+        const fragment, const uniforms = compiled(work, Interpolated.words, &stream) orelse {
+            _ = Printf(scene.dl, "generated smooth: the back end would not compile it\n", .{});
+            return dos.RETURN_FAIL;
+        };
+        if (fragment.code.len != qpu.color_fragment.code.len) {
+            _ = Printf(scene.dl, "generated smooth: %ld instructions, not the %ld of the one written by hand\n", .{ @as(u64, fragment.code.len), @as(u64, qpu.color_fragment.code.len) });
+            return dos.RETURN_FAIL;
+        }
+        const corners = [3]Vertex{
+            at(0, 0.8, 0.5, 1, &.{ 1, 0, 0, 1 }),
+            at(-0.8, -0.8, 0.5, 2, &.{ 0, 1, 0, 1 }),
+            at(0.8, -0.8, 0.5, 4, &.{ 0, 0, 1, 1 }),
+        };
+        scene.begin(.{});
+        scene.draw(.{ .fragment = fragment, .uniforms = uniforms, .vertices = &corners });
+        if (!scene.finish()) return dos.RETURN_FAIL;
+        var tally = Tally{};
+        for (0..height) |row| for (0..width) |column| {
+            const x: u32 = @intCast(column);
+            const y: u32 = @intCast(row);
+            const each = shares(&corners, x, y) orelse continue;
+            const inside = each[0] > edge_margin and each[1] > edge_margin and each[2] > edge_margin;
+            const outside = each[0] < -edge_margin or each[1] < -edge_margin or each[2] < -edge_margin;
+            if (inside) {
+                tally.check(x, y, scene.pixel(x, y), rgba(@floatCast(each[0]), @floatCast(each[1]), @floatCast(each[2]), 1), 2);
+            } else if (outside) {
+                tally.check(x, y, scene.pixel(x, y), backdrop, 0);
+            }
+        };
+        worst = @max(worst, tally.report(scene.dl, "generated smooth", scene.took_us));
+    }
+
+    // A colour of its own: four uniforms read, packed and written out.
+    {
+        const fragment, const uniforms = compiled(work, OwnColour.words, &stream) orelse {
+            _ = Printf(scene.dl, "generated flat: the back end would not compile it\n", .{});
+            return dos.RETURN_FAIL;
+        };
+        if (uniforms.len != 4) {
+            _ = Printf(scene.dl, "generated flat: %ld uniforms, not four\n", .{@as(u64, uniforms.len)});
+            return dos.RETURN_FAIL;
+        }
+        var quad: [6]Vertex = undefined;
+        rectangle(&quad, -0.5, 0.5, 0.5, -0.5, 0.5, Nothing{});
+        scene.begin(.{});
+        scene.draw(.{ .fragment = fragment, .uniforms = uniforms, .vertices = &quad });
+        if (!scene.finish()) return dos.RETURN_FAIL;
+        const want = rgba(0.25, 0.5, 0.75, 1);
+        var tally = Tally{};
+        for (0..height) |row| for (0..width) |column| {
+            const x: u32 = @intCast(column);
+            const y: u32 = @intCast(row);
+            const across = acrossAt(@as(f32, @floatFromInt(x)) + 0.5);
+            const down = downAt(@as(f32, @floatFromInt(y)) + 0.5);
+            // A margin round the edges, where a pixel is half covered.
+            const inside = across > -0.49 and across < 0.49 and down > -0.49 and down < 0.49;
+            const outside = across < -0.51 or across > 0.51 or down < -0.51 or down > 0.51;
+            if (inside) {
+                tally.check(x, y, scene.pixel(x, y), want, 2);
+            } else if (outside) {
+                tally.check(x, y, scene.pixel(x, y), backdrop, 0);
+            }
+        };
+        worst = @max(worst, tally.report(scene.dl, "generated flat", scene.took_us));
+    }
+
+    // A vector times a scalar: five varyings, and the light each corner
+    // carries dimming the colour it carries.
+    {
+        const fragment, const uniforms = compiled(work, Dimmed.words, &stream) orelse {
+            _ = Printf(scene.dl, "generated scaled: the back end would not compile it\n", .{});
+            return dos.RETURN_FAIL;
+        };
+        if (fragment.varyings != 5) {
+            _ = Printf(scene.dl, "generated scaled: %ld varyings, not five\n", .{@as(u64, fragment.varyings)});
+            return dos.RETURN_FAIL;
+        }
+        const corners = [3]Vertex{
+            at(0, 0.8, 0.5, 1, &.{ 1, 1, 1, 1, 1 }),
+            at(-0.8, -0.8, 0.5, 1, &.{ 1, 1, 1, 1, 0.5 }),
+            at(0.8, -0.8, 0.5, 1, &.{ 1, 1, 1, 1, 0 }),
+        };
+        scene.begin(.{});
+        scene.draw(.{ .fragment = fragment, .uniforms = uniforms, .vertices = &corners });
+        if (!scene.finish()) return dos.RETURN_FAIL;
+        var tally = Tally{};
+        for (0..height) |row| for (0..width) |column| {
+            const x: u32 = @intCast(column);
+            const y: u32 = @intCast(row);
+            const each = shares(&corners, x, y) orelse continue;
+            const inside = each[0] > edge_margin and each[1] > edge_margin and each[2] > edge_margin;
+            const outside = each[0] < -edge_margin or each[1] < -edge_margin or each[2] < -edge_margin;
+            if (inside) {
+                const light: f32 = @floatCast(each[0] * 1 + each[1] * 0.5 + each[2] * 0);
+                tally.check(x, y, scene.pixel(x, y), rgba(light, light, light, light), 2);
+            } else if (outside) {
+                tally.check(x, y, scene.pixel(x, y), backdrop, 0);
+            }
+        };
+        worst = @max(worst, tally.report(scene.dl, "generated scaled", scene.took_us));
+    }
+
+    return worst;
+}

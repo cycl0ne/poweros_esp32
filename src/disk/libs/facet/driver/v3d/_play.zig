@@ -1088,10 +1088,25 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
                 break :missing place.address;
             };
         },
+        // No fixed form: the pipeline's own fragment shader, compiled as
+        // the pipeline was made (since 1.76). Its varyings are 0 to 1, as
+        // the graph wrote them and the tile buffer takes them, so they go
+        // out as they are and not divided back out of `shader.channel`'s
+        // scaling the way a fixed form's are.
+        .none => {
+            const made: *const driver.Shader = @ptrCast(@alignCast(pipeline.driver orelse return));
+            fragment = made.address;
+            carried = .as_they_are;
+            const floats = made.stream();
+            const bytes: u32 = @max(4, @as(u32, @intCast(floats.len * 4)));
+            const place = carve(queue, bytes, 4) orelse return noRoom(queue, "a draw with no memory for its uniforms");
+            if (floats.len != 0) @memcpy(@as([*]f32, @ptrCast(@alignCast(place.cpu)))[0..floats.len], floats);
+            uniforms = place.address;
+        },
         // Refused when the pipeline was made (driver.zig): no program drops
         // pixels, and none reads a sampler, so none of these reaches a
         // frame here.
-        .none, .texture_cutout, .texture_sampled, .texture_shadow, .texture_cube_array => return,
+        .texture_cutout, .texture_sampled, .texture_shadow, .texture_cube_array => return,
         .texture_array_sampled, .texture_cube_sampled, .texture_3d_sampled => return,
         .texture_cube_array_sampled => return,
     }

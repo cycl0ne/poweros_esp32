@@ -1109,4 +1109,23 @@ pub const LIBRARY_VERSION = 1;
 /// `error_feature_not_present` for a shader it cannot make code of. A
 /// device without a processor of its own, and one handed a module with no
 /// words, calls the Zig function as it always has.
-pub const LIBRARY_REVISION = 75;
+/// 76: the V3D compiles a fragment shader of the program's own. A
+/// pipeline with no fixed form (`FixedKind.none`) was refused by the V3D's
+/// driver and drawn on the cores; where the program shipped the shader's
+/// SPIR-V beside the function (`shader.Module`, 1.75) the driver now reads
+/// it, makes QPU instructions of it
+/// (`driver/v3d/compile.zig`), puts them in a block of the V3D's own that
+/// lives as long as the pipeline, and draws with them. What the back end
+/// cannot compile is refused as it always was, with
+/// `error_feature_not_present`, and the cores draw it: a program loses
+/// nothing by shipping words the device will not take.
+///
+/// The varyings of such a pipeline go to the hardware as the vertex
+/// function wrote them. A fixed form's are `shader.channel`-scaled - 0 to
+/// 255.5, for the cores - and the driver divides that back out as it
+/// writes the vertex records; a generated shader's are 0 to 1, as Vulkan
+/// has them and as the tile buffer takes them, and the graph's own
+/// function does the scaling where it writes a pixel. So a program with a
+/// generated fragment entry does not call `shader.channel` in its vertex
+/// function.
+pub const LIBRARY_REVISION = 76;

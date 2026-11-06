@@ -45,6 +45,7 @@ const _driver = @import("../_driver.zig");
 const _format = @import("../_format.zig");
 const _play = @import("_play.zig");
 const qpu = v3d.qpu;
+const compile = v3d.compile;
 const tiling = v3d.tiling;
 const Block = v3d.Block;
 
@@ -410,8 +411,40 @@ fn freeMemory(device: *Device, memory: *DeviceMemory) callconv(.c) void {
     letGo(base, hardware);
 }
 
+/// What a pipeline whose fragment shader the V3D compiles itself keeps.
+pub const Shader = struct {
+    /// The code, in a block of its own. The per-frame chunks cannot hold
+    /// it: `beginRenderPass` resets them, and this lives as long as the
+    /// pipeline.
+    block: Block,
+    /// Where the V3D has its first instruction. The shader record ORs its
+    /// flag bits into the low bits of a program address, which a block of
+    /// the space's leaves clear (`space.alloc` aligns to a page).
+    address: u32,
+    /// The varyings it reads, which is the vertex function's count: it was
+    /// held to that as the pipeline was made.
+    varyings: u32,
+    /// The head of its uniform stream, by value, because a draw copies it
+    /// into the stream it carves and the compiler's own memory is one
+    /// block every pipeline is compiled through.
+    uniforms: [compile.most_uniforms]f32,
+    uniform_count: u32,
+
+    pub fn stream(made: *const Shader) []const f32 {
+        return made.uniforms[0..made.uniform_count];
+    }
+};
+
 fn makePipeline(pipeline: *Pipeline) callconv(.c) facet.Result {
     const fixed = pipeline.fixed;
+    // No fixed form: the program's own fragment shader, which this device
+    // draws with where the program shipped the SPIR-V beside the function
+    // and the back end can make code of it (since 1.76). Where it cannot,
+    // the pipeline is refused and the cores draw it, as before.
+    if (fixed.kind == .none) {
+        if (pipeline.fragment_words.len == 0) return .error_feature_not_present;
+        return compiled(pipeline);
+    }
     // A form that drops pixels needs a QPU program that discards, and one
     // that samples through a sampler a program that reads it: there is
     // neither yet, so such a pipeline is refused here and drawn on the
@@ -419,12 +452,68 @@ fn makePipeline(pipeline: *Pipeline) callconv(.c) facet.Result {
     // Nor is there one for a cube of an array, which reads a fourth
     // coordinate (since 1.46) - `texture_cube_array_sampled` reads a
     // sampler besides, so `needsSampler` already refuses it (since 1.53).
-    if (fixed.kind == .none or fixed.kind == .texture_cube_array or fixed.discards() or fixed.needsSampler() or pipeline.varyings != fixed.varyings()) return .error_feature_not_present;
+    if (fixed.kind == .texture_cube_array or fixed.discards() or fixed.needsSampler() or pipeline.varyings != fixed.varyings()) return .error_feature_not_present;
+    return .success;
+}
+
+/// The pipeline's own fragment shader compiled and put where the V3D
+/// reads it. The compiler's working memory is a block of its own and some
+/// kilobytes wide, so it is taken for the call and given back: a pipeline
+/// is made once and drawn with many times.
+fn compiled(pipeline: *Pipeline) facet.Result {
+    const device = pipeline.device;
+    const base = device.base;
+    const sys = device.sys;
+    const work = _objects.create(sys, compile.Work) orelse return .error_out_of_host_memory;
+    defer _objects.destroy(sys, work);
+    const code = compile.compile(work, pipeline.fragment_words) catch return .error_feature_not_present;
+    // The vertex function writes the varyings the fragment program reads.
+    // CreateGraphicsPipelines already holds the two entries to the one
+    // count, so this is the words disagreeing with the entry that shipped
+    // them rather than a pipeline that was put together wrongly.
+    if (code.varyings != pipeline.varyings) return .error_feature_not_present;
+    const kept = _objects.create(sys, Shader) orelse return .error_out_of_host_memory;
+    const hardware = hold(base) orelse {
+        _objects.destroy(sys, kept);
+        return .error_initialization_failed;
+    };
+    sys.ObtainSemaphore(&base.v3d_lock);
+    const block = hardware.space.alloc(@intCast(code.words.len * 8));
+    if (block) |each| {
+        const into: [*]u64 = @ptrCast(@alignCast(each.cpu));
+        @memcpy(into[0..code.words.len], code.words);
+        hardware.space.toGpu(&each);
+        hardware.stale = true;
+    }
+    sys.ReleaseSemaphore(&base.v3d_lock);
+    const made = block orelse {
+        letGo(base, hardware);
+        _objects.destroy(sys, kept);
+        return .error_out_of_device_memory;
+    };
+    kept.* = .{
+        .block = made,
+        .address = made.address,
+        .varyings = code.varyings,
+        .uniforms = code.uniforms,
+        .uniform_count = code.uniform_count,
+    };
+    pipeline.driver = kept;
     return .success;
 }
 
 fn unmakePipeline(pipeline: *Pipeline) callconv(.c) void {
-    _ = pipeline;
+    const kept: *Shader = @ptrCast(@alignCast(pipeline.driver orelse return));
+    const base = pipeline.device.base;
+    const sys = pipeline.device.sys;
+    const hardware: *Hardware = @ptrCast(@alignCast(base.v3d.?));
+    sys.ObtainSemaphore(&base.v3d_lock);
+    hardware.space.free(&kept.block);
+    hardware.stale = true;
+    sys.ReleaseSemaphore(&base.v3d_lock);
+    pipeline.driver = null;
+    _objects.destroy(sys, kept);
+    letGo(base, hardware);
 }
 
 /// The queue's task blocks in the frame's jobs, on what the V3D's interrupts
