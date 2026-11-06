@@ -878,27 +878,30 @@ fn textureUniforms(queue: *Queue, fixed: shader.Fixed) ?u32 {
 }
 
 /// How the TMU would sample through `sampler`, or null where the sampler
-/// asks for something its state cannot say. The state holds one filter
-/// for both directions and one wrap for every axis, and two of facet's
-/// five wraps; it says nothing of mipmapping, of a level held or shifted,
-/// of anisotropy, of a comparison or of a border. A sampler past that is
-/// not drawn wrongly here - it is not drawn here at all, and the draw
-/// says so in the colour.
+/// asks for something the TMU's state cannot say. The state holds one
+/// filter for both directions and one wrap for every axis, and two of
+/// facet's five wraps; it says nothing of mipmapping, of a level held or
+/// shifted, of anisotropy, of a comparison or of a border. A sampler past
+/// that is not drawn wrongly here - it is not drawn here at all, and the
+/// draw says so in the colour.
+///
+/// Which samplers those are is `texture.samplingOf`'s to say and not
+/// this driver's, because the cores have to turn down the same ones: a
+/// generated shader takes its sampling from the bound sampler on
+/// whichever device draws it, so a sampler one device could answer for
+/// and the other could not would be one pipeline drawn two ways. This
+/// maps the answer onto the tiling's own two enums and nothing more.
 fn samplingBy(sampler: *const texture.Sampler) ?struct { filter: tiling.Filter, wrap: tiling.Wrap } {
-    if (sampler.mag_filter != sampler.min_filter) return null;
-    if (sampler.wrap[0] != sampler.wrap[1]) return null;
-    if (sampler.mipmap != .nearest) return null;
-    if (sampler.lod_bias != 0 or sampler.min_lod != 0 or sampler.max_lod != texture.lod_unclamped) return null;
-    if (sampler.anisotropy != 1 or sampler.compare != .none or sampler.unnormalized) return null;
+    // The format is not the sampler's, and nothing below reads it.
+    const said = texture.samplingOf(sampler, .rgba8888) orelse return null;
     return .{
-        .filter = switch (sampler.mag_filter) {
+        .filter = switch (said.filter) {
             .nearest => .nearest,
             .bilinear => .bilinear,
         },
-        .wrap = switch (sampler.wrap[0]) {
-            .repeat => .repeat,
-            .clamp_to_edge => .clamp,
-            else => return null,
+        .wrap = switch (said.address) {
+            .wrap => .repeat,
+            .clamp => .clamp,
         },
     };
 }

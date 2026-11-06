@@ -428,6 +428,38 @@ pub const Sampling = struct {
     address: Address = .wrap,
 };
 
+/// What `sampler` comes to as a `Sampling`, or null where it asks for
+/// something a `Sampling` cannot say.
+///
+/// A `Sampling` is what a *pipeline* does with a texture: one filter for
+/// both directions, one addressing for every axis, and two of the five
+/// wraps a sampler has. It says nothing of mipmapping, of a level held or
+/// shifted, of anisotropy, of a comparison or of a border.
+///
+/// This is here, and not in either device, because **both** of them need
+/// the same answer. Vulkan puts filtering in the sampler object and
+/// SPIR-V has nowhere to carry what a shader asked, so a generated
+/// shader's sampling is the bound sampler's on whichever device draws it;
+/// and a sampler this cannot answer for is drawn by neither - the pixel
+/// is `shader.missing`, which is a wrong colour on purpose rather than
+/// two devices quietly drawing different right ones. (Since 1.79.)
+pub fn samplingOf(sampler: *const Sampler, format: Format) ?Sampling {
+    if (sampler.mag_filter != sampler.min_filter) return null;
+    if (sampler.wrap[0] != sampler.wrap[1]) return null;
+    if (sampler.mipmap != .nearest) return null;
+    if (sampler.lod_bias != 0 or sampler.min_lod != 0 or sampler.max_lod != lod_unclamped) return null;
+    if (sampler.anisotropy != 1 or sampler.compare != .none or sampler.unnormalized) return null;
+    return .{
+        .format = format,
+        .filter = sampler.mag_filter,
+        .address = switch (sampler.wrap[0]) {
+            .repeat => .wrap,
+            .clamp_to_edge => .clamp,
+            else => return null,
+        },
+    };
+}
+
 /// How a sampler goes between the two levels a point falls between.
 pub const Mipmap = enum(u8) {
     /// The nearer level alone, as a fixed form's sample reads it.
@@ -2040,7 +2072,6 @@ inline fn blockAlphas(at: [*]const u8) [16]u8 {
     return made;
 }
 
-
 // --- BC7 ---------------------------------------------------------------------
 
 /// What one of BC7's eight modes holds: the subsets its block is cut into,
@@ -2389,23 +2420,22 @@ const bc7_three = [64][16]u8{
 /// 0. (Since 1.73.)
 const bc7_anchor_two = [64]u8{
     15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
-    15, 2, 8, 2, 2, 8, 8, 15, 2, 8, 2, 2, 8, 8, 2, 2,
-    15, 15, 6, 8, 2, 8, 15, 15, 2, 8, 2, 2, 2, 15, 15, 6,
-    6, 2, 6, 8, 15, 15, 2, 2, 15, 15, 15, 15, 15, 2, 2, 15,
+    15, 2,  8,  2,  2,  8,  8,  15, 2,  8,  2,  2,  8,  8,  2,  2,
+    15, 15, 6,  8,  2,  8,  15, 15, 2,  8,  2,  2,  2,  15, 15, 6,
+    6,  2,  6,  8,  15, 15, 2,  2,  15, 15, 15, 15, 15, 2,  2,  15,
 };
 const bc7_anchor_three_second = [64]u8{
-    3, 3, 15, 15, 8, 3, 15, 15, 8, 8, 6, 6, 6, 5, 3, 3,
-    3, 3, 8, 15, 3, 3, 6, 10, 5, 8, 8, 6, 8, 5, 15, 15,
-    8, 15, 3, 5, 6, 10, 8, 15, 15, 3, 15, 5, 15, 15, 15, 15,
-    3, 15, 5, 5, 5, 8, 5, 10, 5, 10, 8, 13, 15, 12, 3, 3,
+    3, 3,  15, 15, 8, 3,  15, 15, 8,  8,  6,  6,  6,  5,  3,  3,
+    3, 3,  8,  15, 3, 3,  6,  10, 5,  8,  8,  6,  8,  5,  15, 15,
+    8, 15, 3,  5,  6, 10, 8,  15, 15, 3,  15, 5,  15, 15, 15, 15,
+    3, 15, 5,  5,  5, 8,  5,  10, 5,  10, 8,  13, 15, 12, 3,  3,
 };
 const bc7_anchor_three_third = [64]u8{
-    15, 8, 8, 3, 15, 15, 3, 8, 15, 15, 15, 15, 15, 15, 15, 8,
-    15, 8, 15, 3, 15, 8, 15, 8, 3, 15, 6, 10, 15, 15, 10, 8,
-    15, 3, 15, 10, 10, 8, 9, 10, 6, 15, 8, 15, 3, 6, 6, 8,
-    15, 3, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 3, 15, 15, 8,
+    15, 8, 8,  3,  15, 15, 3,  8,  15, 15, 15, 15, 15, 15, 15, 8,
+    15, 8, 15, 3,  15, 8,  15, 8,  3,  15, 6,  10, 15, 15, 10, 8,
+    15, 3, 15, 10, 10, 8,  9,  10, 6,  15, 8,  15, 3,  6,  6,  8,
+    15, 3, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 3,  15, 15, 8,
 };
-
 
 // --- BC6H --------------------------------------------------------------------
 

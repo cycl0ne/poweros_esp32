@@ -1954,7 +1954,11 @@ test "eight varyings and four floats of its own fit the ten registers there are"
     try testing.expectEqualSlices(Word, &[_]Word{
         .{ .float = 0.1 }, .{ .float = 0.2 }, .{ .float = 0.3 }, .{ .float = 0 },
     }, code.stream());
-    try testing.expect(code.registers <= registers);
+    // Eight, which is what `Lit`'s plan above comes to. Not
+    // `<= registers`: `compile` cannot answer with more than there are -
+    // `take` refuses past the tenth - so that would hold for every input
+    // including one that overflowed and was turned down.
+    try testing.expectEqual(@as(u32, 8), code.registers);
     try sound(&work, code);
     // The eight varyings, the product over the first four, the uniforms
     // in the four the second colour left, and the sum over the product.

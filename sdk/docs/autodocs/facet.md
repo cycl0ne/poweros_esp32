@@ -930,7 +930,11 @@ The pipeline has to last until the work is done.
 
 **NOTES**
 
-None.
+A pipeline and the command buffer it is recorded into have to come
+from one device, as Vulkan requires. Nothing is recorded for a
+pipeline from another: each device's driver reads `Pipeline.driver` as
+its own kind of object, so drawing with another device's pipeline
+would hand the hardware whatever lay at that field. (Since 1.79.)
 
 **BUGS**
 

@@ -1188,4 +1188,30 @@ pub const LIBRARY_VERSION = 1;
 /// And the cores can draw a generated shader that samples at all: the
 /// function such a graph generates did not compile, which no test had
 /// found because every sampling graph had been asked only for its words.
-pub const LIBRARY_REVISION = 78;
+/// 79: a generated shader samples as the **bound sampler** says, on
+/// whichever device draws it. Vulkan puts filtering in the sampler
+/// object and SPIR-V has nowhere to carry what a shader asked for, so
+/// the V3D has always read the sampler the draw bound; the cores read
+/// the comptime `Sampling` the graph recorded instead, and the two drew
+/// one pipeline two ways - a plain `b.sample` came out bilinear on the
+/// cores whatever was bound, and whatever was bound on the V3D. Both now
+/// go through `texture.samplingOf`, which is in neither device for that
+/// reason, and a sampler it cannot answer for - a filter each way, one
+/// of the three wraps the TMU has no word for, mipmapping, a level held
+/// or shifted, anisotropy, a comparison - is drawn by neither: the pixel
+/// is `shader.missing`, a wrong colour on purpose rather than two
+/// devices quietly drawing different right ones.
+///
+/// That `missing` is now the right wrong colour. The cores' sampling
+/// read each of its channels one byte over - alpha where red belonged -
+/// and put a half-step on top that the texel's own conversion does not
+/// have, so a texture that was not bound came out white rather than
+/// magenta. Both conversions are one function now.
+///
+/// `CmdBindPipeline` records nothing for a pipeline from another device.
+/// `Pipeline.driver` is the compiling driver's own object and every
+/// driver reads that field as its own kind, so drawing with another
+/// device's pipeline handed the hardware whatever lay there. Vulkan
+/// requires the two to come from one device; both drivers are covered by
+/// the one check.
+pub const LIBRARY_REVISION = 79;

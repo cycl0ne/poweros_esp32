@@ -394,3 +394,67 @@ test "a generated sampling function that mixes is the fixed form to within a ste
     };
     try std.testing.expect(worst <= 2);
 }
+
+/// `bothWays`, but with a sampler bound beside the texture, and the
+/// generated function alone: what it draws is then the *sampler's*
+/// answer, whatever the graph asked for.
+fn throughSampler(comptime Shape: type, sampler: *const texture.Sampler, u: shader.Plane, v: shader.Plane) [4]u32 {
+    var picture = texture.Texture.init(.argb8888, 8, 8, 1, &texels) catch unreachable;
+    for (0..8) |y| for (0..8) |x| {
+        picture.setColor(0, 0, @intCast(x), @intCast(y), texelAt(@intCast(x), @intCast(y)));
+    };
+    const slots = [1]shader.Slot{.{ .pointer = &picture, .sampler = sampler }};
+    const firsts = [2]u16{ 0, 1 };
+    const set = shader.Set{ .first = &firsts, .binding_count = 1, .slots = &slots };
+    var resources = shader.Resources{};
+    resources.sets[0] = &set;
+
+    var quads = [1]shader.Quad{.{ .x = 0, .y = 0, .covered = 0xF, .kept = 0xF }};
+    var planes = [3]shader.Plane{ .{ .origin = 1, .dx = 0, .dy = 0 }, u, v };
+    var out = [1][4]u32{@splat(0)};
+    const made = shader.Fragments{
+        .quads = &quads,
+        .count = 1,
+        .colors = &out,
+        .planes = &planes,
+        .plane_count = 3,
+        .x = 0,
+        .y = 0,
+        .exact = true,
+        .resources = &resources,
+    };
+    Shape.function(&made);
+    return out[0];
+}
+
+test "a generated shader samples as the draw's sampler says, not as the graph asked" {
+    // The point of `texture.samplingOf` being in neither device: Vulkan
+    // puts filtering in the sampler object and SPIR-V has nowhere to
+    // carry what a graph asked for, so the V3D reads the bound sampler.
+    // If the cores read the graph instead, one pipeline would draw two
+    // ways depending on which device took it - and nothing would say so,
+    // because both pictures look reasonable.
+    const u = shader.Plane{ .origin = 0.3125, .dx = 0.07, .dy = 0.11 };
+    const v = shader.Plane{ .origin = 0.4375, .dx = 0.13, .dy = 0.03 };
+
+    // `Mixed` asked for bilinear. With a NEAREST sampler bound it has to
+    // paint what `Near` paints with the same sampler.
+    const near: texture.Sampler = .{ .mag_filter = .nearest, .min_filter = .nearest };
+    try std.testing.expectEqualSlices(u32, &throughSampler(Near, &near, u, v), &throughSampler(Mixed, &near, u, v));
+    // And `Near`, which asked for nearest, has to mix where the bound
+    // sampler says bilinear - so the two are not simply always equal.
+    const mixing: texture.Sampler = .{};
+    const mixed = throughSampler(Near, &mixing, u, v);
+    try std.testing.expect(!std.mem.eql(u32, &mixed, &throughSampler(Near, &near, u, v)));
+    try std.testing.expectEqualSlices(u32, &mixed, &throughSampler(Mixed, &mixing, u, v));
+
+    // A sampler asking for something a `Sampling` cannot say is drawn by
+    // neither device: the pixel is `shader.missing`, which is a wrong
+    // colour on purpose rather than two devices quietly drawing
+    // different right ones. `mirrored_repeat` is one of the three wraps
+    // the TMU's state has no word for.
+    const beyond: texture.Sampler = .{ .wrap = .{ .mirrored_repeat, .mirrored_repeat, .mirrored_repeat } };
+    for (throughSampler(Near, &beyond, u, v)) |pixel| {
+        try std.testing.expectEqual(shader.missing, pixel);
+    }
+}

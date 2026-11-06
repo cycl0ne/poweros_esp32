@@ -568,10 +568,33 @@ fn functionOf(comptime graph: Graph) shader.FragmentFn {
             @setEvalBranchQuota(1_000_000);
             const planes = comptime graph.varyings + 1;
             var rows = shader.Rows(planes).of(fragments);
-            // The textures, once a call rather than once a quad.
+            // The textures, once a call rather than once a quad - and
+            // how each is sampled, which comes from the sampler the draw
+            // bound and not from the graph.
+            //
+            // Vulkan puts filtering in the sampler object, and SPIR-V
+            // has nowhere to carry what the graph asked for, so the V3D
+            // reads the bound sampler; this reads the same one, through
+            // the same `texture.samplingOf`, so the two devices cannot
+            // draw one pipeline two ways. Where nothing is bound there
+            // is no sampler to read and the graph's own answer stands.
+            // Where the sampler asks for something a `Sampling` cannot
+            // say, the texture is dropped and the pixel is
+            // `shader.missing` - which is what the V3D's draw paints for
+            // exactly those samplers.
             var pictures: [@max(graph.sampled.len, 1)]?*const texture.Texture = @splat(null);
+            var sampled_how: [@max(graph.sampled.len, 1)]?texture.Sampling = @splat(null);
             inline for (graph.sampled, 0..) |each, which| {
                 pictures[which] = fragments.resources.sampled(each.set, each.binding, 0);
+                if (fragments.resources.samplerOf(each.set, each.binding, 0)) |bound| {
+                    // No `continue` here: the loop is unrolled and this
+                    // is a runtime condition.
+                    if (texture.samplingOf(bound, each.sampling.format)) |said| {
+                        sampled_how[which] = said;
+                    } else {
+                        pictures[which] = null;
+                    }
+                }
             }
             for (0..fragments.count) |k| {
                 const quad = &fragments.quads[k];
@@ -597,7 +620,8 @@ fn functionOf(comptime graph: Graph) shader.FragmentFn {
                     },
                     .sample => {
                         const which = comptime sampledBefore(graph, i);
-                        values[i] = sampleAt(op.sampling, pictures[which], quad.*, values[op.a][0], values[op.a][1]);
+                        const how = sampled_how[which] orelse op.sampling;
+                        values[i] = sampleAt(how, pictures[which], quad.*, values[op.a][0], values[op.a][1]);
                     },
                     .multiply => inline for (0..comptime op.kind.parts()) |part| {
                         values[i][part] = values[op.a][part] * values[op.b][part];
@@ -645,11 +669,31 @@ fn inputFirst(comptime graph: Graph, comptime at: usize) u32 {
 /// the way `shader.textured` reads a texture whose format is not the
 /// form's: the fixed forms' fast path is theirs, and a pipeline that wants
 /// it names one.
-inline fn sampleAt(comptime sampling: texture.Sampling, picture: ?*const texture.Texture, quad: shader.Quad, u: Pixels, v: Pixels) [4]Pixels {
+/// A colour as 0xAARRGGBB taken into the four floats of 0 to 1 the graph
+/// works in.
+///
+/// Both the texel a sampler hands back and the `shader.missing` that
+/// stands for a sampler with no texture come through here, so the two
+/// cannot disagree about which byte is which channel. They did: the
+/// missing branch read each channel one place over - alpha where red
+/// belonged - and put `channelOfByte`'s half-step on top of it, where
+/// the texel's own conversion has neither. Nothing had noticed, because
+/// the function this sits in had never compiled.
+inline fn channelsOf(colour: u32) [4]f32 {
+    var made: [4]f32 = undefined;
+    inline for (0..4) |channel| {
+        const byte = colour >> @intCast(8 * (if (channel == 3) 3 else 2 - channel)) & 0xFF;
+        made[channel] = @as(f32, @floatFromInt(byte)) / 255;
+    }
+    return made;
+}
+
+inline fn sampleAt(sampling: texture.Sampling, picture: ?*const texture.Texture, quad: shader.Quad, u: Pixels, v: Pixels) [4]Pixels {
     @setRuntimeSafety(false);
     var made: [4]Pixels = @splat(@splat(0));
     const given = picture orelse {
-        inline for (0..4) |channel| made[channel] = @splat(shader.channelOfByte(shader.missing >> @intCast(8 * (3 - channel)) & 0xFF) / 255);
+        const colour = channelsOf(shader.missing);
+        inline for (0..4) |channel| made[channel] = @splat(colour[channel]);
         return made;
     };
     const texels = [2]f32{ @floatFromInt(given.width(0)), @floatFromInt(given.height(0)) };
@@ -662,12 +706,8 @@ inline fn sampleAt(comptime sampling: texture.Sampling, picture: ?*const texture
     // sat here uncompiled until a test asked the cores to draw one.
     inline for (0..4) |pixel| {
         if (quad.covered >> @intCast(pixel) & 1 != 0) {
-            const colour = given.sampleLayer(sampling, 0, lod, u[pixel], v[pixel]);
-            // Back to 0 to 1, which is what the graph works in.
-            inline for (0..4) |channel| {
-                const byte = colour >> @intCast(8 * (if (channel == 3) 3 else 2 - channel)) & 0xFF;
-                made[channel][pixel] = @as(f32, @floatFromInt(byte)) / 255;
-            }
+            const colour = channelsOf(given.sampleLayer(sampling, 0, lod, u[pixel], v[pixel]));
+            inline for (0..4) |channel| made[channel][pixel] = colour[channel];
         }
     }
     return made;
