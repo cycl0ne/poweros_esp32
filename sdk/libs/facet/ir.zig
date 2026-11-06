@@ -654,13 +654,20 @@ inline fn sampleAt(comptime sampling: texture.Sampling, picture: ?*const texture
     };
     const texels = [2]f32{ @floatFromInt(given.width(0)), @floatFromInt(given.height(0)) };
     const lod = if (given.levels == 1) 0 else texture.levelFor(given, (u[1] - u[0]) * texels[0], (v[1] - v[0]) * texels[1], (u[2] - u[0]) * texels[0], (v[2] - v[0]) * texels[1]);
+    // The condition is runtime and the loop is unrolled, so this is an
+    // `if` around the body and not a `continue` out of it: a `continue`
+    // here is comptime control flow inside a runtime block, which is a
+    // compile error. Nothing had ever instantiated this function - every
+    // sampling graph in the tree was asked only for its `.words` - so it
+    // sat here uncompiled until a test asked the cores to draw one.
     inline for (0..4) |pixel| {
-        if (quad.covered >> @intCast(pixel) & 1 == 0) continue;
-        const colour = given.sampleLayer(sampling, 0, lod, u[pixel], v[pixel]);
-        // Back to 0 to 1, which is what the graph works in.
-        inline for (0..4) |channel| {
-            const byte = colour >> @intCast(8 * (if (channel == 3) 3 else 2 - channel)) & 0xFF;
-            made[channel][pixel] = @as(f32, @floatFromInt(byte)) / 255;
+        if (quad.covered >> @intCast(pixel) & 1 != 0) {
+            const colour = given.sampleLayer(sampling, 0, lod, u[pixel], v[pixel]);
+            // Back to 0 to 1, which is what the graph works in.
+            inline for (0..4) |channel| {
+                const byte = colour >> @intCast(8 * (if (channel == 3) 3 else 2 - channel)) & 0xFF;
+                made[channel][pixel] = @as(f32, @floatFromInt(byte)) / 255;
+            }
         }
     }
     return made;

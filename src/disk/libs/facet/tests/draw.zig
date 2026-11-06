@@ -766,6 +766,242 @@ test "a module that ships SPIR-V beside its functions: the words kept, carried t
     fb.DestroyShaderModule(device, made);
 }
 
+/// A sampling shader shipped the way a colour already is: one graph that
+/// reads a texture at two varyings, which is exactly what
+/// `shader.Fixed{ .kind = .texture }` does - so the fixed form is the
+/// oracle the generated function is to be held to, as `docs/facet-ir.md`
+/// says the fixed forms are.
+///
+/// The generated half of rung 4 is in `tests/ir.zig`, where the other
+/// generated functions are held to their fixed forms: the function that
+/// samples is `shader.textured` bit for bit at the nearest texel over
+/// 289 planes, and within two of 255 where it mixes. It could not be
+/// written at all until `sdk/libs/facet/ir.zig`'s `sampleAt` compiled -
+/// `function` is a lazy declaration, every sampling graph in the tree
+/// had been asked only for its `.words`, and the `continue` out of an
+/// `inline for` under a runtime condition had therefore never been
+/// instantiated since the operation was written.
+///
+/// What is here is the library's side: the fragment entries are the
+/// **fixed forms**, with the sampling graph's words beside them, so that
+/// everything the library does with such a module is checked, and the
+/// picture the fixed form draws is written down as the one the generated
+/// function has to come out with.
+const Taken = struct {
+    /// The graph as the documentation writes it: a texture at varyings 0
+    /// and 1, taken as `texture.Sampling`'s own defaults say, which is
+    /// bilinear over an 8888 texture with the edges wrapped.
+    const Mixed = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            b.color(b.sample(0, 0, b.input(0, .f32x2)));
+        }
+    });
+
+    /// The same at the nearest texel. **How** the sample is taken is the
+    /// cores' own and is nowhere in the words: a Vulkan sample reads its
+    /// filter off the descriptor, and the QPU back end takes it from the
+    /// draw. So the two graphs write the one module, which the test
+    /// checks rather than takes on trust.
+    const Near = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            b.color(b.sampleBy(0, 0, b.input(0, .f32x2), .{ .filter = .nearest }));
+        }
+    });
+
+    /// `CutoutScene.cut` is the vertex function of both pairs: the quad
+    /// over the whole picture, s and t taken from its position, 0 to 1
+    /// across the texture. A coordinate is not a colour, so nothing here
+    /// goes through `shader.channel` - which a generated fragment entry
+    /// forbids anyway - and the fixed form and the graph read the same
+    /// two varyings, which is what makes the one the other's oracle.
+    const entries = [_]shader.Entry{
+        shader.vertex("near", &CutoutScene.cut, 2),
+        shader.fixedFragment("near", .{ .kind = .texture, .sampling = .{ .filter = .nearest } }),
+        shader.vertex("mixed", &CutoutScene.cut, 2),
+        shader.fixedFragment("mixed", .{ .kind = .texture }),
+    };
+
+    /// Index for index with the entries: a vertex entry ships no words,
+    /// and each fragment entry ships the graph that means what it does.
+    const table = [_]shader.Spirv{ .{}, Near.spirv, .{}, Mixed.spirv };
+
+    const code = shader.Module{ .entry_count = entries.len, .entries = &entries, .spirv = &table, .spirv_count = table.len };
+};
+
+test "a module that ships a sampling shader: the words kept, carried to the pipeline, and the fixed form's picture the generated function has to match" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+
+    // Two varyings either way, s and t, which is what lets the one vertex
+    // function serve the fixed form and the graph.
+    try testing.expectEqual(@as(u32, 2), Taken.Near.varyings);
+    try testing.expectEqual(@as(u32, 2), Taken.Mixed.varyings);
+    try testing.expectEqual(@as(u32, 2), (shader.Fixed{ .kind = .texture }).varyings());
+    // The filter is the cores' and is not in the words.
+    try testing.expectEqualSlices(u32, Taken.Mixed.words, Taken.Near.words);
+    // What the words say of themselves: one texture, one colour out, no
+    // pixel dropped, and one input variable - a `vec2`, which is the two
+    // varyings in one Location, as `Fixed.varyings` counts them as two
+    // and the reader counts the variable as one. The library takes the
+    // module, which is the first tier's whole job for a form it does not
+    // itself run.
+    switch (facet.spirv.look(Taken.Near.words, facet.spirv.facet_profile)) {
+        .fault => |fault| {
+            std.debug.print("refused: {s}\n", .{@tagName(fault)});
+            return error.TestUnexpectedResult;
+        },
+        .seen => |seen| {
+            try testing.expectEqual(facet.spirv.ExecutionModel.fragment, seen.stage);
+            try testing.expectEqual(@as(u32, 1), seen.samplers);
+            try testing.expectEqual(Taken.Near.graph.inputs.len, seen.inputs);
+            try testing.expectEqual(@as(u32, 1), seen.inputs);
+            try testing.expectEqual(@as(u32, 1), seen.outputs);
+            try testing.expect(!seen.discards);
+        },
+    }
+
+    var made: ?*facet.ShaderModule = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateShaderModule(device, &.{
+        .flags = facet.SHADER_MODULE_CREATE_SPIRV,
+        .code_size = @sizeOf(shader.Module),
+        .code = &Taken.code,
+    }, &made));
+    defer fb.DestroyShaderModule(device, made);
+    const kept = _objects.of(_shader.ShaderModule, made.?);
+    try testing.expectEqual(@as(u32, Taken.entries.len), kept.count);
+    try testing.expectEqual(@as(u32, Taken.table.len), kept.spirv_count);
+    // The table is copied; the words are not, and stay the program's.
+    const near_at = _shader.findAt(kept, facet.SHADER_STAGE_FRAGMENT, "near").?;
+    try testing.expectEqual(Taken.Near.words.ptr, kept.wordsAt(near_at).ptr);
+    try testing.expectEqualSlices(u32, Taken.Near.words, kept.wordsAt(near_at));
+    try testing.expectEqualSlices(u32, Taken.Mixed.words, kept.wordsAt(_shader.findAt(kept, facet.SHADER_STAGE_FRAGMENT, "mixed").?));
+    // And a vertex entry ships none, sampling module or not.
+    try testing.expectEqual(@as(usize, 0), kept.wordsAt(_shader.findAt(kept, facet.SHADER_STAGE_VERTEX, "near").?).len);
+
+    // An 8 x 8 texture, every texel a colour of its own, so that a sample
+    // from the wrong texel is a wrong pixel rather than the right colour
+    // by luck. `texels` is what a sample of each answers, 0xAARRGGBB.
+    var texels: [8][8]u32 = undefined;
+    const texture_image = try bench.bareImage(.{ .format = .r8g8b8a8_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST }, false);
+    const texture_view = try bench.viewOf(.{ .image = texture_image, .format = .r8g8b8a8_unorm });
+    const staging, const staged = try bench.buffer(8 * 8 * 4, facet.BUFFER_USAGE_TRANSFER_SRC);
+    for (0..8) |y| for (0..8) |x| {
+        const red: u8 = @intCast(x * 36);
+        const green: u8 = @intCast(y * 36);
+        const blue: u8 = @intCast((x ^ y) * 36);
+        const alpha: u8 = @intCast(255 - (x + y) * 8);
+        staged[(y * 8 + x) * 4 ..][0..4].* = .{ red, green, blue, alpha };
+        texels[y][x] = @as(u32, alpha) << 24 | @as(u32, red) << 16 | @as(u32, green) << 8 | @as(u32, blue);
+    };
+
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .sampled_image, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &set_layout));
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    var pool: ?*facet.DescriptorPool = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool));
+    defer fb.DestroyDescriptorPool(device, pool);
+    var set: [1]?*facet.DescriptorSet = undefined;
+    try testing.expectEqual(facet.Result.success, fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &set));
+    const image_info = facet.DescriptorImageInfo{ .image_view = texture_view };
+    const write = facet.WriteDescriptorSet{ .dst_set = set[0].?, .dst_binding = 0, .descriptor_type = .sampled_image, .image_info = @ptrCast(&image_info) };
+    fb.UpdateDescriptorSets(device, 1, @ptrCast(&write), 0, null);
+
+    // A picture each, so that the two draws can be held against one
+    // another pixel for pixel rather than one against a remembered copy.
+    const pass = try renderPass(&bench, .clear, false);
+    defer fb.DestroyRenderPass(device, pass);
+    const near_picture = try Picture.of(&bench, 64, 64);
+    const mixed_picture = try Picture.of(&bench, 64, 64);
+    const near_frame = try framebuffer(&bench, pass, &.{near_picture.view}, 64, 64);
+    defer fb.DestroyFramebuffer(device, near_frame);
+    const mixed_frame = try framebuffer(&bench, pass, &.{mixed_picture.view}, 64, 64);
+    defer fb.DestroyFramebuffer(device, mixed_frame);
+
+    // The pipeline is made, not refused: a device whose fragment programs
+    // are the library's own takes a module whose words it will never
+    // read, and carries them to its driver all the same.
+    const layout = try pipelineLayout(&bench, &.{set_layout.?}, 0);
+    defer fb.DestroyPipelineLayout(device, layout);
+    const near_result, const near_pipeline = makePipeline(&bench, .{ .module = made.?, .name = "near", .layout = layout, .pass = pass });
+    try testing.expectEqual(facet.Result.success, near_result);
+    defer fb.DestroyPipeline(device, near_pipeline);
+    const mixed_result, const mixed_pipeline = makePipeline(&bench, .{ .module = made.?, .name = "mixed", .layout = layout, .pass = pass });
+    try testing.expectEqual(facet.Result.success, mixed_result);
+    defer fb.DestroyPipeline(device, mixed_pipeline);
+    try testing.expectEqualSlices(u32, Taken.Near.words, _objects.of(_pipeline.Pipeline, near_pipeline.?).fragment_words);
+    try testing.expectEqualSlices(u32, Taken.Mixed.words, _objects.of(_pipeline.Pipeline, mixed_pipeline.?).fragment_words);
+    // The form is in the pipeline beside the words, which is what a device
+    // that compiles reads to tell a fixed form from a program's own.
+    try testing.expectEqual(shader.FixedKind.texture, _objects.of(_pipeline.Pipeline, near_pipeline.?).fixed.kind);
+    try testing.expectEqual(texture_zig.Filter.nearest, _objects.of(_pipeline.Pipeline, near_pipeline.?).fixed.sampling.filter);
+    try testing.expectEqual(texture_zig.Filter.bilinear, _objects.of(_pipeline.Pipeline, mixed_pipeline.?).fixed.sampling.filter);
+
+    const vertices = CutoutScene.quad;
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
+    const indices = scenes.quad_indices;
+    const index_buffer, const index_bytes = try bench.buffer(@sizeOf(@TypeOf(indices)), facet.BUFFER_USAGE_INDEX_BUFFER);
+    @memcpy(index_bytes[0..@sizeOf(@TypeOf(indices))], std.mem.asBytes(&indices));
+
+    // The texture into the device's memory once, before any pass.
+    const region = facet.BufferImageCopy{ .image_extent = .{ .width = 8, .height = 8 } };
+    {
+        const commands = try bench.record();
+        fb.CmdCopyBufferToImage(commands, staging, texture_image, .transfer_dst_optimal, 1, @ptrCast(&region));
+        try bench.submit();
+    }
+
+    const black = clears(0xFF00_0000);
+    const offset: u64 = 0;
+    for ([2]?*facet.Pipeline{ near_pipeline, mixed_pipeline }, [2]*facet.Framebuffer{ near_frame, mixed_frame }) |which, into| {
+        const commands = try bench.record();
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = into, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 1, .clear_values = &black }, .@"inline");
+        fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+        fb.CmdBindIndexBuffer(commands, index_buffer, 0, .uint16);
+        fb.CmdBindDescriptorSets(commands, .graphics, layout, 0, 1, @ptrCast(&set), 0, null);
+        fb.CmdBindPipeline(commands, .graphics, which.?);
+        fb.CmdDrawIndexed(commands, indices.len, 1, 0, 0, 0);
+        fb.CmdEndRenderPass(commands);
+        try bench.submit();
+    }
+
+    // The oracle, written down: an 8 x 8 texture over 64 x 64 pixels is
+    // eight pixels to a texel, every pixel's centre at least a sixteenth
+    // of a texel inside one, so a `nearest` sample is that texel's colour
+    // and nothing else.
+    //
+    // This is also what the generated function has to come out with, and
+    // with `nearest` it is **equality** rather than nearness, which is why
+    // the scene is this one: the fixed form picks the texel in 1/256ths
+    // (`texture.place`, then `s >> 8`) and the generated function in
+    // floats (`@floor(u * 8)`), scaling by 256 is exact in binary, and
+    // `trunc(256 y) >> 8` is `@floor(y)` for y >= 0, so the two pick the
+    // same texel; and a byte through `ir.bytesOf(b / 255)` comes back as
+    // `b` for all 256 of them. Bilinear would not be exact - `sampleAt`
+    // adds its four weighted texels and shifts once where
+    // `Texture.sampleLayer` mixes across and then down, rounding each
+    // time - so that comparison, when it can be made, wants a byte of
+    // slack and this one does not.
+    var apart: u32 = 0;
+    for (0..64) |y| for (0..64) |x| {
+        const want = texels[y / 8][x / 8];
+        const found = near_picture.at(@intCast(x), @intCast(y));
+        if (found != want) {
+            std.debug.print("{d},{d}: drew 0x{X:0>8}, texel 0x{X:0>8}\n", .{ x, y, found, want });
+            return error.TestExpectedEqual;
+        }
+        if (mixed_picture.at(@intCast(x), @intCast(y)) != want) apart += 1;
+    };
+    // And the filter reaches the draw: the bilinear picture is a mix of
+    // the four texels round each point and so is not the nearest one. Both
+    // pipelines carry the same words, which is the point - what the words
+    // leave to the device, the device still decides.
+    try testing.expect(apart > 0);
+}
+
 test "descriptor sets: a layout's bindings as slots, written and copied as shaders read them; a pool's most" {
     var bench = try Bench.up();
     defer bench.down();
@@ -1165,11 +1401,13 @@ test "points and lines: where they should be, and as wide; a triangle's edges an
         .{ c(20), c(30), 0.5 },              .{ c(40), c(30), 0.5 },
         .{ c(40), c(50), 0.5 },
         // Points.
-        .{ c(5), c(5), 0.5 },                .{ c(60), c(60), 0.5 },
+                     .{ c(5), c(5), 0.5 },
+        .{ c(60), c(60), 0.5 },
         // A triangle one way round, and the other.
-        .{ -0.5, -0.5, 0.5 },                .{ 0.5, -0.5, 0.5 },
-        .{ -0.5, 0.5, 0.5 },                 .{ -0.5, -0.5, 0.5 },
-        .{ -0.5, 0.5, 0.5 },                 .{ 0.5, -0.5, 0.5 },
+                     .{ -0.5, -0.5, 0.5 },
+        .{ 0.5, -0.5, 0.5 },                 .{ -0.5, 0.5, 0.5 },
+        .{ -0.5, -0.5, 0.5 },                .{ -0.5, 0.5, 0.5 },
+        .{ 0.5, -0.5, 0.5 },
     };
     const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER);
     @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
@@ -1390,7 +1628,7 @@ test "the stencil: marked, then drawn only where marked; a face's own test; its 
     defer fb.DestroyPipelineLayout(device, layout);
     const vertices = [_][3]f32{
         // All of the picture.
-        .{ -1, -1, 0.5 }, .{ 1, -1, 0.5 }, .{ -1, 1, 0.5 }, .{ -1, 1, 0.5 }, .{ 1, -1, 0.5 }, .{ 1, 1, 0.5 },
+        .{ -1, -1, 0.5 },  .{ 1, -1, 0.5 },  .{ -1, 1, 0.5 },  .{ -1, 1, 0.5 },  .{ 1, -1, 0.5 },  .{ 1, 1, 0.5 },
         // The left half, one way round, nearer; and the right, the other.
         .{ -1, -1, 0.25 }, .{ 0, -1, 0.25 }, .{ -1, 1, 0.25 }, .{ -1, 1, 0.25 }, .{ 0, -1, 0.25 }, .{ 0, 1, 0.25 },
         .{ 0, -1, 0.25 },  .{ 0, 1, 0.25 },  .{ 1, -1, 0.25 }, .{ 1, -1, 0.25 }, .{ 0, 1, 0.25 },  .{ 1, 1, 0.25 },
@@ -4537,10 +4775,10 @@ test "a stencil attachment that outlives its pass: stored as the tiles are drawn
     defer fb.DestroyPipelineLayout(device, layout);
     // All of the picture, then its left half.
     const vertices = [_][3]f32{
-        .{ -1, -1, 0.5 }, .{ 1, -1, 0.5 },  .{ -1, 1, 0.5 },
-        .{ -1, 1, 0.5 },  .{ 1, -1, 0.5 },  .{ 1, 1, 0.5 },
-        .{ -1, -1, 0.5 }, .{ 0, -1, 0.5 },  .{ -1, 1, 0.5 },
-        .{ -1, 1, 0.5 },  .{ 0, -1, 0.5 },  .{ 0, 1, 0.5 },
+        .{ -1, -1, 0.5 }, .{ 1, -1, 0.5 }, .{ -1, 1, 0.5 },
+        .{ -1, 1, 0.5 },  .{ 1, -1, 0.5 }, .{ 1, 1, 0.5 },
+        .{ -1, -1, 0.5 }, .{ 0, -1, 0.5 }, .{ -1, 1, 0.5 },
+        .{ -1, 1, 0.5 },  .{ 0, -1, 0.5 }, .{ 0, 1, 0.5 },
     };
     const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER);
     @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
@@ -4693,7 +4931,6 @@ test "a depth kept wants memory behind it: a transient image is refused the fram
     const commands = try bench.record();
     fb.CmdClearDepthStencilImage(commands, transient_image, 0, &value, 1, @ptrCast(&range));
     try bench.submit();
-
 }
 
 test "a device that keeps no depth, as the V3D keeps none: the pass that asks for one is refused" {
@@ -7881,7 +8118,7 @@ test "textures of layers: arrays, cube maps, 3D, copied a layer at a time; compr
     fb.CmdCopyImage(commands, array_image, .general, into_image, .general, 1, @ptrCast(&layer_copy));
     fb.CmdCopyImageToBuffer(commands, array_image, .general, read_buffer, 1, @ptrCast(&read_region));
     try bench.submit();
-    try testing.expectEqualSlices(u8, &LayerScene.texel(1, 8, 0), read_back[8 * 4..][0..4]);
+    try testing.expectEqualSlices(u8, &LayerScene.texel(1, 8, 0), read_back[8 * 4 ..][0..4]);
     try testing.expectEqualSlices(u8, &LayerScene.texel(2, 0, 8), read_back[stack_bytes + 8 * 16 * 4 ..][0..4]);
 
     var set_layout: ?*facet.DescriptorSetLayout = null;

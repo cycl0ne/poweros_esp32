@@ -268,3 +268,129 @@ test "a varying of one float is a float: the module Khronos' validator takes" {
     try expectWords(&reference.min_scaled, Dimmed.words);
     try std.testing.expectEqual(@as(u32, 5), Dimmed.varyings);
 }
+
+// --- rung 4 for the sampler family -----------------------------------------
+//
+// The generated function that samples against `shader.textured`, which is
+// the fixed form it mirrors. This is the half of rung 4 that could not be
+// written until `ir.zig`'s `sampleAt` compiled: `function` is a lazy
+// declaration and every sampling graph in the tree had been asked only
+// for its `.words`, so it had never been instantiated at all.
+
+const nearest: texture.Sampling = .{ .format = .argb8888, .filter = .nearest };
+const bilinear: texture.Sampling = .{ .format = .argb8888, .filter = .bilinear };
+
+const Near = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        b.color(b.sampleBy(0, 0, b.input(0, .f32x2), nearest));
+    }
+});
+
+const Mixed = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        b.color(b.sampleBy(0, 0, b.input(0, .f32x2), bilinear));
+    }
+});
+
+var texels: [64 * 8]u8 align(8) = undefined;
+
+/// Eight by eight, no two alike and no two a swap of x and y apart, so
+/// neither picking the wrong texel nor swapping the axes can go unseen.
+fn texelAt(x: u32, y: u32) u32 {
+    return 0xFF00_0000 | (x * 36) << 16 | (y * 36) << 8 | ((x ^ y) * 36);
+}
+
+/// One quad of four pixels drawn twice over the same texture at the same
+/// coordinates: by the graph's own function, and by the fixed form. The
+/// planes are flat in 1 / w, so the interpolation is exact and what is
+/// left between the two is the sampling and nothing else.
+fn bothWays(comptime Shape: type, comptime sampling: texture.Sampling, u: shader.Plane, v: shader.Plane) [2][4]u32 {
+    var picture = texture.Texture.init(sampling.format, 8, 8, 1, &texels) catch unreachable;
+    for (0..8) |y| for (0..8) |x| {
+        picture.setColor(0, 0, @intCast(x), @intCast(y), texelAt(@intCast(x), @intCast(y)));
+    };
+    const slots = [1]shader.Slot{.{ .pointer = &picture }};
+    const firsts = [2]u16{ 0, 1 };
+    const set = shader.Set{ .first = &firsts, .binding_count = 1, .slots = &slots };
+    var resources = shader.Resources{};
+    resources.sets[0] = &set;
+
+    var quads = [1]shader.Quad{.{ .x = 0, .y = 0, .covered = 0xF, .kept = 0xF }};
+    var planes = [3]shader.Plane{ .{ .origin = 1, .dx = 0, .dy = 0 }, u, v };
+    var generated = [1][4]u32{@splat(0)};
+    var fixed = [1][4]u32{@splat(0)};
+    const mine = shader.Fragments{
+        .quads = &quads,
+        .count = 1,
+        .colors = &generated,
+        .planes = &planes,
+        .plane_count = 3,
+        .x = 0,
+        .y = 0,
+        .exact = true,
+        .resources = &resources,
+    };
+    Shape.function(&mine);
+    const theirs = shader.Fragments{
+        .quads = &quads,
+        .count = 1,
+        .colors = &fixed,
+        .planes = &planes,
+        .plane_count = 3,
+        .x = 0,
+        .y = 0,
+        .exact = true,
+        .resources = &resources,
+    };
+    shader.textured(sampling, &theirs, &picture);
+    return .{ fixed[0], generated[0] };
+}
+
+test "a generated sampling function at the nearest texel is the fixed form, bit for bit" {
+    // Equality and not nearness, which is why `nearest` is the one held
+    // this way: the fixed form picks its texel in 1/256ths
+    // (`texture.place`, then a shift) and the generated function in
+    // floats (`@floor(u * 8)`), scaling by 256 is exact in binary, and
+    // `trunc(256 y) >> 8` is `@floor(y)` for y >= 0 - so the two pick the
+    // same texel. A byte through `ir.bytesOf(b / 255)` comes back as `b`
+    // for all 256 of them, so the texel's colour survives the trip
+    // through the graph's floats.
+    var apart: u32 = 0;
+    var cases: u32 = 0;
+    for (0..17) |a| for (0..17) |b| {
+        const u = shader.Plane{ .origin = @as(f32, @floatFromInt(a)) / 16, .dx = 0.07, .dy = 0.11 };
+        const v = shader.Plane{ .origin = @as(f32, @floatFromInt(b)) / 16, .dx = 0.13, .dy = 0.03 };
+        const fixed, const generated = bothWays(Near, nearest, u, v);
+        cases += 1;
+        for (fixed, generated) |want, made| if (want != made) {
+            std.debug.print("u={d}/16 v={d}/16: fixed 0x{X:0>8}, generated 0x{X:0>8}\n", .{ a, b, want, made });
+            apart += 1;
+        };
+    };
+    try std.testing.expectEqual(@as(u32, 289), cases);
+    try std.testing.expectEqual(@as(u32, 0), apart);
+}
+
+test "a generated sampling function that mixes is the fixed form to within a step of two" {
+    // Not bit for bit, and it cannot be: `ir.zig`'s `sampleAt` asks the
+    // texture for a whole mixed colour, and `texture.sampleLayer` mixes
+    // across and then down with a rounding at each step, where the
+    // generated function then takes that colour back into floats and out
+    // again. Two of 255 is what those roundings come to here, which is
+    // written down so that a change in either mix is noticed.
+    var worst: u32 = 0;
+    for (0..17) |a| for (0..17) |b| {
+        const u = shader.Plane{ .origin = @as(f32, @floatFromInt(a)) / 16, .dx = 0.07, .dy = 0.11 };
+        const v = shader.Plane{ .origin = @as(f32, @floatFromInt(b)) / 16, .dx = 0.13, .dy = 0.03 };
+        const fixed, const generated = bothWays(Mixed, bilinear, u, v);
+        for (fixed, generated) |want, made| {
+            inline for (0..4) |channel| {
+                const shift = channel * 8;
+                const one = want >> shift & 0xFF;
+                const other = made >> shift & 0xFF;
+                worst = @max(worst, if (one > other) one - other else other - one);
+            }
+        }
+    };
+    try std.testing.expect(worst <= 2);
+}
