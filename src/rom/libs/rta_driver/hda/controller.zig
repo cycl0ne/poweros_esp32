@@ -176,10 +176,10 @@ fn why(c: *Controller, comptime text: [:0]const u8, args: anytype) void {
     sdk.exec.klog(c.sys, exec.LOG_DEBUG, "rta-hda: " ++ text ++ "\n", args);
 }
 
-/// `us` microseconds given up, and how many were - which is what the
-/// waits above count, so a controller with no timer to wait on still
-/// gives up after a bounded number of turns rather than never.
-fn pause(c: *Controller, us: u32) u32 {
+/// `us` microseconds given up, and how many were - which is what every
+/// wait on this controller counts, so a controller with no timer to wait
+/// on still gives up after a bounded number of turns rather than never.
+pub fn pause(c: *Controller, us: u32) u32 {
     const io = c.io orelse {
         // No timer: a read of a register that cannot be cached is the
         // turn's cost, and the count stands for the time it took.

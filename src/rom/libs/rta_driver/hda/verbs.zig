@@ -78,6 +78,15 @@ pub fn connectionList(from: u8) u20 {
     return 0xf_0200 | @as(u20, from);
 }
 
+/// Which one of a node's inputs it takes, for a node that takes one at a
+/// time: a selector's choice, and a pin's where it has more than one
+/// thing wired to it. A mixer has no choice to make - it sums what comes
+/// in - and is opened by its input amplifiers instead.
+pub const connection_select_get: u20 = 0xf_0100;
+pub fn connectionSelectSet(index: u8) u20 {
+    return 0x7_0100 | @as(u20, index);
+}
+
 /// `param_connections`: how many entries, and whether they are shorts.
 pub const connections_count: u32 = 0x7f;
 pub const connections_long: u32 = 1 << 7;

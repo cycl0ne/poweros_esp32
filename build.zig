@@ -412,7 +412,9 @@ pub fn build(b: *std.Build) void {
     // UART1's backend: the RS-485 port's or a SLIP line's.
     const uart1 = rs485 orelse slip_line;
     const usb_devices = b.option([]const u8, "usb", "Plug these QEMU USB devices into the qemu steps' USB port, comma-separated (usb-hub,usb-kbd,usb-mouse); an item with '=' is a property of the device before it (usb-kbd,port=1,id=kbd)");
-    const virt_speaker = virtSpeaker(b, b.option([]const u8, "audio", "The virt and virt64 steps' USB speaker on this QEMU audio backend - an -audiodev's driver and options: pa, pipewire, alsa, sdl, none, wav,path=out.wav (default: QEMU's own choice among the backends it has)"));
+    const audio_backend = b.option([]const u8, "audio", "The sound of the virt, virt64 and q35 steps on this QEMU audio backend - an -audiodev's driver and options: pa, pipewire, alsa, sdl, none, wav,path=out.wav (default: QEMU's own choice among the backends it has)");
+    const virt_speaker = virtSpeaker(b, audio_backend);
+    const q35_speaker = q35Speaker(b, audio_backend);
     const virt_ui = b.option([]const u8, "virt-ui", "QEMU's -display for the virt, virt64 and q35 display steps (default: gtk,show-cursor=off,zoom-to-fit=off - GTK's window at the picture's size, 1:1; default,show-cursor=off takes SDL, or VNC, where there is no GTK)") orelse "gtk,show-cursor=off,zoom-to-fit=off";
     const virt_monitor = virtMonitor(b, b.option([]const u8, "virt-qmp", "Open a QMP monitor on this Unix socket in the virt, virt64 and q35 display steps, which scripts/qemu-shot.py takes the running machine's picture through (such as /tmp/poweros.qmp)"));
     const usb_disk = b.option([]const u8, "usb-disk", "Plug a USB stick into the qemu steps' USB port whose blocks are this raw image file (-snapshot runs keep it unchanged)");
@@ -1333,6 +1335,7 @@ pub fn build(b: *std.Build) void {
     const run_q35 = b.addSystemCommand(&q35_machine);
     run_q35.addArgs(&.{ "-nographic", "-device", "qemu-xhci" });
     run_q35.addArgs(q35_network);
+    run_q35.addArgs(q35_speaker);
     q35_disks.addTo(run_q35);
     run_q35.addArgs(&.{ "-drive", b.fmt("if=pflash,format=raw,readonly=on,file={s}", .{ovmf_code}) });
     run_q35.addArgs(&.{ "-drive", b.fmt("if=pflash,format=raw,file={s}", .{q35_vars.path}) });
@@ -1395,15 +1398,16 @@ pub fn build(b: *std.Build) void {
     // it, as `virt-display` and `virt64-display`: USB with a keyboard, a
     // tablet, whose pointer stays where the host's is; the console stays
     // on the terminal. Its Ethernet is the card both q35 steps have
-    // (`q35Network`). No speaker: this board's ROM carries no
-    // audio.device, so there is nothing to drive one with.
+    // (`q35Network`), and its sound the controller they both have
+    // (`q35Speaker`).
     //
     // `q35-display` draws on the framebuffer the firmware lights, which
     // on this machine is its emulated VGA; `q35-virtio` gives it QEMU's
     // virtio GPU on PCI instead, which the board lists before the
     // firmware's framebuffer, and the same driver draws on that over
     // virtio's PCI transport. Both at 1920x1080, as the other emulated
-    // machines' windows are.
+    // machines' windows are. Both have the machine's own audio controller,
+    // which rta-hda drives (`q35Speaker`).
     for ([_][3][]const u8{
         .{ "VGA,xres=1920,yres=1080", "q35-display", "the firmware's framebuffer" },
         .{ "virtio-gpu-pci,xres=1920,yres=1080", "q35-virtio", "virtio GPU" },
@@ -1423,6 +1427,7 @@ pub fn build(b: *std.Build) void {
         // takes the size, and the firmware lights that.
         run_q35_display.addArgs(&.{ "-vga", "none", "-device", display[0] });
         run_q35_display.addArgs(q35_network);
+        run_q35_display.addArgs(q35_speaker);
         run_q35_display.addArgs(virt_monitor);
         q35_disks.addTo(run_q35_display);
         run_q35_display.addArgs(&.{ "-drive", b.fmt("if=pflash,format=raw,readonly=on,file={s}", .{ovmf_code}) });
@@ -3122,6 +3127,21 @@ fn q35Network(b: *std.Build, net: ?[]const u8, dump: ?[]const u8, telnet: ?u16, 
 fn virtSpeaker(b: *std.Build, backend: ?[]const u8) []const []const u8 {
     const named = backend orelse return b.dupeStrings(&.{ "-device", "usb-audio,id=speaker" });
     return b.dupeStrings(&.{ "-audiodev", b.fmt("{s},id=sound", .{named}), "-device", "usb-audio,id=speaker,audiodev=sound" });
+}
+
+/// The q35 machine's own sound, as QEMU's arguments: its ICH9 high
+/// definition audio controller with an output codec behind it, which
+/// rta-hda finds on PCI by its class and plays through - the same part a
+/// machine of this kind really has, rather than something plugged into
+/// it. `backend` is an `-audiodev`'s driver and its options, as the virt
+/// machines' speaker takes it.
+fn q35Speaker(b: *std.Build, backend: ?[]const u8) []const []const u8 {
+    const card = [_][]const u8{ "-device", "ich9-intel-hda,id=sound" };
+    const named = backend orelse return b.dupeStrings(&(card ++ [_][]const u8{ "-device", "hda-output,bus=sound.0,id=speaker" }));
+    return b.dupeStrings(&(card ++ [_][]const u8{
+        "-audiodev", b.fmt("{s},id=played", .{named}),
+        "-device",   "hda-output,bus=sound.0,id=speaker,audiodev=played",
+    }));
 }
 
 /// QEMU's QMP monitor on a Unix socket, which a program connects to while
