@@ -436,13 +436,20 @@ pub const Sampling = struct {
 /// wraps a sampler has. It says nothing of mipmapping, of a level held or
 /// shifted, of anisotropy, of a comparison or of a border.
 ///
-/// This is here, and not in either device, because **both** of them need
-/// the same answer. Vulkan puts filtering in the sampler object and
-/// SPIR-V has nowhere to carry what a shader asked, so a generated
-/// shader's sampling is the bound sampler's on whichever device draws it;
-/// and a sampler this cannot answer for is drawn by neither - the pixel
-/// is `shader.missing`, which is a wrong colour on purpose rather than
-/// two devices quietly drawing different right ones. (Since 1.79.)
+/// This is here, and not in either device, because both of them ask it.
+/// Vulkan puts filtering in the sampler object and SPIR-V has nowhere to
+/// carry what a shader asked, so a generated shader's sampling is the
+/// bound sampler's on whichever device draws it. (Since 1.79.)
+///
+/// **A null answer is not a refusal, and since 1.83 it is not one on the
+/// cores at all.** They take a sampler this cannot collapse whole
+/// instead - `ir.zig`'s `sampleThrough`, which is `sampleBy` and
+/// everything a sampler says, the same call the fixed form
+/// `shader.texturedBy` makes - so here null means only "not the fast
+/// path". The V3D's TMU state still has no word for such a sampler and
+/// its draw paints `shader.missing` for it, a wrong colour on purpose;
+/// that is item 54 of docs/facet-vulkan10.md, and until 1.83 both
+/// devices did it.
 pub fn samplingOf(sampler: *const Sampler, format: Format) ?Sampling {
     if (sampler.mag_filter != sampler.min_filter) return null;
     if (sampler.wrap[0] != sampler.wrap[1]) return null;

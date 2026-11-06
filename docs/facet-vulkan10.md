@@ -114,12 +114,16 @@ These are the items that serve the decision above, in the order the
 analysis put them. Items marked *critical path* are the ones the second
 refinement - finish the compiler, no fallback - moves onto the main line.
 
-**Items 2, 3, 4, 5 and 7 were done in revision 1.80, item 78 in 1.81, and
-items 14, 16, 49 and 77 in 1.82.** Each carries a *Done* note below saying
-what was actually built and where the item's own description turned out to
-be wrong - and several did. Things found while doing them became the items
-at the end of the list: 77 and 78 from 1.80 and 1.81, and 79, 80 and 81
-from 1.82.
+**Items 2, 3, 4, 5 and 7 were done in revision 1.80, item 78 in 1.81,
+items 14, 16, 49 and 77 in 1.82, and item 52's half of two in 1.83.** Each
+carries a *Done* note below saying what was actually built and where the
+item's own description turned out to be wrong - and several did. Things
+found while doing them became the items at the end of the list: 77 and 78
+from 1.80 and 1.81, and 79, 80 and 81 from 1.82.
+
+Item 52 is the one split between devices: the cores draw every sampler as
+of 1.83 and the V3D does not, so the magenta that item is about now
+belongs to item 54 alone.
 
 Item 16's *Done* note is the one to read first if you are picking this up,
 because the limits reshape it settles is what items 17 to 30 were waiting
@@ -876,6 +880,35 @@ In facet, which attachment a fragment function reads is the descriptor it reads 
 
 After: nothing — it is the compiler path that exists today
 
+**The cores' half is done in 1.83: no sampler makes this device paint
+magenta any more.** `ir.zig`'s generated function carries the bound
+sampler whole
+where `texture.samplingOf` cannot collapse it into a `Sampling`, and
+samples through `texture.sampleBy` a pixel at a time - which is the same
+call the fixed form `shader.texturedBy` makes with the same sampler, so a
+generated shader and a fixed form reached by one sampler paint the same
+thing. A test holds the two together bit for bit over eleven samplers
+`samplingOf` turns down: the three wraps an `Address` has no word for, a
+wrap each way, a filter each way, linear mipmapping, a lod bias, a lod
+clamp, anisotropy, a comparison, and unnormalized coordinates. The fast
+path is unchanged and still takes a whole quad at a time, so the cost is
+paid only by the samples that ask for more.
+
+Two things were decided doing it. The sampler is carried **untouched**,
+comparison included: a graph's `sample` is an ordinary sample and has no
+reference operand, there being no Dref operation in this IR, so a sampler
+with `compare` set compares against 0 - which Vulkan leaves undefined,
+since it forbids a `compareEnable` sampler to anything but an
+`OpImage*Dref*`, and which is exactly what `texturedBy` already does with
+that sampler beside a form that is not a shadow form. Matching the device
+to itself was worth more than a tidier answer. And the cross-device
+guard this item's magenta was built as still holds: the V3D paints
+magenta where the cores now draw, which is a loud difference rather than
+a quiet one - magenta is not a plausible picture and cannot be mistaken
+for the other device's answer, which is what two plausible pictures would
+have been. **The V3D's half is item 54**, which owns the remaining
+magenta; closing it ends the difference.
+
 This is the newest problem on the list and a regression on the cores, created at 1.79 and documented nowhere but a revision note. texture.samplingOf collapses a facet.Sampler into a three-field Sampling (format, one filter, one of two wraps) and returns null for a different min/mag filter, linear mipmapping, any lod_bias, any min_lod/max_lod clamp, anisotropy above 1, any compare, unnormalized coordinates, and three of the five address modes. On a null answer BOTH devices drop the texture and paint shader.missing (0xFFFF00FF, magenta) — deliberately wrong so the two devices cannot quietly draw different right answers. So for a generated pipeline the full sampler is now reachable only through the fixed forms on the cores. Lifting it means the IR carrying per-sample sampler state and two back ends honouring it; the cheap half — refuse the pipeline instead of drawing magenta — is small on its own and removes the only wrong-colour-on-purpose outcome in the library, though CreateGraphicsPipelines cannot see the bound sampler, so the clean refusal may have to happen at draw time, which Vulkan has no result code for.
 
 > Verified: sdk/libs/facet/texture.zig:430-461 `samplingOf` with its seven null returns and the docstring "a sampler this cannot answer for is drawn by neither - the pixel is `shader.missing`, which is a wrong colour on purpose ... (Since 1.79.)"; ir.zig:586-597 `if (texture.samplingOf(bound, ...)) |said| ... else { pictures[which] = null; }`; driver/v3d/_play.zig:886-906 samplingBy; shader.zig:1801 `pub const missing: u32 = 0xFFFF_00FF;`.
@@ -901,6 +934,8 @@ Found independently by: features, semantics, doc-staleness (3 strands).
 After: The SPIR-V -> QPU compiler; its 1.77-1.79 sampler path is the beachhead
 
 samplers is false on the V3D, so CreateGraphicsPipelines refuses every fixed form needing one — texture_sampled, texture_shadow, texture_array_sampled, texture_cube_sampled, texture_3d_sampled, texture_cube_array_sampled — and the cores draw them. VK_DESCRIPTOR_TYPE_SAMPLER and COMBINED_IMAGE_SAMPLER are mandatory in Vulkan 1.0 and all sampler state bar anisotropy is unconditional, so for the V3D as a Vulkan device this is a conformance block, not a capability. Two halves: the compiler emitting the TMU sequence for each form — the generated path already does this for OpImageSampleImplicitLod on a 2D combined image sampler, so the shape exists — and a software path for what the TMU cannot express, since writeSamplerState takes only a filter and a wrap. unnormalized_coordinates is false only because samplers is, and Vulkan has no feature bit for it, so it rides in free; sampler_anisotropy is optional in 1.0, so that part is a clean capability (and until it lands, item 2 is the honest report).
+
+**Since 1.83 this item also owns the last `shader.missing` in the library.** Item 52 was the pair of this one: a sampler `texture.samplingOf` could not collapse was drawn by neither device and the pixel was painted magenta on purpose, so that the two could not quietly draw different plausible pictures. The cores carry such a sampler whole now and draw it, so the magenta is this device's alone. `samplingBy` returning null is the only place left in facet where a *sampler* makes a draw paint a wrong colour on purpose; the other `shader.missing` paths, on both devices, are for a texture or a sampler that is not bound where the shader reads, which is a resource that is not there rather than one the device cannot express, and Vulkan calls reading it invalid usage.
 
 > Verified: driver/v3d/driver.zig:154 `.samplers = false` with the comment "there is no program that reads a sampler", :155 `.sampler_anisotropy = false`, :158 `.unnormalized_coordinates = false` ("Nothing here reads a sampler at all"); refusal at driver.zig:460; TMU state is filter+wrap only at driver/v3d/tiling.zig:274 `writeSamplerState(into, filter, wrap)`; what a sampler may ask for at sdk/libs/facet/texture.zig:535-565 against samplingOf at :446-461.
 

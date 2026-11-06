@@ -886,11 +886,21 @@ fn textureUniforms(queue: *Queue, fixed: shader.Fixed) ?u32 {
 /// draw says so in the colour.
 ///
 /// Which samplers those are is `texture.samplingOf`'s to say and not
-/// this driver's, because the cores have to turn down the same ones: a
-/// generated shader takes its sampling from the bound sampler on
-/// whichever device draws it, so a sampler one device could answer for
-/// and the other could not would be one pipeline drawn two ways. This
-/// maps the answer onto the tiling's own two enums and nothing more.
+/// this driver's: it is the one place that knows what a `Sampling` can
+/// hold, and both devices ask it. This maps its answer onto the tiling's
+/// own two enums and nothing more.
+///
+/// **The cores no longer turn down the same ones.** Since 1.83 they
+/// carry a sampler a `Sampling` cannot say whole and sample through it
+/// (`ir.zig`'s `sampleThrough`), so one pipeline reached by such a
+/// sampler is drawn right there and magenta here. The pairing this
+/// comment used to describe - both devices refusing together - was
+/// guarding against the two quietly drawing different plausible
+/// pictures, and that guard is still good: magenta is not a plausible
+/// picture, so the difference cannot be mistaken for the other device's
+/// answer. Item 54 of docs/facet-vulkan10.md is this half, a QPU
+/// program that reads the bound sampler, and closing it ends the
+/// difference.
 fn samplingBy(sampler: *const texture.Sampler) ?struct { filter: tiling.Filter, wrap: tiling.Wrap } {
     // The format is not the sampler's, and nothing below reads it.
     const said = texture.samplingOf(sampler, .rgba8888) orelse return null;

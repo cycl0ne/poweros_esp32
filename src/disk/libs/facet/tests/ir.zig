@@ -448,13 +448,135 @@ test "a generated shader samples as the draw's sampler says, not as the graph as
     try std.testing.expect(!std.mem.eql(u32, &mixed, &throughSampler(Near, &near, u, v)));
     try std.testing.expectEqualSlices(u32, &mixed, &throughSampler(Mixed, &mixing, u, v));
 
-    // A sampler asking for something a `Sampling` cannot say is drawn by
-    // neither device: the pixel is `shader.missing`, which is a wrong
-    // colour on purpose rather than two devices quietly drawing
-    // different right ones. `mirrored_repeat` is one of the three wraps
-    // the TMU's state has no word for.
-    const beyond: texture.Sampler = .{ .wrap = .{ .mirrored_repeat, .mirrored_repeat, .mirrored_repeat } };
+    // A sampler asking for something a `Sampling` cannot say used to be
+    // drawn by neither device - the pixel was `shader.missing`, a wrong
+    // colour on purpose - and since 1.83 the cores carry the whole
+    // sampler instead. `mirrored_repeat` is one of the three wraps the
+    // TMU's state has no word for, so it is on the slow path and must
+    // still paint a colour of the texture.
+    const beyond: texture.Sampler = .{ .wrap = @splat(.mirrored_repeat) };
     for (throughSampler(Near, &beyond, u, v)) |pixel| {
-        try std.testing.expectEqual(shader.missing, pixel);
+        try std.testing.expect(pixel != shader.missing);
+    }
+}
+
+/// Four levels of an 8x8 texture, each level a flat colour of its own, so
+/// that which level a sample read is visible in what it painted.
+var levelled: [1024]u8 align(8) = undefined;
+
+/// One quad drawn twice over the same four-level texture with the same
+/// sampler bound: by the graph's own function, and by the fixed form
+/// `shader.texturedBy`, which is the one the cores reach for a sampled
+/// form. Both take the whole of the sampler through `texture.sampleBy`,
+/// so what comes back has to agree.
+fn bothThroughSampler(comptime Shape: type, sampler: *const texture.Sampler, u: shader.Plane, v: shader.Plane) [2][4]u32 {
+    var picture = texture.Texture.init(.argb8888, 8, 8, 4, &levelled) catch unreachable;
+    for (0..4) |lod| {
+        const side = @as(u32, 8) >> @intCast(lod);
+        for (0..side) |y| for (0..side) |x| {
+            // The level in the red channel and the texel in the other
+            // two, so a mixed level and a mixed texel are both visible.
+            picture.setColor(0, @intCast(lod), @intCast(x), @intCast(y), 0xFF00_0000 |
+                @as(u32, @intCast(lod * 60)) << 16 |
+                @as(u32, @intCast(x * 36)) << 8 |
+                @as(u32, @intCast(y * 36)));
+        };
+    }
+    const slots = [1]shader.Slot{.{ .pointer = &picture, .sampler = sampler }};
+    const firsts = [2]u16{ 0, 1 };
+    const set = shader.Set{ .first = &firsts, .binding_count = 1, .slots = &slots };
+    var resources = shader.Resources{};
+    resources.sets[0] = &set;
+
+    var quads = [1]shader.Quad{.{ .x = 0, .y = 0, .covered = 0xF, .kept = 0xF }};
+    var planes = [3]shader.Plane{ .{ .origin = 1, .dx = 0, .dy = 0 }, u, v };
+    var generated = [1][4]u32{@splat(0)};
+    var fixed = [1][4]u32{@splat(0)};
+    const mine = shader.Fragments{
+        .quads = &quads,
+        .count = 1,
+        .colors = &generated,
+        .planes = &planes,
+        .plane_count = 3,
+        .x = 0,
+        .y = 0,
+        .exact = true,
+        .resources = &resources,
+    };
+    Shape.function(&mine);
+    const theirs = shader.Fragments{
+        .quads = &quads,
+        .count = 1,
+        .colors = &fixed,
+        .planes = &planes,
+        .plane_count = 3,
+        .x = 0,
+        .y = 0,
+        .exact = true,
+        .resources = &resources,
+    };
+    // The form's own `sampling` is ignored by `texturedBy`, which takes
+    // everything from the sampler - which is the whole point of it.
+    shader.texturedBy(false, .{}, &theirs, &picture, sampler);
+    return .{ fixed[0], generated[0] };
+}
+
+test "a sampler no Sampling can say is drawn by the cores, as the fixed form draws it" {
+    // Until 1.83 every one of these painted `shader.missing` on both
+    // devices: `texture.samplingOf` cannot collapse any of them into a
+    // `Sampling`, and the IR dropped the texture when it could not. The
+    // cores carry the sampler whole now and take it through
+    // `texture.sampleBy` - the same call the fixed form makes - so the
+    // two have to paint the same thing, bit for bit, and neither may
+    // paint magenta. The V3D's own half of this is item 54.
+    const u = shader.Plane{ .origin = 0.3125, .dx = 0.07, .dy = 0.11 };
+    const v = shader.Plane{ .origin = 0.4375, .dx = 0.13, .dy = 0.03 };
+    const beyond = [_]struct { what: []const u8, sampler: texture.Sampler }{
+        // The three wraps a `Sampling`'s `Address` has no word for.
+        .{ .what = "mirrored_repeat", .sampler = .{ .wrap = @splat(.mirrored_repeat) } },
+        .{ .what = "clamp_to_border", .sampler = .{ .wrap = @splat(.clamp_to_border), .border = 0xFF00_FF00 } },
+        .{ .what = "mirror_clamp_to_edge", .sampler = .{ .wrap = @splat(.mirror_clamp_to_edge) } },
+        // One wrap across and another down, which a `Sampling` has one of.
+        .{ .what = "two wraps", .sampler = .{ .wrap = .{ .repeat, .clamp_to_edge, .repeat } } },
+        // A filter each way, likewise.
+        .{ .what = "two filters", .sampler = .{ .mag_filter = .nearest, .min_filter = .bilinear } },
+        // The levels: mixed, shifted, and held.
+        .{ .what = "linear mipmapping", .sampler = .{ .mipmap = .linear } },
+        .{ .what = "a lod bias", .sampler = .{ .lod_bias = 1.5 } },
+        .{ .what = "a lod clamp", .sampler = .{ .min_lod = 1, .max_lod = 2 } },
+        // Several samples along the longer axis.
+        .{ .what = "anisotropy", .sampler = .{ .anisotropy = 4 } },
+        // A comparison, which the graph has no reference for, so it is
+        // made against 0 - undefined by Vulkan, which forbids the
+        // pairing, and the same undefined thing the fixed form does,
+        // which is what this test is for.
+        .{ .what = "a comparison", .sampler = .{ .compare = .less } },
+        // Coordinates in texels rather than 0 to 1.
+        .{ .what = "unnormalized coordinates", .sampler = .{
+            .unnormalized = true,
+            .mag_filter = .nearest,
+            .min_filter = .nearest,
+            .max_lod = 0,
+            .wrap = @splat(.clamp_to_edge),
+        } },
+    };
+    for (beyond) |each| {
+        // It is on the slow path at all: that is what this tests, and a
+        // sampler that quietly collapsed would make the rest vacuous.
+        try std.testing.expectEqual(@as(?texture.Sampling, null), texture.samplingOf(&each.sampler, .argb8888));
+        const fixed, const generated = bothThroughSampler(Near, &each.sampler, u, v);
+        for (fixed, generated, 0..) |want, made, pixel| {
+            if (want != made) {
+                std.debug.print("{s}, pixel {d}: the fixed form 0x{X:0>8}, the generated 0x{X:0>8}\n", .{ each.what, pixel, want, made });
+            }
+            try std.testing.expectEqual(want, made);
+            try std.testing.expect(made != shader.missing);
+        }
+        // And the graph's own sampling no longer decides anything, so a
+        // graph that asked to mix paints what one that asked for the
+        // nearest texel paints.
+        const mixed_fixed, const mixed_generated = bothThroughSampler(Mixed, &each.sampler, u, v);
+        try std.testing.expectEqualSlices(u32, &mixed_fixed, &mixed_generated);
+        try std.testing.expectEqualSlices(u32, &generated, &mixed_generated);
     }
 }

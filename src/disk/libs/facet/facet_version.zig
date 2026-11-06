@@ -1378,4 +1378,54 @@ pub const LIBRARY_VERSION = 1;
 /// required value for every one of the 106, the feature each one hangs
 /// on, and the number the cores do not meet - eighteen, pinned, and
 /// accounted for item by item against docs/facet-vulkan10.md.
-pub const LIBRARY_REVISION = 82;
+///
+/// 83: **a generated shader on the cores draws every sampler, instead of
+/// painting magenta for the ones a `Sampling` cannot say.**
+///
+/// 1.79 put the filtering of a generated shader in the bound sampler,
+/// because that is where Vulkan puts it and SPIR-V has nowhere to carry
+/// what a shader asked for. `texture.samplingOf` collapses a sampler into
+/// the three fields a `Sampling` has - a format, one filter, one of two
+/// wraps - and answers null for a different filter each way, a different
+/// wrap each way, linear mipmapping, a lod bias, a lod clamp, anisotropy
+/// above 1, a comparison, unnormalized coordinates, and three of the five
+/// wraps. On null **both** devices dropped the texture and painted
+/// `shader.missing`, 0xFFFF00FF, which is magenta: a wrong colour on
+/// purpose, so that one pipeline could not be drawn two plausible ways
+/// depending on which device took it.
+///
+/// It cost more than it was worth on the cores, because the cores can
+/// already sample through the whole of a sampler: `texture.sampleBy` is
+/// what the fixed form `shader.texturedBy` calls, and it does the levels
+/// mixed, a bias and a clamp on them, mirrored and bordered edges,
+/// anisotropy and unnormalized coordinates. So a program reaching a
+/// generated pipeline through any sampler of depth drew magenta on a
+/// device that would have drawn it correctly through a fixed form.
+///
+/// `ir.zig` carries the sampler now. Where `samplingOf` answers, the fast
+/// path is unchanged and still samples a whole quad at a time; where it
+/// does not, `sampleThrough` takes the sampler a pixel at a time through
+/// `sampleBy`, with the quad's own steps for how fast the coordinates
+/// change, as a GPU takes them. A test holds the generated function
+/// against `texturedBy` bit for bit over eleven such samplers, which is
+/// the agreement that matters: one sampler draws one thing on this device
+/// whichever path takes it.
+///
+/// The sampler is carried **untouched**, comparison included. A graph's
+/// `sample` is an ordinary sample with no reference operand - this IR has
+/// no Dref operation - so a sampler with `compare` set compares against
+/// 0. Vulkan leaves that undefined, since it forbids a `compareEnable`
+/// sampler to anything but an `OpImage*Dref*`, and it is already what
+/// `texturedBy` does with such a sampler beside a form that is not a
+/// shadow form. Clearing the comparison would have drawn a tidier colour
+/// and made the two paths of one device disagree, which is the one thing
+/// worth avoiding here.
+///
+/// **The V3D still paints magenta for those samplers**, its TMU state
+/// having no word for them, so one pipeline is now drawn right on the
+/// cores and wrong there. That is deliberate and it is loud: magenta is
+/// not a plausible picture, so it cannot be taken for the other device's
+/// answer, which is what two plausible pictures would have been. Item 54
+/// of docs/facet-vulkan10.md is that half - a QPU program that reads the
+/// bound sampler - and closing it ends the difference.
+pub const LIBRARY_REVISION = 83;

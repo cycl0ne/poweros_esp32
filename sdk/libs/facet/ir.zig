@@ -572,18 +572,27 @@ fn functionOf(comptime graph: Graph) shader.FragmentFn {
             // how each is sampled, which comes from the sampler the draw
             // bound and not from the graph.
             //
-            // Vulkan puts filtering in the sampler object, and SPIR-V
-            // has nowhere to carry what the graph asked for, so the V3D
-            // reads the bound sampler; this reads the same one, through
-            // the same `texture.samplingOf`, so the two devices cannot
-            // draw one pipeline two ways. Where nothing is bound there
-            // is no sampler to read and the graph's own answer stands.
-            // Where the sampler asks for something a `Sampling` cannot
-            // say, the texture is dropped and the pixel is
-            // `shader.missing` - which is what the V3D's draw paints for
-            // exactly those samplers.
+            // Vulkan puts filtering in the sampler object, and SPIR-V has
+            // nowhere to carry what the graph asked for, so a generated
+            // shader's sampling is the bound sampler's on whichever
+            // device draws it. Where nothing is bound there is no sampler
+            // to read and the graph's own answer stands.
+            //
+            // A sampler `texture.samplingOf` can collapse into a
+            // `Sampling` is taken by the fast path, which samples a whole
+            // quad at once. One it cannot - mirrored or bordered edges,
+            // the levels mixed, a bias or a clamp on them, anisotropy,
+            // unnormalized coordinates - is carried whole instead and
+            // taken a pixel at a time by `texture.sampleBy`, which is the
+            // call the fixed form `shader.texturedBy` makes for the same
+            // sampler. **Until 1.83 the texture was dropped here and the
+            // pixel painted `shader.missing`**, so a generated pipeline
+            // reached by a sampler of any depth drew magenta on purpose;
+            // the cores answer for every sampler now, and the V3D's own
+            // half of that is item 54 of docs/facet-vulkan10.md.
             var pictures: [@max(graph.sampled.len, 1)]?*const texture.Texture = @splat(null);
             var sampled_how: [@max(graph.sampled.len, 1)]?texture.Sampling = @splat(null);
+            var sampled_by: [@max(graph.sampled.len, 1)]?*const texture.Sampler = @splat(null);
             inline for (graph.sampled, 0..) |each, which| {
                 pictures[which] = fragments.resources.sampled(each.set, each.binding, 0);
                 if (fragments.resources.samplerOf(each.set, each.binding, 0)) |bound| {
@@ -592,7 +601,22 @@ fn functionOf(comptime graph: Graph) shader.FragmentFn {
                     if (texture.samplingOf(bound, each.sampling.format)) |said| {
                         sampled_how[which] = said;
                     } else {
-                        pictures[which] = null;
+                        // Whole and untouched, which is the agreement
+                        // that matters: one sampler draws one thing on
+                        // this device whichever path takes it. A graph's
+                        // `sample` is an ordinary sample and carries no
+                        // reference, so a sampler with a comparison
+                        // compares against 0 here - exactly what
+                        // `shader.texturedBy` does when the same sampler
+                        // is bound beside a form that is not a shadow
+                        // form. Vulkan holds that a sampler made with
+                        // `compareEnable` is to be used only by an
+                        // `OpImage*Dref*`, so the pairing is the
+                        // program's own fault and what it draws is
+                        // undefined; drawing what the fixed form draws
+                        // is the one answer that keeps the device
+                        // consistent with itself.
+                        sampled_by[which] = bound;
                     }
                 }
             }
@@ -620,8 +644,10 @@ fn functionOf(comptime graph: Graph) shader.FragmentFn {
                     },
                     .sample => {
                         const which = comptime sampledBefore(graph, i);
-                        const how = sampled_how[which] orelse op.sampling;
-                        values[i] = sampleAt(how, pictures[which], quad.*, values[op.a][0], values[op.a][1]);
+                        values[i] = if (sampled_by[which]) |whole|
+                            sampleThrough(whole, pictures[which], quad.*, values[op.a][0], values[op.a][1])
+                        else
+                            sampleAt(sampled_how[which] orelse op.sampling, pictures[which], quad.*, values[op.a][0], values[op.a][1]);
                     },
                     .multiply => inline for (0..comptime op.kind.parts()) |part| {
                         values[i][part] = values[op.a][part] * values[op.b][part];
@@ -688,6 +714,10 @@ inline fn channelsOf(colour: u32) [4]f32 {
     return made;
 }
 
+/// A sample a quad at a time, through what a `Sampling` can say: one
+/// filter, one of two wraps, the level chosen from the quad's own steps
+/// and read on its own. The fast of the two paths, and the one a sampler
+/// `texture.samplingOf` could collapse takes.
 inline fn sampleAt(sampling: texture.Sampling, picture: ?*const texture.Texture, quad: shader.Quad, u: Pixels, v: Pixels) [4]Pixels {
     @setRuntimeSafety(false);
     var made: [4]Pixels = @splat(@splat(0));
@@ -707,6 +737,50 @@ inline fn sampleAt(sampling: texture.Sampling, picture: ?*const texture.Texture,
     inline for (0..4) |pixel| {
         if (quad.covered >> @intCast(pixel) & 1 != 0) {
             const colour = channelsOf(given.sampleLayer(sampling, 0, lod, u[pixel], v[pixel]));
+            inline for (0..4) |channel| made[channel][pixel] = colour[channel];
+        }
+    }
+    return made;
+}
+
+/// A sample through the whole of a bound sampler, for the one a
+/// `Sampling` cannot say: the levels mixed, a bias or a clamp on them,
+/// mirrored and bordered edges, anisotropy, unnormalized coordinates.
+///
+/// `texture.sampleBy` is the call, which is the same call the fixed form
+/// `shader.texturedBy` makes with the same sampler - so a generated
+/// shader and a fixed form reached by one sampler draw the same thing,
+/// which is the agreement that matters here. A pixel at a time and by
+/// floats, where the fast path above does a quad at once: that is the
+/// cost of the sampler asking for more, and it is paid only by the
+/// samples that ask.
+///
+/// How fast the coordinates change is the quad's own, as a GPU takes it
+/// and as `texturedBy` takes it: across from the left pixel to the right,
+/// down from the top row to the bottom, 0 to 1 across the texture like
+/// the point itself. So a quad's four samples share a level.
+inline fn sampleThrough(sampler: *const texture.Sampler, picture: ?*const texture.Texture, quad: shader.Quad, u: Pixels, v: Pixels) [4]Pixels {
+    @setRuntimeSafety(false);
+    var made: [4]Pixels = @splat(@splat(0));
+    const given = picture orelse {
+        const colour = channelsOf(shader.missing);
+        inline for (0..4) |channel| made[channel] = @splat(colour[channel]);
+        return made;
+    };
+    const du_dx = u[1] - u[0];
+    const du_dy = u[2] - u[0];
+    const dv_dx = v[1] - v[0];
+    const dv_dy = v[2] - v[0];
+    inline for (0..4) |pixel| {
+        if (quad.covered >> @intCast(pixel) & 1 != 0) {
+            const colour = channelsOf(texture.sampleBy(given, sampler, 0, .{
+                .u = u[pixel],
+                .v = v[pixel],
+                .du_dx = du_dx,
+                .dv_dx = dv_dx,
+                .du_dy = du_dy,
+                .dv_dy = dv_dy,
+            }));
             inline for (0..4) |channel| made[channel][pixel] = colour[channel];
         }
     }
