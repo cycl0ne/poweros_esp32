@@ -196,8 +196,11 @@ pub fn vecbase() usize {
 }
 
 /// The core's id as platform.resource reports it: its local controller's.
+/// Read from the cores' table, which is where every core's block is once
+/// the tables are laid out; `core_blocks` holds core 0's alone and is
+/// what `blocks` points at until then.
 pub inline fn prid() u32 {
-    return @truncate(core_blocks[coreId()].lapic_id);
+    return @truncate(blocks[coreId()].lapic_id);
 }
 
 /// The data cache's line, in bytes: leaf 1's CLFLUSH line size, in
