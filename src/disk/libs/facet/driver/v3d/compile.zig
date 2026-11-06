@@ -84,7 +84,7 @@ pub const most_constants = 32;
 /// TMU is written once and read once here, as in every hand-written
 /// program, and a module that declares one it never samples costs
 /// nothing.
-pub const most_samplers = 4;
+pub const most_samplers = 16;
 /// One for each float a step answers.
 pub const most_slots = 4 * most_steps;
 /// Instructions chosen, before they are words.
@@ -151,10 +151,19 @@ pub const Error = error{
     Registers,
     /// More instructions than the code buffer holds.
     TooLong,
-    /// More than one combined image sampler, or more than one sample: the
-    /// TMU is written once and read once here, as every hand-written
-    /// program writes it once and reads it once.
+    /// More than one sample: the TMU is written once and read once here,
+    /// as every hand-written program writes it once and reads it once.
     Samplers,
+    /// More combined image samplers *declared* than `most_samplers`.
+    /// Not a limit of the device - a module may declare many and sample
+    /// one, and that one is all this device has to do - but of the table
+    /// that holds where each is bound. Raising `most_samplers` raises it.
+    Declared,
+    /// A `Location`, `DescriptorSet` or `Binding` literal past what the
+    /// tables can tell apart from "never decorated". A module's own
+    /// number, so it is held against a bound before it is stored rather
+    /// than landing on a sentinel and being read back as absent.
+    Numbered,
 };
 
 /// The combined image sampler a module reads, by where the draw binds it.
@@ -170,13 +179,18 @@ pub const Sampler = struct {
 pub const profile: spirv.Profile = .{
     .capabilities = &.{.shader},
     .opcodes = &.{
-        .capability,   .memory_model,        .entry_point,         .execution_mode,
-        .decorate,     .type_void,           .type_float,          .type_vector,
-        .type_pointer, .type_function,       .constant,            .constant_composite,
-        .variable,     .function,            .label,               .load,
-        .store,        .composite_extract,   .composite_construct, .f_add,
-        .f_mul,        .vector_times_scalar, .returns,             .function_end,
+        .capability,   .memory_model,        .entry_point,               .execution_mode,
+        .decorate,     .type_void,           .type_float,                .type_vector,
+        .type_pointer, .type_function,       .constant,                  .constant_composite,
+        .variable,     .function,            .label,                     .load,
+        .store,        .composite_extract,   .composite_construct,       .f_add,
+        .f_mul,        .vector_times_scalar, .returns,                   .function_end,
         .type_image,   .type_sampled_image,  .image_sample_implicit_lod,
+        // Taken here and refused by name below. It is not a thing this
+        // device can do - a dropped pixel wants the flag registers - but
+        // `Error.Discards` says which family is missing where
+        // `Error.Refused` would only say that some word was not known.
+        .kill,
     },
     .storage_classes = &.{ .input, .output, .function, .uniform_constant },
     .image_dims = &.{.dim_2d},
@@ -546,7 +560,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 if (mode != .origin_upper_left) return Error.Refused;
             },
             .decorate => {
-                if (operands.len < 3) return Error.Body;
+                if (operands.len < 2) return Error.Body;
                 const id = try idOf(operands[0]);
                 const what = std.enums.fromInt(spirv.Decoration, operands[1]) orelse return Error.Refused;
                 // A Location, a DescriptorSet and a Binding are read;
@@ -556,12 +570,29 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 // `qpu.varying` interpolates, and taking the decoration
                 // and dropping it would draw the wrong pixels and say
                 // nothing.
-                const value = std.math.cast(u16, operands[2]) orelse return Error.Location;
+                //
+                // Which decoration it is is read before how many
+                // operands it has, because the three that are taken
+                // carry a literal and the ones that are refused do not:
+                // a real `OpDecorate %x Flat` is two words of operands,
+                // so demanding three would answer `Body` for the one
+                // decoration this is here to turn down by name.
+                switch (what) {
+                    .location, .descriptor_set, .binding => {},
+                    else => return Error.Refused,
+                }
+                if (operands.len < 3) return Error.Body;
+                // The literal is the module's own number, so it is held
+                // against the table before it is stored: `none` is
+                // 0xFFFF, and a literal of exactly 65535 would otherwise
+                // land on it and be read back as "never decorated".
+                if (operands[2] >= @as(u32, none)) return Error.Numbered;
+                const value: u16 = @intCast(operands[2]);
                 switch (what) {
                     .location => work.location[id] = value,
                     .descriptor_set => work.set[id] = value,
                     .binding => work.binding[id] = value,
-                    else => return Error.Refused,
+                    else => unreachable,
                 }
             },
             .type_float => {
@@ -658,7 +689,13 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     // uniform stream, and where those words come from is
                     // the set and the binding the draw looks up.
                     if (work.thing[pointee] != .sampled_image) return Error.Storage;
-                    if (work.sampler_count == most_samplers) return Error.Samplers;
+                    // This is the table's bound, not the device's: what
+                    // the device can run is one *sample*, and a module
+                    // may declare many samplers and sample one of them.
+                    // So it has an error of its own, and a log line can
+                    // tell a bound another build could raise from a
+                    // limit no build can.
+                    if (work.sampler_count == most_samplers) return Error.Declared;
                     if (work.set[id] == none or work.binding[id] == none) return Error.Location;
                     work.thing[id] = .variable;
                     work.class[id] = @intCast(@intFromEnum(class));
@@ -814,7 +851,19 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             var made = Step{ .tag = .construct, .kind = kind };
             var floats: u32 = 0;
             for (operands[2..]) |each| {
-                const of = work.step_of[try idOf(each)];
+                const each_id = try idOf(each);
+                // A constituent is a read, and a constant has no step
+                // until something reads it - so this takes the same path
+                // `f_add` and `f_mul` take for a constant operand rather
+                // than refusing. `vec4(uv.x, uv.y, 0.25, 1.0)`, which is
+                // what glslc writes for `vec4(uv, 0.25, 1.0)`, is the
+                // common shape; refusing it would also have made the
+                // answer depend on whether some unrelated earlier
+                // instruction happened to read the same constant first.
+                const of = if (work.step_of[each_id] != none)
+                    work.step_of[each_id]
+                else
+                    try operand(work, each, std.enums.fromInt(Kind, work.wide[each_id]) orelse return Error.Type);
                 if (of == none) return Error.Body;
                 const parts = work.steps[of].kind.parts();
                 var part: u8 = 0;
@@ -1007,11 +1056,25 @@ fn settle(work: *Work) Error!void {
     // colour waits for is waited out first so that the two writes stay
     // next to it as they are in `flat_code`.
     const slots = work.slot_of[work.stored];
-    if (work.steps[work.stored].tag == .sample) {
-        // A texel drawn as it is: the two words the TMU handed back are
-        // already two pairs of half-floats, which is what the tile
-        // buffer takes, so nothing unpacks them and nothing packs them
-        // again (`qpu.texture_code`).
+    // A texel drawn as it is: the two words the TMU handed back are
+    // already two pairs of half-floats, which is what the tile buffer
+    // takes, so nothing unpacks them and nothing packs them again
+    // (`qpu.texture_code`).
+    //
+    // Only while all four are still in their pairs, though. `plain`
+    // reads a half out into a register of its own and points the slot
+    // at *that*, and once both halves of a word are out it hands the
+    // word's register back to the pool - so a program that draws the
+    // texel and also reads a float out of it would otherwise move a
+    // single f32, or a register something else now owns, to the tile
+    // buffer as if it were two half-floats. Where that has happened the
+    // colour below is right: it packs the four floats back, and the 1 it
+    // needs is already loaded, because reading a half out non-fused is
+    // exactly what makes `wantsOne` true.
+    const packed_whole = work.steps[work.stored].tag == .sample and
+        work.slot_half[slots[0]] == .low and work.slot_half[slots[1]] == .high and
+        work.slot_half[slots[2]] == .low and work.slot_half[slots[3]] == .high;
+    if (packed_whole) {
         const first = work.slot_reg[slots[0]];
         const second = work.slot_reg[slots[2]];
         try wait(work, &.{first}, 0);
@@ -1211,6 +1274,15 @@ fn live(work: *Work) Error!void {
             else => {},
         }
     }
+    // The colour out is read after every step there is. This comes
+    // before the pairing below, not after it: the colour may name one
+    // float of a texel's word and not the other, and the pair then has
+    // to carry the bump across.
+    var part: u32 = 0;
+    while (part < 4) : (part += 1) {
+        const slot = work.slot_of[work.stored][part];
+        work.slot_last[slot] = most_steps;
+    }
     // A texel's four floats are two registers, a pair of half-floats
     // each. The two that share a register have to die together, or
     // giving one back would take the other's with it.
@@ -1224,12 +1296,6 @@ fn live(work: *Work) Error!void {
             work.slot_last[one_slot] = last;
             work.slot_last[other] = last;
         }
-    }
-    // The colour out is read after every step there is.
-    var part: u32 = 0;
-    while (part < 4) : (part += 1) {
-        const slot = work.slot_of[work.stored][part];
-        work.slot_last[slot] = most_steps;
     }
 }
 
@@ -1256,9 +1322,29 @@ fn destination(work: *Work, each: Step, at: u16, part: u32, a_slot: u16, b_slot:
     const wide = each.kind.parts();
     // A texel's register is never written over: it holds two floats, and
     // the other one may still be wanted.
-    if (work.slot_half[a_slot] == .none and work.steps[each.a].kind.parts() == wide and dying(work, a_slot, at)) return again(work, a_slot, slot);
-    if (work.slot_half[b_slot] == .none and work.steps[each.b].kind.parts() == wide and dying(work, b_slot, at)) return again(work, b_slot, slot);
+    if (work.slot_half[a_slot] == .none and work.steps[each.a].kind.parts() == wide and
+        dying(work, a_slot, at) and !readLater(work, each, part, a_slot)) return again(work, a_slot, slot);
+    if (work.slot_half[b_slot] == .none and work.steps[each.b].kind.parts() == wide and
+        dying(work, b_slot, at) and !readLater(work, each, part, b_slot)) return again(work, b_slot, slot);
     return take(work, slot);
+}
+
+/// Whether a part of this step past `part` reads `slot` too.
+///
+/// `kind.parts()` catches the one float of `OpVectorTimesScalar` read by
+/// all four of a vector, but it is not the only way a slot is read
+/// twice: `OpCompositeConstruct` names a float per part, and `vec4(l)`
+/// names the same one four times. Writing this part's product over it
+/// would hand the parts that follow what this part computed, which is
+/// what `glslc` makes of `vec4(l) * colour`.
+fn readLater(work: *const Work, each: Step, part: u32, slot: u16) bool {
+    var k: u32 = part + 1;
+    while (k < each.kind.parts()) : (k += 1) {
+        if (work.slot_of[each.a][k] == slot) return true;
+        const b_part = if (work.steps[each.b].kind == .f32x1) 0 else k;
+        if (work.slot_of[each.b][b_part] == slot) return true;
+    }
+    return false;
 }
 
 /// Whether nothing past `at` reads `slot`, and its register is still out.
@@ -1620,7 +1706,32 @@ fn sound(work: *const Work, code: Code) !void {
     var started: ?u32 = null;
     var came_back: ?u32 = null;
     var word: u32 = 0;
+    // Which registers hold a word the TMU handed back, as two packed
+    // half-floats. Only `fmulLow`/`fmulHigh` and a move to the tile
+    // buffer read one as that, so both are held to a register that still
+    // is one: `plain` reads a half out into a register of its own and
+    // points the slot at that, and once both halves are out the word's
+    // register goes back to the pool - so a plan that then moves the
+    // slot's register out as a pair would send a single f32, or whatever
+    // the pool handed out next, to the tile buffer.
+    var packed_word: [qpu.registers]bool = @splat(false);
+    // The stream and the loads that pop it, walked together. The draw
+    // fills the words by tag and position and the program pops by
+    // position, so the pairing is the whole contract of the stream: a
+    // load without its word, or a word without its load, shifts every
+    // later word and the TMU would be configured from a colour.
+    const stream = code.stream();
+    var popped: u32 = 0;
     for (work.plan()) |each| {
+        // Whatever this writes is no longer a word from the TMU.
+        switch (each) {
+            .varying, .uniform => |to| if (to >= qpu.rf_first and to < qpu.rf_last) {
+                packed_word[to - qpu.rf_first] = false;
+            },
+            .fadd, .fmul => |three| packed_word[three.to - qpu.rf_first] = false,
+            .half => |it| packed_word[it.to - qpu.rf_first] = false,
+            else => {},
+        }
         switch (each) {
             .last_section => {
                 try testing.expect(!waited);
@@ -1633,11 +1744,17 @@ fn sound(work: *const Work, code: Code) !void {
             },
             .color_packed => |from| {
                 try testing.expect(waited);
-                try testing.expect(from < qpu.registers);
+                try testing.expect(from >= qpu.rf_first and from < qpu.rf_last);
+                try testing.expect(packed_word[from - qpu.rf_first]);
                 colors += 1;
             },
             .varying => |to| try testing.expect(to >= qpu.rf_first and to < qpu.rf_last or to == qpu.rf_scaled),
-            .uniform => |to| try testing.expect(to >= qpu.rf_first and to < qpu.rf_last),
+            .uniform => |to| {
+                try testing.expect(to >= qpu.rf_first and to < qpu.rf_last);
+                try testing.expect(popped < stream.len);
+                try testing.expect(stream[popped] == .float);
+                popped += 1;
+            },
             .fadd, .fmul => |three| try testing.expect(three.to >= qpu.rf_first and three.to < qpu.rf_last),
             // The coordinate reaches the TMU before the splice, and the
             // write to S is the last thing before it: that write starts
@@ -1649,17 +1766,30 @@ fn sound(work: *const Work, code: Code) !void {
             },
             .config => {
                 try testing.expect(!waited);
+                try testing.expect(popped < stream.len);
+                // The texture's state first, then the sampler's, which
+                // is the order the two `wrtmuc` are issued in.
+                if (configs == 0) {
+                    try testing.expect(stream[popped] == .texture);
+                } else {
+                    try testing.expect(stream[popped] == .sampler);
+                }
+                popped += 1;
                 configs += 1;
             },
             .texel => |to| {
                 try testing.expect(waited);
                 try testing.expect(to >= qpu.rf_first and to < qpu.rf_last);
+                packed_word[to - qpu.rf_first] = true;
                 if (came_back == null) came_back = word;
                 texels += 1;
             },
-            .half => |it| try testing.expect(it.to >= qpu.rf_first and it.to < qpu.rf_last and
-                it.from >= qpu.rf_first and it.from < qpu.rf_last and
-                it.by >= qpu.rf_first and it.by < qpu.rf_last),
+            .half => |it| {
+                try testing.expect(it.to >= qpu.rf_first and it.to < qpu.rf_last and
+                    it.from >= qpu.rf_first and it.from < qpu.rf_last and
+                    it.by >= qpu.rf_first and it.by < qpu.rf_last);
+                try testing.expect(packed_word[it.from - qpu.rf_first]);
+            },
             .end, .nop => {},
         }
         word += each.words();
@@ -1678,19 +1808,13 @@ fn sound(work: *const Work, code: Code) !void {
         try testing.expectEqual(@as(u32, 2), texels);
         try testing.expectEqual(@as(u32, 5), came_back.? - started.?);
     }
-    // One word of the stream for each `wrtmuc`, and in the order they
-    // are issued: the texture's state, then the sampler's.
+    // Every word of the stream was popped by something, and nothing
+    // popped past the end. With the walk above, that is the pairing in
+    // both directions.
+    try testing.expectEqual(stream.len, popped);
     var configured: u32 = 0;
-    for (code.stream()) |each| switch (each) {
-        .float => {},
-        .texture => {
-            try testing.expectEqual(@as(u32, 0), configured);
-            configured += 1;
-        },
-        .sampler => {
-            try testing.expectEqual(@as(u32, 1), configured);
-            configured += 1;
-        },
+    for (stream) |each| if (each != .float) {
+        configured += 1;
     };
     try testing.expectEqual(configs, configured);
     // One `ldvary` for each varying the record declares, as every
@@ -1971,4 +2095,315 @@ test "a program compiled twice from the one work is the same program" {
     const length = first.words.len;
     const twice = try compile(&work, Lit.words);
     try testing.expectEqualSlices(u64, kept[0..length], twice.words);
+}
+
+// --- the shapes `ir.Build` cannot make --------------------------------------
+
+/// A module built by hand, for the shapes the library's own builder does
+/// not emit. `ir.Build` has no vector constructor, so everything here
+/// that turns on `OpCompositeConstruct` - which `glslc` writes for the
+/// commonest lines of GLSL there are - can only be reached this way. The
+/// opcode is in `profile` and `step` implements it, so these are words
+/// this back end means to take.
+fn built(comptime what: struct {
+    /// `vec4(uv.x, uv.y, 0.25, 1.0)`: two of the four constituents are
+    /// constants, which have no step until something reads them.
+    construct_constants: bool = false,
+    /// The same, with each constant read by an `OpFMul` first, so the
+    /// steps exist by the time the construct names them. The two have to
+    /// compile alike: whether an unrelated earlier instruction happened
+    /// to read a constant cannot decide whether a module is taken.
+    read_first: bool = false,
+    /// `vec4(l) * colour`, where `l` is one float varying named by all
+    /// four parts of the construct. This is what `glslc` makes of
+    /// `vec4(l) * colour`, and the product of part 0 may not be written
+    /// over `l` while parts 1 to 3 still read it.
+    splat_times: bool = false,
+    /// `vec4(texel.r, m.g, m.b, m.a)` with `m = colour + k`: the colour
+    /// out names one float of the texel's first word and not the other,
+    /// so the two that share that register have to die together.
+    construct_texel: bool = false,
+    /// How many combined image samplers to declare. One is sampled
+    /// whatever the count: the device's limit is one *sample*, and a
+    /// module may declare more and sample one of them.
+    samplers: u32 = 0,
+    /// `OpDecorate %in Flat` with no literal, which is the only shape an
+    /// emitter writes - two words of operands and not three.
+    bare_flat: bool = false,
+    /// A `Binding` literal of exactly 65535, which is `none`.
+    sentinel_binding: bool = false,
+    /// `OpKill` as the block's terminator: a shader that always drops
+    /// its pixel, which is valid SPIR-V and wants the flag registers.
+    always_kill: bool = false,
+}) []const u32 {
+    comptime {
+        @setEvalBranchQuota(1_000_000);
+        var emit = spirv.Emit{};
+        const main_id = emit.id();
+        const out_id = emit.id();
+        const uv_id = emit.id();
+        const wants_colour = what.splat_times or what.construct_texel;
+        const colour_id = if (wants_colour) emit.id() else 0;
+        var tex_ids: [most_samplers + 1]u32 = @splat(0);
+        for (0..what.samplers) |k| tex_ids[k] = emit.id();
+
+        emit.capability(.shader);
+        emit.memoryModel(.logical, .glsl450);
+        emit.entryPoint(.fragment, main_id, "main", &.{ out_id, uv_id });
+        emit.executionMode(main_id, .origin_upper_left);
+        emit.decorate(out_id, .location, &.{0});
+        // `vec4(l) * colour` reads the colour at location 0 and the one
+        // float at location 1; everything else reads the coordinate at 0.
+        // Locations run from 0 upwards with no gap either way.
+        emit.decorate(uv_id, .location, &.{if (wants_colour) 1 else 0});
+        if (wants_colour) emit.decorate(colour_id, .location, &.{0});
+        if (what.bare_flat) emit.decorate(uv_id, .flat, &.{});
+        for (0..what.samplers) |k| {
+            emit.decorate(tex_ids[k], .descriptor_set, &.{0});
+            emit.decorate(tex_ids[k], .binding, &.{if (what.sentinel_binding) 65535 else @as(u32, @intCast(k))});
+        }
+
+        const void_type = emit.typeVoid();
+        const function_type = emit.typeFunction(void_type, &.{});
+        const float_type = emit.typeFloat(32);
+        const vec4 = emit.typeVector(float_type, 4);
+        const vec2 = emit.typeVector(float_type, 2);
+        emit.variable(emit.typePointer(.output, vec4), out_id, .output);
+        // `vec4(l) * colour` wants one float in, everything else a
+        // coordinate.
+        const in_type = if (what.splat_times) float_type else vec2;
+        emit.variable(emit.typePointer(.input, in_type), uv_id, .input);
+        if (wants_colour) emit.variable(emit.typePointer(.input, vec4), colour_id, .input);
+        var sampled_type: u32 = 0;
+        if (what.samplers != 0) {
+            const image = emit.typeImage(float_type, .dim_2d, 0, 0, 0, 1, .unknown);
+            sampled_type = emit.typeSampledImage(image);
+            for (0..what.samplers) |k| {
+                emit.variable(emit.typePointer(.uniform_constant, sampled_type), tex_ids[k], .uniform_constant);
+            }
+        }
+        const quarter = emit.constant(float_type, @bitCast(@as(f32, 0.25)));
+        const whole = emit.constant(float_type, @bitCast(@as(f32, 1)));
+        const tint = emit.constantComposite(vec4, &.{ quarter, quarter, quarter, whole });
+
+        emit.function(void_type, main_id, function_type);
+        emit.label(emit.id());
+        const in_value = emit.id();
+        emit.at(.load, &.{ in_type, in_value, uv_id });
+        var taken: u32 = 0;
+        if (what.samplers != 0) {
+            const bound = emit.id();
+            emit.at(.load, &.{ sampled_type, bound, tex_ids[0] });
+            taken = emit.id();
+            emit.at(.image_sample_implicit_lod, &.{ vec4, taken, bound, in_value });
+        }
+        if (what.always_kill) {
+            emit.at(.kill, &.{});
+            emit.functionEnd();
+            return emit.finish();
+        }
+        if (what.construct_constants) {
+            const x = emit.id();
+            emit.at(.composite_extract, &.{ float_type, x, in_value, 0 });
+            const y = emit.id();
+            emit.at(.composite_extract, &.{ float_type, y, in_value, 1 });
+            var first = quarter;
+            var second = whole;
+            if (what.read_first) {
+                const p = emit.id();
+                emit.at(.f_mul, &.{ float_type, p, x, quarter });
+                const q = emit.id();
+                emit.at(.f_mul, &.{ float_type, q, y, whole });
+                first = p;
+                second = q;
+            }
+            const made = emit.id();
+            emit.at(.composite_construct, &.{ vec4, made, x, y, first, second });
+            emit.at(.store, &.{ out_id, made });
+        } else if (what.splat_times) {
+            const splat = emit.id();
+            emit.at(.composite_construct, &.{ vec4, splat, in_value, in_value, in_value, in_value });
+            const colour = emit.id();
+            emit.at(.load, &.{ vec4, colour, colour_id });
+            const made = emit.id();
+            emit.at(.f_mul, &.{ vec4, made, splat, colour });
+            emit.at(.store, &.{ out_id, made });
+        } else if (what.construct_texel) {
+            const colour = emit.id();
+            emit.at(.load, &.{ vec4, colour, colour_id });
+            const mixed = emit.id();
+            emit.at(.f_add, &.{ vec4, mixed, colour, tint });
+            const red = emit.id();
+            emit.at(.composite_extract, &.{ float_type, red, taken, 0 });
+            var rest: [3]u32 = undefined;
+            for (&rest, 1..) |*each, part| {
+                each.* = emit.id();
+                emit.at(.composite_extract, &.{ float_type, each.*, mixed, @intCast(part) });
+            }
+            const made = emit.id();
+            emit.at(.composite_construct, &.{ vec4, made, red, rest[0], rest[1], rest[2] });
+            emit.at(.store, &.{ out_id, made });
+        } else {
+            emit.at(.store, &.{ out_id, taken });
+        }
+        emit.at(.returns, &.{});
+        emit.functionEnd();
+        return emit.finish();
+    }
+}
+
+/// `Smooth` with the input's Location literal made the `none` sentinel,
+/// and made larger than a u16 holds. Both are the module's own number
+/// landing where the tables keep "never decorated".
+const sentinel_location = patched(Smooth.words, .decorate, 1, 2, 65535);
+const huge_location = patched(Smooth.words, .decorate, 1, 2, 0xFFFF_FFFF);
+
+/// A texel drawn as it comes, with one of its floats also read out on its
+/// own. `sound` holds every program to a `color_packed` register that
+/// still holds a word from the TMU; before the guard in `settle` this
+/// moved an unpacked f32 to the tile buffer as two half-floats.
+const HalfRead = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const taken = b.sample(0, 0, b.input(0, .f32x2));
+        _ = b.add(b.component(taken, 0), b.scalar(0.5));
+        b.color(taken);
+    }
+});
+
+/// The same with all four floats read out: before the guard both writes
+/// to the tile buffer named registers the pool had handed out again.
+const AllRead = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const taken = b.sample(0, 0, b.input(0, .f32x2));
+        _ = b.add(taken, b.constant(.{ 0.1, 0.2, 0.3, 0 }));
+        b.color(taken);
+    }
+});
+
+test "a texel read out of its pair is packed back for the colour, not moved out raw" {
+    var work: Work = .{};
+    // Both of these drew the wrong colour before `settle` came to decide
+    // the shortcut per pair rather than per step. `sound` is what holds
+    // it now, and it runs on every program the suite compiles.
+    for ([2][]const u32{ HalfRead.words, AllRead.words }) |words| {
+        const code = try compile(&work, words);
+        try sound(&work, code);
+        // Packed back by `color`, not moved out by `color_packed`.
+        var raw: u32 = 0;
+        var packed_back: u32 = 0;
+        for (work.plan()) |each| switch (each) {
+            .color_packed => raw += 1,
+            .color => packed_back += 1,
+            else => {},
+        };
+        try testing.expectEqual(@as(u32, 0), raw);
+        try testing.expectEqual(@as(u32, 2), packed_back);
+    }
+    // And the texel drawn with nothing read out still takes the
+    // shortcut, which is the whole point of having one.
+    const whole = try compile(&work, Textured.words);
+    try sound(&work, whole);
+    var raw: u32 = 0;
+    for (work.plan()) |each| if (each == .color_packed) {
+        raw += 1;
+    };
+    try testing.expectEqual(@as(u32, 2), raw);
+}
+
+test "a float named by all four parts of a construct is not written over by the first part's product" {
+    var work: Work = .{};
+    // `vec4(l) * colour`. The one float is read by parts 1, 2 and 3
+    // after part 0 has computed, so part 0's product may not take its
+    // register - which `kind.parts()` alone did not catch, because the
+    // construct is four floats wide like the vector it multiplies.
+    const code = try compile(&work, comptime built(.{ .splat_times = true }));
+    try sound(&work, code);
+    var splat: ?qpu.Rf = null;
+    var reads: u32 = 0;
+    for (work.plan()) |each| switch (each) {
+        // Five varyings are carried: the colour's four at location 0
+        // and this one float at location 1. They are read in that
+        // order, so the last is the one the construct splats.
+        .varying => |to| if (to != qpu.rf_scaled) {
+            splat = to;
+        },
+        .fmul => |three| {
+            if (splat) |reg| {
+                if (three.a == reg or three.b == reg) reads += 1;
+                // Only the last of the four may write over it.
+                if (three.to == reg) try testing.expectEqual(@as(u32, 4), reads);
+            }
+        },
+        else => {},
+    };
+    try testing.expectEqual(@as(u32, 4), reads);
+}
+
+test "a construct that names one float of a texel's word keeps the other alive" {
+    var work: Work = .{};
+    // `vec4(texel.r, m.g, m.b, m.a)`: the colour out names the texel's
+    // red and not its green, and the two share a register. Before `live`
+    // carried the colour's bump across the pair, green's slot died at
+    // the sample and the register was handed out to the constant.
+    const code = try compile(&work, comptime built(.{ .construct_texel = true, .samplers = 1 }));
+    try sound(&work, code);
+    try testing.expectEqual(@as(?Sampler, .{ .set = 0, .binding = 0 }), code.sampler);
+}
+
+test "a constant may be a constituent of a construct, whatever read it first" {
+    var work: Work = .{};
+    // `vec4(uv.x, uv.y, 0.25, 1.0)`, which is what glslc writes for
+    // `vec4(uv, 0.25, 1.0)`. A constant has no step until something
+    // reads it, and a constituent is a read.
+    const plain_code = try compile(&work, comptime built(.{ .construct_constants = true }));
+    try sound(&work, plain_code);
+    try testing.expectEqual(@as(u32, 2), plain_code.uniform_count);
+    // The same words with the two constants read by an OpFMul first.
+    // Whether an unrelated earlier instruction happened to read them
+    // cannot decide whether the module is taken.
+    const read_code = try compile(&work, comptime built(.{ .construct_constants = true, .read_first = true }));
+    try sound(&work, read_code);
+    try testing.expectEqual(@as(u32, 2), read_code.uniform_count);
+}
+
+test "a module may declare more samplers than it samples" {
+    var work: Work = .{};
+    // The device's limit is one *sample*: one TMU, written once and read
+    // once. How many are declared is this back end's table, so it is a
+    // refusal of its own and not the device's.
+    const code = try compile(&work, comptime built(.{ .samplers = 5 }));
+    try sound(&work, code);
+    try testing.expectEqual(@as(?Sampler, .{ .set = 0, .binding = 0 }), code.sampler);
+    // Past the table, and said as the table and not as the hardware.
+    try testing.expectError(Error.Declared, compile(&work, comptime built(.{ .samplers = most_samplers + 1 })));
+}
+
+test "a module's own numbers are held against the tables before they are stored" {
+    var work: Work = .{};
+    // 65535 is `none`. Stored, it would be read back as "never
+    // decorated" and the sampler refused for want of a binding.
+    try testing.expectError(Error.Numbered, compile(&work, comptime built(.{ .samplers = 1, .sentinel_binding = true })));
+    try testing.expectError(Error.Numbered, compile(&work, &sentinel_location));
+    try testing.expectError(Error.Numbered, compile(&work, &huge_location));
+}
+
+test "a decoration this back end does not take is refused by name, whatever its arity" {
+    var work: Work = .{};
+    // A real `OpDecorate %in Flat` is two words of operands and no
+    // literal. Reading how many operands there are before reading which
+    // decoration it is answered `Body` for exactly the decoration this
+    // is here to turn down by name.
+    try testing.expectError(Error.Refused, compile(&work, comptime built(.{ .bare_flat = true })));
+    // And the three-operand shape a patch makes, which is the one the
+    // suite tested before.
+    try testing.expectError(Error.Refused, compile(&work, &flat_words));
+}
+
+test "a shader that always drops its pixel is refused as a discard and not as an unknown word" {
+    var work: Work = .{};
+    // `OpKill` is in `profile` so that the refusal can name the family
+    // that is missing. A *conditional* discard is refused earlier, for
+    // the bool type and the branch it needs, which is why `Cutout`
+    // above answers `Refused`: that is honest, both are missing.
+    try testing.expectError(Error.Discards, compile(&work, comptime built(.{ .always_kill = true })));
 }

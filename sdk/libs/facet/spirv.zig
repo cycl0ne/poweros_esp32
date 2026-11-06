@@ -555,18 +555,18 @@ pub const Profile = struct {
 /// range - a module richer than this is not refused by the library, only
 /// by a driver that cannot compile it.
 pub const facet_opcodes: []const Op = &.{
-    .capability,    .memory_model,              .entry_point,       .execution_mode,
-    .decorate,      .member_decorate,           .type_void,         .type_bool,
-    .type_int,      .type_float,                .type_vector,       .type_matrix,
-    .type_image,    .type_sampled_image,        .type_pointer,      .type_struct,
-    .type_function, .constant,                  .constant_composite, .function,
-    .function_end,  .variable,                  .load,              .store,
-    .access_chain,  .composite_construct,       .composite_extract, .vector_shuffle,
-    .f_add,         .f_sub,                     .f_mul,             .f_div,
-    .f_negate,      .vector_times_scalar,       .matrix_times_vector, .dot,
-    .f_ord_less_than, .f_ord_greater_than,      .f_ord_greater_than_equal,
-    .select,        .image_sample_implicit_lod, .selection_merge,   .label,
-    .branch,        .branch_conditional,        .kill,              .returns,
+    .capability,                .memory_model,        .entry_point,              .execution_mode,
+    .decorate,                  .member_decorate,     .type_void,                .type_bool,
+    .type_int,                  .type_float,          .type_vector,              .type_matrix,
+    .type_image,                .type_sampled_image,  .type_pointer,             .type_struct,
+    .type_function,             .constant,            .constant_composite,       .function,
+    .function_end,              .variable,            .load,                     .store,
+    .access_chain,              .composite_construct, .composite_extract,        .vector_shuffle,
+    .f_add,                     .f_sub,               .f_mul,                    .f_div,
+    .f_negate,                  .vector_times_scalar, .matrix_times_vector,      .dot,
+    .f_ord_less_than,           .f_ord_greater_than,  .f_ord_greater_than_equal, .select,
+    .image_sample_implicit_lod, .selection_merge,     .label,                    .branch,
+    .branch_conditional,        .kill,                .returns,
 };
 
 /// The format's own profile, which is what `CreateShaderModule` reads a
@@ -679,10 +679,17 @@ pub fn look(words: []const u32, profile: Profile) Outcome {
                 if (which == .location) {
                     if (operands.len < 3) return .{ .fault = .truncated_instruction };
                     // Which side it is on is not known here - a variable's
-                    // storage class says that - so both are raised and the
-                    // caller reads the one it wants.
-                    seen.input_locations = @max(seen.input_locations, operands[2] + 1);
-                    seen.output_locations = @max(seen.output_locations, operands[2] + 1);
+                    // storage class says that - so both are raised and a
+                    // caller reads the one it wants. No caller does today.
+                    //
+                    // Saturating, because the literal is the module's own
+                    // number and a module is read here without being
+                    // trusted: `Location 4294967295` would otherwise
+                    // overflow, and in a ReleaseSafe build that is a
+                    // panic inside `CreateShaderModule` rather than a
+                    // refusal.
+                    seen.input_locations = @max(seen.input_locations, operands[2] +| 1);
+                    seen.output_locations = @max(seen.output_locations, operands[2] +| 1);
                 }
             },
             .type_image => {
