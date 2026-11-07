@@ -205,13 +205,14 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
         more_blends[k - 1], more_mixings[k - 1] = player.mixingFor(pipeline, translated, @intCast(k));
     }
     const stencil: ?[2]raster.batched.StencilFace = if (player.stencil.of(pipeline)) |faces| .{ stencilFaceOf(faces[0]), stencilFaceOf(faces[1]) } else null;
-    // What a query counts of this draw, or nothing where none is being
-    // counted into: the addresses were worked out when it began. A
+    // What the queries begun count of this draw, nothing where none is:
+    // the addresses were worked out as each began (both at once since
+    // 1.117). A
     // subpass played once for each of its colour attachments is counted
     // in the first of them alone: the draw is one in Vulkan's terms, and
     // the parts after it draw the same samples through the same tests
     // (since 1.116).
-    const counters: *const _query.Counters = if (player.resources.output > 0) &_query.none else if (player.query) |*counting| &counting.counters else &_query.none;
+    const counters: *const _query.Counters = if (player.resources.output > 0) &_query.none else &player.queries.counters;
     const state = raster.batched.State{
         .viewport = .{ .x = viewport.x, .y = viewport.y, .width = viewport.width, .height = viewport.height },
         .min_depth = viewport.min_depth,

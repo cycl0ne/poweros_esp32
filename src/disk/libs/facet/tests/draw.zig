@@ -11581,6 +11581,71 @@ test "a query counts a subpass of two colour attachments apart once: each sample
     try testing.expectEqual([3]u64{ 6, 6, 2 }, values);
 }
 
+test "an occlusion query and a statistics query counted at once, each from its own begin to its own end" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const picture = try Picture.of(&bench, 64, 64);
+    const pass = try renderPass(&bench, .clear, false);
+    defer fb.DestroyRenderPass(device, pass);
+    const frame = try framebuffer(&bench, pass, &.{picture.view}, 64, 64);
+    defer fb.DestroyFramebuffer(device, frame);
+    const flat = try module(&bench, &Flat.code);
+    defer fb.DestroyShaderModule(device, flat);
+    const layout = try pipelineLayout(&bench, &.{}, 4);
+    defer fb.DestroyPipelineLayout(device, layout);
+    _, const list = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = pass });
+    defer fb.DestroyPipeline(device, list);
+
+    const occlusion = try queryPool(&bench, .occlusion, 1, 0);
+    defer fb.DestroyQueryPool(device, occlusion);
+    const wanted = facet.QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_VERTICES | facet.QUERY_PIPELINE_STATISTIC_VERTEX_SHADER_INVOCATIONS;
+    const statistics = try queryPool(&bench, .pipeline_statistics, 1, wanted);
+    defer fb.DestroyQueryPool(device, statistics);
+
+    // The top left half of the picture, drawn once in each of two passes.
+    const vertices = [_][3]f32{ .{ -1, -1, 0.5 }, .{ 1, -1, 0.5 }, .{ -1, 1, 0.5 } };
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
+    const offset: u64 = 0;
+    const green: u32 = 0xFF00_FF00;
+    const blue = clears(0xFF00_00FF);
+    const begin = facet.RenderPassBeginInfo{ .render_pass = pass, .framebuffer = frame, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 1, .clear_values = &blue };
+
+    // Begun one after the other and ended one after the other, either
+    // way round: the one begun second or ended first counts the one
+    // pass, the other both.
+    for ([2]bool{ true, false }) |occlusion_outside| {
+        const commands = try bench.record();
+        fb.CmdResetQueryPool(commands, occlusion, 0, 1);
+        fb.CmdResetQueryPool(commands, statistics, 0, 1);
+        if (occlusion_outside) fb.CmdBeginQuery(commands, occlusion, 0, facet.QUERY_CONTROL_PRECISE);
+        fb.CmdBeginQuery(commands, statistics, 0, 0);
+        if (!occlusion_outside) fb.CmdBeginQuery(commands, occlusion, 0, facet.QUERY_CONTROL_PRECISE);
+        for (0..2) |k| {
+            fb.CmdBeginRenderPass(commands, &begin, .@"inline");
+            fb.CmdBindPipeline(commands, .graphics, list.?);
+            fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+            fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &green);
+            fb.CmdDraw(commands, 3, 1, 0, 0);
+            fb.CmdEndRenderPass(commands);
+            if (k == 0) fb.CmdEndQuery(commands, if (occlusion_outside) statistics else occlusion, 0);
+        }
+        fb.CmdEndQuery(commands, if (occlusion_outside) occlusion else statistics, 0);
+        try bench.submit();
+
+        const drawn = pixelsOf(&picture, green);
+        try testing.expect(drawn > 1000);
+        const passes: u64 = if (occlusion_outside) 2 else 1;
+        try testing.expectEqual(passes * drawn, try queryValue(&bench, occlusion, 0));
+        var values: [2]u64 = @splat(0);
+        try testing.expectEqual(facet.Result.success, fb.GetQueryPoolResults(device, statistics, 0, 1, @sizeOf(@TypeOf(values)), &values, @sizeOf(@TypeOf(values)), facet.QUERY_RESULT_64 | facet.QUERY_RESULT_WAIT));
+        const other: u64 = if (occlusion_outside) 1 else 2;
+        try testing.expectEqual([2]u64{ 3 * other, 3 * other }, values);
+    }
+}
+
 test "sixty-four varyings, which is both ends of Vulkan's pair: drawn whole, drawn clipped, and drawn as lines" {
     var bench = try Bench.up();
     defer bench.down();

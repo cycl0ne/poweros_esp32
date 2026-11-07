@@ -158,6 +158,9 @@ reaches the log alone. What is left out:
 - A subpass of several colour attachments drawn a part for each is
   counted once, in its first part, on both devices since 1.116. Until
   then each draw was counted once for each colour attachment.
+- An occlusion query and a statistics query count at once, each from
+  its own begin to its own end, on the cores since 1.117. Until then a
+  query begun stopped the one being counted into.
 - A query's samples are counted as the tiles are drawn, which is where the
   render pass ends - after the command that ended the query, though before
   the submission is done. A program reads the values once its fence is

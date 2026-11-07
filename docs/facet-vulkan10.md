@@ -123,8 +123,8 @@ item 22's half of two in 1.91, item 83's open question, answered from
 Mesa, in 1.92, item 45 in 1.93, item 44 in 1.94, item 84 in 1.95,
 item 61's next six rows of eight, on the cores, in 1.112, item 43's
 half of two, the cores', in 1.113, item 61's last row of eight, on the
-cores, in 1.114, item 85's half of two, the cores', in 1.115, and
-item 87 in 1.116.**
+cores, in 1.114, item 85's half of two, the cores', in 1.115, item 87
+in 1.116 and item 88 in 1.117.**
 Each
 carries a *Done* note below saying what was actually built and where the
 item's own description turned out to be wrong - and several did. Things
@@ -2293,7 +2293,7 @@ Until then it has to be faithful.
 
 ### 88. Only one query counts at a time on the cores
 
-*queries* &mdash; conformance-blocking, small, found with item 87
+*queries* &mdash; conformance-blocking, small, found with item 87 &mdash; **done in 1.117**
 
 Vulkan lets one query of each type be active at once
 (VUID-vkCmdBeginQuery-queryPool-01922 forbids two of the same type), so
@@ -2308,6 +2308,15 @@ occlusion and statistics, with a draw adding to the counters of both.
 The V3D has occlusion alone (its statistics pools are refused, and a
 timestamp is never begun), so one is all it can have. About 30 lines and
 a test.
+
+**Done in 1.117**, in 41 lines of code and 56 of tests. The player keeps
+`_queries.Active` (driver/_queries.zig): an occlusion query and a
+statistics query, each in its own place, and the counters gathered
+from both, so a draw and a dispatch add to either through one set of
+addresses, as before. CmdEndQuery takes out the query it ends and leaves
+the other counting. A reset forgets every query of the pool, as it did
+the one, though Vulkan does not allow resetting an active one
+(VUID-vkCmdResetQueryPool-None-02841).
 
 ## Deferred by the decision, not out of reach
 

@@ -2856,4 +2856,25 @@ pub const LIBRARY_VERSION = 1;
 /// subpass each count every pixel once, and a statistics query six
 /// vertices given, six shaded and two triangles clipped. Each of 5
 /// changes put back fails at least one of them.
-pub const LIBRARY_REVISION = 116;
+///
+/// 117: **An occlusion query and a statistics query, counted at once.**
+/// Item 88 of docs/facet-vulkan10.md, found with item 87. Vulkan lets a
+/// query of each type be active together and no two of one type
+/// (VUID-vkCmdBeginQuery-queryPool-01922), so an occlusion query and a
+/// pipeline-statistics query may be begun one after the other. The cores'
+/// player kept one query, and CmdBeginQuery replaced it: an occlusion
+/// query begun before a statistics query counted nothing after that.
+/// The port is llvmpipe's list of every query begun, each binned into
+/// every tile (`active_queries`, lp_setup.c:1475-1483, taken out at
+/// 1564-1577), here a place for each type that counts
+/// (`_queries.Active`), with a draw and a dispatch adding to the counters
+/// of both. CmdEndQuery takes out the one it ends and leaves the other
+/// counting. The V3D has occlusion pools alone, its statistics pools
+/// being refused, so one is all it can have.
+///
+/// Tests: an occlusion query and a statistics query begun one after the
+/// other, and ended one after the other, around two passes of a triangle
+/// with one of them ended between: the one begun second and ended first
+/// counts the one pass, the other both, either way round. Each of 6
+/// changes put back fails it.
+pub const LIBRARY_REVISION = 117;
