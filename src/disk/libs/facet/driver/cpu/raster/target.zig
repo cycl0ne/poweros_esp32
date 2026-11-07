@@ -183,9 +183,9 @@ pub const Packing = struct {
 /// pixel is dithered as the tile's would be at that pixel, and the two are
 /// the same bytes. For what a pass clears and never draws into - the layers
 /// of a framebuffer past its first (since 1.91) - which goes into memory
-/// without a tile. Cut to the surface, which is of one sample a pixel: a
-/// multisampled image has the one layer (since 1.98), so nothing clears
-/// one this way.
+/// without a tile. Cut to the surface. One sample's plane: of a
+/// multisampled image the caller fills each sample's, a surface of its
+/// own (since 1.104).
 pub fn fillSurface(surface: Surface, area: Rect, color: u32) void {
     const packing = Packing.of(surface.format);
     const right = @min(area.x +| area.width, surface.width);
@@ -205,7 +205,8 @@ pub fn fillSurface(surface: Surface, area: Rect, color: u32) void {
 
 /// A rectangle of a depth plane set to `depth`, as `storeDepth` leaves a
 /// tile cleared to it: the 16 bits low byte first, wherever the plane's
-/// stride puts them. The caller cuts the rectangle to the plane.
+/// stride puts them. The caller cuts the rectangle to the plane, and of a
+/// multisampled image fills each sample's (since 1.104).
 pub fn fillDepth(plane: Attachments.Plane, area: Rect, depth: u16) void {
     for (area.y..area.y + area.height) |y| {
         const row = plane.pixels + y * plane.pitch;
@@ -218,7 +219,8 @@ pub fn fillDepth(plane: Attachments.Plane, area: Rect, depth: u16) void {
 }
 
 /// A rectangle of a stencil plane set to `stencil`, as `storeStencil`
-/// leaves a tile cleared to it. The caller cuts the rectangle to the plane.
+/// leaves a tile cleared to it. The caller cuts the rectangle to the plane,
+/// and of a multisampled image fills each sample's (since 1.104).
 pub fn fillStencil(plane: Attachments.Plane, area: Rect, stencil: u8) void {
     for (area.y..area.y + area.height) |y| {
         const row = plane.pixels + y * plane.pitch;
@@ -310,8 +312,9 @@ pub const Surface = struct {
     height: u32,
     format: Format,
     /// From one sample's plane to the next, for a multisampled image:
-    /// each laid out as the first, after it (`Image.sample_bytes`). 0 at
-    /// one sample a pixel. (Since 1.103.)
+    /// each laid out as the first, after it (`Image.sample_bytes`). Only
+    /// the samples past the first are reached by it, so a frame of one
+    /// sample a pixel never uses it. (Since 1.103.)
     sample_bytes: usize = 0,
 };
 

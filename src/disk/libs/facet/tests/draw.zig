@@ -12109,3 +12109,91 @@ test "a framebuffer's other layers cleared to the bytes its first is cleared to:
     try testing.expectEqual(half, layerDepthAt(kept_depths, 2, 0, 0));
     try testing.expectEqual(quarter, layerDepthAt(kept_depths, 2, 63, 63));
 }
+
+test "a framebuffer's other layers of four samples a pixel cleared in every sample's plane, by a load op and by CmdClearAttachments" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
+    physical.can.multisampling = true;
+    defer physical.can.multisampling = false;
+    const image_zig = @import("../image/_image.zig");
+    const side = 64;
+    const extent = facet.Extent3D{ .width = side, .height = side, .depth = 1 };
+
+    // Two layers of four samples, of colour and of a depth and a stencil
+    // in one image, every byte of both marked by hand.
+    const colors = try bench.bareImage(.{ .format = .b8g8r8a8_unorm, .extent = extent, .array_layers = 2, .samples = 4, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, false);
+    const color_view = try bench.viewOf(.{ .image = colors, .format = .b8g8r8a8_unorm, .view_type = .@"2d_array", .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_COLOR, .layer_count = 2 } });
+    const depths = try bench.bareImage(.{ .format = .d16_unorm_s8_uint, .extent = extent, .array_layers = 2, .samples = 4, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT }, false);
+    const depth_view = try bench.viewOf(.{ .image = depths, .format = .d16_unorm_s8_uint, .view_type = .@"2d_array", .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH | facet.IMAGE_ASPECT_STENCIL, .layer_count = 2 } });
+    const kept_colors = _objects.of(image_zig.Image, colors);
+    const kept_depths = _objects.of(image_zig.Image, depths);
+    try testing.expectEqual(@as(u32, 4), kept_colors.samples);
+    try testing.expectEqual(@as(u32, 4), kept_depths.samples);
+    const marked: u8 = 0xEE;
+    @memset(kept_colors.data.?[0..@intCast(kept_colors.bytes)], marked);
+    @memset(kept_depths.data.?[0..@intCast(kept_depths.bytes)], marked);
+
+    const attachments = [2]facet.AttachmentDescription{
+        fourSamples(.clear),
+        .{ .format = .d16_unorm_s8_uint, .samples = 4, .load_op = .clear, .store_op = .store, .stencil_load_op = .clear, .stencil_store_op = .store, .final_layout = .depth_stencil_attachment_optimal },
+    };
+    const made, const pass = samplesPass(&bench, &attachments, null, 1);
+    defer fb.DestroyRenderPass(device, pass);
+    try testing.expectEqual(facet.Result.success, made);
+    var frame: ?*facet.Framebuffer = null;
+    const views = [2]*facet.ImageView{ color_view, depth_view };
+    try testing.expectEqual(facet.Result.success, fb.CreateFramebuffer(device, &.{ .render_pass = pass.?, .attachment_count = 2, .attachments = &views, .width = side, .height = side, .layers = 2 }, &frame));
+    defer fb.DestroyFramebuffer(device, frame);
+
+    // A render area short of the image on every side, cleared and never
+    // drawn into; then two corners of the second layer alone, one in
+    // colour and one in depth and stencil.
+    const area = facet.Rect2D{ .offset = .{ .x = 8, .y = 4 }, .extent = .{ .width = 48, .height = 52 } };
+    const background: u32 = 0xFF33_6699;
+    var values = clears(background);
+    values[1] = .{ .depth_stencil = .{ .depth = 0.25, .stencil = 0x5A } };
+    const green: u32 = 0xFF00_FF00;
+    const color_rect = facet.ClearRect{ .rect = .{ .offset = .{ .x = 40, .y = 40 }, .extent = .{ .width = 16, .height = 16 } }, .base_array_layer = 1, .layer_count = 1 };
+    const depth_rect = facet.ClearRect{ .rect = .{ .offset = .{ .x = 8, .y = 4 }, .extent = .{ .width = 12, .height = 10 } }, .base_array_layer = 1, .layer_count = 1 };
+    const green_clear = facet.ClearAttachment{ .clear_value = clears(green)[0] };
+    const halfway = facet.ClearAttachment{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH | facet.IMAGE_ASPECT_STENCIL, .clear_value = .{ .depth_stencil = .{ .depth = 0.5, .stencil = 0xA5 } } };
+    const commands = try bench.record();
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass.?, .framebuffer = frame.?, .render_area = area, .clear_value_count = 2, .clear_values = &values }, .@"inline");
+    fb.CmdClearAttachments(commands, 1, @ptrCast(&green_clear), 1, @ptrCast(&color_rect));
+    fb.CmdClearAttachments(commands, 1, @ptrCast(&halfway), 1, @ptrCast(&depth_rect));
+    fb.CmdEndRenderPass(commands);
+    try bench.submit();
+
+    // Every sample of the second layer: the clears inside the area, the
+    // marks outside it. A pixel's depth and stencil are its first three
+    // bytes, the fourth left as it was.
+    const quarter: u16 = @intFromFloat(@round(0.25 * 65535.0));
+    const half: u16 = @intFromFloat(@round(0.5 * 65535.0));
+    const depth_rows = image_zig.rowsAt(kept_depths, 0, 1);
+    for (0..4) |s| for (0..side) |y| for (0..side) |x| {
+        const sample: u32 = @intCast(s);
+        const inside = x >= 8 and x < 56 and y >= 4 and y < 56;
+        const in_color = x >= 40 and y >= 40;
+        const in_depth = x < 20 and y < 14;
+        const color_want: u32 = if (!inside) 0xEEEE_EEEE else if (in_color) green else background;
+        try testing.expectEqual(color_want, sampleTexel(kept_colors, sample, 1, @intCast(x), @intCast(y)).*);
+        const at = s * @as(usize, @intCast(kept_depths.sample_bytes)) + depth_rows.at + y * depth_rows.pitch + x * 4;
+        const bytes = kept_depths.data.?[at..][0..4];
+        const depth_want: u16 = if (!inside) 0xEEEE else if (in_depth) half else quarter;
+        const stencil_want: u8 = if (!inside) marked else if (in_depth) 0xA5 else 0x5A;
+        try testing.expectEqual(depth_want, std.mem.readInt(u16, bytes[0..2], .little));
+        try testing.expectEqual(stencil_want, bytes[2]);
+        try testing.expectEqual(marked, bytes[3]);
+    };
+    // The first layer's colour, every sample of it, is the tiles' (since
+    // 1.103). Its depth and stencil are the tiles' too, and in sample 0's
+    // plane alone until the tiles hold four of each (step K3 of item 61).
+    for (0..4) |s| for (0..side) |y| for (0..side) |x| {
+        const inside = x >= 8 and x < 56 and y >= 4 and y < 56;
+        const want: u32 = if (inside) background else 0xEEEE_EEEE;
+        try testing.expectEqual(want, sampleTexel(kept_colors, @intCast(s), 0, @intCast(x), @intCast(y)).*);
+    };
+}

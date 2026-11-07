@@ -340,7 +340,7 @@ pub const Layered = struct {
 /// row after row, from the layer its view begins at. Null for an image not
 /// bound.
 fn surfaceOf(framebuffer: *const _render.Target, output: u32) ?raster.Surface {
-    return surfaceAt(framebuffer.colors[output], 0);
+    return surfaceAt(framebuffer.colors[output], 0, 0);
 }
 
 /// The same `layer` layers past the one the view begins at. An image kept in
@@ -348,12 +348,14 @@ fn surfaceOf(framebuffer: *const _render.Target, output: u32) ?raster.Surface {
 /// layer whatever its view said: what drew into a view of the second layer
 /// went into the first, the one place the depth's `planeOf` was already
 /// right about. A multisampled image's samples follow sample 0's plane,
-/// a plane each (since 1.103).
-fn surfaceAt(view: *const _image.ImageView, layer: u32) ?raster.Surface {
+/// a plane each (since 1.103): this is sample `sample`'s, and the tiles
+/// reach those past sample 0's by `sample_bytes` (since 1.104).
+fn surfaceAt(view: *const _image.ImageView, layer: u32, sample: u32) ?raster.Surface {
     const image = view.image;
     const data = image.data orelse return null;
+    const plane = @as(usize, sample) * @as(usize, @intCast(image.sample_bytes));
     return .{
-        .pixels = data + _image.rowsAt(image, 0, view.base_layer + layer).at,
+        .pixels = data + plane + _image.rowsAt(image, 0, view.base_layer + layer).at,
         .pitch = image.pitch,
         .width = image.width,
         .height = image.height,
@@ -372,13 +374,15 @@ fn surfaceAt(view: *const _image.ImageView, layer: u32) ?raster.Surface {
 /// (`_image.stencilOffset`). Null where there is nothing in memory to read
 /// or write.
 fn planeOf(view: ?*const _image.ImageView, which: Aspect) ?raster.Attachments.Plane {
-    return planeAt(view orelse return null, which, 0);
+    return planeAt(view orelse return null, which, 0, 0);
 }
 
 const Aspect = enum { depth, stencil };
 
-/// The same `layer` layers past the one the view begins at (since 1.91).
-fn planeAt(held: *const _image.ImageView, which: Aspect, layer: u32) ?raster.Attachments.Plane {
+/// The same `layer` layers past the one the view begins at (since 1.91),
+/// in sample `sample`'s plane of a multisampled image, laid out as a
+/// colour image's are (since 1.104).
+fn planeAt(held: *const _image.ImageView, which: Aspect, layer: u32, sample: u32) ?raster.Attachments.Plane {
     const image = held.image;
     const format = image.format;
     const stride = _image.bytesOf(format);
@@ -392,7 +396,8 @@ fn planeAt(held: *const _image.ImageView, which: Aspect, layer: u32) ?raster.Att
     // since 1.58 and levels since 1.63: a pass draws into the ones its
     // framebuffer's view begins at, in that level's own rows.
     const rows = _image.rowsAt(image, held.base_level, held.base_layer + layer);
-    return .{ .pixels = data + rows.at + at, .pitch = rows.pitch, .stride = stride };
+    const plane = @as(usize, sample) * @as(usize, @intCast(image.sample_bytes));
+    return .{ .pixels = data + plane + rows.at + at, .pitch = rows.pitch, .stride = stride };
 }
 
 /// The layers of a framebuffer past its first, cleared as a part begins where
@@ -409,25 +414,33 @@ fn planeAt(held: *const _image.ImageView, which: Aspect, layer: u32) ?raster.Att
 /// A depth or a stencil is written where the part keeps it in the image and
 /// does not load it, which is the one case its other layers outlive the pass
 /// with something defined in them.
+///
+/// A multisampled image's layers are cleared in every sample's plane (since
+/// 1.104; until then in the first alone), as llvmpipe clears a surface of
+/// more than one sample a sample at a time (`llvmpipe_clear_render_target`,
+/// lp_surface.c:356-368; `llvmpipe_clear_depth_stencil`, :429-442).
 fn clearLayers(layered: Layered, part: *const _render.Part, command: *const _command.BeginRenderPass, first_clear: u32) void {
     const framebuffer = layered.framebuffer orelse return;
     if (framebuffer.layers <= 1) return;
     for (0..layered.colors) |k| {
         if (part.color_loads[k] != .clear) continue;
         const color = command.clear_colors[@min(first_clear + k, _render.most_colors - 1)];
-        for (1..framebuffer.layers) |layer| {
-            const surface = surfaceAt(framebuffer.colors[k], @intCast(layer)) orelse break;
+        const held = framebuffer.colors[k];
+        for (1..framebuffer.layers) |layer| for (0..held.image.samples) |sample| {
+            const surface = surfaceAt(held, @intCast(layer), @intCast(sample)) orelse break;
             raster.fillSurface(surface, layered.area, color);
-        }
+        };
     }
     const view = framebuffer.depth orelse return;
     const clears_depth = layered.depth and part.stores_depth and !part.loads_depth;
     const clears_stencil = layered.stencil and part.stores_stencil and !part.loads_stencil;
     if (!clears_depth and !clears_stencil) return;
-    for (1..framebuffer.layers) |layer| {
-        if (clears_depth) if (planeAt(view, .depth, @intCast(layer))) |plane| raster.fillDepth(plane, layered.area, @intCast(command.clear_depth));
-        if (clears_stencil) if (planeAt(view, .stencil, @intCast(layer))) |plane| raster.fillStencil(plane, layered.area, @intCast(command.clear_stencil));
-    }
+    for (1..framebuffer.layers) |layer| for (0..view.image.samples) |sample| {
+        const at: u32 = @intCast(layer);
+        const plane_of: u32 = @intCast(sample);
+        if (clears_depth) if (planeAt(view, .depth, at, plane_of)) |plane| raster.fillDepth(plane, layered.area, @intCast(command.clear_depth));
+        if (clears_stencil) if (planeAt(view, .stencil, at, plane_of)) |plane| raster.fillStencil(plane, layered.area, @intCast(command.clear_stencil));
+    };
 }
 
 /// CmdClearAttachments' rectangle, over the layers it names past the
@@ -437,6 +450,8 @@ fn clearLayers(layered: Layered, part: *const _render.Part, command: *const _com
 /// the framebuffer's last are left alone, as is what lies outside the render
 /// area, which the tiles never reach either. lavapipe's
 /// `handle_clear_attachments` is the same over `clear_attachment_layers`.
+/// A multisampled image's layers are cleared in every sample's plane, as
+/// `clearLayers` clears them (since 1.104).
 pub fn clearRectangle(player: *const Player, command: *const _command.ClearAttachment) void {
     const layered = player.layered;
     const framebuffer = layered.framebuffer orelse return;
@@ -459,10 +474,18 @@ pub fn clearRectangle(player: *const Player, command: *const _command.ClearAttac
     const stencil = aspect & facet.IMAGE_ASPECT_STENCIL != 0 and layered.stencil;
     for (first..end) |layer| {
         const at: u32 = @intCast(layer);
-        if (color) if (surfaceAt(framebuffer.colors[0], at)) |surface| raster.fillSurface(surface, cut, command.color);
+        if (color) {
+            const held = framebuffer.colors[0];
+            for (0..held.image.samples) |sample| {
+                if (surfaceAt(held, at, @intCast(sample))) |surface| raster.fillSurface(surface, cut, command.color);
+            }
+        }
         const view = framebuffer.depth orelse continue;
-        if (depth) if (planeAt(view, .depth, at)) |plane| raster.fillDepth(plane, cut, _render.depthOf(.{ .depth = command.depth, .stencil = 0 }));
-        if (stencil) if (planeAt(view, .stencil, at)) |plane| raster.fillStencil(plane, cut, @truncate(command.stencil));
+        for (0..view.image.samples) |sample| {
+            const plane_of: u32 = @intCast(sample);
+            if (depth) if (planeAt(view, .depth, at, plane_of)) |plane| raster.fillDepth(plane, cut, _render.depthOf(.{ .depth = command.depth, .stencil = 0 }));
+            if (stencil) if (planeAt(view, .stencil, at, plane_of)) |plane| raster.fillStencil(plane, cut, @truncate(command.stencil));
+        }
     }
 }
 

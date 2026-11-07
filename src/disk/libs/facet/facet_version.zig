@@ -2333,4 +2333,37 @@ pub const LIBRARY_VERSION = 1;
 /// - a dropped pixel's samples written, a kept pixel's written into every
 ///   plane, or each plane by the mirrored sample's bits;
 /// - the query given pixels, or a dropped pixel's samples.
-pub const LIBRARY_REVISION = 103;
+///
+/// 104: **A framebuffer's layers past its first are cleared in every
+/// sample of an image of four samples, not in the first alone.**
+///
+/// A fix to step S4 of item 61 of docs/facet-vulkan10.md, which let a
+/// framebuffer of four samples a pixel have layers. The tiles draw only
+/// into a framebuffer's first layer; the others are cleared straight into
+/// the image's rows (1.91), by a load op and by CmdClearAttachments. Of an
+/// image of four samples that cleared sample 0's plane alone. 1.103 said in
+/// `raster.fillSurface`'s comment that such an image had the one layer,
+/// which is wrong: 1.98 takes layers for it. Each sample's plane of each of
+/// those layers is cleared now, of the colour, the depth and the stencil,
+/// as llvmpipe clears a surface of more than one sample a sample at a time
+/// (`llvmpipe_clear_render_target`, lp_surface.c:356-368;
+/// `llvmpipe_clear_depth_stencil`, :429-442). `surfaceAt` and `planeAt`
+/// take the sample whose plane they give. `Surface.sample_bytes`'s comment
+/// said it was 0 at one sample a pixel; an image of one sample gives its
+/// whole size there, which a frame of one sample never reads.
+///
+/// No device draws four samples yet, and an image of one sample is
+/// cleared as before. A test turns the capability on and marks every byte
+/// of a colour image and of a depth-and-stencil image, both of four samples
+/// and two layers. It clears both in a render area short of them on every
+/// side, then clears a corner of the second layer in colour and another in
+/// depth and stencil. Every sample's plane of the second layer is held to
+/// the clears inside the area and to the marks outside it, and the byte
+/// after each pixel's depth and stencil stays marked. Each of twelve
+/// changes put back fails it:
+/// - for each of the two ways of clearing, its colour, its depth or its
+///   stencil written into sample 0's plane four times;
+/// - for each of the two, its colour, or its depth and stencil, cleared in
+///   one sample;
+/// - a sample's plane not reached by `surfaceAt`, or by `planeAt`.
+pub const LIBRARY_REVISION = 104;
