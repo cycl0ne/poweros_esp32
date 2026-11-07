@@ -127,7 +127,7 @@ pub fn constantOf(constants: [4]f32) u32 {
 pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instance: u32, instances: u32) void {
     const player = _play.playerOf(queue);
     const pipeline = player.pipeline orelse return;
-    if (pipeline.draws_nothing or count == 0 or instances == 0) return;
+    if (count == 0 or instances == 0) return;
     const indices = _vertices.indicesOf(player, pipeline, first, count, vertex_offset) orelse return;
     const lowest, const highest = _vertices.range(indices) orelse return;
     if (highest - lowest >= most_vertices) return _play.noRoom(queue, "a draw of more vertices than one works");
@@ -230,11 +230,33 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
     const counted_before = target.stats;
     _query.add(counters.input_vertices, @as(u64, count) * instances);
     _query.add(counters.vertex_invocations, @as(u64, vertices) * instances);
-    _query.add(counters.input_primitives, @as(u64, corner_count / 3) * instances);
+    // Primitives, not triangles: `assemble` writes one corner a point and
+    // two a line, so three was the count of a triangle topology and a
+    // third of a point list. Item 83 of docs/facet-vulkan10.md.
+    const per_primitive = _vertices.cornersPerPrimitive(pipeline.topology, if (pipeline.tessellated) |patches| patches.points else 0);
+    _query.add(counters.input_primitives, @as(u64, corner_count / per_primitive) * instances);
     defer if (counters.clipping_invocations != null or counters.clipping_primitives != null) {
         _query.add(counters.clipping_invocations, target.stats.triangles - counted_before.triangles);
         _query.add(counters.clipping_primitives, target.stats.set_up - counted_before.set_up);
     };
+
+    // A pipeline that draws nothing - `rasterizer_discard_enable`, or
+    // every face culled - still owes the counts above, and this returned
+    // before them until 1.88. Vulkan's one licence to leave a counter
+    // alone here covers the clipping pair and nothing else: "if
+    // rasterizerDiscardEnable is enabled, the clipping input and output
+    // primitives counters may not be incremented". Input assembly and the
+    // vertex stage are before rasterisation, so what they processed is
+    // what they processed. The two clipping counters are left at zero by
+    // returning here, which is what that sentence allows.
+    //
+    // The vertex function itself is not run, and that is honest only
+    // because `vertex_pipeline_stores_and_atomics` is false on both
+    // devices: a vertex function writes its outputs and nothing else, and
+    // the outputs of a draw that rasterises nothing cannot be read. The
+    // day a device claims that feature this has to run the stage for
+    // real. Item 83 of docs/facet-vulkan10.md.
+    if (pipeline.draws_nothing) return;
 
     for (0..instances) |k| {
         const instance = first_instance +% @as(u32, @intCast(k));

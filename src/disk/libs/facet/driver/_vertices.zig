@@ -319,6 +319,53 @@ pub fn mostCorners(topology: facet.PrimitiveTopology, count: u32) usize {
     };
 }
 
+/// The vertices one primitive takes, which is how many corners
+/// `assemble` writes for it: one for a point, two for a line, three for a
+/// triangle, and a patch's own control points for a patch.
+///
+/// `VK_QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_PRIMITIVES_BIT` counts
+/// *primitives*, so the corners `assemble` made are divided by this and
+/// not by three: a point list of ten points assembles ten corners and is
+/// ten primitives, and a line list of five lines assembles ten corners
+/// and is five. `patch_points` is `Pipeline.Tessellated.points`, or 0
+/// where the pipeline tessellates nothing - a `patch_list` drawn without
+/// a tessellation stage has no patch size to divide by, so one vertex is
+/// taken to be one primitive.
+pub fn cornersPerPrimitive(topology: facet.PrimitiveTopology, patch_points: u32) u32 {
+    return switch (topology) {
+        .point_list => 1,
+        .line_list, .line_strip => 2,
+        .patch_list => @max(1, patch_points),
+        else => 3,
+    };
+}
+
+test "the corners a primitive takes: what assemble writes, divided back" {
+    const testing = @import("std").testing;
+    // Exactly `assemble`'s own shape, topology by topology: what it
+    // writes for n primitives, divided by this, is n again.
+    try testing.expectEqual(@as(u32, 1), cornersPerPrimitive(.point_list, 0));
+    try testing.expectEqual(@as(u32, 2), cornersPerPrimitive(.line_list, 0));
+    try testing.expectEqual(@as(u32, 2), cornersPerPrimitive(.line_strip, 0));
+    try testing.expectEqual(@as(u32, 3), cornersPerPrimitive(.triangle_list, 0));
+    try testing.expectEqual(@as(u32, 3), cornersPerPrimitive(.triangle_strip, 0));
+    try testing.expectEqual(@as(u32, 3), cornersPerPrimitive(.triangle_fan, 0));
+    try testing.expectEqual(@as(u32, 4), cornersPerPrimitive(.patch_list, 4));
+    try testing.expectEqual(@as(u32, 1), cornersPerPrimitive(.patch_list, 0));
+    // And held against `mostCorners`, which is the same rule counted the
+    // other way round: n primitives' worth of vertices assembles n
+    // primitives. A strip is the exception by construction - its corners
+    // are shared - so it is counted from what it assembles, not from
+    // `count`.
+    for ([_]facet.PrimitiveTopology{ .point_list, .line_list, .triangle_list }) |topology| {
+        const per = cornersPerPrimitive(topology, 0);
+        for (1..7) |n| {
+            const vertices: u32 = @intCast(n * per);
+            try testing.expectEqual(n, mostCorners(topology, vertices) / per);
+        }
+    }
+}
+
 /// Whether a pipeline's draws come to something other than filled triangles.
 pub fn widens(pipeline: *const Pipeline) bool {
     return switch (pipeline.drawn_topology) {

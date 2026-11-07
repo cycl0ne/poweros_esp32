@@ -1393,6 +1393,87 @@ question this belongs to is item 51's.
 > before 1.87; `sdk/libs/facet/shader.zig:123` `Code` holds
 > `entries: [*]const Entry`, so its alignment is a pointer's.
 
+### 83. The pipeline-statistics counters a draw owes, which two of them did not pay
+
+*queries / pipeline statistics* &mdash; **done in 1.88**, small, found while scoping item 61
+
+Two defects in one block of `driver/cpu/_draw.zig`, both of them silent
+because the only tests of these counters were of the *plumbing* - which
+counter lands in which slot of a packed result, and that a counter
+saturates - and never of a value a real draw produces.
+
+**A draw that drew nothing counted nothing.** `draw()` returned at its
+first line on `pipeline.draws_nothing`, which is set for
+`rasterizer_discard_enable` and for a `cull_mode` of
+`CULL_MODE_FRONT_AND_BACK`, and every `_query.add` in the function is
+below that line. So `INPUT_ASSEMBLY_VERTICES`, `INPUT_ASSEMBLY_PRIMITIVES`
+and `VERTEX_SHADER_INVOCATIONS` all read 0 for such a draw. Vulkan gives
+exactly one licence to leave a counter alone here, and it is not that one:
+*"If a pipeline has `rasterizerDiscardEnable` enabled, implementations
+**may** discard primitives after the final pre-rasterization shader stage.
+As a result, if `rasterizerDiscardEnable` is enabled, the clipping input
+and output primitives counters **may** not be incremented."* The clipping
+pair, and nothing else. Input assembly and the vertex stage are *before*
+rasterisation and did their work, so what they processed is what they
+processed. The bail is below the three counters now, which leaves the
+clipping pair at zero - which that sentence allows.
+
+The vertex function itself is still not run, and that is honest only
+because `vertex_pipeline_stores_and_atomics` is false on both devices: a
+vertex function writes its outputs and nothing else, and the outputs of a
+draw that rasterises nothing cannot be read, so the count is the only
+observable. The day a device claims that feature, this has to run the
+stage for real - which is why the reason is written beside the bail and
+not only here.
+
+**`INPUT_ASSEMBLY_PRIMITIVES` divided by three whatever the topology.**
+`_vertices.assemble` writes one corner for a point, two for a line and
+three for a triangle, and the counter was `corner_count / 3`. So a point
+list of twelve points counted four primitives, a line list of six lines
+counted four, and a line strip of eleven segments counted seven. Only the
+triangle topologies were ever right, and the one test that checked a value
+drew a triangle list. `_vertices.cornersPerPrimitive` is the divisor now -
+one, two, three, or a patch's control points - and it is held against
+`mostCorners`, which is the same rule counted the other way round.
+
+Both are caught by a new test that draws the same twelve vertices under
+five topologies and under both draws-nothing pipelines and reads all six
+counters. Putting either defect back makes it fail: `expected 12, found 4`
+for the divisor, `expected 24, found 0` for the bail.
+
+**One thing is left unsettled, and it is written down rather than
+guessed.** `CLIPPING_PRIMITIVES` is wired to `target.stats.set_up`, which
+counts triangles that survived *face culling and viewport setup*, where
+Vulkan counts primitives output by the *clipping* stage - and culling
+comes after clipping. Whether a back-face-culled triangle must be counted
+turns on one clause: *"If at least one vertex of the input primitive lies
+inside the clipping volume, and either the primitive is not rasterized
+according to the Basic Polygon Rasterization rules, or at least one sample
+point for a fragment lies within the rasterized triangle according to
+those rules, the counter is incremented by one or more."* "Not rasterized
+according to the Basic Polygon Rasterization rules" reads either as *is
+not a polygon* - a point or a line, which those rules do not govern - or
+as *was not rasterized at all*, which a culled triangle was not. The
+queries chapter does not say which, has no note on culling, and names
+these counters nowhere else. The second reading is the stronger literal
+one, and the `rasterizerDiscardEnable` carve-out above is evidence for it:
+under the first reading a discarded triangle is still a polygon with no
+sample inside, so the "zero or more" branch would already cover it and the
+carve-out would be unnecessary. That is an inference about why a sentence
+exists, not a rule, so it is not enough to call facet's count a defect. If
+the second reading is right, ordinary back-face culling undercounts this
+one counter on the commonest draw there is, and that is worth settling
+from `primsrast.html` (whether culling is inside the Basic Polygon
+Rasterization rules) and `vertexpostproc.html` (the order of clipping and
+culling) before anything is changed.
+
+> Verified by the two reverts above, and by
+> `grep -rn 'input_primitives\|input_vertices\|vertex_invocations' src/disk/libs/facet/tests/ src/disk/libs/facet/query/`
+> before 1.88: every hit was in `query/_query.zig`'s own unit tests of the
+> slot layout, plus the one triangle-list draw in `tests/draw.zig`.
+> Normative text from the Vulkan Queries chapter, Pipeline Statistics
+> Queries.
+
 ## Deferred by the decision, not out of reach
 
 A drop-in `libvulkan.so.1` was not chosen, so these are not scheduled.

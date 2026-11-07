@@ -1606,4 +1606,52 @@ pub const LIBRARY_VERSION = 1;
 /// pointer: it points at a struct holding a pointer, not at Vulkan's
 /// `pCode`, which is only ever read as `[]const u32` behind
 /// `Spirv.words`.
-pub const LIBRARY_REVISION = 87;
+///
+/// 88: **Two pipeline-statistics counters that did not count.**
+///
+/// Found while scoping item 61, and silent because the only tests of
+/// these counters were of the plumbing - which counter lands in which
+/// slot of a packed result, and that a counter saturates - never of a
+/// value a real draw produces. Item 83 of docs/facet-vulkan10.md.
+///
+/// `driver/cpu/_draw.zig` returned at its first line on
+/// `pipeline.draws_nothing`, which is set for `rasterizer_discard_enable`
+/// and for a `cull_mode` of `CULL_MODE_FRONT_AND_BACK`, and every
+/// `_query.add` in the function is below that line. So
+/// `INPUT_ASSEMBLY_VERTICES`, `INPUT_ASSEMBLY_PRIMITIVES` and
+/// `VERTEX_SHADER_INVOCATIONS` all read 0 for such a draw. Vulkan's one
+/// licence to leave a counter alone here covers the clipping pair alone:
+/// "if rasterizerDiscardEnable is enabled, the clipping input and output
+/// primitives counters may not be incremented". Input assembly and the
+/// vertex stage are before rasterisation and did their work. The bail is
+/// below the three counters now, which leaves the clipping pair at zero,
+/// as that sentence allows.
+///
+/// The vertex function is still not run for such a draw, and that is
+/// honest only because `vertex_pipeline_stores_and_atomics` is false on
+/// both devices: a vertex function writes its outputs and nothing else,
+/// and the outputs of a draw that rasterises nothing cannot be read. The
+/// day a device claims that feature this has to run the stage, which is
+/// said beside the bail and not only in the item.
+///
+/// `INPUT_ASSEMBLY_PRIMITIVES` was `corner_count / 3` whatever the
+/// topology, but `_vertices.assemble` writes one corner for a point, two
+/// for a line and three for a triangle: a point list of twelve counted
+/// four primitives and a line list of six lines counted four. Only the
+/// triangle topologies were right, and the one test that checked a value
+/// drew a triangle list. `_vertices.cornersPerPrimitive` is the divisor
+/// now - one, two, three, or a patch's control points - and it is held
+/// against `mostCorners`, the same rule counted the other way round.
+///
+/// A new test draws the same twelve vertices under five topologies and
+/// under both draws-nothing pipelines and reads all six counters. Putting
+/// either defect back makes it fail: `expected 12, found 4` for the
+/// divisor, `expected 24, found 0` for the bail.
+///
+/// One thing beside them is left unsettled and written down rather than
+/// guessed: `CLIPPING_PRIMITIVES` is wired to a count taken after face
+/// culling, where Vulkan counts what the *clipping* stage output, and
+/// whether a culled triangle must be counted turns on a clause the
+/// queries chapter does not disambiguate. Item 83 has the text and what
+/// would settle it.
+pub const LIBRARY_REVISION = 88;

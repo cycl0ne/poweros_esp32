@@ -413,6 +413,9 @@ const PipelineState = struct {
     topology: facet.PrimitiveTopology = .triangle_list,
     restart: bool = false,
     raster: facet.PipelineRasterizationStateCreateInfo = .{},
+    /// Null, and the pipeline is made without a multisample state at all,
+    /// which is what almost every test wants.
+    multisample: ?*const facet.PipelineMultisampleStateCreateInfo = null,
     depth: facet.PipelineDepthStencilStateCreateInfo = .{},
     blend: facet.PipelineColorBlendAttachmentState = .{},
     /// What the subpass's second colour attachment is blended by, where it
@@ -466,6 +469,7 @@ fn makePipeline(bench: *Bench, state: PipelineState) struct { facet.Result, ?*fa
         .input_assembly_state = &assembly,
         .viewport_state = &view,
         .rasterization_state = &state.raster,
+        .multisample_state = state.multisample,
         .depth_stencil_state = &state.depth,
         .color_blend_state = &blend,
         .dynamic_state = &dynamic,
@@ -7672,6 +7676,120 @@ test "an occlusion query counts the samples that passed, and a statistics query 
     // at least the pixels that were kept of both instances.
     try testing.expect(values[5] % 4 == 0);
     try testing.expect(values[5] >= 2 * drawn);
+}
+
+test "the primitives input assembly counted, by topology, and what a draw that draws nothing still owes" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const picture = try Picture.of(&bench, 64, 64);
+    const pass = try renderPass(&bench, .clear, false);
+    defer fb.DestroyRenderPass(device, pass);
+    const frame = try framebuffer(&bench, pass, &.{picture.view}, 64, 64);
+    defer fb.DestroyFramebuffer(device, frame);
+    const flat = try module(&bench, &Flat.code);
+    defer fb.DestroyShaderModule(device, flat);
+    const layout = try pipelineLayout(&bench, &.{}, 4);
+    defer fb.DestroyPipelineLayout(device, layout);
+
+    const wanted = facet.QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_VERTICES |
+        facet.QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_PRIMITIVES |
+        facet.QUERY_PIPELINE_STATISTIC_VERTEX_SHADER_INVOCATIONS |
+        facet.QUERY_PIPELINE_STATISTIC_CLIPPING_INVOCATIONS |
+        facet.QUERY_PIPELINE_STATISTIC_CLIPPING_PRIMITIVES |
+        facet.QUERY_PIPELINE_STATISTIC_FRAGMENT_SHADER_INVOCATIONS;
+    const statistics = try queryPool(&bench, .pipeline_statistics, 1, wanted);
+    defer fb.DestroyQueryPool(device, statistics);
+
+    // Twelve vertices round a circle inside the picture, so that no
+    // triangle of them is degenerate however they are assembled: twelve
+    // points, six lines, eleven of a strip, four triangles or ten of a
+    // strip, by the pipeline's topology alone.
+    var vertices: [12][3]f32 = undefined;
+    for (&vertices, 0..) |*each, k| {
+        const turn = @as(f32, @floatFromInt(k)) / 12 * 6;
+        each.* = .{ @sin(turn) * 0.5, @cos(turn) * 0.5, 0.5 };
+    }
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
+    const offset: u64 = 0;
+    const green: u32 = 0xFF00_FF00;
+    const blue = clears(0xFF00_00FF);
+
+    const Shot = struct {
+        /// The six counters, in the order of their bits.
+        fn of(it: *Bench, pool: *facet.QueryPool, made: *facet.Pipeline, buffer: *facet.Buffer, where: *const u64, set: *facet.PipelineLayout, pass_in: *facet.RenderPass, frame_in: *facet.Framebuffer, clear: *const [2]facet.ClearValue, color: *const u32, count: u32, instances: u32) ![6]u64 {
+            const base = it.rig.fb;
+            const commands = try it.record();
+            base.CmdResetQueryPool(commands, pool, 0, 1);
+            base.CmdBeginQuery(commands, pool, 0, 0);
+            base.CmdBeginRenderPass(commands, &.{ .render_pass = pass_in, .framebuffer = frame_in, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 1, .clear_values = clear }, .@"inline");
+            base.CmdBindPipeline(commands, .graphics, made);
+            base.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&buffer), @ptrCast(where));
+            base.CmdPushConstants(commands, set, facet.SHADER_STAGE_FRAGMENT, 0, 4, color);
+            base.CmdDraw(commands, count, instances, 0, 0);
+            base.CmdEndRenderPass(commands);
+            base.CmdEndQuery(commands, pool, 0);
+            try it.submit();
+            var values: [6]u64 = @splat(0);
+            try testing.expectEqual(facet.Result.success, base.GetQueryPoolResults(it.device, pool, 0, 1, @sizeOf([6]u64), &values, @sizeOf([6]u64), facet.QUERY_RESULT_64 | facet.QUERY_RESULT_WAIT));
+            return values;
+        }
+    };
+
+    // `assemble` writes one corner a point, two a line and three a
+    // triangle, and this counter is of *primitives*: dividing the corners
+    // by three whatever the topology said four where there were twelve
+    // points, and three where there were six lines. Item 83 of
+    // docs/facet-vulkan10.md.
+    const by_topology = [_]struct { facet.PrimitiveTopology, u64 }{
+        .{ .point_list, 12 },
+        .{ .line_list, 6 },
+        .{ .line_strip, 11 },
+        .{ .triangle_list, 4 },
+        .{ .triangle_strip, 10 },
+    };
+    for (by_topology) |case| {
+        const topology, const primitives = case;
+        const result, const made = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = pass, .topology = topology });
+        try testing.expectEqual(facet.Result.success, result);
+        defer fb.DestroyPipeline(device, made);
+        const values = try Shot.of(&bench, statistics, made.?, vertex_buffer, &offset, layout, pass, frame, &blue, &green, 12, 1);
+        try testing.expectEqual(@as(u64, 12), values[0]);
+        try testing.expectEqual(primitives, values[1]);
+        try testing.expectEqual(@as(u64, 12), values[2]);
+    }
+
+    // A pipeline that draws nothing still owes the counts of every stage
+    // before rasterisation, and this returned before all of them until
+    // 1.88. Vulkan's one licence to leave a counter alone here is for the
+    // clipping pair under `rasterizer_discard_enable`: "if
+    // rasterizerDiscardEnable is enabled, the clipping input and output
+    // primitives counters may not be incremented" - nothing is said of
+    // input assembly or of the vertex stage, which are before
+    // rasterisation and did their work.
+    for ([_]facet.PipelineRasterizationStateCreateInfo{
+        .{ .rasterizer_discard_enable = true },
+        .{ .cull_mode = facet.CULL_MODE_FRONT_AND_BACK },
+    }) |raster| {
+        const result, const made = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = pass, .raster = raster });
+        try testing.expectEqual(facet.Result.success, result);
+        defer fb.DestroyPipeline(device, made);
+        try testing.expect(_objects.of(_pipeline.Pipeline, made.?).draws_nothing);
+        const values = try Shot.of(&bench, statistics, made.?, vertex_buffer, &offset, layout, pass, frame, &blue, &green, 12, 2);
+        try testing.expectEqual(@as(u64, 24), values[0]);
+        try testing.expectEqual(@as(u64, 8), values[1]);
+        try testing.expectEqual(@as(u64, 24), values[2]);
+        // The clipping pair at zero, which that sentence allows, and no
+        // fragment function called at all.
+        try testing.expectEqual(@as(u64, 0), values[3]);
+        try testing.expectEqual(@as(u64, 0), values[4]);
+        try testing.expectEqual(@as(u64, 0), values[5]);
+        // And it drew nothing, which is the point of the pipeline: every
+        // pixel is still the colour the pass cleared it to.
+        try testing.expectEqual(@as(usize, 64 * 64), pixelsOf(&picture, 0xFF00_00FF));
+    }
 }
 
 test "query values copied into a buffer: as wide as asked, with availability, and nothing written outside it" {
