@@ -485,13 +485,95 @@ Found independently by: limits, conformance-path (the ~85-field fill is the same
 
 ### 17. Raise maxVertexOutputComponents from 8 to 64, and report maxFragmentInputComponents
 
-*limits / varyings* &mdash; conformance-blocking, large
+*limits / varyings* &mdash; conformance-blocking, medium (**large** until the rescope below)
 
 After: The limits reshape
 
+**Rescoped in 1.89 against the code, and most of what this item says about
+its own size is wrong.** The production change is five uncoupled constants
+and a comptime tie that does not exist yet - about ten real lines - and the
+tests are the bulk and the point. The five, measured:
+
+1. `instance/_instance.zig` `max_vertex_output_components = 8` → 64. Both
+   limits then report 64 with no further edit, because
+   `.max_fragment_input_components = max_vertex_output_components` already
+   reads the same constant. So the title's "and report
+   maxFragmentInputComponents" is already done: the field exists, it is
+   reported, and only its value is wrong.
+2. `driver/cpu/raster/batched.zig` `most_varyings = 8` → 64. This is the
+   one that costs: it widens `setup.ClipVertex(most_varyings)` from 48 to
+   272 bytes and `Batch.planes` from 108 to 780.
+3. `driver/_vertices.zig` `const most_stride = 64` → at least 68, because
+   a stride is 4 + varyings. **This is the item's one way to ship looking
+   done.** `_vertices.zig` guards with `if (stride > most_stride or ...)
+   return .{}` and `Wide` is all zeroes, so raising the limit and leaving
+   this alone makes every draw of points or lines - and of triangles as
+   edges or corners - return zero vertices and zero indices above 60
+   varyings. No refusal, no log, no `noRoom`, no result code: the picture
+   is simply empty, on *both* devices, because that file is shared. Filled
+   triangles are what every test draws and they would keep working.
+4. `sdk/libs/facet/ir.zig`'s `if (build.varyings > 8) @compileError(...)` -
+   a bare literal 8, not the constant. The SDK cannot import `_instance`,
+   so either hardcode 64 or hoist the constant into `sdk/libs/facet/facet.zig`
+   and have `_instance` read it, which is the better fix: `ir.zig` and
+   `shader.zig`'s doc comment would then have one source of truth.
+5. `driver/v3d/qpu.zig` `most_varyings = 8`, which `compile.zig` re-exports.
+
+Nothing ties the first of those to the other four today - there is no
+comptime check at all. `raster` is a separate Zig module and cannot see
+`_instance`, so the tie belongs in `cpu.zig`, which imports both.
+
+**What this item claims is touched and is not.**
+`shader.Entry.varyings`' low 8 bits hold 0..255 and `Fixed.bits()` starts
+at bit 8, so 64 fits with room to spare and nothing moves - it is not a
+blocker in any sense. The V3D's varying count in the shader record is an
+8-bit field in a 32-bit word; 64 fits there too. The SPIR-V reader has
+nothing to plumb: `input_locations` and `output_locations` are saturating
+u32 and the file says in as many words that no caller reads them. Every
+fixed form's `Fixed.varyings()` returns that form's own shape - 0, 2, 3, 4
+or 6 - and the limit never enters. `driver/cpu/raster/pipeline.zig` is
+comptime per config and is untouched.
+
+**And the memory cost is real but in a different place.** Both stores this
+item says grow eightfold are *already runtime-sized*: the per-triangle
+plane store is `@sizeOf(Triangle) + plane_count * @sizeOf(shader.Plane)`
+out of the arena with `plane_count = 1 + state.varyings`, and the
+per-vertex store is `vertices * (4 + pipeline.varyings) * 4` out of a
+scratch that grows, so a 2-varying draw pays what it pays today and only a
+draw that asks for 64 pays more. Per tile the cost is *zero* - the tile
+buffers hold colour, depth and stencil and no varyings at all. What does
+grow unconditionally is the clip path, because `ClipVertex` is a comptime
+array: `setup.cut` would interpolate all 64 slots of every vertex it
+generates, `batched.zig` zeroes 256 bytes a corner, and the polygon copy
+is 2176 bytes per clip plane over five planes - roughly 11 KB of memcpy per
+*cut* triangle against about 1.9 KB today, paid by every clipped draw
+whatever its varying count, with `setUpAll`'s clip arrays going from about
+528 bytes of stack to about 2992 against a 32 KiB task stack. That is the
+one thing to decide before writing code rather than after, and no host test
+will catch it. The honest alternative is a runtime-strided clip vertex out
+of the arena, which is a genuinely larger change.
+
+**The V3D needs no capability work.** Both refusals already exist and are
+already loud, ending in `error_feature_not_present` at pipeline creation,
+and the right limit override is the pattern item 28 established twelve
+lines away in the same file: `said.max_vertex_output_components =
+compile.most_varyings`, so the number follows the capability and cannot
+drift when the register allocator moves the real ceiling. The V3D's row
+stays a shortfall after this item, honestly reported - the same shape items
+52 and 28 settled into. One thing to harden while there: the V3D indexes a
+table of pregenerated vertex programs by varying count, and that table is
+`qpu.most_varyings + 1` long.
+
+**Raising the IR's bound is what makes the V3D's refusal testable at all.**
+`compile.zig` carries twenty host tests and `Error.Varyings` has none,
+because a 9-varying graph cannot be built while `ir.zig` refuses one at
+comptime. So the SDK constant and the first test of that error go together.
+
+The original description follows.
+
 The single largest limit shortfall: 8 floats of interstage data against a required 64 out of the vertex stage and 64 into the fragment stage. Not a constant to bump — it is the width of what the rasterizer interpolates, so it touches the cores' triangle setup and per-pixel interpolation, the V3D's varying count in the shader record, the IR and the SPIR-V reader's varying plumbing, every fixed form's declared varying count, and shader.Entry.varyings, whose low 8 bits carry the number. The per-triangle vertex store grows eightfold, which is real memory and bandwidth in a tiled rasterizer.
 
-> Verified: src/disk/libs/facet/instance/_instance.zig:39 `pub const max_vertex_output_components = 8;` with the comment "what the library's own objects have room for, whatever the driver"; consumed at driver/cpu/cpu.zig:84 and driver/v3d/driver.zig:114. sdk/libs/facet/shader.zig:56-60 puts the count in Entry.varyings' low 8 bits. Required minimum 64 for both limits (Vulkan 1.0 Required Limits, Core column).
+> Verified: src/disk/libs/facet/instance/_instance.zig:39 `pub const max_vertex_output_components = 8;` with the comment "what the library's own objects have room for, whatever the driver"; consumed at driver/cpu/cpu.zig:84 and driver/v3d/driver.zig:114. **That last clause is not merely a stale line number but a wrong mechanism**, found in the 1.89 rescope: `cpu.zig` has no reference to the constant anywhere - it takes `.limits = _instance.limits` whole - and the V3D copies the same struct and then overrides fields. The constant's only consumers outside the limits table itself are the two limit fields and `shader/createshadermodule.zig`'s refusal. sdk/libs/facet/shader.zig:56-60 puts the count in Entry.varyings' low 8 bits. Required minimum 64 for both limits (Vulkan 1.0 Required Limits, Core column).
 
 Found independently by: limits, conformance-path.
 
@@ -626,9 +708,68 @@ Found independently by: limits, formats, conformance-path (which listed it as an
 
 ### 22. Support layered framebuffers to 256 layers and report maxFramebufferLayers
 
-*limits / render pass* &mdash; conformance-blocking, large
+*limits / render pass* &mdash; conformance-blocking, medium (**large** until the rescope below)
 
 After: The limits reshape
+
+**Rescoped in 1.89 against the code, and the premise this item is missing
+changes what it is.** Nothing in facet can select a layer: there is no
+geometry stage, `spirv.zig`'s `BuiltIn` enum has no `layer`, the profile's
+capabilities are `.shader` alone, and `ShaderViewportIndexLayerEXT`,
+multiview and a `Layer` output appear nowhere in the tree. facet's *own*
+native entry path cannot either - `shader.Vertices` carries inputs,
+outputs, the vertex and instance numbers, resources and point sizes, and
+no layer. So **"and render into its layers" is unachievable in core Vulkan
+1.0 through facet's feature set**, and the two expensive things this item
+describes do not exist to build: there is no layer axis for the tile path,
+because the tiles only ever hold layer 0, and there is no field to add,
+because `max_framebuffer_layers` is already in the struct and already
+reported as 1.
+
+What is left is the honest and conformant part: *accept* a layered
+framebuffer over a layered view, report 256, and make sure the layers a
+draw never reaches are still correct where Vulkan says they must be - which
+is the load-op and `CmdClearAttachments` clears, since a render pass
+instance clears every layer of the render area. That is one image-layout
+fix the existing row and texel machinery already consumes, one refusal to
+narrow in `createframebuffer.zig`, two Vulkan-shaped layer fields the
+command path currently drops on the floor, one constant, one V3D override,
+and one genuinely new memset helper of about fifty lines for the layers a
+tile never reaches. Ten library files, about 120 to 150 lines, and the
+tests are another 200 or so. Two commits - the cores, then the V3D on the
+board - and the first cannot be split into "accept and report" then "clear
+the layers", because that would ship a build reporting 256 while a CLEAR
+silently left layers 1 to 255 unwritten.
+
+**The way this ships looking done** is `surfaceOf` in
+`driver/cpu/_play.zig`, which takes the image's data pointer and pitch
+flat and never reads the attachment view's `base_layer` - while `planeOf`
+thirty lines below it *does*, through `_image.rowsAt(image, base_level,
+base_layer)`. That asymmetry is unreachable today because no layered
+colour image can be created. The moment one can, a framebuffer built over
+a `2d_array` view with `baseArrayLayer = 3` draws into layer 0 and
+overwrites whatever is there. None of this item's natural tests touch it:
+"create a 256-layer framebuffer" passes, "clear it and read back layer
+200" passes because the layered clear is a memset computed from `rowsAt`
+and never goes through `surfaceOf`, "report 256" passes, and the pin drops
+- so the audit trail says the item closed. The only test that catches it is
+a *draw* through a non-zero base layer with read-back from both that layer
+and layer 0, and the item's own framing argues nobody needs to write it,
+because layered rendering is unobservable. It mostly is. This is the one
+thing that is not, and it is observable through the single-layer form
+Vulkan explicitly allows, where a view's `layerCount` may exceed the
+framebuffer's `layers`. The same hole on the V3D is its flat frame and
+kept-attachment addresses. Beside it, `createframebuffer.zig` checks no
+view's `layer_count` against the framebuffer's at all today, which is a
+memory-safety question and not only a correctness one, and
+`createimageview.zig` builds a row-image view's rows with no `base_layer`
+offset.
+
+Both are one-liners to get right and both are invisible to the tests this
+item invites, which is the argument for fixing them while the code is open
+rather than meeting them later as a board-only divergence.
+
+The original description follows.
 
 CreateFramebuffer refuses any `layers` but 1, in the same condition as the attachment-count check. Vulkan requires maxFramebufferLayers >= 256 with no gating feature, so a conformant driver must accept a layered framebuffer over a layered view and render into its layers. The render pass, the tile store path and both drivers' frame setup gain a layer axis — the V3D's frame is set up for one render-target plane at a time — so this is a real change, not a constant.
 
