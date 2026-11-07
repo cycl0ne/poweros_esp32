@@ -207,6 +207,22 @@ inline fn projected(p: [4]f32, viewport: Viewport, comptime free: bool) Projecte
     };
 }
 
+/// Where a pixel's samples are, x and y in 1/256ths of a pixel from its
+/// centre: at one sample a pixel the centre, at four Vulkan's standard
+/// positions - (0.375, 0.125), (0.875, 0.375), (0.125, 0.625) and
+/// (0.625, 0.875) from the pixel's top left, llvmpipe's
+/// `lp_sample_pos_4x` (lp_rast.c:63-66), in the fixed point it makes of
+/// them (lp_setup.c:127-128). At four llvmpipe takes its edges at the
+/// pixel's corner (lp_setup.c:632) and adds these; here they are taken
+/// from the centre, where the edges are. (Since 1.102.)
+pub fn sampleOffsets(comptime samples: u32) [samples][2]i64 {
+    return switch (samples) {
+        1 => .{.{ 0, 0 }},
+        4 => .{ .{ -32, -96 }, .{ 96, -32 }, .{ -96, 32 }, .{ 32, 96 } },
+        else => @compileError("a pixel has one sample or four"),
+    };
+}
+
 /// A triangle on the surface, ready for its own values to be set up: its
 /// edges, the pixels it can cover, twice its area in 1/65536ths of a
 /// pixel, and the order of its vertices that makes the edges point in -
@@ -235,8 +251,10 @@ pub const Triangle = struct {
 /// What is left of the triangle `v` on the surface within `area` - its
 /// edges, its pixels and its area - or null: nothing of it in the area,
 /// no area at all, or facing the way that is culled. Made for each
-/// pipeline's culling, in the pipeline's setup: once a triangle.
-pub inline fn onSurface(v: [3]Projected, comptime cull: Cull, comptime front: Winding, area: [4]i32) ?Triangle {
+/// pipeline's culling, in the pipeline's setup: once a triangle. Its
+/// pixels are those that can have one of their `samples` inside
+/// (`sampleOffsets`; since 1.102).
+pub inline fn onSurface(v: [3]Projected, comptime cull: Cull, comptime front: Winding, area: [4]i32, comptime samples: u32) ?Triangle {
     var p = v;
     // Twice the area. Positive is clockwise on the surface, whose y runs
     // down.
@@ -254,15 +272,29 @@ pub inline fn onSurface(v: [3]Projected, comptime cull: Cull, comptime front: Wi
         twice = -twice;
     }
 
-    // The pixels whose centres the box holds, cut to the area.
+    // The pixels whose samples' columns overlap the box's, and their rows
+    // its rows, cut to the area: at one sample a pixel those whose centre
+    // the box holds, at four those with a sample from 32 to 224 of a
+    // pixel from its left and its top. `near` and `far` are a pixel's
+    // first and last.
+    const offsets = comptime sampleOffsets(samples);
+    const near: i64, const far: i64 = comptime extent: {
+        var least: i64 = 0;
+        var most: i64 = 0;
+        for (offsets) |offset| {
+            least = @min(least, offset[0], offset[1]);
+            most = @max(most, offset[0], offset[1]);
+        }
+        break :extent .{ 128 + least, 128 + most };
+    };
     const min_x = @min(p[0].x, p[1].x, p[2].x);
     const max_x = @max(p[0].x, p[1].x, p[2].x);
     const min_y = @min(p[0].y, p[1].y, p[2].y);
     const max_y = @max(p[0].y, p[1].y, p[2].y);
-    const left = @max(@divFloor(min_x - 128 + 255, 256), area[0]);
-    const top = @max(@divFloor(min_y - 128 + 255, 256), area[1]);
-    const right = @min(@divFloor(max_x - 128, 256) + 1, area[2]);
-    const bottom = @min(@divFloor(max_y - 128, 256) + 1, area[3]);
+    const left = @max(@divFloor(min_x - far + 255, 256), area[0]);
+    const top = @max(@divFloor(min_y - far + 255, 256), area[1]);
+    const right = @min(@divFloor(max_x - near, 256) + 1, area[2]);
+    const bottom = @min(@divFloor(max_y - near, 256) + 1, area[3]);
     if (left >= right or top >= bottom) return null;
 
     var made = Triangle{
@@ -290,6 +322,14 @@ pub inline fn onSurface(v: [3]Projected, comptime cull: Cull, comptime front: Wi
         const top_left = (dy == 0 and dx > 0) or dy < 0;
         made.edges[i] = .of(-256 * dy, 256 * dx, if (top_left) c else c - 1);
         made.exact_c[i] = c;
+        // A sample's value is the centre's and what its offset adds,
+        // exactly, so the rule above holds for each; the most a sample
+        // adds is for binning (`Edge.inmost`).
+        if (samples > 1) {
+            var inmost: i64 = std.math.minInt(i64);
+            for (offsets) |offset| inmost = @max(inmost, made.edges[i].offsetBy(offset));
+            made.edges[i].inmost = inmost;
+        }
     }
     return made;
 }

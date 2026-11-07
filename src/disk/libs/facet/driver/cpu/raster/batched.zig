@@ -557,7 +557,7 @@ const SetUp = struct {
         }
         const made = switch (state.cull) {
             inline else => |cull| switch (state.front) {
-                inline else => |front| setup.onSurface(projected, cull, front, set.area),
+                inline else => |front| setup.onSurface(projected, cull, front, set.area, 1),
             },
         } orelse {
             target.stats.dropped += 1;
@@ -663,7 +663,7 @@ fn Rasterize(comptime kind: Test) type {
             // there is none held back for the fragment function to drop:
             // holding them back there would write what was never gathered.
             batch.deferred_depth = kind != .stencil and triangle.shading.discards and tested_here and !second_here and triangle.shading.depth_write;
-            walk.quads(tile, header, Walker{ .tile = tile, .batch = &batch, .depth = triangle.depth, .shading = triangle.shading, .face = triangle.face }, Walker.run);
+            walk.quads(1, tile, header, Walker{ .tile = tile, .batch = &batch, .depth = triangle.depth, .shading = triangle.shading, .face = triangle.face }, Walker.run);
             batch.flush();
         }
 

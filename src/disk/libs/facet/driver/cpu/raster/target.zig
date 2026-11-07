@@ -1035,12 +1035,13 @@ fn handOnTiles(data: ?*anyopaque, part: u32, parts: u32) callconv(.c) void {
 }
 
 /// Whether any pixel of the square at (x, y) is inside all three of the
-/// triangle's edges: for each, its most inside corner is.
+/// triangle's edges: for each, its most inside corner is - at more than
+/// one sample a pixel, that corner's most inside sample (`Edge.inmost`).
 fn touches(triangle: *const Header, x: u32, y: u32) bool {
     for (triangle.edges) |edge| {
         const corner_x: i64 = if (edge.a > 0) x + tile_size - 1 else x;
         const corner_y: i64 = if (edge.b > 0) y + tile_size - 1 else y;
-        if (edge.at(corner_x, corner_y) < 0) return false;
+        if (edge.at(corner_x, corner_y) + edge.inmost < 0) return false;
     }
     return true;
 }

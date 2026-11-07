@@ -492,7 +492,7 @@ test "each row's run is the pixels inside all three edges, for triangles of ever
 
         var projected: [3]setup.Projected = undefined;
         for (&projected, vertices) |*p, vertex| p.* = setup.project(.{ vertex.position[0], vertex.position[1], vertex.position[2], 1 }, viewport);
-        const made = setup.onSurface(projected, .none, .clockwise, target.areaBounds());
+        const made = setup.onSurface(projected, .none, .clockwise, target.areaBounds(), 1);
         for (0..height) |y| for (0..width) |x| {
             var want = false;
             if (made) |triangle| if (inside(area, @intCast(x), @intCast(y))) {
@@ -540,7 +540,7 @@ const Made = struct { triangle: setup.Triangle, depth: setup.Depth };
 fn madeOf(vertices: []const Deep.Vertex, viewport: raster.Viewport, target: *const Target) ?Made {
     var projected: [3]setup.Projected = undefined;
     for (&projected, vertices) |*p, vertex| p.* = setup.project(.{ vertex.position[0], vertex.position[1], vertex.position[2], 1 }, viewport);
-    const triangle = setup.onSurface(projected, .none, .clockwise, target.areaBounds()) orelse return null;
+    const triangle = setup.onSurface(projected, .none, .clockwise, target.areaBounds(), 1) orelse return null;
     return .{ .triangle = triangle, .depth = .of(&triangle, &projected) };
 }
 

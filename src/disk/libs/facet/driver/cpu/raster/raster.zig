@@ -75,4 +75,5 @@ test {
     _ = @import("tests/raster.zig");
     _ = @import("tests/texture.zig");
     _ = @import("tests/shaded.zig");
+    _ = @import("tests/samples.zig");
 }

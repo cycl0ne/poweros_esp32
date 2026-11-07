@@ -2198,4 +2198,65 @@ pub const LIBRARY_VERSION = 1;
 /// The compiler refuses a player of the cores that leaves the command
 /// out altogether: its switch must name every command, the `_` prong
 /// being only for numbers that have no name.
-pub const LIBRARY_REVISION = 101;
+///
+/// 102: **The cores tell which of a pixel's four samples a triangle
+/// holds: in its box, in the tiles it is binned into and in the runs the
+/// walk hands on.**
+///
+/// Step K1 of item 61 of docs/facet-vulkan10.md. Nothing draws four
+/// samples yet: every caller asks for one, until K2 puts the samples in
+/// the tile.
+///
+/// `setup.sampleOffsets` has Vulkan's standard positions of four samples,
+/// llvmpipe's `lp_sample_pos_4x` (lp_rast.c:63-66) in the fixed point it
+/// makes of them (lp_setup.c:127-128), taken from the pixel's centre,
+/// where this library's edges are; at four llvmpipe moves its edges to the
+/// pixel's corner instead (lp_setup.c:632). An edge's value at a sample is
+/// the centre's and what the offset adds (`Edge.offsetBy`), a whole
+/// number, so the top-left rule holds for each sample as it does for the
+/// centre, and two triangles on an edge share its samples out between
+/// them.
+///
+/// `setup.onSurface` takes the count. At four its box holds the pixels
+/// whose samples' columns and rows, from 32 to 224 of a pixel from its
+/// corner, overlap the triangle's, as at one it holds those whose centres
+/// it covers; llvmpipe's box of whole pixels (lp_setup_tri.c:314-324)
+/// holds more. Each edge keeps what the most inside of a pixel's samples
+/// adds (`Edge.inmost`), and binning adds it to a tile's most inside
+/// corner (`touches`).
+///
+/// `walk.quads` takes it too. At four each sample crosses each edge on
+/// its own, as llvmpipe tests each sample against each plane
+/// (`do_block_4`, lp_rast_tri_tmp.h:63-72), and a pair of rows hands on
+/// four runs a row. `walk.sampleMask` makes them a quad's samples, bit
+/// 4s + i sample s of pixel i, and `walk.pixelsOf` its pixels with any of
+/// them. An edge along the rows holds some of a row's samples and not the
+/// others: it takes off the rows its most inside sample is outside, and
+/// each row asks it of the others. At one sample a pixel the walk does
+/// what it did: 2400 triangles, each drawn on five pipelines, came out
+/// the same bytes before and after.
+///
+/// A test sets up, bins and walks random triangles of seven shapes -
+/// anywhere, small, slivers, on the samples' grid and with an edge along
+/// the rows or the columns - at four samples a pixel and at one, and holds
+/// every sample to its own test against the vertices, at the positions as
+/// Vulkan's table has them: each inside handed on once and no other, and
+/// every tile with one binned. A second lays the edge two triangles share
+/// through samples, down a column of them, along a row and across them at
+/// four slopes, and finds each sample on it in one of the two and none in
+/// both. A third bins a sliver whose one sample in a tile is in the
+/// tile's corner pixel, which that pixel's centre alone leaves out. Each
+/// of fifteen changes put back fails one of them:
+/// - a tile binned by its corner's centre alone, or `inmost` never set;
+/// - the centre's box at four samples;
+/// - samples 1 and 2 swapped, or sample 0 a 256th of a pixel to the left
+///   or the right;
+/// - a sample's y offset taken the wrong way, or its x offset for its y;
+/// - every sample crossing an edge where the centre does;
+/// - an edge along the rows asked of no sample, or its rows taken off at
+///   the centre;
+/// - the top-left rule dropped at four samples;
+/// - a mask's samples a bit apart rather than four, or sample 3 left out
+///   of a quad's pixels;
+/// - a row's runs taken as empty when its first sample's is.
+pub const LIBRARY_REVISION = 102;
