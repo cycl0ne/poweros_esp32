@@ -532,6 +532,10 @@ pub const Shader = struct {
 
 fn makePipeline(pipeline: *Pipeline) callconv(.c) facet.Result {
     const fixed = pipeline.fixed;
+    // Alpha to coverage wants a QPU program that writes the coverage,
+    // which none does yet: step V6 of item 61 of docs/facet-vulkan10.md
+    // (since 1.108; refused with every device before it).
+    if (pipeline.alpha_to_coverage) return .error_feature_not_present;
     // No fixed form: the program's own fragment shader, which this device
     // draws with where the program shipped the SPIR-V beside the function
     // and the back end can make code of it (since 1.76). Where it cannot,

@@ -36,6 +36,13 @@
 //! for the function, as llvmpipe tests late where a shader may kill and
 //! the stencil is written (lp_state_fs.c:772-799).
 //!
+//! Alpha to coverage (since 1.108) cuts each pixel's samples to those its
+//! colour 0's alpha keeps, after the fragment function and before the
+//! depth and stencil are written, dithered as lavapipe dithers it
+//! (`Batch.coverByAlpha`), and such a draw holds its depths back as a
+//! form that drops pixels does, as llvmpipe tests alpha to coverage's
+//! depth as it tests a shader's that may kill (lp_state_fs.c:772-776).
+//!
 //! A draw a query is counting (`State.samples`, `State.fragments`) has its
 //! pixels counted once a batch, after the fragment function has run: what
 //! it was called for, and what passed the tests and it did not drop. A draw
@@ -233,6 +240,11 @@ pub const State = struct {
     /// the stencil, the tests too are made after it (`Shading.late`, since
     /// 1.107).
     discards: bool = false,
+    /// Colour 0's alpha cuts the samples of each pixel the fragment
+    /// function was called for to as many as it is a share of, dithered
+    /// (`alpha_to_coverage_enable`, `Batch.coverByAlpha`). It drops what
+    /// it cuts as `discards` drops a pixel. (Since 1.108.)
+    alpha_to_coverage: bool = false,
     fragment: shader.FragmentFn,
     resources: *const shader.Resources,
     /// Whether the fragment function is given the pixels already in the
@@ -292,7 +304,8 @@ const Shading = struct {
     /// The stored depth a pixel has to lie between, in those units; null
     /// for a draw that tests no bounds.
     bounds: ?[2]u64,
-    /// The fragment function may drop a pixel: its depth waits for it.
+    /// The fragment function may drop a pixel, or alpha to coverage a
+    /// sample (since 1.108): its depth waits for it.
     discards: bool,
     /// The stencil and depth tests wait for it too: a form that drops
     /// pixels, with a stencil test that writes the stencil, which a pixel
@@ -301,6 +314,8 @@ const Shading = struct {
     /// written, and otherwise tested early and the depth alone written
     /// late (lp_state_fs.c:772-799). (Since 1.107.)
     late: bool,
+    /// `State.alpha_to_coverage`. (Since 1.108.)
+    alpha_to_coverage: bool,
     /// What a quad's samples are cut to at four samples a pixel, bit
     /// 4s + i sample s of its pixel i (`walk.sampleMask`): each of
     /// `State.sample_mask`'s four bits spread over its sample's four, as
@@ -452,6 +467,9 @@ fn setUpAll(target: *Target, state: *const State, vertices: []const f32, stride:
     // (lp_state_fs.c:780-785), the masks as the pipeline gives them
     // (lvp_execute.c:1028-1029).
     const writes_stencil = if (stencil) |faces| faces[0].write_mask != 0 or faces[1].write_mask != 0 else false;
+    // Alpha to coverage drops samples after the function as a form that
+    // drops pixels does (lp_state_fs.c:772-776).
+    const drops = state.discards or state.alpha_to_coverage;
     const shading = target.arena.create(Shading) orelse return error.OutOfMemory;
     shading.* = .{
         .fragment = state.fragment,
@@ -471,8 +489,9 @@ fn setUpAll(target: *Target, state: *const State, vertices: []const f32, stride:
         .stencil = stencil orelse [2]StencilFace{ keeping, keeping },
         .clamp = clamp,
         .bounds = if (has_plane) bounds else null,
-        .discards = state.discards,
-        .late = state.discards and writes_stencil,
+        .discards = drops,
+        .late = drops and writes_stencil,
+        .alpha_to_coverage = state.alpha_to_coverage,
         .sample_bits = sampleBits(state.sample_mask),
         .samples = state.samples,
         .fragments = state.fragments,
@@ -1013,6 +1032,11 @@ inline fn held(z: i64, range: [2]u64) u64 {
     return @intCast(@min(@max(whole, low), high));
 }
 
+/// Alpha to coverage's thresholds, in eighths of one sample's share of a
+/// pixel, by its place: (x & 1) | (y & 1) << 1. lavapipe's standard 2 x 2
+/// ordered dither (lp_state_fs.c:416-422). (Since 1.108.)
+const dither = [4]u32{ 1, 5, 7, 3 };
+
 /// Pixel `i` of a quad - left, right, then the same a row down - from its
 /// top left, in a tile's rows.
 inline fn offset(comptime i: u32) u32 {
@@ -1120,6 +1144,7 @@ const Batch = struct {
         if (batch.count == 0) return;
         batch.fragments.count = batch.count;
         batch.shading.fragment(&batch.fragments);
+        if (batch.shading.alpha_to_coverage) batch.coverByAlpha(samples);
         // After it, not before: the quads' `kept` is what the function left.
         if (batch.shading.late) {
             batch.testLate(samples);
@@ -1199,6 +1224,38 @@ const Batch = struct {
                     if (bits >> i & 1 != 0) at[offset(i)] = kept_depths[k][4 * sample + i];
                 }
             }
+        }
+    }
+
+    /// Each quad's pixels cut to those colour 0's alpha keeps at one
+    /// sample a pixel, and its samples at four (`masks`): lavapipe's alpha
+    /// to coverage, which always dithers (lvp_execute.c:1139-1142). The
+    /// alpha, less a threshold of a 2 x 2 ordered dither by the pixel's
+    /// place on the surface (`dither`, lp_state_fs.c:408-444; in eighths
+    /// of one sample's share), keeps sample s of n where it is above s / n
+    /// (:447-474, :1207-1211), and at one sample the pixel where it is
+    /// above 0 (lp_bld_blend.c:342-365, lp_state_fs.c:1193-1197). The
+    /// function writes an 8-bit alpha `a`, so this is the same test in
+    /// integers: sample s kept where 8na > 255k + 2040s. (Since 1.108.)
+    fn coverByAlpha(batch: *Batch, comptime samples: u32) void {
+        @setRuntimeSafety(false);
+        const colors = batch.fragments.colors;
+        for (batch.quads[0..batch.count], 0..) |*quad, k| {
+            // A quad's column on the surface is even - the grid's left is
+            // on a cache line (target.zig, `Grid.over`) - and its row is
+            // the area's, which may be odd.
+            const row = batch.fragments.y + quad.y;
+            var keep: u16 = 0;
+            inline for (0..4) |i| {
+                const alpha = colors[k][i] >> 24;
+                const parity = (i & 1) | ((row + (i >> 1)) & 1) << 1;
+                inline for (0..samples) |sample| {
+                    if (8 * samples * alpha > 255 * dither[parity] + 2040 * sample) keep |= @as(u16, 1) << (4 * sample + i);
+                }
+            }
+            if (samples == 1) {
+                quad.kept &= @truncate(keep);
+            } else batch.masks[k] &= keep;
         }
     }
 

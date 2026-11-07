@@ -4545,17 +4545,22 @@ test "four samples a pixel in a render pass, a framebuffer and a pipeline, with 
         try testing.expectEqual(want, result);
         if (pipeline) |kept| try testing.expectEqual(samples, _objects.of(_pipeline.Pipeline, kept).samples);
     }
-    // Sample shading and alpha to one stay refused, and alpha to coverage
-    // until the cores and the V3D draw it.
+    // Sample shading and alpha to one stay refused. Alpha to coverage,
+    // which Vulkan has no feature for, is taken since 1.108 and kept with
+    // the pipeline.
     for ([_]facet.PipelineMultisampleStateCreateInfo{
         .{ .rasterization_samples = 4, .sample_shading_enable = true },
         .{ .rasterization_samples = 4, .alpha_to_one_enable = true },
-        .{ .rasterization_samples = 4, .alpha_to_coverage_enable = true },
     }) |multisample| {
         const result, const pipeline = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = made.?, .multisample = &multisample });
         defer fb.DestroyPipeline(device, pipeline);
         try testing.expectEqual(facet.Result.error_feature_not_present, result);
     }
+    const covering = facet.PipelineMultisampleStateCreateInfo{ .rasterization_samples = 4, .alpha_to_coverage_enable = true };
+    const covered_result, const covered = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = made.?, .multisample = &covering });
+    defer fb.DestroyPipeline(device, covered);
+    try testing.expectEqual(facet.Result.success, covered_result);
+    try testing.expect(_objects.of(_pipeline.Pipeline, covered.?).alpha_to_coverage);
 }
 
 /// Four 8-bit channels averaged one at a time: the formula
@@ -5953,6 +5958,148 @@ fn droppedByPixel(samples: u32) !void {
 test "a form that drops pixels drawn by the pixel, at one sample and at four: what it drops leaves the depth and the stencil as they were, a stencil written tested after its fragment function, and a depth otherwise held back for after it" {
     try droppedByPixel(1);
     try droppedByPixel(4);
+}
+
+/// A band's alpha, and how many samples alpha to coverage keeps of a pixel
+/// at each place, (x & 1) | (y & 1) << 1: the first that many.
+const AlphaKeeps = struct { u8, [4]u3 };
+
+/// At four samples a pixel, lavapipe's dithered test worked out by hand
+/// (lp_state_fs.c:408-474): sample s kept where alpha / 255 less the
+/// place's threshold - 1/32, 5/32, 7/32 or 3/32 - is above s / 4. Alpha 1
+/// keeps none, where a test without the dither would keep one, and 40
+/// and 100 tell the places apart.
+const four_by_alpha = [_]AlphaKeeps{
+    .{ 0, .{ 0, 0, 0, 0 } },
+    .{ 1, .{ 0, 0, 0, 0 } },
+    .{ 40, .{ 1, 1, 0, 1 } },
+    .{ 64, .{ 1, 1, 1, 1 } },
+    .{ 100, .{ 2, 1, 1, 2 } },
+    .{ 128, .{ 2, 2, 2, 2 } },
+    .{ 192, .{ 3, 3, 3, 3 } },
+    .{ 255, .{ 4, 4, 4, 4 } },
+};
+
+/// At one, the pixel kept where alpha / 255 is above the threshold alone,
+/// 1/8, 5/8, 7/8 or 3/8 (lp_bld_blend.c:342-365).
+const one_by_alpha = [_]AlphaKeeps{
+    .{ 0, .{ 0, 0, 0, 0 } },
+    .{ 1, .{ 0, 0, 0, 0 } },
+    .{ 40, .{ 1, 0, 0, 0 } },
+    .{ 128, .{ 1, 0, 0, 1 } },
+    .{ 200, .{ 1, 1, 0, 1 } },
+    .{ 255, .{ 1, 1, 1, 1 } },
+};
+
+/// Alpha to coverage over bands of `table`'s alphas, one a draw, at
+/// `samples` a pixel into a colour and a depth of `format`, the render
+/// area a row down from the top so that a quad's rows start odd on the
+/// surface. Beside a stencil the draws have a stencil test that writes,
+/// whose tests wait for alpha to coverage; a depth alone asks for the
+/// depth pre-pass, which alpha to coverage goes without.
+fn coveredByAlpha(samples: u32, format: facet.Format, table: []const AlphaKeeps) !void {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
+    physical.can.multisampling = samples == 4;
+    defer physical.can.multisampling = false;
+    const image_zig = @import("../image/_image.zig");
+    const stenciled = format == .d16_unorm_s8_uint;
+    const stride: u32 = if (stenciled) 4 else 2;
+
+    const side = 128;
+    const band = 15;
+    const color_made, const color_view = try bench.image(.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = side, .height = side, .depth = 1 }, .samples = samples, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, false);
+    const colors = _objects.of(image_zig.Image, color_made);
+    const depth_made, const depth_view = try bench.image(.{ .format = format, .extent = .{ .width = side, .height = side, .depth = 1 }, .samples = samples, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT }, false);
+    const depths = _objects.of(image_zig.Image, depth_made);
+    var color = fourSamples(.clear);
+    color.samples = samples;
+    const depth = facet.AttachmentDescription{ .format = format, .samples = samples, .load_op = .clear, .store_op = .store, .stencil_load_op = .clear, .stencil_store_op = .store, .final_layout = .depth_stencil_attachment_optimal };
+    const pass_result, const pass = samplesPass(&bench, &.{ color, depth }, null, 1);
+    defer fb.DestroyRenderPass(device, pass);
+    try testing.expectEqual(facet.Result.success, pass_result);
+    const frame = try framebuffer(&bench, pass.?, &.{ color_view, depth_view }, side, side);
+    defer fb.DestroyFramebuffer(device, frame);
+
+    const flat = try module(&bench, &Flat.code);
+    defer fb.DestroyShaderModule(device, flat);
+    const layout = try pipelineLayout(&bench, &.{}, 4);
+    defer fb.DestroyPipelineLayout(device, layout);
+    const multisample = facet.PipelineMultisampleStateCreateInfo{ .rasterization_samples = samples, .alpha_to_coverage_enable = true };
+    const face = facet.StencilOpState{ .pass_op = .replace, .compare_op = .always, .compare_mask = 0xFF, .write_mask = 0xFF, .reference = 0x10 };
+    const tested = facet.PipelineDepthStencilStateCreateInfo{ .depth_test_enable = true, .depth_write_enable = true, .depth_compare_op = .less, .stencil_test_enable = stenciled, .front = face, .back = face };
+    const made, const pipeline = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = pass.?, .multisample = &multisample, .depth = tested, .flags = if (stenciled) 0 else facet.PIPELINE_CREATE_DEPTH_PREPASS, .width = side, .height = side });
+    defer fb.DestroyPipeline(device, pipeline);
+    try testing.expectEqual(facet.Result.success, made);
+
+    // A band of rows a draw, across the whole picture at z = 0.5, from
+    // row 1 on: its edges on the pixels' edges, so that every sample of a
+    // pixel in it is covered.
+    var vertices: [8 * 6][3]f32 = undefined;
+    for (0..table.len) |b| {
+        const top: f32 = @as(f32, @floatFromInt(1 + band * b)) / 64 - 1;
+        const bottom: f32 = @as(f32, @floatFromInt(1 + band * (b + 1))) / 64 - 1;
+        vertices[b * 6 ..][0..6].* = .{ .{ -1, top, 0.5 }, .{ 1, top, 0.5 }, .{ 1, bottom, 0.5 }, .{ -1, top, 0.5 }, .{ 1, bottom, 0.5 }, .{ -1, bottom, 0.5 } };
+    }
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
+    const offset: u64 = 0;
+    const occlusion = try queryPool(&bench, .occlusion, 1, 0);
+    defer fb.DestroyQueryPool(device, occlusion);
+    const background: u32 = 0xFF10_2030;
+    var values = clears(background);
+    values[1] = .{ .depth_stencil = .{ .depth = 1, .stencil = 0x03 } };
+    const area = facet.Rect2D{ .offset = .{ .y = 1 }, .extent = .{ .width = side, .height = side - 1 } };
+
+    const commands = try bench.record();
+    fb.CmdResetQueryPool(commands, occlusion, 0, 1);
+    fb.CmdBeginQuery(commands, occlusion, 0, facet.QUERY_CONTROL_PRECISE);
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass.?, .framebuffer = frame, .render_area = area, .clear_value_count = 2, .clear_values = &values }, .@"inline");
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdBindPipeline(commands, .graphics, pipeline.?);
+    var band_colors: [8]u32 = undefined;
+    for (table, band_colors[0..table.len], 0..) |keeps, *band_color, b| {
+        band_color.* = @as(u32, keeps[0]) << 24 | 0x20_40E0;
+        fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, band_color);
+        fb.CmdDraw(commands, 6, 1, @intCast(b * 6), 0);
+    }
+    fb.CmdEndRenderPass(commands);
+    fb.CmdEndQuery(commands, occlusion, 0);
+    try bench.submit();
+
+    // Each sample of each pixel of the area: the band's colour, the
+    // band's depth and the stencil's reference where it was kept, the
+    // clears where it was not, and under the bands.
+    var kept_samples: u64 = 0;
+    for (1..side) |row| for (0..side) |column| {
+        const x: u32 = @intCast(column);
+        const y: u32 = @intCast(row);
+        const b = (y - 1) / band;
+        const keeps: u32 = if (b < table.len) table[b][1][(x & 1) | (y & 1) << 1] else 0;
+        for (0..samples) |s| {
+            const sample: u32 = @intCast(s);
+            const kept = sample < keeps;
+            kept_samples += @intFromBool(kept);
+            try testing.expectEqual(if (kept) band_colors[b] else background, sampleTexel(colors, sample, 0, x, y).*);
+            const bytes = sampleDepthBytes(depths, stride, sample, x, y);
+            try testing.expectEqual(@as(u16, if (kept) 32768 else 0xFFFF), std.mem.readInt(u16, bytes[0..2], .little));
+            if (stenciled) try testing.expectEqual(@as(u8, if (kept) 0x10 else 0x03), bytes[2]);
+        }
+    };
+    try testing.expectEqual(kept_samples, try queryValue(&bench, occlusion, 0));
+}
+
+test "alpha to coverage at four samples a pixel: each pixel keeps as many samples as its alpha is a share of, dithered as lavapipe dithers it, and the depth and the stencil written for those alone" {
+    try coveredByAlpha(4, .d16_unorm, &four_by_alpha);
+    try coveredByAlpha(4, .d16_unorm_s8_uint, &four_by_alpha);
+}
+
+test "alpha to coverage at one sample a pixel: the pixel kept where its alpha is above its place's threshold, with no depth pre-pass, and with a stencil test that waits for it" {
+    try coveredByAlpha(1, .d16_unorm, &one_by_alpha);
+    try coveredByAlpha(1, .d16_unorm_s8_uint, &one_by_alpha);
 }
 
 /// A render pass whose depth attachment is kept: read as each tile starts

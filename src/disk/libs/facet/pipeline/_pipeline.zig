@@ -184,6 +184,12 @@ pub const Pipeline = struct {
     /// Vulkan has be its subpass's count: 1, or 4 on a device that draws
     /// them (since 1.100).
     samples: u32 = 1,
+    /// `alpha_to_coverage_enable`: colour 0's alpha cuts the samples a
+    /// pixel covers, which every implementation of Vulkan 1.0 does - it
+    /// has no feature to ask for. The cores dither it as lavapipe does
+    /// (driver/cpu/raster/batched.zig); the V3D refuses it until step V6
+    /// of item 61 of docs/facet-vulkan10.md. (Since 1.108.)
+    alpha_to_coverage: bool = false,
     cull: Cull,
     front: facet.FrontFace,
     depth_test: ?facet.CompareOp,

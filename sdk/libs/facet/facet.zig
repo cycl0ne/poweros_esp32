@@ -2228,6 +2228,9 @@ pub const PipelineMultisampleStateCreateInfo = extern struct {
     sample_shading_enable: bool = false,
     min_sample_shading: f32 = 0,
     sample_mask: ?[*]const u32 = null,
+    /// Colour 0's alpha cuts the samples each pixel covers, dithered by
+    /// the pixel's place: on the cores since 1.108, and refused by the V3D
+    /// until step V6 of item 61 of docs/facet-vulkan10.md.
     alpha_to_coverage_enable: bool = false,
     alpha_to_one_enable: bool = false,
 };

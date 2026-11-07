@@ -412,7 +412,13 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         made.culls_everything = false;
     }
     if (info.multisample_state) |multisample| {
-        if (multisample.sample_shading_enable or multisample.alpha_to_coverage_enable or multisample.alpha_to_one_enable) return .error_feature_not_present;
+        if (multisample.sample_shading_enable or multisample.alpha_to_one_enable) return .error_feature_not_present;
+        // It drops samples after the fragment function, as a form that
+        // drops pixels does, so it has no depth pre-pass (since 1.108).
+        if (multisample.alpha_to_coverage_enable) {
+            made.alpha_to_coverage = true;
+            made.prepass = false;
+        }
         // Four samples a pixel where the device draws them, and the
         // subpass's own count whatever it is (since 1.100):
         // VUID-VkGraphicsPipelineCreateInfo-multisampledRenderToSingleSampled-06853.

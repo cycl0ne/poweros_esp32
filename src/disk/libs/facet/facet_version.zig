@@ -2511,4 +2511,36 @@ pub const LIBRARY_VERSION = 1;
 /// texture from a helper the two now share. Against 1.106 the new test
 /// fails: a dropped pixel's stencil was 0x10, not the clear's 0x03. Each
 /// of 19 changes put back fails it.
-pub const LIBRARY_REVISION = 107;
+///
+/// 108: **Alpha to coverage on the cores, dithered as lavapipe dithers
+/// it.** Step K4 of item 61 of docs/facet-vulkan10.md.
+///
+/// `alpha_to_coverage_enable` has no feature in Vulkan 1.0, which has
+/// every implementation do it, and CreateGraphicsPipelines refused it on
+/// every device until now. The cores take it, at one sample a pixel and
+/// at four. After the fragment function, colour 0's alpha less a
+/// threshold of a 2 x 2 ordered dither by the pixel's place on the
+/// surface - 1/8, 5/8, 7/8 or 3/8 of one sample's share
+/// (lp_state_fs.c:408-444) - keeps sample s of n where it is above s / n
+/// (:447-474, :1207-1211), and at one sample the pixel where it is above 0
+/// (lp_bld_blend.c:342-365, lp_state_fs.c:1193-1197). lavapipe always
+/// dithers (lvp_execute.c:1139-1142). The function writes an 8-bit alpha,
+/// so the test is made in integers: 8na > 255k + 2040s, k the threshold
+/// in eighths, which no alpha ties. lavapipe compares the shader's alpha
+/// as a float, so one within half an 8-bit step of a threshold may fall
+/// the other way here; Vulkan specifies no algorithm for it. A draw with
+/// it holds its depths back, and tests late beside a stencil test that
+/// writes, as a form that drops pixels does since 1.107
+/// (lp_state_fs.c:772-776), and goes without the depth pre-pass. The V3D
+/// refuses it until V6.
+///
+/// Tests: bands of eight alphas over a frame of four samples a pixel and
+/// six over one of one, the render area a row down so that the quads'
+/// rows start odd on the surface. Each sample's colour, depth and stencil
+/// is held to the samples kept, worked out by hand for each alpha and
+/// place, under a depth alone that asks for the depth pre-pass and under
+/// a stencil test that writes, and an occlusion query to their count.
+/// The multisample test takes alpha to coverage and keeps it with the
+/// pipeline, where it refused it. Each of fifteen changes put back fails
+/// one of them.
+pub const LIBRARY_REVISION = 108;
