@@ -967,6 +967,16 @@ pub const MemoryAllocateInfo = extern struct {
     memory_type_index: u32,
 };
 
+/// A range of a mapped block, as FlushMappedMemoryRanges and
+/// InvalidateMappedMemoryRanges take it: `size` bytes from `offset`, which
+/// counts from the block's start rather than the mapping's; `WHOLE_SIZE`
+/// reaches the end of the mapping. (Since 1.123.)
+pub const MappedMemoryRange = extern struct {
+    memory: *DeviceMemory,
+    offset: u64 align(4) = 0,
+    size: u64 align(4) = WHOLE_SIZE,
+};
+
 // --- formats ----------------------------------------------------------------
 
 /// How a texel, a pixel or a vertex's value is kept. The numbers are

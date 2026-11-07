@@ -145,6 +145,8 @@ pub const LVO = struct {
     pub const CmdSetDepthBounds = libraries.lvo(128);
     pub const CmdSetBlendConstantsAt = libraries.lvo(129);
     pub const CmdResolveImage = libraries.lvo(130);
+    pub const FlushMappedMemoryRanges = libraries.lvo(131);
+    pub const InvalidateMappedMemoryRanges = libraries.lvo(132);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -277,6 +279,8 @@ pub const Fn = struct {
     pub const CmdSetDepthBounds = *const fn (*FacetBase, *facet.CommandBuffer, f32, f32) callconv(.c) void;
     pub const CmdSetBlendConstantsAt = *const fn (*FacetBase, *facet.CommandBuffer, u32, *const [4]f32) callconv(.c) void;
     pub const CmdResolveImage = *const fn (*FacetBase, *facet.CommandBuffer, *facet.Image, facet.ImageLayout, *facet.Image, facet.ImageLayout, u32, [*]const facet.ImageResolve) callconv(.c) void;
+    pub const FlushMappedMemoryRanges = *const fn (*FacetBase, *facet.Device, u32, [*]const facet.MappedMemoryRange) callconv(.c) facet.Result;
+    pub const InvalidateMappedMemoryRanges = *const fn (*FacetBase, *facet.Device, u32, [*]const facet.MappedMemoryRange) callconv(.c) facet.Result;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -940,5 +944,17 @@ pub const FacetBase = opaque {
     /// one sample, rectangle by rectangle.
     pub fn CmdResolveImage(self: *FacetBase, buffer: *facet.CommandBuffer, source: *facet.Image, source_layout: facet.ImageLayout, destination: *facet.Image, destination_layout: facet.ImageLayout, region_count: u32, regions: [*]const facet.ImageResolve) void {
         return libraries.call(self, LVO.CmdResolveImage, Fn.CmdResolveImage, .{ buffer, source, source_layout, destination, destination_layout, region_count, regions });
+    }
+
+    /// What the host wrote through a mapping, in `ranges`, made the device's to
+    /// read: nothing to do, every memory type being coherent.
+    pub fn FlushMappedMemoryRanges(self: *FacetBase, device: *facet.Device, range_count: u32, ranges: [*]const facet.MappedMemoryRange) facet.Result {
+        return libraries.call(self, LVO.FlushMappedMemoryRanges, Fn.FlushMappedMemoryRanges, .{ device, range_count, ranges });
+    }
+
+    /// What the device wrote, in `ranges`, made the host's to read through its
+    /// mapping: nothing to do, every memory type being coherent.
+    pub fn InvalidateMappedMemoryRanges(self: *FacetBase, device: *facet.Device, range_count: u32, ranges: [*]const facet.MappedMemoryRange) facet.Result {
+        return libraries.call(self, LVO.InvalidateMappedMemoryRanges, Fn.InvalidateMappedMemoryRanges, .{ device, range_count, ranges });
     }
 };

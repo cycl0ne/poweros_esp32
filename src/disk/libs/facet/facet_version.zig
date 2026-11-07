@@ -3083,4 +3083,27 @@ pub const LIBRARY_VERSION = 1;
 /// its tile's part and in no other, at one sample a pixel and at four; and
 /// a tile says which part draws it. Each of 8 changes put back fails at
 /// least one of them.
-pub const LIBRARY_REVISION = 122;
+///
+/// 123: **FlushMappedMemoryRanges and InvalidateMappedMemoryRanges.** Item
+/// 11 of docs/facet-vulkan10.md. Vulkan 1.0 has every implementation carry
+/// the two, and a program written for memory that is not coherent calls
+/// them; this library had neither. They are lavapipe's and v3dv's, which
+/// answer `success` and look at nothing (`lvp_FlushMappedMemoryRanges` and
+/// `lvp_InvalidateMappedMemoryRanges`, lvp_device.c:2390-2404;
+/// `v3dv_FlushMappedMemoryRanges` and `v3dv_InvalidateMappedMemoryRanges`,
+/// v3dv_device.c:2724-2738): every memory type that maps is host-coherent
+/// on either device, so there is nothing to flush or invalidate, and a
+/// range outside its mapping or off the atom is the program's mistake
+/// (VUID-VkMappedMemoryRange-size-00685, -offset-00687), which no call has
+/// to find. `FlushMappedMemoryRanges` is LVO -528,
+/// `InvalidateMappedMemoryRanges` LVO -532, and `MappedMemoryRange`
+/// Vulkan's VkMappedMemoryRange without sType and pNext, as every
+/// structure here is until item 51, its offset 0 and its size `WHOLE_SIZE`
+/// where it says nothing.
+///
+/// Tests: every memory type that maps is coherent and the atom is 64
+/// bytes; both calls, through the library's table, answer `success` for a
+/// range of two atoms and one to the end of the mapping, and leave the
+/// mapped bytes as they were written. Each of 5 changes put back fails at
+/// least one of them.
+pub const LIBRARY_REVISION = 123;

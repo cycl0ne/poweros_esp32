@@ -605,10 +605,12 @@ format, type, tiling and usage - and `error_format_not_supported` for a
 shape there is no image of at all - by asking the rules `CreateImage`
 keeps, so the two cannot drift apart; `GetRenderAreaGranularity` is the
 device's tile; and `GetDeviceMemoryCommitment` is a block's whole size, or
-0 for the lazily allocated type. What is left:
+0 for the lazily allocated type. `FlushMappedMemoryRanges` and
+`InvalidateMappedMemoryRanges` are there since 1.123, as the nothing they
+are where every memory type that maps is coherent: Vulkan has a program
+call them all the same, and lavapipe and v3dv answer them the same way.
+What is left:
 
-- `FlushMappedMemoryRanges` and `InvalidateMappedMemoryRanges`: no
-  non-coherent host memory is offered, so there is nothing to flush.
 - `EnumerateInstanceExtensionProperties` and the other three: there is no
   extension and no layer mechanism. Surfaces and swapchains are simply part
   of the table, not behind an extension, and `CreateScreenSurface` and

@@ -106,6 +106,7 @@ Generated from the source by `./zig build autodoc`.
 - [DeviceWaitIdle](#devicewaitidle) - Wait until every queue of the device has done all it was given.
 - [EndCommandBuffer](#endcommandbuffer) - The command buffer's recording ended: it can be submitted.
 - [EnumeratePhysicalDevices](#enumeratephysicaldevices) - The instance's physical devices.
+- [FlushMappedMemoryRanges](#flushmappedmemoryranges) - What the host wrote through a mapping, in `ranges`, made the device's to read: nothing to do, every memory type being coherent.
 - [FreeCommandBuffers](#freecommandbuffers) - Command buffers given back to the pool they came from.
 - [FreeDescriptorSets](#freedescriptorsets) - `count` descriptor sets given back to the pool they came from.
 - [FreeMemory](#freememory) - The block given back.
@@ -128,6 +129,7 @@ Generated from the source by `./zig build autodoc`.
 - [GetQueryPoolResults](#getquerypoolresults) - What `count` queries from `first` counted, written into `data`.
 - [GetRenderAreaGranularity](#getrenderareagranularity) - The granularity of a render area on this device: the tile it draws in.
 - [GetSwapchainImages](#getswapchainimages) - The swapchain's images into `images`, at most `count.*` of them, and how many there are into `count`; null for `images` counts alone.
+- [InvalidateMappedMemoryRanges](#invalidatemappedmemoryranges) - What the device wrote, in `ranges`, made the host's to read through its mapping: nothing to do, every memory type being coherent.
 - [MapMemory](#mapmemory) - The address of a block's memory, from an offset on.
 - [QueuePresent](#queuepresent) - Images handed to the queue to be shown, once the semaphores are signalled.
 - [QueueSubmit](#queuesubmit) - Batches of work for the queue, played in order by its task.
@@ -7085,6 +7087,75 @@ _ = fb.EnumeratePhysicalDevices(instance, &count, &physical);
 if (count == 0) return error.NoDevice;
 ```
 
+## FlushMappedMemoryRanges
+
+What the host wrote through a mapping, in `ranges`, made the device's to read: nothing to do, every memory type being coherent.
+
+**SYNOPSIS**
+
+```zig
+fn FlushMappedMemoryRanges(base: *FacetBase, device: *facet.Device, range_count: u32, ranges: [*]const facet.MappedMemoryRange) facet.Result
+```
+
+**SINCE**
+
+1.123. LVO -528.
+
+**INPUTS**
+
+- `device` - the device the blocks were allocated from.
+- `range_count`, `ranges` - the ranges, each of a block mapped now:
+  `size` bytes from `offset`, which counts from the block's start, or
+  to the end of the mapping for `WHOLE_SIZE`.
+
+**RESULT**
+
+`success`.
+
+**BEHAVIOR**
+
+Every memory type that can be mapped is `MEMORY_PROPERTY_HOST_COHERENT`
+on either device, so a write through a mapping is the device's to read
+once the submission that reads it is made, with nothing in between.
+Vulkan has the call all the same, for a type that is not coherent, and
+a program written for one calls it; it is lavapipe's and v3dv's, which
+answer `success` and look at nothing (`lvp_FlushMappedMemoryRanges`,
+lvp_device.c:2390-2396; `v3dv_FlushMappedMemoryRanges`,
+v3dv_device.c:2724-2730). A range outside its block's mapping, or not
+rounded to `PhysicalDeviceLimits.non_coherent_atom_size`, is the
+program's mistake (VUID-VkMappedMemoryRange-size-00685,
+VUID-VkMappedMemoryRange-offset-00687) and is not looked for either.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The ranges stay the caller's, and are not read.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`InvalidateMappedMemoryRanges`, `MapMemory`
+
+**EXAMPLES**
+
+```zig
+const range = facet.MappedMemoryRange{ .memory = memory };
+_ = fb.FlushMappedMemoryRanges(device, 1, @ptrCast(&range));
+```
+
 ## FreeCommandBuffers
 
 Command buffers given back to the pool they came from.
@@ -8632,6 +8703,76 @@ None known.
 var count: u32 = 4;
 var images: [4]*facet.Image = undefined;
 _ = fb.GetSwapchainImages(device, swapchain.?, &count, &images);
+```
+
+## InvalidateMappedMemoryRanges
+
+What the device wrote, in `ranges`, made the host's to read through its mapping: nothing to do, every memory type being coherent.
+
+**SYNOPSIS**
+
+```zig
+fn InvalidateMappedMemoryRanges(base: *FacetBase, device: *facet.Device, range_count: u32, ranges: [*]const facet.MappedMemoryRange) facet.Result
+```
+
+**SINCE**
+
+1.123. LVO -532.
+
+**INPUTS**
+
+- `device` - the device the blocks were allocated from.
+- `range_count`, `ranges` - the ranges, each of a block mapped now:
+  `size` bytes from `offset`, which counts from the block's start, or
+  to the end of the mapping for `WHOLE_SIZE`.
+
+**RESULT**
+
+`success`.
+
+**BEHAVIOR**
+
+Every memory type that can be mapped is `MEMORY_PROPERTY_HOST_COHERENT`
+on either device, so what the device wrote is the host's to read
+through a mapping once the submission that wrote it is done - its fence
+signalled, or `QueueWaitIdle` back - with nothing in between. Vulkan has
+the call all the same, for a type that is not coherent, and a program
+written for one calls it; it is lavapipe's and v3dv's, which answer
+`success` and look at nothing (`lvp_InvalidateMappedMemoryRanges`,
+lvp_device.c:2398-2404; `v3dv_InvalidateMappedMemoryRanges`,
+v3dv_device.c:2732-2738). A range outside its block's mapping, or not
+rounded to `PhysicalDeviceLimits.non_coherent_atom_size`, is the
+program's mistake (VUID-VkMappedMemoryRange-size-00685,
+VUID-VkMappedMemoryRange-offset-00687) and is not looked for either.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The ranges stay the caller's, and are not read.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`FlushMappedMemoryRanges`, `MapMemory`
+
+**EXAMPLES**
+
+```zig
+const range = facet.MappedMemoryRange{ .memory = memory };
+_ = fb.InvalidateMappedMemoryRanges(device, 1, @ptrCast(&range));
 ```
 
 ## MapMemory

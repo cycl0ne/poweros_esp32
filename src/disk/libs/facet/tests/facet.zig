@@ -502,6 +502,49 @@ test "memory: from its type's heap, aligned to a cache line, mapped once; the la
     rig.fb.FreeMemory(device, null);
 }
 
+test "a mapping's ranges flushed and invalidated: success and nothing touched, every type that maps being coherent (since 1.123)" {
+    var rig = try Rig.up();
+    defer rig.down() catch |err| std.debug.panic("{}", .{err});
+    const instance, const physical = try rig.instance();
+    defer rig.fb.DestroyInstance(instance);
+    const device = try rig.device(physical);
+    defer rig.fb.DestroyDevice(device);
+
+    // What makes the two calls nothing: no type that maps is other than
+    // coherent. The atom a range is rounded to is a cache line.
+    var memory_properties: facet.PhysicalDeviceMemoryProperties = undefined;
+    rig.fb.GetPhysicalDeviceMemoryProperties(physical, &memory_properties);
+    var mapping: u32 = 0;
+    for (memory_properties.memory_types[0..memory_properties.memory_type_count]) |kind| {
+        if (kind.property_flags & facet.MEMORY_PROPERTY_HOST_VISIBLE == 0) continue;
+        mapping += 1;
+        try testing.expect(kind.property_flags & facet.MEMORY_PROPERTY_HOST_COHERENT != 0);
+    }
+    try testing.expect(mapping > 0);
+    var properties: facet.PhysicalDeviceProperties = undefined;
+    rig.fb.GetPhysicalDeviceProperties(physical, &properties);
+    try testing.expectEqual(64, properties.limits.non_coherent_atom_size);
+
+    var memory: ?*facet.DeviceMemory = null;
+    try testing.expectEqual(facet.Result.success, rig.fb.AllocateMemory(device, &.{ .allocation_size = 8192, .memory_type_index = 0 }, &memory));
+    defer rig.fb.FreeMemory(device, memory);
+    var data: ?*anyopaque = null;
+    try testing.expectEqual(facet.Result.success, rig.fb.MapMemory(device, memory.?, 0, facet.WHOLE_SIZE, 0, &data));
+    const bytes: [*]u8 = @ptrCast(data.?);
+    for (bytes[0..8192], 0..) |*byte, at| byte.* = @truncate(at *% 7);
+    // A range of two atoms, and one from the middle to the mapping's end,
+    // each Vulkan's default where it says nothing.
+    const ranges = [_]facet.MappedMemoryRange{
+        .{ .memory = memory.?, .offset = 64, .size = 128 },
+        .{ .memory = memory.?, .offset = 4096 },
+    };
+    try testing.expectEqual(facet.WHOLE_SIZE, ranges[1].size);
+    try testing.expectEqual(facet.Result.success, rig.fb.FlushMappedMemoryRanges(device, ranges.len, &ranges));
+    try testing.expectEqual(facet.Result.success, rig.fb.InvalidateMappedMemoryRanges(device, ranges.len, &ranges));
+    for (bytes[0..8192], 0..) |byte, at| try testing.expectEqual(@as(u8, @truncate(at *% 7)), byte);
+    rig.fb.UnmapMemory(device, memory.?);
+}
+
 // --- buffers and images -------------------------------------------------------
 
 const _objects = @import("../_objects.zig");

@@ -26,6 +26,8 @@ const AllocateMemory = @import("memory/allocatememory.zig").AllocateMemory;
 const FreeMemory = @import("memory/freememory.zig").FreeMemory;
 const MapMemory = @import("memory/mapmemory.zig").MapMemory;
 const UnmapMemory = @import("memory/unmapmemory.zig").UnmapMemory;
+const FlushMappedMemoryRanges = @import("memory/flushmappedmemoryranges.zig").FlushMappedMemoryRanges;
+const InvalidateMappedMemoryRanges = @import("memory/invalidatemappedmemoryranges.zig").InvalidateMappedMemoryRanges;
 const GetPhysicalDeviceFormatProperties = @import("instance/getphysicaldeviceformatproperties.zig").GetPhysicalDeviceFormatProperties;
 const CreateBuffer = @import("buffer/createbuffer.zig").CreateBuffer;
 const DestroyBuffer = @import("buffer/destroybuffer.zig").DestroyBuffer;
@@ -334,6 +336,12 @@ fn lvoMapMemory(base: *FacetBase, device: *facet.Device, memory: *facet.DeviceMe
 }
 fn lvoUnmapMemory(base: *FacetBase, device: *facet.Device, memory: *facet.DeviceMemory) callconv(.c) void {
     return UnmapMemory(base, device, memory);
+}
+fn lvoFlushMappedMemoryRanges(base: *FacetBase, device: *facet.Device, range_count: u32, ranges: [*]const facet.MappedMemoryRange) callconv(.c) facet.Result {
+    return FlushMappedMemoryRanges(base, device, range_count, ranges);
+}
+fn lvoInvalidateMappedMemoryRanges(base: *FacetBase, device: *facet.Device, range_count: u32, ranges: [*]const facet.MappedMemoryRange) callconv(.c) facet.Result {
+    return InvalidateMappedMemoryRanges(base, device, range_count, ranges);
 }
 fn lvoGetPhysicalDeviceFormatProperties(base: *FacetBase, physical: *facet.PhysicalDevice, format: facet.Format, properties: *facet.FormatProperties) callconv(.c) void {
     return GetPhysicalDeviceFormatProperties(base, physical, format, properties);
@@ -831,6 +839,8 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoCmdSetDepthBounds),
     vec(lvoCmdSetBlendConstantsAt),
     vec(lvoCmdResolveImage),
+    vec(lvoFlushMappedMemoryRanges),
+    vec(lvoInvalidateMappedMemoryRanges),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

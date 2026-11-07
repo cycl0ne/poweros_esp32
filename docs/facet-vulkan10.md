@@ -125,8 +125,8 @@ item 61's next six rows of eight, on the cores, in 1.112, item 43's
 half of two, the cores', in 1.113, item 61's last row of eight, on the
 cores, in 1.114, item 85's half of two, the cores', in 1.115, item 87
 in 1.116, item 88 in 1.117, item 86 in 1.118, item 48's half of two,
-the cores', in 1.119, item 41 in 1.120, item 89 in 1.121, and item 15
-in 1.122.**
+the cores', in 1.119, item 41 in 1.120, item 89 in 1.121, item 15 in
+1.122, and item 11 in 1.123.**
 Each
 carries a *Done* note below saying what was actually built and where the
 item's own description turned out to be wrong - and several did. Things
@@ -382,13 +382,28 @@ Found independently by: entry-points, objects-commands, conformance-path (3 stra
 
 ### 11. Add FlushMappedMemoryRanges and InvalidateMappedMemoryRanges as the no-ops they would be
 
-*entry points / memory* &mdash; conformance-blocking, small, also serves the shim
+*entry points / memory* &mdash; conformance-blocking, small, also serves the shim &mdash; **done in 1.123**
 
 Two core 1.0 commands that must be present and callable even when every host-visible memory type is HOST_COHERENT, in which case they legally return VK_SUCCESS after checking each range against its mapping. Needs VkMappedMemoryRange (absent) and two LVO slots, plus non_coherent_atom_size in the limits — mandatory even though it is only meaningful once a non-coherent type exists. The documents' premise is correct and their conclusion is not: Vulkan requires the commands to exist, not merely to have work to do.
 
 > Verified: the fd has MapMemory (:41) and UnmapMemory (:43) and no flush/invalidate; both drivers always set HOST_VISIBLE|HOST_COHERENT (driver/cpu/cpu.zig:262, driver/v3d/driver.zig:278); `grep -n non_coherent sdk/libs/facet/facet.zig` finds nothing. docs/facet-gaps.md:549-551.
 
 Found independently by: entry-points, objects-commands, conformance-path (3 strands).
+
+**Done in 1.123**, in 35 lines of code, the generated interface aside,
+and 36 of tests, as lavapipe and v3dv have them: both answer `VK_SUCCESS` and look at nothing
+(`lvp_FlushMappedMemoryRanges` and `lvp_InvalidateMappedMemoryRanges`,
+lvp_device.c:2390-2404; `v3dv_FlushMappedMemoryRanges` and
+`v3dv_InvalidateMappedMemoryRanges`, v3dv_device.c:2724-2738).
+`FlushMappedMemoryRanges` (LVO -528), `InvalidateMappedMemoryRanges` (LVO
+-532) and `MappedMemoryRange` are Vulkan's, the structure without sType
+and pNext as every structure here is until item 51. The item's checking
+of each range against its mapping is not what Mesa does, and Vulkan does
+not ask for it: a range outside the mapping, or not rounded to the atom,
+is the program's mistake (VUID-VkMappedMemoryRange-size-00685,
+VUID-VkMappedMemoryRange-offset-00687), which no call has to find.
+`non_coherent_atom_size` was there already, with the limits of 1.82
+(item 16): 64, lavapipe's own.
 
 ### 12. Add the three sparse entry points as stubs, and the struct members 1.0 requires beside them
 

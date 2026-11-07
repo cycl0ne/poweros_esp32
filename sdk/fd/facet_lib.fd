@@ -284,4 +284,10 @@ void CmdSetBlendConstantsAt(*facet.CommandBuffer buffer, u32 attachment, *const 
 /// Recorded: the samples of a multisampled image averaged into an image of
 /// one sample, rectangle by rectangle.
 void CmdResolveImage(*facet.CommandBuffer buffer, *facet.Image source, facet.ImageLayout source_layout, *facet.Image destination, facet.ImageLayout destination_layout, u32 region_count, [*]const facet.ImageResolve regions)
+/// What the host wrote through a mapping, in `ranges`, made the device's to
+/// read: nothing to do, every memory type being coherent.
+facet.Result FlushMappedMemoryRanges(*facet.Device device, u32 range_count, [*]const facet.MappedMemoryRange ranges)
+/// What the device wrote, in `ranges`, made the host's to read through its
+/// mapping: nothing to do, every memory type being coherent.
+facet.Result InvalidateMappedMemoryRanges(*facet.Device device, u32 range_count, [*]const facet.MappedMemoryRange ranges)
 ##end
