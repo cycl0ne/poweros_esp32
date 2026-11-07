@@ -303,6 +303,7 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         .drawn_topology = .triangle_list,
         .restart = false,
         .draws_nothing = false,
+        .culls_everything = false,
         .sample_mask = ~@as(u32, 0),
         .cull = .none,
         .front = .counter_clockwise,
@@ -392,9 +393,23 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         facet.CULL_MODE_NONE => made.cull = .none,
         facet.CULL_MODE_FRONT => made.cull = .front,
         facet.CULL_MODE_BACK => made.cull = .back,
-        else => made.draws_nothing = true,
+        // Every face: which lines and points have none of, so it culls
+        // none of them - Vulkan culls polygons, and llvmpipe's
+        // `triangle_noop` takes the place of its triangle function alone.
+        // Until 1.92 this drew no line and no point either.
+        else => switch (made.drawn_topology) {
+            .point_list, .line_list, .line_strip => {},
+            else => {
+                made.draws_nothing = true;
+                made.culls_everything = true;
+            },
+        },
     }
-    if (rasterization.rasterizer_discard_enable) made.draws_nothing = true;
+    // Discarded before clipping, which nothing then counts.
+    if (rasterization.rasterizer_discard_enable) {
+        made.draws_nothing = true;
+        made.culls_everything = false;
+    }
     if (info.multisample_state) |multisample| {
         if (multisample.rasterization_samples > 1 or multisample.sample_shading_enable or multisample.alpha_to_coverage_enable or multisample.alpha_to_one_enable) return .error_feature_not_present;
         // One word of the mask, which at one sample a pixel is one bit of

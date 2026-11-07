@@ -162,6 +162,11 @@ pub const State = struct {
     /// kept rather than narrowed to a bool because they are the per-sample
     /// mask a 4x walk will read (item 61). (Since 1.89.)
     sample_mask: u32 = ~@as(u32, 0),
+    /// The triangles are rectangles, two each, that lines or points were
+    /// widened into (`_vertices.widen`): a rectangle is one primitive to
+    /// `stats.clipped`, as llvmpipe counts a line or a point once and not
+    /// as the triangles facet draws it with. (Since 1.92.)
+    rectangles: bool = false,
     front: setup.Winding = .counter_clockwise,
     /// The depth test, on a target with depth; null, and the depth is
     /// neither tested nor written.
@@ -441,8 +446,28 @@ fn setUpAll(target: *Target, state: *const State, vertices: []const f32, stride:
     // comptime, so this is the switch that picks which `cutUp` is called.
     const width = Clip.of(state.varyings);
     var at: usize = 0;
+    // `CLIPPING_PRIMITIVES` as llvmpipe counts it: once for each triangle
+    // the clipper lets through to setup, before setup culls a face or finds
+    // no area (`c_primitives` at the top of lp_setup_tri.c's
+    // triangle_cw/ccw/both), so a piece of a cut triangle is one more; and
+    // once for a line or a point (try_setup_line, and the point's setup in
+    // lp_setup_point.c), which here is once for its rectangle, if either
+    // of its two triangles got through.
+    var rectangle_through = false;
     while (at + 3 <= indices.len) : (at += 3) {
         target.stats.triangles += 1;
+        const pieces_before = target.stats.pieces;
+        const second_half = state.rectangles and (at / 3) % 2 == 1;
+        defer {
+            const through = target.stats.pieces - pieces_before;
+            if (!state.rectangles) {
+                target.stats.clipped += through;
+            } else if (!second_half) {
+                rectangle_through = through != 0;
+            } else if (rectangle_through or through != 0) {
+                target.stats.clipped += 1;
+            }
+        }
         const which = [3]usize{ indices[at], indices[at + 1], indices[at + 2] };
         if (which[0] >= count or which[1] >= count or which[2] >= count) continue;
         const code = [3]u8{ codes[which[0]], codes[which[1]], codes[which[2]] };
@@ -520,6 +545,8 @@ const SetUp = struct {
     fn one(set: SetUp, positions: [3]*const [4]f32, carried: [3][*]const f32) error{OutOfMemory}!void {
         const target = set.target;
         const state = set.state;
+        // Out of clipping, and counted so before anything below drops it.
+        target.stats.pieces += 1;
         var projected: [3]setup.Projected = undefined;
         // One branch a triangle, not one a vertex: a draw that clamps
         // leaves its vertices' depth as it comes.
@@ -539,15 +566,13 @@ const SetUp = struct {
         // Covering no sample: this is where the triangle stops, and it
         // stops *here* and not at the draw. Vulkan applies the sample mask
         // after rasterisation, so the primitive reached clipping and came
-        // out of it, and `CLIPPING_INVOCATIONS` (counted by the caller as
-        // `stats.triangles`) and `CLIPPING_PRIMITIVES` (`stats.set_up`,
-        // which `addPending` would bump) are both owed. Nothing is
-        // allocated and no quad is walked, so `FRAGMENT_SHADER_INVOCATIONS`
-        // stays where it was - which is the whole of what the mask does.
-        if (state.sample_mask & 1 == 0) {
-            target.stats.set_up += 1;
-            return;
-        }
+        // out of it, and `CLIPPING_INVOCATIONS` (counted by the draw from
+        // its primitives) and `CLIPPING_PRIMITIVES` (`stats.pieces`, above)
+        // are both owed - as llvmpipe counts `c_primitives` before its
+        // `lp_setup_zero_sample_mask` test. Nothing is allocated and no
+        // quad is walked, so `FRAGMENT_SHADER_INVOCATIONS` stays where it
+        // was - which is the whole of what the mask does.
+        if (state.sample_mask & 1 == 0) return;
         const plane_count = set.shading.plane_count;
         const bytes = @sizeOf(Triangle) + plane_count * @sizeOf(shader.Plane);
         const memory = target.arena.allocate(bytes, @alignOf(Triangle)) orelse return error.OutOfMemory;

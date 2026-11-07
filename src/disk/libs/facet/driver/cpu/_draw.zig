@@ -197,6 +197,7 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
         // they were made.
         .cull = if (wide) .none else translated.cull,
         .sample_mask = pipeline.sample_mask,
+        .rectangles = wide,
         .front = translated.front,
         .depth_test = translated.depth_test,
         .depth_write = pipeline.depth_write,
@@ -226,8 +227,9 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
         .fragments = counters.fragment_invocations,
     };
 
-    // What the stages are given, for a statistics query. The triangles the
-    // rasterizer kept are its own count, taken either side of the draw.
+    // What the stages are given, for a statistics query. What came out of
+    // clipping is the rasterizer's own count, taken either side of the
+    // draw (`stats.clipped`, since 1.92).
     const counted_before = target.stats;
     _query.add(counters.input_vertices, @as(u64, count) * instances);
     _query.add(counters.vertex_invocations, @as(u64, vertices) * instances);
@@ -236,28 +238,41 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
     // third of a point list. Item 83 of docs/facet-vulkan10.md.
     const per_primitive = _vertices.cornersPerPrimitive(pipeline.topology, if (pipeline.tessellated) |patches| patches.points else 0);
     _query.add(counters.input_primitives, @as(u64, corner_count / per_primitive) * instances);
-    defer if (counters.clipping_invocations != null or counters.clipping_primitives != null) {
-        _query.add(counters.clipping_invocations, target.stats.triangles - counted_before.triangles);
-        _query.add(counters.clipping_primitives, target.stats.set_up - counted_before.set_up);
-    };
+    defer _query.add(counters.clipping_primitives, target.stats.clipped - counted_before.clipped);
 
+    // What went *in* to clipping is counted from the primitives - one a
+    // point, a line or a triangle - and not from the triangles the
+    // rasterizer is given, which are two for each line or point it widens
+    // and were the count until 1.92. That is llvmpipe's: gallium's draw
+    // module counts `c_invocations` as the primitives its clip stage is
+    // handed, before anything is culled, and lp_setup_vbuf.c adds them in
+    // unless the rasterizer is discarded. With no tessellation they are
+    // what input assembly made; tessellated, what the evaluation made,
+    // counted below. Item 83 of docs/facet-vulkan10.md.
+    //
     // A pipeline that draws nothing - `rasterizer_discard_enable`, or
     // every face culled - still owes the counts above, and this returned
     // before them until 1.88. Vulkan's one licence to leave a counter
-    // alone here covers the clipping pair and nothing else: "if
-    // rasterizerDiscardEnable is enabled, the clipping input and output
-    // primitives counters may not be incremented". Input assembly and the
-    // vertex stage are before rasterisation, so what they processed is
-    // what they processed. The two clipping counters are left at zero by
-    // returning here, which is what that sentence allows.
+    // alone here covers the clipping pair under the discard and nothing
+    // else: "if rasterizerDiscardEnable is enabled, the clipping input and
+    // output primitives counters may not be incremented". A cull of every
+    // face is no discard: its primitives reach clipping and stop at setup,
+    // as llvmpipe's `triangle_noop` stops them, so they are counted going
+    // in and none coming out (since 1.92; both were left at zero before).
     //
-    // The vertex function itself is not run, and that is honest only
-    // because `vertex_pipeline_stores_and_atomics` is false on both
-    // devices: a vertex function writes its outputs and nothing else, and
-    // the outputs of a draw that rasterises nothing cannot be read. The
-    // day a device claims that feature this has to run the stage for
-    // real. Item 83 of docs/facet-vulkan10.md.
-    if (pipeline.draws_nothing) return;
+    // The vertex function itself is not run where there is no
+    // tessellation to feed, and that is honest only because
+    // `vertex_pipeline_stores_and_atomics` is false on both devices: a
+    // vertex function writes its outputs and nothing else, and the outputs
+    // of a draw that rasterises nothing cannot be read. The day a device
+    // claims that feature this has to run the stage for real. Tessellated,
+    // it runs, and the tessellation with it, for what those stages count.
+    const discarded = pipeline.draws_nothing and !pipeline.culls_everything;
+    if (pipeline.tessellated == null) {
+        if (!discarded) _query.add(counters.clipping_invocations, @as(u64, corner_count / per_primitive) * instances);
+        if (pipeline.draws_nothing) return;
+    }
+    const per_drawn = _vertices.cornersPerPrimitive(pipeline.drawn_topology, 0);
 
     for (0..instances) |k| {
         const instance = first_instance +% @as(u32, @intCast(k));
@@ -280,6 +295,8 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
         if (pipeline.tessellated != null) {
             const made = _tessellate.run(queue.device.sys, pipeline, resources, outputs, corners[0..corner_count], instance, most_vertices, counters) orelse continue;
             defer made.free(queue.device.sys);
+            if (!discarded) _query.add(counters.clipping_invocations, made.corners().len / per_drawn);
+            if (pipeline.draws_nothing) continue;
             if (wide) {
                 const widened = _vertices.widen(pipeline, &viewport, pipeline.line_width orelse player.line_width, made.vertices, stride, made.corners(), made.wide_vertices, made.wide_indices, null);
                 raster.batched.draw(target, &state, made.wide_vertices[0 .. @as(usize, widened.vertices) * stride], stride, made.wide_indices[0..widened.indices]) catch return;

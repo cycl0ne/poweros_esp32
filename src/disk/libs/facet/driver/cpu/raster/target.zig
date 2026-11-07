@@ -402,6 +402,14 @@ pub const Stats = struct {
     cut: u32 = 0,
     /// Triangles set up, and places on the tiles' lists they took.
     set_up: u32 = 0,
+    /// Triangles the clipper let through to setup, whole or a piece of one
+    /// it cut - before setup culls a face, finds no area or no pixel in the
+    /// area (since 1.92).
+    pieces: u32 = 0,
+    /// Primitives out of clipping, `CLIPPING_PRIMITIVES`: each of those
+    /// pieces, but a rectangle a line or a point was widened into once
+    /// (since 1.92).
+    clipped: u32 = 0,
     binned: u32 = 0,
     /// Time in the draws: transforming, cutting and setting up, and
     /// putting on the lists (`Host.now`).

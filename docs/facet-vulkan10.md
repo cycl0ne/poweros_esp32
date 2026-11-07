@@ -118,8 +118,9 @@ refinement - finish the compiler, no fallback - moves onto the main line.
 items 14, 16, 49 and 77 in 1.82, item 52's half of two in 1.83, item 18
 in 1.84, item 19 in 1.85, item 21 in 1.86, item 28's half of two in 1.87,
 items 82 and 83 in 1.87 and 1.88 - both found while doing other items -
-item 61's first row of eight in 1.89, item 17's half of two in 1.90, and
-item 22's half of two in 1.91.** Each
+item 61's first row of eight in 1.89, item 17's half of two in 1.90,
+item 22's half of two in 1.91, and item 83's open question, answered from
+Mesa, in 1.92.** Each
 carries a *Done* note below saying what was actually built and where the
 item's own description turned out to be wrong - and several did. Things
 found while doing them became the items at the end of the list: 77 and 78
@@ -1752,7 +1753,7 @@ question this belongs to is item 51's.
 
 ### 83. The pipeline-statistics counters a draw owes, which two of them did not pay
 
-*queries / pipeline statistics* &mdash; **done in 1.88**, small, found while scoping item 61
+*queries / pipeline statistics* &mdash; **done in 1.88; its open question answered from Mesa, and four more counts fixed, in 1.92**, small, found while scoping item 61
 
 Two defects in one block of `driver/cpu/_draw.zig`, both of them silent
 because the only tests of these counters were of the *plumbing* - which
@@ -1830,6 +1831,56 @@ culling) before anything is changed.
 > slot layout, plus the one triangle-list draw in `tests/draw.zig`.
 > Normative text from the Vulkan Queries chapter, Pipeline Statistics
 > Queries.
+
+**Answered in 1.92, by Mesa rather than by a reading.** The question above
+was the wrong place to start: lavapipe is a conformant Vulkan
+implementation, and llvmpipe, which draws for it, had already decided.
+
+- *A culled triangle is counted.* llvmpipe counts `c_primitives` at the top
+  of `triangle_cw`, `triangle_ccw` and `triangle_both`
+  (src/gallium/drivers/llvmpipe/lp_setup_tri.c, lines 1147-1149,
+  1176-1178 and 1199-1201 at Mesa cbf692da), before `calc_fixed_position`
+  gives the area's sign and before the face is culled on it. A triangle of
+  no area and one covering no pixel's centre are counted the same way. A
+  line is counted once at the top of `try_setup_line` (lp_setup_line.c:292)
+  and a point once in its setup (lp_setup_point.c:449).
+- *What goes into clipping is the primitives, before any cull.* gallium's
+  draw module counts `c_invocations` in `draw_stats_clipper_primitives`
+  (src/gallium/auxiliary/draw/draw_context.c:1223), decomposing the
+  primitives the vertex, tessellation and geometry stages hand on by kind;
+  lp_setup_vbuf.c:693 adds them in unless the rasterizer is discarded.
+- *A cull of every face is no discard.* `lp_setup_choose_triangle` gives
+  that cull `triangle_noop` (lp_setup_tri.c:1258), which counts nothing out;
+  the draw module has counted the primitives in. So 1.88's sentence above,
+  that the specification's licence "leaves the clipping pair at zero", was
+  right for `rasterizer_discard_enable` and wrong for the cull: that
+  licence names the discard alone.
+
+facet counted four things differently, and counts them as llvmpipe does
+now: a culled, an empty and a pixel-less triangle counted nothing out of
+clipping; a line or a point counted two in and two out, being two
+triangles to the rasterizer, and a triangle drawn as its edges six in; a
+cull of every face counted nothing in; and a tessellated draw that drew
+nothing ran neither tessellation function, so counted neither stage. A
+fifth was not a counter: `CULL_MODE_FRONT_AND_BACK` drew no line and no
+point, which have no face - Vulkan culls polygons, and `triangle_noop`
+stands in for llvmpipe's triangle function alone.
+
+Two differences are left, both inside the specification's "zero or more"
+for a primitive with no sample inside: a triangle wholly outside the view
+is rejected at the view's side here and at llvmpipe's guard band there
+(lp_context.c:390 turns the draw module's on); and llvmpipe counts a culled
+triangle when its setup culls it but not when the draw module's own cull
+stage does (draw_pipe_validate.c:243, run for a draw that needs clipping),
+where facet counts it either way.
+
+> Verified by reverting each of the eight changes in turn: every one fails
+> the extended test in tests/draw.zig - `expected 12, found 24` for a line
+> counted twice, `expected 8, found 0` and `expected 24, found 0` for the
+> cull counted as a discard, `expected 1, found 0` for a culled triangle,
+> and the `draws_nothing` assertion for lines culled under
+> `CULL_MODE_FRONT_AND_BACK`. The gallium files are not in this tree's
+> sparse Mesa checkout and were read from Mesa cbf692da's own tree.
 
 ### 84. spirv.look's input_locations and output_locations are the same number
 

@@ -4114,6 +4114,78 @@ test "tessellation: patches made into triangles and lines, on the picture where 
     try testing.expectEqual(facet.Result.error_feature_not_present, result);
     result, _ = Made.of(&bench, bent, layout, pass, "main", "carry", "nohow", 4, .patch_list, .{});
     try testing.expectEqual(facet.Result.error_invalid_shader_nv, result);
+
+    // What the clipping counters say of a tessellated draw (since 1.92):
+    // the primitives the evaluation made, one a line or a triangle, as
+    // gallium's draw module counts what its clip stage is handed after the
+    // evaluation - and not the triangles the rasterizer was given, two a
+    // line once it is widened. Three isolines of four pieces each are
+    // twelve lines in, and twelve out.
+    const wanted = facet.QUERY_PIPELINE_STATISTIC_CLIPPING_INVOCATIONS |
+        facet.QUERY_PIPELINE_STATISTIC_CLIPPING_PRIMITIVES |
+        facet.QUERY_PIPELINE_STATISTIC_TESSELLATION_CONTROL_SHADER_PATCHES |
+        facet.QUERY_PIPELINE_STATISTIC_TESSELLATION_EVALUATION_SHADER_INVOCATIONS;
+    const statistics = try queryPool(&bench, .pipeline_statistics, 1, wanted);
+    defer fb.DestroyQueryPool(device, statistics);
+    const counted = struct {
+        fn of(on: *Bench, pool: *facet.QueryPool, into: *facet.RenderPass, onto: *facet.Framebuffer, pipeline: *facet.Pipeline, buffer: *facet.Buffer, where: *const u64, count: u32) ![4]u64 {
+            const base = on.rig.fb;
+            const values = clears(0xFF00_00FF);
+            const commands = try on.record();
+            base.CmdResetQueryPool(commands, pool, 0, 1);
+            base.CmdBeginQuery(commands, pool, 0, 0);
+            base.CmdBeginRenderPass(commands, &.{ .render_pass = into, .framebuffer = onto, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 1, .clear_values = &values }, .@"inline");
+            base.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&buffer), @ptrCast(where));
+            base.CmdBindPipeline(commands, .graphics, pipeline);
+            base.CmdDraw(commands, count, 1, 0, 0);
+            base.CmdEndRenderPass(commands);
+            base.CmdEndQuery(commands, pool, 0);
+            try on.submit();
+            var got: [4]u64 = @splat(0);
+            try testing.expectEqual(facet.Result.success, base.GetQueryPoolResults(on.device, pool, 0, 1, @sizeOf([4]u64), &got, @sizeOf([4]u64), facet.QUERY_RESULT_64 | facet.QUERY_RESULT_WAIT));
+            return got;
+        }
+    }.of;
+    const isolines = try counted(&bench, statistics, pass, frame, lines.?, vertex_buffer, &offset, 4);
+    try testing.expectEqual(@as(u64, 12), isolines[0]);
+    try testing.expectEqual(@as(u64, 12), isolines[1]);
+    try testing.expectEqual(@as(u64, 1), isolines[2]);
+
+    // A patch made into triangles: drawn, then with every face culled,
+    // then with the rasterizer discarded. The control and evaluation
+    // functions run and are counted all three times; the culled triangles
+    // are counted into clipping and none out, and the discarded ones
+    // neither. Before 1.92 a draw that drew nothing ran neither function,
+    // so counted neither stage, and the cull counted nothing into clipping.
+    var shown: [4]u64 = undefined;
+    for ([3]facet.PipelineRasterizationStateCreateInfo{
+        .{},
+        .{ .cull_mode = facet.CULL_MODE_FRONT_AND_BACK },
+        .{ .rasterizer_discard_enable = true },
+    }, 0..) |raster, which| {
+        result, const each = Made.of(&bench, bent, layout, pass, "main", "main", "triangles", 3, .patch_list, raster);
+        try testing.expectEqual(facet.Result.success, result);
+        defer fb.DestroyPipeline(device, each);
+        const got = try counted(&bench, statistics, pass, frame, each.?, vertex_buffer, &offset, 3);
+        if (which == 0) shown = got;
+        switch (which) {
+            0 => {
+                try testing.expect(got[0] > 1);
+                try testing.expectEqual(got[0], got[1]);
+            },
+            1 => {
+                try testing.expectEqual(shown[0], got[0]);
+                try testing.expectEqual(@as(u64, 0), got[1]);
+            },
+            else => {
+                try testing.expectEqual(@as(u64, 0), got[0]);
+                try testing.expectEqual(@as(u64, 0), got[1]);
+            },
+        }
+        try testing.expectEqual(@as(u64, 1), got[2]);
+        try testing.expect(got[3] > 3);
+        try testing.expectEqual(shown[3], got[3]);
+    }
 }
 
 test "images copied, blitted, read back, and parts of an attachment cleared in the middle of a pass" {
@@ -7964,7 +8036,7 @@ test "the sample mask at one sample a pixel: bit 0 alone, and a masked draw stil
     }
 }
 
-test "the primitives input assembly counted, by topology, and what a draw that draws nothing still owes" {
+test "the primitives input assembly counted, by topology, what a draw that draws nothing still owes, and what clipping lets through" {
     var bench = try Bench.up();
     defer bench.down();
     const fb = bench.rig.fb;
@@ -8045,6 +8117,11 @@ test "the primitives input assembly counted, by topology, and what a draw that d
         try testing.expectEqual(@as(u64, 12), values[0]);
         try testing.expectEqual(primitives, values[1]);
         try testing.expectEqual(@as(u64, 12), values[2]);
+        // Into clipping and out of it, every one of them: a line or a
+        // point is one primitive and not the two triangles it is widened
+        // into, which both counters said of it until 1.92.
+        try testing.expectEqual(primitives, values[3]);
+        try testing.expectEqual(primitives, values[4]);
     }
 
     // A pipeline that draws nothing still owes the counts of every stage
@@ -8067,14 +8144,123 @@ test "the primitives input assembly counted, by topology, and what a draw that d
         try testing.expectEqual(@as(u64, 24), values[0]);
         try testing.expectEqual(@as(u64, 8), values[1]);
         try testing.expectEqual(@as(u64, 24), values[2]);
-        // The clipping pair at zero, which that sentence allows, and no
-        // fragment function called at all.
-        try testing.expectEqual(@as(u64, 0), values[3]);
+        // Under the discard the clipping pair at zero, which that sentence
+        // allows. A cull of every face is no discard: the eight triangles
+        // reached clipping and are counted going in, and none came out to
+        // be set up, as llvmpipe's `triangle_noop` sets none up (since
+        // 1.92; both were zero before). No fragment function called at all.
+        const culls = raster.cull_mode == facet.CULL_MODE_FRONT_AND_BACK;
+        try testing.expectEqual(culls, _objects.of(_pipeline.Pipeline, made.?).culls_everything);
+        try testing.expectEqual(@as(u64, if (culls) 8 else 0), values[3]);
         try testing.expectEqual(@as(u64, 0), values[4]);
         try testing.expectEqual(@as(u64, 0), values[5]);
         // And it drew nothing, which is the point of the pipeline: every
         // pixel is still the colour the pass cleared it to.
         try testing.expectEqual(@as(usize, 64 * 64), pixelsOf(&picture, 0xFF00_00FF));
+    }
+
+    // What came out of clipping, case by case, counted as llvmpipe counts
+    // `c_primitives` (since 1.92): at the top of lp_setup_tri.c's
+    // triangle_cw, triangle_ccw and triangle_both, before the face is
+    // culled or the area found - so a triangle culled for facing away is
+    // counted, and one with no area, and one covering no pixel's centre.
+    // What clipping rejects whole is not: here a triangle wholly right of
+    // the view, which facet rejects at the view's side and llvmpipe at its
+    // guard band, both within Vulkan's "zero or more" for a primitive with
+    // no sample inside.
+    const Corner = [3]f32;
+    const shapes = [_][3]Corner{
+        // Clockwise on the picture: the front, where the front is clockwise.
+        .{ .{ -0.5, -0.5, 0.5 }, .{ 0.5, -0.5, 0.5 }, .{ -0.5, 0.5, 0.5 } },
+        // The same the other way round: the back.
+        .{ .{ -0.5, -0.5, 0.5 }, .{ -0.5, 0.5, 0.5 }, .{ 0.5, -0.5, 0.5 } },
+        // Its corners on one line: no area.
+        .{ .{ -0.5, -0.5, 0.5 }, .{ 0, 0, 0.5 }, .{ 0.5, 0.5, 0.5 } },
+        // Between pixel 32's centre and 33's, either way: inside the view,
+        // covering no pixel.
+        .{ .{ 0.01875, 0.01875, 0.5 }, .{ 0.04375, 0.01875, 0.5 }, .{ 0.01875, 0.04375, 0.5 } },
+        // Wholly right of the view.
+        .{ .{ 2, -0.5, 0.5 }, .{ 3, -0.5, 0.5 }, .{ 2, 0.5, 0.5 } },
+    };
+    const shape_buffer, const shape_bytes = try bench.buffer(@sizeOf(@TypeOf(shapes)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(shape_bytes[0..@sizeOf(@TypeOf(shapes))], std.mem.asBytes(&shapes));
+    const backs = facet.PipelineRasterizationStateCreateInfo{ .cull_mode = facet.CULL_MODE_BACK, .front_face = .clockwise };
+    const culling_result, const culling = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = pass, .raster = backs });
+    try testing.expectEqual(facet.Result.success, culling_result);
+    defer fb.DestroyPipeline(device, culling);
+    // The first triangle, how many, how many out of clipping, and whether
+    // any fragment function is called.
+    const shape_cases = [_]struct { u32, u32, u64, bool }{
+        .{ 0, 1, 1, true },
+        .{ 1, 1, 1, false },
+        .{ 2, 1, 1, false },
+        .{ 3, 1, 1, false },
+        .{ 4, 1, 0, false },
+        .{ 0, 2, 2, true },
+    };
+    for (shape_cases) |case| {
+        const first, const triangles, const out, const shaded = case;
+        const at: u64 = @as(u64, first) * @sizeOf([3]Corner);
+        const values = try Shot.of(&bench, statistics, culling.?, shape_buffer, &at, layout, pass, frame, &blue, &green, 3 * triangles, 1);
+        try testing.expectEqual(@as(u64, triangles), values[3]);
+        try testing.expectEqual(out, values[4]);
+        try testing.expectEqual(shaded, values[5] != 0);
+    }
+
+    // A polygon drawn as its edges or its corners, the front one and the
+    // culled one. gallium's draw module culls, then hands setup three lines
+    // or three points of what is left (clip, cull, then unfilled:
+    // draw_pipe_validate.c), each counted by try_setup_line or the point's
+    // setup: two in, three out. facet culls before it widens
+    // (`_vertices.widen`) and counts a rectangle once, which is the same.
+    for ([_]facet.PolygonMode{ .line, .point }) |mode| {
+        var edges = backs;
+        edges.polygon_mode = mode;
+        const edges_result, const by_edges = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = pass, .raster = edges });
+        try testing.expectEqual(facet.Result.success, edges_result);
+        defer fb.DestroyPipeline(device, by_edges);
+        const at: u64 = 0;
+        const values = try Shot.of(&bench, statistics, by_edges.?, shape_buffer, &at, layout, pass, frame, &blue, &green, 6, 1);
+        try testing.expectEqual(@as(u64, 2), values[3]);
+        try testing.expectEqual(@as(u64, 3), values[4]);
+        try testing.expect(values[5] != 0);
+    }
+
+    // Lines and points have no face, so a cull of every face culls none of
+    // them: Vulkan culls polygons, and so does llvmpipe, whose
+    // `triangle_noop` replaces its triangle function alone. facet drew no
+    // line and no point under it until 1.92.
+    for ([_]facet.PrimitiveTopology{ .line_list, .point_list }) |topology| {
+        const both = facet.PipelineRasterizationStateCreateInfo{ .cull_mode = facet.CULL_MODE_FRONT_AND_BACK };
+        const both_result, const made = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = pass, .topology = topology, .raster = both });
+        try testing.expectEqual(facet.Result.success, both_result);
+        defer fb.DestroyPipeline(device, made);
+        try testing.expect(!_objects.of(_pipeline.Pipeline, made.?).draws_nothing);
+        const values = try Shot.of(&bench, statistics, made.?, vertex_buffer, &offset, layout, pass, frame, &blue, &green, 12, 1);
+        const primitives: u64 = if (topology == .line_list) 6 else 12;
+        try testing.expectEqual(primitives, values[3]);
+        try testing.expectEqual(primitives, values[4]);
+        try testing.expect(values[5] != 0);
+    }
+
+    // A line with one end behind the near plane is cut, and is still one
+    // line out of clipping, as the draw module clips it to one; a point
+    // behind it is clipped away whole.
+    const behind = [_]Corner{ .{ -0.5, 0, 0.5 }, .{ 0.5, 0, -1 }, .{ 0, 0, -1 } };
+    const behind_buffer, const behind_bytes = try bench.buffer(@sizeOf(@TypeOf(behind)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(behind_bytes[0..@sizeOf(@TypeOf(behind))], std.mem.asBytes(&behind));
+    const behind_cases = [_]struct { facet.PrimitiveTopology, u64, u32, u64 }{
+        .{ .line_list, 0, 2, 1 },
+        .{ .point_list, 2 * @sizeOf(Corner), 1, 0 },
+    };
+    for (behind_cases) |case| {
+        const topology, const at, const count, const out = case;
+        const behind_result, const made = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = pass, .topology = topology });
+        try testing.expectEqual(facet.Result.success, behind_result);
+        defer fb.DestroyPipeline(device, made);
+        const values = try Shot.of(&bench, statistics, made.?, behind_buffer, &at, layout, pass, frame, &blue, &green, count, 1);
+        try testing.expectEqual(@as(u64, 1), values[3]);
+        try testing.expectEqual(out, values[4]);
     }
 }
 

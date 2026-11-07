@@ -1836,4 +1836,59 @@ pub const LIBRARY_VERSION = 1;
 /// the VPM as it is made (`vir_STVPMV`, src/broadcom/compiler).
 ///
 /// The pin in tests/vulkan_limits.zig is 7, all of them item 61's.
-pub const LIBRARY_REVISION = 91;
+///
+/// 92: **The clipping counters counted as llvmpipe counts them, and a cull
+/// of every face that culls no line and no point.**
+///
+/// Item 83 of docs/facet-vulkan10.md left one question open: whether a
+/// back-face-culled triangle owes `CLIPPING_PRIMITIVES`, which the
+/// specification's one sentence on it leaves to a reading. Mesa had already
+/// answered it. llvmpipe counts `c_primitives` at the top of
+/// lp_setup_tri.c's `triangle_cw`, `triangle_ccw` and `triangle_both`,
+/// before the face is culled or the area worked out, and once at the top of
+/// `try_setup_line` and of a point's setup; gallium's draw module counts
+/// `c_invocations` as the primitives handed to its clip stage, decomposed
+/// by kind (`draw_stats_clipper_primitives`, draw_context.c), after the
+/// vertex, tessellation and geometry stages and before anything is culled.
+/// facet now does both: `stats.pieces` counts each triangle the clipper
+/// lets through to setup, whole or a piece of one it cut, before setup can
+/// drop it, and `stats.clipped` is those pieces with the rectangle a line
+/// or a point is widened into counted once; the draw counts what goes into
+/// clipping from its primitives - input assembly's, or the evaluation's
+/// under tessellation.
+///
+/// Four counts were wrong, and the open question was only the first. A
+/// culled triangle, one with no area and one covering no pixel's centre
+/// counted nothing out of clipping. A line or a point counted twice going
+/// in and twice coming out, being two triangles to the rasterizer, and a
+/// triangle drawn as its edges six times going in. A cull of every face
+/// counted nothing into clipping, and 1.88 called that the specification's
+/// licence, which is for `rasterizer_discard_enable` alone; the draw module
+/// counts those primitives in, and setup's `triangle_noop` lets none out,
+/// as here (`Pipeline.culls_everything`). And a tessellated draw that drew
+/// nothing ran neither tessellation function, so counted neither stage.
+///
+/// One was not a counter at all: `CULL_MODE_FRONT_AND_BACK` drew no line
+/// and no point. A line or a point has no face, Vulkan culls polygons, and
+/// llvmpipe's `triangle_noop` stands in for its triangle function and for
+/// nothing else; such a pipeline is no longer `draws_nothing` unless what
+/// it draws is triangles.
+///
+/// Where facet and llvmpipe still differ, both are inside the
+/// specification's "zero or more" for a primitive with no sample inside: a
+/// triangle wholly outside the view is rejected at the view's side here and
+/// at llvmpipe's guard band there (lp_context.c turns the draw module's
+/// guard band on), and llvmpipe itself counts a culled triangle when its
+/// setup culls it and not when the draw module's cull stage does, which it
+/// runs for a draw that needs clipping. facet counts it in both cases.
+///
+/// A test draws each case and reads both counters: a culled triangle, one
+/// of no area, one between four pixels' centres and one wholly outside; a
+/// polygon drawn as its edges and as its corners, one face culled; a line
+/// cut at the near plane and a point behind it; lines and points under a
+/// cull of every face; and a tessellated patch drawn, culled whole and
+/// discarded. Putting any of the eight changes back fails it, among them
+/// `expected 12, found 24` for a line counted twice, `expected 8, found 0`
+/// for the cull counted as a discard, and `expected 1, found 0` for a
+/// culled triangle.
+pub const LIBRARY_REVISION = 92;
