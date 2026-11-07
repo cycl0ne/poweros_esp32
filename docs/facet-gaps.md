@@ -113,6 +113,18 @@ time. What is left out:
   comparison, and `address_mode_u` and `address_mode_v` either
   `clamp_to_edge` or `clamp_to_border`. A 3D texture's `r` is then counted
   in slices, which Vulkan does not have at all.
+- **An image view's channels may be swizzled** since 1.120, on either
+  device (`ImageViewCreateInfo.components`): every read of the view's
+  texels takes each channel from where the swizzle says, or 0 or 1, the
+  border and a comparison's result included. A fixed form compiled for
+  the view's format draws one that swizzles through the run-time
+  sampler, a pixel at a time, rather than by its fast path. A framebuffer
+  takes no view that swizzles. On the V3D the TMU swizzles, unchecked on
+  the board so far.
+- **A depth read as a colour is a grey**, (D, D, D, 1) of its top 8 bits,
+  where Vulkan reads (D, 0, 0, 1) (docs/facet-vulkan10.md item 89). A view
+  that swizzles reads the green and the blue as 0, as Vulkan has them;
+  `texture.Texture.partsAt` reads (D, 0, 0, 1) at all 16 bits.
 
 The cores and the V3D's texture units still choose a level and its sample
 point differently, which is why `C:test/FacetCube CHECK V3D` allows 5 % of

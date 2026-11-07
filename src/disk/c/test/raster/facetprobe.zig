@@ -3330,6 +3330,36 @@ fn sizeChecks(probe: *Probe) void {
         };
         if (right) probe.check(true, name) else probe.checkEqual(wanted, found, name);
     }
+
+    // 1.120: a view of the same texture that swizzles, drawn by the same
+    // form - red 1, green 0, and the blue and the alpha the texel's own:
+    // through the run-time sampler on the cores, and on the V3D by the
+    // TMU, which takes the view's swizzle over the format's own
+    // (docs/facet-vulkan10.md item 41).
+    const swizzled = probe.viewed(.{ .image = texture[0], .format = .b8g8r8a8_unorm, .components = .{ .r = .one, .g = .zero } }) orelse
+        return probe.check(false, "a view of the texture that swizzles");
+    const to_swizzled = facet.DescriptorImageInfo{ .image_view = swizzled };
+    const rewrite = facet.WriteDescriptorSet{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .sampled_image, .descriptor_count = 1, .image_info = @ptrCast(&to_swizzled) };
+    fb.UpdateDescriptorSets(device, 1, @ptrCast(&rewrite), 0, null);
+    const quad = [6][5]f32{
+        .{ -1, -1, 0.5, 0, 0 }, .{ 1, -1, 0.5, 1, 0 }, .{ -1, 1, 0.5, 0, 1 },
+        .{ -1, 1, 0.5, 0, 1 },  .{ 1, -1, 0.5, 1, 0 }, .{ 1, 1, 0.5, 1, 1 },
+    };
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(quad))], std.mem.asBytes(&quad));
+    commands = probe.record() orelse return probe.check(false, "a recording of the swizzled draw");
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = onto, .render_area = area, .clear_value_count = 1, .clear_values = &clear }, .@"inline");
+    fb.CmdBindPipeline(commands, .graphics, clamps);
+    fb.CmdBindDescriptorSets(commands, .graphics, layout.?, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdDraw(commands, 6, 1, 0, 0);
+    fb.CmdEndRenderPass(commands);
+    if (!probe.submit()) return probe.check(false, "the swizzled frame submitted");
+    for (rows, 0..) |py, y| for (columns, 0..) |px, x| {
+        const want = 0xFFFF_0000 | (greyOf(@intCast(x), @intCast(y)) & 0xFF);
+        const seen = pixelAt(pixels, pitch, px, py);
+        if (seen != want) return probe.checkEqual(want, seen, "a view that swizzles: red 1, green 0, blue and alpha its own");
+    };
+    probe.check(true, "a view that swizzles: red 1, green 0, blue and alpha its own");
 }
 
 // --- 1.43: the smaller edges -------------------------------------------------

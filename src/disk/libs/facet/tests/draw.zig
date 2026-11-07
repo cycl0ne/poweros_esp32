@@ -10342,6 +10342,199 @@ test "an image drawn into and sampled, and a colour attachment of levels: the fo
     }
 }
 
+// --- 1.120: an image view's component swizzle (item 41) ---------------------
+
+/// A fixed form's own texture, read nearest with no sampler, of the format
+/// a B8G8R8A8 texture keeps its texels in: a view of one that swizzles
+/// nothing takes the form's fast path, which reads the texels as they lie,
+/// and one that swizzles does not (`shader.textured`, since 1.120).
+const OwnForm = struct {
+    const entries = [_]shader.Entry{
+        shader.vertex("main", &Planed.vertex, 2),
+        shader.fixedFragment("main", .{ .kind = .texture, .sampling = .{ .format = .rgba8888, .filter = .nearest } }),
+    };
+    const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
+};
+
+test "an image view's component swizzle: Vulkan's seven taken and nothing else, every read of a texel and every sample swizzled, the border and what a comparison gave as well, a fixed form off its fast path, and a framebuffer refusing such a view (item 41)" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const image_zig = @import("../image/_image.zig");
+
+    // A texture of one colour - alpha 0x80, red 0x10, green 0x20, blue
+    // 0x30 - copied in as the bytes B8G8R8A8 keeps.
+    const given: u32 = 0x8010_2030;
+    const texels = [_]u32{given} ** 32;
+    const staging, const staging_bytes = try bench.buffer(@sizeOf(@TypeOf(texels)), facet.BUFFER_USAGE_TRANSFER_SRC);
+    @memcpy(staging_bytes[0..@sizeOf(@TypeOf(texels))], std.mem.asBytes(&texels));
+    const made = try bench.bareImage(.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 4, .height = 4 }, .usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST }, false);
+    const commands = try bench.record();
+    const region = facet.BufferImageCopy{ .image_extent = .{ .width = 4, .height = 4 } };
+    fb.CmdCopyBufferToImage(commands, staging, made, .transfer_dst_optimal, 1, @ptrCast(&region));
+    try bench.submit();
+
+    // Each of the seven, in each channel, is a view; a value that is none
+    // of them is not.
+    for ([7]facet.ComponentSwizzle{ .identity, .zero, .one, .r, .g, .b, .a }) |one| {
+        for (0..4) |channel| {
+            var components = facet.ComponentMapping{};
+            switch (channel) {
+                0 => components.r = one,
+                1 => components.g = one,
+                2 => components.b = one,
+                else => components.a = one,
+            }
+            var taken: ?*facet.ImageView = null;
+            try testing.expectEqual(facet.Result.success, fb.CreateImageView(device, &.{ .image = made, .format = .b8g8r8a8_unorm, .components = components }, &taken));
+            fb.DestroyImageView(device, taken);
+        }
+    }
+    var refused: ?*facet.ImageView = null;
+    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImageView(device, &.{ .image = made, .format = .b8g8r8a8_unorm, .components = .{ .g = @enumFromInt(7) } }, &refused));
+    try testing.expect(refused == null);
+
+    // Red from blue, green 0, blue 1 and alpha from red: every read of a
+    // texel through the view gives that back, the colour, its floats and
+    // its numbers alike, and so does one past the texture, its
+    // transparent black swizzled as well.
+    const plain = try bench.viewOf(.{ .image = made, .format = .b8g8r8a8_unorm });
+    const swizzled = try bench.viewOf(.{ .image = made, .format = .b8g8r8a8_unorm, .components = .{ .r = .b, .g = .zero, .b = .one, .a = .r } });
+    const wanted: u32 = 0x1030_00FF;
+    const as_given = &_objects.of(image_zig.ImageView, plain).texels;
+    const read = &_objects.of(image_zig.ImageView, swizzled).texels;
+    try testing.expectEqual(given, as_given.colorAt(0, 0, 3, 3));
+    try testing.expectEqual(wanted, read.colorAt(0, 0, 3, 3));
+    try testing.expectEqual(@as(u32, 0x0000_00FF), read.colorAt(0, 0, 9, 9));
+    const parts = as_given.partsAt(0, 0, 1, 2);
+    try testing.expectEqual([4]f32{ parts[2], 0, 1, parts[0] }, read.partsAt(0, 0, 1, 2));
+    try testing.expectEqual([4]i64{ 0x30, 0, 1, 0x10 }, read.wholesAt(0, 0, 2, 1));
+
+    // Sampled, by a sampler and by a fixed form's sampling: nearest and
+    // mixed alike, the texture being of one colour. Past a bordered edge
+    // the border, swizzled as a texel is: transparent black reads blue.
+    var sampler = texture_zig.Sampler{ .wrap = @splat(.clamp_to_border) };
+    try testing.expectEqual(wanted, texture_zig.sampleBy(read, &sampler, 0, .{ .u = 0.5, .v = 0.5 }));
+    try testing.expectEqual(@as(u32, 0x0000_00FF), texture_zig.sampleBy(read, &sampler, 0, .{ .u = 1.5, .v = 0.5 }));
+    sampler.mag_filter = .nearest;
+    sampler.min_filter = .nearest;
+    try testing.expectEqual(wanted, texture_zig.sampleBy(read, &sampler, 0, .{ .u = 0.3, .v = 0.6 }));
+    try testing.expectEqual(@as(u32, 0x0000_00FF), texture_zig.sampleBy(read, &sampler, 0, .{ .u = 0.5, .v = -0.5 }));
+    try testing.expectEqual(wanted, read.sampleLayer(.{ .format = .argb8888, .filter = .nearest }, 0, 0, 0.5, 0.5));
+    try testing.expectEqual(wanted, read.sampleLayer(.{ .format = .argb8888 }, 0, 0, 0.5, 0.5));
+    // A 3D texture's border past its last slice is swizzled as well,
+    // nearest and mixed, a sample there being the border alone.
+    const volume = try bench.bareImage(.{ .format = .b8g8r8a8_unorm, .image_type = .@"3d", .extent = .{ .width = 4, .height = 4, .depth = 2 }, .usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST }, false);
+    const slices = facet.BufferImageCopy{ .image_extent = .{ .width = 4, .height = 4, .depth = 2 } };
+    const filling = try bench.record();
+    fb.CmdCopyBufferToImage(filling, staging, volume, .transfer_dst_optimal, 1, @ptrCast(&slices));
+    try bench.submit();
+    const deep = try bench.viewOf(.{ .image = volume, .view_type = .@"3d", .format = .b8g8r8a8_unorm, .components = .{ .r = .b, .g = .zero, .b = .one, .a = .r } });
+    const deep_read = &_objects.of(image_zig.ImageView, deep).texels;
+    var walls = texture_zig.Sampler{ .mag_filter = .nearest, .min_filter = .nearest, .wrap = @splat(.clamp_to_border) };
+    try testing.expectEqual(wanted, texture_zig.sampleVolumeBy(deep_read, &walls, .{ .u = 0.5, .v = 0.5 }, 0.25));
+    try testing.expectEqual(@as(u32, 0x0000_00FF), texture_zig.sampleVolumeBy(deep_read, &walls, .{ .u = 0.5, .v = 0.5 }, 1.5));
+    walls.mag_filter = .bilinear;
+    walls.min_filter = .bilinear;
+    try testing.expectEqual(@as(u32, 0x0000_00FF), texture_zig.sampleVolumeBy(deep_read, &walls, .{ .u = 0.5, .v = 0.5 }, 2.0));
+    // A comparison reads a colour's red as it lies, Vulkan comparing
+    // before it swizzles: 0x10, under a reference of 0.1 where the
+    // swizzled red, 0x30, is over it. What passed is swizzled as a texel.
+    const compares = texture_zig.Sampler{ .mag_filter = .nearest, .min_filter = .nearest, .wrap = @splat(.clamp_to_edge), .compare = .greater };
+    try testing.expectEqual(@as(u32, 0xFFFF_00FF), texture_zig.sampleBy(read, &compares, 0, .{ .u = 0.5, .v = 0.5, .reference = 0.1 }));
+
+    // A view of a depth: what a swizzle takes from the green and the blue
+    // is 0 and from the alpha 1, as Vulkan reads a depth (D, 0, 0, 1),
+    // and a view that swizzles nothing keeps the grey (item 89). What a
+    // comparison gave is swizzled as a texel is: red 1 whatever passed,
+    // green what passed, blue from the depth's green, 0. What is compared
+    // is the depth as it lies, a quarter, and not the swizzled red's 1.
+    const depth = try bench.bareImage(.{ .format = .d16_unorm, .extent = .{ .width = 4, .height = 4 }, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST }, false);
+    const quarter = facet.ClearDepthStencilValue{ .depth = 0.25 };
+    const depth_range = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH };
+    const clearing = try bench.record();
+    fb.CmdClearDepthStencilImage(clearing, depth, .transfer_dst_optimal, &quarter, 1, @ptrCast(&depth_range));
+    try bench.submit();
+    const depth_view = try bench.viewOf(.{ .image = depth, .format = .d16_unorm, .components = .{ .r = .one, .g = .r, .b = .g, .a = .a }, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH } });
+    const depth_plain = try bench.viewOf(.{ .image = depth, .format = .d16_unorm, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH } });
+    const compared = &_objects.of(image_zig.ImageView, depth_view).texels;
+    try testing.expectEqual(texture_zig.Swizzle{ .r = .one, .g = .red, .b = .zero, .a = .one }, compared.swizzle);
+    try testing.expect(_objects.of(image_zig.ImageView, depth_plain).texels.swizzle.isIdentity());
+    var shadow = texture_zig.Sampler{ .mag_filter = .nearest, .min_filter = .nearest, .wrap = @splat(.clamp_to_edge), .compare = .always };
+    try testing.expectEqual(@as(u32, 0xFFFF_FF00), texture_zig.sampleBy(compared, &shadow, 0, .{ .u = 0.5, .v = 0.5 }));
+    shadow.compare = .never;
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), texture_zig.sampleBy(compared, &shadow, 0, .{ .u = 0.5, .v = 0.5 }));
+    shadow.compare = .greater;
+    try testing.expectEqual(@as(u32, 0xFFFF_FF00), texture_zig.sampleBy(compared, &shadow, 0, .{ .u = 0.5, .v = 0.5, .reference = 0.5 }));
+    shadow.compare = .less;
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), texture_zig.sampleBy(compared, &shadow, 0, .{ .u = 0.5, .v = 0.5, .reference = 0.5 }));
+    shadow.mag_filter = .bilinear;
+    shadow.min_filter = .bilinear;
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), texture_zig.sampleBy(compared, &shadow, 0, .{ .u = 0.5, .v = 0.5, .reference = 0.5 }));
+    shadow.compare = .greater;
+    try testing.expectEqual(@as(u32, 0xFFFF_FF00), texture_zig.sampleBy(compared, &shadow, 0, .{ .u = 0.5, .v = 0.5, .reference = 0.5 }));
+    shadow.compare = .never;
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), texture_zig.sampleBy(compared, &shadow, 0, .{ .u = 0.5, .v = 0.5 }));
+
+    // Drawn by a fixed form compiled for the texture's own format: the
+    // view that swizzles nothing by the fast path, and the one that does
+    // through the run-time sampler, which swizzles.
+    const into = try Picture.of(&bench, Drawn.side, Drawn.side);
+    const reading = try renderPass(&bench, .clear, false);
+    defer fb.DestroyRenderPass(device, reading);
+    const onto = try framebuffer(&bench, reading, &.{into.view}, Drawn.side, Drawn.side);
+    defer fb.DestroyFramebuffer(device, onto);
+    const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .combined_image_sampler, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &set_layout));
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    const layout = try pipelineLayout(&bench, &.{set_layout.?}, 0);
+    defer fb.DestroyPipelineLayout(device, layout);
+    var pool: ?*facet.DescriptorPool = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool));
+    defer fb.DestroyDescriptorPool(device, pool);
+    var sets: [1]?*facet.DescriptorSet = undefined;
+    try testing.expectEqual(facet.Result.success, fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &sets));
+    const attributes = [2]facet.VertexInputAttributeDescription{
+        .{ .location = 0, .binding = 0, .format = .r32g32b32_sfloat },
+        .{ .location = 1, .binding = 0, .format = .r32g32b32_sfloat, .offset = 12 },
+    };
+    const formed = try module(&bench, &OwnForm.code);
+    defer fb.DestroyShaderModule(device, formed);
+    const form_result, const form = makePipeline(&bench, .{ .module = formed, .layout = layout, .pass = reading, .stride = 24, .attributes = &attributes, .width = Drawn.side, .height = Drawn.side });
+    try testing.expectEqual(facet.Result.success, form_result);
+    defer fb.DestroyPipeline(device, form);
+    const vertex_buffer, const vertex_bytes = try bench.buffer(256, facet.BUFFER_USAGE_VERTEX_BUFFER);
+    const quad = [6][6]f32{
+        .{ -1, -1, 0.5, 0, 0, 0 }, .{ 1, -1, 0.5, 1, 0, 0 }, .{ -1, 1, 0.5, 0, 1, 0 },
+        .{ -1, 1, 0.5, 0, 1, 0 },  .{ 1, -1, 0.5, 1, 0, 0 }, .{ 1, 1, 0.5, 1, 1, 0 },
+    };
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(quad))], std.mem.asBytes(&quad));
+    var any: ?*facet.Sampler = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateSampler(device, &.{}, &any));
+    defer fb.DestroySampler(device, any);
+    try Drawn.sample(&bench, form.?, reading, onto, layout, sets[0].?, plain, any.?, vertex_buffer);
+    try testing.expectEqual(given, into.at(5, 5));
+    try testing.expectEqual(given, into.at(30, 30));
+    try Drawn.sample(&bench, form.?, reading, onto, layout, sets[0].?, swizzled, any.?, vertex_buffer);
+    try testing.expectEqual(wanted, into.at(5, 5));
+    try testing.expectEqual(wanted, into.at(30, 30));
+
+    // A framebuffer takes no view that swizzles, Vulkan drawing into an
+    // attachment's pixels as they lie
+    // (VUID-VkFramebufferCreateInfo-pAttachments-00884); the same image's
+    // view that swizzles nothing it takes.
+    const drawn = try bench.bareImage(.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, false);
+    const swapped = try bench.viewOf(.{ .image = drawn, .format = .b8g8r8a8_unorm, .components = .{ .r = .b, .b = .r } });
+    var not_made: ?*facet.Framebuffer = null;
+    try testing.expectEqual(facet.Result.error_initialization_failed, fb.CreateFramebuffer(device, &.{ .render_pass = reading, .attachment_count = 1, .attachments = @ptrCast(&swapped), .width = 8, .height = 8 }, &not_made));
+    try testing.expect(not_made == null);
+    const straight = try bench.viewOf(.{ .image = drawn, .format = .b8g8r8a8_unorm, .components = .{ .r = .r, .g = .identity, .b = .b, .a = .a } });
+    const taken = try framebuffer(&bench, reading, &.{straight}, 8, 8);
+    fb.DestroyFramebuffer(device, taken);
+}
+
 test "a depth attachment read as an input attachment: what the subpass before drew, plane by plane" {
     var bench = try Bench.up();
     defer bench.down();

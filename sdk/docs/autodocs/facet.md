@@ -4034,7 +4034,9 @@ fn CreateFramebuffer(base: *FacetBase, device: *facet.Device, info: *const facet
 pass - another number of them, a colour view of an image not made for a
 colour attachment or in another format, a depth view of an image not
 made for depth, an image smaller than the size, a view of fewer layers
-than the framebuffer has - and for a size or layers of none, or of more
+than the framebuffer has, a view that swizzles its channels (since
+1.120, VUID-VkFramebufferCreateInfo-pAttachments-00884) - and for a
+size or layers of none, or of more
 than the device takes (`PhysicalDeviceLimits.max_framebuffer_width`,
 `max_framebuffer_height` and `max_framebuffer_layers`);
 `error_out_of_host_memory`.
@@ -4568,8 +4570,9 @@ fn CreateImageView(base: *FacetBase, device: *facet.Device, info: *const facet.I
 
 `success`; `error_format_not_supported` for a view facet.library does
 not make - of another format than the image's, of a type the image is
-not for, with channels swizzled, of levels or layers the image has not
-got, or of an image not yet bound into memory; `error_out_of_host_memory`.
+not for, with a swizzle that is none of Vulkan's seven values, of
+levels or layers the image has not got, or of an image not yet bound
+into memory; `error_out_of_host_memory`.
 
 **BEHAVIOR**
 
@@ -4580,6 +4583,23 @@ in rows: it reads the rows a pass drew into, at the levels and the
 layers it names. A framebuffer given a view of any image kept in rows
 draws into the level the view begins at, an image kept in rows having
 levels since 1.119.
+
+**Its channels may be swizzled** since 1.120, as Vulkan's
+`VkComponentMapping` has them: each of `components` names the channel
+of the texel it reads, its own (`identity`), or 0 or 1. Every read of
+the view's texels is swizzled - a sample through a sampler or by a
+fixed form, `colorAt`, `partsAt` and `wholesAt` - and so are the border
+and what a comparison gave, Vulkan replacing a texel and comparing a
+depth before it swizzles (`texture.Swizzle`). A channel the format has
+not got reads 0, or 1 for an alpha, before the swizzle: an R8 view may
+read its alpha as its red, and reads 1. Of a depth or a stencil a swizzle
+takes 0 from the green and the blue and 1 from the alpha, as Vulkan
+reads such a texel (D, 0, 0, 1). A fixed form compiled for the view's
+format draws one that swizzles through the run-time sampler, a pixel at
+a time. A framebuffer takes no view that swizzles, and neither a storage
+image nor an input attachment may be one, as Vulkan has it
+(VUID-VkWriteDescriptorSet-descriptorType-00336). On the V3D the TMU
+swizzles, the view's over the format's own.
 
 Of type `2d` it is one layer, of a texture with any number of them. Of type
 `2d_array` it is the layers asked for, for `shader.FixedKind.texture_array`;

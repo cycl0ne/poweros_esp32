@@ -214,9 +214,18 @@ pub const Texels = enum {
     }
 };
 
+/// Where each of the four channels a sample gives back comes from, as an
+/// image view's swizzle names it: a channel of the colour the format reads
+/// as, or a constant (since 1.120).
+pub const Pick = enum { red, green, blue, alpha, zero, one };
+
+/// Each channel from itself: a view that swizzles nothing.
+pub const own_picks = [4]Pick{ .red, .green, .blue, .alpha };
+
 /// A texture's state, into `into`: levels `base` to `last` of it, at
-/// `address` on the V3D, and `depth` layers or slices `stride` bytes apart.
-pub fn writeTextureState(into: []u8, layout: *const Layout, texels: Texels, address: u32, base: u32, last: u32, depth: u32, stride: u32) void {
+/// `address` on the V3D, and `depth` layers or slices `stride` bytes apart,
+/// each channel from where the view's `picks` say.
+pub fn writeTextureState(into: []u8, layout: *const Layout, texels: Texels, picks: [4]Pick, address: u32, base: u32, last: u32, depth: u32, stride: u32) void {
     const level_0 = &layout.levels[0];
     const base_address = address + level_0.offset;
     const strict_uif = level_0.kind == .uif or level_0.kind == .uif_xor;
@@ -236,6 +245,20 @@ pub fn writeTextureState(into: []u8, layout: *const Layout, texels: Texels, addr
         .rgba, .rgb565 => SWIZZLE_BLUE,
     };
     const alpha: u64 = if (texels == .rgba or texels == .bgra) SWIZZLE_ALPHA else SWIZZLE_ONE;
+    // And the view's swizzle over those, as v3dv composes the format's
+    // with the view's (`util_format_compose_swizzles`,
+    // src/broadcom/vulkan/v3dv_image.c:828-831): a channel the view takes
+    // is read from where the format keeps it, and a constant is itself.
+    const own = [4]u64{ red, green, blue, alpha };
+    var picked: [4]u64 = undefined;
+    for (&picked, picks) |*one, pick| one.* = switch (pick) {
+        .red => own[0],
+        .green => own[1],
+        .blue => own[2],
+        .alpha => own[3],
+        .zero => SWIZZLE_ZERO,
+        .one => SWIZZLE_ONE,
+    };
     // Bits 0 to 63: the address, the distance between arrays' worth, and
     // the width's first 6. That distance starts at bit 33 on this chip, a
     // V3D 7.1.10; on 7.1.2 it starts at 32 (Mesa's v3d_packet.xml).
@@ -246,10 +269,10 @@ pub fn writeTextureState(into: []u8, layout: *const Layout, texels: Texels, addr
         @as(u64, depth) << (86 - 64) |
         texture_type << (100 - 64) |
         @as(u64, @intFromBool(strict_uif)) << (107 - 64) |
-        red << (108 - 64) |
-        green << (111 - 64) |
-        blue << (114 - 64) |
-        alpha << (117 - 64) |
+        picked[0] << (108 - 64) |
+        picked[1] << (111 - 64) |
+        picked[2] << (114 - 64) |
+        picked[3] << (117 - 64) |
         @as(u64, last) << (120 - 64) |
         @as(u64, base) << (124 - 64);
     // Bits 128 to 191: the planes of a video format take the same address.
@@ -353,7 +376,7 @@ test "one byte a texel: Mesa's 8 x 8 microtile, and the TMU's R8 with the swizzl
     try std.testing.expectEqual(words.bytes - words.levels[0].offset, 4 * (layout.bytes - layout.levels[0].offset));
 
     var state: [texture_state_bytes]u8 = undefined;
-    writeTextureState(&state, &layout, .r8, 0x20_0000, 0, 0, 1, 0);
+    writeTextureState(&state, &layout, .r8, own_picks, 0x20_0000, 0, 0, 1, 0);
     const second = std.mem.readInt(u64, state[8..16], .little);
     try std.testing.expectEqual(TEXTURE_R8, second >> (100 - 64) & 0x7F);
     // Red from the texel, a green and a blue of 0 and a whole alpha: what
@@ -364,10 +387,31 @@ test "one byte a texel: Mesa's 8 x 8 microtile, and the TMU's R8 with the swizzl
     try std.testing.expectEqual(SWIZZLE_ONE, second >> (117 - 64) & 7);
 }
 
+test "a view's swizzle over the format's own: a channel the view takes read from where the format keeps it, a constant as itself" {
+    // B8G8R8A8 viewed as its alpha, 0, 1 and its red: the alpha where it
+    // is, and the red from the TMU's blue, which is where the format
+    // keeps it (since 1.120).
+    var state: [texture_state_bytes]u8 = undefined;
+    writeTextureState(&state, &layoutOf(4, 64, 64, 1), .bgra, .{ .alpha, .zero, .one, .red }, 0x10_0000, 0, 0, 1, 0);
+    var second = std.mem.readInt(u64, state[8..16], .little);
+    try std.testing.expectEqual(SWIZZLE_ALPHA, second >> (108 - 64) & 7);
+    try std.testing.expectEqual(SWIZZLE_ZERO, second >> (111 - 64) & 7);
+    try std.testing.expectEqual(SWIZZLE_ONE, second >> (114 - 64) & 7);
+    try std.testing.expectEqual(SWIZZLE_BLUE, second >> (117 - 64) & 7);
+    // R8 viewed as its alpha, its green and its red twice: the alpha and
+    // the green it has not got read 1 and 0, as Vulkan reads them.
+    writeTextureState(&state, &layoutOf(1, 64, 64, 1), .r8, .{ .alpha, .green, .red, .red }, 0x20_0000, 0, 0, 1, 0);
+    second = std.mem.readInt(u64, state[8..16], .little);
+    try std.testing.expectEqual(SWIZZLE_ONE, second >> (108 - 64) & 7);
+    try std.testing.expectEqual(SWIZZLE_ZERO, second >> (111 - 64) & 7);
+    try std.testing.expectEqual(SWIZZLE_RED, second >> (114 - 64) & 7);
+    try std.testing.expectEqual(SWIZZLE_RED, second >> (117 - 64) & 7);
+}
+
 test "the states have their fields where the packet file has them" {
     const layout = layoutOf(4, 64, 32, 1);
     var state: [texture_state_bytes]u8 = undefined;
-    writeTextureState(&state, &layout, .bgra, 0x10_0000, 0, 0, 1, 0);
+    writeTextureState(&state, &layout, .bgra, own_picks, 0x10_0000, 0, 0, 1, 0);
     const first = std.mem.readInt(u64, state[0..8], .little);
     const second = std.mem.readInt(u64, state[8..16], .little);
     try std.testing.expectEqual(@as(u64, 0x10_0000), first & 0xFFFF_FFFF);

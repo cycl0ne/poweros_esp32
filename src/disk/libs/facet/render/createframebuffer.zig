@@ -30,7 +30,9 @@ const ImageView = _image.ImageView;
 /// pass - another number of them, a colour view of an image not made for a
 /// colour attachment or in another format, a depth view of an image not
 /// made for depth, an image smaller than the size, a view of fewer layers
-/// than the framebuffer has - and for a size or layers of none, or of more
+/// than the framebuffer has, a view that swizzles its channels (since
+/// 1.120, VUID-VkFramebufferCreateInfo-pAttachments-00884) - and for a
+/// size or layers of none, or of more
 /// than the device takes (`PhysicalDeviceLimits.max_framebuffer_width`,
 /// `max_framebuffer_height` and `max_framebuffer_layers`);
 /// `error_out_of_host_memory`.
@@ -103,9 +105,13 @@ pub fn CreateFramebuffer(base: *FacetBase, device: *facet.Device, info: *const f
     if (info.width > limits.max_framebuffer_width or info.height > limits.max_framebuffer_height) return .error_initialization_failed;
     const views: []const *facet.ImageView = if (info.attachment_count == 0) &.{} else (info.attachments orelse return .error_initialization_failed)[0..info.attachment_count];
     // Each view of an image holding the samples its attachment says
-    // (VUID-VkFramebufferCreateInfo-pAttachments-00881, since 1.100).
+    // (VUID-VkFramebufferCreateInfo-pAttachments-00881, since 1.100), and
+    // swizzling none of its channels
+    // (VUID-VkFramebufferCreateInfo-pAttachments-00884, since 1.120): a
+    // pass draws into the pixels as they lie.
     for (views, pass.samples[0..views.len]) |view, samples| {
-        if (_objects.of(ImageView, view).image.samples != samples) return .error_initialization_failed;
+        const one = _objects.of(ImageView, view);
+        if (one.image.samples != samples or !one.swizzle.isIdentity()) return .error_initialization_failed;
     }
     var plan = _render.Framebuffer{ .device = owner, .width = info.width, .height = info.height };
     for (pass.parts[0..pass.part_count], plan.targets[0..pass.part_count]) |part, *target| {

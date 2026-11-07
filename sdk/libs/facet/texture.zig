@@ -653,6 +653,69 @@ pub const most_side = 1 << 15;
 /// The side of a block, in texels.
 const block = 4;
 
+/// Where each of the four channels a read gives back comes from: a channel
+/// of the texel, or a constant. An image view's component swizzle,
+/// Vulkan's `VkComponentMapping` (since 1.120). The channels are those of
+/// the colour a texel reads as, so one the format has not got is 0, or 1
+/// for an alpha, before it is swizzled: an R8 view swizzled to read its
+/// alpha as red reads 1.
+///
+/// llvmpipe swizzles a sample once it is made (`apply_sampler_swizzle`,
+/// src/gallium/auxiliary/gallivm/lp_bld_sample_soa.c:3954-3956), from the
+/// view's four (`lvp_create_samplerview`, src/gallium/frontends/lavapipe/
+/// lvp_image.c:379-382). A texture here swizzles each texel as it reads
+/// it, which comes to the same: a channel taken or a constant is mixed
+/// alike before a filter or after it. The border and a shadow sample's
+/// result are swizzled as well, Vulkan replacing a texel past a bordered
+/// edge and comparing a depth before it swizzles.
+pub const Swizzle = packed struct(u12) {
+    r: Source = .red,
+    g: Source = .green,
+    b: Source = .blue,
+    a: Source = .alpha,
+
+    pub const Source = enum(u3) { red, green, blue, alpha, zero, one };
+
+    /// Each channel from itself: what every texture is but a view's.
+    pub fn isIdentity(swizzle: Swizzle) bool {
+        return @as(u12, @bitCast(swizzle)) == @as(u12, @bitCast(Swizzle{}));
+    }
+
+    /// A colour of 0xAARRGGBB, swizzled.
+    pub fn color(swizzle: Swizzle, given: u32) u32 {
+        if (swizzle.isIdentity()) return given;
+        return @as(u32, byteOf(swizzle.a, given)) << 24 | @as(u32, byteOf(swizzle.r, given)) << 16 |
+            @as(u32, byteOf(swizzle.g, given)) << 8 | byteOf(swizzle.b, given);
+    }
+
+    fn byteOf(source: Source, given: u32) u8 {
+        return switch (source) {
+            .red => @truncate(given >> 16),
+            .green => @truncate(given >> 8),
+            .blue => @truncate(given),
+            .alpha => @truncate(given >> 24),
+            .zero => 0,
+            .one => 0xFF,
+        };
+    }
+
+    /// Four channels, red first, swizzled: floats or whole numbers, a
+    /// constant one being 1 for either, as Vulkan has it.
+    pub fn parts(swizzle: Swizzle, comptime T: type, given: [4]T) [4]T {
+        if (swizzle.isIdentity()) return given;
+        var made: [4]T = undefined;
+        for (&made, [4]Source{ swizzle.r, swizzle.g, swizzle.b, swizzle.a }) |*one, source| one.* = switch (source) {
+            .red => given[0],
+            .green => given[1],
+            .blue => given[2],
+            .alpha => given[3],
+            .zero => 0,
+            .one => 1,
+        };
+        return made;
+    }
+};
+
 pub const Texture = struct {
     format: Format,
     /// The sides the blocks are laid out by, as powers of two: each the
@@ -690,6 +753,10 @@ pub const Texture = struct {
     /// (`lp_jit_texture`, src/gallium/drivers/llvmpipe/lp_jit.c:399-404).
     samples: u32 = 1,
     sample_bytes: usize = 0,
+    /// The view's swizzle, which every read of a texel applies: `colorAt`,
+    /// `partsAt`, `wholesAt` and each sample. Each channel from itself
+    /// for every texture but a view's (since 1.120).
+    swizzle: Swizzle = .{},
 
     pub const Error = error{BadSize};
 
@@ -1077,8 +1144,12 @@ pub const Texture = struct {
     /// format has not got reads as 0 and its alpha as 1, and a texel the
     /// texture has not got reads all zero, as `colorAt` has it.
     /// `shader.Texels.intAt` is the same read of a texel buffer.
-    /// (Since 1.70.)
+    /// (Since 1.70.) Swizzled as the view says (since 1.120).
     pub fn wholesAt(texture: *const Texture, layer: u32, lod: u32, x: u32, y: u32) [4]i64 {
+        return texture.swizzle.parts(i64, texture.readWholes(layer, lod, x, y));
+    }
+
+    fn readWholes(texture: *const Texture, layer: u32, lod: u32, x: u32, y: u32) [4]i64 {
         if (!texture.holds(layer, lod, x, y)) return .{ 0, 0, 0, 0 };
         if (texture.format.wholes()) return wholeParts(texture.format, texture.memory + texture.placeOf(layer, lod, x, y));
         if (texture.format.channelsOf()) |one| {
@@ -1087,7 +1158,7 @@ pub const Texture = struct {
             for (0..one.parts) |k| made[k] = channelAt(at, one.bits, k);
             return made;
         }
-        const color = texture.texelColor(layer, lod, x, y);
+        const color = texture.readColor(layer, lod, x, y);
         var made: [4]i64 = undefined;
         inline for (&made, [4]u5{ 16, 8, 0, 24 }) |*one, shift| one.* = color >> shift & 0xFF;
         return made;
@@ -1129,7 +1200,12 @@ pub const Texture = struct {
     /// they lie, and any other format's colour as 0 to 1. The level, the
     /// layer and the place are held to what the texture has, as `colorAt`
     /// has them, and one it has not got reads all zero. (Since 1.57.)
+    /// Swizzled as the view says (since 1.120).
     pub fn partsAt(texture: *const Texture, layer: u32, lod: u32, x: u32, y: u32) [4]f32 {
+        return texture.swizzle.parts(f32, texture.readParts(layer, lod, x, y));
+    }
+
+    fn readParts(texture: *const Texture, layer: u32, lod: u32, x: u32, y: u32) [4]f32 {
         if (!texture.holds(layer, lod, x, y)) return .{ 0, 0, 0, 0 };
         // A depth as x, 0 to 1 over all 16 bits (since 1.58): `colorAt`
         // gives a grey of its top 8, which is all a colour holds.
@@ -1164,7 +1240,7 @@ pub const Texture = struct {
             for (&made, wholes) |*part, one| part.* = @floatFromInt(one);
             return made;
         }
-        return partsOfColor(texture.texelColor(layer, lod, x, y));
+        return partsOfColor(texture.readColor(layer, lod, x, y));
     }
 
     /// A texel of a layer as 0xAARRGGBB, whatever its format: what a
@@ -1177,14 +1253,21 @@ pub const Texture = struct {
     /// read in the texture's own format and holds to nothing, which is
     /// what sampling and the library's own copies want. (Since 1.55.)
     pub fn colorAt(texture: *const Texture, layer: u32, lod: u32, x: u32, y: u32) u32 {
-        if (!texture.holds(layer, lod, x, y)) return 0;
+        if (!texture.holds(layer, lod, x, y)) return texture.swizzle.color(0);
         return texture.texelColor(layer, lod, x, y);
     }
 
     /// The same without holding to anything: a texel that is there, which
     /// is what sampling reads, every place of it having been held to the
-    /// level already.
+    /// level already. Swizzled as the view says (since 1.120).
     fn texelColor(texture: *const Texture, layer: u32, lod: u32, x: u32, y: u32) u32 {
+        return texture.swizzle.color(texture.readColor(layer, lod, x, y));
+    }
+
+    /// The colour a texel holds, before any swizzle: what a comparison
+    /// reads a colour's red from, and what `partsAt` and `wholesAt`
+    /// swizzle once they have read the rest.
+    fn readColor(texture: *const Texture, layer: u32, lod: u32, x: u32, y: u32) u32 {
         const texel = texture.peekLayer(layer, lod, x, y);
         return switch (texture.format) {
             .rgba8888, .argb8888 => texel,
@@ -1335,7 +1418,7 @@ pub const Texture = struct {
             const kept = texture.peekLayer(layer, lod, x, y);
             return @as(f32, @floatFromInt(kept & 0xFFFF)) / 65535;
         }
-        return @as(f32, @floatFromInt(texture.texelColor(layer, lod, x, y) >> 16 & 0xFF)) / 255;
+        return @as(f32, @floatFromInt(texture.readColor(layer, lod, x, y) >> 16 & 0xFF)) / 255;
     }
 
     /// The layer of an array `r` falls on: the nearest there is.
@@ -3248,13 +3331,14 @@ fn slicedBy(texture: *const Texture, sampler: *const Sampler, lod: u32, point: P
     // one that keeps every axis in the same units (since 1.67).
     const z = if (sampler.unnormalized) sane(r) else sane(r) * @as(f32, @floatFromInt(slices));
     if (chosen.filter == .nearest) {
-        const slice = slicedIn(sampler, @intFromFloat(@floor(z)), slices) orelse return sampler.border;
+        const slice = slicedIn(sampler, @intFromFloat(@floor(z)), slices) orelse return texture.swizzle.color(sampler.border);
         return tapped(texture, sampler, .{ .layer = slice }, level, point, chosen.taps, chosen.filter);
     }
     const lower = @floor(z - 0.5);
     const first: i32 = @intFromFloat(lower);
-    const near = if (slicedIn(sampler, first, slices)) |slice| tapped(texture, sampler, .{ .layer = slice }, level, point, chosen.taps, chosen.filter) else sampler.border;
-    const far = if (slicedIn(sampler, first + 1, slices)) |slice| tapped(texture, sampler, .{ .layer = slice }, level, point, chosen.taps, chosen.filter) else sampler.border;
+    const border = texture.swizzle.color(sampler.border);
+    const near = if (slicedIn(sampler, first, slices)) |slice| tapped(texture, sampler, .{ .layer = slice }, level, point, chosen.taps, chosen.filter) else border;
+    const far = if (slicedIn(sampler, first + 1, slices)) |slice| tapped(texture, sampler, .{ .layer = slice }, level, point, chosen.taps, chosen.filter) else border;
     return mixColors(near, far, z - 0.5 - lower);
 }
 
@@ -3317,8 +3401,10 @@ fn sampledAt(texture: *const Texture, sampler: *const Sampler, reads: Reads, lod
         const left: i32 = @as(i32, @intFromFloat(@floor(x))) + offset[0];
         const top: i32 = @as(i32, @intFromFloat(@floor(y))) + offset[1];
         if (sampler.compare == .none) return texelAt(texture, sampler, reads, lod, left, top);
+        // What passed, swizzled: Vulkan compares the depth and swizzles
+        // what the comparison gave (since 1.120).
         const value = valueAt(texture, sampler, reads, lod, left, top);
-        return greyOf(if (sampler.compare.passes(value, reference)) 1 else 0);
+        return texture.swizzle.color(greyOf(if (sampler.compare.passes(value, reference)) 1 else 0));
     }
     const low_x = @floor(x - 0.5);
     const low_y = @floor(y - 0.5);
@@ -3344,7 +3430,7 @@ fn sampledAt(texture: *const Texture, sampler: *const Sampler, reads: Reads, lod
         inline for (places, weights) |place_at, weight| {
             if (sampler.compare.passes(valueAt(texture, sampler, reads, lod, place_at[0], place_at[1]), reference)) passed += weight;
         }
-        return greyOf(passed);
+        return texture.swizzle.color(greyOf(passed));
     }
     const upper = mixColors(corners[0], corners[1], part_x);
     const lower = mixColors(corners[2], corners[3], part_x);
@@ -3364,8 +3450,10 @@ const Reads = union(enum) {
 fn texelAt(texture: *const Texture, sampler: *const Sampler, reads: Reads, lod: u32, x: i32, y: i32) u32 {
     switch (reads) {
         .layer => |layer| {
-            const column = wrapped(sampler.wrap[0], x, texture.width(lod)) orelse return sampler.border;
-            const row = wrapped(sampler.wrap[1], y, texture.height(lod)) orelse return sampler.border;
+            // The border swizzled as a texel is, Vulkan replacing the
+            // texel before it swizzles (since 1.120).
+            const column = wrapped(sampler.wrap[0], x, texture.width(lod)) orelse return texture.swizzle.color(sampler.border);
+            const row = wrapped(sampler.wrap[1], y, texture.height(lod)) orelse return texture.swizzle.color(sampler.border);
             return texture.texelColor(@min(layer, texture.layer_count - 1), lod, column, row);
         },
         // A cube has no edge of its own: past a face's, the face beside

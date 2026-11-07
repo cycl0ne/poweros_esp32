@@ -876,6 +876,14 @@ fn sendVertices(queue: *Queue, vertices: u32, varyings: u32, fragment: u32, unif
 /// `wrtmuc` fall - so this answers the words and the caller places them.
 const Configuration = struct { texture: u32, sampler: u32 };
 
+/// Where a channel of a view's swizzle comes from, as the TMU's state names
+/// it (since 1.120).
+fn pickOf(source: facet.texture.Swizzle.Source) tiling.Pick {
+    return switch (source) {
+        inline else => |one| @field(tiling.Pick, @tagName(one)),
+    };
+}
+
 /// The TMU's two words for the texture bound at `set`, `binding`, read
 /// as `filter` and `wrap` say. Null without a texture bound, with one of
 /// a format the TMU does not read, or with no memory.
@@ -895,7 +903,10 @@ fn tmuConfiguration(queue: *Queue, set: u32, binding: u32, filter: tiling.Filter
     };
     const layout = layoutOf(image.format, image.width, image.height, image.levels);
     const state = carve(queue, tiling.texture_state_bytes, tiling.texture_state_alignment) orelse return null;
-    tiling.writeTextureState(state.cpu[0..tiling.texture_state_bytes], &layout, texels, @intCast(@intFromPtr(image.data) + view.base_layer * image.layer_bytes), view.base_level, view.base_level + view.level_count - 1, view.layer_count, @intCast(image.layer_bytes));
+    // The view's swizzle, which the TMU applies over the format's own
+    // (since 1.120).
+    const picks = [4]tiling.Pick{ pickOf(view.swizzle.r), pickOf(view.swizzle.g), pickOf(view.swizzle.b), pickOf(view.swizzle.a) };
+    tiling.writeTextureState(state.cpu[0..tiling.texture_state_bytes], &layout, texels, picks, @intCast(@intFromPtr(image.data) + view.base_layer * image.layer_bytes), view.base_level, view.base_level + view.level_count - 1, view.layer_count, @intCast(image.layer_bytes));
     const sampler = carve(queue, tiling.sampler_state_bytes, tiling.sampler_state_alignment) orelse return null;
     tiling.writeSamplerState(sampler.cpu[0..tiling.sampler_state_bytes], filter, wrap);
     return .{ .texture = tiling.parameter0(state.address), .sampler = tiling.parameter1(sampler.address) };

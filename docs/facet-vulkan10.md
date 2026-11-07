@@ -124,14 +124,14 @@ Mesa, in 1.92, item 45 in 1.93, item 44 in 1.94, item 84 in 1.95,
 item 61's next six rows of eight, on the cores, in 1.112, item 43's
 half of two, the cores', in 1.113, item 61's last row of eight, on the
 cores, in 1.114, item 85's half of two, the cores', in 1.115, item 87
-in 1.116, item 88 in 1.117, item 86 in 1.118 and item 48's half of two,
-the cores', in 1.119.**
+in 1.116, item 88 in 1.117, item 86 in 1.118, item 48's half of two,
+the cores', in 1.119, and item 41 in 1.120.**
 Each
 carries a *Done* note below saying what was actually built and where the
 item's own description turned out to be wrong - and several did. Things
 found while doing them became the items at the end of the list: 77 and 78
-from 1.80 and 1.81, 79, 80 and 81 from 1.82, 85 and 86 from 1.113, and
-87 and 88 from scoping item 86.
+from 1.80 and 1.81, 79, 80 and 81 from 1.82, 85 and 86 from 1.113,
+87 and 88 from scoping item 86, and 89 from item 41.
 
 Items 52, 28, 17, 22, 61, 43, 85 and 48 are the ones split between devices:
 the cores draw every sampler as of 1.83, sample at a constant texel offset
@@ -1212,11 +1212,49 @@ Found independently by: formats, features (2 items: wide_channels and whole_text
 
 ### 41. Honour a non-identity component swizzle on an image view
 
-*image views* &mdash; conformance-blocking, medium
+*image views* &mdash; conformance-blocking, medium &mdash; **done in 1.120**, the V3D's half unchecked on the board
 
 CreateImageView refuses any ComponentMapping that is not the identity, with error_format_not_supported. VkComponentMapping is core 1.0 with no feature or limit gating it: a view of a mandatory sampled format must accept any of r/g/b/a/zero/one in any slot. The structure exists and is read only to be rejected. Lifting it means the swizzle reaching the sampling path — baked into the view's texture.Texture for the cores, or written into the TMU's own swizzle words for the V3D, which tiling.zig already uses for R8. This was found by one strand and is in neither document.
 
 > Verified verbatim: image/createimageview.zig:107 `if (info.format != image.given_format or !identity(info.components)) return .error_format_not_supported;` and :160-166 `fn identity` (each channel from itself or .identity). sdk/libs/facet/facet.zig:1086 ComponentMapping, :1166 `components: ComponentMapping = .{}`.
+
+**Done in 1.120, on both devices**, in 120 lines of code and 195 of
+tests. Ported from lavapipe, which hands the view's four to the sampler
+view (`lvp_create_samplerview`, lvp_image.c:379-382), llvmpipe, which
+swizzles each sample once it is made (`apply_sampler_swizzle`,
+lp_bld_sample_soa.c:3954-3956), and v3dv, which composes the format's
+swizzle with the view's into the TMU's state (v3dv_image.c:828-831,
+`pack_texture_shader_state_helper`, v3dvx_image.c:72-75).
+
+- **The cores.** A texture carries the view's swizzle (`texture.Swizzle`,
+  `Texture.swizzle`), and every read of a texel applies it: a sample by a
+  sampler or by a fixed form's sampling, `colorAt`, `partsAt` and
+  `wholesAt`. It is applied to each texel as it is read rather than once
+  a sample is made, which comes to the same, a channel taken or a
+  constant being mixed alike before a filter or after it; the border and
+  what a comparison gave are swizzled as well, as Vulkan replaces a texel
+  and compares a depth before it swizzles (20.2.5). A comparison reads
+  the texel as it lies.
+- **The fixed form's fast path** reads texels as they lie, so a view that
+  swizzles goes through the run-time sampler, as llvmpipe's linear path
+  takes no swizzle (`lp_linear_check_sampler`,
+  lp_linear_sampler.c:918-924).
+- **A depth or a stencil.** A swizzle of one takes 0 from the green and
+  the blue and 1 from the alpha, lavapipe's `conv_depth_swiz`
+  (lvp_image.c:337-347, 389-396). lavapipe applies that to every view of
+  one; here a view that swizzles nothing keeps the grey a depth reads as,
+  which is item 89.
+- **The V3D.** The TMU's four swizzle fields take the view's over the
+  format's own (tiling.zig `writeTextureState`), host-tested to the bit
+  and drawn by the board probe, which has not run yet.
+- **Where Vulkan has none.** A framebuffer refuses a view that swizzles
+  (VUID-VkFramebufferCreateInfo-pAttachments-00884). A storage image and
+  an input attachment may not be one
+  (VUID-VkWriteDescriptorSet-descriptorType-00336); UpdateDescriptorSets
+  has no result to refuse with, so that is left to the program, as Vulkan
+  leaves it. A value that is none of the seven is still
+  `error_format_not_supported`, until item 81 settles what an invalid
+  value answers.
 
 ### 42. Accept VK_IMAGE_CREATE_MUTABLE_FORMAT and a compatible view format
 
@@ -2411,6 +2449,26 @@ addresses, as before. CmdEndQuery takes out the query it ends and leaves
 the other counting. A reset forgets every query of the pool, as it did
 the one, though Vulkan does not allow resetting an active one
 (VUID-vkCmdResetQueryPool-None-02841).
+
+### 89. A depth sampled as a colour reads a grey, where Vulkan reads (D, 0, 0, 1)
+
+*samplers / depth* &mdash; conformance-blocking, small, found while doing item 41
+
+A sample of a depth that does not compare reads it as an opaque grey of
+its top 8 bits, (D, D, D, 1) (`texture.Texture.readColor`, the `d16`
+case), and that is what a fixed form and a generated shader get. Vulkan
+converts a texel by component substitution, "(0,0,0,1) for missing
+(R,G,B,A) components" (13.2.2), so a depth reads (D, 0, 0, 1), its D as a
+float. `partsAt` already reads it so, at all 16 bits. lavapipe gets there
+by a swizzle on every view of a depth or a stencil, the green and the blue
+0 and the alpha 1 (`conv_depth_swiz`, lvp_image.c:337-347, applied at
+389-396). Since 1.120 a view that swizzles reads the green and the blue as
+0 (item 41); one that swizzles nothing keeps the grey. The port is
+lavapipe's rule on every such view, a few lines, and the tests and the
+probe's pictures that read the grey (tests/draw.zig at the layers of a
+sampled depth, and facetprobe.zig). The 8 bits are the colour path's,
+which holds 8 a channel; a generated shader reading D at 16 bits is the
+larger half.
 
 ## Deferred by the decision, not out of reach
 

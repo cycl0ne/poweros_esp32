@@ -749,7 +749,12 @@ test "a copy into a texture: each texel where the texture layout keeps it, as 0x
 
     var view: ?*facet.ImageView = null;
     try testing.expectEqual(facet.Result.error_format_not_supported, rig.fb.CreateImageView(device, &.{ .image = image.?, .format = .b8g8r8a8_unorm }, &view));
-    try testing.expectEqual(facet.Result.error_format_not_supported, rig.fb.CreateImageView(device, &.{ .image = image.?, .format = .r8g8b8a8_unorm, .components = .{ .r = .b } }, &view));
+    // A view that swizzles is made since 1.120, its texels reading red
+    // from blue (docs/facet-vulkan10.md item 41).
+    var swizzled: ?*facet.ImageView = null;
+    try testing.expectEqual(facet.Result.success, rig.fb.CreateImageView(device, &.{ .image = image.?, .format = .r8g8b8a8_unorm, .components = .{ .r = .b } }, &swizzled));
+    try testing.expectEqual(texture.Swizzle{ .r = .blue }, _objects.of(_image.ImageView, swizzled.?).texels.swizzle);
+    rig.fb.DestroyImageView(device, swizzled);
     try testing.expectEqual(facet.Result.error_format_not_supported, rig.fb.CreateImageView(device, &.{ .image = image.?, .format = .r8g8b8a8_unorm, .subresource_range = .{ .base_mip_level = 1, .level_count = 3 } }, &view));
     try testing.expectEqual(facet.Result.success, rig.fb.CreateImageView(device, &.{ .image = image.?, .format = .r8g8b8a8_unorm, .subresource_range = .{ .base_mip_level = 1 } }, &view));
     defer rig.fb.DestroyImageView(device, view);

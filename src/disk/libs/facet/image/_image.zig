@@ -150,6 +150,10 @@ pub const ImageView = struct {
     layer_count: u32 = 1,
     /// `texture`: the levels it takes, as a sample reads them.
     texels: texture.Texture = undefined,
+    /// Its component swizzle, which its texels apply (since 1.120): kept
+    /// here as well for a view without texels, which a framebuffer takes
+    /// only where it swizzles nothing.
+    swizzle: texture.Swizzle = .{},
     /// `rows`: its pixels, for a fragment function of a later subpass to
     /// read (`IMAGE_USAGE_INPUT_ATTACHMENT`, `shader.Resources.input`).
     /// Nothing to read where the image is of another kind.

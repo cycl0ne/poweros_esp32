@@ -2961,4 +2961,56 @@ pub const LIBRARY_VERSION = 1;
 /// CreateImage takes them and refuses one level more; on a device of a
 /// layout of its own both refuse. Each of 14 changes put back fails at
 /// least one of them.
-pub const LIBRARY_REVISION = 119;
+///
+/// 120: **An image view's component swizzle.** Item 41 of
+/// docs/facet-vulkan10.md. Vulkan 1.0 lets every view take any of its
+/// seven sources in each of the four channels, with no feature or limit
+/// gating it; CreateImageView refused all but the identity. lavapipe hands
+/// the view's four to the sampler view (`lvp_create_samplerview`,
+/// lvp_image.c:379-382) and llvmpipe swizzles each sample once it is made
+/// (`apply_sampler_swizzle`, lp_bld_sample_soa.c:3954-3956). Here a
+/// texture carries the view's swizzle (`texture.Swizzle`,
+/// `Texture.swizzle`), and every read of a texel applies it: a sample by a
+/// sampler or by a fixed form's sampling, `colorAt`, `partsAt` and
+/// `wholesAt`. It is applied to each texel as it is read rather than once
+/// a sample is made, which comes to the same, a channel taken or a
+/// constant being mixed alike before a filter or after it. The border and
+/// what a comparison gave are swizzled as well, Vulkan replacing a texel
+/// and comparing a depth before it swizzles, and a comparison reads the
+/// texel as it lies (`readColor`). The fixed form's fast path reads
+/// texels as they lie, so a view that swizzles goes through the run-time
+/// sampler, as llvmpipe's linear path takes no swizzle
+/// (`lp_linear_check_sampler`, lp_linear_sampler.c:918-924). A swizzle of
+/// a depth takes 0 from the green and the blue and 1 from the alpha,
+/// lavapipe's `conv_depth_swiz` (lvp_image.c:337-347, 389-396); a view of
+/// one that swizzles nothing keeps the grey a depth reads as, where Vulkan
+/// reads (D, 0, 0, 1), which is item 89, found here. The V3D's TMU takes
+/// the view's four over the format's own, v3dv's
+/// `util_format_compose_swizzles` (v3dv_image.c:828-831) packed into the
+/// texture shader state (`pack_texture_shader_state_helper`,
+/// v3dvx_image.c:72-75), in `tiling.writeTextureState`; unchecked on the
+/// board. A framebuffer refuses a view that swizzles
+/// (VUID-VkFramebufferCreateInfo-pAttachments-00884). A storage image and
+/// an input attachment may not be one
+/// (VUID-VkWriteDescriptorSet-descriptorType-00336), which is left to the
+/// program, UpdateDescriptorSets having no result to refuse with. A value
+/// that is none of the seven is refused as before.
+///
+/// Tests: each of the seven sources in each channel is taken, and a value
+/// past them refused. A view that takes red from the blue, green from
+/// zero, blue from one and alpha from the red reads its texels so through
+/// `colorAt`, `partsAt` and `wholesAt`, a texel it does not hold reads the
+/// swizzled zero, a sampler reads it nearest and mixed, its border and a
+/// 3D texture's past its last slice swizzled too, and a comparison reads
+/// its red as it lies. A fixed form of the texture's own format draws it
+/// swizzled, through the run-time sampler, where the plain view takes the
+/// fast path. A depth's view of one, red, green and alpha resolves to one,
+/// red, zero and one, and its comparisons - always, never, and greater and
+/// less than a depth of a quarter, nearest and mixed - compare the depth
+/// as it lies and read swizzled. A
+/// framebuffer refuses a view that swaps red and blue and takes one whose
+/// swizzle is given as the identity's own sources. The V3D's texture state
+/// packs the composed four, for a format of its own swizzle and for one
+/// without, and the board probe draws a swizzled view. Each of 20
+/// changes put back fails at least one of them.
+pub const LIBRARY_REVISION = 120;

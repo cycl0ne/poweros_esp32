@@ -1958,14 +1958,19 @@ pub fn textured(comptime sampling: texture.Sampling, fragments: *const Fragments
     // form to declare is the texture's own format. So is one kept in rows
     // (`Texture.pitch`) whatever its format, the fast path's places being
     // those of blocks: an image drawn into and sampled where its rows lie
-    // is one of `argb8888` (since 1.119), a fixed form's own format.
-    if (given.format != sampling.format or given.pitch != 0) return texturedOther(sampling, fragments, given);
+    // is one of `argb8888` (since 1.119), a fixed form's own format. And
+    // so is a view that swizzles its channels (since 1.120), which the
+    // fast path reads as they lie, as llvmpipe's linear path takes no
+    // swizzle either (`lp_linear_check_sampler`,
+    // src/gallium/drivers/llvmpipe/lp_linear_sampler.c:918-924).
+    if (given.format != sampling.format or given.pitch != 0 or !given.swizzle.isIdentity()) return texturedOther(sampling, fragments, given);
     if (fragments.exact) texturedQuads(sampling, true, fragments, given) else texturedQuads(sampling, false, fragments, given);
 }
 
-/// `textured` where the texture's format is not the form's, or where it is
-/// kept in rows: the colours come from `Texture.sampleLayer`, which reads
-/// any format and any layout at run time, a pixel at a time. The level is
+/// `textured` where the texture's format is not the form's, where it is
+/// kept in rows, or where its view swizzles it: the colours come from
+/// `Texture.sampleLayer`, which reads any format and any layout at run
+/// time, swizzled, a pixel at a time. The level is
 /// the quad's own steps', as a GPU takes it. (Since 1.44.)
 fn texturedOther(comptime sampling: texture.Sampling, fragments: *const Fragments, given: *const texture.Texture) void {
     @setRuntimeSafety(false);
