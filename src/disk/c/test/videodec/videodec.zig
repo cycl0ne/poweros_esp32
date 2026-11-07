@@ -8,7 +8,10 @@
 //! or .hevc, in Annex B form as `ffmpeg -c:v copy -bsf:v
 //! h264_mp4toannexb out.h264` writes it - is read into memory and cut into
 //! pictures at their access units; each is fed to videodec.resource with
-//! a time of 40 ms a picture, and the frames are taken as they come. The
+//! a time of 40 ms a picture, and the frames are taken as they come. A
+//! name ending in .ivf is VP9 in an IVF file, as `ffmpeg -c:v copy
+//! out.ivf` writes it: each of its packets - a frame, or a superframe
+//! with hidden ones - is fed as it is. The
 //! stream's size, profile and frame rate are printed, then how many
 //! frames came out and how fast, and whether they came in order: their
 //! numbers one after another, their times rising.
@@ -60,7 +63,7 @@ const WatchdogBase = sdk.interface.watchdog.WatchdogBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "VideoDec";
-const VERSION_STRING = "\x00$VER: VideoDec 1.2 (07.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: VideoDec 1.3 (07.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FILE/A,H265/S,FRAME/K/N,TO/K,RGB/S,SHOW/S,SMOOTH/S,WIDTH/K/N,PACE/S,WATCHDOG/K/N";
@@ -85,15 +88,35 @@ fn now(tb: *TimerBase) u64 {
 }
 
 /// An elementary stream cut into access units: each from the start code
-/// of its first unit to the start code of the next access unit's.
+/// of its first unit to the start code of the next access unit's. An IVF
+/// file (VP9) cut into its packets.
 const Splitter = struct {
     bytes: []const u8,
     h265: bool,
-    /// The next unit's start code.
+    ivf: bool,
+    /// The next unit's start code; the next packet's header.
     at: usize,
 
-    fn init(bytes: []const u8, h265: bool) Splitter {
-        return .{ .bytes = bytes, .h265 = h265, .at = startCode(bytes, 0) };
+    fn init(bytes: []const u8, codec: u32) Splitter {
+        if (codec == videodec.VDCODEC_VP9) {
+            // After the file's header, as long as it says.
+            const header: usize = if (bytes.len >= 8) @as(usize, bytes[6]) | @as(usize, bytes[7]) << 8 else bytes.len;
+            return .{ .bytes = bytes, .h265 = false, .ivf = true, .at = header };
+        }
+        const h265 = codec == videodec.VDCODEC_H265;
+        return .{ .bytes = bytes, .h265 = h265, .ivf = false, .at = startCode(bytes, 0) };
+    }
+
+    /// The IVF file's next packet: after its 12 bytes - its size, then
+    /// its time - as many as its size says.
+    fn packet(s: *Splitter) ?[]const u8 {
+        const b = s.bytes;
+        if (s.at + 12 > b.len) return null;
+        const size: usize = @as(usize, b[s.at]) | @as(usize, b[s.at + 1]) << 8 | @as(usize, b[s.at + 2]) << 16 | @as(usize, b[s.at + 3]) << 24;
+        const start = s.at + 12;
+        if (size > b.len - start) return null;
+        s.at = start + size;
+        return b[start..][0..size];
     }
 
     /// Where the start code at or after `from` begins - its leading zero
@@ -139,6 +162,7 @@ const Splitter = struct {
     }
 
     fn next(s: *Splitter) ?[]const u8 {
+        if (s.ivf) return s.packet();
         const b = s.bytes;
         if (s.at >= b.len) return null;
         const start = s.at;
@@ -411,6 +435,14 @@ fn errorName(code: u32) [*:0]const u8 {
     };
 }
 
+fn codecName(codec: u32) [*:0]const u8 {
+    return switch (codec) {
+        videodec.VDCODEC_H265 => "H.265",
+        videodec.VDCODEC_VP9 => "VP9",
+        else => "H.264",
+    };
+}
+
 fn endsWith(name: [*:0]const u8, tail: []const u8) bool {
     var n: usize = 0;
     while (name[n] != 0) : (n += 1) {}
@@ -422,9 +454,8 @@ fn endsWith(name: [*:0]const u8, tail: []const u8) bool {
     return true;
 }
 
-fn run(dl: *DosBase, vb: *VideoDecBase, tb: *TimerBase, file: []const u8, h265: bool, t: *Tally) i32 {
+fn run(dl: *DosBase, vb: *VideoDecBase, tb: *TimerBase, file: []const u8, codec: u32, t: *Tally) i32 {
     var err: u32 = 0;
-    const codec = if (h265) videodec.VDCODEC_H265 else videodec.VDCODEC_H264;
     const opened = now(tb);
     const decoder = vb.OpenVideoDecoder(codec, null, &err) orelse {
         _ = Printf(dl, "OpenVideoDecoder: %s\n", .{errorName(err)});
@@ -433,7 +464,7 @@ fn run(dl: *DosBase, vb: *VideoDecBase, tb: *TimerBase, file: []const u8, h265: 
     defer vb.CloseVideoDecoder(decoder);
     _ = Printf(dl, "opened in %lu us\n", .{now(tb) - opened});
 
-    var splitter = Splitter.init(file, h265);
+    var splitter = Splitter.init(file, codec);
     var pictures: u32 = 0;
     var frame: videodec.VideoDecFrame = .{};
     var told = false;
@@ -539,6 +570,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer dl.FreeArgs(rda);
     const name: [*:0]const u8 = @ptrFromInt(argv[arg_file]);
     const h265 = argv[arg_h265] != 0 or endsWith(name, ".h265") or endsWith(name, ".265") or endsWith(name, ".hevc");
+    const codec = if (endsWith(name, ".ivf")) videodec.VDCODEC_VP9 else if (h265) videodec.VDCODEC_H265 else videodec.VDCODEC_H264;
     var tally: Tally = .{};
     if (argv[arg_frame] != 0) tally.wanted = @intCast(@max(0, @as(*const i32, @ptrFromInt(argv[arg_frame])).*));
     if (argv[arg_to] != 0) tally.to = @ptrFromInt(argv[arg_to]);
@@ -548,8 +580,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         return dos.RETURN_WARN;
     };
     const vb: *VideoDecBase = @ptrCast(found);
-    if (vb.VideoDecCodecs() & (if (h265) videodec.VDCODEC_H265 else videodec.VDCODEC_H264) == 0) {
-        _ = Printf(dl, "The decoder does not take %s\n", .{if (h265) "H.265" else "H.264"});
+    if (vb.VideoDecCodecs() & codec == 0) {
+        _ = Printf(dl, "The decoder does not take %s\n", .{codecName(codec)});
         return dos.RETURN_WARN;
     }
 
@@ -618,7 +650,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     };
     dl.UnLock(lock);
     defer sys.FreeVec(file.ptr);
-    _ = Printf(dl, "%s: %lu bytes of %s\n", .{ name, file.len, if (h265) "H.265" else "H.264" });
+    _ = Printf(dl, "%s: %lu bytes of %s\n", .{ name, file.len, codecName(codec) });
     if (argv[arg_watchdog] != 0) {
         const millis: u32 = @intCast(@max(1, @as(*const i32, @ptrFromInt(argv[arg_watchdog])).*));
         const wb: *WatchdogBase = @ptrCast(sys.OpenResource(watchdog.WATCHDOGNAME) orelse {
@@ -633,5 +665,5 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         tally.watchdog = wb;
     }
     defer if (tally.watchdog) |wb| wb.DisarmWatchdog();
-    return run(dl, vb, tb, file, h265, &tally);
+    return run(dl, vb, tb, file, codec, &tally);
 }

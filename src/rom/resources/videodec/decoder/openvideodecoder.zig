@@ -79,11 +79,12 @@ const ring_most: u32 = 64 * 1024 * 1024;
 /// videoparse.library (opened here, from LIBS:) and is a stream on the
 /// device, made when its sequence is read: in the device's memory a
 /// context (128 KiB, and for H.264 192 bytes a macroblock for each
-/// reference and the picture decoded, for H.265 about 3 MiB at 1080p), a
-/// surface for each of those, and the surface pictures are written to -
-/// about 26 MiB at 1080p with four H.264 references, 24 MiB for H.265
-/// with five pictures in its buffer, 188 MiB for 10-bit H.265 at 4K
-/// with six.
+/// reference and the picture decoded, for H.265 about 3 MiB at 1080p,
+/// for VP9 about 10.4 MiB at any size, the default probabilities written
+/// into it), a surface for each of those, and the surface pictures are
+/// written to - about 26 MiB at 1080p with four H.264 references, 24 MiB
+/// for H.265 with five pictures in its buffer, 188 MiB for 10-bit H.265
+/// at 4K with six, 41 MiB for VP9 at 1080p with its nine.
 /// Its frames are in the system's memory, one for each picture the
 /// stream holds and VDA_HeldFrames and two more; VDA_StreamSize is not
 /// read.

@@ -19,8 +19,8 @@ const VideoDecBase = base.VideoDecBase;
 ///
 /// RESULT:
 /// A VDCODEC_* bit for each codec: VDCODEC_H264 | VDCODEC_H265 on the
-/// JH7110, and on x86-64 with an AMD graphics device whose video block
-/// is 4.0.2. 0 when the machine has no decoder, or it would
+/// JH7110, and with VDCODEC_VP9 (SINCE 1.5) on x86-64 with an AMD
+/// graphics device whose video block is 4.0.2. 0 when the machine has no decoder, or it would
 /// not wake or its firmware would not start.
 ///
 /// BEHAVIOR:

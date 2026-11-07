@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MIT
-//! videoparse.library: an H.264 stream read for a decoder - its
-//! parameter sets and slice headers, its pictures' order counts and the
-//! references each holds, the lists each slice decodes from, the marking
-//! after each picture and the order the pictures are shown in - and said
-//! event by event; on the disk in LIBS:. It decodes no samples: that is
-//! the caller's, a chip's engine or a decoder's cores.
+//! videoparse.library: an H.264, HEVC or VP9 stream read for a decoder -
+//! its parameter sets and slice headers, or its frame headers, its
+//! pictures' order counts and the references each holds, the lists each
+//! slice decodes from, the marking after each picture and the order the
+//! pictures are shown in - and said event by event; on the disk in LIBS:.
+//! It decodes no samples: that is the caller's, a chip's engine or a
+//! decoder's cores.
 //!
 //! A parser (`parser/_parser.zig`) cuts each packet into its units as the
 //! events are asked for - after start codes, or after their lengths where
@@ -14,6 +15,10 @@
 //! (`params.zig`), the slice header (`slice.zig`), the picture buffer
 //! without its samples (`dpb.zig`: order counts, marking, lists, bumping,
 //! slots) and the picture-by-picture reading over them (`_h264.zig`).
+//! HEVC's (`hevc/`) is laid out the same. VP9's (`vp9/`): the
+//! uncompressed header (`header.zig`) and the frame-by-frame reading -
+//! superframes, the eight reference slots, the slots they hold
+//! (`_vp9.zig`).
 //!
 //! The jump table is videoparse_lvo.zig, the ROM tag, init and expunge
 //! videoparse_init.zig, the base videoparse_base.zig. Each call is a file

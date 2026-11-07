@@ -1,26 +1,31 @@
 // SPDX-License-Identifier: MIT
 //! The VP9 decoder (VP9 Bitstream & Decoding Process Specification 0.6):
-//! packets in, the frames to show out.
+//! videoparse.library's events in, the frames to show out.
 //!
-//! A packet is one frame or a superframe of several, the last but one
-//! usually hidden (B.3). A frame is its uncompressed header, which names
-//! the frame's size, format and references and what the frame keeps of
-//! the ones before it; the compressed header, which changes the
-//! probabilities; and the tiles. The decoder reads every tile into the
-//! blocks and coefficients of the frame (parse.zig) and adapts the
-//! probabilities to what it read; the rest is a job: the frame put
+//! The library cuts the packets into their frames - a superframe's
+//! several, the last but one usually hidden (B.3) - and reads each one's
+//! uncompressed header, which names the frame's size, format and
+//! references and what the frame keeps of the ones before it: the colour,
+//! the loop filter's deltas, the segmentation, whether the vectors of the
+//! frame before are read. Here a frame is its compressed header, which
+//! changes the probabilities, and its tiles. The decoder reads every tile
+//! into the blocks and coefficients of the frame (parse.zig) and adapts
+//! the probabilities to what it read; the rest is a job: the frame put
 //! together a superblock row at a time (recon.zig), each row filtered
 //! once it is done (filter.zig) - its last line kept as it was before,
 //! for the intra prediction of the row below, which reads its neighbours
 //! unfiltered. The frame goes into the reference slots its header names,
 //! of eight.
 //!
-//! What a frame keeps of the ones before it - the four saved sets of
-//! probabilities, the segment map, the vectors of the frame before, the
-//! loop filter's and segmentation's settings - is the reading's alone,
+//! What a frame keeps of the ones before it here - the four saved sets of
+//! probabilities, the segment map, the vectors of the frame before - is
 //! kept as libvpx keeps it, whose decode the test vectors are of: a frame
 //! that is not right leaves the decoder waiting for a key frame or an
-//! intra-only one.
+//! intra-only one. The library's slots name the pictures it shows
+//! (VPEV_SHOW), a reference again among them; the decoder's own frames
+//! are as many as it holds, in the eight reference slots, for its jobs
+//! and to be shown, and a slot goes back to the library (`giveBack`) as
+//! soon as it says VPEV_FREE of it, or with a seek.
 //!
 //! **The cores**: given workers (`useCores`), the jobs wait in turn for
 //! whichever worker is free, and the decoder goes on reading the next
@@ -31,6 +36,9 @@
 //! blocks' vectors reach, which jobs begun before it put together.
 //! Without workers the decoder runs each job itself.
 
+const sdk = @import("sdk");
+const vp = sdk.videoparse;
+const v9 = vp.vp9;
 const common = @import("common.zig");
 const tables = @import("tables.zig");
 const header = @import("header.zig");
@@ -44,6 +52,19 @@ const Frame = common.Frame;
 const MvRef = common.MvRef;
 const Cores = common.Cores;
 const Probs = probs.Probs;
+
+/// The library's slots at most: the eight reference slots' pictures, the
+/// frame decoded, and the caller's 32.
+pub const max_slots = 9 + 32;
+
+/// A frame's depth, sampling and colour, as its header says.
+const Color = struct {
+    bit_depth: u8 = 8,
+    color_space: u8 = 0,
+    full_range: bool = false,
+    ss_x: u1 = 1,
+    ss_y: u1 = 1,
+};
 
 /// Frames decoded at once at most; it divides 256 (`Decoder.crew`).
 const max_jobs = 8;
@@ -185,13 +206,11 @@ pub const Decoder = struct {
     env: Env,
     frames: [max_frames]Frame = @splat(.{}),
     slots: [8]?*Frame = @splat(null),
-    /// What the headers keep from frame to frame.
-    st: header.State = .{},
     /// The saved probabilities, and whether a reset has set each.
-    contexts: [4]Probs = @splat(Probs.defaults),
+    contexts: [4]Probs = @splat(probs.defaults),
     ready: [4]bool = @splat(false),
     /// The frame's probabilities, and how often it read each value.
-    p: Probs = Probs.defaults,
+    p: Probs = probs.defaults,
     counts: probs.Counts = undefined,
     ps: parse.Parse,
     /// The vectors of this frame and of the one before ([cur ^ 1]), and
@@ -204,14 +223,22 @@ pub const Decoder = struct {
     mi_cols: u32 = 0,
     mi_rows: u32 = 0,
     ss_x: u1 = 1,
-    /// The last frame decoded: its size, whether it was shown, and the
-    /// type and intra-only flag of the last header read, which libvpx
-    /// keeps through a key frame.
+    /// The last frame decoded: its size and depth, and the type of the
+    /// last header, which the probabilities adapt by.
     width: u32 = 0,
     height: u32 = 0,
-    last_show_frame: bool = false,
+    bit_depth: u8 = 8,
     frame_type: u1 = header.KEY_FRAME,
-    intra_only: bool = false,
+    /// The frame whose VPEV_PICTURE came, its header and its slot, until
+    /// its VPEV_SLICE; the picture of each slot the library gave.
+    pending: v9.Vp9Header = .{},
+    pending_slot: u8 = 0,
+    has_pending: bool = false,
+    by_slot: [max_slots]?*Frame = @splat(null),
+    /// The library's slots by bit: lent with their VPEV_PICTURE, and to be
+    /// given back (ReleaseVideoSlot) since their VPEV_FREE or a seek.
+    lent: u64 = 0,
+    returned: u64 = 0,
     /// Until a key frame or an intra-only one: at the start, after a
     /// frame that was not right and after a seek.
     need_resync: bool = true,
@@ -273,6 +300,10 @@ pub const Decoder = struct {
         dec.drain();
         for (0..8) |i| dec.setSlot(i, null);
         while (dec.out_count != 0) dec.release();
+        dec.by_slot = @splat(null);
+        dec.returned |= dec.lent;
+        dec.lent = 0;
+        dec.has_pending = false;
         dec.flushing = false;
         dec.need_resync = true;
     }
@@ -305,69 +336,67 @@ pub const Decoder = struct {
         dec.flushing = true;
     }
 
-    /// Packet `data` decoded, shown at `time`: the frame it shows is
-    /// handed out by `next`, unless `drop` - due before what is shown -
-    /// has it decoded for the frames after it alone. As libvpx, a packet
-    /// shows one frame at most, its last frame's when that is shown.
-    pub fn decodeFrame(dec: *Decoder, data: []const u8, time: i64, drop: bool) Error!void {
-        dec.flushing = false;
-        var shown: ?*Frame = null;
-        dec.packet(data, &shown) catch |e| {
-            dec.need_resync = true;
-            return e;
-        };
-        if (shown) |f| {
-            if (!drop) dec.queue(f, time);
+    /// An event of videoparse.library's: a frame's header kept from its
+    /// VPEV_PICTURE, the frame decoded - or begun on a worker - from its
+    /// VPEV_SLICE into the picture of the slot the library gave it, shown
+    /// by VPEV_SHOW unless `drop` - due before what is shown - has it
+    /// decoded for the frames after it alone; VPEV_FREE forgets the
+    /// slot's picture, which the decoder keeps as long as it needs it.
+    pub fn event(dec: *Decoder, e: *const vp.VideoEvent, drop: bool) Error!void {
+        switch (e.kind) {
+            vp.VPEV_PICTURE => {
+                const pic = e.picture orelse return;
+                const v = pic.vp9 orelse return;
+                if (pic.slot >= dec.by_slot.len) return error.Corrupt;
+                dec.lent |= @as(u64, 1) << @intCast(pic.slot);
+                dec.pending = v.*;
+                dec.pending_slot = pic.slot;
+                dec.has_pending = true;
+            },
+            vp.VPEV_SLICE => {
+                if (!dec.has_pending) return;
+                dec.has_pending = false;
+                const sl = e.slice orelse return;
+                dec.flushing = false;
+                dec.by_slot[dec.pending_slot] = null;
+                const f = dec.frame(sl.unit[0..sl.unit_bytes], &dec.pending) catch |failure| {
+                    dec.need_resync = true;
+                    return failure;
+                };
+                dec.by_slot[dec.pending_slot] = f;
+            },
+            vp.VPEV_SHOW => {
+                if (e.slot >= dec.by_slot.len or dec.need_resync) return;
+                const f = dec.by_slot[e.slot] orelse return;
+                if (!drop) dec.queue(f, e.time);
+            },
+            vp.VPEV_FREE => if (e.slot < dec.by_slot.len) {
+                dec.by_slot[e.slot] = null;
+                const bit = @as(u64, 1) << @intCast(e.slot);
+                if (dec.lent & bit != 0) dec.returned |= bit;
+                dec.lent &= ~bit;
+            },
+            else => {},
         }
     }
 
-    /// The frames of a packet (B.3): by the superframe index at its end,
-    /// or one after the other, as many as there are.
-    fn packet(dec: *Decoder, data: []const u8, shown: *?*Frame) Error!void {
-        if (data.len == 0) return error.Corrupt;
-        const marker = data[data.len - 1];
-        if (marker & 0xE0 == 0xC0) {
-            const frames: usize = (marker & 7) + 1;
-            const mag: usize = ((marker >> 3) & 3) + 1;
-            const index = 2 + mag * frames;
-            if (data.len >= index and data[data.len - index] == marker) {
-                var at: usize = 0;
-                var sizes = data[data.len - index + 1 ..];
-                for (0..frames) |_| {
-                    var len: usize = 0;
-                    for (0..mag) |i| len |= @as(usize, sizes[i]) << @intCast(8 * i);
-                    sizes = sizes[mag..];
-                    if (len > data.len - at) return error.Corrupt;
-                    _ = try dec.frame(data[at .. at + len], shown);
-                    at += len;
-                }
-                return;
-            }
-        }
-        var at: usize = 0;
-        while (at < data.len) {
-            at += try dec.frame(data[at..], shown);
-            // What an encoder may leave after a frame.
-            while (at < data.len and data[at] == 0) at += 1;
-        }
+    /// A slot to give back to the library (ReleaseVideoSlot), or null:
+    /// one it let go of, or every one it lent after a seek. The decoder
+    /// keeps its own frames as long as it needs them.
+    pub fn giveBack(dec: *Decoder) ?u32 {
+        if (dec.returned == 0) return null;
+        const slot: u32 = @ctz(dec.returned);
+        dec.returned &= dec.returned - 1;
+        return slot;
     }
 
-    /// One frame decoded, or begun on a worker; how many bytes of `data`
-    /// it was.
-    fn frame(dec: *Decoder, data: []const u8, shown: *?*Frame) Error!usize {
+    /// The frame `data` of the header `v` decoded, or begun on a worker:
+    /// the picture it comes to.
+    fn frame(dec: *Decoder, data: []const u8, v: *const v9.Vp9Header) Error!*Frame {
         if (data.len == 0) return error.Corrupt;
-        shown.* = null;
         const last_type = dec.frame_type;
-        const last_intra_only = dec.intra_only;
-        const st = &dec.st;
-        var h = try header.uncompressed(data, st);
-        if (h.show_existing_frame) {
-            const f = dec.slots[h.frame_to_show] orelse return error.Corrupt;
-            if (!dec.need_resync) shown.* = f;
-            return if (h.profile <= 2) 1 else 2;
-        }
+        var h = header.of(v);
         dec.frame_type = h.frame_type;
-        if (h.frame_type != header.KEY_FRAME) dec.intra_only = h.intra_only;
         if (h.intra) {
             // A key frame or an intra-only one with the decoder waiting:
             // the references before it are gone.
@@ -377,8 +406,14 @@ pub const Decoder = struct {
             }
         } else if (dec.need_resync) return error.Corrupt;
         if (h.header_size == 0) return error.Corrupt;
-        if (h.header_size > data.len - h.header_start) return error.Corrupt;
-        const color = st.color;
+        if (h.header_start > data.len or h.header_size > data.len - h.header_start) return error.Corrupt;
+        const color: Color = .{
+            .bit_depth = v.bit_depth,
+            .color_space = v.color_space,
+            .full_range = v.color_range,
+            .ss_x = @intCast(v.subsampling_x),
+            .ss_y = @intCast(v.subsampling_y),
+        };
         const w = h.width;
         const hh = h.height;
 
@@ -414,13 +449,12 @@ pub const Decoder = struct {
         // map.
         if (mi_cols != dec.mi_cols or mi_rows != dec.mi_rows or color.ss_x != dec.ss_x) try dec.fit(mi_cols, mi_rows, color.ss_x);
         if (w != dec.width or hh != dec.height) @memset(dec.segs[dec.seg_cur ^ 1], 0);
-        const use_prev_mvs = !h.error_resilient and w == dec.width and hh == dec.height and
-            !last_intra_only and dec.last_show_frame and last_type != header.KEY_FRAME;
+        const use_prev_mvs = v.use_prev_frame_mvs;
 
         // setup_past_independence (7.2): the probabilities reset, saved
         // as the frame says, and those of the first set used.
         if (h.reset_past) {
-            dec.p = Probs.defaults;
+            dec.p = probs.defaults;
             if (h.frame_type == header.KEY_FRAME or h.error_resilient or h.reset_frame_context == 3) {
                 dec.contexts = @splat(dec.p);
                 dec.ready = @splat(true);
@@ -440,7 +474,7 @@ pub const Decoder = struct {
         // The tiles read.
         const ps = &dec.ps;
         ps.h = &h;
-        ps.seg = &st.seg;
+        ps.seg = &v.segmentation;
         ps.p = &dec.p;
         ps.counts = &dec.counts;
         ps.count = count;
@@ -453,7 +487,7 @@ pub const Decoder = struct {
         ps.prev_seg = dec.segs[dec.seg_cur ^ 1];
         ps.cur_seg = dec.segs[dec.seg_cur];
         ps.out = &j.out;
-        ps.frameTables(&st.deltas);
+        ps.frameTables(&v.loop_filter);
         try ps.tiles(data[h.header_start + h.header_size ..]);
         if (bad_scale) {
             for (j.out.blocks[0..j.out.n_blocks]) |*b| {
@@ -491,12 +525,11 @@ pub const Decoder = struct {
             dec.setSlot(i, cur);
         }
         dec.mv_cur ^= 1;
-        if (st.seg.enabled and st.seg.update_map) dec.seg_cur ^= 1;
-        dec.last_show_frame = h.show_frame;
+        if (v.segmentation.enabled and v.segmentation.update_map) dec.seg_cur ^= 1;
         dec.width = w;
         dec.height = hh;
-        if (h.show_frame) shown.* = cur;
-        return data.len;
+        dec.bit_depth = color.bit_depth;
+        return cur;
     }
 
     fn validScale(r: *const Frame, w: u32, h: u32) bool {
@@ -525,8 +558,6 @@ pub const Decoder = struct {
         if (dec.slots[i]) |old| old.refs -= 1;
         dec.slots[i] = f;
         if (f) |new| new.refs += 1;
-        dec.st.ref_width[i] = if (f) |new| new.width else 0;
-        dec.st.ref_height[i] = if (f) |new| new.height else 0;
     }
 
     fn queue(dec: *Decoder, f: *Frame, time: i64) void {
@@ -539,7 +570,7 @@ pub const Decoder = struct {
     /// A frame no slot, job or wait for showing holds, for a `w` by `h`
     /// frame of `color`'s format: one made for it, or another made anew;
     /// when every one is held, once the first job is done.
-    fn freeFrame(dec: *Decoder, w: u32, h: u32, color: header.Color) Error!*Frame {
+    fn freeFrame(dec: *Decoder, w: u32, h: u32, color: Color) Error!*Frame {
         const alloc_w = (w + 63) & ~@as(u32, 63);
         const alloc_h = (h + 63) & ~@as(u32, 63);
         const bytes: u8 = if (color.bit_depth > 8) 2 else 1;
@@ -729,151 +760,3 @@ pub const Decoder = struct {
         return false;
     }
 };
-
-// --- tests (host: ./zig build test) -----------------------------------------
-
-const std = @import("std");
-const testing = std.testing;
-
-/// Workers on threads, waiting by yielding.
-const TestCores = struct {
-    cores: Cores = undefined,
-    jobs: [3]usize = @splat(0),
-    args: [3]usize = @splat(0),
-    threads: [3]std.Thread = undefined,
-    quit: bool = false,
-
-    fn of(ctx: *anyopaque) *TestCores {
-        return @ptrCast(@alignCast(ctx));
-    }
-    fn run(ctx: *anyopaque, worker: u32, job: *const fn (*anyopaque) void, arg: *anyopaque) void {
-        const t = of(ctx);
-        t.args[worker] = @intFromPtr(arg);
-        @atomicStore(usize, &t.jobs[worker], @intFromPtr(job), .seq_cst);
-    }
-    fn arm(_: *anyopaque, _: u32) void {}
-    fn sleep(_: *anyopaque, _: u32) void {
-        std.Thread.yield() catch {};
-    }
-    fn wake(_: *anyopaque) void {}
-    fn work(t: *TestCores, i: usize) void {
-        while (!@atomicLoad(bool, &t.quit, .acquire)) {
-            const job = @atomicRmw(usize, &t.jobs[i], .Xchg, 0, .acq_rel);
-            if (job == 0) {
-                std.Thread.yield() catch {};
-                continue;
-            }
-            const f: *const fn (*anyopaque) void = @ptrFromInt(job);
-            f(@ptrFromInt(t.args[i]));
-        }
-    }
-};
-
-const TestMemory = struct {
-    fn alloc(_: *anyopaque, len: usize, clear: bool) ?[*]u8 {
-        const m = testing.allocator.alignedAlloc(u8, .@"16", len) catch return null;
-        if (clear) @memset(m, 0);
-        return m.ptr;
-    }
-    fn free(_: *anyopaque, memory: [*]u8, len: usize) void {
-        const s: []align(16) u8 = @alignCast(memory[0..len]);
-        testing.allocator.free(s);
-    }
-};
-
-const Decoded = struct { shown: u32 = 0, errors: u32 = 0, hash: u64 = 0xcbf29ce484222325 };
-
-const Way = struct {
-    /// After so many packets: everything dropped, as for a seek, and the
-    /// stream decoded from its start again.
-    reset_after: ?u32 = null,
-    /// After so many packets: the decoder closed, whatever it is doing.
-    stop_after: ?u32 = null,
-    /// Each packet cut to this part of it, in sixteenths.
-    cut: u32 = 16,
-    /// Each frame taken as soon as there is one, as a program would not.
-    eager: bool = false,
-};
-
-/// Every frame of an IVF file shown, in a decoder made for it: how many
-/// shown and not right, and FNV-1a of their planes' bytes at the size
-/// shown.
-fn decodeAll(ivf: []const u8, cores: ?*const Cores, way: Way) !Decoded {
-    var ctx: u8 = 0;
-    const env: Env = .{ .ctx = &ctx, .alloc = TestMemory.alloc, .free = TestMemory.free };
-    const dec = Decoder.create(env) orelse return error.OutOfMemory;
-    defer dec.destroy();
-    if (cores) |c| dec.useCores(c);
-    const start = std.mem.readInt(u16, ivf[6..8], .little);
-    var got: Decoded = .{};
-    var at: usize = start;
-    var count: u32 = 0;
-    while (true) {
-        count += 1;
-        if (way.stop_after == count) return got;
-        if (way.reset_after == count) {
-            dec.reset();
-            got = .{};
-            at = start;
-        }
-        if (at + 12 <= ivf.len) {
-            const size = std.mem.readInt(u32, ivf[at..][0..4], .little);
-            const data = ivf[at + 12 ..][0 .. size * way.cut / 16];
-            at += 12 + size;
-            dec.decodeFrame(data, count, false) catch {
-                got.errors += 1;
-            };
-        } else dec.flush();
-        while (dec.next()) |s| {
-            const f = s.frame;
-            const bytes: usize = f.alloc_bytes;
-            for (0..3) |p| {
-                const sx: u5 = if (p > 0) f.ss_x else 0;
-                const sy: u5 = if (p > 0) f.ss_y else 0;
-                const w = (f.width + (@as(u32, 1) << sx) - 1) >> sx;
-                const h = (f.height + (@as(u32, 1) << sy) - 1) >> sy;
-                for (0..h) |r| {
-                    for (f.planes[p][r * f.stride[p] * bytes ..][0 .. w * bytes]) |byte| got.hash = (got.hash ^ byte) *% 0x100000001b3;
-                }
-            }
-            got.shown += 1;
-            dec.release();
-            if (!way.eager) break;
-        }
-        if (dec.flushing and dec.out_count == 0) return got;
-    }
-}
-
-// tests/alt.ivf: libvpx (two passes, alternate references in superframes,
-// two tile rows, variance segmentation) of ffmpeg's testsrc2 at 136x104,
-// 24 frames shown, a key frame every 12. tests/p3.ivf: profile 3, 10-bit
-// 4:4:4, lossless, 72x56, 6 frames. tests/p3b.ivf: profile 3, 12-bit
-// 4:2:2, error resilient, a key frame every 5, 10 frames. The hashes are
-// of libvpx's decode.
-test "frames decoded as libvpx decodes them, alone and on three workers, after a seek, a close and damaged ones" {
-    var t: TestCores = .{};
-    t.cores = .{ .ctx = &t, .workers = 3, .run = TestCores.run, .arm = TestCores.arm, .sleep = TestCores.sleep, .wake = TestCores.wake };
-    for (&t.threads, 0..) |*th, i| th.* = try std.Thread.spawn(.{}, TestCores.work, .{ &t, i });
-    defer {
-        @atomicStore(bool, &t.quit, true, .seq_cst);
-        for (t.threads) |th| th.join();
-    }
-    const streams = [_]struct { ivf: []const u8, expect: Decoded }{
-        .{ .ivf = @embedFile("tests/alt.ivf"), .expect = .{ .shown = 24, .hash = 0x70d55fed6db4ff63 } },
-        .{ .ivf = @embedFile("tests/p3.ivf"), .expect = .{ .shown = 6, .hash = 0xb62fd6dd0824a579 } },
-        .{ .ivf = @embedFile("tests/p3b.ivf"), .expect = .{ .shown = 10, .hash = 0x03b0e6b2545da3b7 } },
-    };
-    for (streams) |s| {
-        for ([_]?*const Cores{ null, &t.cores }) |cores| {
-            try testing.expectEqual(s.expect, try decodeAll(s.ivf, cores, .{}));
-            try testing.expectEqual(s.expect, try decodeAll(s.ivf, cores, .{ .eager = true }));
-            for ([_]u32{ 3, 6, 9 }) |at| {
-                try testing.expectEqual(s.expect, try decodeAll(s.ivf, cores, .{ .reset_after = at }));
-                _ = try decodeAll(s.ivf, cores, .{ .stop_after = at });
-            }
-            // Packets cut short: some frames come out, wrong; nothing is
-            // caught.
-            for ([_]u32{ 1, 5, 8, 15 }) |cut| _ = try decodeAll(s.ivf, cores, .{ .cut = cut });
-        }
-    }
-}

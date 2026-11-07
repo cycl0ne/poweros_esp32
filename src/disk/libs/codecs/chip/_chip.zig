@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: MIT
-//! chip.vcodec's decoder: H.264 and H.265 through the board's chip,
-//! videodec.resource.
+//! chip.vcodec's decoder: H.264, H.265 and VP9 through the board's chip,
+//! videodec.resource, where it decodes them.
 //!
 //! The chip is fed a picture at a time and asked for frames in the order
 //! they are shown; it says when it needs more (VDERR_NEED_DATA), which is
-//! when ReceiveVCodecFrame asks for a packet. A packet sent is turned into
-//! Annex B form (`annexb.zig`) - with the parameter sets in front when it
-//! is a key picture - and fed, with its time. At the end of the track the
-//! chip is told so, and hands out the frames it still holds back.
+//! when ReceiveVCodecFrame asks for a packet. An H.264 or H.265 packet
+//! sent is turned into Annex B form (`annexb.zig`) - with the parameter
+//! sets in front when it is a key picture - and fed, with its time; a VP9
+//! packet, a frame or a superframe, is fed as it is. At the end of the
+//! track the chip is told so, and hands out the frames it still holds
+//! back.
 //!
 //! A packet the chip has no room for yet stays `pending` and is fed after
 //! the next frame is taken; another packet sent meanwhile is refused
@@ -17,6 +19,8 @@
 //! A track of a profile the chip has not - H.264 deeper than 8 bits or
 //! with more colour than halved both ways, H.265's range extensions - is
 //! refused when it opens (VCERR_UNSUPPORTED), for the software's module.
+//! A VP9 track says its profile only in its first frame: the chip refuses
+//! one it has not (profiles 1 and 3, 12 bits) as that is fed.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -96,6 +100,7 @@ fn open(sys: *ExecBase, params: *const vcodec.VCodecParams, code: *i32) ?*vcodec
     const codec: u32 = switch (params.codec) {
         vc.VCODEC_H264 => videodec.VDCODEC_H264,
         vc.VCODEC_H265 => videodec.VDCODEC_H265,
+        vc.VCODEC_VP9 => videodec.VDCODEC_VP9,
         else => return failed(code, vc.VCERR_NOCODEC),
     };
     if (params.held == 0 or params.held > vcodec.VCODEC_MOST_HELD) return failed(code, vc.VCERR_UNSUPPORTED);
@@ -104,10 +109,14 @@ fn open(sys: *ExecBase, params: *const vcodec.VCodecParams, code: *i32) ?*vcodec
     if (vb.VideoDecCodecs() & codec == 0) return failed(code, vc.VCERR_NOCODEC);
 
     const config: []const u8 = if (params.config) |bytes| bytes[0..params.config_size] else &.{};
-    const setup = (if (codec == videodec.VDCODEC_H265) annexb.hevcSetup(config, null) else annexb.avcSetup(config, null)) orelse
-        return failed(code, vc.VCERR_CORRUPT);
+    // VP9 has no setup the chip is fed.
+    const setup: annexb.Setup = switch (codec) {
+        videodec.VDCODEC_VP9 => .{ .length_size = 4, .header_size = 0 },
+        videodec.VDCODEC_H265 => annexb.hevcSetup(config, null) orelse return failed(code, vc.VCERR_CORRUPT),
+        else => annexb.avcSetup(config, null) orelse return failed(code, vc.VCERR_CORRUPT),
+    };
     // A profile the chip has not: the software's, at once.
-    if (!annexb.chipTakes(codec == videodec.VDCODEC_H265, config)) return failed(code, vc.VCERR_UNSUPPORTED);
+    if (codec != videodec.VDCODEC_VP9 and !annexb.chipTakes(codec == videodec.VDCODEC_H265, config)) return failed(code, vc.VCERR_UNSUPPORTED);
     const memory = sys.AllocVec(@sizeOf(Decoder), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return failed(code, vc.VCERR_NOMEMORY);
     const c: *Decoder = @ptrCast(@alignCast(memory));
     c.* = .{ .sys = sys, .vb = vb, .decoder = undefined, .codec = codec, .length_size = setup.length_size, .held = params.held };
@@ -153,16 +162,17 @@ pub fn CloseVCodec(_: *Base, decoder: ?*vcodec.VCodecDecoder) void {
     sys.FreeVec(c);
 }
 
-/// A packet turned into Annex B form and fed - or held, when the chip
-/// has no room yet; the end of the track told the chip.
+/// A packet turned into Annex B form (VP9's as it is) and fed - or held,
+/// when the chip has no room yet; the end of the track told the chip.
 pub fn SendVCodecPacket(_: *Base, decoder: *vcodec.VCodecDecoder, packet: *const vcodec.VCodecPacket) i32 {
     const c = of(decoder);
     if (c.pending != 0) return vc.VCERR_FULL;
     if (packet.flags & vcodec.VCPKT_END != 0) return fromChip(c.vb.FeedVideoDecoder(c.decoder, null, 0, 0, videodec.VDFEED_END));
     const data = packet.data orelse return vc.VCERR_CORRUPT;
     const units = data[0..packet.size];
-    const size = annexb.convertedSize(units, c.length_size) orelse return vc.VCERR_CORRUPT;
-    const key = packet.flags & vcodec.VCPKT_KEY != 0;
+    const vp9 = c.codec == videodec.VDCODEC_VP9;
+    const size = if (vp9) units.len else annexb.convertedSize(units, c.length_size) orelse return vc.VCERR_CORRUPT;
+    const key = !vp9 and packet.flags & vcodec.VCPKT_KEY != 0;
     const whole = size + if (key) c.header_size else 0;
     if (whole > c.buffer_size) {
         c.sys.FreeVec(c.buffer);
@@ -180,7 +190,10 @@ pub fn SendVCodecPacket(_: *Base, decoder: *vcodec.VCodecDecoder, packet: *const
         c.sys.CopyMem(c.header.?, out.ptr, c.header_size);
         at = c.header_size;
     }
-    at += annexb.convert(units, c.length_size, out[at..], Copy{ .sys = c.sys });
+    if (vp9) {
+        if (units.len != 0) c.sys.CopyMem(units.ptr, out.ptr, units.len);
+        at = units.len;
+    } else at += annexb.convert(units, c.length_size, out[at..], Copy{ .sys = c.sys });
     c.pending = at;
     c.pending_time = packet.time;
     const fed = feedPending(c);

@@ -52,7 +52,9 @@ const engine = @import("../videodec_init.zig").engine;
 /// fed: each call hands out the next frame due, and reads on in what was
 /// fed where the stream waited for a frame back. Its frames are in the
 /// system's memory, the rows shown alone, read back from the device as
-/// each picture was decoded.
+/// each picture was decoded. A VP9 frame that is shown again - its
+/// stream says so of a reference - is handed out again, the same planes
+/// lent once more: each is released.
 ///
 /// CONTEXT:
 /// - Waits: yes, for the chip. - Interrupts: no.
@@ -66,7 +68,9 @@ const engine = @import("../videodec_init.zig").engine;
 ///
 /// NOTES:
 /// A frame's time is the time of the picture it shows as it was fed: of
-/// the pictures decoded and not yet shown, the earliest.
+/// the pictures decoded and not yet shown, the earliest. A VP9 frame's
+/// is that of the packet that shows it, its frames shown in the order
+/// they come.
 ///
 /// BUGS:
 /// None known.

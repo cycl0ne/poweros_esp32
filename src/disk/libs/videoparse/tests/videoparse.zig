@@ -12,7 +12,10 @@
 //! Their events are read with the stream handed over whole, a unit a
 //! packet and an access unit a packet, with the slots given back at once
 //! and held back until the parser runs out of them, and with a seek on
-//! the way: what they say is the same.
+//! the way: what they say is the same. `alt.ivf`, the VP9 decoder's
+//! clip, is libvpx's (two passes, alternate references hidden in
+//! superframes) of the same at 136x104, 24 frames shown; its frames are
+//! read a packet at a time, the slots given back at once or held back.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -43,11 +46,14 @@ test {
     _ = @import("../hevc/params.zig");
     _ = @import("../hevc/slice.zig");
     _ = @import("../hevc/_hevc.zig");
+    _ = @import("../vp9/header.zig");
+    _ = @import("../vp9/_vp9.zig");
 }
 
 /// The decoders' clips.
 const rows = @embedFile("../../codecs/h264/tests/rows.h264");
 const rows_hevc = @embedFile("../../codecs/hevc/tests/rows.h265");
+const alt_ivf = @embedFile("../../codecs/vp9/tests/alt.ivf");
 
 /// Memory lent to exec: a parser takes some 265 KiB for H.264, 330 KiB
 /// for HEVC.
@@ -447,5 +453,131 @@ fn sameEveryWay(vpb: *VideoParseBase, codec: u32, whole: Trace) !void {
         const sought = try read(vpb, .{ .codec = codec, .reset_after = at, .packets = if (at & 1 != 0) .access_units else .units, .hold = at & 2 != 0 });
         try testing.expectEqual(whole.hash, sought.hash);
         try testing.expectEqual(whole.shown, sought.shown);
+    }
+}
+
+/// What a VP9 stream's events said: their counts, and FNV-1a of the
+/// pictures shown by their numbers counted from the first.
+const Vp9Trace = struct {
+    hash: u64 = 0xcbf29ce484222325,
+    sequences: u32 = 0,
+    pictures: u32 = 0,
+    hidden: u32 = 0,
+    shown: u32 = 0,
+    freed: u32 = 0,
+};
+
+/// An IVF file's VP9 frames read a packet at a time: each slot given back
+/// as soon as it is let go of, or held until the parser has none left;
+/// a seek to the start after `reset_after` packets.
+fn readIvf(vpb: *VideoParseBase, ivf: []const u8, hold: bool, reset_after: ?u32) !Vp9Trace {
+    var err: i32 = 0;
+    const parser = vpb.OpenVideoParser(vp.VPCODEC_VP9, null, 0, null, &err) orelse return error.NoParser;
+    defer vpb.CloseVideoParser(parser);
+    const start = std.mem.readInt(u16, ivf[6..8], .little);
+    var t: Vp9Trace = .{};
+    var slots: Slots = .{};
+    // By slot: the picture's number, whether it is the stream's, and
+    // whether its header said it is shown.
+    var number: [64]u32 = @splat(0);
+    var live: [64]bool = @splat(false);
+    var first_uid: u32 = 0;
+    var at: usize = start;
+    var count: u32 = 0;
+    while (true) {
+        count += 1;
+        if (reset_after == count) {
+            vpb.ResetVideoParser(parser);
+            try slots.all(vpb, parser);
+            live = @splat(false);
+            t = .{};
+            first_uid = 0;
+            at = start;
+        }
+        var packet: vp.VideoPacket = .{ .time = count };
+        if (at + 12 <= ivf.len) {
+            const size = std.mem.readInt(u32, ivf[at..][0..4], .little);
+            packet.data = ivf[at + 12 ..].ptr;
+            packet.bytes = size;
+            at += 12 + size;
+        } else packet.flags = vp.VPPKT_END;
+        try testing.expectEqual(vp.VPERR_OK, vpb.ParseVideoPacket(parser, &packet));
+        var event: vp.VideoEvent = .{};
+        while (true) {
+            const got = vpb.NextVideoEvent(parser, &event);
+            if (got == vp.VPERR_NEED_DATA) break;
+            if (got == vp.VPERR_END) {
+                for (live) |l| try testing.expect(!l);
+                try slots.all(vpb, parser);
+                return t;
+            }
+            if (got == vp.VPERR_FULL) {
+                try slots.oldest(vpb, parser);
+                continue;
+            }
+            try testing.expectEqual(vp.VPERR_OK, got);
+            switch (event.kind) {
+                vp.VPEV_SEQUENCE => {
+                    const q = event.sequence.?;
+                    try testing.expectEqual(vp.VPCODEC_VP9, q.codec);
+                    try testing.expectEqual(@as(u32, 136), q.width);
+                    try testing.expectEqual(@as(u32, 104), q.height);
+                    try testing.expectEqual(@as(u32, 9), q.slots);
+                    t.sequences += 1;
+                },
+                vp.VPEV_PICTURE => {
+                    const pic = event.picture.?;
+                    const h = pic.vp9.?;
+                    try testing.expect(!live[pic.slot]);
+                    // Its references are the stream's pictures.
+                    for (pic.refs[0..pic.ref_count]) |r| {
+                        if (r.slot != vp.VP_NO_SLOT) try testing.expect(live[r.slot]);
+                    }
+                    if (t.pictures == 0) first_uid = pic.uid;
+                    number[pic.slot] = pic.uid - first_uid;
+                    live[pic.slot] = true;
+                    slots.held[pic.slot] = true;
+                    try testing.expect(h.width == 136 and h.height == 104);
+                    t.pictures += 1;
+                    if (!h.show_frame) t.hidden += 1;
+                },
+                vp.VPEV_SLICE => {
+                    const sl = event.slice.?;
+                    try testing.expect(sl.data_bit != 0 and sl.data_bit < sl.unit_bytes * 8);
+                },
+                vp.VPEV_DECODE => {},
+                vp.VPEV_SHOW => {
+                    try testing.expect(live[event.slot]);
+                    t.hash = (t.hash ^ number[event.slot]) *% 0x100000001b3;
+                    t.shown += 1;
+                },
+                vp.VPEV_FREE => {
+                    try testing.expect(live[event.slot]);
+                    live[event.slot] = false;
+                    t.freed += 1;
+                    if (hold) {
+                        slots.waiting[slots.count] = @intCast(event.slot);
+                        slots.count += 1;
+                    } else try slots.give(vpb, parser, event.slot);
+                },
+                else => return error.Unexpected,
+            }
+        }
+    }
+}
+
+test "alt.ivf's events: its frames, the hidden ones among them, shown as they say, the same with the slots held back and after a seek" {
+    var rig: Rig = .{};
+    try rig.up();
+    defer rig.down() catch |e| std.debug.panic("down: {}", .{e});
+
+    const once = try readIvf(rig.vpb, alt_ivf, false, null);
+    try testing.expectEqual(@as(u32, 1), once.sequences);
+    try testing.expectEqual(@as(u32, 24), once.shown);
+    try testing.expect(once.hidden != 0);
+    try testing.expectEqual(once.pictures, once.freed);
+    try testing.expectEqual(once, try readIvf(rig.vpb, alt_ivf, true, null));
+    for ([_]u32{ 2, 7, 13 }) |at| {
+        try testing.expectEqual(once, try readIvf(rig.vpb, alt_ivf, at & 1 != 0, at));
     }
 }

@@ -933,6 +933,9 @@ const Fake = struct {
     var received: u32 = 0;
     /// A decoder (VCERR_OK), or this error.
     var open_answer: i32 = vc.VCERR_OK;
+    /// The stream refused as its first packet is sent, rather than when a
+    /// frame is asked for after it.
+    var refuse_sent: bool = false;
     var decoder: u8 = 0;
 
     fn reset(answer: i32) void {
@@ -941,6 +944,7 @@ const Fake = struct {
         sent = 0;
         received = 0;
         open_answer = answer;
+        refuse_sent = false;
     }
 
     pub fn GetVCodecInfo(_: *module.Base, _: *vcodec.VCodecDecoder, _: *vcodec.VCodecInfo) i32 {
@@ -956,7 +960,7 @@ const Fake = struct {
     }
     pub fn SendVCodecPacket(_: *module.Base, _: *vcodec.VCodecDecoder, _: *const vcodec.VCodecPacket) i32 {
         sent += 1;
-        return vc.VCERR_OK;
+        return if (refuse_sent) vc.VCERR_UNSUPPORTED else vc.VCERR_OK;
     }
     /// A packet asked for, and once it has one the stream refused - as the
     /// chip does a stream it reads it cannot decode.
@@ -1027,6 +1031,17 @@ test "the codec modules: a chip's first, software by priority; one that opens no
         try testing.expectEqual(@as(u32, 1), Fake.opened);
         try testing.expectEqual(@as(u32, 1), Fake.sent);
         try testing.expectEqual(@as(u32, 2), Fake.received);
+        try testing.expectEqual(@as(u32, 1), Fake.closed);
+    }
+    // The same, refused as the packet is sent.
+    Fake.reset(vc.VCERR_OK);
+    Fake.refuse_sent = true;
+    {
+        const film = rig.open("WORK:clip.mov", &err) orelse return error.NoStream;
+        defer vcb.CloseVideoStream(film);
+        try expectClip(vcb, film);
+        try testing.expectEqual(@as(u32, 1), Fake.sent);
+        try testing.expectEqual(@as(u32, 1), Fake.received);
         try testing.expectEqual(@as(u32, 1), Fake.closed);
     }
 

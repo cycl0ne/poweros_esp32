@@ -17,7 +17,9 @@
 //! call, with its parameter sets (H.264's SPS and PPS, H.265's VPS, SPS
 //! and PPS) in front of the first picture and wherever the stream repeats
 //! them. A container's packets (MP4's length-prefixed units) are turned
-//! into that before they are fed; videocodec.library does it.
+//! into that before they are fed; videocodec.library does it. VP9 is fed
+//! a packet a call as the container holds it: a frame, or a superframe
+//! of several.
 //!
 //! **What comes out**: 8-bit 4:2:0 frames as two planes, NV12 - a plane
 //! of brightness, then one of the two colour differences side by side,
@@ -25,8 +27,9 @@
 //! (baseline, main, high) and H.265 (main, and main 10 written in 8
 //! bits), 4K at its best speed, into memory below 4 GiB. The AMD
 //! device's decoder takes H.264 (baseline without slice groups, main,
-//! high; 8-bit 4:2:0) up to 4096 x 4096 and H.265 (main, main 10 rounded
-//! to 8 bits, main still picture) up to 8192 x 4352, its frames copied
+//! high; 8-bit 4:2:0) up to 4096 x 4096, H.265 (main, main 10 rounded
+//! to 8 bits, main still picture) and VP9 (profile 0, and profile 2's
+//! 10 bits rounded to 8; 4:2:0) up to 8192 x 4352, its frames copied
 //! into the system's memory.
 //!
 //! Get its base with OpenResource(VIDEODECNAME); its functions are in
@@ -41,6 +44,8 @@ pub const VIDEODECNAME = "videodec.resource";
 /// one: a bit each.
 pub const VDCODEC_H264: u32 = 1 << 0;
 pub const VDCODEC_H265: u32 = 1 << 1;
+/// Since 1.5, on the AMD graphics devices' decoder.
+pub const VDCODEC_VP9: u32 = 1 << 2;
 
 /// What the calls answer.
 pub const VDERR_OK: u32 = 0;
@@ -60,7 +65,8 @@ pub const VDERR_CORRUPT: u32 = 4;
 pub const VDERR_NO_ENGINE: u32 = 5;
 /// A codec, a stream or a frame the decoder does not take: another
 /// codec, 10-bit H.264, a size too large, a size that changes within
-/// the stream.
+/// the stream (VP9: at a frame predicted from others that is larger
+/// than both 1920 x 1088 and every frame before it).
 pub const VDERR_UNSUPPORTED: u32 = 6;
 /// No memory for the decoder or its frames.
 pub const VDERR_NO_MEMORY: u32 = 7;
@@ -108,11 +114,12 @@ pub const VideoDecFrame = extern struct {
 
 /// What GetVideoDecoderInfo says of a stream: the picture as shown, the
 /// size it is coded at and where the shown part starts in it, its bit
-/// depth (8, or 10 for H.265 Main10 - whose frames come out in 8 bits
-/// all the same; SINCE 1.1), its codec's profile number (H.264's profile_idc, H.265's
-/// general_profile_idc), its frames a second as `rate_num` / `rate_den`
-/// (both 0 when the stream does not say), and how many frame buffers the
-/// decoder made.
+/// depth (8, or 10 for H.265 Main10 and VP9's profile 2 - whose frames
+/// come out in 8 bits all the same; SINCE 1.1), its codec's profile
+/// number (H.264's profile_idc, H.265's general_profile_idc, VP9's
+/// profile), its frames a second as `rate_num` / `rate_den` (both 0 when
+/// the stream does not say, as VP9 never does), and how many frame
+/// buffers the decoder made.
 pub const VideoDecInfo = extern struct {
     width: u32 = 0,
     height: u32 = 0,

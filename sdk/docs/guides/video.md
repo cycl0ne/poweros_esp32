@@ -8,12 +8,13 @@ audio.device. Underneath, media.library reads the container (MP4,
 QuickTime's MOV and Matroska's MKV) and hands out each track's packets,
 a codec module in `LIBS:codecs/` decodes the pictures - chip.vcodec
 H.264 and H.265 on the chip's decoder (videodec.resource: the WAVE511
-on the VisionFive 2, and an AMD graphics device's video decoder),
+on the VisionFive 2, and an AMD graphics device's video decoder, which
+takes VP9 too),
 h264.vcodec H.264 in software, hevc.vcodec H.265,
 vp8.vcodec VP8, vp9.vcodec VP9 and av1.vcodec AV1 in software,
 mjpeg.vcodec Motion JPEG in software - and
-audiocodec.library decodes the sound. videoparse.library reads an H.264
-or H.265 stream for the decoders that decode its samples. A display's video layer (rtg's `ShowVideoFrame`)
+audiocodec.library decodes the sound. videoparse.library reads an H.264,
+H.265 or VP9 stream for the decoders that decode its samples. A display's video layer (rtg's `ShowVideoFrame`)
 shows a frame as it comes out; graphics' `WriteYUVPixelArray` and
 `ScaleYUVPixelArray` put one into a window where there is none.
 
@@ -192,11 +193,11 @@ colour, a pixel half covered or more is the subtitle's.
 
 | Pictures | Decoded by | On the VisionFive 2 |
 |---|---|---|
-| H.264 (baseline, main, high), 8-bit; H.265 (main, and main 10 shown in 8 bits) | chip.vcodec: the chip, videodec.resource | 1080p about 145 frames a second, 720p about 300; on a Radeon 780M 1080p about 600 (H.264 and H.265), 720p H.264 about 900, 4K H.265 in 10 bits about 160 |
+| H.264 (baseline, main, high), 8-bit; H.265 (main, and main 10 shown in 8 bits); on an AMD graphics device VP9 too (profile 0, and profile 2's 10 bits shown in 8) | chip.vcodec: the chip, videodec.resource | 1080p about 145 frames a second, 720p about 300; on a Radeon 780M 1080p about 600 (H.264 and H.265), 720p H.264 about 900, 4K H.265 in 10 bits about 160, 1080p VP9 about 550, in 10 bits about 340 |
 | H.264, every profile but SVC's and MVC's: up to 4:4:4 and 14 bits, fields, shown in 8 bits; what the chip refuses, and every H.264 where there is no chip | h264.vcodec: software, a worker task on each core, a picture each | 720p High 10 about 32 frames a second, 10 on one core; 1080p High about 20, 720p about 52 |
 | H.265: Main, Main 10, Main Still Picture and the range extensions' profiles - grey to 4:4:4, up to 16 bits - shown in 8 bits; the base layer of a stream in layers; what the chip refuses, and every H.265 where there is no chip | hevc.vcodec: software, a worker task on each core, a picture each | 1080p about 25 frames a second, 720p about 55, 1080p 4:2:2 in 10 bits about 17 |
 | VP8, every version (WebM, Matroska) | vp8.vcodec: software, a worker task on each core, a frame each | 720p about 84 frames a second, 1080p about 34; 27 and 11 on one core |
-| VP9, every profile: 8, 10 and 12 bits, 4:2:0, 4:2:2, 4:4:0, 4:4:4 (WebM, Matroska), shown in 8 bits | vp9.vcodec: software, a worker task on each core, a frame each | 720p about 53 frames a second, 1080p about 30, 720p in 10 bits about 38; 18, 9 and 12 on one core |
+| VP9, every profile: 8, 10 and 12 bits, 4:2:0, 4:2:2, 4:4:0, 4:4:4 (WebM, Matroska), shown in 8 bits; what the chip refuses, and every VP9 where there is no chip | vp9.vcodec: software, a worker task on each core, a frame each | 720p about 53 frames a second, 1080p about 30, 720p in 10 bits about 38; 18, 9 and 12 on one core |
 | AV1, every profile: 8, 10 and 12 bits, grey, 4:2:0, 4:2:2, 4:4:4, film grain (MP4, WebM, Matroska), shown in 8 bits | av1.vcodec: software, a worker task on each core, a frame each | 1080p about 15 frames a second, 720p about 27, 720p in 10 bits with film grain about 18 |
 | Motion JPEG, baseline: grey, 4:2:0, 4:2:2, 4:4:4 | mjpeg.vcodec: software, on the calling task | about a second for a 1080p picture: small pictures only |
 | MPEG-4 Part 2 | nothing | - |
@@ -273,14 +274,16 @@ are `.acodec` modules there ([Sound](audio.md)).
 ## Reading a stream
 
 **videoparse.library** (`sdk.interface.videoparse`,
-[md](../autodocs/videoparse.md)) reads an H.264 or H.265 stream for a
-decoder: the parameter sets, each picture's slice headers, its order
-counts, the reference pictures it holds and the two lists each slice
-decodes from, the references the stream lacks, and when each picture is
-shown. The decoder decodes the samples - in software, as h264.vcodec and
-hevc.vcodec do, or on a chip that takes the parsed slices. Its
-structures are in `sdk.videoparse`, every field of the two codecs'
-syntax in `sdk.videoparse.h264` and `sdk.videoparse.hevc`.
+[md](../autodocs/videoparse.md)) reads an H.264, H.265 or VP9 stream
+for a decoder: the parameter sets, each picture's slice headers, its
+order counts, the reference pictures it holds and the two lists each
+slice decodes from, the references the stream lacks, and when each
+picture is shown - for VP9 each frame's uncompressed header and its
+eight reference slots. The decoder decodes the samples - in software,
+as h264.vcodec, hevc.vcodec and vp9.vcodec do, or on a chip that takes
+the parsed slices. Its structures are in `sdk.videoparse`, every field
+of the codecs' syntax in `sdk.videoparse.h264`, `sdk.videoparse.hevc`
+and `sdk.videoparse.vp9`.
 
 ```zig
 const vpb: *VideoParseBase = @ptrCast(sys.OpenLibrary(vp.VIDEOPARSENAME, 1) orelse return);
@@ -341,6 +344,20 @@ read as a stream's first, `VPEV_SEQUENCE` and all. An H.264 parser
 takes some 265 KiB, an H.265 one some 330 KiB, most of it the parameter
 sets.
 
+**A VP9 stream** (`VPCODEC_VP9`, no setup) has no slices, parameter sets
+or reordering: a packet is a frame, or a superframe of several - most
+often a hidden one, a reference for the frames after it, and one shown.
+Each frame is a `VPEV_PICTURE` with its header (`vp9`, the uncompressed
+header with what stays from frame to frame applied) and the eight
+reference slots as its references, in their order; one `VPEV_SLICE`
+with the frame's bytes whole, the compressed header starting at
+`data_bit`; `VPEV_DECODE`; and `VPEV_SHOW` when it is shown. A frame
+that only shows a reference is a `VPEV_SHOW` of that slot alone, so a
+slot can be shown more than once. `VPEV_SEQUENCE` comes before the first
+frame and before one of another size or format; a frame may still be
+predicted from references of other sizes. The stream takes nine slots
+beyond `VPA_Slots`, and a VP9 parser some 26 KiB.
+
 ## From the shell
 
 `C:test/Film FILE` decodes a film as fast as it goes, shows nothing and
@@ -348,4 +365,4 @@ plays nothing, and says how fast: `FRAME n TO file` writes a frame's
 planes to compare with ffmpeg's, `SEEK s` moves to a second at the end
 (with `TO` and no `FRAME`, the frame it lands on is written), `TOGETHER` decodes the sound on a process of its own while the pictures
 are decoded. `C:test/VideoDec` feeds the chip's decoder an elementary
-stream (Annex B) without a container.
+stream (Annex B) without a container, or VP9 in an IVF file.

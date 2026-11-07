@@ -128,7 +128,9 @@ On an AMD graphics device the pictures were decoded as they were
 fed: each call hands out the next frame due, and reads on in what was
 fed where the stream waited for a frame back. Its frames are in the
 system's memory, the rows shown alone, read back from the device as
-each picture was decoded.
+each picture was decoded. A VP9 frame that is shown again - its
+stream says so of a reference - is handed out again, the same planes
+lent once more: each is released.
 
 **CONTEXT**
 
@@ -145,7 +147,9 @@ them until then.
 **NOTES**
 
 A frame's time is the time of the picture it shows as it was fed: of
-the pictures decoded and not yet shown, the earliest.
+the pictures decoded and not yet shown, the earliest. A VP9 frame's
+is that of the packet that shows it, its frames shown in the order
+they come.
 
 **BUGS**
 
@@ -184,7 +188,9 @@ fn FeedVideoDecoder(vb: *VideoDecBase, decoder: *VideoDecoder,
 
 - `decoder` - the decoder.
 - `data` - the picture's units in Annex B form, each after a start
-  code; the parameter sets in front of the first picture.
+  code; the parameter sets in front of the first picture. VP9: a
+  packet as the container holds it, a frame or a superframe (SINCE
+  1.5).
 - `length` - how many bytes; 0 with VDFEED_END alone.
 - `time` - when the picture is shown, in the caller's units
   (microseconds, say); handed back with its frame.
@@ -216,7 +222,11 @@ VDERR_FULL. A stream the device does not take answers
 VDERR_UNSUPPORTED: H.264 other than 8-bit 4:2:0, the extended
 profile, lossless pictures, slice groups, larger than 4096 each way;
 H.265 other than Main, Main 10 and Main Still Picture, larger than
-8192 x 4352.
+8192 x 4352; VP9 other than profile 0 and profile 2's 10 bits in
+4:2:0, larger than 8192 x 4352, or a frame predicted from others that
+is larger than both 1920 x 1088 and every frame before it. Smaller
+frames, and frames predicted from pictures of other sizes, are
+decoded.
 
 **CONTEXT**
 
@@ -426,11 +436,12 @@ that the firmware reads its ring. Each decoder reads its stream with
 videoparse.library (opened here, from LIBS:) and is a stream on the
 device, made when its sequence is read: in the device's memory a
 context (128 KiB, and for H.264 192 bytes a macroblock for each
-reference and the picture decoded, for H.265 about 3 MiB at 1080p), a
-surface for each of those, and the surface pictures are written to -
-about 26 MiB at 1080p with four H.264 references, 24 MiB for H.265
-with five pictures in its buffer, 188 MiB for 10-bit H.265 at 4K
-with six.
+reference and the picture decoded, for H.265 about 3 MiB at 1080p,
+for VP9 about 10.4 MiB at any size, the default probabilities written
+into it), a surface for each of those, and the surface pictures are
+written to - about 26 MiB at 1080p with four H.264 references, 24 MiB
+for H.265 with five pictures in its buffer, 188 MiB for 10-bit H.265
+at 4K with six, 41 MiB for VP9 at 1080p with its nine.
 Its frames are in the system's memory, one for each picture the
 stream holds and VDA_HeldFrames and two more; VDA_StreamSize is not
 read.
@@ -549,8 +560,8 @@ None.
 **RESULT**
 
 A VDCODEC_* bit for each codec: VDCODEC_H264 | VDCODEC_H265 on the
-JH7110, and on x86-64 with an AMD graphics device whose video block
-is 4.0.2. 0 when the machine has no decoder, or it would
+JH7110, and with VDCODEC_VP9 (SINCE 1.5) on x86-64 with an AMD
+graphics device whose video block is 4.0.2. 0 when the machine has no decoder, or it would
 not wake or its firmware would not start.
 
 **BEHAVIOR**

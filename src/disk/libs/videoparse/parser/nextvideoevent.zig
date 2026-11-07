@@ -71,6 +71,20 @@ const _parser = @import("_parser.zig");
 /// another picture parameter set than its first slice did, a redundant
 /// picture's slices are passed over.
 ///
+/// Of a VP9 stream (SINCE 1.1) each frame is VPEV_SEQUENCE before the
+/// first and before one of another size, depth or colour; VPEV_PICTURE,
+/// its `picture` holding the frame's header (`vp9`) and as `refs` the
+/// pictures in the eight reference slots, in their order, VP_NO_SLOT
+/// where one is empty; one VPEV_SLICE, the frame's bytes whole, its
+/// compressed header at `data_bit`; VPEV_DECODE; VPEV_SHOW when it is
+/// shown; then VPEV_FREE for each picture no reference slot holds any
+/// more, the frame's own where it went into none. A frame that only shows
+/// a reference is a VPEV_SHOW of that reference's slot, alone. A frame
+/// that is not a key frame or an intra-only one is passed over
+/// (VPERR_CORRUPT) at the start, after a reset and after a frame that was
+/// not right, and so is one whose references are empty or of another
+/// depth or sampling.
+///
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no.

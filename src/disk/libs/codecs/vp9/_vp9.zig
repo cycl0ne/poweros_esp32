@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: MIT
-//! vp9.vcodec's decoder: VP9 decoded in software by the decoder built in
-//! as `vp9core` (core.zig here), which takes the stream a packet at a
-//! time and shows the frame each packet shows.
+//! vp9.vcodec's decoder: VP9 read by videoparse.library and decoded in
+//! software by the decoder built in as `vp9core` (core.zig here), which
+//! takes the library's events and shows the frames they show.
 //!
 //! **A packet sent** is a frame or a superframe of several - most often a
 //! hidden one, a reference for the frames after it, and one shown. The
-//! decoder decodes all of it at once; the frame it shows waits until it
-//! is asked for, and while one waits another packet is refused
-//! (VCERR_FULL). One marked VCPKT_DROP, due before what is shown, is
-//! decoded for the frames after it and not handed out. A frame that is
-//! not right is passed over, and so is every frame after it until a key
-//! frame or an intra-only one. There is no setup.
+//! parser cuts it into its frames and reads their headers, the decoder
+//! decodes them all at once; the frame shown waits until it is asked for,
+//! and while one waits another packet is refused (VCERR_FULL). One marked
+//! VCPKT_DROP, due before what is shown, is decoded for the frames after
+//! it and not handed out. A frame that is not right is passed over, and
+//! so is every frame after it until a key frame or an intra-only one.
+//! There is no setup. The decoder keeps its frames itself: each slot the
+//! library lends goes back to it as soon as the library lets go of it.
 //!
 //! **The cores**: with more than one, the decoder has a worker task on
 //! each (module.zig's `Team`): the decoder reads each frame - its headers
@@ -42,7 +44,9 @@ const exec = sdk.exec;
 const rtg = sdk.rtg;
 const vc = sdk.videocodec;
 const vcodec = sdk.vcodec;
+const vp = sdk.videoparse;
 const ExecBase = sdk.interface.exec.ExecBase;
+const VideoParseBase = sdk.interface.videoparse.VideoParseBase;
 const vp9 = @import("vp9core");
 const module = @import("../module.zig");
 const Base = module.Base;
@@ -94,6 +98,8 @@ const Planes = struct {
 const Decoder = struct {
     sys: *ExecBase,
     core: *vp9.Decoder,
+    vpb: *VideoParseBase,
+    parser: *vp.VideoParser,
     /// The frames lent out, by slot, and their planes.
     held: u32,
     lent: [vcodec.VCODEC_MOST_HELD]bool = @splat(false),
@@ -140,7 +146,7 @@ const Memory = struct {
 pub fn GetVCodecInfo(_: *Base, decoder: *vcodec.VCodecDecoder, info: *vcodec.VCodecInfo) i32 {
     const m = of(decoder);
     if (m.core.width == 0) return vc.VCERR_NEED_DATA;
-    info.* = .{ .width = m.core.width, .height = m.core.height, .depth = m.core.st.color.bit_depth };
+    info.* = .{ .width = m.core.width, .height = m.core.height, .depth = m.core.bit_depth };
     return vc.VCERR_OK;
 }
 
@@ -155,14 +161,28 @@ pub fn OpenVCodec(base: *Base, params: *const vcodec.VCodecParams, err: ?*i32) ?
 fn open(sys: *ExecBase, params: *const vcodec.VCodecParams, code: *i32) ?*vcodec.VCodecDecoder {
     if (params.codec != vc.VCODEC_VP9) return failed(code, vc.VCERR_NOCODEC);
     if (params.held == 0 or params.held > vcodec.VCODEC_MOST_HELD) return failed(code, vc.VCERR_UNSUPPORTED);
-    const memory = sys.AllocVec(@sizeOf(Decoder), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return failed(code, vc.VCERR_NOMEMORY);
+    const lib = sys.OpenLibrary(vp.VIDEOPARSENAME, 1) orelse return failed(code, vc.VCERR_NOCODEC);
+    const vpb: *VideoParseBase = @ptrCast(lib);
+    var why: i32 = vp.VPERR_OK;
+    // A library before 1.1 refuses VP9.
+    const parser = vpb.OpenVideoParser(vp.VPCODEC_VP9, null, 0, null, &why) orelse {
+        sys.CloseLibrary(lib);
+        return failed(code, if (why == vp.VPERR_NOMEMORY) vc.VCERR_NOMEMORY else vc.VCERR_NOCODEC);
+    };
+    const memory = sys.AllocVec(@sizeOf(Decoder), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse {
+        vpb.CloseVideoParser(parser);
+        sys.CloseLibrary(lib);
+        return failed(code, vc.VCERR_NOMEMORY);
+    };
     const m: *Decoder = @ptrCast(@alignCast(memory));
     const env: vp9.Env = .{ .ctx = @ptrCast(sys), .alloc = Memory.alloc, .free = Memory.free };
     const core = vp9.Decoder.create(env) orelse {
         sys.FreeVec(m);
+        vpb.CloseVideoParser(parser);
+        sys.CloseLibrary(lib);
         return failed(code, vc.VCERR_NOMEMORY);
     };
-    m.* = .{ .sys = sys, .core = core, .held = params.held };
+    m.* = .{ .sys = sys, .core = core, .vpb = vpb, .parser = parser, .held = params.held };
     m.team.start(sys, "vp9.vcodec worker");
     if (m.team.count != 0) core.useCores(&m.team.cores);
     return @ptrCast(m);
@@ -180,28 +200,60 @@ pub fn CloseVCodec(_: *Base, decoder: ?*vcodec.VCodecDecoder) void {
     // The workers finish what they decode before they end.
     m.core.destroy();
     m.team.stop();
+    m.vpb.CloseVideoParser(m.parser);
+    sys.CloseLibrary(m.vpb.lib());
     for (&m.planes) |*planes| sys.FreeVec(planes.memory);
     sys.FreeVec(m);
 }
 
-/// A packet read, the frame begun on a worker or decoded; the end of the
-/// track hands out the frames still being decoded.
+/// A packet handed to the parser and its frames decoded, or begun on a
+/// worker; the end of the track hands out the frames still being decoded.
 pub fn SendVCodecPacket(_: *Base, decoder: *vcodec.VCodecDecoder, packet: *const vcodec.VCodecPacket) i32 {
     const m = of(decoder);
     if (m.core.next() != null) return vc.VCERR_FULL;
+    var given: vp.VideoPacket = .{ .time = packet.time };
     if (packet.flags & vcodec.VCPKT_END != 0) {
-        m.core.flush();
+        given.flags = vp.VPPKT_END;
         m.ended = true;
-        return vc.VCERR_OK;
+    } else {
+        given.data = packet.data orelse return vc.VCERR_CORRUPT;
+        given.bytes = packet.size;
     }
-    const data = packet.data orelse return vc.VCERR_CORRUPT;
-    const drop = packet.flags & vcodec.VCPKT_DROP != 0;
-    m.core.decodeFrame(data[0..packet.size], packet.time, drop) catch |failure| return switch (failure) {
-        error.NoMemory => vc.VCERR_NOMEMORY,
-        error.Unsupported => if (m.started) vc.VCERR_OK else vc.VCERR_UNSUPPORTED,
-        else => vc.VCERR_OK,
-    };
-    return vc.VCERR_OK;
+    if (m.vpb.ParseVideoPacket(m.parser, &given) != vp.VPERR_OK) return vc.VCERR_FULL;
+    return read(m, packet.flags & vcodec.VCPKT_DROP != 0);
+}
+
+/// The packet's events decoded, until it is read through: every frame of
+/// it read while the caller's packet is there, so it is not copied. A
+/// frame that is not right is passed over; one the decoder cannot decode
+/// refuses the track before its first frame, so that another module may
+/// take it.
+fn read(m: *Decoder, drop: bool) i32 {
+    var event: vp.VideoEvent = .{};
+    while (true) {
+        while (m.core.giveBack()) |slot| m.vpb.ReleaseVideoSlot(m.parser, slot);
+        switch (m.vpb.NextVideoEvent(m.parser, &event)) {
+            vp.VPERR_OK => m.core.event(&event, drop) catch |failure| switch (failure) {
+                error.NoMemory => return vc.VCERR_NOMEMORY,
+                error.Unsupported => if (!m.started) return vc.VCERR_UNSUPPORTED,
+                else => {},
+            },
+            vp.VPERR_NEED_DATA => return vc.VCERR_OK,
+            vp.VPERR_END => {
+                m.core.flush();
+                return vc.VCERR_OK;
+            },
+            vp.VPERR_UNSUPPORTED => if (!m.started) return vc.VCERR_UNSUPPORTED,
+            vp.VPERR_NOMEMORY => return vc.VCERR_NOMEMORY,
+            // Not with every slot given back as soon as it is let go of:
+            // eight references and the frame decoded are the nine.
+            vp.VPERR_FULL => {
+                reset(m);
+                return vc.VCERR_CORRUPT;
+            },
+            else => {},
+        }
+    }
 }
 
 /// The next frame to be shown copied into a free slot's planes and lent
@@ -230,8 +282,13 @@ pub fn ReleaseVCodecFrame(_: *Base, decoder: *vcodec.VCodecDecoder, frame: *vc.V
 /// Everything decoded and not yet shown dropped, the references with it,
 /// for a seek: the decoder starts again at the next key frame.
 pub fn FlushVCodec(_: *Base, decoder: *vcodec.VCodecDecoder) void {
-    const m = of(decoder);
+    reset(of(decoder));
+}
+
+fn reset(m: *Decoder) void {
+    m.vpb.ResetVideoParser(m.parser);
     m.core.reset();
+    while (m.core.giveBack()) |slot| m.vpb.ReleaseVideoSlot(m.parser, slot);
     m.ended = false;
 }
 

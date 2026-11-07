@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 //! A decoder on an AMD graphics device's video decoder: what
-//! OpenVideoDecoder hands out there - an H.264 or H.265 stream
+//! OpenVideoDecoder hands out there - an H.264, H.265 or VP9 stream
 //! videoparse.library reads, whose pictures the device decodes one at a
 //! time, and the frames they come to, in the order they are shown.
 //!
@@ -27,11 +27,27 @@
 //! the picture holds them, which its reference picture set's sets point
 //! at.
 //!
+//! **VP9** is fed a packet at a time, a frame or a superframe, which the
+//! parser cuts into its frames, reading each one's uncompressed header;
+//! the decoder reads the compressed header and the tiles itself, and
+//! keeps the probabilities in the stream's context, which starts with
+//! the default ones, written when the stream is made. A frame's message
+//! names the pictures of the eight reference slots by their firmware
+//! numbers, and their surfaces by slot. A frame that only shows a
+//! reference is that slot shown again: a frame can be due, and lent,
+//! more than once. VP9's frames are shown in the order they come, each
+//! at its packet's time. A VP9 stream is made for 1920 x 1088 at least,
+//! and each frame no larger than it is decoded in it, its message naming
+//! the frame's own size: the decoder keeps each picture's size and
+//! scales the references of other sizes a frame is predicted from. A
+//! larger frame makes the stream anew; one after it that is predicted
+//! from pictures from before that stops the stream (VDERR_UNSUPPORTED).
+//!
 //! **The frames** are the parser's slots: each its picture's copy in the
 //! system's memory, read back from the target - NV12, the rows the
 //! picture shows, a target row apart. A slot is given back to the parser
-//! once it said the stream needs it no more, the frame was handed out if
-//! it was to be shown, and the caller released it.
+//! once it said the stream needs it no more, the frame was handed out as
+//! often as it was to be shown, and the caller released each.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -71,7 +87,8 @@ const Frame = struct {
     width: u32 = 0,
     height: u32 = 0,
     /// When it is shown: its picture's time as it was fed, until it is
-    /// shown - then the earliest of the pictures decoded and not shown.
+    /// shown - then the earliest of the pictures decoded and not shown
+    /// (VP9's frames: the time of the packet that shows it).
     time: i64 = 0,
     /// Decoded, or to be shown as if it were, and not shown yet.
     waiting: bool = false,
@@ -80,12 +97,12 @@ const Frame = struct {
     id: u8 = none,
     decoded: bool = false,
     /// The parser handed the slot out and it was not given back; the
-    /// parser needs it no more; it is due to be shown; it is lent to
-    /// the caller.
+    /// parser needs it no more; how often it is due to be shown, and how
+    /// often it is lent to the caller.
     held: bool = false,
     freed: bool = false,
-    due: bool = false,
-    lent: bool = false,
+    due: u8 = 0,
+    lent: u8 = 0,
 };
 
 pub const Session = struct {
@@ -133,9 +150,11 @@ pub const Session = struct {
     staged: ?[*]u8 = null,
     staged_room: u32 = 0,
     staged_bytes: u32 = 0,
-    /// The frames by slot, and the slots due to be shown, in their order.
+    /// The frames by slot, and the slots due to be shown, in their order,
+    /// with the times they are shown at.
     frames: [most_slots]Frame = @splat(.{}),
     due: [most_slots]u8 = @splat(none),
+    due_time: [most_slots]i64 = @splat(0),
     due_first: u32 = 0,
     due_count: u32 = 0,
     /// Frames handed out.
@@ -145,12 +164,14 @@ pub const Session = struct {
     decoded: u32 = 0,
     decode_us: u64 = 0,
     read_us: u64 = 0,
-    /// A picture's message, and its scaling lists, put together here:
-    /// an H.264 one, or an H.265 one.
+    /// A picture's message, and its scaling lists or probability table,
+    /// put together here: an H.264 one, an H.265 one or a VP9 one.
     message: vcn.AvcMessage = .{},
     scaling: vcn.AvcScaling = .{},
     hevc_message: vcn.HevcMessage = .{},
     hevc_scaling: vcn.HevcScaling = .{},
+    vp9_message: vcn.Vp9Message = .{},
+    vp9_tables: vcn.Vp9Tables = .{},
 
     pub fn of(h: *types.VideoDecoder) *Session {
         return @ptrCast(@alignCast(h));
@@ -177,15 +198,20 @@ pub const Session = struct {
         };
         const library: *VideoParseBase = @ptrCast(lib);
         s.library = library;
-        const hevc = s.codec == types.VDCODEC_H265;
+        const codec: u32, const most_width: u32, const most_height: u32 = switch (s.codec) {
+            types.VDCODEC_H265 => .{ vp.VPCODEC_HEVC, vcn.hevc_most_width, vcn.hevc_most_height },
+            types.VDCODEC_VP9 => .{ vp.VPCODEC_VP9, vcn.vp9_most_width, vcn.vp9_most_height },
+            else => .{ vp.VPCODEC_H264, vcn.avc_most, vcn.avc_most },
+        };
         const tags = [_]utility.TagItem{
             .{ .tag = vp.VPA_Slots, .data = s.held + 2 },
-            .{ .tag = vp.VPA_MaxWidth, .data = if (hevc) vcn.hevc_most_width else vcn.avc_most },
-            .{ .tag = vp.VPA_MaxHeight, .data = if (hevc) vcn.hevc_most_height else vcn.avc_most },
+            .{ .tag = vp.VPA_MaxWidth, .data = most_width },
+            .{ .tag = vp.VPA_MaxHeight, .data = most_height },
             .{},
         };
         var why: i32 = vp.VPERR_OK;
-        s.parser = library.OpenVideoParser(if (hevc) vp.VPCODEC_HEVC else vp.VPCODEC_H264, null, 0, &tags, &why) orelse
+        // A library before 1.1 refuses VP9.
+        s.parser = library.OpenVideoParser(codec, null, 0, &tags, &why) orelse
             return if (why == vp.VPERR_NOMEMORY) types.VDERR_NO_MEMORY else types.VDERR_UNSUPPORTED;
         return types.VDERR_OK;
     }
@@ -234,7 +260,7 @@ pub const Session = struct {
                 // The parser waits for a slot, which only a frame given
                 // back makes.
                 for (s.frames) |f| {
-                    if (f.lent) return types.VDERR_FULL;
+                    if (f.lent != 0) return types.VDERR_FULL;
                 }
                 exec.kprintf(s.sys(), "%s: the AMD video decoder's stream %d has no slot free and no frame lent\n", .{ types.VIDEODECNAME, s.stream });
                 s.fail(types.VDERR_CORRUPT);
@@ -250,8 +276,8 @@ pub const Session = struct {
         if (kept == 0 or kept > most_slots) return;
         const slot = kept - 1;
         const f = &s.frames[slot];
-        if (!f.lent) return;
-        f.lent = false;
+        if (f.lent == 0) return;
+        f.lent -= 1;
         s.giveBack(slot);
     }
 
@@ -266,7 +292,7 @@ pub const Session = struct {
         s.due_first = 0;
         s.due_count = 0;
         for (&s.frames, 0..) |*f, slot| {
-            f.due = false;
+            f.due = 0;
             f.waiting = false;
             if (!f.held) continue;
             f.freed = true;
@@ -364,14 +390,23 @@ pub const Session = struct {
     /// A sequence: the stream made on the decoder for it, unless the one
     /// made takes its pictures.
     fn begin(s: *Session, seq: *const vp.VideoSequence) void {
-        const layout = (if (s.codec == types.VDCODEC_H265) s.hevcLayout(seq) else s.avcLayout(seq)) orelse return;
+        const layout = switch (s.codec) {
+            types.VDCODEC_H265 => s.hevcLayout(seq),
+            types.VDCODEC_VP9 => s.vp9Layout(seq),
+            else => s.avcLayout(seq),
+        } orelse return;
         s.sequence = seq.*;
         s.sequence.h264_sps = null;
         s.sequence.hevc_sps = null;
         s.told = true;
         const l = s.layout;
-        if (s.made and l.width == layout.width and l.height == layout.height and l.sample_bytes == layout.sample_bytes and
-            l.ids >= layout.ids and l.hw_bytes >= layout.hw_bytes) return;
+        // A VP9 frame smaller than the stream is decoded in it: it may be
+        // predicted from the larger pictures before it.
+        const fits = if (s.codec == types.VDCODEC_VP9)
+            l.width >= layout.width and l.height >= layout.height
+        else
+            l.width == layout.width and l.height == layout.height;
+        if (s.made and fits and l.sample_bytes == layout.sample_bytes and l.ids >= layout.ids and l.hw_bytes >= layout.hw_bytes) return;
         s.unmake();
         if (s.failed == types.VDERR_OK) s.make(layout);
     }
@@ -421,6 +456,24 @@ pub const Session = struct {
         return vcn.Layout.hevc(seq.coded_width, seq.coded_height, vcn.hevcIds(sps), sps.bit_depth_luma > 8, sps.log2_ctb);
     }
 
+    /// A VP9 sequence's layout, as `avcLayout`: profile 0 or 2, 4:2:0 in
+    /// 8 or 10 bits.
+    fn vp9Layout(s: *Session, seq: *const vp.VideoSequence) ?vcn.Layout {
+        const depth = seq.bit_depth_luma;
+        if ((seq.profile != 0 and seq.profile != 2) or seq.chroma_format != 1 or (depth != 8 and depth != 10) or
+            seq.slots > most_slots or seq.width == 0 or seq.height == 0 or
+            seq.width > vcn.vp9_most_width or seq.height > vcn.vp9_most_height)
+        {
+            exec.kprintf(s.sys(), "%s: the AMD video decoder does not take a VP9 stream of profile %d, %d bits, chroma %d, %u x %u\n", .{
+                types.VIDEODECNAME,          @as(u32, seq.profile), @as(u32, depth),
+                @as(u32, seq.chroma_format), seq.width,             seq.height,
+            });
+            s.fail(types.VDERR_UNSUPPORTED);
+            return null;
+        }
+        return vcn.Layout.vp9(@max(seq.width, vcn.vp9_least_width), @max(seq.height, vcn.vp9_least_height), depth > 8);
+    }
+
     /// A slot that stands for a picture the stream lacks: its frame grey.
     /// It is given a surface when a picture refers to it.
     fn missing(s: *Session, slot: u32, time: i64) void {
@@ -429,7 +482,7 @@ pub const Session = struct {
         s.dropId(f);
         f.held = true;
         f.freed = false;
-        f.due = false;
+        f.due = 0;
         f.waiting = false;
         f.time = time;
         if (!s.frameRoom(f)) return s.fail(types.VDERR_NO_MEMORY);
@@ -453,9 +506,10 @@ pub const Session = struct {
             s.dropId(f);
             f.held = true;
             f.freed = false;
-            f.due = false;
+            f.due = 0;
             f.decoded = false;
-            f.waiting = true;
+            // VP9's frames are shown in the order they come.
+            f.waiting = s.codec != types.VDCODEC_VP9;
             f.time = pic.time;
         }
         s.giveIds(pic);
@@ -507,20 +561,24 @@ pub const Session = struct {
         f.id = none;
     }
 
-    /// A slice: its unit put after the others, behind a start code.
+    /// A slice: its unit put after the others, behind a start code; a
+    /// VP9 frame, its one slice, as it is.
     fn slice(s: *Session, sl: *const vp.VideoSlice) void {
         if (!s.open_picture) return;
         if (sl.partitioned) {
             exec.kprintf(s.sys(), "%s: the AMD video decoder does not take data partitions\n", .{types.VIDEODECNAME});
             return s.fail(types.VDERR_UNSUPPORTED);
         }
-        const need = s.staged_bytes + 3 + sl.unit_bytes;
+        const start_code: u32 = if (s.codec == types.VDCODEC_VP9) 0 else 3;
+        const need = s.staged_bytes + start_code + sl.unit_bytes;
         if (!s.stageRoom(need + 128)) return s.fail(types.VDERR_NO_MEMORY);
-        const into = s.staged.?;
-        into[s.staged_bytes] = 0;
-        into[s.staged_bytes + 1] = 0;
-        into[s.staged_bytes + 2] = 1;
-        s.sys().CopyMem(sl.unit, into + s.staged_bytes + 3, sl.unit_bytes);
+        const into = s.staged.? + s.staged_bytes;
+        if (start_code != 0) {
+            into[0] = 0;
+            into[1] = 0;
+            into[2] = 1;
+        }
+        s.sys().CopyMem(sl.unit, into + start_code, sl.unit_bytes);
         s.staged_bytes = need;
     }
 
@@ -535,16 +593,23 @@ pub const Session = struct {
         const pic = &s.picture;
         const f = &s.frames[pic.slot];
         if (!s.frameRoom(f)) return s.fail(types.VDERR_NO_MEMORY);
-        const hevc = s.codec == types.VDCODEC_H265;
-        if (if (hevc) pic.hevc_sps == null or pic.hevc_pps == null else pic.h264_sps == null or pic.h264_pps == null) return grey(f);
-        if (!s.made or f.id == none or s.staged_bytes == 0) return grey(f);
+        const described = switch (s.codec) {
+            types.VDCODEC_H265 => pic.hevc_sps != null and pic.hevc_pps != null,
+            types.VDCODEC_VP9 => pic.vp9 != null,
+            else => pic.h264_sps != null and pic.h264_pps != null,
+        };
+        if (!described or !s.made or f.id == none or s.staged_bytes == 0) return grey(f);
 
         const bytes = (s.staged_bytes + 127) / 128 * 128;
         if (!s.bitstreamRoom(bytes)) return s.fail(types.VDERR_NO_MEMORY);
         const staged = s.staged.?;
         for (staged[s.staged_bytes..bytes]) |*b| b.* = 0;
         vcn.copyToDevice(s.bitstream.cpu, staged[0..bytes]);
-        if (hevc) s.hevcMessage(f, bytes) else s.avcMessage(f, bytes);
+        switch (s.codec) {
+            types.VDCODEC_H265 => s.hevcMessage(f, bytes),
+            types.VDCODEC_VP9 => if (!s.vp9Message(f, bytes)) return,
+            else => s.avcMessage(f, bytes),
+        }
 
         const timeout = Timeout.open(sys_base) orelse return s.fail(types.VDERR_NO_MEMORY);
         defer timeout.close(sys_base);
@@ -557,7 +622,11 @@ pub const Session = struct {
             .bitstream = s.bitstream.device,
             .target = s.target.device,
         };
-        if (hevc) vcn.decodePicture(&vb.vcn, &s.hevc_message, &s.hevc_scaling, buffers) else vcn.decodePicture(&vb.vcn, &s.message, &s.scaling, buffers);
+        switch (s.codec) {
+            types.VDCODEC_H265 => vcn.decodePicture(&vb.vcn, &s.hevc_message, &s.hevc_scaling, buffers),
+            types.VDCODEC_VP9 => vcn.decodePicture(&vb.vcn, &s.vp9_message, &s.vp9_tables, buffers),
+            else => vcn.decodePicture(&vb.vcn, &s.message, &s.scaling, buffers),
+        }
         if (!vcn.fenced(&vb.vcn, picture_most_us, Pause{ .timeout = timeout, .sys = sys_base })) {
             // The decoder may still write the stream's pieces: they are
             // kept, and it is not asked again.
@@ -615,6 +684,43 @@ pub const Session = struct {
         vcn.hevcMessage(&s.hevc_message, s.layout, s.stream, s.decoded, bytes, s.surface(f.id), addresses[0..count]);
     }
 
+    /// The VP9 frame's message, as `avcMessage`: the pictures of the eight
+    /// reference slots by their numbers, their surfaces by slot - an
+    /// empty slot named by none, and given the frame's own surface. False,
+    /// and the stream stopped, when the frame is predicted from a picture
+    /// the stream does not hold: one from before a larger frame made it
+    /// anew.
+    fn vp9Message(s: *Session, f: *const Frame, bytes: u32) bool {
+        const pic = &s.picture;
+        const header = pic.vp9.?;
+        var map: [8]u8 = @splat(0x7F);
+        var addresses: [8]u64 = @splat(s.surface(f.id));
+        for (pic.refs[0..8], 0..) |r, j| {
+            if (r.slot >= most_slots) continue;
+            const ref = &s.frames[r.slot];
+            if (ref.id == none) continue;
+            map[j] = ref.id;
+            addresses[j] = s.surface(ref.id);
+        }
+        if (!header.frame_is_intra) {
+            for (header.ref_frame_idx) |idx| {
+                const slot = pic.refs[idx & 7].slot;
+                if (slot < most_slots and s.frames[slot].decoded) continue;
+                exec.kprintf(s.sys(), "%s: the AMD video decoder lost the pictures a VP9 frame is predicted from: a larger frame made its stream anew\n", .{types.VIDEODECNAME});
+                s.fail(types.VDERR_UNSUPPORTED);
+                return false;
+            }
+        }
+        vcn.vp9Part(&s.vp9_message.vp9, &s.vp9_tables, header, f.id, &map);
+        // The message names the frame's own size; the surfaces are the
+        // stream's.
+        var at = s.layout;
+        at.width = s.sequence.width;
+        at.height = s.sequence.height;
+        vcn.vp9Message(&s.vp9_message, at, s.stream, s.decoded, bytes, s.surface(f.id), &addresses);
+        return true;
+    }
+
     /// A picture due to be shown, after those due before it: with the
     /// earliest time of the pictures decoded and not shown - its own,
     /// where they were fed with the times they are shown at.
@@ -635,8 +741,11 @@ pub const Session = struct {
             earliest.time = own;
             f.waiting = false;
         } else f.time = time;
-        f.due = true;
-        s.due[(s.due_first + s.due_count) % most_slots] = @intCast(slot);
+        if (s.due_count == most_slots) return s.fail(types.VDERR_CORRUPT);
+        f.due += 1;
+        const at = (s.due_first + s.due_count) % most_slots;
+        s.due[at] = @intCast(slot);
+        s.due_time[at] = f.time;
         s.due_count += 1;
     }
 
@@ -654,7 +763,7 @@ pub const Session = struct {
 
     fn giveBack(s: *Session, slot: u32) void {
         const f = &s.frames[slot];
-        if (!f.held or !f.freed or f.due or f.lent) return;
+        if (!f.held or !f.freed or f.due != 0 or f.lent != 0) return;
         f.held = false;
         s.library.?.ReleaseVideoSlot(s.parser.?, slot);
     }
@@ -662,11 +771,12 @@ pub const Session = struct {
     /// The first frame due handed out in `frame`.
     fn hand(s: *Session, frame: *types.VideoDecFrame) void {
         const slot: u32 = s.due[s.due_first];
+        const time = s.due_time[s.due_first];
         s.due_first = (s.due_first + 1) % most_slots;
         s.due_count -= 1;
         const f = &s.frames[slot];
-        f.due = false;
-        f.lent = true;
+        f.due -= 1;
+        f.lent += 1;
         const memory = f.memory.?;
         frame.* = .{
             .y = memory + f.left,
@@ -675,7 +785,7 @@ pub const Session = struct {
             .width = f.width,
             .height = f.height,
             .format = types.VDFMT_NV12,
-            .time = @bitCast(f.time),
+            .time = @bitCast(time),
             .number = s.shown,
             .private = .{ slot + 1, s.slot, 0 },
         };
@@ -705,6 +815,8 @@ pub const Session = struct {
             return s.fail(types.VDERR_NO_MEMORY);
         }
         vcn.clear(s.context.cpu, vcn.session_bytes);
+        // A VP9 stream's context starts with the default probabilities.
+        if (s.codec == types.VDCODEC_VP9) vcn.copyToDevice(s.context.cpu + vcn.session_bytes, &vcn.vp9_defaults);
         vb.vcn.streams +%= 1;
         s.stream = vb.vcn.streams;
         var message: [16]u32 = undefined;

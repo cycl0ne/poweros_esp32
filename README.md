@@ -212,7 +212,7 @@ from `LIBS:` when first opened. Every module, with its reference, is in
 | Languages | `locale` countries' dates, numbers and money, languages' words and order of letters, programs' texts translated in catalogs |
 | Displays | **`rtg`**; `graphics` drawing; `layers`; `intuition` screens, windows, gadgets, styles; `keymap`; `motion` animations and timers |
 | Sound | **`rta`**; `audiocodec` WAV, MP3, FLAC, Ogg Vorbis |
-| Video | `videocodec` films - their pictures, sound and subtitles; `media` MP4, MOV and Matroska; `videoparse` H.264 and H.265 streams read for a decoder |
+| Video | `videocodec` films - their pictures, sound and subtitles; `media` MP4, MOV and Matroska; `videoparse` H.264, H.265 and VP9 streams read for a decoder |
 | Desktop | `anvil` the desktop; `asl` requesters; `commodities` hotkeys and filters on the input stream; `icon`; `datatypes` pictures, text, animations and sounds by what is in them, from a file or from memory; `iffparse`; `diskfont` and `truetype` fonts; `facet` 3D in Vulkan's model, on the cores or a GPU - on every disk but the ESP32-S3's, whose 14 MB of flash the rest of the system has |
 | Network | `bsdsocket` TCP/IP, IPv4 and IPv6; `tls` 1.3 and 1.2; `http` HTTP/1.1 requests, connections kept; `crypto`; `wpa` WPA2; `filter` a packet filter |
 | Buses | `usb` the USB host stack; `pci` PCI Express; `modbus` RTU and TCP |
@@ -676,13 +676,22 @@ picture, up to 8192 x 4352: videoparse.library reads the stream, each
 picture goes to the firmware as one message with its slices and the
 surfaces of its references, and the frame is copied out into system
 memory through write-combining reads, a 10-bit picture's samples
-rounded to 8 bits by the decoder as it writes them. On the Radeon 780M
-a 1920 x 1080 picture takes 1.1 ms on the decoder and 0.45 ms to copy
-out - some 600 frames a second through `C:test/Film` - and a 10-bit
-3840 x 2160 one 3.7 ms and 2.1 ms, some 160 a second; each frame
-compared, after a seek too, is ffmpeg's to the byte (10-bit ones
-rounded to 8 bits as the software decoder does).
-`C:test/VideoDec <file> WATCHDOG 15000` feeds it an elementary stream;
+rounded to 8 bits by the decoder as it writes them. VP9 - profile 0,
+and profile 2's 10 bits, up to 8192 x 4352 - goes there a frame at a
+time, its uncompressed header read by videoparse.library and the
+probabilities kept in the stream's context by the firmware; a stream
+is made for 1920 x 1088 at least, so a frame whose size changes within
+it is decoded there, predicted from references of other sizes, and
+profiles 1 and 3 fall to vp9.vcodec. On the Radeon 780M a 1920 x 1080
+picture takes 1.1 ms on the decoder and 0.45 ms to copy out - some 600
+frames a second through `C:test/Film` (VP9 some 550, in 10 bits 340) -
+and a 10-bit 3840 x 2160 one 3.7 ms and 2.1 ms, some 160 a second;
+each frame compared, after a seek too, is ffmpeg's to the byte (10-bit
+ones rounded to 8 bits as the software decoder does), VP9's libvpx's,
+on its test streams for tiles, intra-only frames, size changes and
+spatial layers too.
+`C:test/VideoDec <file> WATCHDOG 15000` feeds it an elementary stream
+or VP9 in an IVF file;
 films reach it through chip.vcodec, so the Player plays on it once a
 program has armed the watchdog since the start.
 

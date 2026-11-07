@@ -5,9 +5,10 @@
 //!
 //! **The units** are cut from the packet as they are asked for - each
 //! after a start code (Annex B), or after its length in as many bytes as
-//! the setup said. A unit is looked at (`peek`) before it is gone past
-//! (`advance`): the codec's reading may stop at a unit that needs a slot
-//! none is free for, and read it again once one was given back.
+//! the setup said; a VP9 packet's are its frames. A unit is looked at
+//! (`peek`) before it is gone past (`advance`): the codec's reading may
+//! stop at a unit that needs a slot none is free for, and read it again
+//! once one was given back.
 //!
 //! **The events** go onto a ring in the order they happen - a picture
 //! finished and its marking's VPEV_FREE and VPEV_SHOW, then the next
@@ -15,9 +16,9 @@
 //! only once the ring is empty, so a pointer an event carries is still
 //! good when the event is handed out.
 //!
-//! **The codec's reading** is H.264's or HEVC's (`h264/`, `hevc/`): the
-//! calls reach it through `before`, `unit`, `endAccessUnit`, `flush`,
-//! `reset` and `unlend` here, whichever it is.
+//! **The codec's reading** is H.264's, HEVC's or VP9's (`h264/`,
+//! `hevc/`, `vp9/`): the calls reach it through `before`, `unit`,
+//! `endAccessUnit`, `flush`, `reset` and `unlend` here, whichever it is.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -25,6 +26,7 @@ const vp = sdk.videoparse;
 const VideoParseBase = @import("../videoparse_base.zig").VideoParseBase;
 const h264 = @import("../h264/_h264.zig");
 const hevc = @import("../hevc/_hevc.zig");
+const vp9 = @import("../vp9/_vp9.zig");
 const Error = @import("../h264/bits.zig").Error;
 
 /// What reading a unit came to: read; to be read again once the events
@@ -82,9 +84,10 @@ pub const Parser = struct {
     unit_ended: bool,
     stream_ended: bool,
     events: Events,
-    /// The codec's own reading: one of the two.
+    /// The codec's own reading: one of the three.
     h264: ?*h264.State,
     hevc: ?*hevc.State,
+    vp9: ?*vp9.State,
 
     /// A packet to read.
     pub fn take(p: *Parser, packet: *const vp.VideoPacket) void {
@@ -97,15 +100,17 @@ pub const Parser = struct {
         p.stream_ended = false;
     }
 
-    fn bytes(p: *const Parser) []const u8 {
+    /// The packet's bytes.
+    pub fn bytes(p: *const Parser) []const u8 {
         const data = p.packet.data orelse return &.{};
         return data[0..p.packet.bytes];
     }
 
     /// The next unit of the packet, without its start code or length and
-    /// without the zero bytes after it; null at the packet's end, and
-    /// error.Corrupt for a length past it.
+    /// without the zero bytes after it - a VP9 packet's next frame; null
+    /// at the packet's end, and error.Corrupt for a length past it.
     pub fn peek(p: *Parser) error{Corrupt}!?[]const u8 {
+        if (p.vp9) |st| return vp9.peek(p, st);
         const d = p.bytes();
         var at: usize = p.at;
         while (true) {
@@ -211,18 +216,22 @@ pub fn before(p: *Parser, u: []const u8) Error!Step {
 /// The unit `u`, once `before` is done with it.
 pub fn unit(p: *Parser, u: []const u8) Error!Step {
     if (p.h264) |st| return h264.unit(p, st, u);
+    if (p.vp9) |st| return vp9.unit(p, st, u);
     return hevc.unit(p, p.hevc.?, u);
 }
 
-/// The packet's access unit ended.
+/// The packet's access unit ended: nothing to VP9, whose packets are
+/// their frames.
 pub fn endAccessUnit(p: *Parser) Error!Step {
     if (p.h264) |st| return h264.endAccessUnit(p, st);
+    if (p.vp9 != null) return .done;
     return hevc.endAccessUnit(p, p.hevc.?);
 }
 
 /// The stream ended.
 pub fn flush(p: *Parser) Error!Step {
     if (p.h264) |st| return h264.flush(p, st);
+    if (p.vp9) |st| return vp9.flush(p, st);
     return hevc.flush(p, p.hevc.?);
 }
 
@@ -230,6 +239,7 @@ pub fn flush(p: *Parser) Error!Step {
 pub fn reset(p: *Parser) void {
     if (p.h264) |st| return h264.reset(st);
     if (p.hevc) |st| hevc.reset(st);
+    if (p.vp9) |st| vp9.reset(st);
 }
 
 /// The slot `slot` the caller's no more.
@@ -238,7 +248,7 @@ pub fn unlend(p: *Parser, slot: u32) void {
         if (slot < st.dpb.count) st.dpb.pics[slot].lent = false;
     } else if (p.hevc) |st| {
         if (slot < st.dpb.count) st.dpb.pics[slot].lent = false;
-    }
+    } else if (p.vp9) |st| vp9.unlend(st, slot);
 }
 
 /// The parser behind a handle.

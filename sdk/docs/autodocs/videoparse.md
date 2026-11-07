@@ -1,10 +1,11 @@
 # videoparse.library
 
-videoparse.library's functions: an H.264 stream read for a decoder -
-its parameter sets and slice headers, its pictures' order counts and
-references, the lists each slice decodes from and the order the
-pictures are shown in - event by event (sdk/libs/videoparse/). Open
-it with OpenLibrary("videoparse.library", 1).
+videoparse.library's functions: an H.264, HEVC or VP9 stream read for
+a decoder - its parameter sets and slice headers or frame headers, its
+pictures' order counts and references, the lists each slice decodes
+from and the order the pictures are shown in - event by event
+(sdk/libs/videoparse/). Open it with OpenLibrary("videoparse.library",
+1); VP9 needs 1.1.
 
 Generated from the source by `./zig build autodoc`.
 
@@ -141,6 +142,20 @@ A slice whose parameter sets were never given, a picture that names
 another picture parameter set than its first slice did, a redundant
 picture's slices are passed over.
 
+Of a VP9 stream (SINCE 1.1) each frame is VPEV_SEQUENCE before the
+first and before one of another size, depth or colour; VPEV_PICTURE,
+its `picture` holding the frame's header (`vp9`) and as `refs` the
+pictures in the eight reference slots, in their order, VP_NO_SLOT
+where one is empty; one VPEV_SLICE, the frame's bytes whole, its
+compressed header at `data_bit`; VPEV_DECODE; VPEV_SHOW when it is
+shown; then VPEV_FREE for each picture no reference slot holds any
+more, the frame's own where it went into none. A frame that only shows
+a reference is a VPEV_SHOW of that reference's slot, alone. A frame
+that is not a key frame or an intra-only one is passed over
+(VPERR_CORRUPT) at the start, after a reset and after a frame that was
+not right, and so is one whose references are empty or of another
+depth or sampling.
+
 **CONTEXT**
 
 - Waits: no.
@@ -205,11 +220,12 @@ fn OpenVideoParser(base: *VideoParseBase, codec: u32, setup: ?[*]const u8, bytes
 
 **INPUTS**
 
-- `codec`: what the stream is: VPCODEC_H264 or VPCODEC_HEVC.
+- `codec`: what the stream is: VPCODEC_H264, VPCODEC_HEVC or
+  VPCODEC_VP9 (SINCE 1.1).
 - `setup`, `bytes`: the track's setup as its container holds it - an
   MP4's `avcC` or `hvcC`, a Matroska track's CodecPrivate - or null
   (or 0 bytes) for a stream in Annex B form, its parameter sets among
-  its units.
+  its units. A VP9 track's is not read: its frames say everything.
 - `tags`: `VPA_Slots`, the slots the caller keeps beyond the stream's
   own (pictures it has lent out, or reads on cores of its own after
   the stream let go of them; at most 32, default 0); `VPA_MaxWidth`
@@ -235,7 +251,9 @@ same id takes the earlier one's place.
 The slots go from 0 to 17 plus `VPA_Slots`: sixteen frames the stream
 may hold, the picture being decoded, and a first field waiting for its
 second (H.264) - HEVC's sixteen pictures hold the one being decoded,
-and two more stand for references the stream names and lacks.
+and two more stand for references the stream names and lacks. VP9's
+go from 0 to 8 plus `VPA_Slots`: the eight reference slots' pictures
+and the frame being decoded.
 
 **CONTEXT**
 
@@ -255,7 +273,8 @@ An H.264 parser takes some 265 KiB, most of it the 256 picture
 parameter sets; an HEVC parser some 330 KiB, most of it the sixteen
 sequence parameter sets with their reference picture sets and the 64
 picture parameter sets. Each takes as much again as the largest unit
-for its unescaped copy.
+for its unescaped copy. A VP9 parser takes some 26 KiB, and nothing
+for its frames, which it reads where they are.
 
 **BUGS**
 
@@ -294,7 +313,8 @@ fn ParseVideoPacket(base: *VideoParseBase, parser: *vp.VideoParser, packet: *con
 
 - `parser`: what OpenVideoParser made.
 - `packet`: its bytes (`data`, `bytes`) - units after start codes, or
-  each after its length where the setup said so - when its picture is
+  each after its length where the setup said so; a VP9 frame or
+  superframe, as a WebM or Matroska block holds it - when its picture is
   shown (`time`, in the caller's units), and `flags`:
   `VPPKT_ACCESS_UNIT` where the packet is one access unit, as an MP4's
   or a Matroska track's is, so its picture ends with it;
@@ -314,6 +334,10 @@ when the next is to be handed over. A picture whose packet did not say
 VPPKT_ACCESS_UNIT ends when the next picture's first slice comes, or
 a unit that comes only between pictures (a parameter set, an access
 unit delimiter, SEI).
+
+A VP9 packet's frames are read one after the other, by the index at
+its end where it is a superframe; `VPPKT_ACCESS_UNIT` says nothing
+more of it.
 
 A picture takes the time of the packet its first slice came in. Where
 pictures come out in another order than they came in, each is shown

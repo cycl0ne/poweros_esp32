@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
-//! videoparse.library's functions: an H.264 stream read for a decoder -
-//! its parameter sets and slice headers, its pictures' order counts and
-//! references, the lists each slice decodes from and the order the
-//! pictures are shown in - event by event (sdk/libs/videoparse/). Open
-//! it with OpenLibrary("videoparse.library", 1).
+//! videoparse.library's functions: an H.264, HEVC or VP9 stream read for
+//! a decoder - its parameter sets and slice headers or frame headers, its
+//! pictures' order counts and references, the lists each slice decodes
+//! from and the order the pictures are shown in - event by event
+//! (sdk/libs/videoparse/). Open it with OpenLibrary("videoparse.library",
+//! 1); VP9 needs 1.1.
 ##include libs/videoparse/videoparse as videoparse
 ##include libs/utility/utility as utility
 ##basetype VideoParseBase

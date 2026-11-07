@@ -560,7 +560,11 @@ const index_bytes: u32 = 16;
 
 /// The streams' kinds, as the decoder numbers them.
 pub fn streamKind(codec: u32) u32 {
-    return if (codec == types.VDCODEC_H265) 0x10 else 7;
+    return switch (codec) {
+        types.VDCODEC_H265 => 0x10,
+        types.VDCODEC_VP9 => 0x11,
+        else => 7,
+    };
 }
 
 /// A message making stream `stream` of `kind` (`streamKind`), as large as
@@ -605,6 +609,7 @@ pub const Buffers = struct {
     bitstream: u64 = 0,
     context: u64 = 0,
     target: u64 = 0,
+    probs: u64 = 0,
     scaling: u64 = 0,
 };
 
@@ -626,6 +631,7 @@ pub fn indirectBuffer(into: []u32, buffers: Buffers) u32 {
         .{ .at = 7, .address = buffers.session },
         .{ .at = 9, .address = buffers.bitstream },
         .{ .at = 11, .address = buffers.context },
+        .{ .at = 17, .address = buffers.probs },
         .{ .at = 21, .address = buffers.scaling },
     };
     for (named) |one| {
@@ -675,17 +681,27 @@ const MESSAGE_DECODE: u32 = 1;
 const PART_DECODE: u32 = 2;
 const PART_AVC: u32 = 6;
 const PART_HEVC: u32 = 0xD;
+const PART_VP9: u32 = 0xE;
 const PART_DYNAMIC_DPB: u32 = 0x10;
 
 /// What else an indirect buffer for decoding names: the picture's
-/// slices, the surface it is written to, its scaling lists and the
-/// decoder's context for the stream.
+/// slices, the surface it is written to, its scaling lists (H.264 and
+/// H.265) or its probability table (VP9), and the decoder's context for
+/// the stream.
 const BUFFER_BITSTREAM: u32 = 1 << 2;
 const BUFFER_TARGET: u32 = 1 << 3;
 const BUFFER_SCALING: u32 = 1 << 9;
 const BUFFER_CONTEXT: u32 = 1 << 11;
+const BUFFER_PROBS: u32 = 1 << 12;
 pub const decode_buffers: u32 = BUFFER_MESSAGE | BUFFER_BITSTREAM | BUFFER_TARGET | BUFFER_SCALING |
     BUFFER_CONTEXT | BUFFER_SESSION;
+pub const vp9_decode_buffers: u32 = BUFFER_MESSAGE | BUFFER_BITSTREAM | BUFFER_TARGET | BUFFER_PROBS |
+    BUFFER_CONTEXT | BUFFER_SESSION;
+
+/// The buffers a picture's message of `codec` goes with.
+fn buffersOf(codec: u32) u32 {
+    return if (codec == types.VDCODEC_VP9) vp9_decode_buffers else decode_buffers;
+}
 
 /// The references are surfaces of their own, named by each message.
 const DECODE_DYNAMIC_DPB: u32 = 1 << 0;
@@ -700,12 +716,24 @@ const ARRAY_MODE_GFX11: u32 = 3;
 pub const avc_most: u32 = 4096;
 pub const hevc_most_width: u32 = 8192;
 pub const hevc_most_height: u32 = 4352;
+/// The largest VP9 picture the decoder takes, and the firmware numbers a
+/// VP9 stream has: the pictures of its eight reference slots and the one
+/// decoded.
+pub const vp9_most_width: u32 = 8192;
+pub const vp9_most_height: u32 = 4352;
+pub const vp9_ids: u32 = 9;
+/// The least a VP9 stream is made for: frames that grow up to it are
+/// still predicted from the smaller pictures before them.
+pub const vp9_least_width: u32 = 1920;
+pub const vp9_least_height: u32 = 1088;
 /// The firmware's numbers for the pictures it decodes and refers to:
 /// 0 to 16, the most references and the picture decoded.
 pub const most_ids: u32 = 17;
 
-/// Where the scaling lists go in the message's page.
+/// Where the scaling lists go in the message's page, and a VP9
+/// picture's probability table.
 const scaling_at: u32 = 2048;
+const probs_at: u32 = 1024;
 
 pub const MessageIndex = extern struct {
     id: u32 = 0,
@@ -930,11 +958,118 @@ pub const HevcMessage = extern struct {
     hevc: HevcPart = .{},
 };
 
+/// A VP9 frame: its uncompressed header's values - the compressed
+/// header and the tiles the decoder reads itself, with the sizes of both
+/// headers - the loop filter's level for each segment, reference and
+/// mode, worked out here, and the firmware's numbers for the pictures of
+/// the eight reference slots, for the three the frame refers to and for
+/// itself.
+pub const Vp9Part = extern struct {
+    frame_header_flags: u32 = 0,
+    frame_context_idx: u8 = 0,
+    reset_frame_context: u8 = 0,
+    curr_pic_idx: u8 = 0,
+    interp_filter: u8 = 0,
+    filter_level: u8 = 0,
+    sharpness_level: u8 = 0,
+    lf_adj_level: [8][4][2]u8 = @splat(@splat(@splat(0))),
+    base_qindex: u8 = 0,
+    y_dc_delta_q: i8 = 0,
+    uv_ac_delta_q: i8 = 0,
+    uv_dc_delta_q: i8 = 0,
+    log2_tile_cols: u8 = 0,
+    log2_tile_rows: u8 = 0,
+    tx_mode: u8 = 0,
+    reference_mode: u8 = 0,
+    chroma_format: u8 = 0,
+    ref_frame_map: [8]u8 = @splat(no_ref),
+    frame_refs: [3]u8 = @splat(no_ref),
+    ref_frame_sign_bias: [3]u8 = @splat(0),
+    frame_to_show: u8 = 0,
+    bit_depth_luma_minus8: u8 = 0,
+    bit_depth_chroma_minus8: u8 = 0,
+    p010_mode: u8 = 0,
+    msb_mode: u8 = 0,
+    luma_10to8: u8 = 0,
+    chroma_10to8: u8 = 0,
+    vp9_frame_size: u32 = 0,
+    compressed_header_size: u32 = 0,
+    uncompressed_header_size: u32 = 0,
+    reserved: [2]u8 = @splat(0),
+};
+
+/// A VP9 frame's probability table as the decoder reads it from its own
+/// buffer: the probabilities' room, unused - the decoder keeps them in
+/// the stream's context - and the segmentation: each segment's features'
+/// values in a word (the quantizer's 16 bits, the loop filter's 8, the
+/// reference's 4, then skip's), the trees' probabilities, whether the
+/// values are absolute, each segment's features by bit.
+pub const Vp9Tables = extern struct {
+    probs: [2304]u8 = @splat(0),
+    feature_data: [8]u32 = @splat(0),
+    tree_probs: [7]u8 = @splat(0),
+    pred_probs: [3]u8 = @splat(0),
+    abs_delta: u8 = 0,
+    feature_mask: [8]u8 = @splat(0),
+    reserved: [205]u8 = @splat(0),
+};
+
+/// The whole of a VP9 frame's message.
+pub const Vp9Message = extern struct {
+    header: MessageHeader = .{},
+    codec_index: MessageIndex = .{},
+    dpb_index: MessageIndex = .{},
+    decode: DecodePart = .{},
+    dpb: DpbPart = .{},
+    vp9: Vp9Part = .{},
+};
+
 comptime {
     if (@sizeOf(MessageHeader) != header_bytes or @sizeOf(DecodePart) != 188 or @sizeOf(DpbPart) != 168 or
         @sizeOf(AvcPart) != 1124 or @sizeOf(AvcScaling) != 224 or @sizeOf(AvcMessage) != 1552 or
-        @sizeOf(HevcPart) != 296 or @sizeOf(HevcScaling) != 992 or @sizeOf(HevcMessage) != 724)
+        @sizeOf(HevcPart) != 296 or @sizeOf(HevcScaling) != 992 or @sizeOf(HevcMessage) != 724 or
+        @sizeOf(Vp9Part) != 120 or @sizeOf(Vp9Tables) != 2560 or @sizeOf(Vp9Message) != 548)
         @compileError("a decoding message's part is not the size the decoder reads");
+    if (probs_at + @sizeOf(Vp9Tables) > 4096 or @sizeOf(Vp9Message) > probs_at or @sizeOf(AvcMessage) > scaling_at)
+        @compileError("a decoding message's parts overlap in its page");
+}
+
+/// The VP9 default probabilities (10.5) as the decoder keeps a set of
+/// them in the stream's context, which starts with one: the update
+/// masks of the vectors' probabilities first (none), then the
+/// coefficients', the modes', the references', the filters', the
+/// partitions', the inter modes', skip's, the intra-inter, compound and
+/// compound reference ones, the transform sizes' from 32x32 down, the
+/// vectors' joints and each vector component's.
+pub const vp9_defaults: [2072]u8 = vp9Defaults();
+
+fn vp9Defaults() [2072]u8 {
+    @setEvalBranchQuota(100_000);
+    const p = vp.vp9.default_probs;
+    var out: [2072]u8 = @splat(0);
+    var filled: usize = 32;
+    const parts = .{
+        p.coef,     p.y_mode,   p.uv_mode,  p.single_ref, p.interp_filter, p.partition, p.inter_mode, p.skip,
+        p.is_inter, p.comp_mode, p.comp_ref, p.tx32,       p.tx16,          p.tx8,       p.mv_joint,
+    };
+    inline for (parts) |part| {
+        const bytes: [@sizeOf(@TypeOf(part))]u8 = @bitCast(part);
+        @memcpy(out[filled..][0..bytes.len], &bytes);
+        filled += bytes.len;
+    }
+    for (0..2) |i| {
+        const component = .{
+            [1]u8{p.mv_sign[i]}, p.mv_class[i],          [1]u8{p.mv_class0_bit[i]}, p.mv_bits[i],
+            p.mv_class0_fr[i],   p.mv_fr[i],             [1]u8{p.mv_class0_hp[i]},  [1]u8{p.mv_hp[i]},
+        };
+        inline for (component) |part| {
+            const bytes: [@sizeOf(@TypeOf(part))]u8 = @bitCast(part);
+            @memcpy(out[filled..][0..bytes.len], &bytes);
+            filled += bytes.len;
+        }
+    }
+    if (filled != 2071) @compileError("the VP9 default probabilities are not laid out as the decoder reads them");
+    return out;
 }
 
 fn alignUp(value: u32, to: u32) u32 {
@@ -1016,6 +1151,26 @@ pub const Layout = struct {
             .target_pitch = alignUp(coded_width, 256),
             .target_rows = alignUp(coded_height, 32),
             .hw_bytes = hw_bytes,
+        };
+    }
+
+    /// A VP9 stream of `width` by `height` samples, `deep` past 8 bits:
+    /// its references' rows on 64 samples each way, and the decoder's
+    /// context as large for any size - five sets of probabilities, the
+    /// vectors and segment maps of the frames, the left edges of the
+    /// tiles, and for the deeper samples their own edges too.
+    pub fn vp9(width: u32, height: u32, deep: bool) Layout {
+        const deep_bytes: u32 = if (deep) 8 * 2 * 4096 else 0;
+        return .{
+            .width = width,
+            .height = height,
+            .ids = vp9_ids,
+            .ref_pitch = alignUp(width, 64),
+            .ref_rows = alignUp(height, 64),
+            .sample_bytes = if (deep) 2 else 1,
+            .target_pitch = alignUp(width, 256),
+            .target_rows = alignUp(height, 32),
+            .hw_bytes = 2304 * 5 + 32 * 2 * 128 * 68 + 9 * 64 * 2 * 128 * 68 + 8 * 2 * 2 * 8192 + deep_bytes,
         };
     }
 
@@ -1145,7 +1300,13 @@ pub fn hevcMessage(m: *HevcMessage, layout: Layout, stream: u32, number: u32, bi
     pictureMessage(HevcMessage, m, "hevc", PART_HEVC, types.VDCODEC_H265, layout, stream, number, bitstream_bytes, current, refs);
 }
 
-/// A picture's message of either codec but its codec's part, which is
+/// The rest of a VP9 frame's message, as `avcMessage`: `refs` are the
+/// eight reference slots' surfaces, by slot.
+pub fn vp9Message(m: *Vp9Message, layout: Layout, stream: u32, number: u32, bitstream_bytes: u32, current: u64, refs: *const [8]u64) void {
+    pictureMessage(Vp9Message, m, "vp9", PART_VP9, types.VDCODEC_VP9, layout, stream, number, bitstream_bytes, current, refs);
+}
+
+/// A picture's message of any codec but its codec's part, which is
 /// `part` of `Message` and the part `part_id` of the index.
 fn pictureMessage(comptime Message: type, m: *Message, comptime part: []const u8, part_id: u32, codec: u32, layout: Layout, stream: u32, number: u32, bitstream_bytes: u32, current: u64, refs: []const u64) void {
     m.header = .{
@@ -1167,7 +1328,7 @@ fn pictureMessage(comptime Message: type, m: *Message, comptime part: []const u8
         .dt_size = layout.targetBytes(),
         .hw_ctxt_size = layout.hw_bytes,
         .sw_ctxt_size = session_bytes,
-        .decode_buffer_flags = decode_buffers & ~BUFFER_SESSION,
+        .decode_buffer_flags = buffersOf(codec) & ~BUFFER_SESSION,
         .db_pitch = layout.ref_pitch,
         .db_aligned_height = layout.ref_rows,
         .db_swizzle_mode = SWIZZLE_256B_D,
@@ -1318,6 +1479,102 @@ pub fn hevcPart(part: *HevcPart, scaling: *HevcScaling, sps: *const vp.hevc.Hevc
     }
 }
 
+/// The codec's part and the probability table of the VP9 frame of
+/// header `h`, decoded into firmware number `id`; `map` holds the
+/// firmware's number for the picture of each reference slot (`no_ref`
+/// for an empty one). The loop filter's levels are worked out as the
+/// frame's filter takes them (8.8.1): each segment's level, as its
+/// feature says - itself or a change of the frame's - and that changed
+/// by the reference's and the mode's deltas, twice over where the
+/// frame's level is 32 or more.
+pub fn vp9Part(part: *Vp9Part, tables: *Vp9Tables, h: *const vp.vp9.Vp9Header, id: u8, map: *const [8]u8) void {
+    const v9 = vp.vp9;
+    const sg = &h.segmentation;
+    const lf = &h.loop_filter;
+    part.* = .{};
+    part.frame_header_flags = flag(h.frame_type != v9.KEY_FRAME, 1) | flag(h.error_resilient_mode, 2) |
+        flag(h.intra_only, 3) | flag(h.allow_high_precision_mv, 4) | flag(h.refresh_frame_context, 5) |
+        flag(h.frame_parallel_decoding_mode, 6) | flag(sg.enabled, 7) | flag(sg.enabled and sg.update_map, 8) |
+        flag(sg.enabled and sg.temporal_update, 9) | flag(sg.enabled and sg.update_data, 10) |
+        flag(lf.delta_enabled, 11) | flag(lf.delta_update, 12) | flag(h.use_prev_frame_mvs, 13) |
+        // The decoder is given the uncompressed header's values, and reads
+        // the frame from its start.
+        flag(true, 14);
+    // A frame that resets what came before uses the first context.
+    part.frame_context_idx = if (h.reset_past) 0 else h.frame_context_idx;
+    part.reset_frame_context = h.reset_frame_context;
+    part.curr_pic_idx = id;
+    part.interp_filter = h.interp_filter;
+    part.filter_level = lf.level;
+    part.sharpness_level = lf.sharpness;
+    part.base_qindex = h.base_q_idx;
+    part.y_dc_delta_q = h.delta_q_y_dc;
+    part.uv_ac_delta_q = h.delta_q_uv_ac;
+    part.uv_dc_delta_q = h.delta_q_uv_dc;
+    part.log2_tile_cols = h.tile_cols_log2;
+    part.log2_tile_rows = h.tile_rows_log2;
+    part.chroma_format = 1;
+    part.bit_depth_luma_minus8 = h.bit_depth -| 8;
+    part.bit_depth_chroma_minus8 = h.bit_depth -| 8;
+    part.uncompressed_header_size = h.uncompressed_bytes;
+    part.compressed_header_size = h.compressed_bytes;
+    if (h.bit_depth > 8) {
+        part.luma_10to8 = DITHER_ROUND;
+        part.chroma_10to8 = DITHER_ROUND;
+    }
+
+    const shift: u5 = @intCast(lf.level >> 5);
+    for (0..8) |seg| {
+        var level: i32 = lf.level;
+        if (sg.active(@intCast(seg), v9.SEG_LVL_ALT_L)) {
+            const data: i32 = sg.feature_data[seg][v9.SEG_LVL_ALT_L];
+            level = filterLevel(if (sg.abs_delta) data else data + level);
+        }
+        const levels = &part.lf_adj_level[seg];
+        if (!lf.delta_enabled) {
+            levels[0][0] = @intCast(level);
+            for (levels[1..]) |*by_mode| by_mode.* = .{ @intCast(level), @intCast(level) };
+            continue;
+        }
+        levels[0][0] = @intCast(filterLevel(level + (@as(i32, lf.ref_deltas[0]) << shift)));
+        for (levels[1..], 1..) |*by_mode, ref| {
+            for (by_mode, 0..) |*out, mode| {
+                const changed = level + ((@as(i32, lf.ref_deltas[ref]) + lf.mode_deltas[mode]) << shift);
+                out.* = @intCast(filterLevel(changed));
+            }
+        }
+    }
+
+    part.ref_frame_map = map.*;
+    for (0..3) |i| {
+        part.frame_refs[i] = map[h.ref_frame_idx[i] & 7];
+        part.ref_frame_sign_bias[i] = @intFromBool(h.ref_frame_sign_bias[i + 1]);
+    }
+
+    tables.* = .{};
+    if (sg.enabled) {
+        for (0..8) |seg| {
+            const d = sg.feature_data[seg];
+            tables.feature_data[seg] = @as(u32, @as(u16, @bitCast(d[0]))) |
+                (@as(u32, @as(u8, @truncate(@as(u16, @bitCast(d[1]))))) << 16) |
+                (@as(u32, @as(u4, @truncate(@as(u16, @bitCast(d[2]))))) << 24) |
+                (@as(u32, @as(u4, @truncate(@as(u16, @bitCast(d[3]))))) << 28);
+            var mask: u8 = 0;
+            for (sg.feature_enabled[seg], 0..) |on, feature| mask |= @as(u8, @intFromBool(on)) << @intCast(feature);
+            tables.feature_mask[seg] = mask;
+        }
+        tables.tree_probs = sg.tree_probs;
+        tables.pred_probs = sg.pred_probs;
+        tables.abs_delta = @intFromBool(sg.abs_delta);
+    }
+}
+
+/// A loop filter level kept to 0 to MAX_LOOP_FILTER.
+fn filterLevel(level: i32) i32 {
+    const most: i32 = vp.vp9.MAX_LOOP_FILTER;
+    return if (level < 0) 0 else if (level > most) most else level;
+}
+
 /// The widths of `count` tile columns (or the heights of rows) less
 /// one, in coding tree blocks of a picture `ctbs` across: as `sizes`
 /// says them - all but the last - or spread evenly (6-3, 6-4).
@@ -1383,20 +1640,27 @@ pub fn streamFromDevice(to: [*]u8, cpu: u64, bytes: usize) void {
     }
 }
 
-/// A picture's message `message` and its scaling lists (an AvcMessage
-/// and AvcScaling, or an HevcMessage and HevcScaling) written into the
-/// ring's piece and handed to the decoder with the stream's other
-/// buffers (`buffers`, whose message and scaling lists are filled in
-/// here). Its fence is the state's last; `fenced` waits for it. The
-/// caller holds the resource's lock.
-pub fn decodePicture(state: *State, message: anytype, scaling: anytype, buffers: Buffers) void {
+/// A picture's message `message` and its tables - an AvcMessage and its
+/// AvcScaling, an HevcMessage and its HevcScaling, or a Vp9Message and
+/// its Vp9Tables - written into the ring's piece and handed to the
+/// decoder with the stream's other buffers (`buffers`, whose message and
+/// tables are filled in here). Its fence is the state's last; `fenced`
+/// waits for it. The caller holds the resource's lock.
+pub fn decodePicture(state: *State, message: anytype, tables: anytype, buffers: Buffers) void {
+    const vp9 = @TypeOf(tables.*) == Vp9Tables;
+    const tables_at = if (vp9) probs_at else scaling_at;
     const page = state.ring.cpu + message_at;
     copyToDevice(page, @as([*]const u8, @ptrCast(message))[0..@sizeOf(@TypeOf(message.*))]);
-    copyToDevice(page + scaling_at, @as([*]const u8, @ptrCast(scaling))[0..@sizeOf(@TypeOf(scaling.*))]);
+    copyToDevice(page + tables_at, @as([*]const u8, @ptrCast(tables))[0..@sizeOf(@TypeOf(tables.*))]);
     var named = buffers;
-    named.flags = decode_buffers;
     named.message = state.ring.device + message_at;
-    named.scaling = state.ring.device + message_at + scaling_at;
+    if (vp9) {
+        named.flags = vp9_decode_buffers;
+        named.probs = state.ring.device + message_at + tables_at;
+    } else {
+        named.flags = decode_buffers;
+        named.scaling = state.ring.device + message_at + tables_at;
+    }
     fence();
     handOver(state, named);
 }
@@ -1771,4 +2035,152 @@ test "an H.265 picture's message: its parameter sets, references and sets" {
     try testing.expectEqual(@as(u32, 3), message.dpb.array_size);
     try testing.expectEqual(@as(u32, 1920 * 1088 * 2), message.dpb.luma_aligned_size);
     try testing.expectEqual(@as(u32, 1920 / 2), message.dpb.chroma_pitch);
+}
+
+test "a VP9 frame's message is laid out as the decoder reads it" {
+    try testing.expectEqual(@as(usize, 428), @offsetOf(Vp9Message, "vp9"));
+    try testing.expectEqual(@as(usize, 4), @offsetOf(Vp9Part, "frame_context_idx"));
+    try testing.expectEqual(@as(usize, 10), @offsetOf(Vp9Part, "lf_adj_level"));
+    try testing.expectEqual(@as(usize, 74), @offsetOf(Vp9Part, "base_qindex"));
+    try testing.expectEqual(@as(usize, 78), @offsetOf(Vp9Part, "log2_tile_cols"));
+    try testing.expectEqual(@as(usize, 82), @offsetOf(Vp9Part, "chroma_format"));
+    try testing.expectEqual(@as(usize, 83), @offsetOf(Vp9Part, "ref_frame_map"));
+    try testing.expectEqual(@as(usize, 91), @offsetOf(Vp9Part, "frame_refs"));
+    try testing.expectEqual(@as(usize, 94), @offsetOf(Vp9Part, "ref_frame_sign_bias"));
+    try testing.expectEqual(@as(usize, 98), @offsetOf(Vp9Part, "bit_depth_luma_minus8"));
+    try testing.expectEqual(@as(usize, 102), @offsetOf(Vp9Part, "luma_10to8"));
+    try testing.expectEqual(@as(usize, 104), @offsetOf(Vp9Part, "vp9_frame_size"));
+    try testing.expectEqual(@as(usize, 112), @offsetOf(Vp9Part, "uncompressed_header_size"));
+    try testing.expectEqual(@as(usize, 2304), @offsetOf(Vp9Tables, "feature_data"));
+    try testing.expectEqual(@as(usize, 2336), @offsetOf(Vp9Tables, "tree_probs"));
+    try testing.expectEqual(@as(usize, 2346), @offsetOf(Vp9Tables, "abs_delta"));
+    try testing.expectEqual(@as(usize, 2347), @offsetOf(Vp9Tables, "feature_mask"));
+    try testing.expectEqual(@as(u32, 0x11), streamKind(types.VDCODEC_VP9));
+}
+
+test "the VP9 default probabilities laid out are Mesa's bytes" {
+    // FNV-1a of the 2072 bytes Mesa's table fill writes
+    // (ac_vcn_vp9_fill_probs_table), taken from its sources.
+    var hash: u64 = 0xcbf29ce484222325;
+    for (vp9_defaults) |byte| hash = (hash ^ byte) *% 0x100000001b3;
+    try testing.expectEqual(@as(u64, 0x62de58118a055ac9), hash);
+    try testing.expectEqualSlices(u8, &.{ 195, 29, 183, 84 }, vp9_defaults[32..36]);
+}
+
+test "a VP9 stream's surfaces and context, in 8 bits and in 10" {
+    const l = Layout.vp9(1920, 1080, false);
+    try testing.expectEqual(@as(u32, 9), l.ids);
+    try testing.expectEqual(@as(u32, 1920), l.ref_pitch);
+    try testing.expectEqual(@as(u32, 1088), l.ref_rows);
+    try testing.expectEqual(@as(u32, 1), l.sample_bytes);
+    try testing.expectEqual(@as(u32, 2048), l.target_pitch);
+    try testing.expectEqual(@as(u32, 10_857_728), l.hw_bytes);
+    const deep = Layout.vp9(3840, 2160, true);
+    try testing.expectEqual(@as(u32, 2176), deep.ref_rows);
+    try testing.expectEqual(@as(u32, 3840 * 2176 * 2), deep.refLuma());
+    try testing.expectEqual(@as(u32, 10_857_728 + 65_536), deep.hw_bytes);
+    const small = Layout.vp9(136, 104, false);
+    try testing.expectEqual(@as(u32, 192), small.ref_pitch);
+    try testing.expectEqual(@as(u32, 128), small.ref_rows);
+    try testing.expectEqual(@as(u32, 256), small.target_pitch);
+}
+
+test "a VP9 frame's message: its flags, filter levels, references and segments" {
+    const v9 = vp.vp9;
+    var h: v9.Vp9Header = .{
+        .frame_type = v9.NON_KEY_FRAME,
+        .frame_is_intra = false,
+        .allow_high_precision_mv = true,
+        .refresh_frame_context = true,
+        .frame_parallel_decoding_mode = false,
+        .use_prev_frame_mvs = true,
+        .frame_context_idx = 2,
+        .reset_frame_context = 0,
+        .interp_filter = v9.FILTER_EIGHTTAP_SHARP,
+        .base_q_idx = 60,
+        .delta_q_y_dc = -2,
+        .tile_cols_log2 = 1,
+        .bit_depth = 10,
+        .ref_frame_idx = .{ 0, 3, 5 },
+        .ref_frame_sign_bias = .{ false, false, false, true },
+        .uncompressed_bytes = 20,
+        .compressed_bytes = 50,
+    };
+    h.loop_filter = .{ .level = 36, .sharpness = 2, .delta_enabled = true, .mode_deltas = .{ 0, -1 } };
+    const sg = &h.segmentation;
+    sg.enabled = true;
+    sg.update_map = true;
+    sg.tree_probs = .{ 10, 20, 30, 40, 50, 60, 70 };
+    sg.pred_probs = .{ 1, 2, 3 };
+    sg.feature_enabled[2] = .{ true, true, false, false };
+    sg.feature_data[2] = .{ -17, -10, 0, 0 };
+    sg.feature_enabled[5][v9.SEG_LVL_REF_FRAME] = true;
+    sg.feature_data[5][v9.SEG_LVL_REF_FRAME] = 1;
+    sg.feature_enabled[6][v9.SEG_LVL_SKIP] = true;
+    const map = [8]u8{ 4, 1, no_ref, 6, 2, 0, 3, 8 };
+
+    var message: Vp9Message = .{};
+    var tables: Vp9Tables = .{};
+    vp9Part(&message.vp9, &tables, &h, 7, &map);
+    const part = &message.vp9;
+    // Not a key frame, high-precision vectors, the context refreshed,
+    // segmentation and its map, the filter's deltas, the vectors before,
+    // the uncompressed header given.
+    try testing.expectEqual(@as(u32, 0x69B2), part.frame_header_flags);
+    try testing.expectEqual(@as(u8, 2), part.frame_context_idx);
+    try testing.expectEqual(@as(u8, 7), part.curr_pic_idx);
+    try testing.expectEqual(@as(u8, v9.FILTER_EIGHTTAP_SHARP), part.interp_filter);
+    try testing.expectEqual(@as(u8, 36), part.filter_level);
+    try testing.expectEqual(@as(i8, -2), part.y_dc_delta_q);
+    try testing.expectEqual(@as(u8, 1), part.log2_tile_cols);
+    try testing.expectEqual(@as(u8, 2), part.bit_depth_luma_minus8);
+    try testing.expectEqual(DITHER_ROUND, part.luma_10to8);
+    try testing.expectEqual(@as(u32, 20), part.uncompressed_header_size);
+    try testing.expectEqual(@as(u32, 50), part.compressed_header_size);
+    // Level 36: each delta counts twice. Segment 2's level is 10 lower.
+    try testing.expectEqual([4][2]u8{ .{ 38, 0 }, .{ 36, 34 }, .{ 34, 32 }, .{ 34, 32 } }, part.lf_adj_level[0]);
+    try testing.expectEqual([4][2]u8{ .{ 28, 0 }, .{ 26, 24 }, .{ 24, 22 }, .{ 24, 22 } }, part.lf_adj_level[2]);
+    try testing.expectEqualSlices(u8, &map, &part.ref_frame_map);
+    try testing.expectEqualSlices(u8, &.{ 4, 6, 0 }, &part.frame_refs);
+    try testing.expectEqualSlices(u8, &.{ 0, 0, 1 }, &part.ref_frame_sign_bias);
+    try testing.expectEqual(@as(u32, 0x00F6_FFEF), tables.feature_data[2]);
+    try testing.expectEqual(@as(u8, 3), tables.feature_mask[2]);
+    try testing.expectEqual(@as(u32, 0x0100_0000), tables.feature_data[5]);
+    try testing.expectEqual(@as(u8, 4), tables.feature_mask[5]);
+    try testing.expectEqual(@as(u8, 8), tables.feature_mask[6]);
+    try testing.expectEqualSlices(u8, &sg.tree_probs, &tables.tree_probs);
+    try testing.expectEqualSlices(u8, &sg.pred_probs, &tables.pred_probs);
+
+    // A key frame that resets what came before: the first context,
+    // no deltas, no segments.
+    var key: v9.Vp9Header = .{ .frame_context_idx = 3, .reset_past = true, .reset_frame_context = 3 };
+    key.loop_filter.level = 10;
+    vp9Part(&message.vp9, &tables, &key, 0, &map);
+    try testing.expectEqual(@as(u32, 1 << 14 | 1 << 6), part.frame_header_flags);
+    try testing.expectEqual(@as(u8, 0), part.frame_context_idx);
+    try testing.expectEqual(@as(u8, 3), part.reset_frame_context);
+    for (part.lf_adj_level) |levels| try testing.expectEqual([4][2]u8{ .{ 10, 0 }, .{ 10, 10 }, .{ 10, 10 }, .{ 10, 10 } }, levels);
+    try testing.expectEqual(@as(u8, 0), part.luma_10to8);
+    try testing.expectEqual(Vp9Tables{}, tables);
+
+    // The rest: VP9's stream, the probability table among the buffers,
+    // the eight slots' surfaces.
+    var surfaces: [8]u64 = undefined;
+    for (&surfaces, 0..) |*address, j| address.* = 0x1_0000_0000 + j * 0x10_0000;
+    vp9Message(&message, Layout.vp9(1920, 1080, false), 3, 9, 4096, 0x2_0000_0000, &surfaces);
+    try testing.expectEqual(@as(u32, @sizeOf(Vp9Message)), message.header.total_size);
+    try testing.expectEqual(MessageIndex{ .id = PART_VP9, .offset = 428, .size = 120 }, message.codec_index);
+    try testing.expectEqual(@as(u32, 0x11), message.decode.stream_type);
+    try testing.expectEqual(@as(u32, 0x180D), message.decode.decode_buffer_flags);
+    try testing.expectEqual(@as(u32, 10_857_728), message.decode.hw_ctxt_size);
+    try testing.expectEqual(@as(u32, 8), message.dpb.array_size);
+    try testing.expectEqual(@as(u32, 0x0030_0000), message.dpb.addr_lo[3]);
+    try testing.expectEqual(@as(u32, 1), message.dpb.addr_hi[7]);
+    try testing.expectEqual(@as(u32, 2), message.dpb.curr_hi);
+
+    var ib: [ib_words]u32 = undefined;
+    _ = indirectBuffer(&ib, .{ .flags = vp9_decode_buffers, .message = 0x1000, .session = 0x2000, .probs = 0x3_0000_0400 });
+    try testing.expectEqual(vp9_decode_buffers, ib[6]);
+    try testing.expectEqual(@as(u32, 3), ib[6 + 17]);
+    try testing.expectEqual(@as(u32, 0x400), ib[6 + 18]);
 }

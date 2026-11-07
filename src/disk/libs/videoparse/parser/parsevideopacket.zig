@@ -19,7 +19,8 @@ const _parser = @import("_parser.zig");
 /// INPUTS:
 /// - `parser`: what OpenVideoParser made.
 /// - `packet`: its bytes (`data`, `bytes`) - units after start codes, or
-///   each after its length where the setup said so - when its picture is
+///   each after its length where the setup said so; a VP9 frame or
+///   superframe, as a WebM or Matroska block holds it - when its picture is
 ///   shown (`time`, in the caller's units), and `flags`:
 ///   `VPPKT_ACCESS_UNIT` where the packet is one access unit, as an MP4's
 ///   or a Matroska track's is, so its picture ends with it;
@@ -37,6 +38,10 @@ const _parser = @import("_parser.zig");
 /// VPPKT_ACCESS_UNIT ends when the next picture's first slice comes, or
 /// a unit that comes only between pictures (a parameter set, an access
 /// unit delimiter, SEI).
+///
+/// A VP9 packet's frames are read one after the other, by the index at
+/// its end where it is a superframe; `VPPKT_ACCESS_UNIT` says nothing
+/// more of it.
 ///
 /// A picture takes the time of the packet its first slice came in. Where
 /// pictures come out in another order than they came in, each is shown

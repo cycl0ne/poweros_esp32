@@ -21,7 +21,9 @@ const engine = @import("../videodec_init.zig").engine;
 /// INPUTS:
 /// - `decoder` - the decoder.
 /// - `data` - the picture's units in Annex B form, each after a start
-///   code; the parameter sets in front of the first picture.
+///   code; the parameter sets in front of the first picture. VP9: a
+///   packet as the container holds it, a frame or a superframe (SINCE
+///   1.5).
 /// - `length` - how many bytes; 0 with VDFEED_END alone.
 /// - `time` - when the picture is shown, in the caller's units
 ///   (microseconds, say); handed back with its frame.
@@ -51,7 +53,11 @@ const engine = @import("../videodec_init.zig").engine;
 /// VDERR_UNSUPPORTED: H.264 other than 8-bit 4:2:0, the extended
 /// profile, lossless pictures, slice groups, larger than 4096 each way;
 /// H.265 other than Main, Main 10 and Main Still Picture, larger than
-/// 8192 x 4352.
+/// 8192 x 4352; VP9 other than profile 0 and profile 2's 10 bits in
+/// 4:2:0, larger than 8192 x 4352, or a frame predicted from others that
+/// is larger than both 1920 x 1088 and every frame before it. Smaller
+/// frames, and frames predicted from pictures of other sizes, are
+/// decoded.
 ///
 /// CONTEXT:
 /// - Waits: yes, for the chip to take the command. - Interrupts: no.

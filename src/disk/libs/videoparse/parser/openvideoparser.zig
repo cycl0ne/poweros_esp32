@@ -10,6 +10,7 @@ const _parser = @import("_parser.zig");
 const Parser = _parser.Parser;
 const h264 = @import("../h264/_h264.zig");
 const hevc = @import("../hevc/_hevc.zig");
+const vp9 = @import("../vp9/_vp9.zig");
 const CloseVideoParser = @import("closevideoparser.zig").CloseVideoParser;
 
 /// Makes a parser for a video stream, and reads its track's setup.
@@ -22,11 +23,12 @@ const CloseVideoParser = @import("closevideoparser.zig").CloseVideoParser;
 /// SINCE: 1.0. LVO -20.
 ///
 /// INPUTS:
-/// - `codec`: what the stream is: VPCODEC_H264 or VPCODEC_HEVC.
+/// - `codec`: what the stream is: VPCODEC_H264, VPCODEC_HEVC or
+///   VPCODEC_VP9 (SINCE 1.1).
 /// - `setup`, `bytes`: the track's setup as its container holds it - an
 ///   MP4's `avcC` or `hvcC`, a Matroska track's CodecPrivate - or null
 ///   (or 0 bytes) for a stream in Annex B form, its parameter sets among
-///   its units.
+///   its units. A VP9 track's is not read: its frames say everything.
 /// - `tags`: `VPA_Slots`, the slots the caller keeps beyond the stream's
 ///   own (pictures it has lent out, or reads on cores of its own after
 ///   the stream let go of them; at most 32, default 0); `VPA_MaxWidth`
@@ -50,7 +52,9 @@ const CloseVideoParser = @import("closevideoparser.zig").CloseVideoParser;
 /// The slots go from 0 to 17 plus `VPA_Slots`: sixteen frames the stream
 /// may hold, the picture being decoded, and a first field waiting for its
 /// second (H.264) - HEVC's sixteen pictures hold the one being decoded,
-/// and two more stand for references the stream names and lacks.
+/// and two more stand for references the stream names and lacks. VP9's
+/// go from 0 to 8 plus `VPA_Slots`: the eight reference slots' pictures
+/// and the frame being decoded.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -67,7 +71,8 @@ const CloseVideoParser = @import("closevideoparser.zig").CloseVideoParser;
 /// parameter sets; an HEVC parser some 330 KiB, most of it the sixteen
 /// sequence parameter sets with their reference picture sets and the 64
 /// picture parameter sets. Each takes as much again as the largest unit
-/// for its unescaped copy.
+/// for its unescaped copy. A VP9 parser takes some 26 KiB, and nothing
+/// for its frames, which it reads where they are.
 ///
 /// BUGS:
 /// None known.
@@ -87,7 +92,7 @@ const CloseVideoParser = @import("closevideoparser.zig").CloseVideoParser;
 pub fn OpenVideoParser(base: *VideoParseBase, codec: u32, setup: ?[*]const u8, bytes: u32, tags: ?[*]const utility.TagItem, err: ?*i32) ?*vp.VideoParser {
     const sys = base.sys_base;
     const ub = base.utility_base;
-    if (codec != vp.VPCODEC_H264 and codec != vp.VPCODEC_HEVC) return failed(err, vp.VPERR_UNSUPPORTED);
+    if (codec != vp.VPCODEC_H264 and codec != vp.VPCODEC_HEVC and codec != vp.VPCODEC_VP9) return failed(err, vp.VPERR_UNSUPPORTED);
     const slots: u32 = @truncate(ub.GetTagData(vp.VPA_Slots, 0, tags));
     if (slots > 32) return failed(err, vp.VPERR_UNSUPPORTED);
     const max_width: u32 = @truncate(ub.GetTagData(vp.VPA_MaxWidth, 8192, tags));
@@ -102,15 +107,18 @@ pub fn OpenVideoParser(base: *VideoParseBase, codec: u32, setup: ?[*]const u8, b
     p.max_width_mbs = (max_width + 15) / 16;
     p.max_height_mbs = (max_height + 15) / 16;
     const handle: *vp.VideoParser = @ptrCast(p);
-    if (codec == vp.VPCODEC_H264) {
-        p.h264 = h264.create(p);
-    } else p.hevc = hevc.create(p);
-    if (p.h264 == null and p.hevc == null) {
+    switch (codec) {
+        vp.VPCODEC_H264 => p.h264 = h264.create(p),
+        vp.VPCODEC_HEVC => p.hevc = hevc.create(p),
+        else => p.vp9 = vp9.create(p),
+    }
+    if (p.h264 == null and p.hevc == null and p.vp9 == null) {
         CloseVideoParser(base, handle);
         return failed(err, vp.VPERR_NOMEMORY);
     }
+    // A VP9 track's setup says nothing its frames do not.
     if (setup) |data| {
-        if (bytes != 0) {
+        if (bytes != 0 and codec != vp.VPCODEC_VP9) {
             const read = if (p.h264) |st| h264.setup(p, st, data[0..bytes]) else hevc.setup(p, p.hevc.?, data[0..bytes]);
             read catch |e| {
                 CloseVideoParser(base, handle);
