@@ -144,6 +144,7 @@ pub const LVO = struct {
     pub const GetDeviceMemoryCommitment = libraries.lvo(127);
     pub const CmdSetDepthBounds = libraries.lvo(128);
     pub const CmdSetBlendConstantsAt = libraries.lvo(129);
+    pub const CmdResolveImage = libraries.lvo(130);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -275,6 +276,7 @@ pub const Fn = struct {
     pub const GetDeviceMemoryCommitment = *const fn (*FacetBase, *facet.Device, *facet.DeviceMemory, *u64) callconv(.c) void;
     pub const CmdSetDepthBounds = *const fn (*FacetBase, *facet.CommandBuffer, f32, f32) callconv(.c) void;
     pub const CmdSetBlendConstantsAt = *const fn (*FacetBase, *facet.CommandBuffer, u32, *const [4]f32) callconv(.c) void;
+    pub const CmdResolveImage = *const fn (*FacetBase, *facet.CommandBuffer, *facet.Image, facet.ImageLayout, *facet.Image, facet.ImageLayout, u32, [*]const facet.ImageResolve) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -932,5 +934,11 @@ pub const FacetBase = opaque {
     /// set a pipeline shares between them.
     pub fn CmdSetBlendConstantsAt(self: *FacetBase, buffer: *facet.CommandBuffer, attachment: u32, constants: *const [4]f32) void {
         return libraries.call(self, LVO.CmdSetBlendConstantsAt, Fn.CmdSetBlendConstantsAt, .{ buffer, attachment, constants });
+    }
+
+    /// Recorded: the samples of a multisampled image averaged into an image of
+    /// one sample, rectangle by rectangle.
+    pub fn CmdResolveImage(self: *FacetBase, buffer: *facet.CommandBuffer, source: *facet.Image, source_layout: facet.ImageLayout, destination: *facet.Image, destination_layout: facet.ImageLayout, region_count: u32, regions: [*]const facet.ImageResolve) void {
+        return libraries.call(self, LVO.CmdResolveImage, Fn.CmdResolveImage, .{ buffer, source, source_layout, destination, destination_layout, region_count, regions });
     }
 };

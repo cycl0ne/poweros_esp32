@@ -184,6 +184,7 @@ fn playStream(queue: *Queue, stream: *const _stream.Stream) void {
         .clear_depth_stencil_image => if (!_transfer.clearDepthImage(_stream.as(_command.ClearDepthStencilImage, head))) noRoom(queue, "a clear of a depth image whose pixels it cannot write"),
         .copy_image => _transfer.copyImage(_stream.as(_command.CopyImage, head)),
         .blit_image => _transfer.blitImage(_stream.as(_command.BlitImage, head)),
+        .resolve_image => _transfer.resolveImage(_stream.as(_command.ResolveImage, head)),
         .copy_image_to_buffer => _transfer.copyImageToBuffer(_stream.as(_command.CopyImageToBuffer, head)),
         .clear_attachment => if (player.drawing) _draw.clearAttachment(queue, _stream.as(_command.ClearAttachment, head)),
         .begin_render_pass => {

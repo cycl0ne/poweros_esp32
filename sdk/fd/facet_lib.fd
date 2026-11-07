@@ -281,4 +281,7 @@ void CmdSetDepthBounds(*facet.CommandBuffer buffer, f32 min, f32 max)
 /// One colour attachment's own blend constants, where Vulkan has the one
 /// set a pipeline shares between them.
 void CmdSetBlendConstantsAt(*facet.CommandBuffer buffer, u32 attachment, *const [4]f32 constants)
+/// Recorded: the samples of a multisampled image averaged into an image of
+/// one sample, rectangle by rectangle.
+void CmdResolveImage(*facet.CommandBuffer buffer, *facet.Image source, facet.ImageLayout source_layout, *facet.Image destination, facet.ImageLayout destination_layout, u32 region_count, [*]const facet.ImageResolve regions)
 ##end

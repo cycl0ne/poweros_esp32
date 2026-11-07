@@ -48,6 +48,7 @@ Generated from the source by `./zig build autodoc`.
 - [CmdPipelineBarrier](#cmdpipelinebarrier) - Recorded: a barrier between the work before it and the work after.
 - [CmdPushConstants](#cmdpushconstants) - Recorded: bytes of push constants set.
 - [CmdResetQueryPool](#cmdresetquerypool) - Recorded: `count` queries from `first` set back to nothing counted and not available.
+- [CmdResolveImage](#cmdresolveimage) - Recorded: the samples of a multisampled image averaged into an image of one sample, rectangle by rectangle.
 - [CmdSetBlendConstants](#cmdsetblendconstants) - Recorded: the blend constants, for a pipeline that leaves them to commands.
 - [CmdSetBlendConstantsAt](#cmdsetblendconstantsat) - Recorded: one colour attachment's own blend constants, for a pipeline that leaves them to commands.
 - [CmdSetDepthBias](#cmdsetdepthbias) - Recorded: the depth bias, for a pipeline that leaves it to commands.
@@ -2567,6 +2568,76 @@ None known.
 
 ```zig
 fb.CmdResetQueryPool(commands, counted, 0, 1);
+```
+
+## CmdResolveImage
+
+Recorded: the samples of a multisampled image averaged into an image of one sample, rectangle by rectangle.
+
+**SYNOPSIS**
+
+```zig
+fn CmdResolveImage(base: *FacetBase, buffer: *facet.CommandBuffer, source: *facet.Image, source_layout: facet.ImageLayout, destination: *facet.Image, destination_layout: facet.ImageLayout, region_count: u32, regions: [*]const facet.ImageResolve) void
+```
+
+**SINCE**
+
+1.101. LVO -524.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording.
+- `source` - an image of four samples a pixel.
+- `destination` - an image of one sample, of the source's format.
+- `source_layout`, `destination_layout` - not looked at.
+- `region_count`, `regions` - the rectangles, and the layers of each.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+Outside a render pass. Each pixel of a rectangle of the destination is
+the average of the source's samples at the same place in its rectangle:
+for each channel, the samples' sum over their count, rounded to the
+nearest, as Mesa's resolve averages them. What falls outside either
+image is left out. A source not of four samples, a destination of more
+than one, or two formats, none of which Vulkan has a program give,
+resolve nothing.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+What is given is copied as the command is recorded; the images have to
+last until it has been played.
+
+**NOTES**
+
+Only a device that draws four samples makes an image of them
+(`Capabilities.multisampling`), and none does yet
+(docs/facet-vulkan10.md item 61): until one does, every resolve is of
+an image this library would not have made.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CmdCopyImage`, `CmdBlitImage`, `CreateRenderPass`
+
+**EXAMPLES**
+
+```zig
+const region = facet.ImageResolve{ .extent = .{ .width = 800, .height = 600, .depth = 1 } };
+fb.CmdResolveImage(commands, drawn.?, .transfer_src_optimal, shown.?, .transfer_dst_optimal, 1, @ptrCast(&region));
 ```
 
 ## CmdSetBlendConstants

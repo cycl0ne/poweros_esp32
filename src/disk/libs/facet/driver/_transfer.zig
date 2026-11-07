@@ -111,6 +111,95 @@ fn copyBlocks(command: *const _command.CopyImage, source: *const Image, destinat
     }
 }
 
+/// CmdResolveImage's regions, the part of each inside both images: each
+/// pixel of the destination the average of the source's samples at the
+/// same place (since 1.101). lavapipe has llvmpipe blit the region
+/// (`handle_resolve_image`, lvp_execute.c), and the resolve averages the
+/// samples, their sum times one over their count (`build_tex_resolve`,
+/// vk_meta_blit_resolve.c), and Vulkan has the write take one of the two
+/// values nearest to that and should take the nearer (Fixed-Point Data
+/// Conversions). Here that is done in whole numbers (`average8888`,
+/// `average565`): the same average, and its nearest value, a tie taken
+/// upward.
+///
+/// Vulkan has the source of more than one sample, the destination of one,
+/// both of the one format (VUID-vkCmdResolveImage-srcImage-00257,
+/// VUID-vkCmdResolveImage-dstImage-00259,
+/// VUID-vkCmdResolveImage-srcImage-12546): a command that is not is left
+/// out, and so is a source of any count but four, the one this library
+/// makes. An image of four samples is of an attachment's format
+/// (`_image.shapeFor`), so it is 8888 or 565 and never one of whole
+/// numbers, whose resolve would take one sample instead.
+pub fn resolveImage(command: *const _command.ResolveImage) void {
+    const source = command.source;
+    const destination = command.destination;
+    if (source.samples != 4 or destination.samples != 1 or source.format != destination.format) return;
+    if (!_image.readable(source) or !_image.readable(destination)) return;
+    const pixel = _image.bytesOf(source.format);
+    if (pixel != 4 and source.format != .r5g6b5_unorm_pack16) return;
+    var planes: [4]Image = undefined;
+    for (&planes, 0..) |*plane, sample| plane.* = _image.sampleOf(source, @intCast(sample));
+    for (_stream.items(_command.ResolveImage, facet.ImageResolve, command, command.count)) |*region| {
+        const to_level = region.dst_subresource.mip_level;
+        if (region.src_subresource.mip_level != 0 or to_level >= destination.levels) continue;
+        if (region.src_offset.x < 0 or region.src_offset.y < 0 or region.dst_offset.x < 0 or region.dst_offset.y < 0) continue;
+        const from_size = _image.levelSize(source, 0);
+        const to_size = _image.levelSize(destination, to_level);
+        const from_x: u32 = @intCast(region.src_offset.x);
+        const from_y: u32 = @intCast(region.src_offset.y);
+        const to_x: u32 = @intCast(region.dst_offset.x);
+        const to_y: u32 = @intCast(region.dst_offset.y);
+        if (from_x >= from_size[0] or from_y >= from_size[1] or to_x >= to_size[0] or to_y >= to_size[1]) continue;
+        const width = @min(region.extent.width, from_size[0] - from_x, to_size[0] - to_x);
+        const height = @min(region.extent.height, from_size[1] - from_y, to_size[1] - to_y);
+        const from_layers = _image.layersOf(source, region.src_subresource, region.src_offset.z, region.extent.depth) orelse continue;
+        const to_layers = _image.layersOf(destination, region.dst_subresource, region.dst_offset.z, region.extent.depth) orelse continue;
+        for (0..@min(from_layers.count, to_layers.count)) |layer_number| {
+            const layer: u32 = @intCast(layer_number);
+            for (0..height) |row| for (0..width) |column| {
+                const x: u32 = @intCast(column);
+                const y: u32 = @intCast(row);
+                var words: [4]u32 = undefined;
+                for (&planes, &words) |*plane, *word| {
+                    var bytes: [4]u8 = @splat(0);
+                    _image.readTexel(plane, 0, from_layers.first + layer, from_x + x, from_y + y, &bytes);
+                    word.* = std.mem.readInt(u32, &bytes, .little);
+                }
+                var bytes: [4]u8 = undefined;
+                std.mem.writeInt(u32, &bytes, if (pixel == 4) average8888(words) else average565(words), .little);
+                _image.writeTexel(destination, to_level, to_layers.first + layer, to_x + x, to_y + y, bytes[0..pixel]);
+            };
+        }
+    }
+}
+
+/// Four samples of four 8-bit channels averaged, each channel
+/// (s0 + s1 + s2 + s3 + 2) >> 2: the sum over four, rounded to the
+/// nearest and a half up. Two channels go at a time, each in a lane of 16
+/// bits, which holds at most 4 * 255 + 2 = 1022, so no lane carries into
+/// the next; the mask after the shift drops what the lane above shifted
+/// down.
+pub fn average8888(samples: [4]u32) u32 {
+    const m: u32 = 0x00FF00FF;
+    const even = ((samples[0] & m) + (samples[1] & m) + (samples[2] & m) + (samples[3] & m) + 0x0002_0002) >> 2;
+    const odd = (((samples[0] >> 8) & m) + ((samples[1] >> 8) & m) + ((samples[2] >> 8) & m) + ((samples[3] >> 8) & m) + 0x0002_0002) >> 2;
+    return (even & m) | ((odd & m) << 8);
+}
+
+/// Four samples of R5G6B5 averaged the same way, a channel at a time, in
+/// the low half of each word.
+pub fn average565(samples: [4]u32) u32 {
+    var red: u32 = 2;
+    var green: u32 = 2;
+    var blue: u32 = 2;
+    for (samples) |sample| {
+        red += (sample >> 11) & 0x1F;
+        green += (sample >> 5) & 0x3F;
+        blue += sample & 0x1F;
+    }
+    return ((red >> 2) << 11) | ((green >> 2) << 5) | (blue >> 2);
+}
+
 /// CmdCopyImageToBuffer's regions: the part of each inside the image, as far
 /// as the buffer goes.
 pub fn copyImageToBuffer(command: *const _command.CopyImageToBuffer) void {

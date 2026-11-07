@@ -1429,6 +1429,17 @@ pub const ImageBlit = extern struct {
     dst_offsets: [2]Offset3D = .{ .{}, .{} },
 };
 
+/// A rectangle of a multisampled image whose samples CmdResolveImage
+/// averages into the pixels of an image of one sample, `dst_offset` on
+/// (since 1.101).
+pub const ImageResolve = extern struct {
+    src_subresource: ImageSubresourceLayers = .{},
+    src_offset: Offset3D = .{},
+    dst_subresource: ImageSubresourceLayers = .{},
+    dst_offset: Offset3D = .{},
+    extent: Extent3D,
+};
+
 /// How CmdBlitImage reads between texels.
 pub const Filter = enum(u32) {
     nearest = 0,

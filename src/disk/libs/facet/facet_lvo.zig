@@ -111,6 +111,7 @@ const CmdSetStencilWriteMask = @import("command/cmdsetstencilwritemask.zig").Cmd
 const CmdSetStencilReference = @import("command/cmdsetstencilreference.zig").CmdSetStencilReference;
 const CmdCopyImage = @import("command/cmdcopyimage.zig").CmdCopyImage;
 const CmdBlitImage = @import("command/cmdblitimage.zig").CmdBlitImage;
+const CmdResolveImage = @import("command/cmdresolveimage.zig").CmdResolveImage;
 const CmdCopyImageToBuffer = @import("command/cmdcopyimagetobuffer.zig").CmdCopyImageToBuffer;
 const CmdClearAttachments = @import("command/cmdclearattachments.zig").CmdClearAttachments;
 const CmdDrawIndirect = @import("command/cmddrawindirect.zig").CmdDrawIndirect;
@@ -665,6 +666,9 @@ fn lvoCmdCopyImage(base: *FacetBase, buffer: *facet.CommandBuffer, source: *face
 fn lvoCmdBlitImage(base: *FacetBase, buffer: *facet.CommandBuffer, source: *facet.Image, source_layout: facet.ImageLayout, destination: *facet.Image, destination_layout: facet.ImageLayout, region_count: u32, regions: [*]const facet.ImageBlit, filter: facet.Filter) callconv(.c) void {
     return CmdBlitImage(base, buffer, source, source_layout, destination, destination_layout, region_count, regions, filter);
 }
+fn lvoCmdResolveImage(base: *FacetBase, buffer: *facet.CommandBuffer, source: *facet.Image, source_layout: facet.ImageLayout, destination: *facet.Image, destination_layout: facet.ImageLayout, region_count: u32, regions: [*]const facet.ImageResolve) callconv(.c) void {
+    return CmdResolveImage(base, buffer, source, source_layout, destination, destination_layout, region_count, regions);
+}
 fn lvoCmdCopyImageToBuffer(base: *FacetBase, buffer: *facet.CommandBuffer, image: *facet.Image, image_layout: facet.ImageLayout, destination: *facet.Buffer, region_count: u32, regions: [*]const facet.BufferImageCopy) callconv(.c) void {
     return CmdCopyImageToBuffer(base, buffer, image, image_layout, destination, region_count, regions);
 }
@@ -826,6 +830,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoGetDeviceMemoryCommitment),
     vec(lvoCmdSetDepthBounds),
     vec(lvoCmdSetBlendConstantsAt),
+    vec(lvoCmdResolveImage),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

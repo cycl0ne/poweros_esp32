@@ -59,6 +59,7 @@ pub const Op = enum(u16) {
     set_depth_bias,
     set_depth_bounds,
     set_blend_constants_at,
+    resolve_image,
     _,
 };
 

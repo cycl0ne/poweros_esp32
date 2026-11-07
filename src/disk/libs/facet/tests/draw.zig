@@ -4542,6 +4542,199 @@ test "four samples a pixel in a render pass, a framebuffer and a pipeline, with 
     }
 }
 
+/// Four 8-bit channels averaged one at a time: the formula
+/// `_transfer.average8888` works two channels a word at a time to give.
+fn averagedByChannel(words: [4]u32) u32 {
+    var made: u32 = 0;
+    for (0..4) |channel| {
+        const shift: u5 = @intCast(channel * 8);
+        var sum: u32 = 2;
+        for (words) |word| sum += (word >> shift) & 0xFF;
+        made |= (sum >> 2) << shift;
+    }
+    return made;
+}
+
+test "four samples averaged into one, each channel its sum over four rounded half up, two at a time in a word" {
+    const _transfer = @import("../driver/_transfer.zig");
+    // The ties, each channel alike: three quarters of 255 is 191.25, a
+    // half rounds up, and a quarter down.
+    const ties = [_]struct { [4]u8, u8 }{
+        .{ .{ 255, 255, 255, 0 }, 191 },
+        .{ .{ 0, 0, 1, 1 }, 1 },
+        .{ .{ 0, 0, 0, 1 }, 0 },
+        .{ .{ 1, 2, 3, 4 }, 3 },
+        .{ .{ 255, 255, 255, 255 }, 255 },
+    };
+    for (ties) |tie| {
+        const samples, const want = tie;
+        var words: [4]u32 = undefined;
+        for (&words, samples) |*word, value| word.* = @as(u32, value) * 0x0101_0101;
+        try testing.expectEqual(@as(u32, want) * 0x0101_0101, _transfer.average8888(words));
+    }
+    // Words whose four channels differ, so that a carry from one channel
+    // into the next, or a mask left out, is seen: grey ones hide both.
+    var prng = std.Random.DefaultPrng.init(61);
+    const random = prng.random();
+    for (0..10_000) |_| {
+        var words: [4]u32 = undefined;
+        for (&words) |*word| word.* = random.int(u32);
+        try testing.expectEqual(averagedByChannel(words), _transfer.average8888(words));
+    }
+    // R5G6B5, a channel at a time: red 31, 31, 31, 0 is 23.25, green 1,
+    // 1, 0, 0 a half, and blue 30, 31, 31, 31 is 30.75.
+    const pixels = [4]u32{ 31 << 11 | 1 << 5 | 30, 31 << 11 | 1 << 5 | 31, 31 << 11 | 31, 31 };
+    try testing.expectEqual(@as(u32, 23 << 11 | 1 << 5 | 31), _transfer.average565(pixels));
+    for (0..1000) |_| {
+        var words: [4]u32 = undefined;
+        for (&words) |*word| word.* = random.int(u16);
+        var red: u32 = 2;
+        var green: u32 = 2;
+        var blue: u32 = 2;
+        for (words) |word| {
+            red += word >> 11;
+            green += (word >> 5) & 0x3F;
+            blue += word & 0x1F;
+        }
+        try testing.expectEqual((red >> 2) << 11 | (green >> 2) << 5 | (blue >> 2), _transfer.average565(words));
+    }
+    // Vulkan's VkImageResolve, byte for byte.
+    try testing.expectEqual(@as(usize, 68), @sizeOf(facet.ImageResolve));
+    try testing.expectEqual(@as(usize, 28), @offsetOf(facet.ImageResolve, "dst_subresource"));
+    try testing.expectEqual(@as(usize, 44), @offsetOf(facet.ImageResolve, "dst_offset"));
+    try testing.expectEqual(@as(usize, 56), @offsetOf(facet.ImageResolve, "extent"));
+}
+
+test "CmdResolveImage: each pixel of a rectangle the average of its four samples, layers, offsets and edges as asked" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
+    physical.can.multisampling = true;
+    defer physical.can.multisampling = false;
+    const Image = @import("../image/_image.zig").Image;
+    const _image = @import("../image/_image.zig");
+    const usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
+    const from = try bench.bareImage(.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 20, .height = 9, .depth = 1 }, .array_layers = 2, .samples = 4, .usage = usage }, false);
+    const source = _objects.of(Image, from);
+    // Each sample's texel told apart: four channels that differ from one
+    // another, from the other samples' and from place to place. Alpha is
+    // 0, 85, 170 and 255, whose average is a half.
+    const marked = struct {
+        fn of(sample: u32, layer: u32, x: u32, y: u32) u32 {
+            const blue = sample * 60 + x * 3 + y;
+            const green = 255 - sample * 50 - y * 5;
+            const red = (sample * 37 + x * 11 + layer * 29) & 0xFF;
+            return (sample * 85) << 24 | red << 16 | green << 8 | blue;
+        }
+    }.of;
+    for (0..4) |s| for (0..2) |l| for (0..9) |y| for (0..20) |x| {
+        sampleTexel(source, @intCast(s), @intCast(l), @intCast(x), @intCast(y)).* = marked(@intCast(s), @intCast(l), @intCast(x), @intCast(y));
+    };
+    const averaged = struct {
+        fn at(layer: u32, x: u32, y: u32) u32 {
+            var words: [4]u32 = undefined;
+            for (&words, 0..) |*word, s| word.* = marked(@intCast(s), layer, x, y);
+            return averagedByChannel(words);
+        }
+    }.at;
+
+    const into = try bench.bareImage(.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 16, .height = 8, .depth = 1 }, .usage = usage }, false);
+    const destination = _objects.of(Image, into);
+    const untouched: u32 = 0x5A5A_5A5A;
+    @memset(destination.data.?[0..@intCast(destination.bytes)], 0x5A);
+    // From the second layer to (5, 1); from the first to (0, 6); and one
+    // past the destination's right edge, cut at it.
+    const regions = [_]facet.ImageResolve{
+        .{ .src_subresource = .{ .base_array_layer = 1 }, .src_offset = .{ .x = 3, .y = 2 }, .dst_offset = .{ .x = 5, .y = 1 }, .extent = .{ .width = 9, .height = 5, .depth = 1 } },
+        .{ .dst_offset = .{ .x = 0, .y = 6 }, .extent = .{ .width = 4, .height = 2, .depth = 1 } },
+        .{ .src_offset = .{ .x = 16, .y = 0 }, .dst_offset = .{ .x = 14, .y = 0 }, .extent = .{ .width = 10, .height = 2, .depth = 1 } },
+    };
+    // What each pixel of the destination holds once they are resolved.
+    const resolved = struct {
+        fn at(x: u32, y: u32) u32 {
+            if (x >= 5 and x < 14 and y >= 1 and y < 6) return averaged(1, x - 5 + 3, y - 1 + 2);
+            if (x < 4 and y >= 6) return averaged(0, x, y - 6);
+            if (x >= 14 and y < 2) return averaged(0, x - 14 + 16, y);
+            return untouched;
+        }
+    }.at;
+    var commands = try bench.record();
+    fb.CmdResolveImage(commands, from, .transfer_src_optimal, into, .transfer_dst_optimal, regions.len, &regions);
+    try bench.submit();
+    for (0..8) |y| for (0..16) |x| {
+        try testing.expectEqual(resolved(@intCast(x), @intCast(y)), sampleTexel(destination, 0, 0, @intCast(x), @intCast(y)).*);
+    };
+
+    // A destination kept as a texture, written through its own layout.
+    const sampled = try bench.bareImage(.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 16, .height = 8, .depth = 1 }, .usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST }, false);
+    const texture_image = _objects.of(Image, sampled);
+    commands = try bench.record();
+    fb.CmdResolveImage(commands, from, .transfer_src_optimal, sampled, .transfer_dst_optimal, 1, @ptrCast(&regions[0]));
+    try bench.submit();
+    for (0..5) |row| for (0..9) |column| {
+        const x: u32 = @intCast(column);
+        const y: u32 = @intCast(row);
+        var bytes: [4]u8 = undefined;
+        _image.readTexel(texture_image, 0, 0, 5 + x, 1 + y, &bytes);
+        try testing.expectEqual(averaged(1, 3 + x, 2 + y), std.mem.readInt(u32, &bytes, .little));
+    };
+
+    // R5G6B5, each channel its own average.
+    const info565 = facet.ImageCreateInfo{ .format = .r5g6b5_unorm_pack16, .extent = .{ .width = 4, .height = 4, .depth = 1 }, .samples = 4, .usage = usage };
+    const from565 = try bench.bareImage(info565, false);
+    const source565 = _objects.of(Image, from565);
+    var info_one = info565;
+    info_one.samples = 1;
+    const into565 = try bench.bareImage(info_one, false);
+    const destination565 = _objects.of(Image, into565);
+    const pixel565 = struct {
+        fn of(sample: u32, x: u32, y: u32) u16 {
+            return @intCast(((sample * 9 + x) & 0x1F) << 11 | ((sample * 21 + y * 3) & 0x3F) << 5 | ((31 - sample * 7 - x) & 0x1F));
+        }
+    }.of;
+    for (0..4) |s| for (0..4) |y| for (0..4) |x| {
+        const at = s * @as(usize, @intCast(source565.sample_bytes)) + y * source565.pitch + x * 2;
+        std.mem.writeInt(u16, source565.data.?[at..][0..2], pixel565(@intCast(s), @intCast(x), @intCast(y)), .little);
+    };
+    commands = try bench.record();
+    const whole565 = facet.ImageResolve{ .extent = .{ .width = 4, .height = 4, .depth = 1 } };
+    fb.CmdResolveImage(commands, from565, .transfer_src_optimal, into565, .transfer_dst_optimal, 1, @ptrCast(&whole565));
+    try bench.submit();
+    const _transfer = @import("../driver/_transfer.zig");
+    for (0..4) |y| for (0..4) |x| {
+        var words: [4]u32 = undefined;
+        for (&words, 0..) |*word, s| word.* = pixel565(@intCast(s), @intCast(x), @intCast(y));
+        const at = y * destination565.pitch + x * 2;
+        try testing.expectEqual(@as(u16, @intCast(_transfer.average565(words))), std.mem.readInt(u16, destination565.data.?[at..][0..2], .little));
+    };
+
+    // None of Vulkan's, each leaving the destination as it was: a source
+    // of one sample, a destination of four, and two formats.
+    const flat = try bench.bareImage(.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 16, .height = 8, .depth = 1 }, .usage = usage }, false);
+    const four = try bench.bareImage(.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 16, .height = 8, .depth = 1 }, .samples = 4, .usage = usage }, false);
+    const other = try bench.bareImage(.{ .format = .r8g8b8a8_unorm, .extent = .{ .width = 16, .height = 8, .depth = 1 }, .usage = usage }, false);
+    for ([_]*facet.Image{ flat, four, other }) |each| {
+        const image = _objects.of(Image, each);
+        @memset(image.data.?[0..@intCast(image.bytes)], 0x5A);
+    }
+    const whole = facet.ImageResolve{ .extent = .{ .width = 16, .height = 8, .depth = 1 } };
+    commands = try bench.record();
+    fb.CmdResolveImage(commands, flat, .transfer_src_optimal, into, .transfer_dst_optimal, 1, @ptrCast(&whole));
+    fb.CmdResolveImage(commands, from, .transfer_src_optimal, four, .transfer_dst_optimal, 1, @ptrCast(&whole));
+    fb.CmdResolveImage(commands, from, .transfer_src_optimal, other, .transfer_dst_optimal, 1, @ptrCast(&whole));
+    try bench.submit();
+    for ([_]*facet.Image{ four, other }) |each| {
+        const image = _objects.of(Image, each);
+        try testing.expectEqual(null, std.mem.indexOfNone(u8, image.data.?[0..@intCast(image.bytes)], &.{0x5A}));
+    }
+    // The first command's destination is the one resolved into above, as
+    // the regions left it: the source of one sample resolved nothing.
+    for (0..8) |y| for (0..16) |x| {
+        try testing.expectEqual(resolved(@intCast(x), @intCast(y)), sampleTexel(destination, 0, 0, @intCast(x), @intCast(y)).*);
+    };
+}
+
 /// A render pass whose depth attachment is kept: read as each tile starts
 /// where `load` says, written back where `store` says.
 fn keepingPass(bench: *Bench, color_load: facet.AttachmentLoadOp, load: facet.AttachmentLoadOp, store: facet.AttachmentStoreOp) !*facet.RenderPass {

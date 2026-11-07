@@ -545,10 +545,11 @@ is of the triangle's steepest, in depth over a pixel. What is left out:
 
 ## Commands that are absent
 
-- `CmdResolveImage`: there is no multisampling to resolve.
-
-That is the whole of it: every other command of Vulkan 1.0's core that
-this library has a stage for is in the table.
+None since 1.101: `CmdResolveImage` is there, with its body
+(docs/facet-vulkan10.md item 13). What it resolves waits on
+multisampling, since no device makes an image of four samples yet
+(item 61). Every command of Vulkan 1.0's core that this library has a
+stage for is in the table.
 
 ## Device queries that are absent
 

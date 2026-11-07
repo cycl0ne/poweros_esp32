@@ -247,6 +247,14 @@ fn playStream(queue: *Queue, stream: *const _stream.Stream) void {
             _transfer.blitImage(command);
             texturesToGpu(queue, command.destination);
         },
+        // On the cores' body until the V3D resolves in its tile buffer
+        // (docs/facet-vulkan10.md item 61, step V5). It makes no image of
+        // four samples before step V3, so until then this resolves nothing.
+        .resolve_image => {
+            const command = _stream.as(_command.ResolveImage, head);
+            _transfer.resolveImage(command);
+            texturesToGpu(queue, command.destination);
+        },
         .copy_image_to_buffer => _transfer.copyImageToBuffer(_stream.as(_command.CopyImageToBuffer, head)),
         .clear_attachment => if (player.drawing) clearAttachment(queue, _stream.as(_command.ClearAttachment, head)),
         .begin_render_pass => {

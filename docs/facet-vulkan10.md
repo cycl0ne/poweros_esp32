@@ -387,6 +387,16 @@ Found independently by: entry-points (3 items), objects-commands, formats, confo
 
 *entry points / commands* &mdash; conformance-blocking, small, also serves the shim
 
+**Done in 1.101, with its body rather than as a stub.** `CmdResolveImage`
+(LVO -524) and `ImageResolve` are Vulkan's. The command averages each
+pixel's four samples a channel at a time, `(s0+s1+s2+s3+2)>>2`, as
+lavapipe's resolve (`handle_resolve_image`, lvp_execute.c:3871-3916) and
+Mesa's average (`build_tex_resolve`, vk_meta_blit_resolve.c:134-196) do,
+into rows or a texture. It is step S5 of item 61's plan. Until a device
+draws four samples no program can make an image to resolve, so on every
+device a call still has nothing to do; the tests turn the capability on
+to reach it.
+
 After: Multisampling for anything beyond a stub
 
 One fd line, one LVO wrapper, one file in command/, plus VkImageResolve. While rasterization_samples above 1 is refused there is no legal call a program can make — Vulkan forbids a resolve whose source is single-sampled — so the body is validation and nothing else. The command is S5 of item 61's sized plan, about 187 lines of code and 65 of tests with its CPU body; what a legal call waits on is the rest of item 61. (This said "a day's work" until 07.11.2026, and named item 64, which is the synchronisation item.) This is the one absent command whose absence no feature bit papers over, because Vulkan 1.0's required limits make 4 colour samples a minimum, so a conformant device genuinely has multisampled images to resolve.
@@ -1576,7 +1586,7 @@ facet reports 1|4 on both devices, with the standard locations on the cores and 
 | S2 | **Done in 1.98.** A 4x image in sample-major planes, and the format query's 4 bit following CreateImage. Layers and input-attachment usage are taken, against the first plan: Vulkan's rule for `sampleCounts` holds the query to the masks for both | lp_texture.c:225-226; lvp_formats.c:362-367 | 70 | 45 |
 | S3 | **Done in 1.99.** Copies and clears of every sample; a blit or a buffer copy of a 4x image does nothing, as Vulkan has none | lp_texture.c:225-226; lp_surface.c:40-81 (`lp_resource_copy_ms`), :450 (`llvmpipe_clear_texture`) | 25 | 30 |
 | S4 | **Done in 1.100.** Render passes, framebuffers and pipelines take 4 samples and resolve attachments. A resolve counts as its attachment's first use, resolving subpasses are never joined, and a framebuffer's targets without a resolve are set to none | Vulkan's subpass rules, as v3dv asserts them (v3dv_pipeline.c:1319-1320) | 85 | 50 |
-| S5 | CmdResolveImage (item 13), with a CPU body | `resolve_color`, lvp_execute.c:1782-1828; vk_meta_blit_resolve.c:151, :192 | 187 | 65 |
+| S5 | **Done in 1.101.** CmdResolveImage (item 13), with a CPU body, into rows or a texture; both players route it there | `resolve_color`, lvp_execute.c:1782-1828; vk_meta_blit_resolve.c:151, :192 | 187 | 65 |
 | K1 | Per-sample coverage in setup, binning and the walk | `lp_sample_pos_4x`; lp_setup.c:127-128, :631-632; lp_setup_tri.c:314-324; `do_block_4`, lp_rast_tri_tmp.h:42-80 | 148 | 267 |
 | K2 | Sample planes in the tile. Shading once a pixel; per-sample colour writes and occlusion | lp_state_fs.c:822-823, 860-870, 1017-1021, 3651-3672 | 217 | 195 |
 | K3 | Per-sample depth and stencil | lp_state_fs.c:926-960, 3437-3439 | 93 | 100 |

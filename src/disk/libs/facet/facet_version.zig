@@ -2152,4 +2152,50 @@ pub const LIBRARY_VERSION = 1;
 /// - a target without a resolve left undefined;
 /// - a pipeline of two samples, of a count other than its subpass's, or
 ///   with alpha to coverage, taken, or its count not kept.
-pub const LIBRARY_REVISION = 100;
+///
+/// 101: **CmdResolveImage, LVO -524: each pixel the average of its four
+/// samples.**
+///
+/// Step S5 of item 61 of docs/facet-vulkan10.md, and item 13. The command
+/// and `facet.ImageResolve` are Vulkan's, and the body is the cores' for
+/// both devices. lavapipe resolves a region by a NEAREST blit
+/// (`handle_resolve_image`, lvp_execute.c:3871-3916), and Mesa's resolve
+/// adds the samples and multiplies by one over their count
+/// (`build_tex_resolve`, vk_meta_blit_resolve.c:134-196). Vulkan has the
+/// write take one of the two values nearest to that, and it should take
+/// the nearer (Fixed-Point Data Conversions). `_transfer.resolveImage`
+/// does the same in whole numbers, (s0 + s1 + s2 + s3 + 2) >> 2 for each
+/// channel, the nearest value with a tie taken upward: `average8888`
+/// takes two 8-bit channels a word at a time, in lanes of 16 bits that
+/// never carry, and `average565` the three of R5G6B5. The destination is
+/// written through its own layout, rows or a texture.
+///
+/// A source not of four samples, a destination of more than one or two
+/// formats resolve nothing, Vulkan having no program give them
+/// (VUID-vkCmdResolveImage-srcImage-00257, -dstImage-00259,
+/// -srcImage-12546). No device makes an image of four samples yet, so a
+/// program's call still has nothing to do; the V3D's player hands the
+/// command to the same body until step V5 resolves in its tile buffer.
+///
+/// A test holds the average to the plan's ties - 255, 255, 255 and 0 give
+/// 191; 0, 0, 1 and 1 give 1; 0, 0, 0 and 1 give 0 - and to the formula
+/// a channel at a time over ten thousand random words, and `ImageResolve`
+/// to VkImageResolve's 68 bytes. A second one, with the capability turned
+/// on, resolves three rectangles of a 4x image of two layers, one cut at
+/// the destination's edge, into rows and into a texture, and a 565 one,
+/// and is refused the three Vulkan has none of. Each of twelve changes
+/// put back fails one of them:
+/// - the even channels or the odd ones not rounded, or the lanes not
+///   masked;
+/// - the green of 565 not rounded;
+/// - one plane read for every sample;
+/// - a destination of four samples, or of another format, taken;
+/// - the source's layer or offset, or the destination's offset, not the
+///   region's;
+/// - the destination's edge not cut;
+/// - the cores playing the command as nothing.
+///
+/// The compiler refuses a player of the cores that leaves the command
+/// out altogether: its switch must name every command, the `_` prong
+/// being only for numbers that have no name.
+pub const LIBRARY_REVISION = 101;

@@ -275,6 +275,16 @@ pub const BlitImage = extern struct {
     destination: *Image,
 };
 
+/// CmdResolveImage, followed by its regions (since 1.101).
+pub const ResolveImage = extern struct {
+    pub const op: _stream.Op = .resolve_image;
+    head: Head = .{ .op = op },
+    count: u32,
+    pad: u32 = 0,
+    source: *Image,
+    destination: *Image,
+};
+
 /// CmdCopyImageToBuffer, followed by its regions.
 pub const CopyImageToBuffer = extern struct {
     pub const op: _stream.Op = .copy_image_to_buffer;
