@@ -159,10 +159,17 @@ pub fn vulkanOf(can: *const _instance.Capabilities) facet.PhysicalDeviceFeatures
         // of a device that has the stage, which this does not meet.
         // docs/facet-vulkan10.md item 60 is the SPIR-V side of it.
         .tessellation_shader = no,
-        // Both of these are multisample state, and no device of this
-        // library takes more than one sample a pixel.
-        .sample_rate_shading = of(can.multisampling),
-        .alpha_to_one = of(can.multisampling),
+        // Optional, and off on both devices whether or not they draw four
+        // samples a pixel (`can.multisampling`): a pipeline asking for
+        // either is refused (pipeline/creategraphicspipelines.zig). Both
+        // Mesa drivers have them, v3dv on this same GPU and lavapipe on
+        // the cores (src/broadcom/vulkan/v3dv_device.c,
+        // src/gallium/frontends/lavapipe/lvp_device.c), so they are a port
+        // of their own after docs/facet-vulkan10.md item 61. Sample rate
+        // shading would bring the three interpolation-offset limits with
+        // it, which are 0 here (_instance.zig).
+        .sample_rate_shading = no,
+        .alpha_to_one = no,
         // The blend factors that read a second source colour are refused.
         // docs/facet-vulkan10.md item 62.
         .dual_src_blend = no,
@@ -255,9 +262,13 @@ pub fn vulkanOf(can: *const _instance.Capabilities) facet.PhysicalDeviceFeatures
         .sparse_residency_aliased = no,
 
         // --- the rest ---
-        // Multisample state again, and a sample rate that could vary needs
-        // more than one sample to begin with.
-        .variable_multisample_rate = of(can.multisampling),
+        // Pipelines of different sample counts in one subpass with no
+        // attachments, where without the feature they must all agree.
+        // Off, as v3dv has it on this same GPU
+        // (src/broadcom/vulkan/v3dv_device.c); and a subpass with no
+        // attachments cannot be made here yet
+        // (render/createrenderpass.zig, item 43).
+        .variable_multisample_rate = no,
         // `CommandBufferInheritanceInfo` is a render pass, a subpass and a
         // framebuffer and nothing else, so there is no way for a secondary
         // buffer to be told which query it runs inside. The library cannot

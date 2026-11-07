@@ -1005,6 +1005,85 @@ test "a recording: its commands in order over its chunks; a reset keeps them for
     try testing.expectEqual(free_before, rig.header.free);
 }
 
+/// The nine sample-count masks of `limits` in VkPhysicalDeviceLimits'
+/// order: the framebuffer's colour, depth, stencil and no-attachments
+/// masks, then the sampled image's colour, integer, depth and stencil
+/// masks, and the storage image's.
+fn expectSampleCounts(want: [9]u32, limits: *const facet.PhysicalDeviceLimits) !void {
+    const got = [9]u32{
+        limits.framebuffer_color_sample_counts,
+        limits.framebuffer_depth_sample_counts,
+        limits.framebuffer_stencil_sample_counts,
+        limits.framebuffer_no_attachments_sample_counts,
+        limits.sampled_image_color_sample_counts,
+        limits.sampled_image_integer_sample_counts,
+        limits.sampled_image_depth_sample_counts,
+        limits.sampled_image_stencil_sample_counts,
+        limits.storage_image_sample_counts,
+    };
+    try testing.expectEqualSlices(u32, &want, &got);
+}
+
+test "a device's sample counts follow what it draws, and the three optional multisample features stay off" {
+    var rig = try Rig.up();
+    defer rig.down() catch |err| std.debug.panic("{}", .{err});
+    const instance, const physical = try rig.instance();
+    defer rig.fb.DestroyInstance(instance);
+    const record = _objects.of(_instance.PhysicalDevice, physical);
+    const one = facet.SAMPLE_COUNT_1;
+    const four = facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4;
+
+    // The library's table is what a device drawing four samples a pixel
+    // may say: the 4 bit in the seven masks Vulkan asks it of, and the 1
+    // bit alone in the integer and storage masks.
+    try expectSampleCounts(.{ four, four, four, four, four, one, four, four, one }, &_instance.limits);
+
+    // The cores do not draw four yet, so what they report is one sample
+    // in every mask.
+    try testing.expect(!record.can.multisampling);
+    var properties: facet.PhysicalDeviceProperties = undefined;
+    rig.fb.GetPhysicalDeviceProperties(physical, &properties);
+    try expectSampleCounts(.{ one, one, one, one, one, one, one, one, one }, &properties.limits);
+
+    // The cores described again, as a device that does draw four: six
+    // masks take the 4 bit. The no-attachments mask keeps the 1 bit alone,
+    // since a subpass with no attachments cannot be made yet (item 43).
+    var drawing = record.*;
+    try testing.expect(record.ops.describe(rig.sys, &drawing));
+    drawing.can.multisampling = true;
+    _instance.narrowSampleCounts(&drawing);
+    try expectSampleCounts(.{ four, four, four, one, four, one, four, four, one }, &drawing.properties.limits);
+
+    // A bit a driver cleared stays clear, with the capability or without:
+    // the V3D's four zeros for the images it does not sample
+    // (driver/v3d/driver.zig), whose describe only the board can run.
+    for ([_]bool{ false, true }) |can| {
+        var v3d = record.*;
+        v3d.properties.limits = _instance.limits;
+        v3d.properties.limits.sampled_image_integer_sample_counts = 0;
+        v3d.properties.limits.sampled_image_depth_sample_counts = 0;
+        v3d.properties.limits.sampled_image_stencil_sample_counts = 0;
+        v3d.properties.limits.storage_image_sample_counts = 0;
+        v3d.can.multisampling = can;
+        _instance.narrowSampleCounts(&v3d);
+        const drawn = if (can) four else one;
+        try expectSampleCounts(.{ drawn, drawn, drawn, one, drawn, 0, 0, 0, 0 }, &v3d.properties.limits);
+    }
+
+    // Sample rate shading, alpha to one and a variable sample rate are
+    // optional, and none of them is a part of drawing four samples: each
+    // stays false with the capability as it does without.
+    for ([_]bool{ false, true }) |can| {
+        record.can.multisampling = can;
+        defer record.can.multisampling = false;
+        var features: facet.PhysicalDeviceFeatures = undefined;
+        rig.fb.GetPhysicalDeviceFeatures(physical, &features);
+        try testing.expectEqual(facet.FALSE, features.sample_rate_shading);
+        try testing.expectEqual(facet.FALSE, features.alpha_to_one);
+        try testing.expectEqual(facet.FALSE, features.variable_multisample_rate);
+    }
+}
+
 test "a device says what it does, and a false is what a create call refuses" {
     var rig = try Rig.up();
     defer rig.down() catch |err| std.debug.panic("{}", .{err});

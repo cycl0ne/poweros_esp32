@@ -1560,7 +1560,7 @@ facet reports 1|4 on both devices, with the standard locations on the cores and 
 
 | Step | What | Ported from | Code | Tests |
 |---|---|---|---|---|
-| S1 | The three optional features decoupled. The seven masks become 1\|4, narrowed to 1 while a device lacks the capability, and no-attachments to 1 until item 43 | v3dv_device.c:1179-1189, :392 | 35 | 35 |
+| S1 | **Done in 1.96.** The three optional features decoupled. The seven masks become 1\|4, narrowed to 1 while a device lacks the capability, and no-attachments to 1 until item 43 | v3dv_device.c:1179-1189, :392 | 35 | 35 |
 | S2 | A 4x image in sample-major planes, and the format query's 4 bit following CreateImage | lp_texture.c:225-226; lvp_formats.c:362-367 | 70 | 45 |
 | S3 | Copies and clears of every sample | lp_texture.c:225-226 | 25 | 30 |
 | S4 | Render passes, framebuffers and pipelines take 4 samples and resolve attachments | Vulkan's subpass rules, as v3dv asserts them (v3dv_pipeline.c:1319-1320) | 85 | 50 |

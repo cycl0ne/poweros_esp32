@@ -1972,4 +1972,37 @@ pub const LIBRARY_VERSION = 1;
 ///
 /// tests/ir.zig asserted the two were equal, with the reason beside it;
 /// it asserts the widest graph's sixteen inputs and one output instead.
-pub const LIBRARY_REVISION = 95;
+///
+/// 96: **The seven sample-count masks say one sample and four, held to
+/// what a device draws, and the three optional multisample features no
+/// longer follow the capability.**
+///
+/// Step S1 of item 61 of docs/facet-vulkan10.md. `_instance.limits` says
+/// 1|4 in the seven masks Vulkan asks the 4 bit of, as v3dv does on this
+/// GPU (`supported_sample_counts`, v3dv_device.c) and lavapipe on the
+/// cores with 8 beside it. `narrowSampleCounts`, run after each driver's
+/// describe, holds the seven to the 1 bit on a device without
+/// `can.multisampling`, which is every device still. It holds the
+/// no-attachments mask to it on every device until such a subpass may be
+/// made (item 43), and a bit a driver cleared stays clear. What any device
+/// reports is unchanged.
+///
+/// `sample_rate_shading`, `alpha_to_one` and `variable_multisample_rate`
+/// were `of(can.multisampling)`, so all three would have been claimed the
+/// day a device drew four samples. They are optional, and Vulkan's three
+/// interpolation-offset limits come with the first. They are false now
+/// whatever the device draws: both Mesa drivers have the first two, and
+/// they are a port of their own after item 61.
+///
+/// A test reads the masks through the API, describes the cores again as a
+/// device with the capability, and runs the narrowing over the V3D's
+/// zeros, which only the board can describe. Each of six changes put back
+/// fails it:
+/// - describing without the narrowing, which also gives `expected 7,
+///   found 0` in the limits pin;
+/// - leaving the no-attachments mask or the sampled stencil mask
+///   unnarrowed, which also gives `expected 7, found 6` there;
+/// - setting a mask rather than ANDing it, which fails on the V3D's zeros
+///   alone;
+/// - tying either feature to the capability again, `expected 0, found 1`.
+pub const LIBRARY_REVISION = 96;

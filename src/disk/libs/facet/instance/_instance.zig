@@ -129,8 +129,14 @@ pub const Capabilities = extern struct {
     /// The float formats, the same way.
     float_textures: bool = false,
 
-    /// More than one sample a pixel, sample shading, alpha to coverage or to
-    /// one. No device of this library has it.
+    /// Four samples a pixel: an image, an attachment and a pipeline of
+    /// `SAMPLE_COUNT_4`, a subpass's resolve attachments, and
+    /// CmdResolveImage. The sample-count masks a device reports follow it
+    /// (`narrowSampleCounts`). Sample shading and alpha to one are
+    /// optional features of their own and not part of it, and neither are
+    /// two, eight or sixteen samples, nor four in a storage image or an
+    /// input attachment. No device of this library has it yet
+    /// (docs/facet-vulkan10.md item 61).
     multisampling: bool = false,
     /// `PipelineColorBlendStateCreateInfo.logic_op_enable`.
     logic_ops: bool = false,
@@ -662,27 +668,31 @@ pub const limits: facet.PhysicalDeviceLimits = .{
     // have is one a framebuffer may reach. The V3D reports 1 until its
     // render control list is played once a layer (driver/v3d/driver.zig).
     .max_framebuffer_layers = max_image_array_layers,
-    // One sample a pixel, everywhere. CreateImage refuses an image of more
-    // (image/_image.zig) and no attachment is multisampled, so every one of
-    // these masks has the single bit. Vulkan requires the 4 bit on *seven*
-    // of them - the three framebuffer masks, the no-attachments mask, and
-    // the colour, depth and stencil sampled-image masks - so this is seven
-    // shortfalls and not a choice (item 61). It said six until 1.89: the
-    // no-attachments mask was miscounted as wanting the 1 bit alone, which
-    // is what docs/facet-vulkan10.md said too. The two that do want only
-    // the 1 bit, and so are met here, are the integer sampled-image mask
-    // and the storage-image mask - the latter because
-    // `shader_storage_image_multisample` is false and Vulkan's unsupported
-    // column for it is 1.
-    .framebuffer_color_sample_counts = facet.SAMPLE_COUNT_1,
-    .framebuffer_depth_sample_counts = facet.SAMPLE_COUNT_1,
-    .framebuffer_stencil_sample_counts = facet.SAMPLE_COUNT_1,
-    .framebuffer_no_attachments_sample_counts = facet.SAMPLE_COUNT_1,
+    // One sample a pixel and four, which is what Vulkan requires of seven
+    // of these masks: the three framebuffer masks, the no-attachments mask,
+    // and the colour, depth and stencil sampled-image masks. Both Mesa
+    // drivers report it: v3dv on this same GPU, in every row but storage
+    // (`supported_sample_counts`, src/broadcom/vulkan/v3dv_device.c), and
+    // lavapipe with eight beside it (`LVP_SAMPLE_COUNTS`,
+    // src/gallium/frontends/lavapipe/lvp_device.c). The integer
+    // sampled-image mask and the storage-image mask want the 1 bit alone,
+    // the latter because `shader_storage_image_multisample` is false and
+    // Vulkan's unsupported column for it is 1, and that is what they say.
+    //
+    // **What a device reports is narrower** (`narrowSampleCounts`): one
+    // sample in each of the seven until it has `can.multisampling`, which
+    // no device has yet, so the seven are still seven shortfalls (item
+    // 61); and one sample for a subpass with no attachments, which cannot
+    // be made yet (item 43). Until 1.96 this table said one sample itself.
+    .framebuffer_color_sample_counts = facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4,
+    .framebuffer_depth_sample_counts = facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4,
+    .framebuffer_stencil_sample_counts = facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4,
+    .framebuffer_no_attachments_sample_counts = facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4,
     .max_color_attachments = _render.most_colors,
-    .sampled_image_color_sample_counts = facet.SAMPLE_COUNT_1,
+    .sampled_image_color_sample_counts = facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4,
     .sampled_image_integer_sample_counts = facet.SAMPLE_COUNT_1,
-    .sampled_image_depth_sample_counts = facet.SAMPLE_COUNT_1,
-    .sampled_image_stencil_sample_counts = facet.SAMPLE_COUNT_1,
+    .sampled_image_depth_sample_counts = facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4,
+    .sampled_image_stencil_sample_counts = facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4,
     .storage_image_sample_counts = facet.SAMPLE_COUNT_1,
     // One word, which at one sample a pixel is one bit: Vulkan reads
     // ceil(rasterization_samples / 32) words of
@@ -768,5 +778,28 @@ fn describeOne(sys: *ExecBase, instance: *Instance, ops: *const _driver.Ops) voi
     const physical = &instance.physicals[instance.physical_count];
     physical.instance = instance;
     physical.ops = ops;
-    if (ops.describe(sys, physical)) instance.physical_count += 1;
+    if (!ops.describe(sys, physical)) return;
+    narrowSampleCounts(physical);
+    instance.physical_count += 1;
+}
+
+/// `physical`'s sample-count masks held to what it draws, so that none says
+/// a count before there is code to draw it. `limits` says one sample and
+/// four where Vulkan asks for both. A device without `can.multisampling`
+/// keeps the 1 bit alone in those seven masks; and since a subpass with no
+/// attachments cannot be made on any device yet (render/createrenderpass.zig,
+/// item 43), the no-attachments mask keeps the 1 bit alone whatever the
+/// device can. A bit a driver cleared stays clear, so the V3D's zeros for
+/// the images it does not sample (driver/v3d/driver.zig) survive this.
+/// Called after each driver's describe, since 1.96.
+pub fn narrowSampleCounts(physical: *PhysicalDevice) void {
+    const said = &physical.properties.limits;
+    said.framebuffer_no_attachments_sample_counts &= facet.SAMPLE_COUNT_1;
+    if (physical.can.multisampling) return;
+    said.framebuffer_color_sample_counts &= facet.SAMPLE_COUNT_1;
+    said.framebuffer_depth_sample_counts &= facet.SAMPLE_COUNT_1;
+    said.framebuffer_stencil_sample_counts &= facet.SAMPLE_COUNT_1;
+    said.sampled_image_color_sample_counts &= facet.SAMPLE_COUNT_1;
+    said.sampled_image_depth_sample_counts &= facet.SAMPLE_COUNT_1;
+    said.sampled_image_stencil_sample_counts &= facet.SAMPLE_COUNT_1;
 }
