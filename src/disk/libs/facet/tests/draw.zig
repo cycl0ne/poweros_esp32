@@ -3560,6 +3560,12 @@ test "texel buffers of whole numbers and of 16 bits a channel: every format of t
     const span = 64;
     const source, const source_bytes = try bench.buffer(span, facet.BUFFER_USAGE_UNIFORM_TEXEL_BUFFER);
     const target, const target_bytes = try bench.buffer(span, facet.BUFFER_USAGE_STORAGE_TEXEL_BUFFER);
+    // Words that say where they lie, for a view that starts past the first.
+    for (0..span / 4) |k| std.mem.writeInt(u32, source_bytes[k * 4 ..][0..4], 0x100 + @as(u32, @intCast(k)), .little);
+    var properties: facet.PhysicalDeviceProperties = undefined;
+    fb.GetPhysicalDeviceProperties(bench.physical, &properties);
+    const alignment: u32 = @intCast(properties.limits.min_texel_buffer_offset_alignment);
+    try testing.expectEqual(16, alignment);
 
     const module_made = try module(&bench, &Grid.code);
     defer fb.DestroyShaderModule(device, module_made);
@@ -3616,6 +3622,33 @@ test "texel buffers of whole numbers and of 16 bits a channel: every format of t
             try testing.expectEqual(facet.Result.error_initialization_failed, fb.CreateBufferView(device, &.{ .buffer = source, .format = grain.format, .offset = 1 }, &none));
             try testing.expectEqual(facet.Result.error_initialization_failed, fb.CreateBufferView(device, &.{ .buffer = source, .format = grain.format, .range = grain.size - 1 }, &none));
             try testing.expect(none == null);
+        }
+        // An offset is any multiple of the device's limit, whatever the
+        // format's size: three channels of 32 bits from byte 16 too, where
+        // 16 is no multiple of 12 (since 1.125, item 79). The view is the
+        // whole texels past it, and its first is what lies there. A whole
+        // texel that is not a multiple of the limit is not an offset.
+        var past: ?*facet.BufferView = null;
+        try testing.expectEqual(facet.Result.success, fb.CreateBufferView(device, &.{ .buffer = source, .format = grain.format, .offset = alignment }, &past));
+        defer fb.DestroyBufferView(device, past);
+        const to_past = facet.WriteDescriptorSet{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .uniform_texel_buffer, .descriptor_count = 1, .texel_buffer_view = @ptrCast(&past) };
+        fb.UpdateDescriptorSets(device, 1, @ptrCast(&to_past), 0, null);
+        @memset(told_bytes[0..64], 0);
+        const again = try bench.record();
+        fb.CmdBindPipeline(again, .compute, pipelines[2].?);
+        fb.CmdBindDescriptorSets(again, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+        fb.CmdDispatch(again, 1, 1, 1);
+        try bench.submit();
+        try testing.expectEqual((span - alignment) / grain.size, out[0]);
+        if (grain.size == 12) {
+            try testing.expectEqual(@as(u32, 0x104), out[5]);
+            try testing.expectEqual(@as(u32, 0x105), out[7]);
+            try testing.expectEqual(@as(u32, 0x106), out[9]);
+        }
+        if (grain.size < alignment) {
+            var short: ?*facet.BufferView = null;
+            try testing.expectEqual(facet.Result.error_initialization_failed, fb.CreateBufferView(device, &.{ .buffer = source, .format = grain.format, .offset = grain.size }, &short));
+            try testing.expect(short == null);
         }
     }
 

@@ -3136,4 +3136,26 @@ pub const LIBRARY_VERSION = 1;
 /// sparse memory; a bind is refused and its fence is not signalled; and
 /// the structures that carry no sType are Vulkan's sizes. Each of 6
 /// changes put back fails at least one of them.
-pub const LIBRARY_REVISION = 124;
+///
+/// 125: **A texel buffer's offset is the limit's.** Item 79 of
+/// docs/facet-vulkan10.md, found while filling the limits for item 16.
+/// CreateBufferView asked a texel buffer's offset to be a multiple of the
+/// format's texel size, which for the 12 bytes of three channels of 32
+/// bits no power of two can say, so a program that aligned its offset to
+/// the published `min_texel_buffer_offset_alignment`, 16, was refused for
+/// those formats. Vulkan asks the limit alone
+/// (VUID-VkBufferViewCreateInfo-offset-00926), and nothing here asks more,
+/// a texel being read a byte at a time; so the offset is held to the
+/// device's limit now. lavapipe and v3dv look no further at it
+/// (`lvp_CreateBufferView`, lvp_image.c:785-817; `v3dv_CreateBufferView`,
+/// v3dv_image.c:885-940); llvmpipe's limit is 16 too (lp_screen.c:288),
+/// v3dv's the texture unit's 64 (`V3D_TMU_TEXEL_ALIGN`, v3d_limits.h:60),
+/// which the V3D here will want once its texture unit reads a texel
+/// buffer. A whole texel that is not a multiple of the limit, which was
+/// taken, is refused, as Vulkan forbids it.
+///
+/// Tests: the limit is 16; for every format of the texel buffer grid a
+/// view from byte 16 is made and is the whole texels past it, and for the
+/// two of 12 bytes reads the words that lie there; and a whole texel short
+/// of 16 is refused. Each of 4 changes put back fails at least one of them.
+pub const LIBRARY_REVISION = 125;

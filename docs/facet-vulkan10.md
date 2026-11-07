@@ -126,7 +126,7 @@ half of two, the cores', in 1.113, item 61's last row of eight, on the
 cores, in 1.114, item 85's half of two, the cores', in 1.115, item 87
 in 1.116, item 88 in 1.117, item 86 in 1.118, item 48's half of two,
 the cores', in 1.119, item 41 in 1.120, item 89 in 1.121, item 15 in
-1.122, item 11 in 1.123, and item 12 in 1.124.**
+1.122, item 11 in 1.123, item 12 in 1.124, and item 79 in 1.125.**
 Each
 carries a *Done* note below saying what was actually built and where the
 item's own description turned out to be wrong - and several did. Things
@@ -1990,7 +1990,7 @@ seven.
 
 ### 79. CreateBufferView asks a texel buffer's offset for something no Vulkan limit can say
 
-*buffers / limits* &mdash; conformance-blocking, small
+*buffers / limits* &mdash; conformance-blocking, small &mdash; **done in 1.125**
 
 Found while filling `minTexelBufferOffsetAlignment` for item 16. Vulkan asks
 only that `VkBufferViewCreateInfo::offset` be a multiple of
@@ -2011,6 +2011,19 @@ be a multiple of twelve.
 > `info.offset % size != 0` where `size` is the format's texel bytes, not
 > the limit. `sdk/libs/facet/shader.zig` gives `rgb32f` 12 bytes, and
 > `rgb32u`/`rgb32i` the same. The limit is `_buffer.alignment`, 16.
+
+**Done in 1.125**, in 2 lines of code and 27 of tests, the first way:
+the check uses the limit it publishes, the device's
+`min_texel_buffer_offset_alignment`, as Vulkan has it
+(VUID-VkBufferViewCreateInfo-offset-00926). A texel is read a byte at a
+time (`shader.Texels.at`, `std.mem.readInt`), so nothing here needs more.
+lavapipe and v3dv look no further at the offset (`lvp_CreateBufferView`,
+lvp_image.c:785-817; `v3dv_CreateBufferView`, v3dv_image.c:885-940);
+llvmpipe's limit is 16 as this one is (lp_screen.c:288), and v3dv's is
+the texture unit's 64 (`V3D_TMU_TEXEL_ALIGN`, v3d_limits.h:60), which is
+what this library's V3D will publish once its texture unit reads a texel
+buffer - until then the cores read them. A whole texel that is not a
+multiple of 16, which was taken, is refused now, Vulkan forbidding it.
 
 ### 80. A Vulkan subpass with several colour attachments is drawn in several parts, so one fragment function may write one colour
 

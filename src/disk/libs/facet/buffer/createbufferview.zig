@@ -36,8 +36,10 @@ const Device = @import("../device/_device.zig").Device;
 ///   `buffer_features` say `UNIFORM_TEXEL_BUFFER`, which
 ///   `GetPhysicalDeviceFormatProperties` tells and is the same on every
 ///   device.
-/// - `info.offset` - the first byte of the texels, a multiple of the
-///   format's size.
+/// - `info.offset` - the first byte of the texels, a multiple of
+///   `PhysicalDeviceLimits.min_texel_buffer_offset_alignment`, 16, whatever
+///   the format's size (since 1.125; a multiple of the format's size
+///   before).
 /// - `info.range` - how many bytes of them, a multiple of the format's
 ///   size; `facet.WHOLE_SIZE` reaches the end of the buffer.
 /// - `view` - where the view goes.
@@ -46,8 +48,9 @@ const Device = @import("../device/_device.zig").Device;
 /// `success`; `error_format_not_supported` for a format no view takes;
 /// `error_feature_not_present` where the device has no texel buffers, or
 /// the buffer was not made for them; `error_initialization_failed` for an
-/// offset or a range that is not the format's size, or a range of no
-/// texels, or a buffer with no memory; `error_out_of_host_memory`.
+/// offset that is not the limit's, a range that is not the format's size,
+/// a range of no texels, or a buffer with no memory;
+/// `error_out_of_host_memory`.
 ///
 /// BEHAVIOR:
 /// The view holds the buffer, the format and the range, and nothing of the
@@ -57,6 +60,18 @@ const Device = @import("../device/_device.zig").Device;
 ///
 /// The range is held to the buffer: a range reaching past its end is cut
 /// to it, and what is left has to be a texel at least.
+///
+/// The offset is held to the limit alone, as Vulkan has it
+/// (VUID-VkBufferViewCreateInfo-offset-00926): a texel is read a byte at a
+/// time, so nothing asks it to start on a multiple of its own size, and
+/// three channels of 32 bits, 12 bytes, may start at 16, which no power
+/// of two that is a limit could have said otherwise. lavapipe and v3dv
+/// look at the offset no further (`lvp_CreateBufferView`,
+/// lvp_image.c:785-817; `v3dv_CreateBufferView`, v3dv_image.c:885-940), their
+/// limits llvmpipe's 16 (lp_screen.c:288) and the V3D's texture unit's 64
+/// (`V3D_TMU_TEXEL_ALIGN`, v3d_limits.h:60), which this library's V3D will
+/// want the day its texture unit reads a texel buffer; until then its
+/// texel buffers are read by the cores'.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -108,7 +123,8 @@ pub fn CreateBufferView(base: *FacetBase, device: *facet.Device, info: *const fa
     if (buffer.usage & wanted == 0) return .error_feature_not_present;
     if (buffer.data == null) return .error_initialization_failed;
     const size = texels.bytes();
-    if (info.offset % size != 0 or info.offset >= buffer.size) return .error_initialization_failed;
+    const alignment = owner.physical.properties.limits.min_texel_buffer_offset_alignment;
+    if (info.offset % alignment != 0 or info.offset >= buffer.size) return .error_initialization_failed;
     const left = buffer.size - info.offset;
     const bytes = if (info.range == facet.WHOLE_SIZE) left else range: {
         if (info.range % size != 0) return .error_initialization_failed;

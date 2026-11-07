@@ -631,12 +631,11 @@ pub const limits: facet.PhysicalDeviceLimits = .{
     // --- how memory and offsets are aligned ---
     .min_memory_map_alignment = _memory.alignment,
     // A buffer is aligned to this and a descriptor's offset into one with it
-    // (`_buffer.alignment`). CreateBufferView asks something more of a texel
-    // buffer's offset that no power of two can say - a multiple of the
-    // *format's* texel size, which is 12 bytes for the three three-channel
-    // 32-bit formats - so for those three a program obeying this limit can
-    // still be refused. That is a defect of the check and not of the number
-    // (docs/facet-vulkan10.md item 79).
+    // (`_buffer.alignment`), and since 1.125 it is all CreateBufferView asks
+    // of a texel buffer's offset, as Vulkan has it: before, it asked a
+    // multiple of the format's texel size too, which no power of two can say
+    // for the 12 bytes of three channels of 32 bits (item 79). llvmpipe's
+    // is 16 as well (lp_screen.c:288).
     .min_texel_buffer_offset_alignment = _buffer.alignment,
     .min_uniform_buffer_offset_alignment = _buffer.alignment,
     .min_storage_buffer_offset_alignment = _buffer.alignment,
