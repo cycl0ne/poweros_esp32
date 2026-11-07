@@ -5,6 +5,7 @@ const sdk = @import("sdk");
 const types = sdk.resources.videodec;
 const VideoDecBase = @import("../videodec_base.zig").VideoDecBase;
 const Decoder = @import("_decoder.zig").Decoder;
+const Session = @import("_session.zig").Session;
 const engine = @import("../videodec_init.zig").engine;
 
 /// Hands out a decoder's next frame, decoding as many pictures as that
@@ -47,6 +48,12 @@ const engine = @import("../videodec_init.zig").engine;
 /// The frame's bytes are dropped from the caches before it is handed
 /// out; they are the chip's, written by it - read them, do not write.
 ///
+/// On an AMD graphics device the pictures were decoded as they were
+/// fed: each call hands out the next frame due, and reads on in what was
+/// fed where the stream waited for a frame back. Its frames are in the
+/// system's memory, the rows shown alone, read back from the device as
+/// each picture was decoded.
+///
 /// CONTEXT:
 /// - Waits: yes, for the chip. - Interrupts: no.
 /// - Locks: the resource's, around the chip: decoders on other tasks wait
@@ -62,8 +69,7 @@ const engine = @import("../videodec_init.zig").engine;
 /// the pictures decoded and not yet shown, the earliest.
 ///
 /// BUGS:
-/// On an AMD graphics device the pictures are not decoded yet: it
-/// answers VDERR_UNSUPPORTED.
+/// None known.
 ///
 /// SEE ALSO:
 /// `FeedVideoDecoder`, `ReleaseVideoFrame`, `GetVideoDecoderInfo`
@@ -77,9 +83,9 @@ const engine = @import("../videodec_init.zig").engine;
 /// }
 /// ```
 pub fn DecodeVideoFrame(vb: *VideoDecBase, decoder: *types.VideoDecoder, frame: *types.VideoDecFrame) u32 {
-    if (comptime engine == .vcn) return types.VDERR_UNSUPPORTED;
     const sys = vb.sys_base;
     sys.ObtainSemaphore(&vb.lock);
     defer sys.ReleaseSemaphore(&vb.lock);
+    if (comptime engine == .vcn) return Session.of(decoder).next(frame);
     return Decoder.of(decoder).nextFrame(frame);
 }

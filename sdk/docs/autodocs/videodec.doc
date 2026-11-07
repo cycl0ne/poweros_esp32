@@ -92,6 +92,12 @@ videodec.resource/VideoDecCodecs
 	The frame's bytes are dropped from the caches before it is handed
 	out; they are the chip's, written by it - read them, do not write.
 
+	On an AMD graphics device the pictures were decoded as they were
+	fed: each call hands out the next frame due, and reads on in what was
+	fed where the stream waited for a frame back. Its frames are in the
+	system's memory, the rows shown alone, read back from the device as
+	each picture was decoded.
+
    CONTEXT
 	- Waits: yes, for the chip. - Interrupts: no.
 	- Locks: the resource's, around the chip: decoders on other tasks wait
@@ -107,8 +113,7 @@ videodec.resource/VideoDecCodecs
 	the pictures decoded and not yet shown, the earliest.
 
    BUGS
-	On an AMD graphics device the pictures are not decoded yet: it
-	answers VDERR_UNSUPPORTED.
+	None known.
 
    SEE ALSO
 	`FeedVideoDecoder`, `ReleaseVideoFrame`, `GetVideoDecoderInfo`
@@ -152,6 +157,18 @@ videodec.resource/VideoDecCodecs
 	of the caches, and the chip told where they end. Nothing is decoded
 	here: DecodeVideoFrame does it.
 
+	On an AMD graphics device the bytes are copied and read at once
+	(videoparse.library): the sequence makes the stream on the device,
+	and each picture the call completes is decoded there and read back
+	into a frame of the system's memory, the caller's task waiting for
+	the device meanwhile. Pictures go on being read until the stream
+	needs a frame back that is still to be handed out or lent: then the
+	rest of the call's bytes are read by the next DecodeVideoFrame or
+	FeedVideoDecoder, and a call that comes while they are not answers
+	VDERR_FULL. A stream the device does not take (other than 8-bit 4:2:0
+	H.264, the extended profile, lossless pictures, slice groups, larger
+	than 4096 each way) answers VDERR_UNSUPPORTED.
+
    CONTEXT
 	- Waits: yes, for the chip to take the command. - Interrupts: no.
 	- Locks: the resource's, around the chip. - Process: a Task will do.
@@ -164,8 +181,7 @@ videodec.resource/VideoDecCodecs
 	parameter sets alone counts as a picture of its own.
 
    BUGS
-	On an AMD graphics device the pictures are not decoded yet: it
-	answers VDERR_UNSUPPORTED.
+	None known.
 
    SEE ALSO
 	`DecodeVideoFrame`, `FlushVideoDecoder`
@@ -244,7 +260,9 @@ videodec.resource/VideoDecCodecs
    BEHAVIOR
 	A decoder whose sequence is not read yet has the chip read it from
 	what was fed, and makes its frames, as the first DecodeVideoFrame
-	would; no picture is decoded.
+	would; no picture is decoded. On an AMD graphics device the sequence
+	was read as it was fed: this answers what it said, and `frames` is
+	how many frames the decoder keeps for it.
 
    CONTEXT
 	- Waits: yes, for the chip. - Interrupts: no.
@@ -258,8 +276,7 @@ videodec.resource/VideoDecCodecs
 	twice the stream's num_units_in_tick.
 
    BUGS
-	On an AMD graphics device the pictures are not decoded yet: it
-	answers VDERR_UNSUPPORTED.
+	None known.
 
    SEE ALSO
 	`FeedVideoDecoder`, `DecodeVideoFrame`
@@ -288,10 +305,11 @@ videodec.resource/VideoDecCodecs
 	The decoder, or null and in `err` why not: VDERR_NO_ENGINE when the
 	board has no decoder, its firmware is not in
 	DEVS:firmware/wave511_dec_fw.bin, or it would not wake or start - and
-	on an AMD graphics device while the watchdog is not armed, or where
-	its firmware or the security processor's table of contents is not in
-	DEVS:firmware/amdgpu/; VDERR_UNSUPPORTED for a codec it does not take;
-	VDERR_BUSY when eight decoders are open; VDERR_NO_MEMORY.
+	on an AMD graphics device while the watchdog is not armed, where its
+	firmware or the security processor's table of contents is not in
+	DEVS:firmware/amdgpu/, or without videoparse.library; VDERR_UNSUPPORTED
+	for a codec it does not take; VDERR_BUSY when eight decoders are open;
+	VDERR_NO_MEMORY.
 
    BEHAVIOR
 	The first decoder wakes the chip - its power domain, clocks and
@@ -310,9 +328,15 @@ videodec.resource/VideoDecCodecs
 	decoder's firmware - both files read from DEVS:firmware/amdgpu/,
 	named for the blocks' versions - then has the security processor
 	apply the decoder's start, a list of its register writes, and checks
-	that the firmware reads its ring. Each decoder is a stream on it, made
-	with a message, with a context of 128 KiB in the device's memory; the
-	tags are not read.
+	that the firmware reads its ring. Each decoder reads its stream with
+	videoparse.library (opened here, from LIBS:) and is a stream on the
+	device, made when its sequence is read: in the device's memory a
+	context (128 KiB, and 192 bytes a macroblock for each reference and
+	the picture decoded), a surface for each of those, and the surface
+	pictures are written to - about 60 MiB at 1080p with four references.
+	Its frames are in the system's memory, one for each picture the
+	stream holds and VDA_HeldFrames and two more; VDA_StreamSize is not
+	read.
 
    CONTEXT
 	- Waits: yes, for the chip; the first open for the firmware's file.
@@ -332,9 +356,8 @@ videodec.resource/VideoDecCodecs
 	DEVS:firmware/wave511.licence.
 
    BUGS
-	On an AMD graphics device the pictures are not decoded yet: a stream
-	is made and ended, and FeedVideoDecoder and DecodeVideoFrame answer
-	VDERR_UNSUPPORTED. It is made for pictures of 1920 x 1088.
+	On an AMD graphics device H.265 is not decoded yet: VideoDecCodecs
+	answers H.264 alone there.
 
    SEE ALSO
 	`VideoDecCodecs`, `CloseVideoDecoder`, `FeedVideoDecoder`,
@@ -401,9 +424,9 @@ videodec.resource/VideoDecCodecs
 
    RESULT
 	A VDCODEC_* bit for each codec: VDCODEC_H264 | VDCODEC_H265 on the
-	JH7110, and on x86-64 with an AMD graphics device whose video block
-	is 4.0.2. 0 when the machine has no decoder, or it would not wake or
-	its firmware would not start.
+	JH7110, VDCODEC_H264 on x86-64 with an AMD graphics device whose
+	video block is 4.0.2. 0 when the machine has no decoder, or it would
+	not wake or its firmware would not start.
 
    BEHAVIOR
 	Answered from what the board lists, or the graphics device's table of
@@ -421,7 +444,8 @@ videodec.resource/VideoDecCodecs
 	None.
 
    BUGS
-	None known.
+	The AMD graphics device's decoder decodes H.265 too; it is not
+	driven for it yet.
 
    SEE ALSO
 	`OpenVideoDecoder`

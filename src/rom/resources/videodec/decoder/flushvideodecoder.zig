@@ -5,6 +5,7 @@ const sdk = @import("sdk");
 const types = sdk.resources.videodec;
 const VideoDecBase = @import("../videodec_base.zig").VideoDecBase;
 const Decoder = @import("_decoder.zig").Decoder;
+const Session = @import("_session.zig").Session;
 const engine = @import("../videodec_init.zig").engine;
 
 /// Drops what a decoder was fed and has not shown yet, for a seek.
@@ -51,9 +52,9 @@ const engine = @import("../videodec_init.zig").engine;
 /// feedFrom(keyFrameBefore(target));
 /// ```
 pub fn FlushVideoDecoder(vb: *VideoDecBase, decoder: *types.VideoDecoder) void {
-    if (comptime engine == .vcn) return;
     const sys = vb.sys_base;
     sys.ObtainSemaphore(&vb.lock);
     defer sys.ReleaseSemaphore(&vb.lock);
+    if (comptime engine == .vcn) return Session.of(decoder).flush();
     Decoder.of(decoder).flush();
 }

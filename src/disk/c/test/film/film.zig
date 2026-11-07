@@ -20,7 +20,8 @@
 //! -pix_fmt nv12 -f rawvideo ref.nv12` makes ffmpeg's to compare.
 //!
 //! SEEK moves the film to that second at the end and says where it
-//! landed, the next frame's time, and how much sound is left from there.
+//! landed, the next frame's time, and how much sound is left from there;
+//! with TO and no FRAME, that next frame is what TO is written with.
 //!
 //! TRACKS lists every track instead of decoding: its kind, its codec, its
 //! language and name, how long it lasts, and whether something here
@@ -51,7 +52,7 @@ const TimerBase = timer.TimerBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Film";
-const VERSION_STRING = "\x00$VER: Film 1.3 (02.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Film 1.4 (07.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FILE/A,FRAME/K/N,TO/K,NOSOUND/S,SEEK/K/N,TOGETHER/S,TRACKS/S,SUBS/K/N,PACKETS/K/N";
@@ -408,11 +409,13 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
             return dos.RETURN_WARN;
         }
         _ = Printf(dl, "seek to %ld s: landed at %ld ms", .{ @as(i64, second), @divTrunc(landed, 1000) });
-        if (vcb.DecodeVideoFrame(film, &frame) == vc.VCERR_OK) {
-            _ = Printf(dl, ", the next frame at %ld ms, number %u", .{ @divTrunc(frame.time, 1000), frame.number });
+        const next = vcb.DecodeVideoFrame(film, &frame) == vc.VCERR_OK;
+        if (next) _ = Printf(dl, ", the next frame at %ld ms, number %u", .{ @divTrunc(frame.time, 1000), frame.number });
+        _ = Printf(dl, "\n", .{});
+        if (next) {
+            if (wanted == null and argv[arg_to] != 0) writeFrame(dl, @ptrFromInt(argv[arg_to]), &frame);
             vcb.ReleaseVideoFrame(film, &frame);
         }
-        _ = Printf(dl, "\n", .{});
         if (info.sound_codec != 0) _ = soundLeft(dl, vcb, film, tb, info);
     }
     return result;

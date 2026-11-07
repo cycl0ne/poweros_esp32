@@ -8,7 +8,7 @@
 //! On x86-64 the decoder is an AMD graphics device's, found through
 //! amdgpu.resource - by reading only: it is powered, its firmware loaded
 //! and started by the first OpenVideoDecoder, and only while the
-//! watchdog is armed.
+//! watchdog is armed. It is driven for H.264.
 //!
 //! On a chip or board without the decoder (the host the tests run on) the
 //! resource is made all the same, without it: VideoDecCodecs answers 0,
@@ -30,7 +30,7 @@ const vcn = @import("codec/_vcn.zig");
 /// The name it is opened by. The SDK's.
 pub const RESOURCE_NAME = types.VIDEODECNAME;
 pub const RESOURCE_VERSION = 1;
-pub const RESOURCE_REVISION = 2;
+pub const RESOURCE_REVISION = 3;
 const BUILD_DATE = "07.11.2026";
 const RESOURCE_VERSION_STRING =
     "\x00$VER: " ++ RESOURCE_NAME ++ " " ++
@@ -75,7 +75,7 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     vb.vcn = .{};
     if (comptime engine == .wave511) findVdec(vb, sys_base);
     if (comptime engine == .vcn) {
-        if (vcn.find(sys_base, &vb.vcn)) vb.codecs = types.VDCODEC_H264 | types.VDCODEC_H265;
+        if (vcn.find(sys_base, &vb.vcn)) vb.codecs = types.VDCODEC_H264;
     }
     return lib;
 }

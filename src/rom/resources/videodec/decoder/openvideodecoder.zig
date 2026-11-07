@@ -52,10 +52,11 @@ const ring_most: u32 = 64 * 1024 * 1024;
 /// The decoder, or null and in `err` why not: VDERR_NO_ENGINE when the
 /// board has no decoder, its firmware is not in
 /// DEVS:firmware/wave511_dec_fw.bin, or it would not wake or start - and
-/// on an AMD graphics device while the watchdog is not armed, or where
-/// its firmware or the security processor's table of contents is not in
-/// DEVS:firmware/amdgpu/; VDERR_UNSUPPORTED for a codec it does not take;
-/// VDERR_BUSY when eight decoders are open; VDERR_NO_MEMORY.
+/// on an AMD graphics device while the watchdog is not armed, where its
+/// firmware or the security processor's table of contents is not in
+/// DEVS:firmware/amdgpu/, or without videoparse.library; VDERR_UNSUPPORTED
+/// for a codec it does not take; VDERR_BUSY when eight decoders are open;
+/// VDERR_NO_MEMORY.
 ///
 /// BEHAVIOR:
 /// The first decoder wakes the chip - its power domain, clocks and
@@ -74,9 +75,15 @@ const ring_most: u32 = 64 * 1024 * 1024;
 /// decoder's firmware - both files read from DEVS:firmware/amdgpu/,
 /// named for the blocks' versions - then has the security processor
 /// apply the decoder's start, a list of its register writes, and checks
-/// that the firmware reads its ring. Each decoder is a stream on it, made
-/// with a message, with a context of 128 KiB in the device's memory; the
-/// tags are not read.
+/// that the firmware reads its ring. Each decoder reads its stream with
+/// videoparse.library (opened here, from LIBS:) and is a stream on the
+/// device, made when its sequence is read: in the device's memory a
+/// context (128 KiB, and 192 bytes a macroblock for each reference and
+/// the picture decoded), a surface for each of those, and the surface
+/// pictures are written to - about 60 MiB at 1080p with four references.
+/// Its frames are in the system's memory, one for each picture the
+/// stream holds and VDA_HeldFrames and two more; VDA_StreamSize is not
+/// read.
 ///
 /// CONTEXT:
 /// - Waits: yes, for the chip; the first open for the firmware's file.
@@ -96,9 +103,8 @@ const ring_most: u32 = 64 * 1024 * 1024;
 /// DEVS:firmware/wave511.licence.
 ///
 /// BUGS:
-/// On an AMD graphics device the pictures are not decoded yet: a stream
-/// is made and ended, and FeedVideoDecoder and DecodeVideoFrame answer
-/// VDERR_UNSUPPORTED. It is made for pictures of 1920 x 1088.
+/// On an AMD graphics device H.265 is not decoded yet: VideoDecCodecs
+/// answers H.264 alone there.
 ///
 /// SEE ALSO:
 /// `VideoDecCodecs`, `CloseVideoDecoder`, `FeedVideoDecoder`,
@@ -112,7 +118,7 @@ const ring_most: u32 = 64 * 1024 * 1024;
 /// ```
 pub fn OpenVideoDecoder(vb: *VideoDecBase, codec: u32, tags: ?[*]const utility.TagItem, err: ?*u32) ?*types.VideoDecoder {
     const sys = vb.sys_base;
-    if (comptime engine == .vcn) return openSession(vb, codec, err);
+    if (comptime engine == .vcn) return openSession(vb, codec, tags, err);
     if (vb.vpu == 0) return failed(err, types.VDERR_NO_ENGINE);
     if (codec == 0 or codec & (codec - 1) != 0 or codec & vb.codecs == 0) return failed(err, types.VDERR_UNSUPPORTED);
 
@@ -229,11 +235,19 @@ fn start(vb: *VideoDecBase) void {
 }
 
 /// A decoder on an AMD graphics device's decoder: the decoder started
-/// for the first, a stream made on it.
-fn openSession(vb: *VideoDecBase, codec: u32, err: ?*u32) ?*types.VideoDecoder {
+/// for the first, a parser opened for the stream, which is made on the
+/// decoder when its sequence is read.
+fn openSession(vb: *VideoDecBase, codec: u32, tags: ?[*]const utility.TagItem, err: ?*u32) ?*types.VideoDecoder {
     const sys = vb.sys_base;
     if (vb.codecs == 0) return failed(err, types.VDERR_NO_ENGINE);
     if (codec == 0 or codec & (codec - 1) != 0 or codec & vb.codecs == 0) return failed(err, types.VDERR_UNSUPPORTED);
+    var held: u32 = 2;
+    if (tags != null) {
+        const utility_lib = sys.OpenLibrary(utility.UTILITYNAME, 0) orelse return failed(err, types.VDERR_NO_MEMORY);
+        defer sys.CloseLibrary(utility_lib);
+        const ub: *sdk.interface.utility.UtilityBase = @ptrCast(utility_lib);
+        held = @intCast(@max(1, @min(_decoder.held_max, ub.GetTagData(types.VDA_HeldFrames, 2, tags))));
+    }
     sys.ObtainSemaphore(&vb.lock);
     defer sys.ReleaseSemaphore(&vb.lock);
     if (vb.state == base.STATE_ASLEEP) startVcn(vb);
@@ -244,12 +258,12 @@ fn openSession(vb: *VideoDecBase, codec: u32, err: ?*u32) ?*types.VideoDecoder {
     } else return failed(err, types.VDERR_BUSY);
     const memory = sys.AllocMem(@sizeOf(Session), exec.MEMF_CLEAR | exec.MEMF_SYSTEM) orelse return failed(err, types.VDERR_NO_MEMORY);
     const s: *Session = @ptrCast(@alignCast(memory));
-    s.* = .{ .vb = vb, .slot = @intCast(slot), .codec = codec };
-    if (!s.make()) {
-        // No room, or a decoder that did not answer - which keeps the
-        // context it may still write.
+    s.* = .{ .vb = vb, .slot = @intCast(slot), .codec = codec, .held = held };
+    const started = s.start();
+    if (started != types.VDERR_OK) {
+        s.end();
         sys.FreeMem(memory, @sizeOf(Session));
-        return failed(err, if (vb.state == base.STATE_RUNNING) types.VDERR_NO_MEMORY else types.VDERR_NO_ENGINE);
+        return failed(err, started);
     }
     vb.decoders[slot] = s;
     if (err) |e| e.* = types.VDERR_OK;

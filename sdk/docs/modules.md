@@ -149,6 +149,7 @@ flowchart TB
     m_usbserial_device --> m_usbport_resource
     m_videodec_resource --> m_amdgpu_resource
     m_videodec_resource --> m_dos_library
+    m_videodec_resource --> m_timer_device
     m_videodec_resource --> m_watchdog_resource
 
     classDef lib fill:#dbeafe,stroke:#2563eb,color:#111827

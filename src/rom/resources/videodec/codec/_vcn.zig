@@ -52,6 +52,7 @@ const sdk = @import("sdk");
 const exec = sdk.exec;
 const amdgpu = sdk.resources.amdgpu;
 const types = sdk.resources.videodec;
+const vp = sdk.videoparse;
 const reg = sdk.hardware.mmio.reg;
 const systimer = sdk.hardware.systimer;
 const ExecBase = sdk.interface.exec.ExecBase;
@@ -307,7 +308,7 @@ pub fn report(sys: *ExecBase, state: *const State, why: [*:0]const u8) void {
 }
 
 /// `bytes` of the device's memory at `cpu` set to zero, eight at a time.
-fn clear(cpu: u64, bytes: u32) void {
+pub fn clear(cpu: u64, bytes: u32) void {
     var offset: u32 = 0;
     while (offset < bytes) : (offset += 8) {
         const to: *volatile u64 = @ptrFromInt(@as(usize, @intCast(cpu)) + offset);
@@ -595,9 +596,21 @@ const decode_buffer_words: u32 = 33;
 /// the structure.
 pub const ib_words: u32 = 4 + 2 + decode_buffer_words;
 
-/// An indirect buffer handing over the message at `message` with the
-/// stream's context at `session`: its words written to `into`.
-pub fn messageBuffer(into: []u32, message: u64, session: u64) u32 {
+/// What an indirect buffer names: which buffers (`BUFFER_*`), and each
+/// one's address, 0 for those it does not name.
+pub const Buffers = struct {
+    flags: u32,
+    message: u64,
+    session: u64,
+    bitstream: u64 = 0,
+    context: u64 = 0,
+    target: u64 = 0,
+    scaling: u64 = 0,
+};
+
+/// An indirect buffer handing over `buffers`: its words written to
+/// `into`.
+pub fn indirectBuffer(into: []u32, buffers: Buffers) u32 {
     for (into[0..ib_words]) |*value| value.* = 0;
     into[0] = ENGINE_INFO_SIZE;
     into[1] = ENGINE_INFO;
@@ -606,12 +619,26 @@ pub fn messageBuffer(into: []u32, message: u64, session: u64) u32 {
     into[4] = decode_buffer_words * 4 + 8;
     into[5] = PARAM_DECODE_BUFFER;
     const buffer = into[6..][0..decode_buffer_words];
-    buffer[0] = BUFFER_MESSAGE | BUFFER_SESSION;
-    buffer[1] = @truncate(message >> 32);
-    buffer[2] = @truncate(message);
-    buffer[7] = @truncate(session >> 32);
-    buffer[8] = @truncate(session);
+    buffer[0] = buffers.flags;
+    const named = [_]struct { at: u32, address: u64 }{
+        .{ .at = 1, .address = buffers.message },
+        .{ .at = 5, .address = buffers.target },
+        .{ .at = 7, .address = buffers.session },
+        .{ .at = 9, .address = buffers.bitstream },
+        .{ .at = 11, .address = buffers.context },
+        .{ .at = 21, .address = buffers.scaling },
+    };
+    for (named) |one| {
+        buffer[one.at] = @truncate(one.address >> 32);
+        buffer[one.at + 1] = @truncate(one.address);
+    }
     return ib_words;
+}
+
+/// An indirect buffer handing over the message at `message` with the
+/// stream's context at `session`: its words written to `into`.
+pub fn messageBuffer(into: []u32, message: u64, session: u64) u32 {
+    return indirectBuffer(into, .{ .flags = BUFFER_MESSAGE | BUFFER_SESSION, .message = message, .session = session });
 }
 
 /// How long a message is waited for.
@@ -623,13 +650,491 @@ const message_most_us: u64 = 1_000_000;
 pub fn send(sys: *ExecBase, state: *State, message: []const u32, session: u64, what: [*:0]const u8) bool {
     clear(state.ring.cpu + message_at, 4096);
     for (message, 0..) |value, n| at(state.ring.cpu + message_at, @intCast(n * 4)).* = value;
-    var ib: [ib_words]u32 = undefined;
-    _ = messageBuffer(&ib, state.ring.device + message_at, session);
-    for (ib, 0..) |value, n| at(state.ring.cpu + ib_at, @intCast(n * 4)).* = value;
-    submit(state, ib_words);
+    handOver(state, .{ .flags = BUFFER_MESSAGE | BUFFER_SESSION, .message = state.ring.device + message_at, .session = session });
     if (!waitFence(sys, state, message_most_us)) {
         report(sys, state, what);
         return false;
+    }
+    return true;
+}
+
+/// The indirect buffer naming `buffers` written and run, a fence after
+/// it.
+fn handOver(state: *State, buffers: Buffers) void {
+    var ib: [ib_words]u32 = undefined;
+    _ = indirectBuffer(&ib, buffers);
+    for (ib, 0..) |value, n| at(state.ring.cpu + ib_at, @intCast(n * 4)).* = value;
+    submit(state, ib_words);
+}
+
+// --- a picture decoded ---------------------------------------------------------
+
+/// A decoding message, and the parts it holds: what the picture is, its
+/// reference surfaces, the codec's part.
+const MESSAGE_DECODE: u32 = 1;
+const PART_DECODE: u32 = 2;
+const PART_AVC: u32 = 6;
+const PART_DYNAMIC_DPB: u32 = 0x10;
+
+/// What else an indirect buffer for decoding names: the picture's
+/// slices, the surface it is written to, its scaling lists and the
+/// decoder's context for the stream.
+const BUFFER_BITSTREAM: u32 = 1 << 2;
+const BUFFER_TARGET: u32 = 1 << 3;
+const BUFFER_SCALING: u32 = 1 << 9;
+const BUFFER_CONTEXT: u32 = 1 << 11;
+pub const decode_buffers: u32 = BUFFER_MESSAGE | BUFFER_BITSTREAM | BUFFER_TARGET | BUFFER_SCALING |
+    BUFFER_CONTEXT | BUFFER_SESSION;
+
+/// The references are surfaces of their own, named by each message.
+const DECODE_DYNAMIC_DPB: u32 = 1 << 0;
+/// A reference surface's layout: blocks of 256 bytes - the one layout
+/// the decoder keeps references in - read as the graphics engine of this
+/// generation lays surfaces out.
+const SWIZZLE_256B_D: u32 = 2;
+const ARRAY_MODE_GFX11: u32 = 3;
+
+/// The largest H.264 picture the decoder takes, across and down.
+pub const avc_most: u32 = 4096;
+/// The firmware's numbers for the pictures it decodes and refers to:
+/// 0 to 16, the most references and the picture decoded.
+pub const most_ids: u32 = 17;
+
+/// Where the scaling lists go in the message's page.
+const scaling_at: u32 = 2048;
+
+pub const MessageIndex = extern struct {
+    id: u32 = 0,
+    offset: u32 = 0,
+    size: u32 = 0,
+    filled: u32 = 0,
+};
+
+pub const MessageHeader = extern struct {
+    header_size: u32 = header_bytes,
+    total_size: u32 = 0,
+    num_buffers: u32 = 0,
+    msg_type: u32 = 0,
+    stream_handle: u32 = 0,
+    feedback_number: u32 = 0,
+    index: MessageIndex = .{},
+};
+
+/// What a picture is: its stream's kind and size, how large each buffer
+/// named is, and how its surfaces are laid out - the references' (`db_`)
+/// and the one it is written to (`dt_`), pitches counted in elements.
+pub const DecodePart = extern struct {
+    stream_type: u32 = 0,
+    decode_flags: u32 = 0,
+    width_in_samples: u32 = 0,
+    height_in_samples: u32 = 0,
+    bsd_size: u32 = 0,
+    dpb_size: u32 = 0,
+    dt_size: u32 = 0,
+    sct_size: u32 = 0,
+    sc_coeff_size: u32 = 0,
+    hw_ctxt_size: u32 = 0,
+    sw_ctxt_size: u32 = 0,
+    pic_param_size: u32 = 0,
+    mb_cntl_size: u32 = 0,
+    reserved0: [4]u32 = @splat(0),
+    decode_buffer_flags: u32 = 0,
+    db_pitch: u32 = 0,
+    db_aligned_height: u32 = 0,
+    db_tiling_mode: u32 = 0,
+    db_swizzle_mode: u32 = 0,
+    db_array_mode: u32 = 0,
+    db_field_mode: u32 = 0,
+    db_surf_tile_config: u32 = 0,
+    dt_pitch: u32 = 0,
+    dt_uv_pitch: u32 = 0,
+    dt_tiling_mode: u32 = 0,
+    dt_swizzle_mode: u32 = 0,
+    dt_array_mode: u32 = 0,
+    dt_field_mode: u32 = 0,
+    dt_out_format: u32 = 0,
+    dt_surf_tile_config: u32 = 0,
+    dt_uv_surf_tile_config: u32 = 0,
+    dt_luma_top_offset: u32 = 0,
+    dt_luma_bottom_offset: u32 = 0,
+    dt_chroma_top_offset: u32 = 0,
+    dt_chroma_bottom_offset: u32 = 0,
+    dt_chroma_v_top_offset: u32 = 0,
+    dt_chroma_v_bottom_offset: u32 = 0,
+    mif_wrc_en: u32 = 0,
+    db_pitch_uv: u32 = 0,
+    reserved1: [20]u8 = @splat(0),
+};
+
+/// The picture's reference surfaces: their layout, how many the codec's
+/// part names, the surface the picture itself goes to, and each
+/// reference's by its place in the codec's part - the brightness's
+/// address; the colour follows it.
+pub const DpbPart = extern struct {
+    config_flags: u32 = 0,
+    luma_pitch: u32 = 0,
+    luma_aligned_height: u32 = 0,
+    luma_aligned_size: u32 = 0,
+    chroma_pitch: u32 = 0,
+    chroma_aligned_height: u32 = 0,
+    chroma_aligned_size: u32 = 0,
+    array_size: u32 = 0,
+    curr_lo: u32 = 0,
+    curr_hi: u32 = 0,
+    addr_lo: [16]u32 = @splat(0),
+    addr_hi: [16]u32 = @splat(0),
+};
+
+/// An H.264 picture: its parameter sets' values, its own frame number
+/// and order counts, and its references - each by its place, with the
+/// firmware's number for it.
+pub const AvcPart = extern struct {
+    profile: u32 = 0,
+    level: u32 = 0,
+    sps_info_flags: u32 = 0,
+    pps_info_flags: u32 = 0,
+    chroma_format: u8 = 0,
+    bit_depth_luma_minus8: u8 = 0,
+    bit_depth_chroma_minus8: u8 = 0,
+    log2_max_frame_num_minus4: u8 = 0,
+    pic_order_cnt_type: u8 = 0,
+    log2_max_pic_order_cnt_lsb_minus4: u8 = 0,
+    num_ref_frames: u8 = 0,
+    reserved_8bit: u8 = 0,
+    pic_init_qp_minus26: i8 = 0,
+    pic_init_qs_minus26: i8 = 0,
+    chroma_qp_index_offset: i8 = 0,
+    second_chroma_qp_index_offset: i8 = 0,
+    num_slice_groups_minus1: u8 = 0,
+    slice_group_map_type: u8 = 0,
+    num_ref_idx_l0_active_minus1: u8 = 0,
+    num_ref_idx_l1_active_minus1: u8 = 0,
+    slice_group_change_rate_minus1: u16 = 0,
+    reserved_16bit_1: u16 = 0,
+    scaling_list_4x4: [6][16]u8 = @splat(@splat(16)),
+    scaling_list_8x8: [2][64]u8 = @splat(@splat(16)),
+    frame_num: u32 = 0,
+    frame_num_list: [16]u32 = @splat(0),
+    curr_field_order_cnt_list: [2]i32 = .{ 0, 0 },
+    field_order_cnt_list: [16][2]i32 = @splat(.{ 0, 0 }),
+    decoded_pic_idx: u32 = 0,
+    curr_pic_ref_frame_num: u32 = 0,
+    ref_frame_list: [16]u8 = @splat(0xFF),
+    reserved: [122]u32 = @splat(0),
+    /// Multiview's part, unused.
+    mvc: [140]u8 = @splat(0),
+    non_existing_frame_flags: u16 = 0,
+    used_for_reference_flags: u32 = 0,
+};
+
+/// An H.264 picture's scaling lists as the decoder reads them from their
+/// own buffer: in raster order, the 8x8 ones of brightness only.
+pub const AvcScaling = extern struct {
+    m4: [6][16]u8 = @splat(@splat(16)),
+    m8: [2][64]u8 = @splat(@splat(16)),
+};
+
+/// The whole of an H.264 picture's message, in the order its index
+/// lists the parts.
+pub const AvcMessage = extern struct {
+    header: MessageHeader = .{},
+    codec_index: MessageIndex = .{},
+    dpb_index: MessageIndex = .{},
+    decode: DecodePart = .{},
+    dpb: DpbPart = .{},
+    avc: AvcPart = .{},
+};
+
+comptime {
+    if (@sizeOf(MessageHeader) != header_bytes or @sizeOf(DecodePart) != 188 or @sizeOf(DpbPart) != 168 or
+        @sizeOf(AvcPart) != 1124 or @sizeOf(AvcScaling) != 224 or @sizeOf(AvcMessage) != 1552)
+        @compileError("a decoding message's part is not the size the decoder reads");
+}
+
+fn alignUp(value: u32, to: u32) u32 {
+    return (value + to - 1) / to * to;
+}
+
+/// How a stream's surfaces are laid out, for pictures of `width` by
+/// `height` (multiples of 16) and `ids` firmware numbers:
+///
+/// - a reference surface in blocks of 256 bytes, its rows of brightness
+///   `ref_pitch` across and `ref_rows` down - both multiples of 32 - its
+///   colour pairs right after, at half that each way;
+/// - the target, the surface each picture is written to as rows of
+///   bytes: `target_pitch` (a multiple of 256) apart, `target_rows` of
+///   brightness, then half as many of colour pairs;
+/// - the decoder's own context for the stream, `hw_bytes`, 192 bytes a
+///   macroblock for each of its numbers.
+pub const Layout = struct {
+    width: u32 = 0,
+    height: u32 = 0,
+    ids: u32 = 0,
+    ref_pitch: u32 = 0,
+    ref_rows: u32 = 0,
+    target_pitch: u32 = 0,
+    target_rows: u32 = 0,
+    hw_bytes: u32 = 0,
+
+    pub fn avc(coded_width: u32, coded_height: u32, ids: u32) Layout {
+        const width = alignUp(coded_width, 16);
+        const height = alignUp(coded_height, 16);
+        const across = width / 16;
+        const down = alignUp(height / 16, 2);
+        return .{
+            .width = width,
+            .height = height,
+            .ids = ids,
+            .ref_pitch = alignUp(width, 32),
+            .ref_rows = alignUp(height, 32),
+            .target_pitch = alignUp(width, 256),
+            .target_rows = alignUp(height, 32),
+            .hw_bytes = ids * alignUp(across * down * 192, 256),
+        };
+    }
+
+    pub fn refLuma(l: Layout) u32 {
+        return l.ref_pitch * l.ref_rows;
+    }
+
+    /// A reference surface's room, on a page.
+    pub fn refBytes(l: Layout) u32 {
+        return alignUp(l.refLuma() + l.refLuma() / 2, 4096);
+    }
+
+    pub fn targetLuma(l: Layout) u32 {
+        return l.target_pitch * l.target_rows;
+    }
+
+    pub fn targetBytes(l: Layout) u32 {
+        return l.targetLuma() + l.targetLuma() / 2;
+    }
+};
+
+/// The firmware numbers an H.264 stream needs: its references and the
+/// picture decoded.
+pub fn avcIds(sps: *const vp.h264.H264Sps) u32 {
+    return @min(most_ids, @as(u32, @max(sps.max_num_ref_frames, 1)) + 1);
+}
+
+/// The decoder's number for an H.264 stream's profile - baseline, main
+/// or high, which takes the high profiles' 8-bit 4:2:0 streams - or null
+/// for one it does not decode: extended's data partitions, lossless
+/// macroblocks, colour planes coded apart.
+pub fn avcProfile(sps: *const vp.h264.H264Sps) ?u32 {
+    if (sps.separate_colour_plane or sps.transform_bypass) return null;
+    return switch (sps.profile_idc) {
+        66 => 0,
+        77 => 1,
+        88 => null,
+        else => 2,
+    };
+}
+
+/// A reference as an H.264 picture's message names it: the firmware's
+/// number for it, and whether its surface holds what was decoded.
+pub const AvcRef = struct {
+    id: u8,
+    decoded: bool,
+    ref: vp.VideoRef,
+};
+
+/// An order count for a field that is not a reference.
+const no_poc: i32 = 0x7FFF_FFFF;
+
+fn flag(set: bool, bit: u5) u32 {
+    return @as(u32, @intFromBool(set)) << bit;
+}
+
+/// The codec's part and the scaling lists of the H.264 picture `pic`,
+/// decoded with `sps` and `pps` into firmware number `id`, its
+/// references `refs` in the order the picture holds them.
+pub fn avcPart(part: *AvcPart, scaling: *AvcScaling, sps: *const vp.h264.H264Sps, pps: *const vp.h264.H264Pps, pic: *const vp.VideoPicture, id: u8, refs: []const AvcRef) void {
+    part.* = .{};
+    part.profile = avcProfile(sps) orelse 2;
+    part.level = sps.level_idc;
+    part.sps_info_flags = flag(sps.direct_8x8_inference, 0) | flag(sps.mbaff, 1) | flag(sps.frame_mbs_only, 2) |
+        flag(sps.delta_pic_order_always_zero, 3) | flag(sps.gaps_allowed, 5);
+    part.pps_info_flags = flag(pps.transform_8x8, 0) | flag(pps.redundant_pic_cnt_present, 1) |
+        flag(pps.constrained_intra_pred, 2) | flag(pps.deblocking_control, 3) |
+        (@as(u32, pps.weighted_bipred_idc & 3) << 4) | flag(pps.weighted_pred, 6) |
+        flag(pps.bottom_field_poc_present, 7) | flag(pps.cabac, 8);
+    part.chroma_format = sps.chroma_format_idc;
+    part.bit_depth_luma_minus8 = sps.bit_depth_luma -| 8;
+    part.bit_depth_chroma_minus8 = sps.bit_depth_chroma -| 8;
+    part.log2_max_frame_num_minus4 = sps.log2_max_frame_num -| 4;
+    part.pic_order_cnt_type = sps.poc_type;
+    part.log2_max_pic_order_cnt_lsb_minus4 = sps.log2_max_poc_lsb -| 4;
+    part.num_ref_frames = sps.max_num_ref_frames;
+    part.pic_init_qp_minus26 = @intCast(pps.init_qp - 26);
+    part.pic_init_qs_minus26 = @intCast(pps.init_qs - 26);
+    part.chroma_qp_index_offset = @intCast(pps.chroma_qp_offset[0]);
+    part.second_chroma_qp_index_offset = @intCast(pps.chroma_qp_offset[1]);
+    part.num_slice_groups_minus1 = pps.num_slice_groups -| 1;
+    part.slice_group_map_type = pps.slice_group_map_type;
+    part.num_ref_idx_l0_active_minus1 = pps.num_ref_idx_default[0] -| 1;
+    part.num_ref_idx_l1_active_minus1 = pps.num_ref_idx_default[1] -| 1;
+    part.slice_group_change_rate_minus1 = @intCast(pps.change_rate -| 1);
+    for (0..6) |k| {
+        part.scaling_list_4x4[k] = pps.scaling.m4[k];
+        scaling.m4[k] = pps.scaling.m4[k];
+    }
+    for (0..2) |k| {
+        part.scaling_list_8x8[k] = pps.scaling.m8[k];
+        scaling.m8[k] = pps.scaling.m8[k];
+    }
+    part.frame_num = pic.frame_num;
+    part.curr_field_order_cnt_list = pic.poc;
+    // A first field's pair is not decoded yet: its order count is not
+    // known.
+    if (pic.structure != 3 and !pic.second_field) part.curr_field_order_cnt_list[if (pic.structure == 1) 1 else 0] = 0;
+    part.decoded_pic_idx = id;
+    for (refs, 0..) |r, j| {
+        const top = r.ref.fields & 1 != 0;
+        const bottom = r.ref.fields & 2 != 0;
+        part.frame_num_list[j] = r.ref.frame_num;
+        part.field_order_cnt_list[j] = .{ if (top) r.ref.poc[0] else no_poc, if (bottom) r.ref.poc[1] else no_poc };
+        part.ref_frame_list[j] = r.id | if (r.ref.long_term) @as(u8, 0x80) else 0;
+        if (top) part.used_for_reference_flags |= @as(u32, 1) << @intCast(2 * j);
+        if (bottom) part.used_for_reference_flags |= @as(u32, 1) << @intCast(2 * j + 1);
+        if (!r.decoded) part.non_existing_frame_flags |= @as(u16, 1) << @intCast(j);
+    }
+    part.curr_pic_ref_frame_num = @intCast(refs.len);
+}
+
+/// The rest of an H.264 picture's message: its header and index, what
+/// the picture is - stream `stream`'s `number`th, `bitstream_bytes` of
+/// slices (a multiple of 128), laid out as `layout` - and its surfaces:
+/// `current` for itself, `refs` for its references in the order the
+/// codec's part names them.
+pub fn avcMessage(m: *AvcMessage, layout: Layout, stream: u32, number: u32, bitstream_bytes: u32, current: u64, refs: []const u64) void {
+    m.header = .{
+        .total_size = @sizeOf(AvcMessage),
+        .num_buffers = 3,
+        .msg_type = MESSAGE_DECODE,
+        .stream_handle = stream,
+        .feedback_number = number,
+        .index = .{ .id = PART_DECODE, .offset = @offsetOf(AvcMessage, "decode"), .size = @sizeOf(DecodePart) },
+    };
+    m.codec_index = .{ .id = PART_AVC, .offset = @offsetOf(AvcMessage, "avc"), .size = @sizeOf(AvcPart) };
+    m.dpb_index = .{ .id = PART_DYNAMIC_DPB, .offset = @offsetOf(AvcMessage, "dpb"), .size = @sizeOf(DpbPart) };
+    m.decode = .{
+        .stream_type = streamKind(types.VDCODEC_H264),
+        .decode_flags = DECODE_DYNAMIC_DPB,
+        .width_in_samples = layout.width,
+        .height_in_samples = layout.height,
+        .bsd_size = bitstream_bytes,
+        .dt_size = layout.targetBytes(),
+        .hw_ctxt_size = layout.hw_bytes,
+        .sw_ctxt_size = session_bytes,
+        .decode_buffer_flags = decode_buffers & ~BUFFER_SESSION,
+        .db_pitch = layout.ref_pitch,
+        .db_aligned_height = layout.ref_rows,
+        .db_swizzle_mode = SWIZZLE_256B_D,
+        .db_array_mode = ARRAY_MODE_GFX11,
+        .dt_pitch = layout.target_pitch,
+        .dt_uv_pitch = layout.target_pitch / 2,
+        .dt_array_mode = ARRAY_MODE_GFX11,
+        .dt_chroma_top_offset = layout.targetLuma(),
+        .dt_chroma_bottom_offset = layout.targetLuma(),
+        .mif_wrc_en = 1,
+        .db_pitch_uv = layout.ref_pitch / 2,
+    };
+    m.dpb = .{
+        .luma_pitch = layout.ref_pitch,
+        .luma_aligned_height = layout.ref_rows,
+        .luma_aligned_size = layout.refLuma(),
+        .chroma_pitch = layout.ref_pitch / 2,
+        .chroma_aligned_height = layout.ref_rows / 2,
+        .chroma_aligned_size = layout.refLuma() / 2,
+        .array_size = @intCast(refs.len),
+        .curr_lo = @truncate(current),
+        .curr_hi = @truncate(current >> 32),
+    };
+    for (refs, 0..) |address, j| {
+        m.dpb.addr_lo[j] = @truncate(address);
+        m.dpb.addr_hi[j] = @truncate(address >> 32);
+    }
+}
+
+/// `from` written to the device's memory at `cpu`, eight bytes at a time.
+pub fn copyToDevice(cpu: u64, from: []const u8) void {
+    const whole = from.len / 8 * 8;
+    var offset: usize = 0;
+    while (offset < whole) : (offset += 8) {
+        const to: *volatile u64 = @ptrFromInt(@as(usize, @intCast(cpu)) + offset);
+        to.* = @as(*align(1) const u64, @ptrCast(from.ptr + offset)).*;
+    }
+    if (whole < from.len) {
+        var last: u64 = 0;
+        for (from[whole..], 0..) |byte, n| last |= @as(u64, byte) << @intCast(n * 8);
+        const to: *volatile u64 = @ptrFromInt(@as(usize, @intCast(cpu)) + whole);
+        to.* = last;
+    }
+}
+
+/// `bytes` of the device's memory at `cpu` (a multiple of 8) set to
+/// `value`, eight bytes at a time.
+pub fn fillDevice(cpu: u64, bytes: u32, value: u64) void {
+    var offset: u32 = 0;
+    while (offset < bytes) : (offset += 8) {
+        const to: *volatile u64 = @ptrFromInt(@as(usize, @intCast(cpu)) + offset);
+        to.* = value;
+    }
+}
+
+/// `bytes` out of the device's memory at `cpu` by streaming loads, which
+/// read write-combining memory a whole line at a time where plain loads
+/// fetch each word on its own: a multiple of 64, from a line's start. A
+/// fence first, so that nothing written before is still on its way.
+pub fn streamFromDevice(to: [*]u8, cpu: u64, bytes: usize) void {
+    fence();
+    var offset: usize = 0;
+    while (offset < bytes) : (offset += 64) {
+        asm volatile (
+            \\movntdqa (%[from]), %%xmm0
+            \\movntdqa 16(%[from]), %%xmm1
+            \\movntdqa 32(%[from]), %%xmm2
+            \\movntdqa 48(%[from]), %%xmm3
+            \\movdqu %%xmm0, (%[to])
+            \\movdqu %%xmm1, 16(%[to])
+            \\movdqu %%xmm2, 32(%[to])
+            \\movdqu %%xmm3, 48(%[to])
+            :
+            : [from] "r" (@as(usize, @intCast(cpu)) + offset),
+              [to] "r" (to + offset),
+            : .{ .xmm0 = true, .xmm1 = true, .xmm2 = true, .xmm3 = true, .memory = true });
+    }
+}
+
+/// The H.264 picture's message `message` and its scaling lists written
+/// into the ring's piece and handed to the decoder with the stream's
+/// other buffers (`buffers`, whose message and scaling lists are filled
+/// in here). Its fence is the state's last; `fenced` waits for it. The
+/// caller holds the resource's lock.
+pub fn decodeAvc(state: *State, message: *const AvcMessage, scaling: *const AvcScaling, buffers: Buffers) void {
+    const page = state.ring.cpu + message_at;
+    copyToDevice(page, @as([*]const u8, @ptrCast(message))[0..@sizeOf(AvcMessage)]);
+    copyToDevice(page + scaling_at, @as([*]const u8, @ptrCast(scaling))[0..@sizeOf(AvcScaling)]);
+    var named = buffers;
+    named.flags = decode_buffers;
+    named.message = state.ring.device + message_at;
+    named.scaling = state.ring.device + message_at + scaling_at;
+    fence();
+    handOver(state, named);
+}
+
+/// How often a picture's fence is looked at.
+const look_us: u32 = 100;
+
+/// Waits up to `most_us` for the last fence's number to be written,
+/// `waiter.wait(micros)` waiting that long between looks.
+pub fn fenced(state: *const State, most_us: u64, waiter: anytype) bool {
+    var waited: u64 = 0;
+    while (at(state.ring.cpu, fence_at).* != state.sequence) {
+        if (waited >= most_us) return false;
+        waiter.wait(look_us);
+        waited += look_us;
     }
     return true;
 }
@@ -696,4 +1201,169 @@ test "an indirect buffer names the message and the stream's context" {
     try testing.expectEqual(@as(u32, 0x80), ib[13]);
     try testing.expectEqual(@as(u32, 0x00420000), ib[14]);
     for (ib[15..]) |value| try testing.expectEqual(@as(u32, 0), value);
+}
+
+test "an H.264 picture's message is laid out as the decoder reads it" {
+    try testing.expectEqual(@as(usize, 40), @offsetOf(AvcMessage, "codec_index"));
+    try testing.expectEqual(@as(usize, 56), @offsetOf(AvcMessage, "dpb_index"));
+    try testing.expectEqual(@as(usize, 72), @offsetOf(AvcMessage, "decode"));
+    try testing.expectEqual(@as(usize, 260), @offsetOf(AvcMessage, "dpb"));
+    try testing.expectEqual(@as(usize, 428), @offsetOf(AvcMessage, "avc"));
+    try testing.expectEqual(@as(usize, 68), @offsetOf(DecodePart, "decode_buffer_flags"));
+    try testing.expectEqual(@as(usize, 84), @offsetOf(DecodePart, "db_swizzle_mode"));
+    try testing.expectEqual(@as(usize, 100), @offsetOf(DecodePart, "dt_pitch"));
+    try testing.expectEqual(@as(usize, 144), @offsetOf(DecodePart, "dt_chroma_top_offset"));
+    try testing.expectEqual(@as(usize, 160), @offsetOf(DecodePart, "mif_wrc_en"));
+    try testing.expectEqual(@as(usize, 164), @offsetOf(DecodePart, "db_pitch_uv"));
+    try testing.expectEqual(@as(usize, 40), @offsetOf(DpbPart, "addr_lo"));
+    try testing.expectEqual(@as(usize, 104), @offsetOf(DpbPart, "addr_hi"));
+    try testing.expectEqual(@as(usize, 36), @offsetOf(AvcPart, "scaling_list_4x4"));
+    try testing.expectEqual(@as(usize, 132), @offsetOf(AvcPart, "scaling_list_8x8"));
+    try testing.expectEqual(@as(usize, 260), @offsetOf(AvcPart, "frame_num"));
+    try testing.expectEqual(@as(usize, 264), @offsetOf(AvcPart, "frame_num_list"));
+    try testing.expectEqual(@as(usize, 328), @offsetOf(AvcPart, "curr_field_order_cnt_list"));
+    try testing.expectEqual(@as(usize, 336), @offsetOf(AvcPart, "field_order_cnt_list"));
+    try testing.expectEqual(@as(usize, 464), @offsetOf(AvcPart, "decoded_pic_idx"));
+    try testing.expectEqual(@as(usize, 468), @offsetOf(AvcPart, "curr_pic_ref_frame_num"));
+    try testing.expectEqual(@as(usize, 472), @offsetOf(AvcPart, "ref_frame_list"));
+    try testing.expectEqual(@as(usize, 976), @offsetOf(AvcPart, "mvc"));
+    try testing.expectEqual(@as(usize, 1116), @offsetOf(AvcPart, "non_existing_frame_flags"));
+    try testing.expectEqual(@as(usize, 1120), @offsetOf(AvcPart, "used_for_reference_flags"));
+    try testing.expect(scaling_at >= @sizeOf(AvcMessage) and scaling_at % 256 == 0 and scaling_at + @sizeOf(AvcScaling) <= 4096);
+}
+
+test "a decoding buffer names every buffer where the decoder looks for it" {
+    var ib: [ib_words]u32 = undefined;
+    _ = indirectBuffer(&ib, .{
+        .flags = decode_buffers,
+        .message = 0x80_0000_1000,
+        .session = 0x81_0000_2000,
+        .bitstream = 0x82_0000_3000,
+        .context = 0x83_0000_4000,
+        .target = 0x84_0000_5000,
+        .scaling = 0x85_0000_6000,
+    });
+    // Mesa's flags for an H.264 picture on this generation.
+    try testing.expectEqual(@as(u32, 0x00100A0D), ib[6]);
+    const buffer = ib[6..];
+    try testing.expectEqualSlices(u32, &.{ 0x80, 0x1000 }, buffer[1..3]);
+    try testing.expectEqualSlices(u32, &.{ 0, 0 }, buffer[3..5]);
+    try testing.expectEqualSlices(u32, &.{ 0x84, 0x5000 }, buffer[5..7]);
+    try testing.expectEqualSlices(u32, &.{ 0x81, 0x2000 }, buffer[7..9]);
+    try testing.expectEqualSlices(u32, &.{ 0x82, 0x3000 }, buffer[9..11]);
+    try testing.expectEqualSlices(u32, &.{ 0x83, 0x4000 }, buffer[11..13]);
+    try testing.expectEqualSlices(u32, &.{ 0x85, 0x6000 }, buffer[21..23]);
+}
+
+test "a 1080p stream's surfaces and context" {
+    const l = Layout.avc(1920, 1080, 5);
+    try testing.expectEqual(@as(u32, 1920), l.width);
+    try testing.expectEqual(@as(u32, 1088), l.height);
+    try testing.expectEqual(@as(u32, 1920), l.ref_pitch);
+    try testing.expectEqual(@as(u32, 1088), l.ref_rows);
+    try testing.expectEqual(@as(u32, 2048), l.target_pitch);
+    try testing.expectEqual(@as(u32, 1088), l.target_rows);
+    // 120 x 68 macroblocks, 192 bytes each, for each of the five numbers.
+    try testing.expectEqual(@as(u32, 5 * 120 * 68 * 192), l.hw_bytes);
+    try testing.expectEqual(@as(u32, 1920 * 1088), l.refLuma());
+    try testing.expectEqual(@as(u32, 0), l.refBytes() % 4096);
+    try testing.expect(l.refBytes() >= 1920 * 1088 * 3 / 2);
+    try testing.expectEqual(@as(u32, 2048 * 1088 * 3 / 2), l.targetBytes());
+    // A small one: its macroblock rows counted in pairs, each number's
+    // share on 256 bytes.
+    const small = Layout.avc(176, 144, 2);
+    try testing.expectEqual(@as(u32, 2 * 21248), small.hw_bytes);
+    try testing.expectEqual(@as(u32, 192), small.ref_pitch);
+    try testing.expectEqual(@as(u32, 160), small.ref_rows);
+    try testing.expectEqual(@as(u32, 256), small.target_pitch);
+}
+
+test "an H.264 picture's message: its parameter sets, references and surfaces" {
+    var sps: vp.h264.H264Sps = .{ .profile_idc = 100, .level_idc = 41, .max_num_ref_frames = 4, .frame_mbs_only = true, .direct_8x8_inference = true, .log2_max_frame_num = 9, .log2_max_poc_lsb = 6 };
+    try testing.expectEqual(@as(u32, 5), avcIds(&sps));
+    sps.max_num_ref_frames = 0;
+    try testing.expectEqual(@as(u32, 2), avcIds(&sps));
+    sps.max_num_ref_frames = 16;
+    try testing.expectEqual(@as(u32, 17), avcIds(&sps));
+    try testing.expectEqual(@as(?u32, 2), avcProfile(&sps));
+    sps.profile_idc = 88;
+    try testing.expectEqual(@as(?u32, null), avcProfile(&sps));
+    sps.profile_idc = 66;
+    try testing.expectEqual(@as(?u32, 0), avcProfile(&sps));
+    sps.profile_idc = 100;
+    sps.transform_bypass = true;
+    try testing.expectEqual(@as(?u32, null), avcProfile(&sps));
+    sps.transform_bypass = false;
+
+    var pps: vp.h264.H264Pps = .{ .cabac = true, .transform_8x8 = true, .weighted_bipred_idc = 2, .deblocking_control = true, .init_qp = 24, .chroma_qp_offset = .{ -2, 3 }, .num_ref_idx_default = .{ 3, 1 } };
+    pps.scaling.m4[3][0] = 7;
+    pps.scaling.m8[1][63] = 9;
+    // A bottom field, the second of its pair, with a frame and a
+    // long-term field pair's bottom field for references, the second
+    // never decoded.
+    var pic: vp.VideoPicture = .{ .slot = 4, .structure = 2, .second_field = true, .frame_num = 7, .poc = .{ 14, 15 } };
+    const refs = [_]AvcRef{
+        .{ .id = 2, .decoded = true, .ref = .{ .slot = 1, .fields = 3, .frame_num = 6, .poc = .{ 12, 13 } } },
+        .{ .id = 0, .decoded = false, .ref = .{ .slot = 0, .fields = 2, .long_term = true, .frame_num = 1, .poc = .{ 2, 3 } } },
+    };
+    var message: AvcMessage = .{};
+    var scaling: AvcScaling = .{};
+    avcPart(&message.avc, &scaling, &sps, &pps, &pic, 3, &refs);
+    const avc = &message.avc;
+    try testing.expectEqual(@as(u32, 2), avc.profile);
+    try testing.expectEqual(@as(u32, 41), avc.level);
+    try testing.expectEqual(@as(u32, 0b101), avc.sps_info_flags);
+    try testing.expectEqual(@as(u32, 1 | 8 | (2 << 4) | 0x100), avc.pps_info_flags);
+    try testing.expectEqual(@as(u8, 5), avc.log2_max_frame_num_minus4);
+    try testing.expectEqual(@as(u8, 2), avc.log2_max_pic_order_cnt_lsb_minus4);
+    try testing.expectEqual(@as(i8, -2), avc.pic_init_qp_minus26);
+    try testing.expectEqual(@as(i8, -2), avc.chroma_qp_index_offset);
+    try testing.expectEqual(@as(i8, 3), avc.second_chroma_qp_index_offset);
+    try testing.expectEqual(@as(u8, 2), avc.num_ref_idx_l0_active_minus1);
+    try testing.expectEqual(@as(u8, 7), avc.scaling_list_4x4[3][0]);
+    try testing.expectEqual(@as(u8, 9), scaling.m8[1][63]);
+    try testing.expectEqual(@as(u8, 16), scaling.m8[0][0]);
+    try testing.expectEqual(@as(u32, 7), avc.frame_num);
+    try testing.expectEqual([2]i32{ 14, 15 }, avc.curr_field_order_cnt_list);
+    try testing.expectEqual(@as(u32, 3), avc.decoded_pic_idx);
+    try testing.expectEqual(@as(u32, 2), avc.curr_pic_ref_frame_num);
+    try testing.expectEqualSlices(u8, &.{ 2, 0x80, 0xFF }, avc.ref_frame_list[0..3]);
+    try testing.expectEqual([2]i32{ 12, 13 }, avc.field_order_cnt_list[0]);
+    try testing.expectEqual([2]i32{ no_poc, 3 }, avc.field_order_cnt_list[1]);
+    try testing.expectEqual(@as(u32, 0b1011), avc.used_for_reference_flags);
+    try testing.expectEqual(@as(u16, 0b10), avc.non_existing_frame_flags);
+    try testing.expectEqual(@as(u32, 1), avc.frame_num_list[1]);
+
+    // A first top field: its pair's order count is not known yet.
+    pic = .{ .slot = 4, .structure = 1, .frame_num = 7, .poc = .{ 14, 14 } };
+    avcPart(&message.avc, &scaling, &sps, &pps, &pic, 3, &.{});
+    try testing.expectEqual([2]i32{ 14, 0 }, message.avc.curr_field_order_cnt_list);
+    try testing.expectEqual(@as(u32, 0), message.avc.curr_pic_ref_frame_num);
+
+    const layout = Layout.avc(1920, 1080, 5);
+    avcMessage(&message, layout, 0x55, 9, 4096, 0x80_0100_0000, &.{ 0x80_0200_0000, 0x80_0300_0000 });
+    const words: [*]const u32 = @ptrCast(&message);
+    try testing.expectEqualSlices(u32, &.{ 40, 1552, 3, 1, 0x55, 9, 2, 72, 188, 0, 6, 428, 1124, 0, 0x10, 260, 168, 0 }, words[0..18]);
+    const decode = &message.decode;
+    try testing.expectEqual(@as(u32, 7), decode.stream_type);
+    try testing.expectEqual(@as(u32, 1), decode.decode_flags);
+    try testing.expectEqual(@as(u32, 0x00000A0D), decode.decode_buffer_flags);
+    try testing.expectEqual(@as(u32, 1088), decode.height_in_samples);
+    try testing.expectEqual(@as(u32, 2048 / 2), decode.dt_uv_pitch);
+    try testing.expectEqual(@as(u32, 2048 * 1088), decode.dt_chroma_top_offset);
+    try testing.expectEqual(@as(u32, 5 * 120 * 68 * 192), decode.hw_ctxt_size);
+    try testing.expectEqual(@as(u32, 2), decode.db_swizzle_mode);
+    try testing.expectEqual(@as(u32, 3), decode.db_array_mode);
+    try testing.expectEqual(@as(u32, 0), decode.dt_swizzle_mode);
+    try testing.expectEqual(@as(u32, 2), message.dpb.array_size);
+    try testing.expectEqual(@as(u32, 0x0100_0000), message.dpb.curr_lo);
+    try testing.expectEqual(@as(u32, 0x80), message.dpb.curr_hi);
+    try testing.expectEqual(@as(u32, 0x0300_0000), message.dpb.addr_lo[1]);
+    try testing.expectEqual(@as(u32, 1920 * 1088 / 2), message.dpb.chroma_aligned_size);
+}
+
+test "bytes go to the device's memory eight at a time, the last ones padded" {
+    var room: [24]u8 align(8) = @splat(0xEE);
+    copyToDevice(@intFromPtr(&room), &.{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 });
+    try testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 0, 0, 0, 0, 0, 0xEE }, room[0..17]);
 }
