@@ -47,12 +47,14 @@ Generated from the source by `./zig build autodoc`.
 - [CmdNextSubpass](#cmdnextsubpass) - Recorded: what the subpass drew stored, and the next subpass begun.
 - [CmdPipelineBarrier](#cmdpipelinebarrier) - Recorded: a barrier between the work before it and the work after.
 - [CmdPushConstants](#cmdpushconstants) - Recorded: bytes of push constants set.
+- [CmdResetEvent](#cmdresetevent) - Recorded: the event reset once the work before it is done.
 - [CmdResetQueryPool](#cmdresetquerypool) - Recorded: `count` queries from `first` set back to nothing counted and not available.
 - [CmdResolveImage](#cmdresolveimage) - Recorded: the samples of a multisampled image averaged into an image of one sample, rectangle by rectangle.
 - [CmdSetBlendConstants](#cmdsetblendconstants) - Recorded: the blend constants, for a pipeline that leaves them to commands.
 - [CmdSetBlendConstantsAt](#cmdsetblendconstantsat) - Recorded: one colour attachment's own blend constants, for a pipeline that leaves them to commands.
 - [CmdSetDepthBias](#cmdsetdepthbias) - Recorded: the depth bias, for a pipeline that leaves it to commands.
 - [CmdSetDepthBounds](#cmdsetdepthbounds) - Recorded: the depth bounds, for a pipeline that leaves them to commands.
+- [CmdSetEvent](#cmdsetevent) - Recorded: the event set once the work before it is done.
 - [CmdSetLineWidth](#cmdsetlinewidth) - Recorded: the width of lines, for a pipeline that leaves it to commands.
 - [CmdSetScissor](#cmdsetscissor) - Recorded: the scissor, for a pipeline that leaves it to commands.
 - [CmdSetStencilCompareMask](#cmdsetstencilcomparemask) - Recorded: the stencil test's compare mask, for a pipeline that leaves it to commands.
@@ -60,6 +62,7 @@ Generated from the source by `./zig build autodoc`.
 - [CmdSetStencilWriteMask](#cmdsetstencilwritemask) - Recorded: the stencil test's write mask, for a pipeline that leaves it to commands.
 - [CmdSetViewport](#cmdsetviewport) - Recorded: the viewport, for a pipeline that leaves it to commands.
 - [CmdUpdateBuffer](#cmdupdatebuffer) - Recorded: bytes written into a buffer, kept with the command.
+- [CmdWaitEvents](#cmdwaitevents) - Recorded: the work after it waits until each of the events is set.
 - [CmdWriteTimestamp](#cmdwritetimestamp) - Recorded: the clock written into query `query` of `pool` when the command is played.
 - [CreateBuffer](#createbuffer) - A buffer of so many bytes, for what its usage says.
 - [CreateBufferView](#createbufferview) - A range of a buffer read as texels of a format, for a texel buffer descriptor.
@@ -68,6 +71,7 @@ Generated from the source by `./zig build autodoc`.
 - [CreateDescriptorPool](#createdescriptorpool) - A descriptor pool: the most sets it gives out at once.
 - [CreateDescriptorSetLayout](#createdescriptorsetlayout) - A descriptor set layout: a set's bindings, each of a kind, with its descriptors.
 - [CreateDevice](#createdevice) - A device of the program's own, with its queue.
+- [CreateEvent](#createevent) - An event, reset: set by the host or by a queue's work, and waited for by a queue's work.
 - [CreateFence](#createfence) - A fence: signalled by a queue when the submission it came with is done.
 - [CreateFramebuffer](#createframebuffer) - A framebuffer: an image view for each of a render pass's attachments.
 - [CreateGraphicsPipelines](#creategraphicspipelines) - `count` graphics pipelines, one for each of `infos`, into `pipelines`.
@@ -89,6 +93,7 @@ Generated from the source by `./zig build autodoc`.
 - [DestroyDescriptorPool](#destroydescriptorpool) - The descriptor pool given back, and every set allocated from it.
 - [DestroyDescriptorSetLayout](#destroydescriptorsetlayout) - The descriptor set layout given back; the sets allocated with it stay.
 - [DestroyDevice](#destroydevice) - The device given back, and its queue's task ended.
+- [DestroyEvent](#destroyevent) - The event given back.
 - [DestroyFence](#destroyfence) - The fence given back.
 - [DestroyFramebuffer](#destroyframebuffer) - The framebuffer given back.
 - [DestroyImage](#destroyimage) - The image given back.
@@ -113,6 +118,7 @@ Generated from the source by `./zig build autodoc`.
 - [GetBufferMemoryRequirements](#getbuffermemoryrequirements) - What the buffer needs of the memory it is bound into.
 - [GetDeviceMemoryCommitment](#getdevicememorycommitment) - How many bytes of a block the device has really put behind it.
 - [GetDeviceQueue](#getdevicequeue) - A queue the device was made with.
+- [GetEventStatus](#geteventstatus) - Whether an event is set, without waiting: `event_set` or `event_reset`.
 - [GetFenceStatus](#getfencestatus) - Whether a fence is signalled, without waiting.
 - [GetImageMemoryRequirements](#getimagememoryrequirements) - What the image needs of the memory it is bound into.
 - [GetImageSparseMemoryRequirements](#getimagesparsememoryrequirements) - What binding an image sparsely asks of memory: nothing, no image being sparse.
@@ -140,7 +146,9 @@ Generated from the source by `./zig build autodoc`.
 - [ResetCommandBuffer](#resetcommandbuffer) - The command buffer back to where it started.
 - [ResetCommandPool](#resetcommandpool) - Every command buffer of the pool back to where it started.
 - [ResetDescriptorPool](#resetdescriptorpool) - Every set allocated from the pool freed at once.
+- [ResetEvent](#resetevent) - The event reset by the host.
 - [ResetFences](#resetfences) - Fences back to unsignalled.
+- [SetEvent](#setevent) - The event set by the host.
 - [UnmapMemory](#unmapmemory) - The block's mapping ended.
 - [UpdateDescriptorSets](#updatedescriptorsets) - Descriptors written into sets, and copied from one set to another.
 - [WaitForFences](#waitforfences) - Wait until fences are signalled: all of them, or any.
@@ -2527,6 +2535,66 @@ None known.
 fb.CmdPushConstants(commands, layout.?, facet.SHADER_STAGE_VERTEX, 0, @sizeOf(Matrix), &transform);
 ```
 
+## CmdResetEvent
+
+Recorded: the event reset once the work before it is done.
+
+**SYNOPSIS**
+
+```zig
+fn CmdResetEvent(base: *FacetBase, buffer: *facet.CommandBuffer, event: *facet.Event, stage_mask: u32) void
+```
+
+**SINCE**
+
+1.129. LVO -572.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording, outside a render pass.
+- `event` - the event.
+- `stage_mask` - the stages whose work before it is done first
+  (PIPELINE_STAGE_*), PIPELINE_STAGE_HOST not among them.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+Played, it resets the event, as lavapipe's queue does
+(`handle_event_reset2`, lvp_execute.c:3414-3422), the queue having
+done every command before it.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The event is the caller's, and has to last until the work is done.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CmdSetEvent`, `ResetEvent`
+
+**EXAMPLES**
+
+```zig
+fb.CmdResetEvent(commands, uploaded.?, facet.PIPELINE_STAGE_TRANSFER);
+```
+
 ## CmdResetQueryPool
 
 Recorded: `count` queries from `first` set back to nothing counted and not available.
@@ -2928,6 +2996,69 @@ None known.
 // The nearer half of the depth alone: a light's volume, drawn only
 // where what is there is near enough to be lit.
 fb.CmdSetDepthBounds(commands, 0, 0.5);
+```
+
+## CmdSetEvent
+
+Recorded: the event set once the work before it is done.
+
+**SYNOPSIS**
+
+```zig
+fn CmdSetEvent(base: *FacetBase, buffer: *facet.CommandBuffer, event: *facet.Event, stage_mask: u32) void
+```
+
+**SINCE**
+
+1.129. LVO -568.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording, outside a render pass.
+- `event` - the event.
+- `stage_mask` - the stages whose work before it is done first
+  (PIPELINE_STAGE_*).
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+Played, it sets the event, as lavapipe's queue does
+(`handle_event_set2`, lvp_execute.c:3401-3412): the queue has done
+every command before it, in whatever stage, when it gets there. A
+CmdWaitEvents after it in the queue's order finds the event set, and
+GetEventStatus says so from then on.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The event is the caller's, and has to last until the work is done.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CmdResetEvent`, `CmdWaitEvents`, `GetEventStatus`
+
+**EXAMPLES**
+
+```zig
+fb.CmdCopyBuffer(commands, staging, vertices, 1, @ptrCast(&region));
+fb.CmdSetEvent(commands, uploaded.?, facet.PIPELINE_STAGE_TRANSFER);
 ```
 
 ## CmdSetLineWidth
@@ -3345,6 +3476,84 @@ None known.
 ```zig
 const matrix: [16]f32 = transform;
 fb.CmdUpdateBuffer(commands, uniforms.?, 0, @sizeOf(@TypeOf(matrix)), &matrix);
+```
+
+## CmdWaitEvents
+
+Recorded: the work after it waits until each of the events is set.
+
+**SYNOPSIS**
+
+```zig
+fn CmdWaitEvents(base: *FacetBase, buffer: *facet.CommandBuffer, event_count: u32, events: [*]const *facet.Event, src_stage_mask: u32, dst_stage_mask: u32, memory_barrier_count: u32, memory_barriers: ?[*]const facet.MemoryBarrier, buffer_barrier_count: u32, buffer_barriers: ?[*]const facet.BufferMemoryBarrier, image_barrier_count: u32, image_barriers: ?[*]const facet.ImageMemoryBarrier) void
+```
+
+**SINCE**
+
+1.129. LVO -576.
+
+**INPUTS**
+
+- `buffer` - a command buffer recording.
+- `event_count`, `events` - the events, one at least.
+- `src_stage_mask` - the stages of the CmdSetEvents that set them,
+  and PIPELINE_STAGE_HOST for those the host sets (PIPELINE_STAGE_*).
+- `dst_stage_mask` - the stages of the work after it that waits.
+- `memory_barrier_count`, `memory_barriers`,
+  `buffer_barrier_count`, `buffer_barriers`, `image_barrier_count`,
+  `image_barriers` - what memory is written before and read after, as
+  for CmdPipelineBarrier.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+Played, it has the queue's task wait until every one of the events is
+set, as lavapipe's queue does (`handle_wait_events2`,
+lvp_execute.c:3424-3433), leaving each set; then the commands after it
+go on. Where lavapipe spins, the task sleeps until a SetEvent wakes it.
+An event set by a CmdSetEvent earlier in the queue's order, or by the
+host before the work was submitted, as Vulkan has it, is set already:
+nothing is waited for. The barriers are what CmdPipelineBarrier's are
+and change nothing, the queue doing each command before the next, so
+the command is the wait alone; Mesa's runtime makes it the wait and
+that barrier (`vk_common_CmdWaitEvents`, vk_synchronization.c:307-370).
+No event at all records nothing, as there.
+
+**CONTEXT**
+
+- Waits: no; the queue's task waits when it is played.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The arrays are the caller's, read during the call. The events are the
+caller's, and have to last until the work is done.
+
+**NOTES**
+
+An event the host sets after the work is submitted still lets the
+queue go on when it is set: Vulkan 1.0 had a program wait so, and has
+it set first since (its queue forward progress section). Until it is
+set nothing after it on the queue is done, and an event nothing sets
+holds the queue for ever.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CmdSetEvent`, `SetEvent`, `CmdPipelineBarrier`
+
+**EXAMPLES**
+
+```zig
+fb.CmdWaitEvents(commands, 1, @ptrCast(&uploaded), facet.PIPELINE_STAGE_TRANSFER, facet.PIPELINE_STAGE_VERTEX_INPUT, 0, null, 0, null, 0, null);
 ```
 
 ## CmdWriteTimestamp
@@ -3978,6 +4187,67 @@ const queue_info = facet.DeviceQueueCreateInfo{ .queue_family_index = 0 };
 var device: ?*facet.Device = null;
 if (fb.CreateDevice(physical, &.{ .queue_create_info_count = 1, .queue_create_infos = @ptrCast(&queue_info) }, &device) != .success) return error.NoDevice;
 defer fb.DestroyDevice(device);
+```
+
+## CreateEvent
+
+An event, reset: set by the host or by a queue's work, and waited for by a queue's work.
+
+**SYNOPSIS**
+
+```zig
+fn CreateEvent(base: *FacetBase, device: *facet.Device, info: *const facet.EventCreateInfo, event: *?*facet.Event) facet.Result
+```
+
+**SINCE**
+
+1.129. LVO -548.
+
+**INPUTS**
+
+- `device` - the device.
+- `info` - 0 for its flags.
+- `event` - where the event is written; null when it fails.
+
+**RESULT**
+
+`success`; `error_out_of_host_memory`.
+
+**BEHAVIOR**
+
+An event is an exec waitable, unsignalled at first, as lavapipe's
+starts at 0 (`lvp_CreateEvent`, lvp_device.c:2708-2727). It stays set
+until it is reset: a wait does not take it, as one for a semaphore
+does.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The event is the caller's, until DestroyEvent.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`DestroyEvent`, `SetEvent`, `CmdSetEvent`, `CmdWaitEvents`
+
+**EXAMPLES**
+
+```zig
+var uploaded: ?*facet.Event = null;
+if (fb.CreateEvent(device, &.{}, &uploaded) != .success) return error.NoEvent;
 ```
 
 ## CreateFence
@@ -6141,6 +6411,62 @@ None known.
 fb.DestroyDevice(device);
 ```
 
+## DestroyEvent
+
+The event given back.
+
+**SYNOPSIS**
+
+```zig
+fn DestroyEvent(base: *FacetBase, device: *facet.Device, event: ?*facet.Event) void
+```
+
+**SINCE**
+
+1.129. LVO -552.
+
+**INPUTS**
+
+- `device` - the device it was made on.
+- `event` - the event, or null, which does nothing.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+No work still to be done may set it, reset it or wait for it.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The event is gone.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateEvent`
+
+**EXAMPLES**
+
+```zig
+fb.DestroyEvent(device, uploaded);
+```
+
 ## DestroyFence
 
 The fence given back.
@@ -7552,6 +7878,66 @@ None known.
 ```zig
 var queue: ?*facet.Queue = null;
 fb.GetDeviceQueue(device, 0, 0, &queue);
+```
+
+## GetEventStatus
+
+Whether an event is set, without waiting: `event_set` or `event_reset`.
+
+**SYNOPSIS**
+
+```zig
+fn GetEventStatus(base: *FacetBase, device: *facet.Device, event: *facet.Event) facet.Result
+```
+
+**SINCE**
+
+1.129. LVO -556.
+
+**INPUTS**
+
+- `device` - the device it was made on.
+- `event` - the event.
+
+**RESULT**
+
+`event_set` for a set event, `event_reset` for one that is not;
+`error_device_lost` once the device is lost, as v3dv answers
+(`v3dv_GetEventStatus`, v3dv_event.c:451-459).
+
+**BEHAVIOR**
+
+Nothing changes: the event stays as it is. What a command buffer still
+being played sets or resets may change it as soon as this returns.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: yes: it only reads.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+None.
+
+**NOTES**
+
+Vulkan has no call that waits on the host for an event: a program
+that has to asks this until it is set, or waits for a fence.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`SetEvent`, `ResetEvent`, `CmdSetEvent`
+
+**EXAMPLES**
+
+```zig
+const done = fb.GetEventStatus(device, uploaded.?) == .event_set;
 ```
 
 ## GetFenceStatus
@@ -9476,6 +9862,64 @@ None known.
 _ = fb.ResetDescriptorPool(device, pool.?, 0);
 ```
 
+## ResetEvent
+
+The event reset by the host.
+
+**SYNOPSIS**
+
+```zig
+fn ResetEvent(base: *FacetBase, device: *facet.Device, event: *facet.Event) facet.Result
+```
+
+**SINCE**
+
+1.129. LVO -564.
+
+**INPUTS**
+
+- `device` - the device it was made on.
+- `event` - the event.
+
+**RESULT**
+
+`success`.
+
+**BEHAVIOR**
+
+The event is reset at once, as lavapipe stores 0 (`lvp_ResetEvent`,
+lvp_device.c:2764-2772); one not set stays as it is.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+None.
+
+**NOTES**
+
+No CmdWaitEvents of the event may still be waiting: Vulkan has the
+program know that work is done first (VUID-vkResetEvent-event-03821).
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`SetEvent`, `GetEventStatus`, `CmdResetEvent`
+
+**EXAMPLES**
+
+```zig
+_ = fb.ResetEvent(device, uploaded.?);
+```
+
 ## ResetFences
 
 Fences back to unsignalled.
@@ -9531,6 +9975,67 @@ None known.
 ```zig
 _ = fb.WaitForFences(device, 1, @ptrCast(&frame_done), true, facet.WAIT_FOREVER_NS);
 _ = fb.ResetFences(device, 1, @ptrCast(&frame_done));
+```
+
+## SetEvent
+
+The event set by the host.
+
+**SYNOPSIS**
+
+```zig
+fn SetEvent(base: *FacetBase, device: *facet.Device, event: *facet.Event) facet.Result
+```
+
+**SINCE**
+
+1.129. LVO -560.
+
+**INPUTS**
+
+- `device` - the device it was made on.
+- `event` - the event.
+
+**RESULT**
+
+`success`.
+
+**BEHAVIOR**
+
+The event is set at once, as lavapipe stores 1 (`lvp_SetEvent`,
+lvp_device.c:2754-2762), and stays set until it is reset; one set
+already stays as it is. A queue's task waiting for it in a
+CmdWaitEvents is woken.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+None.
+
+**NOTES**
+
+Vulkan has an event the host sets be set before the work that waits for
+it is submitted (VUID-vkSetEvent-event-09543), and a CmdWaitEvents of
+such an event have PIPELINE_STAGE_HOST in its source stages.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ResetEvent`, `GetEventStatus`, `CmdWaitEvents`
+
+**EXAMPLES**
+
+```zig
+_ = fb.SetEvent(device, uploaded.?);
 ```
 
 ## UnmapMemory

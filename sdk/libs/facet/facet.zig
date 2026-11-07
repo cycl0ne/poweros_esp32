@@ -85,12 +85,12 @@ pub const Result = enum(i32) {
     not_ready = 1,
     /// A wait ran out of time first.
     timeout = 2,
-    /// An event is signalled. Vulkan's `VK_EVENT_SET`, and the name is
-    /// here for a program that was written against it: this library has
-    /// no events yet, so no call answers it. (Since 1.80.)
+    /// An event is signalled: what GetEventStatus answers for one that is
+    /// set. Vulkan's `VK_EVENT_SET`. (Since 1.80; answered since 1.129.)
     event_set = 3,
-    /// An event is not signalled. Vulkan's `VK_EVENT_RESET`, and as with
-    /// `event_set` no call of this library answers it yet. (Since 1.80.)
+    /// An event is not signalled: what GetEventStatus answers for one that
+    /// is reset. Vulkan's `VK_EVENT_RESET`. (Since 1.80; answered since
+    /// 1.129.)
     event_reset = 4,
     /// An array was too short for all there is: as much as fits is in it.
     incomplete = 5,
@@ -1942,6 +1942,9 @@ pub const BufferCopy = extern struct {
 pub const Fence = opaque {};
 /// What one submission signals and another waits for, on a queue.
 pub const Semaphore = opaque {};
+/// What the host or a queue's work sets, and a queue's work waits for: set
+/// until it is reset. (Since 1.129.)
+pub const Event = opaque {};
 
 /// FenceCreateInfo.flags: the fence starts signalled.
 pub const FENCE_CREATE_SIGNALED: u32 = 1 << 0;
@@ -1953,6 +1956,11 @@ pub const FenceCreateInfo = extern struct {
 
 /// What a semaphore is made with.
 pub const SemaphoreCreateInfo = extern struct {
+    flags: u32 = 0,
+};
+
+/// What an event is made with. (Since 1.129.)
+pub const EventCreateInfo = extern struct {
     flags: u32 = 0,
 };
 

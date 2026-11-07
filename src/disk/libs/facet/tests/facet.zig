@@ -1105,6 +1105,7 @@ test "an image of four samples a pixel is four planes of one sample's bytes, and
 
 const _stream = @import("../command/_stream.zig");
 const _command = @import("../command/_command.zig");
+const _sync = @import("../sync/_sync.zig");
 
 test "the three device queries: the largest image of a shape, the render area's granularity, and what a block has behind it" {
     var rig = try Rig.up();
@@ -1707,6 +1708,113 @@ test "semaphores order one submission after another; a fence alone follows all b
     try testing.expectEqual(@as(u64, 1), @import("../sync/_sync.zig").microseconds(1));
     try testing.expectEqual(@as(u64, 2), @import("../sync/_sync.zig").microseconds(1001));
     try testing.expectEqual(exec.WAIT_FOREVER, @import("../sync/_sync.zig").microseconds(facet.WAIT_FOREVER_NS));
+}
+
+test "events: set and reset by the host and by a queue's work, waited for in the queue's order, and lost with the device (since 1.129)" {
+    var rig = try Rig.up();
+    defer rig.down() catch |err| std.debug.panic("{}", .{err});
+    const instance, const physical = try rig.instance();
+    defer rig.fb.DestroyInstance(instance);
+    const device = try rig.device(physical);
+    defer rig.fb.DestroyDevice(device);
+    var queue: ?*facet.Queue = null;
+    rig.fb.GetDeviceQueue(device, 0, 0, &queue);
+
+    var events: [3]?*facet.Event = undefined;
+    for (&events) |*event| try testing.expectEqual(facet.Result.success, rig.fb.CreateEvent(device, &.{}, event));
+    defer for (events) |event| rig.fb.DestroyEvent(device, event);
+    rig.fb.DestroyEvent(device, null);
+    const by_queue, const reset_by_queue, const by_host = .{ events[0].?, events[1].?, events[2].? };
+
+    // Made reset; set and reset by the host at once, and again to no
+    // effect, the others left as they are.
+    for (events) |event| try testing.expectEqual(facet.Result.event_reset, rig.fb.GetEventStatus(device, event.?));
+    for (0..2) |_| {
+        try testing.expectEqual(facet.Result.success, rig.fb.SetEvent(device, by_host));
+        try testing.expectEqual(facet.Result.event_set, rig.fb.GetEventStatus(device, by_host));
+    }
+    try testing.expectEqual(facet.Result.event_reset, rig.fb.GetEventStatus(device, by_queue));
+    for (0..2) |_| {
+        try testing.expectEqual(facet.Result.success, rig.fb.ResetEvent(device, by_host));
+        try testing.expectEqual(facet.Result.event_reset, rig.fb.GetEventStatus(device, by_host));
+    }
+
+    const target, const target_memory, const written = try mappedBuffer(&rig, device, 16, facet.BUFFER_USAGE_TRANSFER_DST);
+    defer rig.fb.FreeMemory(device, target_memory);
+    defer rig.fb.DestroyBuffer(device, target);
+    @memset(written[0..16], 0);
+    var pool: ?*facet.CommandPool = null;
+    try testing.expectEqual(facet.Result.success, rig.fb.CreateCommandPool(device, &.{}, &pool));
+    defer rig.fb.DestroyCommandPool(device, pool);
+    var commands: [4]?*facet.CommandBuffer = undefined;
+    try testing.expectEqual(facet.Result.success, rig.fb.AllocateCommandBuffers(device, &.{ .command_pool = pool.?, .command_buffer_count = 3 }, commands[0..3]));
+    try testing.expectEqual(facet.Result.success, rig.fb.AllocateCommandBuffers(device, &.{ .command_pool = pool.?, .level = .secondary }, commands[3..4]));
+    const setting, const waiting, const empty, const secondary = .{ commands[0].?, commands[1].?, commands[2].?, commands[3].? };
+    var fence: ?*facet.Fence = null;
+    try testing.expectEqual(facet.Result.success, rig.fb.CreateFence(device, &.{}, &fence));
+    defer rig.fb.DestroyFence(device, fence);
+
+    // Set and reset by the queue, once the work before is done: what the
+    // host asks next says so.
+    try testing.expectEqual(facet.Result.success, rig.fb.BeginCommandBuffer(setting, &.{}));
+    rig.fb.CmdFillBuffer(setting, target, 0, 4, 0x1111_1111);
+    rig.fb.CmdSetEvent(setting, by_queue, facet.PIPELINE_STAGE_TRANSFER);
+    rig.fb.CmdResetEvent(setting, reset_by_queue, facet.PIPELINE_STAGE_TRANSFER);
+    try testing.expectEqual(facet.Result.success, rig.fb.EndCommandBuffer(setting));
+    try testing.expectEqual(facet.Result.success, rig.fb.SetEvent(device, reset_by_queue));
+    try testing.expectEqual(facet.Result.event_set, rig.fb.GetEventStatus(device, reset_by_queue));
+    const set_submit = facet.SubmitInfo{ .command_buffer_count = 1, .command_buffers = @ptrCast(&commands[0]) };
+    try testing.expectEqual(facet.Result.success, rig.fb.QueueSubmit(queue.?, 1, @ptrCast(&set_submit), fence));
+    try testing.expectEqual(facet.Result.success, rig.fb.WaitForFences(device, 1, @ptrCast(&fence), true, facet.WAIT_FOREVER_NS));
+    try testing.expectEqual(facet.Result.event_set, rig.fb.GetEventStatus(device, by_queue));
+    try testing.expectEqual(facet.Result.event_reset, rig.fb.GetEventStatus(device, reset_by_queue));
+    try testing.expectEqual(@as(u32, 0x1111_1111), std.mem.readInt(u32, written[0..4], .little));
+
+    // Waited for: one set by the queue before, one by the host before the
+    // submission, as Vulkan has it. Each is set already, so the work after
+    // goes on; the wait leaves them set, and a secondary's commands of
+    // events are played as a primary's.
+    try testing.expectEqual(facet.Result.success, rig.fb.BeginCommandBuffer(secondary, &.{}));
+    rig.fb.CmdResetEvent(secondary, by_host, facet.PIPELINE_STAGE_TRANSFER);
+    rig.fb.CmdFillBuffer(secondary, target, 8, 4, 0x3333_3333);
+    try testing.expectEqual(facet.Result.success, rig.fb.EndCommandBuffer(secondary));
+    try testing.expectEqual(facet.Result.success, rig.fb.BeginCommandBuffer(waiting, &.{}));
+    const awaited = [2]*facet.Event{ by_queue, by_host };
+    rig.fb.CmdWaitEvents(waiting, 2, &awaited, facet.PIPELINE_STAGE_TRANSFER | facet.PIPELINE_STAGE_HOST, facet.PIPELINE_STAGE_TRANSFER, 0, null, 0, null, 0, null);
+    rig.fb.CmdFillBuffer(waiting, target, 4, 4, 0x2222_2222);
+    rig.fb.CmdExecuteCommands(waiting, 1, @ptrCast(&commands[3]));
+    try testing.expectEqual(facet.Result.success, rig.fb.EndCommandBuffer(waiting));
+    const recorded = _objects.of(_command.CommandBuffer, waiting);
+    var reader = recorded.stream.commands();
+    const head = reader.next().?;
+    try testing.expectEqual(_stream.Op.wait_events, head.op);
+    const wait = _stream.as(_command.WaitEvents, head);
+    try testing.expectEqual(@as(u32, 2), wait.count);
+    try testing.expectEqual(@as(*const anyopaque, by_host), @as(*const anyopaque, _stream.items(_command.WaitEvents, *_sync.Event, wait, 2)[1]));
+    try testing.expectEqual(facet.Result.success, rig.fb.SetEvent(device, by_host));
+    try testing.expectEqual(facet.Result.event_set, rig.fb.GetEventStatus(device, by_host));
+    try testing.expectEqual(facet.Result.success, rig.fb.ResetFences(device, 1, @ptrCast(&fence)));
+    const wait_submit = facet.SubmitInfo{ .command_buffer_count = 1, .command_buffers = @ptrCast(&commands[1]) };
+    try testing.expectEqual(facet.Result.success, rig.fb.QueueSubmit(queue.?, 1, @ptrCast(&wait_submit), fence));
+    try testing.expectEqual(facet.Result.success, rig.fb.WaitForFences(device, 1, @ptrCast(&fence), true, facet.WAIT_FOREVER_NS));
+    try testing.expectEqual(@as(u32, 0x2222_2222), std.mem.readInt(u32, written[4..8], .little));
+    try testing.expectEqual(@as(u32, 0x3333_3333), std.mem.readInt(u32, written[8..12], .little));
+    try testing.expectEqual(facet.Result.event_set, rig.fb.GetEventStatus(device, by_queue));
+    try testing.expectEqual(facet.Result.event_reset, rig.fb.GetEventStatus(device, by_host));
+
+    // No event to wait for: nothing recorded, as Mesa's runtime has it.
+    try testing.expectEqual(facet.Result.success, rig.fb.BeginCommandBuffer(empty, &.{}));
+    rig.fb.CmdWaitEvents(empty, 0, &awaited, facet.PIPELINE_STAGE_TRANSFER, facet.PIPELINE_STAGE_TRANSFER, 0, null, 0, null, 0, null);
+    try testing.expectEqual(facet.Result.success, rig.fb.EndCommandBuffer(empty));
+    var none = _objects.of(_command.CommandBuffer, empty).stream.commands();
+    try testing.expect(none.next() == null);
+
+    // Lost with the device; the host still sets it.
+    _objects.of(@import("../device/_device.zig").Device, device).lose();
+    try testing.expectEqual(facet.Result.error_device_lost, rig.fb.GetEventStatus(device, by_host));
+    try testing.expectEqual(facet.Result.success, rig.fb.SetEvent(device, by_host));
+    try testing.expectEqual(@as(u32, 1), _objects.of(_sync.Event, by_host).waitable.signalled);
+    rig.fb.FreeCommandBuffers(device, pool.?, 4, &commands);
 }
 
 /// A vertex, a fragment and a compute function, each as plain as the

@@ -60,6 +60,9 @@ pub const Op = enum(u16) {
     set_depth_bounds,
     set_blend_constants_at,
     resolve_image,
+    set_event,
+    reset_event,
+    wait_events,
     _,
 };
 

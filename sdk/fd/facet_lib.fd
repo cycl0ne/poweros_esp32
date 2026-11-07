@@ -299,4 +299,21 @@ void GetImageSparseMemoryRequirements(*facet.Device device, *facet.Image image, 
 /// Memory bound to sparse buffers and images, in batches, by the queue:
 /// refused, no queue family binding sparse memory.
 facet.Result QueueBindSparse(*facet.Queue queue, u32 count, ?[*]const facet.BindSparseInfo binds, ?*facet.Fence fence)
+/// An event, reset: set by the host or by a queue's work, and waited for by
+/// a queue's work.
+facet.Result CreateEvent(*facet.Device device, *const facet.EventCreateInfo info, *?*facet.Event event)
+/// The event given back.
+void DestroyEvent(*facet.Device device, ?*facet.Event event)
+/// Whether an event is set, without waiting: `event_set` or `event_reset`.
+facet.Result GetEventStatus(*facet.Device device, *facet.Event event)
+/// The event set by the host.
+facet.Result SetEvent(*facet.Device device, *facet.Event event)
+/// The event reset by the host.
+facet.Result ResetEvent(*facet.Device device, *facet.Event event)
+/// Recorded: the event set once the work before it is done.
+void CmdSetEvent(*facet.CommandBuffer buffer, *facet.Event event, u32 stage_mask)
+/// Recorded: the event reset once the work before it is done.
+void CmdResetEvent(*facet.CommandBuffer buffer, *facet.Event event, u32 stage_mask)
+/// Recorded: the work after it waits until each of the events is set.
+void CmdWaitEvents(*facet.CommandBuffer buffer, u32 event_count, [*]const *facet.Event events, u32 src_stage_mask, u32 dst_stage_mask, u32 memory_barrier_count, ?[*]const facet.MemoryBarrier memory_barriers, u32 buffer_barrier_count, ?[*]const facet.BufferMemoryBarrier buffer_barriers, u32 image_barrier_count, ?[*]const facet.ImageMemoryBarrier image_barriers)
 ##end

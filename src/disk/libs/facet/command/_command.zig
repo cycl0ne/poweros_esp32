@@ -21,6 +21,7 @@ const _render = @import("../render/_render.zig");
 const _pipeline = @import("../pipeline/_pipeline.zig");
 const DescriptorSet = @import("../descriptor/_descriptor.zig").Set;
 const QueryPool = @import("../query/_query.zig").Pool;
+const Event = @import("../sync/_sync.zig").Event;
 
 pub const CommandPool = struct {
     device: *Device,
@@ -81,6 +82,36 @@ pub const Barrier = extern struct {
     head: Head = .{ .op = op },
     src_stage_mask: u32,
     dst_stage_mask: u32,
+};
+
+/// CmdSetEvent: the event set, the work before it being done
+/// (_sync.zig).
+pub const SetEvent = extern struct {
+    pub const op: _stream.Op = .set_event;
+    head: Head = .{ .op = op },
+    stage_mask: u32,
+    pad: u32 = 0,
+    event: *Event,
+};
+
+/// CmdResetEvent: the event reset, the work before it being done.
+pub const ResetEvent = extern struct {
+    pub const op: _stream.Op = .reset_event;
+    head: Head = .{ .op = op },
+    stage_mask: u32,
+    pad: u32 = 0,
+    event: *Event,
+};
+
+/// CmdWaitEvents, followed by its `count` events: the work after it
+/// waits until each is set.
+pub const WaitEvents = extern struct {
+    pub const op: _stream.Op = .wait_events;
+    head: Head = .{ .op = op },
+    count: u32,
+    src_stage_mask: u32,
+    dst_stage_mask: u32,
+    pad: u32 = 0,
 };
 
 /// CmdCopyBufferToImage, followed by its regions.

@@ -6228,6 +6228,54 @@ fn layerChecks(probe: *Probe) void {
     probe.checkEqual(blue, layerPixel(back_bytes, 2, 48, 40), "a layer past the framebuffer's left alone");
 }
 
+/// 1.129: events, set and reset by the queue's work, then waited for. The
+/// wait is for one the host sets only once the work is submitted, which
+/// Vulkan 1.0 had a program do: the queue's task holds the work after it
+/// until then, which the host tests cannot show, the work being played
+/// there by the task that submits it.
+fn eventChecks(probe: *Probe) void {
+    const fb = probe.fb;
+    const device = probe.device.?;
+    var events: [2]?*facet.Event = @splat(null);
+    // Given back once the queue is idle, which `give` waits for.
+    defer for (events) |event| fb.DestroyEvent(device, event);
+    defer probe.give();
+    for (&events) |*event| {
+        if (fb.CreateEvent(device, &.{}, event) != .success) return probe.check(false, "two events");
+    }
+    const by_queue, const by_host = .{ events[0].?, events[1].? };
+    probe.check(fb.GetEventStatus(device, by_queue) == .event_reset, "an event is made reset");
+    const target, const bytes = probe.buffer(16, facet.BUFFER_USAGE_TRANSFER_DST) orelse return probe.check(false, "a buffer to fill");
+    @memset(bytes[0..16], 0);
+
+    _ = fb.SetEvent(device, by_host);
+    var commands = probe.record() orelse return probe.check(false, "the events set and reset");
+    fb.CmdFillBuffer(commands, target, 0, 4, 0x1111_1111);
+    fb.CmdSetEvent(commands, by_queue, facet.PIPELINE_STAGE_TRANSFER);
+    fb.CmdResetEvent(commands, by_host, facet.PIPELINE_STAGE_TRANSFER);
+    if (!probe.submit()) return probe.check(false, "the events set and reset");
+    probe.check(fb.GetEventStatus(device, by_queue) == .event_set, "CmdSetEvent sets an event, the work before it done");
+    probe.checkEqual(0x1111_1111, std.mem.readInt(u32, bytes[0..4], .little), "that work done");
+    probe.check(fb.GetEventStatus(device, by_host) == .event_reset, "CmdResetEvent resets one");
+
+    commands = probe.record() orelse return probe.check(false, "a wait for events");
+    const awaited = [2]*facet.Event{ by_queue, by_host };
+    fb.CmdWaitEvents(commands, 2, &awaited, facet.PIPELINE_STAGE_TRANSFER | facet.PIPELINE_STAGE_HOST, facet.PIPELINE_STAGE_TRANSFER, 0, null, 0, null, 0, null);
+    fb.CmdFillBuffer(commands, target, 4, 4, 0x2222_2222);
+    if (fb.EndCommandBuffer(commands) != .success) return probe.check(false, "a wait for events");
+    if (fb.ResetFences(device, 1, @ptrCast(&probe.fence)) != .success) return probe.check(false, "a wait for events");
+    const info = facet.SubmitInfo{ .command_buffer_count = 1, .command_buffers = @ptrCast(&probe.commands) };
+    if (fb.QueueSubmit(probe.queue, 1, @ptrCast(&info), probe.fence) != .success) return probe.check(false, "a wait for events");
+    // From here the host sets the event whatever is found, or the queue
+    // would wait for ever.
+    probe.check(fb.WaitForFences(device, 1, @ptrCast(&probe.fence), true, 50_000_000) == .timeout, "CmdWaitEvents holds the work after it while an event is reset");
+    probe.checkEqual(0, std.mem.readInt(u32, bytes[4..8], .little), "none of that work done");
+    _ = fb.SetEvent(device, by_host);
+    probe.check(fb.WaitForFences(device, 1, @ptrCast(&probe.fence), true, 1_000_000_000) == .success, "SetEvent lets it go on");
+    probe.checkEqual(0x2222_2222, std.mem.readInt(u32, bytes[4..8], .little), "and the work after it is done");
+    probe.check(fb.GetEventStatus(device, by_host) == .event_set and fb.GetEventStatus(device, by_queue) == .event_set, "the events stay set");
+}
+
 fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical: *facet.PhysicalDevice, quiet: bool) struct { u32, u32 } {
     var properties: facet.PhysicalDeviceProperties = undefined;
     fb.GetPhysicalDeviceProperties(physical, &properties);
@@ -6265,6 +6313,7 @@ fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical
     togetherChecks(&probe);
     sharedDepthChecks(&probe);
     layerChecks(&probe);
+    eventChecks(&probe);
     return .{ probe.passed, probe.failed };
 }
 

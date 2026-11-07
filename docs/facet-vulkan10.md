@@ -127,7 +127,7 @@ cores, in 1.114, item 85's half of two, the cores', in 1.115, item 87
 in 1.116, item 88 in 1.117, item 86 in 1.118, item 48's half of two,
 the cores', in 1.119, item 41 in 1.120, item 89 in 1.121, item 15 in
 1.122, item 11 in 1.123, item 12 in 1.124, item 79 in 1.125, item 32 in
-1.126, item 31 in 1.127, and item 29 in 1.128.**
+1.126, item 31 in 1.127, item 29 in 1.128, and item 9 in 1.129.**
 Each
 carries a *Done* note below saying what was actually built and where the
 item's own description turned out to be wrong - and several did. Things
@@ -359,7 +359,7 @@ Found independently by: doc-staleness, semantics.
 
 ### 9. Add VkEvent and its eight commands
 
-*entry points / synchronisation* &mdash; conformance-blocking, medium, also serves the shim
+*entry points / synchronisation* &mdash; conformance-blocking, medium, also serves the shim &mdash; **done in 1.129**
 
 After: facet.Result gaining event_set = 3 and event_reset = 4
 
@@ -368,6 +368,36 @@ Eight entry points and eight LVO slots, none of which exists: CreateEvent, Destr
 > Verified: `grep -icE 'event' sdk/fd/facet_lib.fd` -> 0; src/disk/libs/facet/sync/ holds only fence and semaphore files; facet.Result has no 3 or 4; src/disk/libs/facet/command/_stream.zig:23-62 has no event op; driver/cpu/_play.zig:176 and driver/v3d/_play.zig:225 are both `.barrier => {}`; driver/_driver.zig:147 sums every _stream.Op field into the module stamp. docs/facet-gaps.md:457-465, docs/facet-todo.md:73.
 
 Found independently by: entry-points, objects-commands, conformance-path (3 strands).
+
+**Done in 1.129**, in 202 lines of code, the generated interface aside,
+and 128 of tests, as lavapipe has them: its queue plays a command buffer
+one command after the other, as this one does. An event is an exec
+waitable, as a fence and a semaphore are - one field, not the two counted
+above - made reset (`lvp_CreateEvent`, lvp_device.c:2708-2727), set and
+reset by the host at once (:2754-2772), and read by GetEventStatus, which
+answers `event_set` or `event_reset` and, as v3dv's does,
+`error_device_lost` once the device is lost (`v3dv_GetEventStatus`,
+v3dv_event.c:451-459). The three commands are three `_stream.Op` values,
+played by one function of sync/_sync.zig that both players call beside
+`.barrier => {}`: the set and the reset as lavapipe's `handle_event_set2`
+and `handle_event_reset2`, the wait as `handle_wait_events2`
+(lvp_execute.c:3401-3433), which holds the queue until each event is set
+and leaves it set. Where lavapipe spins, the queue's task sleeps in
+WaitForAny, which a SetEvent wakes. CmdWaitEvents records the wait alone:
+the CmdPipelineBarrier Mesa's runtime records after it
+(`vk_common_CmdWaitEvents`, vk_synchronization.c:307-370) changes nothing
+here, and no event at all records nothing, as there. Two things above were
+not so. The stamp moves with every revision, `LIBRARY_REVISION` being in
+it, so the V3D's module was always built and shipped with the library; the
+new ops are nothing more. And a host SetEvent releasing a pending
+CmdWaitEvents was Vulkan 1.0's case, not today's spec's, which has the host
+set the event before the work that waits for it is submitted (its section
+6.6, VUID-vkSetEvent-event-09543), so that a wait has nothing to wait for.
+It still works: C:test/FacetProbe has a queue's task wait while the program
+sets the event, which the host tests cannot, the task that submits there
+playing the work itself. The gap documents' reason - one in-order queue
+gives a wait nothing to wait for - is so, and is why events cost nothing
+here: lavapipe's queue is the same.
 
 ### 10. Add the pipeline cache's four commands, and make the cache real
 

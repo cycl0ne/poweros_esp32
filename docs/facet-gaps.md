@@ -514,16 +514,6 @@ instead of a set for each. Every device has them
 
 ## Object kinds that do not exist
 
-### Events
-
-No `CreateEvent`, `DestroyEvent`, `GetEventStatus`, `SetEvent`,
-`ResetEvent`, `CmdSetEvent`, `CmdResetEvent` or `CmdWaitEvents`. Fences and
-semaphores are the whole of synchronisation: with one queue family of one
-queue, played in order by one task, a `CmdWaitEvents` is either already
-satisfied or a deadlock, and the host pair would say no more than a fence
-says. A device with more than one queue is what gives them something to
-do.
-
 ### Pipeline cache
 
 `PipelineCache` is declared, and `CreateGraphicsPipelines` and
@@ -917,21 +907,27 @@ sharing an edge cut it the same way from either side.
 ## Left out for this hardware
 
 Logic operations, dual-source blending, geometry shaders, several
-viewports, sparse memory, events and a pipeline cache are not missing by
+viewports, sparse memory and a pipeline cache are not missing by
 accident. They cost more than they would give on *this* hardware, and
 both the tiled rasterizer on the cores and the V3D's fixed fragment forms
 are built the way they are because of it: a logic operation cannot use
 the blend fast path and would have to live in a fragment program the QPUs
 cannot run, a geometry stage wants an allocation between the vertex work
-and the binning, a wait on an event has nothing to wait for behind one
-in-order queue, and a pipeline cache has nothing to cache where nothing is
-compiled.
+and the binning, and a pipeline cache has nothing to cache where nothing
+is compiled.
 
 Multisampling, which Vulkan 1.0 gives no way to refuse, was on that list
 until 1.112. The cores draw four samples a pixel since then, the three
 planes past a pixel's first kept in each part's own block rather than in
 the tile, so that a frame of one sample is drawn as it was
 (docs/facet-vulkan10.md item 61).
+
+Events were on it until 1.129, for the reason that a wait on one has
+nothing to wait for behind one in-order queue. That is so, and is why
+they cost nothing: lavapipe's queue plays its work in order too, and has
+them. An event is an exec waitable, as a fence is, and a `CmdWaitEvents`
+finds it set by the work before it or by the host, which Vulkan has set
+it before the work is submitted (docs/facet-vulkan10.md item 9).
 
 None of that is a judgement on the features, and none of it is for ever.
 Every one of them is answered by the **device**: a driver for a chip that

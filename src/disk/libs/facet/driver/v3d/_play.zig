@@ -45,6 +45,7 @@ const driver = @import("driver.zig");
 const _queries = @import("../_queries.zig");
 const _query = @import("../../query/_query.zig");
 const _render = @import("../../render/_render.zig");
+const _sync = @import("../../sync/_sync.zig");
 const Hardware = driver.Hardware;
 const regs = v3d.regs;
 const cl = v3d.cl;
@@ -234,6 +235,7 @@ fn playStream(queue: *Queue, stream: *const _stream.Stream) void {
     var repeat: ?_vertices.Repeat = null;
     while (commands.next()) |head| switch (head.op) {
         .barrier => {},
+        .set_event, .reset_event, .wait_events => _sync.play(queue.device.sys, head),
         .copy_buffer_to_image => copyBufferToImage(queue, _stream.as(_command.CopyBufferToImage, head)),
         .copy_buffer => _vertices.copyBuffer(_stream.as(_command.CopyBuffer, head)),
         .fill_buffer => if (!_vertices.fillBuffer(_stream.as(_command.FillBuffer, head))) noRoom(queue, "a fill of bytes that are not the buffer's"),

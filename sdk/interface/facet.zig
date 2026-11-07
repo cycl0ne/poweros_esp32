@@ -150,6 +150,14 @@ pub const LVO = struct {
     pub const GetPhysicalDeviceSparseImageFormatProperties = libraries.lvo(133);
     pub const GetImageSparseMemoryRequirements = libraries.lvo(134);
     pub const QueueBindSparse = libraries.lvo(135);
+    pub const CreateEvent = libraries.lvo(136);
+    pub const DestroyEvent = libraries.lvo(137);
+    pub const GetEventStatus = libraries.lvo(138);
+    pub const SetEvent = libraries.lvo(139);
+    pub const ResetEvent = libraries.lvo(140);
+    pub const CmdSetEvent = libraries.lvo(141);
+    pub const CmdResetEvent = libraries.lvo(142);
+    pub const CmdWaitEvents = libraries.lvo(143);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -287,6 +295,14 @@ pub const Fn = struct {
     pub const GetPhysicalDeviceSparseImageFormatProperties = *const fn (*FacetBase, *facet.PhysicalDevice, facet.Format, facet.ImageType, u32, u32, facet.ImageTiling, *u32, ?[*]facet.SparseImageFormatProperties) callconv(.c) void;
     pub const GetImageSparseMemoryRequirements = *const fn (*FacetBase, *facet.Device, *facet.Image, *u32, ?[*]facet.SparseImageMemoryRequirements) callconv(.c) void;
     pub const QueueBindSparse = *const fn (*FacetBase, *facet.Queue, u32, ?[*]const facet.BindSparseInfo, ?*facet.Fence) callconv(.c) facet.Result;
+    pub const CreateEvent = *const fn (*FacetBase, *facet.Device, *const facet.EventCreateInfo, *?*facet.Event) callconv(.c) facet.Result;
+    pub const DestroyEvent = *const fn (*FacetBase, *facet.Device, ?*facet.Event) callconv(.c) void;
+    pub const GetEventStatus = *const fn (*FacetBase, *facet.Device, *facet.Event) callconv(.c) facet.Result;
+    pub const SetEvent = *const fn (*FacetBase, *facet.Device, *facet.Event) callconv(.c) facet.Result;
+    pub const ResetEvent = *const fn (*FacetBase, *facet.Device, *facet.Event) callconv(.c) facet.Result;
+    pub const CmdSetEvent = *const fn (*FacetBase, *facet.CommandBuffer, *facet.Event, u32) callconv(.c) void;
+    pub const CmdResetEvent = *const fn (*FacetBase, *facet.CommandBuffer, *facet.Event, u32) callconv(.c) void;
+    pub const CmdWaitEvents = *const fn (*FacetBase, *facet.CommandBuffer, u32, [*]const *facet.Event, u32, u32, u32, ?[*]const facet.MemoryBarrier, u32, ?[*]const facet.BufferMemoryBarrier, u32, ?[*]const facet.ImageMemoryBarrier) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -980,5 +996,46 @@ pub const FacetBase = opaque {
     /// refused, no queue family binding sparse memory.
     pub fn QueueBindSparse(self: *FacetBase, queue: *facet.Queue, count: u32, binds: ?[*]const facet.BindSparseInfo, fence: ?*facet.Fence) facet.Result {
         return libraries.call(self, LVO.QueueBindSparse, Fn.QueueBindSparse, .{ queue, count, binds, fence });
+    }
+
+    /// An event, reset: set by the host or by a queue's work, and waited for by
+    /// a queue's work.
+    pub fn CreateEvent(self: *FacetBase, device: *facet.Device, info: *const facet.EventCreateInfo, event: *?*facet.Event) facet.Result {
+        return libraries.call(self, LVO.CreateEvent, Fn.CreateEvent, .{ device, info, event });
+    }
+
+    /// The event given back.
+    pub fn DestroyEvent(self: *FacetBase, device: *facet.Device, event: ?*facet.Event) void {
+        return libraries.call(self, LVO.DestroyEvent, Fn.DestroyEvent, .{ device, event });
+    }
+
+    /// Whether an event is set, without waiting: `event_set` or `event_reset`.
+    pub fn GetEventStatus(self: *FacetBase, device: *facet.Device, event: *facet.Event) facet.Result {
+        return libraries.call(self, LVO.GetEventStatus, Fn.GetEventStatus, .{ device, event });
+    }
+
+    /// The event set by the host.
+    pub fn SetEvent(self: *FacetBase, device: *facet.Device, event: *facet.Event) facet.Result {
+        return libraries.call(self, LVO.SetEvent, Fn.SetEvent, .{ device, event });
+    }
+
+    /// The event reset by the host.
+    pub fn ResetEvent(self: *FacetBase, device: *facet.Device, event: *facet.Event) facet.Result {
+        return libraries.call(self, LVO.ResetEvent, Fn.ResetEvent, .{ device, event });
+    }
+
+    /// Recorded: the event set once the work before it is done.
+    pub fn CmdSetEvent(self: *FacetBase, buffer: *facet.CommandBuffer, event: *facet.Event, stage_mask: u32) void {
+        return libraries.call(self, LVO.CmdSetEvent, Fn.CmdSetEvent, .{ buffer, event, stage_mask });
+    }
+
+    /// Recorded: the event reset once the work before it is done.
+    pub fn CmdResetEvent(self: *FacetBase, buffer: *facet.CommandBuffer, event: *facet.Event, stage_mask: u32) void {
+        return libraries.call(self, LVO.CmdResetEvent, Fn.CmdResetEvent, .{ buffer, event, stage_mask });
+    }
+
+    /// Recorded: the work after it waits until each of the events is set.
+    pub fn CmdWaitEvents(self: *FacetBase, buffer: *facet.CommandBuffer, event_count: u32, events: [*]const *facet.Event, src_stage_mask: u32, dst_stage_mask: u32, memory_barrier_count: u32, memory_barriers: ?[*]const facet.MemoryBarrier, buffer_barrier_count: u32, buffer_barriers: ?[*]const facet.BufferMemoryBarrier, image_barrier_count: u32, image_barriers: ?[*]const facet.ImageMemoryBarrier) void {
+        return libraries.call(self, LVO.CmdWaitEvents, Fn.CmdWaitEvents, .{ buffer, event_count, events, src_stage_mask, dst_stage_mask, memory_barrier_count, memory_barriers, buffer_barrier_count, buffer_barriers, image_barrier_count, image_barriers });
     }
 };

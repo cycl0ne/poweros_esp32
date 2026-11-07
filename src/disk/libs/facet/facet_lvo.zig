@@ -31,6 +31,14 @@ const InvalidateMappedMemoryRanges = @import("memory/invalidatemappedmemoryrange
 const GetPhysicalDeviceSparseImageFormatProperties = @import("instance/getphysicaldevicesparseimageformatproperties.zig").GetPhysicalDeviceSparseImageFormatProperties;
 const GetImageSparseMemoryRequirements = @import("image/getimagesparsememoryrequirements.zig").GetImageSparseMemoryRequirements;
 const QueueBindSparse = @import("queue/queuebindsparse.zig").QueueBindSparse;
+const CreateEvent = @import("sync/createevent.zig").CreateEvent;
+const DestroyEvent = @import("sync/destroyevent.zig").DestroyEvent;
+const GetEventStatus = @import("sync/geteventstatus.zig").GetEventStatus;
+const SetEvent = @import("sync/setevent.zig").SetEvent;
+const ResetEvent = @import("sync/resetevent.zig").ResetEvent;
+const CmdSetEvent = @import("command/cmdsetevent.zig").CmdSetEvent;
+const CmdResetEvent = @import("command/cmdresetevent.zig").CmdResetEvent;
+const CmdWaitEvents = @import("command/cmdwaitevents.zig").CmdWaitEvents;
 const GetPhysicalDeviceFormatProperties = @import("instance/getphysicaldeviceformatproperties.zig").GetPhysicalDeviceFormatProperties;
 const CreateBuffer = @import("buffer/createbuffer.zig").CreateBuffer;
 const DestroyBuffer = @import("buffer/destroybuffer.zig").DestroyBuffer;
@@ -354,6 +362,30 @@ fn lvoGetImageSparseMemoryRequirements(base: *FacetBase, device: *facet.Device, 
 }
 fn lvoQueueBindSparse(base: *FacetBase, queue: *facet.Queue, count: u32, binds: ?[*]const facet.BindSparseInfo, fence: ?*facet.Fence) callconv(.c) facet.Result {
     return QueueBindSparse(base, queue, count, binds, fence);
+}
+fn lvoCreateEvent(base: *FacetBase, device: *facet.Device, info: *const facet.EventCreateInfo, event: *?*facet.Event) callconv(.c) facet.Result {
+    return CreateEvent(base, device, info, event);
+}
+fn lvoDestroyEvent(base: *FacetBase, device: *facet.Device, event: ?*facet.Event) callconv(.c) void {
+    return DestroyEvent(base, device, event);
+}
+fn lvoGetEventStatus(base: *FacetBase, device: *facet.Device, event: *facet.Event) callconv(.c) facet.Result {
+    return GetEventStatus(base, device, event);
+}
+fn lvoSetEvent(base: *FacetBase, device: *facet.Device, event: *facet.Event) callconv(.c) facet.Result {
+    return SetEvent(base, device, event);
+}
+fn lvoResetEvent(base: *FacetBase, device: *facet.Device, event: *facet.Event) callconv(.c) facet.Result {
+    return ResetEvent(base, device, event);
+}
+fn lvoCmdSetEvent(base: *FacetBase, buffer: *facet.CommandBuffer, event: *facet.Event, stage_mask: u32) callconv(.c) void {
+    return CmdSetEvent(base, buffer, event, stage_mask);
+}
+fn lvoCmdResetEvent(base: *FacetBase, buffer: *facet.CommandBuffer, event: *facet.Event, stage_mask: u32) callconv(.c) void {
+    return CmdResetEvent(base, buffer, event, stage_mask);
+}
+fn lvoCmdWaitEvents(base: *FacetBase, buffer: *facet.CommandBuffer, event_count: u32, events: [*]const *facet.Event, src_stage_mask: u32, dst_stage_mask: u32, memory_barrier_count: u32, memory_barriers: ?[*]const facet.MemoryBarrier, buffer_barrier_count: u32, buffer_barriers: ?[*]const facet.BufferMemoryBarrier, image_barrier_count: u32, image_barriers: ?[*]const facet.ImageMemoryBarrier) callconv(.c) void {
+    return CmdWaitEvents(base, buffer, event_count, events, src_stage_mask, dst_stage_mask, memory_barrier_count, memory_barriers, buffer_barrier_count, buffer_barriers, image_barrier_count, image_barriers);
 }
 fn lvoGetPhysicalDeviceFormatProperties(base: *FacetBase, physical: *facet.PhysicalDevice, format: facet.Format, properties: *facet.FormatProperties) callconv(.c) void {
     return GetPhysicalDeviceFormatProperties(base, physical, format, properties);
@@ -856,6 +888,14 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoGetPhysicalDeviceSparseImageFormatProperties),
     vec(lvoGetImageSparseMemoryRequirements),
     vec(lvoQueueBindSparse),
+    vec(lvoCreateEvent),
+    vec(lvoDestroyEvent),
+    vec(lvoGetEventStatus),
+    vec(lvoSetEvent),
+    vec(lvoResetEvent),
+    vec(lvoCmdSetEvent),
+    vec(lvoCmdResetEvent),
+    vec(lvoCmdWaitEvents),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

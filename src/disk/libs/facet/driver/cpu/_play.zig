@@ -43,6 +43,7 @@ const _transfer = @import("../_transfer.zig");
 const _draw = @import("_draw.zig");
 const _queries = @import("../_queries.zig");
 const _query = @import("../../query/_query.zig");
+const _sync = @import("../../sync/_sync.zig");
 
 pub const VertexBuffer = _vertices.VertexBuffer;
 
@@ -183,6 +184,7 @@ fn playStream(queue: *Queue, stream: *const _stream.Stream) void {
     var repeat: ?_vertices.Repeat = null;
     while (commands.next()) |head| switch (head.op) {
         .barrier => {},
+        .set_event, .reset_event, .wait_events => _sync.play(queue.device.sys, head),
         .copy_buffer_to_image => copyBufferToImage(_stream.as(_command.CopyBufferToImage, head)),
         .copy_buffer => _vertices.copyBuffer(_stream.as(_command.CopyBuffer, head)),
         .fill_buffer => if (!_vertices.fillBuffer(_stream.as(_command.FillBuffer, head))) noRoom(queue, "a fill of bytes that are not the buffer's"),

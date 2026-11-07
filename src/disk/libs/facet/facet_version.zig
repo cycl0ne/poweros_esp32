@@ -3253,4 +3253,40 @@ pub const LIBRARY_VERSION = 1;
 /// Tests: the largest dispatch the limits admit, times the parts a
 /// dispatch is cut into, fits in 64 bits, beside Vulkan's floor of 65535,
 /// which was held already. Putting the old number back fails it.
-pub const LIBRARY_REVISION = 128;
+///
+/// 129: **Events.** Item 9 of docs/facet-vulkan10.md. Vulkan 1.0 has every
+/// implementation carry CreateEvent, DestroyEvent, GetEventStatus,
+/// SetEvent, ResetEvent, CmdSetEvent, CmdResetEvent and CmdWaitEvents, and
+/// no feature to say a device has none; the library had none of them. They
+/// are LVO -548 to -576, ported from lavapipe, whose queue plays a command
+/// buffer as this one does, one command after the other. An event is an
+/// exec waitable, as a fence and a semaphore are (sync/_sync.zig), made
+/// reset as lavapipe's is (`lvp_CreateEvent`, src/gallium/frontends/
+/// lavapipe/lvp_device.c:2708-2727), set by SetEvent and reset by
+/// ResetEvent at once (:2754-2772), and read by GetEventStatus, which
+/// answers `event_set` or `event_reset` - the codes 1.80 added for it - and
+/// `error_device_lost` once the device is lost, as v3dv's does
+/// (`v3dv_GetEventStatus`, src/broadcom/vulkan/v3dv_event.c:451-459).
+/// CmdSetEvent, CmdResetEvent and CmdWaitEvents are three commands of the
+/// stream, which both drivers play through one function, beside the
+/// barrier: the set and the reset as lavapipe's `handle_event_set2` and
+/// `handle_event_reset2` (lvp_execute.c:3401-3422), and the wait as
+/// `handle_wait_events2` (:3424-3433), which holds the queue until each
+/// event is set and leaves it set - sleeping in WaitForAny where lavapipe
+/// spins, so that a SetEvent wakes it. The work before a set is done when
+/// it is played, on either device, and so is all the work before a wait.
+/// CmdWaitEvents records the wait alone: the barrier Mesa's runtime
+/// records after it (`vk_common_CmdWaitEvents`,
+/// src/vulkan/runtime/vk_synchronization.c:307-370) is CmdPipelineBarrier's,
+/// which changes nothing here, and no event at all records nothing, as
+/// there.
+///
+/// Tests: events are made reset, and set and reset by the host and by a
+/// queue's work, a secondary command buffer's too; a wait for one the
+/// queue set before and one the host set before the submission lets the
+/// work after it go on and leaves both set; a wait for no event records
+/// nothing; and a lost device answers `error_device_lost`. Each of 15
+/// changes put back fails them. C:test/FacetProbe has a queue's task wait
+/// for an event the host sets only once the work is submitted, which the
+/// host tests cannot: there the task that submits plays the work.
+pub const LIBRARY_REVISION = 129;
