@@ -123,12 +123,14 @@ item 22's half of two in 1.91, item 83's open question, answered from
 Mesa, in 1.92, item 45 in 1.93, item 44 in 1.94, item 84 in 1.95,
 item 61's next six rows of eight, on the cores, in 1.112, item 43's
 half of two, the cores', in 1.113, item 61's last row of eight, on the
-cores, in 1.114, and item 85's half of two, the cores', in 1.115.**
+cores, in 1.114, item 85's half of two, the cores', in 1.115, and
+item 87 in 1.116.**
 Each
 carries a *Done* note below saying what was actually built and where the
 item's own description turned out to be wrong - and several did. Things
 found while doing them became the items at the end of the list: 77 and 78
-from 1.80 and 1.81, 79, 80 and 81 from 1.82, and 85 and 86 from 1.113.
+from 1.80 and 1.81, 79, 80 and 81 from 1.82, 85 and 86 from 1.113, and
+87 and 88 from scoping item 86.
 
 Items 52, 28, 17, 22, 61, 43 and 85 are the ones split between devices:
 the cores draw every sampler as of 1.83, sample at a constant texel offset
@@ -2236,6 +2238,76 @@ surface, kept so that the locations after it stay where they are, whose
 plane is neither loaded nor stored. A resolve reference of
 `ATTACHMENT_UNUSED` is already taken as none. About 30 lines and two
 tests.
+
+### 87. A subpass drawn a part for each colour attachment was not played the same way in each part
+
+*render passes / queries* &mdash; conformance-blocking, small, found by a
+test while scoping item 86 &mdash; **done in 1.116**
+
+A subpass of several colour attachments without facet's own
+`SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER` is a part for each (item 80), and
+the player plays its commands again from its begin for each part
+(`playStream`'s `repeat`, on both devices). That is the subpass only if
+each part does what the subpass does once, and two things did not:
+
+- **Every part wrote back a depth or a stencil the subpass loads and
+  stores.** Each separate part is the subpass's `whole` copied
+  (render/createrenderpass.zig), with the attachment's `stores_depth` and
+  `stores_stencil`, so the first wrote what it left into the image's rows
+  and the second read that in and tested against it. A quad drawn under
+  a LESS test over a depth cleared to the furthest left the second colour
+  attachment as it was cleared everywhere, and a stencil test of EQUAL 0
+  with INCREMENT_AND_CLAMP did the same. A G-buffer pass over a depth
+  pre-pass's depth does this. The plan is both devices', so the V3D's
+  parts did it too.
+- **A query counted each draw once for each part.** A query's counters
+  are addresses in its pool (`_query.Counters`) that every draw played
+  adds to, so an occlusion query read twice the samples that passed and a
+  statistics query twice the vertices. On the V3D each part's frame
+  pointed the hardware's counter at the query's word.
+
+Mesa has no replay to port: llvmpipe maps a tile of every colour buffer
+as the tile begins (`lp_rast_tile_begin`, lp_rast.c:107-137) and shades
+it once for all of them, so a draw is tested once and counted once
+(`vis_counter`, lp_rast.c:123 and 635-675). The replay is facet's own
+until item 80 has every subpass on the cores draw its colours together,
+and until item 55 gives the V3D a fragment program of several outputs.
+Until then it has to be faithful.
+
+**Done in 1.116**, in 6 lines of code and 146 of tests:
+
+- **Only the last part writes the depth and the stencil back**
+  (render/createrenderpass.zig), so each part reads in what the subpass
+  began with, and they all leave the same. The plan already assumed that
+  where a later subpass reads the depth from this one's last part (1.52).
+- **A draw counts into a query in the first part alone**
+  (driver/cpu/_draw.zig). On the V3D the frames of the parts after it
+  leave the counter stopped, as a frame with no query does (`tallyFor`,
+  driver/v3d/_play.zig). That is the path every such frame already takes
+  on the board, but this use of it is unchecked there.
+- Neither device writes from a fragment function: `fragment_stores_and_atomics`
+  is false on both. If that changes, a replayed part must not repeat a
+  function's stores either.
+- Found alongside, and item 88: only one query counts at a time on the
+  cores.
+
+### 88. Only one query counts at a time on the cores
+
+*queries* &mdash; conformance-blocking, small, found with item 87
+
+Vulkan lets one query of each type be active at once
+(VUID-vkCmdBeginQuery-queryPool-01922 forbids two of the same type), so
+an occlusion query and a pipeline-statistics query may be begun
+together. The cores' player keeps one `Counting` (`query`,
+driver/cpu/_play.zig), and CmdBeginQuery replaces it: an occlusion query
+begun before a statistics query counts nothing after that, and read 0
+where 4096 samples passed. llvmpipe keeps every query begun in a list
+(`active_queries`, lp_setup.c:1475-1483, taken out at 1564-1577) and
+bins each into every tile. The port is a slot for each type that counts,
+occlusion and statistics, with a draw adding to the counters of both.
+The V3D has occlusion alone (its statistics pools are refused, and a
+timestamp is never begun), so one is all it can have. About 30 lines and
+a test.
 
 ## Deferred by the decision, not out of reach
 

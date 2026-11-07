@@ -11407,6 +11407,180 @@ test "an occlusion query counts the samples that passed, and a statistics query 
     try testing.expect(values[5] >= 2 * drawn);
 }
 
+test "a subpass of two colour attachments apart over a depth or a stencil it loads and stores: each part tests what the subpass began with, and the last keeps what they leave" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const _image = @import("../image/_image.zig");
+    const shaders = try module(&bench, &SubpassScene.code);
+    defer fb.DestroyShaderModule(device, shaders);
+    const layout = try pipelineLayout(&bench, &.{}, 0);
+    defer fb.DestroyPipelineLayout(device, layout);
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(SubpassScene.quad)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(SubpassScene.quad))], std.mem.asBytes(&SubpassScene.quad));
+    const offset: u64 = 0;
+    const colors = [2]facet.AttachmentReference{ .{ .attachment = 0, .layout = .general }, .{ .attachment = 1, .layout = .general } };
+    const tested = facet.AttachmentReference{ .attachment = 2, .layout = .depth_stencil_attachment_optimal };
+    const subpass = facet.SubpassDescription{ .color_attachment_count = 2, .color_attachments = &colors, .depth_stencil_attachment = &tested };
+    const black = clears(0xFF00_0000)[0];
+    const clear_values = [3]facet.ClearValue{ black, black, .{ .depth_stencil = .{ .depth = 1, .stencil = 0 } } };
+    // The quad is at a depth of 0, nearer than the furthest the depth
+    // begins at, and drawn where it is nearer; the stencil begins at 0,
+    // and the quad is drawn where it is 0 and counts it up by one.
+    const counts_up = facet.StencilOpState{ .pass_op = .increment_and_clamp, .compare_op = .equal, .compare_mask = 0xFF, .write_mask = 0xFF, .reference = 0 };
+    const Case = struct { format: facet.Format, aspect: u32, tests: facet.PipelineDepthStencilStateCreateInfo, bytes: usize, left: u16 };
+    const cases = [2]Case{
+        .{ .format = .d16_unorm, .aspect = facet.IMAGE_ASPECT_DEPTH, .tests = .{ .depth_test_enable = true, .depth_write_enable = true, .depth_compare_op = .less }, .bytes = 2, .left = 0 },
+        .{ .format = .s8_uint, .aspect = facet.IMAGE_ASPECT_STENCIL, .tests = .{ .stencil_test_enable = true, .front = counts_up, .back = counts_up }, .bytes = 1, .left = 1 },
+    };
+    for (cases) |case| {
+        const first = try Picture.of(&bench, 64, 64);
+        const second = try Picture.of(&bench, 64, 64);
+        const depth_made, const depth_view = try bench.image(.{ .format = case.format, .extent = .{ .width = 64, .height = 64, .depth = 1 }, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_DST }, false);
+        const attachments = [3]facet.AttachmentDescription{
+            .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general },
+            .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general },
+            .{ .format = case.format, .load_op = .load, .store_op = .store, .stencil_load_op = .load, .stencil_store_op = .store, .initial_layout = .depth_stencil_attachment_optimal, .final_layout = .depth_stencil_attachment_optimal },
+        };
+        var pass_made: ?*facet.RenderPass = null;
+        try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 3, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &pass_made));
+        defer fb.DestroyRenderPass(device, pass_made);
+        const pass = pass_made.?;
+        // A part for each colour attachment, both reading the plane in
+        // and the last alone writing it back.
+        const plan = _objects.of(_render.RenderPass, pass);
+        try testing.expectEqual(@as(u32, 2), plan.part_count);
+        for (plan.parts[0..2], 0..) |part, k| {
+            try testing.expect(part.loads_depth or part.loads_stencil);
+            try testing.expectEqual(k == 1, part.stores_depth or part.stores_stencil);
+        }
+        const frame = try framebuffer(&bench, pass, &.{ first.view, second.view, depth_view }, 64, 64);
+        defer fb.DestroyFramebuffer(device, frame);
+        const result, const pipeline = makePipeline(&bench, .{ .module = shaders, .name = "outputs", .layout = layout, .pass = pass, .blend_count = 2, .depth = case.tests });
+        try testing.expectEqual(facet.Result.success, result);
+        defer fb.DestroyPipeline(device, pipeline);
+
+        const begun_with = facet.ClearDepthStencilValue{ .depth = 1, .stencil = 0 };
+        const range = facet.ImageSubresourceRange{ .aspect_mask = case.aspect };
+        const commands = try bench.record();
+        fb.CmdClearDepthStencilImage(commands, depth_made, .transfer_dst_optimal, &begun_with, 1, @ptrCast(&range));
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 3, .clear_values = &clear_values }, .@"inline");
+        fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+        fb.CmdBindPipeline(commands, .graphics, pipeline.?);
+        fb.CmdDraw(commands, 6, 1, 0, 0);
+        fb.CmdEndRenderPass(commands);
+        try bench.submit();
+
+        // Both colours over the whole picture: the second part tested
+        // what the subpass began with, not what the first left, which
+        // would have failed the test everywhere the quad is.
+        try testing.expectEqual(@as(u32, 64 * 64), pixelsOf(&first, SubpassScene.blue));
+        try testing.expectEqual(@as(u32, 64 * 64), pixelsOf(&second, SubpassScene.yellow));
+        // And what the subpass leaves is kept: the quad's depth, or the
+        // stencil counted up once from where it began.
+        const image = _objects.of(_image.Image, depth_made);
+        const rows = _image.rowsAt(image, 0, 0);
+        for ([_][2]usize{ .{ 0, 0 }, .{ 32, 32 }, .{ 63, 63 } }) |at| {
+            const byte = rows.at + at[1] * rows.pitch + at[0] * case.bytes;
+            const kept: u16 = if (case.bytes == 2) std.mem.readInt(u16, image.data.?[byte..][0..2], .little) else image.data.?[byte];
+            try testing.expectEqual(case.left, kept);
+        }
+    }
+}
+
+test "a query counts a subpass of two colour attachments apart once: each sample that passed, and each vertex, though the subpass is played for each attachment" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const first = try Picture.of(&bench, 64, 64);
+    const second = try Picture.of(&bench, 64, 64);
+    const attachments = [2]facet.AttachmentDescription{
+        .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general },
+        .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general },
+    };
+    const colors = [2]facet.AttachmentReference{ .{ .attachment = 0, .layout = .general }, .{ .attachment = 1, .layout = .general } };
+    const subpass = facet.SubpassDescription{ .color_attachment_count = 2, .color_attachments = &colors };
+    var pass_made: ?*facet.RenderPass = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &pass_made));
+    defer fb.DestroyRenderPass(device, pass_made);
+    const pass = pass_made.?;
+    try testing.expectEqual(@as(u32, 2), _objects.of(_render.RenderPass, pass).part_count);
+    const frame = try framebuffer(&bench, pass, &.{ first.view, second.view }, 64, 64);
+    defer fb.DestroyFramebuffer(device, frame);
+    const shaders = try module(&bench, &SubpassScene.code);
+    defer fb.DestroyShaderModule(device, shaders);
+    const layout = try pipelineLayout(&bench, &.{}, 0);
+    defer fb.DestroyPipelineLayout(device, layout);
+    const result, const pipeline = makePipeline(&bench, .{ .module = shaders, .name = "outputs", .layout = layout, .pass = pass, .blend_count = 2 });
+    try testing.expectEqual(facet.Result.success, result);
+    defer fb.DestroyPipeline(device, pipeline);
+
+    const occlusion = try queryPool(&bench, .occlusion, 2, 0);
+    defer fb.DestroyQueryPool(device, occlusion);
+    const wanted = facet.QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_VERTICES |
+        facet.QUERY_PIPELINE_STATISTIC_VERTEX_SHADER_INVOCATIONS |
+        facet.QUERY_PIPELINE_STATISTIC_CLIPPING_INVOCATIONS;
+    const statistics = try queryPool(&bench, .pipeline_statistics, 1, wanted);
+    defer fb.DestroyQueryPool(device, statistics);
+
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(SubpassScene.quad)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(SubpassScene.quad))], std.mem.asBytes(&SubpassScene.quad));
+    const black = clears(0xFF00_0000)[0];
+    const clear_values = [2]facet.ClearValue{ black, black };
+    const offset: u64 = 0;
+    const begin = facet.RenderPassBeginInfo{ .render_pass = pass, .framebuffer = frame, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 2, .clear_values = &clear_values };
+
+    // An occlusion query over the whole pass, and then one begun and
+    // ended inside its subpass, which the parts after the first begin
+    // again. (Not both at once: two queries of a kind are never active
+    // together, VUID-vkCmdBeginQuery-queryPool-01922.)
+    var commands = try bench.record();
+    fb.CmdResetQueryPool(commands, occlusion, 0, 2);
+    fb.CmdBeginQuery(commands, occlusion, 0, facet.QUERY_CONTROL_PRECISE);
+    fb.CmdBeginRenderPass(commands, &begin, .@"inline");
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdBindPipeline(commands, .graphics, pipeline.?);
+    fb.CmdDraw(commands, 6, 1, 0, 0);
+    fb.CmdEndRenderPass(commands);
+    fb.CmdEndQuery(commands, occlusion, 0);
+    try bench.submit();
+    // Both attachments were drawn, each with its own colour, and each
+    // sample of the quad was counted once: not once more for the second
+    // attachment.
+    try testing.expectEqual(@as(u32, 64 * 64), pixelsOf(&first, SubpassScene.blue));
+    try testing.expectEqual(@as(u32, 64 * 64), pixelsOf(&second, SubpassScene.yellow));
+    try testing.expectEqual(@as(u64, 64 * 64), try queryValue(&bench, occlusion, 0));
+
+    commands = try bench.record();
+    fb.CmdBeginRenderPass(commands, &begin, .@"inline");
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdBindPipeline(commands, .graphics, pipeline.?);
+    fb.CmdBeginQuery(commands, occlusion, 1, facet.QUERY_CONTROL_PRECISE);
+    fb.CmdDraw(commands, 6, 1, 0, 0);
+    fb.CmdEndQuery(commands, occlusion, 1);
+    fb.CmdEndRenderPass(commands);
+    try bench.submit();
+    try testing.expectEqual(@as(u64, 64 * 64), try queryValue(&bench, occlusion, 1));
+
+    // The statistics of the same: six vertices given and six shaded, two
+    // triangles clipped, for the one draw.
+    commands = try bench.record();
+    fb.CmdResetQueryPool(commands, statistics, 0, 1);
+    fb.CmdBeginQuery(commands, statistics, 0, 0);
+    fb.CmdBeginRenderPass(commands, &begin, .@"inline");
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdBindPipeline(commands, .graphics, pipeline.?);
+    fb.CmdDraw(commands, 6, 1, 0, 0);
+    fb.CmdEndRenderPass(commands);
+    fb.CmdEndQuery(commands, statistics, 0);
+    try bench.submit();
+    var values: [3]u64 = @splat(0);
+    try testing.expectEqual(facet.Result.success, fb.GetQueryPoolResults(device, statistics, 0, 1, @sizeOf(@TypeOf(values)), &values, @sizeOf(@TypeOf(values)), facet.QUERY_RESULT_64 | facet.QUERY_RESULT_WAIT));
+    try testing.expectEqual([3]u64{ 6, 6, 2 }, values);
+}
+
 test "sixty-four varyings, which is both ends of Vulkan's pair: drawn whole, drawn clipped, and drawn as lines" {
     var bench = try Bench.up();
     defer bench.down();

@@ -2819,4 +2819,41 @@ pub const LIBRARY_VERSION = 1;
 /// pixel drawn. With alpha to coverage at four samples, a function's alpha
 /// of 0 covers no sample and no function leaves every sample the triangle
 /// covers. Each of 5 changes put back fails at least one of them.
-pub const LIBRARY_REVISION = 115;
+///
+/// 116: **A subpass drawn a part for each colour attachment, played the
+/// same way in each.** Item 87 of docs/facet-vulkan10.md, found by a
+/// test while scoping item 86. Without `SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER`
+/// a subpass of several colour attachments is a part for each, its
+/// commands played again from its begin for each part (item 80), and two
+/// things the replay did were not what the subpass does once. Every part
+/// wrote back a depth or a stencil the subpass loads and stores, so the
+/// parts after the first read in what the first had left and tested
+/// against that: a quad under a LESS test over a depth cleared to the
+/// furthest left every colour attachment past the first as it was
+/// cleared, and a stencil test of what the subpass began with did the
+/// same. Only the last part writes them back now, so each reads in what
+/// the subpass began with and they all leave the same, which a later
+/// subpass reading the depth from the last part (1.52) already assumed.
+/// The plan is both devices', so the V3D's parts follow it. And a query
+/// counted each draw once for each part: an occlusion query read twice
+/// the samples that passed, a statistics query twice the vertices. A
+/// draw counts in the first part alone now, and on the V3D the frames of
+/// the parts after it leave the hardware's counter stopped, as a frame
+/// with no query does (`tallyFor`; unchecked on the board). Mesa has no
+/// such replay to port: llvmpipe maps a tile of every colour buffer as
+/// the tile begins and shades it once for all of them
+/// (`lp_rast_tile_begin`, lp_rast.c:107-137), so a draw is tested and
+/// counted once (`vis_counter`, lp_rast.c:123 and 635-675). The replay is
+/// facet's until item 80 on the cores and item 55 on the V3D.
+///
+/// Tests: over a depth of `d16_unorm` and a stencil of `s8_uint`, each
+/// loaded and stored, a subpass of two colour attachments apart is two
+/// parts that both read the plane in and of which the last alone writes
+/// it back; a quad drawn nearer than the depth, or where the stencil is
+/// 0 and counting it up, colours both attachments everywhere, and leaves
+/// its depth, or the stencil counted up once. Over the same two
+/// attachments, an occlusion query over the pass and one inside its
+/// subpass each count every pixel once, and a statistics query six
+/// vertices given, six shaded and two triangles clipped. Each of 5
+/// changes put back fails at least one of them.
+pub const LIBRARY_REVISION = 116;

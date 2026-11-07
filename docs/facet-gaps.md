@@ -155,6 +155,9 @@ reaches the log alone. What is left out:
   tests run that way.
 - `QUERY_CONTROL_PRECISE` changes nothing: an occlusion query counts the
   samples either way, there being no cheaper answer to give.
+- A subpass of several colour attachments drawn a part for each is
+  counted once, in its first part, on both devices since 1.116. Until
+  then each draw was counted once for each colour attachment.
 - A query's samples are counted as the tiles are drawn, which is where the
   render pass ends - after the command that ended the query, though before
   the submission is done. A program reads the values once its fence is
@@ -218,6 +221,12 @@ pass's depth. What is left out:
   to name it reads it in, whatever the attachment's own ops say. So that
   wants `stored_depth` (and `stored_stencil`, `stored_both`) and an image
   with memory behind it: a transient one is still refused the framebuffer.
+- A subpass of several colour attachments drawn a part for each reads
+  in, in each part, the depth and the stencil it began with, and the last
+  part alone writes them back (since 1.116). Until then every part wrote
+  back what it left, and the parts after the first tested against that:
+  under a LESS test every colour attachment past the first kept its
+  clear.
 - **A subpass may have no colour attachment** since 1.113, on the cores:
   the depth alone - a shadow map's pass, or a depth pre-pass that a
   subpass of colour then tests against, sharing the depth as above - or

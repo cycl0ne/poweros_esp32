@@ -1073,9 +1073,13 @@ fn countSamples(queue: *Queue) void {
 
 /// The word this frame counts the query being counted into with: the one
 /// it already has, or a new one zeroed; 0 where nothing is counted or
-/// there is no room for another.
+/// there is no room for another. A subpass played once for each of its
+/// colour attachments is counted in the first of them alone, as on the
+/// cores (since 1.116): the frames of the others leave the counter
+/// stopped, as a frame with no query does.
 fn tallyFor(queue: *Queue) u32 {
     const player = playerOf(queue);
+    if (player.resources.output != 0) return 0;
     const counting = player.counting orelse return 0;
     const samples = counting.counters.samples orelse return 0;
     for (player.tallies[0..player.tally_count]) |tally| {

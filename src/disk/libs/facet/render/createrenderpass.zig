@@ -468,6 +468,17 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                 part.resolves[0] = resolve;
                 part.color_count = 1;
                 part.reads_target = reads_own[color_index];
+                // Each part is the subpass played again from its begin,
+                // so each tests against the depth and the stencil the
+                // subpass began with. A part before the last that wrote
+                // what it left into the image's rows would have the next
+                // one read that in instead, and fail a LESS test wherever
+                // it had drawn: only the last keeps them, and they all
+                // leave the same (since 1.116).
+                if (k + 1 < colors.len) {
+                    part.stores_depth = false;
+                    part.stores_stencil = false;
+                }
                 plan.parts[plan.part_count] = part;
                 plan.part_count += 1;
             }
