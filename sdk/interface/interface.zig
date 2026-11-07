@@ -49,6 +49,7 @@ pub const power = @import("power.zig");
 pub const amdgpu = @import("amdgpu.zig");
 pub const audiocodec = @import("audiocodec.zig");
 pub const media = @import("media.zig");
+pub const videoparse = @import("videoparse.zig");
 pub const videocodec = @import("videocodec.zig");
 pub const vcodec = @import("vcodec.zig");
 pub const acodec = @import("acodec.zig");

@@ -363,7 +363,7 @@ pub fn Decode(comptime T: type) type {
                     while (v < cmax and e.bypass() == 1) v += 1;
                     a.* = @intCast(v);
                 }
-                const scale: u4 = if (c == 0) st.pps.log2_sao_offset_scale_luma else st.pps.log2_sao_offset_scale_chroma;
+                const scale: u4 = @intCast(if (c == 0) st.pps.log2_sao_offset_scale_luma else st.pps.log2_sao_offset_scale_chroma);
                 if (p.kind[c] == 1) {
                     for (&abs) |*a| {
                         if (a.* != 0 and e.bypass() == 1) a.* = -a.*;
@@ -669,8 +669,8 @@ pub fn Decode(comptime T: type) type {
                 const hh = if (c == 0) n else n >> sps.shiftH();
                 const x = if (c == 0) cu.x else cu.x >> sps.shiftW();
                 const y = if (c == 0) cu.y else cu.y >> sps.shiftH();
-                const pd: u5 = if (c == 0) sps.pcm_depth_luma else sps.pcm_depth_chroma;
-                const depth: u5 = if (c == 0) sps.bit_depth_luma else sps.bit_depth_chroma;
+                const pd: u5 = @intCast(if (c == 0) sps.pcm_depth_luma else sps.pcm_depth_chroma);
+                const depth: u5 = @intCast(if (c == 0) sps.bit_depth_luma else sps.bit_depth_chroma);
                 const stride = st.store.stride[c];
                 const dst = plane(st, c) + y * stride + x;
                 for (0..hh) |j| {
@@ -689,7 +689,7 @@ pub fn Decode(comptime T: type) type {
                 .info = st.info,
                 .lists = st.lists,
                 .poc = st.store.poc,
-                .par_mrg = st.pps.log2_parallel_merge_level,
+                .par_mrg = @intCast(st.pps.log2_parallel_merge_level),
                 .max_merge = h.max_num_merge_cand,
                 .b_slice = h.slice_type == .b,
                 .tmvp = h.temporal_mvp,
@@ -860,7 +860,7 @@ pub fn Decode(comptime T: type) type {
                 const by = y >> sh;
                 const bw = w >> sw;
                 const bh = hh >> sh;
-                const depth: u5 = if (c == 0) sps.bit_depth_luma else sps.bit_depth_chroma;
+                const depth: u5 = @intCast(if (c == 0) sps.bit_depth_luma else sps.bit_depth_chroma);
                 const stride = st.store.stride[c];
                 const dst = plane(st, c) + by * stride + bx;
                 const both = refs[0] != null and refs[1] != null;
@@ -916,7 +916,7 @@ pub fn Decode(comptime T: type) type {
                         ov[l] = @as(i32, wt.chroma_offset[l][r][c - 1]) << ws;
                     }
                 }
-                const log2wd: u5 = (if (c == 0) wt.luma_log2_denom else wt.chroma_log2_denom) + shift1;
+                const log2wd: u5 = @as(u5, @intCast(if (c == 0) wt.luma_log2_denom else wt.chroma_log2_denom)) + shift1;
                 if (both) {
                     inter.putWeightedBi(T, &st.pred[0], &st.pred[1], 64, bw, bh, depth, wv[0], wv[1], ov[0], ov[1], log2wd, dst, stride);
                 } else inter.putWeighted(T, &st.pred[one], 64, bw, bh, depth, wv[one], ov[one], log2wd, dst, stride);
@@ -932,8 +932,8 @@ pub fn Decode(comptime T: type) type {
                 if (!f.uses(l)) continue;
                 const r: usize = @intCast(f.ref_idx[l]);
                 if (c == 0) {
-                    if (wt.luma_weight[l][r] != @as(i16, 1) << wt.luma_log2_denom or wt.luma_offset[l][r] != 0) return false;
-                } else if (wt.chroma_weight[l][r][c - 1] != @as(i16, 1) << wt.chroma_log2_denom or wt.chroma_offset[l][r][c - 1] != 0) return false;
+                    if (wt.luma_weight[l][r] != @as(i16, 1) << @intCast(wt.luma_log2_denom) or wt.luma_offset[l][r] != 0) return false;
+                } else if (wt.chroma_weight[l][r][c - 1] != @as(i16, 1) << @intCast(wt.chroma_log2_denom) or wt.chroma_offset[l][r][c - 1] != 0) return false;
             }
             return true;
         }
@@ -1105,7 +1105,7 @@ pub fn Decode(comptime T: type) type {
             const sh: u5 = if (c == 0) 0 else sps.shiftH();
             const n: u32 = @as(u32, 1) << log2;
             const n2 = 2 * n;
-            const depth: u5 = if (c == 0) sps.bit_depth_luma else sps.bit_depth_chroma;
+            const depth: u5 = @intCast(if (c == 0) sps.bit_depth_luma else sps.bit_depth_chroma);
             const stride = st.store.stride[c];
             const p = plane(st, c);
             const xl = xt << sw;
@@ -1174,14 +1174,14 @@ pub fn Decode(comptime T: type) type {
             const sps = st.sps;
             const n: usize = @as(usize, 1) << log2;
             const nn = n * n;
-            const depth: u5 = if (c == 0) sps.bit_depth_luma else sps.bit_depth_chroma;
+            const depth: u5 = @intCast(if (c == 0) sps.bit_depth_luma else sps.bit_depth_chroma);
             if (coded) {
                 const r = try parseResidual(st, cu, log2, c, mode);
                 reconstruct(st, cu, &r, log2, c, mode, depth);
             } else @memset(st.res[0..nn], 0);
             if (keep) @memcpy(st.res_y[0..nn], st.res[0..nn]);
             if (scale != 0) {
-                const dy = sps.bit_depth_luma;
+                const dy: u6 = @intCast(sps.bit_depth_luma);
                 // rY << BitDepthC takes more than 32 bits at 16.
                 for (st.res[0..nn], st.res_y[0..nn]) |*v, y| v.* += @intCast((scale * ((@as(i64, y) << depth) >> dy)) >> 3);
             }
@@ -1257,7 +1257,7 @@ pub fn Decode(comptime T: type) type {
             const hide_off = cu.bypass or (cu.intra and sps.implicit_rdpcm and r.ts and (mode == 10 or mode == 26)) or r.rdpcm;
             const persistent = sps.persistent_rice;
             const sb_type: usize = 2 * @as(usize, @intFromBool(luma)) + @intFromBool(r.ts or cu.bypass);
-            const depth: u5 = if (luma) sps.bit_depth_luma else sps.bit_depth_chroma;
+            const depth: u5 = @intCast(if (luma) sps.bit_depth_luma else sps.bit_depth_chroma);
             const range: u5 = if (sps.extended_precision) @max(15, depth + 6) else 15;
             const coeff_max: i32 = (@as(i32, 1) << range) - 1;
             var csbf: u64 = 0;

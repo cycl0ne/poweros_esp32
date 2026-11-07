@@ -382,9 +382,9 @@ pub fn Recon(comptime P: type) type {
             if (e.has_corner) e.corner = at(base, pl, -1, -1);
             const dst = ptr(base, pl, 0, 0);
             if (mbh == 8) {
-                intra.predictBlock(P, 8, 8, dst, pl.row, mode, &e, true, d.sps.chroma_format_idc, rc.depth_c);
+                intra.predictBlock(P, 8, 8, dst, pl.row, mode, &e, true, @intCast(d.sps.chroma_format_idc), rc.depth_c);
             } else {
-                intra.predictBlock(P, 8, 16, dst, pl.row, mode, &e, true, d.sps.chroma_format_idc, rc.depth_c);
+                intra.predictBlock(P, 8, 16, dst, pl.row, mode, &e, true, @intCast(d.sps.chroma_format_idc), rc.depth_c);
             }
         }
 

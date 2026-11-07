@@ -55,6 +55,7 @@ const container_modules = @import("../../media/tests/modules.zig");
 const chip_init = @import("../../codecs/chip/chip_init.zig");
 const mjpeg_init = @import("../../codecs/mjpeg/mjpeg_init.zig");
 const h264_init = @import("../../codecs/h264/h264_init.zig");
+const videoparse_init = @import("../../videoparse/videoparse_init.zig");
 const av1_init = @import("../../codecs/av1/av1_init.zig");
 const hevc_init = @import("../../codecs/hevc/hevc_init.zig");
 const module = @import("../../codecs/module.zig");
@@ -133,6 +134,8 @@ const Rig = struct {
     chip_library: *exec.Library = undefined,
     mjpeg_library: *exec.Library = undefined,
     h264_library: *exec.Library = undefined,
+    /// videoparse.library, which h264.vcodec reads its streams through.
+    parse_library: *exec.Library = undefined,
     av1_library: *exec.Library = undefined,
     hevc_library: *exec.Library = undefined,
     vcb: *VideoCodecBase = undefined,
@@ -163,6 +166,7 @@ const Rig = struct {
         rig.chip_library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &chip_init.chip_vcodec_tag.resident, null) orelse return error.NoLibrary));
         rig.mjpeg_library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &mjpeg_init.mjpeg_vcodec_tag.resident, null) orelse return error.NoLibrary));
         rig.h264_library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &h264_init.h264_vcodec_tag.resident, null) orelse return error.NoLibrary));
+        rig.parse_library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &videoparse_init.videoparse_library_tag, null) orelse return error.NoLibrary));
         rig.av1_library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &av1_init.av1_vcodec_tag.resident, null) orelse return error.NoLibrary));
         rig.hevc_library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &hevc_init.hevc_vcodec_tag.resident, null) orelse return error.NoLibrary));
         _codec.test_modules = &modules;
@@ -195,6 +199,8 @@ const Rig = struct {
         try testing.expect(kexec.FindName(kexec.SysBase, &kexec.SysBase.lib_list, mjpeg_init.LIBRARY_NAME) == null);
         _ = rig.sysLib().RemLibrary(rig.h264_library);
         try testing.expect(kexec.FindName(kexec.SysBase, &kexec.SysBase.lib_list, h264_init.LIBRARY_NAME) == null);
+        _ = rig.sysLib().RemLibrary(rig.parse_library);
+        try testing.expect(kexec.FindName(kexec.SysBase, &kexec.SysBase.lib_list, sdk.videoparse.VIDEOPARSENAME) == null);
         _ = rig.sysLib().RemLibrary(rig.av1_library);
         try testing.expect(kexec.FindName(kexec.SysBase, &kexec.SysBase.lib_list, av1_init.LIBRARY_NAME) == null);
         _ = rig.sysLib().RemLibrary(rig.hevc_library);

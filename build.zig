@@ -1590,6 +1590,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = jpegdecode_mod })).step);
     // The H.264 decoder, h264.vcodec's, likewise.
     const h264core_mod = b.createModule(.{ .root_source_file = disk_dep.path("libs/codecs/h264/core.zig"), .target = b.graph.host });
+    h264core_mod.addImport("sdk", sdk);
     disk_test_mod.addImport("h264core", h264core_mod);
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = h264core_mod })).step);
     // The VP8 decoder, vp8.vcodec's, likewise.
@@ -1604,6 +1605,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = av1core_mod })).step);
     // The H.265 decoder, hevc.vcodec's, likewise.
     const hevccore_mod = b.createModule(.{ .root_source_file = disk_dep.path("libs/codecs/hevc/core.zig"), .target = b.graph.host });
+    hevccore_mod.addImport("sdk", sdk);
     disk_test_mod.addImport("hevccore", hevccore_mod);
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = hevccore_mod })).step);
     // The SMB client - the protocol and the share files - which the

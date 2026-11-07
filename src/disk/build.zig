@@ -184,6 +184,7 @@ const modules = [_]Program{
     .{ .disk = "libs/codecs/opus.acodec", .source = "libs/audiocodec/opus.zig", .name = "opus.acodec" },
     .{ .disk = "libs/codecs/dts.acodec", .source = "libs/audiocodec/dts.zig", .name = "dts.acodec" },
     .{ .disk = "libs/media.library", .source = "libs/media/media.zig", .name = "media.library" },
+    .{ .disk = "libs/videoparse.library", .source = "libs/videoparse/videoparse.zig", .name = "videoparse.library" },
     .{ .disk = "libs/codecs/mp4.container", .source = "libs/media/mp4.zig", .name = "mp4.container" },
     .{ .disk = "libs/codecs/mkv.container", .source = "libs/media/mkv.zig", .name = "mkv.container" },
     .{ .disk = "libs/videocodec.library", .source = "libs/videocodec/videocodec.zig", .name = "videocodec.library" },

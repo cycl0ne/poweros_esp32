@@ -11,13 +11,15 @@ H.264 and H.265 on the chip's decoder (videodec.resource, the WAVE511
 on the VisionFive 2), h264.vcodec H.264 in software, hevc.vcodec H.265,
 vp8.vcodec VP8, vp9.vcodec VP9 and av1.vcodec AV1 in software,
 mjpeg.vcodec Motion JPEG in software - and
-audiocodec.library decodes the sound. A display's video layer (rtg's `ShowVideoFrame`)
+audiocodec.library decodes the sound. videoparse.library reads an H.264
+or H.265 stream for the decoders that decode its samples. A display's video layer (rtg's `ShowVideoFrame`)
 shows a frame as it comes out; graphics' `WriteYUVPixelArray` and
 `ScaleYUVPixelArray` put one into a window where there is none.
 
 This guide is opening a film, its pictures, showing them on a video
 layer, its sound, keeping them together, moving in it, its tracks and
-subtitles, what decodes what, and writing a codec module.
+subtitles, what decodes what, writing a codec module, and reading a
+stream for a decoder.
 
 ## Opening a film
 
@@ -266,6 +268,77 @@ media.library's containers are modules the same way (1.5):
 they share, `sdk.mcontainer`; the kind names the file, and without its
 module a file is refused, `MERR_UNSUPPORTED`. audiocodec.library's kinds
 are `.acodec` modules there ([Sound](audio.md)).
+
+## Reading a stream
+
+**videoparse.library** (`sdk.interface.videoparse`,
+[md](../autodocs/videoparse.md)) reads an H.264 or H.265 stream for a
+decoder: the parameter sets, each picture's slice headers, its order
+counts, the reference pictures it holds and the two lists each slice
+decodes from, the references the stream lacks, and when each picture is
+shown. The decoder decodes the samples - in software, as h264.vcodec and
+hevc.vcodec do, or on a chip that takes the parsed slices. Its
+structures are in `sdk.videoparse`, every field of the two codecs'
+syntax in `sdk.videoparse.h264` and `sdk.videoparse.hevc`.
+
+```zig
+const vpb: *VideoParseBase = @ptrCast(sys.OpenLibrary(vp.VIDEOPARSENAME, 1) orelse return);
+defer sys.CloseLibrary(vpb.lib());
+var why: i32 = 0;
+// The track's avcC or hvcC, or null for Annex B; four slots of the
+// caller's beyond the stream's, for pictures it still shows.
+const parser = vpb.OpenVideoParser(vp.VPCODEC_HEVC, setup, setup_size, &[_]utility.TagItem{
+    .{ .tag = vp.VPA_Slots, .data = 4 },
+    .{},
+}, &why) orelse return;
+defer vpb.CloseVideoParser(parser);
+
+var packet: vp.VideoPacket = .{ .data = bytes.ptr, .bytes = @intCast(bytes.len), .time = time, .flags = vp.VPPKT_ACCESS_UNIT };
+_ = vpb.ParseVideoPacket(parser, &packet);
+var event: vp.VideoEvent = .{};
+while (true) {
+    switch (vpb.NextVideoEvent(parser, &event)) {
+        vp.VPERR_OK => {},
+        vp.VPERR_NEED_DATA, vp.VPERR_END => break, // the next packet
+        vp.VPERR_FULL => { // no slot free: a picture shown and given back
+            showOldest(vpb, parser);
+            continue;
+        },
+        else => continue, // a unit passed over
+    }
+    switch (event.kind) {
+        vp.VPEV_SEQUENCE => makePictures(event.sequence.?),
+        vp.VPEV_MISSING => fillGrey(event.picture.?.slot),
+        vp.VPEV_PICTURE => beginPicture(event.picture.?),
+        vp.VPEV_SLICE => decodeSlice(event.slice.?),
+        vp.VPEV_DECODE => endPicture(),
+        vp.VPEV_SHOW => queueToShow(event.slot, event.time),
+        vp.VPEV_FREE => forget(event.slot), // ReleaseVideoSlot once it is not shown or read
+        else => {},
+    }
+}
+```
+
+**A slot** names a picture, 0 up, handed out lowest first by
+`VPEV_PICTURE` and `VPEV_MISSING`: a decoder keeps a picture's samples,
+or a chip's reference surface, by its slot. A slot is the picture's
+until the parser said `VPEV_FREE` of it and the decoder gave it back
+with `ReleaseVideoSlot` - a picture may still wait to be shown, or be
+read by another core, after the stream let go of it. `VPA_Slots` is
+how many the decoder keeps beyond the stream's own: the frames it holds
+to be shown and those its other cores still read. Where none is free
+the next picture waits, `VPERR_FULL`, until one comes back.
+
+**A packet** is the caller's until `NextVideoEvent` answers
+`VPERR_NEED_DATA`: the parser reads a unit at a time as the events are
+asked for. `VPPKT_ACCESS_UNIT` says the packet is a whole picture - an
+MP4's or a Matroska track's is - so its `VPEV_DECODE` comes at its end
+rather than with the next picture's first unit; `VPPKT_END` shows every
+picture held and lets go of every slot. `ResetVideoParser` drops the
+pictures for a seek and keeps the parameter sets: the next packet is
+read as a stream's first, `VPEV_SEQUENCE` and all. An H.264 parser
+takes some 265 KiB, an H.265 one some 330 KiB, most of it the parameter
+sets.
 
 ## From the shell
 

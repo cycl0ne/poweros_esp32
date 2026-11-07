@@ -70,8 +70,6 @@ pub const Motion = struct {
     flags: u8 = 0,
 };
 
-pub const RefKind = enum(u8) { none, short, long };
-
 /// How a picture is shown, as its sequence says (7.4.3.2.1, E.3.1).
 pub const Format = struct {
     /// The conformance window, in luma samples.
@@ -92,9 +90,15 @@ pub const Format = struct {
     }
 };
 
-/// A picture store of the decoded picture buffer (C.5.2).
+/// A picture's store, by its slot (dpb.zig): its samples and motion.
 pub const Store = struct {
-    in_use: bool = false,
+    /// The decoder's: its slot handed out and not yet given back.
+    held: bool = false,
+    /// The stream let go of it (VPEV_FREE).
+    freed: bool = false,
+    /// Waiting to be shown, or taken out and not yet done with.
+    queued: bool = false,
+    /// The picture's number, never given twice.
     uid: u32 = 0,
     /// The samples: luma, Cb, Cr, each `stride` samples apart; the bytes
     /// of one sample are the store's depth's.
@@ -107,17 +111,11 @@ pub const Store = struct {
     format: Format = .{},
     memory: ?[*]u8 = null,
     memory_len: usize = 0,
-    ref: RefKind = .none,
+    /// PicOrderCntVal, as the library said it.
     poc: i32 = 0,
-    /// slice_pic_order_cnt_lsb: what a long-term entry without its MSB
-    /// names it by.
-    poc_lsb: u32 = 0,
-    output_needed: bool = false,
-    /// PicLatencyCount (C.5.2.3).
-    latency: u32 = 0,
     /// Made up for a missing reference (8.3.3): never shown.
     generated: bool = false,
-    /// When it is shown, as its packet said.
+    /// When it is shown, as the library said it.
     time: i64 = 0,
     /// Each 16x16 block's motion, by rows.
     motion: []Motion = &.{},
@@ -126,14 +124,6 @@ pub const Store = struct {
     /// The luma rows that are final, filtered and all: a picture decoded
     /// on a worker counts them up as it goes.
     progress: u32 = 0,
-    /// The jobs that read it: it is not used again before they are done.
+    /// The jobs that read it: it is not given back before they are done.
     pinned: u8 = 0,
-    /// The decoded picture hash SEI of the picture (D.3.20), when it
-    /// came: hash_type + 1 (0: none), and each plane's hash.
-    hash_kind: u8 = 0,
-    hash: [3][16]u8 = undefined,
-
-    pub fn isRef(s: *const Store) bool {
-        return s.ref != .none;
-    }
 };

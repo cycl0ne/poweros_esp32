@@ -101,6 +101,9 @@ test {
     _ = @import("libs/icon/tests/icon.zig");
     _ = @import("libs/audiocodec/tests/audiocodec.zig");
     _ = @import("libs/media/tests/media.zig");
+    _ = @import("libs/videoparse/tests/videoparse.zig");
+    _ = @import("libs/codecs/h264/tests/clip.zig");
+    _ = @import("libs/codecs/hevc/tests/clip.zig");
     _ = @import("libs/videocodec/tests/videocodec.zig");
     _ = @import("libs/anvil/tests/anvil.zig");
     _ = @import("libs/anvil/tests/app.zig");
