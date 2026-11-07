@@ -7,8 +7,8 @@
 //! changed, and the framebuffer a UEFI firmware has already lit
 //! (`uefi.zig`), which reads the one buffer it was given - behind which
 //! the engine doing the reading is looked at where it is one this knows
-//! (`dcn.zig`), to say what it is and to switch on the sound the link it
-//! lit can carry.
+//! (`dcn.zig`, through amdgpu.resource, which holds the device), to say
+//! what it is and to switch on the sound the link it lit can carry.
 //!
 //! A module of its own, on the same footing as the other drivers: it
 //! opens rtg.library at cold start and hands in a driver called "fb",
@@ -183,8 +183,8 @@ const timer = sdk.devices.timer;
 const MODULE_NAME = "rtg-fb";
 const DRIVER_NAME = "fb";
 const VERSION = 1;
-const REVISION = 26;
-const BUILD_DATE = "06.11.2026";
+const REVISION = 27;
+const BUILD_DATE = "07.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
@@ -1978,7 +1978,7 @@ fn destroy(board: *rtg.RtgBoard) callconv(.c) void {
     const screen = screenOf(board);
     // The GPU lets go of the buffers before they are given back.
     if (screen.scanout == .virtio) virtio.stop(&screen.scanout.virtio);
-    if (screen.dcn) |*found| dcn.forget(found);
+    // The device is amdgpu.resource's, which is never given back.
     screen.dcn = null;
     stopFlipping(screen);
     if (screen.frame_hooked) screen.sys.RemIntServer(screen.frame_irq, &screen.frame_int);

@@ -99,7 +99,7 @@ const tests = [_][]const u8{
     "sound",       "memowner",    "records",     "exall",     "disktest",
     "filetest",    "speed2d",     "windraw",     "semtest",   "membench",
     "glyphs",      "ribbon",      "taskbench",   "videodec",  "audiodec",
-    "film",        "commodities",
+    "film",        "commodities", "watchdog",
 };
 const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless", "hostname", "ssh", "scp", "filter", "git" };
 
@@ -431,11 +431,13 @@ pub const p4_files = [_]File{
 /// and the interfaces name the two kinds of card this system drives
 /// there, with a second port for the kind that often has two. A machine
 /// has what it has, and an interface whose port is not there is not
-/// added.
+/// added. And the large photograph, for C:test/Jpeg to time an AMD
+/// graphics device's decoder on.
 pub const x64_files = [_]File{
     .{ .disk = "devs/NetInterfaces/ETH0", .source = "devs/NetInterfaces/x64/ETH0" },
     .{ .disk = "devs/NetInterfaces/ETH1", .source = "devs/NetInterfaces/x64/ETH1" },
     .{ .disk = "devs/NetInterfaces/ETH2", .source = "devs/NetInterfaces/x64/ETH2" },
+    .{ .disk = "tests/datatypes/Desktop.jpg", .source = "tests/datatypes/esp32p4/Desktop.jpg" },
 };
 
 /// The AArch64 machines' disk has these in place of the shared files of

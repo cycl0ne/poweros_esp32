@@ -49,11 +49,20 @@
 //! asked for a range rather than decided here, because what a range holds
 //! - a screen, or a device's registers, which must have every write of
 //! their own - is not something an address says.
+//!
+//! **A range's kind can change while the system runs** (`mark`): uncached,
+//! gathered, or cached as memory is. A driver of a device that keeps its
+//! own memory outside the cores' coherent view asks for it - the device
+//! reads and writes it, and the CPU wants it gathered for writing or
+//! cached for reading, with the lines dropped by hand around the device's
+//! use (`dropLines`). The other cores are held while the map changes and
+//! each reloads its map as it is let go (`rendezvous.zig`), so no core
+//! keeps a translation of the old kind.
 
 const std = @import("std");
 const cpu = @import("cpu.zig");
 const layout = @import("layout.zig");
-const Range = @import("../../boot/uefi/handover.zig").Range;
+pub const Range = @import("../../boot/uefi/handover.zig").Range;
 
 const kib = 1024;
 const mib = 1024 * kib;
@@ -76,6 +85,8 @@ const UNCACHED: u64 = 1 << 4;
 /// that entry up (`cpu.takePat`). It is bit 12 of a block and bit 7 of a
 /// page, which is why only blocks are marked here.
 const GATHERED: u64 = 1 << 12;
+/// The three bits a block's kind is in.
+const KIND_BITS: u64 = UNCACHED | WRITE_THROUGH | GATHERED;
 const ADDRESS: u64 = 0x000F_FFFF_FFFF_F000;
 
 /// How many gibibytes above the first the 2 MiB tables below reach, for a
@@ -102,10 +113,13 @@ var code_level1: [code_tables][entries]u64 align(4 * kib) = @splat(@splat(0));
 /// The gibibytes above the first, in 2 MiB blocks, for a core with no
 /// 1 GiB pages.
 var pool_level2: [pool_gibibytes][entries]u64 align(4 * kib) = @splat(@splat(0));
-/// One gibibyte in 2 MiB blocks, for `gather` to split where the core has
-/// 1 GiB blocks: a screen is a few mebibytes and the registers in the
-/// gibibyte around it must keep every write of their own.
-var screen_level2: [entries]u64 align(4 * kib) = @splat(0);
+/// Gibibytes in 2 MiB blocks, for `mark` to split where the core has 1 GiB
+/// blocks: a screen is a few mebibytes, and the registers in the gibibyte
+/// around it must keep every write of their own. One for the screen, the
+/// rest for the drivers that ask.
+const split_tables = 4;
+var split_level2: [split_tables][entries]u64 align(4 * kib) = @splat(@splat(0));
+var splits_used: u32 = 0;
 
 /// Whether 1 GiB blocks were used, and how far the map reaches: what the
 /// kernel reports.
@@ -189,54 +203,109 @@ pub fn take(memory: []const Range) void {
     cpu.writeCr3(@intFromPtr(&level4));
 }
 
-/// The blocks `range` lies in made write-combining: the writes to them
-/// gathered into bursts instead of each reaching the machine on its own.
-/// True when they are; false, and nothing changed, where the range is not
-/// mapped in blocks this can mark - which the kernel says, since a screen
-/// written word by word to uncached memory is slow enough to be worth
-/// knowing about.
+/// What a block of memory is to the cores: uncached, every access reaching
+/// the machine on its own; gathered (write-combining), writes gathered into
+/// bursts and reads uncached; cached, as memory is.
+pub const Kind = enum { uncached, gathered, cached };
+
+fn kindBits(kind: Kind) u64 {
+    return switch (kind) {
+        .uncached => UNCACHED | WRITE_THROUGH,
+        .gathered => GATHERED,
+        .cached => 0,
+    };
+}
+
+/// The blocks `range` lies in made `kind`. Null, and nothing changed,
+/// where the range is not mapped in blocks this can mark; otherwise
+/// whether any of them was cached before, so that the caller knows to
+/// drop their lines (`dropLines`) once every core has the new map.
 ///
 /// The range is taken out to whole 2 MiB blocks, so what shares one with
-/// the screen is gathered too. Where the core has 1 GiB blocks the
-/// gibibyte the screen is in is split into 2 MiB blocks first, each
-/// keeping what the gibibyte had, so that the devices beside it are
-/// untouched; there is one table for that, so a range lying across two
-/// gibibytes is left alone.
-pub fn gather(range: Range) bool {
+/// it is marked too. Where the core has 1 GiB blocks the gibibyte the
+/// range is in is split into 2 MiB blocks first, each keeping what the
+/// gibibyte had, so that what is beside the range is untouched; there are
+/// `split_tables` tables for that, and a range lying across two gibibytes
+/// is left alone.
+///
+/// This core's translations go with the change. The other cores' are the
+/// caller's: at boot there are none, later it holds them while it marks
+/// (`rendezvous.holdOther`), and they reload the map as they are let go.
+pub fn mark(range: Range, kind: Kind) ?bool {
     const first = std.mem.alignBackward(usize, range.start, 2 * mib);
     const end = std.mem.alignForward(usize, range.end, 2 * mib);
-    if (end <= first or end > mapped_end) return false;
+    if (end <= first or end > mapped_end) return null;
+    const bits = kindBits(kind);
+    var was_cached = false;
 
     if (large_pages and first >= gib) {
-        if ((end - 1) / gib != first / gib) return false;
+        if ((end - 1) / gib != first / gib) return null;
         const which = first / gib;
         const base = which * gib;
         const table = &level3[which / entries];
         const slot = which % entries;
-        const had = table[slot] & (UNCACHED | WRITE_THROUGH);
-        for (&screen_level2, 0..) |*block, number| {
-            const at = base + number * 2 * mib;
-            const inside = at >= first and at < end;
-            block.* = at | PRESENT | WRITABLE | LARGE | TOUCHED | (if (inside) GATHERED else had);
+        const blocks: *[entries]u64 = if (table[slot] & LARGE != 0) split: {
+            if (splits_used >= split_tables) return null;
+            const fresh = &split_level2[splits_used];
+            splits_used += 1;
+            const had = table[slot] & KIND_BITS;
+            for (fresh, 0..) |*block, number| block.* = (base + number * 2 * mib) | PRESENT | WRITABLE | LARGE | TOUCHED | had;
+            table[slot] = @intFromPtr(fresh) | PRESENT | WRITABLE | TOUCHED;
+            break :split fresh;
+        } else @ptrFromInt(table[slot] & ADDRESS);
+        var at = first;
+        while (at < end) : (at += 2 * mib) {
+            const block = &blocks[(at - base) / (2 * mib)];
+            if (block.* & KIND_BITS == 0) was_cached = true;
+            block.* = (block.* & ~KIND_BITS) | bits;
         }
-        table[slot] = @intFromPtr(&screen_level2) | PRESENT | WRITABLE | TOUCHED;
     } else {
         // Already 2 MiB blocks: each is marked where it lies. A block that
         // holds a table of pages instead - the bottom of memory, and the
         // kernel's own code - is not one of them, and nothing is changed.
         var at = first;
         while (at < end) : (at += 2 * mib) {
-            const table = blockTable(at) orelse return false;
-            const number = (at / (2 * mib)) % entries;
-            if (table[number] & LARGE == 0) return false;
-            table[number] = (table[number] & ~(UNCACHED | WRITE_THROUGH)) | GATHERED;
+            const table = blockTable(at) orelse return null;
+            if (table[(at / (2 * mib)) % entries] & LARGE == 0) return null;
+        }
+        at = first;
+        while (at < end) : (at += 2 * mib) {
+            const block = &blockTable(at).?[(at / (2 * mib)) % entries];
+            if (block.* & KIND_BITS == 0) was_cached = true;
+            block.* = (block.* & ~KIND_BITS) | bits;
         }
     }
     // The map changed under a core that has read it: its own translations
     // of those blocks go with the write.
     cpu.writeCr3(@intFromPtr(&level4));
-    return true;
+    return was_cached;
 }
+
+/// The blocks `range` lies in made write-combining, at boot: true when
+/// they are; false, and nothing changed, where the range is not mapped in
+/// blocks this can mark - which the kernel says, since a screen written
+/// word by word to uncached memory is slow enough to be worth knowing
+/// about.
+pub fn gather(range: Range) bool {
+    return mark(range, .gathered) != null;
+}
+
+/// Every cache line of `range` written back if it is dirty and dropped
+/// from every core's caches, then a fence: for memory a device reads and
+/// writes outside the coherent view, before the device reads what the
+/// CPU wrote and before the CPU reads what the device wrote - and once
+/// memory that was cached is not any more.
+pub fn dropLines(range: Range) void {
+    var at = std.mem.alignBackward(usize, range.start, line);
+    while (at < range.end) : (at += line) {
+        asm volatile ("clflush (%[at])"
+            :
+            : [at] "r" (at),
+            : .{ .memory = true });
+    }
+    asm volatile ("mfence" ::: .{ .memory = true });
+}
+const line = 64;
 
 /// The table of 2 MiB blocks `at` is in, where it is in one at all.
 fn blockTable(at: usize) ?*[entries]u64 {

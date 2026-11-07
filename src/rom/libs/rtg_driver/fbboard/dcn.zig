@@ -29,38 +29,12 @@
 //!
 //! ## Where the registers are
 //!
-//! The engine's registers are in the function's sixth memory window, in
-//! blocks whose addresses are not fixed for the part: they are in a table
-//! the device's own firmware leaves behind, which lists every block of
-//! the chip with its version and the addresses its registers are counted
-//! from. That table is read here, so the engine says where its own
-//! registers are and what version it is, and a chip this does not know is
-//! one this says so about rather than reads at an address that would
-//! belong to something else.
-//!
-//! The addresses in that table count 32-bit registers, so a register's
-//! place is `(block + offset) * 4` bytes into the window.
-//!
-//! ## Where the table is
-//!
-//! Three places, and which one it was in is said out loud, because it is
-//! the first thing to know about a part this has not been run on before.
-//!
-//! It is left below the top of the device's own memory - but the device's
-//! memory is longer than the window onto it, so the top of the window is
-//! not the top of the memory and reading there finds a picture, not a
-//! table. What reads it is a pair of registers whose place is the same on
-//! every part the vendor has made: an address is latched in the first and
-//! the four bytes there come back from the second, with no window needed.
-//! How far up to look is the device's own answer for how much memory it
-//! has.
-//!
-//! A firmware that keeps that region in the machine's memory instead
-//! leaves its address in three more registers of that fixed set, and then
-//! the table is read where any other address in the machine is read.
-//!
-//! And on a part whose window shows all of its memory the table is in the
-//! window after all, which is where this looks last.
+//! The device is held by amdgpu.resource, which claims the function and
+//! reads the table its firmware leaves of the chip's blocks; the engine is
+//! its display block. Of the addresses the table gives that block, the
+//! third is where the pipes', the links' and the audio endpoints'
+//! registers are counted from, and the second the clocks'. A register's
+//! place is `(block + offset) * 4` bytes into the register window.
 //!
 //! ## The audio side
 //!
@@ -110,107 +84,22 @@
 //! is all that is needed to turn any address in that window into the one
 //! the device would be given.
 
-const std = @import("std");
 const sdk = @import("sdk");
 const exec = sdk.exec;
-const pci = sdk.pci;
+const amdgpu = sdk.resources.amdgpu;
 const reg = sdk.hardware.mmio.reg;
 const ExecBase = sdk.interface.exec.ExecBase;
-const PCIBase = sdk.interface.pci.PCIBase;
-const PCIDevice = pci.PCIDevice;
+const AMDGPUBase = sdk.interface.amdgpu.AMDGPUBase;
 const uefi = @import("uefi.zig");
 const edid = @import("../edid.zig");
 
-/// Who the function is claimed by, for a listing.
+/// Who says what is found, on the boot's lines.
 const owner = "rtg-fb";
-/// The vendor, and the class every display function carries in its upper
-/// sixteen bits.
-const VENDOR: u32 = 0x1002;
-const CLASS_DISPLAY: u32 = 0x0300;
 
-/// The window the memory is in, and the one the registers are in.
-const bar_memory = 0;
-const bar_registers = 5;
-/// The least either window can be and still be the one: a chip's
-/// registers fill a quarter of a mebibyte, and its memory is never a
-/// handful of pages.
-const registers_least = 256 * 1024;
-const memory_least = 16 * 1024 * 1024;
-
-// --- the table that says where the blocks are --------------------------------------
-
-/// What the table's first word is, what the list of blocks inside it
-/// begins with, and which block is the display engine.
-const binary_mark: u32 = 0x2821_1407;
-const list_mark: u32 = 0x5344_5049;
-const display_block: u16 = 271;
-
-/// The table sits below the top of the device's memory, and is looked for
-/// from there downwards on whole pages. The distance is fixed, but the
-/// memory above the window's end is not always the device's to show, so
-/// the look walks rather than trusting one place.
-const table_below_top = 64 * 1024;
-const look_page = 4096;
-const look_bytes = 64 * 1024 * 1024;
-
-/// How much of the table is read out of the device. It is the room the
-/// firmware reserves for it; the list of blocks is far shorter, and the
-/// rest is the other tables of the same binary.
-const table_bytes = 10 * 1024;
-
-/// The pair that reads the device's own memory with no window onto it,
-/// and the registers that say how much memory there is and where the
-/// firmware put the table when it is not in that memory. These few have
-/// the same place on every part of this vendor, which is what makes them
-/// readable before the table that says where everything else is.
-/// Counted in 32-bit words, as every register here is.
-const mm_index = 0x0;
-const mm_data = 0x1;
-const mm_index_high = 0x6;
-const config_memsize = 0xde3;
-const scratch_address = 0x94;
-const scratch_address_high = 0x95;
-const scratch_bytes = 0x96;
-
-/// In the latched address, that it is an address in the device's memory
-/// and not one of the device's registers. It takes the place of the
-/// address's own bit 31, which is why the upper register is given the
-/// address shifted by one less than the half it carries.
-const index_is_memory: u32 = 0x8000_0000;
-const index_high_shift = 31;
-
-/// The furthest up the device's memory the table is looked for, so that a
-/// device answering with something wild for how much memory it has is not
-/// read at an address that means nothing.
-const memory_most: u64 = 64 * 1024 * 1024 * 1024;
-
-/// Where the list of blocks is in the table, and how long an entry of the
-/// table's own list is.
-const binary_list_at = 12;
-const binary_list_entry = 8;
-/// In the list of blocks: its own version and the version from which a
-/// block's addresses may be 64-bit, where the count of dies is, where
-/// their places are, and where the word that says how wide those
-/// addresses are.
-const list_version_at = 4;
-const list_version_wide = 4;
-const list_dies_at = 12;
-const list_die_at = 14;
-const list_dies_most = 16;
-const list_wide_at = 78;
-/// A die's own header, and a block's entry in it.
-const die_count_at = 2;
-const die_first_at = 4;
-const block_instance_at = 2;
-const block_addresses_at = 3;
-const block_version_at = 4;
-const block_header_bytes = 8;
-
-/// The blocks of one chip this reads from, and the two of a block's
-/// addresses the registers here are counted from. A display engine
-/// answers with six: the third holds the pipes, the links and the audio
-/// endpoints, and the second the clocks the engine is given.
-const blocks_most = 8;
+/// The two of the display block's addresses the registers here are
+/// counted from. A display engine answers with six: the third holds the
+/// pipes, the links and the audio endpoints, and the second the clocks
+/// the engine is given.
 const block_wanted = 2;
 const clocks_wanted = 1;
 
@@ -497,11 +386,6 @@ const address_high_mask: u32 = 0xffff;
 /// The engine behind the firmware's framebuffer, and what it was read to
 /// be saying.
 pub const Engine = struct {
-    /// The function, for giving it back, and pci.library as it was opened
-    /// and as it is called.
-    device: *PCIDevice,
-    library: *exec.Library,
-    base: *PCIBase,
     sys: *ExecBase,
     /// The device's memory as the machine reaches it, and its registers.
     memory: usize,
@@ -552,64 +436,37 @@ pub const Engine = struct {
     }
 };
 
-/// The engine behind the framebuffer `fb`, claimed, with what it says of
-/// itself read out. Null where the machine has no pci.library, no display
-/// function of this vendor, one somebody else has claimed, one whose
-/// windows are not the two this reads, one whose memory the firmware's
-/// framebuffer is not in - which is a display function that is not the
-/// one driving the screen - one whose table of blocks is not there or
-/// does not hold a display engine, or one no pipe of which is scanning
-/// the picture the firmware described. Each of those is said out loud:
-/// what this reads is worth knowing even when it comes to nothing, since
-/// it is read on a machine the author does not have.
+/// The engine behind the framebuffer `fb`, with what it says of itself
+/// read out. Null where the machine has no AMD graphics device, one whose
+/// memory window the firmware's framebuffer is not in - which is a device
+/// that is not the one driving the screen - one whose table holds no
+/// display engine, or one no pipe of which is scanning the picture the
+/// firmware described. Each of those is said out loud: what this reads is
+/// worth knowing even when it comes to nothing, since it is read on a
+/// machine the author does not have.
 pub fn find(sys: *ExecBase, fb: uefi.Framebuffer) ?Engine {
-    const lib = sys.OpenLibrary(pci.PCINAME, 1) orelse return null;
-    const base: *PCIBase = @ptrCast(lib);
-    var found: ?*PCIDevice = null;
-    while (base.FindPCIDevice(found, VENDOR, pci.PCI_ANY)) |device| {
-        found = device;
-        if (device.class_code >> 8 != CLASS_DISPLAY) continue;
-        if (base.ClaimPCIDevice(device, owner) != null) continue;
-        if (engineOf(sys, lib, base, device, fb)) |engine| return engine;
-        base.ReleasePCIDevice(device);
+    const resource = sys.OpenResource(amdgpu.AMDGPUNAME) orelse return null;
+    const gpu: *AMDGPUBase = @ptrCast(resource);
+    var info: amdgpu.GPUInfo = .{};
+    if (!gpu.GetGPUInfo(&info)) return null;
+    // The one free check that this is the device driving the screen.
+    if (fb.pixels < info.window or fb.pixels >= info.window + info.window_bytes) {
+        return say(sys, info, "the firmware's framebuffer is not in its memory, so it is not the display's");
     }
-    sys.CloseLibrary(lib);
-    return null;
-}
-
-/// The function given back and pci.library closed.
-pub fn forget(engine: *Engine) void {
-    engine.base.ReleasePCIDevice(engine.device);
-    engine.sys.CloseLibrary(engine.library);
-}
-
-/// One function read through: its windows, its table of blocks, and the
-/// pipe that is scanning the firmware's picture.
-fn engineOf(sys: *ExecBase, lib: *exec.Library, base: *PCIBase, device: *PCIDevice, fb: uefi.Framebuffer) ?Engine {
-    const memory = window(device, bar_memory, memory_least) orelse return say(sys, device, "its memory window is not one this reads");
-    const registers = window(device, bar_registers, registers_least) orelse return say(sys, device, "its register window is not one this reads");
-    // The one free check that this is the function driving the screen.
-    if (fb.pixels < memory.at or fb.pixels >= memory.at + memory.bytes) {
-        return say(sys, device, "the firmware's framebuffer is not in its memory, so it is not the display's");
+    var block: amdgpu.GPUBlock = .{};
+    if (!gpu.FindGPUBlock(amdgpu.GPUBLOCK_DISPLAY, 0, &block) or block.count <= block_wanted) {
+        return say(sys, info, "its table of blocks holds no display engine");
     }
-
-    const table = tableOf(sys, memory, registers) orelse return say(sys, device, "it leaves no table of blocks in any of the three places one is looked for");
-    defer sys.FreeVec(table.room);
-    const engine_block = blockIn(table.at) orelse return say(sys, device, "its table of blocks holds no display engine");
-    exec.kprintf(sys, "%s: the table of blocks is in %s\n", .{ owner, table.where });
     var engine: Engine = .{
-        .device = device,
-        .library = lib,
-        .base = base,
         .sys = sys,
-        .memory = memory.at,
-        .memory_bytes = memory.bytes,
-        .registers = registers.at,
-        .block = engine_block.block,
-        .clocks = engine_block.clocks,
-        .major = engine_block.major,
-        .minor = engine_block.minor,
-        .revision = engine_block.revision,
+        .memory = @intCast(info.window),
+        .memory_bytes = @intCast(info.window_bytes),
+        .registers = @intCast(info.registers),
+        .block = block.addresses[block_wanted],
+        .clocks = block.addresses[clocks_wanted],
+        .major = block.major,
+        .minor = block.minor,
+        .revision = block.revision,
         .pipe = 0,
         .fetcher = 0,
         .width = 0,
@@ -645,7 +502,7 @@ fn engineOf(sys: *ExecBase, lib: *exec.Library, base: *PCIBase, device: *PCIDevi
     engine.fetcher = fetcher.fetcher;
     engine.surface = fetcher.surface;
     engine.pitch = fetcher.pitch;
-    engine.shift = fetcher.surface -% @as(u64, fb.pixels - memory.at);
+    engine.shift = fetcher.surface -% @as(u64, fb.pixels - engine.memory);
 
     exec.kprintf(sys, "%s: display engine %d.%d.%d at 0x%lx, memory 0x%lx %ldM\n", .{
         owner,
@@ -760,189 +617,11 @@ fn tell(engine: Engine) void {
     }
 }
 
-/// A line about a function that was looked at and left alone, and null,
+/// A line about a device that was looked at and left alone, and null,
 /// which is what the caller returns.
-fn say(sys: *ExecBase, device: *PCIDevice, why: [*:0]const u8) ?Engine {
-    exec.kprintf(sys, "%s: %x:%x is a display function and %s\n", .{
-        owner, @as(u32, device.vendor_id), @as(u32, device.device_id), why,
-    });
+fn say(sys: *ExecBase, info: amdgpu.GPUInfo, why: [*:0]const u8) ?Engine {
+    exec.kprintf(sys, "%s: %x:%x is a display function and %s\n", .{ owner, info.vendor, info.device, why });
     return null;
-}
-
-/// One of the function's memory windows: where it is and how long.
-const Window = struct { at: usize, bytes: usize };
-
-/// A window of the function, when it is memory the firmware or the
-/// library placed, it is at least `least` bytes, and it is within what
-/// this machine can address.
-fn window(device: *PCIDevice, which: usize, least: usize) ?Window {
-    const bar = device.bars[which];
-    if (bar.address == 0 or bar.size < least) return null;
-    if (bar.flags & pci.PCIBAR_IO != 0) return null;
-    if (bar.address > std.math.maxInt(usize) or bar.address + bar.size > std.math.maxInt(usize)) return null;
-    return .{ .at = @intCast(bar.address), .bytes = @intCast(bar.size) };
-}
-
-// --- the table of blocks -----------------------------------------------------------
-
-/// The display engine's entry in the chip's table of blocks: where its
-/// registers are counted from - the pipes' and the clocks' - and what
-/// version it is.
-const Block = struct { block: u32, clocks: u32, major: u8, minor: u8, revision: u8 };
-
-/// The display engine's entry read out of the table at `table`.
-fn blockIn(table: usize) ?Block {
-    // The first entry of the table's own list is the list of blocks, as
-    // far into the table as that entry says.
-    const list = table + word16(table + binary_list_at);
-    if (word32(list) != list_mark) return null;
-    const dies = @min(word16(list + list_dies_at), list_dies_most);
-    // The word after the dies is what says whether a block's addresses
-    // are 64-bit, and only from the fourth version of the list: before
-    // that it is padding, and every address is 32-bit.
-    const wide = word16(list + list_version_at) >= list_version_wide and word8(list + list_wide_at) & 1 != 0;
-    var die: u32 = 0;
-    while (die < dies) : (die += 1) {
-        const place = word16(list + list_die_at + die * 4 + 2);
-        if (place == 0) continue;
-        if (blockInDie(table + place, wide)) |block| return block;
-    }
-    return null;
-}
-
-/// The first instance of the display engine among one die's blocks, or
-/// null. Every entry is walked whether or not it is the one, since an
-/// entry's length is its own number of addresses and the next one begins
-/// after it.
-fn blockInDie(die: usize, wide: bool) ?Block {
-    const count = word16(die + die_count_at);
-    var at = die + die_first_at;
-    var which: u32 = 0;
-    while (which < count) : (which += 1) {
-        const what = word16(at);
-        const addresses = word8(at + block_addresses_at);
-        const first = at + block_header_bytes;
-        if (what == display_block and word8(at + block_instance_at) == 0 and addresses > block_wanted) {
-            // Even where the addresses are 64-bit, the lower half is what
-            // the registers are counted from.
-            const address = if (wide) word32(first + block_wanted * 8) else word32(first + block_wanted * 4);
-            const clocks = if (wide) word32(first + clocks_wanted * 8) else word32(first + clocks_wanted * 4);
-            return .{
-                .block = address,
-                .clocks = clocks,
-                .major = word8(at + block_version_at),
-                .minor = word8(at + block_version_at + 1),
-                .revision = word8(at + block_version_at + 2),
-            };
-        }
-        at = first + addresses * @as(usize, if (wide) 8 else 4);
-    }
-    return null;
-}
-
-/// The table, wherever it was found: where it can be read, the room a
-/// copy of it is in - which is given back once it has been read, and null
-/// where the table was read where it lies - and where it came from, for
-/// the line that says so.
-const Table = struct { at: usize, room: ?*anyopaque = null, where: [*:0]const u8 };
-
-/// The chip's table of blocks, looked for in each of the three places it
-/// is. The device's own memory first, read through the latch, as far up
-/// as the device says its memory goes; then the machine's memory, where a
-/// firmware that keeps the region there leaves the address; then the
-/// window, which is where it is on a part whose window shows all of its
-/// memory. Each is taken only when what is there begins with the table's
-/// mark, so a place that holds something else is passed over rather than
-/// read as a table.
-fn tableOf(sys: *ExecBase, memory: Window, registers: Window) ?Table {
-    // Every register read here is within the first kibibytes of the
-    // window but for one, which is checked for rather than assumed.
-    if (registers.bytes > (scratch_bytes + 1) * 4 and registers.bytes > (config_memsize + 1) * 4) {
-        const megabytes = readWord(registers, config_memsize);
-        const memory_bytes = @as(u64, megabytes) << 20;
-        if (megabytes != 0 and memory_bytes <= memory_most and memory_bytes > table_below_top) {
-            if (copyOut(sys, registers, memory_bytes - table_below_top)) |room| {
-                return .{ .at = @intFromPtr(room), .room = room, .where = "the top of the device's own memory" };
-            }
-        }
-        const left = @as(u64, readWord(registers, scratch_address_high)) << 32 |
-            readWord(registers, scratch_address);
-        const bytes = readWord(registers, scratch_bytes);
-        if (bytes >= table_bytes and left != 0 and left % 4 == 0 and left <= std.math.maxInt(usize) - table_bytes) {
-            const at: usize = @intCast(left);
-            if (word32(at) == binary_mark) {
-                return .{ .at = at, .where = "the machine's memory, where the firmware left it" };
-            }
-        }
-    }
-    if (tableAt(memory)) |at| return .{ .at = at, .where = "the device's memory window" };
-    return null;
-}
-
-/// The table copied out of the device's memory from `at`, in room of our
-/// own, when what is there begins with the table's mark; null otherwise,
-/// with the room given back. A word at a time, which is what the latch
-/// gives: ten kibibytes is a few thousand reads of an uncached register
-/// and happens once.
-fn copyOut(sys: *ExecBase, registers: Window, at: u64) ?*anyopaque {
-    const room = sys.AllocVec(table_bytes, exec.MEMF_ANY) orelse return null;
-    const words: [*]u32 = @ptrCast(@alignCast(room));
-    var which: usize = 0;
-    while (which < table_bytes / 4) : (which += 1) {
-        words[which] = readMemory(registers, at + which * 4);
-    }
-    if (words[0] != binary_mark) {
-        sys.FreeVec(room);
-        return null;
-    }
-    return room;
-}
-
-/// Four bytes of the device's own memory, through the latch.
-fn readMemory(registers: Window, at: u64) u32 {
-    writeWord(registers, mm_index, @as(u32, @truncate(at)) | index_is_memory);
-    writeWord(registers, mm_index_high, @truncate(at >> index_high_shift));
-    return readWord(registers, mm_data);
-}
-
-/// A register of the window, by its number in 32-bit words.
-fn readWord(registers: Window, offset: u32) u32 {
-    return reg(registers.at + offset * 4).*;
-}
-
-fn writeWord(registers: Window, offset: u32, value: u32) void {
-    reg(registers.at + offset * 4).* = value;
-}
-
-/// Where the table is in the device's memory window: below the top, and
-/// otherwise looked for on whole pages downwards
-/// from there. Null where no page in the stretch begins with the table's
-/// mark.
-fn tableAt(memory: Window) ?usize {
-    if (memory.bytes <= table_below_top) return null;
-    const top = memory.at + memory.bytes;
-    const likely = top - table_below_top;
-    if (word32(likely) == binary_mark) return likely;
-    const end = if (memory.bytes > look_bytes) top - look_bytes else memory.at;
-    var at = std.mem.alignBackward(usize, likely, look_page);
-    while (at >= end) {
-        if (word32(at) == binary_mark) return at;
-        if (at < end + look_page) break;
-        at -= look_page;
-    }
-    return null;
-}
-
-fn word8(at: usize) u8 {
-    return sdk.hardware.mmio.reg8(at).*;
-}
-
-fn word16(at: usize) u32 {
-    return sdk.hardware.mmio.reg16(at).*;
-}
-
-fn word32(at: usize) u32 {
-    return reg(at).*;
 }
 
 // --- the pipes ---------------------------------------------------------------------

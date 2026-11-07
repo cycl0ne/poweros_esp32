@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 //! The rendezvous: the other cores held still while this one does what
 //! nothing else may run beside - an alert that ends the machine, the ROM
-//! debugger looking at a stopped one.
+//! debugger looking at a stopped one, the map of memory changed under
+//! them (`mmu.mark`).
 //!
 //! The holding core asks with each running core's cross-core interrupt and
 //! waits until every one of them answers that it is parked: in `parkHere`,
@@ -17,6 +18,10 @@
 //! parked core waits for its own hold to be let go and nothing else: it is
 //! never let go by the one before, and once let go it does not park again
 //! for the same hold while the holder is still on its way out.
+//!
+//! A held core reloads its map on the way out, dropping every translation
+//! it had: the holder may have changed the map meanwhile, and a core must
+//! not go on reaching a block by the kind it had before.
 //!
 //! Until the other cores are started this is one core's work and every
 //! call here returns at once.
@@ -127,10 +132,15 @@ pub fn parkIfAsked() void {
 }
 
 /// The loop a held core waits in: no calls, nothing but the words above,
-/// until its hold is let go.
+/// until its hold is let go; then its map reloaded, before it says it has
+/// left.
 noinline fn parkHere(asked: u32) void {
     @setRuntimeSafety(false);
     _ = @atomicRmw(u32, &parked, .Add, 1, .acq_rel);
     while (@atomicLoad(u32, &let_go, .acquire) != asked) {}
+    asm volatile (
+        \\movq %%cr3, %%rax
+        \\movq %%rax, %%cr3
+        ::: .{ .rax = true, .memory = true });
     _ = @atomicRmw(u32, &parked, .Sub, 1, .acq_rel);
 }

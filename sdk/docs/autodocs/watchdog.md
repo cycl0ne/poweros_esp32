@@ -1,7 +1,8 @@
 # watchdog.resource
 
-watchdog.resource's functions: the chip's watchdog timer (TIMG0's MWDT),
-armed, fed and disarmed by programs. A resource: no Open or Close, its
+watchdog.resource's functions: the machine's watchdog timer (the ESPs'
+TIMG0 MWDT, an x86-64 machine's AMD chipset), armed, fed and disarmed
+by programs. A resource: no Open or Close, its
 first function in the first slot. The base comes from
 OpenResource("watchdog.resource").
 
@@ -26,8 +27,10 @@ bool ArmWatchdog(u32 millis, u32 action)
 
 **BEHAVIOR**
 
-Armed again, it starts over. False for 0 ms, too long a time, or another
-action.
+Armed again, it starts over. False for 0 ms, too long a time, an action
+the watchdog has not got, or a machine with no watchdog the resource
+drives. A chipset's watchdog counts whole seconds, `millis` rounded up,
+and only resets the whole machine.
 
 ## DisarmWatchdog
 

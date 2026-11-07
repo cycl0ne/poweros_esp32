@@ -13,8 +13,10 @@ watchdog.resource/ReadWatchdog
 	    bool ArmWatchdog(u32 millis, u32 action)
 
    BEHAVIOR
-	Armed again, it starts over. False for 0 ms, too long a time, or another
-	action.
+	Armed again, it starts over. False for 0 ms, too long a time, an action
+	the watchdog has not got, or a machine with no watchdog the resource
+	drives. A chipset's watchdog counts whole seconds, `millis` rounded up,
+	and only resets the whole machine.
 watchdog.resource/DisarmWatchdog              watchdog.resource/DisarmWatchdog
 
    NAME

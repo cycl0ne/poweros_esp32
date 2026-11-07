@@ -18,7 +18,7 @@ jpeg.resource/FreeJPEGPicture
    INPUTS
 	- `file` - the file's bytes, from its start. On the ESP32-P4 in memory
 	  the 2D-DMA reads: the PSRAM or the internal memory (what AllocVec
-	  gives); on the JH7110 anywhere.
+	  gives); on the JH7110 and an AMD graphics device anywhere.
 	- `length` - how many there are.
 	- `picture` - filled in.
 
@@ -27,10 +27,12 @@ jpeg.resource/FreeJPEGPicture
 	them from `pixels` on, `pitch` bytes from one row to the next, in
 	`format` (JPEGFMT_BGR24, or JPEGFMT_GREY8 for a grey file). Otherwise
 	why not, and `picture` is all zero: what ExamineJPEG answers for the
-	file, JPEGERR_UNSUPPORTED as well for a file the 2D-DMA cannot read,
-	JPEGERR_NO_MEMORY, JPEGERR_FAILED when the codec stopped on the file
-	or did not finish in time, JPEGERR_NO_ENGINE when there is no codec
-	or it would not wake.
+	file, JPEGERR_UNSUPPORTED as well for a file the 2D-DMA cannot read
+	or a picture less than 64 pixels across or down on an AMD graphics
+	device, JPEGERR_NO_MEMORY, JPEGERR_FAILED when the codec stopped on
+	the file or did not finish in time, JPEGERR_NO_ENGINE when there is no
+	codec, it would not wake, or an AMD device's decoder is not started
+	yet and the watchdog is not armed.
 
    BEHAVIOR
 	The headers are read and their tables written into the codec, and the
@@ -43,14 +45,25 @@ jpeg.resource/FreeJPEGPicture
 	copied below 4 GiB, where the codec reads it, and the codec writes the
 	picture's planes - a grey one straight into the picture - which are
 	then turned into blue, green and red with the same matrix; the first
-	decode wakes the codec and its power domain. Either waits for at most
-	a quarter of a second and a microsecond for each eight pixels; the CPU
-	is free meanwhile. One decode at a time: a second caller waits for the
-	first.
+	decode wakes the codec and its power domain. On an AMD graphics device
+	the file is copied into the device's own memory without its
+	application data and comments, which the decoder has no use for; the
+	decoder writes the samples there in the form the file's sampling has,
+	and they are copied out and turned into blue, green and red with the
+	same matrix - a grey picture's rows copied as they are. The first
+	decode there finds the decoder through amdgpu.resource and starts it,
+	and starts it only while the watchdog is armed, so that a decoder
+	which stops the machine as it starts has the machine reset. Each
+	waits for at most a quarter of a second and a microsecond for each
+	eight pixels; the CPU is free meanwhile. One decode at a time: a
+	second caller waits for the first.
 
-	The codec writes behind the data cache's back: the file's bytes are
-	written back out of the cache before, the picture dropped from it
-	after, so the caller reads what the codec wrote.
+	The ESP32-P4's and the JH7110's codecs write behind the data cache's
+	back: the file's bytes are written back out of the cache before, the
+	picture dropped from it after, so the caller reads what the codec
+	wrote. An AMD device's memory is written gathered and read by
+	streaming loads, neither of which goes through the cache, so neither
+	is needed there.
 
    CONTEXT
 	- Waits: yes, for the codec, and for a decode another task has under
@@ -68,7 +81,9 @@ jpeg.resource/FreeJPEGPicture
 	a software decoder's, not equal.
 
    BUGS
-	None known.
+	An AMD device's decoder that does not finish a picture in time is not
+	asked again until the machine restarts, and the device's memory that
+	picture was given stays the decoder's.
 
    SEE ALSO
 	`ExamineJPEG`, `FreeJPEGPicture`

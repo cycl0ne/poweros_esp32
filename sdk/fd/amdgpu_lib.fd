@@ -1,0 +1,29 @@
+// SPDX-License-Identifier: MIT
+//! amdgpu.resource's functions: the machine's AMD graphics device, where
+//! its register window is and where each of its blocks' registers are,
+//! its blocks powered up and down, and its own memory handed out.
+//! A resource: no Open or Close, its first function in the first slot.
+//! The base comes from OpenResource("amdgpu.resource").
+##include resources/amdgpu as amdgpu
+##basetype AMDGPUBase
+##name amdgpu.resource
+##bias 0
+##public
+/// What the device is and where the machine reaches it, into `info`;
+/// false on a machine without one.
+bool GetGPUInfo(*amdgpu.GPUInfo info)
+/// The device's block of kind `id` (GPUBLOCK_*), its `instance`th, into
+/// `block`; false where the device has no such block, or there is no
+/// device.
+bool FindGPUBlock(u32 id, u32 instance, *amdgpu.GPUBlock block)
+/// The device's `part` (GPUPOWER_*), its `instance`th, powered up - or
+/// down, with `on` false - by its power manager; false where the manager
+/// refused or did not answer, or there is no device.
+bool SetGPUPower(u32 part, u32 instance, bool on)
+/// `bytes` of the device's own memory, starting on a multiple of
+/// `alignment`, into `memory`; false where there is no room, or no
+/// device. Not cleared.
+bool AllocGPUMemory(u32 bytes, u32 alignment, *amdgpu.GPUMemory memory)
+/// A piece from AllocGPUMemory given back; `memory` is cleared.
+void FreeGPUMemory(*amdgpu.GPUMemory memory)
+##end

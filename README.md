@@ -367,6 +367,7 @@ Fetched once into `toolchain/`, pinned and checked, never committed:
 | `scripts/fetch-certs.sh` | Mozilla's root certificates, made into the trust store `SYS:Certificates/Roots` |
 | `scripts/fetch-cyw43455.sh` | the Compute Module 5's radio firmware, which `DEVS:networks/cyw43455.device` loads into it (the AArch64 disk) |
 | `scripts/fetch-vpu.sh` | the JH7110's video decoder firmware, which `videodec.resource` loads (the RISC-V 64 disk) |
+| `scripts/fetch-amdgpu.sh` | an AMD graphics device's video decoder firmware and its security processor's table of contents, which `amdgpu.resource` loads (the x86-64 disk) |
 | `scripts/fetch-pciids.sh` | the PCI ID Repository's list, `DEVS:pci.ids` on the 64-bit machines' disks, which `C:PCIInfo` names vendors and devices from - the host's copy where it has one, the current list otherwise: not pinned |
 | `scripts/fetch-icons.sh` | the pictures of the disk's icons (Tango, public domain), drawn at the boards' sizes |
 | `scripts/fetch-novnc.sh` | noVNC, the VNC client that runs in a browser, which `scripts/qemu-web.sh` serves beside a QEMU machine to show its display in a browser tab |
@@ -640,6 +641,37 @@ the link the firmware lit, which the firmware leaves switched off, so
 that a monitor's speakers can be played over HDMI
 (`rtg_driver/fbboard/dcn.zig`).
 
+**An AMD graphics device is held by `amdgpu.resource`.** Such a device
+is one function on PCI with several machines behind it - the display
+engine, the video decoder, a power manager, a security processor, the hub
+their memory traffic goes through - and a function is one driver's, so
+the resource claims it, reads the table the device's firmware leaves of
+its blocks, and answers each part's driver with where that part's
+registers are (`GetGPUInfo`, `FindGPUBlock`). The display driver finds
+its engine that way. At boot it says what the device has: each block's
+version and addresses, the memory hub as the firmware left it, whether
+the security processor's system runs, and the power manager's firmware
+version, asked through its mailbox. Beside that it powers a block up and
+down through that mailbox (`SetGPUPower`) and hands out pieces of the
+device's own memory, which the device's blocks read and write
+(`AllocGPUMemory`, `FreeGPUMemory`).
+
+**The JPEG decoder beside its video decoder is jpeg.resource's codec.**
+A file is copied into the device's memory without the segments the
+decoder has no use for, decoded there through the decoder's ring of
+commands, and the samples copied out and turned into blue, green and
+red - grey, 4:4:4, 4:2:2 and 4:2:0, at least 64 pixels each way. The
+decoder is started by the first decode and only while the watchdog is
+armed, so until a program arms it every JPEG is decoded in software.
+`C:test/Jpeg SYS:Tests/datatypes/Desktop.jpg WATCHDOG 15000` times it
+against software: on a PC with a Radeon 780M (device 1002:15BF) a
+1024 x 600 photograph takes 3.1 ms there - 4.7 ms through the datatype -
+and 14.6 ms in software. The part of the device's memory that is handed
+out is write-combining to the CPU (platform.resource's `SetMemoryType`,
+which marks a range of the kernel's map uncached, write-combining or
+cached while the system runs), and the samples are read back by
+streaming loads: read word by word, the same picture took 17 ms.
+
 **A virtio GPU is taken where the machine has one.** The display driver
 speaks virtio over two transports now: a block of registers at an address
 a board names, which is what the two `virt` machines have, and a function
@@ -763,6 +795,15 @@ press there: a program that wants it asks with `AddPowerNotify` and
 decides what a press means - whether to ask whoever is sitting in front
 of the machine first - and where nobody is asking, the resource does the
 plain thing, which is what `C:Shutdown` does.
+
+A machine whose chipset is AMD's has that chipset's watchdog, which
+watchdog.resource drives: a count of seconds in the chipset that resets
+the machine once it runs out, however stopped its cores are. At start
+the resource says whether the last restart was the watchdog's, and
+nothing switches it on until a program arms it, so a machine nobody is sitting at can be given a time
+to come back by before anything risky is tried on it. `C:test/watchdog
+ARM 15000` arms it for 15 s, `FEED` starts that over, `OFF` stops it;
+`C:test/Jpeg ... WATCHDOG 15000` arms it around its decodes.
 
 `./zig build q35` boots QEMU's q35 machine with 512 MB on the serial
 console, under the firmware the system has (`-Dovmf-code=` and

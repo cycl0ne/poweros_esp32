@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: MPL-2.0
 //! jpeg.resource's base: the lock one decode at a time holds, the codec -
 //! the ESP32-P4's with the 2D-DMA channel it is fed through and its
-//! descriptors, or the JH7110's - and the decode being waited for.
+//! descriptors, the JH7110's, or an AMD graphics device's - and the
+//! decode being waited for.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DmaBase = sdk.resources.dma.DmaBase;
+const amd = @import("codec/_amdgpu.zig");
 
 pub const JpegBase = extern struct {
     lib: exec.Library,
@@ -26,6 +28,9 @@ pub const JpegBase = extern struct {
     jpu_irq: u32,
     jpu_awake: bool,
     jpu_dead: bool,
+    /// An AMD graphics device's decoder: found, started and checked by
+    /// the first decode that may start it.
+    gpu: amd.State,
     /// The decode being waited for: its task and signal, what the codec
     /// raised, how the receive side ended - on the JH7110, what the codec
     /// raised as it ended.

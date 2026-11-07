@@ -825,6 +825,18 @@ pub fn build(b: *std.Build) void {
         make_rv64_disk.addPrefixedFileArg("devs/firmware/wave511_dec_fw.bin=", .{ .cwd_relative = b.pathJoin(&.{ dir, "wave511_dec_fw.bin" }) });
         make_rv64_disk.addPrefixedFileArg("devs/firmware/wave511.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, "LICENSE.txt" }) });
     }
+    // DEVS:firmware/amdgpu/ - what an AMD graphics device's video decoder
+    // runs and the table of contents its security processor is given
+    // first, which amdgpu.resource loads, as scripts/fetch-amdgpu.sh
+    // fetched them - and AMD's licence for them beside them. On the x86-64
+    // disk alone.
+    if (amdgpuDir(b)) |dir| {
+        make_x64_disk.addArgs(&.{ "devs/firmware", "devs/firmware/amdgpu" });
+        for ([_][]const u8{ "vcn_4_0_2.bin", "psp_13_0_4_toc.bin" }) |name| {
+            make_x64_disk.addPrefixedFileArg(b.fmt("devs/firmware/amdgpu/{s}=", .{name}), .{ .cwd_relative = b.pathJoin(&.{ dir, name }) });
+        }
+        make_x64_disk.addPrefixedFileArg("devs/firmware/amdgpu.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, "LICENSE.amdgpu" }) });
+    }
     // DEVS:networks/firmware/cyw43455/ - what the Raspberry Pi CM5's radio
     // runs, as scripts/fetch-cyw43455.sh fetched it. On the AArch64 disk
     // alone, whose networks/cyw43455.device loads it.
@@ -2488,6 +2500,18 @@ fn vpuDir(b: *std.Build) ?[]const u8 {
     const path = b.pathFromRoot("toolchain/wave511");
     std.Io.Dir.cwd().access(io, b.pathJoin(&.{ path, "wave511_dec_fw.bin" }), .{}) catch {
         std.log.info("no WAVE511 firmware (scripts/fetch-vpu.sh): the RISC-V 64 disk has no DEVS:firmware/", .{});
+        return null;
+    };
+    return path;
+}
+
+/// Where scripts/fetch-amdgpu.sh put an AMD graphics device's firmware,
+/// or null without it.
+fn amdgpuDir(b: *std.Build) ?[]const u8 {
+    const io = b.graph.io;
+    const path = b.pathFromRoot("toolchain/amdgpu");
+    std.Io.Dir.cwd().access(io, b.pathJoin(&.{ path, "vcn_4_0_2.bin" }), .{}) catch {
+        std.log.info("no AMD graphics firmware (scripts/fetch-amdgpu.sh): the x86-64 disk has no DEVS:firmware/amdgpu/", .{});
         return null;
     };
     return path;
