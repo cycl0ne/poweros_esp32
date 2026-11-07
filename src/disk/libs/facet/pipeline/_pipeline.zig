@@ -3,9 +3,11 @@
 //! state, settled as it is made.
 //!
 //! What facet.library's pipelines draw:
-//! - triangles - lists, strips and fans - filled, one sample a pixel;
+//! - points, lines and triangles - lists, strips and fans - the triangles
+//!   filled or as their edges or corners, one sample a pixel or four where
+//!   the device draws them;
 //! - patches tessellated on the cores, into triangles or lines;
-//! - the vertex function's inputs read from up to four vertex buffers,
+//! - the vertex function's inputs read from up to sixteen vertex buffers,
 //!   an attribute a location, of floats or of bytes 0 to 1;
 //! - culled by their facing, front or back or both;
 //! - a depth test of any compare, the depth written or not, the triangles'
@@ -16,8 +18,10 @@
 //!   attachment its own way, and no logic op;
 //! - one viewport and one scissor, given here or set by commands.
 //!
-//! Anything else is refused as the pipeline is made
-//! (`error_feature_not_present`), rather than drawn otherwise than asked.
+//! Anything else is refused as the pipeline is made, rather than drawn
+//! otherwise than asked: `error_validation_failed` where Vulkan does not
+//! allow it on the device, `error_feature_not_present` where it does
+//! (since 1.133; CreateGraphicsPipelines' RESULT says which).
 
 const std = @import("std");
 const sdk = @import("sdk");

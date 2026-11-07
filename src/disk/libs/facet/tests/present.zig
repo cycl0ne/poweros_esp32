@@ -516,7 +516,7 @@ test "a swapchain's image copied out of and into, since 1.43" {
     // drawn into; sampling is not, their pixels being rows.
     const copies = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
     var refused: ?*facet.Swapchain = null;
-    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateSwapchain(device, &.{
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateSwapchain(device, &.{
         .surface = bench.surface,
         .min_image_count = 2,
         .image_format = .b8g8r8a8_unorm,
@@ -524,6 +524,21 @@ test "a swapchain's image copied out of and into, since 1.43" {
         .image_usage = copies | facet.IMAGE_USAGE_SAMPLED,
     }, &refused));
     try testing.expectEqual(null, refused);
+    // Nor more layers than the surface's one, nor a present mode it does
+    // not list (VUID-VkSwapchainCreateInfoKHR-imageArrayLayers-01275,
+    // -presentMode-01281; since 1.133).
+    for ([_]struct { u32, facet.PresentMode }{ .{ 2, .fifo }, .{ 1, .mailbox } }) |case| {
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateSwapchain(device, &.{
+            .surface = bench.surface,
+            .min_image_count = 2,
+            .image_format = .b8g8r8a8_unorm,
+            .image_extent = .{ .width = width, .height = height },
+            .image_usage = copies,
+            .image_array_layers = case[0],
+            .present_mode = case[1],
+        }, &refused));
+        try testing.expectEqual(null, refused);
+    }
 
     var chain: ?*facet.Swapchain = null;
     try testing.expectEqual(facet.Result.success, fb.CreateSwapchain(device, &.{

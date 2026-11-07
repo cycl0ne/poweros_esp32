@@ -24,9 +24,15 @@ const _query = @import("_query.zig");
 /// - `pool` - where the pool is written; null when it fails.
 ///
 /// RESULT:
-/// `success`; `error_feature_not_present` for a kind this device has not
-/// got (`Capabilities.occlusion_queries`, `pipeline_statistics_queries`),
-/// or for a bit that is none of Vulkan's; `error_initialization_failed`
+/// `success`; `error_feature_not_present` for occlusion queries on a
+/// device without them (`Capabilities.occlusion_queries`), which Vulkan
+/// has every device count; `error_validation_failed` for pipeline
+/// statistics on a device without the feature
+/// (`Capabilities.pipeline_statistics_queries`), a bit that is none of
+/// Vulkan's or a kind that is none of them
+/// (VUID-VkQueryPoolCreateInfo-queryType-00791, -queryType-00792,
+/// -queryType-parameter; `error_feature_not_present` until 1.133);
+/// `error_initialization_failed`
 /// for no queries at all, or a statistics pool that counts nothing;
 /// `error_out_of_host_memory`. A geometry shader's two statistics may be
 /// asked for since 1.43, there being no such stage to count: they read 0,
@@ -95,14 +101,14 @@ pub fn CreateQueryPool(base: *FacetBase, device: *facet.Device, info: *const fac
     switch (info.query_type) {
         .occlusion => if (!can.occlusion_queries) return .error_feature_not_present,
         .pipeline_statistics => {
-            if (!can.pipeline_statistics_queries) return .error_feature_not_present;
-            if (info.pipeline_statistics & ~facet.QUERY_PIPELINE_STATISTIC_ALL != 0) return .error_feature_not_present;
+            if (!can.pipeline_statistics_queries) return .error_validation_failed;
+            if (info.pipeline_statistics & ~facet.QUERY_PIPELINE_STATISTIC_ALL != 0) return .error_validation_failed;
             if (info.pipeline_statistics == 0) return .error_initialization_failed;
         },
         // With a clock or without: without one, the queue family's
         // timestamp_valid_bits of 0 is what says so (CmdWriteTimestamp).
         .timestamp => {},
-        else => return .error_feature_not_present,
+        else => return .error_validation_failed,
     }
     if (info.query_count == 0) return .error_initialization_failed;
     const made = _query.make(base.sys_base, owner, info) orelse return .error_out_of_host_memory;

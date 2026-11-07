@@ -129,13 +129,14 @@ the cores', in 1.119, item 41 in 1.120, item 89 in 1.121, item 15 in
 1.122, item 11 in 1.123, item 12 in 1.124, item 79 in 1.125, item 32 in
 1.126, item 31 in 1.127, item 29 in 1.128, item 9 in 1.129, item 10's
 first half of two in 1.130, item 42's half of two, the cores', in
-1.131, and item 90 in 1.132.**
+1.131, item 90 in 1.132, and item 81 in 1.133.**
 Each
 carries a *Done* note below saying what was actually built and where the
 item's own description turned out to be wrong - and several did. Things
 found while doing them became the items at the end of the list: 77 and 78
 from 1.80 and 1.81, 79, 80 and 81 from 1.82, 85 and 86 from 1.113,
-87 and 88 from scoping item 86, 89 from item 41, and 90 from item 42.
+87 and 88 from scoping item 86, 89 from item 41, 90 from item 42, and 91
+from item 81.
 
 Items 52, 28, 17, 22, 61, 43, 85, 48 and 42 are the ones split between devices:
 the cores draw every sampler as of 1.83, sample at a constant texel offset
@@ -2238,7 +2239,7 @@ right. lavapipe clears whichever attachment `colorAttachment` names
 
 ### 81. error_feature_not_present is returned from calls Vulkan does not list it for
 
-*result codes* &mdash; conformance-blocking, medium, also serves the shim
+*result codes* &mdash; conformance-blocking, medium, also serves the shim &mdash; **done in 1.133**
 
 Found while measuring item 49 against the specification. Vulkan lists
 `VK_ERROR_FEATURE_NOT_PRESENT` for `vkCreateDevice` alone: "If any requested
@@ -2300,6 +2301,34 @@ CreateDescriptorSetLayout and 7 in CreateSampler. There are 42 test lines
 beside them. Each site needs its VUID read before it moves, and that
 reading is the work. The code change is one enum member and one return
 value per site.
+
+**Done in 1.133**, in 39 lines of code, the generated interface aside,
+and 185 of tests, as the re-scope says: one member,
+`error_validation_failed = -1000011001`, and a return value at each
+site whose VUID was read. Two of the 72 sites answered for both kinds
+and were split - a set layout's kind of descriptor apart from its
+binding's number, a render pass of no subpass apart from one of more
+than four - so there were 74, and 35 moved: each a feature the device
+reports false, a limit it reports, or a value or a bit none of Vulkan
+1.0's. The other 39 refuse what Vulkan allows, each a gap with an item
+of its own, and keep `error_feature_not_present`; the 133 note in
+facet_version.zig lists both. The counts by file above were off - 20 in
+CreateRenderPass, 17 in CreateGraphicsPipelines - and there were 49 test
+lines, of which 22 expect the new code, besides one in FacetProbe.
+
+Mesa has nothing to port here: its drivers do not validate, and none of
+them answers `VK_ERROR_VALIDATION_FAILED`. The one place facet now
+answers otherwise than v3dv is QueueBindSparse, which v3dv answers
+`VK_ERROR_FEATURE_NOT_PRESENT` (v3dv_queue.c:1172-1178), a code the
+call's list does not have; on either device, asking it at all breaks
+VUID-vkQueueBindSparse-queuetype.
+
+Reading the VUIDs found one refusal of valid usage among the 35:
+CreateSampler turned away a border colour that is none of Vulkan's
+wherever it was given, and Vulkan asks for one of its own only where an
+address mode clamps to the border (VUID-VkSamplerCreateInfo-addressModeU-01078).
+Elsewhere the colour is not read, and it is taken now. The reading also
+found two more codes doing this work, which is item 91.
 
 ### 82. CreateShaderModule panicked on an under-aligned `code` instead of refusing it
 
@@ -2783,6 +2812,42 @@ has texels. The item was right in what it said; what it did not say is
 the policy for what Vulkan does not have: a block into a texel of
 another size is invalid usage (VUID-vkCmdCopyImage-srcImage-01548), and
 takes nothing, as two uncompressed images of two sizes already did.
+
+### 91. error_initialization_failed and error_format_not_supported are answered for invalid usage, from calls Vulkan does not list them for
+
+*result codes* &mdash; conformance-blocking, medium, found while doing item 81
+
+Item 81 moved the refusals that answered `error_feature_not_present` for
+invalid usage to `error_validation_failed`. Two more codes do the same
+work. `error_initialization_failed` is answered at 66 places -
+CreateRenderPass 15, CreateGraphicsPipelines 14, CreateFramebuffer 11,
+CreateSampler 5, CreateBufferView 4, the screen's surface 3, CreateDevice
+3, CreateQueryPool 2, the V3D driver 2, and CreateSwapchain, the window's
+surface, CreatePipelineLayout, CreateDescriptorSetLayout,
+CreateDescriptorPool, EndCommandBuffer and CreateCommandPool one each -
+for a reference past the attachments, a push constant range not on 4
+bytes, a pool of no queries, a size that is not the surface's and the
+like. Vulkan has it mean "Initialization of an object could not be
+completed for implementation-specific reasons", and lists it for
+vkCreateInstance, vkEnumeratePhysicalDevices, vkCreateDevice,
+vkCreateSwapchainKHR and some calls of extensions, not for most of
+those. `error_format_not_supported` is answered at 23 places besides
+GetPhysicalDeviceImageFormatProperties - CreateImageView 16,
+CreateRenderPass 3, and CreateImage, CreateBufferView, CreateSwapchain
+and CreateGraphicsPipelines one each - and Vulkan lists it for the format
+queries alone.
+
+The work is item 81's: each place's VUID read, and
+`error_validation_failed` where one forbids what was asked. Where none
+does, it is a refusal of valid usage that keeps a code until its own
+item, or, for CreateDevice, CreateSwapchain and the surfaces, a cause
+outside the program, which keeps the call's own code.
+`error_invalid_shader_nv` is not part of it: vk.xml lists
+`VK_ERROR_INVALID_SHADER_NV` for vkCreateShaderModule,
+vkCreateGraphicsPipelines and vkCreateComputePipelines alike, and item 4
+settled keeping it.
+
+> `grep -rn 'error_initialization_failed\|error_format_not_supported' src/disk/libs/facet/ --exclude-dir=tests`, comments aside, 07.11.2026; what each command lists is vk.xml's `errorcodes`.
 
 ## Deferred by the decision, not out of reach
 

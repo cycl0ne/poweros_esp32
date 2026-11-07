@@ -52,7 +52,10 @@ pub const PhysicalDevice = struct {
 /// what Vulkan calls a feature.
 ///
 /// There is a field here where a create call can refuse something: a `false`
-/// is what it would answer `error_feature_not_present` to. Until 1.82 this
+/// is what it would answer `error_feature_not_present` to - or, since
+/// 1.133, `error_validation_failed`, where Vulkan does not let a program
+/// ask for the thing on a device whose features or limits, made from the
+/// field, say it has not got it. Until 1.82 this
 /// was the public `facet.PhysicalDeviceFeatures` and
 /// GetPhysicalDeviceFeatures handed it straight out - 49 fields of facet's
 /// own naming against `VkPhysicalDeviceFeatures`' 55 `VkBool32` members,
@@ -76,7 +79,8 @@ pub const PhysicalDevice = struct {
 /// are facet's own surface and not Vulkan's.
 ///
 /// What the library does with a false has not changed: the call that would
-/// have used the thing refuses it, with `error_feature_not_present`.
+/// have used the thing refuses it, with `error_feature_not_present` or, as
+/// above, `error_validation_failed`.
 /// GetPhysicalDeviceFeatures answers Vulkan's 55 members, made from these
 /// (instance/getphysicaldevicefeatures.zig), which is where each Vulkan
 /// feature's reason for being true or false is written down.

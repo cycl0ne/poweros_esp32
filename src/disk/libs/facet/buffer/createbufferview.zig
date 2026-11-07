@@ -46,8 +46,10 @@ const Device = @import("../device/_device.zig").Device;
 ///
 /// RESULT:
 /// `success`; `error_format_not_supported` for a format no view takes;
-/// `error_feature_not_present` where the device has no texel buffers, or
-/// the buffer was not made for them; `error_initialization_failed` for an
+/// `error_feature_not_present` where the device has no texel buffers;
+/// `error_validation_failed` for a buffer not made for them
+/// (VUID-VkBufferViewCreateInfo-buffer-00932; `error_feature_not_present`
+/// until 1.133); `error_initialization_failed` for an
 /// offset that is not the limit's, a range that is not the format's size,
 /// a range of no texels, or a buffer with no memory;
 /// `error_out_of_host_memory`.
@@ -120,7 +122,7 @@ pub fn CreateBufferView(base: *FacetBase, device: *facet.Device, info: *const fa
     if (texels == .none) return .error_format_not_supported;
     const buffer = _objects.of(Buffer, info.buffer);
     const wanted = facet.BUFFER_USAGE_UNIFORM_TEXEL_BUFFER | facet.BUFFER_USAGE_STORAGE_TEXEL_BUFFER;
-    if (buffer.usage & wanted == 0) return .error_feature_not_present;
+    if (buffer.usage & wanted == 0) return .error_validation_failed;
     if (buffer.data == null) return .error_initialization_failed;
     const size = texels.bytes();
     const alignment = owner.physical.properties.limits.min_texel_buffer_offset_alignment;

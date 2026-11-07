@@ -345,6 +345,9 @@ test "the result codes, the barrier masks and the image layouts carry Vulkan's o
     try testing.expectEqual(@as(i32, -8), @intFromEnum(facet.Result.error_feature_not_present));
     try testing.expectEqual(@as(i32, -9), @intFromEnum(facet.Result.error_incompatible_driver));
     try testing.expectEqual(@as(i32, -10), @intFromEnum(facet.Result.error_too_many_objects));
+    // And Vulkan 1.0's since vk.xml took it into the version's own block,
+    // with the extension's number (1.133).
+    try testing.expectEqual(@as(i32, -1000011001), @intFromEnum(facet.Result.error_validation_failed));
 
     // VkPipelineStageFlagBits, every core bit of it (1.80).
     try testing.expectEqual(@as(u32, 1 << 1), facet.PIPELINE_STAGE_DRAW_INDIRECT);
@@ -596,7 +599,7 @@ test "memory bound a piece at a time: no family binds it, no format has a sparse
     try testing.expectEqual(facet.Result.success, rig.fb.CreateFence(device, &.{}, &fence));
     defer rig.fb.DestroyFence(device, fence);
     const bind = facet.BindSparseInfo{};
-    try testing.expectEqual(facet.Result.error_feature_not_present, rig.fb.QueueBindSparse(queue.?, 1, @ptrCast(&bind), fence));
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.QueueBindSparse(queue.?, 1, @ptrCast(&bind), fence));
     try testing.expectEqual(facet.Result.not_ready, rig.fb.GetFenceStatus(device, fence.?));
 
     // Vulkan's shapes, member for member, where they carry no sType: a
@@ -1612,7 +1615,7 @@ test "a submission plays its command buffers in order, then signals its fence; a
     try testing.expectEqual(facet.Result.success, rig.fb.CreateCommandPool(device, &.{}, &pool));
     defer rig.fb.DestroyCommandPool(device, pool);
     var commands: [2]?*facet.CommandBuffer = undefined;
-    try testing.expectEqual(facet.Result.error_feature_not_present, rig.fb.AllocateCommandBuffers(device, &.{ .command_pool = pool.?, .level = @enumFromInt(2), .command_buffer_count = 2 }, &commands));
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.AllocateCommandBuffers(device, &.{ .command_pool = pool.?, .level = @enumFromInt(2), .command_buffer_count = 2 }, &commands));
     try testing.expectEqual(facet.Result.success, rig.fb.AllocateCommandBuffers(device, &.{ .command_pool = pool.?, .command_buffer_count = 2 }, &commands));
 
     // Recorded outside a recording: nothing.

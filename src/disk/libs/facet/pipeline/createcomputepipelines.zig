@@ -33,10 +33,12 @@ const _shader = @import("../shader/_shader.zig");
 /// RESULT:
 /// `success`; else what the first that could not be made came to:
 /// `error_invalid_shader_nv` for a stage that is not of a compute function
-/// the module has; `error_feature_not_present` for a workgroup over the
-/// device's limits, or for a stage whose `specialization_info` names a
-/// constant (since 1.80); `error_out_of_host_memory`. Those made are made either
-/// way.
+/// the module has; `error_validation_failed` for a workgroup over the
+/// device's limits (VUID-RuntimeSpirv-x-06429, -y-06430, -z-06431,
+/// -x-06432, -Workgroup-06530; `error_feature_not_present` until 1.133);
+/// `error_feature_not_present` for a stage whose `specialization_info`
+/// names a constant (since 1.80); `error_out_of_host_memory`. Those made
+/// are made either way.
 ///
 /// BEHAVIOR:
 /// A compute function runs on the cores, whichever device it was made on: a
@@ -119,7 +121,7 @@ pub fn CreateComputePipelines(base: *FacetBase, device: *facet.Device, cache: ?*
             holds <= limits.max_compute_work_group_invocations and
             shared <= limits.max_compute_shared_memory_size;
         if (!fits) {
-            if (result == .success) result = .error_feature_not_present;
+            if (result == .success) result = .error_validation_failed;
             continue;
         }
         const made = _objects.create(base.sys_base, Pipeline) orelse {

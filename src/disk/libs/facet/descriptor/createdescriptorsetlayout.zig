@@ -27,9 +27,11 @@ const Sampler = @import("../sampler/_sampler.zig").Sampler;
 /// - `layout` - where the layout is written; null when it fails.
 ///
 /// RESULT:
-/// `success`; `error_feature_not_present` for a kind of descriptor
-/// facet.library does not have, for samplers of the layout's own on a
-/// device without `Capabilities.immutable_samplers`, a binding
+/// `success`; `error_validation_failed` for a kind of descriptor that is
+/// none of Vulkan's (VUID-VkDescriptorSetLayoutBinding-descriptorType-parameter;
+/// `error_feature_not_present` until 1.133); `error_feature_not_present`
+/// for a kind the device has not got (below), for samplers of the layout's
+/// own on a device without `Capabilities.immutable_samplers`, a binding
 /// numbered past 255, or more than 65535 descriptors;
 /// `error_initialization_failed` for a binding given twice;
 /// `error_out_of_host_memory`.
@@ -101,7 +103,8 @@ pub fn CreateDescriptorSetLayout(base: *FacetBase, device: *facet.Device, info: 
     var holds_samplers = false;
     var held_slots: u32 = 0;
     for (given) |binding| {
-        if (!_descriptor.known(binding.descriptor_type) or binding.binding > 255) return .error_feature_not_present;
+        if (!_descriptor.known(binding.descriptor_type)) return .error_validation_failed;
+        if (binding.binding > 255) return .error_feature_not_present;
         // A storage image is written through the texture the library keeps,
         // which a device with a layout of its own does not use.
         if (binding.descriptor_type == .storage_image and !owner.physical.can.storage_images) return .error_feature_not_present;

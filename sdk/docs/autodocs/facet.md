@@ -258,8 +258,10 @@ fn AllocateCommandBuffers(base: *FacetBase, device: *facet.Device, info: *const 
 
 **RESULT**
 
-`success`; `error_feature_not_present` for a level there is not;
-`error_out_of_host_memory`, none allocated.
+`success`; `error_validation_failed` for a level that is none of
+Vulkan's (VUID-VkCommandBufferAllocateInfo-level-parameter;
+`error_feature_not_present` until 1.133); `error_out_of_host_memory`,
+none allocated.
 
 **BEHAVIOR**
 
@@ -3742,8 +3744,10 @@ fn CreateBufferView(base: *FacetBase, device: *facet.Device, info: *const facet.
 **RESULT**
 
 `success`; `error_format_not_supported` for a format no view takes;
-`error_feature_not_present` where the device has no texel buffers, or
-the buffer was not made for them; `error_initialization_failed` for an
+`error_feature_not_present` where the device has no texel buffers;
+`error_validation_failed` for a buffer not made for them
+(VUID-VkBufferViewCreateInfo-buffer-00932; `error_feature_not_present`
+until 1.133); `error_initialization_failed` for an
 offset that is not the limit's, a range that is not the format's size,
 a range of no texels, or a buffer with no memory;
 `error_out_of_host_memory`.
@@ -3910,10 +3914,12 @@ fn CreateComputePipelines(base: *FacetBase, device: *facet.Device, cache: ?*face
 
 `success`; else what the first that could not be made came to:
 `error_invalid_shader_nv` for a stage that is not of a compute function
-the module has; `error_feature_not_present` for a workgroup over the
-device's limits, or for a stage whose `specialization_info` names a
-constant (since 1.80); `error_out_of_host_memory`. Those made are made either
-way.
+the module has; `error_validation_failed` for a workgroup over the
+device's limits (VUID-RuntimeSpirv-x-06429, -y-06430, -z-06431,
+-x-06432, -Workgroup-06530; `error_feature_not_present` until 1.133);
+`error_feature_not_present` for a stage whose `specialization_info`
+names a constant (since 1.80); `error_out_of_host_memory`. Those made
+are made either way.
 
 **BEHAVIOR**
 
@@ -4058,9 +4064,11 @@ fn CreateDescriptorSetLayout(base: *FacetBase, device: *facet.Device, info: *con
 
 **RESULT**
 
-`success`; `error_feature_not_present` for a kind of descriptor
-facet.library does not have, for samplers of the layout's own on a
-device without `Capabilities.immutable_samplers`, a binding
+`success`; `error_validation_failed` for a kind of descriptor that is
+none of Vulkan's (VUID-VkDescriptorSetLayoutBinding-descriptorType-parameter;
+`error_feature_not_present` until 1.133); `error_feature_not_present`
+for a kind the device has not got (below), for samplers of the layout's
+own on a device without `Capabilities.immutable_samplers`, a binding
 numbered past 255, or more than 65535 descriptors;
 `error_initialization_failed` for a binding given twice;
 `error_out_of_host_memory`.
@@ -4448,8 +4456,16 @@ function that writes other
 than the subpass's colour attachments (`shader.fragmentOutputs`, since
 1.51), or for a fragment entry whose `varyings` word names no fixed
 form (since 1.75); `error_feature_not_present`
-for state facet.library does not draw (see BEHAVIOR), among it a
-stage whose `specialization_info` names a constant (since 1.80);
+for state Vulkan allows and facet.library does not draw (see BEHAVIOR),
+among it a stage whose `specialization_info` names a constant (since
+1.80); `error_validation_failed` for state Vulkan does not allow on the
+device (since 1.133, `error_feature_not_present` before): a feature it
+reports false - `depth_clamp`, `depth_bounds`, `independent_blend`,
+`logic_op`, `multi_viewport`, `dual_src_blend`, `sample_rate_shading`,
+`alpha_to_one`, and `geometry_shader` for the topologies of adjacency -
+a sample count it does not draw, a vertex binding, stride, attribute or
+location past its limits, or a topology, polygon mode, blend factor or
+blend operation that is none of Vulkan 1.0's;
 `error_format_not_supported` for an attribute in a format it does not
 read; `error_initialization_failed` for state that does not hold
 together - an attribute of a binding not given, no viewport where it is
@@ -4488,7 +4504,7 @@ value this library has not is `error_invalid_shader_nv`. The control entry
 says the floats the patch carries from the one function to the other
 (`shader.control`, `Patch.ownValues`, since 1.50), more of them than
 `PhysicalDeviceLimits.max_tessellation_patch_components` being
-`error_feature_not_present`.
+`error_validation_failed` (`error_feature_not_present` until 1.133).
 
 What it draws: points, lines and line strips, and triangle lists, strips
 and fans, a restart index ending a strip or a fan; triangles filled, or as
@@ -5209,9 +5225,13 @@ fn CreatePipelineLayout(base: *FacetBase, device: *facet.Device, info: *const fa
 
 **RESULT**
 
-`success`; `error_feature_not_present` for more than four sets, or
-push constants past 128 bytes; `error_initialization_failed` for a range
-not on 4 bytes; `error_out_of_host_memory`.
+`success`; `error_validation_failed` for more than four sets, or push
+constants past 128 bytes: the device's `max_bound_descriptor_sets` and
+`max_push_constants_size`, which Vulkan holds a layout to
+(VUID-VkPipelineLayoutCreateInfo-setLayoutCount-00286,
+VUID-VkPushConstantRange-offset-00294, -size-00298), and
+`error_feature_not_present` until 1.133; `error_initialization_failed`
+for a range not on 4 bytes; `error_out_of_host_memory`.
 
 **BEHAVIOR**
 
@@ -5273,9 +5293,15 @@ fn CreateQueryPool(base: *FacetBase, device: *facet.Device, info: *const facet.Q
 
 **RESULT**
 
-`success`; `error_feature_not_present` for a kind this device has not
-got (`Capabilities.occlusion_queries`, `pipeline_statistics_queries`),
-or for a bit that is none of Vulkan's; `error_initialization_failed`
+`success`; `error_feature_not_present` for occlusion queries on a
+device without them (`Capabilities.occlusion_queries`), which Vulkan
+has every device count; `error_validation_failed` for pipeline
+statistics on a device without the feature
+(`Capabilities.pipeline_statistics_queries`), a bit that is none of
+Vulkan's or a kind that is none of them
+(VUID-VkQueryPoolCreateInfo-queryType-00791, -queryType-00792,
+-queryType-parameter; `error_feature_not_present` until 1.133);
+`error_initialization_failed`
 for no queries at all, or a statistics pool that counts nothing;
 `error_out_of_host_memory`. A geometry shader's two statistics may be
 asked for since 1.43, there being no such stage to count: they read 0,
@@ -5368,7 +5394,15 @@ fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const facet.
 **RESULT**
 
 `success`; `error_feature_not_present` for a pass facet.library does
-not draw (BEHAVIOR); `error_format_not_supported` for an attachment in
+not draw (BEHAVIOR); `error_validation_failed` for no subpass at all, or
+a subpass of another bind point than graphics, of more colour
+attachments than `PhysicalDeviceLimits.max_color_attachments`, or of a
+flag that is none of Vulkan's or facet.library's own
+(VUID-VkRenderPassCreateInfo-subpassCount-arraylength,
+VUID-VkSubpassDescription-pipelineBindPoint-04952,
+-colorAttachmentCount-00845, -flags-parameter;
+`error_feature_not_present` until 1.133);
+`error_format_not_supported` for an attachment in
 a format it cannot draw into, or read as an input attachment;
 `error_initialization_failed` for a subpass that names an attachment
 there is not, or reads one it draws into itself without saying so in a
@@ -5555,8 +5589,9 @@ blended its own way, into a plane of each tile's own. The flag wants a
 device whose `several_outputs` is true: the cores, not the V3D, whose
 fragment programs are the fixed forms and each write the one colour;
 there it is `error_feature_not_present`, and a subpass without it is
-drawn as it always was. Any other bit in `flags` is
-`error_feature_not_present` too.
+drawn as it always was. Any other bit in `flags` is none of Vulkan
+1.0's (VUID-VkSubpassDescription-flags-parameter): `error_validation_failed`
+since 1.133, `error_feature_not_present` before.
 
 Attachments a subpass does not name are left as they are. The
 dependencies say nothing of what waits for what - a queue's commands
@@ -5624,10 +5659,15 @@ fn CreateSampler(base: *FacetBase, device: *facet.Device, info: *const facet.Sam
 
 **RESULT**
 
-`success`; `error_feature_not_present` for an address mode that is
-none of Vulkan's five, for a filter, mipmap mode, compare operation or
-border colour that is not one of Vulkan's, or for
-`unnormalized_coordinates` on a device that reads none
+`success`; `error_validation_failed` for an address mode that is none
+of the five (Vulkan 1.0's four and `mirror_clamp_to_edge`), or for a
+filter, mipmap mode or compare operation that is none of Vulkan 1.0's,
+or, where an address mode clamps to the border, for a border colour
+that is none of its six
+(VUID-VkSamplerCreateInfo-addressModeU-parameter and the other members'
+own, -compareEnable-01080, -addressModeU-01078;
+`error_feature_not_present` until 1.133); `error_feature_not_present`
+for `unnormalized_coordinates` on a device that reads none
 (`Capabilities.unnormalized_coordinates`);
 `error_initialization_failed` for `unnormalized_coordinates` asked for
 beside something Vulkan does not allow with it;
@@ -6005,9 +6045,13 @@ no room for that many pictures; `error_native_window_in_use` when the
 surface has a swapchain that is not `old_swapchain`;
 `error_initialization_failed` for a size that is not the surface's;
 `error_format_not_supported` for a format that is not its;
-`error_feature_not_present` for a use, a present mode or layers it does
-not have; `error_surface_lost` when the window the surface is over has
-closed; `error_out_of_host_memory`.
+`error_validation_failed` for a use, a present mode or layers the
+surface does not have, as GetPhysicalDeviceSurfaceCapabilities and
+GetPhysicalDeviceSurfacePresentModes give them
+(VUID-VkSwapchainCreateInfoKHR-presentMode-01427, -imageArrayLayers-01275,
+-presentMode-01281; `error_feature_not_present` until 1.133);
+`error_surface_lost` when the window the surface is over has closed;
+`error_out_of_host_memory`.
 
 **BEHAVIOR**
 
@@ -9732,18 +9776,19 @@ fn QueueBindSparse(base: *FacetBase, queue: *facet.Queue, count: u32, binds: ?[*
 
 **RESULT**
 
-`error_feature_not_present`, and nothing bound, waited for or
-signalled.
+`error_validation_failed`, and nothing bound, waited for or signalled.
+It was `error_feature_not_present` until 1.133.
 
 **BEHAVIOR**
 
 Vulkan has the queue be of a family with `QUEUE_SPARSE_BINDING`
 (VUID-vkQueueBindSparse-queuetype), and no family of either device has
 it, `sparse_binding` being false; so no call a program may make reaches
-here, and one that does is answered as v3dv answers it
-(`v3dv_QueueBindSparse`, v3dv_queue.c:1170-1178). That code is not
-one of the call's own, a lost device and no memory, which are for calls
-a program may make. Vulkan has the call carried all the same.
+here, and one that does breaks that rule, which is what
+`error_validation_failed` says. v3dv answers `VK_ERROR_FEATURE_NOT_PRESENT`
+(`v3dv_QueueBindSparse`, v3dv_queue.c:1172-1178), a code Vulkan does
+not list for the call; the call's own, a lost device and no memory, are
+for calls a program may make. Vulkan has the call carried all the same.
 
 **CONTEXT**
 

@@ -115,7 +115,12 @@ pub const Result = enum(i32) {
     /// `error_layer_not_present` no call takes a list of them yet.
     /// (Since 1.80.)
     error_extension_not_present = -7,
-    /// What was asked for is not something this library does.
+    /// What was asked for is not something this library does. Vulkan lists
+    /// it for CreateDevice alone, for a feature asked for that the device
+    /// has not got. facet answers it besides where a call is asked for
+    /// what Vulkan allows and a device cannot do, each such refusal an item
+    /// of docs/facet-vulkan10.md until it is done. What breaks one of
+    /// Vulkan's rules is `error_validation_failed` since 1.133.
     error_feature_not_present = -8,
     /// There is nothing here that provides the interface asked for: the
     /// version a program gives CreateInstance is newer than the
@@ -136,6 +141,20 @@ pub const Result = enum(i32) {
     /// not a code to hand back - and the name is here for a program
     /// written against Vulkan that switches on it. (Since 1.80.)
     error_unknown = -13,
+    /// What was asked breaks one of Vulkan's valid-usage rules, and the
+    /// call saw it: a feature the device has not got, a limit it reports
+    /// passed, or a value or a bit that is none of Vulkan's. Vulkan's
+    /// `VK_ERROR_VALIDATION_FAILED`, which vk.xml requires in version 1.0's
+    /// own block ("Retroactively promoted from VK_EXT_debug_report for
+    /// compatibility with VulkanSC") with the extension's number, so that a
+    /// program built against older headers knows it as
+    /// `VK_ERROR_VALIDATION_FAILED_EXT`. "Any command returning a VkResult
+    /// may return VK_ERROR_VALIDATION_FAILED if a violation of valid usage
+    /// is detected." Mesa's drivers do not look, and leave such a call
+    /// undefined; facet looks where it would otherwise do other than what
+    /// was asked. (Since 1.133: those calls answered
+    /// `error_feature_not_present` until then.)
+    error_validation_failed = -1000011001,
     /// A descriptor pool has no room for another set.
     error_out_of_pool_memory = -1000069000,
     /// A shader module's code is not a `shader.Code`, or names no
@@ -683,10 +702,12 @@ pub const PhysicalDeviceProperties = extern struct {
 /// There is no `DeviceCreateInfo.pEnabledFeatures` step in Vulkan's sense
 /// here. `DeviceCreateInfo.enabled_features` is read and anything asked for
 /// that the device does not have is refused with
-/// `error_feature_not_present`, which Vulkan requires; what Vulkan leaves
-/// undefined - using a feature without having enabled it - this library
-/// refuses at the call instead, which is a permitted way to implement
-/// undefined behaviour and the more useful one.
+/// `error_feature_not_present`, which Vulkan requires. Using a feature the
+/// device has not got, which Vulkan leaves undefined, this library refuses
+/// at the call instead, with `error_validation_failed` since 1.133: a
+/// permitted way to implement undefined behaviour, and the more useful
+/// one. A feature the device has is not refused for not having been
+/// enabled.
 pub const PhysicalDeviceFeatures = extern struct {
 
     // --- the draw and its state ---
@@ -951,7 +972,8 @@ pub const DeviceCreateInfo = extern struct {
     /// `error_feature_not_present`, which Vulkan requires of vkCreateDevice.
     /// What Vulkan then leaves *undefined* - using a feature without having
     /// asked for it - this library does not: every call that would use one
-    /// checks the device and refuses, as it did before this field existed,
+    /// checks the device and refuses (`error_validation_failed` since
+    /// 1.133), as it did before this field existed,
     /// so a program that asks for nothing is not thereby given a device
     /// that behaves unpredictably. Vulkan permits an implementation to do
     /// anything at all in that case, and refusing is the useful thing to do.

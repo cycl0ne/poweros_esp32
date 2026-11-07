@@ -26,7 +26,15 @@ const _surface = @import("../surface/_surface.zig");
 ///
 /// RESULT:
 /// `success`; `error_feature_not_present` for a pass facet.library does
-/// not draw (BEHAVIOR); `error_format_not_supported` for an attachment in
+/// not draw (BEHAVIOR); `error_validation_failed` for no subpass at all, or
+/// a subpass of another bind point than graphics, of more colour
+/// attachments than `PhysicalDeviceLimits.max_color_attachments`, or of a
+/// flag that is none of Vulkan's or facet.library's own
+/// (VUID-VkRenderPassCreateInfo-subpassCount-arraylength,
+/// VUID-VkSubpassDescription-pipelineBindPoint-04952,
+/// -colorAttachmentCount-00845, -flags-parameter;
+/// `error_feature_not_present` until 1.133);
+/// `error_format_not_supported` for an attachment in
 /// a format it cannot draw into, or read as an input attachment;
 /// `error_initialization_failed` for a subpass that names an attachment
 /// there is not, or reads one it draws into itself without saying so in a
@@ -212,8 +220,9 @@ const _surface = @import("../surface/_surface.zig");
 /// device whose `several_outputs` is true: the cores, not the V3D, whose
 /// fragment programs are the fixed forms and each write the one colour;
 /// there it is `error_feature_not_present`, and a subpass without it is
-/// drawn as it always was. Any other bit in `flags` is
-/// `error_feature_not_present` too.
+/// drawn as it always was. Any other bit in `flags` is none of Vulkan
+/// 1.0's (VUID-VkSubpassDescription-flags-parameter): `error_validation_failed`
+/// since 1.133, `error_feature_not_present` before.
 ///
 /// Attachments a subpass does not name are left as they are. The
 /// dependencies say nothing of what waits for what - a queue's commands
@@ -253,7 +262,8 @@ const _surface = @import("../surface/_surface.zig");
 pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const facet.RenderPassCreateInfo, render_pass: *?*facet.RenderPass) facet.Result {
     render_pass.* = null;
     const owner = _objects.of(Device, device);
-    if (info.subpass_count == 0 or info.subpass_count > _render.most_subpasses) return .error_feature_not_present;
+    if (info.subpass_count == 0) return .error_validation_failed;
+    if (info.subpass_count > _render.most_subpasses) return .error_feature_not_present;
     if (info.attachment_count > _render.most_attachments) return .error_feature_not_present;
     const attachments: []const facet.AttachmentDescription = if (info.attachments) |given| given[0..info.attachment_count] else &.{};
     var plan = _render.RenderPass{ .device = owner, .attachment_count = info.attachment_count, .subpass_count = info.subpass_count };
@@ -269,7 +279,7 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
     // its depth into the image's rows and reads it in again (since 1.52).
     var depths: [_render.most_attachments]?u32 = @splat(null);
     for (info.subpasses[0..info.subpass_count], 0..) |subpass, number| {
-        if (subpass.pipeline_bind_point != .graphics) return .error_feature_not_present;
+        if (subpass.pipeline_bind_point != .graphics) return .error_validation_failed;
         // The samples every attachment of the subpass holds, which Vulkan
         // has be one count (VUID-VkSubpassDescription-pColorAttachments-09430,
         // VUID-VkSubpassDescription-pDepthStencilAttachment-01418): the
@@ -333,7 +343,8 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                 if (subpass.depth_stencil_attachment) |depth| if (depth.attachment == reference.attachment) return .error_initialization_failed;
             }
         }
-        if (subpass.color_attachment_count > _render.most_colors) return .error_feature_not_present;
+        // The device's `max_color_attachments` (VUID-VkSubpassDescription-colorAttachmentCount-00845).
+        if (subpass.color_attachment_count > _render.most_colors) return .error_validation_failed;
         // None, on a device that draws a subpass of none (since 1.113).
         if (subpass.color_attachment_count == 0 and !owner.physical.can.colorless_subpasses) return .error_feature_not_present;
         const colors = colorsOf(subpass);
@@ -343,7 +354,7 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
         // it the subpass is a part for each of them, played over again.
         const together = subpass.flags & facet.SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER != 0;
         if (together and !owner.physical.can.several_outputs) return .error_feature_not_present;
-        if (subpass.flags & ~facet.SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER != 0) return .error_feature_not_present;
+        if (subpass.flags & ~facet.SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER != 0) return .error_validation_failed;
         // A subpass that reads what it draws is a part of its own: what it
         // reads is the tile as this part starts, so it does not go on in
         // the part before it (since 1.64).

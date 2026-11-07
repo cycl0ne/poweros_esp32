@@ -28,10 +28,15 @@ const Sampler = _sampler.Sampler;
 /// - `sampler` - where the sampler is written; null when it fails.
 ///
 /// RESULT:
-/// `success`; `error_feature_not_present` for an address mode that is
-/// none of Vulkan's five, for a filter, mipmap mode, compare operation or
-/// border colour that is not one of Vulkan's, or for
-/// `unnormalized_coordinates` on a device that reads none
+/// `success`; `error_validation_failed` for an address mode that is none
+/// of the five (Vulkan 1.0's four and `mirror_clamp_to_edge`), or for a
+/// filter, mipmap mode or compare operation that is none of Vulkan 1.0's,
+/// or, where an address mode clamps to the border, for a border colour
+/// that is none of its six
+/// (VUID-VkSamplerCreateInfo-addressModeU-parameter and the other members'
+/// own, -compareEnable-01080, -addressModeU-01078;
+/// `error_feature_not_present` until 1.133); `error_feature_not_present`
+/// for `unnormalized_coordinates` on a device that reads none
 /// (`Capabilities.unnormalized_coordinates`);
 /// `error_initialization_failed` for `unnormalized_coordinates` asked for
 /// beside something Vulkan does not allow with it;
@@ -145,19 +150,25 @@ pub fn CreateSampler(base: *FacetBase, device: *facet.Device, info: *const facet
             if (mode != .clamp_to_edge and mode != .clamp_to_border) return .error_initialization_failed;
         }
     }
-    const mag = _sampler.filterOf(info.mag_filter) orelse return .error_feature_not_present;
-    const min = _sampler.filterOf(info.min_filter) orelse return .error_feature_not_present;
+    const mag = _sampler.filterOf(info.mag_filter) orelse return .error_validation_failed;
+    const min = _sampler.filterOf(info.min_filter) orelse return .error_validation_failed;
     const mipmap: texture.Mipmap = switch (info.mipmap_mode) {
         .nearest => .nearest,
         .linear => .linear,
-        else => return .error_feature_not_present,
+        else => return .error_validation_failed,
     };
     var wrap: [3]texture.Wrap = undefined;
     for (&wrap, [3]facet.SamplerAddressMode{ info.address_mode_u, info.address_mode_v, info.address_mode_w }) |*into, mode| {
-        into.* = _sampler.wrapOf(mode) orelse return .error_feature_not_present;
+        into.* = _sampler.wrapOf(mode) orelse return .error_validation_failed;
     }
-    const border = _sampler.borderOf(info.border_color) orelse return .error_feature_not_present;
-    const compare: texture.Compare = if (!info.compare_enable) .none else _sampler.compareOf(info.compare_op) orelse return .error_feature_not_present;
+    // The border colour is read only where an address mode clamps to it,
+    // and Vulkan asks for one of its own only there
+    // (VUID-VkSamplerCreateInfo-addressModeU-01078): elsewhere it may be
+    // anything, and is not looked at. Until 1.133 it was refused wherever
+    // it was none of Vulkan's.
+    const bordered = std.mem.indexOfScalar(texture.Wrap, &wrap, .clamp_to_border) != null;
+    const border = if (!bordered) 0 else _sampler.borderOf(info.border_color) orelse return .error_validation_failed;
+    const compare: texture.Compare = if (!info.compare_enable) .none else _sampler.compareOf(info.compare_op) orelse return .error_validation_failed;
     const made = _objects.create(base.sys_base, Sampler) orelse return .error_out_of_host_memory;
     made.* = .{
         .device = owner,

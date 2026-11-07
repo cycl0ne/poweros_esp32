@@ -24,8 +24,10 @@ const _command = @import("_command.zig");
 ///   them; all null when it fails.
 ///
 /// RESULT:
-/// `success`; `error_feature_not_present` for a level there is not;
-/// `error_out_of_host_memory`, none allocated.
+/// `success`; `error_validation_failed` for a level that is none of
+/// Vulkan's (VUID-VkCommandBufferAllocateInfo-level-parameter;
+/// `error_feature_not_present` until 1.133); `error_out_of_host_memory`,
+/// none allocated.
 ///
 /// BEHAVIOR:
 /// Each buffer starts with nothing recorded, ready for
@@ -58,7 +60,7 @@ const _command = @import("_command.zig");
 pub fn AllocateCommandBuffers(base: *FacetBase, device: *facet.Device, info: *const facet.CommandBufferAllocateInfo, buffers: [*]?*facet.CommandBuffer) facet.Result {
     const count = info.command_buffer_count;
     for (buffers[0..count]) |*buffer| buffer.* = null;
-    if (info.level != .primary and info.level != .secondary) return .error_feature_not_present;
+    if (info.level != .primary and info.level != .secondary) return .error_validation_failed;
     const pool = _objects.of(_command.CommandPool, info.command_pool);
     const sys = base.sys_base;
     for (buffers[0..count], 0..) |*buffer, made_so_far| {

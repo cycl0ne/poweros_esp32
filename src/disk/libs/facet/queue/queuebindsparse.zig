@@ -22,17 +22,18 @@ const FacetBase = @import("../facet_base.zig").FacetBase;
 /// - `fence` - would be signalled when they are bound; may be null.
 ///
 /// RESULT:
-/// `error_feature_not_present`, and nothing bound, waited for or
-/// signalled.
+/// `error_validation_failed`, and nothing bound, waited for or signalled.
+/// It was `error_feature_not_present` until 1.133.
 ///
 /// BEHAVIOR:
 /// Vulkan has the queue be of a family with `QUEUE_SPARSE_BINDING`
 /// (VUID-vkQueueBindSparse-queuetype), and no family of either device has
 /// it, `sparse_binding` being false; so no call a program may make reaches
-/// here, and one that does is answered as v3dv answers it
-/// (`v3dv_QueueBindSparse`, v3dv_queue.c:1170-1178). That code is not
-/// one of the call's own, a lost device and no memory, which are for calls
-/// a program may make. Vulkan has the call carried all the same.
+/// here, and one that does breaks that rule, which is what
+/// `error_validation_failed` says. v3dv answers `VK_ERROR_FEATURE_NOT_PRESENT`
+/// (`v3dv_QueueBindSparse`, v3dv_queue.c:1172-1178), a code Vulkan does
+/// not list for the call; the call's own, a lost device and no memory, are
+/// for calls a program may make. Vulkan has the call carried all the same.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -62,5 +63,5 @@ pub fn QueueBindSparse(base: *FacetBase, queue: *facet.Queue, count: u32, binds:
     _ = count;
     _ = binds;
     _ = fence;
-    return .error_feature_not_present;
+    return .error_validation_failed;
 }

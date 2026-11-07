@@ -494,6 +494,11 @@ const PipelineState = struct {
     /// each colour attachment where facet's own are given (since 1.51).
     blend_constants: [4]f32 = @splat(0),
     attachment_constants: ?[*]const [4]f32 = null,
+    /// A logic op asked for, which no device has (since 1.133).
+    logic_op: bool = false,
+    /// The viewports and the scissors the viewport state counts, of which
+    /// it points at one (since 1.133).
+    viewports: u32 = 1,
 };
 
 fn makePipeline(bench: *Bench, state: PipelineState) struct { facet.Result, ?*facet.Pipeline } {
@@ -511,11 +516,12 @@ fn makePipeline(bench: *Bench, state: PipelineState) struct { facet.Result, ?*fa
     const assembly = facet.PipelineInputAssemblyStateCreateInfo{ .topology = state.topology, .primitive_restart_enable = state.restart };
     const viewport = facet.Viewport{ .width = state.width, .height = state.height, .min_depth = state.min_depth, .max_depth = state.max_depth };
     const scissor = facet.Rect2D{ .extent = .{ .width = @intFromFloat(state.width), .height = @intFromFloat(state.height) } };
-    const view = facet.PipelineViewportStateCreateInfo{ .viewports = @ptrCast(&viewport), .scissors = @ptrCast(&scissor) };
+    const view = facet.PipelineViewportStateCreateInfo{ .viewport_count = state.viewports, .viewports = @ptrCast(&viewport), .scissor_count = state.viewports, .scissors = @ptrCast(&scissor) };
     var blends: [4]facet.PipelineColorBlendAttachmentState = @splat(state.blend);
     if (state.second_blend) |other| blends[1] = other;
     if (state.third_blend) |other| blends[2] = other;
     const blend = facet.PipelineColorBlendStateCreateInfo{
+        .logic_op_enable = state.logic_op,
         .attachment_count = state.blend_count,
         .attachments = &blends,
         .blend_constants = state.blend_constants,
@@ -1204,7 +1210,7 @@ test "descriptor sets: a layout's bindings as slots, written and copied as shade
     fb.DestroyDescriptorSetLayout(device, none);
     none = null;
     const nothing = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = @enumFromInt(11) };
-    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&nothing) }, &none));
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&nothing) }, &none));
     var kept: ?*facet.Sampler = null;
     try testing.expectEqual(facet.Result.success, fb.CreateSampler(device, &.{}, &kept));
     defer fb.DestroySampler(device, kept);
@@ -1346,16 +1352,16 @@ test "a pipeline: its functions and its state settled as it is made; what facet.
 
     const Change = struct { facet.Result, PipelineState };
     var changes: [9]Change = @splat(.{ .success, base });
-    changes[0][0] = .error_feature_not_present;
+    changes[0][0] = .error_validation_failed;
     changes[0][1].topology = @enumFromInt(11);
     // A vertex binding whose stride is past the most.
-    changes[1][0] = .error_feature_not_present;
+    changes[1][0] = .error_validation_failed;
     changes[1][1].stride = 4096;
-    changes[2][0] = .error_feature_not_present;
+    changes[2][0] = .error_validation_failed;
     changes[2][1].blend = .{ .blend_enable = true, .src_color_blend_factor = @enumFromInt(15), .dst_color_blend_factor = .one };
-    changes[3][0] = .error_feature_not_present;
+    changes[3][0] = .error_validation_failed;
     changes[3][1].blend = .{ .blend_enable = true, .color_blend_op = @enumFromInt(5) };
-    changes[4][0] = .error_feature_not_present;
+    changes[4][0] = .error_validation_failed;
     changes[4][1].raster = .{ .polygon_mode = @enumFromInt(3) };
     changes[5][0] = .error_format_not_supported;
     changes[5][1].attributes = &.{.{ .location = 0, .binding = 0, .format = .r5g6b5_unorm_pack16 }};
@@ -2291,7 +2297,7 @@ test "a compute group of many invocations, which share memory" {
     var refused: [1]?*facet.Pipeline = undefined;
     for ([_][*:0]const u8{ "crowd", "greedy" }) |name| {
         const over = facet.ComputePipelineCreateInfo{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = code, .name = name }, .layout = layout };
-        try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateComputePipelines(device, null, 1, @ptrCast(&over), &refused));
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateComputePipelines(device, null, 1, @ptrCast(&over), &refused));
         try testing.expectEqual(@as(?*facet.Pipeline, null), refused[0]);
     }
 
@@ -3334,7 +3340,7 @@ test "a buffer read as texels of a format: a uniform one read, a storage one wri
     try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateBufferView(device, &.{ .buffer = floats, .format = .d16_unorm }, &none));
     try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateBufferView(device, &.{ .buffer = floats, .format = .bc1_rgb_unorm_block }, &none));
     const plain, _ = try bench.buffer(64, facet.BUFFER_USAGE_STORAGE_BUFFER);
-    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateBufferView(device, &.{ .buffer = plain, .format = .r32_sfloat }, &none));
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateBufferView(device, &.{ .buffer = plain, .format = .r32_sfloat }, &none));
     try testing.expectEqual(facet.Result.error_initialization_failed, fb.CreateBufferView(device, &.{ .buffer = floats, .format = .r32g32b32a32_sfloat, .offset = 4 }, &none));
     try testing.expectEqual(facet.Result.error_initialization_failed, fb.CreateBufferView(device, &.{ .buffer = floats, .format = .r32g32b32a32_sfloat, .offset = 64 }, &none));
     try testing.expectEqual(facet.Result.error_initialization_failed, fb.CreateBufferView(device, &.{ .buffer = floats, .format = .r32g32b32a32_sfloat, .range = 8 }, &none));
@@ -4256,7 +4262,7 @@ test "tessellation: patches made into triangles and lines, on the picture where 
     // Refused: more floats for the patch than the device holds, and a
     // spacing of a value this library has not.
     result, _ = Made.of(&bench, bent, layout, pass, "main", "hoard", "quads", 4, .patch_list, .{});
-    try testing.expectEqual(facet.Result.error_feature_not_present, result);
+    try testing.expectEqual(facet.Result.error_validation_failed, result);
     result, _ = Made.of(&bench, bent, layout, pass, "main", "carry", "nohow", 4, .patch_list, .{});
     try testing.expectEqual(facet.Result.error_invalid_shader_nv, result);
 
@@ -4964,7 +4970,7 @@ test "four samples a pixel in a render pass, a framebuffer and a pipeline, with 
         .{ 4, made.?, .success },
         .{ 1, made.?, .error_initialization_failed },
         .{ 4, single, .error_initialization_failed },
-        .{ 2, made.?, .error_feature_not_present },
+        .{ 2, made.?, .error_validation_failed },
     };
     for (pipelines) |case| {
         const samples, const pass, const want = case;
@@ -4982,7 +4988,7 @@ test "four samples a pixel in a render pass, a framebuffer and a pipeline, with 
         const multisample = facet.PipelineMultisampleStateCreateInfo{ .rasterization_samples = 4 };
         const result, const pipeline = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = single, .multisample = &multisample });
         defer fb.DestroyPipeline(device, pipeline);
-        try testing.expectEqual(facet.Result.error_feature_not_present, result);
+        try testing.expectEqual(facet.Result.error_validation_failed, result);
     }
     // Sample shading and alpha to one stay refused. Alpha to coverage,
     // which Vulkan has no feature for, is taken since 1.108 and kept with
@@ -4993,7 +4999,7 @@ test "four samples a pixel in a render pass, a framebuffer and a pipeline, with 
     }) |multisample| {
         const result, const pipeline = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = made.?, .multisample = &multisample });
         defer fb.DestroyPipeline(device, pipeline);
-        try testing.expectEqual(facet.Result.error_feature_not_present, result);
+        try testing.expectEqual(facet.Result.error_validation_failed, result);
     }
     const covering = facet.PipelineMultisampleStateCreateInfo{ .rasterization_samples = 4, .alpha_to_coverage_enable = true };
     const covered_result, const covered = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = made.?, .multisample = &covering });
@@ -8425,7 +8431,7 @@ test "the depth bounds test: a pixel drawn only where the depth already there li
     physical.can.depth_bounds = false;
     defer physical.can.depth_bounds = true;
     const refused, const none = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = pass, .depth = .{ .depth_bounds_test_enable = true } });
-    try testing.expectEqual(facet.Result.error_feature_not_present, refused);
+    try testing.expectEqual(facet.Result.error_validation_failed, refused);
     try testing.expect(none == null);
 }
 
@@ -8533,7 +8539,7 @@ test "the depth clamp: what lies past the near plane is drawn all the same, its 
     physical.can.depth_clamp = false;
     defer physical.can.depth_clamp = true;
     const refused, const none = makePipeline(&bench, clamping);
-    try testing.expectEqual(facet.Result.error_feature_not_present, refused);
+    try testing.expectEqual(facet.Result.error_validation_failed, refused);
     try testing.expect(none == null);
 }
 
@@ -9654,8 +9660,8 @@ test "a sampler bound beside the texture: the wrap and the border it says, and a
 
     // What CreateSampler has not got, and what it holds rather than refuses.
     var refused: ?*facet.Sampler = null;
-    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateSampler(device, &.{ .address_mode_u = @enumFromInt(9) }, &refused));
-    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateSampler(device, &.{ .compare_enable = true, .compare_op = @enumFromInt(9) }, &refused));
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateSampler(device, &.{ .address_mode_u = @enumFromInt(9) }, &refused));
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateSampler(device, &.{ .compare_enable = true, .compare_op = @enumFromInt(9) }, &refused));
     var most: ?*facet.Sampler = null;
     try testing.expectEqual(facet.Result.success, fb.CreateSampler(device, &.{ .anisotropy_enable = true, .max_anisotropy = 1000 }, &most));
     try testing.expectEqual(@as(f32, 16), _objects.of(_sampler.Sampler, most.?).kept.anisotropy);
@@ -10027,7 +10033,7 @@ test "a device that blends every colour attachment the same way: the pipeline wh
 
     const red_alone = facet.PipelineColorBlendAttachmentState{ .color_write_mask = facet.COLOR_COMPONENT_R };
     const refused, const none = makePipeline(&bench, .{ .module = shaders, .name = "white", .layout = layout, .pass = pass, .blend = red_alone, .second_blend = .{}, .blend_count = 2 });
-    try testing.expectEqual(facet.Result.error_feature_not_present, refused);
+    try testing.expectEqual(facet.Result.error_validation_failed, refused);
     try testing.expect(none == null);
     // The same state for both is made, as it was before 1.33.
     const result, const pipeline = makePipeline(&bench, .{ .module = shaders, .name = "white", .layout = layout, .pass = pass, .blend = red_alone, .blend_count = 2 });
@@ -11581,7 +11587,7 @@ test "a subpass's colour attachments drawn together: one fragment call writes th
     oddly.flags = 1;
     odd.subpasses = @ptrCast(&oddly);
     var refused: ?*facet.RenderPass = null;
-    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateRenderPass(device, &odd, &refused));
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateRenderPass(device, &odd, &refused));
 }
 
 test "a device whose fragment programs write the one colour, as the V3D's do: the subpass that asks for several is refused" {
@@ -13453,7 +13459,7 @@ test "a query pool refused: a statistic no stage of the library has, and none at
     fb.DestroyQueryPool(device, made);
     made = null;
     // A bit that is no statistic at all.
-    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateQueryPool(device, &.{ .query_type = .pipeline_statistics, .query_count = 1, .pipeline_statistics = 1 << 20 }, &made));
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateQueryPool(device, &.{ .query_type = .pipeline_statistics, .query_count = 1, .pipeline_statistics = 1 << 20 }, &made));
     // A statistics pool that counts nothing, and a pool of no queries.
     try testing.expectEqual(facet.Result.error_initialization_failed, fb.CreateQueryPool(device, &.{ .query_type = .pipeline_statistics, .query_count = 1 }, &made));
     try testing.expectEqual(facet.Result.error_initialization_failed, fb.CreateQueryPool(device, &.{ .query_type = .occlusion, .query_count = 0 }, &made));
@@ -16690,4 +16696,190 @@ test "CmdCopyImage between block images of one block size moves the blocks, and 
     fb.CmdCopyImageToBuffer(commands, other_size, .transfer_src_optimal, back, 1, @ptrCast(&texels2));
     try bench.submit();
     try testing.expectEqualSlices(u8, &([1]u8{0} ** 16), back_bytes[0..16]);
+}
+
+// --- 1.133: what breaks Vulkan's rules is error_validation_failed (item 81) -
+
+test "a pipeline layout past the device's limits breaks Vulkan's rules, since 1.133" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    var properties: facet.PhysicalDeviceProperties = undefined;
+    fb.GetPhysicalDeviceProperties(bench.physical, &properties);
+    const limits = properties.limits;
+    var empty: ?*facet.DescriptorSetLayout = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{}, &empty));
+    defer fb.DestroyDescriptorSetLayout(device, empty);
+    const sets: [5]*facet.DescriptorSetLayout = @splat(empty.?);
+
+    // As many sets as the device binds, and push constants to its limit.
+    var made: ?*facet.PipelineLayout = null;
+    try testing.expectEqual(facet.Result.success, fb.CreatePipelineLayout(device, &.{ .set_layout_count = limits.max_bound_descriptor_sets, .set_layouts = &sets }, &made));
+    fb.DestroyPipelineLayout(device, made);
+    made = null;
+    const whole = facet.PushConstantRange{ .size = limits.max_push_constants_size };
+    try testing.expectEqual(facet.Result.success, fb.CreatePipelineLayout(device, &.{ .push_constant_range_count = 1, .push_constant_ranges = @ptrCast(&whole) }, &made));
+    fb.DestroyPipelineLayout(device, made);
+    made = null;
+
+    // A set more, a range a word longer, and one that starts past the end
+    // (VUID-VkPipelineLayoutCreateInfo-setLayoutCount-00286,
+    // VUID-VkPushConstantRange-size-00298, -offset-00294).
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreatePipelineLayout(device, &.{ .set_layout_count = limits.max_bound_descriptor_sets + 1, .set_layouts = &sets }, &made));
+    for ([_]facet.PushConstantRange{ .{ .size = limits.max_push_constants_size + 4 }, .{ .offset = limits.max_push_constants_size + 4, .size = 4 } }) |range| {
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreatePipelineLayout(device, &.{ .push_constant_range_count = 1, .push_constant_ranges = @ptrCast(&range) }, &made));
+    }
+    try testing.expect(made == null);
+}
+
+test "a query pool of a kind the device says it has not got, or of none of Vulkan's, breaks its rules, since 1.133" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
+    var made: ?*facet.QueryPool = null;
+
+    // A kind that is none of Vulkan's (VUID-VkQueryPoolCreateInfo-queryType-parameter).
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateQueryPool(device, &.{ .query_type = @enumFromInt(3), .query_count = 1 }, &made));
+
+    // Statistics on a device whose features say it counts none
+    // (VUID-VkQueryPoolCreateInfo-queryType-00791).
+    {
+        physical.can.pipeline_statistics_queries = false;
+        defer physical.can.pipeline_statistics_queries = true;
+        var features: facet.PhysicalDeviceFeatures = undefined;
+        fb.GetPhysicalDeviceFeatures(bench.physical, &features);
+        try testing.expectEqual(facet.FALSE, features.pipeline_statistics_query);
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateQueryPool(device, &.{ .query_type = .pipeline_statistics, .query_count = 1, .pipeline_statistics = facet.QUERY_PIPELINE_STATISTIC_ALL }, &made));
+    }
+
+    // Occlusion queries Vulkan has every device count, so a device that
+    // counts none refuses what a program may ask: that stays
+    // `error_feature_not_present`.
+    physical.can.occlusion_queries = false;
+    defer physical.can.occlusion_queries = true;
+    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateQueryPool(device, &.{ .query_type = .occlusion, .query_count = 1 }, &made));
+    try testing.expect(made == null);
+}
+
+test "a render pass of no subpass, of compute, or past the colour attachments the device says breaks Vulkan's rules, since 1.133" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    var properties: facet.PhysicalDeviceProperties = undefined;
+    fb.GetPhysicalDeviceProperties(bench.physical, &properties);
+    try testing.expectEqual(@as(u32, 4), properties.limits.max_color_attachments);
+    const attachments: [5]facet.AttachmentDescription = @splat(.{ .format = .b8g8r8a8_unorm, .final_layout = .general });
+    var references: [5]facet.AttachmentReference = undefined;
+    for (&references, 0..) |*reference, k| reference.* = .{ .attachment = @intCast(k), .layout = .color_attachment_optimal };
+
+    // As many colour attachments as the limit says, and one more
+    // (VUID-VkSubpassDescription-colorAttachmentCount-00845).
+    var made: ?*facet.RenderPass = null;
+    const four = facet.SubpassDescription{ .color_attachment_count = 4, .color_attachments = &references };
+    try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 5, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&four) }, &made));
+    fb.DestroyRenderPass(device, made);
+    made = null;
+    const five = facet.SubpassDescription{ .color_attachment_count = 5, .color_attachments = &references };
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateRenderPass(device, &.{ .attachment_count = 5, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&five) }, &made));
+
+    // No subpass at all (VUID-VkRenderPassCreateInfo-subpassCount-arraylength),
+    // and one bound to compute (VUID-VkSubpassDescription-pipelineBindPoint-04952).
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateRenderPass(device, &.{ .attachment_count = 5, .attachments = &attachments, .subpass_count = 0, .subpasses = @ptrCast(&four) }, &made));
+    var computing = four;
+    computing.pipeline_bind_point = .compute;
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateRenderPass(device, &.{ .attachment_count = 5, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&computing) }, &made));
+    try testing.expect(made == null);
+}
+
+test "a sampler of values none of Vulkan's breaks its rules, and a border colour is looked at only where it is read, since 1.133" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    var refused: ?*facet.Sampler = null;
+    for ([_]facet.SamplerCreateInfo{
+        .{ .mag_filter = @enumFromInt(2) },
+        .{ .min_filter = @enumFromInt(2) },
+        .{ .mipmap_mode = @enumFromInt(2) },
+        .{ .address_mode_w = @enumFromInt(9) },
+        .{ .address_mode_v = .clamp_to_border, .border_color = @enumFromInt(6) },
+    }) |info| {
+        try testing.expectEqual(facet.Result.error_validation_failed, fb.CreateSampler(device, &info, &refused));
+        try testing.expect(refused == null);
+    }
+
+    // Where no address mode clamps to the border its colour is not read,
+    // and Vulkan asks for one of its own only where one does
+    // (VUID-VkSamplerCreateInfo-addressModeU-01078): taken, as a compare
+    // operation is where nothing is compared. The colour was refused until
+    // 1.133.
+    for ([_]facet.SamplerCreateInfo{
+        .{ .border_color = @enumFromInt(6) },
+        .{ .compare_op = @enumFromInt(9) },
+    }) |info| {
+        var made: ?*facet.Sampler = null;
+        try testing.expectEqual(facet.Result.success, fb.CreateSampler(device, &info, &made));
+        fb.DestroySampler(device, made);
+    }
+}
+
+test "a pipeline past the device's vertex limits, or asking for what its features say it has not got, breaks Vulkan's rules, since 1.133" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const pass = try renderPass(&bench, .clear, false);
+    defer fb.DestroyRenderPass(device, pass);
+    const flat = try module(&bench, &Flat.code);
+    defer fb.DestroyShaderModule(device, flat);
+    const layout = try pipelineLayout(&bench, &.{}, 4);
+    defer fb.DestroyPipelineLayout(device, layout);
+    var features: facet.PhysicalDeviceFeatures = undefined;
+    fb.GetPhysicalDeviceFeatures(bench.physical, &features);
+    try testing.expectEqual(facet.FALSE, features.logic_op);
+    try testing.expectEqual(facet.FALSE, features.multi_viewport);
+    try testing.expectEqual(facet.FALSE, features.geometry_shader);
+
+    const base = PipelineState{ .module = flat, .layout = layout, .pass = pass };
+    {
+        const result, const pipeline = makePipeline(&bench, base);
+        defer fb.DestroyPipeline(device, pipeline);
+        try testing.expectEqual(facet.Result.success, result);
+    }
+    var seventeen: [17]facet.VertexInputAttributeDescription = undefined;
+    for (&seventeen, 0..) |*attribute, k| attribute.* = .{ .location = @intCast(k % 16), .binding = 0, .format = .r32_sfloat };
+    var changes: [7]PipelineState = @splat(base);
+    // A binding numbered past the sixteen there are, an attribute at a
+    // location past them, and seventeen attributes.
+    changes[0].bindings = &.{.{ .binding = 16, .stride = 12 }};
+    changes[1].attributes = &.{.{ .location = 16, .binding = 0, .format = .r32g32b32_sfloat }};
+    changes[2].attributes = &seventeen;
+    // Lines with adjacency, which want a geometry stage.
+    changes[3].topology = @enumFromInt(6);
+    // A logic op; two viewports, and none.
+    changes[4].logic_op = true;
+    changes[5].viewports = 2;
+    changes[6].viewports = 0;
+    for (changes) |state| {
+        const result, const pipeline = makePipeline(&bench, state);
+        defer fb.DestroyPipeline(device, pipeline);
+        try testing.expectEqual(facet.Result.error_validation_failed, result);
+        try testing.expect(pipeline == null);
+    }
+}
+
+test "what Vulkan allows and facet does not do stays error_feature_not_present, since 1.133" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    // A binding's number has no bound in Vulkan; facet's are below 256.
+    const far = facet.DescriptorSetLayoutBinding{ .binding = 256, .descriptor_type = .uniform_buffer };
+    var none: ?*facet.DescriptorSetLayout = null;
+    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&far) }, &none));
+    try testing.expect(none == null);
 }

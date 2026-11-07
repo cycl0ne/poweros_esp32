@@ -3151,7 +3151,7 @@ fn groupChecks(probe: *Probe) void {
     for ([2][*:0]const u8{ "crowd", "greedy" }) |name| {
         var refused: [1]?*facet.Pipeline = undefined;
         const over = facet.ComputePipelineCreateInfo{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.?, .name = name }, .layout = layout.? };
-        probe.check(fb.CreateComputePipelines(device, null, 1, @ptrCast(&over), &refused) == .error_feature_not_present, "a group over the limits refused");
+        probe.check(fb.CreateComputePipelines(device, null, 1, @ptrCast(&over), &refused) == .error_validation_failed, "a group over the limits refused");
         probe.check(refused[0] == null, "and nothing given back for it");
     }
 

@@ -3405,4 +3405,72 @@ pub const LIBRARY_VERSION = 1;
 /// blocks, one block and one texel go where the offsets say and nothing
 /// else moves; and a block into a texel of another size takes nothing.
 /// Each of 12 changes put back fails them.
-pub const LIBRARY_REVISION = 132;
+///
+/// 133: **What breaks Vulkan's rules is `error_validation_failed`.** Item
+/// 81 of docs/facet-vulkan10.md. Vulkan lists `VK_ERROR_FEATURE_NOT_PRESENT`
+/// for vkCreateDevice alone, and facet answered it from a dozen other
+/// calls. vk.xml has `VK_ERROR_VALIDATION_FAILED` in version 1.0's own
+/// block ("Retroactively promoted from VK_EXT_debug_report for
+/// compatibility with VulkanSC"), with the extension's number,
+/// -1000011001, and the specification says: "Any command returning a
+/// VkResult may return VK_ERROR_VALIDATION_FAILED if a violation of valid
+/// usage is detected." `facet.Result` has it now, and each refusal was read
+/// against the valid usage of its call. Where a VUID forbids what was asked
+/// of a device that reports what this one does, the answer is
+/// `error_validation_failed`; where none does, facet refuses what Vulkan
+/// allows, and that keeps `error_feature_not_present` until the item that
+/// takes the refusal away. Mesa's drivers look for neither and answer
+/// neither, but for v3dv's QueueBindSparse, which answers
+/// `VK_ERROR_FEATURE_NOT_PRESENT` (src/broadcom/vulkan/v3dv_queue.c:1172-1178),
+/// a code Vulkan does not list for the call.
+///
+/// Moved, 35 places: a command buffer level, a buffer view of a buffer not
+/// made for one, a pipeline layout past `max_bound_descriptor_sets` or
+/// `max_push_constants_size`, a swapchain's usage, layers or present mode
+/// that the surface has not got, QueueBindSparse on a queue that binds
+/// nothing, a workgroup past the compute limits, a kind of descriptor, a
+/// sampler's filter, mipmap mode, address mode, compare operation or border
+/// colour, a query kind or statistic none of Vulkan's, statistics without
+/// the feature; and of a pipeline, the vertex bindings, strides, attributes
+/// and locations past the limits, the topologies of adjacency, a polygon
+/// mode, blend factor or blend operation none of Vulkan 1.0's, a sample
+/// count no subpass can have, a feature the device reports false
+/// (`depth_clamp`, `depth_bounds`, `independent_blend`, `logic_op`,
+/// `multi_viewport`, `dual_src_blend`, `sample_rate_shading`,
+/// `alpha_to_one`), and more floats for a patch than the library carries;
+/// and of a render pass, no subpass, a subpass bound to compute, more colour
+/// attachments than `max_color_attachments`, a flag none of Vulkan's or
+/// facet's. Kept, 39: a draw's vertex count (item 23), what the V3D has not
+/// got that Vulkan requires, specialization constants, occlusion queries
+/// where none are counted, a depth bias where none is taken, the render
+/// pass's bounds of four subpasses and eight attachments, sample counts no
+/// device draws in a render pass, depth and stencil the device does not
+/// keep, a binding numbered past 255, the descriptors past what a set
+/// holds, and the V3D's refusals of a pipeline.
+///
+/// Found while reading the VUIDs: CreateSampler refused a border colour
+/// that is none of Vulkan's wherever it was given, and Vulkan asks for one
+/// of its own only where an address mode clamps to the border
+/// (VUID-VkSamplerCreateInfo-addressModeU-01078); elsewhere it is not
+/// read, and it is taken now. And `error_initialization_failed` is
+/// answered for invalid usage too, from calls Vulkan does not list it for:
+/// item 91.
+///
+/// Tests: the 22 that expected `error_feature_not_present` of these expect
+/// `error_validation_failed`; a pipeline layout of a set more than the
+/// device binds, or push constants past its limit or starting past it, is
+/// refused, and as many made; a query pool of a kind none of Vulkan's, and
+/// of statistics on a device whose features say it counts none, is
+/// refused, and occlusion queries where none are counted stay
+/// `error_feature_not_present`; a render pass of five colour attachments,
+/// of no subpass, or of a subpass of compute is refused, and of four made;
+/// a sampler of a filter, mipmap mode or address mode none of Vulkan's, or
+/// of such a border colour where an address mode clamps to it, is refused,
+/// and that colour taken where none does; a pipeline of a binding or a
+/// location past sixteen, of seventeen attributes, of lines with adjacency,
+/// a logic op, or two viewports or none is refused; so is a swapchain of
+/// two layers or of mailbox; a binding numbered 256 stays
+/// `error_feature_not_present`; and the code is Vulkan's number. Each of
+/// 38 changes put back fails them. C:test/FacetProbe expects the new code
+/// for a workgroup over the limits.
+pub const LIBRARY_REVISION = 133;

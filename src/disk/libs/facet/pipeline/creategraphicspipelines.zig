@@ -41,8 +41,16 @@ const _instance = @import("../instance/_instance.zig");
 /// than the subpass's colour attachments (`shader.fragmentOutputs`, since
 /// 1.51), or for a fragment entry whose `varyings` word names no fixed
 /// form (since 1.75); `error_feature_not_present`
-/// for state facet.library does not draw (see BEHAVIOR), among it a
-/// stage whose `specialization_info` names a constant (since 1.80);
+/// for state Vulkan allows and facet.library does not draw (see BEHAVIOR),
+/// among it a stage whose `specialization_info` names a constant (since
+/// 1.80); `error_validation_failed` for state Vulkan does not allow on the
+/// device (since 1.133, `error_feature_not_present` before): a feature it
+/// reports false - `depth_clamp`, `depth_bounds`, `independent_blend`,
+/// `logic_op`, `multi_viewport`, `dual_src_blend`, `sample_rate_shading`,
+/// `alpha_to_one`, and `geometry_shader` for the topologies of adjacency -
+/// a sample count it does not draw, a vertex binding, stride, attribute or
+/// location past its limits, or a topology, polygon mode, blend factor or
+/// blend operation that is none of Vulkan 1.0's;
 /// `error_format_not_supported` for an attribute in a format it does not
 /// read; `error_initialization_failed` for state that does not hold
 /// together - an attribute of a binding not given, no viewport where it is
@@ -80,7 +88,7 @@ const _instance = @import("../instance/_instance.zig");
 /// says the floats the patch carries from the one function to the other
 /// (`shader.control`, `Patch.ownValues`, since 1.50), more of them than
 /// `PhysicalDeviceLimits.max_tessellation_patch_components` being
-/// `error_feature_not_present`.
+/// `error_validation_failed` (`error_feature_not_present` until 1.133).
 ///
 /// What it draws: points, lines and line strips, and triangle lists, strips
 /// and fans, a restart index ending a strip or a fan; triangles filled, or as
@@ -359,12 +367,15 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
     var given_bindings: u32 = 0;
     if (info.vertex_input_state) |input| {
         if (input.vertex_binding_descriptions) |bindings| for (bindings[0..input.vertex_binding_description_count]) |binding| {
-            if (binding.binding >= _instance.max_vertex_input_bindings or binding.stride > 2048) return .error_feature_not_present;
+            // VUID-VkVertexInputBindingDescription-binding-00618, -stride-00619.
+            if (binding.binding >= _instance.max_vertex_input_bindings or binding.stride > 2048) return .error_validation_failed;
             made.bindings[binding.binding] = .{ .stride = binding.stride, .per_instance = binding.input_rate == .instance };
             given_bindings |= @as(u32, 1) << @intCast(binding.binding);
         };
         if (input.vertex_attribute_descriptions) |attributes| for (attributes[0..input.vertex_attribute_description_count]) |attribute| {
-            if (made.attribute_count == _instance.max_vertex_input_attributes or attribute.location >= _instance.max_vertex_input_attributes) return .error_feature_not_present;
+            // VUID-VkPipelineVertexInputStateCreateInfo-vertexAttributeDescriptionCount-00614,
+            // VUID-VkVertexInputAttributeDescription-location-00620.
+            if (made.attribute_count == _instance.max_vertex_input_attributes or attribute.location >= _instance.max_vertex_input_attributes) return .error_validation_failed;
             if (!_pipeline.attributeFormat(attribute.format)) return .error_format_not_supported;
             if (attribute.binding >= _instance.max_vertex_input_bindings or given_bindings >> @intCast(attribute.binding) & 1 == 0) return .error_initialization_failed;
             made.attributes[made.attribute_count] = .{ .location = attribute.location, .binding = attribute.binding, .format = attribute.format, .offset = attribute.offset };
@@ -375,7 +386,10 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
     if (info.input_assembly_state) |assembly| {
         switch (assembly.topology) {
             .point_list, .line_list, .line_strip, .triangle_list, .triangle_strip, .triangle_fan, .patch_list => made.topology = assembly.topology,
-            else => return .error_feature_not_present,
+            // Those of adjacency want `geometry_shader`, which no device
+            // has (VUID-VkPipelineInputAssemblyStateCreateInfo-topology-00429),
+            // and the rest are none of Vulkan's.
+            else => return .error_validation_failed,
         }
         made.restart = assembly.primitive_restart_enable;
     }
@@ -387,7 +401,7 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         // What the control function writes for the whole patch (since
         // 1.50): its entry's own count, held to the limit.
         const own = control.?.varyingCount();
-        if (own > _instance.max_tessellation_patch_components) return .error_feature_not_present;
+        if (own > _instance.max_tessellation_patch_components) return .error_validation_failed;
         made.tessellated = .{
             .control = @ptrCast(@alignCast(control.?.function)),
             .evaluation = @ptrCast(@alignCast(entry.function)),
@@ -402,7 +416,8 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
     // The rasterization.
     const rasterization = info.rasterization_state;
     if (rasterization.depth_clamp_enable) {
-        if (!device.physical.can.depth_clamp) return .error_feature_not_present;
+        // VUID-VkPipelineRasterizationStateCreateInfo-depthClampEnable-00782.
+        if (!device.physical.can.depth_clamp) return .error_validation_failed;
         made.clamped = true;
     }
     if (rasterization.depth_bias_enable) {
@@ -416,7 +431,7 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
     }
     switch (rasterization.polygon_mode) {
         .fill, .line, .point => made.polygon_mode = rasterization.polygon_mode,
-        else => return .error_feature_not_present,
+        else => return .error_validation_failed,
     }
     made.line_width = rasterization.line_width;
     made.front = if (rasterization.front_face == .clockwise) .clockwise else .counter_clockwise;
@@ -442,7 +457,9 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         made.culls_everything = false;
     }
     if (info.multisample_state) |multisample| {
-        if (multisample.sample_shading_enable or multisample.alpha_to_one_enable) return .error_feature_not_present;
+        // Features no device has (VUID-VkPipelineMultisampleStateCreateInfo-sampleShadingEnable-00784,
+        // -alphaToOneEnable-00785).
+        if (multisample.sample_shading_enable or multisample.alpha_to_one_enable) return .error_validation_failed;
         // It drops samples after the fragment function, as a form that
         // drops pixels does, so it has no depth pre-pass (since 1.108).
         // Not where there is no fragment stage: llvmpipe takes the alpha
@@ -455,8 +472,10 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         // Four samples a pixel where the device draws them, and the
         // subpass's own count whatever it is (since 1.100):
         // VUID-VkGraphicsPipelineCreateInfo-multisampledRenderToSingleSampled-06853.
+        // Another count is neither a subpass's, no attachment being made
+        // of it, nor one a subpass of none may draw at (-subpass-00758).
         const samples = multisample.rasterization_samples;
-        if (samples != 1 and !(samples == 4 and device.physical.can.multisampling)) return .error_feature_not_present;
+        if (samples != 1 and !(samples == 4 and device.physical.can.multisampling)) return .error_validation_failed;
         // A subpass of no attachment has no count of its own: it draws at
         // its pipelines', one of `framebuffer_no_attachments_sample_counts`
         // (VUID-VkGraphicsPipelineCreateInfo-subpass-00758, since 1.114).
@@ -474,7 +493,8 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
     }
     if (info.depth_stencil_state) |depth| {
         if (depth.depth_bounds_test_enable) {
-            if (!device.physical.can.depth_bounds) return .error_feature_not_present;
+            // VUID-VkPipelineDepthStencilStateCreateInfo-depthBoundsTestEnable-00598.
+            if (!device.physical.can.depth_bounds) return .error_validation_failed;
             made.bounded = true;
             made.bounds = .{ depth.min_depth_bounds, depth.max_depth_bounds };
         }
@@ -504,13 +524,15 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         }
     }
     if (info.color_blend_state) |blend| {
-        if (blend.logic_op_enable) return .error_feature_not_present;
+        // No device has `logic_op` (VUID-VkPipelineColorBlendStateCreateInfo-logicOpEnable-00606).
+        if (blend.logic_op_enable) return .error_validation_failed;
         if (blend.attachment_count != 0 and blend.attachment_count != colors) return .error_initialization_failed;
         // A device without `independent_blend` wants them all alike, and
-        // says so rather than drawing what was not asked for.
+        // says so rather than drawing what was not asked for
+        // (VUID-VkPipelineColorBlendStateCreateInfo-pAttachments-00605).
         if (blend.attachment_count > 1 and !device.physical.can.independent_blend) {
             for (blend.attachments.?[1..blend.attachment_count]) |other| {
-                if (!std.mem.eql(u8, std.mem.asBytes(&other), std.mem.asBytes(&blend.attachments.?[0]))) return .error_feature_not_present;
+                if (!std.mem.eql(u8, std.mem.asBytes(&other), std.mem.asBytes(&blend.attachments.?[0]))) return .error_validation_failed;
             }
         }
         // One for each colour attachment of the subpass, each its own way:
@@ -520,8 +542,12 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
             mixing.mask = attachment.color_write_mask & facet.COLOR_COMPONENT_ALL;
             if (attachment.blend_enable) {
                 const factors = [4]facet.BlendFactor{ attachment.src_color_blend_factor, attachment.dst_color_blend_factor, attachment.src_alpha_blend_factor, attachment.dst_alpha_blend_factor };
-                for (factors) |factor| if (@intFromEnum(factor) > @intFromEnum(facet.BlendFactor.src_alpha_saturate)) return .error_feature_not_present;
-                if (@intFromEnum(attachment.color_blend_op) > @intFromEnum(facet.BlendOp.max) or @intFromEnum(attachment.alpha_blend_op) > @intFromEnum(facet.BlendOp.max)) return .error_feature_not_present;
+                // A second source's factors want `dual_src_blend`, which no
+                // device has (VUID-VkPipelineColorBlendAttachmentState-srcColorBlendFactor-00608
+                // and the three beside it); past them, and past `max`, are
+                // none of Vulkan 1.0's.
+                for (factors) |factor| if (@intFromEnum(factor) > @intFromEnum(facet.BlendFactor.src_alpha_saturate)) return .error_validation_failed;
+                if (@intFromEnum(attachment.color_blend_op) > @intFromEnum(facet.BlendOp.max) or @intFromEnum(attachment.alpha_blend_op) > @intFromEnum(facet.BlendOp.max)) return .error_validation_failed;
                 mixing.enabled = true;
                 mixing.src_color = factors[0];
                 mixing.dst_color = factors[1];
@@ -570,7 +596,10 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
     }
     if (!dynamic_viewport or !dynamic_scissor) {
         const view = info.viewport_state orelse return .error_initialization_failed;
-        if (view.viewport_count != 1 or view.scissor_count != 1) return .error_feature_not_present;
+        // One of each: no device has `multi_viewport`, and none is not
+        // allowed (VUID-VkPipelineViewportStateCreateInfo-viewportCount-01216,
+        // -scissorCount-01217, -viewportCount-04135, -scissorCount-04136).
+        if (view.viewport_count != 1 or view.scissor_count != 1) return .error_validation_failed;
         if (!dynamic_viewport) made.viewport = (view.viewports orelse return .error_initialization_failed)[0];
         if (!dynamic_scissor) made.scissor = (view.scissors orelse return .error_initialization_failed)[0];
     }

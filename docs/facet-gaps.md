@@ -52,9 +52,13 @@ Sixteen of its fields differ between the cores and the V3D, which is the
 reason a program that wants the GPU should ask rather than take the first
 device listed.
 
-Nothing below is a defect: every refusal is checked and answered with
-`error_feature_not_present`, and the limits are stated in the
-documentation of the call that enforces them.
+Nothing below is a defect: every refusal is checked and answered, and the
+limits are stated in the documentation of the call that enforces them.
+The answer is `error_validation_failed` where Vulkan does not let a
+program ask that of a device whose features, limits or surface say what
+this one's do, and `error_feature_not_present` where Vulkan does and
+facet does not do it (since 1.133; `error_feature_not_present` for both
+before).
 
 ## Samplers, and what a sampler still cannot ask for
 
@@ -541,7 +545,8 @@ pipeline's programs since 1.76, and keeping them is v3dv's cache
 Memory is bound whole. The three calls are there since 1.124, as v3dv has
 them: `GetPhysicalDeviceSparseImageFormatProperties` and
 `GetImageSparseMemoryRequirements` answer none, and `QueueBindSparse`
-refuses with `error_feature_not_present`. No queue family has
+refuses with `error_validation_failed` (since 1.133; with
+`error_feature_not_present` before, as v3dv does). No queue family has
 `QUEUE_SPARSE_BINDING`, which makes every call to it one no program may
 make, and `sparse_binding` and the eight `sparse_residency_*` features
 are false.
@@ -634,35 +639,50 @@ finds that out.
 
 ## In the structures, refused by the implementation
 
-These can be asked for and are answered with `error_feature_not_present`.
+These can be asked for and are answered with `error_feature_not_present`:
+Vulkan allows them, and facet does not do them.
 
 | What | Where it is refused |
 |---|---|
-| Sample rate shading and alpha to one, both optional and false (`sample_rate_shading`, `alpha_to_one`); `rasterization_samples` but 1 and 4, and 4 on a device that does not draw four samples a pixel: the V3D, until docs/facet-vulkan10.md item 61's V5 (`multisampling`, the cores' since 1.112) | `pipeline/creategraphicspipelines.zig` |
 | An attachment of more than one sample but four, or of four on a device that does not draw them: the V3D, until item 61's V5 | `render/createrenderpass.zig` |
 | A subpass with no colour attachment, on a device that draws none: the V3D, until docs/facet-vulkan10.md item 43's V3D half (`colorless_subpasses`, the cores' since 1.113) | `render/createrenderpass.zig` |
 | A colour reference of `ATTACHMENT_UNUSED` in a subpass whose colours go together (`SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER`), until docs/facet-vulkan10.md item 80; drawn apart it is taken since 1.118 | `render/createrenderpass.zig` |
 | A pipeline of no fragment stage, on a device with a processor of its own: the V3D, until docs/facet-vulkan10.md item 85's V3D half (the cores' since 1.115) | `driver/v3d/driver.zig` |
-| Logic operations: `LogicOp` is fully enumerated, `logic_op_enable` is not taken | `pipeline/creategraphicspipelines.zig` |
-| Depth clamp, the depth bounds test or a depth bias on a device that has none of them: every device has all three since 1.47 (`depth_clamp`, `depth_bounds`, `depth_bias`) | `pipeline/creategraphicspipelines.zig` |
-| More than one viewport or one scissor | `pipeline/creategraphicspipelines.zig` |
-| Colour attachments that differ, on a device that blends them all alike: no device of this library is one (`independent_blend`) | `pipeline/creategraphicspipelines.zig` |
+| A depth bias on a device that takes none: every device takes one since 1.47 (`depth_bias`) | `pipeline/creategraphicspipelines.zig` |
 | An input attachment on a device that reads none: the V3D (`input_attachments`) | `render/createrenderpass.zig` |
 | An input attachment of a colour format whose pixels are not kept in rows (a depth format is read since 1.62); a subpass that reads what it draws without a dependency on itself by region (since 1.64) | `render/createrenderpass.zig` |
 | An image both INPUT_ATTACHMENT and TRANSIENT_ATTACHMENT; one both INPUT_ATTACHMENT and STORAGE but as a colour attachment written through is (above); one sampled as well as drawn into or read as an input attachment on a device whose images lie in a layout of its own: the V3D, until docs/facet-vulkan10.md item 48's V3D half (the cores' since 1.119) | `image/createimage.zig` |
 | A depth or stencil op for a plane the format has not, or on a device that keeps neither (`stored_depth`, `stored_stencil`) | `render/createrenderpass.zig` |
-| Present modes but `fifo`, though `immediate`, `mailbox` and `fifo_relaxed` are enumerated: a display shows a buffer from its next frame on, and there is no way to ask it for anything else | `swapchain/createswapchain.zig` |
-| A swapchain whose images would be SAMPLED: they are drawn into, copied out of and copied into (since 1.43), their pixels being rows and not blocks of texels | `swapchain/createswapchain.zig` |
 | An `input_attachment` layout on a device that reads none: the V3D (`input_attachments`) | `descriptor/createdescriptorsetlayout.zig` |
 | More dynamic buffer descriptors in one set than `max_descriptor_set_dynamic_buffers` | `descriptor/createdescriptorsetlayout.zig` |
 | A `storage_image` layout on the V3D: its TMU keeps a texture its own way | `descriptor/createdescriptorsetlayout.zig` |
 | A fixed fragment form that drops pixels, on the V3D: the QPUs have no program that discards | `driver/v3d/driver.zig` |
 | A fixed fragment form that samples through a sampler, on the V3D: nor one that reads a sampler | `driver/v3d/driver.zig` |
-| A statistics query pool on the V3D: what its QPUs were given is counted by nothing. An occlusion pool is taken on every device since 1.47 | `query/createquerypool.zig` |
-| A bit that is no statistic at all. Both of a geometry shader's may be asked for since 1.43 and read 0, there being no such stage to count | `query/createquerypool.zig` |
 | A depth or stencil attachment of `d16_unorm_s8_uint` that loads or stores, on a device that stores a tile buffer whole: the V3D (`stored_both`, 1.47). Either plane of a format that holds it alone is kept on every device | `render/createrenderpass.zig` |
 | A depth attachment kept, whose image has no memory behind it | `render/createframebuffer.zig` |
 | A sampled depth image on a device that samples none: the V3D (`sampled_depth`); a transient one, or one written through as a storage image; one of more levels than halving its longer side gives, or of type `3d`. Any of the three depth formats is taken since 1.58 and levels of its own since 1.63, and a view of it names one plane, or both at once since 1.94 for a framebuffer, sampling the depth (`image/createimageview.zig`) | `image/createimage.zig` |
+
+And these are answered with `error_validation_failed` (since 1.133;
+`error_feature_not_present` before): Vulkan does not let a program ask
+them of a device that says what this one says of itself
+(docs/facet-vulkan10.md item 81).
+
+| What | Where it is refused |
+|---|---|
+| Sample rate shading and alpha to one, both optional and false (`sample_rate_shading`, `alpha_to_one`); `rasterization_samples` but 1 and 4, and 4 on a device that does not draw four samples a pixel: the V3D, until docs/facet-vulkan10.md item 61's V5 (`multisampling`, the cores' since 1.112) | `pipeline/creategraphicspipelines.zig` |
+| Logic operations: `LogicOp` is fully enumerated, `logic_op_enable` is not taken (`logic_op`) | `pipeline/creategraphicspipelines.zig` |
+| Depth clamp or the depth bounds test on a device that has neither: every device has both since 1.47 (`depth_clamp`, `depth_bounds`) | `pipeline/creategraphicspipelines.zig` |
+| More than one viewport or one scissor (`multi_viewport`), or none | `pipeline/creategraphicspipelines.zig` |
+| Colour attachments that differ, on a device that blends them all alike: no device of this library is one (`independent_blend`) | `pipeline/creategraphicspipelines.zig` |
+| The second source's blend factors (`dual_src_blend`), the topologies of adjacency (`geometry_shader`), and a topology, polygon mode, blend factor or operation that is none of Vulkan 1.0's | `pipeline/creategraphicspipelines.zig` |
+| A vertex binding, stride, attribute or location past `max_vertex_input_bindings`, `max_vertex_input_binding_stride` or `max_vertex_input_attributes` | `pipeline/creategraphicspipelines.zig` |
+| Present modes but `fifo`, though `immediate`, `mailbox` and `fifo_relaxed` are enumerated: a display shows a buffer from its next frame on, and there is no way to ask it for anything else; more layers than one | `swapchain/createswapchain.zig` |
+| A swapchain whose images would be SAMPLED: they are drawn into, copied out of and copied into (since 1.43), their pixels being rows and not blocks of texels | `swapchain/createswapchain.zig` |
+| A statistics query pool on the V3D: what its QPUs were given is counted by nothing (`pipeline_statistics_query`). An occlusion pool is taken on every device since 1.47 | `query/createquerypool.zig` |
+| A bit that is no statistic at all, or a kind of query that is none of Vulkan's. Both of a geometry shader's statistics may be asked for since 1.43 and read 0, there being no such stage to count | `query/createquerypool.zig` |
+| A sampler's filter, mipmap mode, address mode or compare operation that is none of Vulkan 1.0's, or such a border colour where an address mode clamps to it; elsewhere the border colour is not read, and is taken since 1.133 | `sampler/createsampler.zig` |
+| A pipeline layout of more than `max_bound_descriptor_sets` sets, or push constants past `max_push_constants_size` | `pipeline/createpipelinelayout.zig` |
+| A render pass of no subpass, a subpass bound to compute, of more than `max_color_attachments` colour attachments, or of a flag that is none of Vulkan's or facet's | `render/createrenderpass.zig` |
 
 One consequence does not appear in that table:
 
@@ -899,7 +919,8 @@ What that does not bring:
   (`PhysicalDeviceLimits.max_compute_work_group_size`,
   `max_compute_work_group_invocations`,
   `max_compute_shared_memory_size`). A group of more is refused as the
-  pipeline is made (`error_feature_not_present`). A dispatch has 65535
+  pipeline is made (`error_validation_failed` since 1.133,
+  `error_feature_not_present` before). A dispatch has 65535
   groups at most along each axis since 1.128, Vulkan's floor and both
   Mesa drivers' number; until then 2^32 - 1 was said, and a dispatch that
   large overflowed the count of its groups.
