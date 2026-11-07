@@ -55,7 +55,13 @@ const _image = @import("../image/_image.zig");
 ///   takes layers - an image a function reads or writes, a sampled or
 ///   read-back depth attachment among them - and 1 for every other
 ///   shape, a 3D image's layers being its depth.
-/// - `sample_counts`: 1, one sample a pixel.
+/// - `sample_counts`: 1, and 4 as well where CreateImage takes an image
+///   of four samples a pixel of the extent and the layers above at one
+///   level (since 1.98): a 2D image in optimal tiling, not cube
+///   compatible, of a format that is an attachment, drawn into, read as
+///   an input attachment or copied, on a device that draws four samples
+///   (`_image.shapeFor`). Where 4 is said, every such image inside these
+///   bounds is made.
 /// - `max_resource_size`: the bytes an image of all of the above takes,
 ///   every level of every layer of it (since 1.66), which is what
 ///   GetImageMemoryRequirements answers for such an image. It may be
@@ -151,16 +157,29 @@ pub fn GetPhysicalDeviceImageFormatProperties(base: *FacetBase, physical: *facet
         asked.array_layers = limits.max_image_array_layers;
         if (_image.shapeFor(device, &asked)) |wider| largest = wider else asked.array_layers = fewest;
     }
+    // Four samples a pixel, asked of CreateImage's rules the same way:
+    // the largest extent with the most layers at one level, which is all
+    // a multisampled image may have (since 1.98). Where that is made,
+    // every smaller one is.
+    var counts = facet.SAMPLE_COUNT_1;
+    var bytes = largest.bytes;
+    var four = asked;
+    four.mip_levels = 1;
+    four.samples = 4;
+    if (_image.shapeFor(device, &four)) |multisampled| {
+        counts |= facet.SAMPLE_COUNT_4;
+        bytes = @max(bytes, multisampled.bytes);
+    }
     properties.* = .{
         .max_extent = asked.extent,
         .max_mip_levels = asked.mip_levels,
         .max_array_layers = asked.array_layers,
-        .sample_counts = 1,
-        // The bytes that image takes, every level of every layer of it:
-        // what GetImageMemoryRequirements answers for it, and more than
-        // any heap holds where the largest extent and the most layers
-        // meet (since 1.66).
-        .max_resource_size = largest.bytes,
+        .sample_counts = counts,
+        // The bytes the largest image takes, every level of every layer of
+        // it and every sample: what GetImageMemoryRequirements answers for
+        // it, and more than any heap holds where the largest extent and
+        // the most layers meet (since 1.66).
+        .max_resource_size = bytes,
     };
     return .success;
 }

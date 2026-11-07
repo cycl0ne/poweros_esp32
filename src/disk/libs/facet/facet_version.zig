@@ -2031,4 +2031,37 @@ pub const LIBRARY_VERSION = 1;
 /// calls. Each change put back fails it: the gap as it was panics with
 /// `integer overflow` at texture.zig's line again, and the 1D image made
 /// gives `expected .error_format_not_supported, found .success`.
-pub const LIBRARY_REVISION = 97;
+///
+/// 98: **CreateImage makes an image of four samples a pixel, and the
+/// format query says 4 exactly where it does.**
+///
+/// Step S2 of item 61 of docs/facet-vulkan10.md. On a device with
+/// `can.multisampling`, which none has yet, `samples = 4` is taken for a
+/// 2D image in optimal tiling with one level, not cube compatible, whose
+/// usage is attachment, input-attachment and transfer bits only, of a
+/// format with a colour or depth/stencil attachment feature. Each sample
+/// is a plane of the one-sample image's bytes, every layer of it, one
+/// after another, as llvmpipe lays a texture out
+/// (`llvmpipe_texture_layout`, `sample_stride`): `Image.sample_bytes` is
+/// a plane's size and `bytes` four of them. A device whose images are laid
+/// out by its driver (`ops.texture_memory`, the V3D's) is refused until
+/// its layout of four samples (step V3).
+///
+/// GetPhysicalDeviceImageFormatProperties asks `shapeFor` for the asked
+/// image with one level and four samples, and says 4 beside 1 where it is
+/// made, with `max_resource_size` the larger of the two. Vulkan holds the
+/// answer to the seven masks for every usage it does not exclude, so the
+/// plan's refusal of layers and of input attachments was dropped: such an
+/// image is made, and a render pass reading an attachment of four samples
+/// stays refused (createrenderpass.zig).
+///
+/// A test makes the image of every shape, format and count the rule names
+/// and of none it does not, and sweeps the query over every format, type,
+/// tiling, flag and usage with and without the capability, comparing its
+/// answer with what CreateImage makes. Each of eleven changes put back
+/// fails it: the planes not multiplied, any format taken, the query
+/// never saying 4 (`expected 5, found 1`), the query probing every level,
+/// the capability not asked (which fails the older image test too),
+/// SAMPLED taken, input attachments refused, any count up to 4, levels,
+/// cube images, or linear and 3D images taken.
+pub const LIBRARY_REVISION = 98;

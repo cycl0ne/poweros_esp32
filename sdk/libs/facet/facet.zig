@@ -836,8 +836,9 @@ pub const ImageFormatProperties = extern struct {
     /// array; 1 for a shape that takes no levels or no layers.
     max_mip_levels: u32 = 0,
     max_array_layers: u32 = 0,
-    /// The sample counts as bits, as Vulkan has them: always 1, one
-    /// sample a pixel, there being no multisampling here.
+    /// The sample counts as bits, as Vulkan has them: 1, and 4 as well
+    /// for an image of the shape that may have four samples a pixel, on a
+    /// device that draws them (since 1.98).
     sample_counts: u32 = 0,
     /// The bytes an image of `max_extent`, of `max_mip_levels` levels and
     /// of `max_array_layers` layers takes - what

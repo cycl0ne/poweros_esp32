@@ -22,6 +22,10 @@
 //! image's slices. Each lies as a whole texture does, `layer_bytes` from the
 //! one before. A 3D image has one level, so its slices need not halve.
 //!
+//! **An image may have four samples a pixel** (since 1.98), on a device that
+//! draws them: each sample's plane is the whole image at one sample, every
+//! layer of it, the next sample's plane after it (`Image.samples`).
+//!
 //! **Some formats are not kept** (`_decode`): compressed and float textures
 //! are unpacked as they are copied in. `format` is what is kept, and
 //! `given_format` what was asked for.
@@ -59,6 +63,15 @@ pub const Image = struct {
     /// An array's layers, a cube's faces, or a 3D image's slices.
     layers: u32 = 1,
     layer_bytes: u64 = 0,
+    /// The samples each pixel holds: 1, or 4 on a device that draws them
+    /// (`Capabilities.multisampling`, since 1.98). Sample s of a pixel lies
+    /// `s * sample_bytes` past sample 0, `sample_bytes` being the whole of
+    /// the image at one sample, every layer of it. That is llvmpipe's
+    /// layout, its `sample_stride` the size of the single-sampled texture
+    /// and its size that times the samples (`llvmpipe_texture_layout`,
+    /// src/gallium/drivers/llvmpipe/lp_texture.c).
+    samples: u32 = 1,
+    sample_bytes: u64 = 0,
     /// A 3D image: its slices are reached by z, not by layer.
     volume: bool = false,
     /// A 1D image, which this library keeps as a texture of one row: its
@@ -349,7 +362,8 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
     // special: it is sampled, copied and laid out as any texture of its
     // width is.
     const line = info.image_type == .@"1d";
-    if ((info.image_type != .@"2d" and !volume and !line) or info.samples != 1) return null;
+    if (info.image_type != .@"2d" and !volume and !line) return null;
+    if (info.samples != 1 and !multisampled(physical, info)) return null;
     if (line and (extent.height != 1 or extent.depth != 1)) return null;
     // A compressed format is no 1D image's, as neither Mesa driver makes
     // one (`lvp_get_image_format_properties`,
@@ -485,7 +499,7 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
         image.layer_bytes = 0;
         for (0..info.mip_levels) |lod| image.layer_bytes += depthLevelBytes(&image, @intCast(lod));
         image.bytes = image.layer_bytes * layers;
-        return image;
+        return withPlanes(image, info.samples);
     }
     if (info.usage & facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT != 0) return null;
     // Drawn into, or read as an input attachment, and written through as a
@@ -523,7 +537,7 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
         image.bytes = one_layer * layers;
         // Its levels' layout, over no memory yet: BindImageMemory moves it.
         image.texels = texelsOver(&image, @ptrFromInt(_memory.alignment)) catch return null;
-        return image;
+        return withPlanes(image, info.samples);
     }
     if (info.usage & facet.IMAGE_USAGE_COLOR_ATTACHMENT != 0 and !drawable(info.format)) return null;
     // Rows of a colour format, of one level, and a layer's rows after the
@@ -536,7 +550,49 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
     // Written through as a storage image as well: the rows are the
     // texture a function writes, over no memory yet (since 1.56).
     if (rows_written) image.texels = texelsOver(&image, @ptrFromInt(_memory.alignment)) catch return null;
-    return image;
+    return withPlanes(image, info.samples);
+}
+
+/// Whether an image of more than one sample a pixel is one this library
+/// makes, since 1.98: four samples, on a device that draws them
+/// (`Capabilities.multisampling`) and keeps its images in this library's
+/// layout, the V3D's tiling being its own (`Ops.texture_memory`).
+///
+/// Vulkan has a multisampled image be 2D, optimal and of one level, and
+/// not cube compatible (VUID-VkImageCreateInfo-samples-02257), and asks a
+/// sample count beyond one only of a format that is a colour or a depth
+/// attachment, whatever the image's own usage ("Supported Sample Counts").
+/// That format test is v3dv's on this same GPU and lavapipe's on the
+/// cores (`v3dv_get_image_format_properties`,
+/// src/broadcom/vulkan/v3dv_formats.c; src/gallium/frontends/lavapipe/
+/// lvp_formats.c), and it reads the device's own format table, so this
+/// and GetPhysicalDeviceFormatProperties cannot disagree.
+///
+/// The image may be drawn into, read as an input attachment, or copied,
+/// and may have layers. A sampled one waits for a fetch that takes a
+/// sample number, Vulkan's `sampledImage*SampleCounts` saying one sample
+/// meanwhile; a storage one for `shader_storage_image_multisample`, which
+/// is false, Vulkan's `storageImageSampleCounts` being 1 without it.
+fn multisampled(physical: *const _instance.PhysicalDevice, info: *const facet.ImageCreateInfo) bool {
+    if (info.samples != 4 or !physical.can.multisampling or physical.ops.texture_memory != null) return false;
+    if (info.image_type != .@"2d" or info.tiling != .optimal or info.mip_levels != 1) return false;
+    if (info.flags & facet.IMAGE_CREATE_CUBE_COMPATIBLE != 0) return false;
+    const taken = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT |
+        facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT |
+        facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
+    if (info.usage & ~taken != 0) return false;
+    const features = physical.ops.format_properties(physical, info.format).optimal_tiling_features;
+    return features & (facet.FORMAT_FEATURE_COLOR_ATTACHMENT | facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT) != 0;
+}
+
+/// `image`, whose `bytes` are what it takes at one sample a pixel, with
+/// `samples` planes of them, one after another (`Image.samples`).
+fn withPlanes(image: Image, samples: u32) Image {
+    var made = image;
+    made.samples = samples;
+    made.sample_bytes = image.bytes;
+    made.bytes = image.bytes * samples;
+    return made;
 }
 
 /// A texture image's levels and layers as a sample reads them, over `memory`.

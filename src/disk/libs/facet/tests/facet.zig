@@ -811,6 +811,151 @@ test "a texture whose sides are not powers of two: copied into, and a view from 
     try testing.expectEqual(@as(u32, 0x1234_5678), made.texels.peek(2, 24, 14));
 }
 
+/// Every format this library names, for a test that asks the same of each.
+const every_format = names: {
+    const fields = @typeInfo(facet.Format).@"enum".fields;
+    var all: [fields.len]facet.Format = undefined;
+    for (fields, 0..) |field, n| all[n] = @enumFromInt(field.value);
+    break :names all;
+};
+
+/// What CreateImage's image of `info` asks of its memory, or null where
+/// CreateImage refuses it.
+fn imageBytes(rig: *Rig, device: *facet.Device, info: facet.ImageCreateInfo) ?u64 {
+    var image: ?*facet.Image = null;
+    if (rig.fb.CreateImage(device, &info, &image) != .success) return null;
+    defer rig.fb.DestroyImage(device, image);
+    var needs: facet.MemoryRequirements = undefined;
+    rig.fb.GetImageMemoryRequirements(device, image.?, &needs);
+    return needs.size;
+}
+
+test "an image of four samples a pixel is four planes of one sample's bytes, and the format query says 4 exactly where one is made" {
+    var rig = try Rig.up();
+    defer rig.down() catch |err| std.debug.panic("{}", .{err});
+    const instance, const physical = try rig.instance();
+    defer rig.fb.DestroyInstance(instance);
+    const device = try rig.device(physical);
+    defer rig.fb.DestroyDevice(device);
+    const fb = rig.fb;
+    const record = _objects.of(_instance.PhysicalDevice, physical);
+    const color = facet.IMAGE_USAGE_COLOR_ATTACHMENT;
+    const depth = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT;
+    const copied = facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
+    const small = facet.Extent3D{ .width = 37, .height = 19, .depth = 1 };
+
+    // As shipped no device draws four samples, so none is made.
+    try testing.expect(!record.can.multisampling);
+    try testing.expectEqual(null, imageBytes(&rig, device, .{ .format = .b8g8r8a8_unorm, .extent = small, .samples = 4, .usage = color }));
+
+    record.can.multisampling = true;
+    defer record.can.multisampling = false;
+
+    // Four planes, each the whole of the image at one sample: a colour
+    // attachment's rows, padded to a cache line at this width, and a
+    // depth attachment's, with layers and without.
+    const shapes = [_]struct { facet.Format, u32, u32 }{
+        .{ .b8g8r8a8_unorm, color | copied, 1 },
+        .{ .r8g8b8a8_unorm, color | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT, 1 },
+        .{ .r5g6b5_unorm_pack16, color | facet.IMAGE_USAGE_INPUT_ATTACHMENT, 3 },
+        .{ .d16_unorm, depth | copied, 1 },
+        .{ .s8_uint, depth, 6 },
+        .{ .d16_unorm_s8_uint, depth | facet.IMAGE_USAGE_INPUT_ATTACHMENT, 2 },
+    };
+    for (shapes) |shape| {
+        const format, const usage, const layers = shape;
+        var info = facet.ImageCreateInfo{ .format = format, .extent = small, .array_layers = layers, .usage = usage };
+        const one = imageBytes(&rig, device, info) orelse return error.TestUnexpectedResult;
+        info.samples = 4;
+        try testing.expectEqual(@as(?u64, 4 * one), imageBytes(&rig, device, info));
+    }
+
+    // What Vulkan forbids of a multisampled image, and what this library
+    // does not make one of yet, is refused, each beside the same image
+    // made at one sample.
+    const refused = [_]facet.ImageCreateInfo{
+        .{ .format = .b8g8r8a8_unorm, .image_type = .@"3d", .extent = small, .usage = copied },
+        .{ .format = .b8g8r8a8_unorm, .image_type = .@"1d", .extent = .{ .width = 37, .height = 1, .depth = 1 }, .usage = copied },
+        .{ .format = .d16_unorm, .extent = small, .mip_levels = 2, .usage = depth },
+        .{ .format = .b8g8r8a8_unorm, .extent = small, .tiling = .linear, .usage = color },
+        .{ .format = .b8g8r8a8_unorm, .flags = facet.IMAGE_CREATE_CUBE_COMPATIBLE, .extent = .{ .width = 16, .height = 16, .depth = 1 }, .array_layers = 6, .usage = color },
+        .{ .format = .b8g8r8a8_unorm, .extent = small, .usage = color | facet.IMAGE_USAGE_STORAGE },
+        .{ .format = .b8g8r8a8_unorm, .extent = small, .usage = facet.IMAGE_USAGE_SAMPLED | copied },
+        .{ .format = .d16_unorm, .extent = small, .usage = depth | facet.IMAGE_USAGE_SAMPLED },
+    };
+    for (refused) |shape| {
+        var info = shape;
+        try testing.expect(imageBytes(&rig, device, info) != null);
+        info.samples = 4;
+        try testing.expectEqual(null, imageBytes(&rig, device, info));
+    }
+    for ([_]u32{ 2, 8, 16, 3 }) |count| {
+        try testing.expectEqual(null, imageBytes(&rig, device, .{ .format = .b8g8r8a8_unorm, .extent = small, .samples = count, .usage = color }));
+    }
+    // A format that is no attachment is refused at four samples though
+    // an image of it is made at one, as Vulkan says only one sample of it.
+    var no_attachment: u32 = 0;
+    for (every_format) |format| {
+        var features: facet.FormatProperties = undefined;
+        fb.GetPhysicalDeviceFormatProperties(physical, format, &features);
+        if (features.optimal_tiling_features & (facet.FORMAT_FEATURE_COLOR_ATTACHMENT | facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT) != 0) continue;
+        var info = facet.ImageCreateInfo{ .format = format, .extent = small, .usage = copied };
+        if (imageBytes(&rig, device, info) == null) continue;
+        info.samples = 4;
+        try testing.expectEqual(null, imageBytes(&rig, device, info));
+        no_attachment += 1;
+    }
+    try testing.expect(no_attachment > 0);
+
+    // The query asks CreateImage's own rules, at four samples as at one:
+    // its largest image of four samples is the largest of one at one
+    // level, four times the bytes.
+    var properties: facet.ImageFormatProperties = undefined;
+    try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"2d", .optimal, color, 0, &properties));
+    try testing.expectEqual(facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4, properties.sample_counts);
+    try testing.expectEqual(@as(u64, 8192 * 4 * 8192 * 256 * 4), properties.max_resource_size);
+
+    // And over every format, image type, tiling, both flags and each of
+    // the 255 usages, with the capability and without: 4 is said exactly
+    // where CreateImage makes such an image at four samples, the largest
+    // one inside what is answered and the smallest; never where Vulkan
+    // has the answer be one sample alone (2D, optimal, not cube
+    // compatible, a format that is an attachment); and never without the
+    // capability.
+    for ([_]bool{ false, true }) |can| {
+        record.can.multisampling = can;
+        var said_four: u32 = 0;
+        for (every_format) |format| {
+            var features: facet.FormatProperties = undefined;
+            fb.GetPhysicalDeviceFormatProperties(physical, format, &features);
+            const attachment = features.optimal_tiling_features & (facet.FORMAT_FEATURE_COLOR_ATTACHMENT | facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT) != 0;
+            for ([_]facet.ImageType{ .@"1d", .@"2d", .@"3d" }) |image_type| {
+                for ([_]facet.ImageTiling{ .optimal, .linear }) |tiling| {
+                    for ([_]u32{ 0, facet.IMAGE_CREATE_CUBE_COMPATIBLE }) |flags| {
+                        for (1..256) |bits| {
+                            const usage: u32 = @intCast(bits);
+                            if (fb.GetPhysicalDeviceImageFormatProperties(physical, format, image_type, tiling, usage, flags, &properties) != .success) continue;
+                            try testing.expectEqual(facet.SAMPLE_COUNT_1, properties.sample_counts & ~facet.SAMPLE_COUNT_4);
+                            const four = properties.sample_counts & facet.SAMPLE_COUNT_4 != 0;
+                            if (four) {
+                                try testing.expect(can and attachment and image_type == .@"2d" and tiling == .optimal and flags == 0);
+                                said_four += 1;
+                            }
+                            const largest = facet.ImageCreateInfo{ .flags = flags, .image_type = image_type, .format = format, .extent = properties.max_extent, .array_layers = properties.max_array_layers, .samples = 4, .tiling = tiling, .usage = usage };
+                            try testing.expectEqual(four, imageBytes(&rig, device, largest) != null);
+                            var smallest = largest;
+                            smallest.extent = .{ .width = 1, .height = 1, .depth = 1 };
+                            smallest.array_layers = if (flags != 0) 6 else 1;
+                            try testing.expectEqual(four, imageBytes(&rig, device, smallest) != null);
+                        }
+                    }
+                }
+            }
+        }
+        if (can) try testing.expect(said_four > 0) else try testing.expectEqual(0, said_four);
+    }
+}
+
 // --- command buffers, the queue, fences and semaphores -------------------------
 
 const _stream = @import("../command/_stream.zig");
