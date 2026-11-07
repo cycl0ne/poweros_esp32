@@ -363,9 +363,13 @@ pub fn clearDepthImage(command: *const _command.ClearDepthStencilImage) bool {
 /// the image does not keep that way.
 fn spanOf(image: *const Image, level: u32) ?struct { at: usize, bytes: usize } {
     switch (image.kind) {
-        // One level, rows of `pitch` bytes: the padding at a row's end is
-        // written too, being the image's own memory and read by nothing.
-        .rows => return if (level != 0) null else .{ .at = 0, .bytes = @as(usize, image.pitch) * image.height },
+        // A level's rows, each of the level's own pitch: the padding at a
+        // row's end is written too, being the image's own memory and read
+        // by nothing. An image kept in rows has levels since 1.119.
+        .rows => {
+            const rows = _image.rowsAt(image, level, 0);
+            return .{ .at = rows.at, .bytes = @as(usize, rows.pitch) * _image.levelSize(image, level)[1] };
+        },
         .texture => {
             const texels = &image.texels;
             if (level >= texels.levels) return null;

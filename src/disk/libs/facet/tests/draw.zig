@@ -6674,13 +6674,20 @@ test "an image of four samples a pixel sampled where it lies: a colour one kept 
 
     // A colour image of each format an attachment is drawn in: what a pass
     // draws into, its samples marked by hand, copied into the image
-    // sampled, as no image of one sample is both drawn into and sampled.
+    // sampled - an image the copy alone fills, so that each sample's mark
+    // is the test's own.
     for ([3]facet.Format{ .b8g8r8a8_unorm, .r8g8b8a8_unorm, .r5g6b5_unorm_pack16 }) |format| {
         const drawn = try bench.bareImage(.{ .format = format, .extent = extent, .array_layers = 2, .samples = 4, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_SRC }, false);
         const sampled = try bench.bareImage(.{ .format = format, .extent = extent, .array_layers = 2, .samples = 4, .usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST }, false);
-        var none: ?*facet.Image = null;
-        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{ .format = format, .extent = extent, .samples = 4, .usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_COLOR_ATTACHMENT }, &none));
-        try testing.expect(none == null);
+        // One both drawn into and sampled is made since 1.119, in rows as
+        // either of those is (docs/facet-vulkan10.md item 48), and so is
+        // one read as an input attachment and sampled.
+        for ([2]u32{ facet.IMAGE_USAGE_COLOR_ATTACHMENT, facet.IMAGE_USAGE_INPUT_ATTACHMENT }) |attachment| {
+            var both: ?*facet.Image = null;
+            try testing.expectEqual(facet.Result.success, fb.CreateImage(device, &.{ .format = format, .extent = extent, .samples = 4, .usage = facet.IMAGE_USAGE_SAMPLED | attachment }, &both));
+            try testing.expectEqual(_image.Kind.rows, _objects.of(_image.Image, both.?).kind);
+            fb.DestroyImage(device, both);
+        }
         const source = _objects.of(_image.Image, drawn);
         const picture = _objects.of(_image.Image, sampled);
         // Rows, as the image drawn into is, and its texels are those rows:
@@ -9955,6 +9962,386 @@ test "a depth attachment of levels: a pass draws into the level its view names, 
     }
 }
 
+// --- 1.119: an image drawn into and sampled at once (item 48) ---------------
+
+/// A colour image kept in rows, 32 by 32 and three levels of two layers,
+/// and the rule its rows are laid out by, by hand: each level's pitch as
+/// wide as that level, each level on a cache line, and the whole pyramid
+/// again for the second layer (`_image.rowsAt`).
+const Drawn = struct {
+    const image_zig = @import("../image/_image.zig");
+    const side = 32;
+
+    fn pitch(level: u32, pixel: u32) u32 {
+        return std.mem.alignForward(u32, @max(@as(u32, side) >> @intCast(level), 1) * pixel, 64);
+    }
+
+    fn bytes(level: u32, pixel: u32) u64 {
+        return std.mem.alignForward(u64, @as(u64, pitch(level, pixel)) * @max(@as(u32, side) >> @intCast(level), 1), 64);
+    }
+
+    fn whole(levels: u32, pixel: u32) u64 {
+        var sum: u64 = 0;
+        for (0..levels) |lod| sum += bytes(@intCast(lod), pixel);
+        return sum;
+    }
+
+    fn at(level: u32, layer: u32, pixel: u32) usize {
+        return @intCast(layer * whole(3, pixel) + whole(level, pixel));
+    }
+
+    /// Pixel (x, y) of a level of a layer as 0xAARRGGBB, read out of the
+    /// image's memory where the rule above says it lies.
+    fn color(image: *const image_zig.Image, level: u32, layer: u32, x: u32, y: u32) u32 {
+        const pixel = image_zig.bytesOf(image.format);
+        const place = at(level, layer, pixel) + @as(usize, y) * pitch(level, pixel) + @as(usize, x) * pixel;
+        return image_zig.colorOfBytes(image.format, image.data.?[place..][0..pixel]);
+    }
+
+    /// One pass over the picture `frame` holds, sampling `view` through
+    /// `sampler` with `pipeline`: the quad at the start of `buffer`.
+    fn sample(bench: *Bench, pipeline: *facet.Pipeline, pass: *facet.RenderPass, frame: *facet.Framebuffer, layout: *facet.PipelineLayout, set: *facet.DescriptorSet, view: *facet.ImageView, sampler: *facet.Sampler, buffer: *facet.Buffer) !void {
+        const fb = bench.rig.fb;
+        const info = facet.DescriptorImageInfo{ .sampler = sampler, .image_view = view };
+        const write = facet.WriteDescriptorSet{ .dst_set = set, .dst_binding = 0, .descriptor_type = .combined_image_sampler, .image_info = @ptrCast(&info) };
+        fb.UpdateDescriptorSets(bench.device, 1, @ptrCast(&write), 0, null);
+        const grey = clears(0xFF80_8080);
+        const start: u64 = 0;
+        const commands = try bench.record();
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame, .render_area = .{ .extent = .{ .width = side, .height = side } }, .clear_value_count = 1, .clear_values = &grey }, .@"inline");
+        fb.CmdBindPipeline(commands, .graphics, pipeline);
+        fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&buffer), @ptrCast(&start));
+        fb.CmdBindDescriptorSets(commands, .graphics, layout, 0, 1, @ptrCast(&set), 0, null);
+        fb.CmdDraw(commands, 6, 1, 0, 0);
+        fb.CmdEndRenderPass(commands);
+        try bench.submit();
+    }
+};
+
+/// A fixed form's own texture, read nearest with no sampler, s and t at
+/// varyings 0 and 1: its format is the one an image of B8G8R8A8 kept in
+/// rows is read as, so the form would take its fast path, whose places
+/// are those of blocks, did a texture in rows not go the other way
+/// (`shader.textured`, since 1.119).
+const RowsForm = struct {
+    const entries = [_]shader.Entry{
+        shader.vertex("main", &Planed.vertex, 2),
+        shader.fixedFragment("main", .{ .kind = .texture, .sampling = .{ .format = .argb8888, .filter = .nearest } }),
+    };
+    const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
+};
+
+test "an image drawn into and sampled at once: kept in rows of levels and layers, a pass drawing into the level and the layer its view names, a blit making the next level, and a sample reading the rows they wrote (item 48)" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const image_zig = Drawn.image_zig;
+    const extent = facet.Extent3D{ .width = Drawn.side, .height = Drawn.side };
+    const usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
+    const blue: u32 = 0xFF00_00FF;
+    const green: u32 = 0xFF00_FF00;
+    const red: u32 = 0xFFFF_0000;
+
+    // What every format shares: a pass that samples into a picture of
+    // the image's own size, through a combined image sampler, by a
+    // sampler and by a fixed form of its own.
+    const into = try Picture.of(&bench, Drawn.side, Drawn.side);
+    const reading = try renderPass(&bench, .clear, false);
+    defer fb.DestroyRenderPass(device, reading);
+    const onto = try framebuffer(&bench, reading, &.{into.view}, Drawn.side, Drawn.side);
+    defer fb.DestroyFramebuffer(device, onto);
+    const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .combined_image_sampler, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &set_layout));
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    const sampled_layout = try pipelineLayout(&bench, &.{set_layout.?}, 0);
+    defer fb.DestroyPipelineLayout(device, sampled_layout);
+    var pool: ?*facet.DescriptorPool = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool));
+    defer fb.DestroyDescriptorPool(device, pool);
+    var sets: [1]?*facet.DescriptorSet = undefined;
+    try testing.expectEqual(facet.Result.success, fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &sets));
+    const set = sets[0].?;
+    const attributes = [2]facet.VertexInputAttributeDescription{
+        .{ .location = 0, .binding = 0, .format = .r32g32b32_sfloat },
+        .{ .location = 1, .binding = 0, .format = .r32g32b32_sfloat, .offset = 12 },
+    };
+    const planed = try module(&bench, &Planed.code);
+    defer fb.DestroyShaderModule(device, planed);
+    const by_sampler_result, const by_sampler = makePipeline(&bench, .{ .module = planed, .layout = sampled_layout, .pass = reading, .stride = 24, .attributes = &attributes, .width = Drawn.side, .height = Drawn.side });
+    try testing.expectEqual(facet.Result.success, by_sampler_result);
+    defer fb.DestroyPipeline(device, by_sampler);
+    const formed = try module(&bench, &RowsForm.code);
+    defer fb.DestroyShaderModule(device, formed);
+    const by_form_result, const by_form = makePipeline(&bench, .{ .module = formed, .layout = sampled_layout, .pass = reading, .stride = 24, .attributes = &attributes, .width = Drawn.side, .height = Drawn.side });
+    try testing.expectEqual(facet.Result.success, by_form_result);
+    defer fb.DestroyPipeline(device, by_form);
+    const flat = try module(&bench, &Flat.code);
+    defer fb.DestroyShaderModule(device, flat);
+    const flat_layout = try pipelineLayout(&bench, &.{}, 4);
+    defer fb.DestroyPipelineLayout(device, flat_layout);
+    // The quad that samples, s and t 0 to 1 across the picture; and the
+    // one that draws, over the left half of what it draws into.
+    const vertex_buffer, const vertex_bytes = try bench.buffer(1024, facet.BUFFER_USAGE_VERTEX_BUFFER);
+    const sampling = [6][6]f32{
+        .{ -1, -1, 0.5, 0, 0, 0 }, .{ 1, -1, 0.5, 1, 0, 0 }, .{ -1, 1, 0.5, 0, 1, 0 },
+        .{ -1, 1, 0.5, 0, 1, 0 },  .{ 1, -1, 0.5, 1, 0, 0 }, .{ 1, 1, 0.5, 1, 1, 0 },
+    };
+    const left = [6][3]f32{
+        .{ -1, -1, 0.5 }, .{ 0, -1, 0.5 }, .{ -1, 1, 0.5 },
+        .{ -1, 1, 0.5 },  .{ 0, -1, 0.5 }, .{ 0, 1, 0.5 },
+    };
+    const left_at: u64 = 512;
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(sampling))], std.mem.asBytes(&sampling));
+    @memcpy(vertex_bytes[left_at..][0..@sizeOf(@TypeOf(left))], std.mem.asBytes(&left));
+
+    for ([3]facet.Format{ .b8g8r8a8_unorm, .r8g8b8a8_unorm, .r5g6b5_unorm_pack16 }) |format| {
+        const pixel = image_zig.bytesOf(format);
+        const made = try bench.bareImage(.{ .format = format, .extent = extent, .mip_levels = 3, .array_layers = 2, .usage = usage }, false);
+        const image = _objects.of(image_zig.Image, made);
+        // Rows, a level's after the level before, as a depth attachment's.
+        try testing.expectEqual(image_zig.Kind.rows, image.kind);
+        try testing.expectEqual(@as(u32, 3), image.levels);
+        try testing.expectEqual(Drawn.whole(3, pixel), image.layer_bytes);
+        try testing.expectEqual(Drawn.whole(3, pixel) * 2, image.bytes);
+        // Its texels are those rows, every level as wide as it is, read as
+        // the word the format is: R8G8B8A8's with red in its low byte.
+        const kept: texture_zig.Format = switch (format) {
+            .r8g8b8a8_unorm => .rgba8,
+            .r5g6b5_unorm_pack16 => .rgb565,
+            else => .argb8888,
+        };
+        try testing.expectEqual(kept, image.texels.format);
+        try testing.expectEqual(@as(u32, 3), image.texels.levels);
+        try testing.expectEqual(@as(u32, 2), image.texels.layer_count);
+        try testing.expectEqual(@intFromPtr(image.data.?), @intFromPtr(image.texels.memory));
+        try testing.expectEqual(Drawn.pitch(0, pixel), image.texels.pitch);
+        try testing.expectEqual(@as(u32, @intCast(Drawn.whole(2, pixel))), image.texels.layout[2].start);
+        try testing.expectEqual(Drawn.pitch(2, pixel), image.texels.layout[2].pitch);
+        try testing.expectEqual(@as(u32, 8), image.texels.layout[2].width);
+
+        // Every level of every layer cleared blue, with no pass.
+        const everything = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_COLOR };
+        const blue_value = facet.ClearColorValue{ .float32 = .{ 0, 0, 1, 1 } };
+        var commands = try bench.record();
+        fb.CmdClearColorImage(commands, made, .transfer_dst_optimal, &blue_value, 1, @ptrCast(&everything));
+        try bench.submit();
+        for (0..2) |layer| for (0..3) |level| {
+            const last = (@as(u32, Drawn.side) >> @intCast(level)) - 1;
+            try testing.expectEqual(blue, Drawn.color(image, @intCast(level), @intCast(layer), 0, 0));
+            try testing.expectEqual(blue, Drawn.color(image, @intCast(level), @intCast(layer), last, last));
+        };
+
+        // A pass over level 1 of layer 1, which clears it green and draws
+        // red over its left half, through a framebuffer of that level's
+        // size - one wider than the level is refused.
+        const level_view = try bench.viewOf(.{ .image = made, .format = format, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_COLOR, .base_mip_level = 1, .level_count = 1, .base_array_layer = 1, .layer_count = 1 } });
+        const attachment = facet.AttachmentDescription{ .format = format, .load_op = .clear, .store_op = .store, .final_layout = .shader_read_only_optimal };
+        const reference = facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal };
+        const subpass = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&reference) };
+        var drawing: ?*facet.RenderPass = null;
+        try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 1, .attachments = @ptrCast(&attachment), .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &drawing));
+        defer fb.DestroyRenderPass(device, drawing);
+        var too_wide: ?*facet.Framebuffer = null;
+        try testing.expectEqual(facet.Result.error_initialization_failed, fb.CreateFramebuffer(device, &.{ .render_pass = drawing.?, .attachment_count = 1, .attachments = @ptrCast(&level_view), .width = 17, .height = 16 }, &too_wide));
+        const frame = try framebuffer(&bench, drawing.?, &.{level_view}, 16, 16);
+        defer fb.DestroyFramebuffer(device, frame);
+        const painted_result, const painter = makePipeline(&bench, .{ .module = flat, .layout = flat_layout, .pass = drawing.?, .width = 16, .height = 16 });
+        try testing.expectEqual(facet.Result.success, painted_result);
+        defer fb.DestroyPipeline(device, painter);
+        const green_clear = clears(green);
+        commands = try bench.record();
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = drawing.?, .framebuffer = frame, .render_area = .{ .extent = .{ .width = 16, .height = 16 } }, .clear_value_count = 1, .clear_values = &green_clear }, .@"inline");
+        fb.CmdBindPipeline(commands, .graphics, painter.?);
+        fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&left_at));
+        fb.CmdPushConstants(commands, flat_layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &red);
+        fb.CmdDraw(commands, 6, 1, 0, 0);
+        fb.CmdEndRenderPass(commands);
+        // And level 1 blitted down into level 2, as a program makes the
+        // smaller levels of what it drew.
+        const halving = facet.ImageBlit{
+            .src_subresource = .{ .mip_level = 1, .base_array_layer = 1 },
+            .src_offsets = .{ .{}, .{ .x = 16, .y = 16, .z = 1 } },
+            .dst_subresource = .{ .mip_level = 2, .base_array_layer = 1 },
+            .dst_offsets = .{ .{}, .{ .x = 8, .y = 8, .z = 1 } },
+        };
+        fb.CmdBlitImage(commands, made, .transfer_src_optimal, made, .transfer_dst_optimal, 1, @ptrCast(&halving), .nearest);
+        try bench.submit();
+        // That level of that layer holds what the pass drew, and the level
+        // after it the same halved; the first level of that layer, and the
+        // other layer, still what the clear left.
+        try testing.expectEqual(red, Drawn.color(image, 1, 1, 0, 0));
+        try testing.expectEqual(red, Drawn.color(image, 1, 1, 7, 15));
+        try testing.expectEqual(green, Drawn.color(image, 1, 1, 8, 0));
+        try testing.expectEqual(green, Drawn.color(image, 1, 1, 15, 15));
+        try testing.expectEqual(red, Drawn.color(image, 2, 1, 3, 7));
+        try testing.expectEqual(green, Drawn.color(image, 2, 1, 4, 0));
+        try testing.expectEqual(blue, Drawn.color(image, 0, 1, 0, 0));
+        try testing.expectEqual(blue, Drawn.color(image, 0, 1, 31, 31));
+        try testing.expectEqual(blue, Drawn.color(image, 1, 0, 0, 0));
+        try testing.expectEqual(blue, Drawn.color(image, 2, 0, 7, 7));
+
+        // Four samples a pixel resolved into level 1 of the other layer,
+        // through a view of it: a framebuffer wider than that level is
+        // refused, as one wider than a colour attachment's level is, the
+        // image of four being wide enough; and the resolve fills that
+        // level's rows and no other's.
+        const four = try bench.bareImage(.{ .format = format, .extent = extent, .samples = 4, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, false);
+        const four_view = try bench.viewOf(.{ .image = four, .format = format, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_COLOR } });
+        const resolve_view = try bench.viewOf(.{ .image = made, .format = format, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_COLOR, .base_mip_level = 1, .level_count = 1, .layer_count = 1 } });
+        const resolved_shape = [2]facet.AttachmentDescription{
+            .{ .format = format, .samples = 4, .load_op = .clear, .final_layout = .color_attachment_optimal },
+            .{ .format = format, .load_op = .dont_care, .store_op = .store, .final_layout = .shader_read_only_optimal },
+        };
+        const resolving_result, const resolving = samplesPass(&bench, &resolved_shape, 1, null);
+        try testing.expectEqual(facet.Result.success, resolving_result);
+        defer fb.DestroyRenderPass(device, resolving);
+        const resolve_views = [2]*facet.ImageView{ four_view, resolve_view };
+        var wide_resolve: ?*facet.Framebuffer = null;
+        try testing.expectEqual(facet.Result.error_initialization_failed, fb.CreateFramebuffer(device, &.{ .render_pass = resolving.?, .attachment_count = 2, .attachments = @ptrCast(&resolve_views), .width = 17, .height = 16 }, &wide_resolve));
+        const resolve_frame = try framebuffer(&bench, resolving.?, &resolve_views, 16, 16);
+        defer fb.DestroyFramebuffer(device, resolve_frame);
+        const yellow: u32 = 0xFFFF_FF00;
+        const yellow_clear = clears(yellow);
+        commands = try bench.record();
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = resolving.?, .framebuffer = resolve_frame, .render_area = .{ .extent = .{ .width = 16, .height = 16 } }, .clear_value_count = 1, .clear_values = &yellow_clear }, .@"inline");
+        fb.CmdEndRenderPass(commands);
+        try bench.submit();
+        try testing.expectEqual(yellow, Drawn.color(image, 1, 0, 0, 0));
+        try testing.expectEqual(yellow, Drawn.color(image, 1, 0, 15, 15));
+        try testing.expectEqual(blue, Drawn.color(image, 0, 0, 0, 0));
+        try testing.expectEqual(blue, Drawn.color(image, 0, 0, 31, 31));
+        try testing.expectEqual(blue, Drawn.color(image, 2, 0, 7, 7));
+        try testing.expectEqual(red, Drawn.color(image, 1, 1, 0, 0));
+        // And that view holds the level's rows for a subpass to read it
+        // as an input attachment: where the level begins, its own pitch
+        // and its own size.
+        const level_rows = &_objects.of(image_zig.ImageView, resolve_view).rows;
+        try testing.expectEqual(@intFromPtr(image.data.?) + Drawn.at(1, 0, pixel), @intFromPtr(level_rows.bytes.?));
+        try testing.expectEqual(Drawn.pitch(1, pixel), level_rows.pitch);
+        try testing.expectEqual(@as(u32, 16), level_rows.width);
+        try testing.expectEqual(@as(u32, 16), level_rows.height);
+
+        // Sampled through a view of every level of that layer, at the
+        // level the sampler is held to: the one drawn into, the one
+        // blitted, and the first as the clear left it.
+        const whole_view = try bench.viewOf(.{ .image = made, .format = format, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_COLOR, .base_array_layer = 1, .layer_count = 1 } });
+        const texels = &_objects.of(image_zig.ImageView, whole_view).texels;
+        try testing.expectEqual(@as(u32, 3), texels.levels);
+        try testing.expectEqual(@intFromPtr(image.data.?) + Drawn.at(0, 1, pixel), @intFromPtr(texels.memory));
+        for ([3]struct { f32, u32, u32 }{ .{ 1, red, green }, .{ 2, red, green }, .{ 0, blue, blue } }) |one| {
+            const lod, const on_left, const on_right = one;
+            var sampler: ?*facet.Sampler = null;
+            try testing.expectEqual(facet.Result.success, fb.CreateSampler(device, &.{ .mag_filter = .nearest, .min_filter = .nearest, .address_mode_u = .clamp_to_edge, .address_mode_v = .clamp_to_edge, .min_lod = lod, .max_lod = lod }, &sampler));
+            defer fb.DestroySampler(device, sampler);
+            try Drawn.sample(&bench, by_sampler.?, reading, onto, sampled_layout, set, whole_view, sampler.?, vertex_buffer);
+            try testing.expectEqual(on_left, into.at(8, 8));
+            try testing.expectEqual(on_left, into.at(8, 24));
+            try testing.expectEqual(on_right, into.at(24, 8));
+            try testing.expectEqual(on_right, into.at(24, 24));
+        }
+
+        // And the view of level 1 alone, read by the fixed form, which
+        // samples the level a quad's steps choose: the view's one.
+        var any: ?*facet.Sampler = null;
+        try testing.expectEqual(facet.Result.success, fb.CreateSampler(device, &.{}, &any));
+        defer fb.DestroySampler(device, any);
+        const level_texels = &_objects.of(image_zig.ImageView, level_view).texels;
+        try testing.expectEqual(@as(u32, 1), level_texels.levels);
+        try testing.expectEqual(@as(u32, 16), level_texels.width(0));
+        try testing.expectEqual(@intFromPtr(image.data.?) + Drawn.at(1, 1, pixel), @intFromPtr(level_texels.memory));
+        try Drawn.sample(&bench, by_form.?, reading, onto, sampled_layout, set, level_view, any.?, vertex_buffer);
+        try testing.expectEqual(red, into.at(4, 4));
+        try testing.expectEqual(red, into.at(12, 28));
+        try testing.expectEqual(green, into.at(20, 4));
+        try testing.expectEqual(green, into.at(28, 28));
+    }
+}
+
+/// The cores' driver with a layout of its own for a texture, as the V3D
+/// has (`Ops.texture_memory`): what CreateImage and the format query
+/// refuse on such a device, which is the V3D's half of item 48.
+const OwnLayout = struct {
+    const ops = ops: {
+        var made = cpu.ops;
+        made.texture_memory = &memoryOf;
+        break :ops made;
+    };
+
+    fn memoryOf(format: facet.Format, width: u32, height: u32, levels: u32) callconv(.c) _driver.TextureMemory {
+        _ = format;
+        _ = levels;
+        return .{ .bytes = @as(u64, width) * height * 8, .alignment = 64 };
+    }
+};
+
+test "an image drawn into and sampled, and a colour attachment of levels: the format query gives the whole chain of levels an optimal image has on the cores, and a device of a layout of its own refuses both (item 48)" {
+    const both = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED;
+    const read_back = facet.IMAGE_USAGE_INPUT_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED;
+    const extent = facet.Extent3D{ .width = 32, .height = 32 };
+    var said: facet.ImageFormatProperties = undefined;
+    {
+        var bench = try Bench.up();
+        defer bench.down();
+        const fb = bench.rig.fb;
+        const physical = bench.physical;
+        // Drawn into and sampled: 14 levels of 8192, 256 layers, and both
+        // sample counts, as at either usage alone.
+        try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"2d", .optimal, both, 0, &said));
+        try testing.expectEqual(@as(u32, 14), said.max_mip_levels);
+        try testing.expectEqual(@as(u32, 256), said.max_array_layers);
+        try testing.expectEqual(facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4, said.sample_counts);
+        try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, .r8g8b8a8_unorm, .@"2d", .optimal, read_back, 0, &said));
+        // A cube drawn into a face at a time and sampled as one.
+        try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, .r5g6b5_unorm_pack16, .@"2d", .optimal, both, facet.IMAGE_CREATE_CUBE_COMPATIBLE, &said));
+        try testing.expectEqual(@as(u32, 14), said.max_mip_levels);
+        // A colour attachment alone, and an image a transfer alone touches,
+        // which until 1.119 said one level: Vulkan has an optimal image's
+        // be the whole chain.
+        for ([3]facet.Format{ .b8g8r8a8_unorm, .r8g8b8a8_unorm, .r5g6b5_unorm_pack16 }) |format| {
+            try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, format, .@"2d", .optimal, facet.IMAGE_USAGE_COLOR_ATTACHMENT, 0, &said));
+            try testing.expectEqual(@as(u32, 14), said.max_mip_levels);
+            try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, format, .@"2d", .optimal, facet.IMAGE_USAGE_TRANSFER_DST, 0, &said));
+            try testing.expectEqual(@as(u32, 14), said.max_mip_levels);
+        }
+        // A linear one keeps the one, as Vulkan lets it, and is not
+        // sampled where it is drawn into.
+        try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"2d", .linear, facet.IMAGE_USAGE_COLOR_ATTACHMENT, 0, &said));
+        try testing.expectEqual(@as(u32, 1), said.max_mip_levels);
+        try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"2d", .linear, both, 0, &said));
+        // Not written through as well, nor a 3D image.
+        try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"2d", .optimal, both | facet.IMAGE_USAGE_STORAGE, 0, &said));
+        try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"3d", .optimal, both, 0, &said));
+        // CreateImage keeps the same rules: more levels than halving
+        // gives, or a transient one sampled, are refused.
+        var none: ?*facet.Image = null;
+        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(bench.device, &.{ .format = .b8g8r8a8_unorm, .extent = extent, .mip_levels = 7, .usage = both }, &none));
+        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(bench.device, &.{ .format = .b8g8r8a8_unorm, .extent = extent, .usage = both | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT }, &none));
+        try testing.expect(none == null);
+        var six: ?*facet.Image = null;
+        try testing.expectEqual(facet.Result.success, fb.CreateImage(bench.device, &.{ .format = .b8g8r8a8_unorm, .extent = extent, .mip_levels = 6, .usage = both }, &six));
+        bench.rig.fb.DestroyImage(bench.device, six);
+    }
+    {
+        var bench = try Bench.on(&OwnLayout.ops);
+        defer bench.down();
+        const fb = bench.rig.fb;
+        const physical = bench.physical;
+        // Neither drawn into and sampled, nor read back and sampled; and a
+        // colour attachment of the one level, which is what the V3D's
+        // render target is.
+        try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"2d", .optimal, both, 0, &said));
+        try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"2d", .optimal, read_back, 0, &said));
+        try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"2d", .optimal, facet.IMAGE_USAGE_COLOR_ATTACHMENT, 0, &said));
+        try testing.expectEqual(@as(u32, 1), said.max_mip_levels);
+        var none: ?*facet.Image = null;
+        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(bench.device, &.{ .format = .b8g8r8a8_unorm, .extent = extent, .usage = both }, &none));
+        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(bench.device, &.{ .format = .b8g8r8a8_unorm, .extent = extent, .mip_levels = 2, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, &none));
+        try testing.expect(none == null);
+    }
+}
+
 test "a depth attachment read as an input attachment: what the subpass before drew, plane by plane" {
     var bench = try Bench.up();
     defer bench.down();
@@ -10628,7 +11015,15 @@ test "an input attachment: what one subpass drew read pixel by pixel by the next
         .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT,
     }, false);
     _ = plain_image;
-    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = facet.IMAGE_USAGE_INPUT_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED }, &none));
+    // One sampled as well is made since 1.119, in the rows it is read
+    // from (docs/facet-vulkan10.md item 48); one transient is not.
+    {
+        const _image = @import("../image/_image.zig");
+        var sampled: ?*facet.Image = null;
+        try testing.expectEqual(facet.Result.success, fb.CreateImage(device, &.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = facet.IMAGE_USAGE_INPUT_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED }, &sampled));
+        try testing.expectEqual(_image.Kind.rows, _objects.of(_image.Image, sampled.?).kind);
+        fb.DestroyImage(device, sampled);
+    }
     try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = facet.IMAGE_USAGE_INPUT_ATTACHMENT | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT }, &none));
     try testing.expect(none == null);
 

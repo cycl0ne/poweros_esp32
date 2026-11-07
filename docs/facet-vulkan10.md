@@ -124,7 +124,8 @@ Mesa, in 1.92, item 45 in 1.93, item 44 in 1.94, item 84 in 1.95,
 item 61's next six rows of eight, on the cores, in 1.112, item 43's
 half of two, the cores', in 1.113, item 61's last row of eight, on the
 cores, in 1.114, item 85's half of two, the cores', in 1.115, item 87
-in 1.116, item 88 in 1.117 and item 86 in 1.118.**
+in 1.116, item 88 in 1.117, item 86 in 1.118 and item 48's half of two,
+the cores', in 1.119.**
 Each
 carries a *Done* note below saying what was actually built and where the
 item's own description turned out to be wrong - and several did. Things
@@ -132,26 +133,28 @@ found while doing them became the items at the end of the list: 77 and 78
 from 1.80 and 1.81, 79, 80 and 81 from 1.82, 85 and 86 from 1.113, and
 87 and 88 from scoping item 86.
 
-Items 52, 28, 17, 22, 61, 43 and 85 are the ones split between devices:
+Items 52, 28, 17, 22, 61, 43, 85 and 48 are the ones split between devices:
 the cores draw every sampler as of 1.83, sample at a constant texel offset
 as of 1.87, carry 64 varyings as of 1.90, take framebuffers of 256 layers
 as of 1.91, draw four samples a pixel as of 1.112 (in a subpass of no
-attachment as of 1.114), a subpass with no colour attachment as of 1.113
-and a pipeline of no fragment stage as of 1.115, and the V3D does none of
-the seven - so the
+attachment as of 1.114), a subpass with no colour attachment as of 1.113,
+a pipeline of no fragment stage as of 1.115 and an image both drawn into
+and sampled as of 1.119, and the V3D does none of the eight - so the
 magenta item 52 is about now belongs to item 54 alone, item 28's
 remainder is a QPU back end that refuses the operand at pipeline
 creation, item 17's is a vertex program that keeps its varyings in
 registers and so stops at eight, item 22's is a render list played once
 a frame rather than once a layer, item 61's is its steps V1 to V8,
-item 43's is a frame whose one render target is flagged unused, and item
-85's is a fragment program of no instructions.
+item 43's is a frame whose one render target is flagged unused, item
+85's is a fragment program of no instructions, and item 48's is a store
+and a load that name the UIF layout, and a clear through the TLB.
 
-None of the seven is the hardware's limit. Mesa's v3dv runs Vulkan on this
+None of the eight is the hardware's limit. Mesa's v3dv runs Vulkan on this
 same V3D 7.1 with 64 varyings, texel offsets of -8 to 7, 256 framebuffer
 layers, four samples a pixel (`src/broadcom/vulkan/v3dv_device.c`),
-subpasses of no colour attachment (v3dvx_cmd_buffer.c:1189-1197) and
-pipelines of no fragment stage (v3dv_pipeline.c:2616-2642), so
+subpasses of no colour attachment (v3dvx_cmd_buffer.c:1189-1197),
+pipelines of no fragment stage (v3dv_pipeline.c:2616-2642) and images
+drawn into and sampled, every optimal one being UIF (v3dv_image.c:481-483), so
 each remainder is the port of named Mesa code, and the items say which. Until
 then the V3D's limit is **derived from its own compiler or driver** rather
 than written down, so the number cannot drift from what the device
@@ -1349,7 +1352,7 @@ So facet's barrier, which records the two stage masks and plays as nothing on bo
 
 ### 48. Accept an image that is both SAMPLED and COLOR_ATTACHMENT
 
-*images / render to texture* &mdash; port, about 420 lines: about 90 on the cores, about 62 on the V3D, about 11 for a V3D clear, and about 257 of tests and docs
+*images / render to texture* &mdash; port, about 420 lines: about 90 on the cores, about 62 on the V3D, about 11 for a V3D clear, and about 257 of tests and docs &mdash; **the cores' half done in 1.119**; the V3D's is v3dv's store and load of the UIF layout and its TLB clear, about 73 lines and a board check
 
 An image's layout is settled at CreateImage from its usage — rows for an attachment, blocks of texels for a texture — and shapeFor returns null for SAMPLED or STORAGE together with COLOR_ATTACHMENT, so the ordinary Vulkan render-to-texture image cannot be made. Vulkan requires B8G8R8A8_UNORM and R8G8B8A8_UNORM to carry both COLOR_ATTACHMENT and SAMPLED in optimalTilingFeatures and gives no mechanism to refuse the combination; facet's own format table advertises attachment, sampled and storage in the one optimal mask, so the report and the refusal contradict each other. This cannot be fixed by adding a check: it needs either a layout transition that re-tiles the image in place, or a rasterizer that stores tiles straight into the texture layout. The workaround programs use today — draw into a rows image, CmdCopyImage into a texture image — is a copy a Vulkan program does not make. The single largest omission from the gap list.
 
@@ -1369,6 +1372,58 @@ The port has three parts:
 - **A V3D clear.** CmdClearColorImage writes the device's own layout; v3dv clears through the TLB (v3dv_meta_clear.c:70-193).
 
 Two sentences above are wrong. The fix needs neither "a layout transition that re-tiles the image in place" nor a new rasterizer. And STORAGE with COLOR_ATTACHMENT has been made in rows since 1.56: it is refused only for r8g8b8a8, or with levels or layers. The citations have drifted. At 1.91 the refusal is at image/_image.zig:504-505, the format masks at driver/_format.zig:61-74, and the probe's check at facetprobe.zig:1017.
+
+**The cores' half done in 1.119**, in 58 lines of code, 187 of comments
+and 429 of tests, against the 90 of code and the 257 of tests and docs
+sized. An image made SAMPLED
+together with COLOR_ATTACHMENT or INPUT_ATTACHMENT, of one sample or
+four, is kept in rows and sampled where a pass drew it, with no copy
+between and no transition. llvmpipe does the same: one layout whatever
+the image is bound as (`llvmpipe_texture_layout`, lp_texture.c:154-223),
+lavapipe handing every image to it (lvp_image.c:87-89, 104). The
+rasteriser draws into the level and the layer its view names
+(`init_scene_texture`, lp_scene.c:159-185, which `_play.zig` `surfaceAt`
+ports), and the sampler reads the same bytes as a texture of levels and
+layers (`_image.rowLevels`, as `lp_jit_texture_from_pipe` does,
+lp_jit.c:400-437). R8G8B8A8's bytes were already read in rows, red in the
+low byte, since 1.110 (row K6). What was built:
+
+- **The layout.** Every rows image in optimal tiling may have levels now,
+  the whole chain, in the arrangement depth's levels have had since 1.63:
+  per layer the levels one after another, each level's rows 64-byte
+  aligned, as llvmpipe aligns a level's rows to the cache line
+  (`row_stride`, lp_texture.c:191-195). llvmpipe lays a level's layers
+  together instead (`mip_offsets`, 214-217); Vulkan leaves an optimal
+  image's arrangement to the implementation, and facet keeps the one
+  its depth images and its copies already know. It also closes a breach that was not on the list: Vulkan has `maxMipLevels`
+  be the whole chain for every optimal image whatever its usage, and
+  until 1.119 the format query answered 1 for a colour attachment.
+  `_image.depthPitch`, `depthLevelBytes` and `depthLevelAt` are
+  `levelPitch`, `levelBytes` and `levelAt` for that reason, and the rows
+  of a level are `rowsAt`'s for every rows image.
+- **What follows the level.** A framebuffer's attachment, a copy, a
+  blit, a resolve, a clear and an input attachment's view all reach the
+  level and the layer named, through `rowsAt` and `levelSize`, and a
+  framebuffer wider than its attachment's level is refused as one wider
+  than its image was.
+- **The fixed form.** A texture kept in rows has a pitch, and the fixed
+  form's path that reads texels in blocks does not take one: it draws
+  through the run-time sampler, a texel at a time
+  (`shader.texturedOther`).
+- **Where it is refused.** On a device whose images lie in a layout of
+  its own (`Ops.texture_memory`, the V3D), as the format query says; an
+  image written through as well (STORAGE), which is item 48's outside
+  edge and not its subject; a transient one; a 3D one, whose slices no
+  pass of Vulkan 1.0 draws into; and a linear one, no format here being
+  sampled in linear tiling (`linear_tiling_features` hold no
+  SAMPLED_IMAGE).
+
+The V3D's half is unchanged by this: the TLB's store and load naming the
+UIF layout in their Memory Format and Height in UB fields
+(v3dvx_cmd_buffer.c:149-211 and 341-415), and CmdClearColorImage through
+the TLB (v3dv_meta_clear.c:70-193), about 73 lines and a board check.
+Until then the V3D answers `error_format_not_supported` to the format
+query and to CreateImage alike, which the probe checks on both devices.
 
 ### 49. Reconcile GetPhysicalDeviceFeatures with VkPhysicalDeviceFeatures, and decide what replaces the missing enable step
 
@@ -1663,7 +1718,7 @@ facet reports 1|4 on both devices, with the standard locations on the cores and 
 | K3 | **Done in 1.105.** Per-sample depth and stencil, in planes of their own in each part's block, each cleared, loaded and stored. A sample's depth is taken at its own place, held under the depth clamp, and tested in its own planes. A pixel is shaded where any sample passed. A form that drops pixels holds sixteen depths a quad for after its fragment function. Against the first plan, a batch's held depths at four samples, 2 KiB, go in the part's block and not in the batch, which lives on the stack: 8 KiB for a program's task. Its test found a depth attachment's ops for a plane its format has not refused, against Vulkan; 1.106 takes them, and they keep nothing. A form that drops pixels, drawn a pixel at a time, wrote a dropped pixel's depth and stencil, at one sample and at four, until 1.107: it now tests late where its stencil test writes the stencil and holds its depths back otherwise, llvmpipe's depth modes for a shader that may kill (lp_state_fs.c:772-799) | lp_state_fs.c:907, 926-960, 970, 1047-1050, 1321-1334, 1426-1440, 3437-3439 | 93 | 100 |
 | K4 | **Done in 1.108.** Alpha to coverage on the cores, at one sample a pixel and at four: colour 0's alpha, less the dither's threshold at the pixel's place on the surface, keeps sample s of n where it is above s / n. The function writes an 8-bit alpha, so the test is lavapipe's made in integers, 8na > 255k + 2040s. Such a draw holds its depths back, tests late beside a stencil test that writes, as a form that drops pixels does since 1.107, and goes without the depth pre-pass. The V3D refuses it until V6 | lp_state_fs.c:408-474, 1182-1214; lp_bld_blend.c:342-365 | 34 | 40 |
 | K5 | **Done in 1.109.** Resolve attachments on the cores: each tile, once its samples are stored, averaged into the resolve over its part of the render area as the surface holds them, so that a pass's resolve is CmdResolveImage's to the byte. Every tile of the area is drawn where a colour is resolved, and the framebuffer's layers past the first are resolved from the image's rows as the part ends | lvp_execute.c:1782-1837, 2053; v3dvx_cmd_buffer.c:640-686 | 113 | 125 |
-| K6 | **Done in 1.110.** Multisampled fetch from a native fragment function: a texture keeps its samples' planes apart and `sampleOf` gives one as a texture of one, a sample past the last reading nothing. A sampled colour image of four samples is kept in rows, its rows the texture, R8G8B8A8's bytes read by a texture format of their own; a depth attachment's planes carry their samples. Against the first plan, not a colour attachment as well: one sample of that is not made (item 48), and the format query's sample counts hold the 1 wherever they hold the 4 | lp_jit.c:399-404; lp_texture.c:1087; lvp_image.c:87-89, 104; lp_bld_sample_soa.c:2170-2187, 2985, 3166-3181 | 35 | 45 |
+| K6 | **Done in 1.110.** Multisampled fetch from a native fragment function: a texture keeps its samples' planes apart and `sampleOf` gives one as a texture of one, a sample past the last reading nothing. A sampled colour image of four samples is kept in rows, its rows the texture, R8G8B8A8's bytes read by a texture format of their own; a depth attachment's planes carry their samples. Against the first plan, not a colour attachment as well: one sample of that is not made (item 48), and the format query's sample counts hold the 1 wherever they hold the 4. Since 1.119 both are made, item 48's cores' half | lp_jit.c:399-404; lp_texture.c:1087; lvp_image.c:87-89, 104; lp_bld_sample_soa.c:2170-2187, 2985, 3166-3181 | 35 | 45 |
 | K6b | **Done in 1.111.** Input attachments of four samples, read a sample at a time: not in the first plan, which kept them refused, though Vulkan 1.0 reads one through `subpassInputMS` with no feature to refuse it under. An attachment carries its samples, their stride and where its second sample begins, and `sampleOf` gives one sample as an attachment of one, a sample past the last reading nothing: from the image's rows where an earlier subpass drew it, a colour or a depth plane, and from the tile where a subpass reads what it draws. No sample count ties an input attachment to its subpass, so one of one sample reads one of four | lvp_nir_lower_input_attachments.c:49-86; lp_bld_sample_soa.c:2170-2187, 4839, 4941-4956 | 34 | 320 |
 | K7 | **Done in 1.112.** 4x turned on for the cores, closing six rows: `Capabilities.multisampling` is theirs, so the three framebuffer masks and the colour, depth and stencil sampled-image masks say 1\|4, and the format query, CreateImage, CreateRenderPass and CreateGraphicsPipelines take four where those masks say it. The tests that turned the capability on to draw four now ask the cores for it, and each refusal is checked on the cores described without it. `standardSampleLocations` stays true: the cores' four places are Vulkan's (setup.zig `sampleOffsets`), as lavapipe says of its own. v3dv says false on the V3D, though the four places its compiler gives are the same ones: V5 is where that is settled | lvp_device.c:81-82, 1072-1081, 1094; v3dv_device.c:1202; nir_to_vir.c:3111-3134 | 10 | 40 |
 | K8 | **Done in 1.114.** A subpass of no attachment at 4x, after item 43's cores' half (1.113). Such a subpass has its pipelines' count, so a pipeline of four is taken there, and its first draw lays the tiles again at four where its pipeline has four, as v3dv starts its job again with MSAA before its first draw; the frame counts its draws for that, as v3dv's job does. The no-attachments mask holds the 4 bit on a device with `can.colorless_subpasses`, which closes the last row on the cores. Against the first plan, two pipelines of different counts in one subpass, which Vulkan does not allow without `variableMultisampleRate`, draw at the first's, as v3dv's do; and a pipeline of four bound in a subpass of an attachment of one, against Vulkan too, draws at the attachment's count, since the tiles are laid again over no surface | `cmd_buffer_restart_job_for_msaa_if_needed`, v3dv_cmd_buffer.c:2655-2730, 2906-2912 | 16 | 106 |

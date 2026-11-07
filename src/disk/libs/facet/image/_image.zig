@@ -15,8 +15,18 @@
 //!   cleared as each tile starts and never stored, so its memory is never
 //!   touched and may be of the lazily allocated type.
 //!
-//! An image both drawn into and sampled is not one facet.library 1.0
-//! makes: the two kinds lie differently.
+//! **An image both drawn into and sampled is `rows`** (since 1.119), and
+//! sampled where its rows lie, as a sampled depth attachment is: nothing
+//! copied and nothing kept twice (`sampledRows`). That is llvmpipe's way,
+//! which lays every texture out the one way whatever it is bound as
+//! (`llvmpipe_texture_layout`, src/gallium/drivers/llvmpipe/
+//! lp_texture.c:154-223). A device whose images lie in a layout of its own
+//! (`Ops.texture_memory`) does not make one yet.
+//!
+//! **An image kept in rows may have levels** (since 1.119), as a depth
+//! attachment may since 1.63: each level's rows after the level before,
+//! each row on a cache line, and the whole pyramid again for each layer
+//! (`rowsAt`). A pass draws into the level its framebuffer's view names.
 //!
 //! **A texture may have layers**: an array's, a cube's six faces, or a 3D
 //! image's slices. Each lies as a whole texture does, `layer_bytes` from the
@@ -188,7 +198,7 @@ pub fn rowFormat(format: facet.Format) shader.TexelFormat {
 /// whose rows no function writes through. `r8g8b8a8_unorm` is one of
 /// those: a texture of 8888 is 0xAARRGGBB, as `b8g8r8a8_unorm`'s rows
 /// are, and the one that reads a word with red in its low byte,
-/// `texture.Format.rgba8`, is read only where an image of four samples is
+/// `texture.Format.rgba8`, is read only where an image kept in rows is
 /// sampled (`sampledRowFormat`, since 1.110), which nothing writes
 /// through. (Since 1.56.)
 pub fn rowTexture(format: facet.Format) ?texture.Format {
@@ -229,11 +239,13 @@ pub fn writtenRows(image: *const Image) bool {
     return image.kind == .rows and image.usage & facet.IMAGE_USAGE_STORAGE != 0;
 }
 
-/// Whether an image kept in rows is sampled, which only one of four
-/// samples a pixel is (`shapeFor`): kept in rows, as it is copied and
-/// resolved, and those rows the texture a fragment function fetches each
-/// sample of (`texture.Texture.sampleOf`, since 1.110). A depth
-/// attachment's is `sampledDepth`.
+/// Whether an image kept in rows is sampled (`shapeFor`): one of four
+/// samples a pixel, kept in rows as it is copied and resolved, those rows
+/// the texture a fragment function fetches each sample of
+/// (`texture.Texture.sampleOf`, since 1.110); or since 1.119 one drawn
+/// into, or read as an input attachment, as well, those rows the texture
+/// a sample filters, at every level they have. A depth attachment's is
+/// `sampledDepth`.
 pub fn sampledRows(image: *const Image) bool {
     return image.kind == .rows and image.usage & facet.IMAGE_USAGE_SAMPLED != 0;
 }
@@ -252,8 +264,8 @@ pub fn sampledRowFormat(format: facet.Format) ?texture.Format {
 /// Whether an image has texels a descriptor hands a function, which
 /// BindImageMemory lays over its memory: a texture, a depth attachment
 /// sampled where it lies, an attachment written through as a storage
-/// image, and since 1.110 an image of four samples sampled where its rows
-/// lie.
+/// image, and an image kept in rows sampled where they lie - one of four
+/// samples since 1.110, and one drawn into as well since 1.119.
 pub fn hasTexels(image: *const Image) bool {
     return image.kind == .texture or sampledDepth(image) or writtenRows(image) or sampledRows(image);
 }
@@ -535,42 +547,65 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
         // names the level and the layer a pass draws into, and a sample
         // reads any of them.
         image.layer_bytes = 0;
-        for (0..info.mip_levels) |lod| image.layer_bytes += depthLevelBytes(&image, @intCast(lod));
+        for (0..info.mip_levels) |lod| image.layer_bytes += levelBytes(&image, @intCast(lod));
         image.bytes = image.layer_bytes * layers;
         return withPlanes(image, info.samples);
     }
     if (info.usage & facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT != 0) return null;
     // Drawn into, or read as an input attachment, and written through as a
     // storage image at once (since 1.56): the image stays in rows, as an
-    // attachment is, and a function writes those rows. Never sampled as
-    // well, a sample wanting the blocked layout, and of a format whose
-    // rows a texture reads.
+    // attachment is, and a function writes those rows. Not sampled as
+    // well, which `sampled_rows` is, and of a format whose rows a texture
+    // reads.
     const rows_written = info.usage & facet.IMAGE_USAGE_STORAGE != 0 and
         info.usage & facet.IMAGE_USAGE_SAMPLED == 0 and
         info.usage & (facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT) != 0 and
         info.usage & facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT == 0 and
         rowTexture(info.format) != null and info.mip_levels == 1 and layers == 1;
-    // Read as an input attachment: its pixels are read out of its rows,
-    // so not in a texture's layout and not a transient attachment, which
-    // has no memory at all.
-    if (info.usage & facet.IMAGE_USAGE_INPUT_ATTACHMENT != 0) {
-        const not_rows = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT;
-        if (info.usage & not_rows != 0) return null;
-        if (info.usage & facet.IMAGE_USAGE_STORAGE != 0 and !rows_written) return null;
-    }
-    // Sampled at four samples a pixel (since 1.110): kept in rows, as such
-    // an image is drawn, copied and resolved, those rows being the texture
-    // a fragment function fetches each sample of
+    // Sampled where its rows lie. At four samples a pixel (since 1.110):
+    // kept in rows, as such an image is drawn, copied and resolved, those
+    // rows being the texture a fragment function fetches each sample of
     // (`texture.Texture.sampleOf`). Vulkan fetches a multisampled image a
     // texel at a time and never filters it, so nothing re-tiles them, and
     // lavapipe's sampler view of one is the same resource of several
     // samples (`lvp_image_create`, src/gallium/frontends/lavapipe/
-    // lvp_image.c:87-89, :104). Not a colour attachment as well: at one
-    // sample such an image is not made (docs/facet-vulkan10.md item 48),
-    // so the format query refuses that usage, and Vulkan has a query's
-    // sample counts hold the 1 wherever they hold the 4.
-    const sampled_rows = info.samples != 1 and info.usage & facet.IMAGE_USAGE_SAMPLED != 0;
-    if (sampled_rows and info.usage & facet.IMAGE_USAGE_COLOR_ATTACHMENT != 0) return null;
+    // lvp_image.c:87-89, :104).
+    //
+    // And at one, drawn into or read as an input attachment as well
+    // (since 1.119, docs/facet-vulkan10.md item 48): kept in rows, as an
+    // attachment is drawn and copied, and those rows the texture a sample
+    // filters, at every level they have. llvmpipe lays a texture out the
+    // one way whatever it is bound as (`llvmpipe_texture_layout`,
+    // src/gallium/drivers/llvmpipe/lp_texture.c:154-223): the rasteriser
+    // writes the level a surface names (`init_scene_texture`,
+    // lp_scene.c:159-185) and the sampler reads the same bytes. Until
+    // 1.119 such an image was refused, and the one of four samples with
+    // it, Vulkan having a query's sample counts hold the 1 wherever they
+    // hold the 4.
+    //
+    // Either is of a format whose rows a texture reads
+    // (`sampledRowFormat`), which the three a pass draws into are, in
+    // optimal tiling, on a device that keeps its images in this library's
+    // layout: the V3D's are its own (`Ops.texture_memory`), and its half
+    // of item 48 is to come. Not written through as a storage image as
+    // well, which `rows_written` is for one level and one layer alone; not
+    // transient, as it has memory behind it; and not a 3D image, whose
+    // slices no pass of Vulkan 1.0 draws into.
+    const attachment = info.usage & (facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT) != 0;
+    const sampled_rows = info.usage & facet.IMAGE_USAGE_SAMPLED != 0 and (info.samples != 1 or attachment);
+    if (sampled_rows) {
+        if (physical.ops.texture_memory != null or sampledRowFormat(info.format) == null) return null;
+        const not_sampled = facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT;
+        if (info.tiling != .optimal or volume or info.usage & not_sampled != 0) return null;
+    }
+    // Read as an input attachment: its pixels are read out of its rows,
+    // so not in a texture's layout - sampled as well, it is
+    // `sampled_rows` - and not a transient attachment, which has no
+    // memory at all.
+    if (info.usage & facet.IMAGE_USAGE_INPUT_ATTACHMENT != 0) {
+        if (info.usage & facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT != 0) return null;
+        if (info.usage & facet.IMAGE_USAGE_STORAGE != 0 and !rows_written) return null;
+    }
     // Sampled, written through as a storage image, or both: all one kind,
     // kept in the layout a sample reads.
     if (info.usage & (facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_STORAGE) != 0 and !rows_written and !sampled_rows) {
@@ -591,12 +626,26 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
         return withPlanes(image, info.samples);
     }
     if (info.usage & facet.IMAGE_USAGE_COLOR_ATTACHMENT != 0 and !drawable(info.format)) return null;
-    // Rows of a colour format, of one level, and a layer's rows after the
-    // layer before (since 1.91): `rowsAt` finds a layer's first row, and a
+    // Rows of a colour format, a layer's rows after the layer before
+    // (since 1.91): `rowsAt` finds a layer's first row, and a
     // framebuffer's view the layer a pass begins at.
-    if (info.mip_levels != 1 or textureFormat(info.format) == null) return null;
+    if (textureFormat(info.format) == null) return null;
+    // And levels since 1.119, as a depth attachment's: each in rows of its
+    // own after the level before (`levelAt`), a pass drawing into the one
+    // its framebuffer's view names. Vulkan has an optimal image's
+    // `maxMipLevels` be "the number of levels in the complete mipmap
+    // chain" whatever its usage, and until 1.119 the format query answered
+    // 1 for every image kept in rows. A linear image may keep the one, as
+    // Vulkan lets it, and so do a 3D image, an image on a device whose
+    // images lie in a layout of its own (`Ops.texture_memory`), and one of
+    // compressed blocks, which rows hold only for a copy.
+    if (info.mip_levels != 1) {
+        if (info.tiling != .optimal or volume or keeps_blocks or physical.ops.texture_memory != null) return null;
+        if (info.mip_levels > mostLevels(extent.width, extent.height)) return null;
+    }
     image.pitch = std.mem.alignForward(u32, extent.width * pixel, row_alignment);
-    image.layer_bytes = @as(u64, image.pitch) * extent.height;
+    image.layer_bytes = 0;
+    for (0..info.mip_levels) |lod| image.layer_bytes += levelBytes(&image, @intCast(lod));
     image.bytes = image.layer_bytes * layers;
     // Written through as a storage image as well: the rows are the
     // texture a function writes, over no memory yet (since 1.56).
@@ -670,16 +719,10 @@ pub fn texelsOver(image: *const Image, memory: [*]u8) texture.Texture.Error!text
     // A colour attachment written through as a storage image: its rows
     // are the texture, as a sampled depth's are (since 1.56).
     if (writtenRows(image)) return texture.Texture.linear(rowTexture(image.format).?, image.width, image.height, image.pitch, memory);
-    // An image of four samples sampled where its rows lie (since 1.110):
-    // every layer of sample 0's plane, each sample's plane after it.
-    if (sampledRows(image)) {
-        var rows = texture.Texture.linear(sampledRowFormat(image.format).?, image.width, image.height, image.pitch, memory);
-        rows.layer_count = image.layers;
-        rows.layer_bytes = @intCast(image.layer_bytes);
-        rows.samples = image.samples;
-        rows.sample_bytes = @intCast(image.sample_bytes);
-        return rows;
-    }
+    // An image kept in rows sampled where they lie: every level of every
+    // layer of sample 0's plane, each sample's plane after it - one of
+    // four samples since 1.110, and one drawn into as well since 1.119.
+    if (sampledRows(image)) return levelsOver(image, sampledRowFormat(image.format).?, 0, 0, 0, image.levels, 0, image.layers, memory);
     var made = try texture.Texture.init(keptFormat(image.format, image.packed_texels).?, image.width, image.height, image.levels, memory);
     made.layer_count = image.layers;
     made.layer_bytes = @intCast(image.layer_bytes);
@@ -719,20 +762,29 @@ fn planeOver(image: *const Image, aspect: u32, first_level: u32, levels: u32, fi
     // The depth is read as 16 bits of depth and the stencil as one byte,
     // which `texture.Format.r8` reads as (red, 0, 0, 1).
     const kept: texture.Format = if (plane.depth) .d16 else .r8;
+    return levelsOver(image, kept, plane.at, plane.stride, first_level, levels, first_layer, layers, memory);
+}
+
+/// The levels from `first_level` on, `levels` of them, of the layers from
+/// `first_layer` on, `layers` of them, of an image kept in rows, as a
+/// texture over `memory` that reads each texel as `kept`: `at` bytes into
+/// a pixel, and `stride` bytes from one pixel to the next, 0 for the
+/// format's own size. Each level is the rows a pass drew into, where it
+/// lies inside the layer, and each sample's plane is a sample's worth
+/// after the one before. A depth attachment's plane is read this way
+/// (since 1.58, levels since 1.63, samples since 1.110), and since 1.119
+/// so is a colour image kept in rows and sampled.
+fn levelsOver(image: *const Image, kept: texture.Format, at: u32, stride: u32, first_level: u32, levels: u32, first_layer: u32, layers: u32, memory: [*]u8) texture.Texture {
     const first = levelSize(image, first_level);
-    const begins = @as(usize, @intCast(depthLevelAt(image, first_level)));
-    var made = texture.Texture.linearBy(kept, first[0], first[1], depthPitch(image, first_level), plane.stride, memory + plane.at + first_layer * @as(usize, @intCast(image.layer_bytes)) + begins);
-    // The levels after the first, each in rows as wide as that level is,
-    // where it lies inside the layer (since 1.63).
+    const begins = rowsAt(image, first_level, first_layer);
+    var made = texture.Texture.linearBy(kept, first[0], first[1], begins.pitch, stride, memory + at + begins.at);
     for (first_level + 1..first_level + levels) |lod| {
         const size = levelSize(image, @intCast(lod));
-        const at = @as(usize, @intCast(depthLevelAt(image, @intCast(lod)))) - begins;
-        made.linearLevel(size[0], size[1], @intCast(at), depthPitch(image, @intCast(lod)));
+        const rows = rowsAt(image, @intCast(lod), first_layer);
+        made.linearLevel(size[0], size[1], @intCast(rows.at - begins.at), rows.pitch);
     }
     made.layer_count = layers;
     made.layer_bytes = @intCast(image.layer_bytes);
-    // And its samples, each plane of them a sample's worth after the one
-    // before (since 1.110).
     made.samples = image.samples;
     made.sample_bytes = @intCast(image.sample_bytes);
     return made;
@@ -782,37 +834,41 @@ fn mostLevels(width: u32, height: u32) u32 {
     return @min(32 - @clz(longer), texture.most_levels);
 }
 
-/// The bytes from one row of a level of a depth attachment to the next:
-/// the level's own width in pixels, on a cache line. (Since 1.63.)
-pub fn depthPitch(image: *const Image, level: u32) u32 {
+/// The bytes from one row of a level of an image kept in rows to the
+/// next: the level's own width in pixels, on a cache line, and level 0's
+/// the image's own `pitch`, which is a swapchain image's display's. (Since
+/// 1.63 for a depth attachment, as `depthPitch`; since 1.119 for every
+/// image kept in rows.)
+pub fn levelPitch(image: *const Image, level: u32) u32 {
+    if (level == 0) return image.pitch;
     return std.mem.alignForward(u32, @max(image.width >> @intCast(level), 1) * bytesOf(image.format), row_alignment);
 }
 
-/// What one level of one layer of a depth attachment takes: its rows, the
-/// last of them on a cache line so that the level after it begins on one.
-/// (Since 1.63.)
-fn depthLevelBytes(image: *const Image, level: u32) u64 {
+/// What one level of one layer of an image kept in rows takes: its rows,
+/// the last of them on a cache line so that the level after it begins on
+/// one. (Since 1.63, as `depthLevelBytes`.)
+fn levelBytes(image: *const Image, level: u32) u64 {
     const height = @max(image.height >> @intCast(level), 1);
-    return std.mem.alignForward(u64, @as(u64, depthPitch(image, level)) * height, row_alignment);
+    return std.mem.alignForward(u64, @as(u64, levelPitch(image, level)) * height, row_alignment);
 }
 
-/// Where a level of a depth attachment begins inside a layer, in bytes:
-/// the levels before it, each its own rows. (Since 1.63.)
-pub fn depthLevelAt(image: *const Image, level: u32) u64 {
+/// Where a level of an image kept in rows begins inside a layer, in bytes:
+/// the levels before it, each its own rows. (Since 1.63, as
+/// `depthLevelAt`.)
+pub fn levelAt(image: *const Image, level: u32) u64 {
     var at: u64 = 0;
-    for (0..level) |lod| at += depthLevelBytes(image, @intCast(lod));
+    for (0..level) |lod| at += levelBytes(image, @intCast(lod));
     return at;
 }
 
 /// Where a level of a layer of an image kept in rows begins, in bytes from
 /// the image's memory, and the bytes from one of its rows to the next. A
-/// depth attachment may have levels since 1.63, each in rows of its own
-/// inside the layer; every other image kept in rows has the one level, at
-/// the layer's start.
+/// depth attachment may have levels since 1.63, and every other image
+/// kept in rows since 1.119, each level in rows of its own inside the
+/// layer (`levelAt`); level 0 is at the layer's start.
 pub fn rowsAt(image: *const Image, level: u32, layer: u32) struct { at: usize, pitch: u32 } {
     const layer_at = layer * @as(usize, @intCast(image.layer_bytes));
-    if (image.kind != .depth) return .{ .at = layer_at, .pitch = image.pitch };
-    return .{ .at = layer_at + @as(usize, @intCast(depthLevelAt(image, level))), .pitch = depthPitch(image, level) };
+    return .{ .at = layer_at + @as(usize, @intCast(levelAt(image, level))), .pitch = levelPitch(image, level) };
 }
 
 /// One plane of a depth attachment's rows as an input attachment reads
@@ -863,15 +919,13 @@ pub fn levelsFrom(image: *const Image, base: u32, count: u32, first_layer: u32, 
     return made;
 }
 
-/// Of an image of four samples sampled where its rows lie, the layers
-/// from `first_layer` on, `layers` of them, as the texture a view of them
-/// reads: the image's own texels, begun at that layer's rows
-/// (`sampledRows`, since 1.110).
-pub fn rowLayers(image: *const Image, first_layer: u32, layers: u32) texture.Texture {
-    var made = image.texels;
-    made.memory = image.texels.memory + first_layer * @as(usize, @intCast(image.layer_bytes));
-    made.layer_count = layers;
-    return made;
+/// Of an image kept in rows sampled where they lie, the levels from
+/// `first_level` on, `levels` of them, of the layers from `first_layer` on,
+/// `layers` of them, as the texture a view of them reads: the image's own
+/// rows, begun at that level of that layer (`sampledRows`; layers since
+/// 1.110, levels since 1.119).
+pub fn rowLevels(image: *const Image, first_level: u32, levels: u32, first_layer: u32, layers: u32) texture.Texture {
+    return levelsOver(image, sampledRowFormat(image.format).?, 0, 0, first_level, levels, first_layer, layers, image.data.?);
 }
 
 /// The layers a copy's subresource and depth reach.

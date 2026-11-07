@@ -4041,10 +4041,13 @@ than the device takes (`PhysicalDeviceLimits.max_framebuffer_width`,
 
 **BEHAVIOR**
 
-Each colour attachment's view is of its image's first level, and of any
-of its layers since 1.91: the pass draws into the layer the view begins
-at. The size may be smaller than the images: the framebuffer is their
-top left.
+Each colour attachment's view is of any of its image's levels since
+1.119, and of its first before, and of any of its layers since 1.91:
+the pass draws into the level and the layer the view begins at, and it
+is that level's rows that have to hold the size, as a depth view's do.
+The size may be smaller than the images: the framebuffer is their top
+left. So each level of one image, drawn into in turn, is its own mip
+level, and a later pass samples the image they make (CreateImage).
 
 A pass with no attachments has a framebuffer of no views, `attachments`
 null (since 1.113): its size is all there is of it, which the pass
@@ -4351,9 +4354,17 @@ What it is for decides how it lies in its memory:
   by the next one up, so such a texture takes up to 2 x the memory of
   one as wide as a power of two (since 1.42); past the width nothing is
   ever read.
-- COLOR_ATTACHMENT, of B8G8R8A8, R8G8B8A8 or R5G6B5, one level: rows,
-  each on a cache line, in either tiling. What is drawn into one of
-  R5G6B5 is dithered into it (CmdBeginRenderPass).
+- COLOR_ATTACHMENT, of B8G8R8A8, R8G8B8A8 or R5G6B5: rows, each on a
+  cache line, in either tiling. What is drawn into one of R5G6B5 is
+  dithered into it (CmdBeginRenderPass). In optimal tiling it may have
+  levels since 1.119, as a depth attachment does: a layer holds the
+  whole pyramid, a level's rows after the level before, and a pass
+  draws into the level its framebuffer's view names.
+  With SAMPLED as well (since 1.119), optimal and not of type `3d`,
+  those rows are the texture a sampler reads, at every level and layer
+  a view names: an image drawn into and then sampled with nothing
+  copied, as llvmpipe does it. Not with STORAGE or
+  TRANSIENT_ATTACHMENT then.
 - D16_UNORM, S8_UINT or D16_UNORM_S8_UINT with
   DEPTH_STENCIL_ATTACHMENT, optimal, one level: a depth that lives in
   the tiles alone, never stored, whose memory may be of the lazily
@@ -4381,14 +4392,18 @@ What it is for decides how it lies in its memory:
   with it too.
 - INPUT_ATTACHMENT, of B8G8R8A8, R8G8B8A8 or R5G6B5, in either
   tiling: rows, which a later subpass reads pixel by pixel
-  (CreateRenderPass). It goes with COLOR_ATTACHMENT and the transfers,
-  not with SAMPLED, STORAGE or TRANSIENT_ATTACHMENT, which lie
-  otherwise or nowhere. On a depth format it is the bullet above.
-- Anything else of a colour format, one level: rows.
+  (CreateRenderPass). It goes with COLOR_ATTACHMENT, the transfers and,
+  since 1.119, SAMPLED, the rows then being the texture a sampler reads
+  as above; not with TRANSIENT_ATTACHMENT, which lies nowhere. On a
+  depth format it is the bullet above.
+- Anything else of a colour format: rows, with levels in optimal tiling
+  as a colour attachment has them (since 1.119).
 
 Images are up to 8192 wide and high. One both SAMPLED and
-COLOR_ATTACHMENT is not made: a texture and an attachment lie
-differently.
+COLOR_ATTACHMENT, or SAMPLED and INPUT_ATTACHMENT, is made on a device
+that keeps its images in this library's layout; the V3D's lie in its
+own (`Ops.texture_memory`), and there it is
+`error_format_not_supported`, as an image of levels kept in rows is.
 
 **An image may have four samples a pixel** on a device that draws them
 (`Capabilities.multisampling`, since 1.98): 2D, optimal, one level and
@@ -4399,9 +4414,9 @@ image is drawn into, read as an input attachment, copied and resolved,
 and since 1.110 sampled: one of a colour format is then kept in rows, as
 one drawn into is, and those rows are the texture a fragment function
 fetches each sample of (`texture.Texture.sampleOf`), as it fetches a
-depth attachment's planes. A colour one is not a colour attachment or
-an input attachment as well, which a sampled colour image of one sample
-is not either, and no image of four samples is STORAGE.
+depth attachment's planes. A colour one may be a colour attachment or an
+input attachment as well since 1.119, as a sampled colour image of one
+sample may; no image of four samples is STORAGE.
 
 **A colour attachment may be written through as a storage image** since
 1.56: COLOR_ATTACHMENT, or INPUT_ATTACHMENT, with STORAGE and without
@@ -4559,8 +4574,12 @@ got, or of an image not yet bound into memory; `error_out_of_host_memory`.
 **BEHAVIOR**
 
 A view of a texture samples its levels from `base_mip_level` on, as a
-texture of its own whose first level is that one. A view of an
-attachment is all of it.
+texture of its own whose first level is that one. So, since 1.119, does
+a view of an attachment drawn into and sampled at once, which is kept
+in rows: it reads the rows a pass drew into, at the levels and the
+layers it names. A framebuffer given a view of any image kept in rows
+draws into the level the view begins at, an image kept in rows having
+levels since 1.119.
 
 Of type `2d` it is one layer, of a texture with any number of them. Of type
 `2d_array` it is the layers asked for, for `shader.FixedKind.texture_array`;
@@ -7841,9 +7860,13 @@ them:
   a 3D one, 256, and 1 deep for every other.
 - `max_mip_levels`: the levels of `max_extent`, as many as halving
   its longest side gives, where the shape takes levels - a sampled
-  image, one written through, a depth attachment since 1.63, and a 3D
-  image whose slices have levels of their own - and 1 where it does
-  not, which is a colour attachment and rows.
+  image, one written through, a depth attachment since 1.63, a 3D
+  image whose slices have levels of their own, and since 1.119 a
+  colour attachment and any other optimal image kept in rows, which is
+  Vulkan's rule for an optimal image ("the number of levels in the
+  complete mipmap chain") - and 1 where it does not: a linear image, as
+  Vulkan lets it, and on the V3D an image kept in rows
+  (`Ops.texture_memory`).
 - `max_array_layers`: `max_image_array_layers`, 256, where the shape
   takes layers - an image a function reads or writes, a sampled or
   read-back depth attachment among them - and 1 for every other
@@ -7852,10 +7875,10 @@ them:
   of four samples a pixel of the extent and the layers above at one
   level (since 1.98): a 2D image in optimal tiling, not cube
   compatible, of a format that is an attachment, drawn into, read as
-  an input attachment, copied or, since 1.110, sampled - never sampled
-  and drawn into at once, as one sample is not - on a device that
-  draws four samples (`_image.shapeFor`). Where 4 is said, every such
-  image inside these bounds is made.
+  an input attachment, copied or, since 1.110, sampled - and since
+  1.119 sampled and drawn into at once, as one sample is - on a device
+  that draws four samples (`_image.shapeFor`). Where 4 is said, every
+  such image inside these bounds is made.
 - `max_resource_size`: the bytes an image of all of the above takes,
   every level of every layer of it (since 1.66), which is what
   GetImageMemoryRequirements answers for such an image. It may be
@@ -7879,9 +7902,12 @@ levels are as many as halving the longer side gives, which
 
 **NOTES**
 
-A format may be sampled and drawn into without one image being both:
-the two lie differently in memory, so the usages are asked about one
-at a time, as CreateImage takes them.
+Until 1.119 a format could be sampled and drawn into without one image
+being both, so a program asked about the usages one at a time. Since
+then the cores keep such an image in rows and sample it where they
+lie, as llvmpipe and v3dv both make one; the V3D still answers
+`error_format_not_supported` for the two at once, its half of
+docs/facet-vulkan10.md item 48 being to come.
 
 Until 1.66 `max_resource_size` was the largest heap's bytes, which is
 a fact about the memory and not about the image, and the levels and

@@ -37,9 +37,17 @@ const _image = @import("_image.zig");
 ///   by the next one up, so such a texture takes up to 2 x the memory of
 ///   one as wide as a power of two (since 1.42); past the width nothing is
 ///   ever read.
-/// - COLOR_ATTACHMENT, of B8G8R8A8, R8G8B8A8 or R5G6B5, one level: rows,
-///   each on a cache line, in either tiling. What is drawn into one of
-///   R5G6B5 is dithered into it (CmdBeginRenderPass).
+/// - COLOR_ATTACHMENT, of B8G8R8A8, R8G8B8A8 or R5G6B5: rows, each on a
+///   cache line, in either tiling. What is drawn into one of R5G6B5 is
+///   dithered into it (CmdBeginRenderPass). In optimal tiling it may have
+///   levels since 1.119, as a depth attachment does: a layer holds the
+///   whole pyramid, a level's rows after the level before, and a pass
+///   draws into the level its framebuffer's view names.
+///   With SAMPLED as well (since 1.119), optimal and not of type `3d`,
+///   those rows are the texture a sampler reads, at every level and layer
+///   a view names: an image drawn into and then sampled with nothing
+///   copied, as llvmpipe does it. Not with STORAGE or
+///   TRANSIENT_ATTACHMENT then.
 /// - D16_UNORM, S8_UINT or D16_UNORM_S8_UINT with
 ///   DEPTH_STENCIL_ATTACHMENT, optimal, one level: a depth that lives in
 ///   the tiles alone, never stored, whose memory may be of the lazily
@@ -67,14 +75,18 @@ const _image = @import("_image.zig");
 ///   with it too.
 /// - INPUT_ATTACHMENT, of B8G8R8A8, R8G8B8A8 or R5G6B5, in either
 ///   tiling: rows, which a later subpass reads pixel by pixel
-///   (CreateRenderPass). It goes with COLOR_ATTACHMENT and the transfers,
-///   not with SAMPLED, STORAGE or TRANSIENT_ATTACHMENT, which lie
-///   otherwise or nowhere. On a depth format it is the bullet above.
-/// - Anything else of a colour format, one level: rows.
+///   (CreateRenderPass). It goes with COLOR_ATTACHMENT, the transfers and,
+///   since 1.119, SAMPLED, the rows then being the texture a sampler reads
+///   as above; not with TRANSIENT_ATTACHMENT, which lies nowhere. On a
+///   depth format it is the bullet above.
+/// - Anything else of a colour format: rows, with levels in optimal tiling
+///   as a colour attachment has them (since 1.119).
 ///
 /// Images are up to 8192 wide and high. One both SAMPLED and
-/// COLOR_ATTACHMENT is not made: a texture and an attachment lie
-/// differently.
+/// COLOR_ATTACHMENT, or SAMPLED and INPUT_ATTACHMENT, is made on a device
+/// that keeps its images in this library's layout; the V3D's lie in its
+/// own (`Ops.texture_memory`), and there it is
+/// `error_format_not_supported`, as an image of levels kept in rows is.
 ///
 /// **An image may have four samples a pixel** on a device that draws them
 /// (`Capabilities.multisampling`, since 1.98): 2D, optimal, one level and
@@ -85,9 +97,9 @@ const _image = @import("_image.zig");
 /// and since 1.110 sampled: one of a colour format is then kept in rows, as
 /// one drawn into is, and those rows are the texture a fragment function
 /// fetches each sample of (`texture.Texture.sampleOf`), as it fetches a
-/// depth attachment's planes. A colour one is not a colour attachment or
-/// an input attachment as well, which a sampled colour image of one sample
-/// is not either, and no image of four samples is STORAGE.
+/// depth attachment's planes. A colour one may be a colour attachment or an
+/// input attachment as well since 1.119, as a sampled colour image of one
+/// sample may; no image of four samples is STORAGE.
 ///
 /// **A colour attachment may be written through as a storage image** since
 /// 1.56: COLOR_ATTACHMENT, or INPUT_ATTACHMENT, with STORAGE and without

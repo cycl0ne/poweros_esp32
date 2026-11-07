@@ -48,9 +48,13 @@ const _image = @import("../image/_image.zig");
 ///   a 3D one, 256, and 1 deep for every other.
 /// - `max_mip_levels`: the levels of `max_extent`, as many as halving
 ///   its longest side gives, where the shape takes levels - a sampled
-///   image, one written through, a depth attachment since 1.63, and a 3D
-///   image whose slices have levels of their own - and 1 where it does
-///   not, which is a colour attachment and rows.
+///   image, one written through, a depth attachment since 1.63, a 3D
+///   image whose slices have levels of their own, and since 1.119 a
+///   colour attachment and any other optimal image kept in rows, which is
+///   Vulkan's rule for an optimal image ("the number of levels in the
+///   complete mipmap chain") - and 1 where it does not: a linear image, as
+///   Vulkan lets it, and on the V3D an image kept in rows
+///   (`Ops.texture_memory`).
 /// - `max_array_layers`: `max_image_array_layers`, 256, where the shape
 ///   takes layers - an image a function reads or writes, a sampled or
 ///   read-back depth attachment among them - and 1 for every other
@@ -59,10 +63,10 @@ const _image = @import("../image/_image.zig");
 ///   of four samples a pixel of the extent and the layers above at one
 ///   level (since 1.98): a 2D image in optimal tiling, not cube
 ///   compatible, of a format that is an attachment, drawn into, read as
-///   an input attachment, copied or, since 1.110, sampled - never sampled
-///   and drawn into at once, as one sample is not - on a device that
-///   draws four samples (`_image.shapeFor`). Where 4 is said, every such
-///   image inside these bounds is made.
+///   an input attachment, copied or, since 1.110, sampled - and since
+///   1.119 sampled and drawn into at once, as one sample is - on a device
+///   that draws four samples (`_image.shapeFor`). Where 4 is said, every
+///   such image inside these bounds is made.
 /// - `max_resource_size`: the bytes an image of all of the above takes,
 ///   every level of every layer of it (since 1.66), which is what
 ///   GetImageMemoryRequirements answers for such an image. It may be
@@ -83,9 +87,12 @@ const _image = @import("../image/_image.zig");
 /// `properties` is the caller's.
 ///
 /// NOTES:
-/// A format may be sampled and drawn into without one image being both:
-/// the two lie differently in memory, so the usages are asked about one
-/// at a time, as CreateImage takes them.
+/// Until 1.119 a format could be sampled and drawn into without one image
+/// being both, so a program asked about the usages one at a time. Since
+/// then the cores keep such an image in rows and sample it where they
+/// lie, as llvmpipe and v3dv both make one; the V3D still answers
+/// `error_format_not_supported` for the two at once, its half of
+/// docs/facet-vulkan10.md item 48 being to come.
 ///
 /// Until 1.66 `max_resource_size` was the largest heap's bytes, which is
 /// a fact about the memory and not about the image, and the levels and

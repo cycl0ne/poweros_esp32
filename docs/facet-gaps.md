@@ -623,7 +623,7 @@ These can be asked for and are answered with `error_feature_not_present`.
 | Colour attachments that differ, on a device that blends them all alike: no device of this library is one (`independent_blend`) | `pipeline/creategraphicspipelines.zig` |
 | An input attachment on a device that reads none: the V3D (`input_attachments`) | `render/createrenderpass.zig` |
 | An input attachment of a colour format whose pixels are not kept in rows (a depth format is read since 1.62); a subpass that reads what it draws without a dependency on itself by region (since 1.64) | `render/createrenderpass.zig` |
-| An image both INPUT_ATTACHMENT and SAMPLED, STORAGE or TRANSIENT_ATTACHMENT | `image/createimage.zig` |
+| An image both INPUT_ATTACHMENT and TRANSIENT_ATTACHMENT; one both INPUT_ATTACHMENT and STORAGE but as a colour attachment written through is (above); one sampled as well as drawn into or read as an input attachment on a device whose images lie in a layout of its own: the V3D, until docs/facet-vulkan10.md item 48's V3D half (the cores' since 1.119) | `image/createimage.zig` |
 | A depth or stencil op for a plane the format has not, or on a device that keeps neither (`stored_depth`, `stored_stencil`) | `render/createrenderpass.zig` |
 | Present modes but `fifo`, though `immediate`, `mailbox` and `fifo_relaxed` are enumerated: a display shows a buffer from its next frame on, and there is no way to ask it for anything else | `swapchain/createswapchain.zig` |
 | A swapchain whose images would be SAMPLED: they are drawn into, copied out of and copied into (since 1.43), their pixels being rows and not blocks of texels | `swapchain/createswapchain.zig` |
@@ -692,6 +692,20 @@ Of textures:
   height. Past the width nothing is read. `wrap` round a side that is not
   a power of two costs a division a sample instead of a mask; `clamp`
   costs the same whatever the size.
+- **An image drawn into and sampled** since 1.119, on the cores: one
+  made SAMPLED beside COLOR_ATTACHMENT or INPUT_ATTACHMENT, of
+  B8G8R8A8, R8G8B8A8 or R5G6B5 and one sample or four, is kept in rows,
+  with its levels and its layers, and a sampler reads it where a pass
+  drew it: no copy into a texture between. A pass draws into the level
+  and the layer its framebuffer's view names, so a program makes the
+  levels by a blit or by a pass each. Such a texture is read a texel at
+  a time - a fixed form compiled for its format draws it through the
+  run-time sampler - and its width is its own, not the next power of
+  two. Not with STORAGE as well, not transient, not 3D and not linear.
+  The V3D refuses it until docs/facet-vulkan10.md item 48's V3D half,
+  its images lying in a layout of its own. Any image kept in rows in
+  optimal tiling has levels since then, the whole chain, as Vulkan asks
+  of the format query.
 - A texel is kept as `rgba8888`, `rgb565`, the blocks of BC1, BC2 or BC3
   (1.44), the floats of the four float formats (1.45), or - since 1.48 -
   one of the two smaller ones. An 8888 texel takes 64 bits by default,

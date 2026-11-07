@@ -373,16 +373,22 @@ pub fn displayOf(framebuffer: *const _render.Target) ?_image.Display {
 /// went into the first, the one place the depth's `planeOf` was already
 /// right about. A multisampled image's samples follow sample 0's plane,
 /// a plane each (since 1.103): this is sample `sample`'s, and the tiles
-/// reach those past sample 0's by `sample_bytes` (since 1.104).
+/// reach those past sample 0's by `sample_bytes` (since 1.104). Of the
+/// level the view names, an image kept in rows having levels since 1.119:
+/// a pass draws into that level's own rows, as llvmpipe maps the level a
+/// surface names, with that level's stride (`init_scene_texture`,
+/// src/gallium/drivers/llvmpipe/lp_scene.c:159-185).
 fn surfaceAt(view: *const _image.ImageView, layer: u32, sample: u32) ?raster.Surface {
     const image = view.image;
     const data = image.data orelse return null;
     const plane = @as(usize, sample) * @as(usize, @intCast(image.sample_bytes));
+    const rows = _image.rowsAt(image, view.base_level, view.base_layer + layer);
+    const size = _image.levelSize(image, view.base_level);
     return .{
-        .pixels = data + plane + _image.rowsAt(image, 0, view.base_layer + layer).at,
-        .pitch = image.pitch,
-        .width = image.width,
-        .height = image.height,
+        .pixels = data + plane + rows.at,
+        .pitch = rows.pitch,
+        .width = size[0],
+        .height = size[1],
         .format = switch (image.format) {
             .b8g8r8a8_unorm => .bgra32,
             .r8g8b8a8_unorm => .rgba32,

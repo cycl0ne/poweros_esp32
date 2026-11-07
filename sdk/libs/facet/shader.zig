@@ -1955,15 +1955,18 @@ pub fn textured(comptime sampling: texture.Sampling, fragments: *const Fragments
     // compressed one on a device that keeps its blocks, say, where the
     // form says 8888 - is drawn all the same, through the sampler that
     // reads whatever a texture holds. A pixel at a time: slow, and the
-    // form to declare is the texture's own format.
-    if (given.format != sampling.format) return texturedOther(sampling, fragments, given);
+    // form to declare is the texture's own format. So is one kept in rows
+    // (`Texture.pitch`) whatever its format, the fast path's places being
+    // those of blocks: an image drawn into and sampled where its rows lie
+    // is one of `argb8888` (since 1.119), a fixed form's own format.
+    if (given.format != sampling.format or given.pitch != 0) return texturedOther(sampling, fragments, given);
     if (fragments.exact) texturedQuads(sampling, true, fragments, given) else texturedQuads(sampling, false, fragments, given);
 }
 
-/// `textured` where the texture's format is not the form's: the colours
-/// come from `Texture.sampleLayer`, which reads any format at run time,
-/// a pixel at a time. The level is the quad's own steps', as a GPU takes
-/// it. (Since 1.44.)
+/// `textured` where the texture's format is not the form's, or where it is
+/// kept in rows: the colours come from `Texture.sampleLayer`, which reads
+/// any format and any layout at run time, a pixel at a time. The level is
+/// the quad's own steps', as a GPU takes it. (Since 1.44.)
 fn texturedOther(comptime sampling: texture.Sampling, fragments: *const Fragments, given: *const texture.Texture) void {
     @setRuntimeSafety(false);
     const texels = [2]f32{ @floatFromInt(given.width(0)), @floatFromInt(given.height(0)) };

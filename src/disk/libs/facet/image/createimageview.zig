@@ -33,8 +33,12 @@ const ImageView = _image.ImageView;
 ///
 /// BEHAVIOR:
 /// A view of a texture samples its levels from `base_mip_level` on, as a
-/// texture of its own whose first level is that one. A view of an
-/// attachment is all of it.
+/// texture of its own whose first level is that one. So, since 1.119, does
+/// a view of an attachment drawn into and sampled at once, which is kept
+/// in rows: it reads the rows a pass drew into, at the levels and the
+/// layers it names. A framebuffer given a view of any image kept in rows
+/// draws into the level the view begins at, an image kept in rows having
+/// levels since 1.119.
 ///
 /// Of type `2d` it is one layer, of a texture with any number of them. Of type
 /// `2d_array` it is the layers asked for, for `shader.FixedKind.texture_array`;
@@ -157,22 +161,26 @@ pub fn CreateImageView(base: *FacetBase, device: *facet.Device, info: *const fac
     // 1.56): its rows are the one level, and a view of it takes them as
     // they are.
     if (_image.writtenRows(image)) made.texels = image.texels;
-    // An image of four samples sampled where its rows lie (since 1.110):
-    // the layers the view names, of every sample.
-    if (_image.sampledRows(image)) made.texels = _image.rowLayers(image, range.base_array_layer, layers);
+    // An image kept in rows sampled where they lie: the layers the view
+    // names, of every sample (since 1.110), and the levels it names
+    // (since 1.119).
+    if (_image.sampledRows(image)) made.texels = _image.rowLevels(image, range.base_mip_level, count, range.base_array_layer, layers);
     if (plane) |one| made.texels = one;
     if (read_rows) |one| made.rows = one;
     // Its pixels, for a later subpass to read as an input attachment: the
-    // rows of the layer the view begins at, an image kept in rows having
-    // layers since 1.91, and of four samples each sample's rows a plane
-    // after the one before (since 1.111).
+    // rows of the level and the layer the view begins at, an image kept in
+    // rows having layers since 1.91 and levels since 1.119, and of four
+    // samples each sample's rows a plane after the one before (since
+    // 1.111).
     if (image.kind == .rows) {
-        const first = image.data.? + _image.rowsAt(image, 0, range.base_array_layer).at;
+        const rows = _image.rowsAt(image, range.base_mip_level, range.base_array_layer);
+        const size = _image.levelSize(image, range.base_mip_level);
+        const first = image.data.? + rows.at;
         made.rows = .{
             .bytes = first,
-            .pitch = image.pitch,
-            .width = image.width,
-            .height = image.height,
+            .pitch = rows.pitch,
+            .width = size[0],
+            .height = size[1],
             .format = _image.rowFormat(image.format),
             .samples = image.samples,
             .sample_bytes = @intCast(image.sample_bytes),

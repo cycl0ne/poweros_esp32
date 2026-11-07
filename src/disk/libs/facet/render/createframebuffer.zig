@@ -36,10 +36,13 @@ const ImageView = _image.ImageView;
 /// `error_out_of_host_memory`.
 ///
 /// BEHAVIOR:
-/// Each colour attachment's view is of its image's first level, and of any
-/// of its layers since 1.91: the pass draws into the layer the view begins
-/// at. The size may be smaller than the images: the framebuffer is their
-/// top left.
+/// Each colour attachment's view is of any of its image's levels since
+/// 1.119, and of its first before, and of any of its layers since 1.91:
+/// the pass draws into the level and the layer the view begins at, and it
+/// is that level's rows that have to hold the size, as a depth view's do.
+/// The size may be smaller than the images: the framebuffer is their top
+/// left. So each level of one image, drawn into in turn, is its own mip
+/// level, and a later pass samples the image they make (CreateImage).
 ///
 /// A pass with no attachments has a framebuffer of no views, `attachments`
 /// null (since 1.113): its size is all there is of it, which the pass
@@ -114,7 +117,11 @@ pub fn CreateFramebuffer(base: *FacetBase, device: *facet.Device, info: *const f
             const color = _objects.of(ImageView, views[index]);
             const image = color.image;
             if (image.kind != .rows or image.format != format or image.usage & facet.IMAGE_USAGE_COLOR_ATTACHMENT == 0) return .error_initialization_failed;
-            if (color.base_level != 0 or image.width < info.width or image.height < info.height) return .error_initialization_failed;
+            // The level the view names is what the pass draws into, so it
+            // is that level's rows that hold the render area, as a depth
+            // attachment's do (levels since 1.119).
+            const size = _image.levelSize(image, color.base_level);
+            if (size[0] < info.width or size[1] < info.height) return .error_initialization_failed;
             // Every layer the framebuffer has, or a pass would clear past
             // the image's last. Vulkan makes that the program's to see
             // to; here it is refused instead (since 1.91).
@@ -126,7 +133,8 @@ pub fn CreateFramebuffer(base: *FacetBase, device: *facet.Device, info: *const f
                 const resolve = _objects.of(ImageView, views[into]);
                 const rows = resolve.image;
                 if (rows.kind != .rows or rows.format != format or rows.usage & facet.IMAGE_USAGE_COLOR_ATTACHMENT == 0) return .error_initialization_failed;
-                if (resolve.base_level != 0 or rows.width < info.width or rows.height < info.height or resolve.layer_count < info.layers) return .error_initialization_failed;
+                const reach = _image.levelSize(rows, resolve.base_level);
+                if (reach[0] < info.width or reach[1] < info.height or resolve.layer_count < info.layers) return .error_initialization_failed;
                 target.resolves[k] = resolve;
             }
         }

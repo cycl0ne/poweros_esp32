@@ -2917,4 +2917,48 @@ pub const LIBRARY_VERSION = 1;
 /// the one part over a 565 attachment blends a destination alpha of 1,
 /// and its query counts both draws. Each of 12 changes put back
 /// fails at least one of them.
-pub const LIBRARY_REVISION = 118;
+///
+/// 119: **An image drawn into and sampled, on the cores.** The cores' half
+/// of item 48 of docs/facet-vulkan10.md. Vulkan requires B8G8R8A8 and
+/// R8G8B8A8 to be drawn into and sampled in optimal tiling, and has no way
+/// to refuse the two together; CreateImage refused an image of both, so a
+/// program drew into rows and copied them into a texture, a copy no Vulkan
+/// program makes. Mesa renders into a texture's own memory: llvmpipe lays a
+/// texture out one way whatever it is bound as (`llvmpipe_texture_layout`,
+/// lp_texture.c:154-223), its rasteriser writes the level and the layer a
+/// surface names (`init_scene_texture`, lp_scene.c:159-185), and its
+/// sampler reads the same bytes. Here an image made SAMPLED beside
+/// COLOR_ATTACHMENT or INPUT_ATTACHMENT, of one sample or four, is kept in
+/// rows and sampled where it lies (`_image.sampledRows`), as a sampled
+/// depth and a sampled image of four samples already were. Every rows image
+/// in optimal tiling may have levels now, the whole chain, laid out as
+/// depth's levels have been since 1.63, and the format query says so:
+/// Vulkan's `maxMipLevels` is the whole chain for every optimal image
+/// whatever its usage, and the query answered 1 for a colour attachment.
+/// `_image.depthPitch`, `depthLevelBytes` and `depthLevelAt` are
+/// `levelPitch`, `levelBytes` and `levelAt` for that reason, and
+/// `rowLayers` is `rowLevels`. A pass draws into its view's level and layer
+/// (`_play.zig` `surfaceAt`, which a resolve attachment's goes through as
+/// well), a copy, a blit and a clear reach the level they name
+/// (`_transfer.zig` `spanOf`), a framebuffer is held to its attachments'
+/// levels, and an input attachment's view holds its level's rows. A texture
+/// kept in rows is not read in blocks by a fixed form compiled for its
+/// format: it is drawn through the run-time sampler (`shader.textured`).
+/// The V3D refuses such an image, its images lying in a layout of its own
+/// (`Ops.texture_memory`), and the format query there says so; its half is
+/// v3dv's store and load of the UIF layout and its TLB clear.
+///
+/// Tests: on a 32 x 32 image of three levels and two layers, of each of the
+/// three formats, a clear of every level and layer, a pass drawing into
+/// level 1 of layer 1 through a view of it, and a blit of that level into
+/// level 2 leave each in its own rows, a sampler reads each level back at
+/// its lod, and the fixed form reads the level its view names. Four samples
+/// resolved into level 1 of the other layer fill that level's rows alone,
+/// and the view of it holds them, at their own pitch, for an input
+/// attachment. A framebuffer wider than the level, its colour attachment's
+/// or its resolve attachment's, is refused. The format query answers the
+/// whole chain of levels for a colour attachment, sampled or not, and
+/// CreateImage takes them and refuses one level more; on a device of a
+/// layout of its own both refuse. Each of 14 changes put back fails at
+/// least one of them.
+pub const LIBRARY_REVISION = 119;

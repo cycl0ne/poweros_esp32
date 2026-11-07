@@ -62,10 +62,12 @@
 //! and kept in rows rather than blocks, because that is how a render pass
 //! stores a depth attachment - so a shadow map is drawn into an image and
 //! sampled out of it with nothing copied. Such a texture carries the bytes
-//! from one row to the next (`Texture.pitch`), has one level, and is
-//! sampled by `sampleBy` alone: the fixed forms' fast path is built for
-//! blocks, so a form handed one reads it through the run-time sampler
-//! instead. A shadow sample compares the depth at all 16 bits (`valueOf`);
+//! from one row to the next (`Texture.pitch`), has the levels its image
+//! has (since 1.63), each at a pitch of its own, and is sampled by
+//! `sampleBy` alone: the fixed forms' fast path is built for blocks, so a
+//! form handed one reads it through the run-time sampler instead. A colour
+//! image is kept and sampled in rows the same way where it is of four
+//! samples (since 1.110) or drawn into as well (since 1.119). A shadow sample compares the depth at all 16 bits (`valueOf`);
 //! a sample of the colour reads the depth as a grey, its top 8 bits.
 //!
 //! **A compressed texture is kept in its blocks** (`Format.bc1`, `bc1_rgb`,
@@ -660,8 +662,11 @@ pub const Texture = struct {
     height_log2: u5,
     levels: u32,
     /// The bytes from one row to the next, for a texture kept in rows
-    /// rather than blocks: a depth attachment's image, sampled where it
-    /// lies (`linear`). 0 for the blocks every other texture is kept in.
+    /// rather than blocks: a depth attachment's image, or a colour image
+    /// of four samples or drawn into as well (since 1.110 and 1.119),
+    /// sampled where it lies (`linear`), each level past the first at a
+    /// pitch of its own (`Level.pitch`). 0 for the blocks every other
+    /// texture is kept in.
     pitch: u32 = 0,
     /// The bytes from one texel to the next along a row, where that is not
     /// the format's own size: the stencil plane of a depth attachment that

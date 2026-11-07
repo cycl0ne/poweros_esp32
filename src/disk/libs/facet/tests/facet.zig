@@ -653,9 +653,11 @@ test "an image: a texture, rows or a depth, by what it is for" {
     rig.fb.DestroyImage(device, image);
     rig.fb.FreeMemory(device, lazy);
 
-    // What facet.library 1.0 does not make.
+    // What facet.library 1.0 does not make. Drawn into and sampled at once
+    // it does since 1.119, in rows (docs/facet-vulkan10.md item 48), but
+    // not written through as a storage image as well.
     const refused = [_]facet.ImageCreateInfo{
-        .{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 64, .height = 64 }, .usage = sampled | facet.IMAGE_USAGE_COLOR_ATTACHMENT },
+        .{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 64, .height = 64 }, .usage = sampled | facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_STORAGE },
         .{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 64, .height = 64 }, .tiling = .linear, .usage = sampled },
         .{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 64, .height = 64 }, .mip_levels = 8, .usage = sampled },
         .{ .format = .r32_sfloat, .extent = .{ .width = 64, .height = 64 }, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT },
@@ -875,15 +877,17 @@ test "an image of four samples a pixel is four planes of one sample's bytes, and
     }
     // Sampled, of each colour format an attachment is drawn in (since
     // 1.110): rows at four samples, an attachment's of its size four times
-    // over, where one sample is a texture's blocks. Not a colour attachment
-    // or an input attachment as well, as one sample is neither, nor
-    // written through, as no image of four samples is.
+    // over, where one sample is a texture's blocks. A colour attachment or
+    // an input attachment as well since 1.119, in the same rows, as one
+    // sample may be either (docs/facet-vulkan10.md item 48); never written
+    // through, as no image of four samples is.
     for ([_]facet.Format{ .b8g8r8a8_unorm, .r8g8b8a8_unorm, .r5g6b5_unorm_pack16 }) |format| {
         const rows = imageBytes(&rig, device, .{ .format = format, .extent = small, .array_layers = 2, .usage = color }) orelse return error.TestUnexpectedResult;
         try testing.expectEqual(@as(?u64, 4 * rows), imageBytes(&rig, device, .{ .format = format, .extent = small, .array_layers = 2, .samples = 4, .usage = facet.IMAGE_USAGE_SAMPLED | copied }));
-        for ([_]u32{ color, facet.IMAGE_USAGE_INPUT_ATTACHMENT, facet.IMAGE_USAGE_STORAGE }) |beside| {
-            try testing.expectEqual(null, imageBytes(&rig, device, .{ .format = format, .extent = small, .samples = 4, .usage = facet.IMAGE_USAGE_SAMPLED | beside }));
+        for ([_]u32{ color, facet.IMAGE_USAGE_INPUT_ATTACHMENT }) |beside| {
+            try testing.expectEqual(@as(?u64, 4 * rows), imageBytes(&rig, device, .{ .format = format, .extent = small, .array_layers = 2, .samples = 4, .usage = facet.IMAGE_USAGE_SAMPLED | beside }));
         }
+        try testing.expectEqual(null, imageBytes(&rig, device, .{ .format = format, .extent = small, .samples = 4, .usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_STORAGE }));
     }
 
     // What Vulkan forbids of a multisampled image, and what this library
@@ -1010,16 +1014,18 @@ test "the three device queries: the largest image of a shape, the render area's 
     try testing.expectEqual(facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4, properties.sample_counts);
     try testing.expect(properties.max_resource_size != 0);
 
-    // A colour attachment is one level, and its bytes are its rows: one
-    // layer of them in linear tiling, and in optimal tiling the 256 a
-    // framebuffer may reach since 1.91, a layer's rows after the layer
-    // before, at four samples a pixel since 1.112, four planes of them.
+    // A colour attachment's bytes are its rows: one level of one layer of
+    // them in linear tiling, and in optimal tiling the 256 a framebuffer
+    // may reach since 1.91, a layer's rows after the layer before, at four
+    // samples a pixel since 1.112, four planes of them. Since 1.119 an
+    // optimal one has the whole chain of levels Vulkan asks of it as well,
+    // the largest of them still the one of four samples at one level.
     try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"2d", .linear, facet.IMAGE_USAGE_COLOR_ATTACHMENT, 0, &properties));
     try testing.expectEqual(@as(u32, 1), properties.max_mip_levels);
     try testing.expectEqual(@as(u32, 1), properties.max_array_layers);
     try testing.expectEqual(@as(u64, 8192 * 4 * 8192), properties.max_resource_size);
     try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"2d", .optimal, facet.IMAGE_USAGE_COLOR_ATTACHMENT, 0, &properties));
-    try testing.expectEqual(@as(u32, 1), properties.max_mip_levels);
+    try testing.expectEqual(@as(u32, 14), properties.max_mip_levels);
     try testing.expectEqual(@as(u32, 256), properties.max_array_layers);
     try testing.expectEqual(facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4, properties.sample_counts);
     try testing.expectEqual(@as(u64, 8192 * 4 * 8192 * 256 * 4), properties.max_resource_size);
@@ -1138,8 +1144,12 @@ test "the three device queries: the largest image of a shape, the render area's 
     try testing.expectEqual(@as(u32, 1), properties.max_extent.height);
     try testing.expectEqual(@as(u32, 1), properties.max_extent.depth);
     try testing.expectEqual(std.math.log2_int(u32, limits.limits.max_image_dimension_1d) + 1, properties.max_mip_levels);
-    // A colour attachment that is sampled as well is no image here.
-    try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"2d", .optimal, sampled | facet.IMAGE_USAGE_COLOR_ATTACHMENT, 0, &properties));
+    // A colour attachment that is sampled as well is an image since
+    // 1.119, kept in rows of the whole chain of levels (item 48); one
+    // written through besides is still none.
+    try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"2d", .optimal, sampled | facet.IMAGE_USAGE_COLOR_ATTACHMENT, 0, &properties));
+    try testing.expectEqual(std.math.log2_int(u32, limits.limits.max_image_dimension_2d) + 1, properties.max_mip_levels);
+    try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"2d", .optimal, sampled | facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_STORAGE, 0, &properties));
     // And a format nothing is made of.
     try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(physical, .undefined, .@"2d", .optimal, sampled, 0, &properties));
 
