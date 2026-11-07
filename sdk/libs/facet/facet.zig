@@ -521,10 +521,11 @@ pub const PhysicalDeviceLimits = extern struct {
     /// The samples a pixel may hold, as a bitmask of
     /// `SampleCountFlagBits` and not a count: for a colour, a
     /// depth, a stencil attachment, and for a subpass with no
-    /// attachment at all. `SAMPLE_COUNT_1` alone where there is no
-    /// multisampling, which is where this library stands - Vulkan
-    /// requires four, so that single bit is a defect and not a
-    /// choice (docs/facet-vulkan10.md item 61).
+    /// attachment at all. One sample and four on the cores since
+    /// 1.112, but for a subpass with no attachments, and
+    /// `SAMPLE_COUNT_1` alone on the V3D, which does not draw four
+    /// yet - Vulkan requires four, so a single bit is a defect and
+    /// not a choice (docs/facet-vulkan10.md item 61).
     framebuffer_color_sample_counts: u32,
     framebuffer_depth_sample_counts: u32,
     framebuffer_stencil_sample_counts: u32,
@@ -533,7 +534,10 @@ pub const PhysicalDeviceLimits = extern struct {
     max_color_attachments: u32,
     /// The samples an image may hold to be sampled from, by what it
     /// holds: a colour format, a whole-number format, a depth, a
-    /// stencil, and a storage image. One bit each here, as above.
+    /// stencil, and a storage image. Four as well as one in the
+    /// colour, the depth and the stencil mask where the device draws
+    /// four, as above, and one alone in the other two, which is all
+    /// Vulkan asks of them here.
     sampled_image_color_sample_counts: u32,
     sampled_image_integer_sample_counts: u32,
     sampled_image_depth_sample_counts: u32,

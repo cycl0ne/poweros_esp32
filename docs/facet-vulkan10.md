@@ -120,26 +120,29 @@ in 1.84, item 19 in 1.85, item 21 in 1.86, item 28's half of two in 1.87,
 items 82 and 83 in 1.87 and 1.88 - both found while doing other items -
 item 61's first row of eight in 1.89, item 17's half of two in 1.90,
 item 22's half of two in 1.91, item 83's open question, answered from
-Mesa, in 1.92, item 45 in 1.93, item 44 in 1.94 and item 84 in 1.95.**
+Mesa, in 1.92, item 45 in 1.93, item 44 in 1.94, item 84 in 1.95 and
+item 61's next six rows of eight, on the cores, in 1.112.**
 Each
 carries a *Done* note below saying what was actually built and where the
 item's own description turned out to be wrong - and several did. Things
 found while doing them became the items at the end of the list: 77 and 78
 from 1.80 and 1.81, and 79, 80 and 81 from 1.82.
 
-Items 52, 28, 17 and 22 are the ones split between devices: the cores draw
-every sampler as of 1.83, sample at a constant texel offset as of 1.87,
-carry 64 varyings as of 1.90 and take framebuffers of 256 layers as of
-1.91, and the V3D does none of the four - so the magenta item 52 is about
-now belongs to item 54 alone, item 28's remainder is a QPU back end that
-refuses the operand at pipeline creation, item 17's is a vertex program
-that keeps its varyings in registers and so stops at eight, and item 22's
-is a render list played once a frame rather than once a layer.
+Items 52, 28, 17, 22 and 61 are the ones split between devices: the cores
+draw every sampler as of 1.83, sample at a constant texel offset as of
+1.87, carry 64 varyings as of 1.90, take framebuffers of 256 layers as of
+1.91 and draw four samples a pixel as of 1.112, and the V3D does none of
+the five - so the magenta item 52 is about now belongs to item 54 alone,
+item 28's remainder is a QPU back end that refuses the operand at
+pipeline creation, item 17's is a vertex program that keeps its varyings
+in registers and so stops at eight, item 22's is a render list played
+once a frame rather than once a layer, and item 61's is its steps V1 to
+V8.
 
-None of the four is the hardware's limit. Mesa's v3dv runs Vulkan on this
-same V3D 7.1 with 64 varyings, texel offsets of -8 to 7 and 256
-framebuffer layers (`src/broadcom/vulkan/v3dv_device.c`), so each
-remainder is the port of named Mesa code, and the items say which. Until
+None of the five is the hardware's limit. Mesa's v3dv runs Vulkan on this
+same V3D 7.1 with 64 varyings, texel offsets of -8 to 7, 256 framebuffer
+layers and four samples a pixel (`src/broadcom/vulkan/v3dv_device.c`), so
+each remainder is the port of named Mesa code, and the items say which. Until
 then the V3D's limit is **derived from its own compiler or driver** rather
 than written down, so the number cannot drift from what the device
 accepts. That pattern started as item 28's answer to one field and is now
@@ -393,9 +396,9 @@ pixel's four samples a channel at a time, `(s0+s1+s2+s3+2)>>2`, as
 lavapipe's resolve (`handle_resolve_image`, lvp_execute.c:3871-3916) and
 Mesa's average (`build_tex_resolve`, vk_meta_blit_resolve.c:134-196) do,
 into rows or a texture. It is step S5 of item 61's plan. Until a device
-draws four samples no program can make an image to resolve, so on every
-device a call still has nothing to do; the tests turn the capability on
-to reach it.
+drew four samples no program could make an image to resolve, and the
+tests turned the capability on to reach it; the cores draw four since
+1.112 (item 61's K7), and the V3D will from V5 on.
 
 After: Multisampling for anything beyond a stub
 
@@ -1594,7 +1597,7 @@ facet reports 1|4 on both devices, with the standard locations on the cores and 
 | K5 | **Done in 1.109.** Resolve attachments on the cores: each tile, once its samples are stored, averaged into the resolve over its part of the render area as the surface holds them, so that a pass's resolve is CmdResolveImage's to the byte. Every tile of the area is drawn where a colour is resolved, and the framebuffer's layers past the first are resolved from the image's rows as the part ends | lvp_execute.c:1782-1837, 2053; v3dvx_cmd_buffer.c:640-686 | 113 | 125 |
 | K6 | **Done in 1.110.** Multisampled fetch from a native fragment function: a texture keeps its samples' planes apart and `sampleOf` gives one as a texture of one, a sample past the last reading nothing. A sampled colour image of four samples is kept in rows, its rows the texture, R8G8B8A8's bytes read by a texture format of their own; a depth attachment's planes carry their samples. Against the first plan, not a colour attachment as well: one sample of that is not made (item 48), and the format query's sample counts hold the 1 wherever they hold the 4 | lp_jit.c:399-404; lp_texture.c:1087; lvp_image.c:87-89, 104; lp_bld_sample_soa.c:2170-2187, 2985, 3166-3181 | 35 | 45 |
 | K6b | **Done in 1.111.** Input attachments of four samples, read a sample at a time: not in the first plan, which kept them refused, though Vulkan 1.0 reads one through `subpassInputMS` with no feature to refuse it under. An attachment carries its samples, their stride and where its second sample begins, and `sampleOf` gives one sample as an attachment of one, a sample past the last reading nothing: from the image's rows where an earlier subpass drew it, a colour or a depth plane, and from the tile where a subpass reads what it draws. No sample count ties an input attachment to its subpass, so one of one sample reads one of four | lvp_nir_lower_input_attachments.c:49-86; lp_bld_sample_soa.c:2170-2187, 4839, 4941-4956 | 34 | 320 |
-| K7 | 4x turned on for the cores, closing six rows | | 10 | 40 |
+| K7 | **Done in 1.112.** 4x turned on for the cores, closing six rows: `Capabilities.multisampling` is theirs, so the three framebuffer masks and the colour, depth and stencil sampled-image masks say 1\|4, and the format query, CreateImage, CreateRenderPass and CreateGraphicsPipelines take four where those masks say it. The tests that turned the capability on to draw four now ask the cores for it, and each refusal is checked on the cores described without it. `standardSampleLocations` stays true: the cores' four places are Vulkan's (setup.zig `sampleOffsets`), as lavapipe says of its own. v3dv says false on the V3D, though the four places its compiler gives are the same ones: V5 is where that is settled | lvp_device.c:81-82, 1072-1081, 1094; v3dv_device.c:1202; nir_to_vir.c:3111-3134 | 10 | 40 |
 | K8 | No-attachment subpasses at 4x, after item 43 | v3dv_cmd_buffer.c:2655-2675 | 15 | 20 |
 | V1 | The packet fields: COMMON's MSAA bit and log2 tile size, decimate on loads and stores, oversample, and SAMPLE_STATE's mask | v3d_packet.xml | 23 | 50 |
 | V2 | The tile-size chooser, and SAMPLE_STATE per draw at 4x | `v3d_choose_tile_size`, v3d_util.c:105-206; v3dv_cmd_buffer.c:367-413 | 65 | 45 |
@@ -1611,7 +1614,7 @@ Three things this item said are corrected:
 
 - **The tile is not halved.** At 4x a part's tile would hold 112.5 KiB against the A76's 64 KiB of L1, as worked out above, and halving `tile_size` would tax every 1x frame. The three extra sample planes go instead in the per-part run-time block that `lay()` already builds for extra colour attachments, so a 1x frame is unchanged. Whether a 4x frame should halve its own tile, as `v3d_choose_tile_size` does on the V3D, is a measurement for after K7.
 - **A pass with a resolve marks every tile dirty.** `finish` draws only dirty tiles, and `begin` marks them dirty only when something is cleared. Without this, a tile loaded with LOAD_OP_LOAD and drawn into by nothing would never be resolved.
-- **The pin is 7, and all seven are this item's.** It said 10 at 1.89; item 17's half (1.90) and item 22's half (1.91) have closed since. K7 takes it to 1, and K8 to 0. The verified line above cites creategraphicspipelines.zig:378 and _image.zig:338, which at 1.95 are :414 and :352.
+- **The pin is 1 since 1.112, and it is this item's.** It said 10 at 1.89; item 17's half (1.90) and item 22's half (1.91) took it to 7, all seven this item's, and K7 to 1, the no-attachments mask, which K8 takes to 0. The verified line above cites creategraphicspipelines.zig:378 and _image.zig:338, which at 1.95 are :414 and :352.
 
 Found independently by: features, limits, semantics, entry-points, conformance-path (all 5 strands that looked at it).
 

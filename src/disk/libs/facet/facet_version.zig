@@ -2671,4 +2671,39 @@ pub const LIBRARY_VERSION = 1;
 /// fragment's own pixel as the tile loaded it put into all four.
 /// CreateRenderPass takes an input attachment of four samples. Each of
 /// 15 changes put back fails one of them.
-pub const LIBRARY_REVISION = 111;
+///
+/// 112: **The cores draw four samples a pixel.** Step K7 of item 61 of
+/// docs/facet-vulkan10.md: `Capabilities.multisampling` is the cores',
+/// which K1 to K6b drew four samples with in the tests alone, the tests
+/// turning it on. So the three framebuffer sample-count masks and the
+/// colour, depth and stencil sampled-image masks say one sample and four,
+/// as lavapipe's do on the same cores (`LVP_SAMPLE_COUNTS`,
+/// lvp_device.c:81-82, :1072-1081, with eight beside them, which this
+/// library does not draw), and the format query, CreateImage,
+/// CreateRenderPass and CreateGraphicsPipelines take four where those
+/// masks say it. Six of the seven rows Vulkan 1.0's limits still had
+/// against the cores are met; the seventh, the no-attachments mask, waits
+/// on a subpass with no attachments (item 43, then K8). The integer and
+/// the storage sampled-image masks keep one sample, all Vulkan asks of
+/// them while `shader_storage_image_multisample` is false.
+/// `standardSampleLocations` stays true: the cores' four places are
+/// Vulkan's (raster/setup.zig `sampleOffsets`), as lavapipe says of its
+/// own (lvp_device.c:1094). The V3D does not draw four until V5.
+///
+/// Tests: the cores say they draw four, and their masks hold one sample
+/// and four in the six rows and one in the other three, at the standard
+/// places; described again without the capability, one in every row.
+/// Their format query says one and four for a sampled image and a colour
+/// attachment, and where it says four, the bytes of its largest image
+/// are the larger of the largest image of one sample and of four, each
+/// made: a sampled colour image of four is kept in rows, a word a pixel
+/// in each sample's plane, and one of one in a texture of two words a
+/// texel. CreateImage refuses two samples and eight, and CreateRenderPass
+/// takes an attachment of four, refuses two and eight, and refuses four
+/// beside a depth attachment of one. Without the capability the cores
+/// make no image of four and
+/// refuse a render pass and a pipeline of four. Every test that drew four
+/// asks the cores for the capability instead of turning it on. The limits
+/// test's pin is 1. The capability taken back fails 23 of them, and
+/// each of six other changes fails one of them.
+pub const LIBRARY_REVISION = 112;

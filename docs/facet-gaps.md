@@ -547,10 +547,10 @@ is of the triangle's steepest, in depth over a pixel. What is left out:
 ## Commands that are absent
 
 None since 1.101: `CmdResolveImage` is there, with its body
-(docs/facet-vulkan10.md item 13). What it resolves waits on
-multisampling, since no device makes an image of four samples yet
-(item 61). Every command of Vulkan 1.0's core that this library has a
-stage for is in the table.
+(docs/facet-vulkan10.md item 13). The cores make images of four samples
+for it to resolve since 1.112; the V3D makes none until item 61's V5.
+Every command of Vulkan 1.0's core that this library has a stage for is
+in the table.
 
 ## Device queries that are absent
 
@@ -583,13 +583,12 @@ These can be asked for and are answered with `error_feature_not_present`.
 
 | What | Where it is refused |
 |---|---|
-| Multisampling entirely: `rasterization_samples` above 1, sample shading, alpha-to-coverage, alpha-to-one | `pipeline/creategraphicspipelines.zig` |
-| An attachment of more than one sample | `render/createrenderpass.zig` |
+| Sample rate shading and alpha to one, both optional and false (`sample_rate_shading`, `alpha_to_one`); `rasterization_samples` but 1 and 4, and 4 on a device that does not draw four samples a pixel: the V3D, until docs/facet-vulkan10.md item 61's V5 (`multisampling`, the cores' since 1.112) | `pipeline/creategraphicspipelines.zig` |
+| An attachment of more than one sample but four, or of four on a device that does not draw them: the V3D, until item 61's V5 | `render/createrenderpass.zig` |
 | Logic operations: `LogicOp` is fully enumerated, `logic_op_enable` is not taken | `pipeline/creategraphicspipelines.zig` |
 | Depth clamp, the depth bounds test or a depth bias on a device that has none of them: every device has all three since 1.47 (`depth_clamp`, `depth_bounds`, `depth_bias`) | `pipeline/creategraphicspipelines.zig` |
 | More than one viewport or one scissor | `pipeline/creategraphicspipelines.zig` |
 | Colour attachments that differ, on a device that blends them all alike: no device of this library is one (`independent_blend`) | `pipeline/creategraphicspipelines.zig` |
-| Resolve attachments in a subpass | `render/createrenderpass.zig` |
 | An input attachment on a device that reads none: the V3D (`input_attachments`) | `render/createrenderpass.zig` |
 | An input attachment of a colour format whose pixels are not kept in rows (a depth format is read since 1.62); a subpass that reads what it draws without a dependency on itself by region (since 1.64) | `render/createrenderpass.zig` |
 | An image both INPUT_ATTACHMENT and SAMPLED, STORAGE or TRANSIENT_ATTACHMENT | `image/createimage.zig` |
@@ -841,17 +840,22 @@ sharing an edge cut it the same way from either side.
 
 ## Left out for this hardware
 
-Multisampling, logic operations, dual-source blending, geometry shaders,
-several viewports, sparse memory, events and a pipeline cache are not
-missing by accident. They cost more than they would give on *this*
-hardware, and both the tiled rasterizer on the cores and the V3D's fixed
-fragment forms are built the way they are because of it: a tile that holds
-its samples no longer sits in a core's cache, a logic operation cannot use
+Logic operations, dual-source blending, geometry shaders, several
+viewports, sparse memory, events and a pipeline cache are not missing by
+accident. They cost more than they would give on *this* hardware, and
+both the tiled rasterizer on the cores and the V3D's fixed fragment forms
+are built the way they are because of it: a logic operation cannot use
 the blend fast path and would have to live in a fragment program the QPUs
 cannot run, a geometry stage wants an allocation between the vertex work
 and the binning, a wait on an event has nothing to wait for behind one
 in-order queue, and a pipeline cache has nothing to cache where nothing is
 compiled.
+
+Multisampling, which Vulkan 1.0 gives no way to refuse, was on that list
+until 1.112. The cores draw four samples a pixel since then, the three
+planes past a pixel's first kept in each part's own block rather than in
+the tile, so that a frame of one sample is drawn as it was
+(docs/facet-vulkan10.md item 61).
 
 None of that is a judgement on the features, and none of it is for ever.
 Every one of them is answered by the **device**: a driver for a chip that

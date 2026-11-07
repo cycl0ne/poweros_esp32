@@ -50,9 +50,8 @@ const Image = @import("../image/_image.zig").Image;
 ///
 /// NOTES:
 /// Only a device that draws four samples makes an image of them
-/// (`Capabilities.multisampling`), and none does yet
-/// (docs/facet-vulkan10.md item 61): until one does, every resolve is of
-/// an image this library would not have made.
+/// (`Capabilities.multisampling`): the cores since 1.112, and the V3D
+/// not yet (docs/facet-vulkan10.md item 61, V5).
 ///
 /// BUGS:
 /// None known.

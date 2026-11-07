@@ -1961,7 +1961,7 @@ fn queryChecks(probe: *Probe) void {
     probe.checkEqual(limits.max_image_dimension_2d, shape.max_extent.width, "as wide as the device's limit says");
     probe.checkEqual(1, shape.max_extent.depth, "and one deep");
     probe.checkEqual(limits.max_image_array_layers, shape.max_array_layers, "the layers of an array");
-    probe.checkEqual(1, shape.sample_counts, "one sample a pixel");
+    probe.checkEqual(limits.sampled_image_color_sample_counts, shape.sample_counts, "the samples a pixel its limit says");
     probe.check(shape.max_mip_levels > 1, "the levels of the largest");
     probe.check(shape.max_resource_size != 0, "the bytes an image may take");
 

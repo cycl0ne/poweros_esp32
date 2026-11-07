@@ -137,8 +137,8 @@ pub const Capabilities = extern struct {
     /// optional features of their own and not part of it, and neither are
     /// two, eight or sixteen samples, nor four in a storage image; an
     /// input attachment of four is read a sample at a time since 1.111.
-    /// No device of this library has it yet (docs/facet-vulkan10.md item
-    /// 61).
+    /// The cores have it since 1.112, the V3D not yet
+    /// (docs/facet-vulkan10.md item 61, V5).
     multisampling: bool = false,
     /// `PipelineColorBlendStateCreateInfo.logic_op_enable`.
     logic_ops: bool = false,
@@ -683,9 +683,10 @@ pub const limits: facet.PhysicalDeviceLimits = .{
     //
     // **What a device reports is narrower** (`narrowSampleCounts`): one
     // sample in each of the seven until it has `can.multisampling`, which
-    // no device has yet, so the seven are still seven shortfalls (item
-    // 61); and one sample for a subpass with no attachments, which cannot
-    // be made yet (item 43). Until 1.96 this table said one sample itself.
+    // the cores have since 1.112 and the V3D not yet (item 61's V5); and
+    // one sample for a subpass with no attachments, which cannot be made
+    // yet (item 43), so that mask is the one shortfall the cores have
+    // left of these. Until 1.96 this table said one sample itself.
     .framebuffer_color_sample_counts = facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4,
     .framebuffer_depth_sample_counts = facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4,
     .framebuffer_stencil_sample_counts = facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4,

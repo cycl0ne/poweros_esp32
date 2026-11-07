@@ -661,7 +661,8 @@ test "an image: a texture, rows or a depth, by what it is for" {
         .{ .format = .r32_sfloat, .extent = .{ .width = 64, .height = 64 }, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT },
         .{ .format = .d16_unorm, .extent = .{ .width = 64, .height = 64 }, .usage = facet.IMAGE_USAGE_SAMPLED },
         .{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 64, .height = 64, .depth = 2 }, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT },
-        .{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 64, .height = 64 }, .samples = 4, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT },
+        .{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 64, .height = 64 }, .samples = 2, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT },
+        .{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 64, .height = 64 }, .samples = 8, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT },
         .{ .format = .r32g32_sfloat, .extent = .{ .width = 64, .height = 64 }, .usage = facet.IMAGE_USAGE_TRANSFER_DST },
         .{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 16384, .height = 64 }, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT },
     };
@@ -844,12 +845,12 @@ test "an image of four samples a pixel is four planes of one sample's bytes, and
     const copied = facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
     const small = facet.Extent3D{ .width = 37, .height = 19, .depth = 1 };
 
-    // As shipped no device draws four samples, so none is made.
-    try testing.expect(!record.can.multisampling);
+    // The cores draw four samples since 1.112; a device that does not
+    // makes no image of four.
+    try testing.expect(record.can.multisampling);
+    record.can.multisampling = false;
     try testing.expectEqual(null, imageBytes(&rig, device, .{ .format = .b8g8r8a8_unorm, .extent = small, .samples = 4, .usage = color }));
-
     record.can.multisampling = true;
-    defer record.can.multisampling = false;
 
     // Four planes, each the whole of the image at one sample: a colour
     // attachment's rows, padded to a cache line at this width, and a
@@ -1004,13 +1005,15 @@ test "the three device queries: the largest image of a shape, the render area's 
     try testing.expectEqual(@as(u32, 1), properties.max_extent.depth);
     try testing.expectEqual(@as(u32, 14), properties.max_mip_levels);
     try testing.expectEqual(@as(u32, 256), properties.max_array_layers);
-    try testing.expectEqual(@as(u32, 1), properties.sample_counts);
+    // One sample or four: an image of four is sampled since 1.110, and the
+    // cores draw four since 1.112.
+    try testing.expectEqual(facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4, properties.sample_counts);
     try testing.expect(properties.max_resource_size != 0);
 
     // A colour attachment is one level, and its bytes are its rows: one
     // layer of them in linear tiling, and in optimal tiling the 256 a
     // framebuffer may reach since 1.91, a layer's rows after the layer
-    // before.
+    // before, at four samples a pixel since 1.112, four planes of them.
     try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"2d", .linear, facet.IMAGE_USAGE_COLOR_ATTACHMENT, 0, &properties));
     try testing.expectEqual(@as(u32, 1), properties.max_mip_levels);
     try testing.expectEqual(@as(u32, 1), properties.max_array_layers);
@@ -1018,7 +1021,8 @@ test "the three device queries: the largest image of a shape, the render area's 
     try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"2d", .optimal, facet.IMAGE_USAGE_COLOR_ATTACHMENT, 0, &properties));
     try testing.expectEqual(@as(u32, 1), properties.max_mip_levels);
     try testing.expectEqual(@as(u32, 256), properties.max_array_layers);
-    try testing.expectEqual(@as(u64, 8192 * 4 * 8192 * 256), properties.max_resource_size);
+    try testing.expectEqual(facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4, properties.sample_counts);
+    try testing.expectEqual(@as(u64, 8192 * 4 * 8192 * 256 * 4), properties.max_resource_size);
     // A depth attachment has the levels 1.63 gave it, and the layers 1.58
     // gave one sampled as well, which since 1.91 one never sampled has
     // too, for a framebuffer of layers.
@@ -1042,7 +1046,12 @@ test "the three device queries: the largest image of a shape, the render area's 
     // answer describes, to the byte: the same image made, and
     // GetImageMemoryRequirements asked (since 1.66). CreateImage lays an
     // image out and binds nothing, so the largest of them costs an
-    // object and no memory at all.
+    // object and no memory at all. Where the answer says four samples a
+    // pixel, which the cores draw since 1.112, it is the larger of that
+    // image and the largest of four, one level as such an image is: a
+    // sampled colour image of four is kept in rows, a word a pixel in
+    // each sample's plane, where one of one is a texture of two words a
+    // texel and its levels.
     const shapes = [_]struct { facet.Format, facet.ImageType, facet.ImageTiling, u32, u32 }{
         .{ .b8g8r8a8_unorm, .@"2d", .optimal, sampled, 0 },
         .{ .b8g8r8a8_unorm, .@"2d", .optimal, sampled, facet.IMAGE_CREATE_CUBE_COMPATIBLE },
@@ -1069,8 +1078,25 @@ test "the three device queries: the largest image of a shape, the render area's 
         }, &largest));
         var needs: facet.MemoryRequirements = undefined;
         fb.GetImageMemoryRequirements(device, largest.?, &needs);
-        try testing.expectEqual(properties.max_resource_size, needs.size);
         fb.DestroyImage(device, largest);
+        var most = needs.size;
+        if (properties.sample_counts & facet.SAMPLE_COUNT_4 != 0) {
+            var four: ?*facet.Image = null;
+            try testing.expectEqual(facet.Result.success, fb.CreateImage(device, &.{
+                .flags = flags,
+                .image_type = kind,
+                .format = format,
+                .extent = properties.max_extent,
+                .array_layers = properties.max_array_layers,
+                .samples = 4,
+                .tiling = tiling,
+                .usage = usage,
+            }, &four));
+            fb.GetImageMemoryRequirements(device, four.?, &needs);
+            fb.DestroyImage(device, four);
+            most = @max(most, needs.size);
+        }
+        try testing.expectEqual(properties.max_resource_size, most);
         // One level more, or one layer more, is refused: the answer is
         // the largest there is.
         var over: ?*facet.Image = null;
@@ -1241,21 +1267,23 @@ test "a device's sample counts follow what it draws, and the three optional mult
     // bit alone in the integer and storage masks.
     try expectSampleCounts(.{ four, four, four, four, four, one, four, four, one }, &_instance.limits);
 
-    // The cores do not draw four yet, so what they report is one sample
-    // in every mask.
-    try testing.expect(!record.can.multisampling);
+    // The cores draw four since 1.112, so six masks take the 4 bit, at
+    // Vulkan's standard places. The no-attachments mask keeps the 1 bit
+    // alone, since a subpass with no attachments cannot be made yet (item
+    // 43).
+    try testing.expect(record.can.multisampling);
     var properties: facet.PhysicalDeviceProperties = undefined;
     rig.fb.GetPhysicalDeviceProperties(physical, &properties);
-    try expectSampleCounts(.{ one, one, one, one, one, one, one, one, one }, &properties.limits);
+    try expectSampleCounts(.{ four, four, four, one, four, one, four, four, one }, &properties.limits);
+    try testing.expectEqual(facet.TRUE, properties.limits.standard_sample_locations);
 
-    // The cores described again, as a device that does draw four: six
-    // masks take the 4 bit. The no-attachments mask keeps the 1 bit alone,
-    // since a subpass with no attachments cannot be made yet (item 43).
-    var drawing = record.*;
-    try testing.expect(record.ops.describe(rig.sys, &drawing));
-    drawing.can.multisampling = true;
-    _instance.narrowSampleCounts(&drawing);
-    try expectSampleCounts(.{ four, four, four, one, four, one, four, four, one }, &drawing.properties.limits);
+    // The cores described again, as a device that does not draw four:
+    // one sample in every mask.
+    var plain = record.*;
+    try testing.expect(record.ops.describe(rig.sys, &plain));
+    plain.can.multisampling = false;
+    _instance.narrowSampleCounts(&plain);
+    try expectSampleCounts(.{ one, one, one, one, one, one, one, one, one }, &plain.properties.limits);
 
     // A bit a driver cleared stays clear, with the capability or without:
     // the V3D's four zeros for the images it does not sample
@@ -1278,7 +1306,7 @@ test "a device's sample counts follow what it draws, and the three optional mult
     // stays false with the capability as it does without.
     for ([_]bool{ false, true }) |can| {
         record.can.multisampling = can;
-        defer record.can.multisampling = false;
+        defer record.can.multisampling = true;
         var features: facet.PhysicalDeviceFeatures = undefined;
         rig.fb.GetPhysicalDeviceFeatures(physical, &features);
         try testing.expectEqual(facet.FALSE, features.sample_rate_shading);
@@ -1312,10 +1340,11 @@ test "a device says what it does, and a false is what a create call refuses" {
     try testing.expect(can.stored_depth);
     // A fragment function of the program's can read an attachment's rows.
     try testing.expect(can.input_attachments);
+    // And four samples a pixel (since 1.112).
+    try testing.expect(can.multisampling);
 
     // And what it says it does not do, it refuses: a false here is worth
     // having only if the call agrees with it.
-    try testing.expect(!can.multisampling);
     try testing.expect(!can.logic_ops);
 
     const color = facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal };
@@ -1340,12 +1369,16 @@ test "a device says what it does, and a false is what a create call refuses" {
         try testing.expect(!can.logic_ops);
     }
 
-    // More than one sample, likewise.
-    {
-        const attachment = facet.AttachmentDescription{ .format = .b8g8r8a8_unorm, .samples = 4, .load_op = .clear, .final_layout = .color_attachment_optimal };
+    // Four samples are drawn, and two or eight, which no device draws,
+    // are refused.
+    for ([_]u32{ 4, 2, 8 }) |samples| {
+        const attachment = facet.AttachmentDescription{ .format = .b8g8r8a8_unorm, .samples = samples, .load_op = .clear, .final_layout = .color_attachment_optimal };
         const subpass = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&color) };
         const info = facet.RenderPassCreateInfo{ .attachment_count = 1, .attachments = @ptrCast(&attachment), .subpass_count = 1, .subpasses = @ptrCast(&subpass) };
-        try testing.expectEqual(facet.Result.error_feature_not_present, rig.fb.CreateRenderPass(device, &info, &pass));
+        const want: facet.Result = if (samples == 4) .success else .error_feature_not_present;
+        try testing.expectEqual(want, rig.fb.CreateRenderPass(device, &info, &pass));
+        rig.fb.DestroyRenderPass(device, pass);
+        pass = null;
     }
 
     // One sample and no input attachment: the same pass is made.

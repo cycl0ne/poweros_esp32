@@ -51,9 +51,12 @@ would pay for them and get nothing back. Most of them are feature bits,
 and `PhysicalDeviceFeatures` is answered by the *device* - so a driver
 written for a chip that has the thing in hardware says yes to it while the
 cores and the V3D go on saying no, and no program that asks politely has
-to change. That is what the feature structure is for. The three that are
-core with no bit of their own - multisampling, events and a pipeline cache
-- would simply start working on a device that brings what they need.
+to change. That is what the feature structure is for. The two that are
+core with no bit of their own - events and a pipeline cache - would simply
+start working on a device that brings what they need. Multisampling was a
+third, and the one a conformant 1.0 device may not refuse; the cores draw
+four samples a pixel since 1.112, and the V3D's is the rest of
+docs/facet-vulkan10.md item 61.
 
 The next device the library is likely to meet is an **RDNA 3.5** one, and
 most of this table is hardware it has: a blend unit with logic operations
@@ -64,7 +67,6 @@ item in, and what the item costs *here* until then.
 
 | Item | Standing | Why not on this hardware | What brings it in |
 |---|---|---|---|
-| **Multisampling entirely**, and `CmdResolveImage` with it | `1.0 core`: the only row here that a conformant 1.0 device may not refuse - its required limits make 4 colour samples a minimum (`framebufferColorSampleCounts`). Sample shading and alpha-to-one are feature bits beside it | The cores' rasterizer earns its speed by keeping a tile in cache: 64 x 64 pixels, colour 16 KiB + depth 8 KiB + stencil 4 KiB, one buffer a part and four parts, about 114 KiB live. 4x samples makes it ~456 KiB - past the A76's 64 KiB of L1 data cache, which is the whole point of tiling. It also reaches every path in the library: the quad walk writes four pixels under one coverage mask, every load, store and clear gains a sample loop, and resolve attachments appear in a pass | A chip that multisamples and resolves in hardware. Then the work is the library's sample plumbing - `rasterization_samples`, an attachment's `samples`, resolve references, `CmdResolveImage` - with the cores and the V3D still answering no |
 | **Logic operations**, for every attachment | `1.0 feature` (`logicOp`) | They sit where blending sits but are integer operations on the final colour, so they cannot use the blend fast path. Mesa's V3D driver lowers `logicOp` **into the fragment program**, which is the one thing impossible here: the QPUs run no program of ours. So it would be a second blend path on the cores and nothing on the GPU, for the one 1.0 blend feature that predates programmable blending | AMD's blend unit has logic operations in it (which is why RADV answers yes), so an RDNA driver gets them nearly free. The library's side is `logic_op_enable` and `LogicOp`, which are already enumerated and refused in one place |
 | **Dual-source blending** (the `SRC1` factors) | `1.0 feature` (`dualSrcBlend`) | Every fragment form writes one colour: the V3D's tile write is literally "render target 0, four half-floats", and `shader.Fragments` carries one colour a quad. 1.51 paid to let a function write several *attachments*; this is two colours for *one* | A chip whose blend unit takes a second source, with a shader stage that can emit it. The SDK's side is one more output convention beside `shader.fragmentOutputs` |
 | **Geometry shaders** | `1.0 feature` (`geometryShader`) | The binner's input is a vertex array of known count. A geometry stage turns one primitive into many, so its output wants an allocation sized at run time - a stage and a pass between the vertex work and the binning. Tessellation (1.50) already amplifies, with bounded output and no extra pass. There is no `SHADER_STAGE_GEOMETRY` bit at all; both of its statistics read 0 since 1.43, so a program that counts them is not refused | A chip with the stage in hardware. The library's side is the stage bit, the entry kind in `shader.zig`, and a primitive stream the binner takes from somewhere other than the vertex array |

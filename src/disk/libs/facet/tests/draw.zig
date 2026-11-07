@@ -580,8 +580,12 @@ test "a render pass: one subpass, a colour attachment and perhaps a depth one; w
         // A colour attachment of a float, a depth one of 32 bits.
         .{ .error_format_not_supported, .{ .{ .format = .r32_sfloat, .final_layout = .general }, .{ .format = .d16_unorm, .final_layout = .general } } },
         .{ .error_format_not_supported, .{ .{ .format = .b8g8r8a8_unorm, .final_layout = .general }, .{ .format = .r32_sfloat, .final_layout = .general } } },
-        // Multisampled.
-        .{ .error_feature_not_present, .{ .{ .format = .b8g8r8a8_unorm, .samples = 4, .final_layout = .general }, .{ .format = .d16_unorm, .final_layout = .general } } },
+        // Two samples a pixel, which no device draws.
+        .{ .error_feature_not_present, .{ .{ .format = .b8g8r8a8_unorm, .samples = 2, .final_layout = .general }, .{ .format = .d16_unorm, .samples = 2, .final_layout = .general } } },
+        // Four, which the cores draw since 1.112, beside one: a subpass's
+        // depth attachment is of its colour attachments' count
+        // (VUID-VkSubpassDescription-pDepthStencilAttachment-01418).
+        .{ .error_initialization_failed, .{ .{ .format = .b8g8r8a8_unorm, .samples = 4, .final_layout = .general }, .{ .format = .d16_unorm, .final_layout = .general } } },
     };
     for (refused) |case| {
         var none: ?*facet.RenderPass = null;
@@ -4275,8 +4279,7 @@ test "a multisampled image cleared and copied plane by plane, and no blit or buf
     defer bench.down();
     const fb = bench.rig.fb;
     const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
-    physical.can.multisampling = true;
-    defer physical.can.multisampling = false;
+    try testing.expect(physical.can.multisampling);
     const Image = @import("../image/_image.zig").Image;
     const usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
     const info = facet.ImageCreateInfo{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 20, .height = 9, .depth = 1 }, .array_layers = 2, .samples = 4, .usage = usage };
@@ -4413,14 +4416,16 @@ test "four samples a pixel in a render pass, a framebuffer and a pipeline, with 
     const depth_one = facet.AttachmentDescription{ .format = .d16_unorm, .load_op = .clear, .final_layout = .depth_stencil_attachment_optimal };
     const shape = [_]facet.AttachmentDescription{ four, one, depth_four };
 
-    // As shipped, no device draws four samples: such a pass is refused.
+    // A device that does not draw four samples refuses such a pass. The
+    // cores do draw them, since 1.112.
     {
+        physical.can.multisampling = false;
+        defer physical.can.multisampling = true;
         const result, const pass = samplesPass(&bench, &shape, 1, 2);
         defer fb.DestroyRenderPass(device, pass);
         try testing.expectEqual(facet.Result.error_feature_not_present, result);
     }
-    physical.can.multisampling = true;
-    defer physical.can.multisampling = false;
+    try testing.expect(physical.can.multisampling);
 
     // Made: four samples of colour and depth, the colour resolved into an
     // attachment of one.
@@ -4547,6 +4552,16 @@ test "four samples a pixel in a render pass, a framebuffer and a pipeline, with 
         try testing.expectEqual(want, result);
         if (pipeline) |kept| try testing.expectEqual(samples, _objects.of(_pipeline.Pipeline, kept).samples);
     }
+    // A device that does not draw four refuses a pipeline of four as it
+    // does the pass, whatever the pass it is for.
+    {
+        physical.can.multisampling = false;
+        defer physical.can.multisampling = true;
+        const multisample = facet.PipelineMultisampleStateCreateInfo{ .rasterization_samples = 4 };
+        const result, const pipeline = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = single, .multisample = &multisample });
+        defer fb.DestroyPipeline(device, pipeline);
+        try testing.expectEqual(facet.Result.error_feature_not_present, result);
+    }
     // Sample shading and alpha to one stay refused. Alpha to coverage,
     // which Vulkan has no feature for, is taken since 1.108 and kept with
     // the pipeline.
@@ -4633,8 +4648,7 @@ test "CmdResolveImage: each pixel of a rectangle the average of its four samples
     defer bench.down();
     const fb = bench.rig.fb;
     const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
-    physical.can.multisampling = true;
-    defer physical.can.multisampling = false;
+    try testing.expect(physical.can.multisampling);
     const Image = @import("../image/_image.zig").Image;
     const _image = @import("../image/_image.zig");
     const usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
@@ -4867,8 +4881,7 @@ test "four samples a pixel drawn: each sample's plane as its own coverage says, 
     const fb = bench.rig.fb;
     const device = bench.device;
     const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
-    physical.can.multisampling = true;
-    defer physical.can.multisampling = false;
+    try testing.expect(physical.can.multisampling);
     const Image = @import("../image/_image.zig").Image;
 
     // Four tiles of 64, the render area cutting the right ones and the
@@ -5017,8 +5030,7 @@ test "four samples a pixel blended: each sample's colour mixed with that sample'
     const fb = bench.rig.fb;
     const device = bench.device;
     const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
-    physical.can.multisampling = true;
-    defer physical.can.multisampling = false;
+    try testing.expect(physical.can.multisampling);
     const Image = @import("../image/_image.zig").Image;
     const _draw = @import("../driver/cpu/_draw.zig");
     const Blend = @import("raster").Blend;
@@ -5132,8 +5144,7 @@ test "four samples a pixel in colour attachments drawn together: each attachment
     const fb = bench.rig.fb;
     const device = bench.device;
     const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
-    physical.can.multisampling = true;
-    defer physical.can.multisampling = false;
+    try testing.expect(physical.can.multisampling);
     const Image = @import("../image/_image.zig").Image;
 
     const side = 64;
@@ -5342,8 +5353,7 @@ fn depthsBySample(format: facet.Format) !void {
     const fb = bench.rig.fb;
     const device = bench.device;
     const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
-    physical.can.multisampling = true;
-    defer physical.can.multisampling = false;
+    try testing.expect(physical.can.multisampling);
     const image_zig = @import("../image/_image.zig");
     const stenciled = format == .d16_unorm_s8_uint;
     const stride: u32 = if (stenciled) 4 else 2;
@@ -5561,8 +5571,7 @@ test "four samples a pixel in stencil: each sample's stencil tested and changed 
     const fb = bench.rig.fb;
     const device = bench.device;
     const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
-    physical.can.multisampling = true;
-    defer physical.can.multisampling = false;
+    try testing.expect(physical.can.multisampling);
     const image_zig = @import("../image/_image.zig");
 
     const side = 128;
@@ -5726,8 +5735,7 @@ test "four samples a pixel under the depth clamp: each sample's depth taken at i
     const fb = bench.rig.fb;
     const device = bench.device;
     const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
-    physical.can.multisampling = true;
-    defer physical.can.multisampling = false;
+    try testing.expect(physical.can.multisampling);
     const image_zig = @import("../image/_image.zig");
 
     const side = 128;
@@ -5822,8 +5830,7 @@ fn droppedByPixel(samples: u32) !void {
     const fb = bench.rig.fb;
     const device = bench.device;
     const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
-    physical.can.multisampling = samples == 4;
-    defer physical.can.multisampling = false;
+    try testing.expect(physical.can.multisampling);
     try testing.expect(physical.can.depth_clamp);
     const image_zig = @import("../image/_image.zig");
 
@@ -6005,8 +6012,7 @@ fn coveredByAlpha(samples: u32, format: facet.Format, table: []const AlphaKeeps)
     const fb = bench.rig.fb;
     const device = bench.device;
     const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
-    physical.can.multisampling = samples == 4;
-    defer physical.can.multisampling = false;
+    try testing.expect(physical.can.multisampling);
     const image_zig = @import("../image/_image.zig");
     const stenciled = format == .d16_unorm_s8_uint;
     const stride: u32 = if (stenciled) 4 else 2;
@@ -6184,8 +6190,7 @@ fn resolvedByPass(format: facet.Format) !void {
     const fb = bench.rig.fb;
     const device = bench.device;
     const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
-    physical.can.multisampling = true;
-    defer physical.can.multisampling = false;
+    try testing.expect(physical.can.multisampling);
     const Image = @import("../image/_image.zig").Image;
 
     // The resolve's image wider and taller than the framebuffer, so that
@@ -6342,8 +6347,7 @@ test "resolve attachments of colour attachments drawn together: each given the a
     const fb = bench.rig.fb;
     const device = bench.device;
     const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
-    physical.can.multisampling = true;
-    defer physical.can.multisampling = false;
+    try testing.expect(physical.can.multisampling);
     const Image = @import("../image/_image.zig").Image;
 
     // Three colours of four samples drawn together, the second and the
@@ -6566,8 +6570,7 @@ test "an image of four samples a pixel sampled where it lies: a colour one kept 
     const fb = bench.rig.fb;
     const device = bench.device;
     const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
-    physical.can.multisampling = true;
-    defer physical.can.multisampling = false;
+    try testing.expect(physical.can.multisampling);
     const _image = @import("../image/_image.zig");
     const width = 40;
     const height = 24;
@@ -6843,8 +6846,7 @@ test "input attachments of four samples a pixel, read a sample at a time by the 
     const fb = bench.rig.fb;
     const device = bench.device;
     const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
-    physical.can.multisampling = true;
-    defer physical.can.multisampling = false;
+    try testing.expect(physical.can.multisampling);
     const _image = @import("../image/_image.zig");
     const width = 40;
     const height = 24;
@@ -7036,8 +7038,7 @@ test "a subpass of four samples a pixel reading the attachment it draws: each sa
     const fb = bench.rig.fb;
     const device = bench.device;
     const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
-    physical.can.multisampling = true;
-    defer physical.can.multisampling = false;
+    try testing.expect(physical.can.multisampling);
     const _image = @import("../image/_image.zig");
     // Two tiles across and two down.
     const width = 100;
@@ -14054,8 +14055,7 @@ test "a framebuffer's other layers of four samples a pixel cleared in every samp
     const fb = bench.rig.fb;
     const device = bench.device;
     const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
-    physical.can.multisampling = true;
-    defer physical.can.multisampling = false;
+    try testing.expect(physical.can.multisampling);
     const image_zig = @import("../image/_image.zig");
     const side = 64;
     const extent = facet.Extent3D{ .width = side, .height = side, .depth = 1 };

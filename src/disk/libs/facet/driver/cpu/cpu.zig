@@ -198,6 +198,14 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         .textures_3d = true,
         .compressed_textures = true,
         .float_textures = true,
+        // Four samples a pixel (since 1.112): each sample's coverage, at
+        // llvmpipe's places for four, which are Vulkan's standard ones
+        // (raster/setup.zig); the tile's planes of colour, depth and
+        // stencil for each; the sample mask, alpha to coverage and
+        // resolves; and an image of four sampled, fetched and read as an
+        // input attachment a sample at a time (docs/facet-vulkan10.md
+        // item 61, K1 to K6b).
+        .multisampling = true,
     };
     physical.queue_family = queue_family;
     describeMemory(sys, &physical.memory);
