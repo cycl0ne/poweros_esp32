@@ -819,20 +819,26 @@ pub fn rowsAt(image: *const Image, level: u32, layer: u32) struct { at: usize, p
 /// them, pixel by pixel: the layer the view names, the depth as `r16` -
 /// 0 to 1, nearest first - and the stencil as `r8u`, the whole number
 /// it is, each read `stride` bytes apart so that a format holding both is
-/// two planes inside the same rows. Null for an image with no memory
-/// behind it, or for an aspect the format has not got. (Since 1.62.)
+/// two planes inside the same rows. Of four samples, each sample's rows a
+/// plane after the one before (since 1.111). Null for an image with no
+/// memory behind it, or for an aspect the format has not got. (Since
+/// 1.62.)
 pub fn depthRows(image: *const Image, aspect: u32, level: u32, first_layer: u32) ?shader.Attachment {
     const data = image.data orelse return null;
     const plane = planeAt(image, aspect) orelse return null;
     const rows = rowsAt(image, level, first_layer);
     const size = levelSize(image, level);
+    const first = data + rows.at + plane.at;
     return .{
-        .bytes = data + rows.at + plane.at,
+        .bytes = first,
         .pitch = rows.pitch,
         .width = size[0],
         .height = size[1],
         .format = if (plane.depth) .r16 else .r8u,
         .stride = plane.stride,
+        .samples = image.samples,
+        .sample_bytes = @intCast(image.sample_bytes),
+        .others = first + @as(usize, @intCast(image.sample_bytes)),
     };
 }
 

@@ -1181,6 +1181,40 @@ pub const Attachment = extern struct {
     /// hold reads as transparent black.
     left: u32 = 0,
     top: u32 = 0,
+    /// The samples each pixel holds: 1, or 4 for an attachment of four
+    /// samples a pixel (since 1.111). What this reads by itself is sample
+    /// 0, and `sampleOf` gives the others: sample s lies `s - 1` times
+    /// `sample_bytes` on from `others`, which is the next plane of the
+    /// image's memory for one an earlier subpass drew, and the tile's own
+    /// planes of samples for the one this part is drawing. That is
+    /// llvmpipe's image load of several samples, which adds the sample
+    /// times its stride to the texel's offset (`lp_build_img_op_soa`,
+    /// src/gallium/auxiliary/gallivm/lp_bld_sample_soa.c:4941-4956), and
+    /// lavapipe reads a subpass input of several samples with that load
+    /// (`try_lower_input_load`, src/gallium/frontends/lavapipe/nir/
+    /// lvp_nir_lower_input_attachments.c:49-86).
+    samples: u32 = 1,
+    sample_bytes: usize = 0,
+    others: ?[*]const u8 = null,
+
+    /// Sample `which` of an attachment of several samples a pixel, as an
+    /// attachment of one: what Vulkan's `subpassLoad` of a
+    /// `subpassInputMS` reads, through `colorAt` and `at` of what it gives.
+    /// A sample the attachment has not got reads as transparent black
+    /// everywhere, as llvmpipe's load reads nothing for a sample past the
+    /// count (`lp_build_sample_ms_offset`, lp_bld_sample_soa.c:2170-2187).
+    /// Of an attachment of one sample, sample 0 is the attachment itself.
+    /// (Since 1.111.)
+    pub fn sampleOf(attachment: *const Attachment, which: u32) Attachment {
+        var one = attachment.*;
+        one.samples = 1;
+        if (which == 0) return one;
+        one.bytes = null;
+        if (which < attachment.samples) if (attachment.others) |first| {
+            one.bytes = first + @as(usize, which - 1) * attachment.sample_bytes;
+        };
+        return one;
+    }
 
     /// The pixel at (x, y) of the attachment as 0xAARRGGBB; transparent
     /// black outside what this holds.

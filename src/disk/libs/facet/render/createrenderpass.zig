@@ -46,8 +46,11 @@ const _surface = @import("../surface/_surface.zig");
 /// samples are averaged into as the subpass ends: over the render area, in
 /// every layer of the framebuffer, each pixel the average of its four
 /// samples as the attachment holds them, as CmdResolveImage averages them
-/// (since 1.109). An input attachment holds one sample, and so does an
-/// attachment on a device without the capability: either is
+/// (since 1.109). An attachment of four samples may be an input attachment
+/// as well, read a sample at a time (`shader.Attachment.sampleOf`, since
+/// 1.111): from the image's memory where an earlier subpass drew it, and
+/// from the tile where the subpass reads what it draws. An attachment on a
+/// device without the capability holds one sample: one of more is
 /// `error_feature_not_present`. A resolve attachment for a colour of one
 /// sample, or of another format or count, and attachments of one subpass
 /// whose counts differ, are `error_initialization_failed`, as Vulkan has
@@ -283,7 +286,6 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                     }
                     if (_image.hasDepth(read.format) and _image.hasStencil(read.format) and !owner.physical.can.stored_both) return .error_feature_not_present;
                 };
-                if (read.samples != 1) return .error_feature_not_present;
                 // Drawn and read in the same subpass: the pixels being
                 // read are the ones being written, which is the
                 // fragment's own pixel and nothing else. Since 1.64 that

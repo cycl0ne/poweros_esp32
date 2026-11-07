@@ -1131,6 +1131,11 @@ const Batch = struct {
                 .format = .bgra8888,
                 .left = tile.x,
                 .top = tile.y,
+                // Of four samples, the others in the tile's own planes of
+                // them (`Tile.samplePlane`, since 1.111).
+                .samples = tile.samples,
+                .sample_bytes = tile_size * tile_size * @sizeOf(u32),
+                .others = if (tile.sample_planes) |planes| @ptrCast(planes) else null,
             };
             batch.fragments.drawn = pixels;
             batch.fragments.target = &batch.target;

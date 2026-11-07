@@ -135,9 +135,10 @@ pub const Capabilities = extern struct {
     /// fetching each sample. The sample-count masks a device reports
     /// follow it (`narrowSampleCounts`). Sample shading and alpha to one are
     /// optional features of their own and not part of it, and neither are
-    /// two, eight or sixteen samples, nor four in a storage image or an
-    /// input attachment. No device of this library has it yet
-    /// (docs/facet-vulkan10.md item 61).
+    /// two, eight or sixteen samples, nor four in a storage image; an
+    /// input attachment of four is read a sample at a time since 1.111.
+    /// No device of this library has it yet (docs/facet-vulkan10.md item
+    /// 61).
     multisampling: bool = false,
     /// `PipelineColorBlendStateCreateInfo.logic_op_enable`.
     logic_ops: bool = false,

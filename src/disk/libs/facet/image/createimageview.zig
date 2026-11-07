@@ -164,14 +164,21 @@ pub fn CreateImageView(base: *FacetBase, device: *facet.Device, info: *const fac
     if (read_rows) |one| made.rows = one;
     // Its pixels, for a later subpass to read as an input attachment: the
     // rows of the layer the view begins at, an image kept in rows having
-    // layers since 1.91.
-    if (image.kind == .rows) made.rows = .{
-        .bytes = image.data.? + _image.rowsAt(image, 0, range.base_array_layer).at,
-        .pitch = image.pitch,
-        .width = image.width,
-        .height = image.height,
-        .format = _image.rowFormat(image.format),
-    };
+    // layers since 1.91, and of four samples each sample's rows a plane
+    // after the one before (since 1.111).
+    if (image.kind == .rows) {
+        const first = image.data.? + _image.rowsAt(image, 0, range.base_array_layer).at;
+        made.rows = .{
+            .bytes = first,
+            .pitch = image.pitch,
+            .width = image.width,
+            .height = image.height,
+            .format = _image.rowFormat(image.format),
+            .samples = image.samples,
+            .sample_bytes = @intCast(image.sample_bytes),
+            .others = first + @as(usize, @intCast(image.sample_bytes)),
+        };
+    }
     view.* = _objects.handle(facet.ImageView, made);
     return .success;
 }

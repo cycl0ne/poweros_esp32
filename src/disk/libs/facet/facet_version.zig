@@ -2626,4 +2626,49 @@ pub const LIBRARY_VERSION = 1;
 /// it as a colour attachment, an input attachment or a storage image as
 /// well; the format query says 4 for it. Each of 24 changes put back
 /// fails one of them.
-pub const LIBRARY_REVISION = 110;
+///
+/// 111: **An input attachment of four samples a pixel is read a sample at
+/// a time.** Step K6b of item 61 of docs/facet-vulkan10.md, which the
+/// plan did not have: it kept such an input attachment refused, and
+/// CreateRenderPass refused one with `error_feature_not_present`. Vulkan
+/// 1.0 reads one through `subpassInputMS` with no feature to refuse it
+/// under - SPIR-V's InputAttachment capability, StorageImageMultisample
+/// exempting SubpassData - and vkCreateRenderPass has no such error to
+/// give, so a device reporting four samples has to read them. No device
+/// draws four samples yet: the capability stays off until K7, and the
+/// tests turn it on.
+///
+/// lavapipe makes every subpass load, of one sample or of several, an
+/// image load at the fragment's place, the sample number passed on
+/// (`try_lower_input_load`, lvp_nir_lower_input_attachments.c:49-86, the
+/// sample at :75), and llvmpipe's image load adds the sample times its
+/// stride to the texel's offset, reading nothing for a sample past the
+/// count (`lp_build_img_op_soa`, lp_bld_sample_soa.c:4839, :4941-4956;
+/// `lp_build_sample_ms_offset`, :2170-2187). Here an attachment has
+/// `samples`, `sample_bytes` and `others`, where its second sample begins
+/// (sdk.facet.shader.Attachment), and `Attachment.sampleOf` gives one
+/// sample as an attachment of one, a sample past the last reading
+/// transparent black. A view of a colour image of four samples kept in
+/// rows hands on each sample's rows a plane after the one before, and a
+/// depth attachment's planes do the same (`_image.depthRows`); a subpass
+/// that reads what it draws is given the tile, whose samples past the
+/// first lie in planes of their own (`Tile.samplePlane`). No sample count
+/// ties an input attachment to its subpass, as Vulkan has none: a subpass
+/// of one sample reads one of four, which is how Vulkan's conformance
+/// tests read an attachment of several samples back.
+///
+/// Tests: an attachment of four samples, sample 0 where it begins and the
+/// others where it says, one past the last reading transparent black,
+/// and one of one sample itself. A colour image of four samples in each
+/// format an attachment is drawn in, marked by hand, loaded and painted
+/// in two samples under a sample mask by one subpass, and a depth and
+/// stencil one whose depth and stencil two samples are written in: read
+/// by the next subpass, of one sample, a sample into each of four
+/// attachments drawn together, from the first sample and from the
+/// second, the last attachment then given the sample past the last; the
+/// descriptor's attachment holds every sample's rows. A subpass of four
+/// samples over four tiles reading what it draws, each sample of the
+/// fragment's own pixel as the tile loaded it put into all four.
+/// CreateRenderPass takes an input attachment of four samples. Each of
+/// 15 changes put back fails one of them.
+pub const LIBRARY_REVISION = 111;
