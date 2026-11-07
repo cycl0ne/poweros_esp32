@@ -1238,7 +1238,7 @@ Found independently by: objects-commands, formats (via the atomics item).
 
 ### 47. Decide whether an image layout ever means anything
 
-*barriers / layouts* &mdash; structural, months
+*barriers / layouts* &mdash; **settled by Mesa, 0 lines**: neither lavapipe nor v3dv gives a layout any meaning in memory, so facet's recorded barrier is already the port
 
 CmdPipelineBarrier discards every memory, buffer and image barrier it is handed along with dependency_flags, and records only the two stage masks; nothing is checked against an attachment reference's layout or a descriptor's imageLayout either. On a serial single-queue device that is behaviourally conformant, and Vulkan permits an implementation whose layouts are all the same layout. But it is also why an image's kind is baked at CreateImage, and so the direct cause of item 48: with no transition there is nowhere for a rows image to become a texture. The decision is whether a barrier ever re-tiles memory — which makes render-to-texture possible and costs a pass over the image — or whether facet states permanently that layouts are nominal and render-to-texture is a copy. Everything in item 48 follows from this answer, so it comes first.
 
@@ -1246,17 +1246,36 @@ CmdPipelineBarrier discards every memory, buffer and image barrier it is handed 
 
 Found independently by: semantics, objects-commands (whose finding is that the no-op is safe today, and why).
 
+**Settled by Mesa, 07.11.2026, and the premise above was wrong.** Neither Mesa driver gives an image layout any meaning in memory:
+
+- lavapipe's `handle_pipeline_barrier` (lvp_execute.c:3435-3506) is `finish_fence` (350-361), which is a stall. Its one other path is for emulated compressed images leaving `VK_IMAGE_LAYOUT_ZERO_INITIALIZED_EXT`, an extension facet does not have. `lvp_TransitionImageLayoutEXT` is `/* no-op */` (lvp_image.c:1068-1073).
+- v3dv's `v3dv_cmd_buffer_emit_pipeline_barrier` (v3dv_cmd_buffer.c:3456-3531) reads `oldLayout` only to skip barriers out of UNDEFINED (3484-3487). `v3dv_TransitionImageLayout` is a no-op (v3dv_host_copy.c:479-485).
+- Both settle an image's layout at CreateImage (`lvp_alloc_plane`, lvp_image.c:35-165; `v3dv_image_init`, v3dv_image.c:481-483), and both draw into the memory they sample.
+
+So facet's barrier, which records the two stage masks and plays as nothing on both devices, is already what the port would write: 0 lines. The choice above - re-tile at a barrier, or render to a texture by copying - is a false one, because Mesa does neither. And item 48 does not follow from this item. Its cause is that facet picks one of two layouts by usage, where llvmpipe has one layout for every bind.
+
 ### 48. Accept an image that is both SAMPLED and COLOR_ATTACHMENT
 
-*images / render to texture* &mdash; structural, months
-
-After: Item 47 — image layout meaning something
+*images / render to texture* &mdash; port, about 420 lines: about 90 on the cores, about 62 on the V3D, about 11 for a V3D clear, and about 257 of tests and docs
 
 An image's layout is settled at CreateImage from its usage — rows for an attachment, blocks of texels for a texture — and shapeFor returns null for SAMPLED or STORAGE together with COLOR_ATTACHMENT, so the ordinary Vulkan render-to-texture image cannot be made. Vulkan requires B8G8R8A8_UNORM and R8G8B8A8_UNORM to carry both COLOR_ATTACHMENT and SAMPLED in optimalTilingFeatures and gives no mechanism to refuse the combination; facet's own format table advertises attachment, sampled and storage in the one optimal mask, so the report and the refusal contradict each other. This cannot be fixed by adding a check: it needs either a layout transition that re-tiles the image in place, or a rasterizer that stores tiles straight into the texture layout. The workaround programs use today — draw into a rows image, CmdCopyImage into a texture image — is a copy a Vulkan program does not make. The single largest omission from the gap list.
 
 > Verified verbatim: image/_image.zig:481-482 `if (info.usage & (facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_STORAGE) != 0 and !rows_written) { if (info.tiling != .optimal or info.usage & facet.IMAGE_USAGE_COLOR_ATTACHMENT != 0) return null;`; _image.zig:18-19 for the stated reason; driver/_format.zig:46-49 advertises all three usages in one mask; getphysicaldeviceimageformatproperties.zig:78-80 says the usages are asked about one at a time; facetprobe.zig:1884 asserts the refusal.
 
 Found independently by: semantics, formats (2 strands, both calling it structural).
+
+**Sized from Mesa, 07.11.2026.** Mesa renders into a texture's own memory, with no copy and no re-tiling:
+
+- llvmpipe lays every texture out the same way whatever it is bound as (`llvmpipe_texture_layout`, lp_texture.c:154-223; `llvmpipe_resource_create_all`, 296-409). The rasteriser writes the mapped level (`init_scene_texture`, lp_scene.c:159-185; `lp_rast_tile_begin`, lp_rast.c:107-138), and the sampler reads the same bytes (`lp_jit_texture_from_pipe`, lp_jit.c:400-437).
+- v3dv makes every optimal image UIF whatever its usage (v3dv_image.c:481-483). The TLB's store and load name that layout in their Memory Format and Height in UB fields (`cmd_buffer_render_pass_emit_load` and `_store`, v3dvx_cmd_buffer.c:149-211 and 341-415), and the TMU reads the same slices (`pack_texture_shader_state_helper`, v3dvx_image.c:54-64 and 116-118).
+
+The port has three parts:
+
+- **The cores.** A COLOR_ATTACHMENT|SAMPLED image is kept in rows of levels and layers, in facet's 1.63 layer-major arrangement, and sampled where it lies, as a sampled depth already is. llvmpipe's R8G8B8A8 fetch, red and blue exchanged, comes with it (lp_linear_sampler.c:89-97, 738-758).
+- **The V3D.** The existing store and load packets get their Memory Format, for every level, and Height in UB, for UIF levels only, over the UIF layout already ported.
+- **A V3D clear.** CmdClearColorImage writes the device's own layout; v3dv clears through the TLB (v3dv_meta_clear.c:70-193).
+
+Two sentences above are wrong. The fix needs neither "a layout transition that re-tiles the image in place" nor a new rasterizer. And STORAGE with COLOR_ATTACHMENT has been made in rows since 1.56: it is refused only for r8g8b8a8, or with levels or layers. The citations have drifted. At 1.91 the refusal is at image/_image.zig:504-505, the format masks at driver/_format.zig:61-74, and the probe's check at facetprobe.zig:1017.
 
 ### 49. Reconcile GetPhysicalDeviceFeatures with VkPhysicalDeviceFeatures, and decide what replaces the missing enable step
 
@@ -1443,13 +1462,31 @@ Found independently by: features, formats.
 
 ### 59. Grow the compiler's profile: integers, branches, uniform buffers, push constants, arrays, cubes and 3D, and a register allocator **[critical path]**
 
-*V3D compiler profile* &mdash; conformance-blocking, months
+*V3D compiler profile* &mdash; conformance-blocking; a port of Mesa's v3d back end from VIR down, with the 7.1 QPU encoder: about 13,950 required Mesa lines become about 11,950 facet lines, 920 of them items 55 and 60's, plus about 430 for what is optional
 
 The single largest body of work behind every V3D item above, and the place about twenty VkPhysicalDeviceFeatures shader-capability members actually live. At 1.79 the back end takes: the Shader capability; 32-bit float and vectors of 2 to 4 (no int, no bool, no f64); storage classes input, output, function and uniform_constant — so NO uniform buffer and NO push constant read from a fragment shader; 2D images only; the fragment stage only; one basic block, so no branch of any kind; one colour out at location 0; about 28 opcodes (f_add, f_mul, vector_times_scalar, composite extract/construct, one image sample — no f_sub, no f_div, no dot, no ExtInst so no GLSL mix/clamp/pow/sqrt); one TMU sample per shader even where several samplers are declared; and no register spilling. Vulkan 1.0 requires all of the descriptor kinds behind those storage classes of any implementation (12 uniform buffers, 4 storage buffers, 16 sampled images, 4 storage images, 4 input attachments per stage). Growing it means qpu.zig gaining the full add/mul tables, pack/unpack, condition flags, branches with their delay slots and the SFU ops, plus a register allocator and a scheduler. On the cores these features are vacuously satisfied, since a shader is a Zig function that may do anything the CPU can.
 
 > Verified by reading the profile in full: compile.zig:188-207 — `.capabilities = &.{.shader}`, the opcode list, `.storage_classes = &.{ .input, .output, .function, .uniform_constant }`, `.image_dims = &.{.dim_2d}`, `.stages = &.{.fragment}`. The error set naming each limit is compile.zig:126-180 (Type, Storage, Location, Outputs, Varyings, Discards, Branches, Body, NoColor, Steps, Uniforms, Registers, TooLong, Samplers, Declared, Numbered). compile.zig:96 most_samplers = 16 against driver.zig:436's single field. The profile's own comment: "It grows a family at a time - discard and samplers first."
 
 Found independently by: features, semantics, conformance-path, doc-staleness (4 strands).
+
+**Sized from Mesa, 07.11.2026.** The files from VIR down port as they are:
+
+- broadcom/compiler: VIR and its lowering to QPU code, liveness, the register allocator with its spilling, the scheduler and the validator;
+- the 7.1 path of broadcom/qpu's qpu_pack.c.
+
+What Mesa does in NIR before VIR is redone in compile.zig's SPIR-V walk. The optional lines are pairing (about 750 Mesa lines), the vir_opt_* passes (about 1,220) and the disassembler (781).
+
+The item's own description is wrong in four places at 1.91:
+
+- The profile has 34 opcodes, not about 28. Two of them, `kill` and `type_int`, are taken only to be refused by name.
+- `function` is in the profile, but every Function-storage variable is refused (compile.zig:770-772). Mesa keeps such variables in registers and sends only dynamically indexed arrays to TMU scratch.
+- "No register spilling" is not the hardware's limit. Mesa spills on the same QPU: it retries at 2 threads first, then spills through the TMU into a per-thread scratch buffer (vir_register_allocate.c:437-683, 761-1018).
+- Mesa's register classes give a 4-way-threaded program 32 registers (PHYS_COUNT 64 shifted by the thread index, vir_register_allocate.c:1219-1224). The 16 that facet keeps to has no Mesa source.
+
+On 7.1 the SFU ops are entries of the add table (qpu_pack.c:658-663) and come with it. A branch has three delay slots and a uniform-stream offset of its own, and divergent control flow needs the execute mask and predicated writes. So compile.zig's one linear word stream becomes one stream per block.
+
+The list above leaves out four things: the VIR layer itself, liveness, the validator, and the uniform stream growing into Mesa's `quniform_contents`. Storage buffers are covered by no item. The citations have drifted: the profile is compile.zig:196-230, the error set 126-184, and the single sampler field driver.zig:523-526.
 
 ### 60. Compile SPIR-V vertex and compute stages for the V3D **[critical path]**
 
@@ -1522,15 +1559,36 @@ Three optional Vulkan 1.0 features refused with error_feature_not_present, so al
 
 Found independently by: features (3 items), semantics (3 items) — 6 findings merged.
 
-### 63. The optional capabilities with no call and no field: geometry shaders, ASTC, real sparse, robustBufferAccess, V3D pipeline statistics, cube arrays
+### 63. Six capabilities measured against Mesa: geometry shaders, ASTC, sparse, robustBufferAccess, V3D pipeline statistics, V3D cube arrays
 
-*missing capabilities* &mdash; feature-gap, months
+*missing capabilities* &mdash; feature-gap, about 3,460 estimated facet lines:
+
+- geometry on the cores, about 710;
+- ASTC, about 1,410, behind items 32 and 34;
+- V3D cube arrays, about 45, plus about 30 with item 59;
+- with item 60, QPU geometry, about 780, and V3D robust access, about 80;
+- sparse, about 400, behind item 12 and an exec call that maps pages;
+- V3D pipeline statistics, 0, which Mesa does not have.
 
 All optional in Vulkan 1.0, all absent, each a clean capability to add rather than a conformance bug — recorded so they are not mistaken for debt. geometryShader: no SHADER_STAGE_GEOMETRY bit at all; needs the stage, an entry kind, and a primitive stream the binner takes from somewhere other than the vertex array. textureCompressionASTC_LDR: no format and no decoder anywhere in the tree. sparseBinding and the residency bits: memory is exec's and bound whole. robustBufferAccess: nothing in the tree, and with it absent out-of-bounds access is undefined, which Vulkan permits. pipelineStatisticsQuery on the V3D: nothing counts what its QPUs were given, so the kind is refused there; needs the binner's and renderer's perfmon counters read as the frame is drawn, the way the occlusion counter already is — not compiler work, which the to-do document's unlock table miscredits. imageCubeArray on the V3D: no QPU program reads the fourth coordinate, so a cube_array view and texture_cube_array are refused; needs Dim::Cube and arrayed images in the profile.
 
 > Verified: BlendFactor and the stage bits as above; `grep -i astc` across sdk/ and src/disk/libs/facet/ hits only prose at facet_version.zig:1075; `grep -i robust` across both trees returns nothing; driver/v3d/driver.zig:166 `.pipeline_statistics_queries = false` (occlusion is true on both, driver.zig:165 and cpu.zig:128), :192 `.cube_arrays = false`; refusals at createquerypool.zig:83-84 and driver.zig:460.
 
 Found independently by: features (3 items), semantics (2 items).
+
+**Sized from Mesa, 07.11.2026, and four statements above are wrong.**
+
+- **Every capability already has its field**, and only sparse lacks its calls (item 12). The fields are `robust_buffer_access`, `geometry_shader`, `texture_compression_astc_ldr` and the sparse features. `SHADER_STAGE_GEOMETRY` has had a name since 1.80. What is missing is the stage itself, which CreateGraphicsPipelines refuses (creategraphicspipelines.zig:261).
+- **robustBufferAccess is the one feature Vulkan 1.0 requires, not an optional one.** facet reports it true on every device (getphysicaldevicefeatures.zig:133, tests/facet.zig:188), as v3dv and lavapipe do (v3dv_device.c:329, lvp_device.c:444). On the cores every access is bounded by its descriptor's range. On the V3D it waits for buffer access (items 59 and 60), where v3dv's lowering, keyed on the enabled feature, is about 80 lines (vir.c:2025-2038).
+- **V3D pipeline statistics are not a port.** v3dv reports the feature false (v3dv_device.c:358), and its CreateQueryPool takes occlusion, timestamp and performance queries only (v3dv_query.c:258-260). The 7.1 perfmon has no counter for any of the statistics (v3d_performance_counters.h:35-131). Neither the compiler nor the perfmon unlocks them, and they stay refused.
+- **ASTC needs a decoder on one device only.** The V3D's TMU samples it natively: the port is v3dv's format table (v3dvx_formats.c:233-261) and the 8- and 16-byte microtile rows. lavapipe decodes on every write into a second RGBA8 plane, because llvmpipe samples no ASTC (lvp_image.c:276-287, lp_screen.c:729-733). That decoder's ~1,000 lines are the largest term, and it was not counted.
+
+Two capabilities are smaller than they looked:
+
+- **Sparse.** v3dv has none (v3dv_device.c:383). lavapipe's is Linux-only: it maps memfd pages into a reserved range with mmap(MAP_FIXED) (lp_texture.c:325-395). Porting it needs an exec call that maps pages at a fixed address, and exec has none.
+- **Cube arrays on the V3D** are native in the TMU: TMUI carries the layer and TMUSCM retires the sample (v3d_tex.c:121-128, 377-379).
+
+These figures are estimates, not counts. Items 12, 32, 34, 59 and 60 are prerequisites and are not included.
 
 ### 64. The synchronisation capabilities nothing owes today: barrier arrays, subpass dependencies, more than one queue
 
@@ -2081,13 +2139,30 @@ Found independently by: conformance-path, limits.
 
 ### 71. Build a runtime SPIR-V back end for the cores
 
-*shaders* &mdash; structural, months
+*shaders* &mdash; port + replacement, about 8,760 facet lines:
 
-After: Item 68
+- one run-time SPIR-V front end with its passes, about 4,630, after `vk_spirv_to_nir` and spirv_to_nir, shared with the V3D;
+- an interpreter over the 64-quad batch, about 3,550, where lavapipe has gallivm, with no Mesa C to port;
+- about 580 of ABI and pipeline plumbing;
+- no emitter, register allocator or scheduler.
+
+After: nothing has to come first. Item 51 decides how a bare `pCode` reaches CreateShaderModule.
 
 The item that decides whether a host CTS run is possible at all, and it cannot be fixed by adding code to the shim. vkCreateShaderModule is handed SPIR-V and nothing else; facet's shader module is a shader.Code whose every Entry carries a non-optional native function pointer, with SPIR-V riding beside it since 1.75 as a hint for a device that compiles. The cores driver has no SPIR-V path whatsoever, and the IR was deliberately built as a comptime construct precisely because an interpreter cannot meet the cores' fragment ABI — one call per 64 quads, a plane at a time in @Vector(4,f32), no branching a pixel. So a shim that must accept arbitrary SPIR-V at runtime has no executor on the host. What it takes is a third back end: SPIR-V to x86-64 (and later aarch64) machine code at pipeline-creation time, meeting that batch ABI, with its own register allocator and scheduler — the same order of work as the QPU back end, and broader, since it must cover the CTS's whole shader corpus rather than one family at a time. Nothing in Goal B can be tested before it exists.
 
 > Verified: sdk/libs/facet/shader.zig:49-55 `function: *const anyopaque,` — not optional; `grep -rln spirv src/disk/libs/facet/driver/cpu/` returns nothing; shader/createshadermodule.zig:60-62 "A device without a processor of its own ignores the words and calls the function"; sdk/libs/facet/ir.zig:17-24 "The cores keep running Zig because their fragment ABI is a batch ... and an interpreter cannot meet that. The graph is walked at **comptime**"; facet.zig:1695-1710 for the Code-or-Module-with-SPIR-V shape.
+
+**Sized from Mesa, 07.11.2026, and the design above was wrong.**
+
+Mesa has one SPIR-V front end for both drivers. v3dv (v3dv_pipeline.c:476) and lavapipe (lvp_pipeline.c:422) both go through `vk_pipeline_shader_stage_to_nir` (vk_pipeline.c:167-233) and `vk_spirv_to_nir` (vk_nir.c:246-350). They translate at pipeline creation, with the entry point's name and the specialization; vkCreateShaderModule only copies the words (vk_shader_module.c:42-43). facet's equivalent is one run-time front end, which the V3D shares.
+
+Behind that front end, lavapipe needs LLVM and llvmpipe a JIT, and Mesa has no CPU machine-code emitter to port. So the cores get an interpreter over facet's 64-quad batch, sixteen times llvmpipe's 4x4 block.
+
+The sentence above that an interpreter cannot meet the cores' fragment ABI is wrong. The ABI is a C call (`FragmentFn`, shader.zig:1775). A trampoline that walks a run-time program over the batch meets it, once `Fragments` carries a program pointer and the facing. Mesa's SoA code does not branch a pixel either: it runs every lane under an execution mask.
+
+Nor is it only a host CTS run that needs this. Under the decision that facet is Vulkan, any PowerOS program must be able to hand vkCreateShaderModule SPIR-V alone, and the cores run every vertex, tessellation and compute stage today.
+
+The softest number is the translation's, about 3,280 lines of the front end's 4,630. It is extrapolated from compile.zig's density, not counted against a list of opcodes. "Goal B" is defined nowhere in this document. The facet.zig citation is stale: ShaderModuleCreateInfo is at facet.zig:2017-2027 at 1.91.
 
 ### 72. Decide what a single-core, non-preemptive host exec means for the run
 
@@ -2111,11 +2186,29 @@ Clone VK-GL-CTS at a release tag, run external/fetch_sources.py (zlib, libpng, j
 
 ### 74. Accept that the CTS cannot run on the CM5, and decide what that costs the V3D
 
-*CTS / board* &mdash; structural, months
+*CTS / board* &mdash; decision + port, about 1,050 facet lines for the route Mesa's own CI takes; no PowerOS conformance claim either way
 
 deqp-vk is C++17 with CMake, threads, dlopen and a filesystem; PowerOS has no libc or POSIX layer to host it and nothing in the tree provides one. So the V3D — the device that will have a runtime SPIR-V back end long before the cores do — is the device the CTS can never be pointed at, without either a POSIX personality for PowerOS or a remote-driven deqp protocol that does not exist here. The practical consequence to accept up front: a conformance claim would be for the cores device on a host, and the V3D would stay covered by facet's own ladder, including its rung-8 cross-check against the real desktop drivers on this machine. Neither document states this.
 
 > Verified: `ls src/disk/libs/` lists 27 libraries — anvil, asl, audiocodec, bsdsocket, codecs, commodities, compression, crypto, datatypes, diskfont, facet, filter, hello, http, icon, iffparse, locale, media, modbus, pci, rdb, smb, tls, truetype, usb, videocodec, wpa — none a libc or POSIX layer. scripts/vulkan-check.sh:1-6 is the existing cross-check asset.
+
+**Sized from Mesa, 07.11.2026: the limit is PowerOS, not the board.** Mesa runs deqp-vk's vk-main mustpass on the V3D 7.1 generation (`renderer_check` "V3D 7.1.7", deqp-broadcom-rpi5-vk.toml:1-5), on Raspberry Pi 5 boards booted into Linux with the v3d module. So the V3D is not a device the CTS can never be pointed at.
+
+The route that sizes:
+
+- facet's driver/v3d runs over a v3d DRM back end under Linux on this CM5, in place of gpu.zig, space.zig and engine.zig (671 lines);
+- the back end is modelled on v3dv_bo.c (590 lines), on v3dv_queue.c's submit and sync path (about 557 lines in 11 functions) and on v3d_submit_util.c (107);
+- the cores run on the PC.
+
+That comes to about 1,050 facet lines with the syncobj and BO-list path. Fails, flakes and skips would be tracked as Mesa tracks them in broadcom-rpi5-*.txt. Mesa's lists are for V3D 7.1.7 and facet records this board as 7.1.10, so they are a model, not lists to reuse.
+
+It would be a conformance run of facet's driver code under Linux, not a PowerOS claim, because a submission names its CPU and its OS (item 75). Whether Linux goes onto this CM5 at all is the owner's decision. The bench keeps the eMMC unwritten, and the SSD's DH0: and DH1: belong to PowerOS.
+
+Three more statements above need correcting:
+
+- "Long before the cores" rests on item 71's machine-code premise. With one shared front end, both devices get SPIR-V together.
+- Rung 8 never runs the V3D: scripts/vulkan-check.sh draws facet's modules with this machine's desktop drivers.
+- sdk/libs/exec/libc.zig exists, with memcpy, memmove and memset only. So the conclusion that there is no libc or POSIX layer stands, though the evidence missed it.
 
 ### 75. Budget the formal side: adopter status and the submission package
 
@@ -2163,4 +2256,4 @@ reader re-finding it:
 - **V3D `several_outputs`: narrowed rather than downgraded.** The two strands disagreed (conformance-blocking vs feature-gap) and both are half right. facet's SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER flag is facet's own and its absence is no Vulkan gap, and the replay path draws all the attachments correctly. What is conformance-blocking is narrower and real: the compiler refuses a multi-output module by name, so a Vulkan G-buffer shader cannot be compiled for the V3D as a Vulkan physical device at all.
 - **The four layer/extension enumeration commands: relocated, not downgraded.** Still conformance-blocking for a Vulkan implementation, but their home is the shim (item 67), where they answer zero, not facet's LVO table — adding four slots to the .fd buys nothing a program can use, since there is no extension mechanism to enumerate into.
 - **"Keep the barrier's arrays" and "read a subpass dependency": kept as feature-gaps owing nothing today, and I verified why** — the queue waits for each command buffer's `done` before the next, and the V3D flushes and invalidates unconditionally around every job. Worth recording because the gap documents say neither, and because these become load-bearing the instant anything is allowed to overlap.
-- **"The V3D's pipeline statistics are unlocked by the shader compiler"** (docs/facet-todo.md section 4's unlock table): wrong. They need the binner's and renderer's perfmon registers read as the frame is drawn, not code generation. Noted in item 63.
+- **"The V3D's pipeline statistics are unlocked by the shader compiler"** (docs/facet-todo.md section 4's unlock table): wrong, and so was this document's correction until 07.11.2026, which said they needed the perfmon read as the frame is drawn. Neither unlocks them: v3dv has no pipeline statistics (v3dv_device.c:358, v3dv_query.c:258-260), and the V3D 7.1 perfmon has no counter for them (v3d_performance_counters.h:35-131). See item 63.

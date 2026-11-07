@@ -203,8 +203,10 @@ is the hook a compiler would replace.
 5. Compute on the QPUs, if ever: it wants the whole of the above plus the
    dispatch path.
 
-**Size: months, not a revision.** Everything else on this list is smaller
-than step 2 of it.
+**Size: about 13,950 Mesa lines to port and about 11,950 facet lines to
+write** (item 59 of docs/facet-vulkan10.md, 920 of the facet lines being
+items 55 and 60's). Everything else on this list is smaller than step 2 of
+it.
 
 ### Why step 1 is the one that matters
 
