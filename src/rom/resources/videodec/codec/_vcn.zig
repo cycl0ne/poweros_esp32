@@ -674,6 +674,7 @@ fn handOver(state: *State, buffers: Buffers) void {
 const MESSAGE_DECODE: u32 = 1;
 const PART_DECODE: u32 = 2;
 const PART_AVC: u32 = 6;
+const PART_HEVC: u32 = 0xD;
 const PART_DYNAMIC_DPB: u32 = 0x10;
 
 /// What else an indirect buffer for decoding names: the picture's
@@ -694,8 +695,11 @@ const DECODE_DYNAMIC_DPB: u32 = 1 << 0;
 const SWIZZLE_256B_D: u32 = 2;
 const ARRAY_MODE_GFX11: u32 = 3;
 
-/// The largest H.264 picture the decoder takes, across and down.
+/// The largest H.264 picture the decoder takes, across and down, and
+/// the largest H.265 one.
 pub const avc_most: u32 = 4096;
+pub const hevc_most_width: u32 = 8192;
+pub const hevc_most_height: u32 = 4352;
 /// The firmware's numbers for the pictures it decodes and refers to:
 /// 0 to 16, the most references and the picture decoded.
 pub const most_ids: u32 = 17;
@@ -845,9 +849,91 @@ pub const AvcMessage = extern struct {
     avc: AvcPart = .{},
 };
 
+/// An H.265 picture: its parameter sets' values, its own order count,
+/// its references - each by its place, with the firmware's number for
+/// it - and its reference picture set's three sets the picture uses, as
+/// places among them; how a sample deeper than 8 bits is written.
+pub const HevcPart = extern struct {
+    sps_info_flags: u32 = 0,
+    pps_info_flags: u32 = 0,
+    chroma_format: u8 = 0,
+    bit_depth_luma_minus8: u8 = 0,
+    bit_depth_chroma_minus8: u8 = 0,
+    log2_max_pic_order_cnt_lsb_minus4: u8 = 0,
+    sps_max_dec_pic_buffering_minus1: u8 = 0,
+    log2_min_luma_coding_block_size_minus3: u8 = 0,
+    log2_diff_max_min_luma_coding_block_size: u8 = 0,
+    log2_min_transform_block_size_minus2: u8 = 0,
+    log2_diff_max_min_transform_block_size: u8 = 0,
+    max_transform_hierarchy_depth_inter: u8 = 0,
+    max_transform_hierarchy_depth_intra: u8 = 0,
+    pcm_sample_bit_depth_luma_minus1: u8 = 0,
+    pcm_sample_bit_depth_chroma_minus1: u8 = 0,
+    log2_min_pcm_luma_coding_block_size_minus3: u8 = 0,
+    log2_diff_max_min_pcm_luma_coding_block_size: u8 = 0,
+    num_extra_slice_header_bits: u8 = 0,
+    num_short_term_ref_pic_sets: u8 = 0,
+    num_long_term_ref_pic_sps: u8 = 0,
+    num_ref_idx_l0_default_active_minus1: u8 = 0,
+    num_ref_idx_l1_default_active_minus1: u8 = 0,
+    pps_cb_qp_offset: i8 = 0,
+    pps_cr_qp_offset: i8 = 0,
+    pps_beta_offset_div2: i8 = 0,
+    pps_tc_offset_div2: i8 = 0,
+    diff_cu_qp_delta_depth: u8 = 0,
+    num_tile_columns_minus1: u8 = 0,
+    num_tile_rows_minus1: u8 = 0,
+    log2_parallel_merge_level_minus2: u8 = 0,
+    column_width_minus1: [19]u16 = @splat(0),
+    row_height_minus1: [21]u16 = @splat(0),
+    init_qp_minus26: i8 = 0,
+    num_delta_pocs_ref_rps_idx: u8 = 0,
+    curr_idx: u8 = 0,
+    reserved: u8 = 0,
+    curr_poc: i32 = 0,
+    ref_pic_list: [16]u8 = @splat(no_ref),
+    poc_list: [16]i32 = @splat(0),
+    ref_pic_set_st_curr_before: [8]u8 = @splat(0xFF),
+    ref_pic_set_st_curr_after: [8]u8 = @splat(0xFF),
+    ref_pic_set_lt_curr: [8]u8 = @splat(0xFF),
+    scaling_dc_16x16: [6]u8 = @splat(16),
+    scaling_dc_32x32: [2]u8 = @splat(16),
+    highest_tid: u8 = 0,
+    is_non_ref: u8 = 0,
+    p010_mode: u8 = 0,
+    msb_mode: u8 = 0,
+    luma_10to8: u8 = 0,
+    chroma_10to8: u8 = 0,
+    scaler_10to8: [2]u8 = .{ 0, 0 },
+    direct_reflist: [2][15]u8 = @splat(@splat(0)),
+    st_rps_bits: u32 = 0,
+    reserved_1: [15]u8 = @splat(0),
+};
+
+/// An H.265 picture's scaling lists as the decoder reads them from their
+/// own buffer: in their coded (up-right diagonal) order, the six of each
+/// size and the 32x32 ones of brightness only.
+pub const HevcScaling = extern struct {
+    m4: [6][16]u8 = @splat(@splat(16)),
+    m8: [6][64]u8 = @splat(@splat(16)),
+    m16: [6][64]u8 = @splat(@splat(16)),
+    m32: [2][64]u8 = @splat(@splat(16)),
+};
+
+/// The whole of an H.265 picture's message.
+pub const HevcMessage = extern struct {
+    header: MessageHeader = .{},
+    codec_index: MessageIndex = .{},
+    dpb_index: MessageIndex = .{},
+    decode: DecodePart = .{},
+    dpb: DpbPart = .{},
+    hevc: HevcPart = .{},
+};
+
 comptime {
     if (@sizeOf(MessageHeader) != header_bytes or @sizeOf(DecodePart) != 188 or @sizeOf(DpbPart) != 168 or
-        @sizeOf(AvcPart) != 1124 or @sizeOf(AvcScaling) != 224 or @sizeOf(AvcMessage) != 1552)
+        @sizeOf(AvcPart) != 1124 or @sizeOf(AvcScaling) != 224 or @sizeOf(AvcMessage) != 1552 or
+        @sizeOf(HevcPart) != 296 or @sizeOf(HevcScaling) != 992 or @sizeOf(HevcMessage) != 724)
         @compileError("a decoding message's part is not the size the decoder reads");
 }
 
@@ -864,14 +950,19 @@ fn alignUp(value: u32, to: u32) u32 {
 /// - the target, the surface each picture is written to as rows of
 ///   bytes: `target_pitch` (a multiple of 256) apart, `target_rows` of
 ///   brightness, then half as many of colour pairs;
-/// - the decoder's own context for the stream, `hw_bytes`, 192 bytes a
-///   macroblock for each of its numbers.
+/// - the decoder's own context for the stream, `hw_bytes`: for H.264
+///   192 bytes a macroblock for each of its numbers.
+///
+/// An H.265 stream deeper than 8 bits keeps its references in 16 bits a
+/// sample (`sample_bytes`), its rows 64 apart; its target is in 8 bits
+/// all the same.
 pub const Layout = struct {
     width: u32 = 0,
     height: u32 = 0,
     ids: u32 = 0,
     ref_pitch: u32 = 0,
     ref_rows: u32 = 0,
+    sample_bytes: u32 = 1,
     target_pitch: u32 = 0,
     target_rows: u32 = 0,
     hw_bytes: u32 = 0,
@@ -893,8 +984,44 @@ pub const Layout = struct {
         };
     }
 
+    /// An H.265 stream of `coded_width` by `coded_height` samples,
+    /// `ids` firmware numbers, `deep` past 8 bits, its coding tree blocks
+    /// 1 << `log2_ctb` across. The decoder's context is sized for all of
+    /// its numbers, whatever the stream uses: 16 bytes for each block of
+    /// 16 by 16 samples with a margin of 255 each way, and 52 KiB - or,
+    /// for the deeper samples, 16 bytes a block of 16 by 16 in whole
+    /// coding tree blocks, with room for the filters' left edge.
+    pub fn hevc(coded_width: u32, coded_height: u32, ids: u32, deep: bool, log2_ctb: u8) Layout {
+        const rows_on: u32 = if (deep) 64 else 32;
+        const width = alignUp(coded_width, 16);
+        const height = alignUp(coded_height, 16);
+        const hw_bytes = if (!deep)
+            (width + 255) / 16 * ((height + 255) / 16) * 16 * most_ids + 52 * 1024
+        else blk: {
+            const ctb = @as(u32, 1) << @intCast(log2_ctb);
+            const across = (width + ctb - 1) / ctb;
+            const down = (height + ctb - 1) / ctb;
+            const blocks = (ctb / 16) * (ctb / 16);
+            const row = alignUp(across * blocks * 16, 256);
+            const left_rows = (height * 8 + 2047) / 2048;
+            break :blk most_ids * row * down + 4096 / 16 * (32 + 16 * 4) + 2 * (left_rows * 2 * 2048 + 1024);
+        };
+        return .{
+            .width = coded_width,
+            .height = coded_height,
+            .ids = ids,
+            .ref_pitch = alignUp(coded_width, rows_on),
+            .ref_rows = alignUp(coded_height, rows_on),
+            .sample_bytes = if (deep) 2 else 1,
+            .target_pitch = alignUp(coded_width, 256),
+            .target_rows = alignUp(coded_height, 32),
+            .hw_bytes = hw_bytes,
+        };
+    }
+
+    /// A reference surface's brightness in bytes.
     pub fn refLuma(l: Layout) u32 {
-        return l.ref_pitch * l.ref_rows;
+        return l.ref_pitch * l.ref_rows * l.sample_bytes;
     }
 
     /// A reference surface's room, on a page.
@@ -941,6 +1068,8 @@ pub const AvcRef = struct {
 
 /// An order count for a field that is not a reference.
 const no_poc: i32 = 0x7FFF_FFFF;
+/// An H.265 reference place that names no picture.
+const no_ref: u8 = 0x7F;
 
 fn flag(set: bool, bit: u5) u32 {
     return @as(u32, @intFromBool(set)) << bit;
@@ -1008,18 +1137,29 @@ pub fn avcPart(part: *AvcPart, scaling: *AvcScaling, sps: *const vp.h264.H264Sps
 /// `current` for itself, `refs` for its references in the order the
 /// codec's part names them.
 pub fn avcMessage(m: *AvcMessage, layout: Layout, stream: u32, number: u32, bitstream_bytes: u32, current: u64, refs: []const u64) void {
+    pictureMessage(AvcMessage, m, "avc", PART_AVC, types.VDCODEC_H264, layout, stream, number, bitstream_bytes, current, refs);
+}
+
+/// The rest of an H.265 picture's message, as `avcMessage` for H.264.
+pub fn hevcMessage(m: *HevcMessage, layout: Layout, stream: u32, number: u32, bitstream_bytes: u32, current: u64, refs: []const u64) void {
+    pictureMessage(HevcMessage, m, "hevc", PART_HEVC, types.VDCODEC_H265, layout, stream, number, bitstream_bytes, current, refs);
+}
+
+/// A picture's message of either codec but its codec's part, which is
+/// `part` of `Message` and the part `part_id` of the index.
+fn pictureMessage(comptime Message: type, m: *Message, comptime part: []const u8, part_id: u32, codec: u32, layout: Layout, stream: u32, number: u32, bitstream_bytes: u32, current: u64, refs: []const u64) void {
     m.header = .{
-        .total_size = @sizeOf(AvcMessage),
+        .total_size = @sizeOf(Message),
         .num_buffers = 3,
         .msg_type = MESSAGE_DECODE,
         .stream_handle = stream,
         .feedback_number = number,
-        .index = .{ .id = PART_DECODE, .offset = @offsetOf(AvcMessage, "decode"), .size = @sizeOf(DecodePart) },
+        .index = .{ .id = PART_DECODE, .offset = @offsetOf(Message, "decode"), .size = @sizeOf(DecodePart) },
     };
-    m.codec_index = .{ .id = PART_AVC, .offset = @offsetOf(AvcMessage, "avc"), .size = @sizeOf(AvcPart) };
-    m.dpb_index = .{ .id = PART_DYNAMIC_DPB, .offset = @offsetOf(AvcMessage, "dpb"), .size = @sizeOf(DpbPart) };
+    m.codec_index = .{ .id = part_id, .offset = @offsetOf(Message, part), .size = @sizeOf(@FieldType(Message, part)) };
+    m.dpb_index = .{ .id = PART_DYNAMIC_DPB, .offset = @offsetOf(Message, "dpb"), .size = @sizeOf(DpbPart) };
     m.decode = .{
-        .stream_type = streamKind(types.VDCODEC_H264),
+        .stream_type = streamKind(codec),
         .decode_flags = DECODE_DYNAMIC_DPB,
         .width_in_samples = layout.width,
         .height_in_samples = layout.height,
@@ -1054,6 +1194,142 @@ pub fn avcMessage(m: *AvcMessage, layout: Layout, stream: u32, number: u32, bits
     for (refs, 0..) |address, j| {
         m.dpb.addr_lo[j] = @truncate(address);
         m.dpb.addr_hi[j] = @truncate(address >> 32);
+    }
+}
+
+/// The firmware numbers an H.265 stream needs: the pictures its buffer
+/// holds, the one decoded among them, and one to spare.
+pub fn hevcIds(sps: *const vp.hevc.HevcSps) u32 {
+    return @min(most_ids, sps.max_dec_pic_buffering + 1);
+}
+
+/// Whether the decoder takes an H.265 stream of `sps`: Main, Main 10 and
+/// Main Still Picture - 4:2:0 in 8 or 10 bits, its colour as deep as its
+/// brightness - and none of the later profiles' tools.
+pub fn hevcTakes(sps: *const vp.hevc.HevcSps) bool {
+    if (sps.extensionProfile() or sps.separate_colour_plane or sps.chroma_format_idc != 1) return false;
+    if (sps.bit_depth_luma != sps.bit_depth_chroma or (sps.bit_depth_luma != 8 and sps.bit_depth_luma != 10)) return false;
+    return !(sps.transform_skip_rotation or sps.transform_skip_context or sps.implicit_rdpcm or sps.explicit_rdpcm or
+        sps.extended_precision or sps.intra_smoothing_disabled or sps.high_precision_offsets or sps.persistent_rice or
+        sps.cabac_bypass_alignment);
+}
+
+/// A reference as an H.265 picture's message names it: the firmware's
+/// number for its surface, and its order count.
+pub const HevcRef = struct {
+    id: u8,
+    poc: i32,
+};
+
+/// How a sample deeper than 8 bits is written into the 8-bit target:
+/// rounded to the nearest.
+const DITHER_ROUND: u8 = 2;
+/// The same for the scaler, which is not used: its value as Mesa sets it.
+const SCALER_10TO8: u8 = 4;
+
+/// The codec's part and the scaling lists of the H.265 picture `pic`,
+/// decoded with `sps` and `pps` into firmware number `id`; `refs` names
+/// each of the picture's references in its place.
+pub fn hevcPart(part: *HevcPart, scaling: *HevcScaling, sps: *const vp.hevc.HevcSps, pps: *const vp.hevc.HevcPps, pic: *const vp.VideoPicture, id: u8, refs: []const HevcRef) void {
+    part.* = .{};
+    part.sps_info_flags = flag(sps.scaling_enabled, 0) | flag(sps.amp, 1) | flag(sps.sao, 2) | flag(sps.pcm, 3) |
+        flag(sps.pcm_loop_filter_disabled, 4) | flag(sps.long_term_present, 5) | flag(sps.temporal_mvp, 6) |
+        flag(sps.strong_intra_smoothing, 7) | flag(sps.separate_colour_plane, 8) | flag(pic.st_rps_bits != 0, 11);
+    part.st_rps_bits = pic.st_rps_bits;
+    part.pps_info_flags = flag(pps.dependent_slice_segments, 0) | flag(pps.output_flag_present, 1) |
+        flag(pps.sign_data_hiding, 2) | flag(pps.cabac_init_present, 3) | flag(pps.constrained_intra_pred, 4) |
+        flag(pps.transform_skip, 5) | flag(pps.cu_qp_delta_enabled, 6) | flag(pps.slice_chroma_qp_offsets_present, 7) |
+        flag(pps.weighted_pred, 8) | flag(pps.weighted_bipred, 9) | flag(pps.transquant_bypass, 10) |
+        flag(pps.tiles, 11) | flag(pps.entropy_coding_sync, 12) | flag(pps.uniform_spacing, 13) |
+        flag(pps.loop_filter_across_tiles, 14) | flag(pps.loop_filter_across_slices, 15) |
+        flag(pps.deblocking_override_enabled, 16) | flag(pps.deblocking_disabled, 17) |
+        flag(pps.lists_modification_present, 18) | flag(pps.slice_header_extension_present, 19);
+    part.chroma_format = sps.chroma_format_idc;
+    part.bit_depth_luma_minus8 = sps.bit_depth_luma -| 8;
+    part.bit_depth_chroma_minus8 = sps.bit_depth_chroma -| 8;
+    part.log2_max_pic_order_cnt_lsb_minus4 = sps.log2_max_poc_lsb -| 4;
+    part.sps_max_dec_pic_buffering_minus1 = @intCast(sps.max_dec_pic_buffering -| 1);
+    part.log2_min_luma_coding_block_size_minus3 = sps.log2_min_cb -| 3;
+    part.log2_diff_max_min_luma_coding_block_size = sps.log2_ctb -| sps.log2_min_cb;
+    part.log2_min_transform_block_size_minus2 = sps.log2_min_tb -| 2;
+    part.log2_diff_max_min_transform_block_size = sps.log2_max_tb -| sps.log2_min_tb;
+    part.max_transform_hierarchy_depth_inter = sps.max_th_depth_inter;
+    part.max_transform_hierarchy_depth_intra = sps.max_th_depth_intra;
+    if (sps.pcm) {
+        part.pcm_sample_bit_depth_luma_minus1 = sps.pcm_depth_luma -| 1;
+        part.pcm_sample_bit_depth_chroma_minus1 = sps.pcm_depth_chroma -| 1;
+        part.log2_min_pcm_luma_coding_block_size_minus3 = sps.log2_min_pcm -| 3;
+        part.log2_diff_max_min_pcm_luma_coding_block_size = sps.log2_max_pcm -| sps.log2_min_pcm;
+    }
+    part.num_extra_slice_header_bits = pps.num_extra_slice_header_bits;
+    part.num_short_term_ref_pic_sets = sps.num_st_rps;
+    part.num_long_term_ref_pic_sps = sps.num_lt_sps;
+    part.num_ref_idx_l0_default_active_minus1 = pps.num_ref_idx_default[0] -| 1;
+    part.num_ref_idx_l1_default_active_minus1 = pps.num_ref_idx_default[1] -| 1;
+    part.pps_cb_qp_offset = pps.cb_qp_offset;
+    part.pps_cr_qp_offset = pps.cr_qp_offset;
+    part.pps_beta_offset_div2 = @divTrunc(pps.beta_offset, 2);
+    part.pps_tc_offset_div2 = @divTrunc(pps.tc_offset, 2);
+    part.diff_cu_qp_delta_depth = pps.diff_cu_qp_delta_depth;
+    part.log2_parallel_merge_level_minus2 = pps.log2_parallel_merge_level -| 2;
+    part.init_qp_minus26 = @intCast(pps.init_qp - 26);
+    if (pps.tiles) {
+        part.num_tile_columns_minus1 = @intCast(pps.num_tile_columns - 1);
+        part.num_tile_rows_minus1 = @intCast(pps.num_tile_rows - 1);
+        tileSizes(&part.column_width_minus1, pps, pps.column_width[0..], pps.num_tile_columns, sps.widthCtbs());
+        tileSizes(&part.row_height_minus1, pps, pps.row_height[0..], pps.num_tile_rows, sps.heightCtbs());
+    }
+
+    part.curr_idx = id;
+    part.curr_poc = pic.poc[0];
+    for (refs, 0..) |r, j| {
+        part.ref_pic_list[j] = r.id;
+        part.poc_list[j] = r.poc;
+    }
+    const sets = [_]struct { into: *[8]u8, set: u32 }{
+        .{ .into = &part.ref_pic_set_st_curr_before, .set = vp.VP_RPS_ST_CURR_BEFORE },
+        .{ .into = &part.ref_pic_set_st_curr_after, .set = vp.VP_RPS_ST_CURR_AFTER },
+        .{ .into = &part.ref_pic_set_lt_curr, .set = vp.VP_RPS_LT_CURR },
+    };
+    for (sets) |entry| {
+        const count = @min(pic.rps_count[entry.set], 8);
+        for (pic.rps[entry.set][0..count], 0..) |place, k| entry.into[k] = place;
+    }
+
+    scaling.* = .{};
+    if (sps.scaling_enabled) {
+        const lists = if (pps.scaling_present) &pps.scaling else &sps.scaling;
+        for (0..6) |m| {
+            @memcpy(&scaling.m4[m], lists.coef[0][m][0..16]);
+            scaling.m8[m] = lists.coef[1][m];
+            scaling.m16[m] = lists.coef[2][m];
+            part.scaling_dc_16x16[m] = lists.dc[0][m];
+        }
+        for ([_]usize{ 0, 3 }, 0..) |m, k| {
+            scaling.m32[k] = lists.coef[3][m];
+            part.scaling_dc_32x32[k] = lists.dc[1][m];
+        }
+    }
+
+    if (sps.bit_depth_luma > 8) {
+        part.luma_10to8 = DITHER_ROUND;
+        part.chroma_10to8 = DITHER_ROUND;
+        part.scaler_10to8 = .{ SCALER_10TO8, SCALER_10TO8 };
+    }
+}
+
+/// The widths of `count` tile columns (or the heights of rows) less
+/// one, in coding tree blocks of a picture `ctbs` across: as `sizes`
+/// says them - all but the last - or spread evenly (6-3, 6-4).
+fn tileSizes(into: []u16, pps: *const vp.hevc.HevcPps, sizes: []const u16, count: u32, ctbs: u32) void {
+    var used: u32 = 0;
+    for (0..@min(count, into.len)) |k| {
+        const i: u32 = @intCast(k);
+        const size = if (pps.uniform_spacing)
+            (i + 1) * ctbs / count - i * ctbs / count
+        else if (i + 1 < count) sizes[k] else ctbs -| used;
+        used += size;
+        into[k] = @intCast(size -| 1);
     }
 }
 
@@ -1107,15 +1383,16 @@ pub fn streamFromDevice(to: [*]u8, cpu: u64, bytes: usize) void {
     }
 }
 
-/// The H.264 picture's message `message` and its scaling lists written
-/// into the ring's piece and handed to the decoder with the stream's
-/// other buffers (`buffers`, whose message and scaling lists are filled
-/// in here). Its fence is the state's last; `fenced` waits for it. The
+/// A picture's message `message` and its scaling lists (an AvcMessage
+/// and AvcScaling, or an HevcMessage and HevcScaling) written into the
+/// ring's piece and handed to the decoder with the stream's other
+/// buffers (`buffers`, whose message and scaling lists are filled in
+/// here). Its fence is the state's last; `fenced` waits for it. The
 /// caller holds the resource's lock.
-pub fn decodeAvc(state: *State, message: *const AvcMessage, scaling: *const AvcScaling, buffers: Buffers) void {
+pub fn decodePicture(state: *State, message: anytype, scaling: anytype, buffers: Buffers) void {
     const page = state.ring.cpu + message_at;
-    copyToDevice(page, @as([*]const u8, @ptrCast(message))[0..@sizeOf(AvcMessage)]);
-    copyToDevice(page + scaling_at, @as([*]const u8, @ptrCast(scaling))[0..@sizeOf(AvcScaling)]);
+    copyToDevice(page, @as([*]const u8, @ptrCast(message))[0..@sizeOf(@TypeOf(message.*))]);
+    copyToDevice(page + scaling_at, @as([*]const u8, @ptrCast(scaling))[0..@sizeOf(@TypeOf(scaling.*))]);
     var named = buffers;
     named.flags = decode_buffers;
     named.message = state.ring.device + message_at;
@@ -1366,4 +1643,132 @@ test "bytes go to the device's memory eight at a time, the last ones padded" {
     var room: [24]u8 align(8) = @splat(0xEE);
     copyToDevice(@intFromPtr(&room), &.{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 });
     try testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 0, 0, 0, 0, 0, 0xEE }, room[0..17]);
+}
+
+test "an H.265 picture's message is laid out as the decoder reads it" {
+    try testing.expectEqual(@as(usize, 428), @offsetOf(HevcMessage, "hevc"));
+    try testing.expectEqual(@as(usize, 23), @offsetOf(HevcPart, "num_extra_slice_header_bits"));
+    try testing.expectEqual(@as(usize, 28), @offsetOf(HevcPart, "pps_cb_qp_offset"));
+    try testing.expectEqual(@as(usize, 36), @offsetOf(HevcPart, "column_width_minus1"));
+    try testing.expectEqual(@as(usize, 74), @offsetOf(HevcPart, "row_height_minus1"));
+    try testing.expectEqual(@as(usize, 116), @offsetOf(HevcPart, "init_qp_minus26"));
+    try testing.expectEqual(@as(usize, 118), @offsetOf(HevcPart, "curr_idx"));
+    try testing.expectEqual(@as(usize, 120), @offsetOf(HevcPart, "curr_poc"));
+    try testing.expectEqual(@as(usize, 124), @offsetOf(HevcPart, "ref_pic_list"));
+    try testing.expectEqual(@as(usize, 140), @offsetOf(HevcPart, "poc_list"));
+    try testing.expectEqual(@as(usize, 204), @offsetOf(HevcPart, "ref_pic_set_st_curr_before"));
+    try testing.expectEqual(@as(usize, 212), @offsetOf(HevcPart, "ref_pic_set_st_curr_after"));
+    try testing.expectEqual(@as(usize, 220), @offsetOf(HevcPart, "ref_pic_set_lt_curr"));
+    try testing.expectEqual(@as(usize, 228), @offsetOf(HevcPart, "scaling_dc_16x16"));
+    try testing.expectEqual(@as(usize, 234), @offsetOf(HevcPart, "scaling_dc_32x32"));
+    try testing.expectEqual(@as(usize, 236), @offsetOf(HevcPart, "highest_tid"));
+    try testing.expectEqual(@as(usize, 238), @offsetOf(HevcPart, "p010_mode"));
+    try testing.expectEqual(@as(usize, 240), @offsetOf(HevcPart, "luma_10to8"));
+    try testing.expectEqual(@as(usize, 242), @offsetOf(HevcPart, "scaler_10to8"));
+    try testing.expectEqual(@as(usize, 244), @offsetOf(HevcPart, "direct_reflist"));
+    try testing.expectEqual(@as(usize, 276), @offsetOf(HevcPart, "st_rps_bits"));
+    try testing.expectEqual(@as(usize, 96), @offsetOf(HevcScaling, "m8"));
+    try testing.expectEqual(@as(usize, 480), @offsetOf(HevcScaling, "m16"));
+    try testing.expectEqual(@as(usize, 864), @offsetOf(HevcScaling, "m32"));
+    try testing.expect(scaling_at >= @sizeOf(HevcMessage) and scaling_at + @sizeOf(HevcScaling) <= 4096);
+}
+
+test "an H.265 stream's surfaces and context, in 8 bits and in 10" {
+    const l = Layout.hevc(1920, 1080, 6, false, 6);
+    try testing.expectEqual(@as(u32, 1920), l.width);
+    try testing.expectEqual(@as(u32, 1080), l.height);
+    try testing.expectEqual(@as(u32, 1920), l.ref_pitch);
+    try testing.expectEqual(@as(u32, 1088), l.ref_rows);
+    try testing.expectEqual(@as(u32, 1), l.sample_bytes);
+    try testing.expectEqual(@as(u32, 2048), l.target_pitch);
+    // 135 by 83 blocks with the margin, 16 bytes each for 17 numbers, and
+    // 52 KiB.
+    try testing.expectEqual(@as(u32, 135 * 83 * 16 * 17 + 52 * 1024), l.hw_bytes);
+    const deep = Layout.hevc(3840, 2160, 7, true, 6);
+    try testing.expectEqual(@as(u32, 3840), deep.ref_pitch);
+    try testing.expectEqual(@as(u32, 2176), deep.ref_rows);
+    try testing.expectEqual(@as(u32, 3840 * 2176 * 2), deep.refLuma());
+    // 60 by 34 blocks of 64, a row 15360 bytes, 9 rows of the left edge.
+    try testing.expectEqual(@as(u32, 17 * 15360 * 34 + 256 * 96 + 2 * (9 * 2 * 2048 + 1024)), deep.hw_bytes);
+}
+
+test "an H.265 picture's message: its parameter sets, references and sets" {
+    var sps: vp.hevc.HevcSps = .{ .profile_idc = 2, .chroma_format_idc = 1, .bit_depth_luma = 10, .bit_depth_chroma = 10, .log2_max_poc_lsb = 8, .max_dec_pic_buffering = 5, .log2_min_cb = 3, .log2_ctb = 6, .log2_min_tb = 2, .log2_max_tb = 5, .max_th_depth_inter = 1, .sao = true, .amp = true, .temporal_mvp = true, .strong_intra_smoothing = true, .num_st_rps = 4, .scaling_enabled = true };
+    sps.scaling = vp.hevc.HevcScaling.default();
+    try testing.expect(hevcTakes(&sps));
+    try testing.expectEqual(@as(u32, 6), hevcIds(&sps));
+    sps.chroma_format_idc = 2;
+    try testing.expect(!hevcTakes(&sps));
+    sps.chroma_format_idc = 1;
+    sps.bit_depth_chroma = 8;
+    try testing.expect(!hevcTakes(&sps));
+    sps.bit_depth_chroma = 10;
+
+    var pps: vp.hevc.HevcPps = .{ .cabac_init_present = true, .sign_data_hiding = true, .loop_filter_across_slices = true, .beta_offset = -4, .tc_offset = 6, .cb_qp_offset = -1, .init_qp = 30, .num_ref_idx_default = .{ 3, 2 }, .log2_parallel_merge_level = 4, .tiles = true, .num_tile_columns = 3, .num_tile_rows = 2, .uniform_spacing = true };
+    pps.scaling = vp.hevc.HevcScaling.default();
+    pps.scaling.coef[3][3][5] = 77;
+    pps.scaling.dc[1][3] = 20;
+    pps.scaling.coef[0][2][15] = 9;
+    pps.scaling_present = true;
+    sps.width = 1920;
+    sps.height = 1080;
+
+    // Three references: two before (POC 6, then 4) and one after (8),
+    // the third not used by the picture; the sets name their places.
+    var pic: vp.VideoPicture = .{ .slot = 5, .poc = .{ 7, 7 }, .st_rps_bits = 13, .ref_count = 3 };
+    pic.rps_count = .{ 1, 1, 1, 0, 0 };
+    pic.rps[0][0] = 1;
+    pic.rps[1][0] = 0;
+    pic.rps[2][0] = 2;
+    const refs = [_]HevcRef{ .{ .id = 4, .poc = 8 }, .{ .id = 1, .poc = 6 }, .{ .id = 2, .poc = 4 } };
+    var message: HevcMessage = .{};
+    var scaling: HevcScaling = .{};
+    hevcPart(&message.hevc, &scaling, &sps, &pps, &pic, 3, &refs);
+    const h = &message.hevc;
+    try testing.expectEqual(@as(u32, 1 | 2 | 4 | (1 << 6) | (1 << 7) | (1 << 11)), h.sps_info_flags);
+    try testing.expectEqual(@as(u32, 13), h.st_rps_bits);
+    try testing.expectEqual(@as(u32, 4 | 8 | (1 << 11) | (1 << 13) | (1 << 14) | (1 << 15)), h.pps_info_flags);
+    try testing.expectEqual(@as(u8, 2), h.bit_depth_luma_minus8);
+    try testing.expectEqual(@as(u8, 4), h.log2_max_pic_order_cnt_lsb_minus4);
+    try testing.expectEqual(@as(u8, 4), h.sps_max_dec_pic_buffering_minus1);
+    try testing.expectEqual(@as(u8, 3), h.log2_diff_max_min_luma_coding_block_size);
+    try testing.expectEqual(@as(u8, 3), h.log2_diff_max_min_transform_block_size);
+    try testing.expectEqual(@as(i8, -2), h.pps_beta_offset_div2);
+    try testing.expectEqual(@as(i8, 3), h.pps_tc_offset_div2);
+    try testing.expectEqual(@as(i8, -1), h.pps_cb_qp_offset);
+    try testing.expectEqual(@as(i8, 4), h.init_qp_minus26);
+    try testing.expectEqual(@as(u8, 2), h.num_ref_idx_l0_default_active_minus1);
+    try testing.expectEqual(@as(u8, 2), h.log2_parallel_merge_level_minus2);
+    // 30 by 17 blocks of 64 in three columns and two rows, evenly.
+    try testing.expectEqual(@as(u8, 2), h.num_tile_columns_minus1);
+    try testing.expectEqualSlices(u16, &.{ 9, 9, 9, 0 }, h.column_width_minus1[0..4]);
+    try testing.expectEqualSlices(u16, &.{ 7, 8, 0 }, h.row_height_minus1[0..3]);
+    try testing.expectEqual(@as(u8, 3), h.curr_idx);
+    try testing.expectEqual(@as(i32, 7), h.curr_poc);
+    try testing.expectEqualSlices(u8, &.{ 4, 1, 2, no_ref }, h.ref_pic_list[0..4]);
+    try testing.expectEqualSlices(i32, &.{ 8, 6, 4 }, h.poc_list[0..3]);
+    try testing.expectEqualSlices(u8, &.{ 1, 0xFF }, h.ref_pic_set_st_curr_before[0..2]);
+    try testing.expectEqualSlices(u8, &.{ 0, 0xFF }, h.ref_pic_set_st_curr_after[0..2]);
+    try testing.expectEqual(@as(u8, 0xFF), h.ref_pic_set_lt_curr[0]);
+    // The picture's own lists, the 32x32 ones the brightness's.
+    try testing.expectEqual(@as(u8, 77), scaling.m32[1][5]);
+    try testing.expectEqual(@as(u8, 20), h.scaling_dc_32x32[1]);
+    try testing.expectEqual(@as(u8, 9), scaling.m4[2][15]);
+    try testing.expectEqual(@as(u8, 16), scaling.m8[0][0]);
+    try testing.expectEqual(@as(u8, 115), scaling.m16[0][63]);
+    // 10 bits rounded into the 8-bit target.
+    try testing.expectEqual(DITHER_ROUND, h.luma_10to8);
+    try testing.expectEqual(@as(u8, 0), h.p010_mode);
+
+    const layout = Layout.hevc(1920, 1080, 6, true, 6);
+    hevcMessage(&message, layout, 0x55, 9, 4096, 0x80_0100_0000, &.{ 0x80_0200_0000, 0x80_0300_0000, 0x80_0400_0000 });
+    const words: [*]const u32 = @ptrCast(&message);
+    try testing.expectEqualSlices(u32, &.{ 40, 724, 3, 1, 0x55, 9, 2, 72, 188, 0, 0xD, 428, 296, 0, 0x10, 260, 168, 0 }, words[0..18]);
+    try testing.expectEqual(@as(u32, 0x10), message.decode.stream_type);
+    try testing.expectEqual(@as(u32, 1080), message.decode.height_in_samples);
+    try testing.expectEqual(@as(u32, 1920), message.decode.db_pitch);
+    try testing.expectEqual(@as(u32, 1088), message.decode.db_aligned_height);
+    try testing.expectEqual(@as(u32, 3), message.dpb.array_size);
+    try testing.expectEqual(@as(u32, 1920 * 1088 * 2), message.dpb.luma_aligned_size);
+    try testing.expectEqual(@as(u32, 1920 / 2), message.dpb.chroma_pitch);
 }

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 //! A decoder on an AMD graphics device's video decoder: what
-//! OpenVideoDecoder hands out there - a stream videoparse.library reads,
-//! whose pictures the device decodes one at a time, and the frames they
-//! come to, in the order they are shown.
+//! OpenVideoDecoder hands out there - an H.264 or H.265 stream
+//! videoparse.library reads, whose pictures the device decodes one at a
+//! time, and the frames they come to, in the order they are shown.
 //!
 //! **The stream** is read by a parser (`read`): a packet fed is copied
 //! and handed to it, and its events are taken as they come. The sequence
@@ -22,8 +22,10 @@
 //! too. Each picture takes the lowest free number; at each picture the
 //! numbers of the pictures that are no longer referred to are free again.
 //! A reference that has none - one the stream lacks, or one not decoded
-//! since a seek - is given one and a grey surface, and named as not
-//! there.
+//! since a seek - is given one and a grey surface; an H.264 message names
+//! it as not there. An H.265 message names its references in the places
+//! the picture holds them, which its reference picture set's sets point
+//! at.
 //!
 //! **The frames** are the parser's slots: each its picture's copy in the
 //! system's memory, read back from the target - NV12, the rows the
@@ -143,9 +145,12 @@ pub const Session = struct {
     decoded: u32 = 0,
     decode_us: u64 = 0,
     read_us: u64 = 0,
-    /// A picture's message, and its scaling lists, put together here.
+    /// A picture's message, and its scaling lists, put together here:
+    /// an H.264 one, or an H.265 one.
     message: vcn.AvcMessage = .{},
     scaling: vcn.AvcScaling = .{},
+    hevc_message: vcn.HevcMessage = .{},
+    hevc_scaling: vcn.HevcScaling = .{},
 
     pub fn of(h: *types.VideoDecoder) *Session {
         return @ptrCast(@alignCast(h));
@@ -172,14 +177,15 @@ pub const Session = struct {
         };
         const library: *VideoParseBase = @ptrCast(lib);
         s.library = library;
+        const hevc = s.codec == types.VDCODEC_H265;
         const tags = [_]utility.TagItem{
             .{ .tag = vp.VPA_Slots, .data = s.held + 2 },
-            .{ .tag = vp.VPA_MaxWidth, .data = vcn.avc_most },
-            .{ .tag = vp.VPA_MaxHeight, .data = vcn.avc_most },
+            .{ .tag = vp.VPA_MaxWidth, .data = if (hevc) vcn.hevc_most_width else vcn.avc_most },
+            .{ .tag = vp.VPA_MaxHeight, .data = if (hevc) vcn.hevc_most_height else vcn.avc_most },
             .{},
         };
         var why: i32 = vp.VPERR_OK;
-        s.parser = library.OpenVideoParser(vp.VPCODEC_H264, null, 0, &tags, &why) orelse
+        s.parser = library.OpenVideoParser(if (hevc) vp.VPCODEC_HEVC else vp.VPCODEC_H264, null, 0, &tags, &why) orelse
             return if (why == vp.VPERR_NOMEMORY) types.VDERR_NO_MEMORY else types.VDERR_UNSUPPORTED;
         return types.VDERR_OK;
     }
@@ -358,7 +364,25 @@ pub const Session = struct {
     /// A sequence: the stream made on the decoder for it, unless the one
     /// made takes its pictures.
     fn begin(s: *Session, seq: *const vp.VideoSequence) void {
-        const sps = seq.h264_sps orelse return s.fail(types.VDERR_CORRUPT);
+        const layout = (if (s.codec == types.VDCODEC_H265) s.hevcLayout(seq) else s.avcLayout(seq)) orelse return;
+        s.sequence = seq.*;
+        s.sequence.h264_sps = null;
+        s.sequence.hevc_sps = null;
+        s.told = true;
+        const l = s.layout;
+        if (s.made and l.width == layout.width and l.height == layout.height and l.sample_bytes == layout.sample_bytes and
+            l.ids >= layout.ids and l.hw_bytes >= layout.hw_bytes) return;
+        s.unmake();
+        if (s.failed == types.VDERR_OK) s.make(layout);
+    }
+
+    /// An H.264 sequence's layout on the decoder, or null when the decoder
+    /// does not take it - the stream then stops.
+    fn avcLayout(s: *Session, seq: *const vp.VideoSequence) ?vcn.Layout {
+        const sps = seq.h264_sps orelse {
+            s.fail(types.VDERR_CORRUPT);
+            return null;
+        };
         if (vcn.avcProfile(sps) == null or seq.chroma_format != 1 or seq.bit_depth_luma != 8 or
             seq.bit_depth_chroma != 8 or seq.slots > most_slots or seq.width == 0 or seq.height == 0)
         {
@@ -366,17 +390,35 @@ pub const Session = struct {
                 types.VIDEODECNAME,          @as(u32, sps.profile_idc), @as(u32, seq.bit_depth_luma),
                 @as(u32, seq.chroma_format), seq.slots,
             });
-            return s.fail(types.VDERR_UNSUPPORTED);
+            s.fail(types.VDERR_UNSUPPORTED);
+            return null;
         }
         const layout = vcn.Layout.avc(seq.coded_width, seq.coded_height, vcn.avcIds(sps));
-        if (layout.width > vcn.avc_most or layout.height > vcn.avc_most) return s.fail(types.VDERR_UNSUPPORTED);
-        s.sequence = seq.*;
-        s.sequence.h264_sps = null;
-        s.sequence.hevc_sps = null;
-        s.told = true;
-        if (s.made and s.layout.width == layout.width and s.layout.height == layout.height and s.layout.ids >= layout.ids) return;
-        s.unmake();
-        if (s.failed == types.VDERR_OK) s.make(layout);
+        if (layout.width > vcn.avc_most or layout.height > vcn.avc_most) {
+            s.fail(types.VDERR_UNSUPPORTED);
+            return null;
+        }
+        return layout;
+    }
+
+    /// An H.265 sequence's layout on the decoder, as `avcLayout`.
+    fn hevcLayout(s: *Session, seq: *const vp.VideoSequence) ?vcn.Layout {
+        const sps = seq.hevc_sps orelse {
+            s.fail(types.VDERR_CORRUPT);
+            return null;
+        };
+        if (!vcn.hevcTakes(sps) or seq.slots > most_slots or seq.width == 0 or seq.height == 0 or
+            seq.coded_width > vcn.hevc_most_width or seq.coded_height > vcn.hevc_most_height)
+        {
+            exec.kprintf(s.sys(), "%s: the AMD video decoder does not take an H.265 stream of profile %d, %d bits, chroma %d, %u x %u, %d slots\n", .{
+                types.VIDEODECNAME,          @as(u32, sps.profile_idc), @as(u32, seq.bit_depth_luma),
+                @as(u32, seq.chroma_format), seq.coded_width,           seq.coded_height,
+                seq.slots,
+            });
+            s.fail(types.VDERR_UNSUPPORTED);
+            return null;
+        }
+        return vcn.Layout.hevc(seq.coded_width, seq.coded_height, vcn.hevcIds(sps), sps.bit_depth_luma > 8, sps.log2_ctb);
     }
 
     /// A slot that stands for a picture the stream lacks: its frame grey.
@@ -493,43 +535,29 @@ pub const Session = struct {
         const pic = &s.picture;
         const f = &s.frames[pic.slot];
         if (!s.frameRoom(f)) return s.fail(types.VDERR_NO_MEMORY);
-        const sps = pic.h264_sps orelse return grey(f);
-        const pps = pic.h264_pps orelse return grey(f);
+        const hevc = s.codec == types.VDCODEC_H265;
+        if (if (hevc) pic.hevc_sps == null or pic.hevc_pps == null else pic.h264_sps == null or pic.h264_pps == null) return grey(f);
         if (!s.made or f.id == none or s.staged_bytes == 0) return grey(f);
-
-        // The references with a surface, in the order the picture holds
-        // them.
-        var refs: [16]vcn.AvcRef = undefined;
-        var addresses: [16]u64 = undefined;
-        var count: usize = 0;
-        for (pic.refs[0..pic.ref_count]) |r| {
-            if (r.slot >= most_slots or count == refs.len) continue;
-            const ref = &s.frames[r.slot];
-            if (ref.id == none) continue;
-            refs[count] = .{ .id = ref.id, .decoded = ref.decoded and !r.missing, .ref = r };
-            addresses[count] = s.surface(ref.id);
-            count += 1;
-        }
 
         const bytes = (s.staged_bytes + 127) / 128 * 128;
         if (!s.bitstreamRoom(bytes)) return s.fail(types.VDERR_NO_MEMORY);
         const staged = s.staged.?;
         for (staged[s.staged_bytes..bytes]) |*b| b.* = 0;
         vcn.copyToDevice(s.bitstream.cpu, staged[0..bytes]);
-        vcn.avcPart(&s.message.avc, &s.scaling, sps, pps, pic, f.id, refs[0..count]);
-        vcn.avcMessage(&s.message, s.layout, s.stream, s.decoded, bytes, s.surface(f.id), addresses[0..count]);
+        if (hevc) s.hevcMessage(f, bytes) else s.avcMessage(f, bytes);
 
         const timeout = Timeout.open(sys_base) orelse return s.fail(types.VDERR_NO_MEMORY);
         defer timeout.close(sys_base);
         const started = systimer.uptimeUs();
-        vcn.decodeAvc(&vb.vcn, &s.message, &s.scaling, .{
+        const buffers: vcn.Buffers = .{
             .flags = vcn.decode_buffers,
             .message = 0,
             .session = s.context.device,
             .context = s.context.device + vcn.session_bytes,
             .bitstream = s.bitstream.device,
             .target = s.target.device,
-        });
+        };
+        if (hevc) vcn.decodePicture(&vb.vcn, &s.hevc_message, &s.hevc_scaling, buffers) else vcn.decodePicture(&vb.vcn, &s.message, &s.scaling, buffers);
         if (!vcn.fenced(&vb.vcn, picture_most_us, Pause{ .timeout = timeout, .sys = sys_base })) {
             // The decoder may still write the stream's pieces: they are
             // kept, and it is not asked again.
@@ -543,6 +571,48 @@ pub const Session = struct {
         s.decode_us += done - started;
         s.read_us += systimer.uptimeUs() - done;
         s.decoded += 1;
+    }
+
+    /// The H.264 picture's message, for `bytes` of slices into frame `f`:
+    /// its references with a surface, in the order the picture holds them.
+    fn avcMessage(s: *Session, f: *const Frame, bytes: u32) void {
+        const pic = &s.picture;
+        var refs: [16]vcn.AvcRef = undefined;
+        var addresses: [16]u64 = undefined;
+        var count: usize = 0;
+        for (pic.refs[0..pic.ref_count]) |r| {
+            if (r.slot >= most_slots or count == refs.len) continue;
+            const ref = &s.frames[r.slot];
+            if (ref.id == none) continue;
+            refs[count] = .{ .id = ref.id, .decoded = ref.decoded and !r.missing, .ref = r };
+            addresses[count] = s.surface(ref.id);
+            count += 1;
+        }
+        vcn.avcPart(&s.message.avc, &s.scaling, pic.h264_sps.?, pic.h264_pps.?, pic, f.id, refs[0..count]);
+        vcn.avcMessage(&s.message, s.layout, s.stream, s.decoded, bytes, s.surface(f.id), addresses[0..count]);
+    }
+
+    /// The H.265 picture's message, as `avcMessage`: every reference in
+    /// its place, since the reference picture set's sets point at them. A
+    /// reference with no number - every number was taken - stands in for
+    /// by the last one with a number, or by the picture itself.
+    fn hevcMessage(s: *Session, f: *const Frame, bytes: u32) void {
+        const pic = &s.picture;
+        var refs: [16]vcn.HevcRef = undefined;
+        var addresses: [16]u64 = undefined;
+        const count: usize = @min(pic.ref_count, refs.len);
+        var stand_in: vcn.HevcRef = .{ .id = f.id, .poc = pic.poc[0] };
+        for (pic.refs[0..count], 0..) |r, j| {
+            const id = if (r.slot < most_slots) s.frames[r.slot].id else none;
+            refs[j] = .{ .id = id, .poc = r.poc[0] };
+            if (id != none) stand_in = refs[j];
+        }
+        for (refs[0..count], 0..) |*r, j| {
+            if (r.id == none) r.* = stand_in;
+            addresses[j] = s.surface(r.id);
+        }
+        vcn.hevcPart(&s.hevc_message.hevc, &s.hevc_scaling, pic.hevc_sps.?, pic.hevc_pps.?, pic, f.id, refs[0..count]);
+        vcn.hevcMessage(&s.hevc_message, s.layout, s.stream, s.decoded, bytes, s.surface(f.id), addresses[0..count]);
     }
 
     /// A picture due to be shown, after those due before it: with the

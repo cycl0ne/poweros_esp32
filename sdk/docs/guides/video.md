@@ -8,8 +8,8 @@ audio.device. Underneath, media.library reads the container (MP4,
 QuickTime's MOV and Matroska's MKV) and hands out each track's packets,
 a codec module in `LIBS:codecs/` decodes the pictures - chip.vcodec
 H.264 and H.265 on the chip's decoder (videodec.resource: the WAVE511
-on the VisionFive 2, and H.264 on an AMD graphics device's video
-decoder), h264.vcodec H.264 in software, hevc.vcodec H.265,
+on the VisionFive 2, and an AMD graphics device's video decoder),
+h264.vcodec H.264 in software, hevc.vcodec H.265,
 vp8.vcodec VP8, vp9.vcodec VP9 and av1.vcodec AV1 in software,
 mjpeg.vcodec Motion JPEG in software - and
 audiocodec.library decodes the sound. videoparse.library reads an H.264
@@ -192,7 +192,7 @@ colour, a pixel half covered or more is the subtitle's.
 
 | Pictures | Decoded by | On the VisionFive 2 |
 |---|---|---|
-| H.264 (baseline, main, high), 8-bit; H.265 (main, and main 10 shown in 8 bits) - on an AMD graphics device H.264 alone | chip.vcodec: the chip, videodec.resource | 1080p about 145 frames a second, 720p about 300; a Radeon 780M's H.264 1080p about 600, 720p about 900 |
+| H.264 (baseline, main, high), 8-bit; H.265 (main, and main 10 shown in 8 bits) | chip.vcodec: the chip, videodec.resource | 1080p about 145 frames a second, 720p about 300; on a Radeon 780M 1080p about 600 (H.264 and H.265), 720p H.264 about 900, 4K H.265 in 10 bits about 160 |
 | H.264, every profile but SVC's and MVC's: up to 4:4:4 and 14 bits, fields, shown in 8 bits; what the chip refuses, and every H.264 where there is no chip | h264.vcodec: software, a worker task on each core, a picture each | 720p High 10 about 32 frames a second, 10 on one core; 1080p High about 20, 720p about 52 |
 | H.265: Main, Main 10, Main Still Picture and the range extensions' profiles - grey to 4:4:4, up to 16 bits - shown in 8 bits; the base layer of a stream in layers; what the chip refuses, and every H.265 where there is no chip | hevc.vcodec: software, a worker task on each core, a picture each | 1080p about 25 frames a second, 720p about 55, 1080p 4:2:2 in 10 bits about 17 |
 | VP8, every version (WebM, Matroska) | vp8.vcodec: software, a worker task on each core, a frame each | 720p about 84 frames a second, 1080p about 34; 27 and 11 on one core |

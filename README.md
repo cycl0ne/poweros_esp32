@@ -671,17 +671,20 @@ loaded, the start's register writes applied by the security processor,
 the ring of commands checked. Each decoder opened is a stream the
 firmware keeps a context for, made and ended by a message. H.264 is
 decoded there - baseline without slice groups, main and high, 8-bit
-4:2:0, up to 4096 x 4096: videoparse.library reads the stream, each
+4:2:0, up to 4096 x 4096 - and H.265 - main, main 10 and main still
+picture, up to 8192 x 4352: videoparse.library reads the stream, each
 picture goes to the firmware as one message with its slices and the
 surfaces of its references, and the frame is copied out into system
-memory through write-combining reads. On the Radeon 780M a 1920 x 1080
-picture takes 1.1 ms on the decoder and 0.45 ms to copy out - some 600
-frames a second through `C:test/Film` - and each frame compared,
-progressive and MBAFF, after a seek too, is ffmpeg's to the byte.
+memory through write-combining reads, a 10-bit picture's samples
+rounded to 8 bits by the decoder as it writes them. On the Radeon 780M
+a 1920 x 1080 picture takes 1.1 ms on the decoder and 0.45 ms to copy
+out - some 600 frames a second through `C:test/Film` - and a 10-bit
+3840 x 2160 one 3.7 ms and 2.1 ms, some 160 a second; each frame
+compared, after a seek too, is ffmpeg's to the byte (10-bit ones
+rounded to 8 bits as the software decoder does).
 `C:test/VideoDec <file> WATCHDOG 15000` feeds it an elementary stream;
 films reach it through chip.vcodec, so the Player plays on it once a
-program has armed the watchdog since the start. H.265 is not decoded
-there yet.
+program has armed the watchdog since the start.
 
 **The JPEG decoder beside its video decoder is jpeg.resource's codec.**
 A file is copied into the device's memory without the segments the

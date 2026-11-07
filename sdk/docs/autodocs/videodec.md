@@ -212,9 +212,11 @@ the device meanwhile. Pictures go on being read until the stream
 needs a frame back that is still to be handed out or lent: then the
 rest of the call's bytes are read by the next DecodeVideoFrame or
 FeedVideoDecoder, and a call that comes while they are not answers
-VDERR_FULL. A stream the device does not take (other than 8-bit 4:2:0
-H.264, the extended profile, lossless pictures, slice groups, larger
-than 4096 each way) answers VDERR_UNSUPPORTED.
+VDERR_FULL. A stream the device does not take answers
+VDERR_UNSUPPORTED: H.264 other than 8-bit 4:2:0, the extended
+profile, lossless pictures, slice groups, larger than 4096 each way;
+H.265 other than Main, Main 10 and Main Still Picture, larger than
+8192 x 4352.
 
 **CONTEXT**
 
@@ -423,9 +425,12 @@ apply the decoder's start, a list of its register writes, and checks
 that the firmware reads its ring. Each decoder reads its stream with
 videoparse.library (opened here, from LIBS:) and is a stream on the
 device, made when its sequence is read: in the device's memory a
-context (128 KiB, and 192 bytes a macroblock for each reference and
-the picture decoded), a surface for each of those, and the surface
-pictures are written to - about 60 MiB at 1080p with four references.
+context (128 KiB, and for H.264 192 bytes a macroblock for each
+reference and the picture decoded, for H.265 about 3 MiB at 1080p), a
+surface for each of those, and the surface pictures are written to -
+about 26 MiB at 1080p with four H.264 references, 24 MiB for H.265
+with five pictures in its buffer, 188 MiB for 10-bit H.265 at 4K
+with six.
 Its frames are in the system's memory, one for each picture the
 stream holds and VDA_HeldFrames and two more; VDA_StreamSize is not
 read.
@@ -452,8 +457,7 @@ DEVS:firmware/wave511.licence.
 
 **BUGS**
 
-On an AMD graphics device H.265 is not decoded yet: VideoDecCodecs
-answers H.264 alone there.
+None known.
 
 **SEE ALSO**
 
@@ -545,8 +549,8 @@ None.
 **RESULT**
 
 A VDCODEC_* bit for each codec: VDCODEC_H264 | VDCODEC_H265 on the
-JH7110, VDCODEC_H264 on x86-64 with an AMD graphics device whose
-video block is 4.0.2. 0 when the machine has no decoder, or it would
+JH7110, and on x86-64 with an AMD graphics device whose video block
+is 4.0.2. 0 when the machine has no decoder, or it would
 not wake or its firmware would not start.
 
 **BEHAVIOR**
@@ -570,8 +574,7 @@ None.
 
 **BUGS**
 
-The AMD graphics device's decoder decodes H.265 too; it is not
-driven for it yet.
+None known.
 
 **SEE ALSO**
 

@@ -47,9 +47,11 @@ const engine = @import("../videodec_init.zig").engine;
 /// needs a frame back that is still to be handed out or lent: then the
 /// rest of the call's bytes are read by the next DecodeVideoFrame or
 /// FeedVideoDecoder, and a call that comes while they are not answers
-/// VDERR_FULL. A stream the device does not take (other than 8-bit 4:2:0
-/// H.264, the extended profile, lossless pictures, slice groups, larger
-/// than 4096 each way) answers VDERR_UNSUPPORTED.
+/// VDERR_FULL. A stream the device does not take answers
+/// VDERR_UNSUPPORTED: H.264 other than 8-bit 4:2:0, the extended
+/// profile, lossless pictures, slice groups, larger than 4096 each way;
+/// H.265 other than Main, Main 10 and Main Still Picture, larger than
+/// 8192 x 4352.
 ///
 /// CONTEXT:
 /// - Waits: yes, for the chip to take the command. - Interrupts: no.

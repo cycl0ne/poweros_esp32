@@ -22,10 +22,12 @@
 //! **What comes out**: 8-bit 4:2:0 frames as two planes, NV12 - a plane
 //! of brightness, then one of the two colour differences side by side,
 //! Cb first, at half the size each way. The WAVE511 decodes H.264
-//! (baseline, main, high) and H.265 (main), 4K at its best speed, into
-//! memory below 4 GiB; 10-bit streams are not taken. The AMD device's
-//! decoder takes H.264 (baseline without slice groups, main, high; 8-bit
-//! 4:2:0) up to 4096 x 4096, its frames copied into the system's memory.
+//! (baseline, main, high) and H.265 (main, and main 10 written in 8
+//! bits), 4K at its best speed, into memory below 4 GiB. The AMD
+//! device's decoder takes H.264 (baseline without slice groups, main,
+//! high; 8-bit 4:2:0) up to 4096 x 4096 and H.265 (main, main 10 rounded
+//! to 8 bits, main still picture) up to 8192 x 4352, its frames copied
+//! into the system's memory.
 //!
 //! Get its base with OpenResource(VIDEODECNAME); its functions are in
 //! sdk/interface/videodec.zig.

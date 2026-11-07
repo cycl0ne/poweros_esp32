@@ -78,9 +78,12 @@ const ring_most: u32 = 64 * 1024 * 1024;
 /// that the firmware reads its ring. Each decoder reads its stream with
 /// videoparse.library (opened here, from LIBS:) and is a stream on the
 /// device, made when its sequence is read: in the device's memory a
-/// context (128 KiB, and 192 bytes a macroblock for each reference and
-/// the picture decoded), a surface for each of those, and the surface
-/// pictures are written to - about 60 MiB at 1080p with four references.
+/// context (128 KiB, and for H.264 192 bytes a macroblock for each
+/// reference and the picture decoded, for H.265 about 3 MiB at 1080p), a
+/// surface for each of those, and the surface pictures are written to -
+/// about 26 MiB at 1080p with four H.264 references, 24 MiB for H.265
+/// with five pictures in its buffer, 188 MiB for 10-bit H.265 at 4K
+/// with six.
 /// Its frames are in the system's memory, one for each picture the
 /// stream holds and VDA_HeldFrames and two more; VDA_StreamSize is not
 /// read.
@@ -103,8 +106,7 @@ const ring_most: u32 = 64 * 1024 * 1024;
 /// DEVS:firmware/wave511.licence.
 ///
 /// BUGS:
-/// On an AMD graphics device H.265 is not decoded yet: VideoDecCodecs
-/// answers H.264 alone there.
+/// None known.
 ///
 /// SEE ALSO:
 /// `VideoDecCodecs`, `CloseVideoDecoder`, `FeedVideoDecoder`,
