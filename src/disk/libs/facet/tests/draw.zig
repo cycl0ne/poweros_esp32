@@ -5090,7 +5090,7 @@ test "four samples a pixel blended: each sample's colour mixed with that sample'
     try testing.expectEqual(@as(u64, 5 * side * side), try queryValue(&bench, occlusion, 0));
 }
 
-test "four samples a pixel in colour attachments drawn together: each attachment's samples in planes of its own" {
+test "four samples a pixel in colour attachments drawn together: each attachment's samples in planes of its own, and each sample's depth in its own beside them" {
     var bench = try Bench.up();
     defer bench.down();
     const fb = bench.rig.fb;
@@ -5107,25 +5107,37 @@ test "four samples a pixel in colour attachments drawn together: each attachment
         const made, view.* = try bench.image(.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = side, .height = side, .depth = 1 }, .samples = 4, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_SRC }, false);
         image.* = _objects.of(Image, made);
     }
-    const descriptions = [3]facet.AttachmentDescription{ fourSamples(.clear), fourSamples(.clear), fourSamples(.clear) };
+    // And a depth beside them, of four samples too, whose planes the
+    // tiles keep before their room for the colours past the first (since
+    // 1.105).
+    const depth_made, const depth_view = try bench.image(.{ .format = .d16_unorm, .extent = .{ .width = side, .height = side, .depth = 1 }, .samples = 4, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT }, false);
+    const depths = _objects.of(Image, depth_made);
+    const descriptions = [4]facet.AttachmentDescription{
+        fourSamples(.clear),
+        fourSamples(.clear),
+        fourSamples(.clear),
+        .{ .format = .d16_unorm, .samples = 4, .load_op = .clear, .store_op = .store, .final_layout = .depth_stencil_attachment_optimal },
+    };
     const references = [3]facet.AttachmentReference{
         .{ .attachment = 0, .layout = .color_attachment_optimal },
         .{ .attachment = 1, .layout = .color_attachment_optimal },
         .{ .attachment = 2, .layout = .color_attachment_optimal },
     };
-    const together = facet.SubpassDescription{ .flags = facet.SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER, .color_attachment_count = 3, .color_attachments = &references };
+    const tested = facet.AttachmentReference{ .attachment = 3, .layout = .depth_stencil_attachment_optimal };
+    const together = facet.SubpassDescription{ .flags = facet.SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER, .color_attachment_count = 3, .color_attachments = &references, .depth_stencil_attachment = &tested };
     var pass: ?*facet.RenderPass = null;
     defer fb.DestroyRenderPass(device, pass);
-    try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 3, .attachments = &descriptions, .subpass_count = 1, .subpasses = @ptrCast(&together) }, &pass));
+    try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 4, .attachments = &descriptions, .subpass_count = 1, .subpasses = @ptrCast(&together) }, &pass));
     try testing.expectEqual(@as(u32, 3), _objects.of(_render.RenderPass, pass.?).parts[0].color_count);
-    const frame = try framebuffer(&bench, pass.?, &views, side, side);
+    const frame = try framebuffer(&bench, pass.?, &.{ views[0], views[1], views[2], depth_view }, side, side);
     defer fb.DestroyFramebuffer(device, frame);
     const shaders = try module(&bench, &TogetherScene.code);
     defer fb.DestroyShaderModule(device, shaders);
     const layout = try pipelineLayout(&bench, &.{}, 0);
     defer fb.DestroyPipelineLayout(device, layout);
     const four = facet.PipelineMultisampleStateCreateInfo{ .rasterization_samples = 4 };
-    const result, const pipeline = makePipeline(&bench, .{ .module = shaders, .name = "three", .layout = layout, .pass = pass.?, .multisample = &four, .blend_count = 3, .width = side, .height = side });
+    const less = facet.PipelineDepthStencilStateCreateInfo{ .depth_test_enable = true, .depth_write_enable = true, .depth_compare_op = .less };
+    const result, const pipeline = makePipeline(&bench, .{ .module = shaders, .name = "three", .layout = layout, .pass = pass.?, .multisample = &four, .depth = less, .blend_count = 3, .width = side, .height = side });
     defer fb.DestroyPipeline(device, pipeline);
     try testing.expectEqual(facet.Result.success, result);
 
@@ -5133,7 +5145,8 @@ test "four samples a pixel in colour attachments drawn together: each attachment
     // of one attachment, a viewport of 64 keeping them exact. The
     // function writes red, green and blue, one for each attachment, in
     // the one call: the colours go into the tile's room for them, past
-    // the planes of the samples, and from there each into its own.
+    // the planes of the samples' colours and depths, and from there each
+    // into its own.
     const eighths = [3][2]i64{ .{ 29, 203 }, .{ 500, 9 }, .{ 470, 497 } };
     var corners: [3][2]i64 = undefined;
     var vertices: [3][3]f32 = undefined;
@@ -5145,9 +5158,9 @@ test "four samples a pixel in colour attachments drawn together: each attachment
     @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
     const offset: u64 = 0;
     const black = clears(0xFF00_0000)[0];
-    const clear_values = [3]facet.ClearValue{ black, black, black };
+    const clear_values = [4]facet.ClearValue{ black, black, black, clears(0)[1] };
     const commands = try bench.record();
-    fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass.?, .framebuffer = frame, .render_area = .{ .extent = .{ .width = side, .height = side } }, .clear_value_count = 3, .clear_values = &clear_values }, .@"inline");
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass.?, .framebuffer = frame, .render_area = .{ .extent = .{ .width = side, .height = side } }, .clear_value_count = 4, .clear_values = &clear_values }, .@"inline");
     fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
     fb.CmdBindPipeline(commands, .graphics, pipeline.?);
     fb.CmdDraw(commands, 3, 1, 0, 0);
@@ -5163,8 +5176,571 @@ test "four samples a pixel in colour attachments drawn together: each attachment
             const want = if (bits >> @intCast(s) & 1 != 0) color else 0xFF00_0000;
             try testing.expectEqual(want, sampleTexel(image, @intCast(s), 0, @intCast(x), @intCast(y)).*);
         };
+        // The triangle is flat at a half: 32768 in every sample it
+        // covers, and the clear in every other.
+        for (0..4) |s| {
+            const want: u16 = if (bits >> @intCast(s) & 1 != 0) 32768 else 0xFFFF;
+            try testing.expectEqual(want, std.mem.readInt(u16, sampleDepthBytes(depths, 2, @intCast(s), @intCast(x), @intCast(y))[0..2], .little));
+        }
     };
     try testing.expect(twos > 0);
+}
+
+/// The depth of triangle `corners` - in 1/256ths of a pixel, with
+/// `depths` at them - at `at`, in 1/256ths of a pixel too, in a 16-bit
+/// depth's units before it is rounded: the plane through the corners
+/// there.
+fn depthThere(corners: [3][2]i64, depths: [3]f32, at: [2]i64) f64 {
+    const twice = (corners[1][0] - corners[0][0]) * (corners[2][1] - corners[0][1]) - (corners[1][1] - corners[0][1]) * (corners[2][0] - corners[0][0]);
+    var value: f64 = 0;
+    for (0..3) |i| {
+        const from = corners[(i + 1) % 3];
+        const to = corners[(i + 2) % 3];
+        const cross = (to[0] - from[0]) * (at[1] - from[1]) - (to[1] - from[1]) * (at[0] - from[0]);
+        value += @as(f64, @floatFromInt(cross)) / @as(f64, @floatFromInt(twice)) * @as(f64, depths[i]);
+    }
+    return value * 65535;
+}
+
+/// Where sample `sample` of pixel (x, y) is, in 1/256ths of a pixel:
+/// Vulkan's standard place for it.
+fn samplePlace(x: u32, y: u32, sample: u32) [2]i64 {
+    return .{ @as(i64, x) * 256 + standard_four[sample][0], @as(i64, y) * 256 + standard_four[sample][1] };
+}
+
+/// A depth as a 16-bit depth keeps it: to the nearest unit, a half up.
+fn unitsOf(value: f64) u16 {
+    return @intFromFloat(@floor(value + 0.5));
+}
+
+/// Sample `sample` of pixel (x, y) in the first layer of a depth image of
+/// four samples a pixel, `stride` bytes a pixel: its depth, and past it
+/// its stencil where the format has one.
+fn sampleDepthBytes(image: *const @import("../image/_image.zig").Image, stride: u32, sample: u32, x: u32, y: u32) [*]u8 {
+    const rows = @import("../image/_image.zig").rowsAt(image, 0, 0);
+    return image.data.? + @as(usize, sample) * @as(usize, @intCast(image.sample_bytes)) + rows.at + @as(usize, y) * rows.pitch + @as(usize, x) * stride;
+}
+
+/// Three triangles in eighths of a pixel, for the tests of four samples'
+/// depths and stencils at a viewport of 128, which keeps them exact. The
+/// first two cross: each is nearer than the other over part of it, and
+/// the line along which they cross runs through pixels, whose samples go
+/// to one or the other by where each sample lies - no two of them within
+/// 8 units of a tie, and 67 that a test at the pixel's centre would give
+/// to the other one. The third is flat, at a half.
+const crossed = [3][3][2]i64{
+    .{ .{ 16, 24 }, .{ 1000, 60 }, .{ 500, 1010 } },
+    .{ .{ 980, 30 }, .{ 1010, 990 }, .{ 20, 600 } },
+    .{ .{ 40, 980 }, .{ 60, 50 }, .{ 1010, 520 } },
+};
+const crossed_depths = [3][3]f32{ .{ 0.2, 0.8, 0.5 }, .{ 0.25, 0.35, 0.85 }, .{ 0.5, 0.5, 0.5 } };
+
+/// `crossed`'s corners in 1/256ths of a pixel, and as vertices in clip
+/// space with their depths.
+fn crossedCorners() struct { [3][3][2]i64, [9][3]f32 } {
+    var corners: [3][3][2]i64 = undefined;
+    var vertices: [9][3]f32 = undefined;
+    for (0..3) |t| for (0..3) |k| {
+        const corner = crossed[t][k];
+        corners[t][k] = .{ corner[0] * 32, corner[1] * 32 };
+        vertices[t * 3 + k] = .{ @as(f32, @floatFromInt(corner[0])) / 512 - 1, @as(f32, @floatFromInt(corner[1])) / 512 - 1, crossed_depths[t][k] };
+    };
+    return .{ corners, vertices };
+}
+
+/// The test of four samples' depths, for a depth alone and for one beside
+/// a stencil (`format`): 2 bytes a pixel in the image, or 4.
+fn depthsBySample(format: facet.Format) !void {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
+    physical.can.multisampling = true;
+    defer physical.can.multisampling = false;
+    const image_zig = @import("../image/_image.zig");
+    const stenciled = format == .d16_unorm_s8_uint;
+    const stride: u32 = if (stenciled) 4 else 2;
+
+    // Four tiles of 64, of colour and of depth at four samples a pixel.
+    const side = 128;
+    const color_made, const color_view = try bench.image(.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = side, .height = side, .depth = 1 }, .samples = 4, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, false);
+    const colors = _objects.of(image_zig.Image, color_made);
+    const depth_made, const depth_view = try bench.image(.{ .format = format, .extent = .{ .width = side, .height = side, .depth = 1 }, .samples = 4, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT }, false);
+    const depths = _objects.of(image_zig.Image, depth_made);
+    const cleared_depth = facet.AttachmentDescription{
+        .format = format,
+        .samples = 4,
+        .load_op = .clear,
+        .store_op = .store,
+        .stencil_load_op = if (stenciled) .clear else .dont_care,
+        .stencil_store_op = if (stenciled) .store else .dont_care,
+        .final_layout = .depth_stencil_attachment_optimal,
+    };
+    var loaded_depth = cleared_depth;
+    loaded_depth.load_op = .load;
+    if (stenciled) loaded_depth.stencil_load_op = .load;
+    loaded_depth.initial_layout = .depth_stencil_attachment_optimal;
+    const cleared_result, const cleared = samplesPass(&bench, &.{ fourSamples(.clear), cleared_depth }, null, 1);
+    defer fb.DestroyRenderPass(device, cleared);
+    try testing.expectEqual(facet.Result.success, cleared_result);
+    const loaded_result, const loaded = samplesPass(&bench, &.{ fourSamples(.load), loaded_depth }, null, 1);
+    defer fb.DestroyRenderPass(device, loaded);
+    try testing.expectEqual(facet.Result.success, loaded_result);
+    const frame = try framebuffer(&bench, cleared.?, &.{ color_view, depth_view }, side, side);
+    defer fb.DestroyFramebuffer(device, frame);
+
+    // A cut-out texture of 32 columns, clear and opaque by turns: four
+    // pixels a column over 128, read once a pixel at its centre, so that
+    // the cut-out drops the pixels of every other four columns. A form
+    // that drops pixels holds its depths back for after its fragment
+    // function, and at four samples a pixel holds each sample's.
+    const texture_image = try bench.bareImage(.{ .format = .r8g8b8a8_unorm, .extent = .{ .width = 32, .height = 2, .depth = 1 }, .usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST }, false);
+    const texture_view = try bench.viewOf(.{ .image = texture_image, .format = .r8g8b8a8_unorm });
+    const staging, const staged = try bench.buffer(32 * 2 * 4, facet.BUFFER_USAGE_TRANSFER_SRC);
+    for (0..2) |y| for (0..32) |x| {
+        staged[(y * 32 + x) * 4 ..][0..4].* = if (x % 2 == 0) .{ 0, 0, 0, 0 } else .{ 0x40, 0xC0, 0x20, 0xFF };
+    };
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .sampled_image, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &set_layout));
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    var pool: ?*facet.DescriptorPool = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool));
+    defer fb.DestroyDescriptorPool(device, pool);
+    var set: [1]?*facet.DescriptorSet = undefined;
+    try testing.expectEqual(facet.Result.success, fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &set));
+    const image_info = facet.DescriptorImageInfo{ .image_view = texture_view };
+    const write = facet.WriteDescriptorSet{ .dst_set = set[0].?, .dst_binding = 0, .descriptor_type = .sampled_image, .image_info = @ptrCast(&image_info) };
+    fb.UpdateDescriptorSets(device, 1, @ptrCast(&write), 0, null);
+
+    // The cut-out, and Counted's colour, both testing the depth and
+    // writing it; the second again for the pass that loads.
+    const cut_module = try module(&bench, &CutoutScene.code);
+    defer fb.DestroyShaderModule(device, cut_module);
+    const cut_layout = try pipelineLayout(&bench, &.{set_layout.?}, 0);
+    defer fb.DestroyPipelineLayout(device, cut_layout);
+    const counted = try module(&bench, &Counted.code);
+    defer fb.DestroyShaderModule(device, counted);
+    const layout = try pipelineLayout(&bench, &.{}, 4);
+    defer fb.DestroyPipelineLayout(device, layout);
+    const four = facet.PipelineMultisampleStateCreateInfo{ .rasterization_samples = 4 };
+    const less = facet.PipelineDepthStencilStateCreateInfo{ .depth_test_enable = true, .depth_write_enable = true, .depth_compare_op = .less };
+    const cut_result, const cut = makePipeline(&bench, .{ .module = cut_module, .name = "cut", .layout = cut_layout, .pass = cleared.?, .multisample = &four, .depth = less, .width = side, .height = side });
+    defer fb.DestroyPipeline(device, cut);
+    try testing.expectEqual(facet.Result.success, cut_result);
+    const near_result, const near = makePipeline(&bench, .{ .module = counted, .layout = layout, .pass = cleared.?, .multisample = &four, .depth = less, .width = side, .height = side });
+    defer fb.DestroyPipeline(device, near);
+    try testing.expectEqual(facet.Result.success, near_result);
+    const again_result, const again = makePipeline(&bench, .{ .module = counted, .layout = layout, .pass = loaded.?, .multisample = &four, .depth = less, .width = side, .height = side });
+    defer fb.DestroyPipeline(device, again);
+    try testing.expectEqual(facet.Result.success, again_result);
+
+    const corners, const vertices = crossedCorners();
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
+    const offset: u64 = 0;
+    const cut_color: u32 = 0xFF40_C020;
+    const flat_colors = [2]u32{ 0xFF20_40E0, 0xFFE0_6010 };
+    const background: u32 = 0xFF10_2030;
+    var values = clears(background);
+    values[1] = .{ .depth_stencil = .{ .depth = 1, .stencil = 0x3C } };
+    const occlusion = try queryPool(&bench, .occlusion, 1, 0);
+    defer fb.DestroyQueryPool(device, occlusion);
+
+    // The first pass: cleared, the first triangle cut out and the second
+    // drawn after it, the samples that passed counted.
+    Counted.pixels = 0;
+    const region = facet.BufferImageCopy{ .image_extent = .{ .width = 32, .height = 2, .depth = 1 } };
+    var commands = try bench.record();
+    fb.CmdCopyBufferToImage(commands, staging, texture_image, .transfer_dst_optimal, 1, @ptrCast(&region));
+    fb.CmdResetQueryPool(commands, occlusion, 0, 1);
+    fb.CmdBeginQuery(commands, occlusion, 0, facet.QUERY_CONTROL_PRECISE);
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = cleared.?, .framebuffer = frame, .render_area = .{ .extent = .{ .width = side, .height = side } }, .clear_value_count = 2, .clear_values = &values }, .@"inline");
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdBindDescriptorSets(commands, .graphics, cut_layout, 0, 1, @ptrCast(&set), 0, null);
+    fb.CmdBindPipeline(commands, .graphics, cut.?);
+    fb.CmdDraw(commands, 3, 1, 0, 0);
+    fb.CmdBindPipeline(commands, .graphics, near.?);
+    fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &flat_colors[0]);
+    fb.CmdDraw(commands, 3, 1, 3, 0);
+    fb.CmdEndRenderPass(commands);
+    fb.CmdEndQuery(commands, occlusion, 0);
+    try bench.submit();
+
+    // Each sample as worked out here: the first triangle's where it
+    // covers the sample and the cut-out left its pixel, the second's where
+    // it covers the sample and is nearer there than what the first left,
+    // each depth the plane's at the sample's own place; the clears
+    // elsewhere. The stencil beside a depth is the clear's throughout.
+    var samples: u64 = 0;
+    var split: u32 = 0;
+    var centre_wrong: u32 = 0;
+    var quad_covered: [side / 2][side / 2]u8 = @splat(@splat(0));
+    var quad_kept: [side / 2][side / 2]bool = @splat(@splat(false));
+    for (0..side) |row| for (0..side) |column| {
+        const x: u32 = @intCast(column);
+        const y: u32 = @intCast(row);
+        const first: u4 = if (x / 4 % 2 == 1) samplesCovered(corners[0], x, y) else 0;
+        const second = samplesCovered(corners[1], x, y);
+        var passing: u4 = 0;
+        var winners: u2 = 0;
+        for (0..4) |s| {
+            const sample: u32 = @intCast(s);
+            const bit = @as(u4, 1) << @intCast(s);
+            var color = background;
+            var depth: u16 = 0xFFFF;
+            if (first & bit != 0) {
+                color = cut_color;
+                depth = unitsOf(depthThere(corners[0], crossed_depths[0], samplePlace(x, y, sample)));
+                samples += 1;
+            }
+            if (second & bit != 0) {
+                const value = unitsOf(depthThere(corners[1], crossed_depths[1], samplePlace(x, y, sample)));
+                if (first & bit != 0) {
+                    winners |= @as(u2, if (value < depth) 2 else 1);
+                    const centre = [2]i64{ @as(i64, x) * 256 + 128, @as(i64, y) * 256 + 128 };
+                    const nearer_there = depthThere(corners[1], crossed_depths[1], centre) < depthThere(corners[0], crossed_depths[0], centre);
+                    centre_wrong += @intFromBool(nearer_there != (value < depth));
+                }
+                if (value < depth) {
+                    color = flat_colors[0];
+                    depth = value;
+                    passing |= bit;
+                    samples += 1;
+                }
+            }
+            try testing.expectEqual(color, sampleTexel(colors, sample, 0, x, y).*);
+            const bytes = sampleDepthBytes(depths, stride, sample, x, y);
+            const found = std.mem.readInt(u16, bytes[0..2], .little);
+            if (depth == 0xFFFF) try testing.expectEqual(depth, found) else try testing.expectApproxEqAbs(@as(f64, @floatFromInt(depth)), @as(f64, @floatFromInt(found)), 1);
+            if (stenciled) try testing.expectEqual(@as(u8, 0x3C), bytes[2]);
+        }
+        split += @intFromBool(winners == 3);
+        quad_covered[y / 2][x / 2] += @intFromBool(second != 0);
+        if (passing != 0) quad_kept[y / 2][x / 2] = true;
+    };
+    // Pixels whose samples the two triangles share between them, and
+    // samples a test of the pixel's centre would have given to the other.
+    try testing.expect(split > 0);
+    try testing.expect(centre_wrong > 0);
+    // The second shaded once a quad where any of its samples passed: a
+    // quad wholly behind the first is not shaded at all.
+    var shaded: u32 = 0;
+    var skipped: u32 = 0;
+    for (quad_covered, quad_kept) |covered_row, kept_row| for (covered_row, kept_row) |covered, kept| {
+        if (kept) shaded += covered else skipped += @intFromBool(covered != 0);
+    };
+    try testing.expect(skipped > 0);
+    try testing.expectEqual(shaded, @atomicLoad(u32, &Counted.pixels, .monotonic));
+    try testing.expectEqual(samples, try queryValue(&bench, occlusion, 0));
+
+    // What the first pass stored, every plane of it.
+    const kept_colors = try testing.allocator.dupe(u8, colors.data.?[0..@intCast(colors.bytes)]);
+    defer testing.allocator.free(kept_colors);
+    const kept_depths = try testing.allocator.dupe(u8, depths.data.?[0..@intCast(depths.bytes)]);
+    defer testing.allocator.free(kept_depths);
+
+    // The second pass loads both and draws the third triangle, flat at a
+    // half: 32768 at every sample, against each sample's own depth as the
+    // first pass stored it and this one loaded it. Where that is further,
+    // the third's colour and depth; everywhere else what the first pass
+    // left, byte for byte, in every plane of each of the four tiles.
+    commands = try bench.record();
+    fb.CmdResetQueryPool(commands, occlusion, 0, 1);
+    fb.CmdBeginQuery(commands, occlusion, 0, facet.QUERY_CONTROL_PRECISE);
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = loaded.?, .framebuffer = frame, .render_area = .{ .extent = .{ .width = side, .height = side } } }, .@"inline");
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdBindPipeline(commands, .graphics, again.?);
+    fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &flat_colors[1]);
+    fb.CmdDraw(commands, 3, 1, 6, 0);
+    fb.CmdEndRenderPass(commands);
+    fb.CmdEndQuery(commands, occlusion, 0);
+    try bench.submit();
+    const half: u16 = 32768;
+    var touched: [4]bool = @splat(false);
+    var passed: u64 = 0;
+    var mixed: u32 = 0;
+    for (0..side) |row| for (0..side) |column| {
+        const x: u32 = @intCast(column);
+        const y: u32 = @intCast(row);
+        const third = samplesCovered(corners[2], x, y);
+        if (third != 0) touched[y / 64 * 2 + x / 64] = true;
+        var outcomes: u2 = 0;
+        for (0..4) |s| {
+            const sample: u32 = @intCast(s);
+            const color_at = @intFromPtr(sampleTexel(colors, sample, 0, x, y)) - @intFromPtr(colors.data.?);
+            const depth_at = @intFromPtr(sampleDepthBytes(depths, stride, sample, x, y)) - @intFromPtr(depths.data.?);
+            const before = std.mem.readInt(u16, kept_depths[depth_at..][0..2], .little);
+            const covered = third >> @intCast(s) & 1 != 0;
+            const passes = covered and half < before;
+            if (covered) outcomes |= @as(u2, if (passes) 2 else 1);
+            passed += @intFromBool(passes);
+            const color = if (passes) flat_colors[1] else std.mem.readInt(u32, kept_colors[color_at..][0..4], .little);
+            try testing.expectEqual(color, sampleTexel(colors, sample, 0, x, y).*);
+            const bytes = sampleDepthBytes(depths, stride, sample, x, y);
+            try testing.expectEqual(if (passes) half else before, std.mem.readInt(u16, bytes[0..2], .little));
+            if (stenciled) try testing.expectEqual(kept_depths[depth_at + 2], bytes[2]);
+        }
+        mixed += @intFromBool(outcomes == 3);
+    };
+    try testing.expectEqual([4]bool{ true, true, true, true }, touched);
+    try testing.expect(mixed > 0);
+    try testing.expectEqual(passed, try queryValue(&bench, occlusion, 0));
+}
+
+test "four samples a pixel tested in depth: each sample keeps whichever triangle is nearer at its own place, a depth held back for a fragment function that drops pixels written for the samples left, and every plane loaded, tested and stored" {
+    try depthsBySample(.d16_unorm);
+    try depthsBySample(.d16_unorm_s8_uint);
+}
+
+test "four samples a pixel in stencil: each sample's stencil tested and changed in a plane of its own, as its own depth test says, and loaded and tested again" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
+    physical.can.multisampling = true;
+    defer physical.can.multisampling = false;
+    const image_zig = @import("../image/_image.zig");
+
+    const side = 128;
+    const color_made, const color_view = try bench.image(.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = side, .height = side, .depth = 1 }, .samples = 4, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, false);
+    const colors = _objects.of(image_zig.Image, color_made);
+    const depth_made, const depth_view = try bench.image(.{ .format = .d16_unorm_s8_uint, .extent = .{ .width = side, .height = side, .depth = 1 }, .samples = 4, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT }, false);
+    const depths = _objects.of(image_zig.Image, depth_made);
+    const cleared_depth = facet.AttachmentDescription{ .format = .d16_unorm_s8_uint, .samples = 4, .load_op = .clear, .store_op = .store, .stencil_load_op = .clear, .stencil_store_op = .store, .final_layout = .depth_stencil_attachment_optimal };
+    var loaded_depth = cleared_depth;
+    loaded_depth.load_op = .load;
+    loaded_depth.stencil_load_op = .load;
+    loaded_depth.initial_layout = .depth_stencil_attachment_optimal;
+    const cleared_result, const cleared = samplesPass(&bench, &.{ fourSamples(.clear), cleared_depth }, null, 1);
+    defer fb.DestroyRenderPass(device, cleared);
+    try testing.expectEqual(facet.Result.success, cleared_result);
+    const loaded_result, const loaded = samplesPass(&bench, &.{ fourSamples(.load), loaded_depth }, null, 1);
+    defer fb.DestroyRenderPass(device, loaded);
+    try testing.expectEqual(facet.Result.success, loaded_result);
+    const frame = try framebuffer(&bench, cleared.?, &.{ color_view, depth_view }, side, side);
+    defer fb.DestroyFramebuffer(device, frame);
+    const counted = try module(&bench, &Counted.code);
+    defer fb.DestroyShaderModule(device, counted);
+    const layout = try pipelineLayout(&bench, &.{}, 4);
+    defer fb.DestroyPipelineLayout(device, layout);
+    const four = facet.PipelineMultisampleStateCreateInfo{ .rasterization_samples = 4 };
+
+    // The first triangle replaces the stencil with 0x10 wherever it is
+    // drawn. The second passes the stencil test where it is 0x10, and then
+    // as its depth says: where the stencil fails it inverts it, where the
+    // depth fails it zeroes it, and where both pass it adds one - each a
+    // sample's own, by that sample's depth. The third, in a pass that loads
+    // both, is drawn where the stencil is 0x11 and writes nothing else.
+    const replacing = facet.StencilOpState{ .pass_op = .replace, .compare_op = .always, .compare_mask = 0xFF, .write_mask = 0xFF, .reference = 0x10 };
+    const counting = facet.StencilOpState{ .fail_op = .invert, .pass_op = .increment_and_clamp, .depth_fail_op = .zero, .compare_op = .equal, .compare_mask = 0xFF, .write_mask = 0xFF, .reference = 0x10 };
+    const reading = facet.StencilOpState{ .compare_op = .equal, .compare_mask = 0xFF, .reference = 0x11 };
+    const states = [3]facet.PipelineDepthStencilStateCreateInfo{
+        .{ .depth_test_enable = true, .depth_write_enable = true, .depth_compare_op = .less, .stencil_test_enable = true, .front = replacing, .back = replacing },
+        .{ .depth_test_enable = true, .depth_write_enable = true, .depth_compare_op = .less, .stencil_test_enable = true, .front = counting, .back = counting },
+        .{ .stencil_test_enable = true, .front = reading, .back = reading },
+    };
+    var pipelines: [3]?*facet.Pipeline = @splat(null);
+    defer for (pipelines) |made| fb.DestroyPipeline(device, made);
+    for (&pipelines, states, [3]*facet.RenderPass{ cleared.?, cleared.?, loaded.? }) |*made, state, pass| {
+        const result, made.* = makePipeline(&bench, .{ .module = counted, .layout = layout, .pass = pass, .multisample = &four, .depth = state, .width = side, .height = side });
+        try testing.expectEqual(facet.Result.success, result);
+    }
+
+    const corners, const vertices = crossedCorners();
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
+    const offset: u64 = 0;
+    const flat_colors = [3]u32{ 0xFF40_C020, 0xFF20_40E0, 0xFFE0_6010 };
+    const background: u32 = 0xFF10_2030;
+    var values = clears(background);
+    values[1] = .{ .depth_stencil = .{ .depth = 1, .stencil = 0x03 } };
+    var commands = try bench.record();
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = cleared.?, .framebuffer = frame, .render_area = .{ .extent = .{ .width = side, .height = side } }, .clear_value_count = 2, .clear_values = &values }, .@"inline");
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    for (0..2) |t| {
+        fb.CmdBindPipeline(commands, .graphics, pipelines[t].?);
+        fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &flat_colors[t]);
+        fb.CmdDraw(commands, 3, 1, @intCast(t * 3), 0);
+    }
+    fb.CmdEndRenderPass(commands);
+    try bench.submit();
+
+    // Each sample's stencil, depth and colour as worked out here, and
+    // each of the five ways a sample can end up found somewhere.
+    var outcomes: [5]u32 = @splat(0);
+    var split: u32 = 0;
+    for (0..side) |row| for (0..side) |column| {
+        const x: u32 = @intCast(column);
+        const y: u32 = @intCast(row);
+        const first = samplesCovered(corners[0], x, y);
+        const second = samplesCovered(corners[1], x, y);
+        var ends: u2 = 0;
+        for (0..4) |s| {
+            const sample: u32 = @intCast(s);
+            const bit = @as(u4, 1) << @intCast(s);
+            var stencil: u8 = 0x03;
+            var depth: u16 = 0xFFFF;
+            var color = background;
+            if (first & bit != 0) {
+                stencil = 0x10;
+                depth = unitsOf(depthThere(corners[0], crossed_depths[0], samplePlace(x, y, sample)));
+                color = flat_colors[0];
+            }
+            if (second & bit != 0) {
+                const value = unitsOf(depthThere(corners[1], crossed_depths[1], samplePlace(x, y, sample)));
+                if (stencil != 0x10) {
+                    stencil = ~stencil;
+                } else if (value >= depth) {
+                    stencil = 0;
+                    ends |= 1;
+                } else {
+                    stencil = 0x11;
+                    depth = value;
+                    color = flat_colors[1];
+                    ends |= 2;
+                }
+            }
+            const outcome: usize = switch (stencil) {
+                0x03 => 0,
+                0x10 => 1,
+                0xFC => 2,
+                0x00 => 3,
+                else => 4,
+            };
+            outcomes[outcome] += 1;
+            try testing.expectEqual(color, sampleTexel(colors, sample, 0, x, y).*);
+            const bytes = sampleDepthBytes(depths, 4, sample, x, y);
+            try testing.expectEqual(stencil, bytes[2]);
+            const found = std.mem.readInt(u16, bytes[0..2], .little);
+            if (depth == 0xFFFF) try testing.expectEqual(depth, found) else try testing.expectApproxEqAbs(@as(f64, @floatFromInt(depth)), @as(f64, @floatFromInt(found)), 1);
+        }
+        split += @intFromBool(ends == 3);
+    };
+    for (outcomes) |count| try testing.expect(count > 0);
+    try testing.expect(split > 0);
+
+    // The second pass loads both, and the third triangle is drawn where
+    // the stencil it loaded is 0x11, each sample by its own: its colour
+    // there, and everything else as the first pass left it.
+    const kept_colors = try testing.allocator.dupe(u8, colors.data.?[0..@intCast(colors.bytes)]);
+    defer testing.allocator.free(kept_colors);
+    const kept_depths = try testing.allocator.dupe(u8, depths.data.?[0..@intCast(depths.bytes)]);
+    defer testing.allocator.free(kept_depths);
+    commands = try bench.record();
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = loaded.?, .framebuffer = frame, .render_area = .{ .extent = .{ .width = side, .height = side } } }, .@"inline");
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdBindPipeline(commands, .graphics, pipelines[2].?);
+    fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &flat_colors[2]);
+    fb.CmdDraw(commands, 3, 1, 6, 0);
+    fb.CmdEndRenderPass(commands);
+    try bench.submit();
+    var mixed: u32 = 0;
+    for (0..side) |row| for (0..side) |column| {
+        const x: u32 = @intCast(column);
+        const y: u32 = @intCast(row);
+        const third = samplesCovered(corners[2], x, y);
+        var ends: u2 = 0;
+        for (0..4) |s| {
+            const sample: u32 = @intCast(s);
+            const color_at = @intFromPtr(sampleTexel(colors, sample, 0, x, y)) - @intFromPtr(colors.data.?);
+            const depth_at = @intFromPtr(sampleDepthBytes(depths, 4, sample, x, y)) - @intFromPtr(depths.data.?);
+            const covered = third >> @intCast(s) & 1 != 0;
+            const drawn = covered and kept_depths[depth_at + 2] == 0x11;
+            if (covered) ends |= @as(u2, if (drawn) 2 else 1);
+            const color = if (drawn) flat_colors[2] else std.mem.readInt(u32, kept_colors[color_at..][0..4], .little);
+            try testing.expectEqual(color, sampleTexel(colors, sample, 0, x, y).*);
+            try testing.expectEqualSlices(u8, kept_depths[depth_at..][0..3], sampleDepthBytes(depths, 4, sample, x, y)[0..3]);
+        }
+        mixed += @intFromBool(ends == 3);
+    };
+    try testing.expect(mixed > 0);
+}
+
+test "four samples a pixel under the depth clamp: each sample's depth taken at its own place and held inside the viewport's range" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
+    physical.can.multisampling = true;
+    defer physical.can.multisampling = false;
+    const image_zig = @import("../image/_image.zig");
+
+    const side = 128;
+    const color_made, const color_view = try bench.image(.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = side, .height = side, .depth = 1 }, .samples = 4, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, false);
+    const colors = _objects.of(image_zig.Image, color_made);
+    const depth_made, const depth_view = try bench.image(.{ .format = .d16_unorm, .extent = .{ .width = side, .height = side, .depth = 1 }, .samples = 4, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT }, false);
+    const depths = _objects.of(image_zig.Image, depth_made);
+    const depth = facet.AttachmentDescription{ .format = .d16_unorm, .samples = 4, .load_op = .clear, .store_op = .store, .final_layout = .depth_stencil_attachment_optimal };
+    const made, const pass = samplesPass(&bench, &.{ fourSamples(.clear), depth }, null, 1);
+    defer fb.DestroyRenderPass(device, pass);
+    try testing.expectEqual(facet.Result.success, made);
+    const frame = try framebuffer(&bench, pass.?, &.{ color_view, depth_view }, side, side);
+    defer fb.DestroyFramebuffer(device, frame);
+    const counted = try module(&bench, &Counted.code);
+    defer fb.DestroyShaderModule(device, counted);
+    const layout = try pipelineLayout(&bench, &.{}, 4);
+    defer fb.DestroyPipelineLayout(device, layout);
+    const four = facet.PipelineMultisampleStateCreateInfo{ .rasterization_samples = 4 };
+
+    // The viewport's depth range is 0.3 to 0.7, and the triangle's depths
+    // run from in front of its near plane to past its far one: it is
+    // drawn whole, and each sample's depth is held between the two.
+    const less = facet.PipelineDepthStencilStateCreateInfo{ .depth_test_enable = true, .depth_write_enable = true, .depth_compare_op = .less };
+    const result, const pipeline = makePipeline(&bench, .{ .module = counted, .layout = layout, .pass = pass.?, .multisample = &four, .depth = less, .raster = .{ .depth_clamp_enable = true }, .min_depth = 0.3, .max_depth = 0.7, .width = side, .height = side });
+    defer fb.DestroyPipeline(device, pipeline);
+    try testing.expectEqual(facet.Result.success, result);
+
+    const corners, var vertices = crossedCorners();
+    const reaching = [3]f32{ -0.6, 0.5, 1.7 };
+    for (vertices[0..3], reaching) |*vertex, z| vertex[2] = z;
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
+    const offset: u64 = 0;
+    const color: u32 = 0xFF40_C020;
+    const background: u32 = 0xFF10_2030;
+    const values = clears(background);
+    const commands = try bench.record();
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass.?, .framebuffer = frame, .render_area = .{ .extent = .{ .width = side, .height = side } }, .clear_value_count = 2, .clear_values = &values }, .@"inline");
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdBindPipeline(commands, .graphics, pipeline.?);
+    fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &color);
+    fb.CmdDraw(commands, 3, 1, 0, 0);
+    fb.CmdEndRenderPass(commands);
+    try bench.submit();
+
+    // Each sample's depth is the plane through the corners' depths in the
+    // viewport's range at the sample's own place, to the nearest unit, held
+    // between the range's ends, each also to the nearest unit. Some
+    // samples are held at either end, and some lie between them.
+    var in_range: [3]f32 = undefined;
+    for (&in_range, reaching) |*z, given| z.* = 0.3 + given * 0.4;
+    const low: u16 = @intFromFloat(@round(@as(f32, 0.3) * 65535));
+    const high: u16 = @intFromFloat(@round(@as(f32, 0.7) * 65535));
+    var at_ends = [2]u32{ 0, 0 };
+    var between: u32 = 0;
+    for (0..side) |row| for (0..side) |column| {
+        const x: u32 = @intCast(column);
+        const y: u32 = @intCast(row);
+        const bits = samplesCovered(corners[0], x, y);
+        for (0..4) |s| {
+            const sample: u32 = @intCast(s);
+            const covered = bits >> @intCast(s) & 1 != 0;
+            try testing.expectEqual(if (covered) color else background, sampleTexel(colors, sample, 0, x, y).*);
+            const found = std.mem.readInt(u16, sampleDepthBytes(depths, 2, sample, x, y)[0..2], .little);
+            if (!covered) {
+                try testing.expectEqual(@as(u16, 0xFFFF), found);
+                continue;
+            }
+            const want = std.math.clamp(unitsOf(depthThere(corners[0], in_range, samplePlace(x, y, sample))), low, high);
+            try testing.expectApproxEqAbs(@as(f64, @floatFromInt(want)), @as(f64, @floatFromInt(found)), 1);
+            if (want == low) at_ends[0] += 1 else if (want == high) at_ends[1] += 1 else between += 1;
+        }
+    };
+    try testing.expect(at_ends[0] > 0 and at_ends[1] > 0 and between > 0);
 }
 
 /// A render pass whose depth attachment is kept: read as each tile starts
@@ -12189,11 +12765,16 @@ test "a framebuffer's other layers of four samples a pixel cleared in every samp
         try testing.expectEqual(marked, bytes[3]);
     };
     // The first layer's colour, every sample of it, is the tiles' (since
-    // 1.103). Its depth and stencil are the tiles' too, and in sample 0's
-    // plane alone until the tiles hold four of each (step K3 of item 61).
+    // 1.103), and so are its depth and stencil, every sample of each in a
+    // plane of its own (since 1.105): the clears inside the area, the
+    // marks outside it.
     for (0..4) |s| for (0..side) |y| for (0..side) |x| {
         const inside = x >= 8 and x < 56 and y >= 4 and y < 56;
         const want: u32 = if (inside) background else 0xEEEE_EEEE;
         try testing.expectEqual(want, sampleTexel(kept_colors, @intCast(s), 0, @intCast(x), @intCast(y)).*);
+        const bytes = sampleDepthBytes(kept_depths, 4, @intCast(s), @intCast(x), @intCast(y));
+        try testing.expectEqual(if (inside) quarter else @as(u16, 0xEEEE), std.mem.readInt(u16, bytes[0..2], .little));
+        try testing.expectEqual(if (inside) @as(u8, 0x5A) else marked, bytes[2]);
+        try testing.expectEqual(marked, bytes[3]);
     };
 }

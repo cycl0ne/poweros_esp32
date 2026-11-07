@@ -381,7 +381,8 @@ const Aspect = enum { depth, stencil };
 
 /// The same `layer` layers past the one the view begins at (since 1.91),
 /// in sample `sample`'s plane of a multisampled image, laid out as a
-/// colour image's are (since 1.104).
+/// colour image's are (since 1.104); the tiles reach those past sample
+/// 0's by `sample_bytes` (since 1.105).
 fn planeAt(held: *const _image.ImageView, which: Aspect, layer: u32, sample: u32) ?raster.Attachments.Plane {
     const image = held.image;
     const format = image.format;
@@ -397,7 +398,7 @@ fn planeAt(held: *const _image.ImageView, which: Aspect, layer: u32, sample: u32
     // framebuffer's view begins at, in that level's own rows.
     const rows = _image.rowsAt(image, held.base_level, held.base_layer + layer);
     const plane = @as(usize, sample) * @as(usize, @intCast(image.sample_bytes));
-    return .{ .pixels = data + plane + rows.at + at, .pitch = rows.pitch, .stride = stride };
+    return .{ .pixels = data + plane + rows.at + at, .pitch = rows.pitch, .stride = stride, .sample_bytes = @intCast(image.sample_bytes) };
 }
 
 /// The layers of a framebuffer past its first, cleared as a part begins where

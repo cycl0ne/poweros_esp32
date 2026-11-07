@@ -452,4 +452,26 @@ pub const Depth = struct {
         const value = depth.plane.at(@floatFromInt(x), @floatFromInt(y));
         return @intFromFloat(std.math.clamp(value, -4 * units, 4 * units) * (1 << fraction));
     }
+
+    /// At the sample of pixel (x, y) `offset` from its centre, in
+    /// 1/256ths of a pixel (`sampleOffsets`), held as `at` holds a
+    /// centre's: the plane at the sample's own place, as llvmpipe
+    /// interpolates the depth at each sample to test it
+    /// (lp_state_fs.c:946-956). (Since 1.105.)
+    pub inline fn atSample(depth: Depth, x: u32, y: u32, offset: [2]i64) i64 {
+        const value = depth.plane.at(placeOf(x, offset[0]), placeOf(y, offset[1]));
+        return @intFromFloat(std.math.clamp(value, 0, units + 0.5) * (1 << fraction));
+    }
+
+    /// The same held as `atFree` holds a centre's. (Since 1.105.)
+    pub inline fn atSampleFree(depth: Depth, x: u32, y: u32, offset: [2]i64) i64 {
+        const value = depth.plane.at(placeOf(x, offset[0]), placeOf(y, offset[1]));
+        return @intFromFloat(std.math.clamp(value, -4 * units, 4 * units) * (1 << fraction));
+    }
 };
+
+/// A pixel's column or row, and a sample's offset from its centre along
+/// it in 1/256ths of a pixel: where the sample is, in pixels.
+inline fn placeOf(at: u32, offset: i64) f64 {
+    return @as(f64, @floatFromInt(at)) + @as(f64, @floatFromInt(offset)) / 256;
+}

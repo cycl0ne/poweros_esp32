@@ -2366,4 +2366,94 @@ pub const LIBRARY_VERSION = 1;
 /// - for each of the two, its colour, or its depth and stencil, cleared in
 ///   one sample;
 /// - a sample's plane not reached by `surfaceAt`, or by `planeAt`.
-pub const LIBRARY_REVISION = 104;
+///
+/// 105: **The cores test four samples a pixel in depth and in stencil,
+/// each sample in planes of its own and at its own place in the pixel.**
+///
+/// Step K3 of item 61 of docs/facet-vulkan10.md. No device draws four
+/// samples yet: the capability stays off until K7, and the tests turn it
+/// on.
+///
+/// A frame of four samples keeps samples 1 to 3 of the depth and of the
+/// stencil in planes of their own (`Tile.depthPlane`,
+/// `Tile.stencilPlane`). They sit after the colour samples' planes, in the
+/// block each part has beside its buffer. Each is cleared, loaded and
+/// stored on its own, from and into its own plane of the image
+/// (`Attachments.Plane.sample_bytes`), as each colour sample's has been
+/// since 1.103. A frame of one sample is laid out as before.
+///
+/// A sample's depth is the triangle's plane at the sample's own place,
+/// stepped along the row from where that sample's own run starts
+/// (`Depth.atSample`, `sampleDepths`). llvmpipe likewise interpolates the
+/// depth at each sample's position (lp_state_fs.c:946-956), and holds it
+/// in the range as a pixel's is held (:970, :350-400). Each sample is then
+/// tested in its own planes, the stencil and then the depth, by the
+/// pipeline's ops, as a pixel is at one sample: llvmpipe runs its early
+/// depth and stencil test once for each sample (lp_state_fs.c:907). Only
+/// the samples that pass have their colour written and are counted. A
+/// pixel is shaded where any is left, under their masks ORed together
+/// (:1047-1050), and a quad with none left is not shaded at all.
+///
+/// A form that drops pixels holds its depths back for after its fragment
+/// function, sixteen a quad at four samples (`Tile.batch_depths`), and
+/// then writes each sample's depth for the pixels the function left.
+/// llvmpipe writes each sample's depth after its shader, under that
+/// sample's mask ANDed with the shader's (lp_state_fs.c:1321-1334,
+/// :1426-1440).
+///
+/// At one sample a pixel nothing changes. 360 triangles went through nine
+/// pipelines into a depth beside a stencil, under an occlusion query, and
+/// came out the same bytes before and after. The pipelines test less and
+/// less-or-equal, ask for the pre-pass, add, replace the stencil and then
+/// test it, clamp the depth inside a narrow viewport range, test depth
+/// bounds, drop pixels, and mask every sample away.
+///
+/// Three tests turn the capability on and draw into images of four
+/// samples. Each works out every sample's value from the triangles'
+/// corners and depths at that sample's own place, and holds the sample to
+/// it:
+/// - Two triangles cross, along a line that runs through pixels. Some
+///   pixels' samples go to both. Some samples go to the triangle a test at
+///   the centre would not have picked. The first triangle is a cut-out
+///   that drops every other four columns, so its depths wait for its
+///   fragment function. The second's quads are counted as they are shaded,
+///   and those wholly behind the first are not. A second pass loads both
+///   attachments and draws a flat triangle against each sample's loaded
+///   depth. All of this runs for a depth alone and for one beside a
+///   stencil, whose planes keep their clear.
+/// - The stencil: the first triangle replaces it, and the second tests it
+///   and inverts, zeroes or increments it, each sample by its own depth
+///   test. All five outcomes are found. A second pass loads, and draws
+///   where the stencil it loaded says.
+/// - Under the depth clamp, a triangle's depths run past both ends of a
+///   narrow viewport range. Some samples are held at either end, and some
+///   lie between them.
+///
+/// 1.103's test of colour attachments drawn together now has a depth of
+/// four samples beside them. 1.104's test of layers now holds the first
+/// layer's depth and stencil in every sample. A test of `target.zig` lays
+/// out a part's block at one sample and at four, for one to four colour
+/// attachments. It holds everything a tile is handed past its buffer
+/// inside the block, and apart from everything else. On the board the
+/// parts draw at once, so a block too small runs into the next part's. The
+/// host tests draw one part after another and would not see it: two of
+/// the changes below passed every draw test before this one was written.
+///
+/// Each of twenty-seven changes put back fails one of them:
+/// - each sample's depth or stencil cleared, loaded or stored as sample
+///   0's; an image's pixel taken without its sample's plane, or `planeAt`
+///   giving none;
+/// - the depth planes laid over the colour samples', the stencil's over
+///   the depth's, a batch's depths over the stencil's, or the colours past
+///   the first over a batch's depths;
+/// - a part's block without room for the samples' depths and stencils, or
+///   for a batch's depths;
+/// - each sample's depth taken at the pixel's centre, with the clamp or
+///   without it, or from sample 0's run;
+/// - each sample tested at sample 0's depth, against sample 0's stored
+///   depth, or in sample 0's stencil;
+/// - the samples, or the pixels shaded, not cut by the tests;
+/// - a held depth held as sample 0's, written into sample 0's plane,
+///   written for every pixel, or read as sample 0's;
+/// - a clamped depth not held inside the viewport's range.
+pub const LIBRARY_REVISION = 105;

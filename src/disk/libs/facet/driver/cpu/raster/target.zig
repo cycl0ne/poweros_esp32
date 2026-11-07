@@ -26,6 +26,12 @@
 //! each pixel's depth and stencil beside each other, which the planes'
 //! `stride` says.
 //!
+//! A frame of four samples a pixel keeps sample 0 of each in the buffer,
+//! as a frame of one does, and samples 1 to 3 in planes of their own
+//! beside it: of every colour attachment since 1.103, and of the depth
+//! and the stencil since 1.105. Each is cleared, loaded and stored on
+//! its own, from and into its own plane of the image.
+//!
 //! The tiles are handed on once all of them are in the surface, in a
 //! second round shared out the same way. On the JH7110 handing on is the
 //! L2's write-back of the tile's lines, one line after the other, and a
@@ -52,6 +58,11 @@ const Header = bins.Header;
 pub const tile_size = 64;
 const tile_pixels = tile_size * tile_size;
 
+/// The words of a plane of depth in a tile, 16 bits a pixel, and of one
+/// of stencil, a byte. (Since 1.105.)
+const depth_plane_words = tile_pixels / 2;
+const stencil_plane_words = tile_pixels / 4;
+
 /// The most parts a frame's tiles are shared between: a buffer each.
 pub const most_parts = 4;
 
@@ -67,6 +78,14 @@ pub const most_colors = 4;
 /// one run: a tile hands out its part's own rather than growing every
 /// worker's stack by it. (Since 1.51.)
 pub const batch_color_words = 64 * 4;
+
+/// The words a batch of quads' depths take at four samples a pixel,
+/// held for a fragment function that may drop pixels: sixteen 16-bit
+/// depths a quad, as many quads as a batch holds (`batched.batch_quads`,
+/// which a comptime check there holds to this). A tile hands out its
+/// part's own, as it does the colours of several attachments, rather
+/// than the worker's stack growing by them. (Since 1.105.)
+pub const batch_depth_words = 64 * 16 / 2;
 
 /// The cache line a tile's rows start on.
 const line_bytes = 64;
@@ -353,7 +372,8 @@ pub const Attachments = struct {
 
     pub const Depth = struct {
         /// Whether triangles are tested against a depth: 16 bits a pixel,
-        /// 0 nearest, set to `clear` as each tile starts.
+        /// a sample's at four samples a pixel (since 1.105), 0 nearest,
+        /// set to `clear` as each tile starts.
         used: bool = false,
         clear: u16 = 0xFFFF,
         /// Where the depth outlives the frame: the image's rows, 16 bits a
@@ -377,11 +397,15 @@ pub const Attachments = struct {
         pixels: [*]u8,
         pitch: u32,
         stride: u32,
+        /// From one sample's plane to the next, as a surface's
+        /// (`Surface.sample_bytes`). (Since 1.105.)
+        sample_bytes: usize = 0,
     };
 
     pub const Stencil = struct {
-        /// Whether a test may read it: 8 bits a pixel, set to `clear` as each
-        /// tile starts.
+        /// Whether a test may read it: 8 bits a pixel, a sample's at four
+        /// samples a pixel (since 1.105), set to `clear` as each tile
+        /// starts.
         used: bool = false,
         clear: u8 = 0,
         /// Where the stencil outlives the frame: the image's rows, a byte a
@@ -444,7 +468,8 @@ const TileState = struct {
 /// a word. The colour attachments past the first, where a frame draws
 /// several together, have planes of their own outside it
 /// (`Target.extras`), and so do the samples past the first of a frame
-/// of four (since 1.103): the one colour a frame usually draws keeps
+/// of four, of the colours (since 1.103) and of the depth and the
+/// stencil (since 1.105): the one colour a frame usually draws keeps
 /// the buffer the 24 KiB it was, and the cache with it.
 const Buffer = extern struct {
     color: [tile_pixels]u32 align(line_bytes),
@@ -473,6 +498,16 @@ pub const Tile = struct {
     /// 1.103.)
     sample_planes: ?[*]u32 = null,
     samples: u32 = 1,
+    /// The planes of samples 1 to `samples` - 1 of the depth, 16 bits a
+    /// pixel, and of the stencil, a byte, `tile_pixels` of them each;
+    /// null at one sample a pixel. (Since 1.105.)
+    depth_planes: ?[*]u16 = null,
+    stencil_planes: ?[*]u8 = null,
+    /// A batch's depths at more than one sample a pixel, held for a
+    /// fragment function that may drop pixels (`batch_depth_words`):
+    /// sample s of a quad's pixel i at 4s + i. Null at one, whose batch
+    /// holds its own. (Since 1.105.)
+    batch_depths: ?[*][16]u16 = null,
     /// The grid square's number, row by row.
     index: u32,
     /// The grid square's top left on the surface.
@@ -534,6 +569,30 @@ pub const Tile = struct {
     /// Row `y` of the tile's stencil, from its left.
     pub inline fn stencilRow(tile: *const Tile, y: u32) [*]u8 {
         return tile.buffer.stencil[y * tile_size ..].ptr;
+    }
+
+    /// Sample `sample`'s plane of the depth, 64 x 64: the buffer's own
+    /// for 0, one of `depth_planes` for the others. (Since 1.105.)
+    pub inline fn depthPlane(tile: *const Tile, sample: u32) [*]u16 {
+        if (sample == 0) return &tile.buffer.depth;
+        return tile.depth_planes.? + (sample - 1) * tile_pixels;
+    }
+
+    /// The same of the stencil. (Since 1.105.)
+    pub inline fn stencilPlane(tile: *const Tile, sample: u32) [*]u8 {
+        if (sample == 0) return &tile.buffer.stencil;
+        return tile.stencil_planes.? + (sample - 1) * tile_pixels;
+    }
+
+    /// Row `y` of sample `sample`'s depth, from its left. (Since 1.105.)
+    pub inline fn depthRowOf(tile: *const Tile, sample: u32, y: u32) [*]u16 {
+        return tile.depthPlane(sample) + y * tile_size;
+    }
+
+    /// Row `y` of sample `sample`'s stencil, from its left. (Since
+    /// 1.105.)
+    pub inline fn stencilRowOf(tile: *const Tile, sample: u32, y: u32) [*]u8 {
+        return tile.stencilPlane(sample) + y * tile_size;
     }
 };
 
@@ -675,11 +734,15 @@ pub const Target = struct {
 
     /// The words one part takes for `planes` extra planes, for samples 1
     /// to `samples` - 1 of each of those and the first's (since 1.103),
-    /// and for the batch colours of the attachments: 0 for a frame of
-    /// the one colour at one sample a pixel. The one colour a draw
-    /// usually writes has its batch's colours on the worker's stack.
+    /// of the depth and of the stencil, with a batch's depths at that
+    /// many samples (since 1.105), and for the batch colours of the
+    /// attachments: 0 for a frame of the one colour at one sample a
+    /// pixel. The one colour a draw usually writes has its batch's
+    /// colours on the worker's stack.
     fn wordsOf(planes: u32, samples: u32) usize {
-        const sample_words = @as(usize, planes + 1) * (samples - 1) * tile_pixels;
+        const room: usize = samples - 1;
+        const held: usize = if (room == 0) 0 else batch_depth_words;
+        const sample_words = (@as(usize, planes + 1) * tile_pixels + depth_plane_words + stencil_plane_words) * room + held;
         if (planes == 0) return sample_words;
         return @as(usize, planes) * tile_pixels + sample_words + @as(usize, planes + 1) * batch_color_words;
     }
@@ -853,17 +916,26 @@ pub const Target = struct {
         const x = target.grid_x + index % target.columns * tile_size;
         const y = target.grid_y + index / target.columns * tile_size;
         const area = target.area;
-        // This part's block: its extra planes, its samples' planes, then
-        // its batch colours.
+        // This part's block: its extra planes; its samples' planes of
+        // colour, then of depth and of stencil, and its batch's depths
+        // at those samples; then its batch colours.
         const block = if (target.extras) |first| first + @as(usize, part) * target.partWords() else null;
-        const planes = target.extra_planes;
+        const planes: usize = target.extra_planes;
         const samples = target.attachments.samples;
+        const room: usize = target.sample_room - 1;
+        const depths_at = (planes + (planes + 1) * room) * tile_pixels;
+        const stencils_at = depths_at + room * depth_plane_words;
+        const held_at = stencils_at + room * stencil_plane_words;
+        const colors_at = held_at + @as(usize, if (room == 0) 0 else batch_depth_words);
         return .{
             .buffer = &target.buffers[part],
             .extras = if (planes == 0) null else block,
             .sample_planes = if (samples == 1) null else block.? + planes * tile_pixels,
             .samples = samples,
-            .extra_colors = if (planes == 0) null else @ptrCast(@alignCast(block.? + (planes + (planes + 1) * (target.sample_room - 1)) * tile_pixels)),
+            .depth_planes = if (samples == 1) null else @ptrCast(block.? + depths_at),
+            .stencil_planes = if (samples == 1) null else @ptrCast(block.? + stencils_at),
+            .batch_depths = if (samples == 1) null else @ptrCast(block.? + held_at),
+            .extra_colors = if (planes == 0) null else @ptrCast(@alignCast(block.? + colors_at)),
             .index = index,
             .x = x,
             .y = y,
@@ -877,7 +949,6 @@ pub const Target = struct {
     /// One tile: started as the attachments say, drawn, and written into
     /// the surface.
     fn drawTile(target: *Target, tile: *const Tile) void {
-        const buffer = tile.buffer;
         const colors = target.colorCount();
         var output: u32 = 0;
         while (output < colors) : (output += 1) {
@@ -887,16 +958,23 @@ pub const Target = struct {
                 .keep => target.load(tile, output, sample),
             };
         }
+        // The depth and the stencil, each sample's plane (since 1.105).
         const depth = &target.attachments.depth;
-        if (depth.used) switch (depth.load) {
-            .clear => @memset(&buffer.depth, depth.clear),
-            .keep => target.loadDepth(tile),
-        };
+        if (depth.used) {
+            var sample: u32 = 0;
+            while (sample < tile.samples) : (sample += 1) switch (depth.load) {
+                .clear => @memset(tile.depthPlane(sample)[0..tile_pixels], depth.clear),
+                .keep => target.loadDepth(tile, sample),
+            };
+        }
         const stencil = &target.attachments.stencil;
-        if (stencil.used) switch (stencil.load) {
-            .clear => @memset(&buffer.stencil, stencil.clear),
-            .keep => target.loadStencil(tile),
-        };
+        if (stencil.used) {
+            var sample: u32 = 0;
+            while (sample < tile.samples) : (sample += 1) switch (stencil.load) {
+                .clear => @memset(tile.stencilPlane(sample)[0..tile_pixels], stencil.clear),
+                .keep => target.loadStencil(tile, sample),
+            };
+        }
         const state = &target.tiles[tile.index];
         // The triangles at the head of the list that ask for the depth
         // pre-pass are shaded where their depth was left, the rest as
@@ -915,8 +993,14 @@ pub const Target = struct {
             var sample: u32 = 0;
             while (sample < tile.samples) : (sample += 1) target.store(tile, output, sample);
         }
-        if (depth.store) target.storeDepth(tile);
-        if (stencil.store) target.storeStencil(tile);
+        if (depth.store) {
+            var sample: u32 = 0;
+            while (sample < tile.samples) : (sample += 1) target.storeDepth(tile, sample);
+        }
+        if (stencil.store) {
+            var sample: u32 = 0;
+            while (sample < tile.samples) : (sample += 1) target.storeStencil(tile, sample);
+        }
     }
 
     /// The depth pre-pass's first pass (prepass.zig): the depth of the
@@ -971,17 +1055,18 @@ pub const Target = struct {
     }
 
     /// The depth plane under the tile, into its buffer: what a pass whose
-    /// depth attachment loads starts from.
-    fn loadDepth(target: *Target, tile: *const Tile) void {
+    /// depth attachment loads starts from. Sample `sample`'s of each
+    /// (since 1.105).
+    fn loadDepth(target: *Target, tile: *const Tile, sample: u32) void {
         const plane = target.attachments.depth.plane orelse {
-            @memset(&tile.buffer.depth, target.attachments.depth.clear);
+            @memset(tile.depthPlane(sample)[0..tile_pixels], target.attachments.depth.clear);
             return;
         };
         var row = tile.top;
         while (row < tile.bottom) : (row += 1) {
             const count = tile.right - tile.left;
-            const from = pixelOf(plane, tile.x + tile.left, tile.y + row);
-            const into = tile.depthRow(row) + tile.left;
+            const from = pixelOf(plane, sample, tile.x + tile.left, tile.y + row);
+            const into = tile.depthRowOf(sample, row) + tile.left;
             // Depth alone lies as the tile's own does, so a row is one
             // copy; beside a stencil it is every other pixel.
             if (plane.stride == 2) {
@@ -993,14 +1078,15 @@ pub const Target = struct {
         }
     }
 
-    /// The tile's depth, into the plane: what outlives the frame.
-    fn storeDepth(target: *Target, tile: *const Tile) void {
+    /// The tile's depth, into the plane: what outlives the frame. Sample
+    /// `sample`'s of each (since 1.105).
+    fn storeDepth(target: *Target, tile: *const Tile, sample: u32) void {
         const plane = target.attachments.depth.plane orelse return;
         var row = tile.top;
         while (row < tile.bottom) : (row += 1) {
             const count = tile.right - tile.left;
-            const into = pixelOf(plane, tile.x + tile.left, tile.y + row);
-            const from = tile.depthRow(row) + tile.left;
+            const into = pixelOf(plane, sample, tile.x + tile.left, tile.y + row);
+            const from = tile.depthRowOf(sample, row) + tile.left;
             if (plane.stride == 2) {
                 @memcpy(into[0 .. count * 2], @as([*]const u8, @ptrCast(from))[0 .. count * 2]);
             } else for (0..count) |k| {
@@ -1012,17 +1098,18 @@ pub const Target = struct {
     }
 
     /// The stencil plane under the tile, into its buffer: a byte a pixel,
-    /// what a pass whose stencil loads starts from.
-    fn loadStencil(target: *Target, tile: *const Tile) void {
+    /// what a pass whose stencil loads starts from. Sample `sample`'s of
+    /// each (since 1.105).
+    fn loadStencil(target: *Target, tile: *const Tile, sample: u32) void {
         const plane = target.attachments.stencil.plane orelse {
-            @memset(&tile.buffer.stencil, target.attachments.stencil.clear);
+            @memset(tile.stencilPlane(sample)[0..tile_pixels], target.attachments.stencil.clear);
             return;
         };
         var row = tile.top;
         while (row < tile.bottom) : (row += 1) {
             const count = tile.right - tile.left;
-            const from = pixelOf(plane, tile.x + tile.left, tile.y + row);
-            const into = tile.stencilRow(row) + tile.left;
+            const from = pixelOf(plane, sample, tile.x + tile.left, tile.y + row);
+            const into = tile.stencilRowOf(sample, row) + tile.left;
             if (plane.stride == 1) {
                 @memcpy(into[0..count], from[0..count]);
             } else for (0..count) |k| {
@@ -1032,13 +1119,14 @@ pub const Target = struct {
     }
 
     /// The tile's stencil, into the plane: what outlives the frame.
-    fn storeStencil(target: *Target, tile: *const Tile) void {
+    /// Sample `sample`'s of each (since 1.105).
+    fn storeStencil(target: *Target, tile: *const Tile, sample: u32) void {
         const plane = target.attachments.stencil.plane orelse return;
         var row = tile.top;
         while (row < tile.bottom) : (row += 1) {
             const count = tile.right - tile.left;
-            const into = pixelOf(plane, tile.x + tile.left, tile.y + row);
-            const from = tile.stencilRow(row) + tile.left;
+            const into = pixelOf(plane, sample, tile.x + tile.left, tile.y + row);
+            const from = tile.stencilRowOf(sample, row) + tile.left;
             if (plane.stride == 1) {
                 @memcpy(into[0..count], from[0..count]);
             } else for (0..count) |k| {
@@ -1047,10 +1135,11 @@ pub const Target = struct {
         }
     }
 
-    /// The plane's pixel at column `x` of row `y`: its own bytes, the
-    /// plane's first byte being the first pixel's.
-    inline fn pixelOf(plane: Attachments.Plane, x: u32, y: u32) [*]u8 {
-        return plane.pixels + @as(usize, y) * plane.pitch + @as(usize, x) * plane.stride;
+    /// The plane's pixel at column `x` of row `y`, of sample `sample`'s
+    /// plane: its own bytes, the plane's first byte being the first
+    /// pixel's of sample 0.
+    inline fn pixelOf(plane: Attachments.Plane, sample: u32, x: u32, y: u32) [*]u8 {
+        return plane.pixels + sample * plane.sample_bytes + @as(usize, y) * plane.pitch + @as(usize, x) * plane.stride;
     }
 
     /// Colour attachment `output`'s surface, at column `x` of row `y` of
@@ -1096,4 +1185,62 @@ fn touches(triangle: *const Header, x: u32, y: u32) bool {
         if (edge.at(corner_x, corner_y) + edge.inmost < 0) return false;
     }
     return true;
+}
+
+test "a part's block holds everything a tile is handed past its buffer, and nothing lies over anything else: at one sample a pixel and at four, for each count of colour attachments" {
+    const testing = @import("std").testing;
+    const Memory = struct {
+        fn allocate(context: ?*anyopaque, bytes: usize) ?[*]u8 {
+            _ = context;
+            const made = testing.allocator.alloc(u8, bytes) catch return null;
+            return made.ptr;
+        }
+        fn free(context: ?*anyopaque, memory: [*]u8, bytes: usize) void {
+            _ = context;
+            testing.allocator.free(memory[0..bytes]);
+        }
+        fn handOn(context: ?*anyopaque, area: Rect) void {
+            _ = context;
+            _ = area;
+        }
+        fn addressOf(pointer: anytype) ?usize {
+            return if (pointer) |at| @intFromPtr(at) else null;
+        }
+    };
+    const host = Host{ .share = &Host.oneAfterAnother, .hand_on = &Memory.handOn, .allocate = &Memory.allocate, .free = &Memory.free };
+    var pixels: [most_colors][tile_pixels]u32 = undefined;
+    var surfaces: [most_colors]Surface = undefined;
+    for (&surfaces, &pixels) |*surface, *plane| surface.* = .{ .pixels = @ptrCast(plane), .pitch = tile_size * 4, .width = tile_size, .height = tile_size, .format = .bgra32 };
+    const area = Rect{ .width = tile_size, .height = tile_size };
+    // The parts draw at once on the board, each in its own block, one
+    // after another in the target's memory: a block that holds less than
+    // its tiles are handed runs into the next part's, which a test whose
+    // parts draw one after another never sees.
+    for ([2]u32{ 1, 4 }) |samples| for (1..most_colors + 1) |colors| {
+        var target = try Target.initAll(host, surfaces[0..colors], area, .{ .color_count = @intCast(colors), .samples = samples });
+        defer target.deinit();
+        const words = target.partWords();
+        const room: usize = samples - 1;
+        const planes: usize = colors - 1;
+        for (0..most_parts) |part| {
+            const tile = target.tileAt(0, @intCast(part));
+            const handed = [_]struct { ?usize, usize }{
+                .{ Memory.addressOf(tile.extras), planes * tile_pixels * 4 },
+                .{ Memory.addressOf(tile.sample_planes), (planes + 1) * room * tile_pixels * 4 },
+                .{ Memory.addressOf(tile.depth_planes), room * tile_pixels * 2 },
+                .{ Memory.addressOf(tile.stencil_planes), room * tile_pixels },
+                .{ Memory.addressOf(tile.batch_depths), batch_depth_words * 4 },
+                .{ Memory.addressOf(tile.extra_colors), (planes + 1) * batch_color_words * 4 },
+            };
+            const block = if (target.extras) |extras| @intFromPtr(extras) + part * words * 4 else 0;
+            for (handed, 0..) |one, k| {
+                const at = one[0] orelse continue;
+                try testing.expect(at >= block and at + one[1] <= block + words * 4);
+                for (handed[k + 1 ..]) |other| {
+                    const there = other[0] orelse continue;
+                    try testing.expect(at + one[1] <= there or there + other[1] <= at);
+                }
+            }
+        }
+    };
 }
