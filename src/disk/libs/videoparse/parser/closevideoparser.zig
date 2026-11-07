@@ -8,6 +8,7 @@ const _parser = @import("_parser.zig");
 const h264 = @import("../h264/_h264.zig");
 const hevc = @import("../hevc/_hevc.zig");
 const vp9 = @import("../vp9/_vp9.zig");
+const av1 = @import("../av1/_av1.zig");
 
 /// Closes a parser.
 ///
@@ -58,5 +59,6 @@ pub fn CloseVideoParser(base: *VideoParseBase, parser: ?*vp.VideoParser) void {
     if (p.h264) |st| h264.destroy(p, st);
     if (p.hevc) |st| hevc.destroy(p, st);
     if (p.vp9) |st| vp9.destroy(p, st);
+    if (p.av1) |st| av1.destroy(p, st);
     base.sys_base.FreeVec(@ptrCast(p));
 }

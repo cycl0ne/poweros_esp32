@@ -105,6 +105,7 @@ test {
     _ = @import("libs/codecs/h264/tests/clip.zig");
     _ = @import("libs/codecs/hevc/tests/clip.zig");
     _ = @import("libs/codecs/vp9/tests/clip.zig");
+    _ = @import("libs/codecs/av1/tests/clip.zig");
     _ = @import("libs/videocodec/tests/videocodec.zig");
     _ = @import("libs/anvil/tests/anvil.zig");
     _ = @import("libs/anvil/tests/app.zig");

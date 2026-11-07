@@ -5,8 +5,10 @@
 //! the packet's next unit is read, and what that comes to goes onto the
 //! queue. A unit that needs a slot none is free for is not gone past: it
 //! is read again on the next call, the events before its stop handed out
-//! first. At the packet's end its access unit is ended (VPPKT_ACCESS_UNIT)
-//! and the stream (VPPKT_END), each once.
+//! first; nor is one that says more than the queue holds at once (an AV1
+//! frame's tiles), read on once what it said is out. At the packet's end
+//! its access unit is ended (VPPKT_ACCESS_UNIT) and the stream
+//! (VPPKT_END), each once.
 
 const sdk = @import("sdk");
 const vp = sdk.videoparse;
@@ -34,7 +36,8 @@ const _parser = @import("_parser.zig");
 /// - VPERR_FULL: a picture needs a slot and none is free; one is to be
 ///   given back with `ReleaseVideoSlot` before the next call.
 /// - VPERR_CORRUPT: a unit that is not right was passed over - or the
-///   rest of the packet, where a unit's length went past its end.
+///   rest of the packet, where a unit's length went past its end; an AV1
+///   frame whose temporal unit ended before its last tile.
 /// - VPERR_UNSUPPORTED: a unit the library does not read was passed over
 ///   (a picture larger than VPA_MaxWidth or VPA_MaxHeight).
 /// - VPERR_NOMEMORY: a unit was passed over for want of memory.
@@ -85,6 +88,29 @@ const _parser = @import("_parser.zig");
 /// not right, and so is one whose references are empty or of another
 /// depth or sampling.
 ///
+/// Of an AV1 stream (SINCE 1.2) each frame is VPEV_SEQUENCE before the
+/// first and before one of another size, depth or colour, or after a
+/// sequence header with another largest frame; VPEV_PICTURE, its
+/// `picture` holding the frame's header (`av1`), the sequence header
+/// (`av1_sequence`) and as `refs` the pictures in the eight reference
+/// slots, in their order, VP_NO_SLOT where one is empty; a VPEV_SLICE
+/// for each tile, its bytes as `unit` and `rbsp` and its number as
+/// `tile`; VPEV_DECODE after the last; then VPEV_FREE for each picture
+/// nothing holds any more. The frame a temporal unit shows - the last it
+/// shows, of a stream in layers - is VPEV_SHOW once the unit has ended:
+/// at the end of a packet marked VPPKT_ACCESS_UNIT, or else at the next
+/// temporal delimiter. Its `picture` holds the header it is shown with:
+/// the frame's own, or for a frame shown again (show_existing_frame) the
+/// one that shows it, which says the frame's type and the film grain it
+/// was stored with. A frame that is not a key frame or an intra-only one
+/// is passed over (VPERR_CORRUPT) at the start, after a reset, after a
+/// sequence header of another format and after a frame that was not
+/// right; so is one whose references are empty, of another format or a
+/// size it cannot be predicted from (more than twice its own, or less
+/// than a sixteenth), and a frame shown again that is not a key frame
+/// while one is waited for. The OBUs of other operating points than 0
+/// are passed by.
+///
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no.
@@ -101,6 +127,8 @@ const _parser = @import("_parser.zig");
 /// The pictures are numbered too (`uid`), the missing ones with them, and
 /// a number is never given twice: a list entry and a reference name their
 /// picture by it as well as by its slot, which a later picture reuses.
+/// No VPEV_SHOW comes between an AV1 frame's VPEV_PICTURE and its
+/// VPEV_DECODE.
 ///
 /// BUGS:
 /// None known.

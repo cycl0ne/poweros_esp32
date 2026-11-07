@@ -1,23 +1,25 @@
 // SPDX-License-Identifier: MIT
-//! av1.vcodec's decoder: AV1 decoded in software by the decoder built in
-//! as `av1core` (core.zig here), which takes the stream a temporal unit
-//! at a time and shows the frame each one shows.
+//! av1.vcodec's decoder: AV1 read by videoparse.library and decoded in
+//! software by the decoder built in as `av1core` (core.zig here), which
+//! takes the library's events and shows the frames they show.
 //!
 //! **The setup** - the av1C record an MP4's sample entry or a Matroska
 //! track's CodecPrivate holds - carries the sequence header, which the
-//! decoder reads when it opens; the packets of the key frames most often
+//! parser reads when it opens; the packets of the key frames most often
 //! carry it again. A track without one starts at its first key frame
 //! all the same.
 //!
 //! **A packet sent** is a temporal unit: the frames of one moment, most
 //! often hidden ones - references for the frames after them - and one
-//! shown. The decoder decodes all of it at once; the frame it shows waits
-//! until it is asked for, and while one waits another packet is refused
-//! (VCERR_FULL). One marked VCPKT_DROP, due before what is shown, is
-//! decoded for the frames after it and not handed out. A frame that is
-//! not right is passed over, and so is every frame after it until a key
-//! frame. Of a stream in layers, the last frame of each temporal unit is
-//! shown.
+//! shown. The parser reads its OBUs, the decoder decodes all of it at
+//! once; the frame it shows waits until it is asked for, and while one
+//! waits another packet is refused (VCERR_FULL). One marked VCPKT_DROP,
+//! due before what is shown, is decoded for the frames after it and not
+//! handed out. A frame that is not right is passed over, and so is every
+//! frame after it until a key frame. Of a stream in layers, the last
+//! frame of each temporal unit is shown. The decoder keeps its frames
+//! itself: each slot the library lends goes back to it as soon as the
+//! library lets go of it.
 //!
 //! **The cores**: with more than one, the decoder has a worker task on
 //! each (module.zig's `Team`): the decoder reads each frame - its headers
@@ -51,7 +53,9 @@ const exec = sdk.exec;
 const rtg = sdk.rtg;
 const vc = sdk.videocodec;
 const vcodec = sdk.vcodec;
+const vp = sdk.videoparse;
 const ExecBase = sdk.interface.exec.ExecBase;
+const VideoParseBase = sdk.interface.videoparse.VideoParseBase;
 const av1 = @import("av1core");
 const module = @import("../module.zig");
 const Base = module.Base;
@@ -105,6 +109,8 @@ const Planes = struct {
 const Decoder = struct {
     sys: *ExecBase,
     core: *av1.Decoder,
+    vpb: *VideoParseBase,
+    parser: *vp.VideoParser,
     /// The frames lent out, by slot, and their planes.
     held: u32,
     lent: [vcodec.VCODEC_MOST_HELD]bool = @splat(false),
@@ -155,7 +161,8 @@ pub fn GetVCodecInfo(_: *Base, decoder: *vcodec.VCodecDecoder, info: *vcodec.VCo
     return vc.VCERR_OK;
 }
 
-/// The decoder made, for AV1, and given the setup's sequence header.
+/// The decoder made, for AV1, its parser given the setup's sequence
+/// header.
 pub fn OpenVCodec(base: *Base, params: *const vcodec.VCodecParams, err: ?*i32) ?*vcodec.VCodecDecoder {
     var code: i32 = vc.VCERR_OK;
     const decoder = open(base.sys_base, params, &code);
@@ -166,23 +173,32 @@ pub fn OpenVCodec(base: *Base, params: *const vcodec.VCodecParams, err: ?*i32) ?
 fn open(sys: *ExecBase, params: *const vcodec.VCodecParams, code: *i32) ?*vcodec.VCodecDecoder {
     if (params.codec != vc.VCODEC_AV1) return failed(code, vc.VCERR_NOCODEC);
     if (params.held == 0 or params.held > vcodec.VCODEC_MOST_HELD) return failed(code, vc.VCERR_UNSUPPORTED);
-    const memory = sys.AllocVec(@sizeOf(Decoder), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return failed(code, vc.VCERR_NOMEMORY);
+    const lib = sys.OpenLibrary(vp.VIDEOPARSENAME, 1) orelse return failed(code, vc.VCERR_NOCODEC);
+    const vpb: *VideoParseBase = @ptrCast(lib);
+    var why: i32 = vp.VPERR_OK;
+    // A library before 1.2 refuses AV1. The av1C record's sequence header
+    // is read now; one that is not right is passed by.
+    const config_size: u32 = if (params.config != null) params.config_size else 0;
+    const parser = vpb.OpenVideoParser(vp.VPCODEC_AV1, params.config, config_size, null, &why) orelse {
+        sys.CloseLibrary(lib);
+        return failed(code, if (why == vp.VPERR_NOMEMORY) vc.VCERR_NOMEMORY else vc.VCERR_NOCODEC);
+    };
+    const memory = sys.AllocVec(@sizeOf(Decoder), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse {
+        vpb.CloseVideoParser(parser);
+        sys.CloseLibrary(lib);
+        return failed(code, vc.VCERR_NOMEMORY);
+    };
     const m: *Decoder = @ptrCast(@alignCast(memory));
     const env: av1.Env = .{ .ctx = @ptrCast(sys), .alloc = Memory.alloc, .free = Memory.free };
     const core = av1.Decoder.create(env) orelse {
         sys.FreeVec(m);
+        vpb.CloseVideoParser(parser);
+        sys.CloseLibrary(lib);
         return failed(code, vc.VCERR_NOMEMORY);
     };
-    m.* = .{ .sys = sys, .core = core, .held = params.held };
+    m.* = .{ .sys = sys, .core = core, .vpb = vpb, .parser = parser, .held = params.held };
     m.team.start(sys, "av1.vcodec worker");
     if (m.team.count != 0) core.useCores(&m.team.cores);
-    // The av1C record: a byte of marker and version, three of what the
-    // sequence header says, then its OBUs - the sequence header among
-    // them. A setup that is not right is passed by: the key frames carry
-    // the sequence header again.
-    if (params.config) |config| {
-        if (params.config_size > 4 and config[0] == 0x81) core.decodeFrame(config[4..params.config_size], 0, true) catch {};
-    }
     return @ptrCast(m);
 }
 
@@ -198,28 +214,64 @@ pub fn CloseVCodec(_: *Base, decoder: ?*vcodec.VCodecDecoder) void {
     // The workers finish what they decode before they end.
     m.core.destroy();
     m.team.stop();
+    m.vpb.CloseVideoParser(m.parser);
+    sys.CloseLibrary(m.vpb.lib());
     for (&m.planes) |*planes| sys.FreeVec(planes.memory);
     sys.FreeVec(m);
 }
 
-/// A temporal unit read, its frames begun on a worker or decoded; the
-/// end of the track hands out the frames still being decoded.
+/// A temporal unit handed to the parser and its frames decoded, or begun
+/// on a worker; the end of the track hands out the frames still being
+/// decoded.
 pub fn SendVCodecPacket(_: *Base, decoder: *vcodec.VCodecDecoder, packet: *const vcodec.VCodecPacket) i32 {
     const m = of(decoder);
     if (m.core.next() != null) return vc.VCERR_FULL;
+    var given: vp.VideoPacket = .{ .time = packet.time };
     if (packet.flags & vcodec.VCPKT_END != 0) {
-        m.core.flush();
+        given.flags = vp.VPPKT_END;
         m.ended = true;
-        return vc.VCERR_OK;
+    } else {
+        given.data = packet.data orelse return vc.VCERR_CORRUPT;
+        given.bytes = packet.size;
+        // A packet is a temporal unit: its frame is shown at its end.
+        given.flags = vp.VPPKT_ACCESS_UNIT;
     }
-    const data = packet.data orelse return vc.VCERR_CORRUPT;
-    const drop = packet.flags & vcodec.VCPKT_DROP != 0;
-    m.core.decodeFrame(data[0..packet.size], packet.time, drop) catch |failure| return switch (failure) {
-        error.NoMemory => vc.VCERR_NOMEMORY,
-        error.Unsupported => if (m.started) vc.VCERR_OK else vc.VCERR_UNSUPPORTED,
-        else => vc.VCERR_OK,
-    };
-    return vc.VCERR_OK;
+    if (m.vpb.ParseVideoPacket(m.parser, &given) != vp.VPERR_OK) return vc.VCERR_FULL;
+    return read(m, packet.flags & vcodec.VCPKT_DROP != 0);
+}
+
+/// The packet's events decoded, until it is read through: every frame of
+/// it read while the caller's packet is there, so it is not copied. A
+/// frame that is not right is passed over; one the decoder cannot decode
+/// refuses the track before its first frame, so that another module may
+/// take it.
+fn read(m: *Decoder, drop: bool) i32 {
+    var event: vp.VideoEvent = .{};
+    while (true) {
+        while (m.core.giveBack()) |slot| m.vpb.ReleaseVideoSlot(m.parser, slot);
+        switch (m.vpb.NextVideoEvent(m.parser, &event)) {
+            vp.VPERR_OK => m.core.event(&event, drop) catch |failure| switch (failure) {
+                error.NoMemory => return vc.VCERR_NOMEMORY,
+                error.Unsupported => if (!m.started) return vc.VCERR_UNSUPPORTED,
+                else => {},
+            },
+            vp.VPERR_NEED_DATA => return vc.VCERR_OK,
+            vp.VPERR_END => {
+                m.core.flush();
+                return vc.VCERR_OK;
+            },
+            vp.VPERR_UNSUPPORTED => if (!m.started) return vc.VCERR_UNSUPPORTED,
+            vp.VPERR_NOMEMORY => return vc.VCERR_NOMEMORY,
+            // Not with every slot given back as soon as it is let go of:
+            // eight references, the frame decoded and the one shown are
+            // the ten.
+            vp.VPERR_FULL => {
+                reset(m);
+                return vc.VCERR_CORRUPT;
+            },
+            else => {},
+        }
+    }
 }
 
 /// The next frame to be shown copied into a free slot's planes and lent
@@ -248,8 +300,13 @@ pub fn ReleaseVCodecFrame(_: *Base, decoder: *vcodec.VCodecDecoder, frame: *vc.V
 /// Everything decoded and not yet shown dropped, the references with it,
 /// for a seek: the decoder starts again at the next key frame.
 pub fn FlushVCodec(_: *Base, decoder: *vcodec.VCodecDecoder) void {
-    const m = of(decoder);
+    reset(of(decoder));
+}
+
+fn reset(m: *Decoder) void {
+    m.vpb.ResetVideoParser(m.parser);
     m.core.reset();
+    while (m.core.giveBack()) |slot| m.vpb.ReleaseVideoSlot(m.parser, slot);
     m.ended = false;
 }
 

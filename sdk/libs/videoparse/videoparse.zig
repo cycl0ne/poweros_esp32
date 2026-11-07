@@ -1,19 +1,20 @@
 // SPDX-License-Identifier: MIT
-//! videoparse.library's structures and constants: an H.264, HEVC or VP9
-//! stream read - its parameter sets, its pictures' slice headers or
+//! videoparse.library's structures and constants: an H.264, HEVC, VP9 or
+//! AV1 stream read - its parameter sets, its pictures' slice headers or
 //! frame headers, their order counts, the reference pictures each one
 //! holds and the lists it decodes from, and the order the pictures are
 //! shown in - for a decoder, which decodes the samples. The calls are in
 //! `sdk.interface.videoparse`; the syntax structures in
-//! `sdk.videoparse.h264`, `sdk.videoparse.hevc` and `sdk.videoparse.vp9`.
+//! `sdk.videoparse.h264`, `sdk.videoparse.hevc`, `sdk.videoparse.vp9` and
+//! `sdk.videoparse.av1`.
 //!
 //! **A parser** (`OpenVideoParser`) is given a track's setup - an MP4's
-//! avcC or hvcC, a Matroska track's CodecPrivate - or nothing, for a
-//! stream in Annex B form, and for VP9, whose packets are its frames. A packet is handed over (`ParseVideoPacket`),
-//! and what it says is asked for event by event (`NextVideoEvent`) until
-//! the parser answers VPERR_NEED_DATA: it reads one unit at a time, as the
-//! events are asked for, so the packet's bytes stay the caller's to keep
-//! until then.
+//! avcC, hvcC or av1C, a Matroska track's CodecPrivate - or nothing, for
+//! a stream in Annex B form, and for VP9, whose packets are its frames. A
+//! packet is handed over (`ParseVideoPacket`), and what it says is asked
+//! for event by event (`NextVideoEvent`) until the parser answers
+//! VPERR_NEED_DATA: it reads one unit at a time, as the events are asked
+//! for, so the packet's bytes stay the caller's to keep until then.
 //!
 //! **The events**, in their order for each picture:
 //!
@@ -55,6 +56,21 @@
 //! reference's slot alone. VPEV_SEQUENCE comes before the first frame and
 //! before one of another size or format.
 //!
+//! **AV1** has no parameter sets and no reordering either: a packet is a
+//! temporal unit, OBUs (5.3) - the sequence header, most often with a key
+//! frame, and frames, each its header and its tiles in tile groups. Each
+//! frame is a VPEV_PICTURE with its header (`av1`), the sequence header
+//! it is read with (`av1_sequence`) and the eight reference slots as its
+//! references, in their order; a VPEV_SLICE for each tile, its bytes and
+//! its number (`tile`); and VPEV_DECODE after its last tile. A temporal
+//! unit shows one frame - of a stream in layers, the last one it shows -
+//! with a VPEV_SHOW once the unit has ended, which points at the header
+//! the frame is shown with (`picture`): its own, or for a frame shown
+//! again (show_existing_frame) the one that shows it, with the film grain
+//! it was stored with. VPEV_SEQUENCE comes before the first frame and
+//! before one of another size or format. The OBUs of operating point 0
+//! are read, the others passed by.
+//!
 //! A pointer an event carries is the parser's, valid until the next call
 //! on it.
 
@@ -62,6 +78,7 @@ const utility = @import("../utility/utility.zig");
 pub const h264 = @import("h264.zig");
 pub const hevc = @import("hevc.zig");
 pub const vp9 = @import("vp9.zig");
+pub const av1 = @import("av1.zig");
 
 pub const VIDEOPARSENAME = "videoparse.library";
 
@@ -74,6 +91,8 @@ pub const VPCODEC_H264: u32 = 1;
 pub const VPCODEC_HEVC: u32 = 2;
 /// SINCE 1.1.
 pub const VPCODEC_VP9: u32 = 3;
+/// SINCE 1.2.
+pub const VPCODEC_AV1: u32 = 4;
 
 /// An entry or a reference without a picture.
 pub const VP_NO_SLOT: u8 = 0xFF;
@@ -90,7 +109,9 @@ pub const VPEV_FREE: u32 = 7;
 
 /// What `NextVideoEvent` fills in. `slot` and `time` are SHOW's, FREE's
 /// and MISSING's; `sequence`, `picture` and `slice` point at what
-/// SEQUENCE, PICTURE (and MISSING) and SLICE say, and are null otherwise.
+/// SEQUENCE, PICTURE (and MISSING) and SLICE say - and `picture` at the
+/// header an AV1 frame is shown with, for its SHOW (SINCE 1.2) - and are
+/// null otherwise.
 pub const VideoEvent = extern struct {
     kind: u32 = 0,
     slot: u32 = 0,
@@ -132,13 +153,16 @@ pub const VideoSequence = extern struct {
     matrix: u8 = 2,
     colour_primaries: u8 = 2,
     transfer: u8 = 2,
-    /// profile_idc and level_idc; VP9's profile, and no level.
+    /// profile_idc and level_idc; VP9's profile, and no level; AV1's
+    /// seq_profile and operating point 0's seq_level_idx.
     profile: u8 = 0,
     level: u8 = 0,
     /// The sequence parameter set, of an H.264 stream.
     h264_sps: ?*const h264.H264Sps = null,
     /// The sequence parameter set, of an HEVC stream.
     hevc_sps: ?*const hevc.HevcSps = null,
+    /// The sequence header, of an AV1 stream (SINCE 1.2).
+    av1: ?*const av1.Av1Sequence = null,
 };
 
 /// A reference picture a picture holds: H.264's buffer before the
@@ -208,6 +232,11 @@ pub const VideoPicture = extern struct {
     /// The frame header, of a VP9 stream (SINCE 1.1); its eight reference
     /// slots are `refs`, VP_NO_SLOT where one is empty.
     vp9: ?*const vp9.Vp9Header = null,
+    /// The frame header, of an AV1 stream, and the sequence header it is
+    /// read with (SINCE 1.2); its eight reference slots are `refs`,
+    /// VP_NO_SLOT where one is empty.
+    av1: ?*const av1.Av1FrameHeader = null,
+    av1_sequence: ?*const av1.Av1Sequence = null,
 };
 
 /// The sets of an HEVC picture's reference picture set (`rps`).
@@ -230,17 +259,18 @@ pub const VideoListEntry = extern struct {
 };
 
 /// A slice of the picture the last VPEV_PICTURE began - of a VP9
-/// stream, the frame whole.
+/// stream, the frame whole; of an AV1 stream, a tile.
 pub const VideoSlice = extern struct {
     /// The NAL unit as it came, its header included, without a start
-    /// code or a length; a VP9 frame's bytes, its headers included.
+    /// code or a length; a VP9 frame's bytes, its headers included; an
+    /// AV1 tile's bytes, without its size.
     unit: [*]const u8 = undefined,
     unit_bytes: u32 = 0,
     /// The bit the slice data starts at in `rbsp` - a VP9 frame's
     /// compressed header.
     data_bit: u32 = 0,
     /// Its payload after the header, the emulation prevention bytes taken
-    /// out; a VP9 frame's bytes as they came.
+    /// out; a VP9 frame's bytes as they came; an AV1 tile's.
     rbsp: [*]const u8 = undefined,
     rbsp_bytes: u32 = 0,
     /// The entries of each list.
@@ -265,13 +295,17 @@ pub const VideoSlice = extern struct {
     /// RefPicList0 and RefPicList1 as the slice decodes from them, after
     /// their modification.
     lists: [2][33]VideoListEntry = @splat(@splat(.{})),
+    /// An AV1 tile's number, in raster order across the frame's tile
+    /// columns (SINCE 1.2).
+    tile: u32 = 0,
 };
 
 // --- the packets ------------------------------------------------------------------
 
 /// A packet handed to `ParseVideoPacket`: its bytes - units in Annex B
 /// form, or each after its length where the setup said so; a VP9 frame or
-/// superframe - when it is shown, and VPPKT_* flags.
+/// superframe; AV1 OBUs, a temporal unit or part of one - when it is
+/// shown, and VPPKT_* flags.
 pub const VideoPacket = extern struct {
     data: ?[*]const u8 = null,
     bytes: u32 = 0,
@@ -280,7 +314,8 @@ pub const VideoPacket = extern struct {
 };
 
 /// The packet is one access unit (an MP4's, a Matroska track's): its
-/// picture ends with it.
+/// picture ends with it - an AV1 temporal unit, whose frame is shown
+/// then; without the flag, at the next temporal delimiter.
 pub const VPPKT_ACCESS_UNIT: u32 = 1 << 0;
 /// The stream ends, with the packet's bytes or without: every picture
 /// held is shown, and every slot let go of.

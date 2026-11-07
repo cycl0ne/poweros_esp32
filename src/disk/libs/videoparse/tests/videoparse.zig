@@ -48,12 +48,16 @@ test {
     _ = @import("../hevc/_hevc.zig");
     _ = @import("../vp9/header.zig");
     _ = @import("../vp9/_vp9.zig");
+    _ = @import("../av1/header.zig");
+    _ = @import("../av1/_av1.zig");
 }
 
 /// The decoders' clips.
 const rows = @embedFile("../../codecs/h264/tests/rows.h264");
 const rows_hevc = @embedFile("../../codecs/hevc/tests/rows.h265");
 const alt_ivf = @embedFile("../../codecs/vp9/tests/alt.ivf");
+const t1_ivf = @embedFile("../../codecs/av1/tests/t1.ivf");
+const t5_ivf = @embedFile("../../codecs/av1/tests/t5.ivf");
 
 /// Memory lent to exec: a parser takes some 265 KiB for H.264, 330 KiB
 /// for HEVC.
@@ -581,3 +585,163 @@ test "alt.ivf's events: its frames, the hidden ones among them, shown as they sa
         try testing.expectEqual(once, try readIvf(rig.vpb, alt_ivf, at & 1 != 0, at));
     }
 }
+
+/// What an AV1 stream's events said: their counts, how many frames were
+/// shown with film grain, and FNV-1a of the pictures shown by their
+/// numbers counted from the first.
+const Av1Trace = struct {
+    hash: u64 = 0xcbf29ce484222325,
+    sequences: u32 = 0,
+    pictures: u32 = 0,
+    hidden: u32 = 0,
+    slices: u32 = 0,
+    shown: u32 = 0,
+    grained: u32 = 0,
+    freed: u32 = 0,
+};
+
+const Av1Way = struct {
+    /// Each packet marked as its temporal unit: its frame shown at its
+    /// end, else at the next temporal delimiter.
+    access_units: bool = true,
+    /// Slots given back only when the parser has none left (VPERR_FULL).
+    hold: bool = false,
+    /// After so many packets: a seek to the stream's start.
+    reset_after: ?u32 = null,
+};
+
+/// An IVF file's AV1 temporal units read a packet at a time, its frames
+/// `width` by `height` and `tiles` tiles each.
+fn readAv1(vpb: *VideoParseBase, ivf: []const u8, width: u32, height: u32, tiles: u32, way: Av1Way) !Av1Trace {
+    var err: i32 = 0;
+    const parser = vpb.OpenVideoParser(vp.VPCODEC_AV1, null, 0, null, &err) orelse return error.NoParser;
+    defer vpb.CloseVideoParser(parser);
+    const start = std.mem.readInt(u16, ivf[6..8], .little);
+    var t: Av1Trace = .{};
+    var slots: Slots = .{};
+    var number: [64]u32 = @splat(0);
+    var live: [64]bool = @splat(false);
+    var first_uid: u32 = 0;
+    var tile_next: u32 = 0;
+    var in_frame = false;
+    var at: usize = start;
+    var count: u32 = 0;
+    while (true) {
+        count += 1;
+        if (way.reset_after == count) {
+            vpb.ResetVideoParser(parser);
+            try slots.all(vpb, parser);
+            live = @splat(false);
+            t = .{};
+            first_uid = 0;
+            in_frame = false;
+            at = start;
+        }
+        var packet: vp.VideoPacket = .{ .time = count };
+        if (at + 12 <= ivf.len) {
+            const size = std.mem.readInt(u32, ivf[at..][0..4], .little);
+            packet.data = ivf[at + 12 ..].ptr;
+            packet.bytes = size;
+            if (way.access_units) packet.flags = vp.VPPKT_ACCESS_UNIT;
+            at += 12 + size;
+        } else packet.flags = vp.VPPKT_END;
+        try testing.expectEqual(vp.VPERR_OK, vpb.ParseVideoPacket(parser, &packet));
+        var event: vp.VideoEvent = .{};
+        while (true) {
+            const got = vpb.NextVideoEvent(parser, &event);
+            if (got == vp.VPERR_NEED_DATA) break;
+            if (got == vp.VPERR_END) {
+                for (live) |l| try testing.expect(!l);
+                try slots.all(vpb, parser);
+                return t;
+            }
+            if (got == vp.VPERR_FULL) {
+                try slots.oldest(vpb, parser);
+                continue;
+            }
+            try testing.expectEqual(vp.VPERR_OK, got);
+            switch (event.kind) {
+                vp.VPEV_SEQUENCE => {
+                    const q = event.sequence.?;
+                    try testing.expectEqual(vp.VPCODEC_AV1, q.codec);
+                    try testing.expectEqual(width, q.width);
+                    try testing.expectEqual(height, q.height);
+                    try testing.expectEqual(@as(u32, 10), q.slots);
+                    try testing.expect(q.av1 != null);
+                    t.sequences += 1;
+                },
+                vp.VPEV_PICTURE => {
+                    const pic = event.picture.?;
+                    const h = pic.av1.?;
+                    try testing.expect(pic.av1_sequence != null);
+                    try testing.expect(!live[pic.slot] and !in_frame);
+                    // Its references are the stream's pictures.
+                    for (pic.refs[0..pic.ref_count]) |r| {
+                        if (r.slot != vp.VP_NO_SLOT) try testing.expect(live[r.slot]);
+                    }
+                    if (t.pictures == 0) first_uid = pic.uid;
+                    number[pic.slot] = pic.uid - first_uid;
+                    live[pic.slot] = true;
+                    slots.held[pic.slot] = true;
+                    try testing.expect(h.upscaled_width == width and h.frame_height == height);
+                    try testing.expectEqual(tiles, h.tile_cols * h.tile_rows);
+                    t.pictures += 1;
+                    if (!h.show_frame) t.hidden += 1;
+                    in_frame = true;
+                    tile_next = 0;
+                },
+                vp.VPEV_SLICE => {
+                    const sl = event.slice.?;
+                    try testing.expect(in_frame and sl.unit_bytes != 0);
+                    try testing.expectEqual(tile_next, sl.tile);
+                    tile_next += 1;
+                    t.slices += 1;
+                },
+                vp.VPEV_DECODE => {
+                    try testing.expectEqual(tiles, tile_next);
+                    in_frame = false;
+                },
+                vp.VPEV_SHOW => {
+                    try testing.expect(live[event.slot] and !in_frame);
+                    const h = event.picture.?.av1.?;
+                    if (h.film_grain.apply_grain) t.grained += 1;
+                    t.hash = (t.hash ^ number[event.slot]) *% 0x100000001b3;
+                    t.shown += 1;
+                },
+                vp.VPEV_FREE => {
+                    try testing.expect(live[event.slot]);
+                    live[event.slot] = false;
+                    t.freed += 1;
+                    if (way.hold) {
+                        slots.waiting[slots.count] = @intCast(event.slot);
+                        slots.count += 1;
+                    } else try slots.give(vpb, parser, event.slot);
+                },
+                else => return error.Unexpected,
+            }
+        }
+    }
+}
+
+test "t1.ivf's and t5.ivf's events: frames, hidden ones among them, each tile a slice, shown at their temporal unit's end, the same with the slots held back, without units marked and after a seek" {
+    var rig: Rig = .{};
+    try rig.up();
+    defer rig.down() catch |e| std.debug.panic("down: {}", .{e});
+
+    const once = try readAv1(rig.vpb, t1_ivf, 200, 112, 4, .{});
+    try testing.expectEqual(@as(u32, 1), once.sequences);
+    try testing.expectEqual(@as(u32, 24), once.shown);
+    try testing.expect(once.hidden != 0);
+    try testing.expectEqual(4 * once.pictures, once.slices);
+    try testing.expectEqual(once.pictures, once.freed);
+    try testing.expectEqual(once, try readAv1(rig.vpb, t1_ivf, 200, 112, 4, .{ .hold = true }));
+    try testing.expectEqual(once, try readAv1(rig.vpb, t1_ivf, 200, 112, 4, .{ .access_units = false }));
+    for ([_]u32{ 2, 7, 13 }) |at| {
+        try testing.expectEqual(once, try readAv1(rig.vpb, t1_ivf, 200, 112, 4, .{ .hold = at & 1 != 0, .reset_after = at }));
+    }
+    // Every frame shown with the film grain it says.
+    const grain = try readAv1(rig.vpb, t5_ivf, 96, 56, 1, .{});
+    try testing.expectEqual(@as(u32, 8), grain.shown);
+    try testing.expectEqual(@as(u32, 8), grain.grained);
+}
+

@@ -14,7 +14,7 @@ h264.vcodec H.264 in software, hevc.vcodec H.265,
 vp8.vcodec VP8, vp9.vcodec VP9 and av1.vcodec AV1 in software,
 mjpeg.vcodec Motion JPEG in software - and
 audiocodec.library decodes the sound. videoparse.library reads an H.264,
-H.265 or VP9 stream for the decoders that decode its samples. A display's video layer (rtg's `ShowVideoFrame`)
+H.265, VP9 or AV1 stream for the decoders that decode its samples. A display's video layer (rtg's `ShowVideoFrame`)
 shows a frame as it comes out; graphics' `WriteYUVPixelArray` and
 `ScaleYUVPixelArray` put one into a window where there is none.
 
@@ -274,22 +274,23 @@ are `.acodec` modules there ([Sound](audio.md)).
 ## Reading a stream
 
 **videoparse.library** (`sdk.interface.videoparse`,
-[md](../autodocs/videoparse.md)) reads an H.264, H.265 or VP9 stream
-for a decoder: the parameter sets, each picture's slice headers, its
-order counts, the reference pictures it holds and the two lists each
-slice decodes from, the references the stream lacks, and when each
-picture is shown - for VP9 each frame's uncompressed header and its
-eight reference slots. The decoder decodes the samples - in software,
-as h264.vcodec, hevc.vcodec and vp9.vcodec do, or on a chip that takes
-the parsed slices. Its structures are in `sdk.videoparse`, every field
-of the codecs' syntax in `sdk.videoparse.h264`, `sdk.videoparse.hevc`
-and `sdk.videoparse.vp9`.
+[md](../autodocs/videoparse.md)) reads an H.264, H.265, VP9 or AV1
+stream for a decoder: the parameter sets, each picture's slice headers,
+its order counts, the reference pictures it holds and the two lists
+each slice decodes from, the references the stream lacks, and when each
+picture is shown - for VP9 and AV1 each frame's uncompressed header and
+its eight reference slots. The decoder decodes the samples - in
+software, as h264.vcodec, hevc.vcodec, vp9.vcodec and av1.vcodec do, or
+on a chip that takes the parsed slices. Its structures are in
+`sdk.videoparse`, every field of the codecs' syntax in
+`sdk.videoparse.h264`, `sdk.videoparse.hevc`, `sdk.videoparse.vp9` and
+`sdk.videoparse.av1`.
 
 ```zig
 const vpb: *VideoParseBase = @ptrCast(sys.OpenLibrary(vp.VIDEOPARSENAME, 1) orelse return);
 defer sys.CloseLibrary(vpb.lib());
 var why: i32 = 0;
-// The track's avcC or hvcC, or null for Annex B; four slots of the
+// The track's avcC, hvcC or av1C, or null for Annex B; four slots of the
 // caller's beyond the stream's, for pictures it still shows.
 const parser = vpb.OpenVideoParser(vp.VPCODEC_HEVC, setup, setup_size, &[_]utility.TagItem{
     .{ .tag = vp.VPA_Slots, .data = 4 },
@@ -357,6 +358,23 @@ slot can be shown more than once. `VPEV_SEQUENCE` comes before the first
 frame and before one of another size or format; a frame may still be
 predicted from references of other sizes. The stream takes nine slots
 beyond `VPA_Slots`, and a VP9 parser some 26 KiB.
+
+**An AV1 stream** (`VPCODEC_AV1`, the track's av1C as its setup, or
+none) is OBUs: a packet is a temporal unit - the frames of one moment,
+most often hidden ones and one shown - and is marked
+`VPPKT_ACCESS_UNIT`. Each frame is a `VPEV_PICTURE` with its header
+(`av1`, with what it takes from its primary reference and its
+references applied), the sequence header (`av1_sequence`) and the eight
+reference slots as its references, in their order; a `VPEV_SLICE` for
+each tile, its bytes and its number (`tile`); and `VPEV_DECODE` after
+the last. The frame a temporal unit shows - the last it shows, of a
+stream in layers - is a `VPEV_SHOW` at the unit's end, whose `picture`
+holds the header it is shown with: the frame's own, or for a frame
+shown again that one's, with the film grain the frame was stored with.
+`VPEV_SEQUENCE` comes before the first frame and before one of another
+size or format. The OBUs of operating point 0 are read. The stream
+takes ten slots beyond `VPA_Slots` - one more for the frame shown,
+held until its unit ends - and an AV1 parser some 11 KiB.
 
 ## From the shell
 
