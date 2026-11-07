@@ -30,7 +30,7 @@ const vcn = @import("codec/_vcn.zig");
 /// The name it is opened by. The SDK's.
 pub const RESOURCE_NAME = types.VIDEODECNAME;
 pub const RESOURCE_VERSION = 1;
-pub const RESOURCE_REVISION = 5;
+pub const RESOURCE_REVISION = 6;
 const BUILD_DATE = "07.11.2026";
 const RESOURCE_VERSION_STRING =
     "\x00$VER: " ++ RESOURCE_NAME ++ " " ++
@@ -75,7 +75,7 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     vb.vcn = .{};
     if (comptime engine == .wave511) findVdec(vb, sys_base);
     if (comptime engine == .vcn) {
-        if (vcn.find(sys_base, &vb.vcn)) vb.codecs = types.VDCODEC_H264 | types.VDCODEC_H265 | types.VDCODEC_VP9;
+        if (vcn.find(sys_base, &vb.vcn)) vb.codecs = types.VDCODEC_H264 | types.VDCODEC_H265 | types.VDCODEC_VP9 | types.VDCODEC_AV1;
     }
     return lib;
 }

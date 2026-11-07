@@ -9,7 +9,7 @@ QuickTime's MOV and Matroska's MKV) and hands out each track's packets,
 a codec module in `LIBS:codecs/` decodes the pictures - chip.vcodec
 H.264 and H.265 on the chip's decoder (videodec.resource: the WAVE511
 on the VisionFive 2, and an AMD graphics device's video decoder, which
-takes VP9 too),
+takes VP9 and AV1 too),
 h264.vcodec H.264 in software, hevc.vcodec H.265,
 vp8.vcodec VP8, vp9.vcodec VP9 and av1.vcodec AV1 in software,
 mjpeg.vcodec Motion JPEG in software - and
@@ -193,12 +193,12 @@ colour, a pixel half covered or more is the subtitle's.
 
 | Pictures | Decoded by | On the VisionFive 2 |
 |---|---|---|
-| H.264 (baseline, main, high), 8-bit; H.265 (main, and main 10 shown in 8 bits); on an AMD graphics device VP9 too (profile 0, and profile 2's 10 bits shown in 8) | chip.vcodec: the chip, videodec.resource | 1080p about 145 frames a second, 720p about 300; on a Radeon 780M 1080p about 600 (H.264 and H.265), 720p H.264 about 900, 4K H.265 in 10 bits about 160, 1080p VP9 about 550, in 10 bits about 340 |
+| H.264 (baseline, main, high), 8-bit; H.265 (main, and main 10 shown in 8 bits); on an AMD graphics device VP9 too (profile 0, and profile 2's 10 bits shown in 8) and AV1 (main: 8 bits, and 10 shown in 8, film grain) | chip.vcodec: the chip, videodec.resource | 1080p about 145 frames a second, 720p about 300; on a Radeon 780M 1080p about 600 (H.264, H.265 and AV1), 720p H.264 about 900, 4K H.265 in 10 bits about 160, 4K AV1 in 10 bits 130 to 165, 1080p VP9 about 550, in 10 bits about 340 |
 | H.264, every profile but SVC's and MVC's: up to 4:4:4 and 14 bits, fields, shown in 8 bits; what the chip refuses, and every H.264 where there is no chip | h264.vcodec: software, a worker task on each core, a picture each | 720p High 10 about 32 frames a second, 10 on one core; 1080p High about 20, 720p about 52 |
 | H.265: Main, Main 10, Main Still Picture and the range extensions' profiles - grey to 4:4:4, up to 16 bits - shown in 8 bits; the base layer of a stream in layers; what the chip refuses, and every H.265 where there is no chip | hevc.vcodec: software, a worker task on each core, a picture each | 1080p about 25 frames a second, 720p about 55, 1080p 4:2:2 in 10 bits about 17 |
 | VP8, every version (WebM, Matroska) | vp8.vcodec: software, a worker task on each core, a frame each | 720p about 84 frames a second, 1080p about 34; 27 and 11 on one core |
 | VP9, every profile: 8, 10 and 12 bits, 4:2:0, 4:2:2, 4:4:0, 4:4:4 (WebM, Matroska), shown in 8 bits; what the chip refuses, and every VP9 where there is no chip | vp9.vcodec: software, a worker task on each core, a frame each | 720p about 53 frames a second, 1080p about 30, 720p in 10 bits about 38; 18, 9 and 12 on one core |
-| AV1, every profile: 8, 10 and 12 bits, grey, 4:2:0, 4:2:2, 4:4:4, film grain (MP4, WebM, Matroska), shown in 8 bits | av1.vcodec: software, a worker task on each core, a frame each | 1080p about 15 frames a second, 720p about 27, 720p in 10 bits with film grain about 18 |
+| AV1, every profile: 8, 10 and 12 bits, grey, 4:2:0, 4:2:2, 4:4:4, film grain (MP4, WebM, Matroska), shown in 8 bits; what the chip refuses, and every AV1 where there is no chip | av1.vcodec: software, a worker task on each core, a frame each | 1080p about 15 frames a second, 720p about 27, 720p in 10 bits with film grain about 18 |
 | Motion JPEG, baseline: grey, 4:2:0, 4:2:2, 4:4:4 | mjpeg.vcodec: software, on the calling task | about a second for a 1080p picture: small pictures only |
 | MPEG-4 Part 2 | nothing | - |
 
@@ -383,4 +383,4 @@ plays nothing, and says how fast: `FRAME n TO file` writes a frame's
 planes to compare with ffmpeg's, `SEEK s` moves to a second at the end
 (with `TO` and no `FRAME`, the frame it lands on is written), `TOGETHER` decodes the sound on a process of its own while the pictures
 are decoded. `C:test/VideoDec` feeds the chip's decoder an elementary
-stream (Annex B) without a container, or VP9 in an IVF file.
+stream (Annex B) without a container, or VP9 or AV1 in an IVF file.

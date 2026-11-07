@@ -682,16 +682,25 @@ time, its uncompressed header read by videoparse.library and the
 probabilities kept in the stream's context by the firmware; a stream
 is made for 1920 x 1088 at least, so a frame whose size changes within
 it is decoded there, predicted from references of other sizes, and
-profiles 1 and 3 fall to vp9.vcodec. On the Radeon 780M a 1920 x 1080
+profiles 1 and 3 fall to vp9.vcodec. AV1 - main, 8 and 10 bits, up to
+8192 x 4352 - goes there a temporal unit at a time: the frame header
+read by videoparse.library, each tile's place handed over, the default
+CDFs laid out for the firmware from the SDK's tables when the system is
+built, and the film grain's noise worked out for each frame and laid
+over it by the decoder, on frames shown from hidden ones too. On the
+Radeon 780M a 1920 x 1080
 picture takes 1.1 ms on the decoder and 0.45 ms to copy out - some 600
-frames a second through `C:test/Film` (VP9 some 550, in 10 bits 340) -
-and a 10-bit 3840 x 2160 one 3.7 ms and 2.1 ms, some 160 a second;
+frames a second through `C:test/Film` (VP9 some 550, in 10 bits 340,
+AV1 some 600) - and a 10-bit 3840 x 2160 one 3.7 ms and 2.1 ms, some 160
+a second (AV1 130 to 165);
 each frame compared, after a seek too, is ffmpeg's to the byte (10-bit
 ones rounded to 8 bits as the software decoder does), VP9's libvpx's,
 on its test streams for tiles, intra-only frames, size changes and
-spatial layers too.
+spatial layers too, and AV1's libaom's, on its test streams for sizes,
+intra block copy, motion fields, size changes, spatial and temporal
+layers and film grain in 8 and 10 bits.
 `C:test/VideoDec <file> WATCHDOG 15000` feeds it an elementary stream
-or VP9 in an IVF file;
+or VP9 or AV1 in an IVF file;
 films reach it through chip.vcodec, so the Player plays on it once a
 program has armed the watchdog since the start.
 

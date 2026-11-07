@@ -81,10 +81,13 @@ const ring_most: u32 = 64 * 1024 * 1024;
 /// context (128 KiB, and for H.264 192 bytes a macroblock for each
 /// reference and the picture decoded, for H.265 about 3 MiB at 1080p,
 /// for VP9 about 10.4 MiB at any size, the default probabilities written
-/// into it), a surface for each of those, and the surface pictures are
+/// into it, for AV1 34.7 MiB, the four sets of default CDFs written into
+/// it), a surface for each of those, and the surface pictures are
 /// written to - about 26 MiB at 1080p with four H.264 references, 24 MiB
 /// for H.265 with five pictures in its buffer, 188 MiB for 10-bit H.265
-/// at 4K with six, 41 MiB for VP9 at 1080p with its nine.
+/// at 4K with six, 41 MiB for VP9 at 1080p with its nine, 65 MiB for AV1
+/// at 1080p and 262 MiB for 10-bit AV1 at 4K. An AV1 stream has a piece
+/// of 20 KiB more for its frames' tables.
 /// Its frames are in the system's memory, one for each picture the
 /// stream holds and VDA_HeldFrames and two more; VDA_StreamSize is not
 /// read.

@@ -3,7 +3,7 @@
 //! name): set to the defaults, loaded from a reference with the counters
 //! cleared, copied for each tile and saved from one.
 
-const d = @import("cdfs.zig");
+const d = @import("sdk").videoparse.av1.cdfs;
 
 /// The motion vectors' CDFs, of one context.
 pub const MvCdfs = struct {
@@ -21,7 +21,7 @@ pub const MvCdfs = struct {
 pub const MV_CONTEXTS = 2;
 
 /// Every CDF a tile reads; each field named as its default in
-/// cdfs.zig, without the default_ and _cdf.
+/// `sdk.videoparse.av1.cdfs`, without the default_ and _cdf.
 pub const Cdfs = struct {
     intra_frame_y_mode: @TypeOf(d.default_intra_frame_y_mode_cdf),
     y_mode: @TypeOf(d.default_y_mode_cdf),

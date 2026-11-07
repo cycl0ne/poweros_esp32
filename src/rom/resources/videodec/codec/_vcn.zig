@@ -563,6 +563,7 @@ pub fn streamKind(codec: u32) u32 {
     return switch (codec) {
         types.VDCODEC_H265 => 0x10,
         types.VDCODEC_VP9 => 0x11,
+        types.VDCODEC_AV1 => 0x13,
         else => 7,
     };
 }
@@ -682,12 +683,13 @@ const PART_DECODE: u32 = 2;
 const PART_AVC: u32 = 6;
 const PART_HEVC: u32 = 0xD;
 const PART_VP9: u32 = 0xE;
+const PART_AV1: u32 = 0x11;
 const PART_DYNAMIC_DPB: u32 = 0x10;
 
 /// What else an indirect buffer for decoding names: the picture's
 /// slices, the surface it is written to, its scaling lists (H.264 and
-/// H.265) or its probability table (VP9), and the decoder's context for
-/// the stream.
+/// H.265) or its probability table (VP9's; AV1's segments and film
+/// grain), and the decoder's context for the stream.
 const BUFFER_BITSTREAM: u32 = 1 << 2;
 const BUFFER_TARGET: u32 = 1 << 3;
 const BUFFER_SCALING: u32 = 1 << 9;
@@ -695,12 +697,12 @@ const BUFFER_CONTEXT: u32 = 1 << 11;
 const BUFFER_PROBS: u32 = 1 << 12;
 pub const decode_buffers: u32 = BUFFER_MESSAGE | BUFFER_BITSTREAM | BUFFER_TARGET | BUFFER_SCALING |
     BUFFER_CONTEXT | BUFFER_SESSION;
-pub const vp9_decode_buffers: u32 = BUFFER_MESSAGE | BUFFER_BITSTREAM | BUFFER_TARGET | BUFFER_PROBS |
+pub const probs_decode_buffers: u32 = BUFFER_MESSAGE | BUFFER_BITSTREAM | BUFFER_TARGET | BUFFER_PROBS |
     BUFFER_CONTEXT | BUFFER_SESSION;
 
 /// The buffers a picture's message of `codec` goes with.
 fn buffersOf(codec: u32) u32 {
-    return if (codec == types.VDCODEC_VP9) vp9_decode_buffers else decode_buffers;
+    return if (codec == types.VDCODEC_VP9 or codec == types.VDCODEC_AV1) probs_decode_buffers else decode_buffers;
 }
 
 /// The references are surfaces of their own, named by each message.
@@ -726,6 +728,12 @@ pub const vp9_ids: u32 = 9;
 /// still predicted from the smaller pictures before them.
 pub const vp9_least_width: u32 = 1920;
 pub const vp9_least_height: u32 = 1088;
+/// The largest AV1 picture the decoder takes, and the firmware numbers an
+/// AV1 stream has: the pictures of its eight reference slots and the one
+/// decoded.
+pub const av1_most_width: u32 = 8192;
+pub const av1_most_height: u32 = 4352;
+pub const av1_ids: u32 = 9;
 /// The firmware's numbers for the pictures it decodes and refers to:
 /// 0 to 16, the most references and the picture decoded.
 pub const most_ids: u32 = 17;
@@ -1049,7 +1057,7 @@ fn vp9Defaults() [2072]u8 {
     var out: [2072]u8 = @splat(0);
     var filled: usize = 32;
     const parts = .{
-        p.coef,     p.y_mode,   p.uv_mode,  p.single_ref, p.interp_filter, p.partition, p.inter_mode, p.skip,
+        p.coef,     p.y_mode,    p.uv_mode,  p.single_ref, p.interp_filter, p.partition, p.inter_mode, p.skip,
         p.is_inter, p.comp_mode, p.comp_ref, p.tx32,       p.tx16,          p.tx8,       p.mv_joint,
     };
     inline for (parts) |part| {
@@ -1059,8 +1067,8 @@ fn vp9Defaults() [2072]u8 {
     }
     for (0..2) |i| {
         const component = .{
-            [1]u8{p.mv_sign[i]}, p.mv_class[i],          [1]u8{p.mv_class0_bit[i]}, p.mv_bits[i],
-            p.mv_class0_fr[i],   p.mv_fr[i],             [1]u8{p.mv_class0_hp[i]},  [1]u8{p.mv_hp[i]},
+            [1]u8{p.mv_sign[i]}, p.mv_class[i], [1]u8{p.mv_class0_bit[i]}, p.mv_bits[i],
+            p.mv_class0_fr[i],   p.mv_fr[i],    [1]u8{p.mv_class0_hp[i]},  [1]u8{p.mv_hp[i]},
         };
         inline for (component) |part| {
             const bytes: [@sizeOf(@TypeOf(part))]u8 = @bitCast(part);
@@ -1070,6 +1078,462 @@ fn vp9Defaults() [2072]u8 {
     }
     if (filled != 2071) @compileError("the VP9 default probabilities are not laid out as the decoder reads them");
     return out;
+}
+
+/// An AV1 frame: its header's values as the decoder takes them - the
+/// tiles it reads itself, from where each one is among the frame's bytes
+/// - its flags in a word, its sizes and its tiles' starts in
+/// superblocks, the firmware's numbers for the pictures of the eight
+/// reference slots, for the seven it refers to and for itself, each
+/// segment's features, the global motion of each reference, and film
+/// grain's values.
+pub const Av1Part = extern struct {
+    frame_header_flags: u32 = 0,
+    current_frame_id: u32 = 0,
+    frame_offset: u32 = 0,
+    profile: u8 = 0,
+    is_annexb: u8 = 0,
+    frame_type: u8 = 0,
+    primary_ref_frame: u8 = 0,
+    curr_pic_idx: u8 = 0,
+    sb_size: u8 = 0,
+    interp_filter: u8 = 0,
+    filter_level: [2]u8 = .{ 0, 0 },
+    filter_level_u: u8 = 0,
+    filter_level_v: u8 = 0,
+    sharpness_level: u8 = 0,
+    ref_deltas: [8]i8 = @splat(0),
+    mode_deltas: [2]i8 = .{ 0, 0 },
+    base_qindex: u8 = 0,
+    y_dc_delta_q: i8 = 0,
+    u_dc_delta_q: i8 = 0,
+    v_dc_delta_q: i8 = 0,
+    u_ac_delta_q: i8 = 0,
+    v_ac_delta_q: i8 = 0,
+    qm_y: u8 = 0,
+    qm_u: u8 = 0,
+    qm_v: u8 = 0,
+    delta_q_res: u8 = 0,
+    delta_lf_res: u8 = 0,
+    tile_cols: u8 = 0,
+    tile_rows: u8 = 0,
+    tx_mode: u8 = 0,
+    reference_mode: u8 = 0,
+    chroma_format: u8 = 0,
+    tile_size_bytes: u32 = 0,
+    context_update_tile_id: u32 = 0,
+    tile_col_start_sb: [65]u32 = @splat(0),
+    tile_row_start_sb: [65]u32 = @splat(0),
+    max_width: u32 = 0,
+    max_height: u32 = 0,
+    width: u32 = 0,
+    height: u32 = 0,
+    superres_upscaled_width: u32 = 0,
+    superres_scale_denominator: u8 = 0,
+    order_hint_bits: u8 = 0,
+    ref_frame_map: [8]u8 = @splat(no_ref),
+    ref_frame_offset: [8]u32 = @splat(0),
+    frame_refs: [7]u8 = @splat(no_ref),
+    ref_frame_sign_bias: [7]u8 = @splat(0),
+    bit_depth_luma_minus8: u8 = 0,
+    bit_depth_chroma_minus8: u8 = 0,
+    feature_data: [8][8]i32 = @splat(@splat(0)),
+    feature_mask: [8]u8 = @splat(0),
+    cdef_damping: u8 = 0,
+    cdef_bits: u8 = 0,
+    cdef_strengths: [16]u16 = @splat(0),
+    cdef_uv_strengths: [16]u16 = @splat(0),
+    frame_restoration_type: [3]u8 = @splat(0),
+    log2_restoration_unit_size_minus5: [3]u8 = @splat(0),
+    p010_mode: u8 = 0,
+    msb_mode: u8 = 0,
+    luma_10to8: u8 = 0,
+    chroma_10to8: u8 = 0,
+    preskip_segid: u8 = 0,
+    last_active_segid: u8 = 0,
+    seg_lossless_flag: u8 = 0,
+    coded_lossless: u8 = 0,
+    film_grain: Av1Grain = .{},
+    uncompressed_header_size: u32 = 0,
+    global_motion: [8]Av1Warp = @splat(.{}),
+    tile_info: [256]Av1Tile = @splat(.{}),
+    reserved: [3]u8 = @splat(0),
+    av1_intrabc_workaround: u32 = 0,
+};
+
+/// Film grain's values as the decoder applies them to the picture it
+/// writes into the target: the scaling functions' points, the
+/// auto-regressive filter's lag, coefficients and shift, how much of
+/// the brightness goes into each colour, the random numbers' seed.
+pub const Av1Grain = extern struct {
+    apply_grain: u8 = 0,
+    scaling_points_y: [14][2]u8 = @splat(.{ 0, 0 }),
+    num_y_points: u8 = 0,
+    scaling_points_cb: [10][2]u8 = @splat(.{ 0, 0 }),
+    num_cb_points: u8 = 0,
+    scaling_points_cr: [10][2]u8 = @splat(.{ 0, 0 }),
+    num_cr_points: u8 = 0,
+    scaling_shift: u8 = 0,
+    ar_coeff_lag: u8 = 0,
+    ar_coeffs_y: [24]i8 = @splat(0),
+    ar_coeffs_cb: [25]i8 = @splat(0),
+    ar_coeffs_cr: [25]i8 = @splat(0),
+    ar_coeff_shift: u8 = 0,
+    cb_mult: u8 = 0,
+    cb_luma_mult: u8 = 0,
+    cb_offset: u16 = 0,
+    cr_mult: u8 = 0,
+    cr_luma_mult: u8 = 0,
+    cr_offset: u16 = 0,
+    overlap_flag: u8 = 0,
+    clip_to_restricted_range: u8 = 0,
+    bit_depth_minus_8: u8 = 0,
+    chroma_scaling_from_luma: u8 = 0,
+    grain_scale_shift: u8 = 0,
+    random_seed: u16 = 0,
+};
+
+/// A reference's global motion: its kind and its matrix's six
+/// parameters; the two places after them and the shears stay 0.
+pub const Av1Warp = extern struct {
+    wmtype: u32 = 0,
+    wmmat: [8]i32 = @splat(0),
+    alpha: i16 = 0,
+    beta: i16 = 0,
+    gamma: i16 = 0,
+    delta: i16 = 0,
+};
+
+/// Where a tile is among the frame's bytes, and how many it takes.
+pub const Av1Tile = extern struct {
+    offset: u32 = 0,
+    size: u32 = 0,
+};
+
+/// An AV1 frame's tables as the decoder reads them from their own
+/// buffer: the segments' features - each one's values, then which are
+/// on, by bit - and film grain's: the blocks the grain is taken from,
+/// of brightness and of each colour, in rows as the decoder reads them,
+/// and the scaling functions as tables of 256.
+pub const Av1Tables = extern struct {
+    feature_data: [8][8]i16 = @splat(@splat(0)),
+    feature_mask: [8]u8 = @splat(0),
+    reserved: [120]u8 = @splat(0),
+    luma_grain_block: [64][96]i16 = @splat(@splat(0)),
+    cb_grain_block: [32][48]i16 = @splat(@splat(0)),
+    cr_grain_block: [32][48]i16 = @splat(@splat(0)),
+    scaling_lut_y: [256]i16 = @splat(0),
+    scaling_lut_cb: [256]i16 = @splat(0),
+    scaling_lut_cr: [256]i16 = @splat(0),
+    temp_tile_left_seed: [256]u16 = @splat(0),
+};
+
+/// The whole of an AV1 frame's message; its tables are too large for the
+/// message's page and go into a piece of the stream's own.
+pub const Av1Message = extern struct {
+    header: MessageHeader = .{},
+    codec_index: MessageIndex = .{},
+    dpb_index: MessageIndex = .{},
+    decode: DecodePart = .{},
+    dpb: DpbPart = .{},
+    av1: Av1Part = .{},
+};
+
+/// An AV1 frame context as the decoder keeps it: a frame's CDFs, each
+/// as 32768 less its cumulative probabilities, then 0 and the adaptation
+/// counter's 0, each padded to the decoder's length; and the room one
+/// takes in the stream's context.
+const Av1FrameContext = extern struct {
+    txb_skip_cdf: [5][13][3]u16,
+    eob_extra_cdf: [5][2][9][3]u16,
+    dc_sign_cdf: [2][3][3]u16,
+    newmv_cdf: [6][3]u16,
+    zeromv_cdf: [2][3]u16,
+    refmv_cdf: [6][3]u16,
+    drl_cdf: [3][3]u16,
+    compound_type_cdf: [22][3]u16,
+    interintra_cdf: [4][3]u16,
+    wedge_interintra_cdf: [22][3]u16,
+    obmc_cdf: [22][3]u16,
+    comp_inter_cdf: [5][3]u16,
+    single_ref_cdf: [3][6][3]u16,
+    comp_ref_type_cdf: [5][3]u16,
+    uni_comp_ref_cdf: [3][3][3]u16,
+    comp_ref_cdf: [3][3][3]u16,
+    comp_bwdref_cdf: [3][2][3]u16,
+    txfm_partition_cdf: [21][3]u16,
+    skip_mode_cdfs: [3][3]u16,
+    skip_cdfs: [3][3]u16,
+    intra_inter_cdf: [4][3]u16,
+    palette_y_mode_cdf: [9][3][3]u16,
+    palette_uv_mode_cdf: [2][3]u16,
+    filter_intra_cdfs: [22][3]u16,
+    wiener_restore_cdf: [3]u16,
+    sgrproj_restore_cdf: [3]u16,
+    intrabc_cdf: [3]u16,
+    nmvc_0_sign_cdf: [3]u16,
+    nmvc_0_class0_hp_cdf: [3]u16,
+    nmvc_0_hp_cdf: [3]u16,
+    nmvc_0_class0_cdf: [3]u16,
+    nmvc_0_bits_cdf: [10][3]u16,
+    nmvc_1_sign_cdf: [3]u16,
+    nmvc_1_class0_hp_cdf: [3]u16,
+    nmvc_1_hp_cdf: [3]u16,
+    nmvc_1_class0_cdf: [3]u16,
+    nmvc_1_bits_cdf: [10][3]u16,
+    ndvc_0_sign_cdf: [3]u16,
+    ndvc_0_class0_hp_cdf: [3]u16,
+    ndvc_0_hp_cdf: [3]u16,
+    ndvc_0_class0_cdf: [3]u16,
+    ndvc_0_bits_cdf: [10][3]u16,
+    ndvc_1_sign_cdf: [3]u16,
+    ndvc_1_class0_hp_cdf: [3]u16,
+    ndvc_1_hp_cdf: [3]u16,
+    ndvc_1_class0_cdf: [3]u16,
+    ndvc_1_bits_cdf: [10][3]u16,
+    pred_cdf: [3][3]u16,
+    compound_index_cdf: [6][3]u16,
+    comp_group_idx_cdf: [6][3]u16,
+    reserve0: [8]u16,
+    coeff_base_eob_cdf: [5][2][4][4]u16,
+    motion_mode_cdf: [22][4]u16,
+    switchable_restore_cdf: [4]u16,
+    switchable_interp_cdf: [16][4]u16,
+    tx_size_cdf: [4][3][4]u16,
+    reserve1: [4]u16,
+    coeff_base_cdf: [5][2][42][5]u16,
+    coeff_br_cdf: [5][2][21][5]u16,
+    interintra_mode_cdf: [4][5]u16,
+    delta_q_cdf: [5]u16,
+    delta_lf_multi_cdf: [4][5]u16,
+    delta_lf_cdf: [5]u16,
+    nmvc_joints_cdf: [5]u16,
+    nmvc_0_class0_fp_cdf: [2][5]u16,
+    nmvc_0_fp_cdf: [5]u16,
+    nmvc_1_class0_fp_cdf: [2][5]u16,
+    nmvc_1_fp_cdf: [5]u16,
+    ndvc_joints_cdf: [5]u16,
+    ndvc_0_class0_fp_cdf: [2][5]u16,
+    ndvc_0_fp_cdf: [5]u16,
+    ndvc_1_class0_fp_cdf: [2][5]u16,
+    ndvc_1_fp_cdf: [5]u16,
+    reserve2: [10]u16,
+    eob_flag_cdf16: [2][2][6]u16,
+    filter_intra_mode_cdf: [6]u16,
+    eob_flag_cdf32: [2][2][7]u16,
+    eob_flag_cdf64: [2][2][8]u16,
+    palette_y_size_cdf: [9][8]u16,
+    palette_uv_size_cdf: [9][8]u16,
+    angle_delta_cdf: [8][8]u16,
+    reserve3: [6]u16,
+    eob_flag_cdf128: [2][2][9]u16,
+    inter_compound_mode_cdf: [8][9]u16,
+    palette_y_color_index_cdf: [7][5][9]u16,
+    palette_uv_color_index_cdf: [7][5][9]u16,
+    cfl_sign_cdf: [9]u16,
+    tree_cdf: [9]u16,
+    spatial_pred_seg_cdf: [3][9]u16,
+    reserve4: [1]u16,
+    eob_flag_cdf256: [2][2][10]u16,
+    eob_flag_cdf512: [2][2][11]u16,
+    partition_cdf: [20][11]u16,
+    eob_flag_cdf1024: [2][2][12]u16,
+    nmvc_0_classes_cdf: [12]u16,
+    nmvc_1_classes_cdf: [12]u16,
+    ndvc_0_classes_cdf: [12]u16,
+    ndvc_1_classes_cdf: [12]u16,
+    y_mode_cdf: [4][14]u16,
+    kf_y_cdf: [5][5][14]u16,
+    reserve5: [10]u16,
+    uv_mode_cdf: [2][13][15]u16,
+    reserve6: [10]u16,
+    wedge_idx_cdf: [22][17]u16,
+    intra_ext_tx_cdf: [2][4][13][17]u16,
+    inter_ext_tx_cdf: [3][4][17]u16,
+    cfl_alpha_cdf: [6][17]u16,
+};
+pub const av1_frame_context_bytes: u32 = 20480;
+
+comptime {
+    if (@sizeOf(Av1Part) != 3584 or @sizeOf(Av1Grain) != 166 or @sizeOf(Av1Warp) != 44 or
+        @sizeOf(Av1Tables) != 20736 or @sizeOf(Av1Message) != 4012 or @sizeOf(Av1FrameContext) != 19552)
+        @compileError("an AV1 frame's message or tables are not the size the decoder reads");
+    if (@sizeOf(Av1Message) > 4096 or @sizeOf(Av1FrameContext) > av1_frame_context_bytes)
+        @compileError("an AV1 frame's message does not fit its page, or a frame context its room");
+}
+
+/// The AV1 default CDFs (the specification's Default_*_Cdf tables) as
+/// the stream's context starts with them: four frame contexts, one for
+/// each class of the base quantizer index the coefficients' defaults are
+/// by - the firmware takes the one a frame that starts from the defaults
+/// needs. A place the specification has no CDF for stays 0.
+pub const av1_defaults: [4 * av1_frame_context_bytes]u8 = av1Defaults();
+
+fn av1Defaults() [4 * av1_frame_context_bytes]u8 {
+    @setEvalBranchQuota(10_000_000);
+    var out: [4 * av1_frame_context_bytes]u8 = @splat(0);
+    for (0..4) |class| {
+        var words: [@sizeOf(Av1FrameContext) / 2]u16 = @splat(0);
+        av1Context(&words, class);
+        const bytes: [@sizeOf(Av1FrameContext)]u8 = @bitCast(words);
+        @memcpy(out[class * av1_frame_context_bytes ..][0..bytes.len], &bytes);
+    }
+    return out;
+}
+
+/// Frame context `words` filled with the default CDFs, the
+/// coefficients' of quantizer class `class`.
+fn av1Context(words: []u16, class: usize) void {
+    const d = vp.av1.cdfs;
+    putCdfs(words, "txb_skip_cdf", 0, d.default_txb_skip_cdf[class]);
+    putCdfs(words, "eob_extra_cdf", 0, d.default_eob_extra_cdf[class]);
+    putCdfs(words, "dc_sign_cdf", 0, d.default_dc_sign_cdf[class]);
+    putCdfs(words, "newmv_cdf", 0, d.default_new_mv_cdf);
+    putCdfs(words, "zeromv_cdf", 0, d.default_zero_mv_cdf);
+    putCdfs(words, "refmv_cdf", 0, d.default_ref_mv_cdf);
+    putCdfs(words, "drl_cdf", 0, d.default_drl_mode_cdf);
+    putCdfs(words, "compound_type_cdf", 0, d.default_compound_type_cdf);
+    // Block sizes from 8x8 on: the first, 4x4's, is a place of its own.
+    putCdfs(words, "interintra_cdf", 1, d.default_inter_intra_cdf);
+    putCdfs(words, "wedge_interintra_cdf", 0, d.default_wedge_inter_intra_cdf);
+    putCdfs(words, "obmc_cdf", 0, d.default_use_obmc_cdf);
+    putCdfs(words, "comp_inter_cdf", 0, d.default_comp_mode_cdf);
+    putCdfs(words, "single_ref_cdf", 0, d.default_single_ref_cdf);
+    putCdfs(words, "comp_ref_type_cdf", 0, d.default_comp_ref_type_cdf);
+    putCdfs(words, "uni_comp_ref_cdf", 0, d.default_uni_comp_ref_cdf);
+    putCdfs(words, "comp_ref_cdf", 0, d.default_comp_ref_cdf);
+    putCdfs(words, "comp_bwdref_cdf", 0, d.default_comp_bwd_ref_cdf);
+    putCdfs(words, "txfm_partition_cdf", 0, d.default_txfm_split_cdf);
+    putCdfs(words, "skip_mode_cdfs", 0, d.default_skip_mode_cdf);
+    putCdfs(words, "skip_cdfs", 0, d.default_skip_cdf);
+    putCdfs(words, "intra_inter_cdf", 0, d.default_is_inter_cdf);
+    putCdfs(words, "palette_y_mode_cdf", 0, d.default_palette_y_mode_cdf);
+    putCdfs(words, "palette_uv_mode_cdf", 0, d.default_palette_uv_mode_cdf);
+    putCdfs(words, "filter_intra_cdfs", 0, d.default_filter_intra_cdf);
+    putCdfs(words, "wiener_restore_cdf", 0, d.default_use_wiener_cdf);
+    putCdfs(words, "sgrproj_restore_cdf", 0, d.default_use_sgrproj_cdf);
+    putCdfs(words, "intrabc_cdf", 0, d.default_intrabc_cdf);
+    // The motion vectors' and intra block copy's vectors: each of the two
+    // components.
+    inline for (.{ "nmvc", "ndvc" }) |kind| {
+        inline for (.{ "_0_", "_1_" }, 0..) |component, c| {
+            const p = kind ++ component;
+            putCdfs(words, p ++ "sign_cdf", 0, d.default_mv_sign_cdf);
+            putCdfs(words, p ++ "class0_hp_cdf", 0, d.default_mv_class0_hp_cdf);
+            putCdfs(words, p ++ "hp_cdf", 0, d.default_mv_hp_cdf);
+            putCdfs(words, p ++ "class0_cdf", 0, d.default_mv_class0_bit_cdf);
+            putCdfs(words, p ++ "bits_cdf", 0, d.default_mv_bit_cdf);
+            putCdfs(words, p ++ "class0_fp_cdf", 0, d.default_mv_class0_fr_cdf[c]);
+            putCdfs(words, p ++ "fp_cdf", 0, d.default_mv_fr_cdf[c]);
+            putCdfs(words, p ++ "classes_cdf", 0, d.default_mv_class_cdf[c]);
+        }
+        putCdfs(words, kind ++ "_joints_cdf", 0, d.default_mv_joint_cdf);
+    }
+    putCdfs(words, "pred_cdf", 0, d.default_segment_id_predicted_cdf);
+    putCdfs(words, "compound_index_cdf", 0, d.default_compound_idx_cdf);
+    putCdfs(words, "comp_group_idx_cdf", 0, d.default_comp_group_idx_cdf);
+    putCdfs(words, "coeff_base_eob_cdf", 0, d.default_coeff_base_eob_cdf[class]);
+    putCdfs(words, "motion_mode_cdf", 0, d.default_motion_mode_cdf);
+    putCdfs(words, "switchable_restore_cdf", 0, d.default_restoration_type_cdf);
+    putCdfs(words, "switchable_interp_cdf", 0, d.default_interp_filter_cdf);
+    // The transform sizes' depth, by the largest size, 8x8 first.
+    putCdfs(words, "tx_size_cdf", 0, d.default_tx_8x8_cdf);
+    putCdfs(words, "tx_size_cdf", 3, d.default_tx_16x16_cdf);
+    putCdfs(words, "tx_size_cdf", 6, d.default_tx_32x32_cdf);
+    putCdfs(words, "tx_size_cdf", 9, d.default_tx_64x64_cdf);
+    putCdfs(words, "coeff_base_cdf", 0, d.default_coeff_base_cdf[class]);
+    putCdfs(words, "coeff_br_cdf", 0, d.default_coeff_br_cdf[class]);
+    putCdfs(words, "interintra_mode_cdf", 1, d.default_inter_intra_mode_cdf);
+    putCdfs(words, "delta_q_cdf", 0, d.default_delta_q_cdf);
+    for (0..4) |i| putCdfs(words, "delta_lf_multi_cdf", i, d.default_delta_lf_cdf);
+    putCdfs(words, "delta_lf_cdf", 0, d.default_delta_lf_cdf);
+    putCdfs(words, "eob_flag_cdf16", 0, d.default_eob_pt_16_cdf[class]);
+    putCdfs(words, "filter_intra_mode_cdf", 0, d.default_filter_intra_mode_cdf);
+    putCdfs(words, "eob_flag_cdf32", 0, d.default_eob_pt_32_cdf[class]);
+    putCdfs(words, "eob_flag_cdf64", 0, d.default_eob_pt_64_cdf[class]);
+    putCdfs(words, "palette_y_size_cdf", 0, d.default_palette_y_size_cdf);
+    putCdfs(words, "palette_uv_size_cdf", 0, d.default_palette_uv_size_cdf);
+    putCdfs(words, "angle_delta_cdf", 0, d.default_angle_delta_cdf);
+    putCdfs(words, "eob_flag_cdf128", 0, d.default_eob_pt_128_cdf[class]);
+    putCdfs(words, "inter_compound_mode_cdf", 0, d.default_compound_mode_cdf);
+    // The palettes' colour indices, by the palette's size from 2.
+    inline for (.{ "2", "3", "4", "5", "6", "7", "8" }, 0..) |size, n| {
+        putCdfs(words, "palette_y_color_index_cdf", n * 5, @field(d, "default_palette_size_" ++ size ++ "_y_color_cdf"));
+        putCdfs(words, "palette_uv_color_index_cdf", n * 5, @field(d, "default_palette_size_" ++ size ++ "_uv_color_cdf"));
+    }
+    putCdfs(words, "cfl_sign_cdf", 0, d.default_cfl_sign_cdf);
+    putCdfs(words, "spatial_pred_seg_cdf", 0, d.default_segment_id_cdf);
+    putCdfs(words, "eob_flag_cdf256", 0, d.default_eob_pt_256_cdf[class]);
+    // 512 and 1024 have one context each: the second place stays 0.
+    for (0..2) |plane| {
+        putCdfs(words, "eob_flag_cdf512", plane * 2, d.default_eob_pt_512_cdf[class][plane]);
+        putCdfs(words, "eob_flag_cdf1024", plane * 2, d.default_eob_pt_1024_cdf[class][plane]);
+    }
+    // Partitions by block size, four contexts each.
+    putCdfs(words, "partition_cdf", 0, d.default_partition_w8_cdf);
+    putCdfs(words, "partition_cdf", 4, d.default_partition_w16_cdf);
+    putCdfs(words, "partition_cdf", 8, d.default_partition_w32_cdf);
+    putCdfs(words, "partition_cdf", 12, d.default_partition_w64_cdf);
+    putCdfs(words, "partition_cdf", 16, d.default_partition_w128_cdf);
+    putCdfs(words, "y_mode_cdf", 0, d.default_y_mode_cdf);
+    putCdfs(words, "kf_y_cdf", 0, d.default_intra_frame_y_mode_cdf);
+    putCdfs(words, "uv_mode_cdf", 0, d.default_uv_mode_cfl_not_allowed_cdf);
+    putCdfs(words, "uv_mode_cdf", 13, d.default_uv_mode_cfl_allowed_cdf);
+    putCdfs(words, "wedge_idx_cdf", 0, d.default_wedge_index_cdf);
+    // The transform types: intra set 1 for 4x4 and 8x8, set 2 for 4x4 to
+    // 16x16; inter set 1 for 4x4 and 8x8, set 2 for 16x16, set 3 for all
+    // four.
+    putCdfs(words, "intra_ext_tx_cdf", 0, d.default_intra_tx_type_set1_cdf);
+    putCdfs(words, "intra_ext_tx_cdf", 4 * 13, d.default_intra_tx_type_set2_cdf);
+    putCdfs(words, "inter_ext_tx_cdf", 0, d.default_inter_tx_type_set1_cdf);
+    putCdfs(words, "inter_ext_tx_cdf", 4 + 2, d.default_inter_tx_type_set2_cdf);
+    putCdfs(words, "inter_ext_tx_cdf", 8, d.default_inter_tx_type_set3_cdf);
+    putCdfs(words, "cfl_alpha_cdf", 0, d.default_cfl_alpha_cdf);
+}
+
+/// The CDFs of `from`, each in the specification's form - its
+/// cumulative probabilities up to 32768, then the counter - written into
+/// field `name` of the frame context in `words` from its `skip`th row
+/// on, one to a row.
+fn putCdfs(words: []u16, comptime name: []const u8, skip: usize, from: anytype) void {
+    const Field = @FieldType(Av1FrameContext, name);
+    const row = innermost(Field);
+    const From = @TypeOf(from);
+    const length = innermost(From);
+    const flat: [@sizeOf(From) / 2]u16 = @bitCast(from);
+    const rows = flat.len / length;
+    if (length > row or (skip + rows) * row > @sizeOf(Field) / 2) @panic("a default CDF does not fit its place");
+    const first = @offsetOf(Av1FrameContext, name) / 2 + skip * row;
+    for (0..rows) |r| {
+        for (0..length - 1) |i| words[first + r * row + i] = 32768 - flat[r * length + i];
+    }
+}
+
+/// The length of an array's innermost arrays.
+fn innermost(comptime T: type) usize {
+    const info = @typeInfo(T).array;
+    return if (@typeInfo(info.child) == .array) innermost(info.child) else info.len;
+}
+
+/// An AV1 stream's context, for any size: thirteen frame contexts - the
+/// four of default CDFs, and one for each of the nine firmware numbers -
+/// then for each number 512 bytes and five times 256 for each of 64 by
+/// 34 superblocks of 128 samples; and the rows of superblocks the loop
+/// filter, the upscaling, the output and film grain keep, each the
+/// larger of what superblocks of 64 and of 128 samples take for the
+/// largest picture, twice; and 68 blocks of 512 bytes.
+pub const av1_context_bytes: u32 = av1ContextBytes();
+
+fn av1ContextBytes() u32 {
+    const frames = (av1_ids + 4) * av1_frame_context_bytes;
+    const pictures = av1_ids * 64 * 34 * (512 + 5 * 256);
+    const pitch_64 = alignUp(32 * 68, 256) * 2;
+    const pitch_128 = alignUp(32 * 34, 256) * 2;
+    // Each buffer's rows, for superblocks of 64 and of 128.
+    const kept = [_][2]u32{ .{ 1728, 3008 }, .{ 3232, 6208 }, .{ 1312, 2336 }, .{ 384, 640 } };
+    var rows: u32 = 0;
+    for (kept) |k| rows += @max(pitch_64 * (alignUp(k[0], 64) / 64), pitch_128 * (alignUp(k[1], 64) / 64));
+    return frames + pictures + 2 * rows + 68 * 512;
 }
 
 fn alignUp(value: u32, to: u32) u32 {
@@ -1172,6 +1636,15 @@ pub const Layout = struct {
             .target_rows = alignUp(height, 32),
             .hw_bytes = 2304 * 5 + 32 * 2 * 128 * 68 + 9 * 64 * 2 * 128 * 68 + 8 * 2 * 2 * 8192 + deep_bytes,
         };
+    }
+
+    /// An AV1 stream of `width` by `height` samples, `deep` past 8 bits:
+    /// laid out as VP9's, with an AV1 stream's context.
+    pub fn av1(width: u32, height: u32, deep: bool) Layout {
+        var layout = vp9(width, height, deep);
+        layout.ids = av1_ids;
+        layout.hw_bytes = av1_context_bytes;
+        return layout;
     }
 
     /// A reference surface's brightness in bytes.
@@ -1304,6 +1777,11 @@ pub fn hevcMessage(m: *HevcMessage, layout: Layout, stream: u32, number: u32, bi
 /// eight reference slots' surfaces, by slot.
 pub fn vp9Message(m: *Vp9Message, layout: Layout, stream: u32, number: u32, bitstream_bytes: u32, current: u64, refs: *const [8]u64) void {
     pictureMessage(Vp9Message, m, "vp9", PART_VP9, types.VDCODEC_VP9, layout, stream, number, bitstream_bytes, current, refs);
+}
+
+/// The rest of an AV1 frame's message, as `vp9Message`.
+pub fn av1Message(m: *Av1Message, layout: Layout, stream: u32, number: u32, bitstream_bytes: u32, current: u64, refs: *const [8]u64) void {
+    pictureMessage(Av1Message, m, "av1", PART_AV1, types.VDCODEC_AV1, layout, stream, number, bitstream_bytes, current, refs);
 }
 
 /// A picture's message of any codec but its codec's part, which is
@@ -1569,6 +2047,361 @@ pub fn vp9Part(part: *Vp9Part, tables: *Vp9Tables, h: *const vp.vp9.Vp9Header, i
     }
 }
 
+/// The flags of an AV1 frame's part, a bit each (its header's and its
+/// sequence header's).
+const AV1_SHOW_FRAME: u5 = 0;
+const AV1_DISABLE_CDF_UPDATE: u5 = 1;
+const AV1_REFRESH_FRAME_CONTEXT: u5 = 2;
+const AV1_INTRA_ONLY: u5 = 3;
+const AV1_ALLOW_INTRABC: u5 = 4;
+const AV1_ALLOW_HIGH_PRECISION_MV: u5 = 5;
+const AV1_MONOCHROME: u5 = 6;
+const AV1_SKIP_MODE_FLAG: u5 = 7;
+const AV1_USING_QMATRIX: u5 = 8;
+const AV1_ENABLE_FILTER_INTRA: u5 = 9;
+const AV1_ENABLE_INTRA_EDGE_FILTER: u5 = 10;
+const AV1_ENABLE_INTERINTRA_COMPOUND: u5 = 11;
+const AV1_ENABLE_MASKED_COMPOUND: u5 = 12;
+const AV1_ALLOW_WARPED_MOTION: u5 = 13;
+const AV1_ENABLE_DUAL_FILTER: u5 = 14;
+const AV1_ENABLE_ORDER_HINT: u5 = 15;
+const AV1_ENABLE_JNT_COMP: u5 = 16;
+const AV1_ALLOW_REF_FRAME_MVS: u5 = 17;
+const AV1_ALLOW_SCREEN_CONTENT_TOOLS: u5 = 18;
+const AV1_FORCE_INTEGER_MV: u5 = 19;
+const AV1_MODE_REF_DELTA_ENABLED: u5 = 20;
+const AV1_MODE_REF_DELTA_UPDATE: u5 = 21;
+const AV1_DELTA_Q_PRESENT: u5 = 22;
+const AV1_DELTA_LF_PRESENT: u5 = 23;
+const AV1_REDUCED_TX_SET: u5 = 24;
+const AV1_SEGMENTATION_ENABLED: u5 = 25;
+const AV1_SEGMENTATION_UPDATE_MAP: u5 = 26;
+const AV1_SEGMENTATION_TEMPORAL_UPDATE: u5 = 27;
+const AV1_DELTA_LF_MULTI: u5 = 28;
+const AV1_SWITCHABLE_MOTION_MODE: u5 = 29;
+const AV1_DISABLE_REF_FRAME_MVS: u5 = 31;
+
+/// The most points a film grain scaling function has, of brightness and
+/// of each colour, and the most tiles a frame's part says where they are.
+const av1_most_y_points = 14;
+const av1_most_chroma_points = 10;
+pub const av1_most_tiles = 256;
+
+/// The codec's part and the tables of the AV1 frame of header `h`, read
+/// with sequence header `seq` and decoded into firmware number `id` in a
+/// stream laid out as `layout`. `map` holds the firmware's number for the
+/// picture of each reference slot (`no_ref` for an empty one) - a key
+/// frame that is shown refers to none - and `tiles` where each tile is
+/// among the frame's bytes; film grain's tables are made in `blocks`.
+///
+/// The header's values go as they are but these: the quantizer matrices
+/// as 0xF0 and the level, or 0xFF for none; the delta resolutions as the
+/// step itself; the tiles' starts in superblocks, and the end after the
+/// last; CDEF's strengths as the primary's times 4 and the secondary as
+/// coded; the restoration unit's size as its logarithm less 5 (3 where
+/// no plane is restored); each reference's sign bias by its place among
+/// the seven; samples deeper than 8 bits rounded into the 8-bit target.
+pub fn av1Part(part: *Av1Part, tables: *Av1Tables, blocks: *Av1GrainBlocks, seq: *const vp.av1.Av1Sequence, h: *const vp.av1.Av1FrameHeader, layout: Layout, id: u8, map: *const [8]u8, tiles: []const Av1Tile) void {
+    const av1 = vp.av1;
+    part.* = .{};
+    part.frame_header_flags = flag(h.show_frame, AV1_SHOW_FRAME) | flag(h.disable_cdf_update, AV1_DISABLE_CDF_UPDATE) |
+        flag(!h.disable_frame_end_update_cdf, AV1_REFRESH_FRAME_CONTEXT) |
+        flag(h.frame_type == av1.INTRA_ONLY_FRAME, AV1_INTRA_ONLY) | flag(h.allow_intrabc, AV1_ALLOW_INTRABC) |
+        flag(h.allow_high_precision_mv, AV1_ALLOW_HIGH_PRECISION_MV) | flag(seq.mono_chrome, AV1_MONOCHROME) |
+        flag(h.skip_mode_present, AV1_SKIP_MODE_FLAG) | flag(h.using_qmatrix, AV1_USING_QMATRIX) |
+        flag(seq.enable_filter_intra, AV1_ENABLE_FILTER_INTRA) | flag(seq.enable_intra_edge_filter, AV1_ENABLE_INTRA_EDGE_FILTER) |
+        flag(seq.enable_interintra_compound, AV1_ENABLE_INTERINTRA_COMPOUND) |
+        flag(seq.enable_masked_compound, AV1_ENABLE_MASKED_COMPOUND) | flag(h.allow_warped_motion, AV1_ALLOW_WARPED_MOTION) |
+        flag(seq.enable_dual_filter, AV1_ENABLE_DUAL_FILTER) | flag(seq.enable_order_hint, AV1_ENABLE_ORDER_HINT) |
+        flag(seq.enable_jnt_comp, AV1_ENABLE_JNT_COMP) | flag(h.use_ref_frame_mvs, AV1_ALLOW_REF_FRAME_MVS) |
+        flag(h.allow_screen_content_tools, AV1_ALLOW_SCREEN_CONTENT_TOOLS) | flag(h.force_integer_mv, AV1_FORCE_INTEGER_MV) |
+        flag(h.loop_filter_delta_enabled, AV1_MODE_REF_DELTA_ENABLED) |
+        flag(h.loop_filter_delta_update, AV1_MODE_REF_DELTA_UPDATE) | flag(h.delta_q_present, AV1_DELTA_Q_PRESENT) |
+        flag(h.delta_lf_present, AV1_DELTA_LF_PRESENT) | flag(h.reduced_tx_set, AV1_REDUCED_TX_SET) |
+        flag(h.segmentation_enabled, AV1_SEGMENTATION_ENABLED) | flag(h.segmentation_update_map, AV1_SEGMENTATION_UPDATE_MAP) |
+        flag(h.segmentation_temporal_update, AV1_SEGMENTATION_TEMPORAL_UPDATE) | flag(h.delta_lf_multi, AV1_DELTA_LF_MULTI) |
+        flag(h.is_motion_mode_switchable, AV1_SWITCHABLE_MOTION_MODE) | flag(!seq.enable_ref_frame_mvs, AV1_DISABLE_REF_FRAME_MVS);
+    part.current_frame_id = h.current_frame_id;
+    part.frame_offset = h.order_hint;
+    part.profile = seq.seq_profile;
+    part.frame_type = h.frame_type;
+    part.primary_ref_frame = h.primary_ref_frame;
+    part.curr_pic_idx = id;
+    part.sb_size = @intFromBool(seq.use_128x128_superblock);
+    part.interp_filter = h.interpolation_filter;
+    part.filter_level = .{ h.loop_filter_level[0], h.loop_filter_level[1] };
+    part.filter_level_u = h.loop_filter_level[2];
+    part.filter_level_v = h.loop_filter_level[3];
+    part.sharpness_level = h.loop_filter_sharpness;
+    part.ref_deltas = h.loop_filter_ref_deltas;
+    part.mode_deltas = h.loop_filter_mode_deltas;
+    part.base_qindex = h.base_q_idx;
+    part.y_dc_delta_q = h.delta_q_y_dc;
+    part.u_dc_delta_q = h.delta_q_u_dc;
+    part.v_dc_delta_q = h.delta_q_v_dc;
+    part.u_ac_delta_q = h.delta_q_u_ac;
+    part.v_ac_delta_q = h.delta_q_v_ac;
+    part.qm_y = if (h.using_qmatrix) h.qm_y | 0xF0 else 0xFF;
+    part.qm_u = if (h.using_qmatrix) h.qm_u | 0xF0 else 0xFF;
+    part.qm_v = if (h.using_qmatrix) h.qm_v | 0xF0 else 0xFF;
+    part.delta_q_res = @as(u8, 1) << @intCast(h.delta_q_res);
+    part.delta_lf_res = @as(u8, 1) << @intCast(h.delta_lf_res);
+    part.tile_cols = @intCast(h.tile_cols);
+    part.tile_rows = @intCast(h.tile_rows);
+    part.tx_mode = h.tx_mode;
+    part.reference_mode = if (h.reference_select) 2 else 0;
+    part.chroma_format = if (seq.mono_chrome) 0 else 1;
+    part.tile_size_bytes = 0xFF;
+    part.context_update_tile_id = h.context_update_tile_id;
+    const sb_shift: u5 = if (seq.use_128x128_superblock) 5 else 4;
+    const sb_mis = @as(u32, 1) << sb_shift;
+    for (0..h.tile_cols) |i| part.tile_col_start_sb[i] = h.mi_col_starts[i] >> sb_shift;
+    part.tile_col_start_sb[h.tile_cols] = (h.mi_cols + sb_mis - 1) >> sb_shift;
+    for (0..h.tile_rows) |i| part.tile_row_start_sb[i] = h.mi_row_starts[i] >> sb_shift;
+    part.tile_row_start_sb[h.tile_rows] = (h.mi_rows + sb_mis - 1) >> sb_shift;
+    part.max_width = layout.width;
+    part.max_height = layout.height;
+    part.width = h.frame_width;
+    part.height = h.frame_height;
+    part.superres_upscaled_width = h.upscaled_width;
+    part.superres_scale_denominator = @intCast(h.superres_denom);
+    part.order_hint_bits = seq.order_hint_bits;
+    if (h.frame_type != av1.KEY_FRAME or !h.show_frame) part.ref_frame_map = map.*;
+    for (0..7) |i| {
+        part.frame_refs[i] = part.ref_frame_map[h.ref_frame_idx[i] & 7];
+        part.ref_frame_sign_bias[i] = @intFromBool(h.ref_frame_sign_bias[av1.LAST_FRAME + i]);
+    }
+    part.bit_depth_luma_minus8 = seq.bit_depth - 8;
+    part.bit_depth_chroma_minus8 = seq.bit_depth - 8;
+    for (0..av1.MAX_SEGMENTS) |seg| {
+        var mask: u8 = 0;
+        for (0..av1.SEG_LVL_MAX) |feature| {
+            part.feature_data[seg][feature] = h.feature_data[seg][feature];
+            if (h.feature_enabled[seg][feature]) mask |= @as(u8, 1) << @intCast(feature);
+        }
+        part.feature_mask[seg] = mask;
+        if (h.lossless[seg]) part.seg_lossless_flag |= @as(u8, 1) << @intCast(seg);
+    }
+    tables.feature_data = h.feature_data;
+    tables.feature_mask = part.feature_mask;
+    part.preskip_segid = @intFromBool(h.seg_id_pre_skip);
+    part.last_active_segid = h.last_active_seg_id;
+    part.cdef_damping = h.cdef_damping;
+    part.cdef_bits = h.cdef_bits;
+    for (0..8) |i| {
+        part.cdef_strengths[i] = cdefStrength(h.cdef_y_pri_strength[i], h.cdef_y_sec_strength[i]);
+        part.cdef_uv_strengths[i] = cdefStrength(h.cdef_uv_pri_strength[i], h.cdef_uv_sec_strength[i]);
+    }
+    part.frame_restoration_type = h.frame_restoration_type;
+    for (&part.log2_restoration_unit_size_minus5, h.loop_restoration_size) |*log2_minus5, size| {
+        log2_minus5.* = if (h.uses_lr) @as(u8, @intCast(31 - @clz(@max(size, 32)))) - 5 else 3;
+    }
+    if (seq.bit_depth > 8) {
+        part.luma_10to8 = DITHER_ROUND;
+        part.chroma_10to8 = DITHER_ROUND;
+    }
+    // Film grain where the frame has it: the decoder applies it to the
+    // target, the reference surface keeps the picture without.
+    const grain = &h.film_grain;
+    if (grain.apply_grain) {
+        const fg = &part.film_grain;
+        fg.apply_grain = 1;
+        fg.random_seed = grain.grain_seed;
+        fg.grain_scale_shift = grain.grain_scale_shift;
+        fg.scaling_shift = grain.grain_scaling_minus_8 + 8;
+        fg.chroma_scaling_from_luma = @intFromBool(grain.chroma_scaling_from_luma);
+        fg.num_y_points = @min(grain.num_y_points, av1_most_y_points);
+        fg.num_cb_points = @min(grain.num_cb_points, av1_most_chroma_points);
+        fg.num_cr_points = @min(grain.num_cr_points, av1_most_chroma_points);
+        for (0..fg.num_y_points) |i| fg.scaling_points_y[i] = .{ grain.point_y_value[i], grain.point_y_scaling[i] };
+        for (0..fg.num_cb_points) |i| fg.scaling_points_cb[i] = .{ grain.point_cb_value[i], grain.point_cb_scaling[i] };
+        for (0..fg.num_cr_points) |i| fg.scaling_points_cr[i] = .{ grain.point_cr_value[i], grain.point_cr_scaling[i] };
+        fg.ar_coeff_lag = @min(grain.ar_coeff_lag, 3);
+        fg.ar_coeff_shift = grain.ar_coeff_shift_minus_6 + 6;
+        for (&fg.ar_coeffs_y, grain.ar_coeffs_y_plus_128) |*c, plus| c.* = @intCast(@as(i16, plus) - 128);
+        for (&fg.ar_coeffs_cb, grain.ar_coeffs_cb_plus_128) |*c, plus| c.* = @intCast(@as(i16, plus) - 128);
+        for (&fg.ar_coeffs_cr, grain.ar_coeffs_cr_plus_128) |*c, plus| c.* = @intCast(@as(i16, plus) - 128);
+        fg.cb_mult = grain.cb_mult;
+        fg.cb_luma_mult = grain.cb_luma_mult;
+        fg.cb_offset = grain.cb_offset;
+        fg.cr_mult = grain.cr_mult;
+        fg.cr_luma_mult = grain.cr_luma_mult;
+        fg.cr_offset = grain.cr_offset;
+        fg.overlap_flag = @intFromBool(grain.overlap_flag);
+        fg.clip_to_restricted_range = @intFromBool(grain.clip_to_restricted_range);
+        fg.bit_depth_minus_8 = seq.bit_depth - 8;
+        filmGrain(tables, blocks, fg);
+    }
+    for (part.global_motion[av1.LAST_FRAME..], av1.LAST_FRAME..) |*warp, ref| {
+        warp.wmtype = h.gm_type[ref];
+        for (warp.wmmat[0..6], h.gm_params[ref]) |*into, param| into.* = param;
+    }
+    const count = @min(tiles.len, part.tile_info.len);
+    @memcpy(part.tile_info[0..count], tiles[0..count]);
+}
+
+/// A CDEF strength as the decoder takes it: the primary's times 4, and
+/// the secondary as coded - 3 where it is 4.
+fn cdefStrength(primary: u8, secondary: u8) u16 {
+    const coded: u16 = if (secondary == 4) 3 else secondary;
+    return @as(u16, primary) << 2 | coded;
+}
+
+/// Film grain's blocks while they are made: brightness's 73 rows of 82
+/// samples, each colour's 38 of 44 (4:2:0).
+pub const Av1GrainBlocks = struct {
+    luma: [73][82]i16 = undefined,
+    cb: [38][44]i16 = undefined,
+    cr: [38][44]i16 = undefined,
+};
+
+/// Film grain's tables for the values `grain` (7.18.3.3), its blocks
+/// made in `blocks`: white noise taken from the Gaussian sequence by a
+/// shift register, the brightness's seeded with the frame's seed and each
+/// colour's with it changed, then each filtered auto-regressively - the
+/// colours with the brightness at their place mixed in - and kept to
+/// the samples' range. What the decoder takes of them goes into its rows
+/// of the tables: brightness's 64 rows from row and column 9, a gap of 64
+/// after each four; each colour's 32 from row and column 6, a gap after
+/// each eight. The scaling functions are tables of 256, straight between
+/// their points.
+pub fn filmGrain(tables: *Av1Tables, blocks: *Av1GrainBlocks, grain: *const Av1Grain) void {
+    const bit_depth: u5 = @intCast(grain.bit_depth_minus_8 + 8);
+    const center = @as(i32, 128) << (bit_depth - 8);
+    const least = -center;
+    const most = (@as(i32, 256) << (bit_depth - 8)) - 1 - center;
+    const shift: u5 = @intCast(12 - @as(u32, bit_depth) + grain.grain_scale_shift);
+    const lag: usize = grain.ar_coeff_lag;
+    const ar_shift: u5 = @intCast(grain.ar_coeff_shift);
+
+    var seed = grain.random_seed;
+    for (&blocks.luma) |*row| {
+        for (row) |*sample| sample.* = @intCast(round2(if (grain.num_y_points > 0) gaussian(&seed) else 0, shift));
+    }
+    for (3..blocks.luma.len) |y| {
+        for (3..blocks.luma[0].len - 3) |x| {
+            var sum: i32 = 0;
+            var pos: usize = 0;
+            near: for (y - lag..y + 1) |row| {
+                for (x - lag..x + lag + 1) |column| {
+                    if (row == y and column == x) break :near;
+                    sum += @as(i32, blocks.luma[row][column]) * grain.ar_coeffs_y[pos];
+                    pos += 1;
+                }
+            }
+            blocks.luma[y][x] = @intCast(@max(least, @min(most, blocks.luma[y][x] + round2(sum, ar_shift))));
+        }
+    }
+
+    const cb_noise = grain.num_cb_points > 0 or grain.chroma_scaling_from_luma != 0;
+    const cr_noise = grain.num_cr_points > 0 or grain.chroma_scaling_from_luma != 0;
+    seed = grain.random_seed ^ 0xb524;
+    for (&blocks.cb) |*row| {
+        for (row) |*sample| sample.* = @intCast(round2(if (cb_noise) gaussian(&seed) else 0, shift));
+    }
+    seed = grain.random_seed ^ 0x49d8;
+    for (&blocks.cr) |*row| {
+        for (row) |*sample| sample.* = @intCast(round2(if (cr_noise) gaussian(&seed) else 0, shift));
+    }
+    for (3..blocks.cb.len) |y| {
+        for (3..blocks.cb[0].len - 3) |x| {
+            var sum_cb: i32 = 0;
+            var sum_cr: i32 = 0;
+            var pos: usize = 0;
+            near: for (y - lag..y + 1) |row| {
+                for (x - lag..x + lag + 1) |column| {
+                    const c_cb: i32 = grain.ar_coeffs_cb[pos];
+                    const c_cr: i32 = grain.ar_coeffs_cr[pos];
+                    if (row == y and column == x) {
+                        // The brightness at this place: the four samples
+                        // a colour sample covers, averaged.
+                        if (grain.num_y_points > 0) {
+                            const luma_x = ((x - 3) << 1) + 3;
+                            const luma_y = ((y - 3) << 1) + 3;
+                            var luma: i32 = 0;
+                            for (0..2) |i| {
+                                for (0..2) |j| luma += blocks.luma[luma_y + i][luma_x + j];
+                            }
+                            luma = round2(luma, 2);
+                            sum_cb += luma * c_cb;
+                            sum_cr += luma * c_cr;
+                        }
+                        break :near;
+                    }
+                    sum_cb += @as(i32, blocks.cb[row][column]) * c_cb;
+                    sum_cr += @as(i32, blocks.cr[row][column]) * c_cr;
+                    pos += 1;
+                }
+            }
+            blocks.cb[y][x] = @intCast(@max(least, @min(most, blocks.cb[y][x] + round2(sum_cb, ar_shift))));
+            blocks.cr[y][x] = @intCast(@max(least, @min(most, blocks.cr[y][x] + round2(sum_cr, ar_shift))));
+        }
+    }
+
+    const luma_out: *[64 * 96]i16 = @ptrCast(&tables.luma_grain_block);
+    for (0..64) |i| {
+        const row = luma_out[i * 80 + i / 4 * 64 ..][0..80];
+        for (row, 0..) |*sample, j| sample.* = if (9 + j < blocks.luma[0].len) blocks.luma[9 + i][9 + j] else 0;
+    }
+    const cb_out: *[32 * 48]i16 = @ptrCast(&tables.cb_grain_block);
+    const cr_out: *[32 * 48]i16 = @ptrCast(&tables.cr_grain_block);
+    for (0..32) |i| {
+        const first = i * 40 + i / 8 * 64;
+        for (0..40) |j| {
+            const within = 6 + j < blocks.cb[0].len;
+            cb_out[first + j] = if (within) blocks.cb[6 + i][6 + j] else 0;
+            cr_out[first + j] = if (within) blocks.cr[6 + i][6 + j] else 0;
+        }
+    }
+
+    tables.scaling_lut_y = @splat(0);
+    grainScaling(&tables.scaling_lut_y, grain.scaling_points_y[0..grain.num_y_points]);
+    if (grain.chroma_scaling_from_luma != 0) {
+        tables.scaling_lut_cb = tables.scaling_lut_y;
+        tables.scaling_lut_cr = tables.scaling_lut_y;
+    } else {
+        tables.scaling_lut_cb = @splat(0);
+        tables.scaling_lut_cr = @splat(0);
+        grainScaling(&tables.scaling_lut_cb, grain.scaling_points_cb[0..grain.num_cb_points]);
+        grainScaling(&tables.scaling_lut_cr, grain.scaling_points_cr[0..grain.num_cr_points]);
+    }
+}
+
+/// The next of film grain's white noise: the shift register `seed` moved
+/// on, its top 11 bits picking a value of the Gaussian sequence.
+fn gaussian(seed: *u16) i32 {
+    const value = seed.*;
+    const bit = (value ^ (value >> 1) ^ (value >> 3) ^ (value >> 12)) & 1;
+    seed.* = (value >> 1) | (bit << 15);
+    return vp.av1.gaussian_sequence[seed.* >> 5];
+}
+
+/// `value` divided by 2 to the `bits`, rounded (Round2).
+fn round2(value: i32, bits: u5) i32 {
+    return (value + ((@as(i32, 1) << bits) >> 1)) >> bits;
+}
+
+/// A scaling function of `points` (value, scaling) as a table: the first
+/// point's scaling before it, straight lines between the points in steps
+/// of 1/65536, the last point's after it. A function without points stays
+/// as it is.
+fn grainScaling(table: *[256]i16, points: []const [2]u8) void {
+    if (points.len == 0) return;
+    for (table[0..points[0][0]]) |*entry| entry.* = points[0][1];
+    for (points[0 .. points.len - 1], points[1..]) |from, to| {
+        const delta_y = @as(i32, to[1]) - from[1];
+        const delta_x = @as(i32, to[0]) - from[0];
+        if (delta_x <= 0) continue;
+        const delta: i64 = @as(i64, delta_y) * @divTrunc(65536 + (delta_x >> 1), delta_x);
+        for (0..@intCast(delta_x)) |x| {
+            const step: i32 = @intCast((@as(i64, @intCast(x)) * delta + 32768) >> 16);
+            table[from[0] + x] = @intCast(@as(i32, from[1]) + step);
+        }
+    }
+    const last = points[points.len - 1];
+    for (table[last[0]..]) |*entry| entry.* = last[1];
+}
+
 /// A loop filter level kept to 0 to MAX_LOOP_FILTER.
 fn filterLevel(level: i32) i32 {
     const most: i32 = vp.vp9.MAX_LOOP_FILTER;
@@ -1649,18 +2482,34 @@ pub fn streamFromDevice(to: [*]u8, cpu: u64, bytes: usize) void {
 pub fn decodePicture(state: *State, message: anytype, tables: anytype, buffers: Buffers) void {
     const vp9 = @TypeOf(tables.*) == Vp9Tables;
     const tables_at = if (vp9) probs_at else scaling_at;
-    const page = state.ring.cpu + message_at;
-    copyToDevice(page, @as([*]const u8, @ptrCast(message))[0..@sizeOf(@TypeOf(message.*))]);
-    copyToDevice(page + tables_at, @as([*]const u8, @ptrCast(tables))[0..@sizeOf(@TypeOf(tables.*))]);
+    copyToDevice(state.ring.cpu + message_at + tables_at, @as([*]const u8, @ptrCast(tables))[0..@sizeOf(@TypeOf(tables.*))]);
     var named = buffers;
-    named.message = state.ring.device + message_at;
     if (vp9) {
-        named.flags = vp9_decode_buffers;
+        named.flags = probs_decode_buffers;
         named.probs = state.ring.device + message_at + tables_at;
     } else {
         named.flags = decode_buffers;
         named.scaling = state.ring.device + message_at + tables_at;
     }
+    handPicture(state, message, named);
+}
+
+/// An AV1 frame's message, as `decodePicture`, and its tables written
+/// into the stream's piece `tables_piece`.
+pub fn decodeAv1Picture(state: *State, message: *const Av1Message, tables: *const Av1Tables, tables_piece: amdgpu.GPUMemory, buffers: Buffers) void {
+    copyToDevice(tables_piece.cpu, @as([*]const u8, @ptrCast(tables))[0..@sizeOf(Av1Tables)]);
+    var named = buffers;
+    named.flags = probs_decode_buffers;
+    named.probs = tables_piece.device;
+    handPicture(state, message, named);
+}
+
+/// The message written into the ring's piece and handed to the decoder
+/// with `buffers`, which name it there.
+fn handPicture(state: *State, message: anytype, buffers: Buffers) void {
+    copyToDevice(state.ring.cpu + message_at, @as([*]const u8, @ptrCast(message))[0..@sizeOf(@TypeOf(message.*))]);
+    var named = buffers;
+    named.message = state.ring.device + message_at;
     fence();
     handOver(state, named);
 }
@@ -2179,8 +3028,317 @@ test "a VP9 frame's message: its flags, filter levels, references and segments" 
     try testing.expectEqual(@as(u32, 2), message.dpb.curr_hi);
 
     var ib: [ib_words]u32 = undefined;
-    _ = indirectBuffer(&ib, .{ .flags = vp9_decode_buffers, .message = 0x1000, .session = 0x2000, .probs = 0x3_0000_0400 });
-    try testing.expectEqual(vp9_decode_buffers, ib[6]);
+    _ = indirectBuffer(&ib, .{ .flags = probs_decode_buffers, .message = 0x1000, .session = 0x2000, .probs = 0x3_0000_0400 });
+    try testing.expectEqual(probs_decode_buffers, ib[6]);
     try testing.expectEqual(@as(u32, 3), ib[6 + 17]);
     try testing.expectEqual(@as(u32, 0x400), ib[6 + 18]);
+}
+
+test "an AV1 frame's message is laid out as the decoder reads it" {
+    try testing.expectEqual(@as(usize, 428), @offsetOf(Av1Message, "av1"));
+    // Places in the part, as Mesa's structure has them.
+    const places = .{
+        .{ "current_frame_id", 4 },          .{ "profile", 12 },                     .{ "curr_pic_idx", 16 },
+        .{ "ref_deltas", 24 },               .{ "base_qindex", 34 },                 .{ "qm_y", 40 },
+        .{ "tile_cols", 45 },                .{ "chroma_format", 49 },               .{ "tile_size_bytes", 52 },
+        .{ "tile_col_start_sb", 60 },        .{ "tile_row_start_sb", 320 },          .{ "max_width", 580 },
+        .{ "superres_upscaled_width", 596 }, .{ "superres_scale_denominator", 600 }, .{ "order_hint_bits", 601 },
+        .{ "ref_frame_map", 602 },           .{ "ref_frame_offset", 612 },           .{ "frame_refs", 644 },
+        .{ "ref_frame_sign_bias", 651 },     .{ "bit_depth_luma_minus8", 658 },      .{ "feature_data", 660 },
+        .{ "feature_mask", 916 },            .{ "cdef_damping", 924 },               .{ "cdef_strengths", 926 },
+        .{ "cdef_uv_strengths", 958 },       .{ "frame_restoration_type", 990 },     .{ "log2_restoration_unit_size_minus5", 993 },
+        .{ "p010_mode", 996 },               .{ "seg_lossless_flag", 1002 },         .{ "coded_lossless", 1003 },
+        .{ "film_grain", 1004 },             .{ "uncompressed_header_size", 1172 },  .{ "global_motion", 1176 },
+        .{ "tile_info", 1528 },              .{ "reserved", 3576 },                  .{ "av1_intrabc_workaround", 3580 },
+    };
+    inline for (places) |place| try testing.expectEqual(@as(usize, place[1]), @offsetOf(Av1Part, place[0]));
+    try testing.expectEqual(@as(usize, 29), @offsetOf(Av1Grain, "num_y_points"));
+    try testing.expectEqual(@as(usize, 74), @offsetOf(Av1Grain, "ar_coeffs_y"));
+    try testing.expectEqual(@as(usize, 148), @offsetOf(Av1Grain, "ar_coeff_shift"));
+    try testing.expectEqual(@as(usize, 152), @offsetOf(Av1Grain, "cb_offset"));
+    try testing.expectEqual(@as(usize, 156), @offsetOf(Av1Grain, "cr_offset"));
+    try testing.expectEqual(@as(usize, 164), @offsetOf(Av1Grain, "random_seed"));
+    try testing.expectEqual(@as(usize, 36), @offsetOf(Av1Warp, "alpha"));
+    try testing.expectEqual(@as(usize, 128), @offsetOf(Av1Tables, "feature_mask"));
+    try testing.expectEqual(@as(usize, 256), @offsetOf(Av1Tables, "luma_grain_block"));
+    try testing.expectEqual(@as(usize, 18688), @offsetOf(Av1Tables, "scaling_lut_y"));
+    try testing.expectEqual(@as(usize, 13136), @offsetOf(Av1FrameContext, "kf_y_cdf"));
+    try testing.expectEqual(@as(usize, 19348), @offsetOf(Av1FrameContext, "cfl_alpha_cdf"));
+    try testing.expectEqual(@as(u32, 0x13), streamKind(types.VDCODEC_AV1));
+}
+
+test "the AV1 default CDFs laid out are Mesa's bytes" {
+    // FNV-1a of the four frame contexts as Mesa fills them
+    // (ac_vcn_av1_init_probs, video block 4's layout), taken from its
+    // sources - but for the 1280 places no stream reads, which it fills
+    // with values of its own and which stay 0 here.
+    var hash: u64 = 0xcbf29ce484222325;
+    for (av1_defaults) |byte| hash = (hash ^ byte) *% 0x100000001b3;
+    try testing.expectEqual(@as(u64, 0x4c1ce26006be83c8), hash);
+    const words: *const [av1_defaults.len / 2]u16 = @ptrCast(@alignCast(&av1_defaults));
+    const context = av1_frame_context_bytes / 2;
+    // Mesa's words: the coefficients' by the quantizer's class, the rest
+    // the same in each.
+    try testing.expectEqual(@as(u16, 919), words[0]);
+    try testing.expectEqual(@as(u16, 5881), words[3 * context]);
+    try testing.expectEqualSlices(u16, &.{ 17180, 15741, 13430, 12550, 12086, 11658, 10943, 9524, 8579, 4603, 3675, 2302, 0, 0 }, words[13136 / 2 ..][0..14]);
+    try testing.expectEqualSlices(u16, &.{ 25131, 12049, 1367, 287, 111, 80, 76, 72, 68, 64, 60, 56, 52, 48, 44, 0, 0 }, words[3 * context + 19348 / 2 ..][0..17]);
+    try testing.expectEqualSlices(u16, &.{ 17171, 11839, 8197, 6062, 5104, 3947, 3167, 2197, 866, 0, 0 }, words[(12392 + 4 * 22) / 2 ..][0..11]);
+    try testing.expectEqualSlices(u16, &.{ 4096, 1792, 910, 448, 217, 112, 28, 11, 6, 1, 0, 0 }, words[(12952 + 24) / 2 ..][0..12]);
+    try testing.expectEqualSlices(u16, &.{ 23191, 20302, 15029, 12018, 10707, 9553, 8167, 7285, 6925, 712, 0, 0 }, words[2 * context + (12832 + 48) / 2 ..][0..12]);
+}
+
+test "an AV1 stream's surfaces and context" {
+    try testing.expectEqual(@as(u32, 36_389_888), av1_context_bytes);
+    const layout = Layout.av1(3840, 2160, true);
+    try testing.expectEqual(@as(u32, 9), layout.ids);
+    try testing.expectEqual(@as(u32, 3840), layout.ref_pitch);
+    try testing.expectEqual(@as(u32, 2176), layout.ref_rows);
+    try testing.expectEqual(@as(u32, 2), layout.sample_bytes);
+    try testing.expectEqual(@as(u32, 3840), layout.target_pitch);
+    try testing.expectEqual(@as(u32, 2176), layout.target_rows);
+    try testing.expectEqual(av1_context_bytes, layout.hw_bytes);
+}
+
+/// Film grain's values for a test: in 8 bits with the farthest lag and
+/// a scaling function of each plane's own, or in 10 with the nearest and
+/// the colours scaled as the brightness.
+fn testGrain(deep: bool) Av1Grain {
+    var g: Av1Grain = .{ .apply_grain = 1 };
+    if (!deep) {
+        g.random_seed = 0x1234;
+        g.ar_coeff_lag = 3;
+        g.ar_coeff_shift = 7;
+        g.num_y_points = 3;
+        g.scaling_points_y[0..3].* = .{ .{ 16, 20 }, .{ 80, 60 }, .{ 200, 30 } };
+        g.num_cb_points = 2;
+        g.scaling_points_cb[0..2].* = .{ .{ 0, 10 }, .{ 255, 90 } };
+        g.num_cr_points = 1;
+        g.scaling_points_cr[0] = .{ 128, 50 };
+        for (&g.ar_coeffs_y, 0..) |*c, i| c.* = @intCast(@as(i32, @intCast(i * 7 % 23)) - 11);
+        for (&g.ar_coeffs_cb, &g.ar_coeffs_cr, 0..) |*cb, *cr, i| {
+            cb.* = @intCast(@as(i32, @intCast(i * 5 % 19)) - 9);
+            cr.* = @intCast(12 - @as(i32, @intCast(i * 3 % 25)));
+        }
+    } else {
+        g.random_seed = 0xBEEF;
+        g.bit_depth_minus_8 = 2;
+        g.grain_scale_shift = 1;
+        g.ar_coeff_lag = 1;
+        g.ar_coeff_shift = 6;
+        g.chroma_scaling_from_luma = 1;
+        g.num_y_points = 2;
+        g.scaling_points_y[0..2].* = .{ .{ 0, 64 }, .{ 255, 0 } };
+        for (g.ar_coeffs_y[0..4], 0..) |*c, i| c.* = @intCast(30 - 20 * @as(i32, @intCast(i)));
+        for (g.ar_coeffs_cb[0..5], g.ar_coeffs_cr[0..5], 0..) |*cb, *cr, i| {
+            cb.* = @intCast(-40 + 17 * @as(i32, @intCast(i)));
+            cr.* = @intCast(25 - 9 * @as(i32, @intCast(i)));
+        }
+    }
+    return g;
+}
+
+test "film grain's tables are Mesa's bytes" {
+    // FNV-1a of the buffer Mesa's ac_vcn_av1_init_film_grain_buffer
+    // writes for the same values (video block 4's rows), the columns it
+    // leaves unset as 0.
+    var tables: Av1Tables = .{};
+    var blocks: Av1GrainBlocks = .{};
+    for ([_]bool{ false, true }, [_]u64{ 0xbbdec6edc956846e, 0x15f031294a8a1b88 }) |deep, expect| {
+        tables = .{};
+        const g = testGrain(deep);
+        filmGrain(&tables, &blocks, &g);
+        var hash: u64 = 0xcbf29ce484222325;
+        const bytes: *const [@sizeOf(Av1Tables)]u8 = @ptrCast(&tables);
+        for (bytes[@offsetOf(Av1Tables, "luma_grain_block")..]) |byte| hash = (hash ^ byte) *% 0x100000001b3;
+        try testing.expectEqual(expect, hash);
+    }
+    // The 10-bit one's first samples, and its scaling falling from 64.
+    try testing.expectEqualSlices(i16, &.{ 138, -38, -22, 59 }, tables.luma_grain_block[0][0..4]);
+    try testing.expectEqual(@as(i16, -165), tables.cb_grain_block[1][0]);
+    try testing.expectEqual(@as(i16, 54), tables.scaling_lut_y[40]);
+    try testing.expectEqual(@as(i16, 39), tables.scaling_lut_cb[100]);
+}
+
+test "an AV1 frame's message: its flags, tiles, references, segments and film grain" {
+    const av1 = vp.av1;
+    var seq: av1.Av1Sequence = .{ .enable_filter_intra = true, .enable_order_hint = true, .enable_jnt_comp = true, .order_hint_bits = 7, .bit_depth = 10 };
+    var h: av1.Av1FrameHeader = .{
+        .frame_type = av1.INTER_FRAME,
+        .showable_frame = true,
+        .disable_frame_end_update_cdf = false,
+        .primary_ref_frame = 2,
+        .order_hint = 9,
+        .ref_frame_idx = .{ 6, 5, 4, 3, 2, 1, 0 },
+        .interpolation_filter = av1.SWITCHABLE,
+        .use_superres = true,
+        .superres_denom = 12,
+        .upscaled_width = 1920,
+        .frame_width = 1280,
+        .frame_height = 1080,
+        .mi_cols = 320,
+        .mi_rows = 270,
+        .tile_cols = 2,
+        .tile_rows = 1,
+        .context_update_tile_id = 1,
+        .base_q_idx = 100,
+        .delta_q_u_ac = -3,
+        .using_qmatrix = true,
+        .qm_y = 5,
+        .qm_u = 6,
+        .qm_v = 7,
+        .delta_q_present = true,
+        .delta_q_res = 2,
+        .delta_lf_res = 1,
+        .segmentation_enabled = true,
+        .seg_id_pre_skip = true,
+        .last_active_seg_id = 5,
+        .loop_filter_level = .{ 10, 12, 3, 4 },
+        .loop_filter_sharpness = 2,
+        .cdef_damping = 5,
+        .cdef_bits = 2,
+        .frame_restoration_type = .{ av1.RESTORE_WIENER, av1.RESTORE_NONE, av1.RESTORE_SGRPROJ },
+        .loop_restoration_size = .{ 128, 64, 64 },
+        .uses_lr = true,
+        .tx_mode = av1.TX_MODE_SELECT,
+        .reference_select = true,
+    };
+    h.mi_col_starts[0..3].* = .{ 0, 160, 320 };
+    h.mi_row_starts[0..2].* = .{ 0, 270 };
+    h.feature_enabled[3][av1.SEG_LVL_ALT_Q] = true;
+    h.feature_data[3][av1.SEG_LVL_ALT_Q] = -100;
+    h.feature_enabled[5][av1.SEG_LVL_REF_FRAME] = true;
+    h.feature_data[5][av1.SEG_LVL_REF_FRAME] = 4;
+    h.lossless[2] = true;
+    h.cdef_y_pri_strength[1] = 7;
+    h.cdef_y_sec_strength[1] = 4;
+    h.cdef_uv_pri_strength[2] = 3;
+    h.cdef_uv_sec_strength[2] = 2;
+    h.ref_frame_sign_bias[av1.BWDREF_FRAME] = true;
+    h.ref_frame_sign_bias[av1.ALTREF2_FRAME] = true;
+    h.ref_frame_sign_bias[av1.ALTREF_FRAME] = true;
+    h.gm_type[av1.LAST_FRAME] = av1.ROTZOOM;
+    h.gm_params[av1.LAST_FRAME] = .{ 1, 2, 65540, -3, 3, 65532 };
+    h.film_grain = .{
+        .apply_grain = true,
+        .grain_seed = 0x1234,
+        .num_y_points = 3,
+        .grain_scaling_minus_8 = 3,
+        .ar_coeff_lag = 3,
+        .ar_coeff_shift_minus_6 = 1,
+        .cb_mult = 128,
+        .cr_offset = 256,
+        .overlap_flag = true,
+    };
+    h.film_grain.point_y_value[0..3].* = .{ 16, 80, 200 };
+    h.film_grain.point_y_scaling[0..3].* = .{ 20, 60, 30 };
+    h.film_grain.ar_coeffs_y_plus_128 = @splat(128);
+    h.film_grain.ar_coeffs_y_plus_128[0] = 100;
+    h.film_grain.ar_coeffs_cb_plus_128 = @splat(128);
+    h.film_grain.ar_coeffs_cr_plus_128 = @splat(140);
+
+    var part: Av1Part = undefined;
+    var tables: Av1Tables = .{};
+    var blocks: Av1GrainBlocks = .{};
+    const layout = Layout.av1(1920, 1088, true);
+    const map = [8]u8{ 4, 1, no_ref, 3, 0, 2, 6, 7 };
+    const tiles = [_]Av1Tile{ .{ .offset = 0, .size = 1000 }, .{ .offset = 1000, .size = 500 } };
+    av1Part(&part, &tables, &blocks, &seq, &h, layout, 8, &map, &tiles);
+
+    // Refreshes its context, its flags from the header and the sequence;
+    // not shown.
+    const flags = (1 << AV1_REFRESH_FRAME_CONTEXT) | (1 << AV1_USING_QMATRIX) | (1 << AV1_ENABLE_FILTER_INTRA) |
+        (1 << AV1_ENABLE_ORDER_HINT) | (1 << AV1_ENABLE_JNT_COMP) | (1 << AV1_DELTA_Q_PRESENT) |
+        (1 << AV1_SEGMENTATION_ENABLED) | (1 << AV1_DISABLE_REF_FRAME_MVS);
+    try testing.expectEqual(@as(u32, flags), part.frame_header_flags);
+    try testing.expectEqual(@as(u32, 9), part.frame_offset);
+    try testing.expectEqual(@as(u8, 8), part.curr_pic_idx);
+    try testing.expectEqual(@as(u8, 2), part.primary_ref_frame);
+    try testing.expectEqual(av1.SWITCHABLE, part.interp_filter);
+    try testing.expectEqual([2]u8{ 10, 12 }, part.filter_level);
+    try testing.expectEqual(@as(u8, 4), part.filter_level_v);
+    try testing.expectEqual([8]i8{ 1, 0, 0, 0, -1, 0, -1, -1 }, part.ref_deltas);
+    try testing.expectEqual(@as(i8, -3), part.u_ac_delta_q);
+    try testing.expectEqualSlices(u8, &.{ 0xF5, 0xF6, 0xF7 }, &.{ part.qm_y, part.qm_u, part.qm_v });
+    try testing.expectEqual(@as(u8, 4), part.delta_q_res);
+    try testing.expectEqual(@as(u8, 2), part.delta_lf_res);
+    try testing.expectEqual(@as(u8, 2), part.reference_mode);
+    try testing.expectEqual(@as(u8, 1), part.chroma_format);
+    try testing.expectEqual(@as(u32, 0xFF), part.tile_size_bytes);
+    try testing.expectEqual(@as(u32, 1), part.context_update_tile_id);
+    // Superblocks of 64: 16 units of 4 samples each.
+    try testing.expectEqualSlices(u32, &.{ 0, 10, 20, 0 }, part.tile_col_start_sb[0..4]);
+    try testing.expectEqualSlices(u32, &.{ 0, 17, 0 }, part.tile_row_start_sb[0..3]);
+    // The stream's size, the frame's coded and upscaled.
+    try testing.expectEqualSlices(u32, &.{ 1920, 1088, 1280, 1080, 1920 }, &.{ part.max_width, part.max_height, part.width, part.height, part.superres_upscaled_width });
+    try testing.expectEqual(@as(u8, 12), part.superres_scale_denominator);
+    try testing.expectEqual(@as(u8, 7), part.order_hint_bits);
+    try testing.expectEqual(map, part.ref_frame_map);
+    try testing.expectEqual([7]u8{ 6, 2, 0, 3, no_ref, 1, 4 }, part.frame_refs);
+    try testing.expectEqual([7]u8{ 0, 0, 0, 0, 1, 1, 1 }, part.ref_frame_sign_bias);
+    try testing.expectEqual(@as(u8, 2), part.bit_depth_luma_minus8);
+    try testing.expectEqual(DITHER_ROUND, part.luma_10to8);
+    // Segments: the quantizer's change of segment 3, segment 5's
+    // reference; segment 2 lossless.
+    try testing.expectEqual(@as(i32, -100), part.feature_data[3][0]);
+    try testing.expectEqualSlices(u8, &.{ 0, 0, 0, 1, 0, 0x20, 0, 0 }, &part.feature_mask);
+    try testing.expectEqual(@as(i16, 4), tables.feature_data[5][5]);
+    try testing.expectEqual(part.feature_mask, tables.feature_mask);
+    try testing.expectEqual(@as(u8, 0x04), part.seg_lossless_flag);
+    try testing.expectEqual(@as(u8, 1), part.preskip_segid);
+    try testing.expectEqual(@as(u8, 5), part.last_active_segid);
+    try testing.expectEqual(@as(u8, 5), part.cdef_damping);
+    try testing.expectEqual(@as(u16, 7 << 2 | 3), part.cdef_strengths[1]);
+    try testing.expectEqual(@as(u16, 3 << 2 | 2), part.cdef_uv_strengths[2]);
+    try testing.expectEqual([3]u8{ av1.RESTORE_WIENER, av1.RESTORE_NONE, av1.RESTORE_SGRPROJ }, part.frame_restoration_type);
+    try testing.expectEqual([3]u8{ 2, 1, 1 }, part.log2_restoration_unit_size_minus5);
+    // Global motion from the first reference on.
+    try testing.expectEqual(@as(u32, 0), part.global_motion[0].wmtype);
+    try testing.expectEqual(@as(u32, av1.ROTZOOM), part.global_motion[1].wmtype);
+    try testing.expectEqualSlices(i32, &.{ 1, 2, 65540, -3, 3, 65532, 0, 0 }, &part.global_motion[1].wmmat);
+    try testing.expectEqualSlices(i32, &.{ 0, 0, 65536, 0, 0, 65536 }, part.global_motion[7].wmmat[0..6]);
+    try testing.expectEqual(tiles[1], part.tile_info[1]);
+    try testing.expectEqual(Av1Tile{}, part.tile_info[2]);
+    // Film grain's values as the decoder takes them, and its tables made.
+    const fg = part.film_grain;
+    try testing.expectEqual(@as(u8, 1), fg.apply_grain);
+    try testing.expectEqual(@as(u8, 11), fg.scaling_shift);
+    try testing.expectEqual(@as(u8, 7), fg.ar_coeff_shift);
+    try testing.expectEqual(@as(u8, 2), fg.bit_depth_minus_8);
+    try testing.expectEqual([2]u8{ 80, 60 }, fg.scaling_points_y[1]);
+    try testing.expectEqual(@as(i8, -28), fg.ar_coeffs_y[0]);
+    try testing.expectEqual(@as(i8, 12), fg.ar_coeffs_cr[24]);
+    try testing.expectEqual(@as(u16, 256), fg.cr_offset);
+    try testing.expectEqual(@as(u16, 0x1234), fg.random_seed);
+    try testing.expectEqual(@as(i16, 20), tables.scaling_lut_y[0]);
+
+    // A key frame shown refers to nothing; without film grain the tables'
+    // grain stays as it was.
+    h.frame_type = av1.KEY_FRAME;
+    h.show_frame = true;
+    h.film_grain.apply_grain = false;
+    h.uses_lr = false;
+    seq.bit_depth = 8;
+    av1Part(&part, &tables, &blocks, &seq, &h, layout, 0, &map, tiles[0..1]);
+    try testing.expectEqual([8]u8{ no_ref, no_ref, no_ref, no_ref, no_ref, no_ref, no_ref, no_ref }, part.ref_frame_map);
+    try testing.expectEqual([7]u8{ no_ref, no_ref, no_ref, no_ref, no_ref, no_ref, no_ref }, part.frame_refs);
+    try testing.expectEqual(@as(u32, 1), part.frame_header_flags & 1);
+    try testing.expectEqual(Av1Grain{}, part.film_grain);
+    try testing.expectEqual([3]u8{ 3, 3, 3 }, part.log2_restoration_unit_size_minus5);
+    try testing.expectEqual(@as(u8, 0), part.luma_10to8);
+    try testing.expectEqual(@as(i16, 20), tables.scaling_lut_y[0]);
+
+    // The rest: AV1's stream, the tables among the buffers, the eight
+    // slots' surfaces.
+    var message: Av1Message = .{};
+    var surfaces: [8]u64 = undefined;
+    for (&surfaces, 0..) |*address, j| address.* = 0x1_0000_0000 + j * 0x10_0000;
+    av1Message(&message, Layout.av1(1920, 1080, false), 3, 9, 4096, 0x2_0000_0000, &surfaces);
+    try testing.expectEqual(@as(u32, @sizeOf(Av1Message)), message.header.total_size);
+    try testing.expectEqual(MessageIndex{ .id = PART_AV1, .offset = 428, .size = 3584 }, message.codec_index);
+    try testing.expectEqual(@as(u32, 0x13), message.decode.stream_type);
+    try testing.expectEqual(@as(u32, 0x180D), message.decode.decode_buffer_flags);
+    try testing.expectEqual(@as(u32, 36_389_888), message.decode.hw_ctxt_size);
+    try testing.expectEqual(@as(u32, 1088), message.decode.db_aligned_height);
+    try testing.expectEqual(@as(u32, 8), message.dpb.array_size);
 }

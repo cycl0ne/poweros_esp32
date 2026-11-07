@@ -19,7 +19,8 @@
 //! them. A container's packets (MP4's length-prefixed units) are turned
 //! into that before they are fed; videocodec.library does it. VP9 is fed
 //! a packet a call as the container holds it: a frame, or a superframe
-//! of several.
+//! of several. AV1 is fed a temporal unit a call - its OBUs, each with
+//! its size - with the sequence header in front of the first.
 //!
 //! **What comes out**: 8-bit 4:2:0 frames as two planes, NV12 - a plane
 //! of brightness, then one of the two colour differences side by side,
@@ -28,8 +29,9 @@
 //! bits), 4K at its best speed, into memory below 4 GiB. The AMD
 //! device's decoder takes H.264 (baseline without slice groups, main,
 //! high; 8-bit 4:2:0) up to 4096 x 4096, H.265 (main, main 10 rounded
-//! to 8 bits, main still picture) and VP9 (profile 0, and profile 2's
-//! 10 bits rounded to 8; 4:2:0) up to 8192 x 4352, its frames copied
+//! to 8 bits, main still picture), VP9 (profile 0, and profile 2's
+//! 10 bits rounded to 8; 4:2:0) and AV1 (main: 4:2:0 in 8 bits, and 10
+//! rounded to 8, film grain applied) up to 8192 x 4352, its frames copied
 //! into the system's memory.
 //!
 //! Get its base with OpenResource(VIDEODECNAME); its functions are in
@@ -46,6 +48,8 @@ pub const VDCODEC_H264: u32 = 1 << 0;
 pub const VDCODEC_H265: u32 = 1 << 1;
 /// Since 1.5, on the AMD graphics devices' decoder.
 pub const VDCODEC_VP9: u32 = 1 << 2;
+/// Since 1.6, on the AMD graphics devices' decoder.
+pub const VDCODEC_AV1: u32 = 1 << 3;
 
 /// What the calls answer.
 pub const VDERR_OK: u32 = 0;

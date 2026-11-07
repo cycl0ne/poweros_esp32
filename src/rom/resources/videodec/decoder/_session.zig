@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 //! A decoder on an AMD graphics device's video decoder: what
-//! OpenVideoDecoder hands out there - an H.264, H.265 or VP9 stream
+//! OpenVideoDecoder hands out there - an H.264, H.265, VP9 or AV1 stream
 //! videoparse.library reads, whose pictures the device decodes one at a
 //! time, and the frames they come to, in the order they are shown.
 //!
@@ -42,6 +42,19 @@
 //! scales the references of other sizes a frame is predicted from. A
 //! larger frame makes the stream anew; one after it that is predicted
 //! from pictures from before that stops the stream (VDERR_UNSUPPORTED).
+//!
+//! **AV1** is fed a temporal unit at a time, which the parser reads into
+//! frames, each its header and its tiles; the tiles are put together as
+//! they are, the message saying where each one is. As VP9's, its frames
+//! name the reference slots' pictures by their firmware numbers and
+//! their surfaces by slot, are shown in the order they come, and name
+//! their own size; the stream is made for the largest frame its sequence
+//! header allows, and its context starts with the four sets of default
+//! CDFs. A frame's tables - its segments' features and film grain's
+//! blocks and scaling - are too large for the message's page and go into
+//! a piece of the stream's own. Film grain is applied to the target only,
+//! as the frame is decoded: a frame shown again is the one read back
+//! then.
 //!
 //! **The frames** are the parser's slots: each its picture's copy in the
 //! system's memory, read back from the target - NV12, the rows the
@@ -133,7 +146,7 @@ pub const Session = struct {
     /// The stream on the decoder: its number, made or not, the layout it
     /// was made for and its pieces of the device's memory - the context
     /// (the firmware's, then the decoder's), the reference surfaces, the
-    /// target, the slices.
+    /// target, the slices, an AV1 frame's tables.
     stream: u32 = 0,
     made: bool = false,
     layout: vcn.Layout = .{},
@@ -141,6 +154,7 @@ pub const Session = struct {
     surfaces: amdgpu.GPUMemory = .{},
     target: amdgpu.GPUMemory = .{},
     bitstream: amdgpu.GPUMemory = .{},
+    tables: amdgpu.GPUMemory = .{},
     /// Each firmware number's slot, or none.
     owners: [vcn.most_ids]u8 = @splat(none),
     /// The picture being read, and its slices' units put together, each
@@ -164,14 +178,21 @@ pub const Session = struct {
     decoded: u32 = 0,
     decode_us: u64 = 0,
     read_us: u64 = 0,
-    /// A picture's message, and its scaling lists or probability table,
-    /// put together here: an H.264 one, an H.265 one or a VP9 one.
+    /// A picture's message, and its scaling lists or tables, put together
+    /// here: an H.264 one, an H.265 one, a VP9 one or an AV1 one - with
+    /// the room its film grain is made in, and where each of its tiles is
+    /// among the bytes staged, by its number, for as many as it has.
     message: vcn.AvcMessage = .{},
     scaling: vcn.AvcScaling = .{},
     hevc_message: vcn.HevcMessage = .{},
     hevc_scaling: vcn.HevcScaling = .{},
     vp9_message: vcn.Vp9Message = .{},
     vp9_tables: vcn.Vp9Tables = .{},
+    av1_message: vcn.Av1Message = .{},
+    av1_tables: vcn.Av1Tables = .{},
+    av1_grain: vcn.Av1GrainBlocks = .{},
+    av1_tiles: [vcn.av1_most_tiles]vcn.Av1Tile = @splat(.{}),
+    av1_tile_count: u32 = 0,
 
     pub fn of(h: *types.VideoDecoder) *Session {
         return @ptrCast(@alignCast(h));
@@ -201,6 +222,7 @@ pub const Session = struct {
         const codec: u32, const most_width: u32, const most_height: u32 = switch (s.codec) {
             types.VDCODEC_H265 => .{ vp.VPCODEC_HEVC, vcn.hevc_most_width, vcn.hevc_most_height },
             types.VDCODEC_VP9 => .{ vp.VPCODEC_VP9, vcn.vp9_most_width, vcn.vp9_most_height },
+            types.VDCODEC_AV1 => .{ vp.VPCODEC_AV1, vcn.av1_most_width, vcn.av1_most_height },
             else => .{ vp.VPCODEC_H264, vcn.avc_most, vcn.avc_most },
         };
         const tags = [_]utility.TagItem{
@@ -210,7 +232,7 @@ pub const Session = struct {
             .{},
         };
         var why: i32 = vp.VPERR_OK;
-        // A library before 1.1 refuses VP9.
+        // A library before 1.1 refuses VP9, one before 1.2 AV1.
         s.parser = library.OpenVideoParser(codec, null, 0, &tags, &why) orelse
             return if (why == vp.VPERR_NOMEMORY) types.VDERR_NO_MEMORY else types.VDERR_UNSUPPORTED;
         return types.VDERR_OK;
@@ -393,16 +415,18 @@ pub const Session = struct {
         const layout = switch (s.codec) {
             types.VDCODEC_H265 => s.hevcLayout(seq),
             types.VDCODEC_VP9 => s.vp9Layout(seq),
+            types.VDCODEC_AV1 => s.av1Layout(seq),
             else => s.avcLayout(seq),
         } orelse return;
         s.sequence = seq.*;
         s.sequence.h264_sps = null;
         s.sequence.hevc_sps = null;
+        s.sequence.av1 = null;
         s.told = true;
         const l = s.layout;
-        // A VP9 frame smaller than the stream is decoded in it: it may be
-        // predicted from the larger pictures before it.
-        const fits = if (s.codec == types.VDCODEC_VP9)
+        // A VP9 or AV1 frame smaller than the stream is decoded in it: it
+        // may be predicted from the larger pictures before it.
+        const fits = if (s.codec == types.VDCODEC_VP9 or s.codec == types.VDCODEC_AV1)
             l.width >= layout.width and l.height >= layout.height
         else
             l.width == layout.width and l.height == layout.height;
@@ -474,6 +498,31 @@ pub const Session = struct {
         return vcn.Layout.vp9(@max(seq.width, vcn.vp9_least_width), @max(seq.height, vcn.vp9_least_height), depth > 8);
     }
 
+    /// An AV1 sequence's layout, as `avcLayout`: profile 0 (main), 4:2:0
+    /// in 8 or 10 bits, made for the largest frame its sequence header
+    /// allows.
+    fn av1Layout(s: *Session, seq: *const vp.VideoSequence) ?vcn.Layout {
+        const header = seq.av1 orelse {
+            s.fail(types.VDERR_CORRUPT);
+            return null;
+        };
+        const depth = seq.bit_depth_luma;
+        const width = @max(header.max_frame_width, seq.width);
+        const height = @max(header.max_frame_height, seq.height);
+        if (seq.profile != 0 or seq.chroma_format != 1 or (depth != 8 and depth != 10) or
+            seq.slots > most_slots or seq.width == 0 or seq.height == 0 or
+            width > vcn.av1_most_width or height > vcn.av1_most_height)
+        {
+            exec.kprintf(s.sys(), "%s: the AMD video decoder does not take an AV1 stream of profile %d, %d bits, chroma %d, up to %u x %u\n", .{
+                types.VIDEODECNAME,          @as(u32, seq.profile), @as(u32, depth),
+                @as(u32, seq.chroma_format), width,                 height,
+            });
+            s.fail(types.VDERR_UNSUPPORTED);
+            return null;
+        }
+        return vcn.Layout.av1(width, height, depth > 8);
+    }
+
     /// A slot that stands for a picture the stream lacks: its frame grey.
     /// It is given a surface when a picture refers to it.
     fn missing(s: *Session, slot: u32, time: i64) void {
@@ -501,6 +550,7 @@ pub const Session = struct {
         s.picture = pic.*;
         s.open_picture = true;
         s.staged_bytes = 0;
+        s.av1_tile_count = 0;
         const f = &s.frames[pic.slot];
         if (!pic.second_field) {
             s.dropId(f);
@@ -508,8 +558,8 @@ pub const Session = struct {
             f.freed = false;
             f.due = 0;
             f.decoded = false;
-            // VP9's frames are shown in the order they come.
-            f.waiting = s.codec != types.VDCODEC_VP9;
+            // VP9's and AV1's frames are shown in the order they come.
+            f.waiting = s.codec != types.VDCODEC_VP9 and s.codec != types.VDCODEC_AV1;
             f.time = pic.time;
         }
         s.giveIds(pic);
@@ -562,14 +612,23 @@ pub const Session = struct {
     }
 
     /// A slice: its unit put after the others, behind a start code; a
-    /// VP9 frame, its one slice, as it is.
+    /// VP9 frame, its one slice, as it is; an AV1 tile as it is, where it
+    /// is kept by its number.
     fn slice(s: *Session, sl: *const vp.VideoSlice) void {
         if (!s.open_picture) return;
         if (sl.partitioned) {
             exec.kprintf(s.sys(), "%s: the AMD video decoder does not take data partitions\n", .{types.VIDEODECNAME});
             return s.fail(types.VDERR_UNSUPPORTED);
         }
-        const start_code: u32 = if (s.codec == types.VDCODEC_VP9) 0 else 3;
+        const start_code: u32 = if (s.codec == types.VDCODEC_VP9 or s.codec == types.VDCODEC_AV1) 0 else 3;
+        if (s.codec == types.VDCODEC_AV1) {
+            if (sl.tile >= vcn.av1_most_tiles) {
+                exec.kprintf(s.sys(), "%s: the AMD video decoder takes %d tiles a frame at most\n", .{ types.VIDEODECNAME, @as(u32, vcn.av1_most_tiles) });
+                return s.fail(types.VDERR_UNSUPPORTED);
+            }
+            s.av1_tiles[sl.tile] = .{ .offset = s.staged_bytes, .size = sl.unit_bytes };
+            s.av1_tile_count = @max(s.av1_tile_count, sl.tile + 1);
+        }
         const need = s.staged_bytes + start_code + sl.unit_bytes;
         if (!s.stageRoom(need + 128)) return s.fail(types.VDERR_NO_MEMORY);
         const into = s.staged.? + s.staged_bytes;
@@ -596,6 +655,7 @@ pub const Session = struct {
         const described = switch (s.codec) {
             types.VDCODEC_H265 => pic.hevc_sps != null and pic.hevc_pps != null,
             types.VDCODEC_VP9 => pic.vp9 != null,
+            types.VDCODEC_AV1 => pic.av1 != null and pic.av1_sequence != null,
             else => pic.h264_sps != null and pic.h264_pps != null,
         };
         if (!described or !s.made or f.id == none or s.staged_bytes == 0) return grey(f);
@@ -608,6 +668,7 @@ pub const Session = struct {
         switch (s.codec) {
             types.VDCODEC_H265 => s.hevcMessage(f, bytes),
             types.VDCODEC_VP9 => if (!s.vp9Message(f, bytes)) return,
+            types.VDCODEC_AV1 => if (!s.av1Message(f, bytes)) return,
             else => s.avcMessage(f, bytes),
         }
 
@@ -625,6 +686,7 @@ pub const Session = struct {
         switch (s.codec) {
             types.VDCODEC_H265 => vcn.decodePicture(&vb.vcn, &s.hevc_message, &s.hevc_scaling, buffers),
             types.VDCODEC_VP9 => vcn.decodePicture(&vb.vcn, &s.vp9_message, &s.vp9_tables, buffers),
+            types.VDCODEC_AV1 => vcn.decodeAv1Picture(&vb.vcn, &s.av1_message, &s.av1_tables, s.tables, buffers),
             else => vcn.decodePicture(&vb.vcn, &s.message, &s.scaling, buffers),
         }
         if (!vcn.fenced(&vb.vcn, picture_most_us, Pause{ .timeout = timeout, .sys = sys_base })) {
@@ -721,6 +783,37 @@ pub const Session = struct {
         return true;
     }
 
+    /// The AV1 frame's message, as `vp9Message`: where each of its tiles
+    /// is among the bytes staged, film grain's tables made.
+    fn av1Message(s: *Session, f: *const Frame, bytes: u32) bool {
+        const pic = &s.picture;
+        const header = pic.av1.?;
+        var map: [8]u8 = @splat(0x7F);
+        var addresses: [8]u64 = @splat(s.surface(f.id));
+        for (pic.refs[0..8], 0..) |r, j| {
+            if (r.slot >= most_slots) continue;
+            const ref = &s.frames[r.slot];
+            if (ref.id == none) continue;
+            map[j] = ref.id;
+            addresses[j] = s.surface(ref.id);
+        }
+        if (!header.frame_is_intra) {
+            for (header.ref_frame_idx) |idx| {
+                const slot = pic.refs[idx & 7].slot;
+                if (slot < most_slots and s.frames[slot].decoded) continue;
+                exec.kprintf(s.sys(), "%s: the AMD video decoder lost the pictures an AV1 frame is predicted from: a larger sequence made its stream anew\n", .{types.VIDEODECNAME});
+                s.fail(types.VDERR_UNSUPPORTED);
+                return false;
+            }
+        }
+        vcn.av1Part(&s.av1_message.av1, &s.av1_tables, &s.av1_grain, pic.av1_sequence.?, header, s.layout, f.id, &map, s.av1_tiles[0..s.av1_tile_count]);
+        var at = s.layout;
+        at.width = s.sequence.width;
+        at.height = s.sequence.height;
+        vcn.av1Message(&s.av1_message, at, s.stream, s.decoded, bytes, s.surface(f.id), &addresses);
+        return true;
+    }
+
     /// A picture due to be shown, after those due before it: with the
     /// earliest time of the pictures decoded and not shown - its own,
     /// where they were fed with the times they are shown at.
@@ -806,17 +899,25 @@ pub const Session = struct {
         const vb = s.vb;
         const sys_base = s.sys();
         const gpu = vb.vcn.gpu orelse return s.fail(types.VDERR_NO_ENGINE);
+        const av1 = s.codec == types.VDCODEC_AV1;
         if (!gpu.AllocGPUMemory(vcn.session_bytes + layout.hw_bytes, 4096, &s.context) or
             !gpu.AllocGPUMemory(layout.ids * layout.refBytes(), 4096, &s.surfaces) or
-            !gpu.AllocGPUMemory(layout.targetBytes(), 4096, &s.target))
+            !gpu.AllocGPUMemory(layout.targetBytes(), 4096, &s.target) or
+            (av1 and !gpu.AllocGPUMemory(@sizeOf(vcn.Av1Tables), 4096, &s.tables)))
         {
             exec.kprintf(sys_base, "%s: no room for a %u x %u stream on the AMD video decoder\n", .{ types.VIDEODECNAME, layout.width, layout.height });
             s.freePieces();
             return s.fail(types.VDERR_NO_MEMORY);
         }
         vcn.clear(s.context.cpu, vcn.session_bytes);
-        // A VP9 stream's context starts with the default probabilities.
+        // A VP9 stream's context starts with the default probabilities, an
+        // AV1 one's with the default CDFs and its frames' contexts clear.
         if (s.codec == types.VDCODEC_VP9) vcn.copyToDevice(s.context.cpu + vcn.session_bytes, &vcn.vp9_defaults);
+        if (av1) {
+            vcn.copyToDevice(s.context.cpu + vcn.session_bytes, &vcn.av1_defaults);
+            vcn.clear(s.context.cpu + vcn.session_bytes + vcn.av1_defaults.len, vcn.av1_ids * vcn.av1_frame_context_bytes);
+            s.av1_tables = .{};
+        }
         vb.vcn.streams +%= 1;
         s.stream = vb.vcn.streams;
         var message: [16]u32 = undefined;
@@ -858,7 +959,7 @@ pub const Session = struct {
 
     fn freePieces(s: *Session) void {
         const gpu = s.vb.vcn.gpu orelse return;
-        for ([_]*amdgpu.GPUMemory{ &s.context, &s.surfaces, &s.target, &s.bitstream }) |piece| {
+        for ([_]*amdgpu.GPUMemory{ &s.context, &s.surfaces, &s.target, &s.bitstream, &s.tables }) |piece| {
             if (piece.bytes != 0) gpu.FreeGPUMemory(piece);
         }
     }
