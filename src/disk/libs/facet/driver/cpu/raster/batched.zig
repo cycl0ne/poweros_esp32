@@ -30,6 +30,12 @@
 //! A draw with a stencil test goes by way of its own, a pixel at a time and
 //! asking about everything: the rest pay nothing for it.
 //!
+//! A form that drops pixels has the depth of those it left written after
+//! its fragment function, and drawn a pixel at a time too since 1.107.
+//! Where its stencil test writes the stencil, the tests themselves wait
+//! for the function, as llvmpipe tests late where a shader may kill and
+//! the stencil is written (lp_state_fs.c:772-799).
+//!
 //! A draw a query is counting (`State.samples`, `State.fragments`) has its
 //! pixels counted once a batch, after the fragment function has run: what
 //! it was called for, and what passed the tests and it did not drop. A draw
@@ -223,7 +229,9 @@ pub const State = struct {
     varyings: u32 = 0,
     /// The fragment function may drop a pixel by clearing its bit in
     /// `shader.Quad.kept`, so the depth is written after it has run and not
-    /// in the walk that gathers the quads.
+    /// in the walk that gathers the quads. With a stencil test that writes
+    /// the stencil, the tests too are made after it (`Shading.late`, since
+    /// 1.107).
     discards: bool = false,
     fragment: shader.FragmentFn,
     resources: *const shader.Resources,
@@ -286,6 +294,13 @@ const Shading = struct {
     bounds: ?[2]u64,
     /// The fragment function may drop a pixel: its depth waits for it.
     discards: bool,
+    /// The stencil and depth tests wait for it too: a form that drops
+    /// pixels, with a stencil test that writes the stencil, which a pixel
+    /// it drops must leave as it was. llvmpipe's depth modes for a shader
+    /// that may kill: tested and written late where the stencil is
+    /// written, and otherwise tested early and the depth alone written
+    /// late (lp_state_fs.c:772-799). (Since 1.107.)
+    late: bool,
     /// What a quad's samples are cut to at four samples a pixel, bit
     /// 4s + i sample s of its pixel i (`walk.sampleMask`): each of
     /// `State.sample_mask`'s four bits spread over its sample's four, as
@@ -433,6 +448,10 @@ fn setUpAll(target: *Target, state: *const State, vertices: []const f32, stride:
     // Vulkan.
     const has_plane = target.attachments.depth.used;
     const by_pixel = stencil != null or clamp != null or (bounds != null and has_plane);
+    // The stencil is written where either face's write mask is not 0
+    // (lp_state_fs.c:780-785), the masks as the pipeline gives them
+    // (lvp_execute.c:1028-1029).
+    const writes_stencil = if (stencil) |faces| faces[0].write_mask != 0 or faces[1].write_mask != 0 else false;
     const shading = target.arena.create(Shading) orelse return error.OutOfMemory;
     shading.* = .{
         .fragment = state.fragment,
@@ -453,6 +472,7 @@ fn setUpAll(target: *Target, state: *const State, vertices: []const f32, stride:
         .clamp = clamp,
         .bounds = if (has_plane) bounds else null,
         .discards = state.discards,
+        .late = state.discards and writes_stencil,
         .sample_bits = sampleBits(state.sample_mask),
         .samples = state.samples,
         .fragments = state.fragments,
@@ -714,10 +734,11 @@ fn Rasterize(comptime kind: Test, comptime samples: u32) type {
             // drop one has its depths held back until it has run.
             const tested_here = if (kind == .stencil) triangle.shading.has_depth else kind != .off;
             const second_here = kind == .second or kind == .second_or_equal;
-            // The pixel at a time way writes each depth as it tests it, so
-            // there is none held back for the fragment function to drop:
-            // holding them back there would write what was never gathered.
-            batch.deferred_depth = kind != .stencil and triangle.shading.discards and tested_here and !second_here and triangle.shading.depth_write;
+            // The pixel at a time way too, since 1.107: it wrote each as it
+            // tested it before, a dropped pixel's with the rest. Where its
+            // tests wait for the function as well, they write the depth
+            // themselves (`Shading.late`, `flush`).
+            batch.deferred_depth = triangle.shading.discards and tested_here and !second_here and triangle.shading.depth_write;
             walk.quads(samples, tile, header, Walker{ .tile = tile, .batch = &batch, .depth = triangle.depth, .shading = triangle.shading, .face = triangle.face }, Walker.run);
             batch.flush(samples);
         }
@@ -807,7 +828,15 @@ fn Rasterize(comptime kind: Test, comptime samples: u32) type {
                             held(z_lower, range),
                             held(z_lower +% step, range),
                         } else [4]u64{ units(z_upper), units(z_upper +% step), units(z_lower), units(z_lower +% step) };
-                        kept = walker.stenciled(x, covered, near, walker.tile.stencilRow(y), depths);
+                        if (walker.shading.late) {
+                            // Tested once the function has run, at these.
+                            inline for (0..4) |i| batch.depths[count][i] = @truncate(near[i]);
+                        } else {
+                            kept = stenciled(walker.shading, walker.face, x, covered, near, walker.tile.stencilRow(y), depths, !batch.deferred_depth);
+                            if (batch.deferred_depth) {
+                                inline for (0..4) |i| batch.depths[count][i] = @truncate(near[i]);
+                            }
+                        }
                     } else if (tested) {
                         const near = [4]u64{ units(z_upper), units(z_upper +% step), units(z_lower), units(z_lower +% step) };
                         if (second) {
@@ -894,7 +923,16 @@ fn Rasterize(comptime kind: Test, comptime samples: u32) type {
                         const depths = walker.tile.depthRowOf(sample, y);
                         var kept = bits;
                         if (kind == .stencil) {
-                            kept = walker.stenciled(x, bits, near, walker.tile.stencilRowOf(sample, y), depths);
+                            const holding = &walker.tile.batch_depths.?[count];
+                            if (walker.shading.late) {
+                                // Tested once the function has run, at these.
+                                inline for (0..4) |i| holding[4 * sample + i] = @truncate(near[i]);
+                            } else {
+                                kept = stenciled(walker.shading, walker.face, x, bits, near, walker.tile.stencilRowOf(sample, y), depths, !walker.batch.deferred_depth);
+                                if (walker.batch.deferred_depth) {
+                                    inline for (0..4) |i| holding[4 * sample + i] = @truncate(near[i]);
+                                }
+                            }
                         } else {
                             inline for (0..4) |i| {
                                 if (kept >> i & 1 != 0 and !walker.passes(near[i], depths[offset(i) + x])) kept &= ~(@as(u4, 1) << i);
@@ -924,39 +962,40 @@ fn Rasterize(comptime kind: Test, comptime samples: u32) type {
                 }
                 return .{ units(z_upper), units(z_upper +% step), units(z_lower), units(z_lower +% step) };
             }
-
-            /// The stencil test and then the depth test for a quad's pixels,
-            /// each keeping what it should: the pixels kept. `values` and
-            /// `depths` are the row's stencil and depth, the sample's under
-            /// test at four samples a pixel (since 1.105).
-            inline fn stenciled(walker: Walker, x: u32, covered: u4, near: [4]u64, values: [*]u8, depths: [*]u16) u4 {
-                const shading = walker.shading;
-                const face = &shading.stencil[walker.face];
-                var kept: u4 = 0;
-                inline for (0..4) |i| {
-                    if (covered >> i & 1 != 0) {
-                        const value = &values[offset(i) + x];
-                        // The depth bounds test is of the depth already
-                        // there and comes before the stencil's, so a pixel
-                        // it drops leaves the stencil as it is.
-                        const in_bounds = if (shading.bounds) |bounds| within(depths[offset(i) + x], bounds) else true;
-                        if (!in_bounds) {
-                            // Dropped, and nothing written.
-                        } else if (!face.passes(value.*)) {
-                            value.* = face.after(face.fail, value.*);
-                        } else if (shading.has_depth and !byOrder(shading.compare, near[i], depths[offset(i) + x])) {
-                            value.* = face.after(face.depth_fail, value.*);
-                        } else {
-                            if (shading.depth_write) depths[offset(i) + x] = @truncate(near[i]);
-                            value.* = face.after(face.pass, value.*);
-                            kept |= @as(u4, 1) << i;
-                        }
-                    }
-                }
-                return kept;
-            }
         };
     };
+}
+
+/// The stencil test and then the depth test for a quad's pixels at column
+/// `x`, each keeping what it should: the pixels kept. `values` and
+/// `depths` are the row's stencil and depth, the sample's under test at
+/// four samples a pixel (since 1.105), and `seen` the triangle's face. A
+/// depth that passes is written with `write_depth`; without, it is held
+/// for after the fragment function (`Batch.putDepths`, since 1.107).
+inline fn stenciled(shading: *const Shading, seen: u8, x: u32, covered: u4, near: [4]u64, values: [*]u8, depths: [*]u16, write_depth: bool) u4 {
+    const face = &shading.stencil[seen];
+    var kept: u4 = 0;
+    inline for (0..4) |i| {
+        if (covered >> i & 1 != 0) {
+            const value = &values[offset(i) + x];
+            // The depth bounds test is of the depth already there and
+            // comes before the stencil's, so a pixel it drops leaves the
+            // stencil as it is.
+            const in_bounds = if (shading.bounds) |bounds| within(depths[offset(i) + x], bounds) else true;
+            if (!in_bounds) {
+                // Dropped, and nothing written.
+            } else if (!face.passes(value.*)) {
+                value.* = face.after(face.fail, value.*);
+            } else if (shading.has_depth and !byOrder(shading.compare, near[i], depths[offset(i) + x])) {
+                value.* = face.after(face.depth_fail, value.*);
+            } else {
+                if (shading.depth_write and write_depth) depths[offset(i) + x] = @truncate(near[i]);
+                value.* = face.after(face.pass, value.*);
+                kept |= @as(u4, 1) << i;
+            }
+        }
+    }
+    return kept;
 }
 
 inline fn units(z: i64) u64 {
@@ -1002,6 +1041,9 @@ const Batch = struct {
     depths: [batch_quads][4]u16,
     /// Whether that is what happens, worked out once a triangle.
     deferred_depth: bool,
+    /// The face of the triangle seen, for the tests made after the
+    /// fragment function (`testLate`, since 1.107).
+    face: u8,
     /// The triangle's planes moved to the tile's top left, where their
     /// numbers are smallest.
     planes: [1 + most_varyings]shader.Plane,
@@ -1032,6 +1074,7 @@ const Batch = struct {
         batch.count = 0;
         batch.tile = tile;
         batch.shading = shading;
+        batch.face = triangle.face;
         batch.fragments = .{
             .quads = &batch.quads,
             .count = 0,
@@ -1078,7 +1121,9 @@ const Batch = struct {
         batch.fragments.count = batch.count;
         batch.shading.fragment(&batch.fragments);
         // After it, not before: the quads' `kept` is what the function left.
-        if (batch.deferred_depth) batch.putDepths(samples);
+        if (batch.shading.late) {
+            batch.testLate(samples);
+        } else if (batch.deferred_depth) batch.putDepths(samples);
         if (batch.shading.fragments != null or batch.shading.samples != null) batch.countPixels(samples);
         // The colours the function wrote: each attachment's `count` of
         // them after the one before (`shader.Fragments.colorsOf`), and
@@ -1154,6 +1199,37 @@ const Batch = struct {
                     if (bits >> i & 1 != 0) at[offset(i)] = kept_depths[k][4 * sample + i];
                 }
             }
+        }
+    }
+
+    /// The stencil and depth tests of the pixels the fragment function
+    /// left, for a draw whose tests wait for it (`Shading.late`): at more
+    /// than one sample a pixel, of each of their samples covered, the
+    /// quad's mask cut to those that pass. As llvmpipe's late test, under
+    /// the mask the shader left and at the depths taken in the walk
+    /// (lp_state_fs.c:1331-1334, :1366-1424). (Since 1.107.)
+    fn testLate(batch: *Batch, comptime samples: u32) void {
+        @setRuntimeSafety(false);
+        const tile = batch.tile;
+        if (samples == 1) {
+            for (batch.quads[0..batch.count], batch.depths[0..batch.count]) |*quad, near| {
+                const depths = [4]u64{ near[0], near[1], near[2], near[3] };
+                quad.kept = stenciled(batch.shading, batch.face, quad.x, @truncate(quad.kept), depths, tile.stencilRow(quad.y), tile.depthRow(quad.y), true);
+            }
+            return;
+        }
+        const kept_depths = tile.batch_depths.?;
+        for (batch.quads[0..batch.count], 0..) |quad, k| {
+            var passed: u16 = 0;
+            inline for (0..samples) |sample| {
+                const bits = batch.bitsOf(samples, sample, k);
+                if (bits != 0) {
+                    const near = kept_depths[k][4 * sample ..][0..4];
+                    const depths = [4]u64{ near[0], near[1], near[2], near[3] };
+                    passed |= @as(u16, stenciled(batch.shading, batch.face, quad.x, @truncate(bits), depths, tile.stencilRowOf(sample, quad.y), tile.depthRowOf(sample, quad.y), true)) << (4 * sample);
+                }
+            }
+            batch.masks[k] = passed;
         }
     }
 

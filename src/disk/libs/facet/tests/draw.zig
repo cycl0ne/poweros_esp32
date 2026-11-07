@@ -4764,25 +4764,38 @@ const standard_four = [4][2]i64{ .{ 96, 32 }, .{ 224, 96 }, .{ 32, 160 }, .{ 160
 /// left one up - as the cores' own tests hold their walk to it
 /// (driver/cpu/raster/tests/samples.zig).
 fn samplesCovered(corners: [3][2]i64, x: u32, y: u32) u4 {
-    var p = corners;
-    const twice = (p[1][0] - p[0][0]) * (p[2][1] - p[0][1]) - (p[1][1] - p[0][1]) * (p[2][0] - p[0][0]);
-    if (twice == 0) return 0;
-    if (twice < 0) std.mem.swap([2]i64, &p[1], &p[2]);
     var bits: u4 = 0;
     for (standard_four, 0..) |position, sample| {
-        const at = [2]i64{ @as(i64, x) * 256 + position[0], @as(i64, y) * 256 + position[1] };
-        const inside = for (0..3) |i| {
-            const from = p[(i + 1) % 3];
-            const to = p[(i + 2) % 3];
-            const dx = to[0] - from[0];
-            const dy = to[1] - from[1];
-            const cross = dx * (at[1] - from[1]) - dy * (at[0] - from[0]);
-            const top_left = (dy == 0 and dx > 0) or dy < 0;
-            if (cross < 0 or (cross == 0 and !top_left)) break false;
-        } else true;
-        if (inside) bits |= @as(u4, 1) << @intCast(sample);
+        if (covers(corners, .{ @as(i64, x) * 256 + position[0], @as(i64, y) * 256 + position[1] })) bits |= @as(u4, 1) << @intCast(sample);
     }
     return bits;
+}
+
+/// Whether the triangle `corners` covers `at`, both in 1/256ths of a
+/// pixel, as `samplesCovered` has it.
+fn covers(corners: [3][2]i64, at: [2]i64) bool {
+    var p = corners;
+    const twice = (p[1][0] - p[0][0]) * (p[2][1] - p[0][1]) - (p[1][1] - p[0][1]) * (p[2][0] - p[0][0]);
+    if (twice == 0) return false;
+    if (twice < 0) std.mem.swap([2]i64, &p[1], &p[2]);
+    for (0..3) |i| {
+        const from = p[(i + 1) % 3];
+        const to = p[(i + 2) % 3];
+        const dx = to[0] - from[0];
+        const dy = to[1] - from[1];
+        const cross = dx * (at[1] - from[1]) - dy * (at[0] - from[0]);
+        const top_left = (dy == 0 and dx > 0) or dy < 0;
+        if (cross < 0 or (cross == 0 and !top_left)) return false;
+    }
+    return true;
+}
+
+/// Which samples of pixel (x, y) the triangle `corners` covers at
+/// `samples` a pixel, bit s sample s: at one, whether it covers the
+/// pixel's centre.
+fn coveredAt(samples: u32, corners: [3][2]i64, x: u32, y: u32) u4 {
+    if (samples == 4) return samplesCovered(corners, x, y);
+    return @intFromBool(covers(corners, .{ @as(i64, x) * 256 + 128, @as(i64, y) * 256 + 128 }));
 }
 
 /// Flat's colour, the push constants', with the pixels the fragment
@@ -5264,6 +5277,56 @@ fn crossedCorners() struct { [3][3][2]i64, [9][3]f32 } {
     return .{ corners, vertices };
 }
 
+/// A cut-out texture of 32 columns, clear and opaque by turns, in a set of
+/// its own: over a picture 128 wide, four pixels a column read once a
+/// pixel at its centre, so that `CutoutScene`'s cut-out drops the pixels
+/// of every other four columns - those whose x / 4 is even - and colours
+/// the rest `color`.
+const Columns = struct {
+    image: *facet.Image,
+    staging: *facet.Buffer,
+    set_layout: *facet.DescriptorSetLayout,
+    pool: *facet.DescriptorPool,
+    set: *facet.DescriptorSet,
+
+    const color: u32 = 0xFF40_C020;
+
+    fn up(bench: *Bench) !Columns {
+        const fb = bench.rig.fb;
+        const device = bench.device;
+        const image = try bench.bareImage(.{ .format = .r8g8b8a8_unorm, .extent = .{ .width = 32, .height = 2, .depth = 1 }, .usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST }, false);
+        const view = try bench.viewOf(.{ .image = image, .format = .r8g8b8a8_unorm });
+        const staging, const staged = try bench.buffer(32 * 2 * 4, facet.BUFFER_USAGE_TRANSFER_SRC);
+        for (0..2) |y| for (0..32) |x| {
+            staged[(y * 32 + x) * 4 ..][0..4].* = if (x % 2 == 0) .{ 0, 0, 0, 0 } else .{ 0x40, 0xC0, 0x20, 0xFF };
+        };
+        var set_layout: ?*facet.DescriptorSetLayout = null;
+        const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .sampled_image, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
+        try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &set_layout));
+        errdefer fb.DestroyDescriptorSetLayout(device, set_layout);
+        var pool: ?*facet.DescriptorPool = null;
+        try testing.expectEqual(facet.Result.success, fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool));
+        errdefer fb.DestroyDescriptorPool(device, pool);
+        var set: [1]?*facet.DescriptorSet = undefined;
+        try testing.expectEqual(facet.Result.success, fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &set));
+        const image_info = facet.DescriptorImageInfo{ .image_view = view };
+        const write = facet.WriteDescriptorSet{ .dst_set = set[0].?, .dst_binding = 0, .descriptor_type = .sampled_image, .image_info = @ptrCast(&image_info) };
+        fb.UpdateDescriptorSets(device, 1, @ptrCast(&write), 0, null);
+        return .{ .image = image, .staging = staging, .set_layout = set_layout.?, .pool = pool.?, .set = set[0].? };
+    }
+
+    fn down(columns: *const Columns, bench: *Bench) void {
+        bench.rig.fb.DestroyDescriptorPool(bench.device, columns.pool);
+        bench.rig.fb.DestroyDescriptorSetLayout(bench.device, columns.set_layout);
+    }
+
+    /// The texels copied into the image, in `commands`.
+    fn copy(columns: *const Columns, bench: *Bench, commands: *facet.CommandBuffer) void {
+        const region = facet.BufferImageCopy{ .image_extent = .{ .width = 32, .height = 2, .depth = 1 } };
+        bench.rig.fb.CmdCopyBufferToImage(commands, columns.staging, columns.image, .transfer_dst_optimal, 1, @ptrCast(&region));
+    }
+};
+
 /// The test of four samples' depths, for a depth alone and for one beside
 /// a stencil (`format`): 2 bytes a pixel in the image, or 4.
 fn depthsBySample(format: facet.Format) !void {
@@ -5300,35 +5363,17 @@ fn depthsBySample(format: facet.Format) !void {
     const frame = try framebuffer(&bench, cleared.?, &.{ color_view, depth_view }, side, side);
     defer fb.DestroyFramebuffer(device, frame);
 
-    // A cut-out texture of 32 columns, clear and opaque by turns: four
-    // pixels a column over 128, read once a pixel at its centre, so that
-    // the cut-out drops the pixels of every other four columns. A form
+    // The cut-out drops the pixels of every other four columns. A form
     // that drops pixels holds its depths back for after its fragment
     // function, and at four samples a pixel holds each sample's.
-    const texture_image = try bench.bareImage(.{ .format = .r8g8b8a8_unorm, .extent = .{ .width = 32, .height = 2, .depth = 1 }, .usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST }, false);
-    const texture_view = try bench.viewOf(.{ .image = texture_image, .format = .r8g8b8a8_unorm });
-    const staging, const staged = try bench.buffer(32 * 2 * 4, facet.BUFFER_USAGE_TRANSFER_SRC);
-    for (0..2) |y| for (0..32) |x| {
-        staged[(y * 32 + x) * 4 ..][0..4].* = if (x % 2 == 0) .{ 0, 0, 0, 0 } else .{ 0x40, 0xC0, 0x20, 0xFF };
-    };
-    var set_layout: ?*facet.DescriptorSetLayout = null;
-    const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .sampled_image, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
-    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &set_layout));
-    defer fb.DestroyDescriptorSetLayout(device, set_layout);
-    var pool: ?*facet.DescriptorPool = null;
-    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool));
-    defer fb.DestroyDescriptorPool(device, pool);
-    var set: [1]?*facet.DescriptorSet = undefined;
-    try testing.expectEqual(facet.Result.success, fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &set));
-    const image_info = facet.DescriptorImageInfo{ .image_view = texture_view };
-    const write = facet.WriteDescriptorSet{ .dst_set = set[0].?, .dst_binding = 0, .descriptor_type = .sampled_image, .image_info = @ptrCast(&image_info) };
-    fb.UpdateDescriptorSets(device, 1, @ptrCast(&write), 0, null);
+    const columns = try Columns.up(&bench);
+    defer columns.down(&bench);
 
     // The cut-out, and Counted's colour, both testing the depth and
     // writing it; the second again for the pass that loads.
     const cut_module = try module(&bench, &CutoutScene.code);
     defer fb.DestroyShaderModule(device, cut_module);
-    const cut_layout = try pipelineLayout(&bench, &.{set_layout.?}, 0);
+    const cut_layout = try pipelineLayout(&bench, &.{columns.set_layout}, 0);
     defer fb.DestroyPipelineLayout(device, cut_layout);
     const counted = try module(&bench, &Counted.code);
     defer fb.DestroyShaderModule(device, counted);
@@ -5350,7 +5395,7 @@ fn depthsBySample(format: facet.Format) !void {
     const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER);
     @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
     const offset: u64 = 0;
-    const cut_color: u32 = 0xFF40_C020;
+    const cut_color = Columns.color;
     const flat_colors = [2]u32{ 0xFF20_40E0, 0xFFE0_6010 };
     const background: u32 = 0xFF10_2030;
     var values = clears(background);
@@ -5361,14 +5406,13 @@ fn depthsBySample(format: facet.Format) !void {
     // The first pass: cleared, the first triangle cut out and the second
     // drawn after it, the samples that passed counted.
     Counted.pixels = 0;
-    const region = facet.BufferImageCopy{ .image_extent = .{ .width = 32, .height = 2, .depth = 1 } };
     var commands = try bench.record();
-    fb.CmdCopyBufferToImage(commands, staging, texture_image, .transfer_dst_optimal, 1, @ptrCast(&region));
+    columns.copy(&bench, commands);
     fb.CmdResetQueryPool(commands, occlusion, 0, 1);
     fb.CmdBeginQuery(commands, occlusion, 0, facet.QUERY_CONTROL_PRECISE);
     fb.CmdBeginRenderPass(commands, &.{ .render_pass = cleared.?, .framebuffer = frame, .render_area = .{ .extent = .{ .width = side, .height = side } }, .clear_value_count = 2, .clear_values = &values }, .@"inline");
     fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
-    fb.CmdBindDescriptorSets(commands, .graphics, cut_layout, 0, 1, @ptrCast(&set), 0, null);
+    fb.CmdBindDescriptorSets(commands, .graphics, cut_layout, 0, 1, @ptrCast(&columns.set), 0, null);
     fb.CmdBindPipeline(commands, .graphics, cut.?);
     fb.CmdDraw(commands, 3, 1, 0, 0);
     fb.CmdBindPipeline(commands, .graphics, near.?);
@@ -5751,6 +5795,164 @@ test "four samples a pixel under the depth clamp: each sample's depth taken at i
         }
     };
     try testing.expect(at_ends[0] > 0 and at_ends[1] > 0 and between > 0);
+}
+
+/// The ways `droppedByPixel` draws a form that drops pixels, each by the
+/// pixel: a stencil test that writes the stencil - replacing it where it
+/// passes, or inverting it where it fails - one that fails and writes
+/// nothing, the same with the stencil written by the face not seen, and
+/// the depth clamp with no stencil test at all. And `whole`: the inverting
+/// test again with a form that drops nothing, whose tests are made in the
+/// walk as they always were.
+const ByPixel = enum { replacing, inverting, unwritten, behind, clamped, whole };
+
+/// The cut-out over `crossed`'s first triangle, drawn each way of
+/// `ByPixel` at `samples` samples a pixel: a pixel it drops leaves the
+/// depth and the stencil as they were, in every sample.
+fn droppedByPixel(samples: u32) !void {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
+    physical.can.multisampling = samples == 4;
+    defer physical.can.multisampling = false;
+    try testing.expect(physical.can.depth_clamp);
+    const image_zig = @import("../image/_image.zig");
+
+    const side = 128;
+    const color_made, const color_view = try bench.image(.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = side, .height = side, .depth = 1 }, .samples = samples, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, false);
+    const colors = _objects.of(image_zig.Image, color_made);
+    const depth_made, const depth_view = try bench.image(.{ .format = .d16_unorm_s8_uint, .extent = .{ .width = side, .height = side, .depth = 1 }, .samples = samples, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT }, false);
+    const depths = _objects.of(image_zig.Image, depth_made);
+    var color = fourSamples(.clear);
+    color.samples = samples;
+    const depth = facet.AttachmentDescription{ .format = .d16_unorm_s8_uint, .samples = samples, .load_op = .clear, .store_op = .store, .stencil_load_op = .clear, .stencil_store_op = .store, .final_layout = .depth_stencil_attachment_optimal };
+    const pass_result, const pass = samplesPass(&bench, &.{ color, depth }, null, 1);
+    defer fb.DestroyRenderPass(device, pass);
+    try testing.expectEqual(facet.Result.success, pass_result);
+    const frame = try framebuffer(&bench, pass.?, &.{ color_view, depth_view }, side, side);
+    defer fb.DestroyFramebuffer(device, frame);
+
+    const columns = try Columns.up(&bench);
+    defer columns.down(&bench);
+    const cut_module = try module(&bench, &CutoutScene.code);
+    defer fb.DestroyShaderModule(device, cut_module);
+    const cut_layout = try pipelineLayout(&bench, &.{columns.set_layout}, 0);
+    defer fb.DestroyPipelineLayout(device, cut_layout);
+    const flat_module = try module(&bench, &Flat.code);
+    defer fb.DestroyShaderModule(device, flat_module);
+    const flat_layout = try pipelineLayout(&bench, &.{}, 4);
+    defer fb.DestroyPipelineLayout(device, flat_layout);
+    const flat_color: u32 = 0xFF20_40E0;
+    const corners, const vertices = crossedCorners();
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
+    const offset: u64 = 0;
+    const statistics = try queryPool(&bench, .pipeline_statistics, 1, facet.QUERY_PIPELINE_STATISTIC_FRAGMENT_SHADER_INVOCATIONS);
+    defer fb.DestroyQueryPool(device, statistics);
+    var values = clears(0xFF10_2030);
+    values[1] = .{ .depth_stencil = .{ .depth = 1, .stencil = 0x03 } };
+    const multisample = facet.PipelineMultisampleStateCreateInfo{ .rasterization_samples = samples };
+
+    // The quads the triangle covers any sample of: all of them shaded by
+    // a way whose tests wait for the fragment function, so that what it
+    // drops is never tested, even where the stencil test fails throughout,
+    // as llvmpipe shades before a late test (lp_state_fs.c:1153-1156).
+    var quads: u64 = 0;
+    for (0..side / 2) |down| for (0..side / 2) |across| {
+        var any: u4 = 0;
+        for (0..4) |i| any |= coveredAt(samples, corners[0], @intCast(across * 2 + i % 2), @intCast(down * 2 + i / 2));
+        quads += @intFromBool(any != 0);
+    };
+
+    for (std.enums.values(ByPixel), 0..) |way, k| {
+        // The triangle is clockwise on the surface, so its back is seen:
+        // the front's test passes and would zero the stencil, which says
+        // that the face seen is the one tested, late as well as early.
+        // Its write mask is the stencil written for `behind`, whose tests
+        // wait for that alone (lp_state_fs.c:780-785).
+        const whole = way == .whole;
+        const back = facet.StencilOpState{
+            .fail_op = if (way == .replacing) .keep else .invert,
+            .pass_op = .replace,
+            .depth_fail_op = .keep,
+            .compare_op = if (way == .replacing) .always else .never,
+            .compare_mask = 0xFF,
+            .write_mask = if (way == .unwritten or way == .behind) 0 else 0xFF,
+            .reference = 0x10,
+        };
+        const front = facet.StencilOpState{ .fail_op = .zero, .pass_op = .zero, .depth_fail_op = .zero, .compare_op = .always, .compare_mask = 0xFF, .write_mask = if (way == .behind) 0xFF else 0, .reference = 0x55 };
+        const tested = facet.PipelineDepthStencilStateCreateInfo{ .depth_test_enable = true, .depth_write_enable = true, .depth_compare_op = .less, .stencil_test_enable = way != .clamped, .front = front, .back = back };
+        const made, const drawing = makePipeline(&bench, .{
+            .module = if (whole) flat_module else cut_module,
+            .name = if (whole) "main" else "cut",
+            .layout = if (whole) flat_layout else cut_layout,
+            .pass = pass.?,
+            .raster = .{ .depth_clamp_enable = way == .clamped },
+            .multisample = &multisample,
+            .depth = tested,
+            .width = side,
+            .height = side,
+        });
+        defer fb.DestroyPipeline(device, drawing);
+        try testing.expectEqual(facet.Result.success, made);
+
+        const commands = try bench.record();
+        if (k == 0) columns.copy(&bench, commands);
+        fb.CmdResetQueryPool(commands, statistics, 0, 1);
+        fb.CmdBeginQuery(commands, statistics, 0, 0);
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass.?, .framebuffer = frame, .render_area = .{ .extent = .{ .width = side, .height = side } }, .clear_value_count = 2, .clear_values = &values }, .@"inline");
+        fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+        if (whole) {
+            fb.CmdPushConstants(commands, flat_layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &flat_color);
+        } else fb.CmdBindDescriptorSets(commands, .graphics, cut_layout, 0, 1, @ptrCast(&columns.set), 0, null);
+        fb.CmdBindPipeline(commands, .graphics, drawing.?);
+        fb.CmdDraw(commands, 3, 1, 0, 0);
+        fb.CmdEndRenderPass(commands);
+        fb.CmdEndQuery(commands, statistics, 0);
+        try bench.submit();
+
+        // Each sample: what the tests left where the triangle covers it
+        // and the cut-out kept its pixel - the colour and the depth there,
+        // at the sample's own place, where they passed, and the stencil as
+        // the way writes it - and the clears everywhere else.
+        var drawn_samples: u32 = 0;
+        for (0..side) |row| for (0..side) |column| {
+            const x: u32 = @intCast(column);
+            const y: u32 = @intCast(row);
+            const covered = coveredAt(samples, corners[0], x, y);
+            for (0..samples) |s| {
+                const sample: u32 = @intCast(s);
+                const bytes = sampleDepthBytes(depths, 4, sample, x, y);
+                const there = std.mem.readInt(u16, bytes[0..2], .little);
+                const drawn = (whole or x / 4 % 2 == 1) and covered >> @intCast(s) & 1 != 0;
+                const passed = drawn and (way == .replacing or way == .clamped);
+                const stencil: u8 = if (!drawn) 0x03 else switch (way) {
+                    .replacing => 0x10,
+                    .inverting, .whole => 0xFC,
+                    .unwritten, .behind, .clamped => 0x03,
+                };
+                try testing.expectEqual(stencil, bytes[2]);
+                try testing.expectEqual(if (passed) Columns.color else 0xFF10_2030, sampleTexel(colors, sample, 0, x, y).*);
+                drawn_samples += @intFromBool(drawn);
+                if (passed) {
+                    const place = if (samples == 4) samplePlace(x, y, sample) else [2]i64{ @as(i64, x) * 256 + 128, @as(i64, y) * 256 + 128 };
+                    const want: i32 = unitsOf(depthThere(corners[0], crossed_depths[0], place));
+                    try testing.expect(@abs(@as(i32, there) - want) <= 1);
+                } else try testing.expectEqual(@as(u16, 0xFFFF), there);
+            }
+        };
+        try testing.expect(drawn_samples > 0);
+        // A test that writes nothing is made in the walk, and so is one of
+        // a form that drops nothing: failing there shades nothing.
+        try testing.expectEqual(if (way == .unwritten or whole) 0 else quads * 4, try queryValue(&bench, statistics, 0));
+    }
+}
+
+test "a form that drops pixels drawn by the pixel, at one sample and at four: what it drops leaves the depth and the stencil as they were, a stencil written tested after its fragment function, and a depth otherwise held back for after it" {
+    try droppedByPixel(1);
+    try droppedByPixel(4);
 }
 
 /// A render pass whose depth attachment is kept: read as each tile starts

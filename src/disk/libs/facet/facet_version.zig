@@ -2479,4 +2479,36 @@ pub const LIBRARY_VERSION = 1;
 /// each part said to load and store neither plane. Each of four changes
 /// put back fails it: the stencil's load op or store op read for a format
 /// without a stencil, or the depth's for one without a depth.
-pub const LIBRARY_REVISION = 106;
+///
+/// 107: **A form that drops pixels, drawn a pixel at a time, leaves the
+/// depth and the stencil of a pixel it drops as they were.**
+///
+/// A draw with a stencil test, the depth clamp or a depth bounds test goes
+/// a pixel at a time (batched.zig), and it wrote each pixel's depth and
+/// stencil as it tested them, before the fragment function had run: the
+/// cut-out form's dropped pixels left both behind. That way now takes
+/// llvmpipe's depth modes for a shader that may kill
+/// (lp_state_fs.c:772-799). Where the stencil test writes the stencil -
+/// either face's write mask not 0 - the stencil and depth tests wait for
+/// the fragment function and test the pixels it left, at the depths taken
+/// in the walk (`Shading.late`; lp_state_fs.c:1366-1424), so every quad
+/// covered is shaded, as llvmpipe shades before a late test. Otherwise the
+/// tests are made in the walk and the depth alone waits, written for the
+/// pixels left as the other ways of drawing already wrote it
+/// (lp_state_fs.c:1426-1440). At four samples a pixel the same, a sample
+/// at a time. A draw that drops nothing is drawn as before.
+///
+/// Found while porting K4 of item 61, whose alpha to coverage drops
+/// samples the same way. The new test draws the cut-out over a slanted
+/// triangle at one sample and at four: a stencil replaced, one inverted
+/// where its test fails, one failed and never written, one written only
+/// by the face not seen, and the depth clamp alone; and a form that drops
+/// nothing under the inverting test, which is still tested in the walk.
+/// It reads back every sample's colour, depth and stencil, and the
+/// fragment invocations, which tell a test made late from one made in
+/// the walk. The front's test would zero the stencil, which tells the
+/// faces apart. K3's test of four samples' depths takes its cut-out
+/// texture from a helper the two now share. Against 1.106 the new test
+/// fails: a dropped pixel's stencil was 0x10, not the clear's 0x03. Each
+/// of 19 changes put back fails it.
+pub const LIBRARY_REVISION = 107;

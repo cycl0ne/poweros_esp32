@@ -1679,7 +1679,10 @@ pub const Quad = extern struct {
     /// form that drops pixels may clear a bit to drop that one: a pipeline
     /// whose form can do it has its depth written after the function has run,
     /// for the pixels left, so a dropped one leaves behind no depth to hide
-    /// what is past it. `Capabilities.discarding_fragment_forms`
+    /// what is past it. With a stencil test that writes the stencil, the
+    /// tests themselves are made after it, and a dropped pixel leaves the
+    /// stencil as it was too (since 1.107). Its bits are then those
+    /// covered, until the tests. `Capabilities.discarding_fragment_forms`
     /// says where that happens.
     kept: u8,
 };
