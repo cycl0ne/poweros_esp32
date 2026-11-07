@@ -1260,7 +1260,7 @@ Found independently by: semantics, formats (2 strands, both calling it structura
 
 ### 49. Reconcile GetPhysicalDeviceFeatures with VkPhysicalDeviceFeatures, and decide what replaces the missing enable step
 
-*features / struct shape* &mdash; structural, months, also serves the shim
+*features / struct shape* &mdash; **done in 1.82**, also serves the shim
 
 **Done in 1.82, and the item's framing was wrong in a way worth recording.**
 `PhysicalDeviceFeatures` is `VkPhysicalDeviceFeatures`, 55 `Bool32` members,
@@ -1997,11 +1997,17 @@ and only a host build of the cores' driver could ever be tested.
 
 ### 51. Decide what to do about facet's own fields inside the Vulkan-shaped structures
 
-*structures* &mdash; structural, months
+*structures* &mdash; structural; decided 06.11.2026 as Vulkan's own structures, sized below
 
 facet's create-infos are Vulkan's shape minus sType/pNext and plus fields of facet's own: PipelineColorBlendStateCreateInfo.attachment_constants (one set of blend constants per attachment where Vulkan has one), SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER in SubpassDescription.flags, IMAGE_CREATE_PACKED_TEXELS at bit 31, PIPELINE_CREATE_DEPTH_PREPASS, SHADER_MODULE_CREATE_SPIRV, CmdSetBlendConstantsAt occupying an LVO slot a Vulkan-ordered table would not have, and attachment_count = 0 meaning "the default over all of them" where Vulkan requires it to equal the subpass's colour count. None can be fixed by adding code: a Vulkan-source program's initialisers do not compile and a Vulkan binary's structs do not match. Deciding whether these become real extension structs behind pNext or are dropped is the shape question, and it is the one that decides whether anything above can be called conformance at all.
 
 > Verified: PipelineColorBlendStateCreateInfo's members are flags, logic_op_enable, logic_op, attachment_count, attachments, blend_constants, attachment_constants with no sType/pNext; facet.zig:988 PACKED_TEXELS at bit 31, :1710 SHADER_MODULE_CREATE_SPIRV; createrenderpass.zig:282-284; creategraphicspipelines.zig:413. docs/facet-gaps.md:1-9 is honest that the library "is not Vulkan, and does not try to be".
+
+**Decided 06.11.2026, sized 07.11.2026.** The decision was Vulkan's API surface with an Amiga binding: "identical structs, enums, names, semantics and result codes to Vulkan 1.0, still called through the LVO table". So the shape question has its answer. The sentence above, that none of this can be fixed by adding code, is wrong on both counts:
+
+- **sType and pNext** go onto Vulkan 1.0's 47 structures that carry them; facet's SDK has neither member anywhere (`grep -c s_type sdk/libs/facet/facet.zig` is 0). Each gets two members with defaults, its own `StructureType` and null, so a Zig caller's initialiser keeps compiling and a C caller's structure matches. That is about 150 lines in sdk/libs/facet/facet.zig with the `StructureType` enum, and scripts/vulkan-struct-check.sh proves the layouts against the headers.
+- **facet's own shapes come out:** `attachment_constants` with `CmdSetBlendConstantsAt`, `SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER`, `IMAGE_CREATE_PACKED_TEXELS`, `PIPELINE_CREATE_DEPTH_PREPASS`, and `attachment_count` = 0 as a default. Their SDK names appear in 15 library files outside the tests, on 11 test lines, and in one program, FacetProbe (`grep -rlE` over the five names, 07.11.2026). Removing OUTPUTS_TOGETHER makes what it means the meaning of every subpass, which is item 80. CmdClearAttachments then has to clear the attachment it names inside a part that draws several, as lavapipe's `handle_clear_attachments` does; that is the fault 1.91 found.
+- **`SHADER_MODULE_CREATE_SPIRV` waits on item 71.** Until the cores have a SPIR-V back end, it is how a module says which kind of code it carries.
 
 Found independently by: semantics, entry-points (as the sType/pNext item).
 
