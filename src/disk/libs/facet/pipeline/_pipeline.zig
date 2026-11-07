@@ -158,8 +158,20 @@ pub const Pipeline = struct {
     /// An index of all ones ends a strip or a fan, and the next starts.
     restart: bool,
     /// Its draws draw nothing: the rasterizer is switched off, or every
-    /// triangle is culled.
+    /// triangle is culled. Both of those discard the primitive *before*
+    /// rasterisation, so a draw of this pipeline still owes the counters
+    /// of input assembly and the vertex stage - which is what separates it
+    /// from `sample_mask` below. See driver/cpu/_draw.zig.
     draws_nothing: bool,
+    /// `PipelineMultisampleStateCreateInfo.sample_mask`'s first word, or
+    /// all ones where the program passed none - which Vulkan says to read
+    /// as every sample covered. With one sample a pixel only bit 0 is
+    /// read: Vulkan reads ceil(rasterization_samples / 32) words and
+    /// ignores the bits above the sample count. Clearing it covers no
+    /// sample, so nothing is shaded - but the mask is applied *after*
+    /// rasterisation, so such a draw owes the clipping counters as well,
+    /// and this is therefore not `draws_nothing`. (Since 1.89.)
+    sample_mask: u32,
     cull: Cull,
     front: facet.FrontFace,
     depth_test: ?facet.CompareOp,

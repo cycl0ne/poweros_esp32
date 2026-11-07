@@ -150,6 +150,14 @@ pub const State = struct {
     /// The pixels drawn, inside the target's area: those outside are not.
     scissor: Rect,
     cull: setup.Cull = .none,
+    /// Which samples of a pixel a triangle may cover, from the pipeline's
+    /// `PipelineMultisampleStateCreateInfo.sample_mask`; all ones where
+    /// the draw gave none. One sample a pixel is drawn, so bit 0 is the
+    /// whole of it: clear it and the triangle is clipped, set up and
+    /// counted as such, and then nothing is shaded. The bits above are
+    /// kept rather than narrowed to a bool because they are the per-sample
+    /// mask a 4x walk will read (item 61). (Since 1.89.)
+    sample_mask: u32 = ~@as(u32, 0),
     front: setup.Winding = .counter_clockwise,
     /// The depth test, on a target with depth; null, and the depth is
     /// neither tested nor written.
@@ -445,6 +453,18 @@ const SetUp = struct {
             target.stats.dropped += 1;
             return;
         };
+        // Covering no sample: this is where the triangle stops, and it
+        // stops *here* and not at the draw. Vulkan applies the sample mask
+        // after rasterisation, so the primitive reached clipping and came
+        // out of it, and `CLIPPING_INVOCATIONS` (counted by the caller as
+        // `stats.triangles`) and `CLIPPING_PRIMITIVES` (`stats.set_up`,
+        // which `addPending` would bump) are both owed. Nothing is
+        // allocated and no quad is walked, so `FRAGMENT_SHADER_INVOCATIONS`
+        // stays where it was - which is the whole of what the mask does.
+        if (state.sample_mask & 1 == 0) {
+            target.stats.set_up += 1;
+            return;
+        }
         const plane_count = set.shading.plane_count;
         const bytes = @sizeOf(Triangle) + plane_count * @sizeOf(shader.Plane);
         const memory = target.arena.allocate(bytes, @alignOf(Triangle)) orelse return error.OutOfMemory;

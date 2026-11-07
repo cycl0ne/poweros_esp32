@@ -1074,7 +1074,13 @@ fn addTallies(player: *Player, space: *const v3d.Space) void {
 fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instance: u32, instances: u32) void {
     const player = playerOf(queue);
     const pipeline = player.pipeline orelse return;
-    if (pipeline.draws_nothing or count == 0 or instances == 0) return;
+    // The sample mask covering nothing is one more way to draw nothing,
+    // and on this device that is the whole of it: it reports
+    // `pipeline_statistics_queries = false` (driver.zig), so unlike the
+    // cores there is no counter that a masked-off draw still owes, and
+    // returning here is exact. (Since 1.89, item 61 of
+    // docs/facet-vulkan10.md.)
+    if (pipeline.draws_nothing or pipeline.sample_mask & 1 == 0 or count == 0 or instances == 0) return;
     const viewport = pipeline.viewport orelse player.viewport;
     const state = drawStateOf(player, pipeline, &viewport) orelse return;
     const indices = _vertices.indicesOf(player, pipeline, first, count, vertex_offset) orelse return;

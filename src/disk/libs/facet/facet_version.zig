@@ -1654,4 +1654,53 @@ pub const LIBRARY_VERSION = 1;
 /// whether a culled triangle must be counted turns on a clause the
 /// queries chapter does not disambiguate. Item 83 has the text and what
 /// would settle it.
-pub const LIBRARY_REVISION = 88;
+///
+/// 89: **The sample mask, which at one sample a pixel is one bit.**
+///
+/// `PhysicalDeviceLimits.max_sample_mask_words` was 0 against Vulkan's
+/// required 1, and `PipelineMultisampleStateCreateInfo.sample_mask` was a
+/// field nothing read. The first of item 61's eight rows, and the only one
+/// of them needing no new sample: Vulkan reads
+/// ceil(rasterization_samples / 32) words of the mask and ignores the bits
+/// above the sample count, so with one sample a pixel the mask is bit 0
+/// alone. Honouring it is complete and not a stepping stone - a pipeline
+/// whose mask clears bit 0 covers no sample and draws nothing, one that
+/// sets it draws as before, and a null pointer is every sample covered,
+/// which Vulkan says in as many words.
+///
+/// Where the suppression goes is the whole of the care this needed. The
+/// mask is applied *after* rasterisation, so such a draw is **not**
+/// `draws_nothing`: the primitive was assembled, the vertex stage ran, and
+/// it reached primitive clipping and came out of it, so
+/// `INPUT_ASSEMBLY_VERTICES`, `INPUT_ASSEMBLY_PRIMITIVES`,
+/// `VERTEX_SHADER_INVOCATIONS`, `CLIPPING_INVOCATIONS` and
+/// `CLIPPING_PRIMITIVES` are all owed and only
+/// `FRAGMENT_SHADER_INVOCATIONS` goes to zero - which is 1.88's lesson
+/// applied before it could be repeated. On the cores the triangle is
+/// projected, culled and counted and then dropped, in
+/// `raster/batched.zig`'s `SetUp.one`: one test a triangle, nothing a
+/// pixel, nothing allocated. `State.sample_mask` keeps the whole word
+/// rather than a bool, because those are the per-sample bits a 4x walk
+/// will read. On the V3D the draw returns, and that is exact rather than a
+/// shortcut because that device reports `pipeline_statistics_queries =
+/// false` - there is no counter there for a masked-off draw to owe.
+///
+/// The test asks for one triangle under six mask words and reads all six
+/// counters each time. `0x00000002` and `0xFFFFFFFE` draw nothing, which
+/// proves the bits above bit 0 are ignored rather than ORed in; `null`,
+/// `0x1` and `0xFFFFFFFF` draw. Three ways of getting it wrong each make
+/// it fail: not reading the mask gives `expected 0, found 2016`; setting
+/// `draws_nothing` instead trips the assertion that it is not set; and
+/// doing that with the assertion removed gives `expected 1, found 0` on
+/// the clipping counter.
+///
+/// One count was already wrong beside it. `_instance.zig` said "Vulkan
+/// requires the 4 bit on six of them, so this is six shortfalls", where
+/// *seven* of the sample-count masks fall short:
+/// `framebufferNoAttachmentsSampleCounts` wants 1|4 like the other three
+/// framebuffer masks, not the 1 bit alone. The two that are met are the
+/// integer sampled-image mask and the storage-image mask, the latter only
+/// while `shader_storage_image_multisample` is false. The pin in
+/// tests/vulkan_limits.zig is 10 now - item 17's two, item 22's one, and
+/// seven of this item.
+pub const LIBRARY_REVISION = 89;

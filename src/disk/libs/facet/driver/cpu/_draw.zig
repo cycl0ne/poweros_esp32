@@ -196,6 +196,7 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
         // Lines and points are not culled, and a triangle's edges were as
         // they were made.
         .cull = if (wide) .none else translated.cull,
+        .sample_mask = pipeline.sample_mask,
         .front = translated.front,
         .depth_test = translated.depth_test,
         .depth_write = pipeline.depth_write,

@@ -7678,6 +7678,119 @@ test "an occlusion query counts the samples that passed, and a statistics query 
     try testing.expect(values[5] >= 2 * drawn);
 }
 
+test "the sample mask at one sample a pixel: bit 0 alone, and a masked draw still counts what it clipped" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+
+    // One word, and one word at one sample a pixel is one bit: Vulkan
+    // reads ceil(rasterization_samples / 32) words and ignores the bits
+    // above the sample count. Item 61 of docs/facet-vulkan10.md, the first
+    // of its eight rows and the only one needing no new sample.
+    var properties: facet.PhysicalDeviceProperties = undefined;
+    fb.GetPhysicalDeviceProperties(bench.physical, &properties);
+    try testing.expectEqual(@as(u32, 1), properties.limits.max_sample_mask_words);
+
+    const picture = try Picture.of(&bench, 64, 64);
+    const pass = try renderPass(&bench, .clear, false);
+    defer fb.DestroyRenderPass(device, pass);
+    const frame = try framebuffer(&bench, pass, &.{picture.view}, 64, 64);
+    defer fb.DestroyFramebuffer(device, frame);
+    const flat = try module(&bench, &Flat.code);
+    defer fb.DestroyShaderModule(device, flat);
+    const layout = try pipelineLayout(&bench, &.{}, 4);
+    defer fb.DestroyPipelineLayout(device, layout);
+
+    const wanted = facet.QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_VERTICES |
+        facet.QUERY_PIPELINE_STATISTIC_INPUT_ASSEMBLY_PRIMITIVES |
+        facet.QUERY_PIPELINE_STATISTIC_VERTEX_SHADER_INVOCATIONS |
+        facet.QUERY_PIPELINE_STATISTIC_CLIPPING_INVOCATIONS |
+        facet.QUERY_PIPELINE_STATISTIC_CLIPPING_PRIMITIVES |
+        facet.QUERY_PIPELINE_STATISTIC_FRAGMENT_SHADER_INVOCATIONS;
+    const statistics = try queryPool(&bench, .pipeline_statistics, 1, wanted);
+    defer fb.DestroyQueryPool(device, statistics);
+
+    // One triangle over the top left half, well inside the picture.
+    const vertices = [_][3]f32{ .{ -1, -1, 0.5 }, .{ 1, -1, 0.5 }, .{ -1, 1, 0.5 } };
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
+    const offset: u64 = 0;
+    const green: u32 = 0xFF00_FF00;
+    const blue: u32 = 0xFF00_00FF;
+    const clear = clears(blue);
+
+    // Each word of a mask, what it should draw, and whether it is given at
+    // all. Only bit 0 is read, so a word with every *other* bit set still
+    // draws nothing - which is what proves the bits above are ignored
+    // rather than ORed in - and a null pointer is every sample covered,
+    // which Vulkan says in as many words.
+    const cases = [_]struct { ?u32, bool }{
+        .{ null, true },
+        .{ 0xFFFF_FFFF, true },
+        .{ 0x0000_0001, true },
+        .{ 0xFFFF_FFFE, false },
+        .{ 0x0000_0002, false },
+        .{ 0x0000_0000, false },
+    };
+    for (cases) |case| {
+        const word, const draws = case;
+        const multisample = facet.PipelineMultisampleStateCreateInfo{
+            .rasterization_samples = 1,
+            .sample_mask = if (word) |*held| @ptrCast(held) else null,
+        };
+        const result, const made = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = pass, .multisample = &multisample });
+        try testing.expectEqual(facet.Result.success, result);
+        defer fb.DestroyPipeline(device, made);
+        // Not `draws_nothing`: the mask is applied after rasterisation, so
+        // this pipeline owes the clipping counters and that flag's draw
+        // path returns before them.
+        try testing.expect(!_objects.of(_pipeline.Pipeline, made.?).draws_nothing);
+
+        const commands = try bench.record();
+        fb.CmdResetQueryPool(commands, statistics, 0, 1);
+        fb.CmdBeginQuery(commands, statistics, 0, 0);
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 1, .clear_values = &clear }, .@"inline");
+        fb.CmdBindPipeline(commands, .graphics, made.?);
+        fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+        fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &green);
+        fb.CmdDraw(commands, 3, 1, 0, 0);
+        fb.CmdEndRenderPass(commands);
+        fb.CmdEndQuery(commands, statistics, 0);
+        try bench.submit();
+
+        const drawn = pixelsOf(&picture, green);
+        if (draws) {
+            try testing.expect(drawn > 1000);
+        } else {
+            // Nothing of it reached a pixel, and the pass's clear is all
+            // that is there.
+            try testing.expectEqual(@as(usize, 0), drawn);
+            try testing.expectEqual(@as(usize, 64 * 64), pixelsOf(&picture, blue));
+        }
+
+        var values: [6]u64 = @splat(0);
+        try testing.expectEqual(facet.Result.success, fb.GetQueryPoolResults(device, statistics, 0, 1, @sizeOf(@TypeOf(values)), &values, @sizeOf(@TypeOf(values)), facet.QUERY_RESULT_64 | facet.QUERY_RESULT_WAIT));
+        // The five counters before the fragment stage are the same whether
+        // the mask covers anything or not: the primitive was assembled,
+        // the vertex stage ran, and it reached clipping and came out of
+        // it. This is the half of the item that would quietly go wrong if
+        // a masked pipeline were ever folded into `draws_nothing`, whose
+        // draw returns before all five.
+        try testing.expectEqual(@as(u64, 3), values[0]);
+        try testing.expectEqual(@as(u64, 1), values[1]);
+        try testing.expectEqual(@as(u64, 3), values[2]);
+        try testing.expectEqual(@as(u64, 1), values[3]);
+        try testing.expectEqual(@as(u64, 1), values[4]);
+        // And the fragment function is the one thing the mask decides.
+        if (draws) {
+            try testing.expect(values[5] >= drawn);
+        } else {
+            try testing.expectEqual(@as(u64, 0), values[5]);
+        }
+    }
+}
+
 test "the primitives input assembly counted, by topology, and what a draw that draws nothing still owes" {
     var bench = try Bench.up();
     defer bench.down();

@@ -116,8 +116,9 @@ refinement - finish the compiler, no fallback - moves onto the main line.
 
 **Items 2, 3, 4, 5 and 7 were done in revision 1.80, item 78 in 1.81,
 items 14, 16, 49 and 77 in 1.82, item 52's half of two in 1.83, item 18
-in 1.84, item 19 in 1.85, item 21 in 1.86 and item 28's half of two in
-1.87.** Each
+in 1.84, item 19 in 1.85, item 21 in 1.86, item 28's half of two in 1.87,
+items 82 and 83 in 1.87 and 1.88 - both found while doing other items -
+and item 61's first row of eight in 1.89.** Each
 carries a *Done* note below saying what was actually built and where the
 item's own description turned out to be wrong - and several did. Things
 found while doing them became the items at the end of the list: 77 and 78
@@ -1139,9 +1140,48 @@ The back end is fragment-only and refuses any other stage by name; the vertex an
 
 *rasterisation* &mdash; conformance-blocking, months
 
-The largest item Goal A cannot skip, and the only one Vulkan 1.0 gives no way to refuse — not through a feature bit, since sampleRateShading, alphaToOne and variableMultisampleRate are all optional, but through the required limits: framebufferColorSampleCounts, framebufferDepthSampleCounts, framebufferStencilSampleCounts, sampledImageColorSampleCounts, sampledImageDepthSampleCounts and sampledImageStencilSampleCounts must each include VK_SAMPLE_COUNT_4_BIT; framebufferNoAttachmentsSampleCounts, framebufferIntegerColorSampleCounts, sampledImageIntegerSampleCounts and storageImageSampleCounts must include 1; and maxSampleMaskWords must be at least 1. facet published none of those ten fields until 1.82 and now publishes all of them, at their one-sample values - which is exactly why eight of the eighteen limit shortfalls counted by tests/vulkan_limits.zig are this item - and no device has the capability: rasterization_samples above 1, sample shading, alpha-to-coverage and alpha-to-one are refused in CreateGraphicsPipelines; an attachment with samples != 1 and any resolve_attachments are refused in CreateRenderPass; and CreateImage refuses samples != 1 in the same line that refuses 1D images, so a multisampled image cannot be made at all. On the cores: per-sample colour, depth and stencil in the tile store, a sample loop in every load, store, clear and resolve path, the quad walk writing four pixels under one coverage mask, the sample mask, and alpha-to-coverage in the blend path — the to-do document works the budget through: a 64x64 tile is about 114 KiB live across four parts and 4x makes it ~456 KiB, past the A76's 64 KiB L1 data cache, which is the point of tiling. On the V3D the hardware has 4x coverage and the driver writes one sample's worth in all four bits today, so that side is frame setup, the tile store and resolve rather than new silicon.
+The largest item Goal A cannot skip, and the only one Vulkan 1.0 gives no way to refuse — not through a feature bit, since sampleRateShading, alphaToOne and variableMultisampleRate are all optional, but through the required limits: framebufferColorSampleCounts, framebufferDepthSampleCounts, framebufferStencilSampleCounts, sampledImageColorSampleCounts, sampledImageDepthSampleCounts and sampledImageStencilSampleCounts must each include VK_SAMPLE_COUNT_4_BIT; framebufferNoAttachmentsSampleCounts must include VK_SAMPLE_COUNT_4_BIT too - *not* the 1 bit alone, as this said until 1.89, which is a seventh field wanting 4x and not a sixth; sampledImageIntegerSampleCounts and storageImageSampleCounts must include 1, the latter only while shaderStorageImageMultisample is false, and both are met; `framebufferIntegerColorSampleCounts`, also named here until 1.89, is not a Vulkan 1.0 limit at all and is not among the 106; and maxSampleMaskWords must be at least 1, which is **done in 1.89** - see below. facet published none of those ten fields until 1.82 and now publishes all of them, at their one-sample values - which is exactly why eight of the eighteen limit shortfalls counted by tests/vulkan_limits.zig are this item - and no device has the capability: rasterization_samples above 1, sample shading, alpha-to-coverage and alpha-to-one are refused in CreateGraphicsPipelines; an attachment with samples != 1 and any resolve_attachments are refused in CreateRenderPass; and CreateImage refuses samples != 1 in the same line that refuses 1D images, so a multisampled image cannot be made at all. On the cores: per-sample colour, depth and stencil in the tile store, a sample loop in every load, store, clear and resolve path, the quad walk writing four pixels under one coverage mask, the sample mask, and alpha-to-coverage in the blend path — the to-do document works the budget through, and its arithmetic needs one correction: a 64x64 tile is about 114 KiB live *across* four parts, but `Host.share` gives each part its own core and so its own L1, so the figure to hold against the A76's 64 KiB L1 data cache is the per-core 28.5 KiB now and 112.5 KiB at 4x. Still past it, so the conclusion stands - but it is past it by 1.8x and not 7x, and that matters because the doc's framing points at halving `tile_size`, which pays for 4x exactly and taxes every single-sampled frame, where the per-part run-time block `lay()` already builds for extra colour attachments and would carry sample planes at no cost to a 1x frame. On the V3D the hardware has 4x coverage and the driver writes one sample's worth in all four bits today, so that side is frame setup, the tile store and resolve rather than new silicon.
 
 > Verified verbatim: creategraphicspipelines.zig:378 `if (multisample.rasterization_samples > 1 or multisample.sample_shading_enable or multisample.alpha_to_coverage_enable or multisample.alpha_to_one_enable) return .error_feature_not_present;`; createrenderpass.zig:216 and :255/:307/:378; image/_image.zig:338 `... or info.samples != 1) return null;`; multisampling verified absent from both driver tables so false by default; facet.zig:317 `multisampling: bool = false,` ("No device of this library has it.") and :572-573 `sample_counts: u32 = 0,`; one-sample coverage at driver/v3d/cl.zig:336-341. docs/facet-todo.md section 2 states the conformance point correctly and is not stale.
+
+**The first of its eight rows is done in 1.89, and it needed no new
+sample.** `maxSampleMaskWords` was 0 against Vulkan's required 1, and
+`PipelineMultisampleStateCreateInfo.sample_mask` was a field nothing read.
+At one sample a pixel the mask is bit 0 alone - Vulkan reads
+ceil(rasterizationSamples / 32) words and ignores the bits above the sample
+count - so honouring it is complete, not a stepping stone: a pipeline whose
+mask clears bit 0 covers no sample and draws nothing, and one that sets it
+draws as before. A null pointer is every sample covered, which Vulkan says
+in as many words.
+
+Where the suppression goes is the whole of the care this needed. The mask
+is applied *after* rasterisation, so such a draw is not `draws_nothing`:
+the primitive was assembled, the vertex stage ran, and it reached primitive
+clipping and came out of it, so `INPUT_ASSEMBLY_VERTICES`,
+`INPUT_ASSEMBLY_PRIMITIVES`, `VERTEX_SHADER_INVOCATIONS`,
+`CLIPPING_INVOCATIONS` and `CLIPPING_PRIMITIVES` are all owed and only
+`FRAGMENT_SHADER_INVOCATIONS` goes to zero. On the cores the triangle is
+projected, culled and counted and *then* dropped, in
+`raster/batched.zig`'s `SetUp.one` - one test a triangle, nothing per
+pixel, nothing allocated. On the V3D the draw simply returns, and that is
+exact rather than a shortcut because that device reports
+`pipeline_statistics_queries = false`: there is no counter there for a
+masked-off draw to owe.
+
+The test asks for the same triangle under six mask words and reads all six
+counters each time. `0x0000_0002` and `0xFFFF_FFFE` draw nothing, which is
+what proves the bits above bit 0 are ignored rather than ORed in; `null`,
+`0x1` and `0xFFFF_FFFF` draw. Three ways of getting it wrong each make it
+fail: not reading the mask gives `expected 0, found 2016`; setting
+`draws_nothing` instead trips the assertion that it is not set; and doing
+that with the assertion removed gives `expected 1, found 0` on the clipping
+counter - which is the reason the flag is not reused, caught by the test
+rather than by review.
+
+The row count moved the other way too, by one that was already wrong:
+`_instance.zig` said "Vulkan requires the 4 bit on six of them, so this is
+six shortfalls", where seven of the masks fall short. The pin in
+tests/vulkan_limits.zig is 10 now, of which seven are this item.
 
 Found independently by: features, limits, semantics, entry-points, conformance-path (all 5 strands that looked at it).
 

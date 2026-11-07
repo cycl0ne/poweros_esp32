@@ -539,7 +539,12 @@ pub const PhysicalDeviceLimits = extern struct {
     sampled_image_depth_sample_counts: u32,
     sampled_image_stencil_sample_counts: u32,
     storage_image_sample_counts: u32,
-    /// The 32-bit words of a sample mask.
+    /// The 32-bit words of a sample mask that
+    /// `PipelineMultisampleStateCreateInfo.sample_mask` may hold. One:
+    /// Vulkan reads ceil(rasterization_samples / 32) of them and ignores
+    /// the bits above the sample count, so with one sample a pixel the
+    /// mask is bit 0 alone. A pipeline that clears it covers no sample and
+    /// draws nothing.
     max_sample_mask_words: u32,
     /// Whether every queue that draws or computes also writes
     /// timestamps, which saves a program looking at each queue

@@ -653,8 +653,16 @@ pub const limits: facet.PhysicalDeviceLimits = .{
     .max_framebuffer_layers = 1,
     // One sample a pixel, everywhere. CreateImage refuses an image of more
     // (image/_image.zig) and no attachment is multisampled, so every one of
-    // these masks has the single bit. Vulkan requires the 4 bit on six of
-    // them, so this is six shortfalls and not a choice (item 61).
+    // these masks has the single bit. Vulkan requires the 4 bit on *seven*
+    // of them - the three framebuffer masks, the no-attachments mask, and
+    // the colour, depth and stencil sampled-image masks - so this is seven
+    // shortfalls and not a choice (item 61). It said six until 1.89: the
+    // no-attachments mask was miscounted as wanting the 1 bit alone, which
+    // is what docs/facet-vulkan10.md said too. The two that do want only
+    // the 1 bit, and so are met here, are the integer sampled-image mask
+    // and the storage-image mask - the latter because
+    // `shader_storage_image_multisample` is false and Vulkan's unsupported
+    // column for it is 1.
     .framebuffer_color_sample_counts = facet.SAMPLE_COUNT_1,
     .framebuffer_depth_sample_counts = facet.SAMPLE_COUNT_1,
     .framebuffer_stencil_sample_counts = facet.SAMPLE_COUNT_1,
@@ -665,9 +673,14 @@ pub const limits: facet.PhysicalDeviceLimits = .{
     .sampled_image_depth_sample_counts = facet.SAMPLE_COUNT_1,
     .sampled_image_stencil_sample_counts = facet.SAMPLE_COUNT_1,
     .storage_image_sample_counts = facet.SAMPLE_COUNT_1,
-    // Nothing reads or writes a sample mask, there being one sample.
-    // Vulkan asks for 1 (item 30).
-    .max_sample_mask_words = 0,
+    // One word, which at one sample a pixel is one bit: Vulkan reads
+    // ceil(rasterization_samples / 32) words of
+    // `PipelineMultisampleStateCreateInfo.sample_mask` and ignores the bits
+    // above the sample count, so bit 0 is the whole of it here. It is read
+    // and honoured - a pipeline whose mask clears bit 0 covers no sample
+    // and draws nothing - which is why this may say 1 while every mask
+    // above still says one sample (item 61, since 1.89).
+    .max_sample_mask_words = 1,
 
     // --- timestamps ---
     // The one queue family both draws and computes and writes timestamps,

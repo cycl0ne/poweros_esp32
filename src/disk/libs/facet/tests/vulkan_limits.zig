@@ -294,34 +294,40 @@ const Rig = @import("facet.zig").Rig;
 /// overrides about eighteen of them downward) and only the board can say
 /// whether it meets them.
 ///
-/// The eleven, and the item of docs/facet-vulkan10.md each belongs to,
-/// so that the number is auditable rather than merely pinned:
+/// The ten, and the item of docs/facet-vulkan10.md each belongs to, so
+/// that the number is auditable rather than merely pinned:
 ///
 ///   - item 17, the varyings: maxVertexOutputComponents and
 ///     maxFragmentInputComponents, both 8 against 64.
 ///   - item 22, layered framebuffers: maxFramebufferLayers 1 against 256.
-///   - item 61, multisampling, which is eight of the eighteen on its own:
-///     the three framebuffer and three sampled-image sample-count masks
-///     must include VK_SAMPLE_COUNT_4_BIT and hold only _1_BIT,
-///     framebufferNoAttachmentsSampleCounts the same, and
-///     maxSampleMaskWords is 0 against 1.
+///   - item 61, multisampling, which is seven of the ten on its own: the
+///     three framebuffer sample-count masks, the no-attachments mask and
+///     the colour, depth and stencil sampled-image masks must each include
+///     VK_SAMPLE_COUNT_4_BIT and hold only _1_BIT.
 ///
 /// Nothing else falls short, and nothing in that list is unaccounted for.
+/// The two sample-count masks that are *not* in it are the integer
+/// sampled-image mask and the storage-image mask: Vulkan asks only the 1
+/// bit of the first, and only the 1 bit of the second while
+/// `shader_storage_image_multisample` is false, so both are met.
 ///
 /// Closed since this count was first taken, which began at eighteen:
 /// **item 18** in 1.84, maxVertexInputBindings 4 and
 /// maxVertexInputAttributes 8 against 16 apiece; and **item 19** in 1.85,
 /// the one combined cap of 2 dynamic buffer descriptors a set against
 /// Vulkan's 8 uniform and 4 storage a pipeline layout; **item 21** in
-/// 1.86, maxImageDimension1D 0 because there were no 1D images; and
-/// **item 28's half of two** in 1.87, minTexelOffset and maxTexelOffset
-/// both 0 because no sample took a constant texel offset.
+/// 1.86, maxImageDimension1D 0 because there were no 1D images; **item
+/// 28's half of two** in 1.87, minTexelOffset and maxTexelOffset both 0
+/// because no sample took a constant texel offset; and **item 61's first
+/// row of eight** in 1.89, maxSampleMaskWords 0 against 1, which was the
+/// one row of that item needing no new sample: at one sample a pixel the
+/// mask is bit 0 alone, and a pipeline that clears it draws nothing.
 ///
 /// Item 28 is split the way item 52 was: the cores sample at an offset and
 /// the V3D refuses the operand, so **this count is the cores' and the V3D
 /// still reports 0 for those two** - it reads them off its own SPIR-V
 /// profile, so the number follows the capability.
-const shortfalls_on_the_cores = 11;
+const shortfalls_on_the_cores = 10;
 
 test "the check itself: Vulkan's floor passes, and a step below it is caught" {
     // A check that passes is worth nothing on its own: one whose loop never

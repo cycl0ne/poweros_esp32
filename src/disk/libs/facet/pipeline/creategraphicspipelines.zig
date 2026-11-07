@@ -303,6 +303,7 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         .drawn_topology = .triangle_list,
         .restart = false,
         .draws_nothing = false,
+        .sample_mask = ~@as(u32, 0),
         .cull = .none,
         .front = .counter_clockwise,
         .depth_test = null,
@@ -396,6 +397,13 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
     if (rasterization.rasterizer_discard_enable) made.draws_nothing = true;
     if (info.multisample_state) |multisample| {
         if (multisample.rasterization_samples > 1 or multisample.sample_shading_enable or multisample.alpha_to_coverage_enable or multisample.alpha_to_one_enable) return .error_feature_not_present;
+        // One word of the mask, which at one sample a pixel is one bit of
+        // it: `PhysicalDeviceLimits.max_sample_mask_words` is 1 and Vulkan
+        // ignores the bits above the sample count. A null pointer is every
+        // sample covered, which is what the field is initialised to. The
+        // word is copied here because `sample_mask` need not outlive the
+        // call. (Since 1.89, item 61 of docs/facet-vulkan10.md.)
+        if (multisample.sample_mask) |mask| made.sample_mask = mask[0];
     }
     if (info.depth_stencil_state) |depth| {
         if (depth.depth_bounds_test_enable) {
