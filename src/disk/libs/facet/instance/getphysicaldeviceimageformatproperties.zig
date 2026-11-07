@@ -59,9 +59,10 @@ const _image = @import("../image/_image.zig");
 ///   of four samples a pixel of the extent and the layers above at one
 ///   level (since 1.98): a 2D image in optimal tiling, not cube
 ///   compatible, of a format that is an attachment, drawn into, read as
-///   an input attachment or copied, on a device that draws four samples
-///   (`_image.shapeFor`). Where 4 is said, every such image inside these
-///   bounds is made.
+///   an input attachment, copied or, since 1.110, sampled - never sampled
+///   and drawn into at once, as one sample is not - on a device that
+///   draws four samples (`_image.shapeFor`). Where 4 is said, every such
+///   image inside these bounds is made.
 /// - `max_resource_size`: the bytes an image of all of the above takes,
 ///   every level of every layer of it (since 1.66), which is what
 ///   GetImageMemoryRequirements answers for such an image. It may be

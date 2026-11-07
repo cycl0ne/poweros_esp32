@@ -269,9 +269,10 @@ is left out:
   writing such an image through while the pass that draws into it is open
   leaves the store to win. Seeding the rows before the pass, or writing
   over them after it, is what this is for. R8G8B8A8 is refused: a texture
-  of 8888 is 0xAARRGGBB, as B8G8R8A8's rows are, and nothing reads a word
-  with red in its low byte. Sampled and drawn into at once is still
-  refused, a sample wanting the blocked layout.
+  of 8888 is 0xAARRGGBB, as B8G8R8A8's rows are, and the one that reads a
+  word with red in its low byte (since 1.110) is fetched from, not written
+  through. Sampled and drawn into at once is still refused, a sample
+  wanting the blocked layout.
 
 ## Texel buffers, and the formats they read
 

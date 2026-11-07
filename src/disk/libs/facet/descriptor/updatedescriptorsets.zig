@@ -124,10 +124,12 @@ pub fn UpdateDescriptorSets(base: *FacetBase, device: *facet.Device, write_count
                     if (write.descriptor_type == .sampler) break :sampled .{ .sampler = with };
                     const view = _objects.of(ImageView, info.image_view orelse break :sampled .{ .sampler = with });
                     // A texture, a depth attachment sampled where it
-                    // lies (`_image.sampledDepth`, since 1.39), or an
+                    // lies (`_image.sampledDepth`, since 1.39), an
                     // attachment written through as a storage image, whose
-                    // rows are the texture (`writtenRows`, since 1.56).
-                    const kept = view.image.kind == .texture or _image.sampledDepth(view.image) or _image.writtenRows(view.image);
+                    // rows are the texture (`writtenRows`, since 1.56), or
+                    // an image of four samples sampled where its rows lie
+                    // (`sampledRows`, since 1.110): `_image.hasTexels`.
+                    const kept = _image.hasTexels(view.image);
                     if (!kept or view.image.data == null) break :sampled .{ .sampler = with };
                     // A storage image is written through, so the image has
                     // to have been made for it; one that was not is left

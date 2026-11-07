@@ -72,9 +72,22 @@ const _image = @import("_image.zig");
 ///   otherwise or nowhere. On a depth format it is the bullet above.
 /// - Anything else of a colour format, one level: rows.
 ///
-/// Images have one sample a pixel, and are up to 8192 wide and high. One both
-/// SAMPLED and COLOR_ATTACHMENT is not made: a texture and an attachment lie
+/// Images are up to 8192 wide and high. One both SAMPLED and
+/// COLOR_ATTACHMENT is not made: a texture and an attachment lie
 /// differently.
+///
+/// **An image may have four samples a pixel** on a device that draws them
+/// (`Capabilities.multisampling`, since 1.98): 2D, optimal, one level and
+/// not cube compatible, of a format that is a colour or a depth
+/// attachment, as Vulkan has it. Each sample's plane is the whole image at
+/// one sample, every layer of it, the next sample's plane after it. Such an
+/// image is drawn into, read as an input attachment, copied and resolved,
+/// and since 1.110 sampled: one of a colour format is then kept in rows, as
+/// one drawn into is, and those rows are the texture a fragment function
+/// fetches each sample of (`texture.Texture.sampleOf`), as it fetches a
+/// depth attachment's planes. A colour one is not a colour attachment or
+/// an input attachment as well, which a sampled colour image of one sample
+/// is not either, and no image of four samples is STORAGE.
 ///
 /// **A colour attachment may be written through as a storage image** since
 /// 1.56: COLOR_ATTACHMENT, or INPUT_ATTACHMENT, with STORAGE and without
@@ -86,9 +99,11 @@ const _image = @import("_image.zig");
 /// over them after it, and writing them while the pass that draws into them
 /// is open has no order against that store - as it has none in Vulkan
 /// without a barrier. R8G8B8A8 is `error_format_not_supported` for this: a
-/// texture of 8888 is 0xAARRGGBB, as B8G8R8A8's rows are, and nothing reads
-/// a word with red in its low byte. FORMAT_FEATURE_STORAGE_IMAGE in a
-/// format's **linear** features says its rows may be written through.
+/// texture of 8888 is 0xAARRGGBB, as B8G8R8A8's rows are, and the texture
+/// that reads a word with red in its low byte (`texture.Format.rgba8`,
+/// since 1.110) is fetched from, not written through.
+/// FORMAT_FEATURE_STORAGE_IMAGE in a format's **linear** features says its
+/// rows may be written through.
 ///
 /// A SAMPLED image may have up to 256 layers, or be 3D, of type `3d`, of any
 /// depth up to 256 and with levels of its own (since 1.46): a level is half

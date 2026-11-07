@@ -65,8 +65,6 @@ pub fn BindImageMemory(base: *FacetBase, device: *facet.Device, image: *facet.Im
     made.memory = block;
     made.offset = offset;
     made.data = _memory.at(block, offset);
-    if (made.kind == .texture or _image.sampledDepth(made) or _image.writtenRows(made)) {
-        made.texels = _image.texelsOver(made, made.data.?) catch unreachable;
-    }
+    if (_image.hasTexels(made)) made.texels = _image.texelsOver(made, made.data.?) catch unreachable;
     return .success;
 }

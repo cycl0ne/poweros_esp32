@@ -1292,6 +1292,12 @@ pub const Resources = extern struct {
     /// numbers a texture of Vulkan's `_uint` or `_sint` formats keeps,
     /// which no colour and no float carries exactly
     /// (`Capabilities.whole_textures`).
+    ///
+    /// An image of four samples a pixel is fetched a sample at a time
+    /// (since 1.110): its texture holds each sample's texels apart
+    /// (`texture.Texture.samples`), what it reads by itself is sample 0,
+    /// and `texture.Texture.sampleOf` gives any one of them as a texture
+    /// of one, to read at the pixel the function wants.
     pub fn sampled(resources: *const Resources, set: u32, binding: u32, element: u32) ?*const texture.Texture {
         const found = resources.slot(set, binding, element) orelse return null;
         return @ptrCast(@alignCast(found.pointer orelse return null));

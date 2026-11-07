@@ -130,9 +130,10 @@ pub const Capabilities = extern struct {
     float_textures: bool = false,
 
     /// Four samples a pixel: an image, an attachment and a pipeline of
-    /// `SAMPLE_COUNT_4`, a subpass's resolve attachments, and
-    /// CmdResolveImage. The sample-count masks a device reports follow it
-    /// (`narrowSampleCounts`). Sample shading and alpha to one are
+    /// `SAMPLE_COUNT_4`, a subpass's resolve attachments, CmdResolveImage,
+    /// and since 1.110 an image sampled where it lies, a fragment function
+    /// fetching each sample. The sample-count masks a device reports
+    /// follow it (`narrowSampleCounts`). Sample shading and alpha to one are
     /// optional features of their own and not part of it, and neither are
     /// two, eight or sixteen samples, nor four in a storage image or an
     /// input attachment. No device of this library has it yet

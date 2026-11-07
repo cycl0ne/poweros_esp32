@@ -24,7 +24,11 @@
 //!
 //! **An image may have four samples a pixel** (since 1.98), on a device that
 //! draws them: each sample's plane is the whole image at one sample, every
-//! layer of it, the next sample's plane after it (`Image.samples`).
+//! layer of it, the next sample's plane after it (`Image.samples`). One of a
+//! colour format that is sampled is `rows` (since 1.110): Vulkan fetches it
+//! a texel at a time and never filters it, so its rows are the texture as
+//! they lie, each sample's plane a texture's worth after the one before
+//! (`sampledRows`).
 //!
 //! **Some formats are not kept** (`_decode`): compressed and float textures
 //! are unpacked as they are copied in. `format` is what is kept, and
@@ -181,10 +185,12 @@ pub fn rowFormat(format: facet.Format) shader.TexelFormat {
 
 /// How a shader function writes the pixels of an image kept in rows, as
 /// the texture over them (`texture.Texture.linear`): null for a format
-/// whose rows no texture reads, which is every one whose texel is not a
-/// word of its own. `r8g8b8a8_unorm` is one of those - a texture of 8888
-/// is 0xAARRGGBB, as `b8g8r8a8_unorm`'s rows are, and nothing reads a
-/// word with red in its low byte. (Since 1.56.)
+/// whose rows no function writes through. `r8g8b8a8_unorm` is one of
+/// those: a texture of 8888 is 0xAARRGGBB, as `b8g8r8a8_unorm`'s rows
+/// are, and the one that reads a word with red in its low byte,
+/// `texture.Format.rgba8`, is read only where an image of four samples is
+/// sampled (`sampledRowFormat`, since 1.110), which nothing writes
+/// through. (Since 1.56.)
 pub fn rowTexture(format: facet.Format) ?texture.Format {
     return switch (format) {
         .b8g8r8a8_unorm => .argb8888,
@@ -221,6 +227,35 @@ pub fn wholeNumbers(format: facet.Format) bool {
 /// function writes (`rowTexture`, since 1.56).
 pub fn writtenRows(image: *const Image) bool {
     return image.kind == .rows and image.usage & facet.IMAGE_USAGE_STORAGE != 0;
+}
+
+/// Whether an image kept in rows is sampled, which only one of four
+/// samples a pixel is (`shapeFor`): kept in rows, as it is copied and
+/// resolved, and those rows the texture a fragment function fetches each
+/// sample of (`texture.Texture.sampleOf`, since 1.110). A depth
+/// attachment's is `sampledDepth`.
+pub fn sampledRows(image: *const Image) bool {
+    return image.kind == .rows and image.usage & facet.IMAGE_USAGE_SAMPLED != 0;
+}
+
+/// How such an image's rows are read as a texture: a format of 8888 as the
+/// word it is - `b8g8r8a8_unorm`'s 0xAARRGGBB as `argb8888`, and
+/// `r8g8b8a8_unorm`'s, red in the low byte, as `rgba8` - and R5G6B5 as
+/// `rgb565`. Null for any other. (Since 1.110.)
+pub fn sampledRowFormat(format: facet.Format) ?texture.Format {
+    return switch (format) {
+        .r8g8b8a8_unorm => .rgba8,
+        else => rowTexture(format),
+    };
+}
+
+/// Whether an image has texels a descriptor hands a function, which
+/// BindImageMemory lays over its memory: a texture, a depth attachment
+/// sampled where it lies, an attachment written through as a storage
+/// image, and since 1.110 an image of four samples sampled where its rows
+/// lie.
+pub fn hasTexels(image: *const Image) bool {
+    return image.kind == .texture or sampledDepth(image) or writtenRows(image) or sampledRows(image);
 }
 
 /// The bytes a texel, a pixel or a vertex's value of `format` takes; 0
@@ -523,9 +558,22 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
         if (info.usage & not_rows != 0) return null;
         if (info.usage & facet.IMAGE_USAGE_STORAGE != 0 and !rows_written) return null;
     }
+    // Sampled at four samples a pixel (since 1.110): kept in rows, as such
+    // an image is drawn, copied and resolved, those rows being the texture
+    // a fragment function fetches each sample of
+    // (`texture.Texture.sampleOf`). Vulkan fetches a multisampled image a
+    // texel at a time and never filters it, so nothing re-tiles them, and
+    // lavapipe's sampler view of one is the same resource of several
+    // samples (`lvp_image_create`, src/gallium/frontends/lavapipe/
+    // lvp_image.c:87-89, :104). Not a colour attachment as well: at one
+    // sample such an image is not made (docs/facet-vulkan10.md item 48),
+    // so the format query refuses that usage, and Vulkan has a query's
+    // sample counts hold the 1 wherever they hold the 4.
+    const sampled_rows = info.samples != 1 and info.usage & facet.IMAGE_USAGE_SAMPLED != 0;
+    if (sampled_rows and info.usage & facet.IMAGE_USAGE_COLOR_ATTACHMENT != 0) return null;
     // Sampled, written through as a storage image, or both: all one kind,
     // kept in the layout a sample reads.
-    if (info.usage & (facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_STORAGE) != 0 and !rows_written) {
+    if (info.usage & (facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_STORAGE) != 0 and !rows_written and !sampled_rows) {
         if (info.tiling != .optimal or info.usage & facet.IMAGE_USAGE_COLOR_ATTACHMENT != 0) return null;
         const kept = keptFormat(kept_format, packed_texels) orelse return null;
         image.kind = .texture;
@@ -571,18 +619,19 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
 /// lvp_formats.c), and it reads the device's own format table, so this
 /// and GetPhysicalDeviceFormatProperties cannot disagree.
 ///
-/// The image may be drawn into, read as an input attachment, or copied,
-/// and may have layers. A sampled one waits for a fetch that takes a
-/// sample number, Vulkan's `sampledImage*SampleCounts` saying one sample
-/// meanwhile; a storage one for `shader_storage_image_multisample`, which
-/// is false, Vulkan's `storageImageSampleCounts` being 1 without it.
+/// The image may be drawn into, read as an input attachment, copied, and
+/// since 1.110 sampled - a fragment function fetching each sample where
+/// it lies (`texture.Texture.sampleOf`, `sampledRows`, `sampledDepth`) -
+/// and may have layers. A storage one waits for
+/// `shader_storage_image_multisample`, which is false, Vulkan's
+/// `storageImageSampleCounts` being 1 without it.
 fn multisampled(physical: *const _instance.PhysicalDevice, info: *const facet.ImageCreateInfo) bool {
     if (info.samples != 4 or !physical.can.multisampling or physical.ops.texture_memory != null) return false;
     if (info.image_type != .@"2d" or info.tiling != .optimal or info.mip_levels != 1) return false;
     if (info.flags & facet.IMAGE_CREATE_CUBE_COMPATIBLE != 0) return false;
     const taken = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT |
         facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT |
-        facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
+        facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST | facet.IMAGE_USAGE_SAMPLED;
     if (info.usage & ~taken != 0) return false;
     const features = physical.ops.format_properties(physical, info.format).optimal_tiling_features;
     return features & (facet.FORMAT_FEATURE_COLOR_ATTACHMENT | facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT) != 0;
@@ -621,6 +670,16 @@ pub fn texelsOver(image: *const Image, memory: [*]u8) texture.Texture.Error!text
     // A colour attachment written through as a storage image: its rows
     // are the texture, as a sampled depth's are (since 1.56).
     if (writtenRows(image)) return texture.Texture.linear(rowTexture(image.format).?, image.width, image.height, image.pitch, memory);
+    // An image of four samples sampled where its rows lie (since 1.110):
+    // every layer of sample 0's plane, each sample's plane after it.
+    if (sampledRows(image)) {
+        var rows = texture.Texture.linear(sampledRowFormat(image.format).?, image.width, image.height, image.pitch, memory);
+        rows.layer_count = image.layers;
+        rows.layer_bytes = @intCast(image.layer_bytes);
+        rows.samples = image.samples;
+        rows.sample_bytes = @intCast(image.sample_bytes);
+        return rows;
+    }
     var made = try texture.Texture.init(keptFormat(image.format, image.packed_texels).?, image.width, image.height, image.levels, memory);
     made.layer_count = image.layers;
     made.layer_bytes = @intCast(image.layer_bytes);
@@ -672,6 +731,10 @@ fn planeOver(image: *const Image, aspect: u32, first_level: u32, levels: u32, fi
     }
     made.layer_count = layers;
     made.layer_bytes = @intCast(image.layer_bytes);
+    // And its samples, each plane of them a sample's worth after the one
+    // before (since 1.110).
+    made.samples = image.samples;
+    made.sample_bytes = @intCast(image.sample_bytes);
     return made;
 }
 
@@ -791,6 +854,17 @@ pub fn levelsFrom(image: *const Image, base: u32, count: u32, first_layer: u32, 
     var made = texture.Texture.from(whole, base, count, whole.memory + first_layer * @as(usize, @intCast(image.layer_bytes)) + whole.layout[base].start);
     made.layer_count = layers;
     made.layer_bytes = @intCast(image.layer_bytes);
+    return made;
+}
+
+/// Of an image of four samples sampled where its rows lie, the layers
+/// from `first_layer` on, `layers` of them, as the texture a view of them
+/// reads: the image's own texels, begun at that layer's rows
+/// (`sampledRows`, since 1.110).
+pub fn rowLayers(image: *const Image, first_layer: u32, layers: u32) texture.Texture {
+    var made = image.texels;
+    made.memory = image.texels.memory + first_layer * @as(usize, @intCast(image.layer_bytes));
+    made.layer_count = layers;
     return made;
 }
 

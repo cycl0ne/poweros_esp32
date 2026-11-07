@@ -2717,8 +2717,9 @@ test "a colour attachment written through as a storage image: its rows, before t
     try testing.expect(can.storage_images);
 
     // The linear features say the rows of a format may be written
-    // through: b8g8r8a8's are, r8g8b8a8's are not - no texture reads a
-    // word with red in its low byte.
+    // through: b8g8r8a8's are, r8g8b8a8's are not - the texture that
+    // reads a word with red in its low byte is fetched from, not written
+    // through (since 1.110).
     var properties: facet.FormatProperties = undefined;
     fb.GetPhysicalDeviceFormatProperties(bench.physical, .b8g8r8a8_unorm, &properties);
     try testing.expect(properties.linear_tiling_features & facet.FORMAT_FEATURE_STORAGE_IMAGE != 0);
@@ -6421,6 +6422,303 @@ test "resolve attachments of colour attachments drawn together: each given the a
         }
     };
     try testing.expect(twos > 0);
+}
+
+// --- 1.110: an image of four samples fetched a sample at a time ------------
+
+test "a texture of four samples a texel: each sample a plane further on, one past the last reading nothing and taking nothing, and R8G8B8A8's four bytes read and written as they lie" {
+    // Four planes of a texture 5 texels across and 3 down, in rows of 32
+    // bytes, two layers each, as an image of four samples lies.
+    var words: [4 * 2 * 3 * 8]u32 = undefined;
+    for (&words, 0..) |*word, k| word.* = 0x8000_0000 | @as(u32, @intCast(k));
+    const bytes: [*]u8 = @ptrCast(&words);
+    var whole = texture_zig.Texture.linear(.argb8888, 5, 3, 32, bytes);
+    whole.layer_count = 2;
+    whole.layer_bytes = 3 * 32;
+    whole.samples = 4;
+    whole.sample_bytes = 2 * 3 * 32;
+    for (0..4) |s| {
+        const one = whole.sampleOf(@intCast(s));
+        try testing.expectEqual(@as(u32, 1), one.samples);
+        for (0..2) |layer| for (0..3) |y| for (0..5) |x| {
+            const word = words[((s * 2 + layer) * 3 + y) * 8 + x];
+            try testing.expectEqual(word, one.colorAt(@intCast(layer), 0, @intCast(x), @intCast(y)));
+        };
+    }
+    // What the texture reads by itself is sample 0.
+    try testing.expectEqual(words[(1 * 3 + 2) * 8 + 4], whole.colorAt(1, 0, 4, 2));
+
+    // A sample past the last reads transparent black by every read, and a
+    // write into it writes nothing.
+    const kept = words;
+    for ([_]u32{ 4, 5, 0xFFFF_FFFF }) |which| {
+        var past = whole.sampleOf(which);
+        try testing.expectEqual(@as(u32, 0), past.colorAt(0, 0, 0, 0));
+        try testing.expectEqual([4]f32{ 0, 0, 0, 0 }, past.partsAt(1, 0, 2, 1));
+        try testing.expectEqual([4]i64{ 0, 0, 0, 0 }, past.wholesAt(0, 0, 4, 2));
+        past.setColor(0, 0, 0, 0, 0xFFFF_FFFF);
+        past.setColor(1, 0, 4, 2, 0x1234_5678);
+    }
+    try testing.expectEqualSlices(u32, &kept, &words);
+
+    // A texture of one sample: sample 0 is itself, and sample 1 nothing.
+    const single = texture_zig.Texture.linear(.argb8888, 5, 3, 32, bytes);
+    try testing.expectEqual(words[1 * 8 + 2], single.sampleOf(0).colorAt(0, 0, 2, 1));
+    try testing.expectEqual(@as(u32, 0), single.sampleOf(1).colorAt(0, 0, 2, 1));
+
+    // R8G8B8A8_UNORM's four bytes, red first: read as 0xAARRGGBB and as
+    // floats, and written back in the same order.
+    var rgba = [8]u8{ 0x11, 0x22, 0x33, 0x44, 0xF0, 0x0F, 0x80, 0xFF };
+    var four = texture_zig.Texture.linear(.rgba8, 2, 1, 8, &rgba);
+    try testing.expectEqual(@as(u32, 4), texture_zig.Format.rgba8.bytes());
+    try testing.expectEqual(@as(u32, 64), texture_zig.Format.rgba8.blockBytes());
+    try testing.expectEqual(@as(u32, 0x4411_2233), four.colorAt(0, 0, 0, 0));
+    try testing.expectEqual(@as(u32, 0xFFF0_0F80), four.colorAt(0, 0, 1, 0));
+    for (four.partsAt(0, 0, 1, 0), [4]u8{ 0xF0, 0x0F, 0x80, 0xFF }) |part, byte| {
+        try testing.expectEqual(@as(f32, @floatFromInt(byte)) / 255, part);
+    }
+    four.setColor(0, 0, 0, 0, 0x8001_0203);
+    try testing.expectEqualSlices(u8, &.{ 0x01, 0x02, 0x03, 0x80, 0xF0, 0x0F, 0x80, 0xFF }, &rgba);
+}
+
+/// A fragment function that fetches four samples of an image of four
+/// samples a pixel at its own pixel, each into a colour attachment of its
+/// own: sample `first + k` of layer `layer` into attachment k. A colour as
+/// it reads, or - `depth` - a depth's 16 bits in the low half of an opaque
+/// colour.
+const Fetched = struct {
+    var first: u32 = 0;
+    var layer: u32 = 0;
+    var depth: bool = false;
+
+    fn vertex(vertices: *const shader.Vertices) callconv(.c) void {
+        for (0..vertices.count) |k| {
+            const p = vertices.input(@intCast(k), 0);
+            vertices.output(@intCast(k))[0..4].* = .{ p[0], p[1], p[2], 1 };
+        }
+    }
+
+    fn fragment(fragments: *const shader.Fragments) callconv(.c) void {
+        const picture = fragments.resources.sampled(0, 0, 0) orelse return;
+        // Each sample's texture made once a call, as `sampleOf` asks.
+        var planes: [4]texture_zig.Texture = undefined;
+        for (&planes, 0..) |*plane, k| plane.* = picture.sampleOf(first + @as(u32, @intCast(k)));
+        for (&planes, 0..) |*plane, k| {
+            const into = fragments.colorsOf(@intCast(k));
+            for (fragments.quads[0..fragments.count], into[0..fragments.count]) |quad, *colors| {
+                for (colors, 0..) |*color, bit| {
+                    const x = fragments.x + quad.x + @as(u32, @intCast(bit & 1));
+                    const y = fragments.y + quad.y + @as(u32, @intCast(bit >> 1));
+                    color.* = if (depth)
+                        0xFF00_0000 | @as(u32, @intFromFloat(@round(plane.partsAt(layer, 0, x, y)[0] * 65535)))
+                    else
+                        plane.colorAt(layer, 0, x, y);
+                }
+            }
+        }
+    }
+
+    const entries = [_]shader.Entry{ shader.vertex("main", &vertex, 0), shader.fragmentOutputs("main", &fragment, 0, 4) };
+    const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
+};
+
+/// The colour a texel of an image of `format` reads as, 0xAARRGGBB: an
+/// 8888 word with blue in its low byte as it is, one with red there with
+/// the two swapped, and 565 widened by its channels' top bits repeated.
+fn fetchedColor(format: facet.Format, texel: u32) u32 {
+    switch (format) {
+        .r8g8b8a8_unorm => return texel & 0xFF00_FF00 | (texel & 0xFF) << 16 | (texel >> 16 & 0xFF),
+        .r5g6b5_unorm_pack16 => {
+            const r = texel >> 11 & 0x1F;
+            const g = texel >> 5 & 0x3F;
+            const b = texel & 0x1F;
+            return 0xFF00_0000 | (r << 3 | r >> 2) << 16 | (g << 2 | g >> 4) << 8 | (b << 3 | b >> 2);
+        },
+        else => return texel,
+    }
+}
+
+/// What a test of a fetch writes into each sample's planes of a depth and
+/// stencil image by hand: a depth and a stencil of their own at each
+/// place, which differ from one sample to the next.
+fn fetchedDepthMark(sample: u32, layer: u32, x: u32, y: u32) u16 {
+    return @truncate(sample * 0x3001 + layer * 0x0500 + x * 0x0101 + y * 0x0037);
+}
+
+fn fetchedStencilMark(sample: u32, layer: u32, x: u32, y: u32) u8 {
+    return @truncate(sample * 0x40 + layer * 0x20 + x + y * 3);
+}
+
+/// What `Fetched` gives at (x, y) for sample `sample` of layer `layer` of
+/// an image of `format` marked by hand: the mark as it reads, and past the
+/// last sample nothing - transparent black, or a depth of 0.
+fn fetchedWant(format: facet.Format, depth: bool, sample: u32, layer: u32, x: u32, y: u32) u32 {
+    if (depth) return 0xFF00_0000 | @as(u32, if (sample < 4) fetchedDepthMark(sample, layer, x, y) else 0);
+    if (sample >= 4) return 0;
+    if (format == .s8_uint) return 0xFF00_0000 | @as(u32, fetchedStencilMark(sample, layer, x, y)) << 16;
+    return fetchedColor(format, resolveMark(format, sample, layer, x, y));
+}
+
+test "an image of four samples a pixel sampled where it lies: a colour one kept in rows and filled by a copy, a depth one's two planes, each fetched a sample at a time at each pixel by a fragment function, of the layer its view names, and a sample past the last read as nothing" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
+    physical.can.multisampling = true;
+    defer physical.can.multisampling = false;
+    const _image = @import("../image/_image.zig");
+    const width = 40;
+    const height = 24;
+    const extent = facet.Extent3D{ .width = width, .height = height, .depth = 1 };
+    const area = facet.Rect2D{ .extent = .{ .width = width, .height = height } };
+    const colour = facet.IMAGE_ASPECT_COLOR;
+
+    // Four colour attachments of one sample drawn together, each given one
+    // sample's texel at each pixel by `Fetched`, a sampled image bound at
+    // set 0, binding 0.
+    var outputs: [4]Picture = undefined;
+    for (&outputs) |*output| output.* = try Picture.of(&bench, width, height);
+    const description = facet.AttachmentDescription{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general };
+    const descriptions: [4]facet.AttachmentDescription = @splat(description);
+    var references: [4]facet.AttachmentReference = undefined;
+    for (&references, 0..) |*reference, k| reference.* = .{ .attachment = @intCast(k), .layout = .general };
+    const together = facet.SubpassDescription{ .flags = facet.SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER, .color_attachment_count = 4, .color_attachments = &references };
+    var pass: ?*facet.RenderPass = null;
+    defer fb.DestroyRenderPass(device, pass);
+    try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 4, .attachments = &descriptions, .subpass_count = 1, .subpasses = @ptrCast(&together) }, &pass));
+    const frame = try framebuffer(&bench, pass.?, &.{ outputs[0].view, outputs[1].view, outputs[2].view, outputs[3].view }, width, height);
+    defer fb.DestroyFramebuffer(device, frame);
+    const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .sampled_image, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &set_layout));
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    const layout = try pipelineLayout(&bench, &.{set_layout.?}, 0);
+    defer fb.DestroyPipelineLayout(device, layout);
+    var pool: ?*facet.DescriptorPool = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool));
+    defer fb.DestroyDescriptorPool(device, pool);
+    var sets: [1]?*facet.DescriptorSet = undefined;
+    try testing.expectEqual(facet.Result.success, fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &sets));
+    const set = sets[0].?;
+    const shaders = try module(&bench, &Fetched.code);
+    defer fb.DestroyShaderModule(device, shaders);
+    const result, const pipeline = makePipeline(&bench, .{ .module = shaders, .layout = layout, .pass = pass.?, .blend_count = 4, .width = width, .height = height });
+    defer fb.DestroyPipeline(device, pipeline);
+    try testing.expectEqual(facet.Result.success, result);
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(TogetherScene.quad)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(TogetherScene.quad))], std.mem.asBytes(&TogetherScene.quad));
+    const offset: u64 = 0;
+    const clear_values: [4]facet.ClearValue = @splat(clears(0xFF5A_5A5A)[0]);
+
+    // What each draw fetches: through which view, at which of its layers,
+    // from which sample on - an attachment past the last sample given
+    // nothing - and what the image holds there.
+    const Fetch = struct { view: *facet.ImageView, layer: u32, first: u32, depth: bool, format: facet.Format, image_layer: u32 };
+    var fetches: [16]Fetch = undefined;
+    var fetch_count: usize = 0;
+
+    // A colour image of each format an attachment is drawn in: what a pass
+    // draws into, its samples marked by hand, copied into the image
+    // sampled, as no image of one sample is both drawn into and sampled.
+    for ([3]facet.Format{ .b8g8r8a8_unorm, .r8g8b8a8_unorm, .r5g6b5_unorm_pack16 }) |format| {
+        const drawn = try bench.bareImage(.{ .format = format, .extent = extent, .array_layers = 2, .samples = 4, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_SRC }, false);
+        const sampled = try bench.bareImage(.{ .format = format, .extent = extent, .array_layers = 2, .samples = 4, .usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST }, false);
+        var none: ?*facet.Image = null;
+        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{ .format = format, .extent = extent, .samples = 4, .usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_COLOR_ATTACHMENT }, &none));
+        try testing.expect(none == null);
+        const source = _objects.of(_image.Image, drawn);
+        const picture = _objects.of(_image.Image, sampled);
+        // Rows, as the image drawn into is, and its texels are those rows:
+        // both layers, and each sample's plane a texture's worth after
+        // the one before.
+        try testing.expectEqual(_image.Kind.rows, picture.kind);
+        try testing.expectEqual(source.pitch, picture.pitch);
+        try testing.expectEqual(source.bytes, picture.bytes);
+        const kept: texture_zig.Format = switch (format) {
+            .r8g8b8a8_unorm => .rgba8,
+            .r5g6b5_unorm_pack16 => .rgb565,
+            else => .argb8888,
+        };
+        try testing.expectEqual(kept, picture.texels.format);
+        try testing.expectEqual(@as(u32, 2), picture.texels.layer_count);
+        try testing.expectEqual(@as(u32, 4), picture.texels.samples);
+        try testing.expectEqual(@as(usize, @intCast(picture.sample_bytes)), picture.texels.sample_bytes);
+        try testing.expectEqual(@intFromPtr(picture.data.?), @intFromPtr(picture.texels.memory));
+        for (0..4) |s| for (0..2) |l| for (0..height) |y| for (0..width) |x| {
+            putPixelOfRows(source, @intCast(s), @intCast(l), @intCast(x), @intCast(y), resolveMark(format, @intCast(s), @intCast(l), @intCast(x), @intCast(y)));
+        };
+        const copy = facet.ImageCopy{ .src_subresource = .{ .layer_count = 2 }, .dst_subresource = .{ .layer_count = 2 }, .extent = extent };
+        const commands = try bench.record();
+        fb.CmdCopyImage(commands, drawn, .transfer_src_optimal, sampled, .transfer_dst_optimal, 1, @ptrCast(&copy));
+        try bench.submit();
+
+        // A view of the second layer alone, and one of both.
+        const second = try bench.viewOf(.{ .image = sampled, .format = format, .subresource_range = .{ .aspect_mask = colour, .base_array_layer = 1 } });
+        const both = try bench.viewOf(.{ .image = sampled, .format = format, .view_type = .@"2d_array", .subresource_range = .{ .aspect_mask = colour, .layer_count = 2 } });
+        const second_texels = &_objects.of(_image.ImageView, second).texels;
+        try testing.expectEqual(@intFromPtr(picture.data.?) + @as(usize, @intCast(picture.layer_bytes)), @intFromPtr(second_texels.memory));
+        try testing.expectEqual(@as(u32, 1), second_texels.layer_count);
+        try testing.expectEqual(@as(u32, 4), second_texels.samples);
+        try testing.expectEqual(@as(u32, 2), _objects.of(_image.ImageView, both).texels.layer_count);
+        for ([_]Fetch{
+            .{ .view = second, .layer = 0, .first = 0, .depth = false, .format = format, .image_layer = 1 },
+            .{ .view = both, .layer = 1, .first = 1, .depth = false, .format = format, .image_layer = 1 },
+            .{ .view = both, .layer = 0, .first = 0, .depth = false, .format = format, .image_layer = 0 },
+        }) |one| {
+            fetches[fetch_count] = one;
+            fetch_count += 1;
+        }
+    }
+
+    // A depth and stencil attachment sampled where it lies: its two planes,
+    // of each sample and each layer, marked by hand, and a view of each.
+    const depths = try bench.bareImage(.{ .format = .d16_unorm_s8_uint, .extent = extent, .array_layers = 2, .samples = 4, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED }, false);
+    const planes = _objects.of(_image.Image, depths);
+    for (0..4) |s| for (0..2) |l| for (0..height) |y| for (0..width) |x| {
+        const at = planes.data.? + s * @as(usize, @intCast(planes.sample_bytes)) + l * @as(usize, @intCast(planes.layer_bytes)) + y * planes.pitch + x * 4;
+        std.mem.writeInt(u16, at[0..2], fetchedDepthMark(@intCast(s), @intCast(l), @intCast(x), @intCast(y)), .little);
+        at[2] = fetchedStencilMark(@intCast(s), @intCast(l), @intCast(x), @intCast(y));
+    };
+    const depth_view = try bench.viewOf(.{ .image = depths, .format = .d16_unorm_s8_uint, .view_type = .@"2d_array", .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH, .layer_count = 2 } });
+    const stencil_view = try bench.viewOf(.{ .image = depths, .format = .d16_unorm_s8_uint, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_STENCIL, .base_array_layer = 1 } });
+    try testing.expectEqual(@as(u32, 4), _objects.of(_image.ImageView, depth_view).texels.samples);
+    for ([_]Fetch{
+        .{ .view = depth_view, .layer = 1, .first = 0, .depth = true, .format = .d16_unorm, .image_layer = 1 },
+        .{ .view = depth_view, .layer = 0, .first = 1, .depth = true, .format = .d16_unorm, .image_layer = 0 },
+        .{ .view = stencil_view, .layer = 0, .first = 0, .depth = false, .format = .s8_uint, .image_layer = 1 },
+        .{ .view = stencil_view, .layer = 0, .first = 1, .depth = false, .format = .s8_uint, .image_layer = 1 },
+    }) |one| {
+        fetches[fetch_count] = one;
+        fetch_count += 1;
+    }
+
+    // Each draw, and each attachment against what its sample holds.
+    for (fetches[0..fetch_count]) |one| {
+        const info = facet.DescriptorImageInfo{ .image_view = one.view };
+        const write = facet.WriteDescriptorSet{ .dst_set = set, .dst_binding = 0, .descriptor_type = .sampled_image, .image_info = @ptrCast(&info) };
+        fb.UpdateDescriptorSets(device, 1, @ptrCast(&write), 0, null);
+        const slot = _objects.of(_descriptor.Set, set).view.slots[0];
+        try testing.expectEqual(@intFromPtr(&_objects.of(_image.ImageView, one.view).texels), @intFromPtr(slot.pointer.?));
+        Fetched.first = one.first;
+        Fetched.layer = one.layer;
+        Fetched.depth = one.depth;
+        const commands = try bench.record();
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass.?, .framebuffer = frame, .render_area = area, .clear_value_count = 4, .clear_values = &clear_values }, .@"inline");
+        fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+        fb.CmdBindPipeline(commands, .graphics, pipeline.?);
+        fb.CmdBindDescriptorSets(commands, .graphics, layout, 0, 1, @ptrCast(&set), 0, null);
+        fb.CmdDraw(commands, 6, 1, 0, 0);
+        fb.CmdEndRenderPass(commands);
+        try bench.submit();
+        for (&outputs, 0..) |*output, k| {
+            const sample = one.first + @as(u32, @intCast(k));
+            for (0..height) |y| for (0..width) |x| {
+                const want = fetchedWant(one.format, one.depth, sample, one.image_layer, @intCast(x), @intCast(y));
+                try testing.expectEqual(want, output.at(@intCast(x), @intCast(y)));
+            };
+        }
+    }
 }
 
 /// A render pass whose depth attachment is kept: read as each tile starts

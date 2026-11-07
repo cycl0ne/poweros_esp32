@@ -461,8 +461,10 @@ fn texelOf(image: *const Image, color: u32, parts: [4]f32, words: [4]u32) ?Texel
             // A clear of a colour is not for a depth texture:
             // CmdClearDepthStencilImage writes that one. Nor for a
             // compressed image, whose texels are written as whole blocks
-            // and which nothing here compresses.
-            .d16, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc7, .bc6hu, .bc6hs => null,
+            // and which nothing here compresses. And no image of this kind
+            // keeps R8G8B8A8's four bytes as they lie: a texture of them
+            // is an image's rows (since 1.110), cleared as rows are.
+            .d16, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc7, .bc6hu, .bc6hs, .rgba8 => null,
         },
         // Its pixels are rows of depth, which a clear of a colour does
         // not write; a transient one's live in the tiles.

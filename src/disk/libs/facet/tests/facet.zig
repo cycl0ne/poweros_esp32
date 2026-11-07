@@ -861,6 +861,9 @@ test "an image of four samples a pixel is four planes of one sample's bytes, and
         .{ .d16_unorm, depth | copied, 1 },
         .{ .s8_uint, depth, 6 },
         .{ .d16_unorm_s8_uint, depth | facet.IMAGE_USAGE_INPUT_ATTACHMENT, 2 },
+        // Sampled where it lies, since 1.110.
+        .{ .d16_unorm, depth | facet.IMAGE_USAGE_SAMPLED, 1 },
+        .{ .d16_unorm_s8_uint, depth | facet.IMAGE_USAGE_SAMPLED | copied, 3 },
     };
     for (shapes) |shape| {
         const format, const usage, const layers = shape;
@@ -868,6 +871,18 @@ test "an image of four samples a pixel is four planes of one sample's bytes, and
         const one = imageBytes(&rig, device, info) orelse return error.TestUnexpectedResult;
         info.samples = 4;
         try testing.expectEqual(@as(?u64, 4 * one), imageBytes(&rig, device, info));
+    }
+    // Sampled, of each colour format an attachment is drawn in (since
+    // 1.110): rows at four samples, an attachment's of its size four times
+    // over, where one sample is a texture's blocks. Not a colour attachment
+    // or an input attachment as well, as one sample is neither, nor
+    // written through, as no image of four samples is.
+    for ([_]facet.Format{ .b8g8r8a8_unorm, .r8g8b8a8_unorm, .r5g6b5_unorm_pack16 }) |format| {
+        const rows = imageBytes(&rig, device, .{ .format = format, .extent = small, .array_layers = 2, .usage = color }) orelse return error.TestUnexpectedResult;
+        try testing.expectEqual(@as(?u64, 4 * rows), imageBytes(&rig, device, .{ .format = format, .extent = small, .array_layers = 2, .samples = 4, .usage = facet.IMAGE_USAGE_SAMPLED | copied }));
+        for ([_]u32{ color, facet.IMAGE_USAGE_INPUT_ATTACHMENT, facet.IMAGE_USAGE_STORAGE }) |beside| {
+            try testing.expectEqual(null, imageBytes(&rig, device, .{ .format = format, .extent = small, .samples = 4, .usage = facet.IMAGE_USAGE_SAMPLED | beside }));
+        }
     }
 
     // What Vulkan forbids of a multisampled image, and what this library
@@ -880,8 +895,7 @@ test "an image of four samples a pixel is four planes of one sample's bytes, and
         .{ .format = .b8g8r8a8_unorm, .extent = small, .tiling = .linear, .usage = color },
         .{ .format = .b8g8r8a8_unorm, .flags = facet.IMAGE_CREATE_CUBE_COMPATIBLE, .extent = .{ .width = 16, .height = 16, .depth = 1 }, .array_layers = 6, .usage = color },
         .{ .format = .b8g8r8a8_unorm, .extent = small, .usage = color | facet.IMAGE_USAGE_STORAGE },
-        .{ .format = .b8g8r8a8_unorm, .extent = small, .usage = facet.IMAGE_USAGE_SAMPLED | copied },
-        .{ .format = .d16_unorm, .extent = small, .usage = depth | facet.IMAGE_USAGE_SAMPLED },
+        .{ .format = .b8g8r8a8_unorm, .extent = small, .usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_STORAGE },
     };
     for (refused) |shape| {
         var info = shape;
@@ -914,6 +928,17 @@ test "an image of four samples a pixel is four planes of one sample's bytes, and
     try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"2d", .optimal, color, 0, &properties));
     try testing.expectEqual(facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4, properties.sample_counts);
     try testing.expectEqual(@as(u64, 8192 * 4 * 8192 * 256 * 4), properties.max_resource_size);
+    // Sampled, a colour and a depth (since 1.110): Vulkan has a query's
+    // sample counts hold `sampled_image_color_sample_counts` and
+    // `sampled_image_depth_sample_counts` for such a usage, 1 and 4 here.
+    for ([_]struct { facet.Format, u32 }{
+        .{ .r8g8b8a8_unorm, facet.IMAGE_USAGE_SAMPLED },
+        .{ .r5g6b5_unorm_pack16, facet.IMAGE_USAGE_SAMPLED | copied },
+        .{ .d16_unorm_s8_uint, depth | facet.IMAGE_USAGE_SAMPLED },
+    }) |asked| {
+        try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, asked[0], .@"2d", .optimal, asked[1], 0, &properties));
+        try testing.expectEqual(facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4, properties.sample_counts);
+    }
 
     // And over every format, image type, tiling, both flags and each of
     // the 255 usages, with the capability and without: 4 is said exactly

@@ -157,6 +157,9 @@ pub fn CreateImageView(base: *FacetBase, device: *facet.Device, info: *const fac
     // 1.56): its rows are the one level, and a view of it takes them as
     // they are.
     if (_image.writtenRows(image)) made.texels = image.texels;
+    // An image of four samples sampled where its rows lie (since 1.110):
+    // the layers the view names, of every sample.
+    if (_image.sampledRows(image)) made.texels = _image.rowLayers(image, range.base_array_layer, layers);
     if (plane) |one| made.texels = one;
     if (read_rows) |one| made.rows = one;
     // Its pixels, for a later subpass to read as an input attachment: the

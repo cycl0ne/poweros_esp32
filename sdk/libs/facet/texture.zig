@@ -77,6 +77,16 @@
 //! an eighth of the memory and of the cache it fills. Nothing writes a
 //! texel of one (`putLayer` leaves it be): the blocks are copied in whole
 //! (`putBlock`).
+//!
+//! **A texture may hold four samples a texel** (since 1.110): an image of
+//! four samples a pixel, sampled where its rows lie - a depth attachment's
+//! planes, or a colour image a copy filled. Each sample's texels are a
+//! whole texture's worth, `Texture.sample_bytes` after the sample before,
+//! and `Texture.sampleOf` gives one sample as a texture of one. Vulkan
+//! fetches such a texture a texel at a time and never filters it, so it
+//! has one level and lies in rows, in the format its rows are:
+//! `argb8888`, `rgb565`, `rgba8` for R8G8B8A8_UNORM's four bytes, and a
+//! depth's `d16` and a stencil's `r8`.
 
 const std = @import("std");
 
@@ -219,6 +229,12 @@ pub const Format = enum {
     /// (Since 1.74.)
     bc6hu,
     bc6hs,
+    /// Four bytes a texel, red first: Vulkan's R8G8B8A8_UNORM as it lies,
+    /// a word with red in its low byte, where `argb8888`'s has blue there.
+    /// Read channel by channel as `rg8` is, it is what an image of that
+    /// format of four samples a pixel is sampled as where its rows lie,
+    /// nothing re-tiling those (`Texture.sampleOf`). (Since 1.110.)
+    rgba8,
 
     /// The bytes a texel is kept in; 0 for a compressed format, whose
     /// texels have no size of their own (`blockLog2`).
@@ -233,7 +249,7 @@ pub const Format = enum {
         return switch (format) {
             .rgba8888, .rgba16f, .rgba16 => 3,
             .rgba32f => 4,
-            .argb8888, .rg11b10f, .rgb9e5, .r32f, .rg16 => 2,
+            .argb8888, .rg11b10f, .rgb9e5, .r32f, .rg16, .rgba8 => 2,
             .rgb565, .d16, .rg8, .r16 => 1,
             .r8, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc6hu, .bc6hs, .bc7 => 0,
             // The whole numbers of 1.70: one channel, two or four, of 8,
@@ -254,7 +270,7 @@ pub const Format = enum {
             // 16 texels of 8 bytes, and of 2.
             .rgba8888, .rgba16f, .rgba16 => 7,
             .rgba32f => 8,
-            .argb8888, .rg11b10f, .rgb9e5, .r32f, .rg16 => 6,
+            .argb8888, .rg11b10f, .rgb9e5, .r32f, .rg16, .rgba8 => 6,
             .rgb565, .d16, .rg8, .r16 => 5,
             // The whole numbers of 1.70, 16 texels of each width.
             .rgba32u, .rgba32i => 8,
@@ -280,7 +296,7 @@ pub const Format = enum {
         return switch (format) {
             .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc6hu, .bc6hs, .bc7 => true,
             .rgba8888, .argb8888, .rgb565, .r8, .d16, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => false,
-            .rg8, .r16, .rg16, .rgba16 => false,
+            .rg8, .r16, .rg16, .rgba16, .rgba8 => false,
             .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => false,
         };
     }
@@ -295,7 +311,7 @@ pub const Format = enum {
         return switch (format) {
             .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => true,
             .rgba8888, .argb8888, .rgb565, .r8, .d16, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc6hu, .bc6hs, .bc7 => false,
-            .rg8, .r16, .rg16, .rgba16 => false,
+            .rg8, .r16, .rg16, .rgba16, .rgba8 => false,
             .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => false,
         };
     }
@@ -309,7 +325,7 @@ pub const Format = enum {
     /// (`Capabilities.wide_channels`). (Since 1.69.)
     pub fn channels(format: Format) bool {
         return switch (format) {
-            .rg8, .r16, .rg16, .rgba16 => true,
+            .rg8, .r16, .rg16, .rgba16, .rgba8 => true,
             .rgba8888, .argb8888, .rgb565, .r8, .d16, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc6hu, .bc6hs, .bc7 => false,
             .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => false,
             // Whole numbers are their own kind: `wholes` (since 1.70).
@@ -364,6 +380,8 @@ pub const Format = enum {
             .r16 => .{ .parts = 1, .bits = 16 },
             .rg16 => .{ .parts = 2, .bits = 16 },
             .rgba16 => .{ .parts = 4, .bits = 16 },
+            // R8G8B8A8_UNORM's four bytes as they lie (since 1.110).
+            .rgba8 => .{ .parts = 4, .bits = 8 },
             else => null,
         };
     }
@@ -383,7 +401,7 @@ pub const Format = enum {
     /// lie. (Since 1.48.)
     pub fn small(format: Format) bool {
         return switch (format) {
-            .argb8888, .r8, .rg8, .r16, .rg16 => true,
+            .argb8888, .r8, .rg8, .r16, .rg16, .rgba8 => true,
             .rgba8888, .rgb565, .d16, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc6hu, .bc6hs, .bc7, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => false,
             // Eight bytes, as a spread colour is, and still read channel
             // by channel (since 1.69).
@@ -658,6 +676,15 @@ pub const Texture = struct {
     /// a texture's worth, `layer_bytes` from the one before.
     layer_count: u32 = 1,
     layer_bytes: u32 = 0,
+    /// The samples each texel holds: 1, or 4 for an image of four samples
+    /// a pixel sampled where its rows lie (since 1.110). Sample s lies
+    /// `s * sample_bytes` past sample 0, and what the texture reads is
+    /// sample 0: `sampleOf` gives the others. That is llvmpipe's texture
+    /// of several samples, which keeps the count where its fetch holds a
+    /// sample number to it and the stride beside the levels' offsets
+    /// (`lp_jit_texture`, src/gallium/drivers/llvmpipe/lp_jit.c:399-404).
+    samples: u32 = 1,
+    sample_bytes: usize = 0,
 
     pub const Error = error{BadSize};
 
@@ -851,7 +878,7 @@ pub const Texture = struct {
             // Nothing is written a texel at a time into a texture that
             // keeps what it was given: `putTexels` moves the bytes.
             .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc6hu, .bc6hs, .bc7, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => {},
-            .rg8, .r16, .rg16, .rgba16 => {},
+            .rg8, .r16, .rg16, .rgba16, .rgba8 => {},
             .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => {},
         }
     }
@@ -870,7 +897,7 @@ pub const Texture = struct {
             inline .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => |one| floatTexel(one, at),
             // The channels made into a colour, as a float texel is
             // (since 1.69): the top 8 bits of each.
-            .rg8, .r16, .rg16, .rgba16 => channelColor(texture.format, at),
+            .rg8, .r16, .rg16, .rgba16, .rgba8 => channelColor(texture.format, at),
             // And a texel of whole numbers as the colour they hold to
             // (since 1.70): nothing, or the channel at the full.
             .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => wholeColor(texture.format, at),
@@ -930,6 +957,35 @@ pub const Texture = struct {
         return x < texture.width(lod) and y < texture.height(lod);
     }
 
+    /// Sample `which` of a texture of several samples a texel, as a
+    /// texture of one: the same levels and layers, `which * sample_bytes`
+    /// further into the memory, the offset llvmpipe's fetch adds for a
+    /// sample number (`lp_build_sample_ms_offset`,
+    /// src/gallium/auxiliary/gallivm/lp_bld_sample_soa.c:2170-2187). Every
+    /// read and write of a texel works on what it gives - `colorAt`,
+    /// `partsAt`, `wholesAt`, `setColor` - which is how a fragment function
+    /// fetches a sample of an image of four samples a pixel
+    /// (`shader.Resources.sampled`).
+    ///
+    /// A sample the texture has not got is a texture of no layers: its
+    /// every texel reads transparent black and takes nothing written
+    /// (`holds`), as llvmpipe's fetch reads zero for a sample past the
+    /// count (lp_bld_sample_soa.c:2985, :3166-3181). Of a texture of one
+    /// sample, sample 0 is the texture itself.
+    ///
+    /// What it gives is a copy of the texture, some 700 bytes: a function
+    /// takes each sample's once a call, not once a pixel. (Since 1.110.)
+    pub fn sampleOf(texture: *const Texture, which: u32) Texture {
+        var one = texture.*;
+        one.samples = 1;
+        if (which >= texture.samples) {
+            one.layer_count = 0;
+            return one;
+        }
+        one.memory = texture.memory + @as(usize, which) * texture.sample_bytes;
+        return one;
+    }
+
     /// A texel of a layer set from 0xAARRGGBB, whatever its format:
     /// `colorAt` undone. What a shader function writes through a storage
     /// image with (`shader.Resources.written`).
@@ -965,7 +1021,7 @@ pub const Texture = struct {
             // texture: `putLayer` leaves it as it lies.
             .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc6hu, .bc6hs, .bc7 => 0,
             .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => unreachable,
-            .rg8, .r16, .rg16, .rgba16 => unreachable,
+            .rg8, .r16, .rg16, .rgba16, .rgba8 => unreachable,
             .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => unreachable,
         });
     }
@@ -1136,7 +1192,7 @@ pub const Texture = struct {
             // Decoded already: `peekLayer` read it out of its block, out
             // of its floats, or out of its channels.
             .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc6hu, .bc6hs, .bc7, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => texel,
-            .rg8, .r16, .rg16, .rgba16 => texel,
+            .rg8, .r16, .rg16, .rgba16, .rgba8 => texel,
             .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => texel,
         };
     }
@@ -1298,7 +1354,7 @@ pub const Texture = struct {
                     .rgb565, .d16 => std.mem.readInt(u16, row[x * 2 ..][0..2], .little),
                     .r8 => row[x],
                     .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc6hu, .bc6hs, .bc7, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => unreachable,
-                    .rg8, .r16, .rg16, .rgba16 => unreachable,
+                    .rg8, .r16, .rg16, .rgba16, .rgba8 => unreachable,
                     .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => unreachable,
                 };
                 texture.put(lod, @intCast(x), @intCast(y), texel);
@@ -2985,7 +3041,7 @@ inline fn fetch(comptime format: Format, at: [*]const u8) u32 {
         .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => floatTexel(format, at),
         // Channels of its own read and made into a colour (since 1.69):
         // the top 8 bits of each, which is all a tile's colour holds.
-        .rg8, .r16, .rg16, .rgba16 => channelColor(format, at),
+        .rg8, .r16, .rg16, .rgba16, .rgba8 => channelColor(format, at),
         // Whole numbers held to the colour they stand for (since 1.70):
         // nothing, or the channel at the full.
         .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => wholeColor(format, at),
@@ -2998,7 +3054,7 @@ inline fn fetchSpread(comptime format: Format, at: [*]const u8) u64 {
     return switch (format) {
         .rgba8888 => @as(*const u64, @ptrCast(@alignCast(at))).*,
         .argb8888, .r8, .rgb565, .d16, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc6hu, .bc6hs, .bc7, .rgba16f, .rgba32f, .rg11b10f, .rgb9e5, .r32f => spread(fetch(format, at)),
-        .rg8, .r16, .rg16, .rgba16 => spread(fetch(format, at)),
+        .rg8, .r16, .rg16, .rgba16, .rgba8 => spread(fetch(format, at)),
         .r8u, .rg8u, .rgba8u, .r8i, .rg8i, .rgba8i, .r16u, .rg16u, .rgba16u, .r16i, .rg16i, .rgba16i, .r32u, .rg32u, .rgba32u, .r32i, .rg32i, .rgba32i => spread(fetch(format, at)),
     };
 }

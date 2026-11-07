@@ -2580,4 +2580,50 @@ pub const LIBRARY_VERSION = 1;
 /// coverage. A surface resolved alone: cut to both surfaces, and nothing
 /// given to one of another format. And the display the tiles are handed
 /// on to. Each of nineteen changes put back fails one of them.
-pub const LIBRARY_REVISION = 109;
+///
+/// 110: **A fragment function fetches each sample of an image of four
+/// samples a pixel, where the image lies.** Step K6 of item 61 of
+/// docs/facet-vulkan10.md. No device draws four samples yet: the
+/// capability stays off until K7, and the tests turn it on.
+///
+/// llvmpipe samples a texture of several samples where it lies, its
+/// sample count kept where its fetch holds a sample number to it and its
+/// stride beside the levels' offsets (`lp_jit_texture`, lp_jit.c:399-404).
+/// The fetch adds the stride times the sample to a texel's offset, and
+/// reads zero for a sample past the count (`lp_build_sample_ms_offset`,
+/// lp_bld_sample_soa.c:2170-2187, :2985, :3166-3181), as a map of one
+/// sample adds it (lp_texture.c:1087); lavapipe's sampler view of a
+/// multisampled image is that same resource (lvp_image.c:87-89, :104).
+/// Here a texture has `samples` and `sample_bytes` (sdk.facet.texture),
+/// and `Texture.sampleOf` gives one sample as a texture of one: a sample
+/// past the last is a texture of no layers, every texel of which reads
+/// transparent black and takes nothing written. A colour image of four
+/// samples that is sampled is kept in rows, as one drawn into is, and its
+/// rows are the texture (`_image.sampledRows`): R8G8B8A8's four bytes read
+/// as they lie by a texture format of their own, `texture.Format.rgba8`,
+/// B8G8R8A8's word as `argb8888` and R5G6B5 as `rgb565`. A depth
+/// attachment's planes, sampled where they lie since 1.39, carry their
+/// samples the same way. Not a colour attachment as well, against the
+/// first plan: one sample of that is not made (item 48), so the format
+/// query refuses the usage, and Vulkan has its sample counts hold the 1
+/// wherever they hold the 4. With the capability the query says 1 and 4
+/// for a sampled image of each format an attachment is drawn in, as
+/// `sampledImageColorSampleCounts` and `sampledImageDepthSampleCounts`
+/// ask.
+///
+/// Tests: a texture of four samples over planes of two layers, each
+/// sample's texel a plane further on, a sample past the last reading
+/// transparent black by every read and taking nothing written, and
+/// R8G8B8A8's bytes read and written in their order. An image of four
+/// samples in each colour format an attachment is drawn in, its samples
+/// marked by hand in an image a pass draws into and copied into the one
+/// sampled, and a depth and stencil image's two planes marked by hand:
+/// each fetched at every pixel by a fragment function, four samples into
+/// four attachments drawn together, through a view of one layer and one
+/// of two, from the first sample and from the second, the last attachment
+/// then given the sample past the last. CreateImage takes a sampled image
+/// of four samples in rows, four times an attachment's bytes, and refuses
+/// it as a colour attachment, an input attachment or a storage image as
+/// well; the format query says 4 for it. Each of 24 changes put back
+/// fails one of them.
+pub const LIBRARY_REVISION = 110;

@@ -1302,7 +1302,10 @@ pub const ImageCreateInfo = extern struct {
     array_layers: u32 = 1,
     /// Samples a pixel: 1, or 4 on a device that draws them
     /// (`Capabilities.multisampling`, since 1.98), for a 2D image of one
-    /// level in optimal tiling that is an attachment (`CreateImage`).
+    /// level in optimal tiling of a format that is an attachment's: drawn
+    /// into, copied, read as an input attachment, or since 1.110 sampled,
+    /// a fragment function fetching each sample (`CreateImage`,
+    /// `texture.Texture.sampleOf`).
     samples: u32 = 1,
     tiling: ImageTiling = .optimal,
     usage: u32,

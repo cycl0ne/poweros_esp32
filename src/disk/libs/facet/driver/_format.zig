@@ -63,9 +63,10 @@ fn describe(can: *const _instance.Capabilities, format: facet.Format) facet.Form
             .optimal_tiling_features = attachment | transfer | sampled | storage,
             .buffer_features = vertices | texels,
         },
-        // No texture reads a word with red in its low byte, so rows of
-        // this one are not written through; its texels, kept in a
-        // texture's own layout, are.
+        // Rows of this one are not written through: the texture that
+        // reads a word with red in its low byte (`texture.Format.rgba8`,
+        // since 1.110) is fetched from, not written through. Its texels,
+        // kept in a texture's own layout, are.
         .r8g8b8a8_unorm => .{
             .linear_tiling_features = attachment | transfer,
             .optimal_tiling_features = attachment | transfer | sampled | storage,

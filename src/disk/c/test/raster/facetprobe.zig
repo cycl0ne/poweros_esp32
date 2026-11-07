@@ -999,8 +999,9 @@ fn storageImageChecks(probe: *Probe) void {
 
     // --- 1.56: a colour attachment written through as a storage image ---
     // The linear features say whose rows may be written through: a
-    // texture of 8888 is 0xAARRGGBB, as b8g8r8a8's rows are, and nothing
-    // reads a word with red in its low byte.
+    // texture of 8888 is 0xAARRGGBB, as b8g8r8a8's rows are, and the one
+    // that reads a word with red in its low byte is fetched from, not
+    // written through (since 1.110).
     fb.GetPhysicalDeviceFormatProperties(probe.physical, .b8g8r8a8_unorm, &properties);
     probe.check(properties.linear_tiling_features & facet.FORMAT_FEATURE_STORAGE_IMAGE != 0, "rows of b8g8r8a8 say they may be written through");
     fb.GetPhysicalDeviceFormatProperties(probe.physical, .r8g8b8a8_unorm, &properties);
