@@ -1735,6 +1735,39 @@ list it.
 > above. `src/disk/libs/facet/device/createdevice.zig` is the conformant
 > one, since 1.82.
 
+**Re-scoped 07.11.2026, from the specification as it stands now.** The
+premise above, that no code Vulkan lists fits, no longer holds:
+
+- vk.xml has `VK_ERROR_VALIDATION_FAILED` "Retroactively promoted from
+  VK_EXT_debug_report for compatibility with VulkanSC" into Vulkan 1.0's
+  own feature block.
+- Every call named above lists it among its error codes.
+- fundamentals.adoc says: "Any command returning a VkResult may return
+  VK_ERROR_VALIDATION_FAILED if a violation of valid usage is detected."
+- Its value is the extension's, -1000011001, which a program built
+  against 1.0 headers knows as `VK_ERROR_VALIDATION_FAILED_EXT`.
+
+So the item becomes a classification rather than a write-up, because the
+refusals split two ways:
+
+- **Invalid usage detected.** A feature the device lacks or the program
+  did not enable, a limit exceeded, a bit or an enum value that is none of
+  Vulkan's. These answer `error_validation_failed`, which `facet.Result`
+  does not have yet.
+- **Valid usage facet cannot do.** For example a subpass with no colour
+  attachment (item 43), and the other conformance-blocking refusals.
+  Nothing there is invalid, so no code is honest. Each is its own item,
+  and each keeps `error_feature_not_present` until its item removes the
+  refusal.
+
+The size, counted: 72 code sites in 14 library files return
+`error_feature_not_present` outside `CreateDevice`, with 23 in
+CreateRenderPass, 16 in CreateGraphicsPipelines, 8 in
+CreateDescriptorSetLayout and 7 in CreateSampler. There are 42 test lines
+beside them. Each site needs its VUID read before it moves, and that
+reading is the work. The code change is one enum member and one return
+value per site.
+
 ### 82. CreateShaderModule panicked on an under-aligned `code` instead of refusing it
 
 *entry points / shaders* &mdash; **done in 1.87**, small, found while doing item 28
