@@ -2064,4 +2064,34 @@ pub const LIBRARY_VERSION = 1;
 /// the capability not asked (which fails the older image test too),
 /// SAMPLED taken, input attachments refused, any count up to 4, levels,
 /// cube images, or linear and 3D images taken.
-pub const LIBRARY_REVISION = 98;
+///
+/// 99: **An image of four samples is copied and cleared plane by plane,
+/// and a blit or a buffer copy leaves it alone.**
+///
+/// Step S3 of item 61 of docs/facet-vulkan10.md. CmdCopyImage copies each
+/// sample's plane into the same sample's plane of the other image, as
+/// llvmpipe does (`lp_resource_copy_ms`, lp_surface.c), through
+/// `_image.sampleOf`: a plane as an image of one sample, so what reads and
+/// writes texels is unchanged. Images of two counts are not copied, which
+/// Vulkan has them never be (VUID-vkCmdCopyImage-srcImage-00136).
+/// CmdClearColorImage and CmdClearDepthStencilImage clear every plane, as
+/// `llvmpipe_clear_texture` clears each sample. CmdBlitImage,
+/// CmdCopyImageToBuffer and CmdCopyBufferToImage do nothing with an image
+/// of four samples, which Vulkan has none of them take
+/// (VUID-vkCmdBlitImage-srcImage-00233, -dstImage-00234,
+/// VUID-vkCmdCopyImageToBuffer-srcImage-07973,
+/// VUID-vkCmdCopyBufferToImage-dstImage-07973). `Image.sample_bytes` has
+/// no default now, so every place an image is made says it, a swapchain's
+/// as well.
+///
+/// No device has the capability yet, so what any program sees is
+/// unchanged. A test makes a 4x image of two layers with the capability
+/// turned on, marks each texel of it with its sample, layer and place,
+/// clears another, copies a rectangle from one layer to the other, and
+/// then tries a blit, a copy into a 1x image and a copy to and from a
+/// buffer, none of which may write. It clears a 4x depth image too. Each
+/// of nine changes put back fails it: a copy of the first plane alone,
+/// from the source's first plane into each, between two counts, a plane
+/// not offset, either clear of the first plane alone, and each of the
+/// three refusals taken away.
+pub const LIBRARY_REVISION = 99;

@@ -71,7 +71,9 @@ pub const Image = struct {
     /// and its size that times the samples (`llvmpipe_texture_layout`,
     /// src/gallium/drivers/llvmpipe/lp_texture.c).
     samples: u32 = 1,
-    sample_bytes: u64 = 0,
+    /// Given wherever an image is made, a swapchain's as well, since every
+    /// copy and clear steps through the planes by it (since 1.99).
+    sample_bytes: u64,
     /// A 3D image: its slices are reached by z, not by layer.
     volume: bool = false,
     /// A 1D image, which this library keeps as a texture of one row: its
@@ -459,6 +461,7 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
         .usage = info.usage,
         .kind = .rows,
         .bytes = 0,
+        .sample_bytes = 0,
     };
     const depth_usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT |
         facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
@@ -583,6 +586,18 @@ fn multisampled(physical: *const _instance.PhysicalDevice, info: *const facet.Im
     if (info.usage & ~taken != 0) return false;
     const features = physical.ops.format_properties(physical, info.format).optimal_tiling_features;
     return features & (facet.FORMAT_FEATURE_COLOR_ATTACHMENT | facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT) != 0;
+}
+
+/// Sample `sample`'s plane of `image` as an image of one sample a pixel:
+/// the same rows, `sample * sample_bytes` further into its memory. A copy
+/// or a clear goes through each plane this way, so that what reads and
+/// writes texels need not know of samples (since 1.99).
+pub fn sampleOf(image: *const Image, sample: u32) Image {
+    var plane = image.*;
+    if (image.data) |data| plane.data = data + @as(usize, sample) * @as(usize, @intCast(image.sample_bytes));
+    plane.samples = 1;
+    plane.bytes = image.sample_bytes;
+    return plane;
 }
 
 /// `image`, whose `bytes` are what it takes at one sample a pixel, with
@@ -934,7 +949,8 @@ pub fn copyUnpacking(image: *Image, from: []const u8, region: *const facet.Buffe
 /// texture layout for a texture, row by row for rows. The part of the
 /// rectangle outside the image, or past the end of `from`, is left out.
 pub fn copyFromBuffer(image: *Image, from: []const u8, region: *const facet.BufferImageCopy) void {
-    if (image.data == null) return;
+    // A multisampled image is no buffer copy's (VUID-vkCmdCopyBufferToImage-dstImage-07973).
+    if (image.data == null or image.samples != 1) return;
     if (unpacks(image)) return copyUnpacking(image, from, region);
     if (blocked(image)) return copyBlocks(image, from, region);
     const level = region.image_subresource.mip_level;

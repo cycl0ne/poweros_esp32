@@ -1574,7 +1574,7 @@ facet reports 1|4 on both devices, with the standard locations on the cores and 
 |---|---|---|---|---|
 | S1 | **Done in 1.96.** The three optional features decoupled. The seven masks become 1\|4, narrowed to 1 while a device lacks the capability, and no-attachments to 1 until item 43 | v3dv_device.c:1179-1189, :392 | 35 | 35 |
 | S2 | **Done in 1.98.** A 4x image in sample-major planes, and the format query's 4 bit following CreateImage. Layers and input-attachment usage are taken, against the first plan: Vulkan's rule for `sampleCounts` holds the query to the masks for both | lp_texture.c:225-226; lvp_formats.c:362-367 | 70 | 45 |
-| S3 | Copies and clears of every sample | lp_texture.c:225-226 | 25 | 30 |
+| S3 | **Done in 1.99.** Copies and clears of every sample; a blit or a buffer copy of a 4x image does nothing, as Vulkan has none | lp_texture.c:225-226; lp_surface.c:40-81 (`lp_resource_copy_ms`), :450 (`llvmpipe_clear_texture`) | 25 | 30 |
 | S4 | Render passes, framebuffers and pipelines take 4 samples and resolve attachments | Vulkan's subpass rules, as v3dv asserts them (v3dv_pipeline.c:1319-1320) | 85 | 50 |
 | S5 | CmdResolveImage (item 13), with a CPU body | `resolve_color`, lvp_execute.c:1782-1828; vk_meta_blit_resolve.c:151, :192 | 187 | 65 |
 | K1 | Per-sample coverage in setup, binning and the walk | `lp_sample_pos_4x`; lp_setup.c:127-128, :631-632; lp_setup_tri.c:314-324; `do_block_4`, lp_rast_tri_tmp.h:42-80 | 148 | 267 |

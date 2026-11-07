@@ -4246,6 +4246,125 @@ test "images copied, blitted, read back, and parts of an attachment cleared in t
     try testing.expectEqual(red, std.mem.readInt(u32, back_bytes[32..36], .little));
 }
 
+/// A pixel's texel in one sample's plane of a multisampled image of rows,
+/// as 0xAARRGGBB.
+fn sampleTexel(image: *const @import("../image/_image.zig").Image, sample: u32, layer: u32, x: u32, y: u32) *align(1) u32 {
+    const at = @as(usize, sample) * @as(usize, @intCast(image.sample_bytes)) + @as(usize, layer) * @as(usize, @intCast(image.layer_bytes)) + @as(usize, y) * image.pitch + @as(usize, x) * 4;
+    return @ptrCast(image.data.? + at);
+}
+
+test "a multisampled image cleared and copied plane by plane, and no blit or buffer copy of one" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
+    physical.can.multisampling = true;
+    defer physical.can.multisampling = false;
+    const Image = @import("../image/_image.zig").Image;
+    const usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
+    const info = facet.ImageCreateInfo{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 20, .height = 9, .depth = 1 }, .array_layers = 2, .samples = 4, .usage = usage };
+    const from = try bench.bareImage(info, false);
+    const into = try bench.bareImage(info, false);
+    const source = _objects.of(Image, from);
+    const destination = _objects.of(Image, into);
+    // A row of 20 texels is 80 bytes, padded to a cache line, and a
+    // sample's plane is both layers of them.
+    try testing.expectEqual(@as(u32, 128), source.pitch);
+    try testing.expectEqual(@as(u64, 128 * 9 * 2), source.sample_bytes);
+
+    // Each texel of the source told apart by hand: its sample, its layer
+    // and where it is, so that a copy taking one plane for another, or
+    // one layer for another, is seen.
+    const marked = struct {
+        fn of(sample: u32, layer: u32, x: u32, y: u32) u32 {
+            return 0xFF00_0000 | sample << 16 | layer << 12 | y << 6 | x;
+        }
+    }.of;
+    for (0..4) |s| for (0..2) |l| for (0..9) |y| for (0..20) |x| {
+        sampleTexel(source, @intCast(s), @intCast(l), @intCast(x), @intCast(y)).* = marked(@intCast(s), @intCast(l), @intCast(x), @intCast(y));
+    };
+
+    // A clear: every plane of every layer, the destination's whole.
+    const grey: u32 = 0xFF80_8080;
+    const color = facet.ClearColorValue{ .float32 = .{ 128.0 / 255.0, 128.0 / 255.0, 128.0 / 255.0, 1 } };
+    const every = facet.ImageSubresourceRange{};
+    var commands = try bench.record();
+    fb.CmdClearColorImage(commands, into, .transfer_dst_optimal, &color, 1, @ptrCast(&every));
+    try bench.submit();
+    for (0..4) |s| for (0..2) |l| for (0..9) |y| for (0..20) |x| {
+        try testing.expectEqual(grey, sampleTexel(destination, @intCast(s), @intCast(l), @intCast(x), @intCast(y)).*);
+    };
+
+    // A rectangle of the source's second layer copied into the
+    // destination's first, moved along: each sample's texel to the same
+    // sample, and nothing outside the rectangle touched.
+    commands = try bench.record();
+    const moved = facet.ImageCopy{
+        .src_subresource = .{ .base_array_layer = 1 },
+        .src_offset = .{ .x = 3, .y = 2 },
+        .dst_offset = .{ .x = 10, .y = 4 },
+        .extent = .{ .width = 6, .height = 4, .depth = 1 },
+    };
+    fb.CmdCopyImage(commands, from, .transfer_src_optimal, into, .transfer_dst_optimal, 1, @ptrCast(&moved));
+    try bench.submit();
+    for (0..4) |s| for (0..9) |y| for (0..20) |x| {
+        const sample: u32 = @intCast(s);
+        const inside = x >= 10 and x < 16 and y >= 4 and y < 8;
+        const want = if (inside) marked(sample, 1, @intCast(x - 10 + 3), @intCast(y - 4 + 2)) else grey;
+        try testing.expectEqual(want, sampleTexel(destination, sample, 0, @intCast(x), @intCast(y)).*);
+        try testing.expectEqual(grey, sampleTexel(destination, sample, 1, @intCast(x), @intCast(y)).*);
+    };
+
+    // A blit from it or into it, a copy between it and a buffer, and a
+    // copy between it and an image of one sample are none of Vulkan's,
+    // and each leaves what it would have written as it was:
+    // VUID-vkCmdBlitImage-srcImage-00233 and -dstImage-00234,
+    // VUID-vkCmdCopyImageToBuffer-srcImage-07973,
+    // VUID-vkCmdCopyBufferToImage-dstImage-07973 and
+    // VUID-vkCmdCopyImage-srcImage-00136.
+    const flat = try bench.bareImage(.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 20, .height = 9, .depth = 1 }, .usage = usage }, false);
+    const flat_image = _objects.of(Image, flat);
+    @memset(flat_image.data.?[0..@intCast(flat_image.bytes)], 0x11);
+    const out, const out_bytes = try bench.buffer(20 * 9 * 4, facet.BUFFER_USAGE_TRANSFER_DST | facet.BUFFER_USAGE_TRANSFER_SRC);
+    @memset(out_bytes[0 .. 20 * 9 * 4], 0x22);
+    const whole = facet.ImageBlit{ .src_offsets = .{ .{}, .{ .x = 20, .y = 9, .z = 1 } }, .dst_offsets = .{ .{}, .{ .x = 20, .y = 9, .z = 1 } } };
+    const all = facet.ImageCopy{ .extent = .{ .width = 20, .height = 9, .depth = 1 } };
+    const rows = facet.BufferImageCopy{ .image_extent = .{ .width = 20, .height = 9, .depth = 1 } };
+    commands = try bench.record();
+    fb.CmdBlitImage(commands, from, .transfer_src_optimal, flat, .transfer_dst_optimal, 1, @ptrCast(&whole), .nearest);
+    fb.CmdBlitImage(commands, flat, .transfer_src_optimal, into, .transfer_dst_optimal, 1, @ptrCast(&whole), .nearest);
+    fb.CmdCopyImage(commands, from, .transfer_src_optimal, flat, .transfer_dst_optimal, 1, @ptrCast(&all));
+    fb.CmdCopyImage(commands, flat, .transfer_src_optimal, into, .transfer_dst_optimal, 1, @ptrCast(&all));
+    fb.CmdCopyImageToBuffer(commands, from, .transfer_src_optimal, out, 1, @ptrCast(&rows));
+    fb.CmdCopyBufferToImage(commands, out, into, .transfer_dst_optimal, 1, @ptrCast(&rows));
+    try bench.submit();
+    // The first byte written, of the image of one sample and of the
+    // buffer: none.
+    try testing.expectEqual(null, std.mem.indexOfNone(u8, flat_image.data.?[0..@intCast(flat_image.bytes)], &.{0x11}));
+    try testing.expectEqual(null, std.mem.indexOfNone(u8, out_bytes[0 .. 20 * 9 * 4], &.{0x22}));
+    for (0..4) |s| for (0..9) |y| for (0..20) |x| {
+        const sample: u32 = @intCast(s);
+        const inside = x >= 10 and x < 16 and y >= 4 and y < 8;
+        const want = if (inside) marked(sample, 1, @intCast(x - 10 + 3), @intCast(y - 4 + 2)) else grey;
+        try testing.expectEqual(want, sampleTexel(destination, sample, 0, @intCast(x), @intCast(y)).*);
+    };
+
+    // And a depth image's planes, each cleared as a colour image's are.
+    const depth = try bench.bareImage(.{ .format = .d16_unorm, .extent = .{ .width = 20, .height = 9, .depth = 1 }, .samples = 4, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_DST }, false);
+    const depth_image = _objects.of(Image, depth);
+    @memset(depth_image.data.?[0..@intCast(depth_image.bytes)], 0);
+    const depth_pitch = @import("../image/_image.zig").rowsAt(depth_image, 0, 0).pitch;
+    const furthest = facet.ClearDepthStencilValue{ .depth = 1 };
+    const depth_range = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH };
+    commands = try bench.record();
+    fb.CmdClearDepthStencilImage(commands, depth, .transfer_dst_optimal, &furthest, 1, @ptrCast(&depth_range));
+    try bench.submit();
+    for (0..4) |s| for (0..9) |y| for (0..20) |x| {
+        const at = s * @as(usize, @intCast(depth_image.sample_bytes)) + y * depth_pitch + x * 2;
+        try testing.expectEqual(@as(u16, 0xFFFF), std.mem.readInt(u16, depth_image.data.?[at..][0..2], .little));
+    };
+}
+
 /// A render pass whose depth attachment is kept: read as each tile starts
 /// where `load` says, written back where `store` says.
 fn keepingPass(bench: *Bench, color_load: facet.AttachmentLoadOp, load: facet.AttachmentLoadOp, store: facet.AttachmentStoreOp) !*facet.RenderPass {

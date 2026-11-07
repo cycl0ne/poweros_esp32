@@ -15,16 +15,28 @@ const _image = @import("../image/_image.zig");
 const Image = _image.Image;
 
 /// CmdCopyImage's regions, the part of each inside both images. Texels go as
-/// they are: images of the same size of texel.
+/// they are: images of the same size of texel. A multisampled image's
+/// samples go each to the same sample of the other, whose count Vulkan
+/// has be the same (VUID-vkCmdCopyImage-srcImage-00136): plane by plane, as
+/// llvmpipe lays them (`Image.samples`, since 1.99).
 pub fn copyImage(command: *const _command.CopyImage) void {
-    const source = command.source;
-    const destination = command.destination;
+    if (command.source.samples != command.destination.samples) return;
+    for (0..command.source.samples) |sample| {
+        const source = _image.sampleOf(command.source, @intCast(sample));
+        var destination = _image.sampleOf(command.destination, @intCast(sample));
+        copyPlane(command, &source, &destination);
+    }
+}
+
+/// CmdCopyImage's regions between two images of one sample a pixel, or
+/// one sample's plane of each.
+fn copyPlane(command: *const _command.CopyImage, source: *const Image, destination: *Image) void {
     if (!_image.readable(source) or !_image.readable(destination)) return;
     if (_image.unpacks(source) or _image.unpacks(destination)) return;
     // Both keeping their blocks, of the one format: the blocks go as they
     // lie, nothing decoded (`Capabilities.kept_compressed`).
     if (_image.blocked(source) or _image.blocked(destination)) {
-        if (source.format == destination.format) copyBlocks(command);
+        if (source.format == destination.format) copyBlocks(command, source, destination);
         return;
     }
     // Two images that keep what they were given - their floats, or their
@@ -67,9 +79,7 @@ pub fn copyImage(command: *const _command.CopyImage) void {
 /// format: block by block, the offsets and the extent on a multiple of 4 as
 /// Vulkan asks of a compressed image. A region whose offsets are not is
 /// left out.
-fn copyBlocks(command: *const _command.CopyImage) void {
-    const source = command.source;
-    const destination = command.destination;
+fn copyBlocks(command: *const _command.CopyImage, source: *const Image, destination: *Image) void {
     const wide = _image.blockBytes(source);
     for (_stream.items(_command.CopyImage, facet.ImageCopy, command, command.count)) |*region| {
         const from_level = region.src_subresource.mip_level;
@@ -106,6 +116,8 @@ fn copyBlocks(command: *const _command.CopyImage) void {
 pub fn copyImageToBuffer(command: *const _command.CopyImageToBuffer) void {
     const image = command.image;
     if (!_image.readable(image) or _image.unpacks(image)) return;
+    // A multisampled image is no buffer copy's (VUID-vkCmdCopyImageToBuffer-srcImage-07973).
+    if (image.samples != 1) return;
     const into = _buffer.bytes(command.destination, 0, facet.WHOLE_SIZE) orelse return;
     if (_image.blocked(image)) return blocksToBuffer(command, into);
     const pixel = _image.bytesOf(image.format);
@@ -212,14 +224,16 @@ pub fn clearColorImage(command: *const _command.ClearColorImage) bool {
         const first_layer = range.base_array_layer;
         if (first_layer >= image.layers) continue;
         const layers = if (range.layer_count == facet.REMAINING) image.layers - first_layer else @min(range.layer_count, image.layers - first_layer);
-        for (first_layer..first_layer + layers) |layer| {
-            const layer_at = @as(usize, @intCast(image.layer_bytes)) * layer;
+        // Every sample's plane, each the whole image at one sample (since
+        // 1.99).
+        for (0..image.samples) |sample| for (first_layer..first_layer + layers) |layer| {
+            const layer_at = @as(usize, @intCast(image.sample_bytes)) * sample + @as(usize, @intCast(image.layer_bytes)) * layer;
             for (first_level..first_level + levels) |level| {
                 const span = spanOf(image, @intCast(level)) orelse continue;
                 if (layer_at + span.at + span.bytes > image.bytes) continue;
                 fill(data + layer_at + span.at, span.bytes, texel);
             }
-        }
+        };
     }
     return true;
 }
@@ -250,11 +264,12 @@ pub fn clearDepthImage(command: *const _command.ClearDepthStencilImage) bool {
         const layers = @min(if (range.layer_count == facet.REMAINING) image.layers else range.layer_count, image.layers - range.base_array_layer);
         const clears_depth = depth_there and range.aspect_mask & facet.IMAGE_ASPECT_DEPTH != 0;
         const clears_stencil = stencil_there and range.aspect_mask & facet.IMAGE_ASPECT_STENCIL != 0;
-        for (0..layers) |one| for (0..levels) |step| {
+        // Every sample's plane, as a colour clear does (since 1.99).
+        for (0..image.samples) |sample| for (0..layers) |one| for (0..levels) |step| {
             const level = range.base_mip_level + @as(u32, @intCast(step));
             const rows = _image.rowsAt(image, level, range.base_array_layer + @as(u32, @intCast(one)));
             const size = _image.levelSize(image, level);
-            const into_level = data + rows.at;
+            const into_level = data + sample * @as(usize, @intCast(image.sample_bytes)) + rows.at;
             // A format of depth alone or stencil alone, both aspects
             // asked for: every byte of every row is the one value.
             if (clears_depth and stride == 2) {
@@ -427,6 +442,9 @@ pub fn blitImage(command: *const _command.BlitImage) void {
     const source = command.source;
     const destination = command.destination;
     if (!_image.readable(source) or !_image.readable(destination)) return;
+    // An image of more than one sample is no blit's, either way
+    // (VUID-vkCmdBlitImage-srcImage-00233, VUID-vkCmdBlitImage-dstImage-00234).
+    if (source.samples != 1 or destination.samples != 1) return;
     // A compressed source is read block by block and scaled like any
     // other, and a float one texel by texel; nothing here compresses or
     // makes floats, so a destination that keeps what it was given is left
@@ -454,26 +472,26 @@ pub fn blitImage(command: *const _command.BlitImage) void {
             const from_layer = from_layers.first + @as(u32, @intCast(slice * from_layers.count / to_layers.count));
             var y = top;
             while (y < bottom) : (y += 1) {
-            const v = along(y, to_y, from_y);
-            var x = left;
-            while (x < right) : (x += 1) {
-                const u = along(x, to_x, from_x);
-                const color = if (command.filter == .linear) linear: {
-                    const low_u = u - 0.5;
-                    const low_v = v - 0.5;
-                    const whole_u = @floor(low_u);
-                    const whole_v = @floor(low_v);
-                    const first_u: i32 = @intFromFloat(whole_u);
-                    const first_v: i32 = @intFromFloat(whole_v);
-                    const across = low_u - whole_u;
-                    const upper = mixed(colorAt(source, from_level, from_layer, held(first_u, from_size[0]), held(first_v, from_size[1])), colorAt(source, from_level, from_layer, held(first_u + 1, from_size[0]), held(first_v, from_size[1])), across);
-                    const lower = mixed(colorAt(source, from_level, from_layer, held(first_u, from_size[0]), held(first_v + 1, from_size[1])), colorAt(source, from_level, from_layer, held(first_u + 1, from_size[0]), held(first_v + 1, from_size[1])), across);
-                    break :linear mixed(upper, lower, low_v - whole_v);
-                } else colorAt(source, from_level, from_layer, held(@intFromFloat(@floor(u)), from_size[0]), held(@intFromFloat(@floor(v)), from_size[1]));
-                var texel: [4]u8 = undefined;
-                _image.bytesOfColor(destination.format, color, &texel);
-                _image.writeTexel(destination, to_level, to_layer, @intCast(x), @intCast(y), &texel);
-            }
+                const v = along(y, to_y, from_y);
+                var x = left;
+                while (x < right) : (x += 1) {
+                    const u = along(x, to_x, from_x);
+                    const color = if (command.filter == .linear) linear: {
+                        const low_u = u - 0.5;
+                        const low_v = v - 0.5;
+                        const whole_u = @floor(low_u);
+                        const whole_v = @floor(low_v);
+                        const first_u: i32 = @intFromFloat(whole_u);
+                        const first_v: i32 = @intFromFloat(whole_v);
+                        const across = low_u - whole_u;
+                        const upper = mixed(colorAt(source, from_level, from_layer, held(first_u, from_size[0]), held(first_v, from_size[1])), colorAt(source, from_level, from_layer, held(first_u + 1, from_size[0]), held(first_v, from_size[1])), across);
+                        const lower = mixed(colorAt(source, from_level, from_layer, held(first_u, from_size[0]), held(first_v + 1, from_size[1])), colorAt(source, from_level, from_layer, held(first_u + 1, from_size[0]), held(first_v + 1, from_size[1])), across);
+                        break :linear mixed(upper, lower, low_v - whole_v);
+                    } else colorAt(source, from_level, from_layer, held(@intFromFloat(@floor(u)), from_size[0]), held(@intFromFloat(@floor(v)), from_size[1]));
+                    var texel: [4]u8 = undefined;
+                    _image.bytesOfColor(destination.format, color, &texel);
+                    _image.writeTexel(destination, to_level, to_layer, @intCast(x), @intCast(y), &texel);
+                }
             }
         }
     }
@@ -482,7 +500,7 @@ pub fn blitImage(command: *const _command.BlitImage) void {
 test "scaled, turned round and rounded as it should" {
     const testing = std.testing;
     try testing.expectEqual(@as(f32, 2), along(0, .{ 0, 4 }, .{ 0, 16 }));
-    try testing.expectEqual(@as(f32, 14), along(0, .{ 4, 0 }, .{ 0, 16 }) );
+    try testing.expectEqual(@as(f32, 14), along(0, .{ 4, 0 }, .{ 0, 16 }));
     try testing.expectEqual(@as(u32, 0x8080_8080), mixed(0, 0xFFFF_FFFF, 0.5));
     try testing.expectEqual(@as(u32, 0), held(-3, 8));
     try testing.expectEqual(@as(u32, 7), held(30, 8));
