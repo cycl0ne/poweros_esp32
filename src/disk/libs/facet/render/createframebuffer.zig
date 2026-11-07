@@ -28,7 +28,9 @@ const ImageView = _image.ImageView;
 /// RESULT:
 /// `success`; `error_initialization_failed` for views that do not fit the
 /// pass - another number of them, a colour view of an image not made for a
-/// colour attachment or in another format, a depth view of an image not
+/// colour attachment or in another format than its attachment's - the
+/// view's own, which since 1.131 may differ from its image's (CreateImageView,
+/// IMAGE_CREATE_MUTABLE_FORMAT) - a depth view of an image not
 /// made for depth, an image smaller than the size, a view of fewer layers
 /// than the framebuffer has, a view that swizzles its channels (since
 /// 1.120, VUID-VkFramebufferCreateInfo-pAttachments-00884) - and for a
@@ -122,7 +124,9 @@ pub fn CreateFramebuffer(base: *FacetBase, device: *facet.Device, info: *const f
         for (part.colors[0..part.color_count], part.color_formats[0..part.color_count], 0..) |index, format, k| {
             const color = _objects.of(ImageView, views[index]);
             const image = color.image;
-            if (image.kind != .rows or image.format != format or image.usage & facet.IMAGE_USAGE_COLOR_ATTACHMENT == 0) return .error_initialization_failed;
+            // The view's format is the one the pass draws in, which may be
+            // another than the image's (since 1.131).
+            if (image.kind != .rows or color.format != format or image.usage & facet.IMAGE_USAGE_COLOR_ATTACHMENT == 0) return .error_initialization_failed;
             // The level the view names is what the pass draws into, so it
             // is that level's rows that hold the render area, as a depth
             // attachment's do (levels since 1.119).
@@ -138,7 +142,7 @@ pub fn CreateFramebuffer(base: *FacetBase, device: *facet.Device, info: *const f
             if (part.resolves[k]) |into| {
                 const resolve = _objects.of(ImageView, views[into]);
                 const rows = resolve.image;
-                if (rows.kind != .rows or rows.format != format or rows.usage & facet.IMAGE_USAGE_COLOR_ATTACHMENT == 0) return .error_initialization_failed;
+                if (rows.kind != .rows or resolve.format != format or rows.usage & facet.IMAGE_USAGE_COLOR_ATTACHMENT == 0) return .error_initialization_failed;
                 const reach = _image.levelSize(rows, resolve.base_level);
                 if (reach[0] < info.width or reach[1] < info.height or resolve.layer_count < info.layers) return .error_initialization_failed;
                 target.resolves[k] = resolve;

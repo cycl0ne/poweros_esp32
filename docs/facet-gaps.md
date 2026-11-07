@@ -126,6 +126,17 @@ time. What is left out:
   before (docs/facet-vulkan10.md item 89): its top 8 bits through the
   colour path, as every format's channels are, and all 16 through
   `texture.Texture.partsAt` and a comparison.
+- **A view may be of another format than its image's** since 1.131, on
+  the cores (IMAGE_CREATE_MUTABLE_FORMAT): one Vulkan has compatible
+  with the image's, of the same bytes a texel or the other of a pair of
+  block formats, reading and writing the same bytes its own way - an
+  R8G8B8A8 image's four bytes as one R32_UINT, or with red and blue the
+  other way round as B8G8R8A8. Such an image keeps its texels as they
+  lie, B8G8R8A8's and R8G8B8A8's as the 32 bits of their word rather
+  than spread over 64. Not where a compatible format the image's usage
+  could be viewed through is kept unpacked (B4G4R4A4 beside an R5G6B5 to
+  sample), and not on the V3D, which refuses the flag until v3dv's view
+  format is ported (docs/facet-vulkan10.md item 42).
 
 The cores and the V3D's texture units still choose a level and its sample
 point differently, which is why `C:test/FacetCube CHECK V3D` allows 5 % of

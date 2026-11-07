@@ -22,14 +22,17 @@ const texture = facet.texture;
 ///
 /// INPUTS:
 /// - `device` - the device the image was made on.
-/// - `info` - the image, bound already, its own format, and the levels
-///   the view takes.
+/// - `info` - the image, bound already, its own format - or another Vulkan
+///   has compatible with it, where the image was made
+///   IMAGE_CREATE_MUTABLE_FORMAT (since 1.131) - and the levels the view
+///   takes.
 /// - `view` - where the view is written; null when it fails.
 ///
 /// RESULT:
 /// `success`; `error_format_not_supported` for a view facet.library does
-/// not make - of another format than the image's, of a type the image is
-/// not for, with a swizzle that is none of Vulkan's seven values, of
+/// not make - of another format than the image's where the image was not
+/// made IMAGE_CREATE_MUTABLE_FORMAT, or of one Vulkan does not have
+/// compatible with it, of a type the image is not for, with a swizzle that is none of Vulkan's seven values, of
 /// levels or layers the image has not got, or of an image not yet bound
 /// into memory; `error_out_of_host_memory`.
 ///
@@ -41,6 +44,24 @@ const texture = facet.texture;
 /// layers it names. A framebuffer given a view of any image kept in rows
 /// draws into the level the view begins at, an image kept in rows having
 /// levels since 1.119.
+///
+/// **It may be of another format than the image's** since 1.131, where
+/// the image was made IMAGE_CREATE_MUTABLE_FORMAT: one Vulkan has
+/// compatible with the image's own - the same bytes a texel, or a
+/// compressed format's block - which reads the same texels at the same
+/// places its own way, as Vulkan has it ("the same mapping between texel
+/// coordinates and memory locations irrespective of the format, with only
+/// the interpretation of the bit pattern changing"). Such an image keeps
+/// its texels as they lie, so a view of R32_UINT of an R8G8B8A8_UNORM
+/// image reads each texel's four bytes as one whole number, and one of
+/// B8G8R8A8_UNORM reads them with red and blue the other way round. A
+/// texture's view reads them in the texture's layout, a view of an image
+/// sampled where its rows lie reads the rows, and a framebuffer given
+/// such a view draws into the rows in the view's format, which is the
+/// one its render pass names. That is lavapipe's view: the view's format
+/// handed to the sampler view, the image view and the surface of the one
+/// resource (`lvp_CreateImageView`, src/gallium/frontends/lavapipe/
+/// lvp_image.c:483; `add_img_view_surface`, lvp_execute.c:1520-1525).
 ///
 /// **Its channels may be swizzled** since 1.120, as Vulkan's
 /// `VkComponentMapping` has them: each of `components` names the channel of
@@ -136,7 +157,10 @@ pub fn CreateImageView(base: *FacetBase, device: *facet.Device, info: *const fac
     _ = device;
     view.* = null;
     const image = _objects.of(Image, info.image);
-    if (info.format != image.given_format) return .error_format_not_supported;
+    // The image's own format, or since 1.131 another of the same bytes
+    // read its own way, where the image was made for that
+    // (`_image.takesView`).
+    if (!_image.takesView(&image.device.physical.can, image, info.format)) return .error_format_not_supported;
     const swizzle = swizzleOf(info.components) orelse return .error_format_not_supported;
     const range = info.subresource_range;
     if (range.base_mip_level >= image.levels or range.base_array_layer >= image.layers) return .error_format_not_supported;
@@ -176,7 +200,7 @@ pub fn CreateImageView(base: *FacetBase, device: *facet.Device, info: *const fac
     else
         null;
     const made = _objects.create(base.sys_base, ImageView) orelse return .error_out_of_host_memory;
-    made.* = .{ .image = image, .base_level = range.base_mip_level, .level_count = count, .base_layer = range.base_array_layer, .layer_count = layers, .swizzle = swizzle };
+    made.* = .{ .image = image, .format = info.format, .base_level = range.base_mip_level, .level_count = count, .base_layer = range.base_array_layer, .layer_count = layers, .swizzle = swizzle };
     if (image.kind == .texture) made.texels = _image.levelsFrom(image, range.base_mip_level, count, range.base_array_layer, layers);
     // A colour attachment written through as a storage image (since
     // 1.56): its rows are the one level, and a view of it takes them as
@@ -187,6 +211,9 @@ pub fn CreateImageView(base: *FacetBase, device: *facet.Device, info: *const fac
     // (since 1.119).
     if (_image.sampledRows(image)) made.texels = _image.rowLevels(image, range.base_mip_level, count, range.base_array_layer, layers);
     if (plane) |one| made.texels = one;
+    // Of another format than the image's (since 1.131): the same texels
+    // at the same places, read the view's way.
+    if (info.format != image.given_format and _image.hasTexels(image)) made.texels = _image.readAs(made.texels, image, info.format);
     // What a sample, a fetch and a read of the texels give back, swizzled
     // as the view says (since 1.120), and of a depth or a stencil read
     // (D, 0, 0, 1) whatever it says (since 1.121). An input attachment's
@@ -209,7 +236,7 @@ pub fn CreateImageView(base: *FacetBase, device: *facet.Device, info: *const fac
             .pitch = rows.pitch,
             .width = size[0],
             .height = size[1],
-            .format = _image.rowFormat(image.format),
+            .format = _image.rowFormat(info.format),
             .samples = image.samples,
             .sample_bytes = @intCast(image.sample_bytes),
             .others = first + @as(usize, @intCast(image.sample_bytes)),

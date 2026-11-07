@@ -16350,3 +16350,200 @@ test "a framebuffer's other layers of four samples a pixel cleared in every samp
         try testing.expectEqual(marked, bytes[3]);
     };
 }
+
+// --- 1.131: views of another format (item 42) -------------------------------
+
+test "an image made for views of another format: its texels kept as they lie, each compatible format's view reading them its own way, copies, a clear and a pass alike, and the format query refusing what a view could not read (item 42)" {
+    const image_zig = @import("../image/_image.zig");
+    const mutable = facet.IMAGE_CREATE_MUTABLE_FORMAT;
+    var said: facet.ImageFormatProperties = undefined;
+    {
+        var bench = try Bench.up();
+        defer bench.down();
+        const fb = bench.rig.fb;
+        const device = bench.device;
+
+        // An R8G8B8A8_UNORM texture made for such views, copied into: red
+        // 0x11, green 0x22, blue 0x33 and alpha 0x44, kept as the four
+        // bytes they are rather than spread over eight.
+        const given = [4]u8{ 0x11, 0x22, 0x33, 0x44 };
+        const texels = given ** 16;
+        const staging, const staging_bytes = try bench.buffer(256, facet.BUFFER_USAGE_TRANSFER_SRC | facet.BUFFER_USAGE_TRANSFER_DST);
+        @memcpy(staging_bytes[0..texels.len], &texels);
+        const usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_TRANSFER_DST | facet.IMAGE_USAGE_TRANSFER_SRC;
+        const made = try bench.bareImage(.{ .flags = mutable, .format = .r8g8b8a8_unorm, .extent = .{ .width = 4, .height = 4 }, .usage = usage }, false);
+        const kept = _objects.of(image_zig.Image, made);
+        try testing.expectEqual(texture_zig.Format.rgba8, kept.texels.format);
+        const region = facet.BufferImageCopy{ .image_extent = .{ .width = 4, .height = 4 } };
+        const filling = try bench.record();
+        fb.CmdCopyBufferToImage(filling, staging, made, .transfer_dst_optimal, 1, @ptrCast(&region));
+        try bench.submit();
+        try testing.expectEqualSlices(u8, &given, kept.data.?[0..4]);
+
+        // Its own view reads the colour. One of R32_UINT reads the four
+        // bytes as one whole number, one of R8G8B8A8_UINT each byte as one,
+        // one of B8G8R8A8_UNORM the colour with red and blue the other way
+        // round, and one of R16G16_UNORM two channels of 16 bits.
+        const own = try bench.viewOf(.{ .image = made, .format = .r8g8b8a8_unorm });
+        const word = try bench.viewOf(.{ .image = made, .format = .r32_uint });
+        const bytes = try bench.viewOf(.{ .image = made, .format = .r8g8b8a8_uint });
+        const swapped = try bench.viewOf(.{ .image = made, .format = .b8g8r8a8_unorm });
+        const halves = try bench.viewOf(.{ .image = made, .format = .r16g16_unorm });
+        const as_own = &_objects.of(image_zig.ImageView, own).texels;
+        const as_word = &_objects.of(image_zig.ImageView, word).texels;
+        const as_swapped = &_objects.of(image_zig.ImageView, swapped).texels;
+        try testing.expectEqual(facet.Format.r32_uint, _objects.of(image_zig.ImageView, word).format);
+        try testing.expectEqual(@as(u32, 0x4411_2233), as_own.colorAt(0, 0, 2, 1));
+        try testing.expectEqual([4]i64{ 0x4433_2211, 0, 0, 1 }, as_word.wholesAt(0, 0, 2, 1));
+        try testing.expectEqual([4]i64{ 0x11, 0x22, 0x33, 0x44 }, _objects.of(image_zig.ImageView, bytes).texels.wholesAt(0, 0, 3, 3));
+        try testing.expectEqual(@as(u32, 0x4433_2211), as_swapped.colorAt(0, 0, 1, 1));
+        try testing.expectEqual([4]i64{ 0x2211, 0x4433, 0, 1 }, _objects.of(image_zig.ImageView, halves).texels.wholesAt(0, 0, 0, 0));
+        // Sampled through a sampler, the same colour each way.
+        var sampler = texture_zig.Sampler{ .mag_filter = .nearest, .min_filter = .nearest };
+        try testing.expectEqual(@as(u32, 0x4411_2233), texture_zig.sampleBy(as_own, &sampler, 0, .{ .u = 0.6, .v = 0.3 }));
+        try testing.expectEqual(@as(u32, 0x4433_2211), texture_zig.sampleBy(as_swapped, &sampler, 0, .{ .u = 0.6, .v = 0.3 }));
+
+        // A view of a format of other bytes is refused, and so is one of a
+        // depth's, compatible with itself alone, and of a format no image
+        // is made of.
+        var refused: ?*facet.ImageView = null;
+        for ([4]facet.Format{ .r16_unorm, .r16g16b16a16_unorm, .d16_unorm_s8_uint, .a8b8g8r8_unorm_pack32 }) |other| {
+            try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImageView(device, &.{ .image = made, .format = other }, &refused));
+        }
+        try testing.expect(refused == null);
+
+        // Written through the R32_UINT view, read back through its own and
+        // copied out: the bytes the word is, low first.
+        as_word.setWholes(0, 0, 1, 2, .{ 0x8899_AABB, 0, 0, 0 });
+        try testing.expectEqual(@as(u32, 0x88BB_AA99), as_own.colorAt(0, 0, 1, 2));
+        const out = try bench.record();
+        fb.CmdCopyImageToBuffer(out, made, .transfer_src_optimal, staging, 1, @ptrCast(&region));
+        try bench.submit();
+        try testing.expectEqualSlices(u8, &.{ 0xBB, 0xAA, 0x99, 0x88 }, staging_bytes[36..40]);
+        try testing.expectEqualSlices(u8, &given, staging_bytes[32..36]);
+
+        // Copied into an image of the format made without the flag, which
+        // spreads its texels and takes a view of its own format alone: the
+        // same colours.
+        const plain = try bench.bareImage(.{ .format = .r8g8b8a8_unorm, .extent = .{ .width = 4, .height = 4 }, .usage = usage }, false);
+        try testing.expectEqual(texture_zig.Format.rgba8888, _objects.of(image_zig.Image, plain).texels.format);
+        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImageView(device, &.{ .image = plain, .format = .r32_uint }, &refused));
+        const copy = facet.ImageCopy{ .extent = .{ .width = 4, .height = 4 } };
+        const moving = try bench.record();
+        fb.CmdCopyImage(moving, made, .transfer_src_optimal, plain, .transfer_dst_optimal, 1, @ptrCast(&copy));
+        try bench.submit();
+        const plain_view = try bench.viewOf(.{ .image = plain, .format = .r8g8b8a8_unorm });
+        try testing.expectEqual(@as(u32, 0x88BB_AA99), _objects.of(image_zig.ImageView, plain_view).texels.colorAt(0, 0, 1, 2));
+        try testing.expectEqual(@as(u32, 0x4411_2233), _objects.of(image_zig.ImageView, plain_view).texels.colorAt(0, 0, 3, 0));
+
+        // Cleared to red: the four bytes red first, which the R32_UINT view
+        // reads as one number.
+        const red = facet.ClearColorValue{ .float32 = .{ 1, 0, 0, 1 } };
+        const whole = facet.ImageSubresourceRange{};
+        const clearing = try bench.record();
+        fb.CmdClearColorImage(clearing, made, .transfer_dst_optimal, &red, 1, @ptrCast(&whole));
+        try bench.submit();
+        try testing.expectEqualSlices(u8, &.{ 0xFF, 0, 0, 0xFF }, kept.data.?[0..4]);
+        try testing.expectEqual([4]i64{ 0xFF00_00FF, 0, 0, 1 }, as_word.wholesAt(0, 0, 3, 3));
+
+        // A B8G8R8A8 colour attachment drawn into through a view of
+        // R8G8B8A8: the framebuffer takes the view whose format is its
+        // pass's and not the image's own view, and the pass writes the
+        // pixels in the view's format, red first.
+        const drawn = try bench.bareImage(.{ .flags = mutable, .format = .b8g8r8a8_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT }, false);
+        const as_rgba = try bench.viewOf(.{ .image = drawn, .format = .r8g8b8a8_unorm });
+        const own_drawn = try bench.viewOf(.{ .image = drawn, .format = .b8g8r8a8_unorm });
+        const attachment = facet.AttachmentDescription{ .format = .r8g8b8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .color_attachment_optimal };
+        const reference = facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal };
+        const subpass = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&reference) };
+        var pass: ?*facet.RenderPass = null;
+        try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 1, .attachments = @ptrCast(&attachment), .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &pass));
+        defer fb.DestroyRenderPass(device, pass);
+        var not_made: ?*facet.Framebuffer = null;
+        try testing.expectEqual(facet.Result.error_initialization_failed, fb.CreateFramebuffer(device, &.{ .render_pass = pass.?, .attachment_count = 1, .attachments = @ptrCast(&own_drawn), .width = 8, .height = 8 }, &not_made));
+        try testing.expect(not_made == null);
+        const frame = try framebuffer(&bench, pass.?, &.{as_rgba}, 8, 8);
+        defer fb.DestroyFramebuffer(device, frame);
+        const blue = clears(0xFF00_00FF);
+        const drawing = try bench.record();
+        fb.CmdBeginRenderPass(drawing, &.{ .render_pass = pass.?, .framebuffer = frame, .render_area = .{ .extent = .{ .width = 8, .height = 8 } }, .clear_value_count = 1, .clear_values = &blue }, .@"inline");
+        fb.CmdEndRenderPass(drawing);
+        try bench.submit();
+        try testing.expectEqualSlices(u8, &.{ 0, 0, 0xFF, 0xFF }, _objects.of(image_zig.Image, drawn).data.?[0..4]);
+        // And a later subpass reads them as an input attachment each view's
+        // own way, through the rows an input attachment's descriptor hands
+        // a fragment function (UpdateDescriptorSets): blue through the view
+        // of R8G8B8A8, the same bytes red through the image's own.
+        try testing.expectEqual(@as(u32, 0xFF00_00FF), _objects.of(image_zig.ImageView, as_rgba).rows.colorAt(0, 0));
+        try testing.expectEqual(@as(u32, 0xFFFF_0000), _objects.of(image_zig.ImageView, own_drawn).rows.colorAt(0, 0));
+
+        // Drawn into and sampled at once, kept in rows: a view of the
+        // other 8888 order reads those rows red first.
+        const both = try bench.bareImage(.{ .flags = mutable, .format = .b8g8r8a8_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED }, false);
+        const rows_view = try bench.viewOf(.{ .image = both, .format = .r8g8b8a8_unorm });
+        try testing.expectEqual(texture_zig.Format.rgba8, _objects.of(image_zig.ImageView, rows_view).texels.format);
+        try testing.expect(_objects.of(image_zig.ImageView, rows_view).texels.pitch != 0);
+
+        // A BC6H image read the other way BC6H's floats are, block for
+        // block, and by no other compressed format of the same 16 bytes.
+        const blocks = try bench.bareImage(.{ .flags = mutable, .format = .bc6h_ufloat_block, .extent = .{ .width = 8, .height = 8 }, .usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST }, false);
+        const signed = try bench.viewOf(.{ .image = blocks, .format = .bc6h_sfloat_block });
+        try testing.expectEqual(texture_zig.Format.bc6hs, _objects.of(image_zig.ImageView, signed).texels.format);
+        try testing.expectEqual(_objects.of(image_zig.Image, blocks).texels.memory, _objects.of(image_zig.ImageView, signed).texels.memory);
+        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImageView(device, &.{ .image = blocks, .format = .bc7_unorm_block }, &refused));
+
+        // The format query, and CreateImage with it: made where every view
+        // Vulkan lets a program make reads the texels where they lie, and
+        // refused where one would not - B4G4R4A4 is sampled and unpacked as
+        // it is copied in, R8G8B8A8's rows are not written through, and ETC2
+        // keeps no block of its own.
+        const physical = bench.physical;
+        const sampled = facet.IMAGE_USAGE_SAMPLED;
+        for ([_]struct { facet.Format, u32 }{
+            .{ .r8g8b8a8_unorm, sampled | facet.IMAGE_USAGE_STORAGE },
+            .{ .b10g11r11_ufloat_pack32, sampled },
+            .{ .r8_unorm, sampled },
+            .{ .r8g8_unorm, sampled | facet.IMAGE_USAGE_STORAGE },
+            .{ .r16g16b16a16_sfloat, sampled },
+            .{ .r32g32b32a32_sfloat, sampled },
+            .{ .bc6h_ufloat_block, sampled },
+            .{ .r5g6b5_unorm_pack16, facet.IMAGE_USAGE_COLOR_ATTACHMENT },
+            .{ .b8g8r8a8_unorm, facet.IMAGE_USAGE_COLOR_ATTACHMENT | sampled },
+            .{ .d16_unorm, facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | sampled },
+        }) |one| try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, one[0], .@"2d", .optimal, one[1], mutable, &said));
+        for ([_]struct { facet.Format, u32 }{
+            .{ .r5g6b5_unorm_pack16, sampled },
+            .{ .b8g8r8a8_unorm, facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_STORAGE },
+            .{ .etc2_r8g8b8_unorm_block, sampled },
+            .{ .b4g4r4a4_unorm_pack16, sampled },
+        }) |one| {
+            try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, one[0], .@"2d", .optimal, one[1], 0, &said));
+            try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(physical, one[0], .@"2d", .optimal, one[1], mutable, &said));
+            var none: ?*facet.Image = null;
+            try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{ .flags = mutable, .format = one[0], .extent = .{ .width = 8, .height = 8 }, .usage = one[1] }, &none));
+            try testing.expect(none == null);
+        }
+        // A depth image takes a view of its own format alone, and a
+        // depth's format reads no other image's texels, whatever its size:
+        // an R16_UNORM texture written through - which B4G4R4A4, never
+        // written through, takes no view of - is not read as D16_UNORM.
+        const depth = try bench.bareImage(.{ .flags = mutable, .format = .d16_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | sampled }, false);
+        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImageView(device, &.{ .image = depth, .format = .r16_unorm, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH } }, &refused));
+        const sixteen = try bench.bareImage(.{ .flags = mutable, .format = .r16_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = sampled | facet.IMAGE_USAGE_STORAGE }, false);
+        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImageView(device, &.{ .image = sixteen, .format = .d16_unorm }, &refused));
+        try testing.expect(refused == null);
+    }
+    {
+        // A device whose images lie in a layout of its own makes none, its
+        // half being to come, and says so; the same image without the flag
+        // it makes.
+        var bench = try Bench.on(&OwnLayout.ops);
+        defer bench.down();
+        const fb = bench.rig.fb;
+        try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(bench.physical, .r8g8b8a8_unorm, .@"2d", .optimal, facet.IMAGE_USAGE_SAMPLED, mutable, &said));
+        try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(bench.physical, .r8g8b8a8_unorm, .@"2d", .optimal, facet.IMAGE_USAGE_SAMPLED, 0, &said));
+        var none: ?*facet.Image = null;
+        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(bench.device, &.{ .flags = mutable, .format = .r8g8b8a8_unorm, .extent = .{ .width = 8, .height = 8 }, .usage = facet.IMAGE_USAGE_SAMPLED }, &none));
+        try testing.expect(none == null);
+    }
+}

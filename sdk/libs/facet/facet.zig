@@ -1393,6 +1393,19 @@ pub const IMAGE_USAGE_TRANSIENT_ATTACHMENT: u32 = 1 << 6;
 pub const IMAGE_USAGE_INPUT_ATTACHMENT: u32 = 1 << 7;
 
 /// What an image is made with.
+/// ImageCreateInfo.flags: a view of another format may be made of it, one
+/// Vulkan has compatible with the image's own - the same bytes a texel,
+/// or a compressed format's block, read another way. Such an image keeps
+/// its texels as a copy gives them, nothing spread or reordered: an
+/// R8G8B8A8 or B8G8R8A8 texel is the 32 bits of its word rather than the
+/// 64 such a texel is spread over, so a view of R32_UINT reads that word
+/// as a whole number and one of B8G8R8A8 its bytes in the other order.
+/// Refused on a device whose images lie in a layout of its own, of a
+/// format whose texels are unpacked as they are copied in, and where a
+/// format a view of the image could be made in is not one this device
+/// reads where the texels lie. (Since 1.131.)
+pub const IMAGE_CREATE_MUTABLE_FORMAT: u32 = 1 << 3;
+
 /// ImageCreateInfo.flags: a view of type cube may be made of it.
 pub const IMAGE_CREATE_CUBE_COMPATIBLE: u32 = 1 << 4;
 
@@ -1600,7 +1613,9 @@ pub const ImageViewCreateInfo = extern struct {
     flags: u32 = 0,
     image: *Image,
     view_type: ImageViewType = .@"2d",
-    /// The image's own.
+    /// The image's own; since 1.131 another Vulkan has compatible with it
+    /// (of the same bytes a texel, or the other half of a pair of block
+    /// formats) where the image was made IMAGE_CREATE_MUTABLE_FORMAT.
     format: Format,
     components: ComponentMapping = .{},
     subresource_range: ImageSubresourceRange = .{},

@@ -26,7 +26,8 @@ const _image = @import("../image/_image.zig");
 ///   one row, and asks for height and depth 1 (since 1.86).
 /// - `tiling` - `optimal` or `linear`.
 /// - `usage` - the IMAGE_USAGE_* bits it would be made with.
-/// - `flags` - the IMAGE_CREATE_* flags, CUBE_COMPATIBLE among them.
+/// - `flags` - the IMAGE_CREATE_* flags, CUBE_COMPATIBLE among them, and
+///   since 1.131 MUTABLE_FORMAT, refused where CreateImage refuses it.
 /// - `properties` - where the answer is written; zeroed where there is
 ///   no such image.
 ///

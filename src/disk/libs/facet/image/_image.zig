@@ -102,6 +102,11 @@ pub const Image = struct {
     /// its word rather than spread over 64 (`texture.Format.argb8888`,
     /// `Capabilities.small_texels`, since 1.48).
     packed_texels: bool = false,
+    /// IMAGE_CREATE_MUTABLE_FORMAT: its texels kept as they lie, the bytes
+    /// a copy gives them, so that a view of another format Vulkan has
+    /// compatible with its own reads them that format's way (`takesView`,
+    /// since 1.131).
+    mutable: bool = false,
     usage: u32,
     kind: Kind,
     /// `rows`: the bytes from one row to the next.
@@ -144,6 +149,10 @@ pub const Display = struct {
 
 pub const ImageView = struct {
     image: *Image,
+    /// What its texels are read as and what a pass draws into it in: the
+    /// image's own format, or since 1.131 another Vulkan has compatible
+    /// with it, of an image made IMAGE_CREATE_MUTABLE_FORMAT.
+    format: facet.Format,
     base_level: u32,
     level_count: u32,
     base_layer: u32 = 0,
@@ -382,6 +391,152 @@ pub fn keptFormat(format: facet.Format, packed_texels: bool) ?texture.Format {
     };
 }
 
+/// How a texture keeps texels of `format` as they lie - the bytes a copy
+/// gives it, nothing spread or reordered - which is how an image made
+/// IMAGE_CREATE_MUTABLE_FORMAT keeps its own, and how a view of it reads
+/// them in another format: B8G8R8A8's word as `argb8888`, R8G8B8A8's four
+/// bytes as `rgba8`, and every other format as a texture keeps it
+/// already. Null for a format no texture keeps as it lies: one unpacked
+/// as it is copied in on every device - ETC2, EAC, and the two of four
+/// channels in 16 bits - or one no image is made of. (Since 1.131.)
+///
+/// That is how llvmpipe keeps every texture, in its format's own bytes
+/// (`llvmpipe_texture_layout`, src/gallium/drivers/llvmpipe/
+/// lp_texture.c:154-223), which is why lavapipe can hand a view's format
+/// to a sampler view of the same resource and nothing else
+/// (`lvp_CreateImageView`, src/gallium/frontends/lavapipe/
+/// lvp_image.c:483, `lvp_create_samplerview` :350-365).
+pub fn lyingFormat(format: facet.Format) ?texture.Format {
+    return switch (format) {
+        .b8g8r8a8_unorm => .argb8888,
+        .r8g8b8a8_unorm => .rgba8,
+        else => keptFormat(format, false),
+    };
+}
+
+/// Whether the device `can` says of keeps texels of `format` as they lie
+/// (`lyingFormat`) rather than unpacking them as they are copied in: a
+/// compressed format's blocks and a float format's floats where it keeps
+/// those (`Capabilities.kept_compressed`, `kept_floats`), a texture's own
+/// channels and its whole numbers likewise (`wide_channels`,
+/// `whole_textures`), and an 8888 word's 32 bits and R8_UNORM's byte
+/// where it keeps a texel smaller than its colour (`small_texels`).
+/// R5G6B5's 16 bits are kept as they lie everywhere. (Since 1.131.)
+fn keepsAsTheyLie(can: *const _instance.Capabilities, format: facet.Format) bool {
+    if (lyingFormat(format) == null) return false;
+    if (_decode.blockBytes(format) != 0) return can.kept_compressed;
+    if (_decode.texelBytes(format) != 0) return can.kept_floats;
+    if (wideChannels(format)) return can.wide_channels;
+    if (wholeNumbers(format)) return can.whole_textures;
+    return switch (format) {
+        .b8g8r8a8_unorm, .r8g8b8a8_unorm, .r8_unorm => can.small_texels,
+        else => true,
+    };
+}
+
+/// How a texture image keeps its texels: as they lie where it was made
+/// IMAGE_CREATE_MUTABLE_FORMAT (`lyingFormat`, since 1.131), and as
+/// `keptFormat` has it otherwise.
+fn keptBy(image: *const Image) ?texture.Format {
+    return if (image.mutable) lyingFormat(image.format) else keptFormat(image.format, image.packed_texels);
+}
+
+/// Whether a view of `view` may be made of an image of `image`, by
+/// Vulkan's format compatibility classes (58.1.8, "Format Compatibility
+/// Classes"): the one format; two colour formats that are not compressed
+/// and take the same bytes a texel; and two compressed formats whose
+/// blocks differ in nothing but how their texels' numbers are read, which
+/// Vulkan numbers in pairs, from BC1_RGB_UNORM_BLOCK and
+/// BC1_RGB_SRGB_BLOCK (131 and 132) to ASTC_12x12_UNORM_BLOCK and
+/// ASTC_12x12_SRGB_BLOCK (183 and 184). A depth or a stencil format is
+/// compatible with itself alone. (Since 1.131.)
+pub fn compatible(image: facet.Format, view: facet.Format) bool {
+    if (image == view) return true;
+    if (hasDepth(image) or hasStencil(image) or hasDepth(view) or hasStencil(view)) return false;
+    const first = compressedClass(image);
+    const second = compressedClass(view);
+    if (first != null or second != null) return first != null and second != null and first.? == second.?;
+    const size = texelSize(image);
+    return size != 0 and size == texelSize(view);
+}
+
+/// A compressed format's class, the pair of formats Vulkan numbers it in;
+/// null for a format that is not compressed.
+fn compressedClass(format: facet.Format) ?u32 {
+    const value = @intFromEnum(format);
+    if (value < 131 or value > 184) return null;
+    return (value - 131) / 2;
+}
+
+/// The bytes a texel of a format that is not compressed takes, whether a
+/// texture keeps it as it lies or unpacks it; 0 for one no image is made
+/// of.
+fn texelSize(format: facet.Format) u32 {
+    const kept = bytesOf(format);
+    return if (kept != 0) kept else _decode.unpackedBytes(format);
+}
+
+/// Whether a view in a format of `features` may be made of an image made
+/// for `usage`: Vulkan has a view made only of an image a view is for
+/// (VUID-VkImageViewCreateInfo-image-04441), its format having a feature
+/// at all (-None-02273), and that format do whatever the image is for -
+/// be sampled, written through, drawn into or read as an input attachment
+/// (VUID-VkImageViewCreateInfo-usage-02274, -02275, -08931, -02277,
+/// -08932). (Since 1.131.)
+fn viewable(features: u32, usage: u32) bool {
+    const for_views = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_COLOR_ATTACHMENT |
+        facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT;
+    if (usage & for_views == 0 or features == 0) return false;
+    const drawn = facet.FORMAT_FEATURE_COLOR_ATTACHMENT | facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT;
+    if (usage & facet.IMAGE_USAGE_SAMPLED != 0 and features & facet.FORMAT_FEATURE_SAMPLED_IMAGE == 0) return false;
+    if (usage & facet.IMAGE_USAGE_STORAGE != 0 and features & facet.FORMAT_FEATURE_STORAGE_IMAGE == 0) return false;
+    if (usage & facet.IMAGE_USAGE_COLOR_ATTACHMENT != 0 and features & facet.FORMAT_FEATURE_COLOR_ATTACHMENT == 0) return false;
+    if (usage & facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT != 0 and features & facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT == 0) return false;
+    if (usage & facet.IMAGE_USAGE_INPUT_ATTACHMENT != 0 and features & drawn == 0) return false;
+    return true;
+}
+
+/// Whether a view of `format` reads `image`'s texels: its own format,
+/// always; and since 1.131, of an image made IMAGE_CREATE_MUTABLE_FORMAT,
+/// a format Vulkan has compatible with it (`compatible`) that reads them
+/// where they lie, in the way the image's kind keeps them - a texture's
+/// in its layout, as `lyingFormat` reads them, on a device that keeps
+/// that format as it lies; an image's rows written through as
+/// `rowTexture` reads them, sampled as `sampledRowFormat` does, and drawn
+/// into or read as an input attachment as `rowFormat` does. A depth image
+/// takes its own format alone. `can` is the device's.
+pub fn takesView(can: *const _instance.Capabilities, image: *const Image, format: facet.Format) bool {
+    if (format == image.given_format) return true;
+    if (!image.mutable or !compatible(image.given_format, format)) return false;
+    return switch (image.kind) {
+        .texture => keepsAsTheyLie(can, format),
+        .rows => if (writtenRows(image))
+            rowTexture(format) != null
+        else if (sampledRows(image))
+            sampledRowFormat(format) != null
+        else
+            rowFormat(format) != .none,
+        .depth => false,
+    };
+}
+
+/// A view's texels in `format`, which `takesView` took, rather than the
+/// image's own: the same texels at the same places, their bytes read the
+/// view's way. That is what Vulkan has a view of a compatible format be:
+/// "the same mapping between texel coordinates and memory locations
+/// irrespective of the format, with only the interpretation of the bit
+/// pattern changing". Compatible formats take the same bytes a texel, or
+/// a block, so the levels lie where the image's own lie. (Since 1.131.)
+pub fn readAs(texels: texture.Texture, image: *const Image, format: facet.Format) texture.Texture {
+    var made = texels;
+    made.format = switch (image.kind) {
+        .texture => lyingFormat(format).?,
+        .rows => if (writtenRows(image)) rowTexture(format).? else sampledRowFormat(format).?,
+        .depth => unreachable,
+    };
+    return made;
+}
+
 /// Whether an image is a depth attachment's that may also be sampled: its
 /// rows are the texture, so nothing is copied and nothing kept twice.
 pub fn sampledDepth(image: *const Image) bool {
@@ -406,7 +561,31 @@ pub fn shapeOf(device: *Device, info: *const facet.ImageCreateInfo) ?Image {
 /// The same, for a physical device that no Device was made from yet: what
 /// GetPhysicalDeviceImageFormatProperties asks of a shape. The image's
 /// `device` is not filled in.
+///
+/// **An image made IMAGE_CREATE_MUTABLE_FORMAT** (since 1.131) is made
+/// only where every view Vulkan lets a program make of it is one this
+/// library makes: each format compatible with the image's own whose
+/// features do what the image is for (`viewable`) has to read its texels
+/// where they lie (`takesView`). Vulkan gives a program nothing to ask
+/// which of those views would be refused, so the image is refused
+/// instead, which GetPhysicalDeviceImageFormatProperties then says. An
+/// R5G6B5 image to be sampled is one: B4G4R4A4 is sampled, of the same
+/// two bytes, and is unpacked as it is copied in, so no texture reads it
+/// where it lies.
 pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCreateInfo) ?Image {
+    const image = laidOut(physical, info) orelse return null;
+    if (image.mutable) for (std.enums.values(facet.Format)) |other| {
+        if (other == info.format or !compatible(info.format, other)) continue;
+        const described = physical.ops.format_properties(physical, other);
+        const features = if (info.tiling == .optimal) described.optimal_tiling_features else described.linear_tiling_features;
+        if (viewable(features, info.usage) and !takesView(&physical.can, &image, other)) return null;
+    };
+    return image;
+}
+
+/// The image `info` asks for, laid out, or null for one this library does
+/// not make: `shapeFor` before it looks at the views of another format.
+fn laidOut(physical: *_instance.PhysicalDevice, info: *const facet.ImageCreateInfo) ?Image {
     const extent = info.extent;
     const volume = info.image_type == .@"3d";
     // A 1D image is a texture of one row (since 1.86). Vulkan asks that
@@ -447,6 +626,10 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
         else => false,
     };
     if (packed_texels and !(physical.can.small_texels and in_texels and packs)) return null;
+    // A view of another format may be made of it (since 1.131), so its
+    // texels are kept as they lie and each such format reads the same
+    // bytes its own way.
+    const mutable = info.flags & facet.IMAGE_CREATE_MUTABLE_FORMAT != 0;
     if (info.format == .r8_unorm and !(physical.can.small_texels and in_texels)) return null;
     // A texture whose channels are its own, kept as they lie
     // (`Capabilities.wide_channels`, since 1.69): two bytes of
@@ -492,6 +675,12 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
     // - is not (since 1.57, where a float image written through keeps its
     // floats and so needs no sampling).
     if (kept_format != info.format and info.usage & facet.IMAGE_USAGE_SAMPLED == 0) return null;
+    // Nor where a view of another format may be made of it: what is
+    // unpacked is no longer the bytes such a view would read, and a device
+    // whose images lie in a layout of its own reads none of this library's
+    // views of another format yet (`Ops.texture_memory`), the V3D's half
+    // of docs/facet-vulkan10.md item 42 being to come.
+    if (mutable and (kept_format != info.format or physical.ops.texture_memory != null)) return null;
     if (extent.width == 0 or extent.height == 0 or extent.width > max_image_dimension or extent.height > max_image_dimension) return null;
     if (info.mip_levels == 0) return null;
     // A block's bytes stand in for a texel's where the blocks are kept:
@@ -508,6 +697,7 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
         .line = line,
         .cube = cube,
         .packed_texels = packed_texels,
+        .mutable = mutable,
         .width = extent.width,
         .height = extent.height,
         .levels = info.mip_levels,
@@ -620,7 +810,10 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
     // alone wrote through a texture that was never there.
     if ((info.usage & (facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_STORAGE) != 0 or keeps_blocks) and !rows_written and !sampled_rows) {
         if (info.tiling != .optimal or info.usage & facet.IMAGE_USAGE_COLOR_ATTACHMENT != 0) return null;
-        const kept = keptFormat(kept_format, packed_texels) orelse return null;
+        // As they lie, where a view of another format may be made of it,
+        // on a device that keeps its format so (since 1.131).
+        if (mutable and !keepsAsTheyLie(&physical.can, kept_format)) return null;
+        const kept = keptBy(&image) orelse return null;
         image.kind = .texture;
         var one_layer: u64 = texture.Texture.bytes(kept, extent.width, extent.height, info.mip_levels) catch return null;
         one_layer = std.mem.alignForward(u64, one_layer, row_alignment);
@@ -733,7 +926,7 @@ pub fn texelsOver(image: *const Image, memory: [*]u8) texture.Texture.Error!text
     // layer of sample 0's plane, each sample's plane after it - one of
     // four samples since 1.110, and one drawn into as well since 1.119.
     if (sampledRows(image)) return levelsOver(image, sampledRowFormat(image.format).?, 0, 0, 0, image.levels, 0, image.layers, memory);
-    var made = try texture.Texture.init(keptFormat(image.format, image.packed_texels).?, image.width, image.height, image.levels, memory);
+    var made = try texture.Texture.init(keptBy(image).?, image.width, image.height, image.levels, memory);
     made.layer_count = image.layers;
     made.layer_bytes = @intCast(image.layer_bytes);
     return made;
@@ -988,6 +1181,15 @@ pub fn keptTexels(image: *const Image) bool {
     return floatTexels(image) or wideChannels(image.format) or wholeNumbers(image.format);
 }
 
+/// Whether a copy puts a texture's texels where they go as the bytes it
+/// was given, and reads them back the same: an image that keeps what it
+/// was given (`keptTexels`), and since 1.131 one made
+/// IMAGE_CREATE_MUTABLE_FORMAT, whose 8888 texels are their word's bytes
+/// rather than spread (`lyingFormat`).
+fn movedAsTheyLie(image: *const Image) bool {
+    return image.mutable or keptTexels(image);
+}
+
 /// The block holding texel (x, y) of a level of a layer, into `into`;
 /// nothing where the image is not blocked.
 pub fn readBlock(image: *const Image, level: u32, layer: u32, x: u32, y: u32, into: []u8) void {
@@ -1111,8 +1313,9 @@ pub fn copyFromBuffer(image: *Image, from: []const u8, region: *const facet.Buff
     const pixel = bytesOf(image.format);
     // An image that keeps what it is given - a float one's floats, or a
     // texture's own channels since 1.69 - takes the texel's bytes as they
-    // lie rather than through a colour of 8 bits a channel.
-    const keeps = keptTexels(image);
+    // lie rather than through a colour of 8 bits a channel, and so since
+    // 1.131 does one a view of another format may be made of.
+    const keeps = movedAsTheyLie(image);
     const row_length = if (region.buffer_row_length != 0) region.buffer_row_length else region.image_extent.width;
     const source_pitch = @as(usize, row_length) * pixel;
     const slice_height = if (region.buffer_image_height != 0) region.buffer_image_height else region.image_extent.height;
@@ -1194,7 +1397,7 @@ pub fn readTexel(image: *const Image, level: u32, layer: u32, x: u32, y: u32, in
         .texture => if (deviceOffset(image, level, layer, x, y)) |offset| {
             const pixel = bytesOf(image.format);
             @memcpy(into[0..pixel], (image.data.? + offset)[0..pixel]);
-        } else if (keptTexels(image)) {
+        } else if (movedAsTheyLie(image)) {
             // The floats, or the channels, as they lie: what went in
             // comes out again.
             image.texels.texelsAt(layer, level, x, y, into);
@@ -1216,7 +1419,7 @@ pub fn writeTexel(image: *Image, level: u32, layer: u32, x: u32, y: u32, from: [
         .texture => if (deviceOffset(image, level, layer, x, y)) |offset| {
             const pixel = bytesOf(image.format);
             @memcpy((image.data.? + offset)[0..pixel], from[0..pixel]);
-        } else if (keptTexels(image)) {
+        } else if (movedAsTheyLie(image)) {
             image.texels.putTexels(layer, level, x, y, from);
         } else {
             image.texels.putLayer(layer, level, x, y, texelOf(image.format, from));

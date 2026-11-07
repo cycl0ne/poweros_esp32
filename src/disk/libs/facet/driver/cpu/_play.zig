@@ -379,7 +379,11 @@ pub fn displayOf(framebuffer: *const _render.Target) ?_image.Display {
 /// level the view names, an image kept in rows having levels since 1.119:
 /// a pass draws into that level's own rows, as llvmpipe maps the level a
 /// surface names, with that level's stride (`init_scene_texture`,
-/// src/gallium/drivers/llvmpipe/lp_scene.c:159-185).
+/// src/gallium/drivers/llvmpipe/lp_scene.c:159-185). In the view's format,
+/// which since 1.131 may be another than its image's, of the same bytes a
+/// pixel: lavapipe makes a surface of the view's format over the image's
+/// resource (`create_img_surface`, src/gallium/frontends/lavapipe/
+/// lvp_execute.c:1506-1518).
 fn surfaceAt(view: *const _image.ImageView, layer: u32, sample: u32) ?raster.Surface {
     const image = view.image;
     const data = image.data orelse return null;
@@ -391,7 +395,7 @@ fn surfaceAt(view: *const _image.ImageView, layer: u32, sample: u32) ?raster.Sur
         .pitch = rows.pitch,
         .width = size[0],
         .height = size[1],
-        .format = switch (image.format) {
+        .format = switch (view.format) {
             .b8g8r8a8_unorm => .bgra32,
             .r8g8b8a8_unorm => .rgba32,
             .r5g6b5_unorm_pack16 => .rgb565,

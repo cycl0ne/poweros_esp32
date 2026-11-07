@@ -3316,4 +3316,58 @@ pub const LIBRARY_VERSION = 1;
 /// what one gave gives the same; caches merge; and a pipeline is made with
 /// one. Each of 13 changes put back fails them. C:test/FacetProbe holds
 /// each device's header against its properties.
-pub const LIBRARY_REVISION = 130;
+///
+/// 131: **Views of another format.** The cores' half of item 42 of
+/// docs/facet-vulkan10.md. Vulkan 1.0 has an image made
+/// IMAGE_CREATE_MUTABLE_FORMAT take views of a format compatible with its
+/// own - of the same bytes a texel for a colour format, the other of its
+/// pair for a block format, none for depth or stencil - each of which
+/// reads and writes the same texels its own way. The library had no such
+/// flag, and CreateImageView took the image's own format alone. The SDK
+/// has IMAGE_CREATE_MUTABLE_FORMAT, `1 << 3` as Vulkan has it, and a
+/// view's format may be another compatible one where the image was made
+/// with it. That is lavapipe's view, which hands the view's format to the
+/// sampler view, the image view and the surface over the one resource
+/// (`lvp_CreateImageView`, src/gallium/frontends/lavapipe/lvp_image.c:483;
+/// `add_img_view_surface`, lvp_execute.c:1520-1525), llvmpipe keeping
+/// every format's texels as they lie (`llvmpipe_texture_layout`,
+/// src/gallium/drivers/llvmpipe/lp_texture.c:154-223).
+///
+/// The cores kept an 8888 texel spread over 64 bits, which no view of
+/// R32_UINT can read, so an image made with the flag keeps its texels as
+/// they lie: B8G8R8A8's as the word PACKED_TEXELS keeps (since 1.48),
+/// R8G8B8A8's as the four bytes the rows of a sampled image of four
+/// samples keep (`texture.Format.rgba8`, since 1.110), and every other
+/// format as the cores keep it already. A view of another format takes
+/// the same texels with a texture format of its own (`_image.readAs`), a
+/// framebuffer and the cores' surfaces take the view's format, and a copy
+/// moves such an image's bytes as they lie, as it does a float image's.
+/// CreateImage and the format query refuse the flag where a compatible
+/// format whose features take the image's usage could not be read where
+/// the texels lie (`_image.shapeFor`): an R5G6B5 image to sample,
+/// B4G4R4A4 being sampled and kept unpacked, and a B8G8R8A8 image both
+/// drawn into and written through, whose rows have no texture to write
+/// R8G8B8A8 through. A format kept unpacked refuses it too, and so does
+/// the V3D, whose half is v3dv's: the texture state and the render
+/// target type of the view's format (`create_image_view`,
+/// src/broadcom/vulkan/v3dv_image.c:742-845, the texture type at
+/// v3dvx_image.c:77), v3dv making every image MUTABLE
+/// (v3dv_image.c:518-522).
+///
+/// Tests: an R8G8B8A8 image made with the flag keeps its bytes as they
+/// lie, and views of R32_UINT, R8G8B8A8_UINT, B8G8R8A8_UNORM and
+/// R16G16_UNORM read them each its own way, two of them sampled as well;
+/// views of another size, of depth and stencil, and of a format whose
+/// features do not take the image's usage are refused; what a view
+/// writes the copies find again where it lies, a copy to an image without
+/// the flag moves the colours, and a clear is the bytes of its colour; a
+/// pass draws through a view of R8G8B8A8 of a B8G8R8A8 image, whose
+/// framebuffer takes the view's format and not the image's, and a later
+/// subpass reads the pixels as an input attachment each view's own way; a
+/// block image takes a view of the other of its pair and not of another
+/// pair; the format query and CreateImage agree for each format and usage
+/// tried; and a device of a layout of its own refuses the flag. Each of 22
+/// changes put back fails them. C:test/FacetProbe has the cores read and
+/// write such an image through a storage view of R32_UINT, and a device
+/// whose format query refuses the flag refuse the image as well.
+pub const LIBRARY_REVISION = 131;

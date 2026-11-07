@@ -200,6 +200,21 @@ const _image = @import("_image.zig");
 /// them, and so is the flag on an image that is neither sampled nor a
 /// storage image, or whose format has no 8888 word to keep.
 ///
+/// **IMAGE_CREATE_MUTABLE_FORMAT** (since 1.131) makes an image that a
+/// view of another format may be made of, one Vulkan has compatible with
+/// the image's own: of the same bytes a texel for a colour format, the
+/// other of its pair for a block format, and none for depth or stencil
+/// (CreateImageView). Its texels are kept as they lie - B8G8R8A8's as the
+/// word PACKED_TEXELS keeps, R8G8B8A8's as its four bytes - so that each
+/// such view reads and writes the same bytes its own way, and copies move
+/// them as they are. It is `error_format_not_supported` where a compatible
+/// format whose features take the image's usage could not be read where
+/// the texels lie: an R5G6B5 image to sample, B4G4R4A4 being sampled and
+/// kept unpacked, while one only drawn into is made. So it is on a format
+/// kept unpacked itself, and on a device whose images lie in a layout of
+/// its own (`Ops.texture_memory`, the V3D), whose half of
+/// docs/facet-vulkan10.md item 42 is to come.
+///
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no.

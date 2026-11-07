@@ -467,13 +467,15 @@ fn texelOf(image: *const Image, color: u32, parts: [4]f32, words: [4]u32) ?Texel
             .rgba8u, .rgba8i, .rg16u, .rg16i, .r32u, .r32i => .{ .four = wholePattern(image.texels.format, u32, wholes) },
             .rgba16u, .rgba16i, .rg32u, .rg32i => .{ .eight = wholePattern(image.texels.format, u64, wholes) },
             .rgba32u, .rgba32i => .{ .sixteen = wholePattern(image.texels.format, u128, wholes) },
+            // R8G8B8A8's four bytes as they lie, red first: how a texture a
+            // view of another format may be made of keeps them (since
+            // 1.131), and the same bytes its rows would hold.
+            .rgba8 => .{ .four = color & 0xFF00_FF00 | (color >> 16 & 0xFF) | (color & 0xFF) << 16 },
             // A clear of a colour is not for a depth texture:
             // CmdClearDepthStencilImage writes that one. Nor for a
             // compressed image, whose texels are written as whole blocks
-            // and which nothing here compresses. And no image of this kind
-            // keeps R8G8B8A8's four bytes as they lie: a texture of them
-            // is an image's rows (since 1.110), cleared as rows are.
-            .d16, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc7, .bc6hu, .bc6hs, .rgba8 => null,
+            // and which nothing here compresses.
+            .d16, .bc1, .bc1_rgb, .bc2, .bc3, .bc4, .bc5, .bc7, .bc6hu, .bc6hs => null,
         },
         // Its pixels are rows of depth, which a clear of a colour does
         // not write; a transient one's live in the tiles.

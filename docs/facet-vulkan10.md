@@ -127,37 +127,42 @@ cores, in 1.114, item 85's half of two, the cores', in 1.115, item 87
 in 1.116, item 88 in 1.117, item 86 in 1.118, item 48's half of two,
 the cores', in 1.119, item 41 in 1.120, item 89 in 1.121, item 15 in
 1.122, item 11 in 1.123, item 12 in 1.124, item 79 in 1.125, item 32 in
-1.126, item 31 in 1.127, item 29 in 1.128, item 9 in 1.129, and item 10's
-first half of two in 1.130.**
+1.126, item 31 in 1.127, item 29 in 1.128, item 9 in 1.129, item 10's
+first half of two in 1.130, and item 42's half of two, the cores', in
+1.131.**
 Each
 carries a *Done* note below saying what was actually built and where the
 item's own description turned out to be wrong - and several did. Things
 found while doing them became the items at the end of the list: 77 and 78
 from 1.80 and 1.81, 79, 80 and 81 from 1.82, 85 and 86 from 1.113,
-87 and 88 from scoping item 86, and 89 from item 41.
+87 and 88 from scoping item 86, 89 from item 41, and 90 from item 42.
 
-Items 52, 28, 17, 22, 61, 43, 85 and 48 are the ones split between devices:
+Items 52, 28, 17, 22, 61, 43, 85, 48 and 42 are the ones split between devices:
 the cores draw every sampler as of 1.83, sample at a constant texel offset
 as of 1.87, carry 64 varyings as of 1.90, take framebuffers of 256 layers
 as of 1.91, draw four samples a pixel as of 1.112 (in a subpass of no
 attachment as of 1.114), a subpass with no colour attachment as of 1.113,
-a pipeline of no fragment stage as of 1.115 and an image both drawn into
-and sampled as of 1.119, and the V3D does none of the eight - so the
+a pipeline of no fragment stage as of 1.115, an image both drawn into
+and sampled as of 1.119 and a view of another format of an image as of
+1.131, and the V3D does none of the nine - so the
 magenta item 52 is about now belongs to item 54 alone, item 28's
 remainder is a QPU back end that refuses the operand at pipeline
 creation, item 17's is a vertex program that keeps its varyings in
 registers and so stops at eight, item 22's is a render list played once
 a frame rather than once a layer, item 61's is its steps V1 to V8,
 item 43's is a frame whose one render target is flagged unused, item
-85's is a fragment program of no instructions, and item 48's is a store
-and a load that name the UIF layout, and a clear through the TLB.
+85's is a fragment program of no instructions, item 48's is a store
+and a load that name the UIF layout, and a clear through the TLB, and
+item 42's is a texture state and a render target of the view's format.
 
-None of the eight is the hardware's limit. Mesa's v3dv runs Vulkan on this
+None of the nine is the hardware's limit. Mesa's v3dv runs Vulkan on this
 same V3D 7.1 with 64 varyings, texel offsets of -8 to 7, 256 framebuffer
 layers, four samples a pixel (`src/broadcom/vulkan/v3dv_device.c`),
 subpasses of no colour attachment (v3dvx_cmd_buffer.c:1189-1197),
-pipelines of no fragment stage (v3dv_pipeline.c:2616-2642) and images
-drawn into and sampled, every optimal one being UIF (v3dv_image.c:481-483), so
+pipelines of no fragment stage (v3dv_pipeline.c:2616-2642), images
+drawn into and sampled, every optimal one being UIF (v3dv_image.c:481-483),
+and views of another format of every image, each made MUTABLE
+(v3dv_image.c:518-522), so
 each remainder is the port of named Mesa code, and the items say which. Until
 then the V3D's limit is **derived from its own compiler or driver** rather
 than written down, so the number cannot drift from what the device
@@ -1430,11 +1435,63 @@ swizzle with the view's into the TMU's state (v3dv_image.c:828-831,
 
 ### 42. Accept VK_IMAGE_CREATE_MUTABLE_FORMAT and a compatible view format
 
-*images / image views* &mdash; conformance-blocking, medium
+*images / image views* &mdash; conformance-blocking, medium &mdash; **the cores' half done in 1.131**; the V3D's is v3dv's view format in the texture state and the render target, about 20 lines and a board check
 
 facet defines two image create flags — CUBE_COMPATIBLE (1<<4, Vulkan's value) and its own PACKED_TEXELS (1<<31) — and reads only those two. Vulkan's MUTABLE_FORMAT (1<<3) is therefore accepted and silently ignored, and CreateImageView then refuses any view whose format differs from the image's. With the flag set a Vulkan application may legally take a view of any format of the same texel block size, which is how a UNORM image is written as UINT or read as sRGB. Needs the view carrying its own texture.Format over the image's memory, which texelsOver and levelsFrom are already parameterised enough to do for same-size formats, plus validating the flag.
 
 > Verified: `grep -n 'IMAGE_CREATE_' sdk/libs/facet/facet.zig` -> only :976 CUBE_COMPATIBLE and :988 PACKED_TEXELS; `grep -n 'info.flags' src/disk/libs/facet/image/_image.zig` -> :345 and :353 only; the view refusal is the same line as item 41.
+
+**The cores' half done in 1.131**, in 108 lines of code, the generated
+interface aside, and 236 of tests, as lavapipe has it: a view's format
+is handed to the sampler view, the image view and the surface over the
+image's one resource (`lvp_CreateImageView`, lvp_image.c:483;
+`lvp_create_samplerview`, :350-365; `add_img_view_surface`,
+lvp_execute.c:1520-1525), which works because llvmpipe lays every
+format's texels out as they lie (`llvmpipe_texture_layout`,
+lp_texture.c:154-223). The SDK has IMAGE_CREATE_MUTABLE_FORMAT at
+Vulkan's `1 << 3`, a view keeps its own format beside its image's, and
+CreateImageView takes one Vulkan has compatible with the image's - of
+the same bytes a texel for a colour format, the other of its pair for a
+block format, none for depth or stencil (58.1.8) - where the image was
+made with the flag. A framebuffer and the cores' surfaces take the
+view's format (`create_img_surface`, lvp_execute.c:1506-1518), and so
+does what a later subpass reads of it as an input attachment.
+
+Two things the item got wrong. A view could not simply carry its own
+texture.Format over the image's memory: on the cores an 8888 texel is
+spread over 64 bits (`texture.Format.rgba8888`), which no view of
+R32_UINT can read. So an image made with the flag keeps its texels as
+they lie first - B8G8R8A8's as the word PACKED_TEXELS keeps, R8G8B8A8's
+as the four bytes of 1.110's `rgba8` - and its copies move them as they
+are; every other format the cores keep as it lies already. Only then is
+a view a texture format put over the same texels (`_image.readAs`). And
+"validating the flag" is a walk over the compatible formats: CreateImage
+and the format query refuse the flag where a format compatible with the
+image's, whose features take the image's usage, could not be read
+where the texels lie (`_image.shapeFor`). The refusal then comes where
+Vulkan lets it come, rather than at a CreateImageView that Vulkan
+expects to succeed. R5G6B5 to sample is the case that showed it:
+B4G4R4A4 is of its size, sampled, and kept unpacked on every device. A
+B8G8R8A8 image both drawn into and written through is refused for the
+same reason, R8G8B8A8's rows having no texture to be written through,
+and a format kept unpacked refuses the flag itself.
+
+Found while doing it: CmdCopyImage copies nothing between two formats of
+one size that the cores keep differently, which is the copy a view of
+another format is the other way of making (item 90).
+
+The V3D's half is v3dv's: it makes every image MUTABLE, its own meta
+paths taking views of compatible formats (v3dv_image.c:518-522), and
+`create_image_view` (v3dv_image.c:742-845) takes the view's format for
+the texture state (`tex.texture_type`, v3dvx_image.c:77, packed at
+v3dv_image.c:837) and for the render target's internal type (:808-826).
+Here that is the TMU's texture type and the render target's output read
+off the view's format rather than the image's (driver/v3d/_play.zig:502,
+:900), and the refusal (`Ops.texture_memory`) lifted where the TMU reads
+the view's format, B8G8R8A8 and R8G8B8A8 for each other: about 20 lines
+and a board check of its own, a view of B8G8R8A8 of an R8G8B8A8 image
+sampled and drawn into. C:test/FacetProbe's check of 1.131 writes
+through a view of R32_UINT, which the TMU does not read.
 
 ### 43. Accept a subpass with no colour attachment
 
@@ -2677,6 +2734,39 @@ bits a channel on its way into the tiles and into a generated shader's
 floats (docs/facet-gaps.md, the wide channels), and `partsAt` and a
 comparison read a depth at all 16. The V3D samples no depth yet
 (item 58).
+
+### 90. CmdCopyImage copies nothing between two formats of one size that the cores keep differently
+
+*images / copies* &mdash; conformance-blocking, small, found while doing item 42
+
+Vulkan copies an image into another of any format of its size: "Color
+formats with the same texel block size are considered size-compatible",
+and "Copy operations are able to copy between size-compatible formats in
+different resources" (58.1.8); VUID-vkCmdCopyImage-srcImage-01548 asks no
+more of the two formats than that. What is copied is the bits, as a view
+of another format reads them (item 42). The cores copy some of those
+pairs only. `copyPlane` (driver/_transfer.zig:34) returns with nothing
+copied where one image keeps what it was given and the other does not,
+or where both do and their formats differ (:47-48) - R8G8B8A8_UNORM into
+R32_UINT, R16G16_UNORM into R32_SFLOAT, R32_UINT into R32_SFLOAT - and
+where two block images are not of the one format (:39-40), though their
+blocks are of one size: BC6H_UFLOAT into BC6H_SFLOAT, BC1 into BC4. A
+block image and an uncompressed one of its block's size (BC1 and
+R16G16B16A16_SFLOAT, a block to a texel) are never copied at all.
+
+lavapipe hands every such copy to `resource_copy_region`
+(`handle_copy_image`, src/gallium/frontends/lavapipe/lvp_execute.c:2784-2867),
+which llvmpipe does as `util_resource_copy_region` over the bytes as
+they lie (`lp_resource_copy`, src/gallium/drivers/llvmpipe/lp_surface.c:86-116).
+Here `_image.readTexel` and `writeTexel` already move a texel as the
+bytes a buffer holds it in, whatever its format, so between two
+uncompressed images the two refusals are all that is wrong. Two block
+images want `copyBlocks` with the size of their blocks compared rather
+than their format, and a block image and a texel one a region counted in blocks on
+the one side and in texels on the other, as Vulkan size-adjusts the
+destination's offset and extent (26.3).
+
+> Verified: driver/_transfer.zig:39-40 `if (_image.blocked(source) or _image.blocked(destination)) { if (source.format == destination.format) copyBlocks(command, source, destination);`, :47 `if (_image.keptTexels(source) != _image.keptTexels(destination)) return;`, :48 `if (_image.keptTexels(source) and source.format != destination.format) return;`; image/_image.zig:1180-1182, `keptTexels` is a float format, one of wide channels or one of whole numbers.
 
 ## Deferred by the decision, not out of reach
 

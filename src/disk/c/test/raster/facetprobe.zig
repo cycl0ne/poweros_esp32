@@ -6297,6 +6297,123 @@ fn cacheChecks(probe: *Probe) void {
     probe.check(std.mem.eql(u8, &properties.pipeline_cache_uuid, &header.pipeline_cache_uuid), "and its pipeline cache UUID");
 }
 
+// --- 1.131: a view of another format (item 42) -------------------------------
+
+/// Group (x, y) reads texel (x, y) of an R8G8B8A8 image through a view of
+/// R32_UINT, which the image's four bytes are one number to, and writes
+/// what it read into the buffer; the group at (1, 2) then writes a number
+/// of its own over its texel. No group touches another's texel.
+const Viewed = struct {
+    fn words(groups: *const facet.shader.Groups) callconv(.c) void {
+        const image = groups.resources.written(0, 0, 0) orelse return;
+        const out = groups.resources.storage(u32, 0, 1) orelse return;
+        const x = groups.group[0];
+        const y = groups.group[1];
+        out[y * 4 + x] = @truncate(@as(u64, @bitCast(image.wholesAt(0, 0, x, y)[0])));
+        if (x == 1 and y == 2) image.setWholes(0, 0, x, y, .{ 0x88BB_AA99, 0, 0, 1 });
+    }
+
+    const entries = [_]facet.shader.Entry{facet.shader.compute("words", &words)};
+    const code = facet.shader.Code{ .entry_count = entries.len, .entries = &entries };
+};
+
+/// 1.131: an image made IMAGE_CREATE_MUTABLE_FORMAT, which a view of
+/// another format Vulkan has compatible with its own may be made of. The
+/// cores keep such an image's texels as they lie, so that a view of
+/// R32_UINT of an R8G8B8A8 image reads its four bytes as one number and
+/// writes one where the copies find it again; a view of a format of
+/// another size is refused. A device that cannot (the V3D, until the
+/// half of item 42 that is v3dv's) says so in the format query, and then
+/// CreateImage refuses the image the same way.
+fn mutableChecks(probe: *Probe) void {
+    const fb = probe.fb;
+    const device = probe.device.?;
+    defer probe.give();
+    const mutable = facet.IMAGE_CREATE_MUTABLE_FORMAT;
+    // Written through where the device writes through images at all.
+    const written: u32 = if (probe.can.storage_images) facet.IMAGE_USAGE_STORAGE else 0;
+    const usage = facet.IMAGE_USAGE_SAMPLED | written | facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
+    const info = facet.ImageCreateInfo{ .flags = mutable, .format = .r8g8b8a8_unorm, .extent = .{ .width = 4, .height = 4 }, .usage = usage };
+    var shape: facet.ImageFormatProperties = undefined;
+    const said = fb.GetPhysicalDeviceImageFormatProperties(probe.physical, .r8g8b8a8_unorm, .@"2d", .optimal, usage, mutable, &shape);
+    probe.check(fb.GetPhysicalDeviceImageFormatProperties(probe.physical, .r8g8b8a8_unorm, .@"2d", .optimal, usage, 0, &shape) == .success, "an R8G8B8A8 image to sample, write through where the device can, and copy");
+    if (said != .success) {
+        probe.check(said == .error_format_not_supported, "views of another format of it refused, as the format query says");
+        var none: ?*facet.Image = null;
+        probe.check(fb.CreateImage(device, &info, &none) == .error_format_not_supported and none == null, "and CreateImage refuses the image the same way");
+        return;
+    }
+    probe.check(true, "views of another format of it, as the format query says");
+    const made = probe.bound(info, 0) orelse return probe.check(false, "an image made for views of another format");
+    probe.check(true, "an image made for views of another format");
+    const words = probe.viewed(.{ .image = made, .format = .r32_uint }) orelse return probe.check(false, "a view of R32_UINT of it");
+    probe.check(true, "a view of R32_UINT of it");
+    probe.check(probe.viewed(.{ .image = made, .format = .r16_unorm }) == null, "and one of R16_UNORM, of another size, refused");
+    probe.check(probe.viewed(.{ .image = made, .format = .d16_unorm_s8_uint }) == null, "and one of depth and stencil refused");
+
+    // Bytes of the texel's place, copied in as they are.
+    const texels, const texel_bytes = probe.buffer(64, facet.BUFFER_USAGE_TRANSFER_SRC) orelse return probe.check(false, "a buffer the texels come from");
+    for (0..64) |k| texel_bytes[k] = @intCast(0x10 + k * 3);
+    const whole = facet.BufferImageCopy{ .image_extent = .{ .width = 4, .height = 4 } };
+    var commands = probe.record() orelse return probe.check(false, "a recording");
+    fb.CmdCopyBufferToImage(commands, texels, made, .general, 1, @ptrCast(&whole));
+    if (!probe.submit()) return probe.check(false, "the copy in submitted");
+
+    if (!probe.can.storage_images) return;
+    const bindings = [2]facet.DescriptorSetLayoutBinding{
+        .{ .binding = 0, .descriptor_type = .storage_image, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+        .{ .binding = 1, .descriptor_type = .storage_buffer, .descriptor_count = 1, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+    };
+    var set_layout: ?*facet.DescriptorSetLayout = null;
+    if (fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 2, .bindings = &bindings }, &set_layout) != .success) return probe.check(false, "a set layout of a storage image");
+    defer fb.DestroyDescriptorSetLayout(device, set_layout);
+    var module: ?*facet.ShaderModule = null;
+    if (fb.CreateShaderModule(device, &.{ .code = &Viewed.code }, &module) != .success) return probe.check(false, "the shader module");
+    _ = Probe.keep(&probe.modules, module);
+    var layout: ?*facet.PipelineLayout = null;
+    if (fb.CreatePipelineLayout(device, &.{ .set_layout_count = 1, .set_layouts = @ptrCast(&set_layout) }, &layout) != .success) return probe.check(false, "the pipeline layout");
+    _ = Probe.keep(&probe.layouts, layout);
+    var pool: ?*facet.DescriptorPool = null;
+    if (fb.CreateDescriptorPool(device, &.{ .max_sets = 1 }, &pool) != .success) return probe.check(false, "a descriptor pool");
+    defer fb.DestroyDescriptorPool(device, pool);
+    var sets: [1]?*facet.DescriptorSet = undefined;
+    if (fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&set_layout) }, &sets) != .success)
+        return probe.check(false, "a descriptor set");
+    const read, const read_bytes = probe.buffer(64, facet.BUFFER_USAGE_STORAGE_BUFFER) orelse return probe.check(false, "a buffer the function writes");
+    @memset(read_bytes[0..64], 0);
+    const image_info = facet.DescriptorImageInfo{ .image_view = words };
+    const buffer_info = facet.DescriptorBufferInfo{ .buffer = read, .range = facet.WHOLE_SIZE };
+    const writes = [2]facet.WriteDescriptorSet{
+        .{ .dst_set = sets[0].?, .dst_binding = 0, .descriptor_type = .storage_image, .descriptor_count = 1, .image_info = @ptrCast(&image_info) },
+        .{ .dst_set = sets[0].?, .dst_binding = 1, .descriptor_type = .storage_buffer, .descriptor_count = 1, .buffer_info = @ptrCast(&buffer_info) },
+    };
+    fb.UpdateDescriptorSets(device, 2, &writes, 0, null);
+    const pipeline_info = facet.ComputePipelineCreateInfo{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.?, .name = "words" }, .layout = layout.? };
+    var pipeline: ?*facet.Pipeline = null;
+    if (fb.CreateComputePipelines(device, null, 1, @ptrCast(&pipeline_info), @ptrCast(&pipeline)) != .success) return probe.check(false, "the compute pipeline");
+    _ = Probe.keep(&probe.pipelines, pipeline);
+
+    commands = probe.record() orelse return probe.check(false, "a second recording");
+    fb.CmdBindPipeline(commands, .compute, pipeline.?);
+    fb.CmdBindDescriptorSets(commands, .compute, layout.?, 0, 1, @ptrCast(&sets), 0, null);
+    fb.CmdDispatch(commands, 4, 4, 1);
+    if (!probe.submit()) return probe.check(false, "the dispatch submitted");
+    // Each texel's four bytes, the first the lowest: R32_UINT's number.
+    var as_words = true;
+    for (0..16) |k| as_words = as_words and std.mem.readInt(u32, read_bytes[k * 4 ..][0..4], .little) == std.mem.readInt(u32, texel_bytes[k * 4 ..][0..4], .little);
+    probe.check(as_words, "the view of R32_UINT reads each texel's four bytes as one number");
+
+    const back, const back_bytes = probe.buffer(64, facet.BUFFER_USAGE_TRANSFER_DST) orelse return probe.check(false, "a buffer to read the image into");
+    @memset(back_bytes[0..64], 0);
+    commands = probe.record() orelse return probe.check(false, "a third recording");
+    fb.CmdCopyImageToBuffer(commands, made, .general, back, 1, @ptrCast(&whole));
+    if (!probe.submit()) return probe.check(false, "the copy out submitted");
+    probe.checkEqual(0x88BB_AA99, std.mem.readInt(u32, back_bytes[36..40], .little), "and the number it writes is the four bytes the copy finds, the lowest first");
+    var others = true;
+    for (0..64) |k| others = others and (k / 4 == 9 or back_bytes[k] == texel_bytes[k]);
+    probe.check(others, "beside the bytes copied in, where they lie");
+}
+
 fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical: *facet.PhysicalDevice, quiet: bool) struct { u32, u32 } {
     var properties: facet.PhysicalDeviceProperties = undefined;
     fb.GetPhysicalDeviceProperties(physical, &properties);
@@ -6336,6 +6453,7 @@ fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical
     layerChecks(&probe);
     eventChecks(&probe);
     cacheChecks(&probe);
+    mutableChecks(&probe);
     return .{ probe.passed, probe.failed };
 }
 
