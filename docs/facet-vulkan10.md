@@ -127,7 +127,7 @@ cores, in 1.114, item 85's half of two, the cores', in 1.115, item 87
 in 1.116, item 88 in 1.117, item 86 in 1.118, item 48's half of two,
 the cores', in 1.119, item 41 in 1.120, item 89 in 1.121, item 15 in
 1.122, item 11 in 1.123, item 12 in 1.124, item 79 in 1.125, item 32 in
-1.126, and item 31 in 1.127.**
+1.126, item 31 in 1.127, and item 29 in 1.128.**
 Each
 carries a *Done* note below saying what was actually built and where the
 item's own description turned out to be wrong - and several did. Things
@@ -1153,13 +1153,29 @@ minTexelOffset (<=-8) and maxTexelOffset (>=7) are required unconditionally: not
 
 ### 29. Add the fragment-output and compute-dispatch limits
 
-*limits / fragment and compute* &mdash; conformance-blocking, small
+*limits / fragment and compute* &mdash; conformance-blocking, small &mdash; **done in 1.128**
 
 After: maxFragmentInputComponents depends on item 17
 
 Four fields with Core minimums: maxFragmentInputComponents (>=64, the same 8-varying cap as item 17), maxFragmentOutputAttachments (>=4, which most_colors = 4 just meets), maxFragmentCombinedOutputResources (>=4) and maxComputeWorkGroupCount ((65535,65535,65535)). CmdDispatch has no group-count check, so the dispatch limit is probably already met and only needs reporting. The three compute limits facet does report are present and plausible.
 
 > Verified: the limits struct reports max_compute_work_group_size, max_compute_work_group_invocations and max_compute_shared_memory_size (set from _instance.zig:66-68 to {1024,1024,64}, 1024, 16 KiB) and no work-group count; render/_render.zig:36 `pub const most_colors = 4;`; no refusal or cap in command/cmddispatch.zig.
+
+**Done in 1.128**, in 1 line of code and 5 of tests - and most of it was
+done before this list was: item 16's reshape in 1.82 gave the structure
+all four fields and set them, maxFragmentInputComponents to the vertex
+outputs' number (64 since item 17), maxFragmentOutputAttachments to
+`most_colors`, maxFragmentCombinedOutputResources to 0xFFFF, the
+maxPerStageResources that bounds the same descriptors and colours, and
+maxComputeWorkGroupCount to 2^32 - 1 on each axis. That last was a
+promise the dispatcher could not keep: it counts the groups in 64 bits
+and multiplies the count again to cut it into parts (`_compute.dispatch`),
+so the largest dispatch it admitted overflowed. It is 65535 on each axis
+now, as both Mesa drivers have it - llvmpipe's grid (lp_screen.c:167-169)
+and the V3D's dispatcher (`V3D_MAX_CSD_WG_COUNT`, v3d_limits.h:81) - with a
+test that the largest dispatch the limits admit can be counted. The V3D's
+1 for maxFragmentOutputAttachments and maxFragmentCombinedOutputResources,
+under Vulkan's 4, is item 55's: a QPU fragment program writes one colour.
 
 ### 30. Fill the limits that may conformantly stay at their unsupported values, and decide the tessellation and geometry numbers
 

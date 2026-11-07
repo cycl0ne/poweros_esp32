@@ -892,8 +892,10 @@ What that does not bring:
   (`PhysicalDeviceLimits.max_compute_work_group_size`,
   `max_compute_work_group_invocations`,
   `max_compute_shared_memory_size`). A group of more is refused as the
-  pipeline is made (`error_feature_not_present`). The group count a
-  dispatch asks for is not bounded.
+  pipeline is made (`error_feature_not_present`). A dispatch has 65535
+  groups at most along each axis since 1.128, Vulkan's floor and both
+  Mesa drivers' number; until then 2^32 - 1 was said, and a dispatch that
+  large overflowed the count of its groups.
 
 A group runs on a worker's stack, so keep what it puts there small. It
 writes storage buffers and, since 1.31, storage images (below). Compute and

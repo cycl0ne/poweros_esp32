@@ -81,6 +81,16 @@ pub fn dispatch(sys: *ExecBase, pipeline: ?*const Pipeline, resources: *const sh
     _ = sys.ShareWork(&part, &job, parts);
 }
 
+test "every dispatch the limits admit is one whose groups can be counted" {
+    // The groups are counted in 64 bits, and each part's first and last
+    // are that count times the parts it is cut into: the largest dispatch
+    // `max_compute_work_group_count` admits has to leave that room. Until
+    // 1.128 it was 2^32 - 1 on each axis, 2^96 groups.
+    const most = @import("../instance/_instance.zig").limits.max_compute_work_group_count;
+    const groups = @as(u128, most[0]) * most[1] * most[2];
+    try std.testing.expect(groups * most_parts <= std.math.maxInt(u64));
+}
+
 /// A dispatch whose numbers are in a buffer: none where it ends before them.
 pub fn dispatchIndirect(sys: *ExecBase, pipeline: ?*const Pipeline, resources: *const shader.Resources, command: *const _command.DispatchIndirect, counters: *const _query.Counters) void {
     const bytes = _buffer.bytes(command.buffer, command.offset, @sizeOf(facet.DispatchIndirectCommand)) orelse return;

@@ -1699,7 +1699,9 @@ fn CmdDispatch(base: *FacetBase, buffer: *facet.CommandBuffer, x: u32, y: u32, z
 **INPUTS**
 
 - `buffer` - a command buffer recording, outside a render pass.
-- `x`, `y`, `z` - how many groups along each axis.
+- `x`, `y`, `z` - how many groups along each axis: 65535 at most on
+  each, `PhysicalDeviceLimits.max_compute_work_group_count` (since
+  1.128).
 
 **RESULT**
 

@@ -589,8 +589,15 @@ pub const limits: facet.PhysicalDeviceLimits = .{
 
     // --- a compute dispatch ---
     .max_compute_shared_memory_size = max_compute_shared_memory_size,
-    // Nothing caps a dispatch's groups along an axis (CmdDispatch).
-    .max_compute_work_group_count = .{ 0xFFFF_FFFF, 0xFFFF_FFFF, 0xFFFF_FFFF },
+    // The groups along each axis, as both of Mesa's drivers have them:
+    // llvmpipe's grid (`llvmpipe_init_compute_caps`,
+    // src/gallium/drivers/llvmpipe/lp_screen.c:167-169) and the V3D's
+    // dispatcher (`V3D_MAX_CSD_WG_COUNT`, src/broadcom/common/
+    // v3d_limits.h:81), and Vulkan's floor. A dispatch counts its groups
+    // in 64 bits and cuts them into parts (`_compute.dispatch`), which
+    // 65535 cubed, under 2^48, leaves room for; the 2^32 - 1 said until
+    // 1.128 admitted a dispatch of 2^96 groups, which overflowed the count.
+    .max_compute_work_group_count = .{ 65535, 65535, 65535 },
     .max_compute_work_group_invocations = max_compute_work_group_invocations,
     .max_compute_work_group_size = max_compute_work_group_size,
 

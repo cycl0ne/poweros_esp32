@@ -3231,4 +3231,26 @@ pub const LIBRARY_VERSION = 1;
 /// linear tiling and for the transfers alone, and hold the colour each
 /// word is sampled as; and the blit test blits both. Each of 15 changes
 /// put back fails at least one of them.
-pub const LIBRARY_REVISION = 127;
+///
+/// 128: **A dispatch has no more groups than it can count.** Item 29 of
+/// docs/facet-vulkan10.md, the part of it that was left. maxComputeWorkGroupCount
+/// said 2^32 - 1 on each axis, and a dispatch counts its groups in 64
+/// bits and multiplies that count again to cut the groups into parts
+/// (`_compute.dispatch`), so the largest dispatch it admitted, 2^96 groups,
+/// overflowed the count: a safe build stops there, and a fast one runs
+/// the wrong groups. It is 65535 on each axis now, as llvmpipe's grid has
+/// it (`llvmpipe_init_compute_caps`, src/gallium/drivers/llvmpipe/
+/// lp_screen.c:167-169) and the V3D's dispatcher (`V3D_MAX_CSD_WG_COUNT`,
+/// src/broadcom/common/v3d_limits.h:81), which is Vulkan's floor. The
+/// item's other three numbers have been there since 1.82, where the limits
+/// became Vulkan's: maxFragmentInputComponents is the vertex outputs' 64,
+/// maxFragmentOutputAttachments the four colours a subpass holds, and
+/// maxFragmentCombinedOutputResources 0xFFFF, which is maxPerStageResources
+/// and so bounds the same descriptors and colours. The V3D's 1 for each of
+/// the two fragment outputs is item 55's: a QPU fragment program writes
+/// one colour.
+///
+/// Tests: the largest dispatch the limits admit, times the parts a
+/// dispatch is cut into, fits in 64 bits, beside Vulkan's floor of 65535,
+/// which was held already. Putting the old number back fails it.
+pub const LIBRARY_REVISION = 128;
