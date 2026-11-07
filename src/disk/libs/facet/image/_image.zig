@@ -384,12 +384,19 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
     // carries one, so an image of such a format is for a function and
     // nothing else.
     if (wholeNumbers(info.format) and !(physical.can.whole_textures and in_texels)) return null;
-    // Layers are for a function to read or to write: an attachment or
-    // rows have one, and both want the layout a sample reads, which is
-    // `optimal` tiling. An image of layers written through and never
-    // sampled is one of them since 1.55.
+    // Layers want `optimal` tiling, as a format unpacked on the way in
+    // does: a linear image is one layer, which is all Vulkan promises of
+    // one. Until 1.91 an image of layers was also one a function reads or
+    // writes - sampled, or written through and never sampled since 1.55 -
+    // and an attachment had the one. Since 1.91 an attachment may have
+    // them too, a colour attachment's rows or a depth attachment's a
+    // layer after the layer before, for a framebuffer of layers
+    // (CreateFramebuffer); so may an image a transfer alone touches. A 3D
+    // image's slices are not such layers and stay a function's: a pass
+    // draws into a slice through a 2D view of it, which is Vulkan 1.1's
+    // (VK_KHR_maintenance1's IMAGE_CREATE_2D_ARRAY_COMPATIBLE), not 1.0's.
     if ((layers > 1 or _decode.unpacks(info.format)) and info.tiling != .optimal) return null;
-    if (layers > 1 and !in_texels) return null;
+    if (layers > 1 and volume and !in_texels) return null;
     // A compressed image is kept in its blocks, and a float one in its
     // floats, where this device samples them
     // (`Capabilities.kept_compressed`, `kept_floats`); where it
@@ -512,10 +519,13 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
         return image;
     }
     if (info.usage & facet.IMAGE_USAGE_COLOR_ATTACHMENT != 0 and !drawable(info.format)) return null;
-    // Rows of a colour format, of one level.
+    // Rows of a colour format, of one level, and a layer's rows after the
+    // layer before (since 1.91): `rowsAt` finds a layer's first row, and a
+    // framebuffer's view the layer a pass begins at.
     if (info.mip_levels != 1 or textureFormat(info.format) == null) return null;
     image.pitch = std.mem.alignForward(u32, extent.width * pixel, row_alignment);
-    image.bytes = @as(u64, image.pitch) * extent.height;
+    image.layer_bytes = @as(u64, image.pitch) * extent.height;
+    image.bytes = image.layer_bytes * layers;
     // Written through as a storage image as well: the rows are the
     // texture a function writes, over no memory yet (since 1.56).
     if (rows_written) image.texels = texelsOver(&image, @ptrFromInt(_memory.alignment)) catch return null;
@@ -877,8 +887,8 @@ pub fn copyFromBuffer(image: *Image, from: []const u8, region: *const facet.Buff
             switch (image.kind) {
                 .rows, .depth => {
                     // A depth image may have layers since 1.58 and levels
-                    // since 1.63; a rows one has the one of each, at the
-                    // start of its memory.
+                    // since 1.63; a rows one has the one level, and
+                    // layers since 1.91.
                     const rows = rowsAt(image, level, layer);
                     const into = image.data.? + rows.at + @as(usize, y) * rows.pitch + @as(usize, left) * pixel;
                     @memcpy(into[0..source.len], source);

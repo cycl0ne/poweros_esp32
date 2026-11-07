@@ -125,10 +125,18 @@ pub const Player = struct {
     frame: Frame = undefined,
     area: Area = undefined,
     image: *Image = undefined,
+    /// Where in that image's memory the frame's rows begin: the layer its
+    /// view begins at, which the GPU is given and the CPU's caches are kept
+    /// in step over (since 1.91). Mesa's v3dv adds the same to every load
+    /// and store it emits (`v3dv_layer_offset`, v3dv_image.c).
+    image_first: usize = 0,
     /// The image whose rows hold the depth or the stencil the frame keeps,
     /// for the caches either side of the job: null where the pass keeps
     /// neither (since 1.47).
     kept_image: ?*Image = null,
+    /// The same for the kept plane: the level and the layer its view
+    /// names (since 1.91).
+    kept_first: usize = 0,
     /// The occlusion query being counted into, or null for none: what
     /// CmdBeginQuery begins and CmdEndQuery ends (since 1.47).
     counting: ?_queries.Counting = null,
@@ -502,6 +510,10 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
     const list = carve(queue, list_part_bytes, 8) orelse return;
     const color = command.clear_colors[part];
     player.image = image;
+    // The layer the view begins at, an image kept in rows having layers
+    // since 1.91: until then the frame began at the image's first byte
+    // whatever its view said.
+    player.image_first = _image.rowsAt(image, 0, framebuffer.colors[0].base_layer).at;
     player.kept_image = null;
     // `beginBin` stops the hardware's counter, so the frame starts with no
     // word and writes the packet again at the first draw that counts.
@@ -512,7 +524,7 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
     player.frame = .{
         .width = framebuffer.width,
         .height = framebuffer.height,
-        .image = address,
+        .image = address + @as(u32, @intCast(player.image_first)),
         .stride = image.pitch,
         .format = output[0],
         .swap_rb = output[1],
@@ -555,11 +567,17 @@ fn keptOf(queue: *Queue, part: *const _render.Part, framebuffer: *const _render.
         exec.kprintf(queue.device.sys, "v3d: a depth image at %lx is out of its reach\n", .{@intFromPtr(image.data)});
         return null;
     }
+    // The level and the layer the view names, in that level's own rows, as
+    // the cores' `planeOf` has drawn into since 1.58 and 1.63: until 1.91
+    // this device stored a kept plane at the image's first byte, with the
+    // first level's pitch, whatever the view said.
+    const rows = _image.rowsAt(image, view.base_level, view.base_layer);
+    playerOf(queue).kept_first = rows.at;
     return .{
         .buffer = if (keeps_depth) cl.STORE_Z else cl.STORE_STENCIL,
         .format = if (keeps_depth) cl.OUTPUT_D16 else cl.OUTPUT_S8,
-        .image = address,
-        .stride = image.pitch,
+        .image = address + @as(u32, @intCast(rows.at)),
+        .stride = rows.pitch,
         .load = if (keeps_depth) part.loads_depth else part.loads_stencil,
         .store = if (keeps_depth) part.stores_depth else part.stores_stencil,
     };
@@ -575,6 +593,9 @@ fn clearArea(queue: *Queue, color: u32) void {
 /// A part of the attachments cleared in the middle of a pass.
 fn clearAttachment(queue: *Queue, command: *const _command.ClearAttachment) void {
     const player = playerOf(queue);
+    // A framebuffer here has the one layer (`max_framebuffer_layers`), so
+    // a rectangle of any other names nothing of it (since 1.91).
+    if (command.base_layer != 0 or command.layer_count == 0) return;
     const aspect = command.aspect_mask;
     const rect = command.rect;
     const x = @as(i64, rect.offset.x);
@@ -681,12 +702,12 @@ fn endRenderPass(queue: *Queue) void {
     for (player.chunks[0..player.chunk_count]) |*chunk| {
         if (chunk.used != 0) space.rangeToGpu(chunk.block.cpu, chunk.used);
     }
-    space.rangeToGpu(image.data.?, image_bytes);
+    space.rangeToGpu(image.data.? + player.image_first, image_bytes);
     // The depth or the stencil the frame keeps lies in another image: what
     // the CPU wrote there goes out to memory before a load reads it, and
     // what a store writes is dropped from the CPU's caches after.
-    const kept_bytes: usize = if (player.kept_image) |kept| @as(usize, kept.pitch) * player.frame.height else 0;
-    if (player.frame.kept) |kept| if (kept.load) space.rangeToGpu(player.kept_image.?.data.?, kept_bytes);
+    const kept_bytes: usize = if (player.frame.kept) |kept| @as(usize, kept.stride) * player.frame.height else 0;
+    if (player.frame.kept) |kept| if (kept.load) space.rangeToGpu(player.kept_image.?.data.? + player.kept_first, kept_bytes);
 
     sys.ObtainSemaphore(&device.base.v3d_lock);
     defer sys.ReleaseSemaphore(&device.base.v3d_lock);
@@ -704,8 +725,8 @@ fn endRenderPass(queue: *Queue) void {
         if (binned != .done) return lost(player, sys, binned, "binning");
     }
     const rendered = engine.render(render.address, render.here());
-    space.rangeFromGpu(image.data.?, image_bytes);
-    if (player.frame.kept) |kept| if (kept.store) space.rangeFromGpu(player.kept_image.?.data.?, kept_bytes);
+    space.rangeFromGpu(image.data.? + player.image_first, image_bytes);
+    if (player.frame.kept) |kept| if (kept.store) space.rangeFromGpu(player.kept_image.?.data.? + player.kept_first, kept_bytes);
     addTallies(player, space);
     if (rendered != .done) return lost(player, sys, rendered, "rendering");
     if (image.display) |display| {

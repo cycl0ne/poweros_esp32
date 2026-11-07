@@ -178,6 +178,52 @@ pub const Packing = struct {
     const dithered = Packing{ .bytes = 2, .store = &storeDithered, .load = &loadWidened };
 };
 
+/// A rectangle of a surface set to `color`, 0xAARRGGBB, as a tile cleared to
+/// it and stored leaves it: through the surface's own packing, so a 565
+/// pixel is dithered as the tile's would be at that pixel, and the two are
+/// the same bytes. For what a pass clears and never draws into - the layers
+/// of a framebuffer past its first (since 1.91) - which goes into memory
+/// without a tile. Cut to the surface.
+pub fn fillSurface(surface: Surface, area: Rect, color: u32) void {
+    const packing = Packing.of(surface.format);
+    const right = @min(area.x +| area.width, surface.width);
+    const bottom = @min(area.y +| area.height, surface.height);
+    if (area.x >= right or area.y >= bottom) return;
+    const run: [tile_size]u32 = @splat(color);
+    var y = area.y;
+    while (y < bottom) : (y += 1) {
+        var x = area.x;
+        while (x < right) {
+            const count = @min(right - x, run.len);
+            packing.store(surface.pixels + @as(usize, y) * surface.pitch + @as(usize, x) * packing.bytes, &run, count, x, y);
+            x += count;
+        }
+    }
+}
+
+/// A rectangle of a depth plane set to `depth`, as `storeDepth` leaves a
+/// tile cleared to it: the 16 bits low byte first, wherever the plane's
+/// stride puts them. The caller cuts the rectangle to the plane.
+pub fn fillDepth(plane: Attachments.Plane, area: Rect, depth: u16) void {
+    for (area.y..area.y + area.height) |y| {
+        const row = plane.pixels + y * plane.pitch;
+        for (area.x..area.x + area.width) |x| {
+            const at = row + x * plane.stride;
+            at[0] = @truncate(depth);
+            at[1] = @truncate(depth >> 8);
+        }
+    }
+}
+
+/// A rectangle of a stencil plane set to `stencil`, as `storeStencil`
+/// leaves a tile cleared to it. The caller cuts the rectangle to the plane.
+pub fn fillStencil(plane: Attachments.Plane, area: Rect, stencil: u8) void {
+    for (area.y..area.y + area.height) |y| {
+        const row = plane.pixels + y * plane.pitch;
+        for (area.x..area.x + area.width) |x| row[x * plane.stride] = stencil;
+    }
+}
+
 fn storeSame(into: [*]u8, from: [*]const u32, count: u32, _: u32, _: u32) void {
     const pixels: [*]u32 = @ptrCast(@alignCast(into));
     @memcpy(pixels[0..count], from[0..count]);

@@ -310,6 +310,11 @@ const no_resources = shader.Resources{};
 /// drawn over the part, writing what is cleared and no more.
 pub fn clearAttachment(queue: *Queue, command: *const _command.ClearAttachment) void {
     const player = _play.playerOf(queue);
+    // The layers past the framebuffer's first are in the image's rows alone
+    // and are cleared there (since 1.91); the first is in the tiles, and
+    // is cleared here only where the rectangle names it.
+    _play.clearRectangle(player, command);
+    if (command.base_layer != 0 or command.layer_count == 0) return;
     const target = &player.target.?;
     const aspect = command.aspect_mask;
     const clears_stencil = aspect & facet.IMAGE_ASPECT_STENCIL != 0;

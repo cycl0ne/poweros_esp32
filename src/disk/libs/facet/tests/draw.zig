@@ -8787,8 +8787,11 @@ test "textures of layers: arrays, cube maps, 3D, copied a layer at a time; compr
     const usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST;
     const side16 = facet.Extent3D{ .width = 16, .height = 16 };
 
+    // A colour attachment of two layers was the first of these until
+    // 1.91, which made it for a framebuffer of layers ("a framebuffer of
+    // layers" below). Linear tiling still keeps an image to one layer.
     const refused = [_]facet.ImageCreateInfo{
-        .{ .format = .r8g8b8a8_unorm, .extent = side16, .array_layers = 2, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT },
+        .{ .format = .r8g8b8a8_unorm, .extent = side16, .array_layers = 2, .tiling = .linear, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT },
         .{ .format = .r8g8b8a8_unorm, .flags = facet.IMAGE_CREATE_CUBE_COMPATIBLE, .extent = side16, .array_layers = 4, .usage = usage },
         .{ .format = .r8g8b8a8_unorm, .flags = facet.IMAGE_CREATE_CUBE_COMPATIBLE, .extent = .{ .width = 16, .height = 8 }, .array_layers = 6, .usage = usage },
         .{ .format = .r8g8b8a8_unorm, .extent = side16, .array_layers = 257, .usage = usage },
@@ -10654,4 +10657,306 @@ fn expectLike(picture: *const Picture, comptime name: []const u8) !void {
     cwd.createDirPath(testing.io, ".zig-cache/raster") catch {};
     cwd.writeFile(testing.io, .{ .sub_path = ".zig-cache/raster/" ++ name ++ "-facet.ppm", .data = &bytes }) catch {};
     return error.TestExpectedEqual;
+}
+
+// --- framebuffers of layers (since 1.91) -------------------------------------
+
+/// A colour image's layer `layer` at (x, y), 0xAARRGGBB: an image kept in
+/// rows has a layer's rows after the layer before since 1.91.
+fn layerColor(image: *const @import("../image/_image.zig").Image, layer: u32, x: u32, y: u32) u32 {
+    const place = layer * @as(usize, @intCast(image.layer_bytes)) + @as(usize, y) * image.pitch + @as(usize, x) * 4;
+    return std.mem.readInt(u32, image.data.?[place..][0..4], .little);
+}
+
+/// The pixels of a colour image's layer that are `color`.
+fn colorsInLayer(image: *const @import("../image/_image.zig").Image, layer: u32, color: u32) u32 {
+    var found: u32 = 0;
+    for (0..image.height) |y| for (0..image.width) |x| {
+        if (layerColor(image, layer, @intCast(x), @intCast(y)) == color) found += 1;
+    };
+    return found;
+}
+
+/// A depth image's layer `layer` at (x, y), of its first level.
+fn layerDepthAt(image: *const @import("../image/_image.zig").Image, layer: u32, x: u32, y: u32) u16 {
+    const place = layer * @as(usize, @intCast(image.layer_bytes)) + @as(usize, y) * image.pitch + @as(usize, x) * 2;
+    return std.mem.readInt(u16, image.data.?[place..][0..2], .little);
+}
+
+test "a framebuffer of layers: each cleared where the pass clears, the first drawn into, all from the layer a view begins at" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const image_zig = @import("../image/_image.zig");
+    const usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
+
+    // Four layers of rows, each a layer after the one before.
+    const layered = try bench.bareImage(.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 64, .height = 64 }, .array_layers = 4, .usage = usage }, false);
+    const kept = _objects.of(image_zig.Image, layered);
+    try testing.expectEqual(@as(u32, 4), kept.layers);
+    try testing.expectEqual(@as(u64, kept.pitch) * 64, kept.layer_bytes);
+    try testing.expectEqual(kept.layer_bytes * 4, kept.bytes);
+    // Where a program finds a layer: its own offset, one layer apart, and
+    // nothing for a layer the image has not got.
+    var layout: facet.SubresourceLayout = undefined;
+    fb.GetImageSubresourceLayout(device, layered, &.{ .array_layer = 2 }, &layout);
+    try testing.expectEqual(kept.layer_bytes * 2, layout.offset);
+    try testing.expectEqual(kept.layer_bytes, layout.size);
+    try testing.expectEqual(kept.layer_bytes, layout.array_pitch);
+    try testing.expectEqual(@as(u64, kept.pitch), layout.row_pitch);
+    fb.GetImageSubresourceLayout(device, layered, &.{ .array_layer = 4 }, &layout);
+    try testing.expectEqual(@as(u64, 0), layout.size);
+
+    // Every layer grey to begin with, cleared over all four at once.
+    const grey: u32 = 0xFF80_8080;
+    const everything = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_COLOR };
+    var commands = try bench.record();
+    fb.CmdClearColorImage(commands, layered, .general, &clears(grey)[0].color, 1, @ptrCast(&everything));
+    try bench.submit();
+    for (0..4) |layer| try testing.expectEqual(@as(u32, 64 * 64), colorsInLayer(kept, @intCast(layer), grey));
+
+    // A view of the last three, and a framebuffer of two of them: the
+    // image's layers 1 and 2 are its own, 0 and 3 are not.
+    const view = try bench.viewOf(.{
+        .image = layered,
+        .format = .b8g8r8a8_unorm,
+        .view_type = .@"2d_array",
+        .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_COLOR, .base_array_layer = 1, .layer_count = 3 },
+    });
+    // Its pixels as an input attachment reads them are its first layer's.
+    const view_rows = _objects.of(image_zig.ImageView, view).rows;
+    try testing.expectEqual(@intFromPtr(kept.data.?) + @as(usize, @intCast(kept.layer_bytes)), @intFromPtr(view_rows.bytes.?));
+    const pass = try renderPass(&bench, .clear, false);
+    defer fb.DestroyRenderPass(device, pass);
+    var frame: ?*facet.Framebuffer = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateFramebuffer(device, &.{ .render_pass = pass, .attachment_count = 1, .attachments = @ptrCast(&view), .width = 64, .height = 64, .layers = 2 }, &frame));
+    defer fb.DestroyFramebuffer(device, frame);
+
+    const flat = try module(&bench, &Flat.code);
+    defer fb.DestroyShaderModule(device, flat);
+    const flat_layout = try pipelineLayout(&bench, &.{}, 4);
+    defer fb.DestroyPipelineLayout(device, flat_layout);
+    const made, const list = makePipeline(&bench, .{ .module = flat, .layout = flat_layout, .pass = pass });
+    try testing.expectEqual(facet.Result.success, made);
+    defer fb.DestroyPipeline(device, list);
+    const left_half = [6][3]f32{
+        .{ -1, -1, 0.5 }, .{ 0, -1, 0.5 }, .{ -1, 1, 0.5 },
+        .{ -1, 1, 0.5 },  .{ 0, -1, 0.5 }, .{ 0, 1, 0.5 },
+    };
+    const vertex_buffer, const vertex_bytes = try bench.buffer(1024, facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(left_half))], std.mem.asBytes(&left_half));
+
+    const blue: u32 = 0xFF00_00FF;
+    const red: u32 = 0xFFFF_0000;
+    const green: u32 = 0xFF00_FF00;
+    const white: u32 = 0xFFFF_FFFF;
+    const yellow: u32 = 0xFFFF_FF00;
+    const at: u64 = 0;
+    commands = try bench.record();
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame.?, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 1, .clear_values = @ptrCast(&clears(blue)) }, .@"inline");
+    fb.CmdBindPipeline(commands, .graphics, list.?);
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&at));
+    fb.CmdPushConstants(commands, flat_layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &red);
+    fb.CmdDraw(commands, 6, 1, 0, 0);
+    // A corner of the second layer alone, a corner of both, and a corner of
+    // a layer past the framebuffer's last, which is nothing of it.
+    const rects = [3]facet.ClearRect{
+        .{ .rect = .{ .offset = .{ .x = 48 }, .extent = .{ .width = 16, .height = 16 } }, .base_array_layer = 1, .layer_count = 1 },
+        .{ .rect = .{ .offset = .{ .y = 56 }, .extent = .{ .width = 8, .height = 8 } }, .base_array_layer = 0, .layer_count = 2 },
+        .{ .rect = .{ .offset = .{ .x = 20, .y = 20 }, .extent = .{ .width = 4, .height = 4 } }, .base_array_layer = 2, .layer_count = 1 },
+    };
+    for (rects, [3]u32{ green, white, yellow }) |rect, color| {
+        const attachment = facet.ClearAttachment{ .clear_value = clears(color)[0] };
+        fb.CmdClearAttachments(commands, 1, @ptrCast(&attachment), 1, @ptrCast(&rect));
+    }
+    fb.CmdEndRenderPass(commands);
+    try bench.submit();
+
+    // The framebuffer's first layer, the image's second: cleared, the left
+    // half drawn, the corner of both layers white - and the corner that
+    // was the second layer's alone still blue.
+    try testing.expectEqual(red, layerColor(kept, 1, 8, 8));
+    try testing.expectEqual(blue, layerColor(kept, 1, 56, 8));
+    try testing.expectEqual(white, layerColor(kept, 1, 4, 60));
+    try testing.expectEqual(@as(u32, 32 * 64 - 64), colorsInLayer(kept, 1, red));
+    try testing.expectEqual(@as(u32, 32 * 64), colorsInLayer(kept, 1, blue));
+    try testing.expectEqual(@as(u32, 64), colorsInLayer(kept, 1, white));
+    // Its second, the image's third: cleared and never drawn into, with
+    // its own green corner and the white one.
+    try testing.expectEqual(blue, layerColor(kept, 2, 8, 8));
+    try testing.expectEqual(green, layerColor(kept, 2, 56, 8));
+    try testing.expectEqual(white, layerColor(kept, 2, 4, 60));
+    try testing.expectEqual(@as(u32, 64 * 64 - 256 - 64), colorsInLayer(kept, 2, blue));
+    try testing.expectEqual(@as(u32, 256), colorsInLayer(kept, 2, green));
+    try testing.expectEqual(@as(u32, 64), colorsInLayer(kept, 2, white));
+    // The layer before the view's first and the one past the framebuffer's
+    // last, the yellow corner's, are as they were.
+    try testing.expectEqual(@as(u32, 64 * 64), colorsInLayer(kept, 0, grey));
+    try testing.expectEqual(@as(u32, 64 * 64), colorsInLayer(kept, 3, grey));
+
+    // And a transfer reads a layer back as it lies.
+    const back, const back_bytes = try bench.buffer(64 * 64 * 4, facet.BUFFER_USAGE_TRANSFER_DST);
+    const region = facet.BufferImageCopy{ .image_subresource = .{ .base_array_layer = 2 }, .image_extent = .{ .width = 64, .height = 64 } };
+    commands = try bench.record();
+    fb.CmdCopyImageToBuffer(commands, layered, .general, back, 1, @ptrCast(&region));
+    try bench.submit();
+    try testing.expectEqual(green, std.mem.readInt(u32, back_bytes[(8 * 64 + 56) * 4 ..][0..4], .little));
+    try testing.expectEqual(blue, std.mem.readInt(u32, back_bytes[(8 * 64 + 8) * 4 ..][0..4], .little));
+}
+
+test "a framebuffer's layers: none, more than the device takes, and more than a view holds are refused, and all 256 are made" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    var properties: facet.PhysicalDeviceProperties = undefined;
+    fb.GetPhysicalDeviceProperties(bench.physical, &properties);
+    const most = properties.limits.max_framebuffer_layers;
+    try testing.expectEqual(@as(u32, 256), most);
+
+    const usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT;
+    const layered = try bench.bareImage(.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 16, .height = 16 }, .array_layers = most, .usage = usage }, false);
+    const every = try bench.viewOf(.{ .image = layered, .format = .b8g8r8a8_unorm, .view_type = .@"2d_array", .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_COLOR } });
+    const last = try bench.viewOf(.{ .image = layered, .format = .b8g8r8a8_unorm, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_COLOR, .base_array_layer = most - 1, .layer_count = 1 } });
+    const pass = try renderPass(&bench, .clear, false);
+    defer fb.DestroyRenderPass(device, pass);
+
+    const Case = struct { view: *facet.ImageView, layers: u32, result: facet.Result };
+    for ([_]Case{
+        .{ .view = every, .layers = 0, .result = .error_initialization_failed },
+        .{ .view = every, .layers = most + 1, .result = .error_initialization_failed },
+        // A view of one layer holds one: the framebuffer would reach past
+        // the image's last.
+        .{ .view = last, .layers = 2, .result = .error_initialization_failed },
+        .{ .view = last, .layers = 1, .result = .success },
+        .{ .view = every, .layers = most, .result = .success },
+    }) |case| {
+        var frame: ?*facet.Framebuffer = null;
+        try testing.expectEqual(case.result, fb.CreateFramebuffer(device, &.{ .render_pass = pass, .attachment_count = 1, .attachments = @ptrCast(&case.view), .width = 16, .height = 16, .layers = case.layers }, &frame));
+        try testing.expectEqual(case.result == .success, frame != null);
+        fb.DestroyFramebuffer(device, frame);
+    }
+
+    // A depth view short of the layers is refused the same way.
+    const depth_image = try bench.bareImage(.{ .format = .d16_unorm, .extent = .{ .width = 16, .height = 16 }, .array_layers = 2, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT }, false);
+    const one_depth = try bench.viewOf(.{ .image = depth_image, .format = .d16_unorm, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH, .layer_count = 1 } });
+    const both_depths = try bench.viewOf(.{ .image = depth_image, .format = .d16_unorm, .view_type = .@"2d_array", .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH } });
+    const with_depth = try renderPass(&bench, .clear, true);
+    defer fb.DestroyRenderPass(device, with_depth);
+    for ([2]*facet.ImageView{ one_depth, both_depths }, [2]facet.Result{ .error_initialization_failed, .success }) |depth_view, result| {
+        var frame: ?*facet.Framebuffer = null;
+        const views = [2]*facet.ImageView{ every, depth_view };
+        try testing.expectEqual(result, fb.CreateFramebuffer(device, &.{ .render_pass = with_depth, .attachment_count = 2, .attachments = &views, .width = 16, .height = 16, .layers = 2 }, &frame));
+        fb.DestroyFramebuffer(device, frame);
+    }
+
+    // A 3D image is still a function's alone: its slices are not layers a
+    // framebuffer reaches in Vulkan 1.0.
+    var volume: ?*facet.Image = null;
+    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{ .image_type = .@"3d", .format = .b8g8r8a8_unorm, .extent = .{ .width = 16, .height = 16, .depth = 4 }, .usage = usage }, &volume));
+    try testing.expect(volume == null);
+}
+
+test "a framebuffer's other layers cleared to the bytes its first is cleared to: a 565 colour dithered alike, a kept depth, and a loaded one left alone" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const image_zig = @import("../image/_image.zig");
+    const side = facet.Extent3D{ .width = 64, .height = 64 };
+
+    const colors = try bench.bareImage(.{ .format = .r5g6b5_unorm_pack16, .extent = side, .array_layers = 2, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, false);
+    const color_view = try bench.viewOf(.{ .image = colors, .format = .r5g6b5_unorm_pack16, .view_type = .@"2d_array", .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_COLOR } });
+    const kept_colors = _objects.of(image_zig.Image, colors);
+    // Three layers of depth, never sampled - an attachment has layers
+    // since 1.91 - and a view of the last two.
+    const depths = try bench.bareImage(.{ .format = .d16_unorm, .extent = side, .array_layers = 3, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_DST }, false);
+    const depth_view = try bench.viewOf(.{ .image = depths, .format = .d16_unorm, .view_type = .@"2d_array", .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH, .base_array_layer = 1, .layer_count = 2 } });
+    const kept_depths = _objects.of(image_zig.Image, depths);
+
+    // Every layer of depth at 1 to begin with.
+    const furthest = facet.ClearDepthStencilValue{ .depth = 1 };
+    const all_depth = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH };
+    var commands = try bench.record();
+    fb.CmdClearDepthStencilImage(commands, depths, .general, &furthest, 1, @ptrCast(&all_depth));
+    try bench.submit();
+
+    // A pass that clears both and keeps both, and one that loads both.
+    const Ops = struct { load: facet.AttachmentLoadOp };
+    var passes: [2]*facet.RenderPass = undefined;
+    for (&passes, [2]Ops{ .{ .load = .clear }, .{ .load = .load } }) |*made, ops| {
+        const attachments = [2]facet.AttachmentDescription{
+            .{ .format = .r5g6b5_unorm_pack16, .load_op = ops.load, .store_op = .store, .final_layout = .color_attachment_optimal },
+            .{ .format = .d16_unorm, .load_op = ops.load, .store_op = .store, .final_layout = .depth_stencil_attachment_optimal },
+        };
+        const color = facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal };
+        const depth = facet.AttachmentReference{ .attachment = 1, .layout = .depth_stencil_attachment_optimal };
+        const subpass = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&color), .depth_stencil_attachment = &depth };
+        var pass: ?*facet.RenderPass = null;
+        try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &pass));
+        made.* = pass.?;
+    }
+    defer for (passes) |pass| fb.DestroyRenderPass(device, pass);
+    var frame: ?*facet.Framebuffer = null;
+    const views = [2]*facet.ImageView{ color_view, depth_view };
+    try testing.expectEqual(facet.Result.success, fb.CreateFramebuffer(device, &.{ .render_pass = passes[0], .attachment_count = 2, .attachments = &views, .width = 64, .height = 64, .layers = 2 }, &frame));
+    defer fb.DestroyFramebuffer(device, frame);
+
+    // A colour 565 does not hold, so each pixel is dithered, and a depth of
+    // a quarter. Nothing is drawn: the first layer is the tiles' clear and
+    // the second the one written past them.
+    const area = facet.Rect2D{ .extent = .{ .width = 64, .height = 64 } };
+    var values = clears(0xFF33_6699);
+    values[1] = .{ .depth_stencil = .{ .depth = 0.25 } };
+    commands = try bench.record();
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = passes[0], .framebuffer = frame.?, .render_area = area, .clear_value_count = 2, .clear_values = &values }, .@"inline");
+    // Half of the depth, in a corner of the second layer alone.
+    const halfway = facet.ClearAttachment{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH, .clear_value = .{ .depth_stencil = .{ .depth = 0.5 } } };
+    const corner = facet.ClearRect{ .rect = .{ .extent = .{ .width = 16, .height = 16 } }, .base_array_layer = 1, .layer_count = 1 };
+    fb.CmdClearAttachments(commands, 1, @ptrCast(&halfway), 1, @ptrCast(&corner));
+    fb.CmdEndRenderPass(commands);
+    try bench.submit();
+
+    // The two layers of colour, byte for byte the same, and dithered.
+    const row_bytes = 64 * 2;
+    const layer_bytes: usize = @intCast(kept_colors.layer_bytes);
+    var seen: [2]u16 = .{ 0, 0 };
+    var kinds: u32 = 0;
+    for (0..64) |y| {
+        const first = kept_colors.data.?[y * kept_colors.pitch ..][0..row_bytes];
+        const second = kept_colors.data.?[layer_bytes + y * kept_colors.pitch ..][0..row_bytes];
+        try testing.expectEqualSlices(u8, first, second);
+        for (0..64) |x| {
+            const pixel = std.mem.readInt(u16, first[x * 2 ..][0..2], .little);
+            if (kinds == 0 or (kinds == 1 and pixel != seen[0])) {
+                seen[kinds] = pixel;
+                kinds += 1;
+            }
+        }
+    }
+    try testing.expectEqual(@as(u32, 2), kinds);
+
+    // The depth: the image's first layer is not the framebuffer's and stays
+    // at 1, its first is the quarter the tiles stored, and its second the
+    // quarter written past them, with its own corner at a half.
+    const quarter: u16 = @intFromFloat(@round(0.25 * 65535.0));
+    const half: u16 = @intFromFloat(@round(0.5 * 65535.0));
+    for ([4][2]u32{ .{ 0, 0 }, .{ 15, 15 }, .{ 16, 16 }, .{ 63, 63 } }) |p| {
+        try testing.expectEqual(@as(u16, 0xFFFF), layerDepthAt(kept_depths, 0, p[0], p[1]));
+        try testing.expectEqual(quarter, layerDepthAt(kept_depths, 1, p[0], p[1]));
+    }
+    try testing.expectEqual(half, layerDepthAt(kept_depths, 2, 0, 0));
+    try testing.expectEqual(half, layerDepthAt(kept_depths, 2, 15, 15));
+    try testing.expectEqual(quarter, layerDepthAt(kept_depths, 2, 16, 15));
+    try testing.expectEqual(quarter, layerDepthAt(kept_depths, 2, 63, 63));
+
+    // A pass that loads them leaves the second layer as it was: a load op
+    // clears nothing, in any layer.
+    commands = try bench.record();
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = passes[1], .framebuffer = frame.?, .render_area = area, .clear_value_count = 2, .clear_values = &values }, .@"inline");
+    fb.CmdEndRenderPass(commands);
+    try bench.submit();
+    try testing.expectEqual(half, layerDepthAt(kept_depths, 2, 0, 0));
+    try testing.expectEqual(quarter, layerDepthAt(kept_depths, 2, 63, 63));
 }

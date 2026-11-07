@@ -20,7 +20,8 @@ const Image = _image.Image;
 /// INPUTS:
 /// - `device` - the device it was made on.
 /// - `image` - the image.
-/// - `subresource` - which level: 0 for an image in rows.
+/// - `subresource` - which level and which layer: level 0 for an image in
+///   rows.
 /// - `layout` - where its layout is written.
 ///
 /// RESULT:
@@ -28,9 +29,12 @@ const Image = _image.Image;
 ///
 /// BEHAVIOR:
 /// For an image in rows - a linear image, and an attachment - the offset
-/// is 0, `row_pitch` the bytes from one row to the next, `size` the pitch
-/// times the height: with its memory mapped, the program reads and writes
-/// the pixels there. For a texture it is where the level starts and how
+/// is where the layer begins, 0 for the first, `row_pitch` the bytes from
+/// one row to the next, `size` and `array_pitch` the pitch times the
+/// height: with its memory mapped, the program reads and writes the
+/// pixels there. Such an image has layers since 1.91, one after another;
+/// a level or a layer it has not got answers all 0. For a texture it is
+/// where the level starts and how
 /// many bytes it takes, its rows not the program's to know (`row_pitch`
 /// 0). A depth attachment answers since 1.63, its rows being real and
 /// its levels its own: the offset is where the level of the layer begins,
@@ -69,11 +73,16 @@ pub fn GetImageSubresourceLayout(base: *FacetBase, device: *facet.Device, image:
     const made = _objects.of(Image, image);
     layout.* = .{ .offset = 0, .size = 0, .row_pitch = 0, .array_pitch = 0, .depth_pitch = 0 };
     switch (made.kind) {
+        // A layer's rows after the layer before, an attachment having
+        // layers since 1.91: as Mesa's v3dv answers, the offset is the
+        // layer's (`v3dv_layer_offset`) and the array pitch one layer.
         .rows => {
-            layout.size = made.bytes;
+            if (subresource.mip_level != 0 or subresource.array_layer >= made.layers) return;
+            layout.offset = _image.rowsAt(made, 0, subresource.array_layer).at;
+            layout.size = made.layer_bytes;
             layout.row_pitch = made.pitch;
-            layout.array_pitch = made.bytes;
-            layout.depth_pitch = made.bytes;
+            layout.array_pitch = made.layer_bytes;
+            layout.depth_pitch = made.layer_bytes;
         },
         .texture => {
             const level = subresource.mip_level;

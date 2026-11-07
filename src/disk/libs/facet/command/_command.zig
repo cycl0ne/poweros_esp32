@@ -297,6 +297,10 @@ pub const ClearAttachment = extern struct {
     stencil: u32,
     /// Which of the subpass's colour attachments the colour is for.
     output: u32,
+    /// The layers cleared, counted from the one each view begins at
+    /// (`ClearRect.base_array_layer`, `layer_count`, since 1.91).
+    base_layer: u32 = 0,
+    layer_count: u32 = 1,
 };
 
 pub const EndRenderPass = extern struct {

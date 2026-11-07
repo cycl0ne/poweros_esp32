@@ -22,19 +22,33 @@ const ImageView = _image.ImageView;
 /// INPUTS:
 /// - `device` - the device.
 /// - `info` - the render pass, a view for each of its attachments in their
-///   order, and the size drawn in.
+///   order, the size drawn in, and its layers.
 /// - `framebuffer` - where the framebuffer is written; null when it fails.
 ///
 /// RESULT:
 /// `success`; `error_initialization_failed` for views that do not fit the
 /// pass - another number of them, a colour view of an image not made for a
 /// colour attachment or in another format, a depth view of an image not
-/// made for depth, an image smaller than the size, more than one layer;
+/// made for depth, an image smaller than the size, a view of fewer layers
+/// than the framebuffer has - and for no layers, or more than the device
+/// takes (`PhysicalDeviceLimits.max_framebuffer_layers`);
 /// `error_out_of_host_memory`.
 ///
 /// BEHAVIOR:
-/// Each colour attachment's view is of its image's first level. The size
-/// may be smaller than the images: the framebuffer is their top left.
+/// Each colour attachment's view is of its image's first level, and of any
+/// of its layers since 1.91: the pass draws into the layer the view begins
+/// at. The size may be smaller than the images: the framebuffer is their
+/// top left.
+///
+/// A framebuffer has layers since 1.91, as many as the device's
+/// `max_framebuffer_layers` - 256 on the cores, which is what Vulkan asks,
+/// and 1 on the V3D. Each view holds that many from the layer it begins
+/// at, and a pass clears every one of them where an attachment's load op
+/// clears, as CmdClearAttachments clears the ones a rectangle names. What
+/// it draws goes into the first: Vulkan 1.0 has nothing but a geometry
+/// shader's `Layer` to pick another, and no device here has one. That is
+/// how Mesa's lavapipe plays a pass too (`render_clear` and
+/// `handle_clear_attachments`, src/gallium/frontends/lavapipe/lvp_execute.c).
 ///
 /// A depth view names the level and the layer the pass draws into - levels
 /// since 1.63, layers since 1.58 - and it is that level's rows that have
@@ -70,7 +84,10 @@ pub fn CreateFramebuffer(base: *FacetBase, device: *facet.Device, info: *const f
     framebuffer.* = null;
     const owner = _objects.of(Device, device);
     const pass = _objects.of(_render.RenderPass, info.render_pass);
-    if (info.attachment_count != pass.attachment_count or info.layers != 1 or info.width == 0 or info.height == 0) return .error_initialization_failed;
+    if (info.attachment_count != pass.attachment_count or info.width == 0 or info.height == 0) return .error_initialization_failed;
+    // Layers since 1.91, as many as the device takes: what it says, so a
+    // program that reads the limit and keeps to it is never refused here.
+    if (info.layers == 0 or info.layers > owner.physical.properties.limits.max_framebuffer_layers) return .error_initialization_failed;
     const views: []const *facet.ImageView = info.attachments[0..info.attachment_count];
     var plan = _render.Framebuffer{ .device = owner, .width = info.width, .height = info.height };
     for (pass.parts[0..pass.part_count], plan.targets[0..pass.part_count]) |part, *target| {
@@ -80,6 +97,10 @@ pub fn CreateFramebuffer(base: *FacetBase, device: *facet.Device, info: *const f
             const image = color.image;
             if (image.kind != .rows or image.format != format or image.usage & facet.IMAGE_USAGE_COLOR_ATTACHMENT == 0) return .error_initialization_failed;
             if (color.base_level != 0 or image.width < info.width or image.height < info.height) return .error_initialization_failed;
+            // Every layer the framebuffer has, or a pass would clear past
+            // the image's last. Vulkan makes that the program's to see
+            // to; here it is refused instead (since 1.91).
+            if (color.layer_count < info.layers) return .error_initialization_failed;
             target.colors[k] = color;
         }
         const depth: ?*ImageView = if (part.depth) |index| depth: {
@@ -88,7 +109,7 @@ pub fn CreateFramebuffer(base: *FacetBase, device: *facet.Device, info: *const f
             // is that level's rows that have to hold the render area
             // (levels since 1.63).
             const size = _image.levelSize(view.image, view.base_level);
-            if (view.image.kind != .depth or size[0] < info.width or size[1] < info.height) return .error_initialization_failed;
+            if (view.image.kind != .depth or size[0] < info.width or size[1] < info.height or view.layer_count < info.layers) return .error_initialization_failed;
             // A depth the pass keeps is written into the image's memory, so
             // the image wants memory something is behind: a lazily
             // allocated one has none (`readable`).
@@ -98,6 +119,7 @@ pub fn CreateFramebuffer(base: *FacetBase, device: *facet.Device, info: *const f
         } else null;
         target.width = info.width;
         target.height = info.height;
+        target.layers = info.layers;
         target.depth = depth;
     }
     const made = _objects.create(base.sys_base, _render.Framebuffer) orelse return .error_out_of_host_memory;

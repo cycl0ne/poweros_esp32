@@ -801,17 +801,24 @@ test "the three device queries: the largest image of a shape, the render area's 
     try testing.expectEqual(@as(u32, 1), properties.sample_counts);
     try testing.expect(properties.max_resource_size != 0);
 
-    // A colour attachment is one level and one layer, in either tiling,
-    // and its bytes are its rows.
+    // A colour attachment is one level, and its bytes are its rows: one
+    // layer of them in linear tiling, and in optimal tiling the 256 a
+    // framebuffer may reach since 1.91, a layer's rows after the layer
+    // before.
     try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"2d", .linear, facet.IMAGE_USAGE_COLOR_ATTACHMENT, 0, &properties));
     try testing.expectEqual(@as(u32, 1), properties.max_mip_levels);
     try testing.expectEqual(@as(u32, 1), properties.max_array_layers);
     try testing.expectEqual(@as(u64, 8192 * 4 * 8192), properties.max_resource_size);
-    // A depth attachment has the levels 1.63 gave it, and one layer
-    // until it is sampled as well, which 1.58 gave 256 of.
+    try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, .b8g8r8a8_unorm, .@"2d", .optimal, facet.IMAGE_USAGE_COLOR_ATTACHMENT, 0, &properties));
+    try testing.expectEqual(@as(u32, 1), properties.max_mip_levels);
+    try testing.expectEqual(@as(u32, 256), properties.max_array_layers);
+    try testing.expectEqual(@as(u64, 8192 * 4 * 8192 * 256), properties.max_resource_size);
+    // A depth attachment has the levels 1.63 gave it, and the layers 1.58
+    // gave one sampled as well, which since 1.91 one never sampled has
+    // too, for a framebuffer of layers.
     try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, .d16_unorm, .@"2d", .optimal, facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT, 0, &properties));
     try testing.expectEqual(@as(u32, 14), properties.max_mip_levels);
-    try testing.expectEqual(@as(u32, 1), properties.max_array_layers);
+    try testing.expectEqual(@as(u32, 256), properties.max_array_layers);
     try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, .d16_unorm, .@"2d", .optimal, facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED, 0, &properties));
     try testing.expectEqual(@as(u32, 14), properties.max_mip_levels);
     try testing.expectEqual(@as(u32, 256), properties.max_array_layers);

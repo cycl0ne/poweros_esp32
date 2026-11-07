@@ -179,21 +179,40 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
             const offsets = compile.profile.takesImageOperand(.const_offset);
             said.min_texel_offset = if (offsets) _instance.limits.min_texel_offset else 0;
             said.max_texel_offset = if (offsets) _instance.limits.max_texel_offset else 0;
-            // The varyings a vertex hands on, which on this device is a
-            // real ceiling and not a gap to be closed by writing a larger
-            // number: ten usable registers hold eight varyings and the
-            // four floats a program needs of its own (compile.zig), and
-            // the vertex programs are *pregenerated*, one for each count,
-            // `programs.vertex` being `qpu.most_varyings + 1` long. So
-            // this is read off the compiler's own cap for the same reason
-            // the texel offsets are read off its profile: the cores report
-            // `shader.MAX_VARYINGS` since 1.90, and without these two
-            // lines this device would inherit 64 and refuse every pipeline
-            // above 8 at creation while advertising it takes them. Item 17
-            // of docs/facet-vulkan10.md, which keeps this device's two
-            // rows as honest shortfalls.
+            // The varyings a vertex hands on: eight, which is the limit of
+            // this library's own QPU code and not of the V3D. The hardware
+            // takes 64 - Mesa's v3dv reports `16 * 4` for both rows on this
+            // same V3D 7.1 (src/broadcom/vulkan/v3dv_device.c, from
+            // `V3D_MAX_FS_INPUTS` in src/broadcom/common/v3d_limits.h), its
+            // compiler writing each output into the VPM as it is made
+            // (`vir_STVPMV`, src/broadcom/compiler/nir_to_vir.c). This
+            // compiler instead keeps every varying in one of ten usable
+            // registers beside the four floats a program needs of its own
+            // (compile.zig), and the vertex programs are pregenerated, one
+            // for each count, `programs.vertex` being
+            // `qpu.most_varyings + 1` long. So the number is read off the
+            // compiler's own cap, for the reason the texel offsets are read
+            // off its profile: the cores report `shader.MAX_VARYINGS` since
+            // 1.90, and without these two lines this device would inherit
+            // 64 and refuse every pipeline above 8 while advertising it
+            // takes them. It rises when the compiler's vertex outputs are
+            // ported from Mesa's, not by writing a larger number here.
+            // Item 17 of docs/facet-vulkan10.md. (1.90 called this a real
+            // ceiling of the hardware, which Mesa shows it is not.)
             said.max_vertex_output_components = compile.most_varyings;
             said.max_fragment_input_components = compile.most_varyings;
+            // One layer a framebuffer. A frame here is one pass of the
+            // binner and one render control list over one layer; v3dv
+            // takes 256 by emitting `NUMBER_OF_LAYERS` before the binning
+            // mode, sizing the tile lists and the tile state for every
+            // layer, and walking the render list once a layer at that
+            // layer's tile lists and addresses (`job_emit_binning_prolog`
+            // and `cmd_buffer_emit_render_pass_layer_rcl`,
+            // src/broadcom/vulkan/v3dvx_cmd_buffer.c), which is the port
+            // this number waits on. What it already does is begin at the
+            // layer a view names, as v3dv's `v3dv_layer_offset` does
+            // (`_play.zig`, since 1.91). Item 22.
+            said.max_framebuffer_layers = 1;
             break :said said;
         },
     };

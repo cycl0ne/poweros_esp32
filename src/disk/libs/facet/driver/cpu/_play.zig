@@ -104,6 +104,8 @@ pub const Player = struct {
     /// The query the work is counted into, between CmdBeginQuery and
     /// CmdEndQuery; null while nothing counts.
     query: ?_queries.Counting = null,
+    /// What the pass reaches past its framebuffer's first layer with.
+    layered: Layered = .{},
 
     /// How colour attachment `output` is blended into by `pipeline`: its
     /// own of the pipeline's mixings, with the constants a command set
@@ -320,12 +322,36 @@ fn countersOf(player: *const Player) *const _query.Counters {
     return if (player.query) |*counting| &counting.counters else &_query.none;
 }
 
+/// What a pass reaches past its framebuffer's first layer with (since
+/// 1.91): the part's framebuffer, its colour attachments, the render area
+/// cut to the framebuffer, and which of the depth's planes the pass keeps in
+/// the image. Nothing draws into those layers, so this is all a clear of
+/// them needs.
+pub const Layered = struct {
+    framebuffer: ?*const _render.Target = null,
+    colors: u32 = 0,
+    area: raster.Rect = .{},
+    depth: bool = false,
+    stencil: bool = false,
+};
+
 /// The surface a framebuffer's colour attachment is: its image's memory,
-/// row after row. Null for an image not bound.
+/// row after row, from the layer its view begins at. Null for an image not
+/// bound.
 fn surfaceOf(framebuffer: *const _render.Target, output: u32) ?raster.Surface {
-    const image = framebuffer.colors[output].image;
+    return surfaceAt(framebuffer.colors[output], 0);
+}
+
+/// The same `layer` layers past the one the view begins at. An image kept in
+/// rows has layers since 1.91, and until then this was the image's first
+/// layer whatever its view said: what drew into a view of the second layer
+/// went into the first, the one place the depth's `planeOf` was already
+/// right about.
+fn surfaceAt(view: *const _image.ImageView, layer: u32) ?raster.Surface {
+    const image = view.image;
+    const data = image.data orelse return null;
     return .{
-        .pixels = image.data orelse return null,
+        .pixels = data + _image.rowsAt(image, 0, view.base_layer + layer).at,
         .pitch = image.pitch,
         .width = image.width,
         .height = image.height,
@@ -342,8 +368,14 @@ fn surfaceOf(framebuffer: *const _render.Target, output: u32) ?raster.Surface {
 /// pixel, or its stencil, wherever that lies in the pixel's bytes
 /// (`_image.stencilOffset`). Null where there is nothing in memory to read
 /// or write.
-fn planeOf(view: ?*const _image.ImageView, which: enum { depth, stencil }) ?raster.Attachments.Plane {
-    const held = view orelse return null;
+fn planeOf(view: ?*const _image.ImageView, which: Aspect) ?raster.Attachments.Plane {
+    return planeAt(view orelse return null, which, 0);
+}
+
+const Aspect = enum { depth, stencil };
+
+/// The same `layer` layers past the one the view begins at (since 1.91).
+fn planeAt(held: *const _image.ImageView, which: Aspect, layer: u32) ?raster.Attachments.Plane {
     const image = held.image;
     const format = image.format;
     const stride = _image.bytesOf(format);
@@ -356,8 +388,79 @@ fn planeOf(view: ?*const _image.ImageView, which: enum { depth, stencil }) ?rast
     // The level and the layer the view names, a depth image having layers
     // since 1.58 and levels since 1.63: a pass draws into the ones its
     // framebuffer's view begins at, in that level's own rows.
-    const rows = _image.rowsAt(image, held.base_level, held.base_layer);
+    const rows = _image.rowsAt(image, held.base_level, held.base_layer + layer);
     return .{ .pixels = data + rows.at + at, .pitch = rows.pitch, .stride = stride };
+}
+
+/// The layers of a framebuffer past its first, cleared as a part begins where
+/// an attachment's load op clears (since 1.91). Nothing draws into them -
+/// Vulkan 1.0 has only a geometry shader's `Layer` to pick one, and no device
+/// here has a geometry shader - so the clear is all the pass does to them,
+/// and it goes straight into the image's rows rather than through the
+/// tiles. This is Mesa's lavapipe: `render_clear` (lvp_execute.c) clears a
+/// surface over every layer of the view the framebuffer has before anything
+/// is drawn. What is written is what a tile cleared and stored leaves
+/// (`raster.fillSurface`), so the first layer and the rest of a framebuffer
+/// cleared alike are the same bytes, a 565 one dithered and all.
+///
+/// A depth or a stencil is written where the part keeps it in the image and
+/// does not load it, which is the one case its other layers outlive the pass
+/// with something defined in them.
+fn clearLayers(layered: Layered, part: *const _render.Part, command: *const _command.BeginRenderPass, first_clear: u32) void {
+    const framebuffer = layered.framebuffer orelse return;
+    if (framebuffer.layers <= 1) return;
+    for (0..layered.colors) |k| {
+        if (part.color_loads[k] != .clear) continue;
+        const color = command.clear_colors[@min(first_clear + k, _render.most_colors - 1)];
+        for (1..framebuffer.layers) |layer| {
+            const surface = surfaceAt(framebuffer.colors[k], @intCast(layer)) orelse break;
+            raster.fillSurface(surface, layered.area, color);
+        }
+    }
+    const view = framebuffer.depth orelse return;
+    const clears_depth = layered.depth and part.stores_depth and !part.loads_depth;
+    const clears_stencil = layered.stencil and part.stores_stencil and !part.loads_stencil;
+    if (!clears_depth and !clears_stencil) return;
+    for (1..framebuffer.layers) |layer| {
+        if (clears_depth) if (planeAt(view, .depth, @intCast(layer))) |plane| raster.fillDepth(plane, layered.area, @intCast(command.clear_depth));
+        if (clears_stencil) if (planeAt(view, .stencil, @intCast(layer))) |plane| raster.fillStencil(plane, layered.area, @intCast(command.clear_stencil));
+    }
+}
+
+/// CmdClearAttachments' rectangle, over the layers it names past the
+/// framebuffer's first (since 1.91): the first is in the tiles and cleared by
+/// drawing (`_draw.clearAttachment`), and these are in the image's rows and
+/// cleared in them, as `clearLayers` clears them for a load op. Layers past
+/// the framebuffer's last are left alone, as is what lies outside the render
+/// area, which the tiles never reach either. lavapipe's
+/// `handle_clear_attachments` is the same over `clear_attachment_layers`.
+pub fn clearRectangle(player: *const Player, command: *const _command.ClearAttachment) void {
+    const layered = player.layered;
+    const framebuffer = layered.framebuffer orelse return;
+    const first = @max(command.base_layer, 1);
+    const end = @min(command.base_layer +| command.layer_count, framebuffer.layers);
+    if (first >= end) return;
+    const rect = command.rect;
+    const area = layered.area;
+    const left: u32 = @intCast(std.math.clamp(@as(i64, rect.offset.x), area.x, area.x + area.width));
+    const top: u32 = @intCast(std.math.clamp(@as(i64, rect.offset.y), area.y, area.y + area.height));
+    const right: u32 = @intCast(std.math.clamp(@as(i64, rect.offset.x) + rect.extent.width, left, area.x + area.width));
+    const bottom: u32 = @intCast(std.math.clamp(@as(i64, rect.offset.y) + rect.extent.height, top, area.y + area.height));
+    if (left == right or top == bottom) return;
+    const cut = raster.Rect{ .x = left, .y = top, .width = right - left, .height = bottom - top };
+    const aspect = command.aspect_mask;
+    // The colour of this part's own attachment, as the tiles' clear masks
+    // every other one out.
+    const color = aspect & facet.IMAGE_ASPECT_COLOR != 0 and command.output == player.resources.output and layered.colors != 0;
+    const depth = aspect & facet.IMAGE_ASPECT_DEPTH != 0 and layered.depth;
+    const stencil = aspect & facet.IMAGE_ASPECT_STENCIL != 0 and layered.stencil;
+    for (first..end) |layer| {
+        const at: u32 = @intCast(layer);
+        if (color) if (surfaceAt(framebuffer.colors[0], at)) |surface| raster.fillSurface(surface, cut, command.color);
+        const view = framebuffer.depth orelse continue;
+        if (depth) if (planeAt(view, .depth, at)) |plane| raster.fillDepth(plane, cut, _render.depthOf(.{ .depth = command.depth, .stencil = 0 }));
+        if (stencil) if (planeAt(view, .stencil, at)) |plane| raster.fillStencil(plane, cut, @truncate(command.stencil));
+    }
 }
 
 fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, output: u32) void {
@@ -432,12 +535,22 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, outp
     player.target.?.begin();
     player.drawn = null;
     player.drawing = true;
+    // The framebuffer's other layers, which no tile reaches (since 1.91).
+    player.layered = .{
+        .framebuffer = framebuffer,
+        .colors = colors,
+        .area = area,
+        .depth = plane != null,
+        .stencil = stencil_plane != null,
+    };
+    clearLayers(player.layered, render_pass, command, first_clear);
 }
 
 fn endRenderPass(player: *Player) void {
     if (!player.drawing) return;
     player.drawing = false;
     player.drawn = null;
+    player.layered = .{};
     _ = player.target.?.finish();
 }
 

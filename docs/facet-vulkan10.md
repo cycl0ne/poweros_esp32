@@ -118,22 +118,27 @@ refinement - finish the compiler, no fallback - moves onto the main line.
 items 14, 16, 49 and 77 in 1.82, item 52's half of two in 1.83, item 18
 in 1.84, item 19 in 1.85, item 21 in 1.86, item 28's half of two in 1.87,
 items 82 and 83 in 1.87 and 1.88 - both found while doing other items -
-item 61's first row of eight in 1.89, and item 17's half of two in
-1.90.** Each
+item 61's first row of eight in 1.89, item 17's half of two in 1.90, and
+item 22's half of two in 1.91.** Each
 carries a *Done* note below saying what was actually built and where the
 item's own description turned out to be wrong - and several did. Things
 found while doing them became the items at the end of the list: 77 and 78
 from 1.80 and 1.81, and 79, 80 and 81 from 1.82.
 
-Items 52, 28 and 17 are the ones split between devices: the cores draw
-every sampler as of 1.83, sample at a constant texel offset as of 1.87 and
-carry 64 varyings as of 1.90, and the V3D does none of the three - so the
-magenta item 52 is about now belongs to item 54 alone, item 28's remainder
-is a QPU back end that refuses the operand at pipeline creation, and item
-17's remainder is not a gap at all but a real ceiling of eight, reported as
-eight and refused above it.
+Items 52, 28, 17 and 22 are the ones split between devices: the cores draw
+every sampler as of 1.83, sample at a constant texel offset as of 1.87,
+carry 64 varyings as of 1.90 and take framebuffers of 256 layers as of
+1.91, and the V3D does none of the four - so the magenta item 52 is about
+now belongs to item 54 alone, item 28's remainder is a QPU back end that
+refuses the operand at pipeline creation, item 17's is a vertex program
+that keeps its varyings in registers and so stops at eight, and item 22's
+is a render list played once a frame rather than once a layer.
 
-In all three the V3D's limit is **derived from its own compiler** rather
+None of the four is the hardware's limit. Mesa's v3dv runs Vulkan on this
+same V3D 7.1 with 64 varyings, texel offsets of -8 to 7 and 256
+framebuffer layers (`src/broadcom/vulkan/v3dv_device.c`), so each
+remainder is the port of named Mesa code, and the items say which. Until
+then the V3D's limit is **derived from its own compiler or driver** rather
 than written down, so the number cannot drift from what the device
 accepts. That pattern started as item 28's answer to one field and is now
 how this split is done.
@@ -493,7 +498,7 @@ Found independently by: limits, conformance-path (the ~85-field fill is the same
 
 ### 17. Raise maxVertexOutputComponents from 8 to 64, and report maxFragmentInputComponents
 
-*limits / varyings* &mdash; **the cores' half done in 1.90**; the V3D's is a real ceiling, not a gap
+*limits / varyings* &mdash; **the cores' half done in 1.90**; the V3D's is the port of Mesa's VPM writes for vertex outputs
 
 After: The limits reshape
 
@@ -540,10 +545,17 @@ The clipped case also asserts that more primitives came out of clipping
 than went in, which is how the test knows it went *through* the clipper
 rather than past it.
 
-**The V3D keeps its eight, and that is the honest answer rather than a
-to-do.** Ten usable registers hold eight varyings and the four floats a
+**The V3D keeps its eight for now, and they are this compiler's, not the
+hardware's.** 1.90 called them a real ceiling, and Mesa says otherwise:
+v3dv reports `16 * 4` for both limits on this same V3D 7.1
+(`v3dv_device.c`, from `V3D_MAX_FS_INPUTS = 64` in
+`src/broadcom/common/v3d_limits.h`), its compiler storing each vertex
+output into the VPM as it is computed (`vir_STVPMV`, `nir_to_vir.c`)
+rather than holding them all in registers. facet's QPU code does hold
+them: ten usable registers carry eight varyings and the four floats a
 program needs of its own, and the vertex programs are pregenerated, one for
-each count. So `driver/v3d/driver.zig` reads both limits off
+each count. Raising the eight is porting those VPM writes, not writing a
+larger number. Until then `driver/v3d/driver.zig` reads both limits off
 `compile.most_varyings` - the texel-offset pattern from item 28, twelve
 lines above it in the same file - and this device reports 8 where the cores
 report 64. Without those two lines it would have inherited 64 and refused
@@ -638,7 +650,8 @@ already loud, ending in `error_feature_not_present` at pipeline creation,
 and the right limit override is the pattern item 28 established twelve
 lines away in the same file: `said.max_vertex_output_components =
 compile.most_varyings`, so the number follows the capability and cannot
-drift when the register allocator moves the real ceiling. The V3D's row
+drift when the compiler's cap moves - a cap that is facet's and not the
+hardware's, as the Done note above says. The V3D's row
 stays a shortfall after this item, honestly reported - the same shape items
 52 and 28 settled into. One thing to harden while there: the V3D indexes a
 table of pregenerated vertex programs by varying count, and that table is
@@ -788,9 +801,81 @@ Found independently by: limits, formats, conformance-path (which listed it as an
 
 ### 22. Support layered framebuffers to 256 layers and report maxFramebufferLayers
 
-*limits / render pass* &mdash; conformance-blocking, medium (**large** until the rescope below)
+*limits / render pass* &mdash; **the cores' half done in 1.91**; the V3D's is the port of v3dv's per-layer render list, about 90 lines and a board check
 
 After: The limits reshape
+
+**Done on the cores in 1.91, as Mesa's lavapipe does it.** The rescope
+below held: nothing picks a layer, so a pass clears every layer and draws
+into the first, and the work was accepting, reporting and clearing - plus
+the two traps it named, both fixed and both tested.
+
+- *Images.* A colour attachment's rows, an input attachment's, a
+  transfer-only image's and an unsampled depth attachment's may have
+  layers in optimal tiling, a layer's rows after the layer before
+  (`layer_bytes`), so `rowsAt`, `readTexel`, `writeTexel`,
+  CmdClearColorImage and the copies took them unchanged. Linear tiling
+  stays one layer, and a 3D image stays a function's alone: drawing into a
+  slice goes through a 2D view of it, which is VK_KHR_maintenance1's, not
+  1.0's. GetPhysicalDeviceImageFormatProperties follows, being CreateImage's
+  own rules asked, so a colour attachment now answers 256 layers.
+- *Framebuffers.* CreateFramebuffer takes 1 to the device's
+  `max_framebuffer_layers` and refuses a colour or depth view of fewer
+  layers than the framebuffer has - the memory-safety hole named below,
+  where a pass would have cleared past the image's last layer.
+  `max_framebuffer_layers` is 256, `max_image_array_layers` itself, which
+  is also what v3dv reports on this GPU (`v3dv_device.c`).
+- *Where a pass draws.* `surfaceOf` begins at the view's `base_layer` (the
+  trap below), a rows view's input-attachment pixels begin there too, and
+  GetImageSubresourceLayout answers a rows image's layer with its offset
+  and an array pitch of one layer.
+- *The clears, ported.* lavapipe makes each attachment's surface over
+  `framebuffer.layers` layers from the view's base (`handle_begin_rendering`
+  through `add_img_view_surface`, lvp_execute.c:1947-2014; Mesa's render
+  pass runtime begins with `layerCount = framebuffer->layers`,
+  vk_render_pass.c), clears all of them for a CLEAR load op
+  (`render_clear`, :1572-1633), and clears a `VkClearRect`'s
+  `[baseArrayLayer, baseArrayLayer + layerCount)` from that base
+  (`handle_clear_attachments` over `clear_attachment_layers`, :1541-1566
+  and :3816-3868). facet does the same: the first layer in the tiles, as
+  before, and the layers past it straight into the image's rows
+  (`clearLayers` and `clearRectangle`, driver/cpu/_play.zig), through the
+  packing a tile is stored with (`raster.fillSurface`, `fillDepth`,
+  `fillStencil`), so a 565 layer is dithered exactly as the first and the
+  two are the same bytes - which a test compares. A depth or stencil is
+  cleared in the other layers where the part keeps it in the image and
+  does not load it. A rectangle of the second layer alone no longer clears
+  the first (the layer fields used to be dropped), and one of layers past
+  the framebuffer's last clears nothing.
+
+Every one of these fixes was reverted in turn against the new tests and
+each made a named assertion fail.
+
+**The V3D's half.** It reports 1 (`driver/v3d/driver.zig`). What it does
+already, since 1.91, is begin a frame at the layer and the level a view
+names: until then it drew a colour frame and stored a kept depth or stencil
+at the image's first byte, with the first level's pitch, whatever the view
+said - although depth views had named a layer since 1.58 and a level since
+1.63, which the cores honoured. That is v3dv's `v3dv_layer_offset(image,
+level, layer)` (v3dv_image.c:379), added to the frame's address and to the
+cache ranges either side of the job. It is compiled for the board and not
+yet run there. 256 layers is the port of four pieces of v3dvx_cmd_buffer.c:
+`NUMBER_OF_LAYERS` ahead of `TILE_BINNING_MODE_CFG`
+(`job_emit_binning_prolog`, :82-91); tile lists and tile state for every
+layer, at `V3D_TILE_ALLOC_INITIAL_BLOCK_SIZE * layer * draw_tiles_x *
+draw_tiles_y` (:762-765, :954-957); and the render list walked once a layer,
+each with `MULTICORE_RENDERING_TILE_LIST_SET_BASE`, its own generic tile
+list at that layer's addresses and the supertile coordinates
+(`cmd_buffer_emit_render_pass_layer_rcl`, :750-799, looped at :1291-1294).
+In facet that is a `cl.numberOfLayers` packet writer, `beginBin` and
+`writeRender` in `driver/v3d/frame.zig` looping over layers, the two sizes
+in `driver/v3d/_play.zig` multiplied by them, and a frame field or two:
+about 50 lines. For CmdClearAttachments v3dv draws a quad a layer through
+a geometry shader writing `gl_Layer` from a push constant
+(v3dv_meta_clear.c:361-410); facet's V3D has no geometry stage, so its
+layers past the first would be cleared as on the cores, into the rows with
+the cache ranges kept, about 40 lines. Then a board check in facetprobe,
+and the pin on the V3D's own count.
 
 **Rescoped in 1.89 against the code, and the premise this item is missing
 changes what it is.** Nothing in facet can select a layer: there is no
@@ -1581,6 +1666,17 @@ The limits are not where to fix it. Reporting 1 would leave
 indistinguishable to the probe; the defect is that the flag exists at all,
 a Vulkan subpass with several colour attachments meaning what the flag
 means. Fold into item 51's decision about facet's own fields and flags.
+
+**Found in 1.91, by reading and not yet by a test:** inside a part that
+draws its subpass's colours together, CmdClearAttachments clears the first
+colour and no other. `_draw.clearAttachment` draws its quad with
+`State.color_count` at its default of 1 and writes the colour only where
+`command.output == player.resources.output`, which is 0 for that one part,
+so a clear of colour attachment 1 writes nothing anywhere; 1.91's layered
+clear (`clearRectangle`) keeps to the same rule rather than differ from the
+tiles. Without the flag every colour has a part of its own and the clear is
+right. lavapipe clears whichever attachment `colorAttachment` names
+(`handle_clear_attachments`), which is what removing the flag gives.
 
 > `src/disk/libs/facet/render/createrenderpass.zig` splits a subpass into
 > parts; `src/disk/libs/facet/pipeline/creategraphicspipelines.zig` refuses

@@ -1717,7 +1717,8 @@ pub const LIBRARY_VERSION = 1;
 /// comptime bound and the V3D's QPU ceiling, with nothing tying them
 /// together. Four of them read `shader.MAX_VARYINGS` now, in the SDK
 /// beside `MAX_SETS`; the fifth is the V3D's and stays its own, because
-/// it is a real ceiling.
+/// it is that device's compiler's cap. (This said "a real ceiling" until
+/// 1.91, which Mesa shows it is not: see 91.)
 ///
 /// `most_stride` in `driver/_vertices.zig` was the one way this could
 /// have shipped looking done, and it was worse than it looked: a bare 64
@@ -1773,4 +1774,66 @@ pub const LIBRARY_VERSION = 1;
 ///
 /// The pin in tests/vulkan_limits.zig is 8: item 22's one row and item
 /// 61's seven.
-pub const LIBRARY_REVISION = 90;
+///
+/// 91: **Framebuffers of 256 layers on the cores, played as Mesa's lavapipe
+/// plays them.**
+///
+/// `maxFramebufferLayers` was 1 against a required 256, and
+/// CreateFramebuffer refused any other number. Item 22 of
+/// docs/facet-vulkan10.md, the cores' half of two, and the first item done
+/// as a port: the design is lavapipe's
+/// (src/gallium/frontends/lavapipe/lvp_execute.c, Mesa cbf692da) and the
+/// numbers are v3dv's.
+///
+/// Nothing in Vulkan 1.0 picks a layer but a geometry shader's `Layer`, and
+/// no device here has a geometry stage, so a pass draws into the first
+/// layer and clears all of them. lavapipe makes each attachment's surface
+/// over the framebuffer's layers from the view's base
+/// (`handle_begin_rendering`), clears every one for a CLEAR load op
+/// (`render_clear`), and clears a `VkClearRect`'s `[baseArrayLayer,
+/// baseArrayLayer + layerCount)` from that base (`handle_clear_attachments`
+/// over `clear_attachment_layers`). facet does the same: the first layer in
+/// the tiles as before, and the layers past it straight into the image's
+/// rows (`clearLayers` and `clearRectangle`, driver/cpu/_play.zig), through
+/// the packing a tile is stored with (`raster.fillSurface`, `fillDepth`,
+/// `fillStencil`), so a 565 layer is dithered exactly as the first and a
+/// test holds the two to the same bytes.
+///
+/// To have layers at all, an image kept in rows - a colour attachment, an
+/// input attachment, an image a transfer alone touches - and a depth
+/// attachment never sampled may have them in optimal tiling, a layer's rows
+/// after the one before. Every path that read a layer already went through
+/// `rowsAt` and took them unchanged; a swapchain image says its one layer's
+/// size too. A 3D image is still a function's alone, a slice being drawn
+/// into through a 2D view of it, which is Vulkan 1.1's. CreateFramebuffer
+/// takes 1 to the device's own limit and refuses a view of fewer layers than
+/// the framebuffer has, which would have cleared past the image's last.
+///
+/// Two things were already wrong. `surfaceOf` ignored the colour view's
+/// `base_layer`, so what drew into a view of the second layer would have
+/// gone into the first: unreachable while no colour image had a second
+/// layer, and invisible to every test this item invites except a draw read
+/// back from both layers, which is the one written. And CmdClearAttachments
+/// dropped `ClearRect`'s layer fields, so a rectangle of the second layer
+/// alone would have cleared the first.
+///
+/// The V3D reports 1. Its render list is played once a frame, and v3dv's
+/// once a layer (`cmd_buffer_emit_render_pass_layer_rcl`,
+/// src/broadcom/vulkan/v3dvx_cmd_buffer.c) is the port that number waits
+/// on, sized in item 22. What it does since 1.91 is begin at the layer and
+/// the level a view names, as v3dv adds `v3dv_layer_offset` to every load
+/// and store: until now it drew a colour frame, and stored a kept depth or
+/// stencil, at the image's first byte with the first level's pitch,
+/// whatever the view said - although depth views have named a layer since
+/// 1.58 and a level since 1.63. The cache ranges either side of the job
+/// follow the same offset. Compiled for the board, not yet run on it.
+///
+/// Mesa corrects 1.90 as well: v3dv carries 64 varyings on this same V3D
+/// 7.1 (`v3dv_device.c`), so the V3D's 8 are this library's QPU code -
+/// every varying held in a register, the programs pregenerated - and not
+/// the hardware's ceiling 1.90 called them. The comments say so now, and
+/// item 17 names the port: Mesa's compiler stores each vertex output into
+/// the VPM as it is made (`vir_STVPMV`, src/broadcom/compiler).
+///
+/// The pin in tests/vulkan_limits.zig is 7, all of them item 61's.
+pub const LIBRARY_REVISION = 91;

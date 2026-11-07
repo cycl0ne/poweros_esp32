@@ -93,6 +93,11 @@ pub const RenderPass = struct {
 pub const Target = struct {
     width: u32,
     height: u32,
+    /// The framebuffer's layers, of each view from the layer it begins at
+    /// (since 1.91). A pass clears every one of them and draws into the
+    /// first: in Vulkan 1.0 only a geometry shader's `Layer` picks
+    /// another, and no device here has a geometry shader.
+    layers: u32 = 1,
     colors: [most_colors]*ImageView = undefined,
     color_count: u32 = 1,
     depth: ?*ImageView,

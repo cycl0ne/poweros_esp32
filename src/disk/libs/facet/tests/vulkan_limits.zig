@@ -294,16 +294,10 @@ const Rig = @import("facet.zig").Rig;
 /// overrides about eighteen of them downward) and only the board can say
 /// whether it meets them.
 ///
-/// The ten, and the item of docs/facet-vulkan10.md each belongs to, so
-/// that the number is auditable rather than merely pinned:
-///
-///   - item 17, the varyings: maxVertexOutputComponents and
-///     maxFragmentInputComponents, both 8 against 64.
-///   - item 22, layered framebuffers: maxFramebufferLayers 1 against 256.
-///   - item 61, multisampling, which is seven of the ten on its own: the
-///     three framebuffer sample-count masks, the no-attachments mask and
-///     the colour, depth and stencil sampled-image masks must each include
-///     VK_SAMPLE_COUNT_4_BIT and hold only _1_BIT.
+/// The seven, all of them item 61 of docs/facet-vulkan10.md, multisampling:
+/// the three framebuffer sample-count masks, the no-attachments mask and
+/// the colour, depth and stencil sampled-image masks must each include
+/// VK_SAMPLE_COUNT_4_BIT and hold only _1_BIT.
 ///
 /// Nothing else falls short, and nothing in that list is unaccounted for.
 /// The two sample-count masks that are *not* in it are the integer
@@ -321,13 +315,20 @@ const Rig = @import("facet.zig").Rig;
 /// because no sample took a constant texel offset; and **item 61's first
 /// row of eight** in 1.89, maxSampleMaskWords 0 against 1, which was the
 /// one row of that item needing no new sample: at one sample a pixel the
-/// mask is bit 0 alone, and a pipeline that clears it draws nothing.
+/// mask is bit 0 alone, and a pipeline that clears it draws nothing; **item
+/// 17's half of two** in 1.90, maxVertexOutputComponents and
+/// maxFragmentInputComponents both 8 against 64; and **item 22's half of
+/// two** in 1.91, maxFramebufferLayers 1 against 256, a pass clearing each
+/// layer and drawing into the first.
 ///
-/// Item 28 is split the way item 52 was: the cores sample at an offset and
-/// the V3D refuses the operand, so **this count is the cores' and the V3D
-/// still reports 0 for those two** - it reads them off its own SPIR-V
-/// profile, so the number follows the capability.
-const shortfalls_on_the_cores = 8;
+/// Items 28, 17 and 22 are split the way item 52 was, so **this count is
+/// the cores' and the V3D still falls short on those five rows**: 0 for
+/// the two texel offsets, which it reads off its own SPIR-V profile; 8 for
+/// the two varyings, which it reads off its compiler's own cap - Mesa's
+/// v3dv carries 64 on this same GPU, so that is this compiler's limit, not
+/// the hardware's; and 1 framebuffer layer, until its render list is
+/// played once a layer as v3dv's is (driver/v3d/driver.zig).
+const shortfalls_on_the_cores = 7;
 
 test "the check itself: Vulkan's floor passes, and a step below it is caught" {
     // A check that passes is worth nothing on its own: one whose loop never

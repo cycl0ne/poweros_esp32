@@ -653,9 +653,15 @@ pub const limits: facet.PhysicalDeviceLimits = .{
     // --- framebuffers, and the samples a pixel may hold ---
     .max_framebuffer_width = max_image_dimension,
     .max_framebuffer_height = max_image_dimension,
-    // One layer: a framebuffer is made of views and drawn into one layer of
-    // each. Vulkan asks for 256 (item 22).
-    .max_framebuffer_layers = 1,
+    // 256, which is what Vulkan asks and what Mesa's v3dv reports on this
+    // same GPU (src/broadcom/vulkan/v3dv_device.c). A pass clears each layer
+    // where an attachment's load op clears, CmdClearAttachments the ones a
+    // rectangle names, and a draw goes into the first: Vulkan 1.0 picks
+    // another only through a geometry shader's `Layer` (since 1.91, item
+    // 22). It equals `max_image_array_layers`, so every layer an image may
+    // have is one a framebuffer may reach. The V3D reports 1 until its
+    // render control list is played once a layer (driver/v3d/driver.zig).
+    .max_framebuffer_layers = max_image_array_layers,
     // One sample a pixel, everywhere. CreateImage refuses an image of more
     // (image/_image.zig) and no attachment is multisampled, so every one of
     // these masks has the single bit. Vulkan requires the 4 bit on *seven*

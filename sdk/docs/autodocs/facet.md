@@ -1101,7 +1101,8 @@ fn CmdClearAttachments(base: *FacetBase, buffer: *facet.CommandBuffer, attachmen
 - `buffer` - a command buffer recording.
 - `attachment_count`, `attachments` - what to clear: IMAGE_ASPECT_COLOR for
   the colour attachment, and IMAGE_ASPECT_DEPTH and IMAGE_ASPECT_STENCIL.
-- `rect_count`, `rects` - where: inside the render area.
+- `rect_count`, `rects` - where: inside the render area, and the layers,
+  counted from the one each view begins at.
 
 **RESULT**
 
@@ -1111,6 +1112,12 @@ None.
 
 Inside a render pass, whatever draws there before or after it. The scissor
 and the pipeline bound have no part in it, and nothing bound changes.
+
+A rectangle's layers are cleared, each of them, since 1.91, when a
+framebuffer came to have layers: until then its `base_array_layer` and
+`layer_count` were dropped, a framebuffer having the one. Layers past the
+framebuffer's last are left alone - naming them is the program's error in
+Vulkan - and so is a rectangle that begins past it.
 
 **CONTEXT**
 
@@ -3944,7 +3951,7 @@ fn CreateFramebuffer(base: *FacetBase, device: *facet.Device, info: *const facet
 
 - `device` - the device.
 - `info` - the render pass, a view for each of its attachments in their
-  order, and the size drawn in.
+  order, the size drawn in, and its layers.
 - `framebuffer` - where the framebuffer is written; null when it fails.
 
 **RESULT**
@@ -3952,13 +3959,27 @@ fn CreateFramebuffer(base: *FacetBase, device: *facet.Device, info: *const facet
 `success`; `error_initialization_failed` for views that do not fit the
 pass - another number of them, a colour view of an image not made for a
 colour attachment or in another format, a depth view of an image not
-made for depth, an image smaller than the size, more than one layer;
+made for depth, an image smaller than the size, a view of fewer layers
+than the framebuffer has - and for no layers, or more than the device
+takes (`PhysicalDeviceLimits.max_framebuffer_layers`);
 `error_out_of_host_memory`.
 
 **BEHAVIOR**
 
-Each colour attachment's view is of its image's first level. The size
-may be smaller than the images: the framebuffer is their top left.
+Each colour attachment's view is of its image's first level, and of any
+of its layers since 1.91: the pass draws into the layer the view begins
+at. The size may be smaller than the images: the framebuffer is their
+top left.
+
+A framebuffer has layers since 1.91, as many as the device's
+`max_framebuffer_layers` - 256 on the cores, which is what Vulkan asks,
+and 1 on the V3D. Each view holds that many from the layer it begins
+at, and a pass clears every one of them where an attachment's load op
+clears, as CmdClearAttachments clears the ones a rectangle names. What
+it draws goes into the first: Vulkan 1.0 has nothing but a geometry
+shader's `Layer` to pick another, and no device here has one. That is
+how Mesa's lavapipe plays a pass too (`render_clear` and
+`handle_clear_attachments`, src/gallium/frontends/lavapipe/lvp_execute.c).
 
 A depth view names the level and the layer the pass draws into - levels
 since 1.63, layers since 1.58 - and it is that level's rows that have
@@ -7334,7 +7355,8 @@ fn GetImageSubresourceLayout(base: *FacetBase, device: *facet.Device, image: *fa
 
 - `device` - the device it was made on.
 - `image` - the image.
-- `subresource` - which level: 0 for an image in rows.
+- `subresource` - which level and which layer: level 0 for an image in
+  rows.
 - `layout` - where its layout is written.
 
 **RESULT**
@@ -7344,9 +7366,12 @@ None.
 **BEHAVIOR**
 
 For an image in rows - a linear image, and an attachment - the offset
-is 0, `row_pitch` the bytes from one row to the next, `size` the pitch
-times the height: with its memory mapped, the program reads and writes
-the pixels there. For a texture it is where the level starts and how
+is where the layer begins, 0 for the first, `row_pitch` the bytes from
+one row to the next, `size` and `array_pitch` the pitch times the
+height: with its memory mapped, the program reads and writes the
+pixels there. Such an image has layers since 1.91, one after another;
+a level or a layer it has not got answers all 0. For a texture it is
+where the level starts and how
 many bytes it takes, its rows not the program's to know (`row_pitch`
 0). A depth attachment answers since 1.63, its rows being real and
 its levels its own: the offset is where the level of the layer begins,

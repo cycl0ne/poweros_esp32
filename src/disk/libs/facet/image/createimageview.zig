@@ -151,9 +151,11 @@ pub fn CreateImageView(base: *FacetBase, device: *facet.Device, info: *const fac
     if (_image.writtenRows(image)) made.texels = image.texels;
     if (plane) |one| made.texels = one;
     if (read_rows) |one| made.rows = one;
-    // Its pixels, for a later subpass to read as an input attachment.
+    // Its pixels, for a later subpass to read as an input attachment: the
+    // rows of the layer the view begins at, an image kept in rows having
+    // layers since 1.91.
     if (image.kind == .rows) made.rows = .{
-        .bytes = image.data,
+        .bytes = image.data.? + _image.rowsAt(image, 0, range.base_array_layer).at,
         .pitch = image.pitch,
         .width = image.width,
         .height = image.height,

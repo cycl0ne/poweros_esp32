@@ -21,7 +21,8 @@ const _render = @import("../render/_render.zig");
 /// - `buffer` - a command buffer recording.
 /// - `attachment_count`, `attachments` - what to clear: IMAGE_ASPECT_COLOR for
 ///   the colour attachment, and IMAGE_ASPECT_DEPTH and IMAGE_ASPECT_STENCIL.
-/// - `rect_count`, `rects` - where: inside the render area.
+/// - `rect_count`, `rects` - where: inside the render area, and the layers,
+///   counted from the one each view begins at.
 ///
 /// RESULT:
 /// None.
@@ -29,6 +30,12 @@ const _render = @import("../render/_render.zig");
 /// BEHAVIOR:
 /// Inside a render pass, whatever draws there before or after it. The scissor
 /// and the pipeline bound have no part in it, and nothing bound changes.
+///
+/// A rectangle's layers are cleared, each of them, since 1.91, when a
+/// framebuffer came to have layers: until then its `base_array_layer` and
+/// `layer_count` were dropped, a framebuffer having the one. Layers past the
+/// framebuffer's last are left alone - naming them is the program's error in
+/// Vulkan - and so is a rectangle that begins past it.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -65,6 +72,8 @@ pub fn CmdClearAttachments(base: *FacetBase, buffer: *facet.CommandBuffer, attac
             .depth = if (aspect & (facet.IMAGE_ASPECT_DEPTH | facet.IMAGE_ASPECT_STENCIL) != 0) attachment.clear_value.depth_stencil.depth else 0,
             .stencil = if (aspect & (facet.IMAGE_ASPECT_DEPTH | facet.IMAGE_ASPECT_STENCIL) != 0) attachment.clear_value.depth_stencil.stencil else 0,
             .output = attachment.color_attachment,
+            .base_layer = rect.base_array_layer,
+            .layer_count = rect.layer_count,
         };
         _command.record(made, command, u8, &.{});
     };
