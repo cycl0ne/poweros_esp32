@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.41 (06.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.42 (07.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -326,8 +326,14 @@ const Probe = struct {
     }
 
     fn framebuffer(probe: *Probe, pass: *facet.RenderPass, views: []const *facet.ImageView) ?*facet.Framebuffer {
+        return probe.layeredFramebuffer(pass, views, 1);
+    }
+
+    /// A framebuffer of `layers` layers, kept; null where the call refused
+    /// it (since 1.91, a framebuffer has more than one).
+    fn layeredFramebuffer(probe: *Probe, pass: *facet.RenderPass, views: []const *facet.ImageView, layers: u32) ?*facet.Framebuffer {
         var made: ?*facet.Framebuffer = null;
-        if (probe.fb.CreateFramebuffer(probe.device.?, &.{ .render_pass = pass, .attachment_count = @intCast(views.len), .attachments = views.ptr, .width = side, .height = side }, &made) != .success) return null;
+        if (probe.fb.CreateFramebuffer(probe.device.?, &.{ .render_pass = pass, .attachment_count = @intCast(views.len), .attachments = views.ptr, .width = side, .height = side, .layers = layers }, &made) != .success) return null;
         return keep(&probe.frames, made);
     }
 
@@ -1973,12 +1979,13 @@ fn queryChecks(probe: *Probe) void {
     probe.check(shape.max_mip_levels > 1, "and has the levels its slices have");
 
     // 1.66: a depth attachment has the levels 1.63 gave it, and the
-    // layers 1.58 gave one that is read back.
+    // layers 1.58 gave one that is read back; since 1.91 one that is not
+    // read back has them as well, a framebuffer's layers being drawn into.
     if (fb.GetPhysicalDeviceImageFormatProperties(probe.physical, .d16_unorm, .@"2d", .optimal, facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT, 0, &shape) != .success) {
         return probe.check(false, "the largest depth attachment");
     }
     probe.check(shape.max_mip_levels > 1, "a depth attachment has levels of its own");
-    probe.checkEqual(1, shape.max_array_layers, "and one layer until it is read back");
+    probe.checkEqual(limits.max_image_array_layers, shape.max_array_layers, "and its layers, read back or not");
     if (probe.can.sampled_depth) {
         const read_back = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED;
         if (fb.GetPhysicalDeviceImageFormatProperties(probe.physical, .d16_unorm, .@"2d", .optimal, read_back, 0, &shape) != .success) {
@@ -6004,6 +6011,165 @@ fn sharedDepthChecks(probe: *Probe) void {
     probe.checkEqual(white, pixelAt(between_pixels, between_pitch, side / 2, side / 2), "the subpass in between drew into its own picture");
 }
 
+// --- 1.91: framebuffers of layers --------------------------------------------
+
+/// A pixel of one layer read back into a buffer, the layers one after
+/// another and `side` pixels a row: 0xAARRGGBB, as `pixelAt` reads.
+fn layerPixel(bytes: [*]const u8, layer: u32, x: u32, y: u32) u32 {
+    return pixelAt(bytes + @as(usize, layer) * side * side * 4, side * 4, x, y);
+}
+
+/// A framebuffer of layers (since 1.91, which made them on the cores as
+/// lavapipe makes them): as many as `max_framebuffer_layers` says and not
+/// one more. A pass over a view of a later layer clears and draws there
+/// and nowhere else - on the V3D, which has the one layer, that is where
+/// its tiles are stored to and its depth is kept. And on a device with
+/// layers to spare, a pass of two clears both, draws into the first, and
+/// clears a rectangle of the second when CmdClearAttachments names it.
+fn layerChecks(probe: *Probe) void {
+    const fb = probe.fb;
+    const device = probe.device.?;
+    defer probe.give();
+    var properties: facet.PhysicalDeviceProperties = undefined;
+    fb.GetPhysicalDeviceProperties(probe.physical, &properties);
+    const most = properties.limits.max_framebuffer_layers;
+
+    const description = facet.AttachmentDescription{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .color_attachment_optimal };
+    const reference = facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal };
+    const subpass = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&reference) };
+    const pass = probe.renderPass(.{ .attachment_count = 1, .attachments = @ptrCast(&description), .subpass_count = 1, .subpasses = @ptrCast(&subpass) }) orelse
+        return probe.check(false, "a pass that clears its colour");
+
+    // An image of as many layers as a framebuffer may have, and three at
+    // least: a layer past what a pass names is one to see left alone.
+    const layers = @max(most, 3);
+    const extent = facet.Extent3D{ .width = side, .height = side };
+    const usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
+    const stack = probe.bound(.{ .format = .b8g8r8a8_unorm, .extent = extent, .array_layers = layers, .usage = usage }, 0) orelse
+        return probe.check(false, "a colour attachment of layers");
+    probe.check(true, "a colour attachment of layers");
+    const every = probe.viewed(.{ .image = stack, .format = .b8g8r8a8_unorm, .view_type = .@"2d_array", .subresource_range = .{ .layer_count = layers } }) orelse
+        return probe.check(false, "a view of all its layers");
+    const second = probe.viewed(.{ .image = stack, .format = .b8g8r8a8_unorm, .subresource_range = .{ .base_array_layer = 1, .layer_count = 1 } }) orelse
+        return probe.check(false, "a view of its second layer");
+
+    // As many layers as the device says, and one more refused: on the V3D
+    // by its limit alone, the view having the layers.
+    probe.check(probe.layeredFramebuffer(pass, &.{every}, most) != null, "a framebuffer of as many layers as the device says");
+    probe.check(probe.layeredFramebuffer(pass, &.{every}, most + 1) == null, "and one of a layer more refused");
+    const on_second = probe.framebuffer(pass, &.{second}) orelse return probe.check(false, "a framebuffer over the second layer");
+
+    var module: ?*facet.ShaderModule = null;
+    if (fb.CreateShaderModule(device, &.{ .code = &Painted.code }, &module) != .success) return probe.check(false, "the shader module");
+    _ = Probe.keep(&probe.modules, module);
+    var layout: ?*facet.PipelineLayout = null;
+    if (fb.CreatePipelineLayout(device, &.{}, &layout) != .success) return probe.check(false, "the pipeline layout");
+    _ = Probe.keep(&probe.layouts, layout);
+    const painted = pipelineOf(probe, pass, module.?, layout.?, .{ .attributes = &Painted.attributes, .stride = Painted.stride }) orelse
+        return probe.check(false, "a pipeline over the pass");
+
+    // A white quad over the left half: the right half is the clear's.
+    const white_paint = [3]f32{ 1, 1, 1 };
+    const left = [6][6]f32{
+        Painted.at(-1, -1, 0.5, white_paint), Painted.at(0, -1, 0.5, white_paint), Painted.at(-1, 1, 0.5, white_paint),
+        Painted.at(-1, 1, 0.5, white_paint),  Painted.at(0, -1, 0.5, white_paint), Painted.at(0, 1, 0.5, white_paint),
+    };
+    const vertex_buffer, const vertex_bytes = probe.buffer(@sizeOf(@TypeOf(left)), facet.BUFFER_USAGE_VERTEX_BUFFER) orelse
+        return probe.check(false, "a vertex buffer");
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(left))], std.mem.asBytes(&left));
+    const layer_bytes = side * side * 4;
+    const back, const back_bytes = probe.buffer(3 * layer_bytes, facet.BUFFER_USAGE_TRANSFER_DST) orelse
+        return probe.check(false, "a buffer to read three layers into");
+    var regions: [3]facet.BufferImageCopy = undefined;
+    for (&regions, 0..) |*region, k| region.* = .{ .buffer_offset = k * layer_bytes, .image_extent = extent, .image_subresource = .{ .base_array_layer = @intCast(k) } };
+
+    const offset: u64 = 0;
+    const blue: u32 = 0xFF00_00FF;
+    const green: u32 = 0xFF00_FF00;
+    const red: u32 = 0xFFFF_0000;
+    const yellow: u32 = 0xFFFF_FF00;
+    const white: u32 = 0xFFFF_FFFF;
+    const blue_value = facet.ClearColorValue{ .float32 = .{ 0, 0, 1, 1 } };
+    const all = facet.ImageSubresourceRange{};
+    const area = facet.Rect2D{ .extent = .{ .width = side, .height = side } };
+
+    // The image blue, and a pass over the view of its second layer that
+    // clears it green and draws the white half.
+    @memset(back_bytes[0 .. 3 * layer_bytes], 0);
+    const green_clear = [1]facet.ClearValue{.{ .color = .{ .float32 = .{ 0, 1, 0, 1 } } }};
+    var commands = probe.record() orelse return probe.check(false, "a recording of a pass over the second layer");
+    fb.CmdClearColorImage(commands, stack, .transfer_dst_optimal, &blue_value, 1, @ptrCast(&all));
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = on_second, .render_area = area, .clear_value_count = 1, .clear_values = &green_clear }, .@"inline");
+    fb.CmdBindPipeline(commands, .graphics, painted);
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdDraw(commands, 6, 1, 0, 0);
+    fb.CmdEndRenderPass(commands);
+    fb.CmdCopyImageToBuffer(commands, stack, .general, back, regions.len, &regions);
+    if (!probe.submit()) return probe.check(false, "the pass over the second layer submitted");
+    probe.checkEqual(white, layerPixel(back_bytes, 1, 8, 8), "a pass over a view of the second layer draws into it");
+    probe.checkEqual(green, layerPixel(back_bytes, 1, 48, 40), "and clears it");
+    // Past the first tile across and down: each tile is stored on its own.
+    probe.checkEqual(green, layerPixel(back_bytes, 1, 40, 56), "and clears it in another tile");
+    probe.checkEqual(blue, layerPixel(back_bytes, 0, 8, 8), "and leaves the first layer as it was");
+    probe.checkEqual(blue, layerPixel(back_bytes, 0, 48, 40), "the whole of it");
+    probe.checkEqual(blue, layerPixel(back_bytes, 2, 8, 8), "and the third");
+
+    // A depth kept through a view of its second layer, where the device
+    // keeps one.
+    if (probe.can.stored_depth) depth: {
+        const keeping = passKeeping(probe, .clear, .clear, .store) orelse break :depth probe.check(false, "a pass that keeps its depth");
+        const depth_usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
+        const depths = probe.bound(.{ .format = .d16_unorm, .extent = extent, .array_layers = 2, .usage = depth_usage }, 0) orelse
+            break :depth probe.check(false, "a depth attachment of two layers");
+        probe.check(true, "a depth attachment of two layers");
+        const depth_second = probe.viewed(.{ .image = depths, .format = .d16_unorm, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH, .base_array_layer = 1, .layer_count = 1 } }) orelse
+            break :depth probe.check(false, "a view of the depth's second layer");
+        const kept = probe.framebuffer(keeping, &.{ second, depth_second }) orelse break :depth probe.check(false, "a framebuffer keeping a depth in its second layer");
+        const far = facet.ClearDepthStencilValue{ .depth = 1 };
+        const depth_all = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH };
+        const both_clears = [2]facet.ClearValue{ .{ .color = .{ .float32 = .{ 0, 1, 0, 1 } } }, .{ .depth_stencil = .{ .depth = 0.25 } } };
+        var depth_regions: [2]facet.BufferImageCopy = undefined;
+        for (&depth_regions, 0..) |*region, k| region.* = .{ .buffer_offset = k * side * side * 2, .image_extent = extent, .image_subresource = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH, .base_array_layer = @intCast(k) } };
+        @memset(back_bytes[0 .. 2 * side * side * 2], 0xAA);
+        commands = probe.record() orelse break :depth probe.check(false, "a recording of the kept depth");
+        fb.CmdClearDepthStencilImage(commands, depths, .transfer_dst_optimal, &far, 1, @ptrCast(&depth_all));
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = keeping, .framebuffer = kept, .render_area = area, .clear_value_count = 2, .clear_values = &both_clears }, .@"inline");
+        fb.CmdEndRenderPass(commands);
+        fb.CmdCopyImageToBuffer(commands, depths, .general, back, depth_regions.len, &depth_regions);
+        if (!probe.submit()) break :depth probe.check(false, "the kept depth submitted");
+        const quarter: u16 = @intFromFloat(@round(0.25 * 65535));
+        checkDepth(probe, quarter, depthAt(back_bytes + side * side * 2, 8, 8), "a depth kept through a view of the second layer kept there");
+        checkDepth(probe, quarter, depthAt(back_bytes + side * side * 2, 40, 56), "in another tile as well");
+        checkDepth(probe, 0xFFFF, depthAt(back_bytes, 8, 8), "and the first layer's depth left as it was");
+    }
+
+    // Two layers in one pass, where the device has them: both cleared
+    // red, the first drawn into, and the right half of the second cleared
+    // yellow by CmdClearAttachments. The third is not the framebuffer's.
+    if (most < 2) return;
+    const two = probe.layeredFramebuffer(pass, &.{every}, 2) orelse return probe.check(false, "a framebuffer of two layers");
+    const red_clear = [1]facet.ClearValue{.{ .color = .{ .float32 = .{ 1, 0, 0, 1 } } }};
+    const yellow_attachment = facet.ClearAttachment{ .clear_value = .{ .color = .{ .float32 = .{ 1, 1, 0, 1 } } } };
+    const right_of_second = facet.ClearRect{ .rect = .{ .offset = .{ .x = side / 2 }, .extent = .{ .width = side / 2, .height = side } }, .base_array_layer = 1 };
+    @memset(back_bytes[0 .. 3 * layer_bytes], 0);
+    commands = probe.record() orelse return probe.check(false, "a recording of a pass of two layers");
+    fb.CmdClearColorImage(commands, stack, .transfer_dst_optimal, &blue_value, 1, @ptrCast(&all));
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = two, .render_area = area, .clear_value_count = 1, .clear_values = &red_clear }, .@"inline");
+    fb.CmdBindPipeline(commands, .graphics, painted);
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdDraw(commands, 6, 1, 0, 0);
+    fb.CmdClearAttachments(commands, 1, @ptrCast(&yellow_attachment), 1, @ptrCast(&right_of_second));
+    fb.CmdEndRenderPass(commands);
+    fb.CmdCopyImageToBuffer(commands, stack, .general, back, regions.len, &regions);
+    if (!probe.submit()) return probe.check(false, "the pass of two layers submitted");
+    probe.checkEqual(white, layerPixel(back_bytes, 0, 8, 8), "a pass of two layers draws into the first");
+    probe.checkEqual(red, layerPixel(back_bytes, 0, 48, 40), "and clears it");
+    probe.checkEqual(red, layerPixel(back_bytes, 1, 8, 8), "and clears the second, which it does not draw into");
+    probe.checkEqual(yellow, layerPixel(back_bytes, 1, 48, 40), "a rectangle of the second cleared where CmdClearAttachments names it");
+    probe.checkEqual(red, layerPixel(back_bytes, 0, 56, 8), "and the first layer left red there");
+    probe.checkEqual(blue, layerPixel(back_bytes, 2, 48, 40), "a layer past the framebuffer's left alone");
+}
+
 fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical: *facet.PhysicalDevice, quiet: bool) struct { u32, u32 } {
     var properties: facet.PhysicalDeviceProperties = undefined;
     fb.GetPhysicalDeviceProperties(physical, &properties);
@@ -6040,6 +6206,7 @@ fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical
     cutChecks(&probe);
     togetherChecks(&probe);
     sharedDepthChecks(&probe);
+    layerChecks(&probe);
     return .{ probe.passed, probe.failed };
 }
 
