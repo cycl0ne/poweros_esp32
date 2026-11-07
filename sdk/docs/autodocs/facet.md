@@ -4471,16 +4471,24 @@ six as well (`Capabilities.cube_arrays`, since 1.46).
 (`Capabilities.sampled_depth`): IMAGE_ASPECT_DEPTH is the
 depth, read at all 16 bits by a sampler that compares and as a grey of
 its top 8 by one that does not, and IMAGE_ASPECT_STENCIL is the
-stencil, read as (red, 0, 0, 1) the way a texel of one byte is. Both
-aspects at once is `error_format_not_supported`, as is a plane the
-format has not got; an aspect naming neither - IMAGE_ASPECT_COLOR, the
-default, and what every such view asked for before 1.58 - is the
-format's own plane, its depth where it has one and its stencil where
-it has not. The plane is a texture over the image's own rows, so a
-format holding both is two textures inside the same rows, read four
-bytes apart. Since 1.63 it is the levels the view names as well, each
-in rows of its own: a sample of such a view reads the level it chooses,
-as it does of any texture.
+stencil, read as (red, 0, 0, 1) the way a texel of one byte is. A
+plane the format has not got is `error_format_not_supported`; an
+aspect naming neither - IMAGE_ASPECT_COLOR, the default, and what every
+such view asked for before 1.58 - is the format's own plane, its depth
+where it has one and its stencil where it has not. The plane is a
+texture over the image's own rows, so a format holding both is two
+textures inside the same rows, read four bytes apart. Since 1.63 it is
+the levels the view names as well, each in rows of its own: a sample
+of such a view reads the level it chooses, as it does of any texture.
+
+**Both aspects at once**, of a format holding both, is a view since
+1.94 and was refused before. It is what a framebuffer is given for a
+pass's depth/stencil attachment, which draws into both planes whatever
+the view names, as Vulkan has it. No descriptor may hold such a view,
+Vulkan having a descriptor's view of a depth/stencil image name one
+aspect, so its texture is only what a sample would read regardless:
+the depth, as lavapipe's is (`lvp_create_samplerview` takes the stencil
+for the stencil alone).
 
 Since 1.62 the same plane is what a later subpass reads as an **input
 attachment** (`shader.Attachment`), where the image was made one

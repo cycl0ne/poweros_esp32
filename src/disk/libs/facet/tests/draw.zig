@@ -4844,14 +4844,16 @@ test "a sampled depth image of layers: a pass draws into the layer its view name
     try testing.expectEqual(@as(u32, 3), array_texels.layer_count);
     try testing.expectEqual(@as(u32, @intCast(kept.layer_bytes)), array_texels.layer_bytes);
 
-    // A plane the format has not got, and both planes at once: neither is
-    // a texture, so neither is a view.
+    // A plane the format has not got, alone or beside the one it has:
+    // neither is a texture, so neither is a view. Of one layer, so that
+    // the aspect is what refuses it: a `2d` view of all three is refused
+    // for its layers first, which until 1.94 is all this tested.
     var no_view: ?*facet.ImageView = null;
     for ([2]u32{ facet.IMAGE_ASPECT_STENCIL, facet.IMAGE_ASPECT_DEPTH | facet.IMAGE_ASPECT_STENCIL }) |aspect| {
         try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImageView(device, &.{
             .image = layered,
             .format = .d16_unorm,
-            .subresource_range = .{ .aspect_mask = aspect },
+            .subresource_range = .{ .aspect_mask = aspect, .layer_count = 1 },
         }, &no_view));
         try testing.expect(no_view == null);
     }
@@ -4999,13 +5001,38 @@ test "a sampled depth image of layers: a pass draws into the layer its view name
     try testing.expectEqual(@as(u32, 4), stencil_texels.stride);
     try testing.expectEqual(both_kept.data.?, depth_texels.memory);
     try testing.expectEqual(both_kept.data.? + 2, stencil_texels.memory);
-    // Both planes at once is no texture.
-    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImageView(device, &.{
+    // Both planes at once (since 1.94): the view a framebuffer is given,
+    // which draws into both whatever its view names. No descriptor may
+    // hold it, Vulkan having a descriptor's view name one plane, so its
+    // texture is only what a sample would read regardless: the depth, as
+    // lavapipe's sampler view of both reads.
+    const both_view = try bench.viewOf(.{
         .image = both,
         .format = .d16_unorm_s8_uint,
         .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH | facet.IMAGE_ASPECT_STENCIL },
-    }, &no_view));
-    try testing.expect(no_view == null);
+    });
+    const both_texels = &_objects.of(image_zig.ImageView, both_view).texels;
+    try testing.expectEqual(texture_zig.Format.d16, both_texels.format);
+    try testing.expectEqual(both_kept.data.?, both_texels.memory);
+    {
+        // The pass's depth/stencil attachment through it: both planes
+        // cleared and stored, the depth where each pixel starts and the
+        // stencil two bytes in, in more than one tile.
+        const both_pass = try stencilPass(&bench, .d16_unorm_s8_uint, .clear, "cscs".*);
+        defer fb.DestroyRenderPass(device, both_pass);
+        const both_frame = try framebuffer(&bench, both_pass, &.{ picture.view, both_view }, 64, 64);
+        defer fb.DestroyFramebuffer(device, both_frame);
+        const starts = [2]facet.ClearValue{ .{ .color = .{ .float32 = .{ 0, 0, 1, 1 } } }, .{ .depth_stencil = .{ .depth = 0.25, .stencil = 0x5A } } };
+        const commands = try bench.record();
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = both_pass, .framebuffer = both_frame, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 2, .clear_values = &starts }, .@"inline");
+        fb.CmdEndRenderPass(commands);
+        try bench.submit();
+        for ([2][2]u32{ .{ 16, 8 }, .{ 48, 40 } }) |at| {
+            const place = @as(usize, at[1]) * both_kept.pitch + @as(usize, at[0]) * 4;
+            try testing.expectEqual(@as(u16, 16384), std.mem.readInt(u16, both_kept.data.?[place..][0..2], .little));
+            try testing.expectEqual(@as(u8, 0x5A), both_kept.data.?[place + 2]);
+        }
+    }
 
     // Both cleared, and each plane sampled on its own: the depth a grey
     // of its top 8 bits, the stencil red alone, as a texel of one byte is

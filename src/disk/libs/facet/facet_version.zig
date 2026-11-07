@@ -1921,4 +1921,32 @@ pub const LIBRARY_VERSION = 1;
 /// `expected 0, found 1` for the limit left true and for a value other
 /// than 0, and `expected .success, found .not_ready` for the query left
 /// unavailable.
-pub const LIBRARY_REVISION = 93;
+///
+/// 94: **A view of both planes of a sampled depth+stencil image.**
+///
+/// Item 44 of docs/facet-vulkan10.md. CreateImageView refused a view
+/// naming both aspects of a `d16_unorm_s8_uint` image made SAMPLED or
+/// INPUT_ATTACHMENT, so an image that was both a pass's depth/stencil
+/// attachment and a shadow map had no view of both its planes to give a
+/// framebuffer. Vulkan allows one ("can include both", resources.adoc),
+/// keeps it out of descriptors (VUID-VkDescriptorImageInfo-imageView-01976),
+/// and has an attachment draw into both planes whatever its view names.
+/// The view is made now, and its texture is the depth: what lavapipe's
+/// sampler view of both reads, `lvp_create_samplerview` taking the stencil
+/// for the stencil alone. The cores drew into both planes already, from the
+/// image rather than the view (`_play.planeAt`), so nothing changed there.
+///
+/// Both aspects of a format holding one plane alone are still refused:
+/// they name a plane it has not got.
+///
+/// A test makes the view, finds its texture the depth plane, and clears
+/// both planes through it as a pass's attachment, reading each back in two
+/// tiles. The test of the refusals that stay had never reached the aspect:
+/// a `2d` view of all three layers of its image is refused for its layers
+/// first, `layer_count` being `REMAINING` unless it is given, so it names
+/// one layer now. Each of three changes put back fails it alone:
+/// `expected .success, found .error_format_not_supported` for the
+/// refusal, `expected .d16, found .r8` for the stencil taken for both, and
+/// `expected .error_format_not_supported, found .success` for both taken
+/// of a format with one plane.
+pub const LIBRARY_REVISION = 94;

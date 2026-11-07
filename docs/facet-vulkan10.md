@@ -120,7 +120,7 @@ in 1.84, item 19 in 1.85, item 21 in 1.86, item 28's half of two in 1.87,
 items 82 and 83 in 1.87 and 1.88 - both found while doing other items -
 item 61's first row of eight in 1.89, item 17's half of two in 1.90,
 item 22's half of two in 1.91, item 83's open question, answered from
-Mesa, in 1.92, and item 45 in 1.93.** Each
+Mesa, in 1.92, item 45 in 1.93 and item 44 in 1.94.** Each
 carries a *Done* note below saying what was actually built and where the
 item's own description turned out to be wrong - and several did. Things
 found while doing them became the items at the end of the list: 77 and 78
@@ -1192,11 +1192,17 @@ CreateRenderPass refuses color_attachment_count == 0, so a depth-only subpass �
 
 ### 44. Allow a both-aspect view of a sampled depth+stencil image
 
-*image views / depth* &mdash; conformance-blocking, small
+*image views / depth* &mdash; **done in 1.94**, small
 
 For an image whose kind is depth and which carries IMAGE_USAGE_SAMPLED, CreateImageView routes through depthPlane, which returns null — error_format_not_supported — for an aspect mask naming both planes. Vulkan 1.0 requires a depth/stencil attachment view of a format holding both to name both aspects; separate depth/stencil layouts arrived in 1.2. So a d16_unorm_s8_uint image that is both the pass's depth/stencil attachment and a sampled shadow map cannot have a conformant attachment view: one-plane views work, the two-plane one the attachment needs does not. A plain unsampled depth attachment view is unaffected. Narrow, but a hard refusal of a structure Vulkan requires.
 
 > Verified: image/createimageview.zig:125-131 `const plane = if (_image.sampledDepth(image)) _image.depthPlane(...) orelse return .error_format_not_supported`; _image.zig sampledDepth is `image.kind == .depth and image.usage & IMAGE_USAGE_SAMPLED != 0`. The gap list records the behaviour as a facet choice, not as a Vulkan requirement the attachment view cannot meet.
+
+**Done in 1.94, and the requirement is a little different from what this said.** Vulkan does not require an attachment view to name both aspects. It *allows* a view of a depth/stencil format to name both ("can include both"), and it has an attachment ignore the view's aspect: "When an image view of a depth/stencil image is used as a depth/stencil framebuffer attachment, the aspectMask is ignored and both depth and stencil image subresources are used" (resources.adoc). A descriptor's view must name one (VUID-VkDescriptorImageInfo-imageView-01976). So the refusal turned away a view Vulkan permits, and naming both is how a program would write that view. The same refusal applied to an input-attachment image, through `depthRows`, which uses the same `planeAt`.
+
+The port is lavapipe's: `lvp_CreateImageView` makes the view, and `lvp_create_samplerview` samples the combined format unless the aspect is the stencil alone (lvp_image.c:358), so a both-aspect view's texture is the depth. In facet that is `_image.planeAt` mapping both aspects of a format that holds both to the depth plane. Both aspects of a format with one plane still name a plane it has not got, and are still refused. Nothing changed in the drawing: the cores take an attachment's planes from the image, not from the view (`driver/cpu/_play.zig` `planeAt`), and the V3D samples no depth image at all. A test makes the view, finds its texture the depth plane, and clears and stores both planes through it as a pass's attachment.
+
+The test of the refusals that stay had never reached the aspect check. A `2d` view of all three layers of its image is refused for its layers first, because `layer_count` defaults to `REMAINING`, so it now names one layer. Each of three reverts fails the test alone: the refusal put back, the stencil taken for both, and both taken of a format with one plane.
 
 ### 45. Create a timestamp query pool on a machine without timer.device
 

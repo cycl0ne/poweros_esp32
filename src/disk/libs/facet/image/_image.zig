@@ -570,9 +570,13 @@ pub fn requirements(image: *const Image) facet.MemoryRequirements {
 /// inside the same rows. An `aspect` naming neither plane, which is what
 /// a view asking for the colour takes - the default, and what every view
 /// of such an image took before 1.58 - is the format's own plane: its
-/// depth where it has one, and its stencil where it has not. Null for an
-/// aspect the format has not got, or for both planes at once.
-/// (Since 1.58.)
+/// depth where it has one, and its stencil where it has not. Both planes
+/// at once, of a format holding both, is its depth since 1.94: such a view
+/// is a framebuffer's, which draws into both whatever the view names, and
+/// no descriptor may hold one, so this is only what a sample of it would
+/// read regardless - lavapipe's answer, which takes the stencil for the
+/// stencil alone (`lvp_create_samplerview`). Null for an aspect the format
+/// has not got. (Since 1.58.)
 fn planeOver(image: *const Image, aspect: u32, first_level: u32, levels: u32, first_layer: u32, layers: u32, memory: [*]u8) ?texture.Texture {
     const plane = planeAt(image, aspect) orelse return null;
     // The depth is read as 16 bits of depth and the stencil as one byte,
@@ -600,13 +604,25 @@ fn planeOver(image: *const Image, aspect: u32, first_level: u32, levels: u32, fi
 const Plane = struct { at: u32, stride: u32, depth: bool };
 
 /// The plane `aspect` names, by the rule `planeOver` describes: null for
-/// an aspect the format has not got, or for both planes at once.
+/// an aspect the format has not got.
 /// (Since 1.62.)
 fn planeAt(image: *const Image, aspect: u32) ?Plane {
-    const asked = aspect & (facet.IMAGE_ASPECT_DEPTH | facet.IMAGE_ASPECT_STENCIL);
+    const both = facet.IMAGE_ASPECT_DEPTH | facet.IMAGE_ASPECT_STENCIL;
+    const asked = aspect & both;
     const stride = bytesOf(image.format);
     if (stride == 0) return null;
-    const planes = if (asked != 0) asked else if (hasDepth(image.format)) facet.IMAGE_ASPECT_DEPTH else facet.IMAGE_ASPECT_STENCIL;
+    // Both at once, of a format that holds both, is the depth (since
+    // 1.94). Of a format holding one plane alone it names the other as
+    // well, which that format has not got.
+    const holds_both = hasDepth(image.format) and hasStencil(image.format);
+    const planes = if (asked == both and holds_both)
+        facet.IMAGE_ASPECT_DEPTH
+    else if (asked != 0)
+        asked
+    else if (hasDepth(image.format))
+        facet.IMAGE_ASPECT_DEPTH
+    else
+        facet.IMAGE_ASPECT_STENCIL;
     const wants_depth = planes == facet.IMAGE_ASPECT_DEPTH;
     const wants_stencil = planes == facet.IMAGE_ASPECT_STENCIL;
     if (wants_depth and !hasDepth(image.format)) return null;

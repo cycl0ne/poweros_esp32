@@ -205,8 +205,9 @@ pass's depth. What is left out:
   reads the level it falls on or the one its sampler holds it to. So a
   shadow map and its smaller copies are the levels of one image.
   What is left out: it is never of type `3d`, a slice being nothing a pass
-  draws into, and both planes at once are no view, there being no texel of
-  the two together.
+  draws into. Both planes at once are a view since 1.94 - the one a
+  framebuffer is given, drawing into both - and what a sample of it would
+  read is the depth, as lavapipe's; no descriptor may hold one.
 - **A transient depth image keeps nothing**, having no memory: a pass that
   stores into one is refused its framebuffer. That is still the cheap way,
   and what every pass that does not ask for this goes on doing.
@@ -602,7 +603,7 @@ These can be asked for and are answered with `error_feature_not_present`.
 | A bit that is no statistic at all. Both of a geometry shader's may be asked for since 1.43 and read 0, there being no such stage to count | `query/createquerypool.zig` |
 | A depth or stencil attachment of `d16_unorm_s8_uint` that loads or stores, on a device that stores a tile buffer whole: the V3D (`stored_both`, 1.47). Either plane of a format that holds it alone is kept on every device | `render/createrenderpass.zig` |
 | A depth attachment kept, whose image has no memory behind it | `render/createframebuffer.zig` |
-| A sampled depth image on a device that samples none: the V3D (`sampled_depth`); a transient one, or one written through as a storage image; one of more levels than halving its longer side gives, or of type `3d`. Any of the three depth formats is taken since 1.58 and levels of its own since 1.63, and a view of it names one plane - both at once is refused there (`image/createimageview.zig`) | `image/createimage.zig` |
+| A sampled depth image on a device that samples none: the V3D (`sampled_depth`); a transient one, or one written through as a storage image; one of more levels than halving its longer side gives, or of type `3d`. Any of the three depth formats is taken since 1.58 and levels of its own since 1.63, and a view of it names one plane, or both at once since 1.94 for a framebuffer, sampling the depth (`image/createimageview.zig`) | `image/createimage.zig` |
 
 One consequence does not appear in that table:
 
