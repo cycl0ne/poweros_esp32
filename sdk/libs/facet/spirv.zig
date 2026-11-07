@@ -534,10 +534,11 @@ pub const Seen = struct {
     samplers: u32 = 0,
     uniforms: u32 = 0,
     push_constants: u32 = 0,
-    /// The largest `Location` decorated on an input and on an output, and
-    /// one more, so that a back end knows how many varyings are in play.
-    input_locations: u32 = 0,
-    output_locations: u32 = 0,
+    // Which locations are in play is not here, and since 1.95 nothing
+    // claims it is: a back end reads each `Location` beside the variable
+    // it decorates, as the V3D's does (driver/v3d/compile.zig), and as
+    // Mesa's translation does (vtn_variables.c `var_decoration_cb`, then
+    // `nir_shader_gather_info`'s `inputs_read` and `outputs_written`).
     /// Whether the body can drop a pixel (`OpKill`), which decides where
     /// a pipeline's depth is written.
     discards: bool = false,
@@ -739,21 +740,9 @@ pub fn look(words: []const u32, profile: Profile) Outcome {
                 if (operands.len < 2) return .{ .fault = .truncated_instruction };
                 if (operands[0] >= bound) return .{ .fault = .id_over_bound };
                 const which: Decoration = @enumFromInt(operands[1]);
-                if (which == .location) {
-                    if (operands.len < 3) return .{ .fault = .truncated_instruction };
-                    // Which side it is on is not known here - a variable's
-                    // storage class says that - so both are raised and a
-                    // caller reads the one it wants. No caller does today.
-                    //
-                    // Saturating, because the literal is the module's own
-                    // number and a module is read here without being
-                    // trusted: `Location 4294967295` would otherwise
-                    // overflow, and in a ReleaseSafe build that is a
-                    // panic inside `CreateShaderModule` rather than a
-                    // refusal.
-                    seen.input_locations = @max(seen.input_locations, operands[2] +| 1);
-                    seen.output_locations = @max(seen.output_locations, operands[2] +| 1);
-                }
+                // A location is a literal after the two, and a decoration
+                // without it is cut short.
+                if (which == .location and operands.len < 3) return .{ .fault = .truncated_instruction };
             },
             .type_image => {
                 if (operands.len < 8) return .{ .fault = .truncated_instruction };

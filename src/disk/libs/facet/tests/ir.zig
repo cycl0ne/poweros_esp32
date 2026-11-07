@@ -765,19 +765,15 @@ test "a graph carrying every varying the library takes: built, and a module a de
     // library emits.
     switch (facet.spirv.look(Widest.words, facet.spirv.facet_profile)) {
         .seen => |seen| {
-            // Sixteen locations, which is what the graph declares.
-            try std.testing.expectEqual(@as(u32, shader.MAX_VARYINGS / 4), seen.input_locations);
-            // And the same again, which is *not* what the field means.
-            // `look` takes the largest `Location` it decorates anything
-            // with and writes it to both counters without telling an
-            // input from an output, so `output_locations` says sixteen
-            // where this graph has one colour. No caller reads either
-            // field - spirv.zig says so - so it is a wrong answer nothing
-            // asks for, and it is asserted here as it is rather than as
-            // it ought to be, so that the day a back end does ask the
-            // test says what it will get. Item 84 of
-            // docs/facet-vulkan10.md.
-            try std.testing.expectEqual(seen.input_locations, seen.output_locations);
+            // Sixteen inputs of four floats, which is what the graph
+            // declares, and one colour out. Which locations they are is
+            // a back end's to read beside each variable, as the V3D's
+            // does: until 1.95 `look` said it as well, and said the
+            // largest location decorated for both sides, sixteen where
+            // this graph has one output (item 84 of
+            // docs/facet-vulkan10.md).
+            try std.testing.expectEqual(@as(u32, shader.MAX_VARYINGS / 4), seen.inputs);
+            try std.testing.expectEqual(@as(u32, 1), seen.outputs);
         },
         .fault => |fault| {
             std.debug.print("the widest graph is not a module: {t}\n", .{fault});

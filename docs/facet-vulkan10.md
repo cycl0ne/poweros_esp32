@@ -120,7 +120,8 @@ in 1.84, item 19 in 1.85, item 21 in 1.86, item 28's half of two in 1.87,
 items 82 and 83 in 1.87 and 1.88 - both found while doing other items -
 item 61's first row of eight in 1.89, item 17's half of two in 1.90,
 item 22's half of two in 1.91, item 83's open question, answered from
-Mesa, in 1.92, item 45 in 1.93 and item 44 in 1.94.** Each
+Mesa, in 1.92, item 45 in 1.93, item 44 in 1.94 and item 84 in 1.95.**
+Each
 carries a *Done* note below saying what was actually built and where the
 item's own description turned out to be wrong - and several did. Things
 found while doing them became the items at the end of the list: 77 and 78
@@ -1901,7 +1902,7 @@ where facet counts it either way.
 
 ### 84. spirv.look's input_locations and output_locations are the same number
 
-*shader words / SPIR-V reader* &mdash; latent, small, found while doing item 17
+*shader words / SPIR-V reader* &mdash; **done in 1.95**, small, found while doing item 17
 
 `Seen.input_locations` and `Seen.output_locations` are documented as "the
 largest `Location` decorated on an input and on an output, and one more, so
@@ -1926,6 +1927,23 @@ comment.
 > `seen.input_locations = @max(seen.input_locations, operands[2] +| 1);`
 > followed by the same line for `output_locations`. The sixty-four-varying
 > graph in tests/ir.zig reports 16 for both.
+
+**Done in 1.95, by taking the two fields out rather than mending them.**
+The plausible first reader named above already reads the locations
+itself. The V3D's back end keeps a table of locations by id
+(driver/v3d/compile.zig `Work.location`), fills it from each `OpDecorate`,
+and reads it at the `OpVariable` it decorates, in the one pass SPIR-V's
+logical layout allows. That is where Mesa has the answer too.
+spirv_to_nir applies a `Location` in `var_decoration_cb`, with the
+variable's mode beside it (src/compiler/spirv/vtn_variables.c:1705), and
+`nir_shader_gather_info` then sets `inputs_read` and `outputs_written`
+from the translated shader (nir_gather_info.c `set_io_mask`, lines 145
+and 181). The IR here carries its own count too (`Entry.varyingCount`).
+A pre-scan answer would be a second source of the same fact, and it was
+the wrong one, so `Seen` no longer has it. All
+`look` reads of a `Location` now is that its literal is present. A test
+pins that: it had none. The tests/ir.zig assertion of equality became
+one of the widest graph's sixteen inputs and one output.
 
 ## Deferred by the decision, not out of reach
 

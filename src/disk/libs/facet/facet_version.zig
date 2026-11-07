@@ -1949,4 +1949,27 @@ pub const LIBRARY_VERSION = 1;
 /// refusal, `expected .d16, found .r8` for the stencil taken for both, and
 /// `expected .error_format_not_supported, found .success` for both taken
 /// of a format with one plane.
-pub const LIBRARY_REVISION = 94;
+///
+/// 95: **`spirv.Seen` no longer claims to count a module's locations.**
+///
+/// Item 84 of docs/facet-vulkan10.md. `Seen.input_locations` and
+/// `output_locations` were documented as the largest `Location` on an
+/// input and on an output, and `look` wrote the largest of any to both,
+/// not telling one side from the other; nothing read either. Counting them
+/// as documented means matching a decoration's target to its variable's
+/// storage class. The V3D's back end already does that, with its own table
+/// of locations by id read beside each variable (driver/v3d/compile.zig),
+/// and Mesa does it in the translation: `var_decoration_cb` applies a
+/// `Location` with the variable's mode beside it (vtn_variables.c:1705),
+/// and `nir_shader_gather_info` sets `inputs_read` and `outputs_written`
+/// from what was translated (nir_gather_info.c `set_io_mask`). So the two
+/// fields are gone rather than mended, and
+/// all `look` reads of a `Location` is that its literal is there: a
+/// decoration cut short before it is `truncated_instruction`, as it was,
+/// and a test says so now. Taking that check out fails it, `expected
+/// .truncated_instruction, found .bad_word_count`: the literal's place is
+/// read as the next instruction.
+///
+/// tests/ir.zig asserted the two were equal, with the reason beside it;
+/// it asserts the widest graph's sixteen inputs and one output instead.
+pub const LIBRARY_REVISION = 95;

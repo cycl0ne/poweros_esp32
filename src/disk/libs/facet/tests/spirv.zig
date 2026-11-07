@@ -339,6 +339,20 @@ test "a module that is not one is refused, and says why" {
 
     try std.testing.expectEqual(spirv.Fault.too_short, faultOf(reference.min_flat[0..4]));
 
+    // A `Location` without the literal that says which: cut short, and
+    // said to be. Since 1.95 that is all `look` reads of one, a back end
+    // reading the literal beside the variable it decorates.
+    words = reference.min_flat;
+    var reader = spirv.Reader.of(&words);
+    while (reader.next() catch unreachable) |instruction| {
+        if (instruction.op == .decorate and instruction.operands()[1] == @intFromEnum(spirv.Decoration.location)) {
+            const at = reader.at - @as(u32, @intCast(instruction.words.len));
+            words[at] = (3 << 16) | @as(u32, @intFromEnum(spirv.Op.decorate));
+            break;
+        }
+    } else unreachable;
+    try std.testing.expectEqual(spirv.Fault.truncated_instruction, faultOf(&words));
+
     // The header alone, with nothing after it.
     const header = [_]u32{ spirv.MAGIC, spirv.VERSION, 0, 1, 0 };
     try std.testing.expectEqual(spirv.Fault.too_short, faultOf(&header));
