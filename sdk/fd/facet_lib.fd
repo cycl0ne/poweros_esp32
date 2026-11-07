@@ -316,4 +316,14 @@ void CmdSetEvent(*facet.CommandBuffer buffer, *facet.Event event, u32 stage_mask
 void CmdResetEvent(*facet.CommandBuffer buffer, *facet.Event event, u32 stage_mask)
 /// Recorded: the work after it waits until each of the events is set.
 void CmdWaitEvents(*facet.CommandBuffer buffer, u32 event_count, [*]const *facet.Event events, u32 src_stage_mask, u32 dst_stage_mask, u32 memory_barrier_count, ?[*]const facet.MemoryBarrier memory_barriers, u32 buffer_barrier_count, ?[*]const facet.BufferMemoryBarrier buffer_barriers, u32 image_barrier_count, ?[*]const facet.ImageMemoryBarrier image_barriers)
+/// A pipeline cache: what pipelines are made faster with the next time,
+/// and what GetPipelineCacheData hands out to keep for another run.
+facet.Result CreatePipelineCache(*facet.Device device, *const facet.PipelineCacheCreateInfo info, *?*facet.PipelineCache cache)
+/// The pipeline cache given back.
+void DestroyPipelineCache(*facet.Device device, ?*facet.PipelineCache cache)
+/// What a pipeline cache holds, as bytes to keep and give to another
+/// CreatePipelineCache: Vulkan's header of 32 bytes, and nothing after it.
+facet.Result GetPipelineCacheData(*facet.Device device, *facet.PipelineCache cache, *usize size, ?*anyopaque data)
+/// What `sources` hold put into `destination`: nothing, none holding any.
+facet.Result MergePipelineCaches(*facet.Device device, *facet.PipelineCache destination, u32 count, [*]const *facet.PipelineCache sources)
 ##end

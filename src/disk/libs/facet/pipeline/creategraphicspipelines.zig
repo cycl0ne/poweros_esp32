@@ -25,7 +25,8 @@ const _instance = @import("../instance/_instance.zig");
 ///
 /// INPUTS:
 /// - `device` - the device.
-/// - `cache` - null: facet.library has no pipeline caches.
+/// - `cache` - a pipeline cache, or null; it holds no pipeline, and
+///   nothing is looked up in it or put into it (since 1.130).
 /// - `count`, `infos` - each pipeline's stages and state.
 /// - `pipelines` - where each is written; null for one that could not be
 ///   made.

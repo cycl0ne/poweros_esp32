@@ -2162,9 +2162,35 @@ pub const ShaderModule = opaque {};
 pub const PipelineLayout = opaque {};
 /// A way of drawing: its shaders and its state, settled as it is made.
 pub const Pipeline = opaque {};
-/// What pipelines are made faster with the next time: facet.library has
-/// none; CreateGraphicsPipelines takes null.
+/// What pipelines are made faster with the next time: CreatePipelineCache
+/// makes one (since 1.130), which holds none yet; CreateGraphicsPipelines
+/// and CreateComputePipelines take it, or null.
 pub const PipelineCache = opaque {};
+
+/// What a pipeline cache is made with: 0 for its flags, and the bytes an
+/// earlier GetPipelineCacheData gave, if any. (Since 1.130.)
+pub const PipelineCacheCreateInfo = extern struct {
+    flags: u32 = 0,
+    initial_data_size: usize = 0,
+    initial_data: ?*const anyopaque = null,
+};
+
+/// PipelineCacheHeaderVersionOne.header_version. (Since 1.130.)
+pub const PipelineCacheHeaderVersion = enum(u32) {
+    one = 1,
+    _,
+};
+
+/// The start of what GetPipelineCacheData gives, 32 bytes, every number
+/// least significant byte first: the device that made it, and the UUID
+/// that moves when what it made could have. (Since 1.130.)
+pub const PipelineCacheHeaderVersionOne = extern struct {
+    header_size: u32,
+    header_version: PipelineCacheHeaderVersion,
+    vendor_id: u32,
+    device_id: u32,
+    pipeline_cache_uuid: [UUID_SIZE]u8,
+};
 
 /// The stages a shader runs at: PipelineShaderStageCreateInfo.stage,
 /// shader.Entry.stage, and the stage masks of layouts and push constants.

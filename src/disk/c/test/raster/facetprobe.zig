@@ -6276,6 +6276,27 @@ fn eventChecks(probe: *Probe) void {
     probe.check(fb.GetEventStatus(device, by_host) == .event_set and fb.GetEventStatus(device, by_queue) == .event_set, "the events stay set");
 }
 
+/// 1.130: a pipeline cache hands out Vulkan's header, of the device's own
+/// numbers: the cores' and the V3D's differ, which the host tests have
+/// only one of.
+fn cacheChecks(probe: *Probe) void {
+    const fb = probe.fb;
+    const device = probe.device.?;
+    var properties: facet.PhysicalDeviceProperties = undefined;
+    fb.GetPhysicalDeviceProperties(probe.physical, &properties);
+    var cache: ?*facet.PipelineCache = null;
+    if (fb.CreatePipelineCache(device, &.{}, &cache) != .success) return probe.check(false, "a pipeline cache");
+    defer fb.DestroyPipelineCache(device, cache);
+    var bytes: [32]u8 = @splat(0);
+    var size: usize = bytes.len;
+    if (fb.GetPipelineCacheData(device, cache.?, &size, &bytes) != .success) return probe.check(false, "a pipeline cache's data");
+    probe.checkEqual(32, size, "a pipeline cache's data is its header of 32 bytes");
+    const header = std.mem.bytesToValue(facet.PipelineCacheHeaderVersionOne, &bytes);
+    probe.checkEqual(properties.vendor_id, header.vendor_id, "of the device's vendor");
+    probe.checkEqual(properties.device_id, header.device_id, "and the device's own number");
+    probe.check(std.mem.eql(u8, &properties.pipeline_cache_uuid, &header.pipeline_cache_uuid), "and its pipeline cache UUID");
+}
+
 fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical: *facet.PhysicalDevice, quiet: bool) struct { u32, u32 } {
     var properties: facet.PhysicalDeviceProperties = undefined;
     fb.GetPhysicalDeviceProperties(physical, &properties);
@@ -6314,6 +6335,7 @@ fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical
     sharedDepthChecks(&probe);
     layerChecks(&probe);
     eventChecks(&probe);
+    cacheChecks(&probe);
     return .{ probe.passed, probe.failed };
 }
 

@@ -158,6 +158,10 @@ pub const LVO = struct {
     pub const CmdSetEvent = libraries.lvo(141);
     pub const CmdResetEvent = libraries.lvo(142);
     pub const CmdWaitEvents = libraries.lvo(143);
+    pub const CreatePipelineCache = libraries.lvo(144);
+    pub const DestroyPipelineCache = libraries.lvo(145);
+    pub const GetPipelineCacheData = libraries.lvo(146);
+    pub const MergePipelineCaches = libraries.lvo(147);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -303,6 +307,10 @@ pub const Fn = struct {
     pub const CmdSetEvent = *const fn (*FacetBase, *facet.CommandBuffer, *facet.Event, u32) callconv(.c) void;
     pub const CmdResetEvent = *const fn (*FacetBase, *facet.CommandBuffer, *facet.Event, u32) callconv(.c) void;
     pub const CmdWaitEvents = *const fn (*FacetBase, *facet.CommandBuffer, u32, [*]const *facet.Event, u32, u32, u32, ?[*]const facet.MemoryBarrier, u32, ?[*]const facet.BufferMemoryBarrier, u32, ?[*]const facet.ImageMemoryBarrier) callconv(.c) void;
+    pub const CreatePipelineCache = *const fn (*FacetBase, *facet.Device, *const facet.PipelineCacheCreateInfo, *?*facet.PipelineCache) callconv(.c) facet.Result;
+    pub const DestroyPipelineCache = *const fn (*FacetBase, *facet.Device, ?*facet.PipelineCache) callconv(.c) void;
+    pub const GetPipelineCacheData = *const fn (*FacetBase, *facet.Device, *facet.PipelineCache, *usize, ?*anyopaque) callconv(.c) facet.Result;
+    pub const MergePipelineCaches = *const fn (*FacetBase, *facet.Device, *facet.PipelineCache, u32, [*]const *facet.PipelineCache) callconv(.c) facet.Result;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -1037,5 +1045,27 @@ pub const FacetBase = opaque {
     /// Recorded: the work after it waits until each of the events is set.
     pub fn CmdWaitEvents(self: *FacetBase, buffer: *facet.CommandBuffer, event_count: u32, events: [*]const *facet.Event, src_stage_mask: u32, dst_stage_mask: u32, memory_barrier_count: u32, memory_barriers: ?[*]const facet.MemoryBarrier, buffer_barrier_count: u32, buffer_barriers: ?[*]const facet.BufferMemoryBarrier, image_barrier_count: u32, image_barriers: ?[*]const facet.ImageMemoryBarrier) void {
         return libraries.call(self, LVO.CmdWaitEvents, Fn.CmdWaitEvents, .{ buffer, event_count, events, src_stage_mask, dst_stage_mask, memory_barrier_count, memory_barriers, buffer_barrier_count, buffer_barriers, image_barrier_count, image_barriers });
+    }
+
+    /// A pipeline cache: what pipelines are made faster with the next time,
+    /// and what GetPipelineCacheData hands out to keep for another run.
+    pub fn CreatePipelineCache(self: *FacetBase, device: *facet.Device, info: *const facet.PipelineCacheCreateInfo, cache: *?*facet.PipelineCache) facet.Result {
+        return libraries.call(self, LVO.CreatePipelineCache, Fn.CreatePipelineCache, .{ device, info, cache });
+    }
+
+    /// The pipeline cache given back.
+    pub fn DestroyPipelineCache(self: *FacetBase, device: *facet.Device, cache: ?*facet.PipelineCache) void {
+        return libraries.call(self, LVO.DestroyPipelineCache, Fn.DestroyPipelineCache, .{ device, cache });
+    }
+
+    /// What a pipeline cache holds, as bytes to keep and give to another
+    /// CreatePipelineCache: Vulkan's header of 32 bytes, and nothing after it.
+    pub fn GetPipelineCacheData(self: *FacetBase, device: *facet.Device, cache: *facet.PipelineCache, size: *usize, data: ?*anyopaque) facet.Result {
+        return libraries.call(self, LVO.GetPipelineCacheData, Fn.GetPipelineCacheData, .{ device, cache, size, data });
+    }
+
+    /// What `sources` hold put into `destination`: nothing, none holding any.
+    pub fn MergePipelineCaches(self: *FacetBase, device: *facet.Device, destination: *facet.PipelineCache, count: u32, sources: [*]const *facet.PipelineCache) facet.Result {
+        return libraries.call(self, LVO.MergePipelineCaches, Fn.MergePipelineCaches, .{ device, destination, count, sources });
     }
 };

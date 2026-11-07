@@ -33,6 +33,13 @@ pub const PipelineLayout = struct {
     push_size: u32,
 };
 
+/// A pipeline cache (since 1.130), which holds no pipeline, as lavapipe's
+/// holds none (lvp_pipeline_cache.c): what it hands out is Vulkan's header
+/// alone.
+pub const Cache = struct {
+    device: *Device,
+};
+
 /// Where a vertex buffer binding's data goes.
 pub const Binding = struct {
     stride: u32 = 0,

@@ -66,6 +66,7 @@ facet.library/CreateGraphicsPipelines
 facet.library/CreateImage
 facet.library/CreateImageView
 facet.library/CreateInstance
+facet.library/CreatePipelineCache
 facet.library/CreatePipelineLayout
 facet.library/CreateQueryPool
 facet.library/CreateRenderPass
@@ -88,6 +89,7 @@ facet.library/DestroyImage
 facet.library/DestroyImageView
 facet.library/DestroyInstance
 facet.library/DestroyPipeline
+facet.library/DestroyPipelineCache
 facet.library/DestroyPipelineLayout
 facet.library/DestroyQueryPool
 facet.library/DestroyRenderPass
@@ -122,11 +124,13 @@ facet.library/GetPhysicalDeviceSurfaceCapabilities
 facet.library/GetPhysicalDeviceSurfaceFormats
 facet.library/GetPhysicalDeviceSurfacePresentModes
 facet.library/GetPhysicalDeviceSurfaceSupport
+facet.library/GetPipelineCacheData
 facet.library/GetQueryPoolResults
 facet.library/GetRenderAreaGranularity
 facet.library/GetSwapchainImages
 facet.library/InvalidateMappedMemoryRanges
 facet.library/MapMemory
+facet.library/MergePipelineCaches
 facet.library/QueueBindSparse
 facet.library/QueuePresent
 facet.library/QueueSubmit
@@ -3051,7 +3055,8 @@ facet.library/WaitForFences
 
    INPUTS
 	- `device` - the device.
-	- `cache` - null: facet.library has no pipeline caches.
+	- `cache` - a pipeline cache, or null; it holds no pipeline, and
+	  nothing is looked up in it or put into it (since 1.130).
 	- `count`, `infos` - each pipeline's function, of stage
 	  SHADER_STAGE_COMPUTE, and layout. The function's own entry says what a
 	  group of it holds: its invocations and the bytes they share
@@ -3477,7 +3482,8 @@ facet.library/WaitForFences
 
    INPUTS
 	- `device` - the device.
-	- `cache` - null: facet.library has no pipeline caches.
+	- `cache` - a pipeline cache, or null; it holds no pipeline, and
+	  nothing is looked up in it or put into it (since 1.130).
 	- `count`, `infos` - each pipeline's stages and state.
 	- `pipelines` - where each is written; null for one that could not be
 	  made.
@@ -4075,6 +4081,55 @@ facet.library/WaitForFences
 	    var instance: ?*facet.Instance = null;
 	    if (fb.CreateInstance(&.{ .application_name = "Cube" }, &instance) != .success) return error.NoInstance;
 	    defer fb.DestroyInstance(instance);
+facet.library/CreatePipelineCache            facet.library/CreatePipelineCache
+
+   NAME
+	CreatePipelineCache -- A pipeline cache: what pipelines are made faster with the next time, and what GetPipelineCacheData hands out to keep for another run.
+
+   SYNOPSIS
+	    fn CreatePipelineCache(base: *FacetBase, device: *facet.Device, info: *const facet.PipelineCacheCreateInfo, cache: *?*facet.PipelineCache) facet.Result
+
+   SINCE
+	1.130. LVO -580.
+
+   INPUTS
+	- `device` - the device.
+	- `info` - 0 for its flags, and what an earlier GetPipelineCacheData
+	  gave, or none.
+	- `cache` - where the cache is written; null when it fails.
+
+   RESULT
+	`success`; `error_out_of_host_memory`.
+
+   BEHAVIOR
+	The cache holds nothing, as lavapipe's holds nothing
+	(`lvp_CreatePipelineCache`, lvp_pipeline_cache.c:26-53), and the initial
+	data is not read: what GetPipelineCacheData gives is a header and no
+	pipeline, and data from anywhere else leaves a cache empty in Vulkan as
+	well.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The cache is the caller's, until DestroyPipelineCache. The initial
+	data stays the caller's.
+
+   NOTES
+	None.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`DestroyPipelineCache`, `GetPipelineCacheData`, `CreateGraphicsPipelines`
+
+   EXAMPLES
+	    var cache: ?*facet.PipelineCache = null;
+	    if (fb.CreatePipelineCache(device, &.{}, &cache) != .success) return error.NoCache;
 facet.library/CreatePipelineLayout          facet.library/CreatePipelineLayout
 
    NAME
@@ -5480,6 +5535,49 @@ facet.library/WaitForFences
 
    EXAMPLES
 	    fb.DestroyPipeline(device, pipeline);
+facet.library/DestroyPipelineCache          facet.library/DestroyPipelineCache
+
+   NAME
+	DestroyPipelineCache -- The pipeline cache given back.
+
+   SYNOPSIS
+	    fn DestroyPipelineCache(base: *FacetBase, device: *facet.Device, cache: ?*facet.PipelineCache) void
+
+   SINCE
+	1.130. LVO -584.
+
+   INPUTS
+	- `device` - the device it was made on.
+	- `cache` - the cache, or null, which does nothing.
+
+   RESULT
+	None.
+
+   BEHAVIOR
+	As lavapipe gives its back (`lvp_DestroyPipelineCache`,
+	lvp_pipeline_cache.c:55-68). The pipelines made with it are not its,
+	and stay.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The cache is gone.
+
+   NOTES
+	None.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`CreatePipelineCache`
+
+   EXAMPLES
+	    fb.DestroyPipelineCache(device, cache);
 facet.library/DestroyPipelineLayout        facet.library/DestroyPipelineLayout
 
    NAME
@@ -7220,6 +7318,58 @@ facet.library/WaitForFences
 	    var supported = false;
 	    _ = fb.GetPhysicalDeviceSurfaceSupport(physical, 0, surface.?, &supported);
 	    if (!supported) return error.CannotShow;
+facet.library/GetPipelineCacheData          facet.library/GetPipelineCacheData
+
+   NAME
+	GetPipelineCacheData -- What a pipeline cache holds, as bytes to keep and give to another CreatePipelineCache: Vulkan's header of 32 bytes, and nothing after it.
+
+   SYNOPSIS
+	    fn GetPipelineCacheData(base: *FacetBase, device: *facet.Device, cache: *facet.PipelineCache, size: *usize, data: ?*anyopaque) facet.Result
+
+   SINCE
+	1.130. LVO -588.
+
+   INPUTS
+	- `device` - the device it was made on.
+	- `cache` - the cache.
+	- `size` - the bytes there is room for at `data`; set to the bytes
+	  written, or with `data` null to the bytes there are.
+	- `data` - where they are written, or null.
+
+   RESULT
+	`success`; `incomplete` where there is no room for the header, and
+	then nothing is written and `size` is 0.
+
+   BEHAVIOR
+	The header is `PipelineCacheHeaderVersionOne`, its numbers least
+	significant byte first as Vulkan has them whatever the machine: its
+	size, version one, and the device's `vendor_id`, `device_id` and
+	`pipeline_cache_uuid` (PhysicalDeviceProperties), as lavapipe writes
+	its own (`lvp_GetPipelineCacheData`, lvp_pipeline_cache.c:70-94). No
+	pipeline follows it, the cache holding none.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The bytes are the caller's.
+
+   NOTES
+	The UUID moves with the library's revision (`_driver.cacheUuid`), so
+	data kept from another build of it is told apart.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`CreatePipelineCache`, `GetPhysicalDeviceProperties`
+
+   EXAMPLES
+	    var size: usize = 0;
+	    _ = fb.GetPipelineCacheData(device, cache.?, &size, null);
 facet.library/GetQueryPoolResults            facet.library/GetQueryPoolResults
 
    NAME
@@ -7499,6 +7649,49 @@ facet.library/WaitForFences
 	    var data: ?*anyopaque = null;
 	    if (fb.MapMemory(device, memory, 0, facet.WHOLE_SIZE, 0, &data) != .success) return error.NoMap;
 	    const vertices: [*]Vertex = @ptrCast(@alignCast(data.?));
+facet.library/MergePipelineCaches            facet.library/MergePipelineCaches
+
+   NAME
+	MergePipelineCaches -- What `sources` hold put into `destination`: nothing, none holding any.
+
+   SYNOPSIS
+	    fn MergePipelineCaches(base: *FacetBase, device: *facet.Device, destination: *facet.PipelineCache, count: u32, sources: [*]const *facet.PipelineCache) facet.Result
+
+   SINCE
+	1.130. LVO -592.
+
+   INPUTS
+	- `device` - the device they were made on.
+	- `destination` - the cache put into, not among the sources.
+	- `count`, `sources` - the caches put into it.
+
+   RESULT
+	`success`.
+
+   BEHAVIOR
+	A cache holds nothing, so nothing is put anywhere, as lavapipe has it
+	(`lvp_MergePipelineCaches`, lvp_pipeline_cache.c:96-103).
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The caches stay the caller's.
+
+   NOTES
+	None.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`CreatePipelineCache`, `GetPipelineCacheData`
+
+   EXAMPLES
+	    _ = fb.MergePipelineCaches(device, kept.?, 1, @ptrCast(&worker));
 facet.library/QueueBindSparse                    facet.library/QueueBindSparse
 
    NAME

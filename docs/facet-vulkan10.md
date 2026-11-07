@@ -127,7 +127,8 @@ cores, in 1.114, item 85's half of two, the cores', in 1.115, item 87
 in 1.116, item 88 in 1.117, item 86 in 1.118, item 48's half of two,
 the cores', in 1.119, item 41 in 1.120, item 89 in 1.121, item 15 in
 1.122, item 11 in 1.123, item 12 in 1.124, item 79 in 1.125, item 32 in
-1.126, item 31 in 1.127, item 29 in 1.128, and item 9 in 1.129.**
+1.126, item 31 in 1.127, item 29 in 1.128, item 9 in 1.129, and item 10's
+first half of two in 1.130.**
 Each
 carries a *Done* note below saying what was actually built and where the
 item's own description turned out to be wrong - and several did. Things
@@ -401,7 +402,7 @@ here: lavapipe's queue is the same.
 
 ### 10. Add the pipeline cache's four commands, and make the cache real
 
-*entry points / pipelines* &mdash; conformance-blocking, medium, also serves the shim
+*entry points / pipelines* &mdash; conformance-blocking, medium, also serves the shim &mdash; **the four commands done in 1.130, as lavapipe has them**; the V3D's cache of its compiled programs is the pipeline half of v3dv_pipeline_cache.c, about 800 of its 1,088 lines of C
 
 After: PhysicalDeviceProperties.pipeline_cache_uuid
 
@@ -410,6 +411,29 @@ CreatePipelineCache, DestroyPipelineCache, GetPipelineCacheData, MergePipelineCa
 > Verified: the only `PipelineCache` occurrences in sdk/fd/facet_lib.fd are the two create-pipeline parameters at :149 and :228 — no Create/Destroy/GetData/Merge anywhere. sdk/libs/facet/facet.zig:1683 `pub const PipelineCache = opaque {};`; facet.zig:245-255 PhysicalDeviceProperties has no pipeline_cache_uuid; driver/v3d/driver.zig:464-508 `fn compiled`. docs/facet-gaps.md:467-474 (stale reason), docs/facet-todo.md:74 ("This one's reason expires on its own").
 
 Found independently by: entry-points, objects-commands, conformance-path (3 strands).
+
+**The four commands done in 1.130**, in 100 lines of code, the generated
+interface aside, and 75 of tests, as lavapipe has them
+(lvp_pipeline_cache.c:26-103): a cache holds no pipeline, is made from
+initial data it does not read and merged to no effect, and
+GetPipelineCacheData hands out Vulkan's header of 32 bytes alone - its
+size, version one, and the device's `vendor_id`, `device_id` and
+`pipeline_cache_uuid`, least significant byte first - with `incomplete`
+and nothing written where there is no room for it. What it gives is a
+header and no pipeline, and Vulkan leaves a cache empty for data from
+anywhere else, so the initial data has nothing in it to take.
+`pipeline_cache_uuid` was there since 1.82 (`_driver.cacheUuid`), and
+moves with the library's revision, which tells data kept from another
+build apart. That is the cores' cache whole, as it is lavapipe's.
+
+The V3D's half is what the cache can hold there: since 1.76 the V3D
+compiles a pipeline's fragment program from its words (`compiled`,
+driver/v3d/driver.zig), and v3dv keeps a pipeline's compiled programs by
+a hash of what shapes them - the pipeline half of v3dv_pipeline_cache.c,
+`v3dv_pipeline_cache_search_for_pipeline`, `_upload_pipeline`, the blob
+writers and readers, `pipeline_cache_load`, MergePipelineCaches and
+GetPipelineCacheData, about 800 of its 1,088 lines of C. Its NIR half has
+nothing to hold here: the words are what the compile starts from.
 
 ### 11. Add FlushMappedMemoryRanges and InvalidateMappedMemoryRanges as the no-ops they would be
 

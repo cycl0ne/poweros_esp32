@@ -21,7 +21,8 @@ const _shader = @import("../shader/_shader.zig");
 ///
 /// INPUTS:
 /// - `device` - the device.
-/// - `cache` - null: facet.library has no pipeline caches.
+/// - `cache` - a pipeline cache, or null; it holds no pipeline, and
+///   nothing is looked up in it or put into it (since 1.130).
 /// - `count`, `infos` - each pipeline's function, of stage
 ///   SHADER_STAGE_COMPUTE, and layout. The function's own entry says what a
 ///   group of it holds: its invocations and the bytes they share

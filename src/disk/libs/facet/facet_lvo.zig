@@ -39,6 +39,10 @@ const ResetEvent = @import("sync/resetevent.zig").ResetEvent;
 const CmdSetEvent = @import("command/cmdsetevent.zig").CmdSetEvent;
 const CmdResetEvent = @import("command/cmdresetevent.zig").CmdResetEvent;
 const CmdWaitEvents = @import("command/cmdwaitevents.zig").CmdWaitEvents;
+const CreatePipelineCache = @import("pipeline/createpipelinecache.zig").CreatePipelineCache;
+const DestroyPipelineCache = @import("pipeline/destroypipelinecache.zig").DestroyPipelineCache;
+const GetPipelineCacheData = @import("pipeline/getpipelinecachedata.zig").GetPipelineCacheData;
+const MergePipelineCaches = @import("pipeline/mergepipelinecaches.zig").MergePipelineCaches;
 const GetPhysicalDeviceFormatProperties = @import("instance/getphysicaldeviceformatproperties.zig").GetPhysicalDeviceFormatProperties;
 const CreateBuffer = @import("buffer/createbuffer.zig").CreateBuffer;
 const DestroyBuffer = @import("buffer/destroybuffer.zig").DestroyBuffer;
@@ -386,6 +390,18 @@ fn lvoCmdResetEvent(base: *FacetBase, buffer: *facet.CommandBuffer, event: *face
 }
 fn lvoCmdWaitEvents(base: *FacetBase, buffer: *facet.CommandBuffer, event_count: u32, events: [*]const *facet.Event, src_stage_mask: u32, dst_stage_mask: u32, memory_barrier_count: u32, memory_barriers: ?[*]const facet.MemoryBarrier, buffer_barrier_count: u32, buffer_barriers: ?[*]const facet.BufferMemoryBarrier, image_barrier_count: u32, image_barriers: ?[*]const facet.ImageMemoryBarrier) callconv(.c) void {
     return CmdWaitEvents(base, buffer, event_count, events, src_stage_mask, dst_stage_mask, memory_barrier_count, memory_barriers, buffer_barrier_count, buffer_barriers, image_barrier_count, image_barriers);
+}
+fn lvoCreatePipelineCache(base: *FacetBase, device: *facet.Device, info: *const facet.PipelineCacheCreateInfo, cache: *?*facet.PipelineCache) callconv(.c) facet.Result {
+    return CreatePipelineCache(base, device, info, cache);
+}
+fn lvoDestroyPipelineCache(base: *FacetBase, device: *facet.Device, cache: ?*facet.PipelineCache) callconv(.c) void {
+    return DestroyPipelineCache(base, device, cache);
+}
+fn lvoGetPipelineCacheData(base: *FacetBase, device: *facet.Device, cache: *facet.PipelineCache, size: *usize, data: ?*anyopaque) callconv(.c) facet.Result {
+    return GetPipelineCacheData(base, device, cache, size, data);
+}
+fn lvoMergePipelineCaches(base: *FacetBase, device: *facet.Device, destination: *facet.PipelineCache, count: u32, sources: [*]const *facet.PipelineCache) callconv(.c) facet.Result {
+    return MergePipelineCaches(base, device, destination, count, sources);
 }
 fn lvoGetPhysicalDeviceFormatProperties(base: *FacetBase, physical: *facet.PhysicalDevice, format: facet.Format, properties: *facet.FormatProperties) callconv(.c) void {
     return GetPhysicalDeviceFormatProperties(base, physical, format, properties);
@@ -896,6 +912,10 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoCmdSetEvent),
     vec(lvoCmdResetEvent),
     vec(lvoCmdWaitEvents),
+    vec(lvoCreatePipelineCache),
+    vec(lvoDestroyPipelineCache),
+    vec(lvoGetPipelineCacheData),
+    vec(lvoMergePipelineCaches),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

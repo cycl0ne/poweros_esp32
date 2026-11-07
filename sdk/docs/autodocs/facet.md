@@ -78,6 +78,7 @@ Generated from the source by `./zig build autodoc`.
 - [CreateImage](#createimage) - An image: a texture, an attachment, or what a copy moves.
 - [CreateImageView](#createimageview) - A view of an image: the levels of it a texture descriptor samples, or what a framebuffer draws into.
 - [CreateInstance](#createinstance) - A program's hold on the library, through which it finds the devices.
+- [CreatePipelineCache](#createpipelinecache) - A pipeline cache: what pipelines are made faster with the next time, and what GetPipelineCacheData hands out to keep for another run.
 - [CreatePipelineLayout](#createpipelinelayout) - A pipeline layout: the descriptor sets and the push constants a pipeline's shaders read.
 - [CreateQueryPool](#createquerypool) - A query pool: `query_count` queries of one kind, nothing counted yet.
 - [CreateRenderPass](#createrenderpass) - A render pass: the attachments it draws into, what each starts with and what is kept of it.
@@ -100,6 +101,7 @@ Generated from the source by `./zig build autodoc`.
 - [DestroyImageView](#destroyimageview) - The view given back.
 - [DestroyInstance](#destroyinstance) - The instance given back.
 - [DestroyPipeline](#destroypipeline) - The pipeline given back: no submission still drawing with it.
+- [DestroyPipelineCache](#destroypipelinecache) - The pipeline cache given back.
 - [DestroyPipelineLayout](#destroypipelinelayout) - The pipeline layout given back.
 - [DestroyQueryPool](#destroyquerypool) - The pool given back.
 - [DestroyRenderPass](#destroyrenderpass) - The render pass given back.
@@ -134,11 +136,13 @@ Generated from the source by `./zig build autodoc`.
 - [GetPhysicalDeviceSurfaceFormats](#getphysicaldevicesurfaceformats) - The formats a swapchain on the surface can have into `formats`, at most `count.*` of them, and how many there are into `count`; null for `formats` counts alone.
 - [GetPhysicalDeviceSurfacePresentModes](#getphysicaldevicesurfacepresentmodes) - The present modes of the surface into `modes`, at most `count.*` of them, and how many there are into `count`; null for `modes` counts alone.
 - [GetPhysicalDeviceSurfaceSupport](#getphysicaldevicesurfacesupport) - Whether queue family `family` can present to the surface, into `supported`.
+- [GetPipelineCacheData](#getpipelinecachedata) - What a pipeline cache holds, as bytes to keep and give to another CreatePipelineCache: Vulkan's header of 32 bytes, and nothing after it.
 - [GetQueryPoolResults](#getquerypoolresults) - What `count` queries from `first` counted, written into `data`.
 - [GetRenderAreaGranularity](#getrenderareagranularity) - The granularity of a render area on this device: the tile it draws in.
 - [GetSwapchainImages](#getswapchainimages) - The swapchain's images into `images`, at most `count.*` of them, and how many there are into `count`; null for `images` counts alone.
 - [InvalidateMappedMemoryRanges](#invalidatemappedmemoryranges) - What the device wrote, in `ranges`, made the host's to read through its mapping: nothing to do, every memory type being coherent.
 - [MapMemory](#mapmemory) - The address of a block's memory, from an offset on.
+- [MergePipelineCaches](#mergepipelinecaches) - What `sources` hold put into `destination`: nothing, none holding any.
 - [QueueBindSparse](#queuebindsparse) - Memory bound to sparse buffers and images, in batches, by the queue: refused, no queue family binding sparse memory.
 - [QueuePresent](#queuepresent) - Images handed to the queue to be shown, once the semaphores are signalled.
 - [QueueSubmit](#queuesubmit) - Batches of work for the queue, played in order by its task.
@@ -3893,7 +3897,8 @@ fn CreateComputePipelines(base: *FacetBase, device: *facet.Device, cache: ?*face
 **INPUTS**
 
 - `device` - the device.
-- `cache` - null: facet.library has no pipeline caches.
+- `cache` - a pipeline cache, or null; it holds no pipeline, and
+  nothing is looked up in it or put into it (since 1.130).
 - `count`, `infos` - each pipeline's function, of stage
   SHADER_STAGE_COMPUTE, and layout. The function's own entry says what a
   group of it holds: its invocations and the bytes they share
@@ -4424,7 +4429,8 @@ fn CreateGraphicsPipelines(base: *FacetBase, device: *facet.Device, cache: ?*fac
 **INPUTS**
 
 - `device` - the device.
-- `cache` - null: facet.library has no pipeline caches.
+- `cache` - a pipeline cache, or null; it holds no pipeline, and
+  nothing is looked up in it or put into it (since 1.130).
 - `count`, `infos` - each pipeline's stages and state.
 - `pipelines` - where each is written; null for one that could not be
   made.
@@ -5076,6 +5082,70 @@ None known.
 var instance: ?*facet.Instance = null;
 if (fb.CreateInstance(&.{ .application_name = "Cube" }, &instance) != .success) return error.NoInstance;
 defer fb.DestroyInstance(instance);
+```
+
+## CreatePipelineCache
+
+A pipeline cache: what pipelines are made faster with the next time, and what GetPipelineCacheData hands out to keep for another run.
+
+**SYNOPSIS**
+
+```zig
+fn CreatePipelineCache(base: *FacetBase, device: *facet.Device, info: *const facet.PipelineCacheCreateInfo, cache: *?*facet.PipelineCache) facet.Result
+```
+
+**SINCE**
+
+1.130. LVO -580.
+
+**INPUTS**
+
+- `device` - the device.
+- `info` - 0 for its flags, and what an earlier GetPipelineCacheData
+  gave, or none.
+- `cache` - where the cache is written; null when it fails.
+
+**RESULT**
+
+`success`; `error_out_of_host_memory`.
+
+**BEHAVIOR**
+
+The cache holds nothing, as lavapipe's holds nothing
+(`lvp_CreatePipelineCache`, lvp_pipeline_cache.c:26-53), and the initial
+data is not read: what GetPipelineCacheData gives is a header and no
+pipeline, and data from anywhere else leaves a cache empty in Vulkan as
+well.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The cache is the caller's, until DestroyPipelineCache. The initial
+data stays the caller's.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`DestroyPipelineCache`, `GetPipelineCacheData`, `CreateGraphicsPipelines`
+
+**EXAMPLES**
+
+```zig
+var cache: ?*facet.PipelineCache = null;
+if (fb.CreatePipelineCache(device, &.{}, &cache) != .success) return error.NoCache;
 ```
 
 ## CreatePipelineLayout
@@ -6811,6 +6881,64 @@ None known.
 
 ```zig
 fb.DestroyPipeline(device, pipeline);
+```
+
+## DestroyPipelineCache
+
+The pipeline cache given back.
+
+**SYNOPSIS**
+
+```zig
+fn DestroyPipelineCache(base: *FacetBase, device: *facet.Device, cache: ?*facet.PipelineCache) void
+```
+
+**SINCE**
+
+1.130. LVO -584.
+
+**INPUTS**
+
+- `device` - the device it was made on.
+- `cache` - the cache, or null, which does nothing.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+As lavapipe gives its back (`lvp_DestroyPipelineCache`,
+lvp_pipeline_cache.c:55-68). The pipelines made with it are not its,
+and stay.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The cache is gone.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreatePipelineCache`
+
+**EXAMPLES**
+
+```zig
+fb.DestroyPipelineCache(device, cache);
 ```
 
 ## DestroyPipelineLayout
@@ -9063,6 +9191,73 @@ _ = fb.GetPhysicalDeviceSurfaceSupport(physical, 0, surface.?, &supported);
 if (!supported) return error.CannotShow;
 ```
 
+## GetPipelineCacheData
+
+What a pipeline cache holds, as bytes to keep and give to another CreatePipelineCache: Vulkan's header of 32 bytes, and nothing after it.
+
+**SYNOPSIS**
+
+```zig
+fn GetPipelineCacheData(base: *FacetBase, device: *facet.Device, cache: *facet.PipelineCache, size: *usize, data: ?*anyopaque) facet.Result
+```
+
+**SINCE**
+
+1.130. LVO -588.
+
+**INPUTS**
+
+- `device` - the device it was made on.
+- `cache` - the cache.
+- `size` - the bytes there is room for at `data`; set to the bytes
+  written, or with `data` null to the bytes there are.
+- `data` - where they are written, or null.
+
+**RESULT**
+
+`success`; `incomplete` where there is no room for the header, and
+then nothing is written and `size` is 0.
+
+**BEHAVIOR**
+
+The header is `PipelineCacheHeaderVersionOne`, its numbers least
+significant byte first as Vulkan has them whatever the machine: its
+size, version one, and the device's `vendor_id`, `device_id` and
+`pipeline_cache_uuid` (PhysicalDeviceProperties), as lavapipe writes
+its own (`lvp_GetPipelineCacheData`, lvp_pipeline_cache.c:70-94). No
+pipeline follows it, the cache holding none.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The bytes are the caller's.
+
+**NOTES**
+
+The UUID moves with the library's revision (`_driver.cacheUuid`), so
+data kept from another build of it is told apart.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreatePipelineCache`, `GetPhysicalDeviceProperties`
+
+**EXAMPLES**
+
+```zig
+var size: usize = 0;
+_ = fb.GetPipelineCacheData(device, cache.?, &size, null);
+```
+
 ## GetQueryPoolResults
 
 What `count` queries from `first` counted, written into `data`.
@@ -9415,6 +9610,64 @@ None known.
 var data: ?*anyopaque = null;
 if (fb.MapMemory(device, memory, 0, facet.WHOLE_SIZE, 0, &data) != .success) return error.NoMap;
 const vertices: [*]Vertex = @ptrCast(@alignCast(data.?));
+```
+
+## MergePipelineCaches
+
+What `sources` hold put into `destination`: nothing, none holding any.
+
+**SYNOPSIS**
+
+```zig
+fn MergePipelineCaches(base: *FacetBase, device: *facet.Device, destination: *facet.PipelineCache, count: u32, sources: [*]const *facet.PipelineCache) facet.Result
+```
+
+**SINCE**
+
+1.130. LVO -592.
+
+**INPUTS**
+
+- `device` - the device they were made on.
+- `destination` - the cache put into, not among the sources.
+- `count`, `sources` - the caches put into it.
+
+**RESULT**
+
+`success`.
+
+**BEHAVIOR**
+
+A cache holds nothing, so nothing is put anywhere, as lavapipe has it
+(`lvp_MergePipelineCaches`, lvp_pipeline_cache.c:96-103).
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The caches stay the caller's.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreatePipelineCache`, `GetPipelineCacheData`
+
+**EXAMPLES**
+
+```zig
+_ = fb.MergePipelineCaches(device, kept.?, 1, @ptrCast(&worker));
 ```
 
 ## QueueBindSparse

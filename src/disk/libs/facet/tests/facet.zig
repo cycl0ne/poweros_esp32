@@ -1817,6 +1817,75 @@ test "events: set and reset by the host and by a queue's work, waited for in the
     rig.fb.FreeCommandBuffers(device, pool.?, 4, &commands);
 }
 
+test "a pipeline cache: Vulkan's header of the device's own numbers and nothing after it, made again from it, merged, and taken by the pipeline calls (since 1.130)" {
+    var rig = try Rig.up();
+    defer rig.down() catch |err| std.debug.panic("{}", .{err});
+    const instance, const physical = try rig.instance();
+    defer rig.fb.DestroyInstance(instance);
+    const device = try rig.device(physical);
+    defer rig.fb.DestroyDevice(device);
+    // Numbers of a device's own, as the V3D's are, where the cores' are 0.
+    const described = _objects.of(@import("../instance/_instance.zig").PhysicalDevice, physical);
+    described.properties.vendor_id = 0x14E4;
+    described.properties.device_id = 0x2712;
+    var properties: facet.PhysicalDeviceProperties = undefined;
+    rig.fb.GetPhysicalDeviceProperties(physical, &properties);
+
+    var caches: [2]?*facet.PipelineCache = .{ null, null };
+    defer for (caches) |cache| rig.fb.DestroyPipelineCache(device, cache);
+    try testing.expectEqual(facet.Result.success, rig.fb.CreatePipelineCache(device, &.{}, &caches[0]));
+    rig.fb.DestroyPipelineCache(device, null);
+
+    // The bytes there are, then the bytes: the header, least significant
+    // byte first, and nothing after it.
+    try testing.expectEqual(@as(usize, 32), @sizeOf(facet.PipelineCacheHeaderVersionOne));
+    var size: usize = 0;
+    try testing.expectEqual(facet.Result.success, rig.fb.GetPipelineCacheData(device, caches[0].?, &size, null));
+    try testing.expectEqual(@as(usize, 32), size);
+    var bytes: [40]u8 = @splat(0xAA);
+    size = bytes.len;
+    try testing.expectEqual(facet.Result.success, rig.fb.GetPipelineCacheData(device, caches[0].?, &size, &bytes));
+    try testing.expectEqual(@as(usize, 32), size);
+    try testing.expectEqual(@as(u32, 32), std.mem.readInt(u32, bytes[0..4], .little));
+    try testing.expectEqual(@as(u32, 1), std.mem.readInt(u32, bytes[4..8], .little));
+    try testing.expectEqual(@as(u32, 0x14E4), std.mem.readInt(u32, bytes[8..12], .little));
+    try testing.expectEqual(@as(u32, 0x2712), std.mem.readInt(u32, bytes[12..16], .little));
+    try testing.expectEqualSlices(u8, &properties.pipeline_cache_uuid, bytes[16..32]);
+    for (bytes[32..]) |byte| try testing.expectEqual(@as(u8, 0xAA), byte);
+    const header = std.mem.bytesToValue(facet.PipelineCacheHeaderVersionOne, bytes[0..32]);
+    try testing.expectEqual(facet.PipelineCacheHeaderVersion.one, header.header_version);
+    try testing.expectEqual(properties.vendor_id, header.vendor_id);
+    try testing.expectEqual(properties.device_id, header.device_id);
+
+    // No room for the header: nothing written, and 0.
+    var short: [31]u8 = @splat(0xAA);
+    size = short.len;
+    try testing.expectEqual(facet.Result.incomplete, rig.fb.GetPipelineCacheData(device, caches[0].?, &size, &short));
+    try testing.expectEqual(@as(usize, 0), size);
+    for (short) |byte| try testing.expectEqual(@as(u8, 0xAA), byte);
+
+    // Made again from what it gave, which it gives again; merged.
+    try testing.expectEqual(facet.Result.success, rig.fb.CreatePipelineCache(device, &.{ .initial_data_size = 32, .initial_data = &bytes }, &caches[1]));
+    var again: [32]u8 = @splat(0);
+    size = again.len;
+    try testing.expectEqual(facet.Result.success, rig.fb.GetPipelineCacheData(device, caches[1].?, &size, &again));
+    try testing.expectEqualSlices(u8, bytes[0..32], &again);
+    try testing.expectEqual(facet.Result.success, rig.fb.MergePipelineCaches(device, caches[0].?, 1, @ptrCast(&caches[1])));
+
+    // A pipeline made with one.
+    var module: ?*facet.ShaderModule = null;
+    try testing.expectEqual(facet.Result.success, rig.fb.CreateShaderModule(device, &.{ .code = &Specialized.code }, &module));
+    defer rig.fb.DestroyShaderModule(device, module);
+    var layout: ?*facet.PipelineLayout = null;
+    try testing.expectEqual(facet.Result.success, rig.fb.CreatePipelineLayout(device, &.{}, &layout));
+    defer rig.fb.DestroyPipelineLayout(device, layout);
+    var pipeline: [1]?*facet.Pipeline = .{null};
+    const info = facet.ComputePipelineCreateInfo{ .stage = .{ .stage = facet.SHADER_STAGE_COMPUTE, .module = module.? }, .layout = layout.? };
+    try testing.expectEqual(facet.Result.success, rig.fb.CreateComputePipelines(device, caches[0], 1, @ptrCast(&info), &pipeline));
+    try testing.expect(pipeline[0] != null);
+    rig.fb.DestroyPipeline(device, pipeline[0]);
+}
+
 /// A vertex, a fragment and a compute function, each as plain as the
 /// pipelines that specialization constants are refused on need.
 const Specialized = struct {

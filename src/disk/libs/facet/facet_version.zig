@@ -3289,4 +3289,31 @@ pub const LIBRARY_VERSION = 1;
 /// changes put back fails them. C:test/FacetProbe has a queue's task wait
 /// for an event the host sets only once the work is submitted, which the
 /// host tests cannot: there the task that submits plays the work.
-pub const LIBRARY_REVISION = 129;
+///
+/// 130: **A pipeline cache's four calls.** The first half of item 10 of
+/// docs/facet-vulkan10.md. Vulkan 1.0 has every implementation carry
+/// CreatePipelineCache, DestroyPipelineCache, GetPipelineCacheData and
+/// MergePipelineCaches; the library declared the handle, took it in both
+/// pipeline calls and made none. They are LVO -580 to -592, as lavapipe has
+/// them (src/gallium/frontends/lavapipe/lvp_pipeline_cache.c:26-103): a
+/// cache holds no pipeline, is made from initial data it does not read and
+/// merged to no effect, and GetPipelineCacheData hands out Vulkan's header
+/// of 32 bytes alone, its numbers least significant byte first - its size,
+/// version one, and the device's `vendor_id`, `device_id` and
+/// `pipeline_cache_uuid` - with `incomplete` and nothing written where
+/// there is no room for it. What it gives is a header and no pipeline, and
+/// data from anywhere else leaves a cache empty in Vulkan as well, so the
+/// initial data has nothing in it to take. The SDK has Vulkan's
+/// PipelineCacheCreateInfo, without sType and pNext as every structure is
+/// until item 51, PipelineCacheHeaderVersion and
+/// PipelineCacheHeaderVersionOne. That is the cores' cache whole, as it is
+/// lavapipe's. The V3D compiles a pipeline's programs since 1.76, and
+/// keeping them is the item's other half, v3dv's cache.
+///
+/// Tests: the header is 32 bytes of the device's own numbers - set for the
+/// test to the V3D's, the cores' being 0 - with nothing after it; with no
+/// room for it nothing is written and the size is 0; a cache made from
+/// what one gave gives the same; caches merge; and a pipeline is made with
+/// one. Each of 13 changes put back fails them. C:test/FacetProbe holds
+/// each device's header against its properties.
+pub const LIBRARY_REVISION = 130;

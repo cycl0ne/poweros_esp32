@@ -512,16 +512,18 @@ instead of a set for each. Every device has them
 - An offset is in bytes and is not rounded: it is for the program to keep
   it aligned for what it reads there.
 
-## Object kinds that do not exist
+## A pipeline cache and sparse memory, and what they still are not
 
 ### Pipeline cache
 
-`PipelineCache` is declared, and `CreateGraphicsPipelines` and
-`CreateComputePipelines` each take a `?*facet.PipelineCache`, but nothing
-makes one: there is no `CreatePipelineCache`, `DestroyPipelineCache`,
-`GetPipelineCacheData` or `MergePipelineCaches`. The parameter is there for
-the shape of the call and is ignored. Pipelines are cheap to make here,
-because there is nothing to compile.
+`CreatePipelineCache`, `DestroyPipelineCache`, `GetPipelineCacheData` and
+`MergePipelineCaches` are there since 1.130, as lavapipe has them: a cache
+holds no pipeline, and what it hands out is Vulkan's header alone, of the
+device's own numbers. `CreateGraphicsPipelines` and
+`CreateComputePipelines` take one, or null, and look nothing up in it. On
+the cores there is no more to it, as on lavapipe. The V3D compiles a
+pipeline's programs since 1.76, and keeping them is v3dv's cache
+(docs/facet-vulkan10.md item 10).
 
 ### Sparse resources
 
@@ -907,14 +909,12 @@ sharing an edge cut it the same way from either side.
 ## Left out for this hardware
 
 Logic operations, dual-source blending, geometry shaders, several
-viewports, sparse memory and a pipeline cache are not missing by
-accident. They cost more than they would give on *this* hardware, and
-both the tiled rasterizer on the cores and the V3D's fixed fragment forms
-are built the way they are because of it: a logic operation cannot use
-the blend fast path and would have to live in a fragment program the QPUs
-cannot run, a geometry stage wants an allocation between the vertex work
-and the binning, and a pipeline cache has nothing to cache where nothing
-is compiled.
+viewports and sparse memory are not missing by accident. They cost more
+than they would give on *this* hardware, and both the tiled rasterizer on
+the cores and the V3D's fixed fragment forms are built the way they are
+because of it: a logic operation cannot use the blend fast path and would
+have to live in a fragment program the QPUs cannot run, and a geometry
+stage wants an allocation between the vertex work and the binning.
 
 Multisampling, which Vulkan 1.0 gives no way to refuse, was on that list
 until 1.112. The cores draw four samples a pixel since then, the three
@@ -927,7 +927,10 @@ nothing to wait for behind one in-order queue. That is so, and is why
 they cost nothing: lavapipe's queue plays its work in order too, and has
 them. An event is an exec waitable, as a fence is, and a `CmdWaitEvents`
 finds it set by the work before it or by the host, which Vulkan has set
-it before the work is submitted (docs/facet-vulkan10.md item 9).
+it before the work is submitted (docs/facet-vulkan10.md item 9). A
+pipeline cache was on it as well, for having nothing to cache where nothing
+is compiled; the V3D compiles a pipeline's programs since 1.76, so it is
+work (item 10), and its four calls are there since 1.130.
 
 None of that is a judgement on the features, and none of it is for ever.
 Every one of them is answered by the **device**: a driver for a chip that
