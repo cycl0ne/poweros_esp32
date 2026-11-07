@@ -2456,4 +2456,27 @@ pub const LIBRARY_VERSION = 1;
 /// - a held depth held as sample 0's, written into sample 0's plane,
 ///   written for every pixel, or read as sample 0's;
 /// - a clamped depth not held inside the viewport's range.
-pub const LIBRARY_REVISION = 105;
+///
+/// 106: **A depth attachment's pair of ops for a plane its format has not
+/// does nothing, as in Vulkan, and no longer refuses the render pass.**
+///
+/// Vulkan's `loadOp` and `storeOp` are the depth's, and `stencilLoadOp`
+/// and `stencilStoreOp` the stencil's (VkAttachmentDescription). Since
+/// 1.38 CreateRenderPass answered `error_feature_not_present` for a
+/// stencil kept of a `d16_unorm` and for a depth kept of an `s8_uint`: a
+/// pass Vulkan takes, which a program may well make with LOAD and STORE
+/// in all four. Each pair is now read only for a plane the format has, as
+/// Mesa's render passes read them (vk_render_pass.c:1561-1567,
+/// :1833-1839; `v3dv_cmd_buffer_check_needs_load`,
+/// v3dv_cmd_buffer.c:1533-1544), and a pair for a plane it has not keeps
+/// nothing. A device that keeps no stencil takes a depth alone whose
+/// stencil's ops say to keep it, as there is none to keep.
+///
+/// K3's test of depths at four samples (1.105) found it: its `d16_unorm`
+/// attachment needed the stencil's two ops as DONT_CARE to be made at
+/// all. It now gives both of its formats the same four. The render pass
+/// test's two cases of such ops move from those refused to those taken,
+/// each part said to load and store neither plane. Each of four changes
+/// put back fails it: the stencil's load op or store op read for a format
+/// without a stencil, or the depth's for one without a depth.
+pub const LIBRARY_REVISION = 106;

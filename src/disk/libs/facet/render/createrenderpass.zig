@@ -60,14 +60,14 @@ const _surface = @import("../surface/_surface.zig");
 /// there, costing no memory at all. Since 1.30 it may outlive the pass
 /// instead: with the store op STORE each tile's depth is written into the
 /// image's memory as the tile is drawn, and with the load op LOAD each
-/// tile starts from what is there. Both want a format that holds a depth
-/// and a device whose `stored_depth` is true - every device since 1.47 -
-/// and an image bound to memory something is behind, which
-/// CreateFramebuffer holds to; otherwise that is
-/// `error_feature_not_present`. A depth the V3D stored may be one of the
-/// 65535ths away from the one the cores would have stored: the hardware
-/// keeps a deeper number and writes its top 16 bits, which is the same
-/// where the depth falls on a 65535th and one more where it does not.
+/// tile starts from what is there. Both want a device whose
+/// `stored_depth` is true - every device since 1.47 - and an image bound
+/// to memory something is behind, which CreateFramebuffer holds to;
+/// otherwise that is `error_feature_not_present`. A depth the V3D stored
+/// may be one of the 65535ths away from the one the cores would have
+/// stored: the hardware keeps a deeper number and writes its top 16 bits,
+/// which is the same where the depth falls on a 65535th and one more where
+/// it does not.
 ///
 /// Since 1.38 the stencil keeps its own the same way, by its own two ops:
 /// with `stencil_store_op` STORE each tile's stencil, a byte a pixel, is
@@ -77,8 +77,17 @@ const _surface = @import("../surface/_surface.zig");
 /// a device whose `stored_stencil` is true, every device again. A format
 /// that holds both keeps each pixel's depth and its stencil beside each
 /// other, so the four ops are taken on their own: a pass may store the
-/// stencil and leave the depth in the tiles, or the other way round. An
-/// op for a plane the format has not is `error_feature_not_present`.
+/// stencil and leave the depth in the tiles, or the other way round.
+///
+/// Each pair of ops is for its own plane, as in Vulkan: `load_op` and
+/// `store_op` for the depth, `stencil_load_op` and `stencil_store_op` for
+/// the stencil (VkAttachmentDescription). A pair whose plane the format
+/// has not loads and stores nothing, whatever it says - the stencil's of a
+/// `d16_unorm`, the depth's of an `s8_uint` - as Mesa's render passes read
+/// each pair only for a plane the format has (vk_render_pass.c:1561-1567,
+/// :1833-1839; `v3dv_cmd_buffer_check_needs_load`,
+/// v3dv_cmd_buffer.c:1533-1544). Until 1.106 such an op was
+/// `error_feature_not_present`.
 ///
 /// Keeping either plane of a format that holds **both** - `d16_unorm_s8_uint`
 /// - wants `stored_both` as well (since 1.47): the cores write a pixel's
@@ -324,10 +333,12 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                 tests_stencil = _image.hasStencil(depth.format);
                 if (!tests_depth and !tests_stencil) return .error_format_not_supported;
                 samples = depth.samples;
-                loads_depth = depth.load_op == .load;
-                stores_depth = depth.store_op == .store;
-                loads_stencil = depth.stencil_load_op == .load;
-                stores_stencil = depth.stencil_store_op == .store;
+                // Each pair of ops for its own plane, and nothing for a
+                // plane the format has not (since 1.106).
+                loads_depth = tests_depth and depth.load_op == .load;
+                stores_depth = tests_depth and depth.store_op == .store;
+                loads_stencil = tests_stencil and depth.stencil_load_op == .load;
+                stores_stencil = tests_stencil and depth.stencil_store_op == .store;
                 // A subpass that goes on in the tiles of the one before
                 // it took the `continue` above, so reaching here with an
                 // attachment another subpass has already drawn into
@@ -344,16 +355,13 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                 if (loads_depth or stores_depth or (shared != null and tests_depth)) {
                     // A depth that outlives the pass is written into the
                     // image's rows and read back from them, which only a
-                    // device that draws in the rasterizer's tiles can do,
-                    // and only for a format whose rows hold a depth.
+                    // device that draws in the rasterizer's tiles can do.
                     if (!owner.physical.can.stored_depth) return .error_feature_not_present;
-                    if (!tests_depth) return .error_feature_not_present;
                 }
                 // The stencil keeps its own, in its own plane of those
                 // rows, by its own two ops (1.38).
                 if (loads_stencil or stores_stencil or (shared != null and tests_stencil)) {
                     if (!owner.physical.can.stored_stencil) return .error_feature_not_present;
-                    if (!tests_stencil) return .error_feature_not_present;
                 }
                 // A format of both planes keeps either only where the
                 // device writes a pixel's planes where they lie in it

@@ -577,10 +577,6 @@ test "a render pass: one subpass, a colour attachment and perhaps a depth one; w
     const depth = facet.AttachmentReference{ .attachment = 1, .layout = .depth_stencil_attachment_optimal };
     const subpass = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&color), .depth_stencil_attachment = &depth };
     const refused = [_]struct { facet.Result, [2]facet.AttachmentDescription }{
-        // A depth kept, of a format with no depth in it, and a stencil
-        // kept of one with no stencil: each op wants its own plane.
-        .{ .error_feature_not_present, .{ .{ .format = .b8g8r8a8_unorm, .final_layout = .general }, .{ .format = .s8_uint, .load_op = .load, .final_layout = .general } } },
-        .{ .error_feature_not_present, .{ .{ .format = .b8g8r8a8_unorm, .final_layout = .general }, .{ .format = .d16_unorm, .stencil_store_op = .store, .final_layout = .general } } },
         // A colour attachment of a float, a depth one of 32 bits.
         .{ .error_format_not_supported, .{ .{ .format = .r32_sfloat, .final_layout = .general }, .{ .format = .d16_unorm, .final_layout = .general } } },
         .{ .error_format_not_supported, .{ .{ .format = .b8g8r8a8_unorm, .final_layout = .general }, .{ .format = .r32_sfloat, .final_layout = .general } } },
@@ -642,8 +638,25 @@ test "a render pass: one subpass, a colour attachment and perhaps a depth one; w
     try testing.expect(alone.parts[0].loads_stencil and alone.parts[0].stores_stencil);
     fb.DestroyRenderPass(device, keeping_stencil);
 
+    // Each pair of ops is for its own plane, as in Vulkan, and a pair whose
+    // plane the format has not keeps nothing (since 1.106; refused
+    // before): the depth's two of a stencil alone, and the stencil's two
+    // of a depth alone.
+    const planeless = [2][2]facet.AttachmentDescription{
+        .{ .{ .format = .b8g8r8a8_unorm, .final_layout = .general }, .{ .format = .s8_uint, .load_op = .load, .store_op = .store, .final_layout = .general } },
+        .{ .{ .format = .b8g8r8a8_unorm, .final_layout = .general }, .{ .format = .d16_unorm, .stencil_load_op = .load, .stencil_store_op = .store, .final_layout = .general } },
+    };
+    for (&planeless) |*attachments| {
+        var taken: ?*facet.RenderPass = null;
+        try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = attachments, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &taken));
+        const part = _objects.of(_render.RenderPass, taken.?).parts[0];
+        try testing.expect(!part.loads_depth and !part.stores_depth and !part.loads_stencil and !part.stores_stencil);
+        fb.DestroyRenderPass(device, taken);
+    }
+
     // A device that keeps no stencil refuses either of its ops, and keeps
-    // taking the depth's.
+    // taking the depth's - and a depth alone whose stencil's two say to
+    // keep it, as there is no stencil to keep.
     const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
     physical.can.stored_stencil = false;
     defer physical.can.stored_stencil = true;
@@ -653,6 +666,9 @@ test "a render pass: one subpass, a colour attachment and perhaps a depth one; w
     var still: ?*facet.RenderPass = null;
     try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &kept, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &still));
     fb.DestroyRenderPass(device, still);
+    var depth_alone_kept: ?*facet.RenderPass = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &planeless[1], .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &depth_alone_kept));
+    fb.DestroyRenderPass(device, depth_alone_kept);
 }
 
 test "a framebuffer: a view for each attachment, of images that fit the pass" {
@@ -5268,18 +5284,12 @@ fn depthsBySample(format: facet.Format) !void {
     const colors = _objects.of(image_zig.Image, color_made);
     const depth_made, const depth_view = try bench.image(.{ .format = format, .extent = .{ .width = side, .height = side, .depth = 1 }, .samples = 4, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT }, false);
     const depths = _objects.of(image_zig.Image, depth_made);
-    const cleared_depth = facet.AttachmentDescription{
-        .format = format,
-        .samples = 4,
-        .load_op = .clear,
-        .store_op = .store,
-        .stencil_load_op = if (stenciled) .clear else .dont_care,
-        .stencil_store_op = if (stenciled) .store else .dont_care,
-        .final_layout = .depth_stencil_attachment_optimal,
-    };
+    // The same four ops for both formats: a depth alone has no stencil for
+    // the stencil's two to keep, and they keep nothing (since 1.106).
+    const cleared_depth = facet.AttachmentDescription{ .format = format, .samples = 4, .load_op = .clear, .store_op = .store, .stencil_load_op = .clear, .stencil_store_op = .store, .final_layout = .depth_stencil_attachment_optimal };
     var loaded_depth = cleared_depth;
     loaded_depth.load_op = .load;
-    if (stenciled) loaded_depth.stencil_load_op = .load;
+    loaded_depth.stencil_load_op = .load;
     loaded_depth.initial_layout = .depth_stencil_attachment_optimal;
     const cleared_result, const cleared = samplesPass(&bench, &.{ fourSamples(.clear), cleared_depth }, null, 1);
     defer fb.DestroyRenderPass(device, cleared);
