@@ -176,7 +176,9 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
     const blend, const mixing = player.mixingFor(pipeline, translated, first_output);
     var more_blends: [_render.most_colors - 1]raster.pipeline.Blend = @splat(.off);
     var more_mixings: [_render.most_colors - 1]raster.pipeline.Mixing = @splat(.{});
-    for (1..colors) |k| {
+    // None past the first where there is no first: a subpass of no colour
+    // attachment (since 1.113).
+    for (1..@max(colors, 1)) |k| {
         more_blends[k - 1], more_mixings[k - 1] = player.mixingFor(pipeline, translated, @intCast(k));
     }
     const stencil: ?[2]raster.batched.StencilFace = if (player.stencil.of(pipeline)) |faces| .{ stencilFaceOf(faces[0]), stencilFaceOf(faces[1]) } else null;
@@ -339,9 +341,13 @@ pub fn clearAttachment(queue: *Queue, command: *const _command.ClearAttachment) 
     const clears_depth = aspect & facet.IMAGE_ASPECT_DEPTH != 0;
     const color = command.color;
     const rect = command.rect;
-    const surface = target.surfaceAt(0);
-    const surface_width: f32 = @floatFromInt(surface.width);
-    const surface_height: f32 = @floatFromInt(surface.height);
+    // The viewport over the first colour attachment's surface; in a
+    // subpass of none, over the framebuffer's corner to the render area's
+    // far one, which holds every rectangle Vulkan lets be cleared
+    // (VUID-vkCmdClearAttachments-pRects-00016, since 1.113).
+    const reach: [2]u32 = if (target.surface_count > 0) .{ target.surfaceAt(0).width, target.surfaceAt(0).height } else .{ target.area.x + target.area.width, target.area.y + target.area.height };
+    const surface_width: f32 = @floatFromInt(reach[0]);
+    const surface_height: f32 = @floatFromInt(reach[1]);
     const stencil_face = raster.batched.StencilFace{ .pass = .replace, .compare = .always, .write_mask = 0xFF, .reference = @truncate(command.stencil) };
     const state = raster.batched.State{
         .viewport = .{ .x = 0, .y = 0, .width = surface_width, .height = surface_height },

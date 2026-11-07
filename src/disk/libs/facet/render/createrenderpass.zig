@@ -35,9 +35,21 @@ const _surface = @import("../surface/_surface.zig");
 ///
 /// BEHAVIOR:
 /// The pass has up to 4 subpasses and up to 8 attachments. A subpass draws
-/// into 1 to 4 colour attachments - b8g8r8a8_unorm or r8g8b8a8_unorm - 8 in all
+/// into 0 to 4 colour attachments - b8g8r8a8_unorm or r8g8b8a8_unorm - 8 in all
 /// the subpasses, and may test against a depth attachment, d16_unorm, s8_uint
 /// or d16_unorm_s8_uint.
+///
+/// A subpass of no colour attachment - a depth attachment alone, the
+/// shadow map's pass and the depth pre-pass, or no attachment at all - is
+/// taken on a device that draws one (`Capabilities.colorless_subpasses`,
+/// the cores' since 1.113), and is `error_feature_not_present` on one
+/// that does not. What its fragment function colours goes nowhere: Mesa's
+/// lavapipe hands llvmpipe a framebuffer of no colour buffers for it
+/// (lvp_execute.c:1974-1980), whose tiles have none to load or store
+/// (lp_rast.c:126-131) and whose blending is a loop over none
+/// (lp_state_fs.c:3618-3622). A subpass with no attachment at all draws
+/// over the framebuffer's size at one sample a pixel; at four it waits on
+/// docs/facet-vulkan10.md item 61's K8.
 ///
 /// An attachment holds one sample a pixel, or four on a device that draws
 /// them (`Capabilities.multisampling`, since 1.100), and every attachment of
@@ -306,8 +318,10 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                 if (subpass.depth_stencil_attachment) |depth| if (depth.attachment == reference.attachment) return .error_initialization_failed;
             }
         }
-        if (subpass.color_attachment_count == 0 or subpass.color_attachment_count > _render.most_colors) return .error_feature_not_present;
-        const colors = subpass.color_attachments.?[0..subpass.color_attachment_count];
+        if (subpass.color_attachment_count > _render.most_colors) return .error_feature_not_present;
+        // None, on a device that draws a subpass of none (since 1.113).
+        if (subpass.color_attachment_count == 0 and !owner.physical.can.colorless_subpasses) return .error_feature_not_present;
+        const colors = colorsOf(subpass);
         // facet.library's own flag: the subpass's colour attachments are
         // drawn together, in one pass over the tiles, by a fragment
         // function that writes all of them at once (since 1.51). Without
@@ -386,7 +400,9 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
         }
         plan.subpasses[number] = .{
             .first_part = plan.part_count,
-            .part_count = if (together) 1 else subpass.color_attachment_count,
+            // A subpass of no colour attachment is the one part, which
+            // draws none (since 1.113).
+            .part_count = if (together or colors.len == 0) 1 else subpass.color_attachment_count,
             .joined = false,
         };
         if (plan.part_count + plan.subpasses[number].part_count > _render.most_parts) return .error_feature_not_present;
@@ -454,7 +470,7 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                 plan.part_count += 1;
             }
         }
-        if (together) {
+        if (together or colors.len == 0) {
             plan.parts[plan.part_count] = whole;
             plan.part_count += 1;
         }
@@ -498,7 +514,7 @@ fn sameTargets(before: facet.SubpassDescription, subpass: facet.SubpassDescripti
     // put after this one's drawing (since 1.100).
     if (before.resolve_attachments != null or subpass.resolve_attachments != null) return false;
     if (before.flags != subpass.flags) return false;
-    for (before.color_attachments.?[0..before.color_attachment_count], subpass.color_attachments.?[0..subpass.color_attachment_count]) |a, b| {
+    for (colorsOf(before), colorsOf(subpass)) |a, b| {
         if (a.attachment != b.attachment) return false;
     }
     return depthOf(before) == depthOf(subpass);
@@ -507,4 +523,11 @@ fn sameTargets(before: facet.SubpassDescription, subpass: facet.SubpassDescripti
 fn depthOf(subpass: facet.SubpassDescription) u32 {
     const reference = subpass.depth_stencil_attachment orelse return facet.ATTACHMENT_UNUSED;
     return reference.attachment;
+}
+
+/// A subpass's colour attachments: none where it has none, whose pointer
+/// Vulkan lets be null (since 1.113).
+fn colorsOf(subpass: facet.SubpassDescription) []const facet.AttachmentReference {
+    if (subpass.color_attachment_count == 0) return &.{};
+    return subpass.color_attachments.?[0..subpass.color_attachment_count];
 }

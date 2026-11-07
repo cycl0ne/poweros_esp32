@@ -481,7 +481,8 @@ fn setUpAll(target: *Target, state: *const State, vertices: []const f32, stride:
         .mixing = state.mixing,
         .more_blends = state.more_blends,
         .more_mixings = state.more_mixings,
-        // Never more than the frame has planes and surfaces for.
+        // Never more than the frame has planes and surfaces for: none in a
+        // subpass of no colour attachment (since 1.113).
         .color_count = @min(@max(state.color_count, 1), target.colorCount()),
         .has_depth = depth,
         // A draw that goes by pixel without a stencil test of its own has
@@ -1109,7 +1110,10 @@ const Batch = struct {
             .y = tile.y,
             .exact = !(least > 0 and change <= least * newton_change),
             .resources = shading.resources,
-            .output_count = shading.color_count,
+            // One at least: what a function writes as its one colour has
+            // its batch's room still where a frame has no colour
+            // attachment, and goes no further (since 1.113).
+            .output_count = @max(shading.color_count, 1),
         };
         // A function that writes several colour attachments at once
         // writes them one after another, so they go in the one run the
@@ -1160,7 +1164,10 @@ const Batch = struct {
         // each blended its own way into its own plane of the tile
         // (since 1.51).
         const written = batch.fragments.colors;
-        batch.putAt(samples, 0, batch.shading.blend, &batch.shading.mixing, written);
+        // None where the frame has no colour attachment: llvmpipe's
+        // blending is a loop over its colour buffers, of which there are
+        // none (lp_state_fs.c:3618-3622, since 1.113).
+        if (batch.shading.color_count > 0) batch.putAt(samples, 0, batch.shading.blend, &batch.shading.mixing, written);
         var output: u32 = 1;
         while (output < batch.shading.color_count) : (output += 1) {
             batch.putAt(samples, output, batch.shading.more_blends[output - 1], &batch.shading.more_mixings[output - 1], written + output * batch.count);

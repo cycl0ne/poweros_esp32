@@ -280,9 +280,11 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
     const colors = if (subpass.part_count == 1) pass.parts[subpass.first_part].color_count else subpass.part_count;
     // The fragment entry says how many colours it writes in the one call
     // (`shader.fragmentOutputs`): the subpass's own count where they go
-    // together, and one where they do not.
+    // together, and one where they do not - and one in a subpass of
+    // none, where what it writes goes nowhere, llvmpipe's blending being
+    // a loop over no colour buffer (lp_state_fs.c:3618-3622, since 1.113).
     const outputs = fragment_entry.outputCount();
-    if (outputs != pass.parts[subpass.first_part].color_count) return .error_invalid_shader_nv;
+    if (outputs != @max(pass.parts[subpass.first_part].color_count, 1)) return .error_invalid_shader_nv;
     if (outputs > 1 and !device.physical.can.several_outputs) return .error_feature_not_present;
 
     made.* = .{

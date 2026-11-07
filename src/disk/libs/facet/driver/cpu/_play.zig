@@ -358,8 +358,10 @@ fn resolveOf(framebuffer: *const _render.Target, output: u32) ?raster.Surface {
 /// attachment's image's, or that attachment's resolve attachment's where
 /// it has one, the tiles writing their averages into it as they are
 /// written back (since 1.109). A swapchain's image is of one sample, so
-/// it is a resolve attachment and never the colour of four.
+/// it is a resolve attachment and never the colour of four. None for a
+/// part of no colour attachment, which shows nothing (since 1.113).
 pub fn displayOf(framebuffer: *const _render.Target) ?_image.Display {
+    if (framebuffer.color_count == 0) return null;
     const shown = framebuffer.resolves[0] orelse framebuffer.colors[0];
     return shown.image.display;
 }
@@ -593,8 +595,8 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, outp
         },
     };
     // Those past the first: the subpass's own clears, in the order its
-    // part draws them.
-    for (1..colors) |k| attachments.more[k - 1] = .{
+    // part draws them - none in a subpass of none (since 1.113).
+    for (1..@max(colors, 1)) |k| attachments.more[k - 1] = .{
         .load = if (render_pass.color_loads[k] == .clear) .clear else .keep,
         .clear = command.clear_colors[@min(first_clear + k, _render.most_colors - 1)],
         .resolve = resolveOf(framebuffer, @intCast(k)),

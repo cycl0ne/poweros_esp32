@@ -297,7 +297,8 @@ const Rig = @import("facet.zig").Rig;
 /// The one, item 61 of docs/facet-vulkan10.md, multisampling: the
 /// no-attachments sample-count mask must include VK_SAMPLE_COUNT_4_BIT and
 /// holds only _1_BIT, a subpass with no attachments being one this library
-/// cannot make yet (item 43, then item 61's step K8).
+/// draws at one sample alone (item 43, since 1.113) until item 61's step
+/// K8.
 ///
 /// Nothing else falls short, and nothing in that list is unaccounted for.
 /// The other eight sample-count masks are met: six hold the 4 bit since

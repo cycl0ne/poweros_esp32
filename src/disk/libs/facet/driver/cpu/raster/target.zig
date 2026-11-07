@@ -693,7 +693,10 @@ const Grid = struct {
 
     fn over(surfaces: []const Surface, area: Rect) error{OutOfBounds}!Grid {
         if (area.width == 0 or area.height == 0) return error.OutOfBounds;
-        if (surfaces.len == 0 or surfaces.len > most_colors) return error.OutOfBounds;
+        // None at all is a subpass with no colour attachment, whose grid
+        // begins at the area's own left, there being no surface's lines
+        // to keep it to (since 1.113).
+        if (surfaces.len > most_colors) return error.OutOfBounds;
         // The grid's left is on a cache line of every surface it writes,
         // so the widest pixel count a line holds is what it is rounded
         // to: no two tiles share a line of any of them.
@@ -772,7 +775,10 @@ pub const Target = struct {
 
     /// The same over several colour attachments, drawn together: a
     /// surface for each, all holding `area`, and `attachments.color_count`
-    /// saying how many the frames draw. (Since 1.51.)
+    /// saying how many the frames draw. (Since 1.51.) Or over none, for a
+    /// subpass with no colour attachment: its tiles load and store none
+    /// (`colorCount` is 0), and hold the depth alone or nothing (since
+    /// 1.113).
     pub fn initAll(host: Host, surfaces: []const Surface, area: Rect, attachments: Attachments) error{ OutOfMemory, OutOfBounds }!Target {
         const grid = try Grid.over(surfaces, area);
         var target = Target{
@@ -809,7 +815,8 @@ pub const Target = struct {
     }
 
     /// Colour attachment `output`'s surface: the first's where the frame
-    /// draws fewer than that.
+    /// draws fewer than that. A frame of none has none to give, so a
+    /// caller that may be in one asks `surface_count` first.
     pub inline fn surfaceAt(target: *const Target, output: u32) Surface {
         return target.surfaces[@min(output, target.surface_count - 1)];
     }

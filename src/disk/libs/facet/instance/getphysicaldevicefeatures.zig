@@ -266,8 +266,8 @@ pub fn vulkanOf(can: *const _instance.Capabilities) facet.PhysicalDeviceFeatures
         // attachments, where without the feature they must all agree.
         // Off, as v3dv has it on this same GPU
         // (src/broadcom/vulkan/v3dv_device.c); and a subpass with no
-        // attachments cannot be made here yet
-        // (render/createrenderpass.zig, item 43).
+        // attachments is drawn at one sample alone here
+        // (render/createrenderpass.zig, since 1.113), until item 61's K8.
         .variable_multisample_rate = no,
         // `CommandBufferInheritanceInfo` is a render pass, a subpass and a
         // framebuffer and nothing else, so there is no way for a secondary

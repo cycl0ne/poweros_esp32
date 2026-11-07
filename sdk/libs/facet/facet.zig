@@ -1959,7 +1959,10 @@ pub const FramebufferCreateInfo = extern struct {
     flags: u32 = 0,
     render_pass: *RenderPass,
     attachment_count: u32,
-    attachments: [*]const *ImageView,
+    /// A view for each of the pass's attachments, in their order: null
+    /// where `attachment_count` is 0, as Vulkan lets it be, for a pass
+    /// with no attachments (since 1.113).
+    attachments: ?[*]const *ImageView = null,
     width: u32,
     height: u32,
     layers: u32 = 1,

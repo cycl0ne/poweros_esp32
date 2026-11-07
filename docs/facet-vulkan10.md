@@ -120,28 +120,31 @@ in 1.84, item 19 in 1.85, item 21 in 1.86, item 28's half of two in 1.87,
 items 82 and 83 in 1.87 and 1.88 - both found while doing other items -
 item 61's first row of eight in 1.89, item 17's half of two in 1.90,
 item 22's half of two in 1.91, item 83's open question, answered from
-Mesa, in 1.92, item 45 in 1.93, item 44 in 1.94, item 84 in 1.95 and
-item 61's next six rows of eight, on the cores, in 1.112.**
+Mesa, in 1.92, item 45 in 1.93, item 44 in 1.94, item 84 in 1.95,
+item 61's next six rows of eight, on the cores, in 1.112, and item 43's
+half of two, the cores', in 1.113.**
 Each
 carries a *Done* note below saying what was actually built and where the
 item's own description turned out to be wrong - and several did. Things
 found while doing them became the items at the end of the list: 77 and 78
-from 1.80 and 1.81, and 79, 80 and 81 from 1.82.
+from 1.80 and 1.81, 79, 80 and 81 from 1.82, and 85 and 86 from 1.113.
 
-Items 52, 28, 17, 22 and 61 are the ones split between devices: the cores
-draw every sampler as of 1.83, sample at a constant texel offset as of
-1.87, carry 64 varyings as of 1.90, take framebuffers of 256 layers as of
-1.91 and draw four samples a pixel as of 1.112, and the V3D does none of
-the five - so the magenta item 52 is about now belongs to item 54 alone,
-item 28's remainder is a QPU back end that refuses the operand at
-pipeline creation, item 17's is a vertex program that keeps its varyings
-in registers and so stops at eight, item 22's is a render list played
-once a frame rather than once a layer, and item 61's is its steps V1 to
-V8.
+Items 52, 28, 17, 22, 61 and 43 are the ones split between devices: the
+cores draw every sampler as of 1.83, sample at a constant texel offset as
+of 1.87, carry 64 varyings as of 1.90, take framebuffers of 256 layers as
+of 1.91, draw four samples a pixel as of 1.112 and a subpass with no
+colour attachment as of 1.113, and the V3D does none of the six - so the
+magenta item 52 is about now belongs to item 54 alone, item 28's
+remainder is a QPU back end that refuses the operand at pipeline
+creation, item 17's is a vertex program that keeps its varyings in
+registers and so stops at eight, item 22's is a render list played once
+a frame rather than once a layer, item 61's is its steps V1 to V8, and
+item 43's is a frame whose one render target is flagged unused.
 
-None of the five is the hardware's limit. Mesa's v3dv runs Vulkan on this
+None of the six is the hardware's limit. Mesa's v3dv runs Vulkan on this
 same V3D 7.1 with 64 varyings, texel offsets of -8 to 7, 256 framebuffer
-layers and four samples a pixel (`src/broadcom/vulkan/v3dv_device.c`), so
+layers, four samples a pixel (`src/broadcom/vulkan/v3dv_device.c`) and
+subpasses of no colour attachment (v3dvx_cmd_buffer.c:1189-1197), so
 each remainder is the port of named Mesa code, and the items say which. Until
 then the V3D's limit is **derived from its own compiler or driver** rather
 than written down, so the number cannot drift from what the device
@@ -1210,11 +1213,63 @@ facet defines two image create flags — CUBE_COMPATIBLE (1<<4, Vulkan's value) 
 
 ### 43. Accept a subpass with no colour attachment
 
-*render passes* &mdash; conformance-blocking, medium
+*render passes* &mdash; **the cores' half done in 1.113**; the V3D's is the port of v3dv's unused render target, about 30 lines and a board check
 
 CreateRenderPass refuses color_attachment_count == 0, so a depth-only subpass — the canonical shadow-map pass, and the depth pre-pass as Vulkan writes it — cannot be described at all. Vulkan allows colorAttachmentCount = 0 with a depth/stencil attachment and no colour. Lifting it means the render-pass plan, the tile layout and both drivers' part code tolerating zero colour planes: the cores' tile always carries a colour buffer per part and the V3D's render-target configuration names a colour format. facet has PIPELINE_CREATE_DEPTH_PREPASS as its own answer to the same need, which is why this went unnoticed; it is in neither document.
 
 > Verified verbatim: render/createrenderpass.zig:276 `if (subpass.color_attachment_count == 0 or subpass.color_attachment_count > _render.most_colors) return .error_feature_not_present;`.
+
+**The cores' half done in 1.113.** `CreateRenderPass` takes a subpass of
+no colour attachment on a device that says it draws one
+(`Capabilities.colorless_subpasses`): a depth attachment alone, or no
+attachment at all, as the one part of no colour. Vulkan has no feature to
+refuse it under, so the V3D's refusal is a shortfall, as its others are.
+
+The port is lavapipe's and llvmpipe's, and it is short because llvmpipe's
+colour handling is a loop over the framebuffer's colour buffers wherever
+it touches one. lavapipe gives llvmpipe a framebuffer of
+`colorAttachmentCount` buffers, which may be none, sized by the render
+area (`handle_begin_rendering`, lvp_execute.c:1974-1980); a tile maps
+each buffer there is (`lp_rast_tile_begin`, lp_rast.c:126-131); and the
+fragment shader's blend is a loop over them too (`generate_fragment`,
+lp_state_fs.c:3618-3622), so the shader runs and its colour goes nowhere.
+facet's tiles were already loops of that kind - `Target.colorCount` is 0,
+so a tile loads and stores no colour plane - and what had to change was
+where code took a first colour attachment for granted: the grid's
+alignment to a surface's cache lines (`Grid.over`, which now begins at
+the area's left), the display a part hands its tiles on to
+(`displayOf`, none), two loops over the colours past the first, which
+ran from 1 to 0, the viewport of CmdClearAttachments' quad (to the
+render area's far corner), and a batch's blend into plane 0, skipped as
+llvmpipe skips it. A fragment function is still given its one colour's
+room (`output_count` is 1), so a function written for any subpass runs
+in this one; an entry of several colours is refused there, as it is in a
+subpass of one.
+
+Two things this item did not say:
+
+- **A framebuffer of no views is a size and nothing else**, so
+  `FramebufferCreateInfo.attachments` is optional, as Vulkan's
+  `pAttachments` is, and every framebuffer is now held to
+  `max_framebuffer_width` and `max_framebuffer_height`
+  (VUID-VkFramebufferCreateInfo-width-00886, -height-00888). Before, an
+  image smaller than the size was refused, which bounded it; with no
+  image, nothing did.
+- **A subpass of no attachment at all is drawn at one sample a pixel**,
+  the count a subpass has where no attachment gives it one. Vulkan takes
+  it from the pipeline instead, up to `framebufferNoAttachmentsSampleCounts`:
+  that is item 61's K8, and the limits test's pin stays 1 until it lands.
+
+The pre-pass facet already had, `PIPELINE_CREATE_DEPTH_PREPASS`, is
+untouched: it is a pipeline's, inside a subpass of colour. A depth
+pre-pass as Vulkan writes it - a subpass of the depth alone, then one of
+colour tested against what it left - now runs on the cores through the
+depth two subpasses share (1.52), which the first stores and the second
+loads.
+
+Found while doing it, and added as items 85 and 86: a pipeline with no
+fragment stage, and a colour reference of `ATTACHMENT_UNUSED`. Both are
+valid Vulkan 1.0, and both are refused.
 
 ### 44. Allow a both-aspect view of a sampled depth+stencil image
 
@@ -1598,7 +1653,7 @@ facet reports 1|4 on both devices, with the standard locations on the cores and 
 | K6 | **Done in 1.110.** Multisampled fetch from a native fragment function: a texture keeps its samples' planes apart and `sampleOf` gives one as a texture of one, a sample past the last reading nothing. A sampled colour image of four samples is kept in rows, its rows the texture, R8G8B8A8's bytes read by a texture format of their own; a depth attachment's planes carry their samples. Against the first plan, not a colour attachment as well: one sample of that is not made (item 48), and the format query's sample counts hold the 1 wherever they hold the 4 | lp_jit.c:399-404; lp_texture.c:1087; lvp_image.c:87-89, 104; lp_bld_sample_soa.c:2170-2187, 2985, 3166-3181 | 35 | 45 |
 | K6b | **Done in 1.111.** Input attachments of four samples, read a sample at a time: not in the first plan, which kept them refused, though Vulkan 1.0 reads one through `subpassInputMS` with no feature to refuse it under. An attachment carries its samples, their stride and where its second sample begins, and `sampleOf` gives one sample as an attachment of one, a sample past the last reading nothing: from the image's rows where an earlier subpass drew it, a colour or a depth plane, and from the tile where a subpass reads what it draws. No sample count ties an input attachment to its subpass, so one of one sample reads one of four | lvp_nir_lower_input_attachments.c:49-86; lp_bld_sample_soa.c:2170-2187, 4839, 4941-4956 | 34 | 320 |
 | K7 | **Done in 1.112.** 4x turned on for the cores, closing six rows: `Capabilities.multisampling` is theirs, so the three framebuffer masks and the colour, depth and stencil sampled-image masks say 1\|4, and the format query, CreateImage, CreateRenderPass and CreateGraphicsPipelines take four where those masks say it. The tests that turned the capability on to draw four now ask the cores for it, and each refusal is checked on the cores described without it. `standardSampleLocations` stays true: the cores' four places are Vulkan's (setup.zig `sampleOffsets`), as lavapipe says of its own. v3dv says false on the V3D, though the four places its compiler gives are the same ones: V5 is where that is settled | lvp_device.c:81-82, 1072-1081, 1094; v3dv_device.c:1202; nir_to_vir.c:3111-3134 | 10 | 40 |
-| K8 | No-attachment subpasses at 4x, after item 43 | v3dv_cmd_buffer.c:2655-2675 | 15 | 20 |
+| K8 | No-attachment subpasses at 4x, after item 43, whose cores' half is done in 1.113 | v3dv_cmd_buffer.c:2655-2675 | 15 | 20 |
 | V1 | The packet fields: COMMON's MSAA bit and log2 tile size, decimate on loads and stores, oversample, and SAMPLE_STATE's mask | v3d_packet.xml | 23 | 50 |
 | V2 | The tile-size chooser, and SAMPLE_STATE per draw at 4x | `v3d_choose_tile_size`, v3d_util.c:105-206; v3dv_cmd_buffer.c:367-413 | 65 | 45 |
 | V3 | The 4x layout, 2W x 2H and always UIF, as a fourth image kind | v3dv_image.c:136-140, 180-183; v3d_nir_lower_txf_ms.c:46-51 | 75 | 35 |
@@ -1606,7 +1661,7 @@ facet reports 1|4 on both devices, with the standard locations on the cores and 
 | V5 | Resolve in the TLB, with S5 as the fallback; 4x turned on for the V3D, closing three rows | v3dvx_cmd_buffer.c:640-686; v3dv_pass.c:138-142, 663-683; `resolve_image_tlb`, v3dv_meta_copy.c:5109 | 110 | 40 |
 | V6 | Alpha to coverage on the QPU | nir_to_vir.c:2056-2100; v3dvx_pipeline.c:453, 459 | 110 | 35 |
 | V7 | Multisampled fetch through the TMU, after item 59 | v3d_nir_lower_txf_ms.c:46-51 | 45 | 25 |
-| V8 | No-attachment subpasses at 4x, after item 43 | `cmd_buffer_restart_job_for_msaa_if_needed`, v3dv_cmd_buffer.c:2676 | 20 | 10 |
+| V8 | No-attachment subpasses at 4x, after item 43's V3D half | `cmd_buffer_restart_job_for_msaa_if_needed`, v3dv_cmd_buffer.c:2676 | 20 | 10 |
 
 Docs add about 75 lines in K7 and 15 in V5. The V3D's sampled depth and stencil rows wait on item 58 and are not among these commits.
 
@@ -1884,7 +1939,8 @@ refusals split two ways:
   Vulkan's. These answer `error_validation_failed`, which `facet.Result`
   does not have yet.
 - **Valid usage facet cannot do.** For example a subpass with no colour
-  attachment (item 43), and the other conformance-blocking refusals.
+  attachment on the V3D (item 43's remainder), and the other
+  conformance-blocking refusals.
   Nothing there is invalid, so no code is honest. Each is its own item,
   and each keeps `error_feature_not_present` until its item removes the
   refusal.
@@ -2106,6 +2162,46 @@ the wrong one, so `Seen` no longer has it. All
 `look` reads of a `Location` now is that its literal is present. A test
 pins that: it had none. The tests/ir.zig assertion of equality became
 one of the widest graph's sixteen inputs and one output.
+
+### 85. A graphics pipeline with no fragment stage is refused
+
+*pipelines* &mdash; conformance-blocking, small, found while doing item 43
+
+Vulkan 1.0 asks a graphics pipeline for a vertex stage
+(VUID-VkGraphicsPipelineCreateInfo-stage-02096) and nothing of a fragment
+stage: "If no fragment shader is included in the pipeline, no fragment
+shader is executed, and undefined values may be written to all color
+attachment outputs" (fragops.adoc, *Fragment Shading*). A shadow map's
+pipeline is the program that leaves it out, now that its subpass of the
+depth alone can be made (item 43). CreateGraphicsPipelines refuses a
+pipeline without one (pipeline/creategraphicspipelines.zig,
+`fragment orelse return .error_invalid_shader_nv`).
+
+lavapipe binds a fragment shader of no instructions in its place,
+`noop_fs`, built once for the device (lvp_device.c:2048-2052) and bound
+where the pipeline has none (`emit_state`, lvp_execute.c:552-554). The
+port is the same: a fragment entry of facet's own that writes nothing,
+taken where the stages name none, with no varyings for the last stage
+before it to be checked against. About 15 lines and a test.
+
+### 86. A colour reference of ATTACHMENT_UNUSED is refused
+
+*render passes* &mdash; conformance-blocking, small, found while doing item 43
+
+A subpass's colour attachment `i` may be `ATTACHMENT_UNUSED` in Vulkan
+1.0: what the fragment shader writes at location `i` goes nowhere, and the
+locations after it keep their attachments. facet reads the reference as an
+attachment's index and refuses it as one past the last
+(render/createrenderpass.zig, `color_index >= attachments.len`,
+`error_initialization_failed`). Mesa's common render-pass code makes such a
+reference a colour attachment with no image view (vk_render_pass.c:1924-1930),
+lavapipe a colour buffer with no texture (`handle_begin_rendering`,
+lvp_execute.c:1984-1999), and llvmpipe's tile maps none for it
+(lp_rast.c:126-131). In facet that is a part's colour slot with no
+surface, kept so that the locations after it stay where they are, whose
+plane is neither loaded nor stored. A resolve reference of
+`ATTACHMENT_UNUSED` is already taken as none. About 30 lines and two
+tests.
 
 ## Deferred by the decision, not out of reach
 

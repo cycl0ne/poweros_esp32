@@ -119,6 +119,13 @@ pub const Capabilities = extern struct {
     secondary_command_buffers: bool = false,
     several_subpasses: bool = false,
     several_color_attachments: bool = false,
+    /// A subpass with no colour attachment: a depth attachment alone, or
+    /// no attachment at all, what its fragment function colours going
+    /// nowhere (since 1.113). Vulkan has no feature for it, so a device
+    /// without it falls short of 1.0 there: the V3D, whose frame names a
+    /// colour render target, until v3dv's unused one is ported
+    /// (v3dvx_cmd_buffer.c:1189-1197, docs/facet-vulkan10.md item 43).
+    colorless_subpasses: bool = false,
     texture_arrays: bool = false,
     cube_maps: bool = false,
     textures_3d: bool = false,
@@ -684,9 +691,10 @@ pub const limits: facet.PhysicalDeviceLimits = .{
     // **What a device reports is narrower** (`narrowSampleCounts`): one
     // sample in each of the seven until it has `can.multisampling`, which
     // the cores have since 1.112 and the V3D not yet (item 61's V5); and
-    // one sample for a subpass with no attachments, which cannot be made
-    // yet (item 43), so that mask is the one shortfall the cores have
-    // left of these. Until 1.96 this table said one sample itself.
+    // one sample for a subpass with no attachments, which is drawn at one
+    // alone since 1.113 (item 43) and at four after item 61's K8, so that
+    // mask is the one shortfall the cores have left of these. Until 1.96
+    // this table said one sample itself.
     .framebuffer_color_sample_counts = facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4,
     .framebuffer_depth_sample_counts = facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4,
     .framebuffer_stencil_sample_counts = facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4,
@@ -790,9 +798,9 @@ fn describeOne(sys: *ExecBase, instance: *Instance, ops: *const _driver.Ops) voi
 /// a count before there is code to draw it. `limits` says one sample and
 /// four where Vulkan asks for both. A device without `can.multisampling`
 /// keeps the 1 bit alone in those seven masks; and since a subpass with no
-/// attachments cannot be made on any device yet (render/createrenderpass.zig,
-/// item 43), the no-attachments mask keeps the 1 bit alone whatever the
-/// device can. A bit a driver cleared stays clear, so the V3D's zeros for
+/// attachments is drawn at one sample alone (render/createrenderpass.zig,
+/// since 1.113 - four are item 61's K8), the no-attachments mask keeps the
+/// 1 bit alone whatever the device can. A bit a driver cleared stays clear, so the V3D's zeros for
 /// the images it does not sample (driver/v3d/driver.zig) survive this.
 /// Called after each driver's describe, since 1.96.
 pub fn narrowSampleCounts(physical: *PhysicalDevice) void {

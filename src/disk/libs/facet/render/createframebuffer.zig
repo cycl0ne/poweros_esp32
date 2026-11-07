@@ -30,8 +30,9 @@ const ImageView = _image.ImageView;
 /// pass - another number of them, a colour view of an image not made for a
 /// colour attachment or in another format, a depth view of an image not
 /// made for depth, an image smaller than the size, a view of fewer layers
-/// than the framebuffer has - and for no layers, or more than the device
-/// takes (`PhysicalDeviceLimits.max_framebuffer_layers`);
+/// than the framebuffer has - and for a size or layers of none, or of more
+/// than the device takes (`PhysicalDeviceLimits.max_framebuffer_width`,
+/// `max_framebuffer_height` and `max_framebuffer_layers`);
 /// `error_out_of_host_memory`.
 ///
 /// BEHAVIOR:
@@ -39,6 +40,12 @@ const ImageView = _image.ImageView;
 /// of its layers since 1.91: the pass draws into the layer the view begins
 /// at. The size may be smaller than the images: the framebuffer is their
 /// top left.
+///
+/// A pass with no attachments has a framebuffer of no views, `attachments`
+/// null (since 1.113): its size is all there is of it, which the pass
+/// draws over, so that is held to the device's most, as Vulkan asks of
+/// every framebuffer (VUID-VkFramebufferCreateInfo-width-00886 and
+/// -height-00888).
 ///
 /// A framebuffer has layers since 1.91, as many as the device's
 /// `max_framebuffer_layers` - 256 on the cores, which is what Vulkan asks,
@@ -87,8 +94,11 @@ pub fn CreateFramebuffer(base: *FacetBase, device: *facet.Device, info: *const f
     if (info.attachment_count != pass.attachment_count or info.width == 0 or info.height == 0) return .error_initialization_failed;
     // Layers since 1.91, as many as the device takes: what it says, so a
     // program that reads the limit and keeps to it is never refused here.
-    if (info.layers == 0 or info.layers > owner.physical.properties.limits.max_framebuffer_layers) return .error_initialization_failed;
-    const views: []const *facet.ImageView = info.attachments[0..info.attachment_count];
+    const limits = &owner.physical.properties.limits;
+    if (info.layers == 0 or info.layers > limits.max_framebuffer_layers) return .error_initialization_failed;
+    // Its size, which no image bounds where there are none (since 1.113).
+    if (info.width > limits.max_framebuffer_width or info.height > limits.max_framebuffer_height) return .error_initialization_failed;
+    const views: []const *facet.ImageView = if (info.attachment_count == 0) &.{} else (info.attachments orelse return .error_initialization_failed)[0..info.attachment_count];
     // Each view of an image holding the samples its attachment says
     // (VUID-VkFramebufferCreateInfo-pAttachments-00881, since 1.100).
     for (views, pass.samples[0..views.len]) |view, samples| {

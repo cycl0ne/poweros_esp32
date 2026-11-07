@@ -2706,4 +2706,51 @@ pub const LIBRARY_VERSION = 1;
 /// asks the cores for the capability instead of turning it on. The limits
 /// test's pin is 1. The capability taken back fails 23 of them, and
 /// each of six other changes fails one of them.
-pub const LIBRARY_REVISION = 112;
+///
+/// 113: **A subpass with no colour attachment.** The cores' half of item
+/// 43 of docs/facet-vulkan10.md: CreateRenderPass took a subpass of one to
+/// four colour attachments, so the shadow map's pass - a depth attachment
+/// alone - and the depth pre-pass as Vulkan writes it could not be
+/// described, though Vulkan 1.0 has no feature to refuse them under. It
+/// takes none now on a device that draws such a subpass
+/// (`Capabilities.colorless_subpasses`, the cores'): the one part, of no
+/// colour, with a depth or with no attachment at all. The port is
+/// lavapipe's and llvmpipe's: lavapipe hands llvmpipe a framebuffer of no
+/// colour buffers (lvp_execute.c:1974-1980), whose tiles map none
+/// (lp_rast.c:126-131) and whose blending loops over none
+/// (lp_state_fs.c:3618-3622). So the cores' tiles load and store no
+/// colour plane, a batch blends into none, and the fragment function
+/// still has its one colour's room, which goes nowhere; an entry of
+/// several colours is refused there, as in a subpass of one. Where the
+/// code took a first colour for granted it no longer does: the grid's
+/// alignment to a surface's lines, the display a part hands its tiles
+/// on to, two loops from 1 to the colour count, and the viewport of
+/// CmdClearAttachments' quad. A subpass of no attachment at all is drawn
+/// over its render area at one sample a pixel, so the no-attachments
+/// mask keeps the 1 bit alone until item 61's K8.
+/// `FramebufferCreateInfo.attachments` is optional, as Vulkan's is, for a
+/// framebuffer of no views, and a framebuffer's size is held to the
+/// device's `max_framebuffer_width` and `max_framebuffer_height`
+/// (VUID-VkFramebufferCreateInfo-width-00886, -height-00888), which no
+/// image bounds where there are none. The V3D refuses the subpass until
+/// v3dv's unused render target is ported (v3dvx_cmd_buffer.c:1189-1197).
+///
+/// Tests: the cores say they draw it; CreateRenderPass makes a subpass of
+/// the depth alone the one part, of no colour, makes two of them in a row
+/// the second going on in the first's tiles, and refuses one without the
+/// capability; a subpass of no attachment is the eighth part after seven
+/// of colour, and refused as a ninth. A shadow map's pass: its depth drawn, a corner of it
+/// cleared in the middle of the pass, stored and read back; its function
+/// called and told of the one colour it writes, and an entry of three
+/// colours refused. The same at four samples a pixel, each sample's depth
+/// where the triangle covers it. A depth pre-pass as Vulkan writes it: a
+/// subpass of colour tested against what the one of the depth alone
+/// left, the green that one drew in nowhere. A subpass of no attachment
+/// at all: its framebuffer of no views made, one past either of the
+/// device's sizes refused, as is a null for a pass of one view, and an
+/// occlusion query counting the pixels of a render area away from the
+/// framebuffer's corner and none outside it. Each of 17 changes put back
+/// fails at least one of them. The blend skipped where there is no
+/// colour is not among them: it saves work and changes nothing a test
+/// can see.
+pub const LIBRARY_REVISION = 113;

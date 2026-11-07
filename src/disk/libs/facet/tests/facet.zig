@@ -1269,8 +1269,8 @@ test "a device's sample counts follow what it draws, and the three optional mult
 
     // The cores draw four since 1.112, so six masks take the 4 bit, at
     // Vulkan's standard places. The no-attachments mask keeps the 1 bit
-    // alone, since a subpass with no attachments cannot be made yet (item
-    // 43).
+    // alone, since a subpass with no attachments is drawn at one sample
+    // alone (item 43, since 1.113; four are item 61's K8).
     try testing.expect(record.can.multisampling);
     var properties: facet.PhysicalDeviceProperties = undefined;
     rig.fb.GetPhysicalDeviceProperties(physical, &properties);
@@ -1342,6 +1342,8 @@ test "a device says what it does, and a false is what a create call refuses" {
     try testing.expect(can.input_attachments);
     // And four samples a pixel (since 1.112).
     try testing.expect(can.multisampling);
+    // And a subpass with no colour attachment (since 1.113).
+    try testing.expect(can.colorless_subpasses);
 
     // And what it says it does not do, it refuses: a false here is worth
     // having only if the call agrees with it.

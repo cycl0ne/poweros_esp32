@@ -193,6 +193,12 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         .secondary_command_buffers = true,
         .several_subpasses = true,
         .several_color_attachments = true,
+        // A subpass with no colour attachment (since 1.113): its tiles
+        // load and store no colour, as llvmpipe's map no colour buffer
+        // for a framebuffer of none (lp_rast.c:126-131), and what its
+        // fragment function colours is blended into nothing
+        // (lp_state_fs.c:3618-3622).
+        .colorless_subpasses = true,
         .texture_arrays = true,
         .cube_maps = true,
         .textures_3d = true,

@@ -4034,8 +4034,9 @@ fn CreateFramebuffer(base: *FacetBase, device: *facet.Device, info: *const facet
 pass - another number of them, a colour view of an image not made for a
 colour attachment or in another format, a depth view of an image not
 made for depth, an image smaller than the size, a view of fewer layers
-than the framebuffer has - and for no layers, or more than the device
-takes (`PhysicalDeviceLimits.max_framebuffer_layers`);
+than the framebuffer has - and for a size or layers of none, or of more
+than the device takes (`PhysicalDeviceLimits.max_framebuffer_width`,
+`max_framebuffer_height` and `max_framebuffer_layers`);
 `error_out_of_host_memory`.
 
 **BEHAVIOR**
@@ -4044,6 +4045,12 @@ Each colour attachment's view is of its image's first level, and of any
 of its layers since 1.91: the pass draws into the layer the view begins
 at. The size may be smaller than the images: the framebuffer is their
 top left.
+
+A pass with no attachments has a framebuffer of no views, `attachments`
+null (since 1.113): its size is all there is of it, which the pass
+draws over, so that is held to the device's most, as Vulkan asks of
+every framebuffer (VUID-VkFramebufferCreateInfo-width-00886 and
+-height-00888).
 
 A framebuffer has layers since 1.91, as many as the device's
 `max_framebuffer_layers` - 256 on the cores, which is what Vulkan asks,
@@ -4892,9 +4899,21 @@ dependency by region (BEHAVIOR);
 **BEHAVIOR**
 
 The pass has up to 4 subpasses and up to 8 attachments. A subpass draws
-into 1 to 4 colour attachments - b8g8r8a8_unorm or r8g8b8a8_unorm - 8 in all
+into 0 to 4 colour attachments - b8g8r8a8_unorm or r8g8b8a8_unorm - 8 in all
 the subpasses, and may test against a depth attachment, d16_unorm, s8_uint
 or d16_unorm_s8_uint.
+
+A subpass of no colour attachment - a depth attachment alone, the
+shadow map's pass and the depth pre-pass, or no attachment at all - is
+taken on a device that draws one (`Capabilities.colorless_subpasses`,
+the cores' since 1.113), and is `error_feature_not_present` on one
+that does not. What its fragment function colours goes nowhere: Mesa's
+lavapipe hands llvmpipe a framebuffer of no colour buffers for it
+(lvp_execute.c:1974-1980), whose tiles have none to load or store
+(lp_rast.c:126-131) and whose blending is a loop over none
+(lp_state_fs.c:3618-3622). A subpass with no attachment at all draws
+over the framebuffer's size at one sample a pixel; at four it waits on
+docs/facet-vulkan10.md item 61's K8.
 
 An attachment holds one sample a pixel, or four on a device that draws
 them (`Capabilities.multisampling`, since 1.100), and every attachment of
