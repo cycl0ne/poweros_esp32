@@ -125,7 +125,7 @@ item 61's next six rows of eight, on the cores, in 1.112, item 43's
 half of two, the cores', in 1.113, item 61's last row of eight, on the
 cores, in 1.114, item 85's half of two, the cores', in 1.115, item 87
 in 1.116, item 88 in 1.117, item 86 in 1.118, item 48's half of two,
-the cores', in 1.119, and item 41 in 1.120.**
+the cores', in 1.119, item 41 in 1.120, and item 89 in 1.121.**
 Each
 carries a *Done* note below saying what was actually built and where the
 item's own description turned out to be wrong - and several did. Things
@@ -1242,8 +1242,8 @@ swizzle with the view's into the TMU's state (v3dv_image.c:828-831,
 - **A depth or a stencil.** A swizzle of one takes 0 from the green and
   the blue and 1 from the alpha, lavapipe's `conv_depth_swiz`
   (lvp_image.c:337-347, 389-396). lavapipe applies that to every view of
-  one; here a view that swizzles nothing keeps the grey a depth reads as,
-  which is item 89.
+  one; here a view that swizzles nothing kept the grey a depth reads as
+  until 1.121, which was item 89.
 - **The V3D.** The TMU's four swizzle fields take the view's over the
   format's own (tiling.zig `writeTextureState`), host-tested to the bit
   and drawn by the board probe, which has not run yet.
@@ -2452,7 +2452,7 @@ the one, though Vulkan does not allow resetting an active one
 
 ### 89. A depth sampled as a colour reads a grey, where Vulkan reads (D, 0, 0, 1)
 
-*samplers / depth* &mdash; conformance-blocking, small, found while doing item 41
+*samplers / depth* &mdash; conformance-blocking, small, found while doing item 41 &mdash; **done in 1.121**
 
 A sample of a depth that does not compare reads it as an opaque grey of
 its top 8 bits, (D, D, D, 1) (`texture.Texture.readColor`, the `d16`
@@ -2469,6 +2469,29 @@ probe's pictures that read the grey (tests/draw.zig at the layers of a
 sampled depth, and facetprobe.zig). The 8 bits are the colour path's,
 which holds 8 a channel; a generated shader reading D at 16 bits is the
 larger half.
+
+**Done in 1.121**, in 12 lines of code and 52 of tests, and as
+lavapipe does it. llvmpipe reads a depth or a stencil as (Z, Z, Z, 1)
+whatever the view, "Correct swizzling will be handled by
+apply_sampler_swizzle() later" (`lp_build_format_swizzle_soa`,
+lp_bld_format_soa.c:82-101), as `readColor` reads the grey here, and
+lavapipe turns every view of one's swizzle by `conv_depth_swiz`, the
+identity's too, so the identity's green and blue read 0 and its alpha 1.
+Here the texels of every view of a depth or a stencil take that rule
+(`createimageview.zig` `depthRead`), and a view of one reads (D, 0, 0, 1)
+through a sampler, a fixed form, `colorAt` and `partsAt`, what a
+comparison gave standing in the D, and a texel it does not hold
+(0, 0, 0, 1). The view itself keeps the swizzle the program gave it,
+which is what a framebuffer asks of it and what the V3D's TMU will take
+over the format's own, v3dv's depth formats being `SWIZ_X001`
+(v3dvx_formats.c:204-206), so a depth attachment's view is still the
+identity.
+
+The 8 bits are not this item: every format a sample reads is held at 8
+bits a channel on its way into the tiles and into a generated shader's
+floats (docs/facet-gaps.md, the wide channels), and `partsAt` and a
+comparison read a depth at all 16. The V3D samples no depth yet
+(item 58).
 
 ## Deferred by the decision, not out of reach
 

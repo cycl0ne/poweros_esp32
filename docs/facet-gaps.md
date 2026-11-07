@@ -121,10 +121,11 @@ time. What is left out:
   sampler, a pixel at a time, rather than by its fast path. A framebuffer
   takes no view that swizzles. On the V3D the TMU swizzles, unchecked on
   the board so far.
-- **A depth read as a colour is a grey**, (D, D, D, 1) of its top 8 bits,
-  where Vulkan reads (D, 0, 0, 1) (docs/facet-vulkan10.md item 89). A view
-  that swizzles reads the green and the blue as 0, as Vulkan has them;
-  `texture.Texture.partsAt` reads (D, 0, 0, 1) at all 16 bits.
+- **A depth or a stencil reads (D, 0, 0, 1)** since 1.121, as Vulkan
+  converts one, through every view, where it read a grey (D, D, D, 1)
+  before (docs/facet-vulkan10.md item 89): its top 8 bits through the
+  colour path, as every format's channels are, and all 16 through
+  `texture.Texture.partsAt` and a comparison.
 
 The cores and the V3D's texture units still choose a level and its sample
 point differently, which is why `C:test/FacetCube CHECK V3D` allows 5 % of
@@ -209,9 +210,10 @@ pass's depth. What is left out:
   stored it into, through a sampler, and a shadow sample compares it at
   all 16 bits. Since 1.58 it is any of the three depth formats, and it may
   have **layers**: a view takes the plane its aspect names - the depth,
-  read at all 16 bits by a sampler that compares and as a grey of its top
-  8 bits by one that does not, or the stencil, read as (red, 0, 0, 1) the
-  way one byte of red is - of the layers it names, and a pass draws into
+  read at all 16 bits by a sampler that compares and as (D, 0, 0, 1) of
+  its top 8 bits by one that does not (a grey before 1.121), or the
+  stencil, read as (red, 0, 0, 1) the way one byte of red is - of the
+  layers it names, and a pass draws into
   the layer its framebuffer's view begins at. So the layers of one image
   are the shadow maps of several lights, and the rows of a format holding
   both planes are two textures over the same bytes, four apart

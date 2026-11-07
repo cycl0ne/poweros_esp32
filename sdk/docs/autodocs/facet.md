@@ -4585,21 +4585,22 @@ draws into the level the view begins at, an image kept in rows having
 levels since 1.119.
 
 **Its channels may be swizzled** since 1.120, as Vulkan's
-`VkComponentMapping` has them: each of `components` names the channel
-of the texel it reads, its own (`identity`), or 0 or 1. Every read of
-the view's texels is swizzled - a sample through a sampler or by a
-fixed form, `colorAt`, `partsAt` and `wholesAt` - and so are the border
-and what a comparison gave, Vulkan replacing a texel and comparing a
-depth before it swizzles (`texture.Swizzle`). A channel the format has
-not got reads 0, or 1 for an alpha, before the swizzle: an R8 view may
-read its alpha as its red, and reads 1. Of a depth or a stencil a swizzle
-takes 0 from the green and the blue and 1 from the alpha, as Vulkan
-reads such a texel (D, 0, 0, 1). A fixed form compiled for the view's
-format draws one that swizzles through the run-time sampler, a pixel at
-a time. A framebuffer takes no view that swizzles, and neither a storage
-image nor an input attachment may be one, as Vulkan has it
-(VUID-VkWriteDescriptorSet-descriptorType-00336). On the V3D the TMU
-swizzles, the view's over the format's own.
+`VkComponentMapping` has them: each of `components` names the channel of
+the texel it reads, its own (`identity`), or 0 or 1. Every read of the
+view's texels is swizzled - a sample through a sampler or by a fixed
+form, `colorAt`, `partsAt` and `wholesAt` - and so are the border and
+what a comparison gave, Vulkan replacing a texel and comparing a depth
+before it swizzles (`texture.Swizzle`). A channel the format has not got
+reads 0, or 1 for an alpha, before the swizzle: an R8 view may read its
+alpha as its red, and reads 1. A depth or a stencil reads (D, 0, 0, 1),
+as Vulkan converts such a texel, before the swizzle: a swizzle takes 0
+from its green and its blue and 1 from its alpha (since 1.121 whatever
+the view's swizzle, since 1.120 where it swizzles). A fixed form
+compiled for the view's format draws one that swizzles through the
+run-time sampler, a pixel at a time. A framebuffer takes no view that
+swizzles, and neither a storage image nor an input attachment may be
+one, as Vulkan has it (VUID-VkWriteDescriptorSet-descriptorType-00336).
+On the V3D the TMU swizzles, the view's over the format's own.
 
 Of type `2d` it is one layer, of a texture with any number of them. Of type
 `2d_array` it is the layers asked for, for `shader.FixedKind.texture_array`;

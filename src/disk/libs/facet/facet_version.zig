@@ -3013,4 +3013,40 @@ pub const LIBRARY_VERSION = 1;
 /// packs the composed four, for a format of its own swizzle and for one
 /// without, and the board probe draws a swizzled view. Each of 20
 /// changes put back fails at least one of them.
-pub const LIBRARY_REVISION = 120;
+///
+/// 121: **A depth and a stencil read as Vulkan reads them.** Item 89 of
+/// docs/facet-vulkan10.md, found while doing item 41. A sample of a depth
+/// that does not compare read it as an opaque grey, (D, D, D, 1), and so
+/// did a fixed form's and a generated shader's; Vulkan converts the texel
+/// by "(0,0,0,1) for missing (R,G,B,A) components" (13.2.2), so it reads
+/// (D, 0, 0, 1). llvmpipe reads a depth or a stencil as the grey this
+/// library does, "Correct swizzling will be handled by
+/// apply_sampler_swizzle() later" (`lp_build_format_swizzle_soa`,
+/// lp_bld_format_soa.c:82-101), and lavapipe turns the swizzle of every
+/// view of one, the identity's too, so that the green and the blue read 0
+/// and the alpha 1 (`conv_depth_swiz`, lvp_image.c:337-347, 389-396).
+/// Here the texels of every view of a depth or a stencil take that rule
+/// (`createimageview.zig` `depthRead`), where 1.120 gave it only to a view
+/// that swizzles. So such a view reads (D, 0, 0, 1) through a sampler, a
+/// fixed form, `colorAt` and `partsAt`, what a comparison gave stands in
+/// the D, (1, 0, 0, 1) for a pass and (0, 0, 0, 1) for a fail, and a texel
+/// it does not hold reads (0, 0, 0, 1). The view itself keeps the swizzle
+/// the program gave it, which a framebuffer asks to be the identity and
+/// which the V3D's TMU will take over the format's own, v3dv's depth
+/// formats being `SWIZ_X001` (v3dvx_formats.c:204-206); the V3D samples no
+/// depth yet (item 58). The 8 bits through the colour path are every
+/// format's; `partsAt` and a comparison read all 16.
+///
+/// Tests: of an image of a depth of a quarter and a stencil of 0x30, the
+/// view of each plane that swizzles nothing reads (D, 0, 0, 1) and
+/// (S, 0, 0, 1) through `colorAt` and a sampler, nearest and mixed, its
+/// floats the depth at all 16 bits, a texel it does not hold (0, 0, 0, 1),
+/// and a comparison (1, 0, 0, 1) where greater and (0, 0, 0, 1) where
+/// less, nearest and mixed; a view that takes its alpha from the red and
+/// its green from the alpha reads (D, 1, 0, D), composed over the rule; and
+/// each view is still the identity. The tests that drew a sampled depth's
+/// layers, levels and planes read its red alone, a shadow sample passes
+/// as red rather than white, and a stencil fetched past its last sample
+/// reads (0, 0, 0, 1). The board probe's shadow checks say the same. Each
+/// of 6 changes put back fails at least one of them.
+pub const LIBRARY_REVISION = 121;

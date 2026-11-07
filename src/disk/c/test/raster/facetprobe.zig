@@ -2703,7 +2703,10 @@ fn sampledDepthChecks(probe: *Probe) void {
     const shade = pipelineOf(probe, reading, module.?, layout.?, .{ .attributes = &attributes, .stride = 24 }) orelse
         return probe.check(false, "a pipeline that samples the depth");
 
-    const white: u32 = 0xFFFF_FFFF;
+    // What passed reads (1, 0, 0, 1) and what failed (0, 0, 0, 1): a
+    // depth reads (D, 0, 0, 1), as Vulkan converts one, and what a
+    // comparison gave stands in its D (since 1.121).
+    const white: u32 = 0xFFFF_0000;
     const black: u32 = 0xFF00_0000;
     const near: f32 = @round(0.25 * 65535);
     // Mapped once: a block is mapped one at a time.
@@ -2757,7 +2760,7 @@ fn sampledDepthChecks(probe: *Probe) void {
             commands = probe.record() orelse return probe.check(false, "a recording of the plane cleared");
             fb.CmdClearDepthStencilImage(commands, held, .undefined, &filled, 1, @ptrCast(&planes));
             if (!probe.submit()) return probe.check(false, "the plane cleared");
-            probe.checkEqual(0xFFFF_FFFF, sampledWith(probe, plane, sampler.?, sets[0].?, layout.?, reading, onto, shade, vertex_buffer, vertex_bytes, pixels, pitch, 0.5), "the depth plane of such an image sampled at 16 bits");
+            probe.checkEqual(white, sampledWith(probe, plane, sampler.?, sets[0].?, layout.?, reading, onto, shade, vertex_buffer, vertex_bytes, pixels, pitch, 0.5), "the depth plane of such an image sampled at 16 bits");
         }
     }
 

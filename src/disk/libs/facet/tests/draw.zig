@@ -6606,10 +6606,12 @@ fn fetchedStencilMark(sample: u32, layer: u32, x: u32, y: u32) u8 {
 
 /// What `Fetched` gives at (x, y) for sample `sample` of layer `layer` of
 /// an image of `format` marked by hand: the mark as it reads, and past the
-/// last sample nothing - transparent black, or a depth of 0.
+/// last sample nothing - transparent black, or a depth of 0, or of a
+/// stencil (0, 0, 0, 1), the texel a stencil reads as being (S, 0, 0, 1)
+/// (since 1.121).
 fn fetchedWant(format: facet.Format, depth: bool, sample: u32, layer: u32, x: u32, y: u32) u32 {
     if (depth) return 0xFF00_0000 | @as(u32, if (sample < 4) fetchedDepthMark(sample, layer, x, y) else 0);
-    if (sample >= 4) return 0;
+    if (sample >= 4) return if (format == .s8_uint) 0xFF00_0000 else 0;
     if (format == .s8_uint) return 0xFF00_0000 | @as(u32, fetchedStencilMark(sample, layer, x, y)) << 16;
     return fetchedColor(format, resolveMark(format, sample, layer, x, y));
 }
@@ -8304,7 +8306,10 @@ test "a depth image sampled where it lies: the pass stores it, a shadow sample c
     try testing.expectEqual(facet.Result.success, shade_result);
     defer fb.DestroyPipeline(device, shade);
 
-    const white: u32 = 0xFFFF_FFFF;
+    // What passed reads (1, 0, 0, 1) and what failed (0, 0, 0, 1): a
+    // depth's texel reads (D, 0, 0, 1), as Vulkan converts one, and what
+    // a comparison gave stands in its D (since 1.121).
+    const white: u32 = 0xFFFF_0000;
     const black: u32 = 0xFF00_0000;
     // A quad over the whole picture, s and t over the whole depth image,
     // and the reference each run compares with.
@@ -8562,9 +8567,10 @@ test "a sampled depth image of layers: a pass draws into the layer its view name
 
     for (layer_views, stored) |view, value| {
         try sample(&bench, vertex_bytes, vertex_buffer, view, sampler, sets[0].?, reading, onto, plane, layout);
-        const grey: u32 = 0xFF00_0000 | @as(u32, value >> 8) * 0x01_01_01;
-        try testing.expectEqual(grey, into.at(16, 8));
-        try testing.expectEqual(grey, into.at(48, 40));
+        // Its top 8 bits in the red alone, (D, 0, 0, 1) (since 1.121).
+        const deep: u32 = 0xFF00_0000 | @as(u32, value >> 8) << 16;
+        try testing.expectEqual(deep, into.at(16, 8));
+        try testing.expectEqual(deep, into.at(48, 40));
     }
 
     // A format that holds both planes: the depth where the pixel starts
@@ -8615,16 +8621,16 @@ test "a sampled depth image of layers: a pass draws into the layer its view name
         }
     }
 
-    // Both cleared, and each plane sampled on its own: the depth a grey
-    // of its top 8 bits, the stencil red alone, as a texel of one byte is
-    // read.
+    // Both cleared, and each plane sampled on its own: the depth its top 8
+    // bits in the red alone, (D, 0, 0, 1) as Vulkan reads one (since
+    // 1.121), the stencil red alone, as a texel of one byte is read.
     const filled = facet.ClearDepthStencilValue{ .depth = 0.25, .stencil = 0x60 };
     const both_aspects = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH | facet.IMAGE_ASPECT_STENCIL };
     const filling = try bench.record();
     fb.CmdClearDepthStencilImage(filling, both, .undefined, &filled, 1, @ptrCast(&both_aspects));
     try bench.submit();
     try sample(&bench, vertex_bytes, vertex_buffer, depth_plane, sampler, sets[0].?, reading, onto, plane, layout);
-    try testing.expectEqual(@as(u32, 0xFF40_4040), into.at(16, 8));
+    try testing.expectEqual(@as(u32, 0xFF40_0000), into.at(16, 8));
     try sample(&bench, vertex_bytes, vertex_buffer, stencil_plane, sampler, sets[0].?, reading, onto, plane, layout);
     try testing.expectEqual(@as(u32, 0xFF60_0000), into.at(16, 8));
 
@@ -9956,9 +9962,10 @@ test "a depth attachment of levels: a pass draws into the level its view names, 
         fb.CmdDraw(drawing, 6, 1, 0, 0);
         fb.CmdEndRenderPass(drawing);
         try bench.submit();
-        const grey: u32 = 0xFF00_0000 | @as(u32, value >> 8) * 0x01_01_01;
-        try testing.expectEqual(grey, into.at(8, 8));
-        try testing.expectEqual(grey, into.at(24, 24));
+        // Its top 8 bits in the red alone, (D, 0, 0, 1) (since 1.121).
+        const deep: u32 = 0xFF00_0000 | @as(u32, value >> 8) << 16;
+        try testing.expectEqual(deep, into.at(8, 8));
+        try testing.expectEqual(deep, into.at(24, 24));
     }
 }
 
@@ -10446,7 +10453,8 @@ test "an image view's component swizzle: Vulkan's seven taken and nothing else, 
 
     // A view of a depth: what a swizzle takes from the green and the blue
     // is 0 and from the alpha 1, as Vulkan reads a depth (D, 0, 0, 1),
-    // and a view that swizzles nothing keeps the grey (item 89). What a
+    // and so it is for a view that swizzles nothing (since 1.121, item
+    // 89), which a framebuffer still takes. What a
     // comparison gave is swizzled as a texel is: red 1 whatever passed,
     // green what passed, blue from the depth's green, 0. What is compared
     // is the depth as it lies, a quarter, and not the swizzled red's 1.
@@ -10460,7 +10468,8 @@ test "an image view's component swizzle: Vulkan's seven taken and nothing else, 
     const depth_plain = try bench.viewOf(.{ .image = depth, .format = .d16_unorm, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH } });
     const compared = &_objects.of(image_zig.ImageView, depth_view).texels;
     try testing.expectEqual(texture_zig.Swizzle{ .r = .one, .g = .red, .b = .zero, .a = .one }, compared.swizzle);
-    try testing.expect(_objects.of(image_zig.ImageView, depth_plain).texels.swizzle.isIdentity());
+    try testing.expectEqual(texture_zig.Swizzle{ .g = .zero, .b = .zero, .a = .one }, _objects.of(image_zig.ImageView, depth_plain).texels.swizzle);
+    try testing.expect(_objects.of(image_zig.ImageView, depth_plain).swizzle.isIdentity());
     var shadow = texture_zig.Sampler{ .mag_filter = .nearest, .min_filter = .nearest, .wrap = @splat(.clamp_to_edge), .compare = .always };
     try testing.expectEqual(@as(u32, 0xFFFF_FF00), texture_zig.sampleBy(compared, &shadow, 0, .{ .u = 0.5, .v = 0.5 }));
     shadow.compare = .never;
@@ -10533,6 +10542,66 @@ test "an image view's component swizzle: Vulkan's seven taken and nothing else, 
     const straight = try bench.viewOf(.{ .image = drawn, .format = .b8g8r8a8_unorm, .components = .{ .r = .r, .g = .identity, .b = .b, .a = .a } });
     const taken = try framebuffer(&bench, reading, &.{straight}, 8, 8);
     fb.DestroyFramebuffer(device, taken);
+}
+
+// --- 1.121: a depth and a stencil read as Vulkan reads them (item 89) ------
+
+test "a depth and a stencil read as Vulkan reads them: (D, 0, 0, 1) and (S, 0, 0, 1) through a view that swizzles nothing, what a comparison gave in the D, a view's swizzle over that, and the view itself still the identity (item 89)" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const image_zig = @import("../image/_image.zig");
+
+    // A depth of a quarter, 0x4000, and a stencil of 0x30: a plane each
+    // of one image, and a view of each that swizzles nothing.
+    const both = try bench.bareImage(.{ .format = .d16_unorm_s8_uint, .extent = .{ .width = 4, .height = 4 }, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST }, false);
+    const filled = facet.ClearDepthStencilValue{ .depth = 0.25, .stencil = 0x30 };
+    const planes = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH | facet.IMAGE_ASPECT_STENCIL };
+    const commands = try bench.record();
+    fb.CmdClearDepthStencilImage(commands, both, .transfer_dst_optimal, &filled, 1, @ptrCast(&planes));
+    try bench.submit();
+    const depth = try bench.viewOf(.{ .image = both, .format = .d16_unorm_s8_uint, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH } });
+    const stencil = try bench.viewOf(.{ .image = both, .format = .d16_unorm_s8_uint, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_STENCIL } });
+    const deep = &_objects.of(image_zig.ImageView, depth).texels;
+    const marked = &_objects.of(image_zig.ImageView, stencil).texels;
+
+    // Each texel reads its depth's top 8 bits, or its stencil, in the red
+    // alone, and the alpha 1; its floats the depth at all 16 bits; a texel
+    // the view does not hold (0, 0, 0, 1).
+    try testing.expectEqual(@as(u32, 0xFF40_0000), deep.colorAt(0, 0, 1, 2));
+    try testing.expectEqual(@as(u32, 0xFF30_0000), marked.colorAt(0, 0, 2, 1));
+    try testing.expectEqual([4]f32{ 16384.0 / 65535.0, 0, 0, 1 }, deep.partsAt(0, 0, 3, 3));
+    try testing.expectEqual(@as(u32, 0xFF00_0000), deep.colorAt(0, 0, 9, 9));
+    try testing.expectEqual(@as(u32, 0xFF00_0000), marked.colorAt(0, 0, 9, 9));
+
+    // A sampler reads the same, nearest and mixed; one that compares gives
+    // (1, 0, 0, 1) where the depth passed and (0, 0, 0, 1) where it did
+    // not, what passed standing in the D.
+    var sampler = texture_zig.Sampler{ .mag_filter = .nearest, .min_filter = .nearest, .wrap = @splat(.clamp_to_edge) };
+    try testing.expectEqual(@as(u32, 0xFF40_0000), texture_zig.sampleBy(deep, &sampler, 0, .{ .u = 0.5, .v = 0.5 }));
+    try testing.expectEqual(@as(u32, 0xFF30_0000), texture_zig.sampleBy(marked, &sampler, 0, .{ .u = 0.5, .v = 0.5 }));
+    sampler.mag_filter = .bilinear;
+    sampler.min_filter = .bilinear;
+    try testing.expectEqual(@as(u32, 0xFF40_0000), texture_zig.sampleBy(deep, &sampler, 0, .{ .u = 0.5, .v = 0.5 }));
+    sampler.compare = .greater;
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), texture_zig.sampleBy(deep, &sampler, 0, .{ .u = 0.5, .v = 0.5, .reference = 0.5 }));
+    sampler.compare = .less;
+    try testing.expectEqual(@as(u32, 0xFF00_0000), texture_zig.sampleBy(deep, &sampler, 0, .{ .u = 0.5, .v = 0.5, .reference = 0.5 }));
+    sampler.mag_filter = .nearest;
+    sampler.min_filter = .nearest;
+    sampler.compare = .greater;
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), texture_zig.sampleBy(deep, &sampler, 0, .{ .u = 0.5, .v = 0.5, .reference = 0.5 }));
+
+    // A view's swizzle goes over that: the alpha from the red reads the
+    // depth there too, and the green from the alpha 1.
+    const over = try bench.viewOf(.{ .image = both, .format = .d16_unorm_s8_uint, .components = .{ .g = .a, .a = .r }, .subresource_range = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH } });
+    try testing.expectEqual(@as(u32, 0x4040_FF00), _objects.of(image_zig.ImageView, over).texels.colorAt(0, 0, 1, 1));
+
+    // The view itself swizzles nothing, which is what a framebuffer asks
+    // of it (VUID-VkFramebufferCreateInfo-pAttachments-00884): the rule
+    // is its texels' alone.
+    try testing.expect(_objects.of(image_zig.ImageView, depth).swizzle.isIdentity());
+    try testing.expect(_objects.of(image_zig.ImageView, stencil).swizzle.isIdentity());
 }
 
 test "a depth attachment read as an input attachment: what the subpass before drew, plane by plane" {

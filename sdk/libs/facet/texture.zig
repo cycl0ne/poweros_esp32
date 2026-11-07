@@ -755,7 +755,9 @@ pub const Texture = struct {
     sample_bytes: usize = 0,
     /// The view's swizzle, which every read of a texel applies: `colorAt`,
     /// `partsAt`, `wholesAt` and each sample. Each channel from itself
-    /// for every texture but a view's (since 1.120).
+    /// for every texture but a view's (since 1.120), and never for a
+    /// depth's or a stencil's view, whose green and blue read 0 and whose
+    /// alpha reads 1 whatever the view says (since 1.121).
     swizzle: Swizzle = .{},
 
     pub const Error = error{BadSize};
@@ -1275,7 +1277,10 @@ pub const Texture = struct {
             // Red alone, as Vulkan reads a one-channel format: the green
             // and the blue 0, the alpha whole.
             .r8 => redOf8(@truncate(texel)),
-            // A depth as an opaque grey: its top 8 bits.
+            // A depth as an opaque grey: its top 8 bits, as llvmpipe reads
+            // one (Z, Z, Z, 1). Every view of a depth swizzles it to
+            // (D, 0, 0, 1), as lavapipe's does (since 1.121,
+            // image/createimageview.zig `depthRead`).
             .d16 => greyOf8(@truncate(texel >> 8)),
             // Decoded already: `peekLayer` read it out of its block, out
             // of its floats, or out of its channels.

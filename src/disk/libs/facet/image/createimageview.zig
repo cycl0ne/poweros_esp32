@@ -43,21 +43,22 @@ const texture = facet.texture;
 /// levels since 1.119.
 ///
 /// **Its channels may be swizzled** since 1.120, as Vulkan's
-/// `VkComponentMapping` has them: each of `components` names the channel
-/// of the texel it reads, its own (`identity`), or 0 or 1. Every read of
-/// the view's texels is swizzled - a sample through a sampler or by a
-/// fixed form, `colorAt`, `partsAt` and `wholesAt` - and so are the border
-/// and what a comparison gave, Vulkan replacing a texel and comparing a
-/// depth before it swizzles (`texture.Swizzle`). A channel the format has
-/// not got reads 0, or 1 for an alpha, before the swizzle: an R8 view may
-/// read its alpha as its red, and reads 1. Of a depth or a stencil a swizzle
-/// takes 0 from the green and the blue and 1 from the alpha, as Vulkan
-/// reads such a texel (D, 0, 0, 1). A fixed form compiled for the view's
-/// format draws one that swizzles through the run-time sampler, a pixel at
-/// a time. A framebuffer takes no view that swizzles, and neither a storage
-/// image nor an input attachment may be one, as Vulkan has it
-/// (VUID-VkWriteDescriptorSet-descriptorType-00336). On the V3D the TMU
-/// swizzles, the view's over the format's own.
+/// `VkComponentMapping` has them: each of `components` names the channel of
+/// the texel it reads, its own (`identity`), or 0 or 1. Every read of the
+/// view's texels is swizzled - a sample through a sampler or by a fixed
+/// form, `colorAt`, `partsAt` and `wholesAt` - and so are the border and
+/// what a comparison gave, Vulkan replacing a texel and comparing a depth
+/// before it swizzles (`texture.Swizzle`). A channel the format has not got
+/// reads 0, or 1 for an alpha, before the swizzle: an R8 view may read its
+/// alpha as its red, and reads 1. A depth or a stencil reads (D, 0, 0, 1),
+/// as Vulkan converts such a texel, before the swizzle: a swizzle takes 0
+/// from its green and its blue and 1 from its alpha (since 1.121 whatever
+/// the view's swizzle, since 1.120 where it swizzles). A fixed form
+/// compiled for the view's format draws one that swizzles through the
+/// run-time sampler, a pixel at a time. A framebuffer takes no view that
+/// swizzles, and neither a storage image nor an input attachment may be
+/// one, as Vulkan has it (VUID-VkWriteDescriptorSet-descriptorType-00336).
+/// On the V3D the TMU swizzles, the view's over the format's own.
 ///
 /// Of type `2d` it is one layer, of a texture with any number of them. Of type
 /// `2d_array` it is the layers asked for, for `shader.FixedKind.texture_array`;
@@ -136,7 +137,7 @@ pub fn CreateImageView(base: *FacetBase, device: *facet.Device, info: *const fac
     view.* = null;
     const image = _objects.of(Image, info.image);
     if (info.format != image.given_format) return .error_format_not_supported;
-    const swizzle = swizzleOf(info.components, image.kind == .depth) orelse return .error_format_not_supported;
+    const swizzle = swizzleOf(info.components) orelse return .error_format_not_supported;
     const range = info.subresource_range;
     if (range.base_mip_level >= image.levels or range.base_array_layer >= image.layers) return .error_format_not_supported;
     const layers = if (range.layer_count == facet.REMAINING) image.layers - range.base_array_layer else range.layer_count;
@@ -187,11 +188,12 @@ pub fn CreateImageView(base: *FacetBase, device: *facet.Device, info: *const fac
     if (_image.sampledRows(image)) made.texels = _image.rowLevels(image, range.base_mip_level, count, range.base_array_layer, layers);
     if (plane) |one| made.texels = one;
     // What a sample, a fetch and a read of the texels give back, swizzled
-    // as the view says (since 1.120). An input attachment's rows and a
-    // storage image's texels are read where Vulkan has the view swizzle
-    // nothing (VUID-VkWriteDescriptorSet-descriptorType-00336), so a view
-    // that does is not one either may be.
-    if (_image.hasTexels(image)) made.texels.swizzle = swizzle;
+    // as the view says (since 1.120), and of a depth or a stencil read
+    // (D, 0, 0, 1) whatever it says (since 1.121). An input attachment's
+    // rows and a storage image's texels are read where Vulkan has the view
+    // swizzle nothing (VUID-VkWriteDescriptorSet-descriptorType-00336), so
+    // a view that does is not one either may be.
+    if (_image.hasTexels(image)) made.texels.swizzle = if (image.kind == .depth) depthRead(swizzle) else swizzle;
     if (read_rows) |one| made.rows = one;
     // Its pixels, for a later subpass to read as an input attachment: the
     // rows of the level and the layer the view begins at, an image kept in
@@ -217,27 +219,36 @@ pub fn CreateImageView(base: *FacetBase, device: *facet.Device, info: *const fac
     return .success;
 }
 
-/// The view's component swizzle, as its texels apply it: null for a value
-/// that is none of Vulkan's seven. Of a depth or a stencil a swizzle reads
-/// the green and the blue as 0 and the alpha as 1, as Vulkan reads such a
-/// texel (D, 0, 0, 1) before it swizzles - lavapipe's `conv_depth_swiz`
-/// (src/gallium/frontends/lavapipe/lvp_image.c:337-347, 389-396). A view
-/// of one that swizzles nothing keeps the grey this library reads a depth
-/// as (docs/facet-vulkan10.md item 89).
-fn swizzleOf(components: facet.ComponentMapping, depth: bool) ?texture.Swizzle {
-    var made = texture.Swizzle{
+/// The view's component swizzle, as the program gave it: null for a value
+/// that is none of Vulkan's seven. It is what a framebuffer asks of the
+/// view and what the V3D's TMU takes over the format's own.
+fn swizzleOf(components: facet.ComponentMapping) ?texture.Swizzle {
+    return .{
         .r = sourceOf(components.r, .red) orelse return null,
         .g = sourceOf(components.g, .green) orelse return null,
         .b = sourceOf(components.b, .blue) orelse return null,
         .a = sourceOf(components.a, .alpha) orelse return null,
     };
-    if (depth and !made.isIdentity()) {
-        inline for (.{ "r", "g", "b", "a" }) |name| @field(made, name) = switch (@field(made, name)) {
-            .green, .blue => .zero,
-            .alpha => .one,
-            else => |same| same,
-        };
-    }
+}
+
+/// The swizzle a depth's or a stencil's texels apply, whatever the view's:
+/// the green and the blue read as 0 and the alpha as 1, so the grey this
+/// library reads such a texel as, (D, D, D, 1), is read (D, 0, 0, 1), as
+/// Vulkan converts it (13.2.2, "(0,0,0,1) for missing (R,G,B,A)
+/// components"). This is lavapipe's `conv_depth_swiz`, on every view of a
+/// depth or a stencil (src/gallium/frontends/lavapipe/lvp_image.c:337-347,
+/// 389-396), over llvmpipe's read of one, the same grey
+/// (`lp_build_format_swizzle_soa`,
+/// src/gallium/auxiliary/gallivm/lp_bld_format_soa.c:82-101). Since 1.121
+/// on a view that swizzles nothing as well (docs/facet-vulkan10.md item
+/// 89); since 1.120 on one that does.
+fn depthRead(given: texture.Swizzle) texture.Swizzle {
+    var made = given;
+    inline for (.{ "r", "g", "b", "a" }) |name| @field(made, name) = switch (@field(made, name)) {
+        .green, .blue => .zero,
+        .alpha => .one,
+        else => |same| same,
+    };
     return made;
 }
 
