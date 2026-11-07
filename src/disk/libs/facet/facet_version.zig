@@ -3158,4 +3158,44 @@ pub const LIBRARY_VERSION = 1;
 /// view from byte 16 is made and is the whole texels past it, and for the
 /// two of 12 bytes reads the words that lie there; and a whole texel short
 /// of 16 is refused. Each of 4 changes put back fails at least one of them.
-pub const LIBRARY_REVISION = 125;
+///
+/// 126: **A blit says which formats it takes.** Item 32 of
+/// docs/facet-vulkan10.md. FORMAT_FEATURE_BLIT_SRC and BLIT_DST did not
+/// exist, so no format said either on either device, though CmdBlitImage
+/// has been in the table since 1.16. They are set as v3dv sets them:
+/// BLIT_SRC beside SAMPLED_IMAGE in optimal tiling, BLIT_DST beside
+/// COLOR_ATTACHMENT in either tiling (`image_format_plane_features`,
+/// src/broadcom/vulkan/v3dv_formats.c:169-182). R8_UNORM is a blit's
+/// destination as well, as both of Mesa's drivers have it, and D16_UNORM
+/// is blitted both ways, into an image of its own format and without a
+/// filter (VUID-vkCmdBlitImage-srcImage-00231, -00232), as lavapipe has a
+/// depth format (lvp_formats.c:93-104). The processor blits for both
+/// devices, so the V3D's D16_UNORM says so although its texture unit
+/// samples no depth. The whole numbers say neither: a blit carries a
+/// colour of 8 bits a channel. That is 11 of the 47 formats Vulkan asks
+/// BLIT_SRC of on the cores and 10 on the V3D, and 4 of the 38 it asks
+/// BLIT_DST of on either; the rest wait on items 31, 34, 35, 36 and 37.
+///
+/// Setting them found three faults in what a blit reads and writes. The
+/// colour of a source texel was read into 4 bytes: a texel of
+/// R16G16B16A16_UNORM, 8 bytes, was not read at all and its colour made of
+/// what lay in and past those 4; a texel of floats kept in rows, 8 or 16
+/// bytes, was copied into them; and a float texel read as nothing even
+/// where it fit, `_image.colorOfBytes` knowing no float format. It is read
+/// into 16 now, and a float as a sample reads it. A blit into a depth
+/// image wrote 2 bytes it never set; it moves the nearest pixel's depth
+/// now, as lavapipe's blit of the depth aspect does (`handle_blit_image`,
+/// src/gallium/frontends/lavapipe/lvp_execute.c:3040-3047). And a
+/// compressed image kept in its blocks but made for the transfers alone
+/// lay in rows with no texture laid over them, which a copy into it wrote
+/// through: it is a texture whatever it is for.
+///
+/// Tests: of every format, each that says BLIT_SRC is made for the
+/// transfers alone where CreateImage makes such an image, and sampled,
+/// copied into, and blitted into 8888 as the colour a sample reads, worked
+/// out by the decoders an image is unpacked through; each that says
+/// BLIT_DST is blitted into in each tiling that says so and read back in
+/// its own bytes; D16_UNORM is blitted into itself turned round; and no
+/// whole number, stencil or linear source says a blit. Each of 10 changes
+/// put back fails it.
+pub const LIBRARY_REVISION = 126;

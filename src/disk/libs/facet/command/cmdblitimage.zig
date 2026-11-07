@@ -19,7 +19,9 @@ const Image = @import("../image/_image.zig").Image;
 ///
 /// INPUTS:
 /// - `buffer` - a command buffer recording.
-/// - `source`, `destination` - images of colour, of any formats.
+/// - `source`, `destination` - images of formats whose features say
+///   BLIT_SRC and BLIT_DST (GetPhysicalDeviceFormatProperties, since
+///   1.126): of colour, or both of D16_UNORM.
 /// - `source_layout`, `destination_layout` - not looked at.
 /// - `region_count`, `regions` - the rectangles: corners the other way round
 ///   turn it round.
@@ -34,10 +36,17 @@ const Image = @import("../image/_image.zig").Image;
 /// the destination is left out, and the source's edge is read beyond it.
 ///
 /// A source kept in its blocks is read out of them, texel by texel (since
-/// 1.44), and one kept as floats is read and rounded the same way (since
-/// 1.45). Nothing here compresses or makes floats, so a destination that
-/// keeps what it was given takes nothing, as Vulkan does not allow a
-/// compressed one either.
+/// 1.44), and one kept as floats, or as channels of 16 bits, is read as a
+/// sample reads it, each channel held to 0 to 1 and rounded to 8 bits:
+/// since 1.126, where before a float one read as nothing and one of 8
+/// bytes a texel as what lay past its first 4. Nothing here compresses or
+/// makes floats, so a destination that keeps what it was given takes
+/// nothing, as Vulkan does not allow a compressed one either.
+///
+/// A depth goes into an image of its own format, D16_UNORM, without a
+/// filter, as Vulkan has it (VUID-vkCmdBlitImage-srcImage-00231, -00232):
+/// each pixel takes the nearest one's depth as it lies (since 1.126). An
+/// image with a stencil takes nothing.
 ///
 /// CONTEXT:
 /// - Waits: no.

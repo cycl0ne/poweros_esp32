@@ -238,12 +238,17 @@ fn blocksToBuffer(command: *const _command.CopyImageToBuffer, into: []u8) void {
     }
 }
 
-/// The colours of a level read by way of 0xAARRGGBB.
+/// The colours of a level read by way of 0xAARRGGBB: the colour a sample
+/// reads of each texel, whatever the image keeps it as.
 fn colorAt(image: *const Image, level: u32, layer: u32, x: u32, y: u32) u32 {
     // A compressed image has no texel of its own in memory: the one it
     // holds is decoded out of the block it lies in.
     if (_image.blocked(image)) return _image.blockColor(image, level, layer, x, y);
-    var texel: [4]u8 = undefined;
+    // Room for the widest texel, four floats (since 1.126). A texel kept
+    // as it was given is read as it lies, and was cut to the four bytes of
+    // a colour word before: one of 8 or 16 bytes read as nothing, or as
+    // what lay past the word, and a float one as nothing at all.
+    var texel: [16]u8 = undefined;
     _image.readTexel(image, level, layer, x, y, &texel);
     return _image.colorOfBytes(image.format, &texel);
 }
@@ -515,11 +520,23 @@ pub fn blitImage(command: *const _command.BlitImage) void {
     // An image of more than one sample is no blit's, either way
     // (VUID-vkCmdBlitImage-srcImage-00233, VUID-vkCmdBlitImage-dstImage-00234).
     if (source.samples != 1 or destination.samples != 1) return;
-    // A compressed source is read block by block and scaled like any
-    // other, and a float one texel by texel; nothing here compresses or
-    // makes floats, so a destination that keeps what it was given is left
-    // alone, as Vulkan does not allow a compressed one either.
-    if (_image.blocked(destination) or _image.keptTexels(destination)) return;
+    // A depth is blitted into an image of its own format alone, and
+    // without a filter (VUID-vkCmdBlitImage-srcImage-00231, -00232): each
+    // pixel takes the nearest one's depth as it lies (since 1.126), which
+    // is lavapipe's blit of the depth aspect (`handle_blit_image`,
+    // src/gallium/frontends/lavapipe/lvp_execute.c:3040-3047). D16_UNORM
+    // is the format that says so; one with a stencil is left alone. Before
+    // 1.126 a blit into a depth image wrote two bytes it never set.
+    const depth = source.kind == .depth;
+    if (depth or destination.kind == .depth) {
+        if (source.format != .d16_unorm or destination.format != .d16_unorm) return;
+    } else if (_image.blocked(destination) or _image.keptTexels(destination)) {
+        // A compressed source is read block by block and scaled like any
+        // other, and a float one texel by texel; nothing here compresses
+        // or makes floats, so a destination that keeps what it was given
+        // is left alone, as Vulkan does not allow a compressed one either.
+        return;
+    }
     for (_stream.items(_command.BlitImage, facet.ImageBlit, command, command.count)) |*region| {
         const from_level = region.src_subresource.mip_level;
         const to_level = region.dst_subresource.mip_level;
@@ -546,6 +563,12 @@ pub fn blitImage(command: *const _command.BlitImage) void {
                 var x = left;
                 while (x < right) : (x += 1) {
                     const u = along(x, to_x, from_x);
+                    if (depth) {
+                        var texel: [2]u8 = undefined;
+                        _image.readTexel(source, from_level, from_layer, held(@intFromFloat(@floor(u)), from_size[0]), held(@intFromFloat(@floor(v)), from_size[1]), &texel);
+                        _image.writeTexel(destination, to_level, to_layer, @intCast(x), @intCast(y), &texel);
+                        continue;
+                    }
                     const color = if (command.filter == .linear) linear: {
                         const low_u = u - 0.5;
                         const low_v = v - 0.5;

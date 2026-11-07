@@ -159,7 +159,11 @@ const _image = @import("_image.zig");
 /// as they lie, by CmdCopyBufferToImage, CmdCopyImageToBuffer and CmdCopyImage
 /// between two images of the one format, their offsets and extents on a
 /// multiple of 4 as Vulkan asks. GetImageMemoryRequirements says which was
-/// done. A device without the feature unpacks it as a float image is unpacked.
+/// done. Such an image is a texture whatever it is for, one made for the
+/// transfers alone as well (since 1.126): that one lay in rows until then,
+/// with no texture over them, and a copy into it wrote through a texture
+/// that was never laid. A device without the feature unpacks it as a
+/// float image is unpacked.
 /// A STORAGE image is written texel by texel, so a compressed one is unpacked
 /// there whatever the device: nothing writes one texel of a block, and such
 /// an image wants SAMPLED beside it, being unpacked to be sampled. A float

@@ -126,7 +126,8 @@ half of two, the cores', in 1.113, item 61's last row of eight, on the
 cores, in 1.114, item 85's half of two, the cores', in 1.115, item 87
 in 1.116, item 88 in 1.117, item 86 in 1.118, item 48's half of two,
 the cores', in 1.119, item 41 in 1.120, item 89 in 1.121, item 15 in
-1.122, item 11 in 1.123, item 12 in 1.124, and item 79 in 1.125.**
+1.122, item 11 in 1.123, item 12 in 1.124, item 79 in 1.125, and item 32
+in 1.126.**
 Each
 carries a *Done* note below saying what was actually built and where the
 item's own description turned out to be wrong - and several did. Things
@@ -1180,13 +1181,36 @@ Six formats carrying unconditional mandatory features are absent from the enum: 
 
 ### 32. Define BLIT_SRC and BLIT_DST and report them
 
-*formats / FormatProperties bitmask* &mdash; conformance-blocking, small
+*formats / FormatProperties bitmask* &mdash; conformance-blocking, small &mdash; **done in 1.126**
 
 After: Items 33-40 for the formats facet cannot yet draw into or sample
 
 FORMAT_FEATURE_BLIT_SRC (1<<10) and BLIT_DST (1<<11) do not exist in facet's bitmask, so facet reports neither for any format on either device — although CmdBlitImage is in the jump table and documented as taking "images of colour, of any formats". Vulkan mandates BLIT_SRC for 47 formats and BLIT_DST for 38. Defining the bits and setting them for what CmdBlitImage already reads and writes is small; the rest of the coverage rides on items 33-40.
 
 > Verified by listing the constants: facet.zig:825-839 defines bits 0, 1, 3, 4, 6, 7, 8, 9, 12, 14, 15 — Vulkan's bits 2, 5, 10 and 11 (the two atomics and the two blits) are all absent. command/cmdblitimage.zig:22 for the docstring.
+
+**Done in 1.126**, in 26 lines of code and 153 of tests. The two bits are
+set as v3dv sets them - BLIT_SRC beside SAMPLED_IMAGE in optimal tiling,
+BLIT_DST beside COLOR_ATTACHMENT in either (`image_format_plane_features`,
+v3dv_formats.c:169-182) - with R8_UNORM a destination as well, as both of
+Mesa's drivers have it, and D16_UNORM blitted both ways into an image of
+its own format, the processor blitting for both devices (lavapipe's depth
+formats, lvp_formats.c:93-104; `handle_blit_image`, lvp_execute.c:3040-3047).
+The whole numbers say neither: the blit carries a colour of 8 bits a
+channel. That meets BLIT_SRC for 11 of the 47 formats Vulkan asks it of on
+the cores and 10 on the V3D, which keeps no R8G8_UNORM, and BLIT_DST for 4
+of the 38 on either. Setting the bits found three faults in the blit, all
+fixed: a source texel was read into 4 bytes, so R16G16B16A16_UNORM and the
+floats kept in rows overran them and every float read as nothing; a blit
+into a depth image wrote 2 bytes it never set; and a compressed image kept
+in its blocks but made for the transfers alone lay in rows with no texture
+over them, which a copy into it wrote through. What is left, by item:
+B4G4R4A4, A1R5G5B5 and the three A8B8G8R8 forms the enum lacks (31); the
+sRGB words, A8B8G8R8_UNORM and _SRGB, and A2B10G10R10_UNORM (34);
+D32_SFLOAT (35); the 21 integer formats both ways, and BLIT_DST for
+R8G8_UNORM and the three float formats (36, where they become attachments
+and the blit has to write a format at its own width); and the _snorm
+forms, R16_SFLOAT, R16G16_SFLOAT and R32G32_SFLOAT (37).
 
 ### 33. Decode the 45 mandatory vertex-attribute formats
 
@@ -1222,7 +1246,7 @@ Found independently by: formats, semantics, conformance-path (3 strands).
 
 *formats / colour attachments* &mdash; conformance-blocking, large
 
-Vulkan mandates COLOR_ATTACHMENT for 38 formats and COLOR_ATTACHMENT_BLEND for 14. facet provides 3 of each, hard-coded in a two-line `drawable()` and enforced by CreateImage. The missing 35 are the integer attachments, the three sRGB words, the half- and single-float forms, a2b10g10r10 both ways, a8b8g8r8_*_pack32 and a1r5g5b5. This is the largest piece in the formats strand: the tile buffer keeps 8 bits a channel of BGRA, dithered to 565 on store, so each new format needs a tile representation, a store, a load, a clear and — for the 11 blendable ones — a blend unit at that width. On the V3D the render-target config packets must name the format too. The same fix closes the colour-input-attachment gap, since an input attachment must be of a format rowFormat knows, which is the same three.
+Vulkan mandates COLOR_ATTACHMENT for 38 formats and COLOR_ATTACHMENT_BLEND for 14. facet provides 3 of each, hard-coded in a two-line `drawable()` and enforced by CreateImage. The missing 35 are the integer attachments, the three sRGB words, the half- and single-float forms, a2b10g10r10 both ways, a8b8g8r8_*_pack32 and a1r5g5b5. This is the largest piece in the formats strand: the tile buffer keeps 8 bits a channel of BGRA, dithered to 565 on store, so each new format needs a tile representation, a store, a load, a clear and — for the 11 blendable ones — a blend unit at that width. On the V3D the render-target config packets must name the format too. The same fix closes the colour-input-attachment gap, since an input attachment must be of a format rowFormat knows, which is the same three. Since 1.126 (item 32) BLIT_DST rides on this as well, set beside COLOR_ATTACHMENT as v3dv sets it: each format made an attachment here becomes a blit's destination, so the blit, which carries 8 bits a channel, has to write it at its own width - a float as a float, a whole number as it is.
 
 > Verified verbatim: src/disk/libs/facet/surface/_surface.zig:78-80 `return format == .b8g8r8a8_unorm or format == .r8g8b8a8_unorm or format == .r5g6b5_unorm_pack16;`; image/_image.zig:498 `if (info.usage & facet.IMAGE_USAGE_COLOR_ATTACHMENT != 0 and !drawable(info.format)) return null;`; driver/_format.zig:45-58 are the only arms setting `attachment`; render/createrenderpass.zig:238 for the input-attachment half.
 
@@ -1698,7 +1722,7 @@ storage_images is false on the V3D, so a storage_image descriptor layout is refu
 
 After: V3D samplers (for the compare op); item 3 makes the report honest first
 
-sampled_depth is false on the V3D: an image of d16_unorm with IMAGE_USAGE_SAMPLED is refused there, so a shadow map must be copied rather than sampled where it lies. Vulkan mandates SAMPLED_IMAGE and BLIT_SRC for D16_UNORM on every physical device, so this is the conformance failure that item 3's honest gating exposes. Needs a depth format in the TMU's table, or the library handing the TMU a 16-bit single-channel texture that reads as depth, plus the compare-against-reference path, which is sampler state the TMU cannot express today.
+sampled_depth is false on the V3D: an image of d16_unorm with IMAGE_USAGE_SAMPLED is refused there, so a shadow map must be copied rather than sampled where it lies. Vulkan mandates SAMPLED_IMAGE and BLIT_SRC for D16_UNORM on every physical device (BLIT_SRC is met since 1.126, the processor blitting the depth rows; SAMPLED_IMAGE is what is left), so this is the conformance failure that item 3's honest gating exposes. Needs a depth format in the TMU's table, or the library handing the TMU a 16-bit single-channel texture that reads as depth, plus the compare-against-reference path, which is sampler state the TMU cannot express today.
 
 > Verified: driver/v3d/driver.zig:178 `.sampled_depth = false` with the comment "Its texture unit keeps a texture its own way, and knows no depth format"; enforcement at driver/_format.zig:73 and image/_image.zig:433 `if (!physical.features.sampled_depth) return null;`.
 

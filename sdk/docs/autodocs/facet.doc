@@ -824,7 +824,9 @@ facet.library/WaitForFences
 
    INPUTS
 	- `buffer` - a command buffer recording.
-	- `source`, `destination` - images of colour, of any formats.
+	- `source`, `destination` - images of formats whose features say
+	  BLIT_SRC and BLIT_DST (GetPhysicalDeviceFormatProperties, since
+	  1.126): of colour, or both of D16_UNORM.
 	- `source_layout`, `destination_layout` - not looked at.
 	- `region_count`, `regions` - the rectangles: corners the other way round
 	  turn it round.
@@ -839,10 +841,17 @@ facet.library/WaitForFences
 	the destination is left out, and the source's edge is read beyond it.
 
 	A source kept in its blocks is read out of them, texel by texel (since
-	1.44), and one kept as floats is read and rounded the same way (since
-	1.45). Nothing here compresses or makes floats, so a destination that
-	keeps what it was given takes nothing, as Vulkan does not allow a
-	compressed one either.
+	1.44), and one kept as floats, or as channels of 16 bits, is read as a
+	sample reads it, each channel held to 0 to 1 and rounded to 8 bits:
+	since 1.126, where before a float one read as nothing and one of 8
+	bytes a texel as what lay past its first 4. Nothing here compresses or
+	makes floats, so a destination that keeps what it was given takes
+	nothing, as Vulkan does not allow a compressed one either.
+
+	A depth goes into an image of its own format, D16_UNORM, without a
+	filter, as Vulkan has it (VUID-vkCmdBlitImage-srcImage-00231, -00232):
+	each pixel takes the nearest one's depth as it lies (since 1.126). An
+	image with a stencil takes nothing.
 
    CONTEXT
 	- Waits: no.
@@ -3594,7 +3603,11 @@ facet.library/WaitForFences
 	as they lie, by CmdCopyBufferToImage, CmdCopyImageToBuffer and CmdCopyImage
 	between two images of the one format, their offsets and extents on a
 	multiple of 4 as Vulkan asks. GetImageMemoryRequirements says which was
-	done. A device without the feature unpacks it as a float image is unpacked.
+	done. Such an image is a texture whatever it is for, one made for the
+	transfers alone as well (since 1.126): that one lay in rows until then,
+	with no texture over them, and a copy into it wrote through a texture
+	that was never laid. A device without the feature unpacks it as a
+	float image is unpacked.
 	A STORAGE image is written texel by texel, so a compressed one is unpacked
 	there whatever the device: nothing writes one texel of a block, and such
 	an image wants SAMPLED beside it, being unpacked to be sampled. A float
@@ -6338,6 +6351,12 @@ facet.library/WaitForFences
 	  EAC_R11G11: sampled, filtered, in optimal tiling, and copied into.
 	  No sampler of this library reads such a block, so they are always
 	  unpacked to 8 bits a channel and never copied out of (since 1.46).
+	- Blits (since 1.126): BLIT_SRC, in optimal tiling, beside every colour
+	  format sampled there but those of whole numbers, a blit reading the
+	  texel as a sample does; BLIT_DST beside the three colour attachments
+	  in either tiling, and beside R8_UNORM. D16_UNORM says both, a depth
+	  going into an image of its own format. No blit carries a whole number
+	  or a stencil, and none reads an image in linear tiling.
 
 	Every answer that differs between two devices of one machine is read
 	off that device's `PhysicalDeviceFeatures` (since 1.80): what it keeps

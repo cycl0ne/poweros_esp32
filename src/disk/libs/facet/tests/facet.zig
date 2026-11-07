@@ -638,11 +638,13 @@ test "the formats: what each does in each tiling" {
     try testing.expect(properties.optimal_tiling_features & facet.FORMAT_FEATURE_SAMPLED_IMAGE != 0);
     try testing.expect(properties.linear_tiling_features & facet.FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND != 0);
     try testing.expect(properties.linear_tiling_features & facet.FORMAT_FEATURE_SAMPLED_IMAGE == 0);
-    // A depth attachment, and a transfer since a pass may store its depth;
-    // never sampled, and never linear.
+    // A depth attachment, a transfer since a pass may store its depth,
+    // sampled where its rows lie on the cores, and blitted both ways into
+    // an image of its own format since 1.126; never linear.
     rig.fb.GetPhysicalDeviceFormatProperties(physical, .d16_unorm, &properties);
     try testing.expectEqual(
         facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT | facet.FORMAT_FEATURE_TRANSFER_SRC | facet.FORMAT_FEATURE_TRANSFER_DST |
+            facet.FORMAT_FEATURE_BLIT_SRC | facet.FORMAT_FEATURE_BLIT_DST |
             facet.FORMAT_FEATURE_SAMPLED_IMAGE | facet.FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR,
         properties.optimal_tiling_features,
     );

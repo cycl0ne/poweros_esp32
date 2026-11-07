@@ -1233,6 +1233,11 @@ pub const FORMAT_FEATURE_VERTEX_BUFFER: u32 = 1 << 6;
 pub const FORMAT_FEATURE_COLOR_ATTACHMENT: u32 = 1 << 7;
 pub const FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND: u32 = 1 << 8;
 pub const FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT: u32 = 1 << 9;
+/// An image of this format may be CmdBlitImage's source, in the tiling
+/// these features are of (VUID-vkCmdBlitImage-srcImage-01999; since 1.126).
+pub const FORMAT_FEATURE_BLIT_SRC: u32 = 1 << 10;
+/// And its destination (VUID-vkCmdBlitImage-dstImage-02000; since 1.126).
+pub const FORMAT_FEATURE_BLIT_DST: u32 = 1 << 11;
 pub const FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR: u32 = 1 << 12;
 pub const FORMAT_FEATURE_TRANSFER_SRC: u32 = 1 << 14;
 pub const FORMAT_FEATURE_TRANSFER_DST: u32 = 1 << 15;

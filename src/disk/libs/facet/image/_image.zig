@@ -611,8 +611,12 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
         if (info.usage & facet.IMAGE_USAGE_STORAGE != 0 and !rows_written) return null;
     }
     // Sampled, written through as a storage image, or both: all one kind,
-    // kept in the layout a sample reads.
-    if (info.usage & (facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_STORAGE) != 0 and !rows_written and !sampled_rows) {
+    // kept in the layout a sample reads. And one kept in its blocks,
+    // whatever it is for (since 1.126): a copy moves the blocks and a blit
+    // decodes them where a texture keeps them, and rows of them had no
+    // texture laid over them, so a copy into one made for the transfers
+    // alone wrote through a texture that was never there.
+    if ((info.usage & (facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_STORAGE) != 0 or keeps_blocks) and !rows_written and !sampled_rows) {
         if (info.tiling != .optimal or info.usage & facet.IMAGE_USAGE_COLOR_ATTACHMENT != 0) return null;
         const kept = keptFormat(kept_format, packed_texels) orelse return null;
         image.kind = .texture;
@@ -640,11 +644,11 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
     // `maxMipLevels` be "the number of levels in the complete mipmap
     // chain" whatever its usage, and until 1.119 the format query answered
     // 1 for every image kept in rows. A linear image may keep the one, as
-    // Vulkan lets it, and so do a 3D image, an image on a device whose
-    // images lie in a layout of its own (`Ops.texture_memory`), and one of
-    // compressed blocks, which rows hold only for a copy.
+    // Vulkan lets it, and so do a 3D image and an image on a device whose
+    // images lie in a layout of its own (`Ops.texture_memory`). One of
+    // compressed blocks is never in rows since 1.126.
     if (info.mip_levels != 1) {
-        if (info.tiling != .optimal or volume or keeps_blocks or physical.ops.texture_memory != null) return null;
+        if (info.tiling != .optimal or volume or physical.ops.texture_memory != null) return null;
         if (info.mip_levels > mostLevels(extent.width, extent.height)) return null;
     }
     image.pitch = std.mem.alignForward(u32, extent.width * pixel, row_alignment);
@@ -1248,6 +1252,14 @@ pub fn colorOfBytes(format: facet.Format, bytes: []const u8) u32 {
         // The channels a texture keeps as they lie, as the colour of
         // their top 8 bits (since 1.69).
         .r8g8_unorm, .r16_unorm, .r16g16_unorm, .r16g16b16a16_unorm => texture.channelColor(keptFormat(format, false).?, bytes.ptr),
+        // A float texel as a sample reads it, each channel held to 0 to 1
+        // and rounded to 8 bits (since 1.126): what a blit reads of an
+        // image that keeps its floats, in rows or a texture.
+        .r16g16b16a16_sfloat => texture.floatTexel(.rgba16f, bytes.ptr),
+        .r32g32b32a32_sfloat => texture.floatTexel(.rgba32f, bytes.ptr),
+        .b10g11r11_ufloat_pack32 => texture.floatTexel(.rg11b10f, bytes.ptr),
+        .e5b9g9r9_ufloat_pack32 => texture.floatTexel(.rgb9e5, bytes.ptr),
+        .r32_sfloat => texture.floatTexel(.r32f, bytes.ptr),
         else => if (wholeNumbers(format))
             // The whole numbers held to the colour they stand for (since
             // 1.70): nothing, or the channel at the full.

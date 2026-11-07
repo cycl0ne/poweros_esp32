@@ -4350,6 +4350,200 @@ test "images copied, blitted, read back, and parts of an attachment cleared in t
     try testing.expectEqual(red, std.mem.readInt(u32, back_bytes[32..36], .little));
 }
 
+/// A 4 x 4 image of a format, bound into memory of its own, for a blit:
+/// given back by `gone`, so a test may make one of every format, more than
+/// a `Bench` holds.
+const Blitted = struct {
+    image: *facet.Image,
+    memory: *facet.DeviceMemory,
+
+    /// Null where CreateImage does not make such an image for `usage`.
+    fn of(bench: *Bench, format: facet.Format, tiling: facet.ImageTiling, usage: u32) !?Blitted {
+        const fb = bench.rig.fb;
+        var image: ?*facet.Image = null;
+        if (fb.CreateImage(bench.device, &.{ .format = format, .extent = .{ .width = 4, .height = 4 }, .tiling = tiling, .usage = usage }, &image) != .success) return null;
+        var needs: facet.MemoryRequirements = undefined;
+        fb.GetImageMemoryRequirements(bench.device, image.?, &needs);
+        var memory: ?*facet.DeviceMemory = null;
+        try testing.expectEqual(facet.Result.success, fb.AllocateMemory(bench.device, &.{ .allocation_size = needs.size, .memory_type_index = 0 }, &memory));
+        try testing.expectEqual(facet.Result.success, fb.BindImageMemory(bench.device, image.?, memory.?, 0));
+        return .{ .image = image.?, .memory = memory.? };
+    }
+
+    fn gone(blitted: Blitted, bench: *Bench) void {
+        bench.rig.fb.DestroyImage(bench.device, blitted.image);
+        bench.rig.fb.FreeMemory(bench.device, blitted.memory);
+    }
+};
+
+/// The colour a sample reads of texel `k` of a 4 x 4 image of `format`
+/// whose bytes are `bytes`, 0xAARRGGBB, worked out apart from the blit:
+/// by the decoders an image is unpacked through for blocks and floats, and
+/// by hand for the rest - a channel the format has not got as 0, an alpha
+/// it has not got as whole, a channel of 16 bits as its top 8 and one of
+/// R5G6B5 widened as the sampler widens it. Null for a format with no
+/// colour to read.
+fn sampledColor(format: facet.Format, bytes: []const u8, k: usize) ?u32 {
+    const decode = @import("../image/_decode.zig");
+    const argb = struct {
+        fn of(rgba: [4]u8) u32 {
+            return @as(u32, rgba[3]) << 24 | @as(u32, rgba[0]) << 16 | @as(u32, rgba[1]) << 8 | rgba[2];
+        }
+    }.of;
+    if (decode.blockBytes(format) != 0) return argb(decode.block16(format, bytes)[k]);
+    const at = bytes[k * @import("../image/_image.zig").bytesOf(format) ..];
+    if (decode.texelBytes(format) != 0) return argb(decode.texel(format, at));
+    return switch (format) {
+        .b8g8r8a8_unorm => std.mem.readInt(u32, at[0..4], .little),
+        .r8g8b8a8_unorm => argb(at[0..4].*),
+        .r5g6b5_unorm_pack16 => widened: {
+            const word: u32 = std.mem.readInt(u16, at[0..2], .little);
+            const r = word >> 11;
+            const g = word >> 5 & 0x3F;
+            const b = word & 0x1F;
+            break :widened 0xFF00_0000 | (r << 3 | r >> 2) << 16 | (g << 2 | g >> 4) << 8 | (b << 3 | b >> 2);
+        },
+        .r8_unorm => argb(.{ at[0], 0, 0, 255 }),
+        .r8g8_unorm => argb(.{ at[0], at[1], 0, 255 }),
+        .r16_unorm => argb(.{ at[1], 0, 0, 255 }),
+        .r16g16_unorm => argb(.{ at[1], at[3], 0, 255 }),
+        .r16g16b16a16_unorm => argb(.{ at[1], at[3], at[5], at[7] }),
+        else => null,
+    };
+}
+
+test "every format whose features say BLIT_SRC is blitted out of as the colour a sample reads, and every one saying BLIT_DST is blitted into (since 1.126)" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const image_zig = @import("../image/_image.zig");
+    const transfers = facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
+    const blits = facet.FORMAT_FEATURE_BLIT_SRC | facet.FORMAT_FEATURE_BLIT_DST;
+    const whole = facet.Extent3D{ .width = 4, .height = 4 };
+    const all = facet.ImageBlit{ .src_offsets = .{ .{}, .{ .x = 4, .y = 4, .z = 1 } }, .dst_offsets = .{ .{}, .{ .x = 4, .y = 4, .z = 1 } } };
+    // What goes into each image and what comes back out of it: no texel of
+    // 4 x 4 takes more than 256 bytes, four floats of 4 bytes each.
+    const staging, const staged = try bench.buffer(256, facet.BUFFER_USAGE_TRANSFER_SRC);
+    const back, const backed = try bench.buffer(256, facet.BUFFER_USAGE_TRANSFER_DST);
+    for (0..256) |i| staged[i] = @truncate(i *% 37 +% 11);
+    // An image of 8888 made for the transfers alone, as a conformance test
+    // makes one: what each source is blitted into, and one of sixteen
+    // colours each destination is blitted out of.
+    const picture = (try Blitted.of(&bench, .b8g8r8a8_unorm, .optimal, transfers)).?;
+    defer picture.gone(&bench);
+    const colors = (try Blitted.of(&bench, .b8g8r8a8_unorm, .optimal, transfers)).?;
+    defer colors.gone(&bench);
+    var commands = try bench.record();
+    fb.CmdCopyBufferToImage(commands, staging, colors.image, .general, 1, @ptrCast(&facet.BufferImageCopy{ .image_extent = whole }));
+    try bench.submit();
+
+    const formats = comptime named: {
+        const fields = @typeInfo(facet.Format).@"enum".fields;
+        var named: [fields.len]facet.Format = undefined;
+        for (fields, 0..) |field, k| named[k] = @enumFromInt(field.value);
+        break :named named;
+    };
+    var sources: u32 = 0;
+    var destinations: u32 = 0;
+    for (formats) |format| {
+        var properties: facet.FormatProperties = undefined;
+        fb.GetPhysicalDeviceFormatProperties(bench.physical, format, &properties);
+        // A source in optimal tiling alone, where a sample reads one, as
+        // v3dv has it; and no blit carries a whole number or a stencil.
+        try testing.expectEqual(@as(u32, 0), properties.linear_tiling_features & facet.FORMAT_FEATURE_BLIT_SRC);
+        if (image_zig.wholeNumbers(format) or image_zig.hasStencil(format))
+            try testing.expectEqual(@as(u32, 0), (properties.optimal_tiling_features | properties.linear_tiling_features) & blits);
+
+        if (format == .d16_unorm) {
+            // A depth into one of its own format, without a filter, turned
+            // round left to right: each pixel the depth of the one it
+            // mirrors, as it lies.
+            try testing.expectEqual(blits, properties.optimal_tiling_features & blits);
+            sources += 1;
+            destinations += 1;
+            const depths = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | transfers;
+            const from = (try Blitted.of(&bench, format, .optimal, depths)).?;
+            defer from.gone(&bench);
+            const to = (try Blitted.of(&bench, format, .optimal, depths)).?;
+            defer to.gone(&bench);
+            const plane = facet.ImageSubresourceLayers{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH };
+            commands = try bench.record();
+            fb.CmdCopyBufferToImage(commands, staging, from.image, .general, 1, @ptrCast(&facet.BufferImageCopy{ .image_subresource = plane, .image_extent = whole }));
+            try bench.submit();
+            const turned = facet.ImageBlit{ .src_subresource = plane, .src_offsets = all.src_offsets, .dst_subresource = plane, .dst_offsets = .{ .{ .x = 4 }, .{ .y = 4, .z = 1 } } };
+            commands = try bench.record();
+            fb.CmdBlitImage(commands, from.image, .transfer_src_optimal, to.image, .transfer_dst_optimal, 1, @ptrCast(&turned), .nearest);
+            fb.CmdCopyImageToBuffer(commands, to.image, .transfer_src_optimal, back, 1, @ptrCast(&facet.BufferImageCopy{ .image_subresource = plane, .image_extent = whole }));
+            try bench.submit();
+            for (0..4) |y| for (0..4) |x| {
+                try testing.expectEqualSlices(u8, staged[(y * 4 + 3 - x) * 2 ..][0..2], backed[(y * 4 + x) * 2 ..][0..2]);
+            };
+            continue;
+        }
+
+        if (properties.optimal_tiling_features & facet.FORMAT_FEATURE_BLIT_SRC != 0) {
+            sources += 1;
+            // Made for the transfers alone where CreateImage makes such an
+            // image - in rows, or for a compressed one a texture - and
+            // sampled as well, which is a texture.
+            for ([2]u32{ transfers, transfers | facet.IMAGE_USAGE_SAMPLED }) |usage| {
+                const source = try Blitted.of(&bench, format, .optimal, usage) orelse {
+                    // A small texel, channels of a texture's own, and what
+                    // is unpacked on the way in are for a sample alone.
+                    try testing.expectEqual(transfers, usage);
+                    continue;
+                };
+                defer source.gone(&bench);
+                commands = try bench.record();
+                fb.CmdCopyBufferToImage(commands, staging, source.image, .general, 1, @ptrCast(&facet.BufferImageCopy{ .image_extent = whole }));
+                try bench.submit();
+                commands = try bench.record();
+                fb.CmdBlitImage(commands, source.image, .transfer_src_optimal, picture.image, .transfer_dst_optimal, 1, @ptrCast(&all), .nearest);
+                fb.CmdCopyImageToBuffer(commands, picture.image, .transfer_src_optimal, back, 1, @ptrCast(&facet.BufferImageCopy{ .image_extent = whole }));
+                try bench.submit();
+                for (0..16) |k| try testing.expectEqual(sampledColor(format, staged[0..256], k).?, std.mem.readInt(u32, backed[k * 4 ..][0..4], .little));
+            }
+        }
+
+        for ([2]facet.ImageTiling{ .optimal, .linear }) |tiling| {
+            const features = if (tiling == .optimal) properties.optimal_tiling_features else properties.linear_tiling_features;
+            if (features & facet.FORMAT_FEATURE_BLIT_DST == 0) continue;
+            destinations += 1;
+            const into = (try Blitted.of(&bench, format, tiling, transfers)) orelse (try Blitted.of(&bench, format, tiling, transfers | facet.IMAGE_USAGE_SAMPLED)).?;
+            defer into.gone(&bench);
+            commands = try bench.record();
+            fb.CmdBlitImage(commands, colors.image, .transfer_src_optimal, into.image, .transfer_dst_optimal, 1, @ptrCast(&all), .nearest);
+            fb.CmdCopyImageToBuffer(commands, into.image, .transfer_src_optimal, back, 1, @ptrCast(&facet.BufferImageCopy{ .image_extent = whole }));
+            try bench.submit();
+            // Each colour in the format's own bytes, a channel narrowed by
+            // rounding.
+            const wide = image_zig.bytesOf(format);
+            for (0..16) |k| {
+                const color = std.mem.readInt(u32, staged[k * 4 ..][0..4], .little);
+                const r = color >> 16 & 0xFF;
+                const g = color >> 8 & 0xFF;
+                const b = color & 0xFF;
+                var made: [4]u8 = undefined;
+                switch (format) {
+                    .b8g8r8a8_unorm => std.mem.writeInt(u32, &made, color, .little),
+                    .r8g8b8a8_unorm => made = .{ @intCast(r), @intCast(g), @intCast(b), @intCast(color >> 24) },
+                    .r5g6b5_unorm_pack16 => std.mem.writeInt(u16, made[0..2], @intCast((r * 31 + 127) / 255 << 11 | (g * 63 + 127) / 255 << 5 | (b * 31 + 127) / 255), .little),
+                    .r8_unorm => made[0] = @intCast(r),
+                    else => return error.TestUnexpectedResult,
+                }
+                try testing.expectEqualSlices(u8, made[0..wide], backed[k * wide ..][0..wide]);
+            }
+        }
+    }
+    // Sources: every colour format a sample reads but the whole numbers -
+    // B8G8R8A8, R8G8B8A8, R5G6B5, R8_UNORM, nine of BC, five of ETC2 and
+    // EAC, five of floats and four of channels of their own - and
+    // D16_UNORM. Destinations: the three colour attachments in either
+    // tiling, R8_UNORM, and D16_UNORM.
+    try testing.expectEqual(@as(u32, 28), sources);
+    try testing.expectEqual(@as(u32, 8), destinations);
+}
+
 /// A pixel's texel in one sample's plane of a multisampled image of rows,
 /// as 0xAARRGGBB.
 fn sampleTexel(image: *const @import("../image/_image.zig").Image, sample: u32, layer: u32, x: u32, y: u32) *align(1) u32 {

@@ -36,11 +36,26 @@ pub fn properties(physical: *const PhysicalDevice, format: facet.Format) callcon
 
 fn describe(can: *const _instance.Capabilities, format: facet.Format) facet.FormatProperties {
     const transfer = facet.FORMAT_FEATURE_TRANSFER_SRC | facet.FORMAT_FEATURE_TRANSFER_DST;
-    const attachment = facet.FORMAT_FEATURE_COLOR_ATTACHMENT | facet.FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND;
-    const sampled = facet.FORMAT_FEATURE_SAMPLED_IMAGE | facet.FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR | facet.FORMAT_FEATURE_TRANSFER_DST;
+    // A colour attachment is a blit's destination as well, in either
+    // tiling (since 1.126): v3dv sets BLIT_DST with COLOR_ATTACHMENT
+    // (`image_format_plane_features`, src/broadcom/vulkan/
+    // v3dv_formats.c:176-179), and lavapipe sets the two blit bits in both
+    // tilings (lvp_formats.c:214-223, :233-234). The blit writes each of
+    // these where it lies, in rows or a texture (`_transfer.blitImage`).
+    const attachment = facet.FORMAT_FEATURE_COLOR_ATTACHMENT | facet.FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND | facet.FORMAT_FEATURE_BLIT_DST;
+    // And a format sampled in optimal tiling is a blit's source there
+    // (since 1.126), as v3dv sets BLIT_SRC with SAMPLED_IMAGE in that
+    // tiling alone (v3dv_formats.c:169-173): the blit reads such a texel as
+    // the colour a sample reads, out of rows, a texture, its blocks or its
+    // floats (`_transfer.colorAt`).
+    const sampled = facet.FORMAT_FEATURE_SAMPLED_IMAGE | facet.FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR | facet.FORMAT_FEATURE_TRANSFER_DST | facet.FORMAT_FEATURE_BLIT_SRC;
     // A format of whole numbers is sampled without the linear filter:
     // Vulkan has no integer format filtered, there being nothing to mix
-    // between two whole numbers (since 1.70).
+    // between two whole numbers (since 1.70). Nor is it a blit's source: a
+    // blit carries a colour of 8 bits a channel, which a whole number is
+    // not, and Vulkan blits one into another of whole numbers alone
+    // (VUID-vkCmdBlitImage-srcImage-00229, -00230), none of which is a
+    // blit's destination here.
     const nearest = facet.FORMAT_FEATURE_SAMPLED_IMAGE | facet.FORMAT_FEATURE_TRANSFER_DST;
     // The formats a texture is kept in are the ones a function can write
     // through as well; the unpacked ones are not, being kept as 8888.
@@ -77,9 +92,13 @@ fn describe(can: *const _instance.Capabilities, format: facet.Format) facet.Form
         // an attachment: a texture of one channel, read as (red, 0, 0, 1)
         // (`Capabilities.small_texels`, since 1.48). A device
         // without that feature refuses such an image all the same.
+        // A blit's destination as well since 1.126, its byte of red
+        // written as a colour's is: Mesa's two drivers have R8_UNORM one,
+        // it being an attachment there (v3dv_formats.c:176-179,
+        // lvp_formats.c:214-223).
         .r8_unorm => .{
             .linear_tiling_features = 0,
-            .optimal_tiling_features = transfer | sampled | storage,
+            .optimal_tiling_features = transfer | sampled | storage | facet.FORMAT_FEATURE_BLIT_DST,
             // And a texel buffer of one byte a texel, since 1.54.
             .buffer_features = texels,
         },
@@ -92,9 +111,18 @@ fn describe(can: *const _instance.Capabilities, format: facet.Format) facet.Form
         // sampled bits are left out, as they have been since 1.80: a
         // device whose texture unit knows no depth format refuses such an
         // image at CreateImage, and this said otherwise.
+        //
+        // Blitted both ways since 1.126, into an image of its own format
+        // and without a filter, as Vulkan blits a depth
+        // (VUID-vkCmdBlitImage-srcImage-00231, -00232): each pixel takes
+        // the nearest one's depth as it lies in the rows. The processor
+        // blits for either device, so this is not held to the sampling as
+        // v3dv's BLIT_SRC is (v3dv_formats.c:169-182); lavapipe has a depth
+        // format blitted both ways (lvp_formats.c:93-104).
         .d16_unorm => .{
             .linear_tiling_features = 0,
             .optimal_tiling_features = facet.FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT | transfer |
+                facet.FORMAT_FEATURE_BLIT_SRC | facet.FORMAT_FEATURE_BLIT_DST |
                 if (can.sampled_depth) depth_sampled else 0,
             .buffer_features = 0,
         },

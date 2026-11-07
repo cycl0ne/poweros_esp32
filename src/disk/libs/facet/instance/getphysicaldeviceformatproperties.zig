@@ -53,6 +53,12 @@ const PhysicalDevice = @import("_instance.zig").PhysicalDevice;
 ///   EAC_R11G11: sampled, filtered, in optimal tiling, and copied into.
 ///   No sampler of this library reads such a block, so they are always
 ///   unpacked to 8 bits a channel and never copied out of (since 1.46).
+/// - Blits (since 1.126): BLIT_SRC, in optimal tiling, beside every colour
+///   format sampled there but those of whole numbers, a blit reading the
+///   texel as a sample does; BLIT_DST beside the three colour attachments
+///   in either tiling, and beside R8_UNORM. D16_UNORM says both, a depth
+///   going into an image of its own format. No blit carries a whole number
+///   or a stencil, and none reads an image in linear tiling.
 ///
 /// Every answer that differs between two devices of one machine is read
 /// off that device's `PhysicalDeviceFeatures` (since 1.80): what it keeps

@@ -856,7 +856,9 @@ Of textures:
   of `ClearColorValue.float32` as they stand rather than rounded to a byte
   each, so a red of 2 is a red of 2 afterwards as far as the format
   reaches. What still makes no floats: a blit into a float image, and a
-  copy into one from an image of another format, take nothing.
+  copy into one from an image of another format, take nothing. A blit out
+  of one reads it as a sample does, each channel held to 0 to 1 and
+  rounded to 8 bits (since 1.126; before that it read as nothing).
 
 ## Compute, as it stands
 
