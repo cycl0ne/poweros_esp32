@@ -3106,4 +3106,34 @@ pub const LIBRARY_VERSION = 1;
 /// range of two atoms and one to the end of the mapping, and leave the
 /// mapped bytes as they were written. Each of 5 changes put back fails at
 /// least one of them.
-pub const LIBRARY_REVISION = 123;
+///
+/// 124: **The three sparse calls.** Item 12 of docs/facet-vulkan10.md.
+/// Vulkan 1.0 has every implementation carry
+/// GetPhysicalDeviceSparseImageFormatProperties,
+/// GetImageSparseMemoryRequirements and QueueBindSparse, whether or not it
+/// binds memory sparsely; this library had none of them, though its
+/// features and `sparse_properties` already said it binds none (1.82).
+/// They are v3dv's, which binds none either: the two queries set their
+/// count to 0 and write nothing
+/// (`v3dv_GetPhysicalDeviceSparseImageFormatProperties`,
+/// v3dv_formats.c:818-829; `v3dv_GetImageSparseMemoryRequirements`,
+/// v3dv_device.c:3430-3438), which is what Vulkan has a device answer for
+/// arguments without `IMAGE_CREATE_SPARSE_RESIDENCY` and for an image not
+/// made with it, and the bind is refused with `error_feature_not_present`
+/// (`v3dv_QueueBindSparse`, v3dv_queue.c:1170-1178), which no call a
+/// program may make reaches: Vulkan has the queue be of a family with
+/// `QUEUE_SPARSE_BINDING` (VUID-vkQueueBindSparse-queuetype), and none is.
+/// They are LVO -536, -540 and -544. Beside them are Vulkan's sparse
+/// structures - `SparseImageFormatProperties`,
+/// `SparseImageMemoryRequirements`, `SparseMemoryBind`,
+/// `SparseImageMemoryBind`, the three bind infos and `BindSparseInfo` -
+/// with their flags and `QUEUE_SPARSE_BINDING`, the bind info without
+/// sType and pNext, as every structure here is until item 51.
+///
+/// Tests: no family binds sparse memory and no feature says any is bound;
+/// for two formats at one sample and four, and a 3D linear one, the
+/// count comes back 0 and nothing is written; an image asks nothing of
+/// sparse memory; a bind is refused and its fence is not signalled; and
+/// the structures that carry no sType are Vulkan's sizes. Each of 6
+/// changes put back fails at least one of them.
+pub const LIBRARY_REVISION = 124;

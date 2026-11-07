@@ -825,6 +825,9 @@ pub const PhysicalDeviceFeatures = extern struct {
 pub const QUEUE_GRAPHICS: u32 = 1 << 0;
 pub const QUEUE_COMPUTE: u32 = 1 << 1;
 pub const QUEUE_TRANSFER: u32 = 1 << 2;
+/// A family whose queues bind memory to sparse buffers and images
+/// (QueueBindSparse): no family of either device has it. (Since 1.124.)
+pub const QUEUE_SPARSE_BINDING: u32 = 1 << 3;
 
 /// A width, a height and a depth.
 pub const Extent3D = extern struct {
@@ -975,6 +978,100 @@ pub const MappedMemoryRange = extern struct {
     memory: *DeviceMemory,
     offset: u64 align(4) = 0,
     size: u64 align(4) = WHOLE_SIZE,
+};
+
+// --- memory bound a piece at a time -----------------------------------------
+//
+// Vulkan's sparse resources, as its calls take and give them. No device of
+// this library has one: `PhysicalDeviceFeatures.sparse_binding` and the
+// eight `sparse_residency_*` are false, so GetPhysicalDeviceSparseImage-
+// FormatProperties and GetImageSparseMemoryRequirements answer none and
+// QueueBindSparse refuses. (Since 1.124.)
+
+/// SparseImageFormatProperties.flags: how a sparse image's smallest levels
+/// and its blocks lie.
+pub const SPARSE_IMAGE_FORMAT_SINGLE_MIPTAIL: u32 = 1 << 0;
+pub const SPARSE_IMAGE_FORMAT_ALIGNED_MIP_SIZE: u32 = 1 << 1;
+pub const SPARSE_IMAGE_FORMAT_NONSTANDARD_BLOCK_SIZE: u32 = 1 << 2;
+
+/// SparseMemoryBind.flags: the range bound is the image's metadata.
+pub const SPARSE_MEMORY_BIND_METADATA: u32 = 1 << 0;
+
+/// The block one aspect of a sparse image of a format is bound in.
+pub const SparseImageFormatProperties = extern struct {
+    aspect_mask: u32,
+    image_granularity: Extent3D,
+    /// SPARSE_IMAGE_FORMAT_*.
+    flags: u32,
+};
+
+/// What binding one aspect of a sparse image asks of memory: its blocks'
+/// shape, and where the tail of levels too small for a block lies.
+pub const SparseImageMemoryRequirements = extern struct {
+    format_properties: SparseImageFormatProperties,
+    image_mip_tail_first_lod: u32,
+    image_mip_tail_size: u64 align(4),
+    image_mip_tail_offset: u64 align(4),
+    image_mip_tail_stride: u64 align(4),
+};
+
+/// A range of a buffer, or of an image's opaque bytes, bound to memory:
+/// unbound where `memory` is null.
+pub const SparseMemoryBind = extern struct {
+    resource_offset: u64 align(4),
+    size: u64 align(4),
+    memory: ?*DeviceMemory = null,
+    memory_offset: u64 align(4) = 0,
+    /// SPARSE_MEMORY_BIND_*.
+    flags: u32 = 0,
+};
+
+/// A region of an image's texels bound to memory, in whole blocks: unbound
+/// where `memory` is null.
+pub const SparseImageMemoryBind = extern struct {
+    subresource: ImageSubresource = .{},
+    offset: Offset3D = .{},
+    extent: Extent3D,
+    memory: ?*DeviceMemory = null,
+    memory_offset: u64 align(4) = 0,
+    /// SPARSE_MEMORY_BIND_*.
+    flags: u32 = 0,
+};
+
+/// A buffer's ranges, bound.
+pub const SparseBufferMemoryBindInfo = extern struct {
+    buffer: *Buffer,
+    bind_count: u32,
+    binds: [*]const SparseMemoryBind,
+};
+
+/// An image's opaque ranges, bound: its tail of levels, or all of it.
+pub const SparseImageOpaqueMemoryBindInfo = extern struct {
+    image: *Image,
+    bind_count: u32,
+    binds: [*]const SparseMemoryBind,
+};
+
+/// An image's regions of texels, bound.
+pub const SparseImageMemoryBindInfo = extern struct {
+    image: *Image,
+    bind_count: u32,
+    binds: [*]const SparseImageMemoryBind,
+};
+
+/// One batch of binding for a queue: the semaphores it waits for first,
+/// what it binds, and the semaphores it signals once it is bound.
+pub const BindSparseInfo = extern struct {
+    wait_semaphore_count: u32 = 0,
+    wait_semaphores: ?[*]const *Semaphore = null,
+    buffer_bind_count: u32 = 0,
+    buffer_binds: ?[*]const SparseBufferMemoryBindInfo = null,
+    image_opaque_bind_count: u32 = 0,
+    image_opaque_binds: ?[*]const SparseImageOpaqueMemoryBindInfo = null,
+    image_bind_count: u32 = 0,
+    image_binds: ?[*]const SparseImageMemoryBindInfo = null,
+    signal_semaphore_count: u32 = 0,
+    signal_semaphores: ?[*]const *Semaphore = null,
 };
 
 // --- formats ----------------------------------------------------------------

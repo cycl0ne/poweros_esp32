@@ -545,6 +545,71 @@ test "a mapping's ranges flushed and invalidated: success and nothing touched, e
     rig.fb.UnmapMemory(device, memory.?);
 }
 
+test "memory bound a piece at a time: no family binds it, no format has a sparse image, an image asks nothing of it, and a bind is refused (since 1.124)" {
+    var rig = try Rig.up();
+    defer rig.down() catch |err| std.debug.panic("{}", .{err});
+    const instance, const physical = try rig.instance();
+    defer rig.fb.DestroyInstance(instance);
+    const device = try rig.device(physical);
+    defer rig.fb.DestroyDevice(device);
+
+    // No family binds sparse memory, and no feature says any is bound.
+    var count: u32 = 1;
+    var family: [1]facet.QueueFamilyProperties = undefined;
+    rig.fb.GetPhysicalDeviceQueueFamilyProperties(physical, &count, &family);
+    try testing.expectEqual(0, family[0].queue_flags & facet.QUEUE_SPARSE_BINDING);
+    var features: facet.PhysicalDeviceFeatures = undefined;
+    rig.fb.GetPhysicalDeviceFeatures(physical, &features);
+    try testing.expectEqual(facet.FALSE, features.sparse_binding);
+    try testing.expectEqual(facet.FALSE, features.sparse_residency_image_2d);
+
+    // No format, type, sample count, usage or tiling has a sparse image:
+    // the count comes back 0, and nothing is written.
+    var formats: [2]facet.SparseImageFormatProperties = undefined;
+    @memset(std.mem.asBytes(&formats), 0xA5);
+    for ([_]facet.Format{ .r8g8b8a8_unorm, .d16_unorm }) |format| for ([_]u32{ 1, 4 }) |samples| {
+        count = formats.len;
+        rig.fb.GetPhysicalDeviceSparseImageFormatProperties(physical, format, .@"2d", samples, facet.IMAGE_USAGE_SAMPLED, .optimal, &count, &formats);
+        try testing.expectEqual(0, count);
+    };
+    count = 7;
+    rig.fb.GetPhysicalDeviceSparseImageFormatProperties(physical, .r8g8b8a8_unorm, .@"3d", 1, facet.IMAGE_USAGE_SAMPLED, .linear, &count, null);
+    try testing.expectEqual(0, count);
+    for (std.mem.asBytes(&formats)) |byte| try testing.expectEqual(0xA5, byte);
+
+    // An image is never sparse: it asks nothing of sparse memory.
+    var image: ?*facet.Image = null;
+    try testing.expectEqual(facet.Result.success, rig.fb.CreateImage(device, &.{ .format = .r8g8b8a8_unorm, .extent = .{ .width = 64, .height = 64 }, .usage = facet.IMAGE_USAGE_SAMPLED }, &image));
+    defer rig.fb.DestroyImage(device, image);
+    var requirements: [1]facet.SparseImageMemoryRequirements = undefined;
+    @memset(std.mem.asBytes(&requirements), 0xA5);
+    count = requirements.len;
+    rig.fb.GetImageSparseMemoryRequirements(device, image.?, &count, &requirements);
+    try testing.expectEqual(0, count);
+    for (std.mem.asBytes(&requirements)) |byte| try testing.expectEqual(0xA5, byte);
+
+    // A bind is refused, a queue that binds none being the only kind there
+    // is; its fence is not signalled.
+    var queue: ?*facet.Queue = null;
+    rig.fb.GetDeviceQueue(device, 0, 0, &queue);
+    var fence: ?*facet.Fence = null;
+    try testing.expectEqual(facet.Result.success, rig.fb.CreateFence(device, &.{}, &fence));
+    defer rig.fb.DestroyFence(device, fence);
+    const bind = facet.BindSparseInfo{};
+    try testing.expectEqual(facet.Result.error_feature_not_present, rig.fb.QueueBindSparse(queue.?, 1, @ptrCast(&bind), fence));
+    try testing.expectEqual(facet.Result.not_ready, rig.fb.GetFenceStatus(device, fence.?));
+
+    // Vulkan's shapes, member for member, where they carry no sType: a
+    // C program's arrays of them lie as a Zig program's do.
+    try testing.expectEqual(20, @sizeOf(facet.SparseImageFormatProperties));
+    try testing.expectEqual(48, @sizeOf(facet.SparseImageMemoryRequirements));
+    if (@sizeOf(usize) == 8) {
+        try testing.expectEqual(40, @sizeOf(facet.SparseMemoryBind));
+        try testing.expectEqual(64, @sizeOf(facet.SparseImageMemoryBind));
+        try testing.expectEqual(24, @sizeOf(facet.SparseBufferMemoryBindInfo));
+    }
+}
+
 // --- buffers and images -------------------------------------------------------
 
 const _objects = @import("../_objects.zig");

@@ -290,4 +290,13 @@ facet.Result FlushMappedMemoryRanges(*facet.Device device, u32 range_count, [*]c
 /// What the device wrote, in `ranges`, made the host's to read through its
 /// mapping: nothing to do, every memory type being coherent.
 facet.Result InvalidateMappedMemoryRanges(*facet.Device device, u32 range_count, [*]const facet.MappedMemoryRange ranges)
+/// The blocks a sparse image of a format, type, sample count, usage and
+/// tiling would be bound in: none, no device having a sparse image.
+void GetPhysicalDeviceSparseImageFormatProperties(*facet.PhysicalDevice physical, facet.Format format, facet.ImageType image_type, u32 samples, u32 usage, facet.ImageTiling tiling, *u32 count, ?[*]facet.SparseImageFormatProperties properties)
+/// What binding an image sparsely asks of memory: nothing, no image being
+/// sparse.
+void GetImageSparseMemoryRequirements(*facet.Device device, *facet.Image image, *u32 count, ?[*]facet.SparseImageMemoryRequirements requirements)
+/// Memory bound to sparse buffers and images, in batches, by the queue:
+/// refused, no queue family binding sparse memory.
+facet.Result QueueBindSparse(*facet.Queue queue, u32 count, ?[*]const facet.BindSparseInfo binds, ?*facet.Fence fence)
 ##end

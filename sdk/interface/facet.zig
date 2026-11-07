@@ -147,6 +147,9 @@ pub const LVO = struct {
     pub const CmdResolveImage = libraries.lvo(130);
     pub const FlushMappedMemoryRanges = libraries.lvo(131);
     pub const InvalidateMappedMemoryRanges = libraries.lvo(132);
+    pub const GetPhysicalDeviceSparseImageFormatProperties = libraries.lvo(133);
+    pub const GetImageSparseMemoryRequirements = libraries.lvo(134);
+    pub const QueueBindSparse = libraries.lvo(135);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -281,6 +284,9 @@ pub const Fn = struct {
     pub const CmdResolveImage = *const fn (*FacetBase, *facet.CommandBuffer, *facet.Image, facet.ImageLayout, *facet.Image, facet.ImageLayout, u32, [*]const facet.ImageResolve) callconv(.c) void;
     pub const FlushMappedMemoryRanges = *const fn (*FacetBase, *facet.Device, u32, [*]const facet.MappedMemoryRange) callconv(.c) facet.Result;
     pub const InvalidateMappedMemoryRanges = *const fn (*FacetBase, *facet.Device, u32, [*]const facet.MappedMemoryRange) callconv(.c) facet.Result;
+    pub const GetPhysicalDeviceSparseImageFormatProperties = *const fn (*FacetBase, *facet.PhysicalDevice, facet.Format, facet.ImageType, u32, u32, facet.ImageTiling, *u32, ?[*]facet.SparseImageFormatProperties) callconv(.c) void;
+    pub const GetImageSparseMemoryRequirements = *const fn (*FacetBase, *facet.Device, *facet.Image, *u32, ?[*]facet.SparseImageMemoryRequirements) callconv(.c) void;
+    pub const QueueBindSparse = *const fn (*FacetBase, *facet.Queue, u32, ?[*]const facet.BindSparseInfo, ?*facet.Fence) callconv(.c) facet.Result;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -956,5 +962,23 @@ pub const FacetBase = opaque {
     /// mapping: nothing to do, every memory type being coherent.
     pub fn InvalidateMappedMemoryRanges(self: *FacetBase, device: *facet.Device, range_count: u32, ranges: [*]const facet.MappedMemoryRange) facet.Result {
         return libraries.call(self, LVO.InvalidateMappedMemoryRanges, Fn.InvalidateMappedMemoryRanges, .{ device, range_count, ranges });
+    }
+
+    /// The blocks a sparse image of a format, type, sample count, usage and
+    /// tiling would be bound in: none, no device having a sparse image.
+    pub fn GetPhysicalDeviceSparseImageFormatProperties(self: *FacetBase, physical: *facet.PhysicalDevice, format: facet.Format, image_type: facet.ImageType, samples: u32, usage: u32, tiling: facet.ImageTiling, count: *u32, properties: ?[*]facet.SparseImageFormatProperties) void {
+        return libraries.call(self, LVO.GetPhysicalDeviceSparseImageFormatProperties, Fn.GetPhysicalDeviceSparseImageFormatProperties, .{ physical, format, image_type, samples, usage, tiling, count, properties });
+    }
+
+    /// What binding an image sparsely asks of memory: nothing, no image being
+    /// sparse.
+    pub fn GetImageSparseMemoryRequirements(self: *FacetBase, device: *facet.Device, image: *facet.Image, count: *u32, requirements: ?[*]facet.SparseImageMemoryRequirements) void {
+        return libraries.call(self, LVO.GetImageSparseMemoryRequirements, Fn.GetImageSparseMemoryRequirements, .{ device, image, count, requirements });
+    }
+
+    /// Memory bound to sparse buffers and images, in batches, by the queue:
+    /// refused, no queue family binding sparse memory.
+    pub fn QueueBindSparse(self: *FacetBase, queue: *facet.Queue, count: u32, binds: ?[*]const facet.BindSparseInfo, fence: ?*facet.Fence) facet.Result {
+        return libraries.call(self, LVO.QueueBindSparse, Fn.QueueBindSparse, .{ queue, count, binds, fence });
     }
 };

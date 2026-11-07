@@ -28,6 +28,9 @@ const MapMemory = @import("memory/mapmemory.zig").MapMemory;
 const UnmapMemory = @import("memory/unmapmemory.zig").UnmapMemory;
 const FlushMappedMemoryRanges = @import("memory/flushmappedmemoryranges.zig").FlushMappedMemoryRanges;
 const InvalidateMappedMemoryRanges = @import("memory/invalidatemappedmemoryranges.zig").InvalidateMappedMemoryRanges;
+const GetPhysicalDeviceSparseImageFormatProperties = @import("instance/getphysicaldevicesparseimageformatproperties.zig").GetPhysicalDeviceSparseImageFormatProperties;
+const GetImageSparseMemoryRequirements = @import("image/getimagesparsememoryrequirements.zig").GetImageSparseMemoryRequirements;
+const QueueBindSparse = @import("queue/queuebindsparse.zig").QueueBindSparse;
 const GetPhysicalDeviceFormatProperties = @import("instance/getphysicaldeviceformatproperties.zig").GetPhysicalDeviceFormatProperties;
 const CreateBuffer = @import("buffer/createbuffer.zig").CreateBuffer;
 const DestroyBuffer = @import("buffer/destroybuffer.zig").DestroyBuffer;
@@ -342,6 +345,15 @@ fn lvoFlushMappedMemoryRanges(base: *FacetBase, device: *facet.Device, range_cou
 }
 fn lvoInvalidateMappedMemoryRanges(base: *FacetBase, device: *facet.Device, range_count: u32, ranges: [*]const facet.MappedMemoryRange) callconv(.c) facet.Result {
     return InvalidateMappedMemoryRanges(base, device, range_count, ranges);
+}
+fn lvoGetPhysicalDeviceSparseImageFormatProperties(base: *FacetBase, physical: *facet.PhysicalDevice, format: facet.Format, image_type: facet.ImageType, samples: u32, usage: u32, tiling: facet.ImageTiling, count: *u32, properties: ?[*]facet.SparseImageFormatProperties) callconv(.c) void {
+    return GetPhysicalDeviceSparseImageFormatProperties(base, physical, format, image_type, samples, usage, tiling, count, properties);
+}
+fn lvoGetImageSparseMemoryRequirements(base: *FacetBase, device: *facet.Device, image: *facet.Image, count: *u32, requirements: ?[*]facet.SparseImageMemoryRequirements) callconv(.c) void {
+    return GetImageSparseMemoryRequirements(base, device, image, count, requirements);
+}
+fn lvoQueueBindSparse(base: *FacetBase, queue: *facet.Queue, count: u32, binds: ?[*]const facet.BindSparseInfo, fence: ?*facet.Fence) callconv(.c) facet.Result {
+    return QueueBindSparse(base, queue, count, binds, fence);
 }
 fn lvoGetPhysicalDeviceFormatProperties(base: *FacetBase, physical: *facet.PhysicalDevice, format: facet.Format, properties: *facet.FormatProperties) callconv(.c) void {
     return GetPhysicalDeviceFormatProperties(base, physical, format, properties);
@@ -841,6 +853,9 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoCmdResolveImage),
     vec(lvoFlushMappedMemoryRanges),
     vec(lvoInvalidateMappedMemoryRanges),
+    vec(lvoGetPhysicalDeviceSparseImageFormatProperties),
+    vec(lvoGetImageSparseMemoryRequirements),
+    vec(lvoQueueBindSparse),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

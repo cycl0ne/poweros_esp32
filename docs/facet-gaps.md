@@ -535,8 +535,13 @@ because there is nothing to compile.
 
 ### Sparse resources
 
-No `QueueBindSparse`, `GetImageSparseMemoryRequirements` or
-`GetPhysicalDeviceSparseImageFormatProperties`. Memory is bound whole.
+Memory is bound whole. The three calls are there since 1.124, as v3dv has
+them: `GetPhysicalDeviceSparseImageFormatProperties` and
+`GetImageSparseMemoryRequirements` answer none, and `QueueBindSparse`
+refuses with `error_feature_not_present`. No queue family has
+`QUEUE_SPARSE_BINDING`, which makes every call to it one no program may
+make, and `sparse_binding` and the eight `sparse_residency_*` features
+are false.
 
 ## The depth clamp and the depth bounds test
 

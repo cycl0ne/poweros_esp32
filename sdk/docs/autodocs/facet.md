@@ -115,6 +115,7 @@ Generated from the source by `./zig build autodoc`.
 - [GetDeviceQueue](#getdevicequeue) - A queue the device was made with.
 - [GetFenceStatus](#getfencestatus) - Whether a fence is signalled, without waiting.
 - [GetImageMemoryRequirements](#getimagememoryrequirements) - What the image needs of the memory it is bound into.
+- [GetImageSparseMemoryRequirements](#getimagesparsememoryrequirements) - What binding an image sparsely asks of memory: nothing, no image being sparse.
 - [GetImageSubresourceLayout](#getimagesubresourcelayout) - Where a level of an image lies in its memory, and how its rows do.
 - [GetPhysicalDeviceFeatures](#getphysicaldevicefeatures) - What a physical device does, so that a program may ask before it is refused.
 - [GetPhysicalDeviceFormatProperties](#getphysicaldeviceformatproperties) - What the device does with a format, in each tiling and in a buffer.
@@ -122,6 +123,7 @@ Generated from the source by `./zig build autodoc`.
 - [GetPhysicalDeviceMemoryProperties](#getphysicaldevicememoryproperties) - The physical device's memory types and heaps.
 - [GetPhysicalDeviceProperties](#getphysicaldeviceproperties) - What a physical device is, and the most it does.
 - [GetPhysicalDeviceQueueFamilyProperties](#getphysicaldevicequeuefamilyproperties) - The physical device's queue families.
+- [GetPhysicalDeviceSparseImageFormatProperties](#getphysicaldevicesparseimageformatproperties) - The blocks a sparse image of a format, type, sample count, usage and tiling would be bound in: none, no device having a sparse image.
 - [GetPhysicalDeviceSurfaceCapabilities](#getphysicaldevicesurfacecapabilities) - What a swapchain on the surface can be, into `capabilities`.
 - [GetPhysicalDeviceSurfaceFormats](#getphysicaldevicesurfaceformats) - The formats a swapchain on the surface can have into `formats`, at most `count.*` of them, and how many there are into `count`; null for `formats` counts alone.
 - [GetPhysicalDeviceSurfacePresentModes](#getphysicaldevicesurfacepresentmodes) - The present modes of the surface into `modes`, at most `count.*` of them, and how many there are into `count`; null for `modes` counts alone.
@@ -131,6 +133,7 @@ Generated from the source by `./zig build autodoc`.
 - [GetSwapchainImages](#getswapchainimages) - The swapchain's images into `images`, at most `count.*` of them, and how many there are into `count`; null for `images` counts alone.
 - [InvalidateMappedMemoryRanges](#invalidatemappedmemoryranges) - What the device wrote, in `ranges`, made the host's to read through its mapping: nothing to do, every memory type being coherent.
 - [MapMemory](#mapmemory) - The address of a block's memory, from an offset on.
+- [QueueBindSparse](#queuebindsparse) - Memory bound to sparse buffers and images, in batches, by the queue: refused, no queue family binding sparse memory.
 - [QueuePresent](#queuepresent) - Images handed to the queue to be shown, once the semaphores are signalled.
 - [QueueSubmit](#queuesubmit) - Batches of work for the queue, played in order by its task.
 - [QueueWaitIdle](#queuewaitidle) - Wait until the queue has done all it was given.
@@ -7632,6 +7635,72 @@ var needs: facet.MemoryRequirements = undefined;
 fb.GetImageMemoryRequirements(device, picture, &needs);
 ```
 
+## GetImageSparseMemoryRequirements
+
+What binding an image sparsely asks of memory: nothing, no image being sparse.
+
+**SYNOPSIS**
+
+```zig
+fn GetImageSparseMemoryRequirements(base: *FacetBase, device: *facet.Device, image: *facet.Image, count: *u32, requirements: ?[*]facet.SparseImageMemoryRequirements) void
+```
+
+**SINCE**
+
+1.124. LVO -540.
+
+**INPUTS**
+
+- `device` - the device the image was made on.
+- `image` - the image.
+- `count` - set to 0.
+- `requirements` - not written; may be null.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+An image is sparse only where it was made with
+`IMAGE_CREATE_SPARSE_RESIDENCY`, which no device of this library takes,
+its `sparse_residency_*` features being false: "If the image was not
+created with VK_IMAGE_CREATE_SPARSE_RESIDENCY_BIT then
+pSparseMemoryRequirementCount will be zero and pSparseMemoryRequirements
+will not be written to" (the sparse resources chapter). That is v3dv's
+answer (`v3dv_GetImageSparseMemoryRequirements`,
+v3dv_device.c:3430-3438). Vulkan has the call carried all the same.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The image and `count` stay the caller's.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`GetImageMemoryRequirements`, `GetPhysicalDeviceSparseImageFormatProperties`
+
+**EXAMPLES**
+
+```zig
+var count: u32 = 0;
+fb.GetImageSparseMemoryRequirements(device, image, &count, null);
+```
+
 ## GetImageSubresourceLayout
 
 Where a level of an image lies in its memory, and how its rows do.
@@ -8226,6 +8295,73 @@ None known.
 var count: u32 = 1;
 var family: [1]facet.QueueFamilyProperties = undefined;
 fb.GetPhysicalDeviceQueueFamilyProperties(physical, &count, &family);
+```
+
+## GetPhysicalDeviceSparseImageFormatProperties
+
+The blocks a sparse image of a format, type, sample count, usage and tiling would be bound in: none, no device having a sparse image.
+
+**SYNOPSIS**
+
+```zig
+fn GetPhysicalDeviceSparseImageFormatProperties(base: *FacetBase, physical: *facet.PhysicalDevice, format: facet.Format, image_type: facet.ImageType, samples: u32, usage: u32, tiling: facet.ImageTiling, count: *u32, properties: ?[*]facet.SparseImageFormatProperties) void
+```
+
+**SINCE**
+
+1.124. LVO -536.
+
+**INPUTS**
+
+- `physical` - the device.
+- `format`, `image_type`, `samples`, `usage`, `tiling` - the image, as
+  CreateImage would be given it with `IMAGE_CREATE_SPARSE_RESIDENCY`.
+- `count` - set to 0.
+- `properties` - not written; may be null.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+No device of this library binds memory sparsely: `sparse_binding` and
+the eight `sparse_residency_*` features are false. So no format has a
+sparse image, and the count is 0 whatever is asked about: "If
+VK_IMAGE_CREATE_SPARSE_RESIDENCY_BIT is not supported for the given
+arguments, pPropertyCount will be zero upon return, and no data will be
+written to pProperties" (the sparse resources chapter). That is v3dv's
+answer (`v3dv_GetPhysicalDeviceSparseImageFormatProperties`,
+v3dv_formats.c:818-829). Vulkan has the call carried all the same.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+`count` stays the caller's.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`GetImageSparseMemoryRequirements`, `GetPhysicalDeviceFeatures`
+
+**EXAMPLES**
+
+```zig
+var count: u32 = 0;
+fb.GetPhysicalDeviceSparseImageFormatProperties(physical, .r8g8b8a8_unorm, .@"2d", 1, facet.IMAGE_USAGE_SAMPLED, .optimal, &count, null);
 ```
 
 ## GetPhysicalDeviceSurfaceCapabilities
@@ -8841,6 +8977,71 @@ None known.
 var data: ?*anyopaque = null;
 if (fb.MapMemory(device, memory, 0, facet.WHOLE_SIZE, 0, &data) != .success) return error.NoMap;
 const vertices: [*]Vertex = @ptrCast(@alignCast(data.?));
+```
+
+## QueueBindSparse
+
+Memory bound to sparse buffers and images, in batches, by the queue: refused, no queue family binding sparse memory.
+
+**SYNOPSIS**
+
+```zig
+fn QueueBindSparse(base: *FacetBase, queue: *facet.Queue, count: u32, binds: ?[*]const facet.BindSparseInfo, fence: ?*facet.Fence) facet.Result
+```
+
+**SINCE**
+
+1.124. LVO -544.
+
+**INPUTS**
+
+- `queue` - the queue.
+- `count`, `binds` - the batches: for each, the semaphores it waits
+  for, the ranges and blocks it binds and the semaphores it signals.
+- `fence` - would be signalled when they are bound; may be null.
+
+**RESULT**
+
+`error_feature_not_present`, and nothing bound, waited for or
+signalled.
+
+**BEHAVIOR**
+
+Vulkan has the queue be of a family with `QUEUE_SPARSE_BINDING`
+(VUID-vkQueueBindSparse-queuetype), and no family of either device has
+it, `sparse_binding` being false; so no call a program may make reaches
+here, and one that does is answered as v3dv answers it
+(`v3dv_QueueBindSparse`, v3dv_queue.c:1170-1178). That code is not
+one of the call's own, a lost device and no memory, which are for calls
+a program may make. Vulkan has the call carried all the same.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The batches and the fence stay the caller's, and are not read.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`QueueSubmit`, `GetPhysicalDeviceQueueFamilyProperties`
+
+**EXAMPLES**
+
+```zig
+const refused = fb.QueueBindSparse(queue, 0, null, null);
 ```
 
 ## QueuePresent

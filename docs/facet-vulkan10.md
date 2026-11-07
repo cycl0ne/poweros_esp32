@@ -126,7 +126,7 @@ half of two, the cores', in 1.113, item 61's last row of eight, on the
 cores, in 1.114, item 85's half of two, the cores', in 1.115, item 87
 in 1.116, item 88 in 1.117, item 86 in 1.118, item 48's half of two,
 the cores', in 1.119, item 41 in 1.120, item 89 in 1.121, item 15 in
-1.122, and item 11 in 1.123.**
+1.122, item 11 in 1.123, and item 12 in 1.124.**
 Each
 carries a *Done* note below saying what was actually built and where the
 item's own description turned out to be wrong - and several did. Things
@@ -407,13 +407,30 @@ VUID-VkMappedMemoryRange-offset-00687), which no call has to find.
 
 ### 12. Add the three sparse entry points as stubs, and the struct members 1.0 requires beside them
 
-*entry points / memory* &mdash; conformance-blocking, small, also serves the shim
+*entry points / memory* &mdash; conformance-blocking, small, also serves the shim &mdash; **done in 1.124**
 
 Three stubs, three fd lines, three LVOs: GetPhysicalDeviceSparseImageFormatProperties and GetImageSparseMemoryRequirements writing count 0, and QueueBindSparse, which no legal call can reach because no queue family carries a sparse bit. Beside them PhysicalDeviceProperties needs sparse_properties and the features struct the sparse bits, all answering false — Vulkan requires both to be reportable even when every answer is no. The sparse *functionality* is a separate optional capability, and real residency is a different machine: page tables facet may write, where the V3D's MMU is the firmware's.
 
 > Verified: `grep -ci sparse sdk/fd/facet_lib.fd` -> 0; `grep -rn -i sparse sdk/libs/facet/ src/disk/libs/facet/ --include='*.zig'` finds only prose at facet.zig:262 and getphysicaldevicefeatures.zig:48; facet.zig:245-255 has no sparse_properties; facet.zig:976 and :988 are the only two IMAGE_CREATE_ bits, so there are no sparse image flags to refuse; facet.zig:551-553 has no QUEUE_SPARSE_BINDING bit.
 
 Found independently by: entry-points (3 items), objects-commands, formats, conformance-path (4 strands).
+
+**Done in 1.124**, in 109 lines of code, the generated interface aside,
+and 51 of tests, as v3dv has them, v3dv binding no memory sparsely
+either: the two queries set the count to 0 and write nothing
+(`v3dv_GetPhysicalDeviceSparseImageFormatProperties`,
+v3dv_formats.c:818-829; `v3dv_GetImageSparseMemoryRequirements`,
+v3dv_device.c:3430-3438), as Vulkan has them answer for arguments
+without `VK_IMAGE_CREATE_SPARSE_RESIDENCY_BIT` and for an image not made
+with it, and `QueueBindSparse` answers `VK_ERROR_FEATURE_NOT_PRESENT`
+(`v3dv_QueueBindSparse`, v3dv_queue.c:1170-1178). They are LVO -536,
+-540 and -544, with Vulkan's sparse structures and `QUEUE_SPARSE_BINDING`
+beside them. The struct members the item asked for were there before it:
+`sparse_properties` with item 14 and the nine sparse features with item
+16, both in 1.82. `QueueBindSparse`'s code is not one of the call's own,
+a lost device and no memory, which is item 81's kind of finding; no call
+a program may make reaches it (VUID-vkQueueBindSparse-queuetype), so it
+is v3dv's answer as it stands.
 
 ### 13. Add CmdResolveImage, as a stub until there is multisampling
 

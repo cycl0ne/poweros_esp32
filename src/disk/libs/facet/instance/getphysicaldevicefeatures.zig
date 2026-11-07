@@ -248,9 +248,9 @@ pub fn vulkanOf(can: *const _instance.Capabilities) facet.PhysicalDeviceFeatures
         .shader_resource_min_lod = no,
 
         // --- memory bound a piece at a time ---
-        // Nothing here binds memory sparsely: there are no sparse commands
-        // in the jump table and `PhysicalDeviceSparseProperties` is five
-        // falses beside these. docs/facet-vulkan10.md item 12.
+        // Nothing here binds memory sparsely: the sparse calls answer none
+        // and refuse to bind (since 1.124), and
+        // `PhysicalDeviceSparseProperties` is five falses beside these.
         .sparse_binding = no,
         .sparse_residency_buffer = no,
         .sparse_residency_image_2d = no,
