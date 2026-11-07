@@ -143,7 +143,8 @@ the pictures decoded and not yet shown, the earliest.
 
 **BUGS**
 
-None known.
+On an AMD graphics device the pictures are not decoded yet: it
+answers VDERR_UNSUPPORTED.
 
 **SEE ALSO**
 
@@ -214,7 +215,8 @@ parameter sets alone counts as a picture of its own.
 
 **BUGS**
 
-None known.
+On an AMD graphics device the pictures are not decoded yet: it
+answers VDERR_UNSUPPORTED.
 
 **SEE ALSO**
 
@@ -337,7 +339,8 @@ twice the stream's num_units_in_tick.
 
 **BUGS**
 
-None known.
+On an AMD graphics device the pictures are not decoded yet: it
+answers VDERR_UNSUPPORTED.
 
 **SEE ALSO**
 
@@ -375,9 +378,11 @@ fn OpenVideoDecoder(vb: *VideoDecBase, codec: u32,
 
 The decoder, or null and in `err` why not: VDERR_NO_ENGINE when the
 board has no decoder, its firmware is not in
-DEVS:firmware/wave511_dec_fw.bin, or it would not wake or start;
-VDERR_UNSUPPORTED for a codec it does not take; VDERR_BUSY when eight
-decoders are open; VDERR_NO_MEMORY.
+DEVS:firmware/wave511_dec_fw.bin, or it would not wake or start - and
+on an AMD graphics device while the watchdog is not armed, or where
+its firmware or the security processor's table of contents is not in
+DEVS:firmware/amdgpu/; VDERR_UNSUPPORTED for a codec it does not take;
+VDERR_BUSY when eight decoders are open; VDERR_NO_MEMORY.
 
 **BEHAVIOR**
 
@@ -390,6 +395,16 @@ made when its first picture is decoded, or its stream asked about
 (GetVideoDecoderInfo): as many compressed frames as the stream needs
 and one, as many shown frames as that and VDA_HeldFrames (2 by
 default, at most 16) - about 3 MiB each at 1080p.
+
+On an AMD graphics device the first decoder, opened while the
+watchdog is armed, has amdgpu.resource power the decoder up, start
+the security processor with its table of contents and load the
+decoder's firmware - both files read from DEVS:firmware/amdgpu/,
+named for the blocks' versions - then has the security processor
+apply the decoder's start, a list of its register writes, and checks
+that the firmware reads its ring. Each decoder is a stream on it, made
+with a message, with a context of 128 KiB in the device's memory; the
+tags are not read.
 
 **CONTEXT**
 
@@ -413,7 +428,9 @@ DEVS:firmware/wave511.licence.
 
 **BUGS**
 
-None known.
+On an AMD graphics device the pictures are not decoded yet: a stream
+is made and ended, and FeedVideoDecoder and DecodeVideoFrame answer
+VDERR_UNSUPPORTED. It is made for pictures of 1920 x 1088.
 
 **SEE ALSO**
 
@@ -505,13 +522,15 @@ None.
 **RESULT**
 
 A VDCODEC_* bit for each codec: VDCODEC_H264 | VDCODEC_H265 on the
-JH7110. 0 when the board has no decoder, or it would not wake or its
-firmware would not start.
+JH7110, and on x86-64 with an AMD graphics device whose video block
+is 4.0.2. 0 when the machine has no decoder, or it would not wake or
+its firmware would not start.
 
 **BEHAVIOR**
 
-Answered from what the board lists; the chip is not woken. Whether the
-firmware is on the disk only the first OpenVideoDecoder finds out.
+Answered from what the board lists, or the graphics device's table of
+blocks; the chip is not woken. Whether the firmware is on the disk
+only the first OpenVideoDecoder finds out.
 
 **CONTEXT**
 

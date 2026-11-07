@@ -107,8 +107,10 @@ pub const GPUPOWER_VIDEO: u32 = 1;
 pub const GPUPOWER_JPEG: u32 = 2;
 
 /// LoadGPUFirmware's kinds, as the security processor numbers them: the
-/// video decoder's firmware.
+/// video decoder's firmware, and the list of register writes that starts
+/// the video decoder, which the processor applies itself.
 pub const GPUFIRMWARE_VIDEO: u32 = 13;
+pub const GPUFIRMWARE_VIDEO_REGISTERS: u32 = 49;
 
 /// A piece of the device's own memory, from AllocGPUMemory: where the CPU
 /// reaches it, where the device's blocks reach it, and how many bytes it

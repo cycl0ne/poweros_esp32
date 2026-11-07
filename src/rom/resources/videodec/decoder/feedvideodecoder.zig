@@ -5,6 +5,7 @@ const sdk = @import("sdk");
 const types = sdk.resources.videodec;
 const VideoDecBase = @import("../videodec_base.zig").VideoDecBase;
 const Decoder = @import("_decoder.zig").Decoder;
+const engine = @import("../videodec_init.zig").engine;
 
 /// Feeds a decoder one picture of its stream.
 ///
@@ -49,7 +50,8 @@ const Decoder = @import("_decoder.zig").Decoder;
 /// parameter sets alone counts as a picture of its own.
 ///
 /// BUGS:
-/// None known.
+/// On an AMD graphics device the pictures are not decoded yet: it
+/// answers VDERR_UNSUPPORTED.
 ///
 /// SEE ALSO:
 /// `DecodeVideoFrame`, `FlushVideoDecoder`
@@ -61,6 +63,7 @@ const Decoder = @import("_decoder.zig").Decoder;
 /// }
 /// ```
 pub fn FeedVideoDecoder(vb: *VideoDecBase, decoder: *types.VideoDecoder, data: ?[*]const u8, length: u32, time: u64, flags: u32) u32 {
+    if (comptime engine == .vcn) return types.VDERR_UNSUPPORTED;
     const sys = vb.sys_base;
     sys.ObtainSemaphore(&vb.lock);
     defer sys.ReleaseSemaphore(&vb.lock);

@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
 //! videodec.resource's base: the chip's decoder - where it is, whether it
-//! runs, the firmware's code buffer - the lock its commands are given
-//! under, and the decoders open on it, by their instance number.
+//! runs, the firmware's code buffer, or an AMD graphics device's decoder
+//! and its ring - the lock its commands are given under, and the decoders
+//! open on it, by their instance number.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const ExecBase = sdk.interface.exec.ExecBase;
+const vcn = @import("codec/_vcn.zig");
 
 /// How many decoders may be open at once.
 pub const max_decoders = 8;
@@ -42,4 +44,7 @@ pub const VideoDecBase = extern struct {
     /// The server on the decoder's interrupt, and whether it is hooked up.
     server: exec.Interrupt,
     hooked: bool,
+    /// An AMD graphics device's decoder, where that is the machine's:
+    /// where it is, its firmware's pieces and its ring.
+    vcn: vcn.State,
 };

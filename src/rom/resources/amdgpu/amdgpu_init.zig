@@ -33,7 +33,7 @@ const _power = @import("power/_power.zig");
 /// The name it is opened by. The SDK's.
 pub const RESOURCE_NAME = amdgpu.AMDGPUNAME;
 pub const RESOURCE_VERSION = 1;
-pub const RESOURCE_REVISION = 2;
+pub const RESOURCE_REVISION = 3;
 const BUILD_DATE = "07.11.2026";
 const RESOURCE_VERSION_STRING =
     "\x00$VER: " ++ RESOURCE_NAME ++ " " ++

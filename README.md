@@ -658,11 +658,20 @@ device's own memory, which the device's blocks read and write
 own runs it from a protected region only the security processor writes:
 the resource makes that processor's ring of commands, gives it the table
 of contents its firmware comes with and the region it asks for
-(`StartGPUSecurity`), and has it check and load a file
-(`LoadGPUFirmware`). `C:test/Gpu WATCHDOG 15000` does both with the
-video decoder's firmware from `DEVS:firmware/amdgpu/`: on the Radeon
-780M the processor asks for a 64 MiB region and takes the decoder's
-firmware into it with nothing else loaded.
+(`StartGPUSecurity`), and has it check and load a file, or apply a list
+of a block's register writes (`LoadGPUFirmware`). `C:test/Gpu WATCHDOG
+15000` loads the video decoder's firmware from `DEVS:firmware/amdgpu/`:
+on the Radeon 780M the processor asks for a 64 MiB region and takes the
+decoder's firmware into it with nothing else loaded.
+
+**The video decoder is videodec.resource's on such a device.** The first
+decoder opened while the watchdog is armed starts it: the firmware
+loaded, the start's register writes applied by the security processor,
+the ring of commands checked. Each decoder opened is a stream the
+firmware keeps a context for, made and ended by a message. Pictures are
+not decoded there yet: feeding one answers that the codec is not
+supported. `C:test/VideoDec <file> WATCHDOG 15000` opens one and feeds
+it.
 
 **The JPEG decoder beside its video decoder is jpeg.resource's codec.**
 A file is copied into the device's memory without the segments the
@@ -813,7 +822,8 @@ to come back by before anything risky is tried on it. `C:test/watchdog
 ARM 15000` arms it for 15 s, `FEED` starts that over, `OFF` stops it;
 `C:test/Jpeg ... WATCHDOG 15000` arms it around its decodes, and
 `C:test/Gpu WATCHDOG 15000` around its commands to the graphics
-device's security processor.
+device's security processor, and `C:test/VideoDec ... WATCHDOG 15000`
+around the video decoder's start and its pictures.
 
 `./zig build q35` boots QEMU's q35 machine with 512 MB on the serial
 console, under the firmware the system has (`-Dovmf-code=` and

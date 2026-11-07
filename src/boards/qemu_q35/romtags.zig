@@ -30,6 +30,11 @@
 //! while the watchdog is armed. A machine without one has the resource
 //! all the same, and its decodes say there is no codec.
 //!
+//! videodec.resource for the video decoder of the same device: found
+//! through amdgpu.resource as it starts, by reading only, and started by
+//! the first decoder opened - only while the watchdog is armed. A machine
+//! without one has the resource all the same, and it answers no codecs.
+//!
 //! And sound: rta.library, the machine's own audio controllers
 //! (rta-hda), the sink that plays into a file, the one that plays into
 //! nothing, and audio.device over them. An audio controller of this
@@ -46,6 +51,7 @@ pub const modules = .{
     @import("../../rom/resources/amdgpu/amdgpu.zig"),
     @import("../../rom/resources/watchdog/watchdog.zig"),
     @import("../../rom/resources/jpeg/jpeg.zig"),
+    @import("../../rom/resources/videodec/videodec.zig"),
     @import("../../disk/devs/nvme/nvme.zig"),
     @import("../../disk/devs/handlers/posfs/posfs.zig"),
     @import("../../rom/libs/rta/rta.zig"),

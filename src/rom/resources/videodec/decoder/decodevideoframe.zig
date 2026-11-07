@@ -5,6 +5,7 @@ const sdk = @import("sdk");
 const types = sdk.resources.videodec;
 const VideoDecBase = @import("../videodec_base.zig").VideoDecBase;
 const Decoder = @import("_decoder.zig").Decoder;
+const engine = @import("../videodec_init.zig").engine;
 
 /// Hands out a decoder's next frame, decoding as many pictures as that
 /// takes.
@@ -61,7 +62,8 @@ const Decoder = @import("_decoder.zig").Decoder;
 /// the pictures decoded and not yet shown, the earliest.
 ///
 /// BUGS:
-/// None known.
+/// On an AMD graphics device the pictures are not decoded yet: it
+/// answers VDERR_UNSUPPORTED.
 ///
 /// SEE ALSO:
 /// `FeedVideoDecoder`, `ReleaseVideoFrame`, `GetVideoDecoderInfo`
@@ -75,6 +77,7 @@ const Decoder = @import("_decoder.zig").Decoder;
 /// }
 /// ```
 pub fn DecodeVideoFrame(vb: *VideoDecBase, decoder: *types.VideoDecoder, frame: *types.VideoDecFrame) u32 {
+    if (comptime engine == .vcn) return types.VDERR_UNSUPPORTED;
     const sys = vb.sys_base;
     sys.ObtainSemaphore(&vb.lock);
     defer sys.ReleaseSemaphore(&vb.lock);

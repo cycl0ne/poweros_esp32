@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! OpenVideoDecoder: a decoder for a codec, the chip woken and its
-//! firmware started for the first.
+//! firmware started for the first - the JH7110's WAVE511, or an AMD
+//! graphics device's decoder.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -15,7 +16,13 @@ const _decoder = @import("_decoder.zig");
 const Decoder = _decoder.Decoder;
 const Block = _decoder.Block;
 const wave511 = @import("../codec/_wave511.zig");
+const vcn = @import("../codec/_vcn.zig");
+const Session = @import("_session.zig").Session;
 const engine = @import("../videodec_init.zig").engine;
+const amdgpu = sdk.resources.amdgpu;
+const watchdog = sdk.resources.watchdog;
+const WatchdogBase = sdk.interface.watchdog.WatchdogBase;
+const datatypes = sdk.datatypes;
 
 /// Where the firmware is read from.
 pub const FIRMWARE = "DEVS:firmware/wave511_dec_fw.bin";
@@ -44,9 +51,11 @@ const ring_most: u32 = 64 * 1024 * 1024;
 /// RESULT:
 /// The decoder, or null and in `err` why not: VDERR_NO_ENGINE when the
 /// board has no decoder, its firmware is not in
-/// DEVS:firmware/wave511_dec_fw.bin, or it would not wake or start;
-/// VDERR_UNSUPPORTED for a codec it does not take; VDERR_BUSY when eight
-/// decoders are open; VDERR_NO_MEMORY.
+/// DEVS:firmware/wave511_dec_fw.bin, or it would not wake or start - and
+/// on an AMD graphics device while the watchdog is not armed, or where
+/// its firmware or the security processor's table of contents is not in
+/// DEVS:firmware/amdgpu/; VDERR_UNSUPPORTED for a codec it does not take;
+/// VDERR_BUSY when eight decoders are open; VDERR_NO_MEMORY.
 ///
 /// BEHAVIOR:
 /// The first decoder wakes the chip - its power domain, clocks and
@@ -58,6 +67,16 @@ const ring_most: u32 = 64 * 1024 * 1024;
 /// (GetVideoDecoderInfo): as many compressed frames as the stream needs
 /// and one, as many shown frames as that and VDA_HeldFrames (2 by
 /// default, at most 16) - about 3 MiB each at 1080p.
+///
+/// On an AMD graphics device the first decoder, opened while the
+/// watchdog is armed, has amdgpu.resource power the decoder up, start
+/// the security processor with its table of contents and load the
+/// decoder's firmware - both files read from DEVS:firmware/amdgpu/,
+/// named for the blocks' versions - then has the security processor
+/// apply the decoder's start, a list of its register writes, and checks
+/// that the firmware reads its ring. Each decoder is a stream on it, made
+/// with a message, with a context of 128 KiB in the device's memory; the
+/// tags are not read.
 ///
 /// CONTEXT:
 /// - Waits: yes, for the chip; the first open for the firmware's file.
@@ -77,7 +96,9 @@ const ring_most: u32 = 64 * 1024 * 1024;
 /// DEVS:firmware/wave511.licence.
 ///
 /// BUGS:
-/// None known.
+/// On an AMD graphics device the pictures are not decoded yet: a stream
+/// is made and ended, and FeedVideoDecoder and DecodeVideoFrame answer
+/// VDERR_UNSUPPORTED. It is made for pictures of 1920 x 1088.
 ///
 /// SEE ALSO:
 /// `VideoDecCodecs`, `CloseVideoDecoder`, `FeedVideoDecoder`,
@@ -91,6 +112,7 @@ const ring_most: u32 = 64 * 1024 * 1024;
 /// ```
 pub fn OpenVideoDecoder(vb: *VideoDecBase, codec: u32, tags: ?[*]const utility.TagItem, err: ?*u32) ?*types.VideoDecoder {
     const sys = vb.sys_base;
+    if (comptime engine == .vcn) return openSession(vb, codec, err);
     if (vb.vpu == 0) return failed(err, types.VDERR_NO_ENGINE);
     if (codec == 0 or codec & (codec - 1) != 0 or codec & vb.codecs == 0) return failed(err, types.VDERR_UNSUPPORTED);
 
@@ -204,6 +226,90 @@ fn start(vb: *VideoDecBase) void {
     vb.code = @intCast(code);
     vb.firmware = version;
     vb.state = base.STATE_RUNNING;
+}
+
+/// A decoder on an AMD graphics device's decoder: the decoder started
+/// for the first, a stream made on it.
+fn openSession(vb: *VideoDecBase, codec: u32, err: ?*u32) ?*types.VideoDecoder {
+    const sys = vb.sys_base;
+    if (vb.codecs == 0) return failed(err, types.VDERR_NO_ENGINE);
+    if (codec == 0 or codec & (codec - 1) != 0 or codec & vb.codecs == 0) return failed(err, types.VDERR_UNSUPPORTED);
+    sys.ObtainSemaphore(&vb.lock);
+    defer sys.ReleaseSemaphore(&vb.lock);
+    if (vb.state == base.STATE_ASLEEP) startVcn(vb);
+    if (vb.state != base.STATE_RUNNING) return failed(err, types.VDERR_NO_ENGINE);
+
+    const slot = for (vb.decoders, 0..) |d, n| {
+        if (d == null) break n;
+    } else return failed(err, types.VDERR_BUSY);
+    const memory = sys.AllocMem(@sizeOf(Session), exec.MEMF_CLEAR | exec.MEMF_SYSTEM) orelse return failed(err, types.VDERR_NO_MEMORY);
+    const s: *Session = @ptrCast(@alignCast(memory));
+    s.* = .{ .vb = vb, .slot = @intCast(slot), .codec = codec };
+    if (!s.make()) {
+        // No room, or a decoder that did not answer - which keeps the
+        // context it may still write.
+        sys.FreeMem(memory, @sizeOf(Session));
+        return failed(err, if (vb.state == base.STATE_RUNNING) types.VDERR_NO_MEMORY else types.VDERR_NO_ENGINE);
+    }
+    vb.decoders[slot] = s;
+    if (err) |e| e.* = types.VDERR_OK;
+    return s.handle();
+}
+
+/// The AMD graphics device's decoder started: STATE_RUNNING, or
+/// STATE_DEAD when the security processor, the firmware or the decoder
+/// failed - or STATE_ASLEEP still when it may not be started yet: the
+/// watchdog not armed, the caller a Task, a file missing.
+fn startVcn(vb: *VideoDecBase) void {
+    if (comptime engine != .vcn) return;
+    const sys = vb.sys_base;
+    const gpu = vb.vcn.gpu orelse return;
+    const wb: *WatchdogBase = @ptrCast(@alignCast(sys.OpenResource(watchdog.WATCHDOGNAME) orelse return));
+    if (wb.ReadWatchdog() == 0) return;
+    const task = sys.FindTask(null) orelse return;
+    if (task.node.type != .process) return;
+    const dos_lib = sys.OpenLibrary(dos.DOSNAME, 0) orelse return;
+    defer sys.CloseLibrary(dos_lib);
+    const dl: *DosBase = @ptrCast(dos_lib);
+
+    var toc_room: [64]u8 = undefined;
+    var firmware_room: [64]u8 = undefined;
+    const toc_name = vcn.firmwareName(&toc_room, "psp_", vb.vcn.security, "_toc.bin");
+    const firmware_name = vcn.firmwareName(&firmware_room, "vcn_", vb.vcn.video, ".bin");
+    const toc = readFile(sys, dl, toc_name) orelse return;
+    defer sys.FreeVec(toc.ptr);
+    const firmware = readFile(sys, dl, firmware_name) orelse return;
+    defer sys.FreeVec(firmware.ptr);
+
+    var address: u64 = 0;
+    if (!gpu.StartGPUSecurity(toc.ptr, @intCast(toc.len)) or
+        !gpu.LoadGPUFirmware(amdgpu.GPUFIRMWARE_VIDEO, firmware.ptr, @intCast(firmware.len), &address))
+    {
+        exec.kprintf(sys, "%s: the AMD video decoder's firmware is not loaded\n", .{types.VIDEODECNAME});
+        vb.state = base.STATE_DEAD;
+        return;
+    }
+    if (!vcn.wake(sys, &vb.vcn, address)) {
+        vb.state = base.STATE_DEAD;
+        return;
+    }
+    vb.state = base.STATE_RUNNING;
+}
+
+/// The file `name` read whole, or null with why said.
+fn readFile(sys: *ExecBase, dl: *DosBase, name: [*:0]const u8) ?[]u8 {
+    const lock = dl.Lock(name, dos.SHARED_LOCK) orelse {
+        exec.kprintf(sys, "%s: no %s\n", .{ types.VIDEODECNAME, name });
+        return null;
+    };
+    defer dl.UnLock(lock);
+    return switch (datatypes.subclass.readWhole(sys, dl, lock)) {
+        .got => |bytes| bytes,
+        else => {
+            exec.kprintf(sys, "%s: %s cannot be read\n", .{ types.VIDEODECNAME, name });
+            return null;
+        },
+    };
 }
 
 /// The firmware's file read into `into`: false when it is missing,

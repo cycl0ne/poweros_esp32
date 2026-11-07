@@ -15,7 +15,7 @@ Generated from the source by `./zig build autodoc`.
 - [FindGPUBlock](#findgpublock) - One of the device's blocks: its version and where its registers are.
 - [FreeGPUMemory](#freegpumemory) - A piece of the device's memory given back.
 - [GetGPUInfo](#getgpuinfo) - What the device is and where the machine reaches it.
-- [LoadGPUFirmware](#loadgpufirmware) - A block's firmware loaded by the security processor into its protected region.
+- [LoadGPUFirmware](#loadgpufirmware) - A block's firmware loaded by the security processor into its protected region, or a list of a block's register writes applied by it.
 - [SetGPUPower](#setgpupower) - A block of the device powered up or down by its power manager.
 - [StartGPUSecurity](#startgpusecurity) - The security processor made ready to load firmware: its ring made, its table of contents loaded, and the protected region it asks for set up.
 
@@ -292,7 +292,7 @@ if (!ab.GetGPUInfo(&info)) return; // no such device here
 
 ## LoadGPUFirmware
 
-A block's firmware loaded by the security processor into its protected region.
+A block's firmware loaded by the security processor into its protected region, or a list of a block's register writes applied by it.
 
 **SYNOPSIS**
 
@@ -307,32 +307,39 @@ fn LoadGPUFirmware(ab: *AMDGPUBase, kind: u32, image: [*]const u8,
 
 **INPUTS**
 
-- `kind` - which firmware it is: GPUFIRMWARE_VIDEO, the video
-  decoder's.
-- `image` - the firmware file, whole, as it is on the disk
+- `kind` - what it is: GPUFIRMWARE_VIDEO, the video decoder's
+  firmware; GPUFIRMWARE_VIDEO_REGISTERS (since 1.3), the writes that
+  start the video decoder.
+- `image` - for firmware the file, whole, as it is on the disk
   (DEVS:firmware/amdgpu/vcn_<version>.bin), its vendor's header
-  included.
-- `length` - the file's length in bytes.
+  included; for the writes the list itself, pairs of 32-bit words -
+  a register's offset as the block itself numbers it, then its value -
+  at most 512 pairs.
+- `length` - its length in bytes.
 - `address` - filled in.
 
 **RESULT**
 
 True with `address` holding where the firmware is in the protected
 region, as the device's blocks reach it - what the block's driver
-points the block at. False where `kind` is not one there is;
-StartGPUSecurity has not made the processor ready; the file's header
-does not fit the file; the processor does not answer within five
-seconds, or answers no address; the device's memory has no room for
-the copy it reads from; and on a machine without the device.
-`address` is then left alone.
+points the block at - or, for the writes, what the processor answered
+as an address, 0 where it named none. False where `kind` is not one
+there is; StartGPUSecurity has not made the processor ready; the
+file's header does not fit the file, or the list is empty, longer
+than 512 pairs or not of whole pairs; the processor does not answer
+within five seconds, or answers no address for firmware; the device's
+memory has no room for the copy it reads from; and on a machine
+without the device. `address` is then left alone.
 
 **BEHAVIOR**
 
 Under the security processor's lock: the part of the file its header
-names is copied into a piece of its own, which the processor reads,
-checks and puts into the region; the piece is given back once it
-answers. The status it answers is put on the system's lines; one that
-is not 0 stops nothing where an address came with it.
+names, or the list whole, is copied into a piece of its own, which the
+processor reads - firmware it checks and puts into the region, writes
+it applies to the block in their order. The piece is given back once
+it answers. The status it answers is put on the
+system's lines; one that is not 0 stops nothing where an address came
+with firmware.
 
 **CONTEXT**
 
@@ -345,14 +352,15 @@ is not 0 stops nothing where an address came with it.
 
 **OWNERSHIP**
 
-The file stays the caller's. What the processor put into the region
-stays there; loading the same kind again puts it there again.
+The file or list stays the caller's. What the processor put into the
+region stays there; loading the same kind again puts it there again.
 
 **NOTES**
 
 The address is the firmware's start; how large a window onto it the
 block is given is the block's driver's to work out from the file's
-part.
+part. The writes are the block's start as its driver puts it together;
+the processor checks the firmware, not them.
 
 **BUGS**
 
@@ -368,6 +376,10 @@ None known.
 var at: u64 = 0;
 if (!ab.LoadGPUFirmware(amdgpu.GPUFIRMWARE_VIDEO, vcn.ptr, @intCast(vcn.len), &at))
     return error.NoFirmware;
+// The decoder's processor out of reset: its control register, 0xd6
+// inside the block.
+const writes = [_]u32{ 0xd6, 0x0ff00200 };
+_ = ab.LoadGPUFirmware(amdgpu.GPUFIRMWARE_VIDEO_REGISTERS, @ptrCast(&writes), 8, &at);
 ```
 
 ## SetGPUPower

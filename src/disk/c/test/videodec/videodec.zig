@@ -2,7 +2,7 @@
 //! VideoDec: an elementary video stream decoded by the chip's decoder,
 //! timed and checked. Built against the SDK only.
 //!
-//!   VideoDec FILE/A,H265/S,FRAME/K/N,TO/K,RGB/S,SHOW/S,SMOOTH/S,WIDTH/K/N,PACE/S
+//!   VideoDec FILE/A,H265/S,FRAME/K/N,TO/K,RGB/S,SHOW/S,SMOOTH/S,WIDTH/K/N,PACE/S,WATCHDOG/K/N
 //!
 //! The file - H.264, or H.265 with H265 or a name ending in .h265, .265
 //! or .hevc, in Annex B form as `ffmpeg -c:v copy -bsf:v
@@ -32,6 +32,11 @@
 //! pixel; PACE shows the frames at the stream's own rate instead of as
 //! fast as they come. How long putting a frame down took, on average and
 //! at most, is printed at the end. The close gadget or Ctrl-C stops it.
+//!
+//! WATCHDOG arms the watchdog for that many milliseconds before the
+//! decoder is opened, feeds it with each picture, and disarms it at the
+//! end: a decoder that stops the machine has it reset. An AMD graphics
+//! device's decoder is only started while the watchdog is armed.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -50,13 +55,15 @@ const IntuitionBase = sdk.interface.intuition.IntuitionBase;
 const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 const VideoDecBase = videodec.VideoDecBase;
 const TimerBase = timer.TimerBase;
+const watchdog = sdk.resources.watchdog;
+const WatchdogBase = sdk.interface.watchdog.WatchdogBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "VideoDec";
-const VERSION_STRING = "\x00$VER: VideoDec 1.1 (29.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: VideoDec 1.2 (07.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "FILE/A,H265/S,FRAME/K/N,TO/K,RGB/S,SHOW/S,SMOOTH/S,WIDTH/K/N,PACE/S";
+const template = "FILE/A,H265/S,FRAME/K/N,TO/K,RGB/S,SHOW/S,SMOOTH/S,WIDTH/K/N,PACE/S,WATCHDOG/K/N";
 const arg_file = 0;
 const arg_h265 = 1;
 const arg_frame = 2;
@@ -66,6 +73,7 @@ const arg_show = 5;
 const arg_smooth = 6;
 const arg_width = 7;
 const arg_pace = 8;
+const arg_watchdog = 9;
 
 /// The time each picture is fed with: 25 a second.
 const picture_us: u64 = 40_000;
@@ -159,6 +167,8 @@ const Tally = struct {
     rgb: ?*GraphicsBase = null,
     sys: ?*ExecBase = null,
     show: ?*Show = null,
+    /// WATCHDOG: the watchdog, fed with each picture.
+    watchdog: ?*WatchdogBase = null,
     /// The window was closed, or Ctrl-C came: no more is fed.
     stopped: bool = false,
 };
@@ -393,7 +403,7 @@ fn errorName(code: u32) [*:0]const u8 {
         videodec.VDERR_END => "ended",
         videodec.VDERR_FULL => "full",
         videodec.VDERR_CORRUPT => "corrupt, or the chip stopped",
-        videodec.VDERR_NO_ENGINE => "no decoder (or no DEVS:firmware/wave511_dec_fw.bin)",
+        videodec.VDERR_NO_ENGINE => "no decoder (or no firmware in DEVS:firmware/, or an AMD decoder without WATCHDOG)",
         videodec.VDERR_UNSUPPORTED => "not supported",
         videodec.VDERR_NO_MEMORY => "no memory",
         videodec.VDERR_BUSY => "every decoder in use",
@@ -431,6 +441,7 @@ fn run(dl: *DosBase, vb: *VideoDecBase, tb: *TimerBase, file: []const u8, h265: 
     var failure: u32 = videodec.VDERR_OK;
     feeding: while (splitter.next()) |picture| {
         if (t.stopped) break;
+        if (t.watchdog) |wb| wb.FeedWatchdog();
         while (true) {
             const fed = vb.FeedVideoDecoder(decoder, picture.ptr, @intCast(picture.len), pictures * picture_us, 0);
             if (fed == videodec.VDERR_OK) break;
@@ -492,7 +503,9 @@ fn run(dl: *DosBase, vb: *VideoDecBase, tb: *TimerBase, file: []const u8, h265: 
             }
         }
     }
-    const took = now(tb) - started;
+    // Timed from the first picture the decoder read; nothing where it
+    // read none.
+    const took = if (started != 0) now(tb) - started else 0;
     _ = Printf(dl, "%u pictures fed, %u frames out in %lu ms", .{ pictures, t.frames, took / 1000 });
     if (took > 0 and t.frames > 0) {
         const per_100s = @as(u64, t.frames) * 100_000_000 / took;
@@ -518,7 +531,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const lib = sys.OpenLibrary(dos.DOSNAME, 0) orelse return dos.RETURN_FAIL;
     defer sys.CloseLibrary(lib);
     const dl: *DosBase = @ptrCast(lib);
-    var argv: [9]usize = @splat(0);
+    var argv: [10]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_ERROR;
@@ -606,5 +619,19 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     dl.UnLock(lock);
     defer sys.FreeVec(file.ptr);
     _ = Printf(dl, "%s: %lu bytes of %s\n", .{ name, file.len, if (h265) "H.265" else "H.264" });
+    if (argv[arg_watchdog] != 0) {
+        const millis: u32 = @intCast(@max(1, @as(*const i32, @ptrFromInt(argv[arg_watchdog])).*));
+        const wb: *WatchdogBase = @ptrCast(sys.OpenResource(watchdog.WATCHDOGNAME) orelse {
+            _ = Printf(dl, "No %s\n", .{watchdog.WATCHDOGNAME});
+            return dos.RETURN_FAIL;
+        });
+        if (!wb.ArmWatchdog(millis, watchdog.WATCHDOG_RESET_SYSTEM)) {
+            _ = Printf(dl, "The watchdog refuses %u ms\n", .{millis});
+            return dos.RETURN_FAIL;
+        }
+        _ = Printf(dl, "Watchdog armed: %u ms\n", .{millis});
+        tally.watchdog = wb;
+    }
+    defer if (tally.watchdog) |wb| wb.DisarmWatchdog();
     return run(dl, vb, tb, file, h265, &tally);
 }

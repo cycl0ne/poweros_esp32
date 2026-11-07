@@ -5,6 +5,7 @@ const sdk = @import("sdk");
 const types = sdk.resources.videodec;
 const VideoDecBase = @import("../videodec_base.zig").VideoDecBase;
 const Decoder = @import("_decoder.zig").Decoder;
+const engine = @import("../videodec_init.zig").engine;
 const wave511 = @import("../codec/_wave511.zig");
 
 /// Says what a decoder's stream is, once its sequence is read.
@@ -46,7 +47,8 @@ const wave511 = @import("../codec/_wave511.zig");
 /// twice the stream's num_units_in_tick.
 ///
 /// BUGS:
-/// None known.
+/// On an AMD graphics device the pictures are not decoded yet: it
+/// answers VDERR_UNSUPPORTED.
 ///
 /// SEE ALSO:
 /// `FeedVideoDecoder`, `DecodeVideoFrame`
@@ -59,6 +61,7 @@ const wave511 = @import("../codec/_wave511.zig");
 pub fn GetVideoDecoderInfo(vb: *VideoDecBase, decoder: *types.VideoDecoder, info: *types.VideoDecInfo) u32 {
     const sys = vb.sys_base;
     info.* = .{};
+    if (comptime engine == .vcn) return types.VDERR_UNSUPPORTED;
     sys.ObtainSemaphore(&vb.lock);
     defer sys.ReleaseSemaphore(&vb.lock);
     const d = Decoder.of(decoder);

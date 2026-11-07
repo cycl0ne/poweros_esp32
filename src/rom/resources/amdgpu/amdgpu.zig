@@ -103,6 +103,7 @@ test "a machine without the device has the resource, and it answers false" {
     try testing.expect(!call(ab).StartGPUSecurity(&file, file.len));
     var address: u64 = 7;
     try testing.expect(!call(ab).LoadGPUFirmware(amdgpu.GPUFIRMWARE_VIDEO, &file, file.len, &address));
+    try testing.expect(!call(ab).LoadGPUFirmware(amdgpu.GPUFIRMWARE_VIDEO_REGISTERS, &file, file.len, &address));
     try testing.expectEqual(@as(u64, 7), address);
     try tearDown(ab);
 }
