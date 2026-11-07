@@ -70,6 +70,19 @@ const _surface = @import("../surface/_surface.zig");
 /// whose counts differ, are `error_initialization_failed`, as Vulkan has
 /// none of them.
 ///
+/// A colour attachment of a subpass may be ATTACHMENT_UNUSED: what the
+/// fragment function writes at that location is discarded, and the
+/// locations after it keep their attachments, as Vulkan has it (since
+/// 1.118). Mesa's render pass gives such a reference no image view
+/// (vk_render_pass.c:1924-1930), and lavapipe gives it no colour buffer
+/// (lvp_execute.c:1984-1999). A subpass drawn a part for each colour
+/// attachment has no part for it, and one whose every colour is unused is
+/// drawn as a subpass of none. One whose colours go together
+/// (SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER) would have a plane in its tiles
+/// with no image behind it, and is `error_feature_not_present`. A resolve
+/// attachment for an unused colour is `error_initialization_failed`
+/// (VUID-VkSubpassDescription-pResolveAttachments-00847).
+///
 /// The subpasses are drawn one after another. A colour attachment's load op
 /// CLEAR clears the render area the first time a subpass names it; LOAD,
 /// DONT_CARE and later subpasses keep what the image holds. What is drawn is
@@ -400,11 +413,25 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                 depth_index = reference.attachment;
             }
         }
+        // The colour attachments it draws: those not named
+        // ATTACHMENT_UNUSED, writes to whose location are discarded (since
+        // 1.118). Drawn apart, an unused one is no part at all, and the
+        // parts after it keep their locations (`Part.output`). Drawn
+        // together, it would be a plane of the tiles with no image behind
+        // it, which a part cannot have yet.
+        var used: u32 = 0;
+        for (colors) |reference| {
+            if (reference.attachment != facet.ATTACHMENT_UNUSED) {
+                used += 1;
+            } else if (together) return .error_feature_not_present;
+        }
         plan.subpasses[number] = .{
             .first_part = plan.part_count,
             // A subpass of no colour attachment is the one part, which
-            // draws none (since 1.113).
-            .part_count = if (together or colors.len == 0) 1 else subpass.color_attachment_count,
+            // draws none (since 1.113), as is one whose every colour is
+            // unused (since 1.118).
+            .part_count = if (together or used == 0) 1 else used,
+            .color_count = subpass.color_attachment_count,
             .joined = false,
         };
         if (plan.part_count + plan.subpasses[number].part_count > _render.most_parts) return .error_feature_not_present;
@@ -419,6 +446,7 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
             .stores_stencil = stores_stencil,
         };
         for (colors) |reference| {
+            if (reference.attachment == facet.ATTACHMENT_UNUSED) continue;
             if (reference.attachment >= attachments.len) return .error_initialization_failed;
             const count = attachments[reference.attachment].samples;
             if ((samples orelse count) != count) return .error_initialization_failed;
@@ -428,6 +456,12 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
         const resolves: []const facet.AttachmentReference = if (subpass.resolve_attachments) |given| given[0..subpass.color_attachment_count] else &.{};
         for (colors, 0..) |reference, k| {
             const color_index = reference.attachment;
+            if (color_index == facet.ATTACHMENT_UNUSED) {
+                // Nothing to resolve where nothing is drawn
+                // (VUID-VkSubpassDescription-pResolveAttachments-00847).
+                if (resolves.len != 0 and resolves[k].attachment != facet.ATTACHMENT_UNUSED) return .error_initialization_failed;
+                continue;
+            }
             if (color_index >= attachments.len) return .error_initialization_failed;
             if (color_index == depth_index) return .error_initialization_failed;
             for (colors[0..k]) |earlier| if (earlier.attachment == color_index) return .error_initialization_failed;
@@ -468,26 +502,28 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                 part.resolves[0] = resolve;
                 part.color_count = 1;
                 part.reads_target = reads_own[color_index];
-                // Each part is the subpass played again from its begin,
-                // so each tests against the depth and the stencil the
-                // subpass began with. A part before the last that wrote
-                // what it left into the image's rows would have the next
-                // one read that in instead, and fail a LESS test wherever
-                // it had drawn: only the last keeps them, and they all
-                // leave the same (since 1.116).
-                if (k + 1 < colors.len) {
-                    part.stores_depth = false;
-                    part.stores_stencil = false;
-                }
+                part.output = @intCast(k);
                 plan.parts[plan.part_count] = part;
                 plan.part_count += 1;
             }
         }
-        if (together or colors.len == 0) {
+        if (together or used == 0) {
             plan.parts[plan.part_count] = whole;
             plan.part_count += 1;
         }
-        for (colors) |reference| drawn[reference.attachment] = true;
+        // Each part is the subpass played again from its begin, so each
+        // tests against the depth and the stencil the subpass began with.
+        // A part before the last that wrote what it left into the image's
+        // rows would have the next one read that in instead, and fail a
+        // LESS test wherever it had drawn: only the last keeps them, and
+        // they all leave the same (since 1.116).
+        for (plan.parts[plan.subpasses[number].first_part .. plan.part_count - 1]) |*part| {
+            part.stores_depth = false;
+            part.stores_stencil = false;
+        }
+        for (colors) |reference| if (reference.attachment != facet.ATTACHMENT_UNUSED) {
+            drawn[reference.attachment] = true;
+        };
         // A resolve attachment is written by the subpass as well, so its
         // load op is spent there.
         for (resolves) |reference| if (reference.attachment != facet.ATTACHMENT_UNUSED) {

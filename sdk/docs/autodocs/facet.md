@@ -4947,6 +4947,19 @@ sample, or of another format or count, and attachments of one subpass
 whose counts differ, are `error_initialization_failed`, as Vulkan has
 none of them.
 
+A colour attachment of a subpass may be ATTACHMENT_UNUSED: what the
+fragment function writes at that location is discarded, and the
+locations after it keep their attachments, as Vulkan has it (since
+1.118). Mesa's render pass gives such a reference no image view
+(vk_render_pass.c:1924-1930), and lavapipe gives it no colour buffer
+(lvp_execute.c:1984-1999). A subpass drawn a part for each colour
+attachment has no part for it, and one whose every colour is unused is
+drawn as a subpass of none. One whose colours go together
+(SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER) would have a plane in its tiles
+with no image behind it, and is `error_feature_not_present`. A resolve
+attachment for an unused colour is `error_initialization_failed`
+(VUID-VkSubpassDescription-pResolveAttachments-00847).
+
 The subpasses are drawn one after another. A colour attachment's load op
 CLEAR clears the render area the first time a subpass names it; LOAD,
 DONT_CARE and later subpasses keep what the image holds. What is drawn is

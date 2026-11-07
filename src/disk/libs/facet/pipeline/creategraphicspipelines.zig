@@ -299,10 +299,10 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
     const pass = _objects.of(_render.RenderPass, info.render_pass);
     if (info.subpass >= pass.subpass_count) return .error_initialization_failed;
     const subpass = pass.subpasses[info.subpass];
-    // The subpass's colour attachments: one a part where it is drawn once
-    // for each of them, and all of the one part where they go together
-    // (SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER, since 1.51).
-    const colors = if (subpass.part_count == 1) pass.parts[subpass.first_part].color_count else subpass.part_count;
+    // The subpass's colour attachments as Vulkan counts them, those named
+    // ATTACHMENT_UNUSED too, which the blend state has an entry for each
+    // of (VUID-VkGraphicsPipelineCreateInfo-renderPass-07609, since 1.118).
+    const colors = subpass.color_count;
     // The fragment entry says how many colours it writes in the one call
     // (`shader.fragmentOutputs`): the subpass's own count where they go
     // together, and one where they do not - and one in a subpass of

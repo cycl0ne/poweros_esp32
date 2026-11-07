@@ -237,6 +237,11 @@ pass's depth. What is left out:
   count of samples, one or four (since 1.114; one alone in 1.113). Its
   fragment function runs, and what it colours goes nowhere. The V3D
   refuses such a subpass (`colorless_subpasses`).
+- **A colour attachment may be `ATTACHMENT_UNUSED`** since 1.118: what
+  the fragment function writes at its location goes nowhere, the
+  locations after it keep their attachments, and a clear of it does
+  nothing. A subpass whose every colour is unused is drawn as one of
+  none. A subpass whose colours go together refuses one.
 - **A pipeline may have no fragment stage** since 1.115, on the cores:
   the shadow map's pipeline, of a vertex stage alone, drawn with a
   function of the library's own that does nothing. Each colour
@@ -610,6 +615,7 @@ These can be asked for and are answered with `error_feature_not_present`.
 | Sample rate shading and alpha to one, both optional and false (`sample_rate_shading`, `alpha_to_one`); `rasterization_samples` but 1 and 4, and 4 on a device that does not draw four samples a pixel: the V3D, until docs/facet-vulkan10.md item 61's V5 (`multisampling`, the cores' since 1.112) | `pipeline/creategraphicspipelines.zig` |
 | An attachment of more than one sample but four, or of four on a device that does not draw them: the V3D, until item 61's V5 | `render/createrenderpass.zig` |
 | A subpass with no colour attachment, on a device that draws none: the V3D, until docs/facet-vulkan10.md item 43's V3D half (`colorless_subpasses`, the cores' since 1.113) | `render/createrenderpass.zig` |
+| A colour reference of `ATTACHMENT_UNUSED` in a subpass whose colours go together (`SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER`), until docs/facet-vulkan10.md item 80; drawn apart it is taken since 1.118 | `render/createrenderpass.zig` |
 | A pipeline of no fragment stage, on a device with a processor of its own: the V3D, until docs/facet-vulkan10.md item 85's V3D half (the cores' since 1.115) | `driver/v3d/driver.zig` |
 | Logic operations: `LogicOp` is fully enumerated, `logic_op_enable` is not taken | `pipeline/creategraphicspipelines.zig` |
 | Depth clamp, the depth bounds test or a depth bias on a device that has none of them: every device has all three since 1.47 (`depth_clamp`, `depth_bounds`, `depth_bias`) | `pipeline/creategraphicspipelines.zig` |

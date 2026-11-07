@@ -124,7 +124,7 @@ Mesa, in 1.92, item 45 in 1.93, item 44 in 1.94, item 84 in 1.95,
 item 61's next six rows of eight, on the cores, in 1.112, item 43's
 half of two, the cores', in 1.113, item 61's last row of eight, on the
 cores, in 1.114, item 85's half of two, the cores', in 1.115, item 87
-in 1.116 and item 88 in 1.117.**
+in 1.116, item 88 in 1.117 and item 86 in 1.118.**
 Each
 carries a *Done* note below saying what was actually built and where the
 item's own description turned out to be wrong - and several did. Things
@@ -2222,7 +2222,7 @@ handed to the back end, with a board check.
 
 ### 86. A colour reference of ATTACHMENT_UNUSED is refused
 
-*render passes* &mdash; conformance-blocking, small, found while doing item 43
+*render passes* &mdash; conformance-blocking, small, found while doing item 43 &mdash; **done in 1.118**
 
 A subpass's colour attachment `i` may be `ATTACHMENT_UNUSED` in Vulkan
 1.0: what the fragment shader writes at location `i` goes nowhere, and the
@@ -2238,6 +2238,45 @@ surface, kept so that the locations after it stay where they are, whose
 plane is neither loaded nor stored. A resolve reference of
 `ATTACHMENT_UNUSED` is already taken as none. About 30 lines and two
 tests.
+
+**Done in 1.118**, in 38 lines of code and 192 of tests, and not as the
+item said: the slot with no surface is the together case, and a Vulkan
+program never reaches it, `SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER` being
+facet's own.
+
+- **Drawn apart, an unused reference is no part at all.** This is how
+  every Vulkan program's subpass is drawn. Each part now carries the
+  location of its colour (`Part.output`), and four things go by it: the
+  location the fragment function writes, the blend state it is mixed by,
+  the colour attachment CmdClearAttachments names (`colorAttachment`),
+  and whether the target has an alpha. Each was the part's number until
+  now, which is the same thing only while no reference is unused. A clear
+  of the unused location matches no part, so it does nothing, as Vulkan
+  has it.
+- **One of the four was wrong regardless of UNUSED.** A part's no-alpha
+  flag was set at the first place and read at the part's number, so a
+  part past the first, over an `r5g6b5_unorm_pack16` attachment, blended
+  by an alpha the attachment does not have. It is set at the location
+  now.
+- **A query counts the subpass's first part by its number**
+  (`player.part`), not by its location: a first part past an unused
+  reference is not at 0 (item 87).
+- **The blend state is held to the subpass's colours as Vulkan counts
+  them** (`Subpass.color_count`,
+  VUID-VkGraphicsPipelineCreateInfo-renderPass-07609). Three references,
+  one unused, take three blend states though they are two parts.
+- **A subpass whose every reference is unused is drawn as a subpass of
+  none** (item 43).
+- **Drawn together, an unused reference is refused**, with
+  `error_feature_not_present`. It would be a plane of the tiles with no
+  image behind it, and the tile target has no colour that loads and
+  stores nothing; llvmpipe's tile maps no memory for it
+  (lp_rast.c:126-131). That is item 80's to bring, once every subpass on
+  the cores draws its colours together.
+- **The V3D draws every subpass apart**, and reads a part's location the
+  same way (driver/v3d/_play.zig). This is unchecked on the board. A
+  subpass whose every reference is unused is one of none, which the V3D
+  refuses until item 43's V3D half.
 
 ### 87. A subpass drawn a part for each colour attachment was not played the same way in each part
 

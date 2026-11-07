@@ -479,6 +479,8 @@ const PipelineState = struct {
     /// What the subpass's second colour attachment is blended by, where it
     /// is not the first's (`Capabilities.independent_blend`).
     second_blend: ?facet.PipelineColorBlendAttachmentState = null,
+    /// And the third's.
+    third_blend: ?facet.PipelineColorBlendAttachmentState = null,
     width: f32 = 64,
     height: f32 = 64,
     /// Where z = 0 and z = 1 land in the depth.
@@ -512,6 +514,7 @@ fn makePipeline(bench: *Bench, state: PipelineState) struct { facet.Result, ?*fa
     const view = facet.PipelineViewportStateCreateInfo{ .viewports = @ptrCast(&viewport), .scissors = @ptrCast(&scissor) };
     var blends: [4]facet.PipelineColorBlendAttachmentState = @splat(state.blend);
     if (state.second_blend) |other| blends[1] = other;
+    if (state.third_blend) |other| blends[2] = other;
     const blend = facet.PipelineColorBlendStateCreateInfo{
         .attachment_count = state.blend_count,
         .attachments = &blends,
@@ -11643,6 +11646,234 @@ test "an occlusion query and a statistics query counted at once, each from its o
         try testing.expectEqual(facet.Result.success, fb.GetQueryPoolResults(device, statistics, 0, 1, @sizeOf(@TypeOf(values)), &values, @sizeOf(@TypeOf(values)), facet.QUERY_RESULT_64 | facet.QUERY_RESULT_WAIT));
         const other: u64 = if (occlusion_outside) 1 else 2;
         try testing.expectEqual([2]u64{ 3 * other, 3 * other }, values);
+    }
+}
+
+test "a colour reference of ATTACHMENT_UNUSED: no part of its own, the locations after it keep their attachments, blend states and clears, and what is written at it goes nowhere" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const first = try Picture.of(&bench, 64, 64);
+    const third = try Picture.of(&bench, 64, 64);
+    const attachments = [2]facet.AttachmentDescription{
+        .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general },
+        .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general },
+    };
+    // Locations 0 and 2 drawn, 1 unused.
+    const colors = [3]facet.AttachmentReference{
+        .{ .attachment = 0, .layout = .general },
+        .{ .attachment = facet.ATTACHMENT_UNUSED, .layout = .general },
+        .{ .attachment = 1, .layout = .general },
+    };
+    const subpass = facet.SubpassDescription{ .color_attachment_count = 3, .color_attachments = &colors };
+    var pass_made: ?*facet.RenderPass = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &pass_made));
+    defer fb.DestroyRenderPass(device, pass_made);
+    const pass = pass_made.?;
+    // A part for each colour drawn, each at its own location; the
+    // subpass's colours counted as Vulkan counts them.
+    const plan = _objects.of(_render.RenderPass, pass);
+    try testing.expectEqual(@as(u32, 2), plan.part_count);
+    try testing.expectEqual(@as(u32, 3), plan.subpasses[0].color_count);
+    try testing.expectEqual(@as(u32, 0), plan.parts[0].output);
+    try testing.expectEqual(@as(u32, 2), plan.parts[1].output);
+    try testing.expectEqual(@as(u32, 1), plan.parts[1].colors[0]);
+    const frame = try framebuffer(&bench, pass, &.{ first.view, third.view }, 64, 64);
+    defer fb.DestroyFramebuffer(device, frame);
+    const shaders = try module(&bench, &SubpassScene.code);
+    defer fb.DestroyShaderModule(device, shaders);
+    const layout = try pipelineLayout(&bench, &.{}, 0);
+    defer fb.DestroyPipelineLayout(device, layout);
+    // A blend state for each of the three, the unused one's too; the
+    // third's writes no blue. Two of them, as for two parts, is refused.
+    const no_blue = facet.PipelineColorBlendAttachmentState{ .color_write_mask = facet.COLOR_COMPONENT_R | facet.COLOR_COMPONENT_G | facet.COLOR_COMPONENT_A };
+    var result, const two = makePipeline(&bench, .{ .module = shaders, .name = "outputs", .layout = layout, .pass = pass, .blend_count = 2 });
+    try testing.expectEqual(facet.Result.error_initialization_failed, result);
+    try testing.expectEqual(null, two);
+    result, const pipeline = makePipeline(&bench, .{ .module = shaders, .name = "outputs", .layout = layout, .pass = pass, .blend_count = 3, .third_blend = no_blue });
+    try testing.expectEqual(facet.Result.success, result);
+    defer fb.DestroyPipeline(device, pipeline);
+
+    const occlusion = try queryPool(&bench, .occlusion, 1, 0);
+    defer fb.DestroyQueryPool(device, occlusion);
+    // The left half of the picture.
+    const left_half = [6][3]f32{ .{ -1, -1, 0 }, .{ 0, -1, 0 }, .{ -1, 1, 0 }, .{ -1, 1, 0 }, .{ 0, -1, 0 }, .{ 0, 1, 0 } };
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(left_half)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(left_half))], std.mem.asBytes(&left_half));
+    const offset: u64 = 0;
+    const red: u32 = 0xFFFF_0000;
+    const blue: u32 = 0xFF00_00FF;
+    const green: u32 = 0xFF00_FF00;
+    const white: u32 = 0xFFFF_FFFF;
+    // Each attachment's clear value is at its own place among the pass's.
+    const clear_values = [2]facet.ClearValue{ clears(red)[0], clears(blue)[0] };
+    const commands = try bench.record();
+    fb.CmdResetQueryPool(commands, occlusion, 0, 1);
+    fb.CmdBeginQuery(commands, occlusion, 0, facet.QUERY_CONTROL_PRECISE);
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 2, .clear_values = &clear_values }, .@"inline");
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdBindPipeline(commands, .graphics, pipeline.?);
+    fb.CmdDraw(commands, 6, 1, 0, 0);
+    // A clear of the unused location does nothing; one of location 2
+    // clears the second attachment and no other.
+    const bottom_right = facet.ClearRect{ .rect = .{ .offset = .{ .x = 32, .y = 32 }, .extent = .{ .width = 32, .height = 32 } }, .layer_count = 1 };
+    const cleared = [2]facet.ClearAttachment{
+        .{ .aspect_mask = facet.IMAGE_ASPECT_COLOR, .color_attachment = 1, .clear_value = clears(green)[0] },
+        .{ .aspect_mask = facet.IMAGE_ASPECT_COLOR, .color_attachment = 2, .clear_value = clears(green)[0] },
+    };
+    fb.CmdClearAttachments(commands, 2, &cleared, 1, @ptrCast(&bottom_right));
+    fb.CmdEndRenderPass(commands);
+    fb.CmdEndQuery(commands, occlusion, 0);
+    try bench.submit();
+
+    // Location 0 is the first attachment, drawn blue over the left half
+    // and red, its clear, over the right.
+    try testing.expectEqual(blue, first.at(16, 16));
+    try testing.expectEqual(red, first.at(48, 16));
+    try testing.expectEqual(red, first.at(48, 48));
+    // Location 2 is the second, blended by the third state: yellow
+    // without its blue over the blue it was cleared to, which is white.
+    // Location 1's state would have left yellow.
+    try testing.expectEqual(white, third.at(16, 16));
+    try testing.expectEqual(blue, third.at(48, 16));
+    try testing.expectEqual(green, third.at(48, 48));
+    // And the draw counted once, though two parts drew it.
+    try testing.expectEqual(@as(u64, 32 * 64), try queryValue(&bench, occlusion, 0));
+}
+
+test "a subpass whose every colour reference is ATTACHMENT_UNUSED is drawn as a subpass of none; one drawn together, or resolving an unused colour, is refused" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const _image = @import("../image/_image.zig");
+    const depth_made, const depth_view = try bench.image(.{ .format = .d16_unorm, .extent = .{ .width = 64, .height = 64, .depth = 1 }, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT }, false);
+    const attachments = [2]facet.AttachmentDescription{
+        .{ .format = .d16_unorm, .load_op = .clear, .store_op = .store, .final_layout = .depth_stencil_attachment_optimal },
+        .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general },
+    };
+    const unused = [2]facet.AttachmentReference{ .{ .attachment = facet.ATTACHMENT_UNUSED, .layout = .general }, .{ .attachment = facet.ATTACHMENT_UNUSED, .layout = .general } };
+    const tested = facet.AttachmentReference{ .attachment = 0, .layout = .depth_stencil_attachment_optimal };
+    const depth_alone = facet.SubpassDescription{ .color_attachment_count = 2, .color_attachments = &unused, .depth_stencil_attachment = &tested };
+    var pass_made: ?*facet.RenderPass = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 1, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&depth_alone) }, &pass_made));
+    defer fb.DestroyRenderPass(device, pass_made);
+    const pass = pass_made.?;
+    const plan = _objects.of(_render.RenderPass, pass);
+    try testing.expectEqual(@as(u32, 1), plan.part_count);
+    try testing.expectEqual(@as(u32, 0), plan.parts[0].color_count);
+    try testing.expectEqual(@as(u32, 2), plan.subpasses[0].color_count);
+    const frame = try framebuffer(&bench, pass, &.{depth_view}, 64, 64);
+    defer fb.DestroyFramebuffer(device, frame);
+    const shaders = try module(&bench, &SubpassScene.code);
+    defer fb.DestroyShaderModule(device, shaders);
+    const layout = try pipelineLayout(&bench, &.{}, 0);
+    defer fb.DestroyPipelineLayout(device, layout);
+    const less = facet.PipelineDepthStencilStateCreateInfo{ .depth_test_enable = true, .depth_write_enable = true, .depth_compare_op = .less };
+    // Its pipeline has a blend state for each unused reference.
+    const result, const pipeline = makePipeline(&bench, .{ .module = shaders, .name = "outputs", .layout = layout, .pass = pass, .blend_count = 2, .depth = less });
+    try testing.expectEqual(facet.Result.success, result);
+    defer fb.DestroyPipeline(device, pipeline);
+
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(SubpassScene.quad)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(SubpassScene.quad))], std.mem.asBytes(&SubpassScene.quad));
+    const offset: u64 = 0;
+    const clear_values = [1]facet.ClearValue{.{ .depth_stencil = .{ .depth = 1 } }};
+    const commands = try bench.record();
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 1, .clear_values = &clear_values }, .@"inline");
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdBindPipeline(commands, .graphics, pipeline.?);
+    fb.CmdDraw(commands, 6, 1, 0, 0);
+    fb.CmdEndRenderPass(commands);
+    try bench.submit();
+    // The quad's depth, 0, kept everywhere.
+    const image = _objects.of(_image.Image, depth_made);
+    const rows = _image.rowsAt(image, 0, 0);
+    for ([_][2]usize{ .{ 0, 0 }, .{ 32, 32 }, .{ 63, 63 } }) |at| {
+        const byte = rows.at + at[1] * rows.pitch + at[0] * 2;
+        try testing.expectEqual(@as(u16, 0), std.mem.readInt(u16, image.data.?[byte..][0..2], .little));
+    }
+
+    // Drawn together, an unused colour would be a plane of the tiles
+    // with no image behind it: refused.
+    const one_unused = [2]facet.AttachmentReference{ .{ .attachment = 1, .layout = .general }, .{ .attachment = facet.ATTACHMENT_UNUSED, .layout = .general } };
+    const together = facet.SubpassDescription{ .flags = facet.SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER, .color_attachment_count = 2, .color_attachments = &one_unused };
+    var refused: ?*facet.RenderPass = null;
+    try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&together) }, &refused));
+    try testing.expectEqual(null, refused);
+    // A resolve attachment for an unused colour
+    // (VUID-VkSubpassDescription-pResolveAttachments-00847), and a
+    // reference past the pass's attachments that is not ATTACHMENT_UNUSED.
+    const into = [2]facet.AttachmentReference{ .{ .attachment = facet.ATTACHMENT_UNUSED, .layout = .general }, .{ .attachment = 1, .layout = .general } };
+    const resolving = facet.SubpassDescription{ .color_attachment_count = 2, .color_attachments = &one_unused, .resolve_attachments = &into };
+    try testing.expectEqual(facet.Result.error_initialization_failed, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&resolving) }, &refused));
+    const past = [1]facet.AttachmentReference{.{ .attachment = 2, .layout = .general }};
+    const beyond = facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = &past };
+    try testing.expectEqual(facet.Result.error_initialization_failed, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&beyond) }, &refused));
+}
+
+test "a colour attachment past an unused one, its subpass's one part: blended over a target with no alpha as its own location says, and counted by a query" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const _image = @import("../image/_image.zig");
+    const made, const view = try bench.image(.{ .format = .r5g6b5_unorm_pack16, .extent = .{ .width = 64, .height = 64, .depth = 1 }, .usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT }, false);
+    const attachments = [1]facet.AttachmentDescription{.{ .format = .r5g6b5_unorm_pack16, .load_op = .clear, .store_op = .store, .final_layout = .general }};
+    const colors = [2]facet.AttachmentReference{ .{ .attachment = facet.ATTACHMENT_UNUSED, .layout = .general }, .{ .attachment = 0, .layout = .general } };
+    const subpass = facet.SubpassDescription{ .color_attachment_count = 2, .color_attachments = &colors };
+    var pass_made: ?*facet.RenderPass = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 1, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &pass_made));
+    defer fb.DestroyRenderPass(device, pass_made);
+    const pass = pass_made.?;
+    const frame = try framebuffer(&bench, pass, &.{view}, 64, 64);
+    defer fb.DestroyFramebuffer(device, frame);
+    const flat = try module(&bench, &Flat.code);
+    defer fb.DestroyShaderModule(device, flat);
+    const layout = try pipelineLayout(&bench, &.{}, 4);
+    defer fb.DestroyPipelineLayout(device, layout);
+    // The first writes a green of alpha 0 into the tile; the second takes
+    // as much of its own colour as the destination's alpha leaves, which
+    // over a target with no alpha is none at all: Vulkan reads its alpha
+    // as 1.
+    var result, const plain = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = pass, .blend_count = 2 });
+    try testing.expectEqual(facet.Result.success, result);
+    defer fb.DestroyPipeline(device, plain);
+    const by_alpha = facet.PipelineColorBlendAttachmentState{ .blend_enable = true, .src_color_blend_factor = .one_minus_dst_alpha, .dst_color_blend_factor = .zero, .src_alpha_blend_factor = .one, .dst_alpha_blend_factor = .zero };
+    result, const over = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = pass, .blend_count = 2, .second_blend = by_alpha });
+    try testing.expectEqual(facet.Result.success, result);
+    defer fb.DestroyPipeline(device, over);
+
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(SubpassScene.quad)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(SubpassScene.quad))], std.mem.asBytes(&SubpassScene.quad));
+    const offset: u64 = 0;
+    const clear_values = clears(0xFFFF_FFFF);
+    const green_of_no_alpha: u32 = 0x0000_FF00;
+    const occlusion = try queryPool(&bench, .occlusion, 1, 0);
+    defer fb.DestroyQueryPool(device, occlusion);
+    const commands = try bench.record();
+    fb.CmdResetQueryPool(commands, occlusion, 0, 1);
+    fb.CmdBeginQuery(commands, occlusion, 0, facet.QUERY_CONTROL_PRECISE);
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 1, .clear_values = &clear_values }, .@"inline");
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &green_of_no_alpha);
+    fb.CmdBindPipeline(commands, .graphics, plain.?);
+    fb.CmdDraw(commands, 6, 1, 0, 0);
+    fb.CmdBindPipeline(commands, .graphics, over.?);
+    fb.CmdDraw(commands, 6, 1, 0, 0);
+    fb.CmdEndRenderPass(commands);
+    fb.CmdEndQuery(commands, occlusion, 0);
+    try bench.submit();
+    // The one part is the subpass's first, though its location is 1: both
+    // draws counted, every pixel of each.
+    try testing.expectEqual(@as(u64, 2 * 64 * 64), try queryValue(&bench, occlusion, 0));
+    // Black everywhere: none of the green taken, the alpha of 0 the first
+    // wrote being no alpha this target has.
+    const image = _objects.of(_image.Image, made);
+    for ([_][2]usize{ .{ 0, 0 }, .{ 32, 32 }, .{ 63, 63 } }) |at| {
+        const byte = at[1] * image.pitch + at[0] * 2;
+        try testing.expectEqual(@as(u16, 0), std.mem.readInt(u16, image.data.?[byte..][0..2], .little));
     }
 }
 

@@ -116,6 +116,9 @@ pub const Player = struct {
     line_width: f32 = 1,
     stencil: _vertices.StencilSet = .{},
     resources: shader.Resources = .{},
+    /// Which of its subpass's parts is being drawn: a query counts the
+    /// first alone (since 1.116).
+    part: u32 = 0,
     /// What was bound where a subpass of several attachments began.
     saved: _vertices.Bound = undefined,
     /// What compute functions have bound, apart from what draws have.
@@ -486,7 +489,10 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
     endRenderPass(queue);
     const player = playerOf(queue);
     if (player.hardware.broken) return;
-    player.resources.output = part;
+    player.part = part;
+    // The location its colour is written at: its part's number, unless a
+    // colour before it is unused and has none (since 1.118).
+    player.resources.output = command.parts[part].output;
     const framebuffer = &command.targets[part];
     const image = framebuffer.colors[0].image;
     const output: struct { u64, bool } = switch (image.format) {
@@ -1079,7 +1085,7 @@ fn countSamples(queue: *Queue) void {
 /// stopped, as a frame with no query does.
 fn tallyFor(queue: *Queue) u32 {
     const player = playerOf(queue);
-    if (player.resources.output != 0) return 0;
+    if (player.part != 0) return 0;
     const counting = player.counting orelse return 0;
     const samples = counting.counters.samples orelse return 0;
     for (player.tallies[0..player.tally_count]) |tally| {

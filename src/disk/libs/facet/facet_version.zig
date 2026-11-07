@@ -2877,4 +2877,44 @@ pub const LIBRARY_VERSION = 1;
 /// with one of them ended between: the one begun second and ended first
 /// counts the one pass, the other both, either way round. Each of 6
 /// changes put back fails it.
-pub const LIBRARY_REVISION = 117;
+///
+/// 118: **A colour reference of ATTACHMENT_UNUSED.** Item 86 of
+/// docs/facet-vulkan10.md, found while doing item 43. Vulkan 1.0 lets a
+/// subpass's colour attachment be ATTACHMENT_UNUSED: what the fragment
+/// shader writes at that location is discarded, and the locations after
+/// it keep their attachments. CreateRenderPass refused it as an
+/// attachment past the last. Mesa's render pass gives such a reference
+/// no image view (vk_render_pass.c:1924-1930), and lavapipe gives it no
+/// colour buffer (lvp_execute.c:1984-1999). Here, a subpass drawn a part
+/// for each colour attachment, the way every Vulkan program's is, has no
+/// part for it. Each part carries the location of its colour
+/// (`Part.output`), which the fragment function writes, which picks its
+/// blend state and the clear CmdClearAttachments names, and at which its
+/// target says it has no alpha. The last was set at the first place and
+/// read at the part's number, so a part past the first over an
+/// `r5g6b5_unorm_pack16` attachment blended by an alpha it has not got;
+/// it is set at the location now. A query counts the first part by its
+/// number (`player.part`). The blend state is held to the subpass's
+/// colours as Vulkan counts them, the unused ones too (`Subpass.color_count`,
+/// VUID-VkGraphicsPipelineCreateInfo-renderPass-07609). A subpass whose
+/// every colour is unused is drawn as a subpass of none. One whose colours
+/// go together refuses an unused one, a plane of the tiles with no image
+/// behind it being nothing the target has yet (item 80), and a resolve
+/// attachment for an unused colour is refused
+/// (VUID-VkSubpassDescription-pResolveAttachments-00847). The V3D reads a
+/// part's location the same way; unchecked on the board.
+///
+/// Tests: three colour references, the second unused, are two parts at
+/// locations 0 and 2, taking three blend states and refusing two. A
+/// left-half quad colours the first attachment at location 0 and the
+/// second by the third blend state. Each keeps its own clear over the
+/// right half. A clear of location 1 changes nothing, and one of location
+/// 2 clears the second attachment alone. An occlusion query counts the
+/// draw once. Two unused references over a depth are one part of no
+/// colour that keeps the quad's depth, its pipeline taking two blend
+/// states. An unused reference drawn together, a resolve for one, and a
+/// reference past the attachments are refused. Past an unused reference,
+/// the one part over a 565 attachment blends a destination alpha of 1,
+/// and its query counts both draws. Each of 12 changes put back
+/// fails at least one of them.
+pub const LIBRARY_REVISION = 118;

@@ -83,8 +83,11 @@ pub const Player = struct {
     /// Whether each colour attachment the part draws has no alpha to
     /// read, which a blend of the destination's alpha takes as 1: one
     /// for each, the first's alone until a subpass draws several
-    /// together (since 1.51).
+    /// together (since 1.51), each at its location (since 1.118).
     target_opaques: [_render.most_colors]bool = @splat(false),
+    /// Which of its subpass's parts is being drawn: a query counts the
+    /// first alone (since 1.116).
+    part: u32 = 0,
     /// Whether the part being drawn reads the colour attachment it draws
     /// into: its fragment functions are given the tile's own pixels for
     /// it (`shader.Fragments.keptAt`, since 1.64).
@@ -530,12 +533,15 @@ pub fn clearRectangle(player: *const Player, command: *const _command.ClearAttac
     }
 }
 
-fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, output: u32) void {
+fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part: u32) void {
     const player = playerOf(queue);
     endRenderPass(player);
-    player.resources.output = output;
-    const framebuffer = &command.targets[output];
-    const render_pass = &command.parts[output];
+    player.part = part;
+    const framebuffer = &command.targets[part];
+    const render_pass = &command.parts[part];
+    // The location its first colour is written at: its part's number,
+    // unless a colour before it is unused and has none (since 1.118).
+    player.resources.output = render_pass.output;
     // A surface for each colour attachment the part draws: the one it
     // usually has, and all of a subpass's where they go together
     // (SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER, since 1.51).
@@ -544,13 +550,14 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, outp
     for (0..colors) |k| surfaces[k] = surfaceOf(framebuffer, @intCast(k)) orelse return;
     // The clears are the subpass's, in the order its parts draw them, so
     // this part's begin after the colours of the parts before it: that is
-    // `output` where the subpass is played again for each of them, and 0
+    // `part` where the subpass is played again for each of them, and 0
     // where its one part draws them all.
     var first_clear: u32 = 0;
-    for (command.parts[0..output]) |before| first_clear += before.color_count;
-    // Each attachment says for itself whether it has an alpha to read.
+    for (command.parts[0..part]) |before| first_clear += before.color_count;
+    // Each attachment says for itself whether it has an alpha to read, at
+    // the location a blend asks for it by.
     player.target_opaques = @splat(false);
-    for (surfaces[0..colors], 0..) |each, k| player.target_opaques[k] = each.format == .rgb565;
+    for (surfaces[0..colors], 0..) |each, k| player.target_opaques[@min(render_pass.output + k, _render.most_colors - 1)] = each.format == .rgb565;
     // What the subpass reads of what it draws (since 1.64).
     player.reads_target = render_pass.reads_target;
     // The render area, cut to the framebuffer.

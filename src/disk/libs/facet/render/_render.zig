@@ -79,11 +79,23 @@ pub const Part = struct {
     /// pass's, or null for none: what that colour's samples are averaged
     /// into as the subpass ends (since 1.100).
     resolves: [most_colors]?u32 = @splat(null),
+    /// The place of its first colour among the subpass's colour
+    /// attachments: the location a fragment function writes it at, and
+    /// the blend state it is mixed by. A part's number in its subpass
+    /// where it is drawn once for each, unless one before it is
+    /// ATTACHMENT_UNUSED and has no part (since 1.118); 0 where they go
+    /// together.
+    output: u32 = 0,
 };
 
 pub const Subpass = struct {
     first_part: u32,
     part_count: u32,
+    /// Its colour attachments as Vulkan counts them, those named
+    /// ATTACHMENT_UNUSED too: what a pipeline's blend state has one entry
+    /// for each of (VUID-VkGraphicsPipelineCreateInfo-renderPass-07609,
+    /// since 1.118).
+    color_count: u32,
     /// Goes on in the tiles of the one before it.
     joined: bool,
 };
