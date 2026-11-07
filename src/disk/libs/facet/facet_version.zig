@@ -3049,4 +3049,38 @@ pub const LIBRARY_VERSION = 1;
 /// as red rather than white, and a stencil fetched past its last sample
 /// reads (0, 0, 0, 1). The board probe's shadow checks say the same. Each
 /// of 6 changes put back fails at least one of them.
-pub const LIBRARY_REVISION = 121;
+///
+/// 122: **A query counts in 64 bits.** Item 15 of docs/facet-vulkan10.md.
+/// A query's counter was 32 bits, added to atomically by every part that
+/// drew tiles and held at its highest, so a result asked for in 8 bytes
+/// read 0xFFFFFFFF once more samples than that had passed; Vulkan's
+/// values are 64 bits, and only a 4-byte result of one too big for it may
+/// "either wrap or saturate" (17.2). llvmpipe keeps a 64-bit count for
+/// each of its rasterizer threads (`llvmpipe_query.start` and `end`,
+/// lp_query.h:45-46), each thread adding to its own (`lp_rast_end_query`,
+/// lp_rast.c:665-688), and sums them when the query is read
+/// (`llvmpipe_get_query_result`, lp_query.c:122-129, 196-206). A counter
+/// here is kept so: `_query.lanes` lanes of 64 bits, one for each part a
+/// frame's tiles are drawn in. A batch adds what it counted to the lane of
+/// the part drawing its tile (`batched.zig` `countUp`, the part from
+/// `Tile.part`), the queue's task what it counts - a draw's numbers, a
+/// dispatch's, the V3D's frame - to the first lane, part 0 being its own,
+/// and a value is the sum of the lanes (`_query.valueAt`). No lane has two
+/// writers, so none needs an atomic add, which a 32-bit machine has not
+/// got for 64 bits: a lane is loaded and stored whole where the machine's
+/// words are 64 bits, and a partial result read on a 32-bit one may catch
+/// a lane between its two words. A 4-byte result is still held at
+/// 0xFFFFFFFF. A counter takes 32 bytes of its pool, where it took 4.
+///
+/// batched.zig's tests had never run: the raster's tests did not name the
+/// file, and a file no test names keeps its tests to itself. They run now,
+/// the one already there passing as it stood.
+///
+/// Tests: a counter's lanes add up, one past 2^32 is read whole, and a
+/// reset clears every lane; an occlusion count past 32 bits, of what each
+/// part and the queue's task added, reads whole in 8 bytes and held at
+/// 0xFFFFFFFF in 4; a batch's pixels and samples are counted in the lane of
+/// its tile's part and in no other, at one sample a pixel and at four; and
+/// a tile says which part draws it. Each of 8 changes put back fails at
+/// least one of them.
+pub const LIBRARY_REVISION = 122;

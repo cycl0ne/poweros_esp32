@@ -125,7 +125,8 @@ item 61's next six rows of eight, on the cores, in 1.112, item 43's
 half of two, the cores', in 1.113, item 61's last row of eight, on the
 cores, in 1.114, item 85's half of two, the cores', in 1.115, item 87
 in 1.116, item 88 in 1.117, item 86 in 1.118, item 48's half of two,
-the cores', in 1.119, item 41 in 1.120, and item 89 in 1.121.**
+the cores', in 1.119, item 41 in 1.120, item 89 in 1.121, and item 15
+in 1.122.**
 Each
 carries a *Done* note below saying what was actually built and where the
 item's own description turned out to be wrong - and several did. Things
@@ -454,13 +455,38 @@ Found independently by: entry-points, objects-commands.
 
 ### 15. Widen a query's counter past 32 bits
 
-*query pools* &mdash; conformance-blocking, medium
+*query pools* &mdash; conformance-blocking, medium &mdash; **done in 1.122**
 
 Pool.counts is [*]u32, written and read with 32-bit atomics and held at its highest rather than wrapping. GetQueryPoolResults honours QUERY_RESULT_64 by writing eight bytes, so a conformant caller that asks for a 64-bit occlusion result and passes 2^32-1 samples is handed a saturated value where Vulkan does not leave it undefined. At 2560x1440 that is about 1165 full-screen depth-passing draws inside one query. Needs a 64-bit atomic, which the library cannot assume because it runs on 32-bit chips too — so either a per-core 32-bit counter summed at the fence, which the tiled rasterizer's part structure already suggests, or a per-driver change on the CM5 alone. A timestamp is already 64 bits because one task writes it whole.
 
 > Verified: src/disk/libs/facet/query/_query.zig:73 `counts: [*]u32,` and :76 `times: [*]u64,`; :116 `@atomicStore(u32, ...)`; query/getquerypoolresults.zig:44-45 "one that will not fit is held at 0xFFFFFFFF, where Vulkan leaves it undefined". docs/facet-gaps.md:135-148 and docs/facet-todo.md:84 both state it and both are still true.
 
 Found independently by: entry-points, semantics.
+
+**Done in 1.122**, in 54 lines of code and 69 of tests, and as llvmpipe
+does it. llvmpipe keeps a 64-bit count for each of its rasterizer threads
+(`llvmpipe_query.start` and `end`, lp_query.h:45-46), each thread adding
+to its own (`lp_rast_end_query`, lp_rast.c:665-688), and adds them up when
+the query is read (`llvmpipe_get_query_result`, lp_query.c:122-129,
+196-206). That is the item's counter for each core, with no fence needed
+to sum it at: a counter here is `_query.lanes` lanes of 64 bits, one for
+each part a frame's tiles are drawn in. A batch adds what it counted to
+the lane of the part drawing its tile (`batched.zig` `countUp`, the part
+from `Tile.part`), the queue's task adds a draw's numbers, a dispatch's
+and the V3D's frame to the first lane, part 0 being its own, and
+`_query.valueAt` sums the lanes as it reads them. No lane has two writers,
+so no machine needs a 64-bit atomic add: a lane is loaded and stored whole
+where the words are 64 bits, and plainly on a 32-bit machine, where a
+partial result read while a lane is added to may catch it between its two
+words. A counter takes 32 bytes of its pool where it took 4.
+
+A 4-byte result is still held at 0xFFFFFFFF, which Vulkan allows: "the
+value may either wrap or saturate" (17.2), not undefined as the item and
+the call's documentation had it. The 8-byte one is whole.
+
+Found on the way: batched.zig's tests had never run, the raster module's
+test block not naming the file. It is named now, and the test already
+there passes.
 
 ### 16. Decide what PhysicalDeviceLimits is: 26 facet fields against VkPhysicalDeviceLimits' ~106
 

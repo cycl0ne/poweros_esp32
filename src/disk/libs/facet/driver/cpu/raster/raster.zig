@@ -83,6 +83,12 @@ pub const tile_size = target.tile_size;
 pub const most_parts = target.most_parts;
 
 test {
+    // The files a draw runs through hold tests of their own: named here, or
+    // none of them is analysed for the tests alone (batched.zig's never ran
+    // before 1.122).
+    _ = @import("batched.zig");
+    _ = @import("pipeline.zig");
+    _ = @import("target.zig");
     _ = @import("tests/raster.zig");
     _ = @import("tests/texture.zig");
     _ = @import("tests/shaded.zig");

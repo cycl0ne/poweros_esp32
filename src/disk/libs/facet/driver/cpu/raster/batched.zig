@@ -254,10 +254,15 @@ pub const State = struct {
     /// Where the pixels that passed the tests and were not dropped are
     /// counted - an occlusion query's samples - and where the pixels the
     /// fragment function was called for are. Null for a draw nothing is
-    /// counting, which is every draw until a query is begun; the tiles are
-    /// drawn on every core at once, so both are added to atomically.
-    samples: ?*u32 = null,
-    fragments: ?*u32 = null,
+    /// counting, which is every draw until a query is begun. Each is a
+    /// lane of 64 bits for each part the tiles are drawn in, `most_parts`
+    /// of them one after another, and a part adds to its own lane alone
+    /// (`Tile.part`), as llvmpipe's rasterizer threads count each into
+    /// their own (`lp_rast_end_query`,
+    /// src/gallium/drivers/llvmpipe/lp_rast.c:665-688); the query adds
+    /// them up when it is read (query/_query.zig, since 1.122).
+    samples: ?[*]u64 = null,
+    fragments: ?[*]u64 = null,
 };
 
 pub const Error = error{OutOfMemory};
@@ -323,8 +328,8 @@ const Shading = struct {
     /// (lp_state_fs.c:3505-3513). (Since 1.103.)
     sample_bits: u16,
     /// What a query counts of the pixels (`State.samples`).
-    samples: ?*u32,
-    fragments: ?*u32,
+    samples: ?[*]u64,
+    fragments: ?[*]u64,
     /// The fragment function reads the attachment it writes, out of the
     /// tile (since 1.64): the attachment's own first pixel, which is what
     /// a descriptor of it points at and so how `shader.Fragments.input`
@@ -1183,7 +1188,8 @@ const Batch = struct {
     /// a query is counting, and once a batch rather than once a pixel.
     fn countPixels(batch: *Batch, comptime samples: u32) void {
         const shading = batch.shading;
-        countUp(shading.fragments, @as(u32, batch.count) * 4);
+        const part = batch.tile.part;
+        countUp(shading.fragments, part, @as(u32, batch.count) * 4);
         if (shading.samples) |at| {
             var passed: u32 = 0;
             if (samples == 1) {
@@ -1192,21 +1198,22 @@ const Batch = struct {
                 // The pixels kept, once for each sample's four bits.
                 passed += @popCount(mask & @as(u16, quad.kept & 0xF) * 0x1111);
             }
-            countUp(at, passed);
+            countUp(at, part, passed);
         }
     }
 
-    /// `by` added to one of a query's counters, which several cores add to
-    /// at once: held at the highest it takes rather than wrapping round. It
-    /// is 32 bits wide because a 32-bit machine has no wider atomic.
-    inline fn countUp(counter: ?*u32, by: u32) void {
+    /// `by` added to one of a query's counters, in the lane of the part
+    /// drawing the tile: no other part adds to it, so it needs no atomic
+    /// add, which a 32-bit machine has not got for 64 bits. A 64-bit one
+    /// writes it whole, for a program reading a partial count while it is
+    /// added to (query/_query.zig, since 1.122).
+    inline fn countUp(counter: ?[*]u64, part: u32, by: u32) void {
         const at = counter orelse return;
         if (by == 0) return;
-        const most = std.math.maxInt(u32);
-        var have = @atomicLoad(u32, at, .monotonic);
-        while (have != most) {
-            have = @cmpxchgWeak(u32, at, have, have +| by, .monotonic, .monotonic) orelse return;
-        }
+        const lane = &at[part];
+        if (comptime @bitSizeOf(usize) >= 64) {
+            @atomicStore(u64, lane, @atomicLoad(u64, lane, .monotonic) + by, .monotonic);
+        } else lane.* += by;
     }
 
     /// The depths of the pixels the fragment function left, for a form that
@@ -1359,3 +1366,32 @@ const Batch = struct {
 /// Pipeline's: how much 1 / w may change from a pixel to the next aslant
 /// for a quad's centre to stand for its pixels.
 const newton_change = pipeline.newton_change;
+
+test "a batch's pixels counted for a query in the lane of the part drawing its tile alone, at one sample a pixel and at four (since 1.122)" {
+    const testing = std.testing;
+    var samples = [_]u64{0} ** target_zig.most_parts;
+    var fragments = [_]u64{0} ** target_zig.most_parts;
+    var shading: Shading = undefined;
+    shading.samples = &samples;
+    shading.fragments = &fragments;
+    var tile: Tile = undefined;
+    tile.part = 2;
+    var batch: Batch = undefined;
+    batch.tile = &tile;
+    batch.shading = &shading;
+    batch.count = 2;
+    batch.quads[0].kept = 0b1011;
+    batch.quads[1].kept = 0b0001;
+    // Four pixels a quad called for, three and one of them kept.
+    batch.countPixels(1);
+    try testing.expectEqual([_]u64{ 0, 0, 8, 0 }, fragments);
+    try testing.expectEqual([_]u64{ 0, 0, 4, 0 }, samples);
+    // At four samples a pixel, part 1: each sample's bits of the pixels
+    // kept, all sixteen of the first quad's and one of the second's.
+    tile.part = 1;
+    batch.masks[0] = 0xFFFF;
+    batch.masks[1] = 0x0001;
+    batch.countPixels(4);
+    try testing.expectEqual([_]u64{ 0, 8, 8, 0 }, fragments);
+    try testing.expectEqual([_]u64{ 0, 13, 4, 0 }, samples);
+}

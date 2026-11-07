@@ -36,10 +36,14 @@ const _query = @import("_query.zig");
 ///
 /// BEHAVIOR:
 /// A query holds one value, or for `pipeline_statistics` one for each
-/// statistic asked for, in the order of their bits. Every query starts not
-/// available and counting nothing, as `CmdResetQueryPool` leaves it; Vulkan
-/// asks for a reset before a query is used all the same, and a program that
-/// means to be read elsewhere should do it.
+/// statistic asked for, in the order of their bits, and a value is 64 bits
+/// wide since 1.122. A counter is kept in a lane for each part the cores
+/// draw a frame's tiles in and added up when it is read, which is how
+/// llvmpipe keeps one for each of its threads (lp_query.h:45-46): it takes
+/// 32 bytes of the pool, a timestamp 8. Every query starts not available
+/// and counting nothing, as `CmdResetQueryPool` leaves it; Vulkan asks for
+/// a reset before a query is used all the same, and a program that means
+/// to be read elsewhere should do it.
 ///
 /// Which kinds a device has is what it counts with: an occlusion query is
 /// counted by the rasterizer on the cores and by the hardware's own counter

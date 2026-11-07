@@ -29,6 +29,12 @@ const _render = @import("../../render/_render.zig");
 const _play = @import("_play.zig");
 const Player = _play.Player;
 
+// A query's counter keeps a lane for each part a frame's tiles may be
+// drawn in, each part adding to its own (query/_query.zig, since 1.122).
+comptime {
+    std.debug.assert(raster.most_parts <= _query.lanes);
+}
+
 /// The most vertices a draw works, the V3D driver's limit too: past it the
 /// draw is left out and said to be, and a CmdDraw over it never gets this far.
 const most_vertices = @import("../../instance/_instance.zig").max_draw_vertices;

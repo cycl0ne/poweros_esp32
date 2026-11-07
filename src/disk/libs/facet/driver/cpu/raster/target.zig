@@ -567,6 +567,10 @@ const Buffer = extern struct {
 /// The tile a part draws: its buffer, and where it lies on the surface.
 pub const Tile = struct {
     buffer: *Buffer,
+    /// The part drawing it, 0 to `most_parts` - 1: whose buffer it is
+    /// drawn in, and the lane of a query's counters its pixels are counted
+    /// in (`batched.State.samples`, since 1.122).
+    part: u32 = 0,
     /// This part's planes for the colour attachments past the first, one
     /// after another, `tile_pixels` words each; null where the frame
     /// draws the one colour. (Since 1.51.)
@@ -1032,6 +1036,7 @@ pub const Target = struct {
         const colors_at = held_at + @as(usize, if (room == 0) 0 else batch_depth_words);
         return .{
             .buffer = &target.buffers[part],
+            .part = part,
             .extras = if (planes == 0) null else block,
             .sample_planes = if (samples == 1) null else block.? + planes * tile_pixels,
             .samples = samples,
@@ -1327,6 +1332,9 @@ test "a part's block holds everything a tile is handed past its buffer, and noth
         const planes: usize = colors - 1;
         for (0..most_parts) |part| {
             const tile = target.tileAt(0, @intCast(part));
+            // The tile says whose it is: the lane of a query's counters
+            // its pixels are counted in (since 1.122).
+            try testing.expectEqual(part, tile.part);
             const handed = [_]struct { ?usize, usize }{
                 .{ Memory.addressOf(tile.extras), planes * tile_pixels * 4 },
                 .{ Memory.addressOf(tile.sample_planes), (planes + 1) * room * tile_pixels * 4 },

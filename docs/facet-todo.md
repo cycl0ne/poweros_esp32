@@ -83,7 +83,6 @@ driver, or a different library.
 
 | Item | Standing | What binds it |
 |---|---|---|
-| A query's counter is 32 bits, held at its highest | `1.0 core` (64 bits) | No 64-bit atomic on every machine the library runs on. A timestamp is 64 bits: one task writes it whole |
 | One queue family of one queue, so `SharingMode` is nominal | `1.0 core` | One task plays what is submitted, in the order it was |
 | `fifo` is the one present mode | `above 1.0` (`VK_KHR_swapchain`), part of facet's table | A display shows a buffer from its next frame on, and there is no way to ask it for anything else |
 | A swapchain's images cannot be sampled | as above | They are rows, not blocks of texels. Copied both ways since 1.43 |

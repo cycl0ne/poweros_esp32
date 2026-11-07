@@ -387,7 +387,9 @@ fn playStream(queue: *Queue, stream: *const _stream.Stream) void {
 /// and the counter those samples are added to as the frame ends (since
 /// 1.47).
 const Tally = struct {
-    samples: *u32,
+    /// The query's counter, whose first lane the frame's count goes into,
+    /// the task's own (query/_query.zig `lanes`).
+    samples: _query.Counter,
     at: *u32,
     address: u32,
 };

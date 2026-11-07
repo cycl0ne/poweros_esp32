@@ -42,7 +42,10 @@ const Pool = _query.Pool;
 /// A statistics query writes one value for each statistic it counts, in the
 /// order of their bits; the other kinds write one. Without
 /// `QUERY_RESULT_64` a value is 4 bytes and one that will not fit is held
-/// at 0xFFFFFFFF, where Vulkan leaves it undefined.
+/// at 0xFFFFFFFF, which Vulkan allows, "the value may either wrap or
+/// saturate" (17.2). With it a value is 8 bytes and whole: a query counts
+/// in 64 bits, as llvmpipe's do (since 1.122; a count was held at
+/// 0xFFFFFFFF in 8 bytes as well before).
 ///
 /// `QUERY_RESULT_WAIT` waits for the device's queue to go idle, which is
 /// when everything recorded before has been played and every value is

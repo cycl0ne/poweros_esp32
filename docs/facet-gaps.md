@@ -156,10 +156,12 @@ reaches the log alone. What is left out:
   `..._GEOMETRY_SHADER_PRIMITIVES` read 0 - which is what Vulkan has a
   statistic of a stage that never ran hold. Until 1.43 a pool that asked
   for either was refused.
-- **A counter is 32 bits wide**, because the library runs on machines with
-  no 64-bit atomic. It is held at its highest rather than wrapping round, so
-  a count that outgrows it is too low and never nonsense. A timestamp is 64
-  bits: one task writes it whole.
+- **A counter is 64 bits wide** since 1.122, kept in a lane for each part
+  a frame's tiles are drawn in and added up when it is read, as llvmpipe
+  keeps one for each thread, so that no machine needs a 64-bit atomic. A
+  4-byte result of one that will not fit is held at 0xFFFFFFFF. Until
+  1.122 a counter was 32 bits, held at its highest, so an 8-byte result
+  read that as well. A timestamp is 64 bits: one task writes it whole.
 - **Without timer.device there are no timestamps**: `timestamp_valid_bits`
   and `timestamp_period` are 0 and `timestamp_compute_and_graphics` is
   false, which is how Vulkan has a device say it. A pool of them is made
@@ -692,7 +694,7 @@ Three more things cannot be asked for at all, having nothing to ask with:
 | Floats a patch carries to its evaluation function | 16 |
 | Swapchain images | 1 to 4 |
 | Samples along a sampler's longer axis | 16 |
-| A query's counter | 32 bits, held there |
+| A query's counter | 64 bits since 1.122; a 4-byte result held at 0xFFFFFFFF |
 | A timestamp's unit | 1000 ns, 64 bits of it |
 | A line's width | `line_width` pixels, and `CmdSetLineWidth` |
 | A point's size | what the vertex function says in pixels since 1.71 (`shader.Vertices.setPointSize`, Vulkan's `PointSize`), held inside `PhysicalDeviceLimits.point_size_range` - 1 to 256 on either device - and one pixel where it says nothing. A pipeline that tessellates makes its points of vertices that function never saw, so those are one pixel |
