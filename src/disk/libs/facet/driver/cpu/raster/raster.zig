@@ -29,6 +29,10 @@
 //! (`Host.share`), a tile at a time to whichever part is free - and then
 //! hands each on. A tile nothing touched is not written.
 //!
+//! A frame has one sample a pixel or four (`Attachments.samples`, since
+//! 1.103), and four are drawn by `batched.draw` alone: `Pipeline(cfg)`'s
+//! triangles are of one.
+//!
 //! What it needs of the system - the cores, memory, and a way to hand on
 //! what it wrote - it is given (`Host`), so the same code runs in the host
 //! tests, one part after another.

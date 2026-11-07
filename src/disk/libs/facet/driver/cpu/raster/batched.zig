@@ -34,6 +34,18 @@
 //! pixels counted once a batch, after the fragment function has run: what
 //! it was called for, and what passed the tests and it did not drop. A draw
 //! nothing is counting pays one branch a batch for it.
+//!
+//! A frame of four samples a pixel (since 1.103) walks each sample's
+//! coverage (walk.zig) and shades a pixel once, where any of its samples
+//! is inside, as llvmpipe does without sample shading: its fragment
+//! shader runs under the samples' masks ORed together
+//! (lp_state_fs.c:860-870). The colour goes into the plane of each sample
+//! covered, blended with that sample's own, as llvmpipe blends a sample
+//! at a time under its own mask (lp_state_fs.c:3651-3672), and a query
+//! counts the samples (lp_state_fs.c:1017-1021). The depth and the
+//! stencil are still one a pixel, tested at its centre, until step K3
+//! of item 61 (docs/facet-vulkan10.md). Such a draw has no depth
+//! pre-pass.
 
 const std = @import("std");
 const shader = @import("sdk").facet.shader;
@@ -156,11 +168,12 @@ pub const State = struct {
     cull: setup.Cull = .none,
     /// Which samples of a pixel a triangle may cover, from the pipeline's
     /// `PipelineMultisampleStateCreateInfo.sample_mask`; all ones where
-    /// the draw gave none. One sample a pixel is drawn, so bit 0 is the
-    /// whole of it: clear it and the triangle is clipped, set up and
-    /// counted as such, and then nothing is shaded. The bits above are
-    /// kept rather than narrowed to a bool because they are the per-sample
-    /// mask a 4x walk will read (item 61). (Since 1.89.)
+    /// the draw gave none. Bit s is sample s: bit 0 is the whole of a
+    /// frame of one sample a pixel, and bits 0 to 3 are a frame of four
+    /// (since 1.103). With none of the frame's set the triangle is
+    /// clipped, set up and counted as such, and then nothing is shaded;
+    /// at four, a sample whose bit is clear is never covered
+    /// (`Shading.sample_bits`). (Since 1.89.)
     sample_mask: u32 = ~@as(u32, 0),
     /// The triangles are rectangles, two each, that lines or points were
     /// widened into (`_vertices.widen`): a rectangle is one primitive to
@@ -267,6 +280,12 @@ const Shading = struct {
     bounds: ?[2]u64,
     /// The fragment function may drop a pixel: its depth waits for it.
     discards: bool,
+    /// What a quad's samples are cut to at four samples a pixel, bit
+    /// 4s + i sample s of its pixel i (`walk.sampleMask`): each of
+    /// `State.sample_mask`'s four bits spread over its sample's four, as
+    /// llvmpipe ANDs each sample's coverage with that sample's bit
+    /// (lp_state_fs.c:3505-3513). (Since 1.103.)
+    sample_bits: u16,
     /// What a query counts of the pixels (`State.samples`).
     samples: ?*u32,
     fragments: ?*u32,
@@ -366,11 +385,22 @@ test "a clip bucket holds what it is asked for, and the narrowest is what 1.89 c
 const Test = enum { off, less, less_or_equal, masked, second, second_or_equal, stencil };
 
 /// A triangle in the pre-pass: its depth alone, then its quads tested as
-/// `second` says.
+/// `second` says. Only at one sample a pixel: the pre-pass's walk is of
+/// pixels (`walk.runs`).
 fn TwoPasses(comptime second: Test) type {
     return struct {
-        const passes = bins.Prepass{ .depth = &prepass.DepthOnly(Triangle).raster, .shade = &Rasterize(second).raster };
+        const passes = bins.Prepass{ .depth = &prepass.DepthOnly(Triangle).raster, .shade = &Rasterize(second, 1).raster };
     };
+}
+
+/// `State.sample_mask`'s four samples, each bit spread over the four
+/// pixels of a quad (`Shading.sample_bits`).
+fn sampleBits(mask: u32) u16 {
+    var bits: u16 = 0;
+    inline for (0..4) |sample| {
+        if (mask >> sample & 1 != 0) bits |= @as(u16, 0xF) << (4 * sample);
+    }
+    return bits;
 }
 
 /// Every triangle of the draw set up and put on the pending list.
@@ -380,6 +410,10 @@ fn setUpAll(target: *Target, state: *const State, vertices: []const f32, stride:
     const compare = if (depth) state.depth_test.? else .always;
     if (compare == .never and !(target.attachments.stencil.used and state.stencil != null)) return;
     const area = scissored(target.areaBounds(), state.scissor) orelse return;
+    // A render pass has one sample a pixel or four (createrenderpass.zig):
+    // a frame of any other count is drawn into by nothing.
+    const samples = target.attachments.samples;
+    if (samples != 1 and samples != 4) return;
     const stencil = if (target.attachments.stencil.used) state.stencil else null;
     // The depth bounds test is of the depth already there, so it wants a
     // depth to look at; a draw that clamps holds each pixel's depth inside
@@ -413,6 +447,7 @@ fn setUpAll(target: *Target, state: *const State, vertices: []const f32, stride:
         .clamp = clamp,
         .bounds = if (has_plane) bounds else null,
         .discards = state.discards,
+        .sample_bits = sampleBits(state.sample_mask),
         .samples = state.samples,
         .fragments = state.fragments,
         // What the part draws into, as the image holds it: a descriptor
@@ -425,11 +460,14 @@ fn setUpAll(target: *Target, state: *const State, vertices: []const f32, stride:
         .less_or_equal => .less_or_equal,
         else => .masked,
     };
-    const raster = switch (test_kind) {
-        inline .off, .less, .less_or_equal, .masked, .stencil => |kind| &Rasterize(kind).raster,
-        .second, .second_or_equal => unreachable,
+    const raster = switch (samples) {
+        inline 1, 4 => |n| switch (test_kind) {
+            inline .off, .less, .less_or_equal, .masked, .stencil => |kind| &Rasterize(kind, n).raster,
+            .second, .second_or_equal => unreachable,
+        },
+        else => unreachable,
     };
-    const two = state.prepass and shading.depth_write and state.blend == .off;
+    const two = samples == 1 and state.prepass and shading.depth_write and state.blend == .off;
     const passes: ?*const bins.Prepass = if (!two) null else switch (test_kind) {
         .less => &TwoPasses(.second).passes,
         .less_or_equal => &TwoPasses(.second_or_equal).passes,
@@ -441,7 +479,7 @@ fn setUpAll(target: *Target, state: *const State, vertices: []const f32, stride:
     const cut_bits: u8 = if (state.depth_clamp) setup.must_cut_clamped else setup.must_cut;
     for (codes, 0..) |*code, k| code.* = setup.outcode(position(vertices, stride, k).*, guard);
 
-    const set: SetUp = .{ .target = target, .state = state, .shading = shading, .raster = raster, .prepass = passes, .area = area, .depth = depth };
+    const set: SetUp = .{ .target = target, .state = state, .shading = shading, .raster = raster, .prepass = passes, .area = area, .depth = depth, .samples = samples };
     // Chosen once a draw, not once a triangle: the clip vertex's width is
     // comptime, so this is the switch that picks which `cutUp` is called.
     const width = Clip.of(state.varyings);
@@ -539,6 +577,8 @@ const SetUp = struct {
     prepass: ?*const bins.Prepass,
     area: [4]i32,
     depth: bool,
+    /// The frame's samples a pixel, 1 or 4 (since 1.103).
+    samples: u32,
 
     /// One triangle in clip space projected, culled and set up: its
     /// vertices' positions, and what each carries.
@@ -555,10 +595,13 @@ const SetUp = struct {
         } else {
             for (&projected, positions) |*into, p| into.* = setup.project(p.*, state.viewport);
         }
-        const made = switch (state.cull) {
-            inline else => |cull| switch (state.front) {
-                inline else => |front| setup.onSurface(projected, cull, front, set.area, 1),
+        const made = switch (set.samples) {
+            inline 1, 4 => |samples| switch (state.cull) {
+                inline else => |cull| switch (state.front) {
+                    inline else => |front| setup.onSurface(projected, cull, front, set.area, samples),
+                },
             },
+            else => unreachable,
         } orelse {
             target.stats.dropped += 1;
             return;
@@ -571,8 +614,13 @@ const SetUp = struct {
         // are both owed - as llvmpipe counts `c_primitives` before its
         // `lp_setup_zero_sample_mask` test. Nothing is allocated and no
         // quad is walked, so `FRAGMENT_SHADER_INVOCATIONS` stays where it
-        // was - which is the whole of what the mask does.
-        if (state.sample_mask & 1 == 0) return;
+        // was. At one sample a pixel that is the whole of what the mask
+        // does. At four, llvmpipe stops a triangle whose whole mask is 0
+        // (lp_setup_context.h:311-316); here the four bits of the
+        // frame's samples are tested, the bits above them having no
+        // sample to cover.
+        const frame_samples: u32 = if (set.samples == 1) 1 else 0xF;
+        if (state.sample_mask & frame_samples == 0) return;
         const plane_count = set.shading.plane_count;
         const bytes = @sizeOf(Triangle) + plane_count * @sizeOf(shader.Plane);
         const memory = target.arena.allocate(bytes, @alignOf(Triangle)) orelse return error.OutOfMemory;
@@ -642,8 +690,8 @@ fn planeOf(made: *const setup.Triangle, values: [3]f64) shader.Plane {
 }
 
 /// How the tiles draw a draw's triangles, testing the depth as `kind`
-/// says.
-fn Rasterize(comptime kind: Test) type {
+/// says, at `samples` samples a pixel: 1, or 4 (since 1.103).
+fn Rasterize(comptime kind: Test, comptime samples: u32) type {
     return struct {
         // On a cache line, as a segment is loaded on one: placed wherever
         // the code before it ended, the quads' loops took the cube up to
@@ -663,9 +711,13 @@ fn Rasterize(comptime kind: Test) type {
             // there is none held back for the fragment function to drop:
             // holding them back there would write what was never gathered.
             batch.deferred_depth = kind != .stencil and triangle.shading.discards and tested_here and !second_here and triangle.shading.depth_write;
-            walk.quads(1, tile, header, Walker{ .tile = tile, .batch = &batch, .depth = triangle.depth, .shading = triangle.shading, .face = triangle.face }, Walker.run);
-            batch.flush();
+            walk.quads(samples, tile, header, Walker{ .tile = tile, .batch = &batch, .depth = triangle.depth, .shading = triangle.shading, .face = triangle.face }, Walker.run);
+            batch.flush(samples);
         }
+
+        /// A row's runs as the walk hands them on: its one, or one for
+        /// each sample.
+        const Runs = if (samples == 1) Span else [samples]Span;
 
         /// What the walk goes by over a triangle's rows in a tile.
         const Walker = struct {
@@ -677,12 +729,19 @@ fn Rasterize(comptime kind: Test) type {
 
             /// Rows `y` and `y + 1`, the quads from the even column at or
             /// left of the first pixel of either run to past the last of
-            /// either.
-            inline fn run(walker: Walker, y: u32, upper: Span, lower: Span) void {
+            /// either. At four samples a pixel, of any sample's run: a
+            /// quad's samples are cut to the draw's sample mask, its
+            /// pixels with any left are shaded, and their colours go
+            /// into those samples' planes alone (`Batch.masks`).
+            inline fn run(walker: Walker, y: u32, upper_runs: Runs, lower_runs: Runs) void {
                 // This runs for every quad: its numbers are held inside
                 // their ranges, and the checks would cost more than the
                 // work.
                 @setRuntimeSafety(false);
+                // The pixels the rows hold any sample of: what the quads
+                // are looked for in, and the depth is read from.
+                const upper = if (samples == 1) upper_runs else walk.hullOf(upper_runs);
+                const lower = if (samples == 1) lower_runs else walk.hullOf(lower_runs);
                 const first = if (upper.empty()) lower.left else if (lower.empty()) upper.left else @min(upper.left, lower.left);
                 const end = @max(upper.right, lower.right);
                 var x = first & ~@as(u32, 1);
@@ -700,12 +759,14 @@ fn Rasterize(comptime kind: Test) type {
                 const batch = walker.batch;
                 var count = batch.count;
                 defer batch.count = count;
+                const sample_bits = walker.shading.sample_bits;
                 while (x < end) : ({
                     x += 2;
                     z_upper +%= 2 *% step;
                     z_lower +%= 2 *% step;
                 }) {
-                    const covered = @as(u4, @intFromBool(upper.holds(x))) | @as(u4, @intFromBool(upper.holds(x + 1))) << 1 |
+                    const mask: u16 = if (samples == 1) 0 else walk.sampleMask(upper_runs, lower_runs, x) & sample_bits;
+                    const covered = if (samples > 1) walk.pixelsOf(mask) else @as(u4, @intFromBool(upper.holds(x))) | @as(u4, @intFromBool(upper.holds(x + 1))) << 1 |
                         @as(u4, @intFromBool(lower.holds(x))) << 2 | @as(u4, @intFromBool(lower.holds(x + 1))) << 3;
                     var kept = covered;
                     if (kind == .stencil) {
@@ -738,10 +799,11 @@ fn Rasterize(comptime kind: Test) type {
                     }
                     if (kept == 0) continue;
                     batch.quads[count] = .{ .x = @intCast(x), .y = @intCast(y), .covered = covered, .kept = kept };
+                    if (samples > 1) batch.masks[count] = mask;
                     count += 1;
                     if (count == batch_quads) {
                         batch.count = count;
-                        batch.flush();
+                        batch.flush(samples);
                         count = 0;
                     }
                 }
@@ -832,6 +894,11 @@ const Batch = struct {
     shading: *const Shading,
     fragments: shader.Fragments,
     quads: [batch_quads]shader.Quad,
+    /// Each quad's samples at four samples a pixel, bit 4s + i sample s
+    /// of its pixel i (`walk.sampleMask`, cut to `Shading.sample_bits`):
+    /// the planes its colours go into. Not written at one. (Since
+    /// 1.103.)
+    masks: [batch_quads]u16,
     colors: [batch_quads][4]u32 align(8),
     /// Each quad's four depths, held while the fragment function runs where
     /// it may drop pixels: written after it, for those it left.
@@ -907,37 +974,45 @@ const Batch = struct {
     }
 
     /// The quads gathered coloured by the fragment function, and the
-    /// pixels kept put into the tile.
-    fn flush(batch: *Batch) void {
+    /// pixels kept put into the tile: into each of its `samples`
+    /// samples' planes, at more than one, under that sample's bits.
+    fn flush(batch: *Batch, comptime samples: u32) void {
         if (batch.count == 0) return;
         batch.fragments.count = batch.count;
         batch.shading.fragment(&batch.fragments);
         // After it, not before: the quads' `kept` is what the function left.
         if (batch.deferred_depth) batch.putDepths();
-        if (batch.shading.fragments != null or batch.shading.samples != null) batch.countPixels();
+        if (batch.shading.fragments != null or batch.shading.samples != null) batch.countPixels(samples);
         // The colours the function wrote: each attachment's `count` of
         // them after the one before (`shader.Fragments.colorsOf`), and
         // each blended its own way into its own plane of the tile
         // (since 1.51).
         const written = batch.fragments.colors;
-        batch.putAt(0, batch.shading.blend, &batch.shading.mixing, written);
+        batch.putAt(samples, 0, batch.shading.blend, &batch.shading.mixing, written);
         var output: u32 = 1;
         while (output < batch.shading.color_count) : (output += 1) {
-            batch.putAt(output, batch.shading.more_blends[output - 1], &batch.shading.more_mixings[output - 1], written + output * batch.count);
+            batch.putAt(samples, output, batch.shading.more_blends[output - 1], &batch.shading.more_mixings[output - 1], written + output * batch.count);
         }
         batch.count = 0;
     }
 
     /// What a query counts of a batch: the pixels the fragment function was
     /// called for, all four of every quad as a GPU shades them, and those
-    /// that passed the tests and it did not drop. Only for a draw a query
-    /// is counting, and once a batch rather than once a pixel.
-    fn countPixels(batch: *Batch) void {
+    /// that passed the tests and it did not drop - at four samples a
+    /// pixel, their samples covered, as llvmpipe counts each sample's mask
+    /// (lp_state_fs.c:1017-1021, :1443-1448; since 1.103). Only for a draw
+    /// a query is counting, and once a batch rather than once a pixel.
+    fn countPixels(batch: *Batch, comptime samples: u32) void {
         const shading = batch.shading;
         countUp(shading.fragments, @as(u32, batch.count) * 4);
         if (shading.samples) |at| {
             var passed: u32 = 0;
-            for (batch.quads[0..batch.count]) |quad| passed += @popCount(quad.kept);
+            if (samples == 1) {
+                for (batch.quads[0..batch.count]) |quad| passed += @popCount(quad.kept);
+            } else for (batch.quads[0..batch.count], batch.masks[0..batch.count]) |quad, mask| {
+                // The pixels kept, once for each sample's four bits.
+                passed += @popCount(mask & @as(u16, quad.kept & 0xF) * 0x1111);
+            }
             countUp(at, passed);
         }
     }
@@ -969,39 +1044,54 @@ const Batch = struct {
     }
 
     /// Colour attachment `output`'s colours put into its plane of the
-    /// tile, as its own blend says. (Since 1.51: before that there was
-    /// the one attachment, and `put` and `putMixed` took the tile's one
+    /// tile, as its own blend says, and at more than one sample a pixel
+    /// into each of its samples' planes in turn, the same colour blended
+    /// into each (since 1.103). (Since 1.51: before that there was the
+    /// one attachment, and `put` and `putMixed` took the tile's one
     /// colour plane.)
-    inline fn putAt(batch: *Batch, output: u32, blend: pipeline.Blend, mixing: *const pipeline.Mixing, colors: [*][4]u32) void {
-        const plane = batch.tile.plane(output);
-        switch (blend) {
-            .general => batch.putMixed(plane, mixing, colors),
-            inline else => |one| batch.put(plane, one, colors),
+    inline fn putAt(batch: *Batch, comptime samples: u32, output: u32, blend: pipeline.Blend, mixing: *const pipeline.Mixing, colors: [*][4]u32) void {
+        inline for (0..samples) |sample| {
+            const plane = batch.tile.samplePlane(output, sample);
+            switch (blend) {
+                .general => batch.putMixed(samples, sample, plane, mixing, colors),
+                inline else => |one| batch.put(samples, sample, plane, one, colors),
+            }
         }
     }
 
-    inline fn put(batch: *Batch, pixels: [*]u32, comptime blend: pipeline.Blend, from: [*][4]u32) void {
+    /// The pixels of quad `k` that go into sample `sample`'s plane: those
+    /// kept, and at more than one sample a pixel only those of them whose
+    /// sample `sample` is covered.
+    inline fn bitsOf(batch: *const Batch, comptime samples: u32, comptime sample: u32, k: usize) u8 {
+        const kept = batch.quads[k].kept;
+        if (samples == 1) return kept;
+        return kept & @as(u8, @truncate(batch.masks[k] >> (4 * sample))) & 0xF;
+    }
+
+    inline fn put(batch: *Batch, comptime samples: u32, comptime sample: u32, pixels: [*]u32, comptime blend: pipeline.Blend, from: [*][4]u32) void {
         @setRuntimeSafety(false);
-        for (batch.quads[0..batch.count], from[0..batch.count]) |quad, *colors| {
+        for (batch.quads[0..batch.count], from[0..batch.count], 0..) |quad, *colors, k| {
             const at = pixels + @as(u32, quad.y) * tile_size + quad.x;
-            if (quad.kept == 0xF and blend == .off) {
+            const bits = batch.bitsOf(samples, sample, k);
+            if (bits == 0xF and blend == .off) {
                 // A row of a quad a store: its column is even, and its two
                 // pixels are 8 bytes aligned, in the tile and here.
                 const pairs: *const [2]u64 = @ptrCast(@alignCast(colors));
                 inline for (0..2) |row| @as(*u64, @ptrCast(@alignCast(at + row * tile_size))).* = pairs[row];
             } else inline for (0..4) |i| {
-                if (quad.kept >> i & 1 != 0) at[offset(i)] = pipeline.blendedBy(blend, colors[i], at[offset(i)]);
+                if (bits >> i & 1 != 0) at[offset(i)] = pipeline.blendedBy(blend, colors[i], at[offset(i)]);
             }
         }
     }
 
     /// As `put`, by what the attachment's Mixing says.
-    fn putMixed(batch: *Batch, pixels: [*]u32, mixing: *const pipeline.Mixing, from: [*][4]u32) void {
+    fn putMixed(batch: *Batch, comptime samples: u32, comptime sample: u32, pixels: [*]u32, mixing: *const pipeline.Mixing, from: [*][4]u32) void {
         @setRuntimeSafety(false);
-        for (batch.quads[0..batch.count], from[0..batch.count]) |quad, *colors| {
+        for (batch.quads[0..batch.count], from[0..batch.count], 0..) |quad, *colors, k| {
             const at = pixels + @as(u32, quad.y) * tile_size + quad.x;
+            const bits = batch.bitsOf(samples, sample, k);
             inline for (0..4) |i| {
-                if (quad.kept >> i & 1 != 0) at[offset(i)] = mixing.mixed(colors[i], at[offset(i)]);
+                if (bits >> i & 1 != 0) at[offset(i)] = mixing.mixed(colors[i], at[offset(i)]);
             }
         }
     }

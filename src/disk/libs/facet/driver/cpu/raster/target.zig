@@ -183,7 +183,9 @@ pub const Packing = struct {
 /// pixel is dithered as the tile's would be at that pixel, and the two are
 /// the same bytes. For what a pass clears and never draws into - the layers
 /// of a framebuffer past its first (since 1.91) - which goes into memory
-/// without a tile. Cut to the surface.
+/// without a tile. Cut to the surface, which is of one sample a pixel: a
+/// multisampled image has the one layer (since 1.98), so nothing clears
+/// one this way.
 pub fn fillSurface(surface: Surface, area: Rect, color: u32) void {
     const packing = Packing.of(surface.format);
     const right = @min(area.x +| area.width, surface.width);
@@ -307,6 +309,10 @@ pub const Surface = struct {
     width: u32,
     height: u32,
     format: Format,
+    /// From one sample's plane to the next, for a multisampled image:
+    /// each laid out as the first, after it (`Image.sample_bytes`). 0 at
+    /// one sample a pixel. (Since 1.103.)
+    sample_bytes: usize = 0,
 };
 
 /// What each frame starts with.
@@ -323,6 +329,11 @@ pub const Attachments = struct {
     color_count: u32 = 1,
     depth: Depth = .{},
     stencil: Stencil = .{},
+    /// A pixel's samples, 1 or 4: at four each colour attachment has a
+    /// plane in every tile for each sample (`Tile.samplePlane`), loaded
+    /// from and stored into its surface's own (`Surface.sample_bytes`).
+    /// (Since 1.103.)
+    samples: u32 = 1,
 
     /// Colour attachment `output`'s: the first's for 0.
     pub inline fn colorAt(attachments: *const Attachments, output: u32) Color {
@@ -429,8 +440,9 @@ const TileState = struct {
 /// pixels the depth pre-pass's second pass has shaded, a bit each, a row
 /// a word. The colour attachments past the first, where a frame draws
 /// several together, have planes of their own outside it
-/// (`Target.extras`): the one colour a frame usually draws keeps the
-/// buffer the 24 KiB it was, and the cache with it.
+/// (`Target.extras`), and so do the samples past the first of a frame
+/// of four (since 1.103): the one colour a frame usually draws keeps
+/// the buffer the 24 KiB it was, and the cache with it.
 const Buffer = extern struct {
     color: [tile_pixels]u32 align(line_bytes),
     depth: [tile_pixels]u16,
@@ -452,6 +464,12 @@ pub const Tile = struct {
     /// Null where the frame draws the one colour, whose colours go on the
     /// stack as they always did. (Since 1.51.)
     extra_colors: ?[*][4]u32 = null,
+    /// The planes of samples 1 to `samples` - 1 of every colour
+    /// attachment, `samples` - 1 of the first's and then of each after,
+    /// `tile_pixels` words each; null at one sample a pixel. (Since
+    /// 1.103.)
+    sample_planes: ?[*]u32 = null,
+    samples: u32 = 1,
     /// The grid square's number, row by row.
     index: u32,
     /// The grid square's top left on the surface.
@@ -490,6 +508,13 @@ pub const Tile = struct {
     pub inline fn plane(tile: *const Tile, output: u32) [*]u32 {
         if (output == 0) return &tile.buffer.color;
         return tile.extras.? + (output - 1) * tile_pixels;
+    }
+
+    /// Sample `sample` of colour attachment `output`'s plane: `plane` for
+    /// sample 0, one of `sample_planes` for the others. (Since 1.103.)
+    pub inline fn samplePlane(tile: *const Tile, output: u32, sample: u32) [*]u32 {
+        if (sample == 0) return tile.plane(output);
+        return tile.sample_planes.? + (output * (tile.samples - 1) + sample - 1) * tile_pixels;
     }
 
     /// Row `y` of colour attachment `output`'s plane, from its left.
@@ -562,12 +587,15 @@ pub const Target = struct {
     tiles: []TileState,
     /// A buffer for each part.
     buffers: *[most_parts]Buffer,
-    /// The planes for the colour attachments past the first, where the
-    /// frame draws several together: `extra_planes` for each part, one
-    /// after another, `tile_pixels` words each. Null where there are
-    /// none. (Since 1.51.)
+    /// What each part has past its buffer, one part's after another
+    /// (`wordsOf`): the planes for the colour attachments past the
+    /// first, where the frame draws several together, `extra_planes`
+    /// of them `tile_pixels` words each; samples 1 to `sample_room` - 1
+    /// of every colour attachment's plane (since 1.103); and the room
+    /// for a batch's colours. Null where there is nothing. (Since 1.51.)
     extras: ?[*]u32 = null,
     extra_planes: u32 = 0,
+    sample_room: u32 = 1,
     /// The squares a frame draws, in the order they are handed out, and
     /// the next to hand out.
     order: []u32,
@@ -618,7 +646,7 @@ pub const Target = struct {
             .room = 0,
         };
         target.take(surfaces);
-        try target.lay(grid.squares(), planesOf(attachments));
+        try target.lay(grid.squares(), planesOf(attachments), attachments.samples);
         return target;
     }
 
@@ -642,17 +670,20 @@ pub const Target = struct {
         return @min(@max(attachments.color_count, 1), most_colors) - 1;
     }
 
-    /// The words one part takes for `planes` extra planes and the batch
-    /// colours of the attachments they and the first make: 0 for a frame
-    /// of the one colour, whose colours go on the worker's stack.
-    fn wordsOf(planes: u32) usize {
-        if (planes == 0) return 0;
-        return @as(usize, planes) * tile_pixels + @as(usize, planes + 1) * batch_color_words;
+    /// The words one part takes for `planes` extra planes, for samples 1
+    /// to `samples` - 1 of each of those and the first's (since 1.103),
+    /// and for the batch colours of the attachments: 0 for a frame of
+    /// the one colour at one sample a pixel. The one colour a draw
+    /// usually writes has its batch's colours on the worker's stack.
+    fn wordsOf(planes: u32, samples: u32) usize {
+        const sample_words = @as(usize, planes + 1) * (samples - 1) * tile_pixels;
+        if (planes == 0) return sample_words;
+        return @as(usize, planes) * tile_pixels + sample_words + @as(usize, planes + 1) * batch_color_words;
     }
 
     /// The same for this target's own planes.
     inline fn partWords(target: *const Target) usize {
-        return wordsOf(target.extra_planes);
+        return wordsOf(target.extra_planes, target.sample_room);
     }
 
     /// The target moved onto `area` of `surface`, which may be another, and
@@ -668,7 +699,9 @@ pub const Target = struct {
     pub fn moveToAll(target: *Target, surfaces: []const Surface, area: Rect, attachments: Attachments) error{ OutOfMemory, OutOfBounds }!void {
         const grid = try Grid.over(surfaces, area);
         const planes = planesOf(attachments);
-        if (grid.squares() > target.room or planes > target.extra_planes) try target.lay(@max(grid.squares(), target.room), @max(planes, target.extra_planes));
+        if (grid.squares() > target.room or planes > target.extra_planes or attachments.samples > target.sample_room) {
+            try target.lay(@max(grid.squares(), target.room), @max(planes, target.extra_planes), @max(attachments.samples, target.sample_room));
+        }
         target.take(surfaces);
         target.area = area;
         target.attachments = attachments;
@@ -681,12 +714,12 @@ pub const Target = struct {
     }
 
     /// A block for the buffers, `planes` colour planes a part past the
-    /// first and `squares` squares, in place of the one there was: all of
-    /// them laid out in it.
-    fn lay(target: *Target, squares: u32, planes: u32) error{OutOfMemory}!void {
+    /// first, room for `samples` samples a pixel and `squares` squares, in
+    /// place of the one there was: all of them laid out in it.
+    fn lay(target: *Target, squares: u32, planes: u32, samples: u32) error{OutOfMemory}!void {
         const host = target.host;
         const buffers_bytes = @sizeOf([most_parts]Buffer);
-        const extras_bytes = @as(usize, most_parts) * wordsOf(planes) * @sizeOf(u32);
+        const extras_bytes = @as(usize, most_parts) * wordsOf(planes, samples) * @sizeOf(u32);
         const tiles_bytes = squares * @sizeOf(TileState);
         const order_bytes = squares * @sizeOf(u32);
         const bytes = line_bytes + buffers_bytes + extras_bytes + tiles_bytes + order_bytes;
@@ -695,8 +728,9 @@ pub const Target = struct {
         var at = (@intFromPtr(memory) + line_bytes - 1) / line_bytes * line_bytes;
         target.buffers = @ptrFromInt(at);
         at += buffers_bytes;
-        target.extras = if (planes == 0) null else @as([*]u32, @ptrFromInt(at));
+        target.extras = if (extras_bytes == 0) null else @as([*]u32, @ptrFromInt(at));
         target.extra_planes = planes;
+        target.sample_room = samples;
         at += extras_bytes;
         target.tiles = @as([*]TileState, @ptrFromInt(at))[0..squares];
         at += tiles_bytes;
@@ -816,10 +850,17 @@ pub const Target = struct {
         const x = target.grid_x + index % target.columns * tile_size;
         const y = target.grid_y + index / target.columns * tile_size;
         const area = target.area;
+        // This part's block: its extra planes, its samples' planes, then
+        // its batch colours.
+        const block = if (target.extras) |first| first + @as(usize, part) * target.partWords() else null;
+        const planes = target.extra_planes;
+        const samples = target.attachments.samples;
         return .{
             .buffer = &target.buffers[part],
-            .extras = if (target.extras) |first| first + @as(usize, part) * target.partWords() else null,
-            .extra_colors = if (target.extras) |first| @ptrCast(@alignCast(first + @as(usize, part) * target.partWords() + target.extra_planes * tile_pixels)) else null,
+            .extras = if (planes == 0) null else block,
+            .sample_planes = if (samples == 1) null else block.? + planes * tile_pixels,
+            .samples = samples,
+            .extra_colors = if (planes == 0) null else @ptrCast(@alignCast(block.? + (planes + (planes + 1) * (target.sample_room - 1)) * tile_pixels)),
             .index = index,
             .x = x,
             .y = y,
@@ -837,10 +878,11 @@ pub const Target = struct {
         const colors = target.colorCount();
         var output: u32 = 0;
         while (output < colors) : (output += 1) {
-            switch (target.attachments.colorAt(output).load) {
-                .clear => @memset(tile.plane(output)[0..tile_pixels], target.clear_pixels[output]),
-                .keep => target.load(tile, output),
-            }
+            var sample: u32 = 0;
+            while (sample < tile.samples) : (sample += 1) switch (target.attachments.colorAt(output).load) {
+                .clear => @memset(tile.samplePlane(output, sample)[0..tile_pixels], target.clear_pixels[output]),
+                .keep => target.load(tile, output, sample),
+            };
         }
         const depth = &target.attachments.depth;
         if (depth.used) switch (depth.load) {
@@ -866,7 +908,10 @@ pub const Target = struct {
             }
         }
         output = 0;
-        while (output < colors) : (output += 1) target.store(tile, output);
+        while (output < colors) : (output += 1) {
+            var sample: u32 = 0;
+            while (sample < tile.samples) : (sample += 1) target.store(tile, output, sample);
+        }
         if (depth.store) target.storeDepth(tile);
         if (stencil.store) target.storeStencil(tile);
     }
@@ -899,23 +944,26 @@ pub const Target = struct {
     }
 
     /// Colour attachment `output`'s surface under the tile, into that
-    /// attachment's plane in the buffer.
-    fn load(target: *Target, tile: *const Tile, output: u32) void {
+    /// attachment's plane in the buffer: sample `sample`'s of each.
+    fn load(target: *Target, tile: *const Tile, output: u32, sample: u32) void {
         const packing = target.packings[output];
         const column = tile.x + tile.left;
+        const plane = tile.samplePlane(output, sample);
         var row = tile.top;
         while (row < tile.bottom) : (row += 1) {
-            packing.load(tile.rowOf(output, row) + tile.left, target.pixelAt(output, column, tile.y + row), tile.right - tile.left);
+            packing.load(plane + row * tile_size + tile.left, target.pixelAt(output, sample, column, tile.y + row), tile.right - tile.left);
         }
     }
 
-    /// The tile's plane for colour attachment `output`, into its surface.
-    fn store(target: *Target, tile: *const Tile, output: u32) void {
+    /// The tile's plane for colour attachment `output`, into its surface:
+    /// sample `sample`'s of each.
+    fn store(target: *Target, tile: *const Tile, output: u32, sample: u32) void {
         const packing = target.packings[output];
         const column = tile.x + tile.left;
+        const plane = tile.samplePlane(output, sample);
         var row = tile.top;
         while (row < tile.bottom) : (row += 1) {
-            packing.store(target.pixelAt(output, column, tile.y + row), tile.rowOf(output, row) + tile.left, tile.right - tile.left, column, tile.y + row);
+            packing.store(target.pixelAt(output, sample, column, tile.y + row), plane + row * tile_size + tile.left, tile.right - tile.left, column, tile.y + row);
         }
     }
 
@@ -1002,10 +1050,11 @@ pub const Target = struct {
         return plane.pixels + @as(usize, y) * plane.pitch + @as(usize, x) * plane.stride;
     }
 
-    /// Colour attachment `output`'s surface, at column `x` of row `y`.
-    inline fn pixelAt(target: *const Target, output: u32, x: u32, y: u32) [*]u8 {
+    /// Colour attachment `output`'s surface, at column `x` of row `y` of
+    /// sample `sample`'s plane.
+    inline fn pixelAt(target: *const Target, output: u32, sample: u32, x: u32, y: u32) [*]u8 {
         const surface = target.surfaces[output];
-        return surface.pixels + @as(usize, y) * surface.pitch + @as(usize, x) * target.packings[output].bytes;
+        return surface.pixels + sample * surface.sample_bytes + @as(usize, y) * surface.pitch + @as(usize, x) * target.packings[output].bytes;
     }
 };
 

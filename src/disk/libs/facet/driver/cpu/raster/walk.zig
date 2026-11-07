@@ -232,6 +232,20 @@ pub inline fn sampleMask(upper: [4]Span, lower: [4]Span, x: u32) u16 {
     return mask;
 }
 
+/// The pixels a row's runs hold between them at more than one sample a
+/// pixel: from the first that any of them holds to past the last; none
+/// where they hold nothing. What a quad is looked for in, and its depth
+/// read from (batched.zig). (Since 1.103.)
+pub inline fn hullOf(spans: anytype) Span {
+    var hull = Span{ .left = ~@as(u32, 0), .right = 0 };
+    for (spans) |span| {
+        if (span.empty()) continue;
+        hull.left = @min(hull.left, span.left);
+        hull.right = @max(hull.right, span.right);
+    }
+    return if (hull.empty()) Span.none else hull;
+}
+
 /// The pixels of a quad with any of their samples inside, bit i pixel i:
 /// those it is shaded for (`shader.Quad.covered`). (Since 1.102.)
 pub inline fn pixelsOf(mask: u16) u4 {

@@ -347,7 +347,8 @@ fn surfaceOf(framebuffer: *const _render.Target, output: u32) ?raster.Surface {
 /// rows has layers since 1.91, and until then this was the image's first
 /// layer whatever its view said: what drew into a view of the second layer
 /// went into the first, the one place the depth's `planeOf` was already
-/// right about.
+/// right about. A multisampled image's samples follow sample 0's plane,
+/// a plane each (since 1.103).
 fn surfaceAt(view: *const _image.ImageView, layer: u32) ?raster.Surface {
     const image = view.image;
     const data = image.data orelse return null;
@@ -362,6 +363,7 @@ fn surfaceAt(view: *const _image.ImageView, layer: u32) ?raster.Surface {
             .r5g6b5_unorm_pack16 => .rgb565,
             else => unreachable,
         },
+        .sample_bytes = @intCast(image.sample_bytes),
     };
 }
 
@@ -506,6 +508,7 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, outp
     var attachments = raster.Attachments{
         .color = .{ .load = if (render_pass.color_loads[0] == .clear) .clear else .keep, .clear = command.clear_colors[@min(first_clear, _render.most_colors - 1)] },
         .color_count = colors,
+        .samples = render_pass.samples,
         .depth = .{
             .used = render_pass.tests_depth,
             .clear = @intCast(command.clear_depth),

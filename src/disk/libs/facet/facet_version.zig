@@ -2259,4 +2259,78 @@ pub const LIBRARY_VERSION = 1;
 /// - a mask's samples a bit apart rather than four, or sample 3 left out
 ///   of a quad's pixels;
 /// - a row's runs taken as empty when its first sample's is.
-pub const LIBRARY_REVISION = 102;
+///
+/// 103: **The cores draw four samples a pixel in colour: a plane for each
+/// sample in the tile, a pixel shaded once, and each sample written and
+/// counted as its own coverage says.**
+///
+/// Step K2 of item 61 of docs/facet-vulkan10.md. No device draws four
+/// samples yet: the capability stays off until K7, and the tests turn it
+/// on.
+///
+/// A frame of four samples (`Attachments.samples`, the render pass's)
+/// keeps samples 1 to 3 of each colour attachment in planes of their own.
+/// They sit after the extra attachments' planes, in the block each part has
+/// beside its buffer (`Tile.samplePlane`). The buffer, and a frame of one
+/// sample, are as they were. Every plane is cleared, loaded and stored
+/// on its own, from and into its own plane of the image
+/// (`Surface.sample_bytes`).
+///
+/// The walk hands on each sample's runs (1.102). A quad's samples are cut
+/// to the pipeline's sample mask, each of its four bits spread over its
+/// sample's four (`Shading.sample_bits`), as llvmpipe ANDs each sample's
+/// coverage with that sample's bit (lp_state_fs.c:3505-3513). A pixel with
+/// any sample left is shaded once, its fragment function given those
+/// pixels as `covered`. llvmpipe likewise runs its shader once, under the
+/// samples' masks ORed together (lp_state_fs.c:860-870), unless it shades
+/// by sample (:1076). The colour goes into the plane of each sample
+/// covered, blended with that sample's own (`Batch.put`): llvmpipe blends
+/// its one colour into each sample's plane under that sample's mask
+/// (lp_state_fs.c:3651-3672). An occlusion query counts the samples
+/// (lp_state_fs.c:1017-1021, :1443-1448). A triangle whose mask holds
+/// none of the frame's samples stops after setup, as at one sample
+/// (lp_setup_context.h:311-316).
+///
+/// The depth and the stencil are still one a pixel, tested and written at
+/// its centre, until K3. A frame of four draws without the depth
+/// pre-pass, whose walk is of pixels. At one sample a pixel nothing
+/// changes: 200 triangles through five pipelines, and an occlusion query
+/// over them, came out the same bytes before and after. The pipelines test
+/// depth, ask for the pre-pass, add, mix, and mask every sample away.
+///
+/// Three tests turn the capability on and draw into images of four
+/// samples. Every plane is written by hand first, and each plane is then
+/// held, pixel by pixel, to each sample tested against the triangle's
+/// corners.
+/// - One draws a triangle across four tiles, cut by the render area,
+///   through a pipeline that asks for the depth pre-pass. It counts the
+///   fragment function's pixels and the query's samples. A second pass
+///   then loads, draws another triangle, and drops its odd columns.
+/// - One blends three draws over the whole attachment, each under a sample
+///   mask of its own: added, mixed one and one, and stored. A pass of one
+///   sample on the same queue comes before them, and a rectangle of the
+///   attachment is cleared after them.
+/// - One draws three attachments together.
+///
+/// Each of thirty changes put back fails one of them:
+/// - every plane but the first left uncleared, unloaded or unstored, or
+///   every plane of the image taken for its first;
+/// - the samples' planes laid over the extra planes, the batch's colours
+///   over the samples' planes, or every attachment's samples in the
+///   first's;
+/// - no room for the samples' planes, the room not kept, or a target laid
+///   out for one sample drawing four;
+/// - the image's planes or the frame's samples not given;
+/// - a frame of four walked or set up as one;
+/// - the sample mask's bit 0 alone tested, the mask spread over a pixel's
+///   samples, or not applied;
+/// - the depth pre-pass at four samples;
+/// - the quads looked for in sample 0's runs alone, or to the nearest
+///   run's end, or the upper rows' runs taken for the lower;
+/// - a quad's pixels those of its sample 0, or its mask not kept;
+/// - a full batch put as one sample, or the first sample's plane alone
+///   written;
+/// - a dropped pixel's samples written, a kept pixel's written into every
+///   plane, or each plane by the mirrored sample's bits;
+/// - the query given pixels, or a dropped pixel's samples.
+pub const LIBRARY_REVISION = 103;
