@@ -3370,4 +3370,39 @@ pub const LIBRARY_VERSION = 1;
 /// changes put back fails them. C:test/FacetProbe has the cores read and
 /// write such an image through a storage view of R32_UINT, and a device
 /// whose format query refuses the flag refuse the image as well.
-pub const LIBRARY_REVISION = 131;
+///
+/// 132: **CmdCopyImage between two formats of one size.** Item 90 of
+/// docs/facet-vulkan10.md, found while doing item 42. Vulkan copies an
+/// image into another of any format of its size - "Color formats with the
+/// same texel block size are considered size-compatible", and copies are
+/// made between such formats (58.1.8, which
+/// VUID-vkCmdCopyImage-srcImage-01548 asks of the two) - and what it
+/// copies is the bits. The cores copied some of those pairs only: none
+/// where one image kept its texels as it was given them and the other not,
+/// or both did in formats of their own - R8G8B8A8_UNORM into R32_UINT,
+/// R16G16_UNORM into R32_SFLOAT - none between block images of two
+/// formats, BC1 into BC4 among them, and none at all between a block image
+/// and a texel one. Now a texel goes as the bytes a buffer holds it in,
+/// which `_image.readTexel` and `writeTexel` already moved whatever the
+/// format, between any two uncompressed images of one size; two block
+/// images copy their blocks where the blocks are of one size; and a block
+/// image and an uncompressed one whose texel is as large as its block copy
+/// each block as a texel (`copyAcross`), the region's offsets each in its
+/// own image's texels and its extent in the source's, as Vulkan
+/// size-adjusts it (26.3). That is lavapipe's copy, which hands each one
+/// to `resource_copy_region` (`handle_copy_image`,
+/// src/gallium/frontends/lavapipe/lvp_execute.c:2784-2867), and llvmpipe
+/// copies the bytes as they lie (`lp_resource_copy`,
+/// src/gallium/drivers/llvmpipe/lp_surface.c:86-116). The V3D plays the
+/// copy through the same function, and of the formats it keeps only
+/// B8G8R8A8 and R8G8B8A8 are of one size, which it copied already.
+///
+/// Tests: R8G8B8A8_UNORM into R32_UINT and back, B8G8R8A8_UNORM into
+/// R16G16_UINT, R16G16_UNORM into R32_SFLOAT and R32_UINT into R32_SFLOAT
+/// each give back the bytes copied in; BC6H_UFLOAT into BC6H_SFLOAT and
+/// BC1 into BC4 the blocks; BC1's four blocks become an R32G32_UINT
+/// image's four texels and those another BC1 image's blocks; a column of
+/// blocks, one block and one texel go where the offsets say and nothing
+/// else moves; and a block into a texel of another size takes nothing.
+/// Each of 12 changes put back fails them.
+pub const LIBRARY_REVISION = 132;

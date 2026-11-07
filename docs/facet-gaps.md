@@ -852,8 +852,10 @@ Of textures:
   `texture.Texture.partsAt` gives a shader function the halves
   themselves. There is no `_snorm` pair of BC4 and BC5 and no `_srgb`
   form of BC7: a texture holds 0 to 1 and is read as it lies. No BC1 with 1-bit alpha told apart from the opaque one past the
-  punch-through rule, and nothing compresses - a blit or a copy into a
-  compressed image from an uncompressed one takes nothing.
+  punch-through rule, and nothing compresses: a blit into a compressed
+  image takes nothing. A copy into one from an uncompressed image whose
+  texel is as large as a block takes each texel's bytes as a block since
+  1.132, Vulkan copying bits (docs/facet-vulkan10.md item 90).
 - The float formats are the five Vulkan ones the library takes:
   `r16g16b16a16_sfloat`, `r32g32b32a32_sfloat`, `b10g11r11_ufloat_pack32`,
   `e5b9g9r9_ufloat_pack32` and `r32_sfloat`. There is no `r16_sfloat` or
@@ -861,8 +863,10 @@ Of textures:
   `CmdClearColorImage` writes such an image since 1.61, with the channels
   of `ClearColorValue.float32` as they stand rather than rounded to a byte
   each, so a red of 2 is a red of 2 afterwards as far as the format
-  reaches. What still makes no floats: a blit into a float image, and a
-  copy into one from an image of another format, take nothing. A blit out
+  reaches. What still makes no floats is a blit into a float image, which
+  takes nothing. A copy into one from an image of another format of its
+  size moves the bits since 1.132, as every copy between two formats of
+  one size does (docs/facet-vulkan10.md item 90). A blit out
   of one reads it as a sample does, each channel held to 0 to 1 and
   rounded to 8 bits (since 1.126; before that it read as nothing).
 

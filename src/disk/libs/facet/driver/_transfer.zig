@@ -30,22 +30,31 @@ pub fn copyImage(command: *const _command.CopyImage) void {
 }
 
 /// CmdCopyImage's regions between two images of one sample a pixel, or
-/// one sample's plane of each.
+/// one sample's plane of each. What is copied is the bits, between any two
+/// formats of one size (58.1.8's size-compatible, which
+/// VUID-vkCmdCopyImage-srcImage-01548 asks of them): each texel goes as
+/// the bytes a buffer would hold it in, whatever the two images keep it
+/// as, and since 1.132 that is so for every such pair. lavapipe hands each
+/// copy to `resource_copy_region` (`handle_copy_image`,
+/// src/gallium/frontends/lavapipe/lvp_execute.c:2784-2867), which llvmpipe
+/// does over the bytes as they lie (`lp_resource_copy`,
+/// src/gallium/drivers/llvmpipe/lp_surface.c:86-116); before, two images
+/// that kept their texels differently, or kept them as given in formats
+/// of their own, took nothing.
 fn copyPlane(command: *const _command.CopyImage, source: *const Image, destination: *Image) void {
     if (!_image.readable(source) or !_image.readable(destination)) return;
     if (_image.unpacks(source) or _image.unpacks(destination)) return;
-    // Both keeping their blocks, of the one format: the blocks go as they
-    // lie, nothing decoded (`Capabilities.kept_compressed`).
-    if (_image.blocked(source) or _image.blocked(destination)) {
-        if (source.format == destination.format) copyBlocks(command, source, destination);
+    const from_blocks = _image.blocked(source);
+    const to_blocks = _image.blocked(destination);
+    // Both keeping their blocks, of one size (of one format before 1.132):
+    // the blocks go as they lie, nothing decoded
+    // (`Capabilities.kept_compressed`).
+    if (from_blocks and to_blocks) {
+        if (_image.blockBytes(source) == _image.blockBytes(destination)) copyBlocks(command, source, destination);
         return;
     }
-    // Two images that keep what they were given - their floats, or their
-    // own channels since 1.69 - move the texels as they lie as well, and
-    // only between images of the one format: nothing here turns one such
-    // format into another.
-    if (_image.keptTexels(source) != _image.keptTexels(destination)) return;
-    if (_image.keptTexels(source) and source.format != destination.format) return;
+    // A block to a texel as large, or a texel to a block (since 1.132).
+    if (from_blocks or to_blocks) return copyAcross(command, source, destination);
     const pixel = _image.bytesOf(source.format);
     if (pixel != _image.bytesOf(destination.format)) return;
     for (_stream.items(_command.CopyImage, facet.ImageCopy, command, command.count)) |*region| {
@@ -110,6 +119,67 @@ fn copyBlocks(command: *const _command.CopyImage, source: *const Image, destinat
             };
         }
     }
+}
+
+/// CmdCopyImage's regions between a block image and an uncompressed one
+/// whose texel is as large as its block (since 1.132): each block of the
+/// one is the bytes of a texel of the other. A region's offsets are each
+/// in its own image's texels and its extent in the source's, so a source
+/// of blocks writes a quarter as many texels each way as its extent says,
+/// and a source of texels as many blocks as it has texels: Vulkan's size
+/// adjustment (26.3, 58.1.8), which `util_resource_copy_region` makes by
+/// counting the region in blocks of each format.
+fn copyAcross(command: *const _command.CopyImage, source: *const Image, destination: *Image) void {
+    const from_blocks = _image.blocked(source);
+    const wide = if (from_blocks) _image.blockBytes(source) else _image.blockBytes(destination);
+    if (wide != _image.bytesOf(if (from_blocks) destination.format else source.format)) return;
+    // How far a block or a texel reaches each way, in its own texels.
+    const from_step: u32 = if (from_blocks) 4 else 1;
+    const to_step: u32 = if (from_blocks) 1 else 4;
+    for (_stream.items(_command.CopyImage, facet.ImageCopy, command, command.count)) |*region| {
+        const from_level = region.src_subresource.mip_level;
+        const to_level = region.dst_subresource.mip_level;
+        if (from_level >= source.levels or to_level >= destination.levels) continue;
+        if (region.src_offset.x < 0 or region.src_offset.y < 0 or region.dst_offset.x < 0 or region.dst_offset.y < 0) continue;
+        const from_size = _image.levelSize(source, from_level);
+        const to_size = _image.levelSize(destination, to_level);
+        const from_x: u32 = @intCast(region.src_offset.x);
+        const from_y: u32 = @intCast(region.src_offset.y);
+        const to_x: u32 = @intCast(region.dst_offset.x);
+        const to_y: u32 = @intCast(region.dst_offset.y);
+        if (from_x % from_step != 0 or from_y % from_step != 0 or to_x % to_step != 0 or to_y % to_step != 0) continue;
+        if (from_x >= from_size[0] or from_y >= from_size[1] or to_x >= to_size[0] or to_y >= to_size[1]) continue;
+        // The region in blocks of the block image, which are texels of
+        // the other, as far as both images reach.
+        const across = @min(divCeil(@min(region.extent.width, from_size[0] - from_x), from_step), divCeil(to_size[0] - to_x, to_step));
+        const down = @min(divCeil(@min(region.extent.height, from_size[1] - from_y), from_step), divCeil(to_size[1] - to_y, to_step));
+        const from_layers = _image.layersOf(source, region.src_subresource, region.src_offset.z, region.extent.depth) orelse continue;
+        const to_layers = _image.layersOf(destination, region.dst_subresource, region.dst_offset.z, region.extent.depth) orelse continue;
+        var bytes: [16]u8 = undefined;
+        for (0..@min(from_layers.count, to_layers.count)) |layer_number| {
+            const from_layer = from_layers.first + @as(u32, @intCast(layer_number));
+            const to_layer = to_layers.first + @as(u32, @intCast(layer_number));
+            for (0..down) |row| for (0..across) |column| {
+                const r: u32 = @intCast(row);
+                const c: u32 = @intCast(column);
+                const fx = from_x + c * from_step;
+                const fy = from_y + r * from_step;
+                const tx = to_x + c * to_step;
+                const ty = to_y + r * to_step;
+                if (from_blocks) {
+                    _image.readBlock(source, from_level, from_layer, fx, fy, bytes[0..wide]);
+                    _image.writeTexel(destination, to_level, to_layer, tx, ty, bytes[0..wide]);
+                } else {
+                    _image.readTexel(source, from_level, from_layer, fx, fy, &bytes);
+                    _image.writeBlock(destination, to_level, to_layer, tx, ty, bytes[0..wide]);
+                }
+            };
+        }
+    }
+}
+
+fn divCeil(value: u32, step: u32) u32 {
+    return (value + step - 1) / step;
 }
 
 /// CmdResolveImage's regions, the part of each inside both images: each

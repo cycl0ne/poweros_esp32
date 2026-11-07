@@ -128,8 +128,8 @@ in 1.116, item 88 in 1.117, item 86 in 1.118, item 48's half of two,
 the cores', in 1.119, item 41 in 1.120, item 89 in 1.121, item 15 in
 1.122, item 11 in 1.123, item 12 in 1.124, item 79 in 1.125, item 32 in
 1.126, item 31 in 1.127, item 29 in 1.128, item 9 in 1.129, item 10's
-first half of two in 1.130, and item 42's half of two, the cores', in
-1.131.**
+first half of two in 1.130, item 42's half of two, the cores', in
+1.131, and item 90 in 1.132.**
 Each
 carries a *Done* note below saying what was actually built and where the
 item's own description turned out to be wrong - and several did. Things
@@ -2737,7 +2737,7 @@ comparison read a depth at all 16. The V3D samples no depth yet
 
 ### 90. CmdCopyImage copies nothing between two formats of one size that the cores keep differently
 
-*images / copies* &mdash; conformance-blocking, small, found while doing item 42
+*images / copies* &mdash; conformance-blocking, small, found while doing item 42 &mdash; **done in 1.132**
 
 Vulkan copies an image into another of any format of its size: "Color
 formats with the same texel block size are considered size-compatible",
@@ -2767,6 +2767,22 @@ the one side and in texels on the other, as Vulkan size-adjusts the
 destination's offset and extent (26.3).
 
 > Verified: driver/_transfer.zig:39-40 `if (_image.blocked(source) or _image.blocked(destination)) { if (source.format == destination.format) copyBlocks(command, source, destination);`, :47 `if (_image.keptTexels(source) != _image.keptTexels(destination)) return;`, :48 `if (_image.keptTexels(source) and source.format != destination.format) return;`; image/_image.zig:1180-1182, `keptTexels` is a float format, one of wide channels or one of whole numbers.
+
+**Done in 1.132**, in 53 lines of code and 114 of tests, as lavapipe
+copies: every region goes to `resource_copy_region`, which llvmpipe
+makes over the bytes as they lie, counted in blocks of each format. The
+two refusals went, so between two uncompressed images of one size each
+texel goes as the bytes a buffer holds it in, whatever each image keeps
+it as. Two block images copy their blocks where the blocks are of one
+size. A block image and an uncompressed one whose texel is as large as
+its block copy a block to a texel or a texel to a block (`copyAcross`):
+the region's offsets are each in its own image's texels and its extent
+in the source's, so a source of blocks writes a quarter as many texels
+each way as the extent says, and a source of texels as many blocks as it
+has texels. The item was right in what it said; what it did not say is
+the policy for what Vulkan does not have: a block into a texel of
+another size is invalid usage (VUID-vkCmdCopyImage-srcImage-01548), and
+takes nothing, as two uncompressed images of two sizes already did.
 
 ## Deferred by the decision, not out of reach
 

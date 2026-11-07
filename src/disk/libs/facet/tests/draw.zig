@@ -16547,3 +16547,147 @@ test "an image made for views of another format: its texels kept as they lie, ea
         try testing.expect(none == null);
     }
 }
+
+// --- 1.132: copies between formats of one size (item 90) -------------------
+
+test "CmdCopyImage between two formats of one size moves the bits, whatever each image keeps them as: 8888 into a whole number and back, wide channels and whole numbers into a float (item 90)" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST | facet.IMAGE_USAGE_TRANSFER_SRC;
+    const side4 = facet.Extent3D{ .width = 4, .height = 4 };
+    const staging, const staging_bytes = try bench.buffer(64, facet.BUFFER_USAGE_TRANSFER_SRC);
+    const back, const back_bytes = try bench.buffer(64, facet.BUFFER_USAGE_TRANSFER_DST);
+    // Bytes no two alike, an opaque alpha among them.
+    for (0..64) |k| staging_bytes[k] = @truncate(k * 7 + 3);
+    const region = facet.BufferImageCopy{ .image_extent = side4 };
+    const copy = facet.ImageCopy{ .extent = side4 };
+    // Each pair is two formats of four bytes a texel that the cores keep
+    // differently: R8G8B8A8 and B8G8R8A8 spread over 64 bits, the whole
+    // numbers, the wide channels and the float each as it lies.
+    const pairs = [_][2]facet.Format{
+        .{ .r8g8b8a8_unorm, .r32_uint },
+        .{ .r32_uint, .r8g8b8a8_unorm },
+        .{ .b8g8r8a8_unorm, .r16g16_uint },
+        .{ .r16g16_unorm, .r32_sfloat },
+        .{ .r32_uint, .r32_sfloat },
+    };
+    for (pairs) |pair| {
+        const from = try bench.bareImage(.{ .format = pair[0], .extent = side4, .usage = usage }, false);
+        const into = try bench.bareImage(.{ .format = pair[1], .extent = side4, .usage = usage }, false);
+        @memset(back_bytes[0..64], 0);
+        const commands = try bench.record();
+        fb.CmdCopyBufferToImage(commands, staging, from, .transfer_dst_optimal, 1, @ptrCast(&region));
+        fb.CmdCopyImage(commands, from, .transfer_src_optimal, into, .transfer_dst_optimal, 1, @ptrCast(&copy));
+        fb.CmdCopyImageToBuffer(commands, into, .transfer_src_optimal, back, 1, @ptrCast(&region));
+        try bench.submit();
+        try testing.expectEqualSlices(u8, staging_bytes[0..64], back_bytes[0..64]);
+    }
+}
+
+test "CmdCopyImage between block images of one block size moves the blocks, and between a block image and a texel one of its block's size each block as a texel, a region counted in each image's own texels (item 90)" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST | facet.IMAGE_USAGE_TRANSFER_SRC;
+    const side8 = facet.Extent3D{ .width = 8, .height = 8 };
+    const side2 = facet.Extent3D{ .width = 2, .height = 2 };
+    const staging, const staging_bytes = try bench.buffer(64, facet.BUFFER_USAGE_TRANSFER_SRC);
+    const back, const back_bytes = try bench.buffer(64, facet.BUFFER_USAGE_TRANSFER_SRC | facet.BUFFER_USAGE_TRANSFER_DST);
+    for (0..64) |k| staging_bytes[k] = @truncate(k * 11 + 5);
+    const blocks8 = facet.BufferImageCopy{ .image_extent = side8 };
+    const texels2 = facet.BufferImageCopy{ .image_extent = side2 };
+    const whole8 = facet.ImageCopy{ .extent = side8 };
+    const whole2 = facet.ImageCopy{ .extent = side2 };
+    const right_column = facet.ImageCopy{ .src_offset = .{ .x = 4 }, .dst_offset = .{ .x = 1 }, .extent = .{ .width = 4, .height = 8 } };
+    const one_block = facet.ImageCopy{ .src_offset = .{ .y = 4 }, .extent = .{ .width = 4, .height = 4 } };
+    const one_word = facet.ImageCopy{ .src_offset = .{ .x = 1, .y = 1 }, .dst_offset = .{ .x = 4 }, .extent = .{ .width = 1, .height = 1 } };
+
+    // Four blocks of 16 bytes, BC6H's unsigned half into its signed one,
+    // and four of 8, BC1's into BC4's: the blocks as they are.
+    for ([_][2]facet.Format{ .{ .bc6h_ufloat_block, .bc6h_sfloat_block }, .{ .bc1_rgb_unorm_block, .bc4_unorm_block } }) |pair| {
+        const from = try bench.bareImage(.{ .format = pair[0], .extent = side8, .usage = usage }, false);
+        const into = try bench.bareImage(.{ .format = pair[1], .extent = side8, .usage = usage }, false);
+        @memset(back_bytes[0..64], 0);
+        const commands = try bench.record();
+        fb.CmdCopyBufferToImage(commands, staging, from, .transfer_dst_optimal, 1, @ptrCast(&blocks8));
+        fb.CmdCopyImage(commands, from, .transfer_src_optimal, into, .transfer_dst_optimal, 1, @ptrCast(&whole8));
+        fb.CmdCopyImageToBuffer(commands, into, .transfer_src_optimal, back, 1, @ptrCast(&blocks8));
+        try bench.submit();
+        const bytes: usize = if (pair[0] == .bc1_rgb_unorm_block) 32 else 64;
+        try testing.expectEqualSlices(u8, staging_bytes[0..bytes], back_bytes[0..bytes]);
+    }
+
+    // BC1's four blocks of 8 bytes as the four texels of an R32G32_UINT
+    // image of 2 x 2, the extent the source's 8 x 8; and back into
+    // another BC1 image, the extent the source's 2 x 2.
+    const blocks = try bench.bareImage(.{ .format = .bc1_rgb_unorm_block, .extent = side8, .usage = usage }, false);
+    const words = try bench.bareImage(.{ .format = .r32g32_uint, .extent = side2, .usage = usage }, false);
+    const again = try bench.bareImage(.{ .format = .bc1_rgb_unorm_block, .extent = side8, .usage = usage }, false);
+    @memset(back_bytes[0..64], 0);
+    var commands = try bench.record();
+    fb.CmdCopyBufferToImage(commands, staging, blocks, .transfer_dst_optimal, 1, @ptrCast(&blocks8));
+    fb.CmdCopyImage(commands, blocks, .transfer_src_optimal, words, .transfer_dst_optimal, 1, @ptrCast(&whole8));
+    fb.CmdCopyImageToBuffer(commands, words, .transfer_src_optimal, back, 1, @ptrCast(&texels2));
+    try bench.submit();
+    try testing.expectEqualSlices(u8, staging_bytes[0..32], back_bytes[0..32]);
+    @memset(back_bytes[0..64], 0);
+    commands = try bench.record();
+    fb.CmdCopyImage(commands, words, .transfer_src_optimal, again, .transfer_dst_optimal, 1, @ptrCast(&whole2));
+    fb.CmdCopyImageToBuffer(commands, again, .transfer_src_optimal, back, 1, @ptrCast(&blocks8));
+    try bench.submit();
+    try testing.expectEqualSlices(u8, staging_bytes[0..32], back_bytes[0..32]);
+
+    // The right column of blocks, from texel 4 across, 4 x 8 of the
+    // source's texels, into the half floats' second column at texel 1:
+    // blocks 1 and 3 there, texels 0 and 2 left as they were.
+    const halves = try bench.bareImage(.{ .format = .r16g16b16a16_sfloat, .extent = side2, .usage = usage }, false);
+    @memset(back_bytes[0..64], 0);
+    commands = try bench.record();
+    fb.CmdCopyBufferToImage(commands, back, halves, .transfer_dst_optimal, 1, @ptrCast(&texels2));
+    fb.CmdCopyImage(commands, blocks, .transfer_src_optimal, halves, .transfer_dst_optimal, 1, @ptrCast(&right_column));
+    fb.CmdCopyImageToBuffer(commands, halves, .transfer_src_optimal, back, 1, @ptrCast(&texels2));
+    try bench.submit();
+    try testing.expectEqualSlices(u8, &([1]u8{0} ** 8), back_bytes[0..8]);
+    try testing.expectEqualSlices(u8, staging_bytes[8..16], back_bytes[8..16]);
+    try testing.expectEqualSlices(u8, &([1]u8{0} ** 8), back_bytes[16..24]);
+    try testing.expectEqualSlices(u8, staging_bytes[24..32], back_bytes[24..32]);
+
+    // One block, the first of the second row, 4 x 4 of the source's
+    // texels at (0, 4): one texel at (0, 0) of a cleared image, the other
+    // three left as they were.
+    const one_texel = try bench.bareImage(.{ .format = .r32g32_uint, .extent = side2, .usage = usage }, false);
+    @memset(back_bytes[0..64], 0);
+    commands = try bench.record();
+    fb.CmdCopyBufferToImage(commands, back, one_texel, .transfer_dst_optimal, 1, @ptrCast(&texels2));
+    fb.CmdCopyImage(commands, blocks, .transfer_src_optimal, one_texel, .transfer_dst_optimal, 1, @ptrCast(&one_block));
+    fb.CmdCopyImageToBuffer(commands, one_texel, .transfer_src_optimal, back, 1, @ptrCast(&texels2));
+    try bench.submit();
+    try testing.expectEqualSlices(u8, staging_bytes[16..24], back_bytes[0..8]);
+    try testing.expectEqualSlices(u8, &([1]u8{0} ** 24), back_bytes[8..32]);
+
+    // One texel, the words' last, into the second block of a cleared BC1
+    // image, at texel (4, 0): that block, the other three left as they
+    // were.
+    const one_block_image = try bench.bareImage(.{ .format = .bc1_rgb_unorm_block, .extent = side8, .usage = usage }, false);
+    @memset(back_bytes[0..64], 0);
+    commands = try bench.record();
+    fb.CmdCopyBufferToImage(commands, back, one_block_image, .transfer_dst_optimal, 1, @ptrCast(&blocks8));
+    fb.CmdCopyImage(commands, words, .transfer_src_optimal, one_block_image, .transfer_dst_optimal, 1, @ptrCast(&one_word));
+    fb.CmdCopyImageToBuffer(commands, one_block_image, .transfer_src_optimal, back, 1, @ptrCast(&blocks8));
+    try bench.submit();
+    try testing.expectEqualSlices(u8, &([1]u8{0} ** 8), back_bytes[0..8]);
+    try testing.expectEqualSlices(u8, staging_bytes[24..32], back_bytes[8..16]);
+    try testing.expectEqualSlices(u8, &([1]u8{0} ** 16), back_bytes[16..32]);
+
+    // A block into a texel of another size is no copy Vulkan has
+    // (VUID-vkCmdCopyImage-srcImage-01548), and takes nothing.
+    const other_size = try bench.bareImage(.{ .format = .r8g8b8a8_unorm, .extent = side2, .usage = usage }, false);
+    @memset(back_bytes[0..64], 0);
+    commands = try bench.record();
+    fb.CmdCopyBufferToImage(commands, back, other_size, .transfer_dst_optimal, 1, @ptrCast(&texels2));
+    fb.CmdCopyImage(commands, blocks, .transfer_src_optimal, other_size, .transfer_dst_optimal, 1, @ptrCast(&whole8));
+    fb.CmdCopyImageToBuffer(commands, other_size, .transfer_src_optimal, back, 1, @ptrCast(&texels2));
+    try bench.submit();
+    try testing.expectEqualSlices(u8, &([1]u8{0} ** 16), back_bytes[0..16]);
+}
