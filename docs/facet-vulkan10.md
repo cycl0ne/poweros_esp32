@@ -389,7 +389,7 @@ Found independently by: entry-points (3 items), objects-commands, formats, confo
 
 After: Multisampling for anything beyond a stub
 
-One fd line, one LVO wrapper, one file in command/, plus VkImageResolve. While rasterization_samples above 1 is refused there is no legal call a program can make — Vulkan forbids a resolve whose source is single-sampled — so the body is validation and nothing else. The command is a day's work; what it waits on is the whole of item 64. This is the one absent command whose absence no feature bit papers over, because Vulkan 1.0's required limits make 4 colour samples a minimum, so a conformant device genuinely has multisampled images to resolve.
+One fd line, one LVO wrapper, one file in command/, plus VkImageResolve. While rasterization_samples above 1 is refused there is no legal call a program can make — Vulkan forbids a resolve whose source is single-sampled — so the body is validation and nothing else. The command is S5 of item 61's sized plan, about 187 lines of code and 65 of tests with its CPU body; what a legal call waits on is the rest of item 61. (This said "a day's work" until 07.11.2026, and named item 64, which is the synchronisation item.) This is the one absent command whose absence no feature bit papers over, because Vulkan 1.0's required limits make 4 colour samples a minimum, so a conformant device genuinely has multisampled images to resolve.
 
 > Verified: the fd has CmdBlitImage (:216) and CmdCopyImage (:214) and no CmdResolveImage; `awk 'NR>12 && NR<284 && /^[A-Za-z]/' sdk/fd/facet_lib.fd | grep -c Resolve` -> 0. render/createrenderpass.zig:215-216 read verbatim: "// A resolve attachment is multisampling's, which there is none of." then `if (subpass.resolve_attachments != null) return .error_feature_not_present;`. docs/facet-todo.md:67 already calls this the one row a conformant 1.0 device may not refuse.
 
@@ -1500,7 +1500,7 @@ The back end is fragment-only and refuses any other stage by name; the vertex an
 
 ### 61. Multisampling: 4 samples a pixel on both devices, with resolve attachments and CmdResolveImage's body **[critical path]**
 
-*rasterisation* &mdash; conformance-blocking, months
+*rasterisation* &mdash; conformance-blocking, port, **sized 07.11.2026: 21 commits, about 1,590 lines of code, 1,340 of tests and 90 of docs**
 
 The largest item Goal A cannot skip, and the only one Vulkan 1.0 gives no way to refuse — not through a feature bit, since sampleRateShading, alphaToOne and variableMultisampleRate are all optional, but through the required limits: framebufferColorSampleCounts, framebufferDepthSampleCounts, framebufferStencilSampleCounts, sampledImageColorSampleCounts, sampledImageDepthSampleCounts and sampledImageStencilSampleCounts must each include VK_SAMPLE_COUNT_4_BIT; framebufferNoAttachmentsSampleCounts must include VK_SAMPLE_COUNT_4_BIT too - *not* the 1 bit alone, as this said until 1.89, which is a seventh field wanting 4x and not a sixth; sampledImageIntegerSampleCounts and storageImageSampleCounts must include 1, the latter only while shaderStorageImageMultisample is false, and both are met; `framebufferIntegerColorSampleCounts`, also named here until 1.89, is not a Vulkan 1.0 limit at all and is not among the 106; and maxSampleMaskWords must be at least 1, which is **done in 1.89** - see below. facet published none of those ten fields until 1.82 and now publishes all of them, at their one-sample values - which is exactly why eight of the eighteen limit shortfalls counted by tests/vulkan_limits.zig are this item - and no device has the capability: rasterization_samples above 1, sample shading, alpha-to-coverage and alpha-to-one are refused in CreateGraphicsPipelines; an attachment with samples != 1 and any resolve_attachments are refused in CreateRenderPass; and CreateImage refuses samples != 1 in the same line that refuses 1D images, so a multisampled image cannot be made at all. On the cores: per-sample colour, depth and stencil in the tile store, a sample loop in every load, store, clear and resolve path, the quad walk writing four pixels under one coverage mask, the sample mask, and alpha-to-coverage in the blend path — the to-do document works the budget through, and its arithmetic needs one correction: a 64x64 tile is about 114 KiB live *across* four parts, but `Host.share` gives each part its own core and so its own L1, so the figure to hold against the A76's 64 KiB L1 data cache is the per-core 28.5 KiB now and 112.5 KiB at 4x. Still past it, so the conclusion stands - but it is past it by 1.8x and not 7x, and that matters because the doc's framing points at halving `tile_size`, which pays for 4x exactly and taxes every single-sampled frame, where the per-part run-time block `lay()` already builds for extra colour attachments and would carry sample planes at no cost to a 1x frame. On the V3D the hardware has 4x coverage and the driver writes one sample's worth in all four bits today, so that side is frame setup, the tile store and resolve rather than new silicon.
 
@@ -1544,6 +1544,51 @@ The row count moved the other way too, by one that was already wrong:
 `_instance.zig` said "Vulkan requires the 4 bit on six of them, so this is
 six shortfalls", where seven of the masks fall short. The pin in
 tests/vulkan_limits.zig is 10 now, of which seven are this item.
+
+**Sized from Mesa, 07.11.2026.** Both Mesa drivers multisample, and facet takes the set they share:
+
+- v3dv reports 1|4 on this same V3D 7.1: in all seven rows Vulkan asks for, in the integer row as well, and 1 for storage (`supported_sample_counts`, v3dv_device.c:1024-1027 and 1179-1189). Its standardSampleLocations is false (:1202), and so is variableMultisampleRate (:392).
+- lavapipe reports 1|4|8, with the standard locations (`LVP_SAMPLE_COUNTS`, lvp_device.c:81-82; :1094). llvmpipe's 4x positions (`lp_sample_pos_4x`, lp_rast.c:63-66) are Vulkan's standard set.
+
+facet reports 1|4 on both devices, with the standard locations on the cores and not on the V3D. These stay off or refused:
+
+- sampleRateShading, alphaToOne and variableMultisampleRate, which are optional;
+- 4x storage images and 4x input attachments;
+- 2, 8 and 16 samples.
+
+`can.multisampling` comes to mean four samples a pixel, with no new field. It turns on in K7 for the cores and in V5 for the V3D, and the masks and the format query follow it, so no sample-count bit is reported before the code that draws it. The first five commits are shared, host-tested, and change nothing a shipped device reports. After them the cores and the V3D proceed independently.
+
+| Step | What | Ported from | Code | Tests |
+|---|---|---|---|---|
+| S1 | The three optional features decoupled. The seven masks become 1\|4, narrowed to 1 while a device lacks the capability, and no-attachments to 1 until item 43 | v3dv_device.c:1179-1189, :392 | 35 | 35 |
+| S2 | A 4x image in sample-major planes, and the format query's 4 bit following CreateImage | lp_texture.c:225-226; lvp_formats.c:362-367 | 70 | 45 |
+| S3 | Copies and clears of every sample | lp_texture.c:225-226 | 25 | 30 |
+| S4 | Render passes, framebuffers and pipelines take 4 samples and resolve attachments | Vulkan's subpass rules, as v3dv asserts them (v3dv_pipeline.c:1319-1320) | 85 | 50 |
+| S5 | CmdResolveImage (item 13), with a CPU body | `resolve_color`, lvp_execute.c:1782-1828; vk_meta_blit_resolve.c:151, :192 | 187 | 65 |
+| K1 | Per-sample coverage in setup, binning and the walk | `lp_sample_pos_4x`; lp_setup.c:127-128, :631-632; lp_setup_tri.c:314-324; `do_block_4`, lp_rast_tri_tmp.h:42-80 | 148 | 267 |
+| K2 | Sample planes in the tile. Shading once a pixel; per-sample colour writes and occlusion | lp_state_fs.c:822-823, 860-870, 1017-1021, 3651-3672 | 217 | 195 |
+| K3 | Per-sample depth and stencil | lp_state_fs.c:926-960, 3437-3439 | 93 | 100 |
+| K4 | Alpha to coverage, with lavapipe's dither | lp_state_fs.c:408-474, 1182-1214; lp_bld_blend.c:342-365 | 34 | 40 |
+| K5 | Resolve attachments, in the tile before its store | lvp_execute.c:1802-1837; v3dvx_cmd_buffer.c:640-686 | 113 | 125 |
+| K6 | Multisampled fetch from a native fragment function | lp_jit.c:399-404; lp_texture.c:1087; lvp_image.c:70-74 | 35 | 45 |
+| K7 | 4x turned on for the cores, closing six rows | | 10 | 40 |
+| K8 | No-attachment subpasses at 4x, after item 43 | v3dv_cmd_buffer.c:2655-2675 | 15 | 20 |
+| V1 | The packet fields: COMMON's MSAA bit and log2 tile size, decimate on loads and stores, oversample, and SAMPLE_STATE's mask | v3d_packet.xml | 23 | 50 |
+| V2 | The tile-size chooser, and SAMPLE_STATE per draw at 4x | `v3d_choose_tile_size`, v3d_util.c:105-206; v3dv_cmd_buffer.c:367-413 | 65 | 45 |
+| V3 | The 4x layout, 2W x 2H and always UIF, as a fourth image kind | v3dv_image.c:136-140, 180-183; v3d_nir_lower_txf_ms.c:46-51 | 75 | 35 |
+| V4 | Binning and rendering a 4x frame, with GFXH-1918 | v3dvx_cmd_buffer.c:206-209, 408-413, 973-984, 1604-1618, 1874-1881 | 76 | 45 |
+| V5 | Resolve in the TLB, with S5 as the fallback; 4x turned on for the V3D, closing three rows | v3dvx_cmd_buffer.c:640-686; v3dv_pass.c:138-142, 663-683; `resolve_image_tlb`, v3dv_meta_copy.c:5109 | 110 | 40 |
+| V6 | Alpha to coverage on the QPU | nir_to_vir.c:2056-2100; v3dvx_pipeline.c:453, 459 | 110 | 35 |
+| V7 | Multisampled fetch through the TMU, after item 59 | v3d_nir_lower_txf_ms.c:46-51 | 45 | 25 |
+| V8 | No-attachment subpasses at 4x, after item 43 | `cmd_buffer_restart_job_for_msaa_if_needed`, v3dv_cmd_buffer.c:2676 | 20 | 10 |
+
+Docs add about 75 lines in K7 and 15 in V5. The V3D's sampled depth and stencil rows wait on item 58 and are not among these commits.
+
+Three things this item said are corrected:
+
+- **The tile is not halved.** At 4x a part's tile would hold 112.5 KiB against the A76's 64 KiB of L1, as worked out above, and halving `tile_size` would tax every 1x frame. The three extra sample planes go instead in the per-part run-time block that `lay()` already builds for extra colour attachments, so a 1x frame is unchanged. Whether a 4x frame should halve its own tile, as `v3d_choose_tile_size` does on the V3D, is a measurement for after K7.
+- **A pass with a resolve marks every tile dirty.** `finish` draws only dirty tiles, and `begin` marks them dirty only when something is cleared. Without this, a tile loaded with LOAD_OP_LOAD and drawn into by nothing would never be resolved.
+- **The pin is 7, and all seven are this item's.** It said 10 at 1.89; item 17's half (1.90) and item 22's half (1.91) have closed since. K7 takes it to 1, and K8 to 0. The verified line above cites creategraphicspipelines.zig:378 and _image.zig:338, which at 1.95 are :414 and :352.
 
 Found independently by: features, limits, semantics, entry-points, conformance-path (all 5 strands that looked at it).
 
