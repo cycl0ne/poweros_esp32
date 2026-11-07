@@ -8324,7 +8324,7 @@ test "query values copied into a buffer: as wide as asked, with availability, an
     try testing.expectEqual(0xAAAA_AAAA, std.mem.readInt(u32, bytes[56..60], .little));
 }
 
-test "a query pool refused: a kind the device does not count, a statistic no stage of the library has, and none at all" {
+test "a query pool refused: a statistic no stage of the library has, and none at all; a timestamp pool made without a clock" {
     var bench = try Bench.up();
     defer bench.down();
     const fb = bench.rig.fb;
@@ -8363,8 +8363,8 @@ test "a query pool refused: a kind the device does not count, a statistic no sta
     try testing.expectEqual(null, made);
 
     // A timestamp is the E-clock, which the library opens as timer.device:
-    // the host's ROM has none, so no device of it writes one, and what the
-    // device says of itself says the same.
+    // the host's ROM has none, so no device of it has a clock, and what the
+    // device says of itself says so.
     const can = _objects.of(_instance.PhysicalDevice, bench.physical).can;
     var properties: facet.PhysicalDeviceProperties = undefined;
     fb.GetPhysicalDeviceProperties(bench.physical, &properties);
@@ -8372,15 +8372,30 @@ test "a query pool refused: a kind the device does not count, a statistic no sta
     var count: u32 = 1;
     fb.GetPhysicalDeviceQueueFamilyProperties(bench.physical, &count, @ptrCast(&family));
     if (can.timestamp_queries) {
-        try testing.expect(family.timestamp_valid_bits > 0);
+        try testing.expect(family.timestamp_valid_bits >= 36);
         try testing.expect(properties.limits.timestamp_period > 0);
-        const pool = try queryPool(&bench, .timestamp, 1, 0);
-        fb.DestroyQueryPool(device, pool);
+        try testing.expectEqual(facet.TRUE, properties.limits.timestamp_compute_and_graphics);
     } else {
         try testing.expectEqual(0, family.timestamp_valid_bits);
         try testing.expectEqual(@as(f32, 0), properties.limits.timestamp_period);
-        try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateQueryPool(device, &.{ .query_type = .timestamp, .query_count = 1 }, &made));
-        try testing.expectEqual(null, made);
+        // Its true would promise every graphics and compute queue 36 bits.
+        try testing.expectEqual(facet.FALSE, properties.limits.timestamp_compute_and_graphics);
+    }
+    // The pool is made either way (since 1.93): vkCreateQueryPool has no
+    // way to refuse a kind, and what says there is no clock is the queue
+    // family. Without one, a timestamp written regardless is 0, all a
+    // value with no meaningful bits can be, and available, so that a read
+    // that waits for it is not left waiting.
+    {
+        const pool = try queryPool(&bench, .timestamp, 1, 0);
+        defer fb.DestroyQueryPool(device, pool);
+        const commands = try bench.record();
+        fb.CmdResetQueryPool(commands, pool, 0, 1);
+        fb.CmdWriteTimestamp(commands, facet.PIPELINE_STAGE_BOTTOM_OF_PIPE, pool, 0);
+        try bench.submit();
+        var value: u64 = 0xDEAD_BEEF;
+        try testing.expectEqual(facet.Result.success, fb.GetQueryPoolResults(device, pool, 0, 1, @sizeOf(u64), &value, @sizeOf(u64), facet.QUERY_RESULT_64));
+        if (!can.timestamp_queries) try testing.expectEqual(0, value);
     }
 
     // Nothing given back for a pool that was never made.

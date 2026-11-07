@@ -3289,7 +3289,7 @@ None.
 **BEHAVIOR**
 
 The value is the E-clock in microseconds, which is what
-`PhysicalDeviceLimits.timestamp_period_ns` of 1000 says; the query is
+`PhysicalDeviceLimits.timestamp_period` of 1000 says; the query is
 available from then on.
 
 The commands of a buffer are played one after another, each finished
@@ -3311,9 +3311,13 @@ The pool has to last until the work is done.
 
 **NOTES**
 
-Without timer.device there is no clock to read:
-`Capabilities.timestamp_queries` is false then and
-CreateQueryPool refuses the kind, so this cannot be reached.
+Without timer.device there is no clock to read, and the queue family
+says so with `timestamp_valid_bits` 0: Vulkan asks every
+`vkCmdWriteTimestamp` for a queue family whose bits are not 0. One
+written all the same is 0, which is all a value with no meaningful bits
+can be, and is available like any other, so that a read that waits for
+it is not left waiting for ever. Until 1.93 its pool could not be made,
+and this was never reached.
 
 **BUGS**
 
@@ -4694,13 +4698,14 @@ fn CreateQueryPool(base: *FacetBase, device: *facet.Device, info: *const facet.Q
 **RESULT**
 
 `success`; `error_feature_not_present` for a kind this device has not
-got (`Capabilities.occlusion_queries`,
-`pipeline_statistics_queries`, `timestamp_queries`), or for a bit that
-is none of Vulkan's; `error_initialization_failed` for no queries at
-all, or a statistics pool that counts nothing;
+got (`Capabilities.occlusion_queries`, `pipeline_statistics_queries`),
+or for a bit that is none of Vulkan's; `error_initialization_failed`
+for no queries at all, or a statistics pool that counts nothing;
 `error_out_of_host_memory`. A geometry shader's two statistics may be
 asked for since 1.43, there being no such stage to count: they read 0,
-which is what Vulkan has a statistic of a stage that never ran hold.
+which is what Vulkan has a statistic of a stage that never ran hold. A
+timestamp pool is made on every device since 1.93, with a clock or
+without one: see below.
 
 **BEHAVIOR**
 
@@ -4715,8 +4720,16 @@ counted by the rasterizer on the cores and by the hardware's own counter
 on the V3D, which every device has since 1.47; the statistics are the
 calls round the rasterizer, so they are the cores' alone; and a
 timestamp is the E-clock read as the command is played, which every
-device does - where the machine has timer.device, or there is no clock
-to read and the kind is refused.
+device does where the machine has timer.device.
+
+Without timer.device there is no clock to read, and the device says so
+as Vulkan has a device say it: `QueueFamilyProperties.timestamp_valid_bits`
+and `PhysicalDeviceLimits.timestamp_period` are 0, and
+`timestamp_compute_and_graphics` is false. The pool is made all the
+same. Vulkan gives `vkCreateQueryPool` no way to refuse a kind, and a
+program learns what its queue can time from the queue family; until
+1.93 the pool was refused here. What a timestamp written into it reads
+is `CmdWriteTimestamp`'s.
 
 **CONTEXT**
 

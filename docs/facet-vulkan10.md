@@ -119,8 +119,8 @@ items 14, 16, 49 and 77 in 1.82, item 52's half of two in 1.83, item 18
 in 1.84, item 19 in 1.85, item 21 in 1.86, item 28's half of two in 1.87,
 items 82 and 83 in 1.87 and 1.88 - both found while doing other items -
 item 61's first row of eight in 1.89, item 17's half of two in 1.90,
-item 22's half of two in 1.91, and item 83's open question, answered from
-Mesa, in 1.92.** Each
+item 22's half of two in 1.91, item 83's open question, answered from
+Mesa, in 1.92, and item 45 in 1.93.** Each
 carries a *Done* note below saying what was actually built and where the
 item's own description turned out to be wrong - and several did. Things
 found while doing them became the items at the end of the list: 77 and 78
@@ -1200,11 +1200,22 @@ For an image whose kind is depth and which carries IMAGE_USAGE_SAMPLED, CreateIm
 
 ### 45. Create a timestamp query pool on a machine without timer.device
 
-*query pools* &mdash; conformance-blocking, small
+*query pools* &mdash; **done in 1.93**, small
 
 CreateQueryPool refuses QueryType.timestamp outright wherever timestamp_queries is false, which is any machine without timer.device — the host tests run that way, so this bites the shim's own test bed. Vulkan has no mechanism to refuse a timestamp pool: vkCreateQueryPool must succeed, and the device says it cannot time things through timestampValidBits = 0 on the queue family and timestampPeriod. One line in the refusal, plus making CmdWriteTimestamp a recorded no-op and GetQueryPoolResults answer not-available, which _queries.stamped already returns false for.
 
 > Verified verbatim: query/createquerypool.zig:89 `.timestamp => if (!features.timestamp_queries) return .error_feature_not_present,`; driver/_queries.zig:44-52 stamped() already returns false where there is no clock; instance/_instance.zig:88-92 clears the feature on every device when timer.device is absent.
+
+**Done in 1.93: the refusal was the whole fault, and the item was wrong about what a timestamp does without a clock.** The quote above is not verbatim: the line read `can.timestamp_queries`, and the clearing is in `_instance.describe`. Nor did `_queries.stamped` ever return false for want of a clock. It writes `_base.now`, which is 0 without timer.device, makes the query available, and returns false only for a pool of another kind or a query past its last. That is the right behaviour, and the change asked for here - a recorded no-op, the query left unavailable - would have been wrong:
+
+- The specification gives such a queue's timestamps no meaningful bits, and says of `timestampValidBits` that "Bits outside the valid range are guaranteed to be zeros" (devsandqueues.adoc). With no bits valid, every bit is outside the range, so 0 is the value.
+- Writing a timestamp there is invalid usage (VUID-vkCmdWriteTimestamp-timestampValidBits-00829), so nothing conformant reaches it. What one written regardless should not do is hang: a query that never becomes available leaves a `QUERY_RESULT_WAIT` read waiting for ever, and one available at 0 returns.
+
+So one line went, and nothing else in the path changed. In vk.xml, `vkCreateQueryPool`'s error codes are out of host memory and out of device memory, with `VK_ERROR_UNKNOWN` and `VK_ERROR_VALIDATION_FAILED` added since. No kind of pool is refused.
+
+One more fault came with it. `timestamp_compute_and_graphics` stayed true without a clock, beside timestamp bits of 0, and its true says that every graphics and compute queue supports "timestampValidBits of at least 36" (limits.adoc, `limits-timestampComputeAndGraphics`). It is cleared with the other two now.
+
+The host has no timer.device, so the test runs there. The pool is made, a timestamp written into it reads 0 and available without waiting, and the limit reads false. Each of four reverts fails it alone: the refusal put back, the limit left true, the query left unavailable, and a value other than 0.
 
 ### 46. Give a compute workgroup a barrier
 

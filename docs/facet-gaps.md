@@ -126,7 +126,7 @@ Since 1.29 there are query pools: `CreateQueryPool`, `DestroyQueryPool`,
 the samples that passed the tests and the fragment function did not drop; a
 statistics query counts what each stage was given; and a timestamp is the
 E-clock as the command is played, in microseconds, so
-`timestamp_valid_bits` is 64 and `timestamp_period_ns` 1000. What is
+`timestamp_valid_bits` is 64 and `timestamp_period` 1000. What is
 counted is added where the work is done, so a frame's cost no longer
 reaches the log alone. What is left out:
 
@@ -147,9 +147,12 @@ reaches the log alone. What is left out:
   no 64-bit atomic. It is held at its highest rather than wrapping round, so
   a count that outgrows it is too low and never nonsense. A timestamp is 64
   bits: one task writes it whole.
-- **Without timer.device there are no timestamps**: a pool of them is
-  refused, and `timestamp_queries`, `timestamp_valid_bits` and
-  `timestamp_period_ns` are all 0. The host tests run that way.
+- **Without timer.device there are no timestamps**: `timestamp_valid_bits`
+  and `timestamp_period` are 0 and `timestamp_compute_and_graphics` is
+  false, which is how Vulkan has a device say it. A pool of them is made
+  all the same since 1.93, Vulkan giving no way to refuse one, and a
+  timestamp written into it regardless reads 0 and is available. The host
+  tests run that way.
 - `QUERY_CONTROL_PRECISE` changes nothing: an occlusion query counts the
   samples either way, there being no cheaper answer to give.
 - A query's samples are counted as the tiles are drawn, which is where the
@@ -597,7 +600,6 @@ These can be asked for and are answered with `error_feature_not_present`.
 | A fixed fragment form that samples through a sampler, on the V3D: nor one that reads a sampler | `driver/v3d/driver.zig` |
 | A statistics query pool on the V3D: what its QPUs were given is counted by nothing. An occlusion pool is taken on every device since 1.47 | `query/createquerypool.zig` |
 | A bit that is no statistic at all. Both of a geometry shader's may be asked for since 1.43 and read 0, there being no such stage to count | `query/createquerypool.zig` |
-| A timestamp pool without timer.device: the clock a timestamp is read from | `query/createquerypool.zig` |
 | A depth or stencil attachment of `d16_unorm_s8_uint` that loads or stores, on a device that stores a tile buffer whole: the V3D (`stored_both`, 1.47). Either plane of a format that holds it alone is kept on every device | `render/createrenderpass.zig` |
 | A depth attachment kept, whose image has no memory behind it | `render/createframebuffer.zig` |
 | A sampled depth image on a device that samples none: the V3D (`sampled_depth`); a transient one, or one written through as a storage image; one of more levels than halving its longer side gives, or of type `3d`. Any of the three depth formats is taken since 1.58 and levels of its own since 1.63, and a view of it names one plane - both at once is refused there (`image/createimageview.zig`) | `image/createimage.zig` |

@@ -39,8 +39,10 @@ pub fn ended(command: *const _command.EndQuery) void {
     _query.finish(command.pool, command.query);
 }
 
-/// A timestamp written, the clock read here: false for a pool of another
-/// kind or a query past its last, nothing written.
+/// A timestamp written, the clock read here - 0 without timer.device, as
+/// `_base.now` reads it, and available all the same (CmdWriteTimestamp):
+/// false for a pool of another kind or a query past its last, nothing
+/// written.
 pub fn stamped(base: *_base.FacetBase, command: *const _command.WriteTimestamp) bool {
     const at = _query.timeOf(command.pool, command.query) orelse return false;
     // Only this task writes it, and the flag `finish` sets is what carries

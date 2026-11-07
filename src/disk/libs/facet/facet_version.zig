@@ -1891,4 +1891,34 @@ pub const LIBRARY_VERSION = 1;
 /// `expected 12, found 24` for a line counted twice, `expected 8, found 0`
 /// for the cull counted as a discard, and `expected 1, found 0` for a
 /// culled triangle.
-pub const LIBRARY_REVISION = 92;
+///
+/// 93: **A timestamp pool made on a machine without timer.device.**
+///
+/// Item 45 of docs/facet-vulkan10.md. CreateQueryPool refused a timestamp
+/// pool wherever the library had no clock, and Vulkan has no refusal of a
+/// kind of pool: vk.xml gives `vkCreateQueryPool` no error but memory's
+/// (and, later, `VK_ERROR_UNKNOWN` and `VK_ERROR_VALIDATION_FAILED`). A
+/// device says it cannot time things through its queue family's
+/// `timestampValidBits` of 0, which facet already said, and the pool is
+/// made now.
+///
+/// A timestamp written into it all the same, which is invalid usage on
+/// such a queue (VUID-vkCmdWriteTimestamp-timestampValidBits-00829), is 0
+/// and available, as `_queries.stamped` already had it: the specification
+/// says the bits outside the valid range are zeros, and with none valid
+/// that is every bit. The item asked for the query left unavailable
+/// instead, which would leave a `QUERY_RESULT_WAIT` read waiting for ever,
+/// and said `stamped` already did that, which it never did.
+///
+/// `timestamp_compute_and_graphics` stayed true without a clock, beside
+/// timestamp bits of 0, and Vulkan's true promises at least 36 of them on
+/// every graphics and compute queue: it is cleared with them.
+///
+/// The host has no timer.device, so the test runs there: the pool is
+/// made, a timestamp written into it reads 0 without waiting, and the
+/// limit reads false. Each of four changes put back fails it alone:
+/// `expected .success, found .error_feature_not_present` for the refusal,
+/// `expected 0, found 1` for the limit left true and for a value other
+/// than 0, and `expected .success, found .not_ready` for the query left
+/// unavailable.
+pub const LIBRARY_REVISION = 93;

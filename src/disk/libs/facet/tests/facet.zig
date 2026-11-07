@@ -116,6 +116,9 @@ test "an instance lists one physical device: the cores, its memory made from exe
     // machine with no timer.device, which is this rig: what must hold is
     // that the two agree, not which way they went.
     try testing.expectEqual(properties.limits.timestamp_period > 0, record.queue_family.timestamp_valid_bits > 0);
+    // And Vulkan's true for every graphics and compute queue timing things
+    // promises them at least 36 bits, so it goes with them (since 1.93).
+    try testing.expect(properties.limits.timestamp_compute_and_graphics == facet.FALSE or record.queue_family.timestamp_valid_bits >= 36);
     try testing.expectEqual(@as(f32, 16), properties.limits.max_sampler_anisotropy);
     try testing.expectEqual(@as(usize, 64), properties.limits.min_memory_map_alignment);
 

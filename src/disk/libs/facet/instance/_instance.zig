@@ -752,11 +752,15 @@ pub fn describe(base: *FacetBase, instance: *Instance) void {
     for (base.module_ops[0..base.module_count]) |ops| describeOne(sys, instance, @ptrCast(@alignCast(ops.?)));
     // A timestamp is the E-clock read as a command is played, and the
     // clock is the library's, not a driver's: without timer.device no
-    // device of this machine writes one (CmdWriteTimestamp).
+    // device of this machine writes one (CmdWriteTimestamp), and each says
+    // so as Vulkan has a device say it. `timestamp_compute_and_graphics`
+    // too since 1.93, its true promising at least 36 bits on every
+    // graphics and compute queue.
     if (!base.clock_open) for (instance.physicals[0..instance.physical_count]) |*physical| {
         physical.can.timestamp_queries = false;
         physical.queue_family.timestamp_valid_bits = 0;
         physical.properties.limits.timestamp_period = 0;
+        physical.properties.limits.timestamp_compute_and_graphics = facet.FALSE;
     };
 }
 

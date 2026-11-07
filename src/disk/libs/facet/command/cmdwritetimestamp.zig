@@ -31,7 +31,7 @@ const Pool = @import("../query/_query.zig").Pool;
 ///
 /// BEHAVIOR:
 /// The value is the E-clock in microseconds, which is what
-/// `PhysicalDeviceLimits.timestamp_period_ns` of 1000 says; the query is
+/// `PhysicalDeviceLimits.timestamp_period` of 1000 says; the query is
 /// available from then on.
 ///
 /// The commands of a buffer are played one after another, each finished
@@ -50,9 +50,13 @@ const Pool = @import("../query/_query.zig").Pool;
 /// The pool has to last until the work is done.
 ///
 /// NOTES:
-/// Without timer.device there is no clock to read:
-/// `Capabilities.timestamp_queries` is false then and
-/// CreateQueryPool refuses the kind, so this cannot be reached.
+/// Without timer.device there is no clock to read, and the queue family
+/// says so with `timestamp_valid_bits` 0: Vulkan asks every
+/// `vkCmdWriteTimestamp` for a queue family whose bits are not 0. One
+/// written all the same is 0, which is all a value with no meaningful bits
+/// can be, and is available like any other, so that a read that waits for
+/// it is not left waiting for ever. Until 1.93 its pool could not be made,
+/// and this was never reached.
 ///
 /// BUGS:
 /// None known.

@@ -25,13 +25,14 @@ const _query = @import("_query.zig");
 ///
 /// RESULT:
 /// `success`; `error_feature_not_present` for a kind this device has not
-/// got (`Capabilities.occlusion_queries`,
-/// `pipeline_statistics_queries`, `timestamp_queries`), or for a bit that
-/// is none of Vulkan's; `error_initialization_failed` for no queries at
-/// all, or a statistics pool that counts nothing;
+/// got (`Capabilities.occlusion_queries`, `pipeline_statistics_queries`),
+/// or for a bit that is none of Vulkan's; `error_initialization_failed`
+/// for no queries at all, or a statistics pool that counts nothing;
 /// `error_out_of_host_memory`. A geometry shader's two statistics may be
 /// asked for since 1.43, there being no such stage to count: they read 0,
-/// which is what Vulkan has a statistic of a stage that never ran hold.
+/// which is what Vulkan has a statistic of a stage that never ran hold. A
+/// timestamp pool is made on every device since 1.93, with a clock or
+/// without one: see below.
 ///
 /// BEHAVIOR:
 /// A query holds one value, or for `pipeline_statistics` one for each
@@ -45,8 +46,16 @@ const _query = @import("_query.zig");
 /// on the V3D, which every device has since 1.47; the statistics are the
 /// calls round the rasterizer, so they are the cores' alone; and a
 /// timestamp is the E-clock read as the command is played, which every
-/// device does - where the machine has timer.device, or there is no clock
-/// to read and the kind is refused.
+/// device does where the machine has timer.device.
+///
+/// Without timer.device there is no clock to read, and the device says so
+/// as Vulkan has a device say it: `QueueFamilyProperties.timestamp_valid_bits`
+/// and `PhysicalDeviceLimits.timestamp_period` are 0, and
+/// `timestamp_compute_and_graphics` is false. The pool is made all the
+/// same. Vulkan gives `vkCreateQueryPool` no way to refuse a kind, and a
+/// program learns what its queue can time from the queue family; until
+/// 1.93 the pool was refused here. What a timestamp written into it reads
+/// is `CmdWriteTimestamp`'s.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -86,7 +95,9 @@ pub fn CreateQueryPool(base: *FacetBase, device: *facet.Device, info: *const fac
             if (info.pipeline_statistics & ~facet.QUERY_PIPELINE_STATISTIC_ALL != 0) return .error_feature_not_present;
             if (info.pipeline_statistics == 0) return .error_initialization_failed;
         },
-        .timestamp => if (!can.timestamp_queries) return .error_feature_not_present,
+        // With a clock or without: without one, the queue family's
+        // timestamp_valid_bits of 0 is what says so (CmdWriteTimestamp).
+        .timestamp => {},
         else => return .error_feature_not_present,
     }
     if (info.query_count == 0) return .error_initialization_failed;
