@@ -1399,6 +1399,10 @@ fn texelBufferChecks(probe: *Probe) void {
         .{ .format = .e5b9g9r9_ufloat_pack32, .size = 4 },
         .{ .format = .r32g32b32_uint, .size = 12 },
         .{ .format = .r32g32b32_sint, .size = 12 },
+        // 1.127: the A8B8G8R8 words of the rest.
+        .{ .format = .a8b8g8r8_snorm_pack32, .size = 4 },
+        .{ .format = .a8b8g8r8_uint_pack32, .size = 4 },
+        .{ .format = .a8b8g8r8_sint_pack32, .size = 4 },
     };
     var all_made = true;
     var all_counted = true;

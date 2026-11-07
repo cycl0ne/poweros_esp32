@@ -1439,7 +1439,9 @@ they lie, nothing decoded: the buffer holds a row of blocks every
 on a multiple of 4 or the region is left out. One that is unpacked
 instead takes the texels decoded. A float image kept as its floats
 (`kept_floats`, since 1.45) takes them as they lie too, a texel at a
-time; one that is unpacked takes them rounded to 8 bits a channel.
+time; one that is unpacked takes them rounded to 8 bits a channel. One
+of B4G4R4A4 or A1R5G5B5 (since 1.127) takes each word widened to 8 bits
+a channel.
 
 **CONTEXT**
 
@@ -4492,7 +4494,14 @@ nor another image into it, by CmdCopyImage.
 It may also be of ETC2 or EAC - ETC2_R8G8B8, ETC2_R8G8B8A1, ETC2_R8G8B8A8,
 EAC_R11 or EAC_R11G11 - which no sampler of this library reads: such an
 image is always kept as R8G8B8A8, its blocks unpacked as they are copied
-in (`Capabilities.etc2_textures`, since 1.46).
+in (`Capabilities.etc2_textures`, since 1.46). So is one of
+B4G4R4A4_UNORM_PACK16 or A1R5G5B5_UNORM_PACK16 (since 1.127), four
+channels in 16 bits that no sampler here reads either: each word is
+widened to 8 bits a channel as it is copied in, as R5G6B5's are where a
+texture keeps them.
+
+One of A8B8G8R8_UINT_PACK32 or _SINT_PACK32 is an image of R8G8B8A8's
+whole numbers, the same bytes, wherever that one is made (since 1.127).
 
 R32_SFLOAT is an image since 1.57, in optimal tiling: one float a texel,
 sampled as (red, 0, 0, 1) the way R8_UNORM is read, with the float held
@@ -7960,6 +7969,13 @@ None.
   EAC_R11G11: sampled, filtered, in optimal tiling, and copied into.
   No sampler of this library reads such a block, so they are always
   unpacked to 8 bits a channel and never copied out of (since 1.46).
+- B4G4R4A4_UNORM_PACK16 and A1R5G5B5_UNORM_PACK16: sampled, filtered,
+  in optimal tiling, and copied into. No sampler of this library reads
+  four channels in 16 bits either, so they are always unpacked to 8
+  bits a channel as ETC2 is, and never copied out of (since 1.127).
+- A8B8G8R8_SNORM_PACK32, _UINT_PACK32 and _SINT_PACK32: what
+  R8G8B8A8_SNORM, _UINT and _SINT say, on either device, being the same
+  bytes (since 1.127).
 - Blits (since 1.126): BLIT_SRC, in optimal tiling, beside every colour
   format sampled there but those of whole numbers, a blit reading the
   texel as a sample does; BLIT_DST beside the three colour attachments

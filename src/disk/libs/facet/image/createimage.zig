@@ -144,7 +144,14 @@ const _image = @import("_image.zig");
 /// It may also be of ETC2 or EAC - ETC2_R8G8B8, ETC2_R8G8B8A1, ETC2_R8G8B8A8,
 /// EAC_R11 or EAC_R11G11 - which no sampler of this library reads: such an
 /// image is always kept as R8G8B8A8, its blocks unpacked as they are copied
-/// in (`Capabilities.etc2_textures`, since 1.46).
+/// in (`Capabilities.etc2_textures`, since 1.46). So is one of
+/// B4G4R4A4_UNORM_PACK16 or A1R5G5B5_UNORM_PACK16 (since 1.127), four
+/// channels in 16 bits that no sampler here reads either: each word is
+/// widened to 8 bits a channel as it is copied in, as R5G6B5's are where a
+/// texture keeps them.
+///
+/// One of A8B8G8R8_UINT_PACK32 or _SINT_PACK32 is an image of R8G8B8A8's
+/// whole numbers, the same bytes, wherever that one is made (since 1.127).
 ///
 /// R32_SFLOAT is an image since 1.57, in optimal tiling: one float a texel,
 /// sampled as (red, 0, 0, 1) the way R8_UNORM is read, with the float held

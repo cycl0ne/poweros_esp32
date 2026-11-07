@@ -166,6 +166,17 @@ fn describe(can: *const _instance.Capabilities, format: facet.Format) facet.Form
             .optimal_tiling_features = sampled | facet.FORMAT_FEATURE_TRANSFER_DST,
             .buffer_features = 0,
         },
+        // Four channels in 16 bits (since 1.127), unpacked the same way on
+        // every device: sampled, filtered, copied into and a blit's
+        // source, and never read back. v3dv samples both where they lie,
+        // its texture unit reading the words (v3dvx_formats.c:187, :190),
+        // which no sampler of this library does; A1R5G5B5's attachment
+        // half is to come with the other colour attachments.
+        .b4g4r4a4_unorm_pack16, .a1r5g5b5_unorm_pack16 => .{
+            .linear_tiling_features = 0,
+            .optimal_tiling_features = sampled,
+            .buffer_features = 0,
+        },
         // Float: sampled, and written through by a function since 1.57
         // (`texture.Texture.setParts`), and read back as well where the
         // floats are kept, there being something of the format to read.
@@ -222,13 +233,16 @@ fn describe(can: *const _instance.Capabilities, format: facet.Format) facet.Form
         // `texture.Texture.wholesAt` and writes with `setWholes`, and
         // read back, there being something of the format to read. No
         // linear filter and never an attachment: a whole number is no
-        // colour, and nothing blends one.
+        // colour, and nothing blends one. The A8B8G8R8 words of the 8-bit
+        // four are the same bytes, and so the same texels (since 1.127).
         .r8_uint,
         .r8g8_uint,
         .r8g8b8a8_uint,
         .r8_sint,
         .r8g8_sint,
         .r8g8b8a8_sint,
+        .a8b8g8r8_uint_pack32,
+        .a8b8g8r8_sint_pack32,
         .r16_uint,
         .r16g16_uint,
         .r16g16b16a16_uint,
@@ -265,6 +279,7 @@ fn describe(can: *const _instance.Capabilities, format: facet.Format) facet.Form
         .r8g8b8a8_srgb,
         .b8g8r8a8_srgb,
         .a8b8g8r8_unorm_pack32,
+        .a8b8g8r8_snorm_pack32,
         .a8b8g8r8_srgb_pack32,
         .a2r10g10b10_unorm_pack32,
         .a2r10g10b10_uint_pack32,
@@ -366,6 +381,40 @@ test "each of the four kept features answers for its own formats" {
     // A buffer's texels are the same on either: the bytes are read as they
     // lie, with no image to keep.
     try testing.expectEqual(describe(&keeping, .r16g16_unorm).buffer_features, describe(&unpacking, .r16g16_unorm).buffer_features);
+}
+
+test "an A8B8G8R8 word says what its R8G8B8A8 form says, on either device" {
+    // The same bytes on a little-endian machine, so the same texels: v3dv
+    // gives each pair the one texture type (src/broadcom/vulkan/
+    // v3dvx_formats.c:132-134, :192-194). Since 1.127, where the three
+    // were not formats of this library at all.
+    const pairs = [_][2]facet.Format{
+        .{ .a8b8g8r8_snorm_pack32, .r8g8b8a8_snorm },
+        .{ .a8b8g8r8_uint_pack32, .r8g8b8a8_uint },
+        .{ .a8b8g8r8_sint_pack32, .r8g8b8a8_sint },
+    };
+    for ([2]*const _instance.Capabilities{ &keeping, &unpacking }) |can| for (pairs) |pair| {
+        try testing.expectEqual(describe(can, pair[1]), describe(can, pair[0]));
+    };
+    // A texel buffer of each on either device, and an image of the whole
+    // numbers where the device keeps them.
+    try testing.expect(describe(&keeping, .a8b8g8r8_uint_pack32).optimal_tiling_features != 0);
+    try testing.expectEqual(@as(u32, 0), describe(&unpacking, .a8b8g8r8_sint_pack32).optimal_tiling_features);
+    try testing.expect(describe(&unpacking, .a8b8g8r8_snorm_pack32).buffer_features != 0);
+}
+
+test "four channels in 16 bits are sampled and blitted out of on either device, and never read back" {
+    // Unpacked into 8 bits a channel as they are copied in, as ETC2 is,
+    // whatever the device keeps: the three features Vulkan asks of
+    // B4G4R4A4 and of A1R5G5B5's sampled half, and a copy into them.
+    // Since 1.127.
+    const want = facet.FORMAT_FEATURE_SAMPLED_IMAGE | facet.FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR |
+        facet.FORMAT_FEATURE_BLIT_SRC | facet.FORMAT_FEATURE_TRANSFER_DST;
+    for ([2]*const _instance.Capabilities{ &keeping, &unpacking }) |can| for ([2]facet.Format{ .b4g4r4a4_unorm_pack16, .a1r5g5b5_unorm_pack16 }) |format| {
+        const said = describe(can, format);
+        try testing.expectEqual(want, said.optimal_tiling_features);
+        try testing.expectEqual(@as(u32, 0), said.linear_tiling_features | said.buffer_features);
+    };
 }
 
 // The one format whose four features a single bool used to stand for is

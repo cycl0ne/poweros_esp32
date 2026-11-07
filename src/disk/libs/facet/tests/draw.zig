@@ -3543,6 +3543,10 @@ test "texel buffers of whole numbers and of 16 bits a channel: every format of t
         .{ .format = .e5b9g9r9_ufloat_pack32, .size = 4 },
         .{ .format = .r32g32b32_uint, .size = 12 },
         .{ .format = .r32g32b32_sint, .size = 12 },
+        // And the A8B8G8R8 words of the rest, since 1.127.
+        .{ .format = .a8b8g8r8_snorm_pack32, .size = 4 },
+        .{ .format = .a8b8g8r8_uint_pack32, .size = 4 },
+        .{ .format = .a8b8g8r8_sint_pack32, .size = 4 },
     };
 
     // Every one of them says a texel buffer and nothing else - no image
@@ -3662,6 +3666,43 @@ test "texel buffers of whole numbers and of 16 bits a channel: every format of t
             return view.?;
         }
     }.bind;
+
+    // An A8B8G8R8 word is the R8G8B8A8 texel of the same name, byte for
+    // byte (since 1.127): a function sees the same of a view of either
+    // over the same bytes - 129, 127, 0 and 255 unsigned, -127, 127, 0 and
+    // -1 signed - and each of the five kinds sees something of its own.
+    const word, const word_bytes = try bench.buffer(16, facet.BUFFER_USAGE_UNIFORM_TEXEL_BUFFER);
+    for (0..4) |k| word_bytes[k * 4 ..][0..4].* = .{ 0x81, 0x7F, 0x00, 0xFF };
+    const pairs = [_][2]facet.Format{
+        .{ .a8b8g8r8_unorm_pack32, .r8g8b8a8_unorm },
+        .{ .a8b8g8r8_snorm_pack32, .r8g8b8a8_snorm },
+        .{ .a8b8g8r8_uint_pack32, .r8g8b8a8_uint },
+        .{ .a8b8g8r8_sint_pack32, .r8g8b8a8_sint },
+        .{ .a8b8g8r8_srgb_pack32, .r8g8b8a8_srgb },
+    };
+    var seen: [pairs.len][2][13]u32 = undefined;
+    for (pairs, 0..) |pair, n| for (pair, 0..) |format, which| {
+        const view = try bind(&bench, word, format, 0, .uniform_texel_buffer, &sets);
+        defer fb.DestroyBufferView(device, view);
+        @memset(told_bytes[0..64], 0);
+        const looked = try bench.record();
+        fb.CmdBindPipeline(looked, .compute, pipelines[2].?);
+        fb.CmdBindDescriptorSets(looked, .compute, layout, 0, 1, @ptrCast(&sets), 0, null);
+        fb.CmdDispatch(looked, 1, 1, 1);
+        try bench.submit();
+        seen[n][which] = out[0..13].*;
+    };
+    for (seen, 0..) |both, n| {
+        try testing.expectEqualSlices(u32, &both[1], &both[0]);
+        try testing.expectEqual(@as(u32, 4), both[0][0]);
+        for (seen[n + 1 ..]) |other| try testing.expect(!std.mem.eql(u32, &both[0], &other[0]));
+    }
+    // The snorm word's first two channels as -1 and 1, and the whole
+    // numbers as they are, each of 64 bits low word first.
+    try testing.expectEqual(@as(u32, @bitCast(@as(f32, -1))), seen[1][0][1]);
+    try testing.expectEqual(@as(u32, @bitCast(@as(f32, 1))), seen[1][0][2]);
+    try testing.expectEqualSlices(u32, &.{ 129, 0, 127, 0, 0, 0, 255, 0 }, seen[2][0][5..13]);
+    try testing.expectEqualSlices(u32, &.{ 0xFFFF_FF81, 0xFFFF_FFFF, 127, 0, 0, 0, 0xFFFF_FFFF, 0xFFFF_FFFF }, seen[3][0][5..13]);
 
     // A whole number read as itself: r8_uint's 0 to 255, copied by floats
     // into r16_uint, where it is the same number in two bytes.
@@ -4380,9 +4421,9 @@ const Blitted = struct {
 /// whose bytes are `bytes`, 0xAARRGGBB, worked out apart from the blit:
 /// by the decoders an image is unpacked through for blocks and floats, and
 /// by hand for the rest - a channel the format has not got as 0, an alpha
-/// it has not got as whole, a channel of 16 bits as its top 8 and one of
-/// R5G6B5 widened as the sampler widens it. Null for a format with no
-/// colour to read.
+/// it has not got as whole, a channel of 16 bits as its top 8, and one of
+/// R5G6B5, B4G4R4A4 or A1R5G5B5 widened as the sampler widens it. Null for
+/// a format with no colour to read.
 fn sampledColor(format: facet.Format, bytes: []const u8, k: usize) ?u32 {
     const decode = @import("../image/_decode.zig");
     const argb = struct {
@@ -4391,7 +4432,8 @@ fn sampledColor(format: facet.Format, bytes: []const u8, k: usize) ?u32 {
         }
     }.of;
     if (decode.blockBytes(format) != 0) return argb(decode.block16(format, bytes)[k]);
-    const at = bytes[k * @import("../image/_image.zig").bytesOf(format) ..];
+    const unpacked = decode.unpackedBytes(format);
+    const at = bytes[k * (if (unpacked != 0) unpacked else @import("../image/_image.zig").bytesOf(format)) ..];
     if (decode.texelBytes(format) != 0) return argb(decode.texel(format, at));
     return switch (format) {
         .b8g8r8a8_unorm => std.mem.readInt(u32, at[0..4], .little),
@@ -4402,6 +4444,22 @@ fn sampledColor(format: facet.Format, bytes: []const u8, k: usize) ?u32 {
             const g = word >> 5 & 0x3F;
             const b = word & 0x1F;
             break :widened 0xFF00_0000 | (r << 3 | r >> 2) << 16 | (g << 2 | g >> 4) << 8 | (b << 3 | b >> 2);
+        },
+        // Four channels in 16 bits (since 1.127): B4G4R4A4's 4 bits each
+        // times 17, and A1R5G5B5's 5 widened as R5G6B5's are, its alpha
+        // the one bit.
+        .b4g4r4a4_unorm_pack16 => four: {
+            const word: u32 = std.mem.readInt(u16, at[0..2], .little);
+            var rgba: [4]u8 = undefined;
+            for (&rgba, [4]u5{ 4, 8, 12, 0 }) |*channel, shift| channel.* = @intCast((word >> shift & 0xF) * 17);
+            break :four argb(rgba);
+        },
+        .a1r5g5b5_unorm_pack16 => widened: {
+            const word: u32 = std.mem.readInt(u16, at[0..2], .little);
+            const r = word >> 10 & 0x1F;
+            const g = word >> 5 & 0x1F;
+            const b = word & 0x1F;
+            break :widened (word >> 15) * 0xFF00_0000 | (r << 3 | r >> 2) << 16 | (g << 3 | g >> 2) << 8 | (b << 3 | b >> 2);
         },
         .r8_unorm => argb(.{ at[0], 0, 0, 255 }),
         .r8g8_unorm => argb(.{ at[0], at[1], 0, 255 }),
@@ -4537,11 +4595,98 @@ test "every format whose features say BLIT_SRC is blitted out of as the colour a
     }
     // Sources: every colour format a sample reads but the whole numbers -
     // B8G8R8A8, R8G8B8A8, R5G6B5, R8_UNORM, nine of BC, five of ETC2 and
-    // EAC, five of floats and four of channels of their own - and
-    // D16_UNORM. Destinations: the three colour attachments in either
-    // tiling, R8_UNORM, and D16_UNORM.
-    try testing.expectEqual(@as(u32, 28), sources);
+    // EAC, five of floats, four of channels of their own, and B4G4R4A4 and
+    // A1R5G5B5 since 1.127 - and D16_UNORM. Destinations: the three colour
+    // attachments in either tiling, R8_UNORM, and D16_UNORM.
+    try testing.expectEqual(@as(u32, 30), sources);
     try testing.expectEqual(@as(u32, 8), destinations);
+}
+
+test "the five formats Vulkan 1.0 asks for that had no value: four channels in 16 bits unpacked as they come in, and A8B8G8R8 words that are their R8G8B8A8 forms (since 1.127)" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const image_zig = @import("../image/_image.zig");
+    const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
+    const transfers = facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
+    const sampled = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST;
+    const whole = facet.Extent3D{ .width = 4, .height = 4 };
+    const staging, const staged = try bench.buffer(64, facet.BUFFER_USAGE_TRANSFER_SRC);
+    const back, const backed = try bench.buffer(64, facet.BUFFER_USAGE_TRANSFER_DST);
+    var refused: ?*facet.Image = null;
+    var limits: facet.ImageFormatProperties = undefined;
+
+    // Four channels in 16 bits: a texture of 8888 in optimal tiling, made
+    // to be sampled, as an image of ETC2 is - none in linear tiling and
+    // none for the transfers alone, which the format query says as well.
+    // Four words of each, and the colour each is sampled as: B4G4R4A4's
+    // channels each times 17, A1R5G5B5's widened as R5G6B5's are and its
+    // alpha the one bit.
+    const Word = struct { word: u16, color: u32 };
+    const sixteen = [2]struct { facet.Format, [4]Word }{
+        .{ .b4g4r4a4_unorm_pack16, .{ .{ .word = 0x1234, .color = 0x4433_2211 }, .{ .word = 0xF00F, .color = 0xFF00_00FF }, .{ .word = 0x0F0F, .color = 0xFF00_FF00 }, .{ .word = 0x00F8, .color = 0x88FF_0000 } } },
+        .{ .a1r5g5b5_unorm_pack16, .{ .{ .word = 0xFC00, .color = 0xFFFF_0000 }, .{ .word = 0x83E0, .color = 0xFF00_FF00 }, .{ .word = 0x001F, .color = 0x0000_00FF }, .{ .word = 0x8421, .color = 0xFF08_0808 } } },
+    };
+    for (sixteen) |one| {
+        const format, const words = one;
+        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{ .format = format, .extent = whole, .tiling = .linear, .usage = sampled }, &refused));
+        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{ .format = format, .extent = whole, .usage = transfers }, &refused));
+        try testing.expect(refused == null);
+        try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(bench.physical, format, .@"2d", .linear, sampled, 0, &limits));
+        try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(bench.physical, format, .@"2d", .optimal, transfers, 0, &limits));
+        try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(bench.physical, format, .@"2d", .optimal, sampled, 0, &limits));
+        const made = try bench.bareImage(.{ .format = format, .extent = whole, .usage = sampled }, false);
+        const image = _objects.of(image_zig.Image, made);
+        try testing.expectEqual(image_zig.Kind.texture, image.kind);
+        try testing.expectEqual(facet.Format.r8g8b8a8_unorm, image.format);
+        try testing.expectEqual(format, image.given_format);
+        _ = try bench.viewOf(.{ .image = made, .format = format });
+        // Two bytes a texel in the buffer, and each texel the colour its
+        // word is sampled as.
+        for (0..16) |k| std.mem.writeInt(u16, staged[k * 2 ..][0..2], words[k % 4].word, .little);
+        const commands = try bench.record();
+        fb.CmdCopyBufferToImage(commands, staging, made, .transfer_dst_optimal, 1, @ptrCast(&facet.BufferImageCopy{ .image_extent = whole }));
+        try bench.submit();
+        for (0..16) |k| try testing.expectEqual(words[k % 4].color, image.texels.peek(0, @intCast(k % 4), @intCast(k / 4)));
+    }
+
+    // A8B8G8R8's whole numbers: a texture of R8G8B8A8's whole numbers
+    // where the device keeps them and none where it does not, as of the
+    // R8G8B8A8 form. Copied in and out byte for byte, and cleared to the
+    // numbers given, each held to what its byte holds.
+    for (0..64) |i| staged[i] = @truncate(i *% 37 +% 11);
+    const numbers = [2]struct { facet.Format, texture_zig.Format, facet.ClearColorValue, [4]u8 }{
+        .{ .a8b8g8r8_uint_pack32, .rgba8u, .{ .uint32 = .{ 1, 2, 300, 255 } }, .{ 1, 2, 255, 255 } },
+        .{ .a8b8g8r8_sint_pack32, .rgba8i, .{ .int32 = .{ -1, 2, -300, 127 } }, .{ 0xFF, 2, 0x80, 0x7F } },
+    };
+    for (numbers) |one| {
+        const format, const kept, const clear, const cleared = one;
+        const info = facet.ImageCreateInfo{ .format = format, .extent = whole, .usage = facet.IMAGE_USAGE_SAMPLED | transfers };
+        physical.can.whole_textures = false;
+        const without = fb.CreateImage(device, &info, &refused);
+        physical.can.whole_textures = true;
+        try testing.expectEqual(facet.Result.error_format_not_supported, without);
+        const made = try bench.bareImage(info, false);
+        const image = _objects.of(image_zig.Image, made);
+        try testing.expectEqual(image_zig.Kind.texture, image.kind);
+        try testing.expectEqual(kept, image.texels.format);
+        _ = try bench.viewOf(.{ .image = made, .format = format });
+        var commands = try bench.record();
+        fb.CmdCopyBufferToImage(commands, staging, made, .transfer_dst_optimal, 1, @ptrCast(&facet.BufferImageCopy{ .image_extent = whole }));
+        fb.CmdCopyImageToBuffer(commands, made, .transfer_src_optimal, back, 1, @ptrCast(&facet.BufferImageCopy{ .image_extent = whole }));
+        try bench.submit();
+        try testing.expectEqualSlices(u8, staged[0..64], backed[0..64]);
+        commands = try bench.record();
+        fb.CmdClearColorImage(commands, made, .transfer_dst_optimal, &clear, 1, @ptrCast(&facet.ImageSubresourceRange{}));
+        fb.CmdCopyImageToBuffer(commands, made, .transfer_src_optimal, back, 1, @ptrCast(&facet.BufferImageCopy{ .image_extent = whole }));
+        try bench.submit();
+        for (0..16) |k| try testing.expectEqualSlices(u8, &cleared, backed[k * 4 ..][0..4]);
+    }
+    // And `_snorm` is no image's, as R8G8B8A8_SNORM is not.
+    for ([2]facet.Format{ .a8b8g8r8_snorm_pack32, .r8g8b8a8_snorm }) |format| {
+        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{ .format = format, .extent = whole, .usage = facet.IMAGE_USAGE_SAMPLED | transfers }, &refused));
+    }
 }
 
 /// A pixel's texel in one sample's plane of a multisampled image of rows,

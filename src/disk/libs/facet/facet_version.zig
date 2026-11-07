@@ -3198,4 +3198,37 @@ pub const LIBRARY_VERSION = 1;
 /// its own bytes; D16_UNORM is blitted into itself turned round; and no
 /// whole number, stencil or linear source says a blit. Each of 10 changes
 /// put back fails it.
-pub const LIBRARY_REVISION = 126;
+///
+/// 127: **The five formats Vulkan asks for that had no value.** Item 31 of
+/// docs/facet-vulkan10.md. B4G4R4A4_UNORM_PACK16, A1R5G5B5_UNORM_PACK16
+/// and A8B8G8R8_SNORM, _UINT and _SINT_PACK32 carry features Vulkan 1.0
+/// asks of every device, and `facet.Format` named none of them, so a
+/// program could not even ask. The three A8B8G8R8 words are the bytes of
+/// the R8G8B8A8 format of the same name on a little-endian machine, as
+/// the `_unorm` and `_srgb` pair already were, and each is now what its
+/// R8G8B8A8 form is: the same texel buffer, the whole numbers the same
+/// texture where the device keeps them, and the same features on either
+/// device, as v3dv gives each pair the one texture type
+/// (src/broadcom/vulkan/v3dvx_formats.c:131-134, :191-195). The two words
+/// of 16 bits are unpacked into 8 bits a channel as they are copied in, on
+/// every device, as ETC2 is (`_decode.texel`), each channel widened by
+/// repeating its bits as R5G6B5's are: sampled, filtered, a blit's source
+/// and copied into, in optimal tiling. v3dv samples both where they lie
+/// (v3dvx_formats.c:187, :190), which no sampler here does. That meets
+/// all B4G4R4A4 is asked and the sampled half of A1R5G5B5, whose
+/// attachment half waits on item 36 with the other colour attachments,
+/// and BLIT_SRC for 13 of the 47 formats on the cores and 12 on the V3D.
+/// D32_SFLOAT, the sixth format the item named, is item 35's.
+///
+/// Tests: each A8B8G8R8 word says what its R8G8B8A8 form says on either
+/// device, and the two of 16 bits say SAMPLED_IMAGE, the filter, BLIT_SRC
+/// and TRANSFER_DST on either; a function sees the same of a texel-buffer
+/// view of each A8B8G8R8 word as of its R8G8B8A8 form over the same
+/// bytes, and something different for each of the five kinds; images of
+/// the whole numbers keep R8G8B8A8's texels, copy back byte for byte,
+/// clear to the numbers given, and are refused where the device keeps no
+/// whole numbers; images of the two words of 16 bits are refused in
+/// linear tiling and for the transfers alone, and hold the colour each
+/// word is sampled as; and the blit test blits both. Each of 15 changes
+/// put back fails at least one of them.
+pub const LIBRARY_REVISION = 127;

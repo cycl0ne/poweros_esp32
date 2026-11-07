@@ -126,8 +126,8 @@ half of two, the cores', in 1.113, item 61's last row of eight, on the
 cores, in 1.114, item 85's half of two, the cores', in 1.115, item 87
 in 1.116, item 88 in 1.117, item 86 in 1.118, item 48's half of two,
 the cores', in 1.119, item 41 in 1.120, item 89 in 1.121, item 15 in
-1.122, item 11 in 1.123, item 12 in 1.124, item 79 in 1.125, and item 32
-in 1.126.**
+1.122, item 11 in 1.123, item 12 in 1.124, item 79 in 1.125, item 32 in
+1.126, and item 31 in 1.127.**
 Each
 carries a *Done* note below saying what was actually built and where the
 item's own description turned out to be wrong - and several did. Things
@@ -1173,11 +1173,31 @@ About eighteen fields that must exist for a well-formed Vulkan driver but owe no
 
 ### 31. Add the six mandatory formats that have no facet.Format value
 
-*formats / enumeration* &mdash; conformance-blocking, small
+*formats / enumeration* &mdash; conformance-blocking, small &mdash; **done in 1.127**
 
 Six formats carrying unconditional mandatory features are absent from the enum: B4G4R4A4_UNORM_PACK16, A1R5G5B5_UNORM_PACK16, A8B8G8R8_SNORM_PACK32, A8B8G8R8_UINT_PACK32, A8B8G8R8_SINT_PACK32 and D32_SFLOAT. The three a8b8g8r8 pack32 ones are byte-identical to their r8g8b8a8 forms on a little-endian machine — facet already says so for the _unorm and _srgb pair — so they are three enum values plus three switch arms. The two packed-16 ones need a new texel layout; D32_SFLOAT is item 35's.
 
 > Verified by enumerating the Format enum (sdk/libs/facet/facet.zig:682-821, 71 members): none of the six is present. facet.zig:804-807 states the little-endian aliasing for the pair that does exist. Noted: docs/facet-todo.md:30-36 claims section 1 is empty and "the texel buffers read every format Vulkan 1.0 asks of them" — wrong by exactly these three pack32 forms.
+
+**Done in 1.127**, in 39 lines of code and 153 of tests, for five of the
+six: D32_SFLOAT stays with item 35, which is where it becomes a depth
+format. The three A8B8G8R8 words are their R8G8B8A8 forms under another
+name, as v3dv has them - the same texture and render-target types
+(src/broadcom/vulkan/v3dvx_formats.c:131-134 beside :191-195) - so they
+took a name more in five switches rather than the three arms counted
+above: what a texel buffer reads, the format table, and an image's
+whole-number test, size and kept format. The two words of 16 bits did not
+need a texel layout of their own: they are unpacked into 8 bits a channel
+as they are copied in, as ETC2 is, through a decoder beside the float one
+(`_decode.texel`), so both devices sample, filter and blit out of them.
+v3dv keeps them as the V3D's own RGBA4 and A1_RGB5 textures (:187, :190),
+which here would want a texture format of the SDK's and the V3D's texture
+state for half the memory. What the five still lack is what their
+siblings lack: COLOR_ATTACHMENT, BLIT_DST and blending for A1R5G5B5 and
+the A8B8G8R8 whole numbers (36), BLIT_SRC for those whole numbers (36),
+SAMPLED_IMAGE and BLIT_SRC for the _snorm word (37), and VERTEX_BUFFER for
+the three words (33). docs/facet-todo.md's "the texel buffers read every
+format Vulkan 1.0 asks of them" is true since this revision.
 
 ### 32. Define BLIT_SRC and BLIT_DST and report them
 
@@ -1246,7 +1266,7 @@ Found independently by: formats, semantics, conformance-path (3 strands).
 
 *formats / colour attachments* &mdash; conformance-blocking, large
 
-Vulkan mandates COLOR_ATTACHMENT for 38 formats and COLOR_ATTACHMENT_BLEND for 14. facet provides 3 of each, hard-coded in a two-line `drawable()` and enforced by CreateImage. The missing 35 are the integer attachments, the three sRGB words, the half- and single-float forms, a2b10g10r10 both ways, a8b8g8r8_*_pack32 and a1r5g5b5. This is the largest piece in the formats strand: the tile buffer keeps 8 bits a channel of BGRA, dithered to 565 on store, so each new format needs a tile representation, a store, a load, a clear and — for the 11 blendable ones — a blend unit at that width. On the V3D the render-target config packets must name the format too. The same fix closes the colour-input-attachment gap, since an input attachment must be of a format rowFormat knows, which is the same three. Since 1.126 (item 32) BLIT_DST rides on this as well, set beside COLOR_ATTACHMENT as v3dv sets it: each format made an attachment here becomes a blit's destination, so the blit, which carries 8 bits a channel, has to write it at its own width - a float as a float, a whole number as it is.
+Vulkan mandates COLOR_ATTACHMENT for 38 formats and COLOR_ATTACHMENT_BLEND for 14. facet provides 3 of each, hard-coded in a two-line `drawable()` and enforced by CreateImage. The missing 35 are the integer attachments, the three sRGB words, the half- and single-float forms, a2b10g10r10 both ways, a8b8g8r8_*_pack32 and a1r5g5b5. This is the largest piece in the formats strand: the tile buffer keeps 8 bits a channel of BGRA, dithered to 565 on store, so each new format needs a tile representation, a store, a load, a clear and — for the 11 blendable ones — a blend unit at that width. On the V3D the render-target config packets must name the format too. The same fix closes the colour-input-attachment gap, since an input attachment must be of a format rowFormat knows, which is the same three. Since 1.126 (item 32) BLIT_DST rides on this as well, set beside COLOR_ATTACHMENT as v3dv sets it: each format made an attachment here becomes a blit's destination, so the blit, which carries 8 bits a channel, has to write it at its own width - a float as a float, a whole number as it is. Since 1.127 (item 31) the A8B8G8R8 whole numbers are their R8G8B8A8 forms under another name, so each follows its form here with one name more; A1R5G5B5 is unpacked as it is copied in, so its attachment needs a tile format of its own and a store that packs it.
 
 > Verified verbatim: src/disk/libs/facet/surface/_surface.zig:78-80 `return format == .b8g8r8a8_unorm or format == .r8g8b8a8_unorm or format == .r5g6b5_unorm_pack16;`; image/_image.zig:498 `if (info.usage & facet.IMAGE_USAGE_COLOR_ATTACHMENT != 0 and !drawable(info.format)) return null;`; driver/_format.zig:45-58 are the only arms setting `attachment`; render/createrenderpass.zig:238 for the input-attachment half.
 
@@ -1256,7 +1276,7 @@ Found independently by: formats, conformance-path, semantics (3 strands).
 
 *formats / sampled and storage images* &mdash; conformance-blocking, medium
 
-R8_SNORM, R8G8_SNORM and R8G8B8A8_SNORM are mandatory for SAMPLED_IMAGE, BLIT_SRC and FILTER_LINEAR; R16_SFLOAT and R16G16_SFLOAT for those plus COLOR_ATTACHMENT, BLIT_DST and BLEND. All five exist in the enum and report texel-buffer features only. The read path exists for texel buffers, so what is missing is texture.Format entries and the sample/filter path — and for _snorm a signed -1..1 channel the tile's 8-bit unsigned colour cannot hold, so the wide-channel machinery has to take signed channels. Separately 16 formats must report STORAGE_IMAGE and the cores miss two: R8G8B8A8_SNORM and R32G32_SFLOAT, the latter sharing an arm with r32g32b32_sfloat that reports 0 in both tilings, so no image of two floats exists on either device although four of the other float formats do.
+R8_SNORM, R8G8_SNORM and R8G8B8A8_SNORM are mandatory for SAMPLED_IMAGE, BLIT_SRC and FILTER_LINEAR (and since 1.127 A8B8G8R8_SNORM_PACK32, the same bytes, follows R8G8B8A8_SNORM with one name more); R16_SFLOAT and R16G16_SFLOAT for those plus COLOR_ATTACHMENT, BLIT_DST and BLEND. All five exist in the enum and report texel-buffer features only. The read path exists for texel buffers, so what is missing is texture.Format entries and the sample/filter path — and for _snorm a signed -1..1 channel the tile's 8-bit unsigned colour cannot hold, so the wide-channel machinery has to take signed channels. Separately 16 formats must report STORAGE_IMAGE and the cores miss two: R8G8B8A8_SNORM and R32G32_SFLOAT, the latter sharing an arm with r32g32b32_sfloat that reports 0 in both tilings, so no image of two floats exists on either device although four of the other float formats do.
 
 > Verified: driver/_format.zig:136 `.r32g32_sfloat, .r32g32b32_sfloat => .{ .linear_tiling_features = 0, .optimal_tiling_features = 0, .buffer_features = vertices | texels }`; :181-207 put r16_sfloat, r16g16_sfloat, r8_snorm, r8g8_snorm, r8g8b8a8_snorm and the three 16-bit _snorm forms in the texel-only arm; image/_image.zig:178-183 wideChannels() covers only the four _unorm wide formats. Noted: docs/facet-gaps.md:770-771 ("There is no r16_sfloat or r16g16") is stale and contradicts the same document twenty lines earlier.
 

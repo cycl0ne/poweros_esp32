@@ -1082,6 +1082,13 @@ pub const Format = enum(u32) {
     undefined = 0,
     /// 16 bits: red in the top 5, green in the middle 6, blue in the low 5.
     r5g6b5_unorm_pack16 = 4,
+    /// Four channels in 16 bits, as textures: unpacked as they come in,
+    /// into 8 bits a channel, on every device, as ETC2 is (since 1.127).
+    /// B4G4R4A4 has blue in the top 4 bits, then green and red, and alpha
+    /// in the low 4; A1R5G5B5 has alpha in the top bit, then red, green
+    /// and blue in 5 bits each.
+    b4g4r4a4_unorm_pack16 = 3,
+    a1r5g5b5_unorm_pack16 = 8,
     /// One byte of red, as a texture: read as (red, 0, 0, 1), one byte a
     /// texel in memory, where an 8888 texel takes eight
     /// (`Capabilities.small_texels`, since 1.48).
@@ -1200,10 +1207,16 @@ pub const Format = enum(u32) {
     r8g8_srgb = 22,
     r8g8b8a8_srgb = 43,
     b8g8r8a8_srgb = 50,
-    /// The same bytes as `r8g8b8a8_unorm` and `r8g8b8a8_srgb` on a
+    /// The same bytes as the `r8g8b8a8_` format of the same name on a
     /// little-endian machine, which is every machine this library runs
-    /// on: a word of 0xAABBGGRR.
+    /// on: a word of 0xAABBGGRR. `_snorm`, `_uint` and `_sint` do all
+    /// their R8G8B8A8 forms do (since 1.127): a texel buffer, and for the
+    /// whole numbers an image where the device keeps them. `_unorm` and
+    /// `_srgb` are texel buffers alone.
     a8b8g8r8_unorm_pack32 = 51,
+    a8b8g8r8_snorm_pack32 = 52,
+    a8b8g8r8_uint_pack32 = 55,
+    a8b8g8r8_sint_pack32 = 56,
     a8b8g8r8_srgb_pack32 = 57,
     /// Three channels of 10 bits and an alpha of 2 in one word, as 0 to 1
     /// or as the whole numbers themselves.

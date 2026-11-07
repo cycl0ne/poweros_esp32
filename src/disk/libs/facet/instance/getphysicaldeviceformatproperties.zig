@@ -53,6 +53,13 @@ const PhysicalDevice = @import("_instance.zig").PhysicalDevice;
 ///   EAC_R11G11: sampled, filtered, in optimal tiling, and copied into.
 ///   No sampler of this library reads such a block, so they are always
 ///   unpacked to 8 bits a channel and never copied out of (since 1.46).
+/// - B4G4R4A4_UNORM_PACK16 and A1R5G5B5_UNORM_PACK16: sampled, filtered,
+///   in optimal tiling, and copied into. No sampler of this library reads
+///   four channels in 16 bits either, so they are always unpacked to 8
+///   bits a channel as ETC2 is, and never copied out of (since 1.127).
+/// - A8B8G8R8_SNORM_PACK32, _UINT_PACK32 and _SINT_PACK32: what
+///   R8G8B8A8_SNORM, _UINT and _SINT say, on either device, being the same
+///   bytes (since 1.127).
 /// - Blits (since 1.126): BLIT_SRC, in optimal tiling, beside every colour
 ///   format sampled there but those of whole numbers, a blit reading the
 ///   texel as a sample does; BLIT_DST beside the three colour attachments

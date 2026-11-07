@@ -226,10 +226,12 @@ pub fn wideChannels(format: facet.Format) bool {
 /// Whether a texture of `format` keeps whole numbers rather than a colour
 /// or a part of one: Vulkan's `_uint` and `_sint` formats, one channel,
 /// two or four, of 8, 16 or 32 bits
-/// (`Capabilities.whole_textures`, since 1.70).
+/// (`Capabilities.whole_textures`, since 1.70), and since 1.127 the
+/// A8B8G8R8 words of the 8-bit four, which are the same bytes.
 pub fn wholeNumbers(format: facet.Format) bool {
     return switch (format) {
         .r8_uint, .r8g8_uint, .r8g8b8a8_uint, .r8_sint, .r8g8_sint, .r8g8b8a8_sint => true,
+        .a8b8g8r8_uint_pack32, .a8b8g8r8_sint_pack32 => true,
         .r16_uint, .r16g16_uint, .r16g16b16a16_uint, .r16_sint, .r16g16_sint, .r16g16b16a16_sint => true,
         .r32_uint, .r32g32_uint, .r32g32b32a32_uint, .r32_sint, .r32g32_sint, .r32g32b32a32_sint => true,
         else => false,
@@ -289,7 +291,7 @@ pub fn bytesOf(format: facet.Format) u32 {
         // or 32 bits.
         .r8_uint, .r8_sint => 1,
         .r8g8_uint, .r8g8_sint, .r16_uint, .r16_sint => 2,
-        .r8g8b8a8_uint, .r8g8b8a8_sint, .r16g16_uint, .r16g16_sint, .r32_uint, .r32_sint => 4,
+        .r8g8b8a8_uint, .r8g8b8a8_sint, .a8b8g8r8_uint_pack32, .a8b8g8r8_sint_pack32, .r16g16_uint, .r16g16_sint, .r32_uint, .r32_sint => 4,
         .r16g16b16a16_uint, .r16g16b16a16_sint, .r32g32_uint, .r32g32_sint => 8,
         .r32g32b32a32_uint, .r32g32b32a32_sint => 16,
         .d16_unorm_s8_uint => 4,
@@ -357,10 +359,10 @@ pub fn keptFormat(format: facet.Format, packed_texels: bool) ?texture.Format {
         // so (`Capabilities.whole_textures`, since 1.70).
         .r8_uint => .r8u,
         .r8g8_uint => .rg8u,
-        .r8g8b8a8_uint => .rgba8u,
+        .r8g8b8a8_uint, .a8b8g8r8_uint_pack32 => .rgba8u,
         .r8_sint => .r8i,
         .r8g8_sint => .rg8i,
-        .r8g8b8a8_sint => .rgba8i,
+        .r8g8b8a8_sint, .a8b8g8r8_sint_pack32 => .rgba8i,
         .r16_uint => .r16u,
         .r16g16_uint => .rg16u,
         .r16g16b16a16_uint => .rgba16u,
@@ -1038,9 +1040,10 @@ pub fn copyBlocks(image: *Image, from: []const u8, region: *const facet.BufferIm
     }
 }
 
-/// A rectangle of a compressed or a float format from a buffer's bytes into
-/// a level of an image, unpacked; the part of it outside the image, or past
-/// the end of `from`, left out. Blocks start on a multiple of 4.
+/// A rectangle of a compressed or a float format, or since 1.127 of four
+/// channels in 16 bits, from a buffer's bytes into a level of an image,
+/// unpacked; the part of it outside the image, or past the end of `from`,
+/// left out. Blocks start on a multiple of 4.
 pub fn copyUnpacking(image: *Image, from: []const u8, region: *const facet.BufferImageCopy) void {
     if (image.data == null) return;
     const level = region.image_subresource.mip_level;
@@ -1073,7 +1076,7 @@ pub fn copyUnpacking(image: *Image, from: []const u8, region: *const facet.Buffe
                 }
             };
         } else {
-            const texel = _decode.texelBytes(image.given_format);
+            const texel = _decode.unpackedBytes(image.given_format);
             const pitch = @as(usize, row_length) * texel;
             const slice_at = start + slice * @as(usize, slice_height) * pitch;
             for (0..height) |row| for (0..width) |column| {

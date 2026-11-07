@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! Texels of a format an image does not keep: a compressed one (BC1, BC2,
-//! BC3) or a float one, unpacked as they come in by CmdCopyBufferToImage into
-//! the 8 bits a channel the image is kept in.
+//! BC3), a float one, or since 1.127 one of four channels in 16 bits
+//! (B4G4R4A4, A1R5G5B5), unpacked as they come in by CmdCopyBufferToImage
+//! into the 8 bits a channel the image is kept in.
 //!
 //! A compressed image is unpacked here only on a device that samples texels
 //! rather than blocks (`Capabilities.kept_compressed`, false on the
@@ -18,7 +19,7 @@ const texture = facet.texture;
 
 /// Whether an image of `format` is kept as 8 bits a channel.
 pub fn unpacks(format: facet.Format) bool {
-    return blockBytes(format) != 0 or texelBytes(format) != 0;
+    return blockBytes(format) != 0 or unpackedBytes(format) != 0;
 }
 
 /// The bytes of a block of 4 x 4 texels of a compressed format; 0 for another.
@@ -57,6 +58,17 @@ pub fn texelBytes(format: facet.Format) u32 {
         // One float a texel, since 1.57.
         .b10g11r11_ufloat_pack32, .e5b9g9r9_ufloat_pack32, .r32_sfloat => 4,
         else => 0,
+    };
+}
+
+/// The bytes of a texel of a format unpacked a texel at a time: a float
+/// one's (`texelBytes`), and since 1.127 a word of four channels in 16
+/// bits, which no sampler of this library reads where it lies, on any
+/// device; 0 for another.
+pub fn unpackedBytes(format: facet.Format) u32 {
+    return switch (format) {
+        .b4g4r4a4_unorm_pack16, .a1r5g5b5_unorm_pack16 => 2,
+        else => texelBytes(format),
     };
 }
 
@@ -128,8 +140,9 @@ const eac_modifiers = [16][8]i32{
     .{ -3, -5, -7, -9, 2, 4, 6, 8 },
 };
 
-/// Bits repeated into the low ones, which is the value times 255 over the
-/// largest the bits hold, to the nearest.
+/// Bits repeated into the low ones: the value times 255 over the largest
+/// the bits hold, to the nearest for 4 bits and 7, and within one of it
+/// for 5 and 6, as a texture unit widens them.
 fn extend4(value: u32) u32 {
     return value << 4 | value;
 }
@@ -381,8 +394,24 @@ fn keptFloats(format: facet.Format) ?texture.Format {
 
 /// A texel of a float format, 8 bits a channel: the SDK's decoder, which
 /// is the one a sample of a kept texel reads through, so an image unpacked
-/// as it is copied in holds what sampling the floats would have read.
+/// as it is copied in holds what sampling the floats would have read. And
+/// since 1.127 a word of four channels in 16 bits, each channel widened by
+/// repeating its bits, as R5G6B5's are where a texture keeps them.
 pub fn texel(format: facet.Format, bytes: []const u8) Rgba {
+    switch (format) {
+        // Blue in the top 4 bits, then green and red, and alpha in the
+        // low 4.
+        .b4g4r4a4_unorm_pack16 => {
+            const word: u32 = std.mem.readInt(u16, bytes[0..2], .little);
+            return .{ @intCast(extend4(word >> 4 & 0xF)), @intCast(extend4(word >> 8 & 0xF)), @intCast(extend4(word >> 12)), @intCast(extend4(word & 0xF)) };
+        },
+        // Alpha in the top bit, then red, green and blue in 5 bits each.
+        .a1r5g5b5_unorm_pack16 => {
+            const word: u32 = std.mem.readInt(u16, bytes[0..2], .little);
+            return .{ @intCast(extend5(word >> 10 & 0x1F)), @intCast(extend5(word >> 5 & 0x1F)), @intCast(extend5(word & 0x1F)), if (word >> 15 != 0) 255 else 0 };
+        },
+        else => {},
+    }
     const kept = keptFloats(format) orelse return .{ 0, 0, 0, 0 };
     var made: Rgba = .{ 0, 0, 0, 0 };
     switch (kept) {
@@ -401,6 +430,20 @@ pub fn texel(format: facet.Format, bytes: []const u8) Rgba {
 }
 
 const testing = std.testing;
+
+test "B4G4R4A4 and A1R5G5B5: each channel widened by repeating its bits" {
+    // 0x1234: blue 1, green 2, red 3 and alpha 4, each times 17.
+    try testing.expectEqual(Rgba{ 0x33, 0x22, 0x11, 0x44 }, texel(.b4g4r4a4_unorm_pack16, &.{ 0x34, 0x12 }));
+    // The alpha bit set, red whole, no green, and blue 16 of 31: 132.
+    try testing.expectEqual(Rgba{ 255, 0, 132, 255 }, texel(.a1r5g5b5_unorm_pack16, &.{ 0x10, 0xFC }));
+    // And clear, the three colours whole.
+    try testing.expectEqual(Rgba{ 255, 255, 255, 0 }, texel(.a1r5g5b5_unorm_pack16, &.{ 0xFF, 0x7F }));
+    // Two bytes a texel, unpacked on every device: no floats, so nothing
+    // a device that keeps floats keeps of them.
+    try testing.expectEqual(@as(u32, 2), unpackedBytes(.b4g4r4a4_unorm_pack16));
+    try testing.expect(unpacks(.a1r5g5b5_unorm_pack16));
+    try testing.expectEqual(@as(u32, 0), texelBytes(.a1r5g5b5_unorm_pack16));
+}
 
 test "BC1: four colours, or three and clear" {
     // Red, then blue; texels 0, 1, 2 and 3 in order.

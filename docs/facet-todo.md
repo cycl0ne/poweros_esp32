@@ -30,7 +30,9 @@ them.
 
 **Nothing is left here.** Every item this section held has been done, the
 last of them in 1.74: the compressed formats are all of BC1 to BC7, the
-texel buffers read every format Vulkan 1.0 asks of them, textures are
+texel buffers read every format Vulkan 1.0 asks of them (the A8B8G8R8
+words of `_snorm`, `_uint` and `_sint` only since 1.127, which this said
+before it was so), textures are
 kept in their own channels and in whole numbers, and a point is as wide as
 its vertex says.
 

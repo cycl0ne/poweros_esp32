@@ -834,6 +834,9 @@ Of textures:
   alpha and 11-bit channels. No sampler reads such a block where it lies,
   so the image takes the memory of its texels and cannot be copied out of.
   There is no ETC1 and no ASTC.
+- B4G4R4A4 and A1R5G5B5 since 1.127, unpacked into 8888 as they are
+  copied in on every device, as ETC2 is: twice the memory of the words, no
+  copy out, and no attachment of A1R5G5B5 yet.
 - The compressed formats are all of BC1 to BC7: BC1 to BC3; since 1.72
   BC4 and BC5 - one channel and two, each the block BC3 keeps its alpha
   in, read as (red, 0, 0, 1) and (red, green, 0, 1); since 1.73 BC7, four

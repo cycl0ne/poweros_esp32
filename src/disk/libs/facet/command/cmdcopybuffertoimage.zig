@@ -44,7 +44,9 @@ const Image = @import("../image/_image.zig").Image;
 /// on a multiple of 4 or the region is left out. One that is unpacked
 /// instead takes the texels decoded. A float image kept as its floats
 /// (`kept_floats`, since 1.45) takes them as they lie too, a texel at a
-/// time; one that is unpacked takes them rounded to 8 bits a channel.
+/// time; one that is unpacked takes them rounded to 8 bits a channel. One
+/// of B4G4R4A4 or A1R5G5B5 (since 1.127) takes each word widened to 8 bits
+/// a channel.
 ///
 /// CONTEXT:
 /// - Waits: no.
