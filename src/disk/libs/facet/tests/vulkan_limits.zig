@@ -294,16 +294,14 @@ const Rig = @import("facet.zig").Rig;
 /// overrides about eighteen of them downward) and only the board can say
 /// whether it meets them.
 ///
-/// The one, item 61 of docs/facet-vulkan10.md, multisampling: the
-/// no-attachments sample-count mask must include VK_SAMPLE_COUNT_4_BIT and
-/// holds only _1_BIT, a subpass with no attachments being one this library
-/// draws at one sample alone (item 43, since 1.113) until item 61's step
-/// K8.
-///
-/// Nothing else falls short, and nothing in that list is unaccounted for.
-/// The other eight sample-count masks are met: six hold the 4 bit since
-/// 1.112, and of the integer sampled-image mask and the storage-image mask
-/// Vulkan asks only the 1 bit, of the second while
+/// **None since 1.114**: the cores meet all 106. The last was item 61 of
+/// docs/facet-vulkan10.md, multisampling, in its no-attachments
+/// sample-count mask, which holds VK_SAMPLE_COUNT_4_BIT since a subpass of
+/// no attachment is drawn at its pipelines' count: item 43 made such a
+/// subpass in 1.113, and item 61's step K8 its four samples. The other
+/// eight sample-count masks are met: six hold the 4 bit since 1.112, and
+/// of the integer sampled-image mask and the storage-image mask Vulkan
+/// asks only the 1 bit, of the second while
 /// `shader_storage_image_multisample` is false.
 ///
 /// Closed since this count was first taken, which began at eighteen:
@@ -320,20 +318,23 @@ const Rig = @import("facet.zig").Rig;
 /// 17's half of two** in 1.90, maxVertexOutputComponents and
 /// maxFragmentInputComponents both 8 against 64; **item 22's half of
 /// two** in 1.91, maxFramebufferLayers 1 against 256, a pass clearing each
-/// layer and drawing into the first; and **item 61's six rows** in 1.112,
+/// layer and drawing into the first; **item 61's six rows** in 1.112,
 /// the three framebuffer sample-count masks and the colour, depth and
 /// stencil sampled-image masks, which hold the 4 bit since the cores draw
-/// four samples a pixel.
+/// four samples a pixel; and **item 61's last row** in 1.114, the
+/// no-attachments mask, after item 43 made such a subpass in 1.113.
 ///
-/// Items 28, 17, 22 and 61 are split the way item 52 was, so **this count
-/// is the cores' and the V3D still falls short on those eleven rows**: 0
+/// Items 28, 17, 22, 61 and 43 are split the way item 52 was, so **this
+/// count is the cores' and the V3D still falls short on twelve rows**: 0
 /// for the two texel offsets, which it reads off its own SPIR-V profile; 8
 /// for the two varyings, which it reads off its compiler's own cap - Mesa's
 /// v3dv carries 64 on this same GPU, so that is this compiler's limit, not
 /// the hardware's; 1 framebuffer layer, until its render list is played
-/// once a layer as v3dv's is (driver/v3d/driver.zig); and one sample in
-/// the six masks, until it draws four (item 61's V5).
-const shortfalls_on_the_cores = 1;
+/// once a layer as v3dv's is (driver/v3d/driver.zig); one sample in the
+/// six masks, until it draws four (item 61's V5); and one in the
+/// no-attachments mask, until it makes a subpass of no attachment (item
+/// 43's V3D half) and draws four in it (item 61's V8).
+const shortfalls_on_the_cores = 0;
 
 test "the check itself: Vulkan's floor passes, and a step below it is caught" {
     // A check that passes is worth nothing on its own: one whose loop never

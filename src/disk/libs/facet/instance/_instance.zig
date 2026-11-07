@@ -691,10 +691,11 @@ pub const limits: facet.PhysicalDeviceLimits = .{
     // **What a device reports is narrower** (`narrowSampleCounts`): one
     // sample in each of the seven until it has `can.multisampling`, which
     // the cores have since 1.112 and the V3D not yet (item 61's V5); and
-    // one sample for a subpass with no attachments, which is drawn at one
-    // alone since 1.113 (item 43) and at four after item 61's K8, so that
-    // mask is the one shortfall the cores have left of these. Until 1.96
-    // this table said one sample itself.
+    // one sample for a subpass with no attachments on a device that makes
+    // no such subpass (`can.colorless_subpasses`): the V3D, until item
+    // 43's half of it. The cores meet all seven since 1.114, when a
+    // subpass of no attachment took its pipelines' count (item 61's K8).
+    // Until 1.96 this table said one sample itself.
     .framebuffer_color_sample_counts = facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4,
     .framebuffer_depth_sample_counts = facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4,
     .framebuffer_stencil_sample_counts = facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4,
@@ -797,16 +798,19 @@ fn describeOne(sys: *ExecBase, instance: *Instance, ops: *const _driver.Ops) voi
 /// `physical`'s sample-count masks held to what it draws, so that none says
 /// a count before there is code to draw it. `limits` says one sample and
 /// four where Vulkan asks for both. A device without `can.multisampling`
-/// keeps the 1 bit alone in those seven masks; and since a subpass with no
-/// attachments is drawn at one sample alone (render/createrenderpass.zig,
-/// since 1.113 - four are item 61's K8), the no-attachments mask keeps the
-/// 1 bit alone whatever the device can. A bit a driver cleared stays clear, so the V3D's zeros for
-/// the images it does not sample (driver/v3d/driver.zig) survive this.
+/// keeps the 1 bit alone in those seven masks. One without
+/// `can.colorless_subpasses` keeps it alone in the no-attachments mask
+/// whatever else it can, making no subpass of no attachment to draw four
+/// in: a subpass of none draws at its pipelines' count since 1.114
+/// (driver/cpu/_draw.zig), and until then it kept one sample on every
+/// device. A bit a driver cleared stays clear, so the V3D's zeros for the
+/// images it does not sample (driver/v3d/driver.zig) survive this.
 /// Called after each driver's describe, since 1.96.
 pub fn narrowSampleCounts(physical: *PhysicalDevice) void {
     const said = &physical.properties.limits;
-    said.framebuffer_no_attachments_sample_counts &= facet.SAMPLE_COUNT_1;
+    if (!physical.can.colorless_subpasses) said.framebuffer_no_attachments_sample_counts &= facet.SAMPLE_COUNT_1;
     if (physical.can.multisampling) return;
+    said.framebuffer_no_attachments_sample_counts &= facet.SAMPLE_COUNT_1;
     said.framebuffer_color_sample_counts &= facet.SAMPLE_COUNT_1;
     said.framebuffer_depth_sample_counts &= facet.SAMPLE_COUNT_1;
     said.framebuffer_stencil_sample_counts &= facet.SAMPLE_COUNT_1;

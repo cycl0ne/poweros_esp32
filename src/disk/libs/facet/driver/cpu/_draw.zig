@@ -159,6 +159,29 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
     const corner_count = _vertices.assemble(pipeline.topology, indices, lowest, corners[0..most_corners]);
 
     const target = &player.target.?;
+    // A subpass of no attachment is drawn at its pipelines' count of
+    // samples (VUID-VkGraphicsPipelineCreateInfo-subpass-00758), the same
+    // in every pipeline it binds while `variable_multisample_rate` is off
+    // (VUID-vkCmdBindPipeline-pipeline-00781). Its tiles, laid at one
+    // sample as it began, are laid again at four before its first draw
+    // where that draw's pipeline has four, as v3dv starts its job again
+    // with MSAA there (`cmd_buffer_restart_job_for_msaa_if_needed`,
+    // v3dv_cmd_buffer.c:2676-2730, before `job->draw_count++` at 2912;
+    // since 1.114). After the first draw a pipeline of another count,
+    // which Vulkan does not allow, draws at the first's; and a pipeline
+    // of four in a subpass whose attachments have one, not compatible
+    // with its own pass (VUID-vkCmdDraw-renderPass-02684), draws at
+    // theirs, since the tiles are laid again over no surface.
+    if (target.stats.draws == 0 and pipeline.samples > 1 and target.attachments.samples == 1 and
+        target.attachments.color_count == 0 and !target.attachments.depth.used and !target.attachments.stencil.used)
+    {
+        var attachments = target.attachments;
+        attachments.samples = pipeline.samples;
+        target.moveToAll(&.{}, target.area, attachments) catch
+            return _play.noRoom(queue, "a draw of four samples a pixel in a subpass of no attachment");
+        target.begin();
+    }
+    target.stats.draws += 1;
     const resources = player.drawn orelse resources: {
         const copy = target.arena.create(shader.Resources) orelse return;
         copy.* = player.resources;

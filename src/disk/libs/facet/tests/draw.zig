@@ -7614,6 +7614,132 @@ test "a subpass of no attachment at all: drawn over its render area alone, at on
     try testing.expectEqual(@as(u64, 32 * 24), try queryValue(&bench, occlusion, 0));
 }
 
+test "a subpass of no attachment at all draws at its pipeline's count: at four samples a pixel each sample covered counted, at one each pixel" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
+    try testing.expect(physical.can.multisampling and physical.can.colorless_subpasses);
+    const nothing = facet.SubpassDescription{};
+    var pass: ?*facet.RenderPass = null;
+    defer fb.DestroyRenderPass(device, pass);
+    try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .subpass_count = 1, .subpasses = @ptrCast(&nothing) }, &pass));
+    const side = 64;
+    var frame: ?*facet.Framebuffer = null;
+    defer fb.DestroyFramebuffer(device, frame);
+    try testing.expectEqual(facet.Result.success, fb.CreateFramebuffer(device, &.{ .render_pass = pass.?, .attachment_count = 0, .width = side, .height = side }, &frame));
+    const flat = try module(&bench, &Flat.code);
+    defer fb.DestroyShaderModule(device, flat);
+    const layout = try pipelineLayout(&bench, &.{}, 4);
+    defer fb.DestroyPipelineLayout(device, layout);
+
+    // A pipeline of four samples is taken by the subpass as one of one is:
+    // a subpass of no attachment has its pipelines' count
+    // (VUID-VkGraphicsPipelineCreateInfo-subpass-00758).
+    const four = facet.PipelineMultisampleStateCreateInfo{ .rasterization_samples = 4 };
+    const four_made, const at_four = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = pass.?, .multisample = &four, .blend_count = 0 });
+    defer fb.DestroyPipeline(device, at_four);
+    try testing.expectEqual(facet.Result.success, four_made);
+    const one_made, const at_one = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = pass.?, .blend_count = 0 });
+    defer fb.DestroyPipeline(device, at_one);
+    try testing.expectEqual(facet.Result.success, one_made);
+
+    // The triangle of corners in eighths of a pixel the colour tests of
+    // four samples draw, which covers some pixels in part: so the samples
+    // it covers are not four times the centres.
+    const eighths = [3][2]i64{ .{ 29, 203 }, .{ 500, 9 }, .{ 470, 497 } };
+    var corners: [3][2]i64 = undefined;
+    var vertices: [3][3]f32 = undefined;
+    for (eighths, &corners, &vertices) |at, *q8, *vertex| {
+        q8.* = .{ at[0] * 32, at[1] * 32 };
+        vertex.* = .{ @as(f32, @floatFromInt(at[0])) / 256 - 1, @as(f32, @floatFromInt(at[1])) / 256 - 1, 0.5 };
+    }
+    var samples_covered: u64 = 0;
+    var centres_covered: u64 = 0;
+    for (0..side) |y| for (0..side) |x| {
+        samples_covered += @popCount(coveredAt(4, corners, @intCast(x), @intCast(y)));
+        centres_covered += coveredAt(1, corners, @intCast(x), @intCast(y));
+    };
+    try testing.expect(samples_covered != 4 * centres_covered);
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
+    const occlusion = try queryPool(&bench, .occlusion, 1, 0);
+    defer fb.DestroyQueryPool(device, occlusion);
+
+    // A pass of the pipelines given, the triangle drawn by each in turn,
+    // and what the query counted of it.
+    const Counting = struct {
+        fn of(on: *Bench, into: *facet.RenderPass, onto: *facet.Framebuffer, by: *facet.PipelineLayout, pipelines: []const *facet.Pipeline, buffer: *facet.Buffer, pool: *facet.QueryPool) !u64 {
+            const base = on.rig.fb;
+            const at: u64 = 0;
+            const green: u32 = 0xFF00_FF00;
+            const values = clears(0xFF00_0000);
+            const commands = try on.record();
+            base.CmdResetQueryPool(commands, pool, 0, 1);
+            base.CmdBeginQuery(commands, pool, 0, facet.QUERY_CONTROL_PRECISE);
+            base.CmdBeginRenderPass(commands, &.{ .render_pass = into, .framebuffer = onto, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 2, .clear_values = &values }, .@"inline");
+            base.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&buffer), @ptrCast(&at));
+            base.CmdPushConstants(commands, by, facet.SHADER_STAGE_FRAGMENT, 0, 4, &green);
+            for (pipelines) |pipeline| {
+                base.CmdBindPipeline(commands, .graphics, pipeline);
+                base.CmdDraw(commands, 3, 1, 0, 0);
+            }
+            base.CmdEndRenderPass(commands);
+            base.CmdEndQuery(commands, pool, 0);
+            try on.submit();
+            return queryValue(on, pool, 0);
+        }
+    };
+
+    // At four, every sample it covers, as llvmpipe counts each sample's
+    // mask; at one, every pixel whose centre it covers; and at four again
+    // after a pass of one, each pass's tiles laid at its first draw.
+    try testing.expectEqual(samples_covered, try Counting.of(&bench, pass.?, frame.?, layout, &.{at_four.?}, vertex_buffer, occlusion));
+    try testing.expectEqual(centres_covered, try Counting.of(&bench, pass.?, frame.?, layout, &.{at_one.?}, vertex_buffer, occlusion));
+    try testing.expectEqual(samples_covered, try Counting.of(&bench, pass.?, frame.?, layout, &.{at_four.?}, vertex_buffer, occlusion));
+    // Two pipelines of different counts in one subpass, which Vulkan does
+    // not allow without `variable_multisample_rate`
+    // (VUID-vkCmdBindPipeline-pipeline-00781), draw at the first's, as
+    // v3dv lays its frame again at its first draw alone: the first draw
+    // is kept, and the second counted at the first's count too.
+    try testing.expect(samples_covered != 2 * centres_covered);
+    try testing.expectEqual(2 * samples_covered, try Counting.of(&bench, pass.?, frame.?, layout, &.{ at_four.?, at_one.? }, vertex_buffer, occlusion));
+    try testing.expectEqual(2 * centres_covered, try Counting.of(&bench, pass.?, frame.?, layout, &.{ at_one.?, at_four.? }, vertex_buffer, occlusion));
+
+    // The tiles are laid again in a subpass of no attachment alone. One
+    // of an attachment has that attachment's count, and a pipeline of four
+    // is refused where it has one. Bound there all the same, not
+    // compatible with its own pass (VUID-vkCmdDraw-renderPass-02684), the
+    // pipeline of four draws at the attachment's count: a colour
+    // attachment of one is drawn at the triangle's centres, and a depth or
+    // a stencil attachment of one counts them.
+    const picture = try Picture.of(&bench, side, side);
+    const transient = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT;
+    _, const depth_view = try bench.image(.{ .format = .d16_unorm, .extent = .{ .width = side, .height = side }, .usage = transient }, true);
+    _, const stencil_view = try bench.image(.{ .format = .s8_uint, .extent = .{ .width = side, .height = side }, .usage = transient }, true);
+    for ([3]facet.Format{ .b8g8r8a8_unorm, .d16_unorm, .s8_uint }, [3]*facet.ImageView{ picture.view, depth_view, stencil_view }) |format, view| {
+        const color = format == .b8g8r8a8_unorm;
+        const held: facet.ImageLayout = if (color) .color_attachment_optimal else .depth_stencil_attachment_optimal;
+        const description = facet.AttachmentDescription{ .format = format, .load_op = .clear, .store_op = if (color) .store else .dont_care, .stencil_load_op = .clear, .final_layout = held };
+        const reference = facet.AttachmentReference{ .attachment = 0, .layout = held };
+        const subpass = if (color)
+            facet.SubpassDescription{ .color_attachment_count = 1, .color_attachments = @ptrCast(&reference) }
+        else
+            facet.SubpassDescription{ .depth_stencil_attachment = &reference };
+        var attached: ?*facet.RenderPass = null;
+        defer fb.DestroyRenderPass(device, attached);
+        try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 1, .attachments = @ptrCast(&description), .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &attached));
+        const refused, const none = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = attached.?, .multisample = &four, .blend_count = @intFromBool(color) });
+        try testing.expectEqual(facet.Result.error_initialization_failed, refused);
+        try testing.expect(none == null);
+        const onto = try framebuffer(&bench, attached.?, &.{view}, side, side);
+        defer fb.DestroyFramebuffer(device, onto);
+        try testing.expectEqual(centres_covered, try Counting.of(&bench, attached.?, onto, layout, &.{at_four.?}, vertex_buffer, occlusion));
+        if (color) try testing.expectEqual(centres_covered, @as(u64, pixelsOf(&picture, 0xFF00_FF00)));
+    }
+}
+
 // --- 1.40: the depth clamp and the depth bounds test ------------------------
 
 test "the depth bounds test: a pixel drawn only where the depth already there lies between them, as the pipeline or a command says" {

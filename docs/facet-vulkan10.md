@@ -121,8 +121,9 @@ items 82 and 83 in 1.87 and 1.88 - both found while doing other items -
 item 61's first row of eight in 1.89, item 17's half of two in 1.90,
 item 22's half of two in 1.91, item 83's open question, answered from
 Mesa, in 1.92, item 45 in 1.93, item 44 in 1.94, item 84 in 1.95,
-item 61's next six rows of eight, on the cores, in 1.112, and item 43's
-half of two, the cores', in 1.113.**
+item 61's next six rows of eight, on the cores, in 1.112, item 43's
+half of two, the cores', in 1.113, and item 61's last row of eight, on
+the cores, in 1.114.**
 Each
 carries a *Done* note below saying what was actually built and where the
 item's own description turned out to be wrong - and several did. Things
@@ -132,8 +133,9 @@ from 1.80 and 1.81, 79, 80 and 81 from 1.82, and 85 and 86 from 1.113.
 Items 52, 28, 17, 22, 61 and 43 are the ones split between devices: the
 cores draw every sampler as of 1.83, sample at a constant texel offset as
 of 1.87, carry 64 varyings as of 1.90, take framebuffers of 256 layers as
-of 1.91, draw four samples a pixel as of 1.112 and a subpass with no
-colour attachment as of 1.113, and the V3D does none of the six - so the
+of 1.91, draw four samples a pixel as of 1.112 (in a subpass of no
+attachment as of 1.114) and a subpass with no colour attachment as of
+1.113, and the V3D does none of the six - so the
 magenta item 52 is about now belongs to item 54 alone, item 28's
 remainder is a QPU back end that refuses the operand at pipeline
 creation, item 17's is a vertex program that keeps its varyings in
@@ -505,6 +507,11 @@ it and the test says that too. The check proves itself as well: a device
 built from the table, on Vulkan's floor everywhere, must pass, and one step
 the wrong way in each of the five kinds of requirement must be caught -
 which is what says `at_most` is not being read as `at_least`.
+
+**The pin is 0 since 1.114**: the cores meet all 106, the last being item
+61's no-attachments mask. What the V3D still falls short on is the
+remainder of the items split between the devices, 28, 17, 22, 61 and 43,
+which tests/vulkan_limits.zig lists row by row.
 
 This cannot be fixed by raising numbers, and it gates every limits item below it. facet's struct has 26 fields; Vulkan's has about 106. Roughly 25 Vulkan limits have a counterpart and about 81 do not; two facet fields (tile_size, cores) have no Vulkan counterpart; max_descriptor_set_dynamic_buffers folds two Vulkan limits into one; and three types differ — min_memory_map_alignment is u32 where Vulkan uses size_t, max_sampler_anisotropy is u32 where Vulkan's is float, and timestamp_period_ns is u32 nanoseconds where timestampPeriod is a float (1000 maps cleanly; a fractional period cannot be expressed). Worse for any translation, facet's struct is append-only by contract — the comments repeatedly say "a field added at the end, so that none already there moves" — which is how an LVO library keeps its ABI and the exact opposite of Vulkan's frozen layout. So either facet's struct is revised wholesale once, or the shim owns a VkPhysicalDeviceLimits filled from facet plus new sources. Decide before items 17-30, because they all land in whichever struct wins.
 
@@ -1255,10 +1262,11 @@ Two things this item did not say:
   (VUID-VkFramebufferCreateInfo-width-00886, -height-00888). Before, an
   image smaller than the size was refused, which bounded it; with no
   image, nothing did.
-- **A subpass of no attachment at all is drawn at one sample a pixel**,
-  the count a subpass has where no attachment gives it one. Vulkan takes
-  it from the pipeline instead, up to `framebufferNoAttachmentsSampleCounts`:
-  that is item 61's K8, and the limits test's pin stays 1 until it lands.
+- **A subpass of no attachment at all was drawn at one sample a pixel**
+  in 1.113, the count a subpass has where no attachment gives it one.
+  Vulkan takes it from the pipeline instead, up to
+  `framebufferNoAttachmentsSampleCounts`: item 61's K8 does since 1.114,
+  and the limits test's pin is 0.
 
 The pre-pass facet already had, `PIPELINE_CREATE_DEPTH_PREPASS`, is
 untouched: it is a pipeline's, inside a subpass of colour. A depth
@@ -1580,7 +1588,7 @@ The back end is fragment-only and refuses any other stage by name; the vertex an
 
 ### 61. Multisampling: 4 samples a pixel on both devices, with resolve attachments and CmdResolveImage's body **[critical path]**
 
-*rasterisation* &mdash; conformance-blocking, port, **sized 07.11.2026: 21 commits, about 1,590 lines of code, 1,340 of tests and 90 of docs**
+*rasterisation* &mdash; conformance-blocking, port, **sized 07.11.2026: 21 commits, about 1,590 lines of code, 1,340 of tests and 90 of docs**; **the cores' half done in 1.114**, the V3D's is steps V1 to V8
 
 The largest item Goal A cannot skip, and the only one Vulkan 1.0 gives no way to refuse — not through a feature bit, since sampleRateShading, alphaToOne and variableMultisampleRate are all optional, but through the required limits: framebufferColorSampleCounts, framebufferDepthSampleCounts, framebufferStencilSampleCounts, sampledImageColorSampleCounts, sampledImageDepthSampleCounts and sampledImageStencilSampleCounts must each include VK_SAMPLE_COUNT_4_BIT; framebufferNoAttachmentsSampleCounts must include VK_SAMPLE_COUNT_4_BIT too - *not* the 1 bit alone, as this said until 1.89, which is a seventh field wanting 4x and not a sixth; sampledImageIntegerSampleCounts and storageImageSampleCounts must include 1, the latter only while shaderStorageImageMultisample is false, and both are met; `framebufferIntegerColorSampleCounts`, also named here until 1.89, is not a Vulkan 1.0 limit at all and is not among the 106; and maxSampleMaskWords must be at least 1, which is **done in 1.89** - see below. facet published none of those ten fields until 1.82 and now publishes all of them, at their one-sample values - which is exactly why eight of the eighteen limit shortfalls counted by tests/vulkan_limits.zig are this item - and no device has the capability: rasterization_samples above 1, sample shading, alpha-to-coverage and alpha-to-one are refused in CreateGraphicsPipelines; an attachment with samples != 1 and any resolve_attachments are refused in CreateRenderPass; and CreateImage refuses samples != 1 in the same line that refuses 1D images, so a multisampled image cannot be made at all. On the cores: per-sample colour, depth and stencil in the tile store, a sample loop in every load, store, clear and resolve path, the quad walk writing four pixels under one coverage mask, the sample mask, and alpha-to-coverage in the blend path — the to-do document works the budget through, and its arithmetic needs one correction: a 64x64 tile is about 114 KiB live *across* four parts, but `Host.share` gives each part its own core and so its own L1, so the figure to hold against the A76's 64 KiB L1 data cache is the per-core 28.5 KiB now and 112.5 KiB at 4x. Still past it, so the conclusion stands - but it is past it by 1.8x and not 7x, and that matters because the doc's framing points at halving `tile_size`, which pays for 4x exactly and taxes every single-sampled frame, where the per-part run-time block `lay()` already builds for extra colour attachments and would carry sample planes at no cost to a 1x frame. On the V3D the hardware has 4x coverage and the driver writes one sample's worth in all four bits today, so that side is frame setup, the tile store and resolve rather than new silicon.
 
@@ -1653,7 +1661,7 @@ facet reports 1|4 on both devices, with the standard locations on the cores and 
 | K6 | **Done in 1.110.** Multisampled fetch from a native fragment function: a texture keeps its samples' planes apart and `sampleOf` gives one as a texture of one, a sample past the last reading nothing. A sampled colour image of four samples is kept in rows, its rows the texture, R8G8B8A8's bytes read by a texture format of their own; a depth attachment's planes carry their samples. Against the first plan, not a colour attachment as well: one sample of that is not made (item 48), and the format query's sample counts hold the 1 wherever they hold the 4 | lp_jit.c:399-404; lp_texture.c:1087; lvp_image.c:87-89, 104; lp_bld_sample_soa.c:2170-2187, 2985, 3166-3181 | 35 | 45 |
 | K6b | **Done in 1.111.** Input attachments of four samples, read a sample at a time: not in the first plan, which kept them refused, though Vulkan 1.0 reads one through `subpassInputMS` with no feature to refuse it under. An attachment carries its samples, their stride and where its second sample begins, and `sampleOf` gives one sample as an attachment of one, a sample past the last reading nothing: from the image's rows where an earlier subpass drew it, a colour or a depth plane, and from the tile where a subpass reads what it draws. No sample count ties an input attachment to its subpass, so one of one sample reads one of four | lvp_nir_lower_input_attachments.c:49-86; lp_bld_sample_soa.c:2170-2187, 4839, 4941-4956 | 34 | 320 |
 | K7 | **Done in 1.112.** 4x turned on for the cores, closing six rows: `Capabilities.multisampling` is theirs, so the three framebuffer masks and the colour, depth and stencil sampled-image masks say 1\|4, and the format query, CreateImage, CreateRenderPass and CreateGraphicsPipelines take four where those masks say it. The tests that turned the capability on to draw four now ask the cores for it, and each refusal is checked on the cores described without it. `standardSampleLocations` stays true: the cores' four places are Vulkan's (setup.zig `sampleOffsets`), as lavapipe says of its own. v3dv says false on the V3D, though the four places its compiler gives are the same ones: V5 is where that is settled | lvp_device.c:81-82, 1072-1081, 1094; v3dv_device.c:1202; nir_to_vir.c:3111-3134 | 10 | 40 |
-| K8 | No-attachment subpasses at 4x, after item 43, whose cores' half is done in 1.113 | v3dv_cmd_buffer.c:2655-2675 | 15 | 20 |
+| K8 | **Done in 1.114.** A subpass of no attachment at 4x, after item 43's cores' half (1.113). Such a subpass has its pipelines' count, so a pipeline of four is taken there, and its first draw lays the tiles again at four where its pipeline has four, as v3dv starts its job again with MSAA before its first draw; the frame counts its draws for that, as v3dv's job does. The no-attachments mask holds the 4 bit on a device with `can.colorless_subpasses`, which closes the last row on the cores. Against the first plan, two pipelines of different counts in one subpass, which Vulkan does not allow without `variableMultisampleRate`, draw at the first's, as v3dv's do; and a pipeline of four bound in a subpass of an attachment of one, against Vulkan too, draws at the attachment's count, since the tiles are laid again over no surface | `cmd_buffer_restart_job_for_msaa_if_needed`, v3dv_cmd_buffer.c:2655-2730, 2906-2912 | 16 | 106 |
 | V1 | The packet fields: COMMON's MSAA bit and log2 tile size, decimate on loads and stores, oversample, and SAMPLE_STATE's mask | v3d_packet.xml | 23 | 50 |
 | V2 | The tile-size chooser, and SAMPLE_STATE per draw at 4x | `v3d_choose_tile_size`, v3d_util.c:105-206; v3dv_cmd_buffer.c:367-413 | 65 | 45 |
 | V3 | The 4x layout, 2W x 2H and always UIF, as a fourth image kind | v3dv_image.c:136-140, 180-183; v3d_nir_lower_txf_ms.c:46-51 | 75 | 35 |
@@ -1669,7 +1677,7 @@ Three things this item said are corrected:
 
 - **The tile is not halved.** At 4x a part's tile would hold 112.5 KiB against the A76's 64 KiB of L1, as worked out above, and halving `tile_size` would tax every 1x frame. The three extra sample planes go instead in the per-part run-time block that `lay()` already builds for extra colour attachments, so a 1x frame is unchanged. Whether a 4x frame should halve its own tile, as `v3d_choose_tile_size` does on the V3D, is a measurement for after K7.
 - **A pass with a resolve marks every tile dirty.** `finish` draws only dirty tiles, and `begin` marks them dirty only when something is cleared. Without this, a tile loaded with LOAD_OP_LOAD and drawn into by nothing would never be resolved.
-- **The pin is 1 since 1.112, and it is this item's.** It said 10 at 1.89; item 17's half (1.90) and item 22's half (1.91) took it to 7, all seven this item's, and K7 to 1, the no-attachments mask, which K8 takes to 0. The verified line above cites creategraphicspipelines.zig:378 and _image.zig:338, which at 1.95 are :414 and :352.
+- **The pin is 0 since 1.114.** It said 10 at 1.89; item 17's half (1.90) and item 22's half (1.91) took it to 7, all seven this item's, K7 to 1, the no-attachments mask, and K8 to 0. The verified line above cites creategraphicspipelines.zig:378 and _image.zig:338, which at 1.95 are :414 and :352.
 
 Found independently by: features, limits, semantics, entry-points, conformance-path (all 5 strands that looked at it).
 

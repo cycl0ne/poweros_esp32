@@ -1268,13 +1268,13 @@ test "a device's sample counts follow what it draws, and the three optional mult
     try expectSampleCounts(.{ four, four, four, four, four, one, four, four, one }, &_instance.limits);
 
     // The cores draw four since 1.112, so six masks take the 4 bit, at
-    // Vulkan's standard places. The no-attachments mask keeps the 1 bit
-    // alone, since a subpass with no attachments is drawn at one sample
-    // alone (item 43, since 1.113; four are item 61's K8).
+    // Vulkan's standard places; and the no-attachments mask since 1.114,
+    // a subpass of no attachment drawing at its pipelines' count.
     try testing.expect(record.can.multisampling);
+    try testing.expect(record.can.colorless_subpasses);
     var properties: facet.PhysicalDeviceProperties = undefined;
     rig.fb.GetPhysicalDeviceProperties(physical, &properties);
-    try expectSampleCounts(.{ four, four, four, one, four, one, four, four, one }, &properties.limits);
+    try expectSampleCounts(.{ four, four, four, four, four, one, four, four, one }, &properties.limits);
     try testing.expectEqual(facet.TRUE, properties.limits.standard_sample_locations);
 
     // The cores described again, as a device that does not draw four:
@@ -1284,6 +1284,14 @@ test "a device's sample counts follow what it draws, and the three optional mult
     plain.can.multisampling = false;
     _instance.narrowSampleCounts(&plain);
     try expectSampleCounts(.{ one, one, one, one, one, one, one, one, one }, &plain.properties.limits);
+
+    // And as one that draws four but makes no subpass of no attachment,
+    // as the V3D makes none yet: the 1 bit alone in that mask.
+    var colorless = record.*;
+    try testing.expect(record.ops.describe(rig.sys, &colorless));
+    colorless.can.colorless_subpasses = false;
+    _instance.narrowSampleCounts(&colorless);
+    try expectSampleCounts(.{ four, four, four, one, four, one, four, four, one }, &colorless.properties.limits);
 
     // A bit a driver cleared stays clear, with the capability or without:
     // the V3D's four zeros for the images it does not sample
@@ -1296,6 +1304,8 @@ test "a device's sample counts follow what it draws, and the three optional mult
         v3d.properties.limits.sampled_image_stencil_sample_counts = 0;
         v3d.properties.limits.storage_image_sample_counts = 0;
         v3d.can.multisampling = can;
+        // Nor a subpass of no attachment (docs/facet-vulkan10.md item 43).
+        v3d.can.colorless_subpasses = false;
         _instance.narrowSampleCounts(&v3d);
         const drawn = if (can) four else one;
         try expectSampleCounts(.{ drawn, drawn, drawn, one, drawn, 0, 0, 0, 0 }, &v3d.properties.limits);

@@ -221,8 +221,9 @@ pass's depth. What is left out:
 - **A subpass may have no colour attachment** since 1.113, on the cores:
   the depth alone - a shadow map's pass, or a depth pre-pass that a
   subpass of colour then tests against, sharing the depth as above - or
-  no attachment at all, drawn over the render area at one sample a pixel.
-  Its fragment function runs, and what it colours goes nowhere. The V3D
+  no attachment at all, drawn over the render area at its pipelines'
+  count of samples, one or four (since 1.114; one alone in 1.113). Its
+  fragment function runs, and what it colours goes nowhere. The V3D
   refuses such a subpass (`colorless_subpasses`).
 
 ## Images written through, and what they still are not

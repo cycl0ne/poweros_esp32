@@ -265,9 +265,9 @@ pub fn vulkanOf(can: *const _instance.Capabilities) facet.PhysicalDeviceFeatures
         // Pipelines of different sample counts in one subpass with no
         // attachments, where without the feature they must all agree.
         // Off, as v3dv has it on this same GPU
-        // (src/broadcom/vulkan/v3dv_device.c); and a subpass with no
-        // attachments is drawn at one sample alone here
-        // (render/createrenderpass.zig, since 1.113), until item 61's K8.
+        // (src/broadcom/vulkan/v3dv_device.c): such a subpass's tiles are
+        // laid at the count of its first draw's pipeline
+        // (driver/cpu/_draw.zig, since 1.114), as v3dv lays its frame.
         .variable_multisample_rate = no,
         // `CommandBufferInheritanceInfo` is a render pass, a subpass and a
         // framebuffer and nothing else, so there is no way for a secondary

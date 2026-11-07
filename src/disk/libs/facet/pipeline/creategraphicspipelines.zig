@@ -426,7 +426,12 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         // VUID-VkGraphicsPipelineCreateInfo-multisampledRenderToSingleSampled-06853.
         const samples = multisample.rasterization_samples;
         if (samples != 1 and !(samples == 4 and device.physical.can.multisampling)) return .error_feature_not_present;
-        if (samples != pass.parts[subpass.first_part].samples) return .error_initialization_failed;
+        // A subpass of no attachment has no count of its own: it draws at
+        // its pipelines', one of `framebuffer_no_attachments_sample_counts`
+        // (VUID-VkGraphicsPipelineCreateInfo-subpass-00758, since 1.114).
+        const first = pass.parts[subpass.first_part];
+        const no_attachment = first.color_count == 0 and first.depth == null;
+        if (!no_attachment and samples != first.samples) return .error_initialization_failed;
         made.samples = samples;
         // One word of the mask, which at one sample a pixel is one bit of
         // it: `PhysicalDeviceLimits.max_sample_mask_words` is 1 and Vulkan

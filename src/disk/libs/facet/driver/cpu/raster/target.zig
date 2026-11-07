@@ -512,6 +512,11 @@ pub const Finished = struct {
 
 /// What the draws of a frame came to.
 pub const Stats = struct {
+    /// The draws made into the frame, as v3dv counts its job's
+    /// (`job->draw_count`, v3dv_cmd_buffer.c:2912): a subpass of no
+    /// attachment is laid at its first one's count of samples
+    /// (driver/cpu/_draw.zig, since 1.114).
+    draws: u32 = 0,
     /// Triangles the draws were given.
     triangles: u32 = 0,
     /// Those not drawn: wholly outside the view, facing away, with no

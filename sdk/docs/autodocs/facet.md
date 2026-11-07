@@ -4912,8 +4912,10 @@ lavapipe hands llvmpipe a framebuffer of no colour buffers for it
 (lvp_execute.c:1974-1980), whose tiles have none to load or store
 (lp_rast.c:126-131) and whose blending is a loop over none
 (lp_state_fs.c:3618-3622). A subpass with no attachment at all draws
-over the framebuffer's size at one sample a pixel; at four it waits on
-docs/facet-vulkan10.md item 61's K8.
+over its render area at the count of samples its pipelines say, as
+Vulkan has it: one, or four on a device that draws them
+(`framebuffer_no_attachments_sample_counts`, since 1.114; one alone in
+1.113).
 
 An attachment holds one sample a pixel, or four on a device that draws
 them (`Capabilities.multisampling`, since 1.100), and every attachment of

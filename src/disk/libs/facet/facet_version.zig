@@ -2753,4 +2753,42 @@ pub const LIBRARY_VERSION = 1;
 /// fails at least one of them. The blend skipped where there is no
 /// colour is not among them: it saves work and changes nothing a test
 /// can see.
-pub const LIBRARY_REVISION = 113;
+///
+/// 114: **A subpass of no attachment at four samples a pixel.** Item 61's
+/// K8 of docs/facet-vulkan10.md, its last row on the cores: such a
+/// subpass has no count of its own and draws at its pipelines', one of
+/// `framebuffer_no_attachments_sample_counts` (Vulkan's "rules for a
+/// zero-attachment subpass", VUID-VkGraphicsPipelineCreateInfo-subpass-00758),
+/// and that mask held the 1 bit alone in 1.113. CreateGraphicsPipelines
+/// takes a pipeline of four for a subpass of no attachment, and of no
+/// other count than its attachments' for any other subpass. The port is
+/// v3dv's: it starts a subpass's frame at one sample where no attachment
+/// says otherwise and, before the first draw of a pipeline of four,
+/// starts it again with MSAA (`cmd_buffer_restart_job_for_msaa_if_needed`,
+/// v3dv_cmd_buffer.c:2655-2730, guarded by the job's `draw_count`, which
+/// is counted at 2912). So the cores' first draw in such a subpass lays
+/// its tiles again at four and begins the frame again, and the frame
+/// counts its draws (`Stats.draws`). A pipeline of another count after
+/// the first draw, which Vulkan does not allow while
+/// `variable_multisample_rate` is off (VUID-vkCmdBindPipeline-pipeline-00781),
+/// draws at the first's, as v3dv's does. The tiles are laid again over
+/// no surface, so a pipeline of four bound in a subpass of an attachment
+/// of one, which Vulkan does not allow either
+/// (VUID-vkCmdDraw-renderPass-02684), draws at the attachment's count.
+/// The no-attachments mask holds the 4 bit on a device with
+/// `can.colorless_subpasses` that draws four, so the cores meet all of
+/// Vulkan's 106 limits and the limits test's pin is 0. The V3D keeps the
+/// 1 bit until item 43's V3D half and item 61's V8.
+///
+/// Tests: the cores say the 4 bit, and say the 1 bit alone described
+/// without `colorless_subpasses`, as the V3D is; the limits test's pin is
+/// 0. A subpass of no attachment at all takes a pipeline of four and one
+/// of one; an occlusion query counts every sample a triangle in eighths
+/// of a pixel covers at four, every pixel whose centre it covers at one,
+/// and at four again after a pass of one. Two pipelines of different
+/// counts in one subpass count at the first's, in either order. Over a
+/// colour, a depth and a stencil attachment of one sample, a pipeline of
+/// four is refused, and bound all the same draws at one: the colour
+/// drawn at the triangle's centres, and each counting them. Each of
+/// 14 changes put back fails at least one of them.
+pub const LIBRARY_REVISION = 114;

@@ -521,11 +521,12 @@ pub const PhysicalDeviceLimits = extern struct {
     /// The samples a pixel may hold, as a bitmask of
     /// `SampleCountFlagBits` and not a count: for a colour, a
     /// depth, a stencil attachment, and for a subpass with no
-    /// attachment at all. One sample and four on the cores since
-    /// 1.112, but for a subpass with no attachments, and
-    /// `SAMPLE_COUNT_1` alone on the V3D, which does not draw four
-    /// yet - Vulkan requires four, so a single bit is a defect and
-    /// not a choice (docs/facet-vulkan10.md item 61).
+    /// attachment at all. One sample and four on the cores - since
+    /// 1.112, and since 1.114 for a subpass with no attachments, which
+    /// draws at its pipelines' count - and `SAMPLE_COUNT_1` alone on
+    /// the V3D, which does not draw four yet - Vulkan requires four, so
+    /// a single bit is a defect and not a choice (docs/facet-vulkan10.md
+    /// item 61).
     framebuffer_color_sample_counts: u32,
     framebuffer_depth_sample_counts: u32,
     framebuffer_stencil_sample_counts: u32,
@@ -811,8 +812,9 @@ pub const PhysicalDeviceFeatures = extern struct {
     sparse_residency_aliased: Bool32 = FALSE,
 
     // --- the rest ---
-    /// A subpass with no attachments may be drawn at a sample rate other
-    /// than another subpass's.
+    /// The pipelines bound in one subpass with no attachments may be of
+    /// different sample counts; without it they all have the same
+    /// (VUID-vkCmdBindPipeline-pipeline-00781).
     variable_multisample_rate: Bool32 = FALSE,
     /// A secondary command buffer run inside a query its primary began
     /// (`CommandBufferInheritanceInfo`).
@@ -2233,7 +2235,9 @@ pub const PipelineRasterizationStateCreateInfo = extern struct {
 pub const PipelineMultisampleStateCreateInfo = extern struct {
     flags: u32 = 0,
     /// The subpass's own count: 1, or 4 on a device that draws them
-    /// (`Capabilities.multisampling`, since 1.100).
+    /// (`Capabilities.multisampling`, since 1.100). A subpass of no
+    /// attachment has none of its own and draws at this one, one of
+    /// `framebuffer_no_attachments_sample_counts` (since 1.114).
     rasterization_samples: u32 = 1,
     sample_shading_enable: bool = false,
     min_sample_shading: f32 = 0,
