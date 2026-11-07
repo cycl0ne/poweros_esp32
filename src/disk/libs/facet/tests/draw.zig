@@ -458,6 +458,9 @@ fn module(bench: *Bench, code: *const shader.Code) !*facet.ShaderModule {
 const PipelineState = struct {
     module: *facet.ShaderModule,
     name: [*:0]const u8 = "main",
+    /// False, and the pipeline is made of its vertex stage alone, which
+    /// Vulkan 1.0 allows (since 1.115).
+    fragment: bool = true,
     layout: *facet.PipelineLayout,
     pass: *facet.RenderPass,
     stride: u32 = 12,
@@ -518,7 +521,7 @@ fn makePipeline(bench: *Bench, state: PipelineState) struct { facet.Result, ?*fa
     const dynamic = facet.PipelineDynamicStateCreateInfo{ .dynamic_state_count = @intCast(state.dynamic.len), .dynamic_states = state.dynamic.ptr };
     const info = facet.GraphicsPipelineCreateInfo{
         .flags = state.flags,
-        .stage_count = 2,
+        .stage_count = if (state.fragment) 2 else 1,
         .stages = &stages,
         .vertex_input_state = &input,
         .input_assembly_state = &assembly,
@@ -7614,6 +7617,33 @@ test "a subpass of no attachment at all: drawn over its render area alone, at on
     try testing.expectEqual(@as(u64, 32 * 24), try queryValue(&bench, occlusion, 0));
 }
 
+/// The triangle of corners in eighths of a pixel that the colour tests of
+/// four samples a pixel draw over a viewport of 64, which covers some
+/// pixels in part: its vertices at the depths given, and what it covers.
+const Eighths = struct {
+    const at = [3][2]i64{ .{ 29, 203 }, .{ 500, 9 }, .{ 470, 497 } };
+
+    fn vertices(depths: [3]f32) [3][3]f32 {
+        var made: [3][3]f32 = undefined;
+        for (at, depths, &made) |corner, depth, *vertex| {
+            vertex.* = .{ @as(f32, @floatFromInt(corner[0])) / 256 - 1, @as(f32, @floatFromInt(corner[1])) / 256 - 1, depth };
+        }
+        return made;
+    }
+
+    /// The samples it covers at `samples` a pixel: at one, the pixels
+    /// whose centres it covers.
+    fn covered(samples: u32) u64 {
+        var corners: [3][2]i64 = undefined;
+        for (at, &corners) |corner, *q8| q8.* = .{ corner[0] * 32, corner[1] * 32 };
+        var count: u64 = 0;
+        for (0..64) |y| for (0..64) |x| {
+            count += @popCount(coveredAt(samples, corners, @intCast(x), @intCast(y)));
+        };
+        return count;
+    }
+};
+
 test "a subpass of no attachment at all draws at its pipeline's count: at four samples a pixel each sample covered counted, at one each pixel" {
     var bench = try Bench.up();
     defer bench.down();
@@ -7645,22 +7675,12 @@ test "a subpass of no attachment at all draws at its pipeline's count: at four s
     defer fb.DestroyPipeline(device, at_one);
     try testing.expectEqual(facet.Result.success, one_made);
 
-    // The triangle of corners in eighths of a pixel the colour tests of
-    // four samples draw, which covers some pixels in part: so the samples
-    // it covers are not four times the centres.
-    const eighths = [3][2]i64{ .{ 29, 203 }, .{ 500, 9 }, .{ 470, 497 } };
-    var corners: [3][2]i64 = undefined;
-    var vertices: [3][3]f32 = undefined;
-    for (eighths, &corners, &vertices) |at, *q8, *vertex| {
-        q8.* = .{ at[0] * 32, at[1] * 32 };
-        vertex.* = .{ @as(f32, @floatFromInt(at[0])) / 256 - 1, @as(f32, @floatFromInt(at[1])) / 256 - 1, 0.5 };
-    }
-    var samples_covered: u64 = 0;
-    var centres_covered: u64 = 0;
-    for (0..side) |y| for (0..side) |x| {
-        samples_covered += @popCount(coveredAt(4, corners, @intCast(x), @intCast(y)));
-        centres_covered += coveredAt(1, corners, @intCast(x), @intCast(y));
-    };
+    // The triangle of corners in eighths of a pixel, which covers some
+    // pixels in part: so the samples it covers are not four times the
+    // centres.
+    const vertices = Eighths.vertices(@splat(0.5));
+    const samples_covered = Eighths.covered(4);
+    const centres_covered = Eighths.covered(1);
     try testing.expect(samples_covered != 4 * centres_covered);
     const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER);
     @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
@@ -7737,6 +7757,202 @@ test "a subpass of no attachment at all draws at its pipeline's count: at four s
         defer fb.DestroyFramebuffer(device, onto);
         try testing.expectEqual(centres_covered, try Counting.of(&bench, attached.?, onto, layout, &.{at_four.?}, vertex_buffer, occlusion));
         if (color) try testing.expectEqual(centres_covered, @as(u64, pixelsOf(&picture, 0xFF00_FF00)));
+    }
+}
+
+// --- 1.115: a pipeline of no fragment stage --------------------------------
+
+/// A vertex function as `Flat`'s that hands on three varyings, beside
+/// `Flat`'s fragment function, which reads none.
+const Unread = struct {
+    fn vertex(vertices: *const shader.Vertices) callconv(.c) void {
+        for (0..vertices.count) |k| {
+            const p = vertices.input(@intCast(k), 0);
+            const out = vertices.output(@intCast(k));
+            out[0..4].* = .{ p[0], p[1], p[2], 1 };
+            out[4..7].* = .{ 0.25, 0.5, 0.75 };
+        }
+    }
+
+    const entries = [_]shader.Entry{ shader.vertex("main", &vertex, 3), Flat.entries[1] };
+    const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
+};
+
+test "a pipeline of no fragment stage, the shadow map's: the depth a pipeline of a fragment function draws, and its vertex function's varyings read by nothing" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const depth_image, const depth_view = try bench.image(.{
+        .format = .d16_unorm,
+        .extent = .{ .width = 64, .height = 64 },
+        .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_SRC,
+    }, false);
+    const pass = try depthOnlyPass(&bench, 1);
+    defer fb.DestroyRenderPass(device, pass);
+    const frame = try framebuffer(&bench, pass, &.{depth_view}, 64, 64);
+    defer fb.DestroyFramebuffer(device, frame);
+    const flat = try module(&bench, &Flat.code);
+    defer fb.DestroyShaderModule(device, flat);
+    const unread = try module(&bench, &Unread.code);
+    defer fb.DestroyShaderModule(device, unread);
+    const layout = try pipelineLayout(&bench, &.{}, 4);
+    defer fb.DestroyPipelineLayout(device, layout);
+    const tested = facet.PipelineDepthStencilStateCreateInfo{ .depth_test_enable = true, .depth_write_enable = true, .depth_compare_op = .less };
+
+    // The vertex stage alone, which Vulkan 1.0 allows
+    // (VUID-VkGraphicsPipelineCreateInfo-stage-02096): its three varyings
+    // have no fragment function to agree with, where one that reads none
+    // is refused beside them.
+    const bare_made, const bare = makePipeline(&bench, .{ .module = unread, .fragment = false, .layout = layout, .pass = pass, .depth = tested, .blend_count = 0 });
+    defer fb.DestroyPipeline(device, bare);
+    try testing.expectEqual(facet.Result.success, bare_made);
+    const unread_made, const not_made = makePipeline(&bench, .{ .module = unread, .layout = layout, .pass = pass, .depth = tested, .blend_count = 0 });
+    try testing.expectEqual(facet.Result.error_invalid_shader_nv, unread_made);
+    try testing.expect(not_made == null);
+    const full_made, const full = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = pass, .depth = tested, .blend_count = 0 });
+    defer fb.DestroyPipeline(device, full);
+    try testing.expectEqual(facet.Result.success, full_made);
+
+    // The triangle in eighths of a pixel, its depth a quarter, a half and
+    // three quarters at its corners, drawn by each into a depth cleared to
+    // 1 and read back.
+    const vertices = Eighths.vertices(.{ 0.25, 0.5, 0.75 });
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
+    const bytes = 64 * 64 * 2;
+    const read_back, const back_bytes = try bench.buffer(bytes, facet.BUFFER_USAGE_TRANSFER_DST);
+    const offset: u64 = 0;
+    const green: u32 = 0xFF00_FF00;
+    const cleared = clears(0)[1];
+    const whole = facet.BufferImageCopy{ .image_extent = .{ .width = 64, .height = 64 }, .image_subresource = .{ .aspect_mask = facet.IMAGE_ASPECT_DEPTH } };
+    var drawn: [2][bytes]u8 = undefined;
+    for ([2]*facet.Pipeline{ bare.?, full.? }, &drawn) |pipeline, *depths| {
+        @memset(back_bytes[0..bytes], 0xAA);
+        const commands = try bench.record();
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 1, .clear_values = @ptrCast(&cleared) }, .@"inline");
+        fb.CmdBindPipeline(commands, .graphics, pipeline);
+        fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+        fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &green);
+        fb.CmdDraw(commands, 3, 1, 0, 0);
+        fb.CmdEndRenderPass(commands);
+        fb.CmdCopyImageToBuffer(commands, depth_image, .general, read_back, 1, @ptrCast(&whole));
+        try bench.submit();
+        @memcpy(depths, back_bytes[0..bytes]);
+    }
+
+    // The same depths from both: written where the triangle covers a
+    // pixel's centre, and the clear's 1 elsewhere.
+    try testing.expectEqualSlices(u8, &drawn[1], &drawn[0]);
+    var written: u64 = 0;
+    for (0..64) |y| for (0..64) |x| {
+        if (depthAt(&drawn[0], @intCast(x), @intCast(y)) != 0xFFFF) written += 1;
+    };
+    try testing.expectEqual(Eighths.covered(1), written);
+}
+
+test "a pipeline of no fragment stage over two colour attachments drawn together: each keeping what it held, and the pixels drawn counted" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    var pictures: [2]Picture = undefined;
+    for (&pictures) |*picture| picture.* = try Picture.of(&bench, 64, 64);
+    const description = facet.AttachmentDescription{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general };
+    const descriptions: [2]facet.AttachmentDescription = @splat(description);
+    const references = [2]facet.AttachmentReference{ .{ .attachment = 0, .layout = .general }, .{ .attachment = 1, .layout = .general } };
+    const together = facet.SubpassDescription{ .flags = facet.SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER, .color_attachment_count = 2, .color_attachments = &references };
+    var pass: ?*facet.RenderPass = null;
+    defer fb.DestroyRenderPass(device, pass);
+    try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &descriptions, .subpass_count = 1, .subpasses = @ptrCast(&together) }, &pass));
+    const frame = try framebuffer(&bench, pass.?, &.{ pictures[0].view, pictures[1].view }, 64, 64);
+    defer fb.DestroyFramebuffer(device, frame);
+    const flat = try module(&bench, &Flat.code);
+    defer fb.DestroyShaderModule(device, flat);
+    const layout = try pipelineLayout(&bench, &.{}, 4);
+    defer fb.DestroyPipelineLayout(device, layout);
+
+    // Of the vertex stage alone, it has the room of both colours, as an
+    // entry of `shader.fragmentOutputs` of two would.
+    const made, const pipeline = makePipeline(&bench, .{ .module = flat, .fragment = false, .layout = layout, .pass = pass.?, .blend_count = 2 });
+    defer fb.DestroyPipeline(device, pipeline);
+    try testing.expectEqual(facet.Result.success, made);
+    const vertices = Eighths.vertices(@splat(0.5));
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
+    const occlusion = try queryPool(&bench, .occlusion, 1, 0);
+    defer fb.DestroyQueryPool(device, occlusion);
+    const offset: u64 = 0;
+    const green: u32 = 0xFF00_FF00;
+    const blue: u32 = 0xFF00_00FF;
+    const red: u32 = 0xFFFF_0000;
+    const values = [2]facet.ClearValue{ clears(blue)[0], clears(red)[0] };
+    const commands = try bench.record();
+    fb.CmdResetQueryPool(commands, occlusion, 0, 1);
+    fb.CmdBeginQuery(commands, occlusion, 0, facet.QUERY_CONTROL_PRECISE);
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass.?, .framebuffer = frame, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 2, .clear_values = &values }, .@"inline");
+    fb.CmdBindPipeline(commands, .graphics, pipeline.?);
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &green);
+    fb.CmdDraw(commands, 3, 1, 0, 0);
+    fb.CmdEndRenderPass(commands);
+    fb.CmdEndQuery(commands, occlusion, 0);
+    try bench.submit();
+
+    // Vulkan leaves what is written undefined, and each attachment keeps
+    // its clear, though every pixel whose centre the triangle covers was
+    // drawn.
+    try testing.expectEqual(Eighths.covered(1), try queryValue(&bench, occlusion, 0));
+    try testing.expectEqual(@as(u32, 64 * 64), pixelsOf(&pictures[0], blue));
+    try testing.expectEqual(@as(u32, 64 * 64), pixelsOf(&pictures[1], red));
+}
+
+test "alpha to coverage on a pipeline of no fragment stage changes no sample, as llvmpipe leaves the coverage where no colour is written" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const nothing = facet.SubpassDescription{};
+    var pass: ?*facet.RenderPass = null;
+    defer fb.DestroyRenderPass(device, pass);
+    try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .subpass_count = 1, .subpasses = @ptrCast(&nothing) }, &pass));
+    var frame: ?*facet.Framebuffer = null;
+    defer fb.DestroyFramebuffer(device, frame);
+    try testing.expectEqual(facet.Result.success, fb.CreateFramebuffer(device, &.{ .render_pass = pass.?, .attachment_count = 0, .width = 64, .height = 64 }, &frame));
+    const flat = try module(&bench, &Flat.code);
+    defer fb.DestroyShaderModule(device, flat);
+    const layout = try pipelineLayout(&bench, &.{}, 4);
+    defer fb.DestroyPipelineLayout(device, layout);
+    const covering = facet.PipelineMultisampleStateCreateInfo{ .rasterization_samples = 4, .alpha_to_coverage_enable = true };
+    const full_made, const full = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = pass.?, .multisample = &covering, .blend_count = 0 });
+    defer fb.DestroyPipeline(device, full);
+    try testing.expectEqual(facet.Result.success, full_made);
+    const bare_made, const bare = makePipeline(&bench, .{ .module = flat, .fragment = false, .layout = layout, .pass = pass.?, .multisample = &covering, .blend_count = 0 });
+    defer fb.DestroyPipeline(device, bare);
+    try testing.expectEqual(facet.Result.success, bare_made);
+    const vertices = Eighths.vertices(@splat(0.5));
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
+    const occlusion = try queryPool(&bench, .occlusion, 1, 0);
+    defer fb.DestroyQueryPool(device, occlusion);
+
+    // A function's alpha of 0 covers no sample; without a function every
+    // sample the triangle covers is counted (lp_state_fs.c:1181-1185).
+    const offset: u64 = 0;
+    const transparent: u32 = 0x0000_FF00;
+    for ([2]*facet.Pipeline{ full.?, bare.? }, [2]u64{ 0, Eighths.covered(4) }) |pipeline, expected| {
+        const commands = try bench.record();
+        fb.CmdResetQueryPool(commands, occlusion, 0, 1);
+        fb.CmdBeginQuery(commands, occlusion, 0, facet.QUERY_CONTROL_PRECISE);
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass.?, .framebuffer = frame.?, .render_area = .{ .extent = .{ .width = 64, .height = 64 } } }, .@"inline");
+        fb.CmdBindPipeline(commands, .graphics, pipeline);
+        fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+        fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &transparent);
+        fb.CmdDraw(commands, 3, 1, 0, 0);
+        fb.CmdEndRenderPass(commands);
+        fb.CmdEndQuery(commands, occlusion, 0);
+        try bench.submit();
+        try testing.expectEqual(expected, try queryValue(&bench, occlusion, 0));
     }
 }
 

@@ -4124,10 +4124,11 @@ fn CreateGraphicsPipelines(base: *FacetBase, device: *facet.Device, cache: ?*fac
 **RESULT**
 
 `success`; else what the first that could not be made came to:
-`error_invalid_shader_nv` for stages that are not one vertex and one
-fragment function of the same varyings, with or without a tessellation
-control and evaluation function, whose varyings then the fragment
-function's have to be, or for a fragment function that writes other
+`error_invalid_shader_nv` for stages that are not one vertex function
+and one fragment function of the same varyings or none (since 1.115),
+with or without a tessellation control and evaluation function, whose
+varyings then the fragment function's have to be, or for a fragment
+function that writes other
 than the subpass's colour attachments (`shader.fragmentOutputs`, since
 1.51), or for a fragment entry whose `varyings` word names no fixed
 form (since 1.75); `error_feature_not_present`
@@ -4147,6 +4148,18 @@ code for its depth test and blend is chosen then, not as it draws. On a
 device with a processor of its own the fragment function has to be of a
 fixed form (`shader.fixedFragment`), or the pipeline is refused with
 `error_feature_not_present`.
+
+A pipeline of no fragment stage, as Vulkan 1.0 allows - a shadow map's
+- is drawn with a fragment function of the library's own that does
+nothing, as lavapipe binds `noop_fs` where a pipeline has none
+(lvp_device.c:2048-2052, lvp_execute.c:552-554; since 1.115). Vulkan
+leaves what it writes into a colour attachment undefined, and here every
+colour attachment keeps what it held; alpha to coverage, which takes
+the alpha of a colour that is not written, changes no sample, as in
+llvmpipe (lp_state_fs.c:1181-1185). A device with a processor of its
+own has no code for it and refuses it with `error_feature_not_present`:
+the V3D, until v3dv's no-op fragment shader is ported
+(v3dv_pipeline.c:2616-2642, docs/facet-vulkan10.md item 85).
 
 With tessellation functions, the topology is `patch_list` and the
 `tessellation_state` says the vertices of a patch, 1 to 32: the cores make

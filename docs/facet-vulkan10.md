@@ -122,31 +122,34 @@ item 61's first row of eight in 1.89, item 17's half of two in 1.90,
 item 22's half of two in 1.91, item 83's open question, answered from
 Mesa, in 1.92, item 45 in 1.93, item 44 in 1.94, item 84 in 1.95,
 item 61's next six rows of eight, on the cores, in 1.112, item 43's
-half of two, the cores', in 1.113, and item 61's last row of eight, on
-the cores, in 1.114.**
+half of two, the cores', in 1.113, item 61's last row of eight, on the
+cores, in 1.114, and item 85's half of two, the cores', in 1.115.**
 Each
 carries a *Done* note below saying what was actually built and where the
 item's own description turned out to be wrong - and several did. Things
 found while doing them became the items at the end of the list: 77 and 78
 from 1.80 and 1.81, 79, 80 and 81 from 1.82, and 85 and 86 from 1.113.
 
-Items 52, 28, 17, 22, 61 and 43 are the ones split between devices: the
-cores draw every sampler as of 1.83, sample at a constant texel offset as
-of 1.87, carry 64 varyings as of 1.90, take framebuffers of 256 layers as
-of 1.91, draw four samples a pixel as of 1.112 (in a subpass of no
-attachment as of 1.114) and a subpass with no colour attachment as of
-1.113, and the V3D does none of the six - so the
+Items 52, 28, 17, 22, 61, 43 and 85 are the ones split between devices:
+the cores draw every sampler as of 1.83, sample at a constant texel offset
+as of 1.87, carry 64 varyings as of 1.90, take framebuffers of 256 layers
+as of 1.91, draw four samples a pixel as of 1.112 (in a subpass of no
+attachment as of 1.114), a subpass with no colour attachment as of 1.113
+and a pipeline of no fragment stage as of 1.115, and the V3D does none of
+the seven - so the
 magenta item 52 is about now belongs to item 54 alone, item 28's
 remainder is a QPU back end that refuses the operand at pipeline
 creation, item 17's is a vertex program that keeps its varyings in
 registers and so stops at eight, item 22's is a render list played once
-a frame rather than once a layer, item 61's is its steps V1 to V8, and
-item 43's is a frame whose one render target is flagged unused.
+a frame rather than once a layer, item 61's is its steps V1 to V8,
+item 43's is a frame whose one render target is flagged unused, and item
+85's is a fragment program of no instructions.
 
-None of the six is the hardware's limit. Mesa's v3dv runs Vulkan on this
+None of the seven is the hardware's limit. Mesa's v3dv runs Vulkan on this
 same V3D 7.1 with 64 varyings, texel offsets of -8 to 7, 256 framebuffer
-layers, four samples a pixel (`src/broadcom/vulkan/v3dv_device.c`) and
-subpasses of no colour attachment (v3dvx_cmd_buffer.c:1189-1197), so
+layers, four samples a pixel (`src/broadcom/vulkan/v3dv_device.c`),
+subpasses of no colour attachment (v3dvx_cmd_buffer.c:1189-1197) and
+pipelines of no fragment stage (v3dv_pipeline.c:2616-2642), so
 each remainder is the port of named Mesa code, and the items say which. Until
 then the V3D's limit is **derived from its own compiler or driver** rather
 than written down, so the number cannot drift from what the device
@@ -2173,7 +2176,7 @@ one of the widest graph's sixteen inputs and one output.
 
 ### 85. A graphics pipeline with no fragment stage is refused
 
-*pipelines* &mdash; conformance-blocking, small, found while doing item 43
+*pipelines* &mdash; conformance-blocking, small, found while doing item 43 &mdash; **the cores' half done in 1.115**; the V3D's is v3dv's no-op fragment shader
 
 Vulkan 1.0 asks a graphics pipeline for a vertex stage
 (VUID-VkGraphicsPipelineCreateInfo-stage-02096) and nothing of a fragment
@@ -2191,6 +2194,29 @@ where the pipeline has none (`emit_state`, lvp_execute.c:552-554). The
 port is the same: a fragment entry of facet's own that writes nothing,
 taken where the stages name none, with no varyings for the last stage
 before it to be checked against. About 15 lines and a test.
+
+**The cores' half done in 1.115**, in 11 lines of code and 189 of
+tests. `settle` takes `noFragment`, a function of no instructions, where
+the stages name no fragment one, and checks no varyings against it. Two
+things the item did not say:
+
+- **What lands in a colour attachment.** Vulkan leaves it undefined, and
+  llvmpipe blends the colour store it allocates for a cbuf and never
+  writes (`lp_build_array_alloca`, lp_state_fs.c:826-832), which is
+  whatever that memory held. Here each colour attachment's write mask is
+  0, so it keeps what it held: deterministic, and as undefined as
+  Vulkan's. The function still has the room of as many colours as the
+  subpass draws together, so a subpass marked OUTPUTS_TOGETHER takes it.
+- **Alpha to coverage changes no sample**, as llvmpipe's applies only
+  where the shader writes colour 0 (lp_state_fs.c:1181-1185), which the
+  no-op does not.
+
+The V3D refuses such a pipeline with `error_feature_not_present`, at the
+check it already made for a fragment stage that ships no SPIR-V
+(driver/v3d/driver.zig, `makePipeline`). Its half is v3dv's: a fragment
+shader of no instructions built for the pipeline and compiled
+(v3dv_pipeline.c:2616-2642), here a fragment program of the library's own
+handed to the back end, with a board check.
 
 ### 86. A colour reference of ATTACHMENT_UNUSED is refused
 

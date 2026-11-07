@@ -32,10 +32,11 @@ const _instance = @import("../instance/_instance.zig");
 ///
 /// RESULT:
 /// `success`; else what the first that could not be made came to:
-/// `error_invalid_shader_nv` for stages that are not one vertex and one
-/// fragment function of the same varyings, with or without a tessellation
-/// control and evaluation function, whose varyings then the fragment
-/// function's have to be, or for a fragment function that writes other
+/// `error_invalid_shader_nv` for stages that are not one vertex function
+/// and one fragment function of the same varyings or none (since 1.115),
+/// with or without a tessellation control and evaluation function, whose
+/// varyings then the fragment function's have to be, or for a fragment
+/// function that writes other
 /// than the subpass's colour attachments (`shader.fragmentOutputs`, since
 /// 1.51), or for a fragment entry whose `varyings` word names no fixed
 /// form (since 1.75); `error_feature_not_present`
@@ -54,6 +55,18 @@ const _instance = @import("../instance/_instance.zig");
 /// device with a processor of its own the fragment function has to be of a
 /// fixed form (`shader.fixedFragment`), or the pipeline is refused with
 /// `error_feature_not_present`.
+///
+/// A pipeline of no fragment stage, as Vulkan 1.0 allows - a shadow map's
+/// - is drawn with a fragment function of the library's own that does
+/// nothing, as lavapipe binds `noop_fs` where a pipeline has none
+/// (lvp_device.c:2048-2052, lvp_execute.c:552-554; since 1.115). Vulkan
+/// leaves what it writes into a colour attachment undefined, and here every
+/// colour attachment keeps what it held; alpha to coverage, which takes
+/// the alpha of a colour that is not written, changes no sample, as in
+/// llvmpipe (lp_state_fs.c:1181-1185). A device with a processor of its
+/// own has no code for it and refuses it with `error_feature_not_present`:
+/// the V3D, until v3dv's no-op fragment shader is ported
+/// (v3dv_pipeline.c:2616-2642, docs/facet-vulkan10.md item 85).
 ///
 /// With tessellation functions, the topology is `patch_list` and the
 /// `tessellation_state` says the vertices of a patch, 1 to 32: the cores make
@@ -228,6 +241,13 @@ pub fn CreateGraphicsPipelines(base: *FacetBase, device: *facet.Device, cache: ?
     return result;
 }
 
+/// The fragment function of a pipeline of no fragment stage: one of no
+/// instructions, which writes nothing and drops no pixel (since 1.115).
+fn noFragment(fragments: *const shader.Fragments) callconv(.c) void {
+    _ = fragments;
+}
+const no_fragment = shader.fragment("main", &noFragment, 0);
+
 /// `made` filled in from `info`: what it came to.
 fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineCreateInfo) facet.Result {
     // The functions.
@@ -263,10 +283,15 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         }
     }
     const vertex_entry = vertex orelse return .error_invalid_shader_nv;
-    const fragment_entry = fragment orelse return .error_invalid_shader_nv;
     if ((control == null) != (evaluation == null)) return .error_invalid_shader_nv;
     const last_entry = evaluation orelse vertex_entry;
-    if (last_entry.varyingCount() != fragment_entry.varyingCount()) return .error_invalid_shader_nv;
+    // A pipeline of no fragment stage, which Vulkan 1.0 allows: it asks
+    // for a vertex stage alone (VUID-VkGraphicsPipelineCreateInfo-stage-02096).
+    // It is drawn with a function that does nothing, as lavapipe binds
+    // `noop_fs` (lvp_device.c:2048-2052, lvp_execute.c:552-554), which
+    // reads no varying for the last stage's to agree with (since 1.115).
+    const fragment_entry = fragment orelse &no_fragment;
+    if (fragment != null and last_entry.varyingCount() != fragment_entry.varyingCount()) return .error_invalid_shader_nv;
     // The fixed form is in the fragment entry's own `varyings` word, which
     // the program wrote: a kind byte that names no form is refused here
     // rather than read as whichever form it lands on (since 1.75).
@@ -283,7 +308,9 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
     // together, and one where they do not - and one in a subpass of
     // none, where what it writes goes nowhere, llvmpipe's blending being
     // a loop over no colour buffer (lp_state_fs.c:3618-3622, since 1.113).
-    const outputs = fragment_entry.outputCount();
+    // The function of no fragment stage has the room of as many as the
+    // subpass has, and writes none of them.
+    const outputs = if (fragment == null) @max(pass.parts[subpass.first_part].color_count, 1) else fragment_entry.outputCount();
     if (outputs != @max(pass.parts[subpass.first_part].color_count, 1)) return .error_invalid_shader_nv;
     if (outputs > 1 and !device.physical.can.several_outputs) return .error_feature_not_present;
 
@@ -417,7 +444,10 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         if (multisample.sample_shading_enable or multisample.alpha_to_one_enable) return .error_feature_not_present;
         // It drops samples after the fragment function, as a form that
         // drops pixels does, so it has no depth pre-pass (since 1.108).
-        if (multisample.alpha_to_coverage_enable) {
+        // Not where there is no fragment stage: llvmpipe takes the alpha
+        // of colour 0 where the shader writes it and leaves the coverage
+        // as it is otherwise (lp_state_fs.c:1181-1185, since 1.115).
+        if (multisample.alpha_to_coverage_enable and fragment != null) {
             made.alpha_to_coverage = true;
             made.prepass = false;
         }
@@ -510,6 +540,13 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
             for (given[0..count], made.mixings[0..count]) |constants, *mixing| mixing.constants = constants;
         }
     }
+    // What a pipeline of no fragment stage writes into a colour attachment
+    // Vulkan leaves undefined ("undefined values may be written to all
+    // color attachment outputs", *Fragment Shading*): here nothing, each
+    // attachment keeping what it held (since 1.115).
+    if (fragment == null) for (&made.mixings) |*mixing| {
+        mixing.mask = 0;
+    };
 
     // The viewport and the scissor, unless commands set them.
     var dynamic_viewport = false;

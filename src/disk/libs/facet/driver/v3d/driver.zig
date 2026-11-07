@@ -539,7 +539,10 @@ fn makePipeline(pipeline: *Pipeline) callconv(.c) facet.Result {
     // No fixed form: the program's own fragment shader, which this device
     // draws with where the program shipped the SPIR-V beside the function
     // and the back end can make code of it (since 1.76). Where it cannot,
-    // the pipeline is refused and the cores draw it, as before.
+    // the pipeline is refused and the cores draw it, as before. A pipeline
+    // of no fragment stage ships none: refused until v3dv's no-op
+    // fragment shader is ported (v3dv_pipeline.c:2616-2642,
+    // docs/facet-vulkan10.md item 85).
     if (fixed.kind == .none) {
         if (pipeline.fragment_words.len == 0) return .error_feature_not_present;
         return compiled(pipeline);

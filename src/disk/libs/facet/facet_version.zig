@@ -2791,4 +2791,32 @@ pub const LIBRARY_VERSION = 1;
 /// four is refused, and bound all the same draws at one: the colour
 /// drawn at the triangle's centres, and each counting them. Each of
 /// 14 changes put back fails at least one of them.
-pub const LIBRARY_REVISION = 114;
+///
+/// 115: **A pipeline of no fragment stage.** The cores' half of item 85
+/// of docs/facet-vulkan10.md: CreateGraphicsPipelines refused a pipeline
+/// without a fragment stage, though Vulkan 1.0 asks for a vertex stage
+/// alone (VUID-VkGraphicsPipelineCreateInfo-stage-02096), and the shadow
+/// map's pipeline - a depth drawn, no colour - is the program that leaves
+/// it out. The port is lavapipe's: it binds `noop_fs`, a fragment shader
+/// of no instructions built once for the device (lvp_device.c:2048-2052),
+/// where a pipeline has none (lvp_execute.c:552-554). Here that is
+/// `noFragment`, a function that writes nothing and drops no pixel, and
+/// no varyings are checked against it. Vulkan leaves what lands in a
+/// colour attachment undefined; llvmpipe blends a colour store it never
+/// writes (lp_state_fs.c:826-832), and here each colour attachment's write
+/// mask is 0, so it keeps what it held. The function has the room of as
+/// many colours as the subpass draws together. Alpha to coverage changes
+/// no sample, as llvmpipe applies it only where the shader writes colour 0
+/// (lp_state_fs.c:1181-1185). The V3D refuses such a pipeline, there
+/// being no SPIR-V for its back end to compile, until v3dv's no-op
+/// fragment shader is ported (v3dv_pipeline.c:2616-2642).
+///
+/// Tests: the shadow map's pass drawn by a pipeline of the vertex stage
+/// alone writes the same depths as one with a fragment function, and its
+/// vertex function's three varyings are taken, where a fragment function
+/// of none beside them is refused. Over two colour attachments drawn
+/// together, each keeps its clear while an occlusion query counts every
+/// pixel drawn. With alpha to coverage at four samples, a function's alpha
+/// of 0 covers no sample and no function leaves every sample the triangle
+/// covers. Each of 5 changes put back fails at least one of them.
+pub const LIBRARY_REVISION = 115;
