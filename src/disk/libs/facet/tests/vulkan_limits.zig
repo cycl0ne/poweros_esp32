@@ -327,7 +327,7 @@ const Rig = @import("facet.zig").Rig;
 /// the V3D refuses the operand, so **this count is the cores' and the V3D
 /// still reports 0 for those two** - it reads them off its own SPIR-V
 /// profile, so the number follows the capability.
-const shortfalls_on_the_cores = 10;
+const shortfalls_on_the_cores = 8;
 
 test "the check itself: Vulkan's floor passes, and a step below it is caught" {
     // A check that passes is worth nothing on its own: one whose loop never

@@ -454,6 +454,28 @@ pub const MAX_SETS = 4;
 /// conformance is not a thing to trade against it either way.
 pub const MAX_DYNAMIC_OFFSETS = 12;
 pub const MAX_PUSH_CONSTANTS_SIZE = 128;
+/// The floats a vertex function may hand to a fragment function past the
+/// position, which is `Entry.varyings`' low 8 bits and both ends of
+/// Vulkan's pair: `PhysicalDeviceLimits.max_vertex_output_components` out
+/// of the vertex stage and `max_fragment_input_components` into the
+/// fragment stage, each required to be at least 64.
+///
+/// **This is the one place the number is written.** It was 8 until 1.90,
+/// and it was written in five uncoupled places - this library's limits
+/// table, the cores' rasterizer, the vertex widening path, `ir.zig`'s
+/// comptime bound, and the V3D's QPU ceiling - with nothing tying them
+/// together. Four of those read it from here now; the fifth, the V3D's,
+/// is a real and different ceiling and stays its own (`qpu.most_varyings`,
+/// which is why that device reports 8 and refuses more at pipeline
+/// creation). Item 17 of docs/facet-vulkan10.md.
+///
+/// A draw pays for what it carries and not for this number: the
+/// per-triangle plane store and the per-vertex output store are both
+/// sized at run time from the pipeline's own count, and the tiles hold no
+/// varyings at all. The one place the width is comptime is the clip
+/// path's vertex, and that is bucketed so a draw of 8 or fewer costs what
+/// it did before (driver/cpu/raster/batched.zig).
+pub const MAX_VARYINGS = 64;
 
 /// A descriptor as a shader reads it: a uniform or storage buffer's bytes
 /// from the offset written, and how many; a sampled image's texture; a

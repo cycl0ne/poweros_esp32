@@ -811,7 +811,16 @@ fn sendVertices(queue: *Queue, vertices: u32, varyings: u32, fragment: u32, unif
     cl.shaderRecord(&list, .{
         .fragment = fragment,
         .fragment_uniforms = uniforms,
-        .vertex = programs.vertex[varyings],
+        // One pregenerated program for each varying count this device
+        // takes, and `varyings` is held to that by CreateGraphicsPipelines
+        // against the limit this driver reports (`compile.most_varyings`,
+        // which is what `programs.vertex` is sized by). The bound is
+        // repeated here because the cores report `shader.MAX_VARYINGS`
+        // since 1.90 and this table is eight long: an index past it would
+        // be a read of whatever follows the array, and a draw that draws
+        // nothing is the right answer for a pipeline that should never
+        // have reached here.
+        .vertex = if (varyings < programs.vertex.len) programs.vertex[varyings] else return false,
         .vertex_uniforms = uniforms,
         .coordinate = programs.coordinate,
         .coordinate_uniforms = uniforms,

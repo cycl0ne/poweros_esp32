@@ -411,7 +411,15 @@ const nearest_w: f32 = 1.0 / 65536.0;
 
 /// The most floats a vertex carries `widen` can work with: a position and
 /// `shader`'s varyings.
-const most_stride = 64;
+/// The floats a widened vertex carries: its position and its varyings,
+/// from the SDK's own cap so that this cannot fall behind
+/// `PhysicalDeviceLimits.max_vertex_output_components`. It was a bare 64
+/// until 1.90, which was 4 + 60 and so four short of the 64 varyings now
+/// reported - and `widen` below answers a stride past this with an
+/// all-zero `Wide`, which draws *nothing* and says nothing, on both
+/// devices. Item 17 of docs/facet-vulkan10.md names it the one way that
+/// item could have shipped looking done.
+const most_stride = 4 + shader.MAX_VARYINGS;
 
 /// What `widen` writes to.
 const Widening = struct {

@@ -51,7 +51,11 @@ const Span = walk.Span;
 const tile_size = target_zig.tile_size;
 
 /// The most floats a vertex carries past its position.
-pub const most_varyings = 8;
+/// The floats a vertex hands on past its position, from the SDK so that
+/// this and `PhysicalDeviceLimits.max_vertex_output_components` are one
+/// number (`shader.MAX_VARYINGS`). Only the clip path is sized by it at
+/// comptime, and that is bucketed - see `Clip` and `cutUp`.
+pub const most_varyings = shader.MAX_VARYINGS;
 
 /// The quads a batch holds.
 pub const batch_quads = 64;
@@ -284,7 +288,72 @@ const Triangle = struct {
     }
 };
 
-const Clip = setup.ClipVertex(most_varyings);
+/// The widths a clipped triangle's vertex is cut at. The clip path is the
+/// one place a vertex's varyings are a *comptime* array, so cutting costs
+/// what the array is wide whatever the draw actually carries: `setup.cut`
+/// interpolates every slot of each vertex it makes, copies a whole vertex
+/// per kept corner, and copies the polygon once per clip plane, five of
+/// them. At `most_varyings` of 64 that is about 11 KB of copying a cut
+/// triangle against about 1.9 KB at 8 - and it would have been paid by a
+/// two-varying draw as readily as a sixty-four-varying one.
+///
+/// So the width is bucketed and a draw pays for the bucket it fits. The
+/// first bucket is 8, which is what every draw written before 1.90 fits
+/// and is exactly the cost it had then; the rest are there so that the
+/// step up is gradual rather than straight to the widest. Nothing else in
+/// the rasterizer is bucketed, because nothing else is comptime-sized by
+/// this number: the per-triangle planes and the per-vertex outputs are
+/// both sized at run time from the pipeline's own count.
+/// Narrowest first, and the last one is the cap: a draw carrying more
+/// than the widest bucket cannot be clipped at all, which `of` and the
+/// test below hold it to. Lowering `shader.MAX_VARYINGS` below 32 makes
+/// two of these equal, which is a duplicate enum value and so a compile
+/// error naming this type - the right failure, since the buckets would
+/// then need rewriting rather than silently collapsing.
+const Clip = enum(u32) {
+    eight = 8,
+    sixteen = 16,
+    thirty_two = 32,
+    all = most_varyings,
+
+    /// The narrowest bucket that holds `varyings`.
+    fn of(varyings: u32) Clip {
+        inline for (@typeInfo(Clip).@"enum".fields) |field| {
+            if (varyings <= field.value) return @enumFromInt(field.value);
+        }
+        return .all;
+    }
+
+    fn width(bucket: Clip) u32 {
+        return @intFromEnum(bucket);
+    }
+};
+
+test "a clip bucket holds what it is asked for, and the narrowest is what 1.89 cost" {
+    const testing = std.testing;
+    try testing.expectEqual(Clip.eight, Clip.of(0));
+    try testing.expectEqual(Clip.eight, Clip.of(8));
+    try testing.expectEqual(Clip.sixteen, Clip.of(9));
+    try testing.expectEqual(Clip.sixteen, Clip.of(16));
+    try testing.expectEqual(Clip.thirty_two, Clip.of(17));
+    try testing.expectEqual(Clip.all, Clip.of(33));
+    try testing.expectEqual(Clip.all, Clip.of(most_varyings));
+    // Every count up to the cap is held by the bucket chosen for it. A
+    // bucket too narrow would make `cutUp`'s @memcpy of the varyings run
+    // off the end of a clip vertex, which is a panic in a safe build and
+    // worse in any other, so this is the check that matters.
+    for (0..most_varyings + 1) |varyings| {
+        try testing.expect(varyings <= Clip.of(@intCast(varyings)).width());
+    }
+    // And the widest bucket is the cap, so there is no count above it.
+    const fields = @typeInfo(Clip).@"enum".fields;
+    try testing.expectEqual(@as(u32, most_varyings), fields[fields.len - 1].value);
+    // Narrowest first, which is what makes `of` pick the narrowest that
+    // fits rather than whichever comes first.
+    inline for (fields[1..], fields[0 .. fields.len - 1]) |after, before| {
+        try testing.expect(before.value < after.value);
+    }
+}
 
 /// How the depth is tested in a tile: by the draw's test, or - `second`
 /// and `second_or_equal` - as the pre-pass's second pass does after a
@@ -368,6 +437,9 @@ fn setUpAll(target: *Target, state: *const State, vertices: []const f32, stride:
     for (codes, 0..) |*code, k| code.* = setup.outcode(position(vertices, stride, k).*, guard);
 
     const set: SetUp = .{ .target = target, .state = state, .shading = shading, .raster = raster, .prepass = passes, .area = area, .depth = depth };
+    // Chosen once a draw, not once a triangle: the clip vertex's width is
+    // comptime, so this is the switch that picks which `cutUp` is called.
+    const width = Clip.of(state.varyings);
     var at: usize = 0;
     while (at + 3 <= indices.len) : (at += 3) {
         target.stats.triangles += 1;
@@ -391,19 +463,30 @@ fn setUpAll(target: *Target, state: *const State, vertices: []const f32, stride:
             continue;
         }
         target.stats.cut += 1;
-        var corners: [3]Clip = undefined;
-        for (&corners, which) |*corner, k| {
-            corner.position = position(vertices, stride, k).*;
-            corner.values = @splat(0);
-            @memcpy(corner.values[0..state.varyings], vertices[k * stride + 4 ..][0..state.varyings]);
+        switch (width) {
+            inline else => |bucket| try cutUp(bucket.width(), &set, vertices, stride, which, guard),
         }
-        var polygon: [setup.most_cut]Clip = undefined;
-        const made = setup.cut(Clip, corners, guard, state.depth_clamp, &polygon);
-        if (made < 3) continue;
-        for (1..made - 1) |k| {
-            const three = [3]*const Clip{ &polygon[0], &polygon[k], &polygon[k + 1] };
-            try set.one(.{ &three[0].position, &three[1].position, &three[2].position }, .{ &three[0].values, &three[1].values, &three[2].values });
-        }
+    }
+}
+
+/// One triangle cut by the near plane and the guard band, and each piece
+/// of what is left set up. `width` is the clip vertex's bucket
+/// (`clipWidth`), so a draw carrying few varyings copies little.
+fn cutUp(comptime width: u32, set: *const SetUp, vertices: []const f32, stride: u32, which: [3]usize, guard: setup.Guard) error{OutOfMemory}!void {
+    const Vertex = setup.ClipVertex(width);
+    const varyings = set.state.varyings;
+    var corners: [3]Vertex = undefined;
+    for (&corners, which) |*corner, k| {
+        corner.position = position(vertices, stride, k).*;
+        corner.values = @splat(0);
+        @memcpy(corner.values[0..varyings], vertices[k * stride + 4 ..][0..varyings]);
+    }
+    var polygon: [setup.most_cut]Vertex = undefined;
+    const made = setup.cut(Vertex, corners, guard, set.state.depth_clamp, &polygon);
+    if (made < 3) return;
+    for (1..made - 1) |k| {
+        const three = [3]*const Vertex{ &polygon[0], &polygon[k], &polygon[k + 1] };
+        try set.one(.{ &three[0].position, &three[1].position, &three[2].position }, .{ &three[0].values, &three[1].values, &three[2].values });
     }
 }
 

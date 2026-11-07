@@ -179,6 +179,21 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
             const offsets = compile.profile.takesImageOperand(.const_offset);
             said.min_texel_offset = if (offsets) _instance.limits.min_texel_offset else 0;
             said.max_texel_offset = if (offsets) _instance.limits.max_texel_offset else 0;
+            // The varyings a vertex hands on, which on this device is a
+            // real ceiling and not a gap to be closed by writing a larger
+            // number: ten usable registers hold eight varyings and the
+            // four floats a program needs of its own (compile.zig), and
+            // the vertex programs are *pregenerated*, one for each count,
+            // `programs.vertex` being `qpu.most_varyings + 1` long. So
+            // this is read off the compiler's own cap for the same reason
+            // the texel offsets are read off its profile: the cores report
+            // `shader.MAX_VARYINGS` since 1.90, and without these two
+            // lines this device would inherit 64 and refuse every pipeline
+            // above 8 at creation while advertising it takes them. Item 17
+            // of docs/facet-vulkan10.md, which keeps this device's two
+            // rows as honest shortfalls.
+            said.max_vertex_output_components = compile.most_varyings;
+            said.max_fragment_input_components = compile.most_varyings;
             break :said said;
         },
     };

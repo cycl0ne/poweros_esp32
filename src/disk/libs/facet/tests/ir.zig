@@ -733,3 +733,55 @@ test "a constant texel offset is in the words, as the one image operand facet wr
         try std.testing.expect(!answer.fault.malformed());
     }
 }
+
+/// A graph carrying every varying the library takes: sixteen locations of
+/// four floats, which is `shader.MAX_VARYINGS`. The bound `ir.Build.input`
+/// holds a graph to is a `@compileError`, so there is no way to assert
+/// that one past it is refused - what can be asserted is that one *at* it
+/// builds, which is what says the bound is 64 and not the 8 it was until
+/// 1.90. Item 17 of docs/facet-vulkan10.md.
+const Widest = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        var sum = b.input(0, .f32x4);
+        inline for (1..shader.MAX_VARYINGS / 4) |location| {
+            sum = b.add(sum, b.input(location, .f32x4));
+        }
+        b.color(sum);
+    }
+});
+
+test "a graph carrying every varying the library takes: built, and a module a device would read" {
+    // The graph's own count, the entry's low 8 bits, and the limit the
+    // cores report are one number.
+    try std.testing.expectEqual(@as(u32, shader.MAX_VARYINGS), Widest.varyings);
+    const entry = Widest.entry("main");
+    try std.testing.expectEqual(@as(u32, shader.MAX_VARYINGS), entry.varyingCount());
+    // Sixty-four fits in the low 8 bits with room over, so the fixed-form
+    // bits above them are untouched - which is the half of this item's
+    // description that was wrong about needing to move.
+    try std.testing.expectEqual(shader.FixedKind.none, entry.fixed().?.kind);
+    // And the words are a module: every input read, every id inside the
+    // bound. `facet_profile` is the cores' own, which takes what this
+    // library emits.
+    switch (facet.spirv.look(Widest.words, facet.spirv.facet_profile)) {
+        .seen => |seen| {
+            // Sixteen locations, which is what the graph declares.
+            try std.testing.expectEqual(@as(u32, shader.MAX_VARYINGS / 4), seen.input_locations);
+            // And the same again, which is *not* what the field means.
+            // `look` takes the largest `Location` it decorates anything
+            // with and writes it to both counters without telling an
+            // input from an output, so `output_locations` says sixteen
+            // where this graph has one colour. No caller reads either
+            // field - spirv.zig says so - so it is a wrong answer nothing
+            // asks for, and it is asserted here as it is rather than as
+            // it ought to be, so that the day a back end does ask the
+            // test says what it will get. Item 84 of
+            // docs/facet-vulkan10.md.
+            try std.testing.expectEqual(seen.input_locations, seen.output_locations);
+        },
+        .fault => |fault| {
+            std.debug.print("the widest graph is not a module: {t}\n", .{fault});
+            return error.TestUnexpectedResult;
+        },
+    }
+}

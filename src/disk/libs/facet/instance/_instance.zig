@@ -380,7 +380,12 @@ pub const Capabilities = extern struct {
 /// and the hardware is handed a stream already transformed.
 pub const max_vertex_input_bindings = 16;
 pub const max_vertex_input_attributes = 16;
-pub const max_vertex_output_components = 8;
+/// Both ends of Vulkan's varying pair, from the SDK's own constant so
+/// that the rasterizer, the widening path and `ir.zig` cannot drift from
+/// what is reported here (`shader.MAX_VARYINGS`, 64 since 1.90). The V3D
+/// reports its own lower number, which is a real ceiling: ten usable
+/// registers, nine pregenerated vertex programs.
+pub const max_vertex_output_components = facet.shader.MAX_VARYINGS;
 /// The vertices of a tessellated patch, and the floats its control
 /// function may write for the whole of it (`shader.Patch.ownValues`,
 /// since 1.50).

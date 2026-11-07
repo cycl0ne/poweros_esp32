@@ -118,17 +118,25 @@ refinement - finish the compiler, no fallback - moves onto the main line.
 items 14, 16, 49 and 77 in 1.82, item 52's half of two in 1.83, item 18
 in 1.84, item 19 in 1.85, item 21 in 1.86, item 28's half of two in 1.87,
 items 82 and 83 in 1.87 and 1.88 - both found while doing other items -
-and item 61's first row of eight in 1.89.** Each
+item 61's first row of eight in 1.89, and item 17's half of two in
+1.90.** Each
 carries a *Done* note below saying what was actually built and where the
 item's own description turned out to be wrong - and several did. Things
 found while doing them became the items at the end of the list: 77 and 78
 from 1.80 and 1.81, and 79, 80 and 81 from 1.82.
 
-Items 52 and 28 are the ones split between devices: the cores draw every
-sampler as of 1.83 and sample at a constant texel offset as of 1.87, and
-the V3D does neither - so the magenta item 52 is about now belongs to item
-54 alone, and item 28's remainder is a QPU back end that refuses the
-operand at pipeline creation.
+Items 52, 28 and 17 are the ones split between devices: the cores draw
+every sampler as of 1.83, sample at a constant texel offset as of 1.87 and
+carry 64 varyings as of 1.90, and the V3D does none of the three - so the
+magenta item 52 is about now belongs to item 54 alone, item 28's remainder
+is a QPU back end that refuses the operand at pipeline creation, and item
+17's remainder is not a gap at all but a real ceiling of eight, reported as
+eight and refused above it.
+
+In all three the V3D's limit is **derived from its own compiler** rather
+than written down, so the number cannot drift from what the device
+accepts. That pattern started as item 28's answer to one field and is now
+how this split is done.
 
 Item 16's *Done* note is the one to read first if you are picking this up,
 because the limits reshape it settles is what items 17 to 30 were waiting
@@ -485,9 +493,81 @@ Found independently by: limits, conformance-path (the ~85-field fill is the same
 
 ### 17. Raise maxVertexOutputComponents from 8 to 64, and report maxFragmentInputComponents
 
-*limits / varyings* &mdash; conformance-blocking, medium (**large** until the rescope below)
+*limits / varyings* &mdash; **the cores' half done in 1.90**; the V3D's is a real ceiling, not a gap
 
 After: The limits reshape
+
+**Done on the cores in 1.90, and the rescope below is what it turned out
+to be.** The five uncoupled constants are one constant:
+`shader.MAX_VARYINGS`, in the SDK beside `MAX_SETS`, read by the limits
+table, the cores' rasterizer, the widening path and `ir.zig`. The comptime
+tie this item wanted in `cpu.zig` is not needed, because
+`driver/cpu/raster/batched.zig` and `driver/_vertices.zig` already import
+the SDK's `shader` - so rather than four numbers checked against each
+other, there is one number and nothing to check.
+
+`most_stride` was the trap and it was *worse* than the rescope said: a bare
+64 is 4 + 60, so it was already four short of the 64 now reported, and a
+draw of points or lines above 60 varyings would have drawn nothing and said
+nothing. It is `4 + shader.MAX_VARYINGS` now, and the test draws a line
+with every varying live - put the bare 64 back and that case alone fails.
+
+The clip path is bucketed. It is the one place a vertex's varyings are a
+comptime array, so cutting cost what the array was wide whatever the draw
+carried, and widening it to 64 would have charged a two-varying draw about
+11 KB of copying a cut triangle against about 1.9 KB. `Clip` is an enum of
+8, 16, 32 and 64 now, chosen once a draw and dispatched by an `inline`
+switch into `cutUp`, so every draw written before 1.90 fits the narrowest
+bucket and pays exactly what it paid then. The bucket list is the single
+source: its own test walks every count from 0 to the cap and holds the
+bucket chosen for it to be wide enough, because a bucket one step too
+narrow makes `cutUp`'s varying copy run off the end of a clip vertex -
+which it does, as `panic: index out of bounds: index 64, len 63`, when the
+widest bucket is set one short.
+
+The test is the point of the item. A vertex function writes varying *i* as
+*i + 1* at every corner, so each interpolates to exactly *i + 1* over the
+triangle whatever the perspective and whatever the clipper does to it; the
+fragment function reads all 64 back through `shader.Rows(65)` and paints
+green only where every one is right, red otherwise. So the *picture* is the
+assertion, and a varying lost, truncated or read one row over is a red
+pixel rather than nothing at all. Three draws reach three paths with all 64
+live: whole (the uncut path, where varyings are read through a pointer),
+crossing the near plane (the only way into the clipper, and the only draw
+that picks the widest bucket - 1113 green pixels, 0 red), and a line list
+(the only way into `_vertices.widen` and so to the `most_stride` guard).
+The clipped case also asserts that more primitives came out of clipping
+than went in, which is how the test knows it went *through* the clipper
+rather than past it.
+
+**The V3D keeps its eight, and that is the honest answer rather than a
+to-do.** Ten usable registers hold eight varyings and the four floats a
+program needs of its own, and the vertex programs are pregenerated, one for
+each count. So `driver/v3d/driver.zig` reads both limits off
+`compile.most_varyings` - the texel-offset pattern from item 28, twelve
+lines above it in the same file - and this device reports 8 where the cores
+report 64. Without those two lines it would have inherited 64 and refused
+every pipeline above 8 at creation while advertising that it took them,
+which is the shape item 28 settled into and the one this item could most
+easily have got wrong. `_play.zig`'s index into the pregenerated table is
+bounded too, since the cores' number now exceeds that table's length.
+
+And raising the IR's bound made the V3D's own refusal testable for the first
+time: `Error.Varyings` had no test in `compile.zig`'s twenty, because a
+nine-varying graph could not be built while `ir.zig` refused one at
+comptime. There is a twelve-varying graph now, refused as `Error.Varyings`,
+and `spirv.look` accepts the same words - so it is the device refusing a
+module and not the words being wrong, which is what the two tiers are for.
+
+The pin in tests/vulkan_limits.zig is **8**: item 22's one row and item
+61's seven.
+
+What this item said about `shader.Entry.varyings`, the V3D's shader record,
+the SPIR-V reader, the fixed forms and the two runtime-sized stores was
+wrong, and the rescope below says so in detail. The one thing it was right
+about and put in the wrong place is the memory: the cost is on the clip
+path, not in the vertex store, and it is now paid only by draws that ask
+for it.
 
 **Rescoped in 1.89 against the code, and most of what this item says about
 its own size is wrong.** The production change is five uncoupled constants
@@ -1654,6 +1734,34 @@ culling) before anything is changed.
 > slot layout, plus the one triangle-list draw in `tests/draw.zig`.
 > Normative text from the Vulkan Queries chapter, Pipeline Statistics
 > Queries.
+
+### 84. spirv.look's input_locations and output_locations are the same number
+
+*shader words / SPIR-V reader* &mdash; latent, small, found while doing item 17
+
+`Seen.input_locations` and `Seen.output_locations` are documented as "the
+largest `Location` decorated on an input and on an output, and one more, so
+that a back end knows how many varyings are in play" - two numbers. `look`
+writes the same value to both: it takes the `Location` from an `OpDecorate`
+and maxes it into each counter without telling an input variable from an
+output one, which would mean correlating the decoration's target id with the
+storage class of the `OpVariable` it names, in either order.
+
+Harmless today and said to be: the file states that no caller reads either
+field. It is a wrong answer nothing asks for. But item 17's V3D half is the
+plausible first reader - a back end sizing its varying table would ask
+exactly this - and the answer it would get for a sixteen-input,
+one-output fragment module is sixteen for both.
+
+`tests/ir.zig` asserts the two are *equal* rather than asserting what they
+ought to be, with the reason written beside it, so the day a back end asks,
+the test says what it will get rather than quietly agreeing with the doc
+comment.
+
+> Verified: sdk/libs/facet/spirv.zig, the `.decorate` arm -
+> `seen.input_locations = @max(seen.input_locations, operands[2] +| 1);`
+> followed by the same line for `output_locations`. The sixty-four-varying
+> graph in tests/ir.zig reports 16 for both.
 
 ## Deferred by the decision, not out of reach
 

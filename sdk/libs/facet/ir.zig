@@ -209,7 +209,7 @@ pub const Build = struct {
         build.locations += 1;
         const first = build.varyings;
         build.varyings += kind.parts();
-        if (build.varyings > 8) @compileError("a shader reads 8 varyings: PhysicalDeviceLimits.max_vertex_output_components");
+        if (build.varyings > shader.MAX_VARYINGS) @compileError("a shader reads at most shader.MAX_VARYINGS varyings: PhysicalDeviceLimits.max_vertex_output_components and max_fragment_input_components");
         return build.put(.{ .tag = .input, .kind = kind, .at = location, .value = .{ @bitCast(first), 0, 0, 0 } });
     }
 

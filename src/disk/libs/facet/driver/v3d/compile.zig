@@ -1683,6 +1683,23 @@ const Lit = ir.Fragment(struct {
     }
 });
 
+/// Twelve varyings, which is more than this device holds: ten usable
+/// registers take eight of them and the four floats a program needs of
+/// its own. The cores carry sixty-four since 1.90 and the QPUs carry
+/// eight, so this is a graph the one device draws and the other refuses -
+/// and the first graph of its kind that could be *written*, because
+/// `ir.zig` refused more than eight varyings at comptime until then and
+/// `Error.Varyings` therefore had no test at all. Item 17 of
+/// docs/facet-vulkan10.md.
+const Wide = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const first = b.input(0, .f32x4);
+        const second = b.input(1, .f32x4);
+        const third = b.input(2, .f32x4);
+        b.color(b.add(b.mul(first, second), third));
+    }
+});
+
 /// A colour from location 0, with a varying declared after it and never
 /// read: the draw still carries it, so the program still takes it.
 const Spare = ir.Fragment(struct {
@@ -2028,6 +2045,32 @@ test "a vector times a scalar: the scalar is read by every part and is not writt
         .{ .color = .{ .low = 6, .high = 7 } },
         .end,
     }, work.plan());
+}
+
+test "more varyings than the registers hold: refused, and refused as varyings" {
+    // Twelve against this device's eight. Before 1.90 this test could not
+    // be written: `ir.zig` would not build the graph, so the one refusal
+    // in this file that nothing reached was the one for the thing the
+    // hardware most plainly cannot do.
+    try testing.expectEqual(@as(u32, 12), Wide.varyings);
+    try testing.expect(Wide.varyings > most_varyings);
+    var work: Work = .{};
+    try testing.expectError(Error.Varyings, compile(&work, Wide.words));
+    // The widest that does fit still compiles, so this is the ceiling and
+    // not a refusal of anything broad. `Lit` carries exactly eight.
+    var fits: Work = .{};
+    const code = try compile(&fits, Lit.words);
+    try testing.expectEqual(@as(u32, most_varyings), code.varyings);
+    // And the module is a module: it is the device that refuses it, not
+    // the words that are wrong, which is the distinction the two tiers of
+    // `spirv.look` are for.
+    switch (spirv.look(Wide.words, profile)) {
+        .seen => {},
+        .fault => |fault| {
+            std.debug.print("the wide graph is not a module: {t}\n", .{fault});
+            return error.TestUnexpectedResult;
+        },
+    }
 }
 
 test "eight varyings and four floats of its own fit the ten registers there are" {

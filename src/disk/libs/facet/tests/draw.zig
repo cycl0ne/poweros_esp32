@@ -227,6 +227,61 @@ const Flat = struct {
     const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
 };
 
+/// As many varyings as the library takes, which is `shader.MAX_VARYINGS`
+/// and both ends of Vulkan's required pair - 64 out of the vertex stage
+/// and 64 into the fragment stage (item 17 of docs/facet-vulkan10.md).
+///
+/// The vertex function writes varying *i* as *i + 1* at every corner, so
+/// each one interpolates to exactly *i + 1* over the whole triangle
+/// whatever the perspective, and whatever the clipper does to it: a cut
+/// generates vertices between two corners that agree, so the generated
+/// ones agree too. The fragment function reads all 64 back and paints
+/// green only where every one of them is what it should be, red otherwise
+/// - so the *picture* is the assertion, and a varying lost, truncated or
+/// read from the wrong row shows up as a red pixel rather than as nothing
+/// at all.
+const Many = struct {
+    const count = shader.MAX_VARYINGS;
+    const right: u32 = 0xFF00_FF00;
+    const wrong: u32 = 0xFFFF_0000;
+
+    fn vertex(vertices: *const shader.Vertices) callconv(.c) void {
+        for (0..vertices.count) |k| {
+            const p = vertices.input(@intCast(k), 0);
+            const out = vertices.output(@intCast(k));
+            out[0..4].* = .{ p[0], p[1], p[2], 1 };
+            for (0..count) |i| out[4 + i] = @floatFromInt(i + 1);
+        }
+    }
+
+    fn fragment(fragments: *const shader.Fragments) callconv(.c) void {
+        var rows = shader.Rows(count + 1).of(fragments);
+        for (fragments.quads[0..fragments.count], fragments.colors[0..fragments.count]) |quad, *out| {
+            const at = rows.at(quad);
+            const w = @as(shader.Pixels, @splat(1)) / at[0];
+            var ok = true;
+            for (at[1..], 1..) |over_w, i| {
+                const wanted: shader.Pixels = @splat(@as(f32, @floatFromInt(i)));
+                // Interpolating a value that is the same at all three
+                // corners gives that value back, so this is held to a
+                // hundredth rather than to a share of it: the failures
+                // this guards against are a varying missing, shifted by a
+                // row, or stopping short, and all of those are whole
+                // numbers out.
+                if (@reduce(.Or, @abs(over_w * w - wanted) > @as(shader.Pixels, @splat(0.01)))) ok = false;
+            }
+            const color = if (ok) right else wrong;
+            out.* = .{ color, color, color, color };
+        }
+    }
+
+    const entries = [_]shader.Entry{
+        shader.vertex("main", &vertex, count),
+        shader.fragment("main", &fragment, count),
+    };
+    const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
+};
+
 /// A program that ships its fragment shaders as SPIR-V as well as
 /// functions: the one graph writes the words for a device that compiles
 /// and the function the cores call (`shader.Module`, since 1.75).
@@ -654,7 +709,11 @@ test "a shader module: the entries of a shader.Code, found by stage and name; SP
     try testing.expectEqual(facet.Result.error_invalid_shader_nv, fb.CreateShaderModule(device, &.{ .code_size = 4, .code = &Flat.code }, &none));
     const unknown = [1]shader.Entry{.{ .name = "main", .stage = 0x40, .function = &Flat.vertex, .varyings = 0 }};
     try testing.expectEqual(facet.Result.error_invalid_shader_nv, fb.CreateShaderModule(device, &.{ .code = &shader.Code{ .entry_count = 1, .entries = &unknown } }, &none));
-    const too_many = [1]shader.Entry{shader.vertex("main", &Flat.vertex, 9)};
+    // One past the cap, whatever the cap is: `shader.MAX_VARYINGS` is what
+    // `PhysicalDeviceLimits.max_vertex_output_components` reports, so this
+    // asks for one more than the device says it takes rather than for a
+    // number that was one more in 1.89 and is well inside it now.
+    const too_many = [1]shader.Entry{shader.vertex("main", &Flat.vertex, shader.MAX_VARYINGS + 1)};
     try testing.expectEqual(facet.Result.error_invalid_shader_nv, fb.CreateShaderModule(device, &.{ .code = &shader.Code{ .entry_count = 1, .entries = &too_many } }, &none));
     try testing.expect(none == null);
 
@@ -7676,6 +7735,120 @@ test "an occlusion query counts the samples that passed, and a statistics query 
     // at least the pixels that were kept of both instances.
     try testing.expect(values[5] % 4 == 0);
     try testing.expect(values[5] >= 2 * drawn);
+}
+
+test "sixty-four varyings, which is both ends of Vulkan's pair: drawn whole, drawn clipped, and drawn as lines" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+
+    // Both limits, from the one constant the rasterizer and the widening
+    // path also read. Item 17 of docs/facet-vulkan10.md.
+    var properties: facet.PhysicalDeviceProperties = undefined;
+    fb.GetPhysicalDeviceProperties(bench.physical, &properties);
+    try testing.expectEqual(@as(u32, 64), properties.limits.max_vertex_output_components);
+    try testing.expectEqual(@as(u32, 64), properties.limits.max_fragment_input_components);
+    try testing.expectEqual(@as(u32, shader.MAX_VARYINGS), properties.limits.max_vertex_output_components);
+
+    const picture = try Picture.of(&bench, 64, 64);
+    const pass = try renderPass(&bench, .clear, false);
+    defer fb.DestroyRenderPass(device, pass);
+    const frame = try framebuffer(&bench, pass, &.{picture.view}, 64, 64);
+    defer fb.DestroyFramebuffer(device, frame);
+    // A module of as many varyings as the device says it takes is made:
+    // CreateShaderModule holds an entry to that limit, and one past it is
+    // refused in the test above.
+    const many = try module(&bench, &Many.code);
+    defer fb.DestroyShaderModule(device, many);
+    const layout = try pipelineLayout(&bench, &.{}, 4);
+    defer fb.DestroyPipelineLayout(device, layout);
+
+    const wanted = facet.QUERY_PIPELINE_STATISTIC_CLIPPING_INVOCATIONS |
+        facet.QUERY_PIPELINE_STATISTIC_CLIPPING_PRIMITIVES;
+    const statistics = try queryPool(&bench, .pipeline_statistics, 1, wanted);
+    defer fb.DestroyQueryPool(device, statistics);
+
+    const blue: u32 = 0xFF00_00FF;
+    const clear = clears(blue);
+    const offset: u64 = 0;
+
+    // Three draws, each reaching a different path of the rasterizer with
+    // all sixty-four varyings live:
+    //
+    //   - whole, which goes by the uncut path, where a vertex's varyings
+    //     are read through a pointer and the width is never comptime;
+    //   - crossing the near plane, which is the only way to reach the
+    //     clipper - `setUpAll` buckets the clip vertex by varying count
+    //     and this is the one draw that picks the widest bucket, where a
+    //     cut vertex interpolates all sixty-four slots;
+    //   - as a line list, which is the only way to reach `_vertices.widen`
+    //     and so the `most_stride` guard that answers an over-wide stride
+    //     with an all-zero `Wide` - drawing nothing, on both devices, and
+    //     saying nothing.
+    const whole = [_][3]f32{ .{ -1, -1, 0.5 }, .{ 1, -1, 0.5 }, .{ -1, 1, 0.5 } };
+    // One corner behind the near plane, the other two well inside it.
+    const crossing = [_][3]f32{ .{ -1, -1, 0.5 }, .{ 1, -1, 0.5 }, .{ -1, 1, -1 } };
+    // A diagonal well inside the picture: a line along the edge at y = -1
+    // lands on the boundary and covers nothing, which says nothing about
+    // the widening path.
+    const diagonal = [_][3]f32{ .{ -0.5, -0.5, 0.5 }, .{ 0.5, 0.5, 0.5 } };
+    const cases = [_]struct { facet.PrimitiveTopology, []const [3]f32, u32, bool }{
+        .{ .triangle_list, &whole, 3, false },
+        .{ .triangle_list, &crossing, 3, true },
+        .{ .line_list, &diagonal, 2, false },
+    };
+    for (cases, 0..) |case, which| {
+        const topology, const corners, const count, const cut = case;
+        const bytes_wanted = corners.len * @sizeOf([3]f32);
+        const vertex_buffer, const vertex_bytes = try bench.buffer(bytes_wanted, facet.BUFFER_USAGE_VERTEX_BUFFER);
+        @memcpy(vertex_bytes[0..bytes_wanted], std.mem.sliceAsBytes(corners));
+
+        const result, const made = makePipeline(&bench, .{ .module = many, .layout = layout, .pass = pass, .topology = topology });
+        try testing.expectEqual(facet.Result.success, result);
+        defer fb.DestroyPipeline(device, made);
+        try testing.expectEqual(@as(u32, Many.count), _objects.of(_pipeline.Pipeline, made.?).varyings);
+
+        const commands = try bench.record();
+        fb.CmdResetQueryPool(commands, statistics, 0, 1);
+        fb.CmdBeginQuery(commands, statistics, 0, 0);
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 1, .clear_values = &clear }, .@"inline");
+        fb.CmdBindPipeline(commands, .graphics, made.?);
+        fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+        fb.CmdDraw(commands, count, 1, 0, 0);
+        fb.CmdEndRenderPass(commands);
+        fb.CmdEndQuery(commands, statistics, 0);
+        try bench.submit();
+
+        // Something was drawn - which for the line list is the whole of
+        // what the `most_stride` guard would have taken away - and every
+        // pixel of it read all sixty-four varyings correctly. A single red
+        // pixel is a varying that did not arrive.
+        const right = pixelsOf(&picture, Many.right);
+        const wrong = pixelsOf(&picture, Many.wrong);
+        try testing.expectEqual(@as(usize, 0), wrong);
+        // The diagonal is 32 pixels of a 64x64 picture and the triangles
+        // are a few thousand; what matters is that it is not zero, which
+        // is what the `most_stride` guard would make it.
+        try testing.expect(right >= if (topology == .line_list) @as(usize, 16) else @as(usize, 1000));
+        // The clear is still under it, so nothing but those two colours is
+        // in the picture.
+        try testing.expectEqual(@as(usize, 64 * 64), right + wrong + pixelsOf(&picture, blue));
+
+        var values: [2]u64 = @splat(0);
+        try testing.expectEqual(facet.Result.success, fb.GetQueryPoolResults(device, statistics, 0, 1, @sizeOf(@TypeOf(values)), &values, @sizeOf(@TypeOf(values)), facet.QUERY_RESULT_64 | facet.QUERY_RESULT_WAIT));
+        if (cut) {
+            // The clipper turned one triangle into more than one, which is
+            // the proof this draw went through it rather than past it: a
+            // triangle with a corner behind the near plane is cut into a
+            // quadrilateral and fanned.
+            try testing.expectEqual(@as(u64, 1), values[0]);
+            try testing.expect(values[1] > 1);
+        } else {
+            try testing.expect(values[1] <= values[0]);
+        }
+        _ = which;
+    }
 }
 
 test "the sample mask at one sample a pixel: bit 0 alone, and a masked draw still counts what it clipped" {

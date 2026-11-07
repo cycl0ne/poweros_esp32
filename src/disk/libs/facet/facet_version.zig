@@ -1703,4 +1703,74 @@ pub const LIBRARY_VERSION = 1;
 /// while `shader_storage_image_multisample` is false. The pin in
 /// tests/vulkan_limits.zig is 10 now - item 17's two, item 22's one, and
 /// seven of this item.
-pub const LIBRARY_REVISION = 89;
+///
+/// 90: **Sixty-four varyings on the cores, which is both ends of Vulkan's
+/// pair.**
+///
+/// `maxVertexOutputComponents` and `maxFragmentInputComponents` were both
+/// 8 against a required 64 - the largest single entry in the pinned
+/// shortfall and two of its rows. Item 17 of docs/facet-vulkan10.md, the
+/// cores' half of two.
+///
+/// The number was written in five uncoupled places: this library's limits
+/// table, the cores' rasterizer, the vertex widening path, `ir.zig`'s
+/// comptime bound and the V3D's QPU ceiling, with nothing tying them
+/// together. Four of them read `shader.MAX_VARYINGS` now, in the SDK
+/// beside `MAX_SETS`; the fifth is the V3D's and stays its own, because
+/// it is a real ceiling.
+///
+/// `most_stride` in `driver/_vertices.zig` was the one way this could
+/// have shipped looking done, and it was worse than it looked: a bare 64
+/// is 4 + 60, four short of the 64 reported, and `widen` answers an
+/// over-wide stride with an all-zero `Wide` - a draw of points or lines
+/// that draws *nothing* and says nothing, on both devices, since that
+/// file is shared. It is `4 + shader.MAX_VARYINGS` now.
+///
+/// The clip path is bucketed, because it is the one place a vertex's
+/// varyings are a comptime array: cutting a triangle costs what the array
+/// is wide whatever the draw carries, so widening it to 64 outright would
+/// have charged a two-varying draw about 11 KB of copying a cut triangle
+/// against about 1.9 KB. `Clip` is an enum of 8, 16, 32 and 64, chosen
+/// once a draw and dispatched by an `inline` switch into `cutUp`, so
+/// every draw written before this fits the narrowest bucket and pays what
+/// it paid then. Nothing else in the rasterizer needed bucketing: the
+/// per-triangle planes and the per-vertex outputs are sized at run time
+/// from the pipeline's own count, and the tiles hold no varyings at all.
+///
+/// The test is the point. A vertex function writes varying *i* as *i + 1*
+/// at every corner, so each interpolates to exactly *i + 1* over the
+/// triangle whatever the perspective and whatever the clipper does; the
+/// fragment function reads all 64 back through `shader.Rows(65)` and
+/// paints green only where every one is right. The picture is the
+/// assertion. Three draws reach three paths with all 64 live: whole,
+/// crossing the near plane - the only way into the clipper and the only
+/// draw picking the widest bucket - and a line list, the only way into
+/// `widen` and so to the `most_stride` guard. The clipped case also
+/// asserts more primitives came out of clipping than went in, so the test
+/// knows it went through the clipper rather than past it.
+///
+/// The V3D reports 8, read off `compile.most_varyings` the way item 28
+/// reads the texel offsets off its profile twelve lines above. Ten usable
+/// registers hold eight varyings and the four floats a program needs of
+/// its own, and the vertex programs are pregenerated, one a count. Without
+/// those two lines this device would have inherited 64 and refused every
+/// pipeline above 8 at creation while advertising it took them.
+/// `_play.zig`'s index into that table is bounded too, since the cores'
+/// number now exceeds its length.
+///
+/// Raising the IR's bound made the V3D's own refusal testable for the
+/// first time: `Error.Varyings` had no test among `compile.zig`'s twenty,
+/// because a nine-varying graph could not be built while `ir.zig` refused
+/// one at comptime. There is a twelve-varying graph now, refused as
+/// `Error.Varyings`, whose words `spirv.look` accepts - the device
+/// refusing a module, not the words being wrong.
+///
+/// One thing was found and left: `spirv.look` writes the same number to
+/// `Seen.input_locations` and `Seen.output_locations`, which are
+/// documented as two. Nothing reads either, and tests/ir.zig asserts they
+/// are equal with the reason beside it rather than asserting what they
+/// ought to be. Item 84.
+///
+/// The pin in tests/vulkan_limits.zig is 8: item 22's one row and item
+/// 61's seven.
+pub const LIBRARY_REVISION = 90;
