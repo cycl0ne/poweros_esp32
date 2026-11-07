@@ -1579,7 +1579,13 @@ pub const Level = struct {
         level.column_high = level.last_column & ~lowColumn(texel);
         level.row_low = level.last_row & lowRow(texel);
         level.row_high = (level.height - 1) / block;
-        level.row_gap = (@as(u32, 1) << level.blocks_shift) - (@as(u32, 1) << (texel + 4));
+        // Only `rows`' walk over texels of `shift` bytes reads the gap. A
+        // compressed level is read a block at a time (`blockAt`), and its
+        // block of 8 bytes is narrower than the 16 texels the gap counts
+        // in, so working it out underflowed for a level 4 texels across or
+        // narrower: every BC1 and BC4 image with a full chain of levels
+        // (until 1.97).
+        level.row_gap = if (format.compressed()) 0 else (@as(u32, 1) << level.blocks_shift) - (@as(u32, 1) << (texel + 4));
         return level;
     }
 

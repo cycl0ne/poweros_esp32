@@ -795,6 +795,18 @@ have kept passing and said so. It shapes one row now.
 `maxImageDimensionCube` was already met: a cube is six layers of a square
 2D image, so the 2D width governs it, which is what this item suspected.
 
+**Corrected in 1.97: no compressed format is a 1D image's.** Until then
+one was made: a texture of blocks a row high, which nothing tested. Its
+layout overflowed working out the gap between a level's rows, and so did
+every BC1 or BC4 image with a full chain of levels, at its level 4 texels
+across. CreateImage and the format query alike panicked there. A
+compressed level's gap is now none, since only the walk over uncompressed
+texels reads it, and a compressed 1D image is refused, as both Mesa
+drivers refuse one (`lvp_get_image_format_properties`, lvp_formats.c:347-349;
+`v3dv_get_image_format_properties`, v3dv_formats.c:598-602). Vulkan's
+compressed format tables are the ones scoped away from 1D, so no
+requirement is lost. Item 61's sweep of the format query found it.
+
 facet has no 1D images at all: shapeFor refuses any image_type that is not 2d or 3d in one line, so maxImageDimension1D would be 0 against a required 4096, and no Vulkan 1.0 feature makes 1D images optional. The spec's mandatory format tables are also scoped "for every VkImageType unless otherwise noted", and only the depth/stencil and compressed tables are noted, so every mandatory colour format currently fails the table for 1D. Needs a 1D image kind (rows of one line, or 2D of height 1), the 1D and 1D_ARRAY view types, a 1D sampler path, and both limit fields — a cube is governed today by the 2D limit with nothing said.
 
 > Verified: src/disk/libs/facet/image/_image.zig:338 `if ((info.image_type != .@"2d" and !volume) or info.samples != 1) return null;` — this one line is both the 1D refusal and the multisampled-image refusal. sdk/libs/facet/facet.zig:921-926 declares ImageType.@"1d" = 0; instance/getphysicaldeviceimageformatproperties.zig:25 "`1d` has no images"; src/disk/c/test/raster/facetprobe.zig:1883 asserts "a 1D image refused". Limits struct has no 1d or cube field.

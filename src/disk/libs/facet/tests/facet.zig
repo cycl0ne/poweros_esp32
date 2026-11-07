@@ -671,6 +671,39 @@ test "an image: a texture, rows or a depth, by what it is for" {
     }
 }
 
+test "a compressed image down to its last level, and no compressed image of one dimension" {
+    var rig = try Rig.up();
+    defer rig.down() catch |err| std.debug.panic("{}", .{err});
+    const instance, const physical = try rig.instance();
+    defer rig.fb.DestroyInstance(instance);
+    const device = try rig.device(physical);
+    defer rig.fb.DestroyDevice(device);
+    const fb = rig.fb;
+    const sampled = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST;
+
+    // A block of 8 bytes, BC1's and BC4's, at every level down to one
+    // texel: until 1.97 the level 4 texels across overflowed its layout,
+    // in CreateImage and in the query's largest image, which has them all.
+    // BC3's block of 16 bytes did not, and is here beside them.
+    for ([_]facet.Format{ .bc1_rgb_unorm_block, .bc1_rgba_unorm_block, .bc4_unorm_block, .bc3_unorm_block }) |format| {
+        var image: ?*facet.Image = null;
+        try testing.expectEqual(facet.Result.success, fb.CreateImage(device, &.{ .format = format, .extent = .{ .width = 16, .height = 16, .depth = 1 }, .mip_levels = 5, .usage = sampled }, &image));
+        fb.DestroyImage(device, image);
+        var properties: facet.ImageFormatProperties = undefined;
+        try testing.expectEqual(facet.Result.success, fb.GetPhysicalDeviceImageFormatProperties(physical, format, .@"2d", .optimal, sampled, 0, &properties));
+        try testing.expectEqual(@as(u32, 14), properties.max_mip_levels);
+
+        // And no compressed image of one dimension, as neither Mesa driver
+        // makes one: the query and CreateImage say so alike.
+        try testing.expectEqual(facet.Result.error_format_not_supported, fb.GetPhysicalDeviceImageFormatProperties(physical, format, .@"1d", .optimal, sampled, 0, &properties));
+        try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{ .format = format, .image_type = .@"1d", .extent = .{ .width = 16, .height = 1, .depth = 1 }, .usage = sampled }, &image));
+    }
+    // ETC2 is unpacked as it is copied in, and is refused as one dimension
+    // all the same.
+    var image: ?*facet.Image = null;
+    try testing.expectEqual(facet.Result.error_format_not_supported, fb.CreateImage(device, &.{ .format = .etc2_r8g8b8_unorm_block, .image_type = .@"1d", .extent = .{ .width = 16, .height = 1, .depth = 1 }, .usage = sampled }, &image));
+}
+
 test "a copy into a texture: each texel where the texture layout keeps it, as 0xAARRGGBB; a view from a level on" {
     var rig = try Rig.up();
     defer rig.down() catch |err| std.debug.panic("{}", .{err});

@@ -351,6 +351,13 @@ pub fn shapeFor(physical: *_instance.PhysicalDevice, info: *const facet.ImageCre
     const line = info.image_type == .@"1d";
     if ((info.image_type != .@"2d" and !volume and !line) or info.samples != 1) return null;
     if (line and (extent.height != 1 or extent.depth != 1)) return null;
+    // A compressed format is no 1D image's, as neither Mesa driver makes
+    // one (`lvp_get_image_format_properties`,
+    // src/gallium/frontends/lavapipe/lvp_formats.c;
+    // `v3dv_get_image_format_properties`, src/broadcom/vulkan/v3dv_formats.c),
+    // its blocks being four rows high. Until 1.97 one was made, and the
+    // layout of a level a block across overflowed (`texture.Level`).
+    if (line and _decode.blockBytes(info.format) != 0) return null;
     const layers = if (volume) extent.depth else info.array_layers;
     if (layers == 0 or (!volume and extent.depth != 1)) return null;
     // A 3D image's depth is its layers, and may be any number since 1.46;

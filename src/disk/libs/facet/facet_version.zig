@@ -2005,4 +2005,30 @@ pub const LIBRARY_VERSION = 1;
 /// - setting a mask rather than ANDing it, which fails on the V3D's zeros
 ///   alone;
 /// - tying either feature to the capability again, `expected 0, found 1`.
-pub const LIBRARY_REVISION = 96;
+///
+/// 97: **A BC1 or BC4 image with a full chain of levels no longer
+/// overflows its layout, and no compressed image is 1D.**
+///
+/// `texture.Level.of` worked out `row_gap` - the bits between a row's low
+/// two and its others, for the wrapping walk over texels of `shift`
+/// bytes - for every format. A block of 8 bytes is narrower than the 16
+/// texels the gap counts in, so for a level 4 texels across or narrower
+/// it underflowed. CreateImage of such an image, and the format query,
+/// whose largest image has every level, panicked with `integer overflow`.
+/// Nothing reads the gap of a compressed level, which is read a block at a
+/// time (`blockAt`), so it is 0 there now.
+///
+/// A 1D image of a compressed format, made since 1.86, is refused now, as
+/// lavapipe and v3dv refuse it (`lvp_get_image_format_properties`,
+/// `v3dv_get_image_format_properties`). Its blocks are four rows high, and
+/// Vulkan scopes the compressed format tables away from 1D. ETC2 and EAC,
+/// unpacked as they are copied in, are refused as 1D the same way.
+///
+/// Found by the sweep step S2 of docs/facet-vulkan10.md item 61 makes of
+/// the format query, over every format, type, tiling, usage and flag. A
+/// test makes BC1, BC1 with alpha, BC4 and BC3 images of five levels and
+/// asks the query for the largest, and finds the 1D one refused by both
+/// calls. Each change put back fails it: the gap as it was panics with
+/// `integer overflow` at texture.zig's line again, and the 1D image made
+/// gives `expected .error_format_not_supported, found .success`.
+pub const LIBRARY_REVISION = 97;
