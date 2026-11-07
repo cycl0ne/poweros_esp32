@@ -15,7 +15,9 @@
 //!
 //! A tile written into a swapchain's image is handed on to the display
 //! by the part that wrote it (rtg's RefreshRect), as C:test/Cube hands
-//! on its own; into any other image it is handed on to nothing.
+//! on its own; into any other image it is handed on to nothing. A colour
+//! of four samples is handed on as its resolve attachment, which is the
+//! swapchain's image where the program resolves into one (since 1.109).
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -54,7 +56,8 @@ pub const Player = struct {
     /// Inside a render pass that could begin.
     drawing: bool = false,
     /// Where the pass's tiles are handed on to: the display's buffer the
-    /// colour attachment is, or null.
+    /// first colour attachment is - or its resolve attachment, where it
+    /// has one (since 1.109) - or null (`displayOf`).
     display: ?_image.Display = null,
     /// What the draws are drawn with: bound, and set by commands.
     pipeline: ?*Pipeline = null,
@@ -343,6 +346,24 @@ fn surfaceOf(framebuffer: *const _render.Target, output: u32) ?raster.Surface {
     return surfaceAt(framebuffer.colors[output], 0, 0);
 }
 
+/// The surface a part's colour attachment `output` is resolved into, at
+/// the layer its view begins at: its resolve attachment's, or null where
+/// it has none (since 1.109).
+fn resolveOf(framebuffer: *const _render.Target, output: u32) ?raster.Surface {
+    const view = framebuffer.resolves[output] orelse return null;
+    return surfaceAt(view, 0, 0);
+}
+
+/// The display a part's tiles are handed on to, if any: its first colour
+/// attachment's image's, or that attachment's resolve attachment's where
+/// it has one, the tiles writing their averages into it as they are
+/// written back (since 1.109). A swapchain's image is of one sample, so
+/// it is a resolve attachment and never the colour of four.
+pub fn displayOf(framebuffer: *const _render.Target) ?_image.Display {
+    const shown = framebuffer.resolves[0] orelse framebuffer.colors[0];
+    return shown.image.display;
+}
+
 /// The same `layer` layers past the one the view begins at. An image kept in
 /// rows has layers since 1.91, and until then this was the image's first
 /// layer whatever its view said: what drew into a view of the second layer
@@ -444,6 +465,25 @@ fn clearLayers(layered: Layered, part: *const _render.Part, command: *const _com
     };
 }
 
+/// The layers of a framebuffer past its first resolved as a part ends
+/// (since 1.109): each colour attachment that has a resolve attachment,
+/// its samples averaged into it over the render area, as the tiles
+/// resolve the first. No tile reaches those layers, so they are resolved
+/// from what the image's rows hold by then - what the part's load ops and
+/// clears left there (`clearLayers`, `clearRectangle`). lavapipe resolves
+/// every layer of the framebuffer (`resolve_color`, lvp_execute.c:1809).
+fn resolveLayers(layered: Layered) void {
+    const framebuffer = layered.framebuffer orelse return;
+    for (0..layered.colors) |k| {
+        const into = framebuffer.resolves[k] orelse continue;
+        for (1..framebuffer.layers) |layer| {
+            const from = surfaceAt(framebuffer.colors[k], @intCast(layer), 0) orelse break;
+            const resolve = surfaceAt(into, @intCast(layer), 0) orelse break;
+            raster.resolveSurface(from, resolve, layered.area);
+        }
+    }
+}
+
 /// CmdClearAttachments' rectangle, over the layers it names past the
 /// framebuffer's first (since 1.91): the first is in the tiles and cleared by
 /// drawing (`_draw.clearAttachment`), and these are in the image's rows and
@@ -530,7 +570,11 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, outp
     const plane: ?raster.Attachments.Plane = if (keeps_depth) planeOf(framebuffer.depth, .depth) else null;
     const stencil_plane: ?raster.Attachments.Plane = if (keeps_stencil) planeOf(framebuffer.depth, .stencil) else null;
     var attachments = raster.Attachments{
-        .color = .{ .load = if (render_pass.color_loads[0] == .clear) .clear else .keep, .clear = command.clear_colors[@min(first_clear, _render.most_colors - 1)] },
+        .color = .{
+            .load = if (render_pass.color_loads[0] == .clear) .clear else .keep,
+            .clear = command.clear_colors[@min(first_clear, _render.most_colors - 1)],
+            .resolve = resolveOf(framebuffer, 0),
+        },
         .color_count = colors,
         .samples = render_pass.samples,
         .depth = .{
@@ -553,8 +597,9 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, outp
     for (1..colors) |k| attachments.more[k - 1] = .{
         .load = if (render_pass.color_loads[k] == .clear) .clear else .keep,
         .clear = command.clear_colors[@min(first_clear + k, _render.most_colors - 1)],
+        .resolve = resolveOf(framebuffer, @intCast(k)),
     };
-    player.display = framebuffer.colors[0].image.display;
+    player.display = displayOf(framebuffer);
     if (player.target) |*target| {
         target.moveToAll(surfaces[0..colors], area, attachments) catch return;
     } else {
@@ -578,8 +623,9 @@ fn endRenderPass(player: *Player) void {
     if (!player.drawing) return;
     player.drawing = false;
     player.drawn = null;
-    player.layered = .{};
     _ = player.target.?.finish();
+    resolveLayers(player.layered);
+    player.layered = .{};
 }
 
 /// What the queue's target is given of the system: exec's workers and

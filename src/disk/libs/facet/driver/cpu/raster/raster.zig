@@ -2,13 +2,15 @@
 //! The rasterizer core of facet.library: triangles drawn into a surface a
 //! tile at a time, the tiles shared out between the cores.
 //!
-//! A module, not a library. It is compiled into what uses it - facet.library
-//! and the test programs that measure it - and has no jump table, no .fd
-//! and no name in LIBS:. Its calls are made per triangle, per tile and per
-//! span, and how a triangle is drawn - the blend, the texture's format,
-//! the depth test - is settled when a pipeline is made: those are comptime
-//! parameters, so the loops run for every pixel are built for that one
-//! pipeline and look nothing up while they run.
+//! A module, not a library. It is compiled into what uses it -
+//! facet.library, v3d.fdriver for the average CmdResolveImage's body
+//! takes from it (since 1.109), and the test programs that measure it -
+//! and has no jump table, no .fd and no name in LIBS:. Its calls are made
+//! per triangle, per tile and per span, and how a triangle is drawn - the
+//! blend, the texture's format, the depth test - is settled when a
+//! pipeline is made: those are comptime parameters, so the loops run for
+//! every pixel are built for that one pipeline and look nothing up while
+//! they run.
 //!
 //! Its edge is drawn as a library's would be, and nothing of the API above
 //! it shows through. It has four things:
@@ -31,7 +33,9 @@
 //!
 //! A frame has one sample a pixel or four (`Attachments.samples`, since
 //! 1.103), and four are drawn by `batched.draw` alone: `Pipeline(cfg)`'s
-//! triangles are of one.
+//! triangles are of one. A colour of four may be resolved into a surface
+//! of one as the frame ends (`Attachments.Color.resolve`, since 1.109),
+//! and `resolveSurface` resolves a rectangle of one the same way.
 //!
 //! What it needs of the system - the cores, memory, and a way to hand on
 //! what it wrote - it is given (`Host`), so the same code runs in the host
@@ -49,6 +53,9 @@ pub const Packing = target.Packing;
 pub const fillSurface = target.fillSurface;
 pub const fillDepth = target.fillDepth;
 pub const fillStencil = target.fillStencil;
+pub const resolveSurface = target.resolveSurface;
+pub const average8888 = target.average8888;
+pub const average565 = target.average565;
 pub const Rect = target.Rect;
 pub const Host = target.Host;
 pub const Work = target.Work;

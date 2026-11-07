@@ -18,8 +18,9 @@
 //! - a colour: CLEAR clears every tile of the render area the first time
 //!   it is drawn into; LOAD, DONT_CARE and any time after that keep what the
 //!   image holds, read into a tile only where something is drawn - a tile
-//!   nothing touches is neither read nor written. What is drawn is stored,
-//!   whatever the store op.
+//!   nothing touches is neither read nor written, unless the colour is
+//!   resolved, which reads and writes every tile of the area (since
+//!   1.109). What is drawn is stored, whatever the store op.
 //! - the depth: CLEAR or DONT_CARE, the tiles' depth cleared as each
 //!   starts; it is never stored, and its store op is DONT_CARE.
 

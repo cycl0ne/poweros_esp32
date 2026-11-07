@@ -32,6 +32,18 @@
 //! and the stencil since 1.105. Each is cleared, loaded and stored on
 //! its own, from and into its own plane of the image.
 //!
+//! A colour of four samples may be resolved as the frame ends, into a
+//! surface of one (`Attachments.Color.resolve`, since 1.109): each tile,
+//! once its samples are stored, has them averaged into the resolve's
+//! surface over its part of the area, a pixel at a time as the surface
+//! now holds them (`resolveSurface`). lavapipe blits the multisampled
+//! image into the resolve attachment over the render area as the
+//! rendering ends (`resolve_color`, lvp_execute.c:1782-1827, from
+//! `handle_end_rendering`, :2053), and v3dv resolves a tile at a time in
+//! its tile buffer (v3dvx_cmd_buffer.c:640-686): here it is a tile at a
+//! time, from the samples as they were stored, so that it is
+//! CmdResolveImage's average to the byte, a 565 sample's dither and all.
+//!
 //! The tiles are handed on once all of them are in the surface, in a
 //! second round shared out the same way. On the JH7110 handing on is the
 //! L2's write-back of the tile's lines, one line after the other, and a
@@ -45,10 +57,11 @@
 //! 2.7 ms (FillRect: 2.8 ms).
 //!
 //! A tile is written back only when something was drawn into it this
-//! frame, or when the frame starts cleared. One nothing touched in a frame
-//! kept from the last is not read, not written and not handed on: its
-//! write-back would be lines the display has to fetch again from memory
-//! for nothing.
+//! frame, or when the frame starts cleared, or when a colour is resolved
+//! (since 1.109), which is of every pixel of the area, drawn into or not.
+//! One nothing touched in a frame kept from the last is not read, not
+//! written and not handed on: its write-back would be lines the display
+//! has to fetch again from memory for nothing.
 
 const sdk = @import("sdk");
 const bins = @import("bins.zig");
@@ -222,6 +235,68 @@ pub fn fillSurface(surface: Surface, area: Rect, color: u32) void {
     }
 }
 
+/// Four samples of four 8-bit channels averaged, each channel
+/// (s0 + s1 + s2 + s3 + 2) >> 2: the sum over four, rounded to the
+/// nearest and a half up. Two channels go at a time, each in a lane of 16
+/// bits, which holds at most 4 * 255 + 2 = 1022, so no lane carries into
+/// the next; the mask after the shift drops what the lane above shifted
+/// down. CmdResolveImage's average (since 1.101), and a pass's resolve's
+/// (since 1.109), which are the same.
+pub fn average8888(samples: [4]u32) u32 {
+    const m: u32 = 0x00FF00FF;
+    const even = ((samples[0] & m) + (samples[1] & m) + (samples[2] & m) + (samples[3] & m) + 0x0002_0002) >> 2;
+    const odd = (((samples[0] >> 8) & m) + ((samples[1] >> 8) & m) + ((samples[2] >> 8) & m) + ((samples[3] >> 8) & m) + 0x0002_0002) >> 2;
+    return (even & m) | ((odd & m) << 8);
+}
+
+/// Four samples of R5G6B5 averaged the same way, a channel at a time, in
+/// the low half of each word.
+pub fn average565(samples: [4]u32) u32 {
+    var red: u32 = 2;
+    var green: u32 = 2;
+    var blue: u32 = 2;
+    for (samples) |sample| {
+        red += (sample >> 11) & 0x1F;
+        green += (sample >> 5) & 0x3F;
+        blue += sample & 0x1F;
+    }
+    return ((red >> 2) << 11) | ((green >> 2) << 5) | (blue >> 2);
+}
+
+/// A rectangle of `from`, a surface of four samples a pixel, resolved
+/// into `into`, one of one sample a pixel: each pixel the average of the
+/// four as `from` holds them (`average8888`, `average565`), the samples
+/// `sample_bytes` apart. What a colour attachment's resolve is given as a
+/// frame ends, a tile at a time (`Target.drawTile`), and of a
+/// framebuffer's layers past the first, which no tile reaches. Cut to
+/// both surfaces; a surface of another format than `from`'s is given
+/// nothing, as Vulkan has a resolve keep the one format. (Since 1.109.)
+pub fn resolveSurface(from: Surface, into: Surface, area: Rect) void {
+    if (from.format != into.format) return;
+    const right = @min(area.x +| area.width, from.width, into.width);
+    const bottom = @min(area.y +| area.height, from.height, into.height);
+    if (area.x >= right or area.y >= bottom) return;
+    switch (from.format) {
+        .bgra32, .rgba32 => resolveRows(u32, average8888, from, into, area.x, area.y, right, bottom),
+        .rgb565 => resolveRows(u16, average565, from, into, area.x, area.y, right, bottom),
+    }
+}
+
+fn resolveRows(comptime Pixel: type, comptime average: fn ([4]u32) u32, from: Surface, into: Surface, left: u32, top: u32, right: u32, bottom: u32) void {
+    @setRuntimeSafety(false);
+    var y = top;
+    while (y < bottom) : (y += 1) {
+        const row = from.pixels + @as(usize, y) * from.pitch;
+        var planes: [4][*]const Pixel = undefined;
+        for (&planes, 0..) |*plane, sample| plane.* = @ptrCast(@alignCast(row + sample * from.sample_bytes));
+        const out: [*]Pixel = @ptrCast(@alignCast(into.pixels + @as(usize, y) * into.pitch));
+        var x = left;
+        while (x < right) : (x += 1) {
+            out[x] = @intCast(average(.{ planes[0][x], planes[1][x], planes[2][x], planes[3][x] }));
+        }
+    }
+}
+
 /// A rectangle of a depth plane set to `depth`, as `storeDepth` leaves a
 /// tile cleared to it: the 16 bits low byte first, wherever the plane's
 /// stride puts them. The caller cuts the rectangle to the plane, and of a
@@ -368,6 +443,12 @@ pub const Attachments = struct {
         load: Load = .clear,
         /// 0xAARRGGBB.
         clear: u32 = 0xFF00_0000,
+        /// Where its samples are averaged into as the frame ends, at four
+        /// samples a pixel: a surface of one sample a pixel, of the
+        /// colour's own format, each tile's part of the area averaged
+        /// into it once the tile's samples are stored
+        /// (`resolveSurface`). Null for none. (Since 1.109.)
+        resolve: ?Surface = null,
     };
 
     pub const Depth = struct {
@@ -533,6 +614,12 @@ pub const Tile = struct {
         const bottom = @min(header.bottom - y, tile.bottom);
         if (left >= right or top >= bottom) return null;
         return .{ .left = @intCast(left), .top = @intCast(top), .right = @intCast(right), .bottom = @intCast(bottom) };
+    }
+
+    /// The part of the tile inside the area, on the surface: what is
+    /// written back, resolved and handed on.
+    pub inline fn rect(tile: *const Tile) Rect {
+        return .{ .x = tile.x + tile.left, .y = tile.y + tile.top, .width = tile.right - tile.left, .height = tile.bottom - tile.top };
     }
 
     /// Row `y` of the tile's colour, from its left.
@@ -817,7 +904,11 @@ pub const Target = struct {
     pub fn begin(target: *Target) void {
         // A tile nothing draws into is skipped - unless the frame starts
         // cleared, when every tile has to be written: the colour, or a
-        // depth that is kept and starts cleared.
+        // depth that is kept and starts cleared. Or unless a colour is
+        // resolved, which is of every pixel of the area, as lavapipe
+        // blits the whole render area (lvp_execute.c:1805-1809): a tile
+        // a pass loads and draws nothing into is resolved from what it
+        // loaded (since 1.109).
         const depth = target.attachments.depth;
         const stencil = target.attachments.stencil;
         var any_cleared = false;
@@ -825,7 +916,7 @@ pub const Target = struct {
         for (0..colors) |output| {
             const color = target.attachments.colorAt(@intCast(output));
             target.clear_pixels[output] = color.clear;
-            if (color.load == .clear) any_cleared = true;
+            if (color.load == .clear or color.resolve != null) any_cleared = true;
         }
         const cleared = any_cleared or
             (depth.store and depth.load == .clear) or
@@ -947,7 +1038,8 @@ pub const Target = struct {
     }
 
     /// One tile: started as the attachments say, drawn, and written into
-    /// the surface.
+    /// the surface, and each colour with a resolve averaged into it
+    /// (since 1.109).
     fn drawTile(target: *Target, tile: *const Tile) void {
         const colors = target.colorCount();
         var output: u32 = 0;
@@ -992,6 +1084,10 @@ pub const Target = struct {
         while (output < colors) : (output += 1) {
             var sample: u32 = 0;
             while (sample < tile.samples) : (sample += 1) target.store(tile, output, sample);
+            // Its samples, as the surface now holds them, averaged into
+            // its resolve while their rows are still in this part's
+            // cache (since 1.109).
+            if (target.attachments.colorAt(output).resolve) |into| resolveSurface(target.surfaces[output], into, tile.rect());
         }
         if (depth.store) {
             var sample: u32 = 0;
@@ -1022,12 +1118,7 @@ pub const Target = struct {
 
     /// The part of a tile inside the area, handed on.
     fn handOn(target: *Target, tile: *const Tile) void {
-        target.host.hand_on(target.host.context, .{
-            .x = tile.x + tile.left,
-            .y = tile.y + tile.top,
-            .width = tile.right - tile.left,
-            .height = tile.bottom - tile.top,
-        });
+        target.host.hand_on(target.host.context, tile.rect());
     }
 
     /// Colour attachment `output`'s surface under the tile, into that

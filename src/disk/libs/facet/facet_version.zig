@@ -2543,4 +2543,41 @@ pub const LIBRARY_VERSION = 1;
 /// The multisample test takes alpha to coverage and keeps it with the
 /// pipeline, where it refused it. Each of fifteen changes put back fails
 /// one of them.
-pub const LIBRARY_REVISION = 108;
+///
+/// 109: **The cores resolve a colour of four samples into its resolve
+/// attachment as the subpass ends.** Step K5 of item 61 of
+/// docs/facet-vulkan10.md. No device draws four samples yet: the
+/// capability stays off until K7, and the tests turn it on.
+///
+/// lavapipe blits the multisampled image into the resolve attachment over
+/// the render area, in every layer of the framebuffer, as the rendering
+/// ends (`resolve_color`, lvp_execute.c:1782-1827, from
+/// `handle_end_rendering`, :2053), and v3dv resolves a tile at a time in
+/// its tile buffer, before the multisampled store
+/// (v3dvx_cmd_buffer.c:640-686). Here each tile, once its samples are
+/// stored, has them averaged into the resolve over its part of the render
+/// area, as the surface now holds them (`raster.resolveSurface`), while
+/// their rows are still in the part's cache: a pass's resolve is
+/// CmdResolveImage's average to the byte, a 565 sample's dither and all.
+/// The two averages of 1.101 move into the raster module for it, which
+/// v3d.fdriver now imports, its CmdResolveImage being the cores' until V5.
+/// Where a colour is resolved, every tile of the area is drawn: one the
+/// pass loads and draws nothing into is resolved all the same, from what
+/// it loaded. The framebuffer's layers past the first, which no tile
+/// reaches, are resolved from the image's rows as the part ends. The tiles
+/// of a colour resolved into a swapchain's image are handed on to its
+/// display (`_play.displayOf`).
+///
+/// Tests: a pass of four samples in 8888 and in 565, over two layers of
+/// four tiles, its render area short of the framebuffer on every side and
+/// its resolve's image larger than the framebuffer, at another pitch.
+/// Cleared and drawn, then loaded from samples marked by hand and drawn
+/// into the first tile alone: in both layers each pixel of the area is
+/// the average of its four samples as the pass stored them, the three
+/// tiles nothing drew into resolved from what they loaded, and nothing
+/// past the area written. Three colours drawn together, the first without
+/// a resolve and the others with one each, against each sample's
+/// coverage. A surface resolved alone: cut to both surfaces, and nothing
+/// given to one of another format. And the display the tiles are handed
+/// on to. Each of nineteen changes put back fails one of them.
+pub const LIBRARY_REVISION = 109;

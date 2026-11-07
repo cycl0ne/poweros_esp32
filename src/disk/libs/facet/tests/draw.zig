@@ -4564,7 +4564,7 @@ test "four samples a pixel in a render pass, a framebuffer and a pipeline, with 
 }
 
 /// Four 8-bit channels averaged one at a time: the formula
-/// `_transfer.average8888` works two channels a word at a time to give.
+/// `raster.average8888` works two channels a word at a time to give.
 fn averagedByChannel(words: [4]u32) u32 {
     var made: u32 = 0;
     for (0..4) |channel| {
@@ -4577,7 +4577,7 @@ fn averagedByChannel(words: [4]u32) u32 {
 }
 
 test "four samples averaged into one, each channel its sum over four rounded half up, two at a time in a word" {
-    const _transfer = @import("../driver/_transfer.zig");
+    const raster = @import("raster");
     // The ties, each channel alike: three quarters of 255 is 191.25, a
     // half rounds up, and a quarter down.
     const ties = [_]struct { [4]u8, u8 }{
@@ -4591,7 +4591,7 @@ test "four samples averaged into one, each channel its sum over four rounded hal
         const samples, const want = tie;
         var words: [4]u32 = undefined;
         for (&words, samples) |*word, value| word.* = @as(u32, value) * 0x0101_0101;
-        try testing.expectEqual(@as(u32, want) * 0x0101_0101, _transfer.average8888(words));
+        try testing.expectEqual(@as(u32, want) * 0x0101_0101, raster.average8888(words));
     }
     // Words whose four channels differ, so that a carry from one channel
     // into the next, or a mask left out, is seen: grey ones hide both.
@@ -4600,12 +4600,12 @@ test "four samples averaged into one, each channel its sum over four rounded hal
     for (0..10_000) |_| {
         var words: [4]u32 = undefined;
         for (&words) |*word| word.* = random.int(u32);
-        try testing.expectEqual(averagedByChannel(words), _transfer.average8888(words));
+        try testing.expectEqual(averagedByChannel(words), raster.average8888(words));
     }
     // R5G6B5, a channel at a time: red 31, 31, 31, 0 is 23.25, green 1,
     // 1, 0, 0 a half, and blue 30, 31, 31, 31 is 30.75.
     const pixels = [4]u32{ 31 << 11 | 1 << 5 | 30, 31 << 11 | 1 << 5 | 31, 31 << 11 | 31, 31 };
-    try testing.expectEqual(@as(u32, 23 << 11 | 1 << 5 | 31), _transfer.average565(pixels));
+    try testing.expectEqual(@as(u32, 23 << 11 | 1 << 5 | 31), raster.average565(pixels));
     for (0..1000) |_| {
         var words: [4]u32 = undefined;
         for (&words) |*word| word.* = random.int(u16);
@@ -4617,7 +4617,7 @@ test "four samples averaged into one, each channel its sum over four rounded hal
             green += (word >> 5) & 0x3F;
             blue += word & 0x1F;
         }
-        try testing.expectEqual((red >> 2) << 11 | (green >> 2) << 5 | (blue >> 2), _transfer.average565(words));
+        try testing.expectEqual((red >> 2) << 11 | (green >> 2) << 5 | (blue >> 2), raster.average565(words));
     }
     // Vulkan's VkImageResolve, byte for byte.
     try testing.expectEqual(@as(usize, 68), @sizeOf(facet.ImageResolve));
@@ -4722,12 +4722,12 @@ test "CmdResolveImage: each pixel of a rectangle the average of its four samples
     const whole565 = facet.ImageResolve{ .extent = .{ .width = 4, .height = 4, .depth = 1 } };
     fb.CmdResolveImage(commands, from565, .transfer_src_optimal, into565, .transfer_dst_optimal, 1, @ptrCast(&whole565));
     try bench.submit();
-    const _transfer = @import("../driver/_transfer.zig");
+    const raster = @import("raster");
     for (0..4) |y| for (0..4) |x| {
         var words: [4]u32 = undefined;
         for (&words, 0..) |*word, s| word.* = pixel565(@intCast(s), @intCast(x), @intCast(y));
         const at = y * destination565.pitch + x * 2;
-        try testing.expectEqual(@as(u16, @intCast(_transfer.average565(words))), std.mem.readInt(u16, destination565.data.?[at..][0..2], .little));
+        try testing.expectEqual(@as(u16, @intCast(raster.average565(words))), std.mem.readInt(u16, destination565.data.?[at..][0..2], .little));
     };
 
     // None of Vulkan's, each leaving the destination as it was: a source
@@ -6100,6 +6100,327 @@ test "alpha to coverage at four samples a pixel: each pixel keeps as many sample
 test "alpha to coverage at one sample a pixel: the pixel kept where its alpha is above its place's threshold, with no depth pre-pass, and with a stencil test that waits for it" {
     try coveredByAlpha(1, .d16_unorm, &one_by_alpha);
     try coveredByAlpha(1, .d16_unorm_s8_uint, &one_by_alpha);
+}
+
+test "a surface of four samples a pixel resolved into one: each pixel the average of its four, cut to both surfaces, and nothing given to one of another format" {
+    const raster = @import("raster");
+    // Three rows of eight, four samples' planes one after another, every
+    // channel of every pixel its own.
+    var planes: [4 * 3 * 8]u32 = undefined;
+    for (&planes, 0..) |*pixel, k| pixel.* = @intCast(k * 0x0103_0507);
+    const untouched: u32 = 0x5A5A_5A5A;
+    // Rows of seven words, the last past the surface's six pixels, and a
+    // row past its two: what a resolve not cut to it would write into.
+    var rows: [3 * 7]u32 = undefined;
+    const into = raster.Surface{ .pixels = @ptrCast(&rows), .pitch = 28, .width = 6, .height = 2, .format = .bgra32 };
+    // Cut to the destination, and to a source said to be narrower and
+    // shorter than it; from the area's second column either way.
+    for ([2][2]u32{ .{ 8, 3 }, .{ 4, 1 } }) |size| {
+        @memset(&rows, untouched);
+        const from = raster.Surface{ .pixels = @ptrCast(&planes), .pitch = 32, .width = size[0], .height = size[1], .format = .bgra32, .sample_bytes = 96 };
+        raster.resolveSurface(from, into, .{ .x = 1, .width = 20, .height = 20 });
+        for (0..3) |y| for (0..7) |x| {
+            var words: [4]u32 = undefined;
+            for (&words, 0..) |*word, s| word.* = planes[s * 24 + y * 8 + x];
+            const inside = x >= 1 and x < @min(6, size[0]) and y < @min(2, size[1]);
+            try testing.expectEqual(if (inside) averagedByChannel(words) else untouched, rows[y * 7 + x]);
+        };
+    }
+    // A destination of 565 given a source of 8888: nothing written, in
+    // its rows or in the room past them that 8888's pixels would reach.
+    var other: [4 * 6]u16 = @splat(0x5A5A);
+    raster.resolveSurface(.{ .pixels = @ptrCast(&planes), .pitch = 32, .width = 8, .height = 3, .format = .bgra32, .sample_bytes = 96 }, .{ .pixels = @ptrCast(&other), .pitch = 12, .width = 6, .height = 2, .format = .rgb565 }, .{ .width = 6, .height = 2 });
+    try testing.expectEqual(null, std.mem.indexOfNone(u16, &other, &.{0x5A5A}));
+}
+
+/// A pixel of an image of rows, of one sample a pixel or of several, of
+/// four bytes or of 565's two, as the number its bytes make, low byte
+/// first.
+fn pixelOfRows(image: *const @import("../image/_image.zig").Image, sample: u32, layer: u32, x: u32, y: u32) u32 {
+    const wide: usize = if (image.format == .r5g6b5_unorm_pack16) 2 else 4;
+    const at = @as(usize, sample) * @as(usize, @intCast(image.sample_bytes)) + @as(usize, layer) * @as(usize, @intCast(image.layer_bytes)) + @as(usize, y) * image.pitch + @as(usize, x) * wide;
+    const bytes = image.data.? + at;
+    return if (wide == 4) std.mem.readInt(u32, bytes[0..4], .little) else std.mem.readInt(u16, bytes[0..2], .little);
+}
+
+/// The same pixel written.
+fn putPixelOfRows(image: *const @import("../image/_image.zig").Image, sample: u32, layer: u32, x: u32, y: u32, value: u32) void {
+    const wide: usize = if (image.format == .r5g6b5_unorm_pack16) 2 else 4;
+    const at = @as(usize, sample) * @as(usize, @intCast(image.sample_bytes)) + @as(usize, layer) * @as(usize, @intCast(image.layer_bytes)) + @as(usize, y) * image.pitch + @as(usize, x) * wide;
+    const bytes = image.data.? + at;
+    if (wide == 4) std.mem.writeInt(u32, bytes[0..4], value, .little) else std.mem.writeInt(u16, bytes[0..2], @intCast(value), .little);
+}
+
+/// Four samples averaged as a resolve averages them, worked out a channel
+/// at a time: 8888's four, or 565's three, each the sum over four
+/// rounded half up.
+fn averagedAs(format: facet.Format, words: [4]u32) u32 {
+    if (format != .r5g6b5_unorm_pack16) return averagedByChannel(words);
+    var made: u32 = 0;
+    for ([3]u5{ 11, 5, 0 }, [3]u32{ 0x1F, 0x3F, 0x1F }) |shift, mask| {
+        var sum: u32 = 2;
+        for (words) |word| sum += (word >> shift) & mask;
+        made |= (sum >> 2) << shift;
+    }
+    return made;
+}
+
+/// What a test of a resolve writes into each sample's plane of each layer
+/// by hand: a pixel of its own at each place, whose channels differ from
+/// one sample to the next.
+fn resolveMark(format: facet.Format, sample: u32, layer: u32, x: u32, y: u32) u32 {
+    if (format == .r5g6b5_unorm_pack16) return ((sample * 7 + layer * 3 + x) & 0x1F) << 11 | ((sample * 13 + y) & 0x3F) << 5 | ((sample * 9 + x + y) & 0x1F);
+    return 0x8000_0000 | (sample * 0x20 + layer * 0x80) << 16 | (y + sample * 0x11) << 8 | x;
+}
+
+/// A pass of four samples a pixel in `format`, resolved into an
+/// attachment of one: two layers of four tiles, a render area short of
+/// the framebuffer, and a resolve whose image is larger than it.
+fn resolvedByPass(format: facet.Format) !void {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
+    physical.can.multisampling = true;
+    defer physical.can.multisampling = false;
+    const Image = @import("../image/_image.zig").Image;
+
+    // The resolve's image wider and taller than the framebuffer, so that
+    // its rows are of another pitch than the samples' and some of it lies
+    // past the framebuffer.
+    const side = 128;
+    const usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_SRC;
+    const layers = facet.ImageSubresourceRange{ .aspect_mask = facet.IMAGE_ASPECT_COLOR, .layer_count = 2 };
+    const four = try bench.bareImage(.{ .format = format, .extent = .{ .width = side, .height = side, .depth = 1 }, .array_layers = 2, .samples = 4, .usage = usage }, false);
+    const one = try bench.bareImage(.{ .format = format, .extent = .{ .width = side + 8, .height = side + 2, .depth = 1 }, .array_layers = 2, .usage = usage }, false);
+    const views = [2]*facet.ImageView{
+        try bench.viewOf(.{ .image = four, .format = format, .view_type = .@"2d_array", .subresource_range = layers }),
+        try bench.viewOf(.{ .image = one, .format = format, .view_type = .@"2d_array", .subresource_range = layers }),
+    };
+    const samples = _objects.of(Image, four);
+    const resolved = _objects.of(Image, one);
+    try testing.expect(resolved.pitch != samples.pitch);
+    var descriptions = [2]facet.AttachmentDescription{
+        .{ .format = format, .samples = 4, .load_op = .clear, .store_op = .store, .final_layout = .color_attachment_optimal },
+        .{ .format = format, .load_op = .dont_care, .store_op = .store, .final_layout = .color_attachment_optimal },
+    };
+    const cleared_result, const cleared = samplesPass(&bench, &descriptions, 1, null);
+    defer fb.DestroyRenderPass(device, cleared);
+    try testing.expectEqual(facet.Result.success, cleared_result);
+    descriptions[0].load_op = .load;
+    descriptions[0].initial_layout = .color_attachment_optimal;
+    const loaded_result, const loaded = samplesPass(&bench, &descriptions, 1, null);
+    defer fb.DestroyRenderPass(device, loaded);
+    try testing.expectEqual(facet.Result.success, loaded_result);
+    var frame: ?*facet.Framebuffer = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateFramebuffer(device, &.{ .render_pass = cleared.?, .attachment_count = 2, .attachments = &views, .width = side, .height = side, .layers = 2 }, &frame));
+    defer fb.DestroyFramebuffer(device, frame);
+
+    // The tiles are handed on to the resolve's display: a swapchain's
+    // image, where the pass resolves into one, is of one sample and never
+    // the colour of four. Taken off again before anything is drawn, as it
+    // is no display's.
+    const _play = @import("../driver/cpu/_play.zig");
+    resolved.display = .{ .rb = @ptrFromInt(0x1000), .bitmap = @ptrFromInt(0x2000) };
+    const shown = _play.displayOf(&_objects.of(_render.Framebuffer, frame.?).targets[0]);
+    resolved.display = null;
+    try testing.expect(shown != null);
+    try testing.expectEqual(@as(usize, 0x2000), @intFromPtr(shown.?.bitmap));
+
+    const flat = try module(&bench, &Flat.code);
+    defer fb.DestroyShaderModule(device, flat);
+    const layout = try pipelineLayout(&bench, &.{}, 4);
+    defer fb.DestroyPipelineLayout(device, layout);
+    const multisample = facet.PipelineMultisampleStateCreateInfo{ .rasterization_samples = 4 };
+    const result, const pipeline = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = cleared.?, .multisample = &multisample, .width = side, .height = side });
+    defer fb.DestroyPipeline(device, pipeline);
+    try testing.expectEqual(facet.Result.success, result);
+    // A triangle over all four tiles, and one inside the first alone,
+    // their corners in eighths of a pixel, which a viewport of 128 keeps
+    // exact.
+    const eighths = [2][3][2]i64{
+        .{ .{ 29, 403 }, .{ 1012, 17 }, .{ 980, 957 } },
+        .{ .{ 70, 90 }, .{ 400, 130 }, .{ 150, 420 } },
+    };
+    var vertices: [6][3]f32 = undefined;
+    for (0..2) |t| for (0..3) |k| {
+        const corner = eighths[t][k];
+        vertices[t * 3 + k] = .{ @as(f32, @floatFromInt(corner[0])) / 512 - 1, @as(f32, @floatFromInt(corner[1])) / 512 - 1, 0.5 };
+    };
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
+    const offset: u64 = 0;
+    const color: u32 = 0xFF40_C020;
+    const untouched: u32 = if (format == .r5g6b5_unorm_pack16) 0x5A5A else 0x5A5A_5A5A;
+    const resolve_bytes: usize = @intCast(resolved.bytes);
+
+    // The first pass clears, over a render area short of the framebuffer
+    // on every side, cutting all four tiles, and draws the first
+    // triangle. The second layer is cleared and nothing draws into it.
+    // Every pixel of every sample marked by hand before, and every byte of
+    // the resolve.
+    for (0..4) |s| for (0..2) |l| for (0..side) |y| for (0..side) |x| {
+        putPixelOfRows(samples, @intCast(s), @intCast(l), @intCast(x), @intCast(y), resolveMark(format, @intCast(s), @intCast(l), @intCast(x), @intCast(y)));
+    };
+    @memset(resolved.data.?[0..resolve_bytes], 0x5A);
+    const area = facet.Rect2D{ .offset = .{ .x = 5, .y = 3 }, .extent = .{ .width = 110, .height = 97 } };
+    const cleared_to = clears(0xFF10_2030);
+    var commands = try bench.record();
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = cleared.?, .framebuffer = frame.?, .render_area = area, .clear_value_count = 2, .clear_values = &cleared_to }, .@"inline");
+    fb.CmdBindPipeline(commands, .graphics, pipeline.?);
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &color);
+    fb.CmdDraw(commands, 3, 1, 0, 0);
+    fb.CmdEndRenderPass(commands);
+    try bench.submit();
+    // Inside the area, in both layers, each pixel of the resolve the
+    // average of the four samples the pass stored there; outside it, and
+    // past the framebuffer, as it was. The first layer has pixels whose
+    // four differ, at the triangle's edges; the second is the clear.
+    var mixed: [2]u32 = @splat(0);
+    for (0..2) |l| for (0..side + 2) |y| for (0..side + 8) |x| {
+        const found = pixelOfRows(resolved, 0, @intCast(l), @intCast(x), @intCast(y));
+        if (x < 5 or x >= 115 or y < 3 or y >= 100) {
+            try testing.expectEqual(untouched, found);
+            continue;
+        }
+        var words: [4]u32 = undefined;
+        for (&words, 0..) |*word, s| word.* = pixelOfRows(samples, @intCast(s), @intCast(l), @intCast(x), @intCast(y));
+        mixed[l] += @intFromBool(words[0] != words[1] or words[0] != words[2] or words[0] != words[3]);
+        try testing.expectEqual(averagedAs(format, words), found);
+    };
+    try testing.expect(mixed[0] > 0);
+    try testing.expectEqual(@as(u32, 0), mixed[1]);
+
+    // The second pass loads, over the whole framebuffer, and draws the
+    // second triangle into the first tile alone. Marked by hand again:
+    // the three tiles nothing draws into are resolved from the samples
+    // they loaded, and so is the second layer.
+    for (0..4) |s| for (0..2) |l| for (0..side) |y| for (0..side) |x| {
+        putPixelOfRows(samples, @intCast(s), @intCast(l), @intCast(x), @intCast(y), resolveMark(format, @intCast(s), @intCast(l), @intCast(x), @intCast(y)));
+    };
+    @memset(resolved.data.?[0..resolve_bytes], 0x5A);
+    commands = try bench.record();
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = loaded.?, .framebuffer = frame.?, .render_area = .{ .extent = .{ .width = side, .height = side } } }, .@"inline");
+    fb.CmdBindPipeline(commands, .graphics, pipeline.?);
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdPushConstants(commands, layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &color);
+    fb.CmdDraw(commands, 3, 1, 3, 0);
+    fb.CmdEndRenderPass(commands);
+    try bench.submit();
+    mixed = @splat(0);
+    for (0..2) |l| for (0..side + 2) |y| for (0..side + 8) |x| {
+        const found = pixelOfRows(resolved, 0, @intCast(l), @intCast(x), @intCast(y));
+        if (x >= side or y >= side) {
+            try testing.expectEqual(untouched, found);
+            continue;
+        }
+        var words: [4]u32 = undefined;
+        for (&words, 0..) |*word, s| word.* = pixelOfRows(samples, @intCast(s), @intCast(l), @intCast(x), @intCast(y));
+        // Past the first tile, and in the second layer, the marks as
+        // they were loaded.
+        if (l == 1 or x >= 64 or y >= 64) for (words, 0..) |word, s| {
+            try testing.expectEqual(resolveMark(format, @intCast(s), @intCast(l), @intCast(x), @intCast(y)), word);
+        };
+        mixed[l] += @intFromBool(words[0] != words[1] or words[0] != words[2] or words[0] != words[3]);
+        try testing.expectEqual(averagedAs(format, words), found);
+    };
+    try testing.expect(mixed[0] > 0 and mixed[1] > 0);
+}
+
+test "a resolve attachment at four samples a pixel: each pixel of the render area, in every layer, the average of its four samples as the pass stored them, every tile of the area resolved whether drawn into or not, and nothing past the area" {
+    try resolvedByPass(.b8g8r8a8_unorm);
+    try resolvedByPass(.r5g6b5_unorm_pack16);
+}
+
+test "resolve attachments of colour attachments drawn together: each given the average of its own colour's samples, and a colour without one resolved into nothing" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
+    physical.can.multisampling = true;
+    defer physical.can.multisampling = false;
+    const Image = @import("../image/_image.zig").Image;
+
+    // Three colours of four samples drawn together, the second and the
+    // third resolved and the first not; every byte of the resolves marked.
+    const side = 64;
+    const usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_SRC;
+    var views: [5]*facet.ImageView = undefined;
+    var resolves: [2]*const Image = undefined;
+    for (&views, 0..) |*view, k| {
+        const made, view.* = try bench.image(.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = side, .height = side, .depth = 1 }, .samples = if (k < 3) 4 else 1, .usage = usage }, false);
+        if (k < 3) continue;
+        const image = _objects.of(Image, made);
+        @memset(image.data.?[0..@intCast(image.bytes)], 0x5A);
+        resolves[k - 3] = image;
+    }
+    const resolve_into = facet.AttachmentDescription{ .format = .b8g8r8a8_unorm, .load_op = .dont_care, .store_op = .store, .final_layout = .color_attachment_optimal };
+    const descriptions = [5]facet.AttachmentDescription{ fourSamples(.clear), fourSamples(.clear), fourSamples(.clear), resolve_into, resolve_into };
+    const references = [3]facet.AttachmentReference{
+        .{ .attachment = 0, .layout = .color_attachment_optimal },
+        .{ .attachment = 1, .layout = .color_attachment_optimal },
+        .{ .attachment = 2, .layout = .color_attachment_optimal },
+    };
+    const into = [3]facet.AttachmentReference{
+        .{ .attachment = facet.ATTACHMENT_UNUSED, .layout = .color_attachment_optimal },
+        .{ .attachment = 3, .layout = .color_attachment_optimal },
+        .{ .attachment = 4, .layout = .color_attachment_optimal },
+    };
+    const together = facet.SubpassDescription{ .flags = facet.SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER, .color_attachment_count = 3, .color_attachments = &references, .resolve_attachments = &into };
+    var pass: ?*facet.RenderPass = null;
+    defer fb.DestroyRenderPass(device, pass);
+    try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 5, .attachments = &descriptions, .subpass_count = 1, .subpasses = @ptrCast(&together) }, &pass));
+    const frame = try framebuffer(&bench, pass.?, &views, side, side);
+    defer fb.DestroyFramebuffer(device, frame);
+    const shaders = try module(&bench, &TogetherScene.code);
+    defer fb.DestroyShaderModule(device, shaders);
+    const layout = try pipelineLayout(&bench, &.{}, 0);
+    defer fb.DestroyPipelineLayout(device, layout);
+    const four = facet.PipelineMultisampleStateCreateInfo{ .rasterization_samples = 4 };
+    const result, const pipeline = makePipeline(&bench, .{ .module = shaders, .name = "three", .layout = layout, .pass = pass.?, .multisample = &four, .blend_count = 3, .width = side, .height = side });
+    defer fb.DestroyPipeline(device, pipeline);
+    try testing.expectEqual(facet.Result.success, result);
+
+    // The test of colours drawn together's triangle, its edges through
+    // samples; the function writes red, green and blue.
+    const eighths = [3][2]i64{ .{ 29, 203 }, .{ 500, 9 }, .{ 470, 497 } };
+    var corners: [3][2]i64 = undefined;
+    var vertices: [3][3]f32 = undefined;
+    for (eighths, &corners, &vertices) |corner, *q8, *vertex| {
+        q8.* = .{ corner[0] * 32, corner[1] * 32 };
+        vertex.* = .{ @as(f32, @floatFromInt(corner[0])) / 256 - 1, @as(f32, @floatFromInt(corner[1])) / 256 - 1, 0.5 };
+    }
+    const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER);
+    @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
+    const offset: u64 = 0;
+    const black = clears(0xFF00_0000)[0];
+    const clear_values = [3]facet.ClearValue{ black, black, black };
+    const commands = try bench.record();
+    fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass.?, .framebuffer = frame, .render_area = .{ .extent = .{ .width = side, .height = side } }, .clear_value_count = 3, .clear_values = &clear_values }, .@"inline");
+    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+    fb.CmdBindPipeline(commands, .graphics, pipeline.?);
+    fb.CmdDraw(commands, 3, 1, 0, 0);
+    fb.CmdEndRenderPass(commands);
+    try bench.submit();
+
+    // Each resolve its own colour's samples averaged - green's into the
+    // first, blue's into the second - worked out from each sample's
+    // coverage.
+    const colors = [2]u32{ 0xFF00_FF00, 0xFF00_00FF };
+    var twos: u32 = 0;
+    for (0..side) |y| for (0..side) |x| {
+        const bits = samplesCovered(corners, @intCast(x), @intCast(y));
+        twos += @intFromBool(@popCount(bits) == 2);
+        for (resolves, colors) |image, color| {
+            var words: [4]u32 = undefined;
+            for (&words, 0..) |*word, s| word.* = if (bits >> @intCast(s) & 1 != 0) color else 0xFF00_0000;
+            try testing.expectEqual(averagedByChannel(words), sampleTexel(image, 0, 0, @intCast(x), @intCast(y)).*);
+        }
+    };
+    try testing.expect(twos > 0);
 }
 
 /// A render pass whose depth attachment is kept: read as each tile starts

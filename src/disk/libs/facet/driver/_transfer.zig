@@ -8,6 +8,7 @@ const std = @import("std");
 const sdk = @import("sdk");
 const facet = sdk.facet;
 const texture = facet.texture;
+const raster = @import("raster");
 const _buffer = @import("../buffer/_buffer.zig");
 const _command = @import("../command/_command.zig");
 const _stream = @import("../command/_stream.zig");
@@ -118,9 +119,10 @@ fn copyBlocks(command: *const _command.CopyImage, source: *const Image, destinat
 /// samples, their sum times one over their count (`build_tex_resolve`,
 /// vk_meta_blit_resolve.c), and Vulkan has the write take one of the two
 /// values nearest to that and should take the nearer (Fixed-Point Data
-/// Conversions). Here that is done in whole numbers (`average8888`,
-/// `average565`): the same average, and its nearest value, a tie taken
-/// upward.
+/// Conversions). Here that is done in whole numbers
+/// (`raster.average8888`, `raster.average565`): the same average, and its
+/// nearest value, a tie taken upward. A pass's resolve attachment is
+/// given the same average (since 1.109).
 ///
 /// Vulkan has the source of more than one sample, the destination of one,
 /// both of the one format (VUID-vkCmdResolveImage-srcImage-00257,
@@ -166,38 +168,11 @@ pub fn resolveImage(command: *const _command.ResolveImage) void {
                     word.* = std.mem.readInt(u32, &bytes, .little);
                 }
                 var bytes: [4]u8 = undefined;
-                std.mem.writeInt(u32, &bytes, if (pixel == 4) average8888(words) else average565(words), .little);
+                std.mem.writeInt(u32, &bytes, if (pixel == 4) raster.average8888(words) else raster.average565(words), .little);
                 _image.writeTexel(destination, to_level, to_layers.first + layer, to_x + x, to_y + y, bytes[0..pixel]);
             };
         }
     }
-}
-
-/// Four samples of four 8-bit channels averaged, each channel
-/// (s0 + s1 + s2 + s3 + 2) >> 2: the sum over four, rounded to the
-/// nearest and a half up. Two channels go at a time, each in a lane of 16
-/// bits, which holds at most 4 * 255 + 2 = 1022, so no lane carries into
-/// the next; the mask after the shift drops what the lane above shifted
-/// down.
-pub fn average8888(samples: [4]u32) u32 {
-    const m: u32 = 0x00FF00FF;
-    const even = ((samples[0] & m) + (samples[1] & m) + (samples[2] & m) + (samples[3] & m) + 0x0002_0002) >> 2;
-    const odd = (((samples[0] >> 8) & m) + ((samples[1] >> 8) & m) + ((samples[2] >> 8) & m) + ((samples[3] >> 8) & m) + 0x0002_0002) >> 2;
-    return (even & m) | ((odd & m) << 8);
-}
-
-/// Four samples of R5G6B5 averaged the same way, a channel at a time, in
-/// the low half of each word.
-pub fn average565(samples: [4]u32) u32 {
-    var red: u32 = 2;
-    var green: u32 = 2;
-    var blue: u32 = 2;
-    for (samples) |sample| {
-        red += (sample >> 11) & 0x1F;
-        green += (sample >> 5) & 0x3F;
-        blue += sample & 0x1F;
-    }
-    return ((red >> 2) << 11) | ((green >> 2) << 5) | (blue >> 2);
 }
 
 /// CmdCopyImageToBuffer's regions: the part of each inside the image, as far
