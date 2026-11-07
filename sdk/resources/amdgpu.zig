@@ -34,6 +34,15 @@
 //! is read as it is, and streaming loads (`movntdqa`) read it a line at a
 //! time instead of a word.
 //!
+//! **Firmware.** A block that runs firmware of its own - the video
+//! decoder - runs it from a protected region of the device's memory,
+//! where only the security processor writes, and only once it has checked
+//! the firmware. StartGPUSecurity makes the processor ready, once, with
+//! the table of contents its firmware files come with;
+//! LoadGPUFirmware hands it a file and answers with where it put it. The
+//! files are read from the disk by the driver that needs them
+//! (DEVS:firmware/amdgpu/) and given as they are.
+//!
 //! A machine without such a device has the resource all the same:
 //! GetGPUInfo and FindGPUBlock answer false, and so do SetGPUPower and
 //! AllocGPUMemory.
@@ -96,6 +105,10 @@ pub const GPUBlock = extern struct {
 /// block, and the JPEG decoder beside it.
 pub const GPUPOWER_VIDEO: u32 = 1;
 pub const GPUPOWER_JPEG: u32 = 2;
+
+/// LoadGPUFirmware's kinds, as the security processor numbers them: the
+/// video decoder's firmware.
+pub const GPUFIRMWARE_VIDEO: u32 = 13;
 
 /// A piece of the device's own memory, from AllocGPUMemory: where the CPU
 /// reaches it, where the device's blocks reach it, and how many bytes it

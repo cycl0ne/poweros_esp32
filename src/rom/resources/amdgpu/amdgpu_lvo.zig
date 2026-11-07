@@ -13,6 +13,8 @@ const FindGPUBlock = @import("device/findgpublock.zig").FindGPUBlock;
 const SetGPUPower = @import("power/setgpupower.zig").SetGPUPower;
 const AllocGPUMemory = @import("memory/allocgpumemory.zig").AllocGPUMemory;
 const FreeGPUMemory = @import("memory/freegpumemory.zig").FreeGPUMemory;
+const StartGPUSecurity = @import("security/startgpusecurity.zig").StartGPUSecurity;
+const LoadGPUFirmware = @import("security/loadgpufirmware.zig").LoadGPUFirmware;
 
 /// amdgpu.resource's interface, as the SDK generates it from
 /// sdk/fd/amdgpu_lib.fd.
@@ -43,6 +45,8 @@ const contract_files = [_][]const u8{
     @embedFile("power/setgpupower.zig"),
     @embedFile("memory/allocgpumemory.zig"),
     @embedFile("memory/freegpumemory.zig"),
+    @embedFile("security/startgpusecurity.zig"),
+    @embedFile("security/loadgpufirmware.zig"),
 };
 
 fn lvoGetGPUInfo(ab: *AMDGPUBase, info: *amdgpu.GPUInfo) callconv(.c) bool {
@@ -60,6 +64,12 @@ fn lvoAllocGPUMemory(ab: *AMDGPUBase, bytes: u32, alignment: u32, memory: *amdgp
 fn lvoFreeGPUMemory(ab: *AMDGPUBase, memory: *amdgpu.GPUMemory) callconv(.c) void {
     FreeGPUMemory(ab, memory);
 }
+fn lvoStartGPUSecurity(ab: *AMDGPUBase, toc: [*]const u8, length: u32) callconv(.c) bool {
+    return StartGPUSecurity(ab, toc, length);
+}
+fn lvoLoadGPUFirmware(ab: *AMDGPUBase, kind: u32, image: [*]const u8, length: u32, address: *u64) callconv(.c) bool {
+    return LoadGPUFirmware(ab, kind, image, length, address);
+}
 
 /// The jump table, in slot order: a resource has no standard vectors, so
 /// its first function is in the first slot.
@@ -69,4 +79,6 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoSetGPUPower),
     vec(lvoAllocGPUMemory),
     vec(lvoFreeGPUMemory),
+    vec(lvoStartGPUSecurity),
+    vec(lvoLoadGPUFirmware),
 };

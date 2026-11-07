@@ -654,7 +654,15 @@ the security processor's system runs, and the power manager's firmware
 version, asked through its mailbox. Beside that it powers a block up and
 down through that mailbox (`SetGPUPower`) and hands out pieces of the
 device's own memory, which the device's blocks read and write
-(`AllocGPUMemory`, `FreeGPUMemory`).
+(`AllocGPUMemory`, `FreeGPUMemory`). A block that runs firmware of its
+own runs it from a protected region only the security processor writes:
+the resource makes that processor's ring of commands, gives it the table
+of contents its firmware comes with and the region it asks for
+(`StartGPUSecurity`), and has it check and load a file
+(`LoadGPUFirmware`). `C:test/Gpu WATCHDOG 15000` does both with the
+video decoder's firmware from `DEVS:firmware/amdgpu/`: on the Radeon
+780M the processor asks for a 64 MiB region and takes the decoder's
+firmware into it with nothing else loaded.
 
 **The JPEG decoder beside its video decoder is jpeg.resource's codec.**
 A file is copied into the device's memory without the segments the
@@ -803,7 +811,9 @@ the resource says whether the last restart was the watchdog's, and
 nothing switches it on until a program arms it, so a machine nobody is sitting at can be given a time
 to come back by before anything risky is tried on it. `C:test/watchdog
 ARM 15000` arms it for 15 s, `FEED` starts that over, `OFF` stops it;
-`C:test/Jpeg ... WATCHDOG 15000` arms it around its decodes.
+`C:test/Jpeg ... WATCHDOG 15000` arms it around its decodes, and
+`C:test/Gpu WATCHDOG 15000` around its commands to the graphics
+device's security processor.
 
 `./zig build q35` boots QEMU's q35 machine with 512 MB on the serial
 console, under the firmware the system has (`-Dovmf-code=` and

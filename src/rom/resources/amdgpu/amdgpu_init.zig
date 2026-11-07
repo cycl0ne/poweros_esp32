@@ -7,7 +7,9 @@
 //! use - their versions and where their registers are - then the memory
 //! hub as the firmware left it, whether the security processor's system
 //! runs, and the power manager's firmware version, which is asked for
-//! through its mailbox and is the one thing written. Every other block of
+//! through its mailbox and is the one thing written - the security
+//! processor's ring is made only once a driver asks for it
+//! (StartGPUSecurity). Every other block of
 //! the table goes on the debug lines. These are the facts every driver of
 //! the device starts from, and the machines they are read on are not the
 //! author's, so the numbers themselves are the finding.
@@ -31,7 +33,7 @@ const _power = @import("power/_power.zig");
 /// The name it is opened by. The SDK's.
 pub const RESOURCE_NAME = amdgpu.AMDGPUNAME;
 pub const RESOURCE_VERSION = 1;
-pub const RESOURCE_REVISION = 1;
+pub const RESOURCE_REVISION = 2;
 const BUILD_DATE = "07.11.2026";
 const RESOURCE_VERSION_STRING =
     "\x00$VER: " ++ RESOURCE_NAME ++ " " ++
@@ -69,11 +71,21 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     ab.memory_gathered = false;
     ab.arena = .{};
     sys_base.InitSemaphore(&ab.arena_lock);
+    ab.security = .{};
+    ab.security_known = false;
+    ab.security_ring = .{};
+    ab.security_sequence = 0;
+    ab.security_made = false;
+    ab.security_ready = false;
+    ab.security_dead = false;
+    ab.protected = .{};
+    sys_base.InitSemaphore(&ab.security_lock);
     if (_device.take(ab)) {
         const gpu: *sdk.interface.amdgpu.AMDGPUBase = @ptrCast(&ab.lib);
         var block: amdgpu.GPUBlock = .{};
         if (gpu.FindGPUBlock(amdgpu.GPUBLOCK_MEMORY_HUB, 0, &block)) _memory.take(ab, block);
         if (gpu.FindGPUBlock(amdgpu.GPUBLOCK_POWER, 0, &block)) _power.take(ab, block);
+        if (gpu.FindGPUBlock(amdgpu.GPUBLOCK_SECURITY, 0, &block)) _security.take(ab, block);
         tell(ab);
     }
     return lib;

@@ -11,8 +11,10 @@
 //! manager's mailbox (`power/_power.zig`), the security processor's ring
 //! (`security/_security.zig`), the memory hub (`memory/_memory.zig`) -
 //! are the resource's to drive: SetGPUPower sends the manager its
-//! messages, and AllocGPUMemory hands out the device's own memory
-//! (`memory/_arena.zig`) for the blocks to read and write.
+//! messages, AllocGPUMemory hands out the device's own memory
+//! (`memory/_arena.zig`) for the blocks to read and write, and
+//! StartGPUSecurity and LoadGPUFirmware have the security processor put
+//! a block's firmware into the protected region it runs from.
 //!
 //! The device is found and read as the resource starts
 //! (`device/_device.zig`), and what it says of itself goes on the boot's
@@ -61,6 +63,8 @@ test {
     _ = @import("memory/_arena.zig");
     _ = @import("memory/allocgpumemory.zig");
     _ = @import("memory/freegpumemory.zig");
+    _ = @import("security/startgpusecurity.zig");
+    _ = @import("security/loadgpufirmware.zig");
 }
 
 fn setUp() !*AMDGPUBase {
@@ -95,6 +99,11 @@ test "a machine without the device has the resource, and it answers false" {
     var memory: amdgpu.GPUMemory = .{ .bytes = 7 };
     try testing.expect(!call(ab).AllocGPUMemory(4096, 4096, &memory));
     try testing.expectEqual(@as(u32, 7), memory.bytes);
+    const file = [_]u8{0} ** 64;
+    try testing.expect(!call(ab).StartGPUSecurity(&file, file.len));
+    var address: u64 = 7;
+    try testing.expect(!call(ab).LoadGPUFirmware(amdgpu.GPUFIRMWARE_VIDEO, &file, file.len, &address));
+    try testing.expectEqual(@as(u64, 7), address);
     try tearDown(ab);
 }
 
@@ -130,8 +139,11 @@ test "the device's memory is handed out in pieces each address of which says the
     call(ab).FreeGPUMemory(&picture);
     try testing.expectEqual(@as(u32, 0), ab.arena.count);
 
-    // Without a power manager whose messages are known, nothing is sent.
+    // Without a power manager whose messages are known, nothing is sent;
+    // nor to a security processor whose ring is not known.
     try testing.expect(!call(ab).SetGPUPower(amdgpu.GPUPOWER_JPEG, 0, true));
+    const file = [_]u8{0} ** 64;
+    try testing.expect(!call(ab).StartGPUSecurity(&file, file.len));
 
     ab.device = null;
     try tearDown(ab);

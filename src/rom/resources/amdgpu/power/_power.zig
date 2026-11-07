@@ -17,6 +17,7 @@ const sdk = @import("sdk");
 const exec = sdk.exec;
 const amdgpu = sdk.resources.amdgpu;
 const reg = sdk.hardware.mmio.reg;
+const systimer = sdk.hardware.systimer;
 const AMDGPUBase = @import("../amdgpu_base.zig").AMDGPUBase;
 
 /// The mailbox's registers, counted in 32-bit words from the power
@@ -53,7 +54,7 @@ pub fn take(ab: *AMDGPUBase, manager: amdgpu.GPUBlock) void {
 }
 
 /// How long an answer is waited for, and how often it is looked at.
-const answer_most_us: u32 = 1_000_000;
+const answer_most_us: u64 = 1_000_000;
 const answer_step_us: u32 = 100;
 
 /// What a message was answered with: the answer, and what the manager
@@ -78,17 +79,19 @@ pub fn send(ab: *AMDGPUBase, manager: amdgpu.GPUBlock, message: u32, argument: u
 
 /// Whether the answer register reads nonzero within the time an answer
 /// is waited for.
+///
+/// The time is the machine's clock, not the steps counted: a wait is
+/// woken by the system's tick, so a step lasts longer than it asks for.
 fn answered(ab: *AMDGPUBase, at: usize) bool {
-    var waited: u32 = 0;
+    const until = systimer.uptimeUs() + answer_most_us;
     while (reg(at + mailbox_answer * 4).* == 0) {
-        if (waited >= answer_most_us) return false;
+        if (systimer.uptimeUs() > until) return false;
         pause(ab, answer_step_us);
-        waited += answer_step_us;
     }
     return true;
 }
 
-/// A wait of so many microseconds.
+/// A wait of so many microseconds, at the least.
 fn pause(ab: *AMDGPUBase, us: u32) void {
     var never: exec.Waitable = .{};
     const list = [_]*exec.Waitable{&never};

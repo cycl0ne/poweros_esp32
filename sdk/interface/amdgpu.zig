@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! amdgpu.resource's functions: the machine's AMD graphics device, where
 //! its register window is and where each of its blocks' registers are,
-//! its blocks powered up and down, and its own memory handed out.
+//! its blocks powered up and down, its own memory handed out, and the
+//! firmware its blocks run loaded through its security processor.
 //! A resource: no Open or Close, its first function in the first slot.
 //! The base comes from OpenResource("amdgpu.resource").
 //!
@@ -21,6 +22,8 @@ pub const LVO = struct {
     pub const SetGPUPower = libraries.lvo(2);
     pub const AllocGPUMemory = libraries.lvo(3);
     pub const FreeGPUMemory = libraries.lvo(4);
+    pub const StartGPUSecurity = libraries.lvo(5);
+    pub const LoadGPUFirmware = libraries.lvo(6);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -31,6 +34,8 @@ pub const Fn = struct {
     pub const SetGPUPower = *const fn (*AMDGPUBase, u32, u32, bool) callconv(.c) bool;
     pub const AllocGPUMemory = *const fn (*AMDGPUBase, u32, u32, *amdgpu.GPUMemory) callconv(.c) bool;
     pub const FreeGPUMemory = *const fn (*AMDGPUBase, *amdgpu.GPUMemory) callconv(.c) void;
+    pub const StartGPUSecurity = *const fn (*AMDGPUBase, [*]const u8, u32) callconv(.c) bool;
+    pub const LoadGPUFirmware = *const fn (*AMDGPUBase, u32, [*]const u8, u32, *u64) callconv(.c) bool;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -71,5 +76,20 @@ pub const AMDGPUBase = opaque {
     /// A piece from AllocGPUMemory given back; `memory` is cleared.
     pub fn FreeGPUMemory(self: *AMDGPUBase, memory: *amdgpu.GPUMemory) void {
         return libraries.call(self, LVO.FreeGPUMemory, Fn.FreeGPUMemory, .{memory});
+    }
+
+    /// The security processor made ready to load firmware: its ring made,
+    /// its table of contents - the file `toc`, `length` bytes, as it is on
+    /// the disk - loaded, and the protected region it asks for set up in the
+    /// device's memory. True once it is, and at once where it already is.
+    pub fn StartGPUSecurity(self: *AMDGPUBase, toc: [*]const u8, length: u32) bool {
+        return libraries.call(self, LVO.StartGPUSecurity, Fn.StartGPUSecurity, .{ toc, length });
+    }
+
+    /// The firmware file `image`, `length` bytes, of kind `kind`
+    /// (GPUFIRMWARE_*), loaded by the security processor into its protected
+    /// region; true with `address` holding where it is there, to the device.
+    pub fn LoadGPUFirmware(self: *AMDGPUBase, kind: u32, image: [*]const u8, length: u32, address: *u64) bool {
+        return libraries.call(self, LVO.LoadGPUFirmware, Fn.LoadGPUFirmware, .{ kind, image, length, address });
     }
 };

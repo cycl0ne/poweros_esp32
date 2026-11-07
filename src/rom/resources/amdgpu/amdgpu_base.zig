@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 //! amdgpu.resource's base: the device's function, as it was claimed, what
 //! is answered about it, the table of its blocks it was read from, the
-//! power manager its mailbox reaches, and the device's own memory with
-//! what of it is handed out.
+//! power manager its mailbox reaches, the device's own memory with what
+//! of it is handed out, and the security processor's ring with the
+//! protected region it was given.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -44,4 +45,20 @@ pub const AMDGPUBase = extern struct {
     memory_gathered: bool = false,
     arena: Arena = .{},
     arena_lock: exec.SignalSemaphore,
+    /// The security processor, where it is one whose ring and commands
+    /// are known; the piece its ring, command page and fence are in, and
+    /// the number of the last command put on it. Whether the ring is
+    /// made, whether the processor is ready to load firmware, and whether
+    /// it failed to answer - after which nothing more is asked of it.
+    /// The protected region it was given, and the lock every command is
+    /// sent under.
+    security: amdgpu.GPUBlock = .{},
+    security_known: bool = false,
+    security_ring: amdgpu.GPUMemory = .{},
+    security_sequence: u32 = 0,
+    security_made: bool = false,
+    security_ready: bool = false,
+    security_dead: bool = false,
+    protected: amdgpu.GPUMemory = .{},
+    security_lock: exec.SignalSemaphore,
 };
