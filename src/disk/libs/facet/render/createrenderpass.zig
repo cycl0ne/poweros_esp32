@@ -37,7 +37,18 @@ const _surface = @import("../surface/_surface.zig");
 /// The pass has up to 4 subpasses and up to 8 attachments. A subpass draws
 /// into 1 to 4 colour attachments - b8g8r8a8_unorm or r8g8b8a8_unorm - 8 in all
 /// the subpasses, and may test against a depth attachment, d16_unorm, s8_uint
-/// or d16_unorm_s8_uint. No resolve or multisampled attachments.
+/// or d16_unorm_s8_uint.
+///
+/// An attachment holds one sample a pixel, or four on a device that draws
+/// them (`Capabilities.multisampling`, since 1.100), and every attachment of
+/// a subpass holds the same count. A colour attachment of four samples may
+/// name a resolve attachment, of one sample and of its format, which its
+/// samples are averaged into as the subpass ends. An input attachment holds
+/// one sample, and so does an attachment on a device without the
+/// capability: either is `error_feature_not_present`. A resolve attachment
+/// for a colour of one sample, or of another format or count, and
+/// attachments of one subpass whose counts differ, are
+/// `error_initialization_failed`, as Vulkan has none of them.
 ///
 /// The subpasses are drawn one after another. A colour attachment's load op
 /// CLEAR clears the render area the first time a subpass names it; LOAD,
@@ -204,6 +215,11 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
     if (info.attachment_count > _render.most_attachments) return .error_feature_not_present;
     const attachments: []const facet.AttachmentDescription = if (info.attachments) |given| given[0..info.attachment_count] else &.{};
     var plan = _render.RenderPass{ .device = owner, .attachment_count = info.attachment_count, .subpass_count = info.subpass_count };
+    // One sample a pixel, or four where the device draws them (since 1.100).
+    for (attachments, 0..) |attachment, index| {
+        if (attachment.samples != 1 and !(attachment.samples == 4 and owner.physical.can.multisampling)) return .error_feature_not_present;
+        plan.samples[index] = attachment.samples;
+    }
     var drawn: [_render.most_attachments]bool = @splat(false);
     // For each depth attachment, the last part that drew into it, or null
     // where no subpass has yet. A later subpass that draws into the same
@@ -212,8 +228,11 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
     var depths: [_render.most_attachments]?u32 = @splat(null);
     for (info.subpasses[0..info.subpass_count], 0..) |subpass, number| {
         if (subpass.pipeline_bind_point != .graphics) return .error_feature_not_present;
-        // A resolve attachment is multisampling's, which there is none of.
-        if (subpass.resolve_attachments != null) return .error_feature_not_present;
+        // The samples every attachment of the subpass holds, which Vulkan
+        // has be one count (VUID-VkSubpassDescription-pColorAttachments-09430,
+        // VUID-VkSubpassDescription-pDepthStencilAttachment-01418): the
+        // first one named says it (since 1.100).
+        var samples: ?u32 = null;
         // The colour attachments of its own this subpass reads: the
         // fragment's own pixel, out of the tile (since 1.64).
         var reads_own: [_render.most_attachments]bool = @splat(false);
@@ -304,7 +323,7 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                 tests_depth = _image.hasDepth(depth.format);
                 tests_stencil = _image.hasStencil(depth.format);
                 if (!tests_depth and !tests_stencil) return .error_format_not_supported;
-                if (depth.samples != 1) return .error_feature_not_present;
+                samples = depth.samples;
                 loads_depth = depth.load_op == .load;
                 stores_depth = depth.store_op == .store;
                 loads_stencil = depth.stencil_load_op == .load;
@@ -368,6 +387,14 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
             .loads_stencil = loads_stencil,
             .stores_stencil = stores_stencil,
         };
+        for (colors) |reference| {
+            if (reference.attachment >= attachments.len) return .error_initialization_failed;
+            const count = attachments[reference.attachment].samples;
+            if ((samples orelse count) != count) return .error_initialization_failed;
+            samples = count;
+        }
+        whole.samples = samples orelse 1;
+        const resolves: []const facet.AttachmentReference = if (subpass.resolve_attachments) |given| given[0..subpass.color_attachment_count] else &.{};
         for (colors, 0..) |reference, k| {
             const color_index = reference.attachment;
             if (color_index >= attachments.len) return .error_initialization_failed;
@@ -375,8 +402,19 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
             for (colors[0..k]) |earlier| if (earlier.attachment == color_index) return .error_initialization_failed;
             const color = attachments[color_index];
             if (!_surface.drawable(color.format)) return .error_format_not_supported;
-            if (color.samples != 1) return .error_feature_not_present;
             const load: _render.ColorLoad = if (color.load_op == .clear and !drawn[color_index]) .clear else .keep;
+            // Its resolve attachment: one sample, of its own format, for a
+            // colour of more than one. Vulkan's resolve is at the
+            // subpass's end, over the render area:
+            // VUID-VkSubpassDescription-pResolveAttachments-00848, -00849
+            // and -00850.
+            const resolve: ?u32 = if (resolves.len == 0 or resolves[k].attachment == facet.ATTACHMENT_UNUSED) null else resolve: {
+                const index = resolves[k].attachment;
+                if (index >= attachments.len) return .error_initialization_failed;
+                const into = attachments[index];
+                if (color.samples == 1 or into.samples != 1 or into.format != color.format) return .error_initialization_failed;
+                break :resolve index;
+            };
             if (together) {
                 // The one part draws them all: a plane of each tile for
                 // each of them. What it reads of its own is the first of
@@ -389,12 +427,14 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                 whole.colors[whole.color_count] = color_index;
                 whole.color_formats[whole.color_count] = color.format;
                 whole.color_loads[whole.color_count] = load;
+                whole.resolves[whole.color_count] = resolve;
                 whole.color_count += 1;
             } else {
                 var part = whole;
                 part.colors[0] = color_index;
                 part.color_formats[0] = color.format;
                 part.color_loads[0] = load;
+                part.resolves[0] = resolve;
                 part.color_count = 1;
                 part.reads_target = reads_own[color_index];
                 plan.parts[plan.part_count] = part;
@@ -406,6 +446,11 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
             plan.part_count += 1;
         }
         for (colors) |reference| drawn[reference.attachment] = true;
+        // A resolve attachment is written by the subpass as well, so its
+        // load op is spent there.
+        for (resolves) |reference| if (reference.attachment != facet.ATTACHMENT_UNUSED) {
+            drawn[reference.attachment] = true;
+        };
         // The last part of this subpass is the one a later subpass that
         // shares the depth attachment has keep it: the parts of a subpass
         // drawn once for each colour attachment all leave the same depth,
@@ -436,6 +481,9 @@ fn byRegion(info: *const facet.RenderPassCreateInfo, subpass: u32) bool {
 /// same way round.
 fn sameTargets(before: facet.SubpassDescription, subpass: facet.SubpassDescription) bool {
     if (before.color_attachment_count != subpass.color_attachment_count) return false;
+    // The one before resolves as it ends, which its tiles going on would
+    // put after this one's drawing (since 1.100).
+    if (before.resolve_attachments != null or subpass.resolve_attachments != null) return false;
     if (before.flags != subpass.flags) return false;
     for (before.color_attachments.?[0..before.color_attachment_count], subpass.color_attachments.?[0..subpass.color_attachment_count]) |a, b| {
         if (a.attachment != b.attachment) return false;

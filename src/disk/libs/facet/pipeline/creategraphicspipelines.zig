@@ -71,6 +71,7 @@ const _instance = @import("../instance/_instance.zig");
 /// What it draws: points, lines and line strips, and triangle lists, strips
 /// and fans, a restart index ending a strip or a fan; triangles filled, or as
 /// their edges or corners (POLYGON_MODE_LINE, POINT); one sample a pixel,
+/// or four in a subpass of four on a device that draws them (since 1.100);
 /// triangles culled by facing as asked; lines `line_width` pixels wide, set
 /// here or by CmdSetLineWidth, and points one pixel; a
 /// depth test of any compare, written or not, with a bias on the triangles'
@@ -411,7 +412,14 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         made.culls_everything = false;
     }
     if (info.multisample_state) |multisample| {
-        if (multisample.rasterization_samples > 1 or multisample.sample_shading_enable or multisample.alpha_to_coverage_enable or multisample.alpha_to_one_enable) return .error_feature_not_present;
+        if (multisample.sample_shading_enable or multisample.alpha_to_coverage_enable or multisample.alpha_to_one_enable) return .error_feature_not_present;
+        // Four samples a pixel where the device draws them, and the
+        // subpass's own count whatever it is (since 1.100):
+        // VUID-VkGraphicsPipelineCreateInfo-multisampledRenderToSingleSampled-06853.
+        const samples = multisample.rasterization_samples;
+        if (samples != 1 and !(samples == 4 and device.physical.can.multisampling)) return .error_feature_not_present;
+        if (samples != pass.parts[subpass.first_part].samples) return .error_initialization_failed;
+        made.samples = samples;
         // One word of the mask, which at one sample a pixel is one bit of
         // it: `PhysicalDeviceLimits.max_sample_mask_words` is 1 and Vulkan
         // ignores the bits above the sample count. A null pointer is every

@@ -89,9 +89,17 @@ pub fn CreateFramebuffer(base: *FacetBase, device: *facet.Device, info: *const f
     // program that reads the limit and keeps to it is never refused here.
     if (info.layers == 0 or info.layers > owner.physical.properties.limits.max_framebuffer_layers) return .error_initialization_failed;
     const views: []const *facet.ImageView = info.attachments[0..info.attachment_count];
+    // Each view of an image holding the samples its attachment says
+    // (VUID-VkFramebufferCreateInfo-pAttachments-00881, since 1.100).
+    for (views, pass.samples[0..views.len]) |view, samples| {
+        if (_objects.of(ImageView, view).image.samples != samples) return .error_initialization_failed;
+    }
     var plan = _render.Framebuffer{ .device = owner, .width = info.width, .height = info.height };
     for (pass.parts[0..pass.part_count], plan.targets[0..pass.part_count]) |part, *target| {
         target.color_count = part.color_count;
+        // The targets are set a field at a time, so none is left as it
+        // was: a part without a resolve has none (since 1.100).
+        target.resolves = @splat(null);
         for (part.colors[0..part.color_count], part.color_formats[0..part.color_count], 0..) |index, format, k| {
             const color = _objects.of(ImageView, views[index]);
             const image = color.image;
@@ -102,6 +110,15 @@ pub fn CreateFramebuffer(base: *FacetBase, device: *facet.Device, info: *const f
             // to; here it is refused instead (since 1.91).
             if (color.layer_count < info.layers) return .error_initialization_failed;
             target.colors[k] = color;
+            // Its resolve attachment, rows of the same format that hold
+            // the render area, as the colour does (since 1.100).
+            if (part.resolves[k]) |into| {
+                const resolve = _objects.of(ImageView, views[into]);
+                const rows = resolve.image;
+                if (rows.kind != .rows or rows.format != format or rows.usage & facet.IMAGE_USAGE_COLOR_ATTACHMENT == 0) return .error_initialization_failed;
+                if (resolve.base_level != 0 or rows.width < info.width or rows.height < info.height or resolve.layer_count < info.layers) return .error_initialization_failed;
+                target.resolves[k] = resolve;
+            }
         }
         const depth: ?*ImageView = if (part.depth) |index| depth: {
             const view = _objects.of(ImageView, views[index]);

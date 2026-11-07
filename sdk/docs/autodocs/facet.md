@@ -4087,6 +4087,7 @@ says the floats the patch carries from the one function to the other
 What it draws: points, lines and line strips, and triangle lists, strips
 and fans, a restart index ending a strip or a fan; triangles filled, or as
 their edges or corners (POLYGON_MODE_LINE, POINT); one sample a pixel,
+or four in a subpass of four on a device that draws them (since 1.100);
 triangles culled by facing as asked; lines `line_width` pixels wide, set
 here or by CmdSetLineWidth, and points one pixel; a
 depth test of any compare, written or not, with a bias on the triangles'
@@ -4808,7 +4809,18 @@ dependency by region (BEHAVIOR);
 The pass has up to 4 subpasses and up to 8 attachments. A subpass draws
 into 1 to 4 colour attachments - b8g8r8a8_unorm or r8g8b8a8_unorm - 8 in all
 the subpasses, and may test against a depth attachment, d16_unorm, s8_uint
-or d16_unorm_s8_uint. No resolve or multisampled attachments.
+or d16_unorm_s8_uint.
+
+An attachment holds one sample a pixel, or four on a device that draws
+them (`Capabilities.multisampling`, since 1.100), and every attachment of
+a subpass holds the same count. A colour attachment of four samples may
+name a resolve attachment, of one sample and of its format, which its
+samples are averaged into as the subpass ends. An input attachment holds
+one sample, and so does an attachment on a device without the
+capability: either is `error_feature_not_present`. A resolve attachment
+for a colour of one sample, or of another format or count, and
+attachments of one subpass whose counts differ, are
+`error_initialization_failed`, as Vulkan has none of them.
 
 The subpasses are drawn one after another. A colour attachment's load op
 CLEAR clears the render area the first time a subpass names it; LOAD,

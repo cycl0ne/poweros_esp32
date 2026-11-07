@@ -2094,4 +2094,62 @@ pub const LIBRARY_VERSION = 1;
 /// from the source's first plane into each, between two counts, a plane
 /// not offset, either clear of the first plane alone, and each of the
 /// three refusals taken away.
-pub const LIBRARY_REVISION = 99;
+///
+/// 100: **A render pass, a framebuffer and a pipeline may have four
+/// samples a pixel, and a colour attachment of four a resolve
+/// attachment.**
+///
+/// Step S4 of item 61 of docs/facet-vulkan10.md. On a device with
+/// `can.multisampling`, which none has yet, CreateRenderPass takes
+/// attachments of four samples where each subpass's colour and depth
+/// attachments hold one count (VUID-VkSubpassDescription-pColorAttachments-09430,
+/// -pDepthStencilAttachment-01418), and keeps it in `Part.samples`. A
+/// colour attachment of four may name a resolve attachment of one sample
+/// and its own format (-pResolveAttachments-00848, -00849, -00850), kept
+/// in `Part.resolves`. The resolve is the attachment's first use, so a
+/// later subpass drawing into it keeps what it holds, and a subpass that
+/// resolves never goes on in the tiles of the one before. An input
+/// attachment of four samples stays refused, as do counts the device does
+/// not draw.
+///
+/// CreateFramebuffer holds each view's image to its attachment's count
+/// (VUID-VkFramebufferCreateInfo-pAttachments-00881) and a resolve's view
+/// to rows of the colour's format that hold the render area, kept in
+/// `Target.resolves`. The targets are set a field at a time out of an
+/// undefined array, so a part without a resolve has its own set to none
+/// as well: the proof found it left as whatever was there.
+///
+/// CreateGraphicsPipelines takes `rasterization_samples` of 4 where the
+/// subpass has four
+/// (VUID-VkGraphicsPipelineCreateInfo-multisampledRenderToSingleSampled-06853),
+/// kept in `Pipeline.samples`. Sample shading, alpha to one and alpha to
+/// coverage stay refused. v3dv asserts that a pipeline's count is 1 or 4
+/// (v3dv_pipeline.c:1319-1320) and leaves the rest to Vulkan's valid
+/// usage. These calls refuse what Vulkan has no program do, as this
+/// library does elsewhere. Nothing is drawn with four samples yet: steps
+/// K1 to K7 do that on the cores, V1 to V5 on the V3D, and each turns the
+/// capability on at its end.
+///
+/// The SDK's `ImageCreateInfo.samples`, `AttachmentDescription.samples`,
+/// `SubpassDescription.resolve_attachments` and
+/// `PipelineMultisampleStateCreateInfo.rasterization_samples` say so. The
+/// first had gone on saying one sample after 1.98 made four.
+///
+/// A test turns the capability on and makes such a pass, framebuffer and
+/// pipeline, and is refused every mismatch Vulkan has none of. Each of
+/// nineteen changes put back fails it:
+/// - an attachment of two samples, or of four without the capability,
+///   taken;
+/// - a subpass's counts not compared;
+/// - a part's count, a resolve or a resolve view not kept;
+/// - a resolve of a one-sample colour, of four samples or of another
+///   format taken;
+/// - a resolve not counted as the attachment's first use;
+/// - resolving subpasses joined;
+/// - an input attachment of four taken;
+/// - a view's count not compared, or a resolve view of another format
+///   taken;
+/// - a target without a resolve left undefined;
+/// - a pipeline of two samples, of a count other than its subpass's, or
+///   with alpha to coverage, taken, or its count not kept.
+pub const LIBRARY_REVISION = 100;

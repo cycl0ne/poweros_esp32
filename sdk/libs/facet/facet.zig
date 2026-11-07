@@ -1300,7 +1300,9 @@ pub const ImageCreateInfo = extern struct {
     extent: Extent3D,
     mip_levels: u32 = 1,
     array_layers: u32 = 1,
-    /// Samples a pixel: 1.
+    /// Samples a pixel: 1, or 4 on a device that draws them
+    /// (`Capabilities.multisampling`, since 1.98), for a 2D image of one
+    /// level in optimal tiling that is an attachment (`CreateImage`).
     samples: u32 = 1,
     tiling: ImageTiling = .optimal,
     usage: u32,
@@ -1855,7 +1857,9 @@ pub const AttachmentStoreOp = enum(u32) {
 pub const AttachmentDescription = extern struct {
     flags: u32 = 0,
     format: Format,
-    /// Samples a pixel: 1.
+    /// Samples a pixel: 1, or 4 on a device that draws them
+    /// (`Capabilities.multisampling`, since 1.100). Every attachment a
+    /// subpass draws into or tests against holds the same count.
     samples: u32 = 1,
     load_op: AttachmentLoadOp = .dont_care,
     store_op: AttachmentStoreOp = .dont_care,
@@ -1890,6 +1894,10 @@ pub const SubpassDescription = extern struct {
     input_attachments: ?[*]const AttachmentReference = null,
     color_attachment_count: u32 = 0,
     color_attachments: ?[*]const AttachmentReference = null,
+    /// Null, or one for each colour attachment: the attachment of one
+    /// sample and the colour's format that its four samples are averaged
+    /// into as the subpass ends, or `ATTACHMENT_UNUSED` for none (since
+    /// 1.100).
     resolve_attachments: ?[*]const AttachmentReference = null,
     depth_stencil_attachment: ?*const AttachmentReference = null,
     preserve_attachment_count: u32 = 0,
@@ -2203,6 +2211,8 @@ pub const PipelineRasterizationStateCreateInfo = extern struct {
 
 pub const PipelineMultisampleStateCreateInfo = extern struct {
     flags: u32 = 0,
+    /// The subpass's own count: 1, or 4 on a device that draws them
+    /// (`Capabilities.multisampling`, since 1.100).
     rasterization_samples: u32 = 1,
     sample_shading_enable: bool = false,
     min_sample_shading: f32 = 0,

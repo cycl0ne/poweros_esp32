@@ -180,6 +180,10 @@ pub const Pipeline = struct {
     /// rasterisation, so such a draw owes the clipping counters as well,
     /// and this is therefore not `draws_nothing`. (Since 1.89.)
     sample_mask: u32,
+    /// `PipelineMultisampleStateCreateInfo.rasterization_samples`, which
+    /// Vulkan has be its subpass's count: 1, or 4 on a device that draws
+    /// them (since 1.100).
+    samples: u32 = 1,
     cull: Cull,
     front: facet.FrontFace,
     depth_test: ?facet.CompareOp,

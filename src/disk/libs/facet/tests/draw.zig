@@ -4365,6 +4365,183 @@ test "a multisampled image cleared and copied plane by plane, and no blit or buf
     };
 }
 
+/// A render pass of one subpass over `attachments`: the first a colour
+/// attachment, `resolve` its resolve attachment where it has one, and
+/// `depth` the depth's.
+fn samplesPass(bench: *Bench, attachments: []const facet.AttachmentDescription, resolve: ?u32, depth: ?u32) struct { facet.Result, ?*facet.RenderPass } {
+    const color = facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal };
+    const resolved = facet.AttachmentReference{ .attachment = resolve orelse 0, .layout = .color_attachment_optimal };
+    const tested = facet.AttachmentReference{ .attachment = depth orelse 0, .layout = .depth_stencil_attachment_optimal };
+    const subpass = facet.SubpassDescription{
+        .color_attachment_count = 1,
+        .color_attachments = @ptrCast(&color),
+        .resolve_attachments = if (resolve != null) @ptrCast(&resolved) else null,
+        .depth_stencil_attachment = if (depth != null) &tested else null,
+    };
+    var made: ?*facet.RenderPass = null;
+    const result = bench.rig.fb.CreateRenderPass(bench.device, &.{ .attachment_count = @intCast(attachments.len), .attachments = attachments.ptr, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &made);
+    return .{ result, made };
+}
+
+test "four samples a pixel in a render pass, a framebuffer and a pipeline, with a resolve attachment; what Vulkan has none of refused" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const device = bench.device;
+    const physical = _objects.of(_instance.PhysicalDevice, bench.physical);
+    const four = facet.AttachmentDescription{ .format = .b8g8r8a8_unorm, .samples = 4, .load_op = .clear, .final_layout = .color_attachment_optimal };
+    const one = facet.AttachmentDescription{ .format = .b8g8r8a8_unorm, .load_op = .dont_care, .final_layout = .color_attachment_optimal };
+    const other = facet.AttachmentDescription{ .format = .r8g8b8a8_unorm, .load_op = .dont_care, .final_layout = .color_attachment_optimal };
+    const depth_four = facet.AttachmentDescription{ .format = .d16_unorm, .samples = 4, .load_op = .clear, .final_layout = .depth_stencil_attachment_optimal };
+    const depth_one = facet.AttachmentDescription{ .format = .d16_unorm, .load_op = .clear, .final_layout = .depth_stencil_attachment_optimal };
+    const shape = [_]facet.AttachmentDescription{ four, one, depth_four };
+
+    // As shipped, no device draws four samples: such a pass is refused.
+    {
+        const result, const pass = samplesPass(&bench, &shape, 1, 2);
+        defer fb.DestroyRenderPass(device, pass);
+        try testing.expectEqual(facet.Result.error_feature_not_present, result);
+    }
+    physical.can.multisampling = true;
+    defer physical.can.multisampling = false;
+
+    // Made: four samples of colour and depth, the colour resolved into an
+    // attachment of one.
+    const made_result, const made = samplesPass(&bench, &shape, 1, 2);
+    try testing.expectEqual(facet.Result.success, made_result);
+    defer fb.DestroyRenderPass(device, made);
+    const plan = _objects.of(_render.RenderPass, made.?);
+    try testing.expectEqual(@as(u32, 4), plan.parts[0].samples);
+    try testing.expectEqual(@as(?u32, 1), plan.parts[0].resolves[0]);
+    try testing.expectEqualSlices(u32, &.{ 4, 1, 4 }, plan.samples[0..3]);
+
+    // What Vulkan has no subpass do: attachments of two counts, a resolve
+    // of a colour of one sample, a resolve of another format, and a
+    // resolve of four samples. And counts the device does not draw, and
+    // an input attachment of four samples, which this library does not.
+    const refused = [_]struct { []const facet.AttachmentDescription, ?u32, ?u32, facet.Result }{
+        .{ &.{ four, one, depth_one }, 1, 2, .error_initialization_failed },
+        .{ &.{ one, one }, 1, null, .error_initialization_failed },
+        .{ &.{ four, other }, 1, null, .error_initialization_failed },
+        .{ &.{ four, four }, 1, null, .error_initialization_failed },
+        .{ &.{.{ .format = .b8g8r8a8_unorm, .samples = 2, .load_op = .clear, .final_layout = .color_attachment_optimal }}, null, null, .error_feature_not_present },
+        .{ &.{.{ .format = .b8g8r8a8_unorm, .samples = 8, .load_op = .clear, .final_layout = .color_attachment_optimal }}, null, null, .error_feature_not_present },
+    };
+    // Whatever is made where nothing should be is given back as the case
+    // ends, so that a failure is the one named and not the leak after it.
+    for (refused) |case| {
+        const attachments, const resolve, const depth, const want = case;
+        const result, const pass = samplesPass(&bench, attachments, resolve, depth);
+        defer fb.DestroyRenderPass(device, pass);
+        try testing.expectEqual(want, result);
+        try testing.expectEqual(null, pass);
+    }
+    {
+        const read = facet.AttachmentReference{ .attachment = 1, .layout = .shader_read_only_optimal };
+        const color = facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal };
+        const subpass = facet.SubpassDescription{ .input_attachment_count = 1, .input_attachments = @ptrCast(&read), .color_attachment_count = 1, .color_attachments = @ptrCast(&color) };
+        const both = [_]facet.AttachmentDescription{ four, four };
+        var pass: ?*facet.RenderPass = null;
+        defer fb.DestroyRenderPass(device, pass);
+        try testing.expectEqual(facet.Result.error_feature_not_present, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &both, .subpass_count = 1, .subpasses = @ptrCast(&subpass) }, &pass));
+    }
+
+    // Two subpasses, the first resolving into attachment 1 and the second
+    // drawing into it. The resolve is the attachment's first use, so the
+    // second keeps what it left rather than clearing it. And two
+    // subpasses that resolve are never one part going on: the first's
+    // resolve comes before the second's drawing.
+    {
+        const resolve_into = facet.AttachmentDescription{ .format = .b8g8r8a8_unorm, .load_op = .clear, .final_layout = .color_attachment_optimal };
+        const both = [_]facet.AttachmentDescription{ four, resolve_into };
+        const color = facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal };
+        const into = facet.AttachmentReference{ .attachment = 1, .layout = .color_attachment_optimal };
+        const subpasses = [_]facet.SubpassDescription{
+            .{ .color_attachment_count = 1, .color_attachments = @ptrCast(&color), .resolve_attachments = @ptrCast(&into) },
+            .{ .color_attachment_count = 1, .color_attachments = @ptrCast(&into) },
+        };
+        var pass: ?*facet.RenderPass = null;
+        try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &both, .subpass_count = 2, .subpasses = &subpasses }, &pass));
+        defer fb.DestroyRenderPass(device, pass);
+        const after = _objects.of(_render.RenderPass, pass.?);
+        try testing.expectEqual(@as(u32, 2), after.part_count);
+        try testing.expectEqual(@as(u32, 1), after.parts[1].samples);
+        try testing.expectEqual(_render.ColorLoad.keep, after.parts[1].color_loads[0]);
+
+        const again = [_]facet.SubpassDescription{ subpasses[0], subpasses[0] };
+        var twice: ?*facet.RenderPass = null;
+        try testing.expectEqual(facet.Result.success, fb.CreateRenderPass(device, &.{ .attachment_count = 2, .attachments = &both, .subpass_count = 2, .subpasses = &again }, &twice));
+        defer fb.DestroyRenderPass(device, twice);
+        const resolving = _objects.of(_render.RenderPass, twice.?);
+        try testing.expectEqual(false, resolving.subpasses[1].joined);
+        try testing.expectEqual(@as(u32, 2), resolving.part_count);
+    }
+
+    // A framebuffer of views whose images hold what each attachment says,
+    // the resolve's among them.
+    const usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_SRC;
+    _, const colors = try bench.image(.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 64, .height = 64, .depth = 1 }, .samples = 4, .usage = usage }, false);
+    _, const resolved = try bench.image(.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = 64, .height = 64, .depth = 1 }, .usage = usage }, false);
+    _, const depths = try bench.image(.{ .format = .d16_unorm, .extent = .{ .width = 64, .height = 64, .depth = 1 }, .samples = 4, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT }, false);
+    _, const reds = try bench.image(.{ .format = .r8g8b8a8_unorm, .extent = .{ .width = 64, .height = 64, .depth = 1 }, .usage = usage }, false);
+    const frame = try framebuffer(&bench, made.?, &.{ colors, resolved, depths }, 64, 64);
+    defer fb.DestroyFramebuffer(device, frame);
+    const target = &_objects.of(_render.Framebuffer, frame).targets[0];
+    try testing.expectEqual(@as(?*@import("../image/_image.zig").ImageView, _objects.of(@import("../image/_image.zig").ImageView, resolved)), target.resolves[0]);
+    // And a pass of four samples with no resolve: its target has none.
+    {
+        const unresolved_result, const unresolved = samplesPass(&bench, &.{ four, depth_four }, null, 1);
+        defer fb.DestroyRenderPass(device, unresolved);
+        try testing.expectEqual(facet.Result.success, unresolved_result);
+        const plain_frame = try framebuffer(&bench, unresolved.?, &.{ colors, depths }, 64, 64);
+        defer fb.DestroyFramebuffer(device, plain_frame);
+        // As an address, so that a target left undefined is said rather
+        // than followed.
+        try testing.expectEqual(@as(usize, 0), @intFromPtr(_objects.of(_render.Framebuffer, plain_frame).targets[0].resolves[0]));
+    }
+    // A view of one sample for the attachment of four, one of four for the
+    // resolve, and a resolve whose image is of another format.
+    for ([_][3]*facet.ImageView{ .{ resolved, resolved, depths }, .{ colors, colors, depths }, .{ colors, reds, depths } }) |views| {
+        var refused_frame: ?*facet.Framebuffer = null;
+        defer fb.DestroyFramebuffer(device, refused_frame);
+        try testing.expectEqual(facet.Result.error_initialization_failed, fb.CreateFramebuffer(device, &.{ .render_pass = made.?, .attachment_count = 3, .attachments = &views, .width = 64, .height = 64 }, &refused_frame));
+    }
+
+    // A pipeline of four samples in the subpass of four, and none of
+    // another count: the subpass's is the one Vulkan allows.
+    const flat = try module(&bench, &Flat.code);
+    defer fb.DestroyShaderModule(device, flat);
+    const layout = try pipelineLayout(&bench, &.{}, 4);
+    defer fb.DestroyPipelineLayout(device, layout);
+    const single = try renderPass(&bench, .clear, false);
+    defer fb.DestroyRenderPass(device, single);
+    const pipelines = [_]struct { u32, *facet.RenderPass, facet.Result }{
+        .{ 4, made.?, .success },
+        .{ 1, made.?, .error_initialization_failed },
+        .{ 4, single, .error_initialization_failed },
+        .{ 2, made.?, .error_feature_not_present },
+    };
+    for (pipelines) |case| {
+        const samples, const pass, const want = case;
+        const multisample = facet.PipelineMultisampleStateCreateInfo{ .rasterization_samples = samples };
+        const result, const pipeline = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = pass, .multisample = &multisample });
+        defer fb.DestroyPipeline(device, pipeline);
+        try testing.expectEqual(want, result);
+        if (pipeline) |kept| try testing.expectEqual(samples, _objects.of(_pipeline.Pipeline, kept).samples);
+    }
+    // Sample shading and alpha to one stay refused, and alpha to coverage
+    // until the cores and the V3D draw it.
+    for ([_]facet.PipelineMultisampleStateCreateInfo{
+        .{ .rasterization_samples = 4, .sample_shading_enable = true },
+        .{ .rasterization_samples = 4, .alpha_to_one_enable = true },
+        .{ .rasterization_samples = 4, .alpha_to_coverage_enable = true },
+    }) |multisample| {
+        const result, const pipeline = makePipeline(&bench, .{ .module = flat, .layout = layout, .pass = made.?, .multisample = &multisample });
+        defer fb.DestroyPipeline(device, pipeline);
+        try testing.expectEqual(facet.Result.error_feature_not_present, result);
+    }
+}
+
 /// A render pass whose depth attachment is kept: read as each tile starts
 /// where `load` says, written back where `store` says.
 fn keepingPass(bench: *Bench, color_load: facet.AttachmentLoadOp, load: facet.AttachmentLoadOp, store: facet.AttachmentStoreOp) !*facet.RenderPass {

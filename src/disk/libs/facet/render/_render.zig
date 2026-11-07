@@ -70,6 +70,14 @@ pub const Part = struct {
     /// is given the pixels already in the tile
     /// (`shader.Fragments.keptAt`, since 1.64).
     reads_target: bool = false,
+    /// The samples a pixel of its attachments holds: 1, or 4 on a device
+    /// that draws them (`Capabilities.multisampling`, since 1.100). Vulkan
+    /// has every attachment of a subpass hold the same count.
+    samples: u32 = 1,
+    /// Each colour attachment's resolve attachment, by its place among the
+    /// pass's, or null for none: what that colour's samples are averaged
+    /// into as the subpass ends (since 1.100).
+    resolves: [most_colors]?u32 = @splat(null),
 };
 
 pub const Subpass = struct {
@@ -86,6 +94,9 @@ pub const RenderPass = struct {
     part_count: u32 = 0,
     subpasses: [most_subpasses]Subpass = undefined,
     subpass_count: u32 = 0,
+    /// Each attachment's samples, as its description says: what
+    /// CreateFramebuffer holds each view's image to (since 1.100).
+    samples: [most_attachments]u32 = @splat(1),
 };
 
 /// What a part of a subpass draws into: a view for each of its colour
@@ -101,6 +112,9 @@ pub const Target = struct {
     colors: [most_colors]*ImageView = undefined,
     color_count: u32 = 1,
     depth: ?*ImageView,
+    /// Each colour's resolve attachment, where the part has one
+    /// (`Part.resolves`, since 1.100).
+    resolves: [most_colors]?*ImageView = @splat(null),
 };
 
 pub const Framebuffer = struct {
