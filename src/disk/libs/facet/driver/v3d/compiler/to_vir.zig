@@ -33,7 +33,10 @@
 //!   which the steps do not keep: what comes after the store is not
 //!   handed on.
 //! - The key is the one this device's draws have: render target 0, of
-//!   16-bit floats, red and blue not swapped, one sample a pixel.
+//!   16-bit floats, red and blue not swapped, and of what Mesa's key
+//!   varies, alpha to coverage alone (`Key`). One sample a pixel or four
+//!   (since 1.148): the colour is written a pixel at a time either way,
+//!   as Mesa writes it without sample shading (msaa_per_sample_output).
 //! - Of the strategies (vir.c:2214), 0 and 2. 1, 3 and 4 turn off what is
 //!   not done here (GCM, loop unrolling, UBO load sorting, moving buffer
 //!   loads, TMU pipelining) and so would make the same program, and 5's
@@ -102,6 +105,19 @@ const strategies = [_]Strategy{
     .{ .name = "lower thread count", .max_threads = 2, .min_threads = 1, .max_tmu_spills = std.math.maxInt(u32) },
 };
 
+/// What a pipeline tells the compiler that its module does not: the part
+/// of Mesa's v3d_fs_key (v3d_compiler.h:350-400) this device's pipelines
+/// vary (since 1.149).
+pub const Key = struct {
+    /// Colour 0's alpha cuts the samples the pixel covers: alpha to
+    /// coverage, which v3dv keys only for a pipeline of four samples
+    /// (v3dv_pipeline.c:1321-1324). The TLB blends here, so it is the
+    /// QPU's FTOC at the end (`emitFragEnd`), not
+    /// nir_lower_alpha_to_coverage, which is for a key that blends in the
+    /// program (vir.c:1293-1299).
+    sample_alpha_to_coverage: bool = false,
+};
+
 /// A program compiled: its instructions in `c.qpu_insts`, the uniforms it
 /// reads in the order it reads them in `c.uniform_contents` and
 /// `c.uniform_data`, up to `c.num_uniforms`, and its threads, varyings and
@@ -115,7 +131,7 @@ pub const Program = struct {
     uses_center_w: bool,
     /// The program writes Z, and early Z is to be off: prog_data's
     /// writes_z and disable_ez (vir.c:1011-1013), which a program that
-    /// drops pixels has.
+    /// drops pixels has, or one that covers by alpha.
     writes_z: bool,
     disable_ez: bool,
 
@@ -137,6 +153,7 @@ const Pending = struct {
 const Emit = struct {
     c: *Compile,
     work: *const Work,
+    key: Key,
     defs: [compile.most_steps][4]Reg = undefined,
     /// A step's floats are there: a sample's are not until it is
     /// unpacked, nor its words until the TMU is flushed (the def that
@@ -160,13 +177,15 @@ const Emit = struct {
     /// info.fs.uses_discard says of the NIR here.
     uses_discard: bool = false,
     writes_z: bool = false,
+    /// info.fs.early_fragment_tests, as emit_frag_end leaves it.
+    early_fragment_tests: bool = true,
 };
 
 /// v3d_compile (vir.c:2605): the steps compiled under each strategy in
 /// turn until one gives every temporary a register. Each attempt starts
 /// from the steps again, as Mesa's starts from the NIR. The program is
 /// the caller's, given back with `Program.destroy`.
-pub fn compileSteps(allocator: std.mem.Allocator, compiler: *const vir.Compiler, work: *const Work) Error!Program {
+pub fn compileSteps(allocator: std.mem.Allocator, compiler: *const vir.Compiler, work: *const Work, key: Key) Error!Program {
     const e = try allocator.create(Emit);
     defer allocator.destroy(e);
     var failed_register_allocation = false;
@@ -179,7 +198,7 @@ pub fn compileSteps(allocator: std.mem.Allocator, compiler: *const vir.Compiler,
         c.stage = .fragment;
         c.threads = strategy.max_threads;
         c.max_tmu_spills = strategy.max_tmu_spills;
-        e.* = .{ .c = c, .work = work };
+        e.* = .{ .c = c, .work = work, .key = key };
 
         const registers = try attemptCompile(e, strategy);
         switch (c.compilation_result) {
@@ -197,9 +216,9 @@ pub fn compileSteps(allocator: std.mem.Allocator, compiler: *const vir.Compiler,
             .registers = registers,
             .uses_center_w = e.uses_center_w,
             .writes_z = e.writes_z,
-            // !info.fs.early_fragment_tests, which emit_frag_end set to
-            // !uses_discard: v3dv has no can_earlyz_with_discard.
-            .disable_ez = e.uses_discard,
+            // !info.fs.early_fragment_tests (vir.c:1013), as
+            // emit_frag_end set it.
+            .disable_ez = !e.early_fragment_tests,
         };
     }
     return if (failed_register_allocation) Error.Registers else Error.Invalid;
@@ -554,15 +573,25 @@ fn restoreLastThrsw(c: *Compile, restore: Restore) void {
 
 /// emit_frag_end (nir_to_vir.c:2041), for a program that writes no depth,
 /// no sample mask and no image or buffer, and writes a colour: its early
-/// fragment tests are promoted, nothing discards and nothing reads Z, so
-/// Z is not written and there is the colour alone.
+/// fragment tests are promoted unless it discards or covers by alpha,
+/// nothing reads Z, and Z is written through where they are not.
 fn emitFragEnd(e: *Emit) Error!void {
     const c = e.c;
-    // The colour is always written, so early_fragment_tests is
-    // !uses_discard (nir_to_vir.c:2073-2081), and where it is false the
+    // Alpha to coverage where the TLB blends (nir_to_vir.c:2056-2065):
+    // the samples FTOC makes of colour 0's alpha, kept of those the pixel
+    // has (since 1.149).
+    if (e.key.sample_alpha_to_coverage) {
+        const covered = try c.add(.@"and", .{ try c.add(.msf, .{}), try c.add(.ftoc, .{e.outputs[3]}) });
+        _ = try c.addDest(.setmsf, vir.nopReg(), .{covered});
+    }
+    // The colour is always written and there is no image, buffer or
+    // sample mask, so early_fragment_tests is promoted where nothing
+    // discards and nothing covers by alpha (nir_to_vir.c:2073-2081;
+    // v3dv has no can_earlyz_with_discard), and where it is not the
     // program writes Z (nir_to_vir.c:2098). It has no gl_FragDepth, so
     // that Z is the one the rasterizer made, written through as it is.
-    if (e.uses_discard) {
+    e.early_fragment_tests = !e.uses_discard and !e.key.sample_alpha_to_coverage;
+    if (!e.early_fragment_tests) {
         e.writes_z = true;
         const inst = try c.mulDest(.mov, vir.magicReg(.tlbu), .{vir.nopReg()});
         // The spec says PER_PIXEL is ignored for invariant writes, but

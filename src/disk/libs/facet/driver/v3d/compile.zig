@@ -658,13 +658,16 @@ pub fn compile(work: *Work, words: []const u32) Error!Code {
 /// sets as well, which Mesa makes once for the device (v3d_compiler_init,
 /// vir.c:535) and which are four classes of 64 registers or fewer here.
 /// What it answers is in `work`, as `compile`'s is.
-pub fn compileThroughMesa(work: *Work, words: []const u32, child: std.mem.Allocator) (Error || std.mem.Allocator.Error)!Code {
+pub fn compileThroughMesa(work: *Work, words: []const u32, child: std.mem.Allocator, key: Key) (Error || std.mem.Allocator.Error)!Code {
     var arena = std.heap.ArenaAllocator.init(child);
     defer arena.deinit();
     const allocator = arena.allocator();
     const compiler = allocate.initRegSets(allocator) catch return error.OutOfMemory;
-    return compileVir(work, words, allocator, &compiler);
+    return compileVir(work, words, allocator, &compiler, key);
 }
+
+/// What the pipeline says beside the words (`to_vir.Key`, since 1.149).
+pub const Key = to_vir.Key;
 
 /// `compile` reads them, then made VIR, given registers, scheduled and
 /// packed as Mesa's v3d_compile does (compiler/to_vir.zig). V3DTest's
@@ -672,9 +675,9 @@ pub fn compileThroughMesa(work: *Work, words: []const u32, child: std.mem.Alloca
 /// through `compileThroughMesa` (since 1.137).
 /// `compiler` is the register sets (`allocate.initRegSets`), made once
 /// for every compile.
-pub fn compileVir(work: *Work, words: []const u32, allocator: std.mem.Allocator, compiler: *const vir.Compiler) (Error || std.mem.Allocator.Error)!Code {
+pub fn compileVir(work: *Work, words: []const u32, allocator: std.mem.Allocator, compiler: *const vir.Compiler, key: Key) (Error || std.mem.Allocator.Error)!Code {
     try readModule(work, words);
-    const program = to_vir.compileSteps(allocator, compiler, work) catch |err| return switch (err) {
+    const program = to_vir.compileSteps(allocator, compiler, work, key) catch |err| return switch (err) {
         error.OutOfMemory => error.OutOfMemory,
         error.Registers => Error.Registers,
         error.Invalid => Error.Invalid,
@@ -3125,9 +3128,13 @@ const Crowded = ir.Fragment(struct {
 
 /// What Mesa's back end makes of `words`, with register sets of its own.
 fn throughMesa(work: *Work, words: []const u32) !Code {
+    return throughMesaKeyed(work, words, .{});
+}
+
+fn throughMesaKeyed(work: *Work, words: []const u32, key: Key) !Code {
     var compiler = try allocate.initRegSets(testing.allocator);
     defer compiler.deinit();
-    return compileVir(work, words, testing.allocator, &compiler);
+    return compileVir(work, words, testing.allocator, &compiler, key);
 }
 
 /// An instruction as Mesa's disassembler prints it: the add side, the mul
@@ -3569,6 +3576,66 @@ test "through Mesa's back end, a pixel dropped: the comparison into the flags, S
     });
 }
 
+test "through Mesa's back end, alpha to coverage: FTOC of the colour's alpha, kept of MSF by SETMSF, then Z written through before the colour" {
+    var work: Work = .{};
+    const code = try throughMesaKeyed(&work, Smooth.words, .{ .sample_alpha_to_coverage = true });
+    try testing.expectEqual(@as(u32, 4), code.varyings);
+    // Early Z off and Z written, as for a discard (nir_to_vir.c:2073-2081,
+    // 2098): the one uniform is the depth's write specifier.
+    try testing.expect(code.writes_z);
+    try testing.expect(code.disable_ez);
+    const stream = code.stream();
+    try testing.expectEqual(@as(usize, 1), stream.len);
+    try testing.expectEqual(@as(u32, 0xffffff84), @as(u32, @bitCast(stream[0].float)));
+    // Where each is, by its line's add side: the alpha's FTOC, MSF and
+    // the AND of the two, SETMSF of that with no condition, then Z and
+    // the colour.
+    const Seen = struct { ftoc: ?usize = null, msf: ?usize = null, both: ?usize = null, setmsf: ?usize = null, z: ?usize = null, color: ?usize = null, alpha_pair: ?usize = null };
+    var seen: Seen = .{};
+    var lines: [most_words][disasm.most_text]u8 = undefined;
+    var texts: [most_words][]const u8 = undefined;
+    for (code.words, 0..) |word, k| {
+        texts[k] = disasm.disasm(word, &lines[k]).?;
+        const line = texts[k];
+        const add_side = line[0 .. std.mem.indexOf(u8, line, ";") orelse line.len];
+        if (std.mem.startsWith(u8, add_side, "ftoc ")) seen.ftoc = k;
+        if (std.mem.startsWith(u8, add_side, "msf ")) seen.msf = k;
+        if (std.mem.startsWith(u8, add_side, "and ")) seen.both = k;
+        if (std.mem.startsWith(u8, add_side, "setmsf ")) {
+            try testing.expect(std.mem.startsWith(u8, add_side, "setmsf -, "));
+            seen.setmsf = k;
+        }
+        if (std.mem.indexOf(u8, line, "mov tlbu") != null) seen.z = k;
+        if (std.mem.indexOf(u8, line, "vfpack tlb") != null) {
+            if (seen.color == null) seen.color = k else seen.alpha_pair = k;
+        }
+    }
+    const ftoc = seen.ftoc orelse return error.NoFtoc;
+    const msf = seen.msf orelse return error.NoMsf;
+    const both = seen.both orelse return error.NoAnd;
+    const setmsf = seen.setmsf orelse return error.NoSetmsf;
+    try testing.expect(ftoc < both and msf < both and both < setmsf);
+    try testing.expect(setmsf < (seen.z orelse return error.NoZ));
+    try testing.expect(seen.z.? < (seen.color orelse return error.NoColor));
+    // The FTOC reads what the colour's alpha is in: the last source of
+    // the second pair the tile buffer is written.
+    const second_pair = texts[seen.alpha_pair orelse return error.NoAlpha];
+    const packed_side = second_pair[0 .. std.mem.indexOf(u8, second_pair, ";") orelse second_pair.len];
+    const alpha = packed_side[std.mem.lastIndexOf(u8, packed_side, "rf") orelse return error.NoAlpha ..];
+    const alpha_register = alpha[0 .. std.mem.indexOfAny(u8, alpha, ". ") orelse alpha.len];
+    const ftoc_side = texts[ftoc][0 .. std.mem.indexOf(u8, texts[ftoc], ";") orelse texts[ftoc].len];
+    try testing.expect(std.mem.endsWith(u8, std.mem.trimEnd(u8, ftoc_side, " "), alpha_register));
+    // Without the key, none of it, as before.
+    var unkeyed: Work = .{};
+    const without = try throughMesa(&unkeyed, Smooth.words);
+    try testing.expect(!without.writes_z and !without.disable_ez);
+    for (without.words) |word| {
+        var buffer: [disasm.most_text]u8 = undefined;
+        const line = disasm.disasm(word, &buffer).?;
+        try testing.expect(std.mem.indexOf(u8, line, "ftoc") == null and std.mem.indexOf(u8, line, "setmsf") == null);
+    }
+}
+
 test "through Mesa's back end, glslc's discard is facet's, to the word" {
     var work: Work = .{};
     const code = try throughMesa(&work, Cutout.words);
@@ -3602,12 +3669,12 @@ test "compileThroughMesa makes what compileVir does, its memory given back" {
         const kept = try testing.allocator.dupe(u64, once.words);
         defer testing.allocator.free(kept);
         var second: Work = .{};
-        const code = try compileThroughMesa(&second, words, testing.allocator);
+        const code = try compileThroughMesa(&second, words, testing.allocator, .{});
         try testing.expectEqualSlices(u64, kept, code.words);
         try testing.expectEqual(once.threads, code.threads);
         try testing.expectEqual(once.uniform_count, code.uniform_count);
     }
     // And a refusal gives back the register sets it was made after.
     var work: Work = .{};
-    try testing.expectError(Error.Samplers, compileThroughMesa(&work, Twice.words, testing.allocator));
+    try testing.expectError(Error.Samplers, compileThroughMesa(&work, Twice.words, testing.allocator, .{}));
 }

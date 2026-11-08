@@ -597,10 +597,15 @@ fn makePipeline(pipeline: *Pipeline) callconv(.c) facet.Result {
     // refused before as item 85's V3D half refuses the others).
     if (pipeline.draws_nothing) return .success;
     const fixed = pipeline.fixed;
-    // Alpha to coverage wants a QPU program that writes the coverage,
-    // which none does yet: step V6 of item 61 of docs/facet-vulkan10.md
-    // (since 1.108; refused with every device before it).
-    if (pipeline.alpha_to_coverage) return .error_feature_not_present;
+    // Alpha to coverage, in a pipeline of four samples alone, as v3dv
+    // keys it (v3dv_pipeline.c:1321-1324): one of one sample draws
+    // without it here, a fixed form as well. A compiled program covers by
+    // its colour's alpha through the QPU's FTOC (`coverageOf`, since
+    // 1.149, docs/facet-vulkan10.md item 61, V6); a fixed form's
+    // hand-written program does not, so one of four that asks for it is
+    // refused and drawn on the cores, as every pipeline that did was
+    // before (since 1.108).
+    if (coverageOf(pipeline) and fixed.kind != .none) return .error_feature_not_present;
     // No fixed form: the program's own fragment shader, which this device
     // draws with where the program shipped the SPIR-V beside the function
     // and the back end can make code of it (since 1.76). Where it cannot,
@@ -644,6 +649,12 @@ fn samplesHere(fixed: facet.shader.Fixed) bool {
     };
 }
 
+/// Whether the pipeline's program covers by its colour's alpha: alpha to
+/// coverage, at four samples (`makePipeline`).
+fn coverageOf(pipeline: *const Pipeline) bool {
+    return pipeline.alpha_to_coverage and pipeline.samples > 1;
+}
+
 /// The pipeline's own fragment shader compiled and put where the V3D
 /// reads it. The compiler's working memory is a block of its own and some
 /// kilobytes wide, so it is taken for the call and given back: a pipeline
@@ -660,7 +671,7 @@ fn compiled(pipeline: *Pipeline) facet.Result {
     const sys = device.sys;
     const work = _objects.create(sys, compile.Work) orelse return .error_out_of_host_memory;
     defer _objects.destroy(sys, work);
-    const code = compile.compileThroughMesa(work, pipeline.fragment_words, v3d.heap.of(sys)) catch |err| return switch (err) {
+    const code = compile.compileThroughMesa(work, pipeline.fragment_words, v3d.heap.of(sys), .{ .sample_alpha_to_coverage = coverageOf(pipeline) }) catch |err| return switch (err) {
         error.OutOfMemory => .error_out_of_host_memory,
         else => .error_feature_not_present,
     };

@@ -36,7 +36,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.16 (09.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.17 (09.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -863,6 +863,8 @@ const Options = struct {
     /// all where null (since 1.16).
     samples: u32 = 1,
     sample_mask: ?u32 = null,
+    /// Colour 0's alpha cuts the samples a pixel covers (since 1.17).
+    alpha_to_coverage: bool = false,
 };
 
 /// What a pass of a case is.
@@ -1610,7 +1612,7 @@ const Side = struct {
         const blend_attachments: [4]facet.PipelineColorBlendAttachmentState = @splat(blend_attachment);
         const blend = facet.PipelineColorBlendStateCreateInfo{ .attachment_count = options.colors, .attachments = &blend_attachments, .blend_constants = options.constants };
         const mask = [1]u32{options.sample_mask orelse 0xFFFF_FFFF};
-        const multisample = facet.PipelineMultisampleStateCreateInfo{ .rasterization_samples = options.samples, .sample_mask = if (options.sample_mask != null) &mask else null };
+        const multisample = facet.PipelineMultisampleStateCreateInfo{ .rasterization_samples = options.samples, .sample_mask = if (options.sample_mask != null) &mask else null, .alpha_to_coverage_enable = options.alpha_to_coverage };
         const info = facet.GraphicsPipelineCreateInfo{
             .stage_count = if (options.patch_points != 0) 4 else 2,
             .stages = &stages,
@@ -2462,6 +2464,23 @@ const Cases = struct {
             }
         }.run;
     }
+    /// The far triangle, opaque, and the glass in front of it, its alpha
+    /// 0.4, at four samples with alpha to coverage and no blending, through
+    /// the shipped shader that hands the colour on, which the V3D compiles
+    /// with its FTOC (since 1.17): resolved, a pixel of the glass is the
+    /// average of the samples its alpha covered. Vulkan leaves which those
+    /// are to the implementation - the cores dither them - so two pixels
+    /// one sample apart are the same here, a sample being at most 51 steps
+    /// of a channel of the glass over the blue.
+    fn covered(side: *Side) Failure!void {
+        side.begin(.{ .depth = false });
+        side.end();
+        side.beginFour(true, null);
+        try side.use(.{ .vertex = "as it is", .fragment = "shipped smooth", .pass = side.resolving.?, .samples = 4, .test_depth = true, .write_depth = true, .alpha_to_coverage = true });
+        side.draw(far_at, 3);
+        side.draw(glass_at, 3);
+        side.end();
+    }
     /// The same over all of the picture in a pass that keeps its four
     /// samples, resolved into the first picture by CmdResolveImage after a
     /// barrier that says the colour was written (since 1.16).
@@ -2688,6 +2707,7 @@ const cases = [_]Case{
     .{ .name = "four samples, resolved over a part", .run = Cases.resolved(.{ 0.1, 0.15, 0.7, 0.8 }, null) },
     .{ .name = "four samples, two of them written", .run = Cases.resolved(null, 0x5) },
     .{ .name = "four samples, resolved by CmdResolveImage", .run = &Cases.resolvedAfter },
+    .{ .name = "four samples, covered by alpha", .run = &Cases.covered, .slack = 52 },
 };
 
 /// A case for each of `throughs`, after the shipped ones.

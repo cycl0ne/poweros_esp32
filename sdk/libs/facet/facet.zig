@@ -2477,8 +2477,11 @@ pub const PipelineMultisampleStateCreateInfo = extern struct {
     min_sample_shading: f32 = 0,
     sample_mask: ?[*]const u32 = null,
     /// Colour 0's alpha cuts the samples each pixel covers, dithered by
-    /// the pixel's place: on the cores since 1.108, and refused by the V3D
-    /// until step V6 of item 61 of docs/facet-vulkan10.md.
+    /// the pixel's place: on the cores since 1.108. On the V3D since 1.149
+    /// at four samples, the QPU's FTOC covering by a compiled program's
+    /// alpha; a pipeline of one sample is drawn there without it, as v3dv
+    /// draws one, and a fixed form of four that asks for it is refused
+    /// (item 61, step V6, of docs/facet-vulkan10.md).
     alpha_to_coverage_enable: bool = false,
     alpha_to_one_enable: bool = false,
 };

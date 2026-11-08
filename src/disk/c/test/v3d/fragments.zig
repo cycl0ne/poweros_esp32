@@ -905,7 +905,7 @@ const Modulated = ir.Fragment(struct {
 fn compiled(back: Back, work: *compile.Work, words: []const u32, stream: *[compile.most_uniforms]u32, tmu: ?[2]u32) ?struct { qpu.Fragment, []const u32 } {
     const code = switch (back) {
         .plan => compile.compile(work, words),
-        .mesa => |sys| compile.compileThroughMesa(work, words, v3d.heap.of(sys)),
+        .mesa => |sys| compile.compileThroughMesa(work, words, v3d.heap.of(sys), .{}),
     } catch return null;
     for (code.stream(), 0..) |word, k| stream[k] = switch (word) {
         .float => |each| @bitCast(each),

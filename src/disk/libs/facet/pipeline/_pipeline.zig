@@ -204,8 +204,11 @@ pub const Pipeline = struct {
     /// `alpha_to_coverage_enable`: colour 0's alpha cuts the samples a
     /// pixel covers, which every implementation of Vulkan 1.0 does - it
     /// has no feature to ask for. The cores dither it as lavapipe does
-    /// (driver/cpu/raster/batched.zig); the V3D refuses it until step V6
-    /// of item 61 of docs/facet-vulkan10.md. (Since 1.108.)
+    /// (driver/cpu/raster/batched.zig). The V3D takes it at four samples
+    /// through a compiled program's FTOC since 1.149, and draws a pipeline
+    /// of one without it, as v3dv does; a fixed form of four that asks
+    /// for it it refuses (docs/facet-vulkan10.md item 61, V6). (Since
+    /// 1.108.)
     alpha_to_coverage: bool = false,
     cull: Cull,
     front: facet.FrontFace,

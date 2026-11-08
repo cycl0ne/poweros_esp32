@@ -4326,4 +4326,27 @@ pub const LIBRARY_VERSION = 1;
 /// average into rows at the resolve's stride, after the depth and before
 /// the colour, and resolves in its tiles only over whole supertiles, the
 /// 4 x 4 tiles of one at 2560 x 1440 among them.
-pub const LIBRARY_REVISION = 148;
+///
+/// 149: **Alpha to coverage on the V3D (docs/facet-vulkan10.md item 61,
+/// step V6).** A pipeline of four samples whose fragment shader the V3D
+/// compiles covers by its colour's alpha, as v3d's compiler does where
+/// the TLB blends (nir_to_vir.c:2056-2065): the alpha's FTOC ANDed with
+/// MSF into SETMSF, after the body and before the tile buffer is written.
+///
+/// - The pipeline says so beside the words: `compile.Key`, the part of
+///   Mesa's v3d_fs_key the V3D's pipelines vary, which v3dv sets for
+///   alpha to coverage only where the pipeline has four samples
+///   (v3dv_pipeline.c:1321-1324). So a pipeline of one draws without it,
+///   a fixed form as well, where until now every pipeline that asked
+///   for it was refused there.
+/// - Such a program does not have its early fragment tests promoted
+///   (nir_to_vir.c:2073-2081), so it writes Z through and early Z is off
+///   in its shader record, as a program that discards has.
+/// - A fixed form of four samples that asks for it is still refused and
+///   drawn on the cores: its hand-written program does not cover.
+///
+/// Tests: the V3D's 146, one new: through Mesa's back end with the key,
+/// the alpha's FTOC and MSF are ANDed into SETMSF before Z, which is
+/// written through before the colour, and the program writes Z with
+/// early Z off; without it, none of that.
+pub const LIBRARY_REVISION = 149;
