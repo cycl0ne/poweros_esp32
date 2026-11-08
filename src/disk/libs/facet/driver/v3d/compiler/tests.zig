@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
-//! The tests of the VIR layer (vir.zig, dump.zig, to_qpu.zig): what Mesa's
-//! VIR is built into, prints as, and becomes once its temporaries have
-//! registers. The text is what Mesa's vir_dump and the QPU disassembler
-//! print, the disassembler's own having been held to Mesa's tests in
-//! qpu/tests.zig.
+//! The tests of the VIR layer (vir.zig, dump.zig, to_qpu.zig), its
+//! liveness (live.zig) and its register allocation (allocate.zig): what
+//! Mesa's VIR is built into, prints as, is live over, which registers its
+//! temporaries are given, and what it becomes once they have them. The
+//! text is what Mesa's vir_dump and the QPU disassembler print, the
+//! disassembler's own having been held to Mesa's tests in qpu/tests.zig.
 
 const std = @import("std");
 const testing = std.testing;
@@ -14,6 +15,7 @@ const vir = @import("vir.zig");
 const dump = @import("dump.zig");
 const to_qpu = @import("to_qpu.zig");
 const live = @import("live.zig");
+const allocate = @import("allocate.zig");
 const Compile = vir.Compile;
 const Inst = vir.Inst;
 const Reg = vir.Reg;
@@ -655,4 +657,509 @@ test "after a spill the ranges are found again, spill_base's over the loop it is
     // to the loop's end, which goes back to where it is read.
     try expectRange(c, base, 0, 6);
     try expectRange(c, address, 2, 2);
+}
+
+/// interferes (vir_register_allocate.c:686): the ranges overlap, one
+/// ending where the other starts not counting.
+fn rangesOverlap(c: *const Compile, t0: usize, t1: usize) bool {
+    return !(c.temp_start[t0] >= c.temp_end[t1] or c.temp_start[t1] >= c.temp_end[t0]);
+}
+
+/// The registers the allocator gave, held to the program as it is now,
+/// its ranges found again from the start: each is one of the file's that
+/// the threads leave, and no two temporaries live together share one.
+fn expectColoured(c: *Compile, registers: []const vir.QpuReg) !void {
+    try testing.expectEqual(@as(usize, c.num_temps), registers.len);
+    try live.calculateLiveIntervals(c);
+    const budget = @as(u32, 64) >> @intCast(c.thread_index);
+    for (0..c.num_temps) |i| {
+        // Not live anywhere.
+        if (c.temp_start[i] > c.temp_end[i]) continue;
+        try testing.expect(!registers[i].magic);
+        try testing.expect(registers[i].index < budget);
+        for (i + 1..c.num_temps) |j| {
+            if (c.temp_start[j] > c.temp_end[j]) continue;
+            if (rangesOverlap(c, i, j)) try testing.expect(registers[i].index != registers[j].index);
+        }
+    }
+}
+
+fn expectRegisters(registers: []const vir.QpuReg, expected: []const u6) !void {
+    try testing.expectEqual(expected.len, registers.len);
+    for (registers, expected) |r, index| {
+        try testing.expect(!r.magic);
+        try testing.expectEqual(index, r.index);
+    }
+}
+
+test "the register sets are the file's 64 registers at 1 and 2 threads and 32 at 4, as Mesa's" {
+    var compiler = try allocate.initRegSets(testing.allocator);
+    defer compiler.deinit();
+    const expected_p = [_]u32{ 64, 64, 32, 32 };
+    for (expected_p, 0..) |p, index| {
+        const class = compiler.regs.classFromIndex(@intCast(index));
+        try testing.expectEqual(@as(u32, @intCast(index)), class.index);
+        try testing.expectEqual(p, class.p);
+        // Single registers, the first 32 in every class: each conflicts
+        // with one at most of every class.
+        try testing.expectEqual(@as(usize, 4), class.q.len);
+        for (class.q) |q| try testing.expectEqual(@as(u32, 1), q);
+    }
+    try testing.expectEqual(compiler.regs.classFromIndex(0), compiler.reg_class_any[0]);
+    try testing.expectEqual(compiler.regs.classFromIndex(1), compiler.reg_class_phys[0]);
+    try testing.expectEqual(compiler.regs.classFromIndex(2), compiler.reg_class_any[1]);
+    try testing.expectEqual(compiler.regs.classFromIndex(3), compiler.reg_class_phys[1]);
+}
+
+test "temporaries are given registers round the file from rf4, rf0 kept, one not live anywhere rf0" {
+    var compiler = try allocate.initRegSets(testing.allocator);
+    defer compiler.deinit();
+    const c = try Compile.create(testing.allocator);
+    defer c.destroy();
+    c.compiler = &compiler;
+    const one = try c.uniformF(1.0);
+    const two = try c.uniformF(2.0);
+    const sum = try c.add(.fadd, .{ one, two });
+    _ = try c.mulDest(.mov, vir.magicReg(.tlb), .{sum});
+    _ = try c.getTemp();
+
+    const registers = (try allocate.registerAllocate(c)).?;
+    defer testing.allocator.free(registers);
+    // Four threads: the classes of 32 registers.
+    try testing.expectEqual(@as(u32, 1), c.thread_index);
+    // `one` is live across the second ldunif's rf0 write, and neither
+    // ldunif of a fragment program this close to its start tries rf0.
+    try expectRegisters(registers, &.{ 4, 5, 6, 0 });
+    try expectColoured(c, registers);
+    try testing.expectEqual(@as(u32, 0), c.spills + c.fills);
+}
+
+test "an ldunif's temporary is tried in rf0 outside a fragment program, where nothing is live across it" {
+    var compiler = try allocate.initRegSets(testing.allocator);
+    defer compiler.deinit();
+    const c = try Compile.create(testing.allocator);
+    defer c.destroy();
+    c.compiler = &compiler;
+    c.stage = .vertex;
+    const one = try c.uniformF(1.0);
+    const two = try c.uniformF(2.0);
+    const sum = try c.add(.fadd, .{ one, two });
+    _ = try c.mulDest(.mov, vir.magicReg(.vpm), .{sum});
+
+    const registers = (try allocate.registerAllocate(c)).?;
+    defer testing.allocator.free(registers);
+    try expectRegisters(registers, &.{ 4, 0, 5 });
+    try expectColoured(c, registers);
+}
+
+test "a temporary moved out of a payload register is given that register" {
+    var compiler = try allocate.initRegSets(testing.allocator);
+    defer compiler.deinit();
+    const c = try Compile.create(testing.allocator);
+    defer c.destroy();
+    c.compiler = &compiler;
+    const w = try c.mul(.mov, .{vir.reg(.reg, 1)});
+    const z = try c.mul(.mov, .{vir.reg(.reg, 3)});
+    const sum = try c.add(.fadd, .{ w, z });
+    _ = try c.mulDest(.mov, vir.magicReg(.tlb), .{sum});
+
+    const registers = (try allocate.registerAllocate(c)).?;
+    defer testing.allocator.free(registers);
+    try expectRegisters(registers, &.{ 1, 3, 4 });
+    try expectColoured(c, registers);
+}
+
+/// A value the add unit makes of a small immediate, which no uniform
+/// defines and the hardware does not give again: only the TMU spills it.
+fn smallImmAdd(c: *Compile, value: u32) !Reg {
+    const imm = vir.reg(.small_imm, value);
+    const sum = try c.add(.add, .{ imm, imm });
+    const def = defOf(c, sum);
+    def.qpu.raddr_b = pack.smallImmPack(value).?;
+    def.qpu.sig.small_imm_b = true;
+    return sum;
+}
+
+/// A fragment program with more temporaries live together than four
+/// threads have registers: `held`, made first and read last, and across
+/// it `count` values made one after the other and then summed; then the
+/// last thread switch, and the sum written out. With 32 values, `held`
+/// and they are 33; the 32 alone fit.
+const Overfull = struct { held: Reg, result: Reg };
+
+/// How `held` is made: loaded as a uniform, asked of the hardware, which
+/// gives it again, or made of a small immediate.
+const Held = enum { uniform, reconstructed, tmu };
+
+fn overfullProgram(c: *Compile, how: Held, count: usize) !Overfull {
+    const held = switch (how) {
+        .uniform => try c.uniformF(1.0),
+        .reconstructed => try c.add(.eidx, .{}),
+        .tmu => try smallImmAdd(c, 1),
+    };
+    var values: [33]Reg = undefined;
+    for (values[0..count], 0..) |*value, i| value.* = try smallImmAdd(c, @intCast(i % 16));
+    var sum = try c.add(.fadd, .{ values[0], values[1] });
+    for (values[2..count]) |value| sum = try c.add(.fadd, .{ sum, value });
+    const result = try c.add(.fadd, .{ sum, held });
+    const end = try c.nop();
+    end.qpu.sig.thrsw = true;
+    end.is_last_thrsw = true;
+    c.last_thrsw = end;
+    _ = try c.mulDest(.mov, vir.magicReg(.tlb), .{result});
+    return .{ .held = held, .result = result };
+}
+
+test "a uniform spilled is loaded again where it is read, and the rest fit" {
+    var compiler = try allocate.initRegSets(testing.allocator);
+    defer compiler.deinit();
+    const c = try Compile.create(testing.allocator);
+    defer c.destroy();
+    c.compiler = &compiler;
+    const program = try overfullProgram(c, .uniform, 32);
+    const held = program.held;
+    const before = c.num_temps;
+    const read = defOf(c, program.result);
+
+    const registers = (try allocate.registerAllocate(c)).?;
+    defer testing.allocator.free(registers);
+    try expectColoured(c, registers);
+    // Neither stored nor loaded through the TMU.
+    try testing.expectEqual(@as(u32, 0), c.spills + c.fills);
+    try testing.expectEqual(@as(u32, 0), c.spill_size);
+    // Its ldunif gone, and one made before the instruction that read it,
+    // for that instruction alone.
+    try testing.expectEqual(@as(?*Inst, null), c.defs[held.index]);
+    try testing.expectEqual(before + 1, c.num_temps);
+    const reload = read.src[1];
+    try testing.expectEqual(Reg{ .file = .temp, .index = before }, reload);
+    const ldunif = defOf(c, reload);
+    try testing.expect(ldunif.qpu.sig.ldunif);
+    try testing.expectEqual(@as(?u32, 0), ldunif.uniform);
+    try testing.expectEqual(&ldunif.link, read.link.prev.?);
+    var each = c.eachInstInorder();
+    while (each.next()) |inst| {
+        try testing.expect(!(inst.dst.file == .temp and inst.dst.index == held.index));
+    }
+}
+
+test "the spill base is worked out once at the program's start, its constant 2 loaded again" {
+    const c = try Compile.create(testing.allocator);
+    defer c.destroy();
+    const two = try c.uniformUi(2);
+    _ = try c.add(.fadd, .{ two, two });
+    try allocate.setupSpillBase(c);
+
+    try testing.expectEqual(Reg{ .file = .temp, .index = 10 }, c.spill_base);
+    var buffer: [1024]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buffer);
+    try dump.program(&w, c);
+    try testing.expectEqualStrings(
+        \\BLOCK 0:
+        \\tidx t2
+        \\nop t3; ldunif (spill_size_per_thread)
+        \\multop null, t2, t3
+        \\umul24 t4, t2, t3
+        \\eidx t5
+        \\nop t6; ldunif (0x00000002 / 0.000000)
+        \\shl t7, t5, t6
+        \\add t8, t4, t7
+        \\nop t9; ldunif (spill_offset)
+        \\add t10, t8, t9
+        \\nop t0; ldunif (0x00000002 / 0.000000)
+        \\fadd t1, t0, t0
+        \\
+        \\
+    , w.buffered());
+    // None of its temporaries is spilled; the program's may be.
+    for (2..c.num_temps) |t| try testing.expect(!vir.bitsetTest(c.spillable, t));
+    try testing.expect(vir.bitsetTest(c.spillable, 0) and vir.bitsetTest(c.spillable, 1));
+    // Emitting goes on at the end of the block.
+    const after = try c.add(.fadd, .{ two, two });
+    try testing.expectEqual(&defOf(c, after).link, c.cur_block.?.instructions.prev.?);
+}
+
+fn expectOp(inst: *const Inst, op: instr.AddOp) !void {
+    try testing.expectEqual(instr.Kind.alu, inst.qpu.kind);
+    try testing.expectEqual(op, inst.qpu.alu.add.op);
+}
+
+fn nextInst(inst: *const Inst) *Inst {
+    return @fieldParentPtr("link", inst.link.next.?);
+}
+
+test "spilled to the TMU, a temporary is stored after it is written and read back before it is read" {
+    var compiler = try allocate.initRegSets(testing.allocator);
+    defer compiler.deinit();
+    const c = try Compile.create(testing.allocator);
+    defer c.destroy();
+    c.compiler = &compiler;
+    c.max_tmu_spills = std.math.maxInt(u32);
+    const program = try overfullProgram(c, .tmu, 32);
+    const write = defOf(c, program.held);
+    const read = defOf(c, program.result);
+
+    const registers = (try allocate.registerAllocate(c)).?;
+    defer testing.allocator.free(registers);
+    try expectColoured(c, registers);
+    try testing.expect(c.spills >= 1 and c.fills >= 1);
+    try testing.expect(c.spill_size >= 64 and c.spill_size % 64 == 0);
+    try testing.expect(c.tmu_dirty_rcl);
+    // The last thread switch is still the program's, not a spill's.
+    try testing.expect(c.last_thrsw.?.is_last_thrsw);
+
+    // The spill base first, kept off rf0, which the ldunifs write.
+    var setup = c.entryBlock().instructions.next.?;
+    const setup_ops = [_]instr.AddOp{ .tidx, .nop, .nop, .nop, .eidx, .nop, .shl, .add, .nop, .add };
+    for (setup_ops) |op| {
+        try expectOp(@fieldParentPtr("link", setup), op);
+        setup = setup.next.?;
+    }
+    const base: *Inst = @fieldParentPtr("link", setup.prev.?);
+    try testing.expectEqual(c.spill_base, base.dst);
+    try testing.expect(registers[c.spill_base.index].index != 0);
+
+    // The first victim, the longest lived: its write given a temporary
+    // of its own and stored, with the address its spill offset, 0.
+    try testing.expect(write.dst.index != program.held.index);
+    const store = nextInst(write);
+    try testing.expectEqual(instr.MulOp.mov, store.qpu.alu.mul.op);
+    try testing.expectEqual(vir.magicReg(.tmud), store.dst);
+    try testing.expectEqual(write.dst, store.src[0]);
+    const offset = nextInst(store);
+    try testing.expect(offset.qpu.sig.ldunif);
+    try testing.expectEqual(vir.Uniform.constant, c.uniform_contents[offset.uniform.?]);
+    try testing.expectEqual(@as(u32, 0), c.uniform_data[offset.uniform.?]);
+    const address = nextInst(offset);
+    try testing.expectEqual(vir.magicReg(.tmuau), address.dst);
+    try testing.expectEqual([2]Reg{ c.spill_base, offset.dst }, address.src[0..2].*);
+    try testing.expectEqual(@as(u32, 0xffffff7f), c.uniform_data[address.uniform.?]);
+    const thrsw = nextInst(address);
+    try testing.expect(thrsw.qpu.sig.thrsw and !thrsw.is_last_thrsw);
+    try expectOp(nextInst(thrsw), .tmuwt);
+
+    // And read back into a temporary of its own before it is read.
+    const fill = defOf(c, read.src[1]);
+    try testing.expect(fill.qpu.sig.ldtmu);
+    try testing.expectEqual(&fill.link, read.link.prev.?);
+    const fill_thrsw: *Inst = @fieldParentPtr("link", fill.link.prev.?);
+    try testing.expect(fill_thrsw.qpu.sig.thrsw);
+    const fill_address: *Inst = @fieldParentPtr("link", fill_thrsw.link.prev.?);
+    try testing.expectEqual(vir.magicReg(.tmuau), fill_address.dst);
+    try testing.expectEqual(c.spill_base, fill_address.src[0]);
+}
+
+test "where no temporary can go, the allocation fails, and gives back what it took" {
+    var compiler = try allocate.initRegSets(testing.allocator);
+    defer compiler.deinit();
+    const c = try Compile.create(testing.allocator);
+    defer c.destroy();
+    c.compiler = &compiler;
+    // 33 values live together, and only the uniform to spill: the
+    // strategy allows no TMU spill.
+    const program = try overfullProgram(c, .uniform, 33);
+    const before = c.num_temps;
+    try testing.expectEqual(@as(?[]vir.QpuReg, null), try allocate.registerAllocate(c));
+    // The uniform was spilled, loaded again where it is read, before the
+    // values were found not to fit.
+    try testing.expectEqual(before + 1, c.num_temps);
+    try testing.expectEqual(@as(?*Inst, null), c.defs[program.held.index]);
+    try testing.expectEqual(@as(u32, 0), c.spills + c.fills);
+    try testing.expectEqual(@as(usize, 0), c.nodes.info.len);
+    try testing.expectEqual(@as(?*@import("ra.zig").Graph, null), c.g);
+}
+
+test "a value the hardware gives again is asked for again where it is read" {
+    var compiler = try allocate.initRegSets(testing.allocator);
+    defer compiler.deinit();
+    const c = try Compile.create(testing.allocator);
+    defer c.destroy();
+    c.compiler = &compiler;
+    const program = try overfullProgram(c, .reconstructed, 32);
+    const before = c.num_temps;
+    const read = defOf(c, program.result);
+
+    const registers = (try allocate.registerAllocate(c)).?;
+    defer testing.allocator.free(registers);
+    try expectColoured(c, registers);
+    try testing.expectEqual(@as(u32, 0), c.spills + c.fills);
+    try testing.expectEqual(@as(?*Inst, null), c.defs[program.held.index]);
+    try testing.expectEqual(before + 1, c.num_temps);
+    const again = defOf(c, read.src[1]);
+    try expectOp(again, .eidx);
+    try testing.expectEqual(&again.link, read.link.prev.?);
+}
+
+test "a spill inside a TMU sequence waits for its end, and a fill inside one goes before its start" {
+    var compiler = try allocate.initRegSets(testing.allocator);
+    defer compiler.deinit();
+    const c = try Compile.create(testing.allocator);
+    defer c.destroy();
+    c.compiler = &compiler;
+    c.max_tmu_spills = std.math.maxInt(u32);
+
+    // A TMU read, and `inside` made while it is under way.
+    const address = try smallImmAdd(c, 0);
+    _ = try c.mulDest(.mov, vir.magicReg(.tmua), .{address});
+    const inside = try smallImmAdd(c, 2);
+    const texel = try c.ldtmu();
+    const outside = try smallImmAdd(c, 1);
+    // 30 values live together, with `inside`, `outside` and `texel` 33.
+    var values: [30]Reg = undefined;
+    for (&values, 0..) |*value, i| value.* = try smallImmAdd(c, @intCast(i % 16));
+    var sum = try c.add(.fadd, .{ values[0], values[1] });
+    for (values[2..]) |value| sum = try c.add(.fadd, .{ sum, value });
+    // A TMU write, `outside` read while it is under way.
+    const data = try c.mulDest(.mov, vir.magicReg(.tmud), .{sum});
+    const read_inside = try c.mulDest(.mov, vir.magicReg(.tmua), .{outside});
+    const result = try c.ldtmu();
+    const total = try c.add(.fadd, .{ result, inside });
+    const final = try c.add(.fadd, .{ total, texel });
+    const end = try c.nop();
+    end.qpu.sig.thrsw = true;
+    end.is_last_thrsw = true;
+    c.last_thrsw = end;
+    _ = try c.mulDest(.mov, vir.magicReg(.tlb), .{final});
+    // The two alone may be spilled, which leaves 32.
+    for (0..c.num_temps) |t| {
+        if (t != inside.index and t != outside.index) vir.bitsetClear(c.spillable, t);
+    }
+    const inside_def = defOf(c, inside);
+    const texel_def = defOf(c, texel);
+    const total_def = defOf(c, total);
+
+    const registers = (try allocate.registerAllocate(c)).?;
+    defer testing.allocator.free(registers);
+    try expectColoured(c, registers);
+    try testing.expectEqual(@as(u32, 2), c.spills);
+    try testing.expectEqual(@as(u32, 2), c.fills);
+    try testing.expectEqual(@as(u32, 128), c.spill_size);
+
+    // `inside` written to a temporary of its own, stored once the ldtmu
+    // has ended the read it was made in the middle of, and read back.
+    try testing.expect(inside_def.dst.index != inside.index);
+    const store = nextInst(texel_def);
+    try testing.expectEqual(vir.magicReg(.tmud), store.dst);
+    try testing.expectEqual(inside_def.dst, store.src[0]);
+    try testing.expect(defOf(c, total_def.src[1]).qpu.sig.ldtmu);
+
+    // `outside` read back before the write it is read in the middle of.
+    const fill = defOf(c, read_inside.src[0]);
+    try testing.expect(fill.qpu.sig.ldtmu);
+    try testing.expectEqual(&fill.link, data.link.prev.?);
+}
+
+fn prevInst(inst: *const Inst) *Inst {
+    return @fieldParentPtr("link", inst.link.prev.?);
+}
+
+test "a write of part of a spilled temporary: under a condition stored under it, packed filled first and stored whole" {
+    var compiler = try allocate.initRegSets(testing.allocator);
+    defer compiler.deinit();
+    const c = try Compile.create(testing.allocator);
+    defer c.destroy();
+    c.compiler = &compiler;
+    c.max_tmu_spills = std.math.maxInt(u32);
+
+    const masked = try smallImmAdd(c, 1);
+    const halved = try smallImmAdd(c, 2);
+    const kept = try smallImmAdd(c, 3);
+    const k = try smallImmAdd(c, 4);
+    const compare = try c.addDest(.fcmp, vir.nopReg(), .{ k, k });
+    c.setPf(compare, .pushz);
+    const conditional = try c.movCond(.ifa, masked, k);
+    const packed_write = try c.addDest(.fadd, halved, .{ k, k });
+    vir.setPack(packed_write, .l);
+    // 30 values live together, with the three 33.
+    var values: [30]Reg = undefined;
+    for (&values, 0..) |*value, i| value.* = try smallImmAdd(c, @intCast(i % 16));
+    var sum = try c.add(.fadd, .{ values[0], values[1] });
+    for (values[2..]) |value| sum = try c.add(.fadd, .{ sum, value });
+    const first = try c.add(.fadd, .{ sum, masked });
+    const second = try c.add(.fadd, .{ first, halved });
+    const third = try c.add(.fadd, .{ second, kept });
+    const end = try c.nop();
+    end.qpu.sig.thrsw = true;
+    end.is_last_thrsw = true;
+    c.last_thrsw = end;
+    _ = try c.mulDest(.mov, vir.magicReg(.tlb), .{third});
+    for (0..c.num_temps) |t| {
+        if (t != masked.index and t != halved.index) vir.bitsetClear(c.spillable, t);
+    }
+
+    const registers = (try allocate.registerAllocate(c)).?;
+    defer testing.allocator.free(registers);
+    try expectColoured(c, registers);
+    // Two stores of each, a fill of each where it is read, and one more
+    // before the packed write.
+    try testing.expectEqual(@as(u32, 4), c.spills);
+    try testing.expectEqual(@as(u32, 3), c.fills);
+    try testing.expectEqual(@as(u32, 128), c.spill_size);
+
+    // The conditional write stored under its condition, its lanes alone.
+    try testing.expect(conditional.dst.index != masked.index);
+    const store = nextInst(conditional);
+    try testing.expectEqual(vir.magicReg(.tmud), store.dst);
+    try testing.expectEqual(conditional.dst, store.src[0]);
+    try testing.expectEqual(instr.Cond.ifa, store.qpu.flags.mc);
+    const address = nextInst(nextInst(store));
+    try testing.expectEqual(vir.magicReg(.tmuau), address.dst);
+    try testing.expectEqual(instr.Cond.ifa, address.qpu.flags.ac);
+    try testing.expectEqual(@as(u32, 0xffffffff), c.uniform_data[address.uniform.?]);
+
+    // The packed write's other half filled from the slot before it, and
+    // all of it stored, per quad.
+    const whole = prevInst(packed_write);
+    try testing.expectEqual(instr.MulOp.mov, whole.qpu.alu.mul.op);
+    try testing.expectEqual(packed_write.dst, whole.dst);
+    try testing.expect(defOf(c, whole.src[0]).qpu.sig.ldtmu);
+    const packed_store = nextInst(packed_write);
+    try testing.expectEqual(vir.magicReg(.tmud), packed_store.dst);
+    try testing.expectEqual(instr.Cond.none, packed_store.qpu.flags.mc);
+    const packed_address = nextInst(nextInst(packed_store));
+    try testing.expectEqual(@as(u32, 0xffffff7f), c.uniform_data[packed_address.uniform.?]);
+}
+
+test "far over the registers, a batch of victims is spilled before the graph is brought up to date" {
+    var compiler = try allocate.initRegSets(testing.allocator);
+    defer compiler.deinit();
+    const c = try Compile.create(testing.allocator);
+    defer c.destroy();
+    c.compiler = &compiler;
+
+    // Four uniforms read last and 32 values: 36 live together, four over,
+    // so the first batch is of two.
+    var uniforms: [4]Reg = undefined;
+    for (&uniforms, 0..) |*u, i| u.* = try c.uniformF(@floatFromInt(i + 1));
+    var values: [32]Reg = undefined;
+    for (&values, 0..) |*value, i| value.* = try smallImmAdd(c, @intCast(i % 16));
+    var sum = try c.add(.fadd, .{ values[0], values[1] });
+    for (values[2..]) |value| sum = try c.add(.fadd, .{ sum, value });
+    var reads: [4]*Inst = undefined;
+    for (uniforms, &reads) |u, *read| {
+        sum = try c.add(.fadd, .{ sum, u });
+        read.* = defOf(c, sum);
+    }
+    const end = try c.nop();
+    end.qpu.sig.thrsw = true;
+    end.is_last_thrsw = true;
+    c.last_thrsw = end;
+    _ = try c.mulDest(.mov, vir.magicReg(.tlb), .{sum});
+    try live.calculateLiveIntervals(c);
+    try testing.expectEqual(@as(u32, 36), try c.getMaxTemps());
+    const before = c.num_temps;
+
+    const registers = (try allocate.registerAllocate(c)).?;
+    defer testing.allocator.free(registers);
+    try expectColoured(c, registers);
+    try testing.expectEqual(@as(u32, 0), c.spills + c.fills);
+    // All four loaded again where they are read, each its own uniform.
+    try testing.expectEqual(before + 4, c.num_temps);
+    for (uniforms, reads, 0..) |u, read, i| {
+        try testing.expectEqual(@as(?*Inst, null), c.defs[u.index]);
+        const reload = defOf(c, read.src[1]);
+        try testing.expect(reload.qpu.sig.ldunif);
+        try testing.expectEqual(@as(?u32, @intCast(i)), reload.uniform);
+        try testing.expectEqual(&reload.link, read.link.prev.?);
+    }
 }

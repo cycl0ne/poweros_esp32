@@ -22,6 +22,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const instr = @import("../qpu/instr.zig");
 const list = @import("list.zig");
+const ra = @import("ra.zig");
 const Link = list.Link;
 
 pub const Instr = instr.Instr;
@@ -245,6 +246,47 @@ pub fn afterBlock(block: *Block) Cursor {
 /// enum v3d_compilation_result (v3d_compiler.h:548).
 pub const Result = enum { succeeded, failed_register_allocation, failed };
 
+/// The stage a program is for (gl_shader_stage, as the compiler asks
+/// c->s->info.stage): the V3D runs no tessellation.
+pub const Stage = enum { vertex, geometry, fragment, compute };
+
+/// What of struct v3d_compiler (v3d_compiler.h:558), the state kept from
+/// one compile to the next, the register allocator uses: the register
+/// file as a set, and its classes for each count of threads, 64
+/// registers at 1 and 2 and 32 at 4 (vir_init_reg_sets, allocate.zig).
+/// Mesa's arrays have room for three counts and fill two; its classes of
+/// accumulators are 4.x's.
+pub const Compiler = struct {
+    regs: *ra.Regs,
+    reg_class_any: [2]*ra.Class,
+    reg_class_phys: [2]*ra.Class,
+
+    pub fn deinit(compiler: *Compiler) void {
+        compiler.regs.destroy();
+    }
+};
+
+/// What the register allocator knows of each node of its graph (struct
+/// v3d_ra_node_info, v3d_compiler.h:579).
+pub const RaNodeInfo = struct {
+    /// How long its temporary is live, which 4.x's accumulators go by.
+    priority: u32 = 0,
+    class_bits: u8 = 0,
+    /// Its temporary is among those of the program's last instructions.
+    is_program_end: bool = false,
+    /// Its temporary is not live anywhere.
+    unused: bool = false,
+    /// It may be given a payload register, which it must not be.
+    payload_conflict: bool = false,
+    /// Its temporary is an ldunif's, which rf0 spares an ldunifrf.
+    try_rf0: bool = false,
+};
+
+pub const RaNodes = struct {
+    info: []RaNodeInfo = &.{},
+    alloc_count: u32 = 0,
+};
+
 /// A program being compiled (struct v3d_compile, v3d_compiler.h:597):
 /// the part of it the files ported so far use, each field as Mesa names
 /// it. The rest comes with the files that use it.
@@ -290,6 +332,46 @@ pub const Compile = struct {
     live_intervals_valid: bool = false,
     /// The address each spill and fill is made from, where one is.
     spill_base: Reg = .{},
+
+    /// The stage the program is for (c->s->info.stage).
+    stage: Stage = .fragment,
+    /// The threads the program shares a QPU with, 1, 2 or 4, each thread
+    /// switch giving it to another while the TMU answers; at 4 a thread
+    /// has half the register file. Mesa's first compile strategy, the
+    /// default (vir.c:2215), compiles with 4, as here.
+    threads: u8 = 4,
+    /// How many TMU spills and fills the register allocator may make:
+    /// none in the default strategy, as many as it likes from the third.
+    max_tmu_spills: u32 = 0,
+    /// The code being emitted is inside control flow.
+    in_control_flow: bool = false,
+    /// The last thread switch was made outside control flow.
+    last_thrsw_at_top_level: bool = false,
+    /// The tile buffer has been read, so the scoreboard is locked at the
+    /// first thread switch rather than at the last.
+    emitted_tlb_load: bool = false,
+    lock_scoreboard_on_first_thrsw: bool = false,
+    /// The bytes of the spill buffer each thread of each QPU needs.
+    spill_size: u32 = 0,
+    /// The TMU spills and fills made, for the compile's statistics.
+    spills: u32 = 0,
+    fills: u32 = 0,
+    /// The register allocator is spilling.
+    spilling: bool = false,
+    /// The temporaries there were when the spill being made began: those
+    /// at and above it are the spill's own.
+    spill_start_num_temps: u32 = 0,
+    /// The program spills to the TMU, which the render's control list is
+    /// told of.
+    tmu_dirty_rcl: bool = false,
+
+    /// The register sets the allocator allocates from (c->compiler).
+    compiler: ?*const Compiler = null,
+    /// While registers are allocated: which of the compiler's classes the
+    /// threads give, each node's information, and the graph.
+    thread_index: u32 = 0,
+    nodes: RaNodes = .{},
+    g: ?*ra.Graph = null,
 
     /// The thread switch that starts the program's last thread section,
     /// where it has one.
@@ -342,6 +424,8 @@ pub const Compile = struct {
         allocator.free(c.temp_start);
         allocator.free(c.temp_end);
         allocator.free(c.qpu_insts);
+        allocator.free(c.nodes.info);
+        if (c.g) |g| g.destroy();
         allocator.destroy(c);
     }
 
@@ -694,6 +778,49 @@ pub const Compile = struct {
         const inst = try c.addInst(.nop, c.undef, c.undef, c.undef);
         inst.qpu.sig.ldtmu = true;
         return c.emitDef(inst);
+    }
+
+    /// A thread switch, where the program has another thread to switch
+    /// to, and the last one made until another is (vir_emit_thrsw,
+    /// nir_to_vir.c:152). Where the tile buffer was read before it, the
+    /// scoreboard can no longer be locked at the last.
+    pub fn emitThrsw(c: *Compile) Error!void {
+        if (c.threads == 1) return;
+        const thrsw = try c.nop();
+        thrsw.qpu.sig.thrsw = true;
+        c.last_thrsw = thrsw;
+        c.last_thrsw_at_top_level = !c.in_control_flow;
+        if (c.emitted_tlb_load) c.lock_scoreboard_on_first_thrsw = true;
+    }
+
+    /// The most temporaries live at any one instruction, a range counting
+    /// from its start and not at its end, as the allocator's interference
+    /// has it (vir_get_max_temps, vir.c:1343).
+    pub fn getMaxTemps(c: *Compile) Error!u32 {
+        var max_ip: i32 = 0;
+        var insts = c.eachInstInorder();
+        while (insts.next()) |_| max_ip += 1;
+
+        // +1 where a range starts and -1 where it ends, then summed.
+        const delta = try c.allocator.alloc(i32, @intCast(max_ip + 1));
+        defer c.allocator.free(delta);
+        @memset(delta, 0);
+        for (c.temp_start[0..c.num_temps], c.temp_end[0..c.num_temps]) |start, temp_end| {
+            if (start < 0 or start >= max_ip) continue;
+            var end = temp_end;
+            if (end > max_ip) end = max_ip;
+            if (end <= start) continue;
+            delta[@intCast(start)] += 1;
+            delta[@intCast(end)] -= 1;
+        }
+
+        var max_temps: u32 = 0;
+        var live: i32 = 0;
+        for (delta[0..@intCast(max_ip)]) |d| {
+            live += d;
+            max_temps = @max(max_temps, @as(u32, @bitCast(live)));
+        }
+        return max_temps;
     }
 
     /// A 32-bit multiply: multop, then umul24 (vir_UMUL,
