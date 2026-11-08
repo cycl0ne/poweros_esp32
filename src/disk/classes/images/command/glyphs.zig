@@ -201,6 +201,140 @@ pub fn draw(p: *Painter, glyph: u32) void {
                 p.rr(87, 41, 94, 59, 0),
             }, .blue, .{ .flat = true, .no_shadow = true });
         },
+        command.CMD_PARENT => {
+            folder(p, 6, 30, 94, 94);
+            p.solid(&.{ p.poly(&.{ .{ 50, 4 }, .{ 80, 36 }, .{ 20, 36 } }), p.rr(40, 32, 60, 76, 2) }, .blue, .{});
+        },
+        command.CMD_NEW_DRAWER => {
+            folder(p, 4, 14, 86, 82);
+            badge(p, 74, 76, 20, .green, .plus);
+        },
+        command.CMD_RENAME => {
+            // The field, the name in it, and the cursor standing out of
+            // it at both ends. The name is dark on the paper, not the ink,
+            // which is light on a dark screen.
+            p.solid(&.{p.rr(4, 28, 92, 72, 6)}, .paper, .{ .no_gloss = true });
+            p.fill(p.rr(14, 42, 58, 58, 3), .{ .colour = shapes.tones(.iron).base });
+            p.solid(&.{ p.rr(67, 14, 75, 86, 0), p.rr(59, 14, 83, 21, 0), p.rr(59, 79, 83, 86, 0) }, .blue, .{ .flat = true, .no_shadow = true });
+        },
+        command.CMD_DELETE => {
+            // The bin narrowing downward, its ribs, the lid and its handle.
+            p.solid(&.{p.poly(&.{ .{ 18, 30 }, .{ 82, 30 }, .{ 75, 95 }, .{ 25, 95 } })}, .metal, .{});
+            if (p.detail) {
+                const rib = shapes.Paint{ .colour = shapes.tones(.metal).dark };
+                p.fill(p.poly(&shapes.bar(35, 42, 38, 84, 5)), rib);
+                p.fill(p.poly(&shapes.bar(50, 42, 50, 84, 5)), rib);
+                p.fill(p.poly(&shapes.bar(65, 42, 62, 84, 5)), rib);
+            }
+            p.solid(&.{p.rr(37, 5, 63, 21, 5)}, .iron, .{ .no_gloss = true });
+            p.solid(&.{p.rr(10, 15, 90, 29, 4)}, .metal, .{});
+        },
+        command.CMD_INFORMATION => {
+            p.solid(&.{p.disc(50, 50, 45)}, .blue, .{});
+            const white = shapes.Paint{ .colour = shapes.white };
+            p.fill(p.disc(50, 26, 8), white);
+            p.fill(p.rr(43, 40, 57, 78, 0), white);
+            if (p.detail) {
+                p.fill(p.rr(36, 40, 57, 47, 0), white);
+                p.fill(p.rr(36, 71, 64, 78, 0), white);
+            }
+        },
+        command.CMD_UPDATE => p.solid(&.{
+            p.ring(50, 50, 40, 26, 30, 150),
+            p.poly(&update_heads[0]),
+            p.ring(50, 50, 40, 26, 210, 330),
+            p.poly(&update_heads[1]),
+        }, .green, .{}),
+        command.CMD_VIEW_ICONS => {
+            // Each a tile and its name under it, drawers and files.
+            for ([_][2]f32{ .{ 6, 6 }, .{ 56, 6 }, .{ 6, 56 }, .{ 56, 56 } }, 0..) |at, i| {
+                p.solid(&.{p.rr(at[0] + 5, at[1], at[0] + 33, at[1] + 28, 4)}, if (i == 0 or i == 3) .yellow else .blue, .{});
+                p.ink(&.{p.rr(at[0], at[1] + 32, at[0] + 38, at[1] + 38, 2)});
+            }
+        },
+        command.CMD_VIEW_LIST => {
+            for ([_]f32{ 10, 40, 70 }, [_]f32{ 94, 76, 86 }, 0..) |y, end, i| {
+                p.solid(&.{p.rr(6, y, 26, y + 20, 3)}, if (i == 0) .yellow else .blue, .{ .no_gloss = true });
+                p.ink(&.{p.rr(34, y + 6, end, y + 14, 3)});
+            }
+        },
+        command.CMD_VIEW_DATE => {
+            // The page, its top, the two rings, and the days as a grid.
+            p.solid(&.{p.rr(8, 14, 92, 94, 6)}, .paper, .{ .no_gloss = true });
+            p.solid(&.{p.rr(8, 14, 92, 38, 6)}, .red, .{ .no_shadow = true, .no_gloss = true });
+            p.solid(&.{ p.rr(26, 4, 36, 26, 4), p.rr(64, 4, 74, 26, 4) }, .iron, .{ .no_shadow = true, .no_gloss = true });
+            if (p.detail) {
+                const day = shapes.Paint{ .colour = shapes.tones(.iron).light };
+                for ([_]f32{ 48, 63, 78 }) |y| {
+                    for ([_]f32{ 18, 34, 50, 66 }) |x| p.fill(p.rr(x, y, x + 10, y + 9, 1), day);
+                }
+            }
+        },
+        command.CMD_VIEW_SIZE => p.solid(&.{
+            p.rr(6, 62, 30, 92, 3),
+            p.rr(38, 38, 62, 92, 3),
+            p.rr(70, 10, 94, 92, 3),
+        }, .blue, .{}),
+        command.CMD_ALL_FILES => {
+            // A plain sheet, and the eye: its white, the iris, the pupil
+            // and a glint.
+            sheet(p, 8, 4, 64, 74, 14, null);
+            p.solid(&.{p.poly(&eye)}, .paper, .{ .no_gloss = true });
+            p.solid(&.{p.disc(62, 68, 14)}, .blue, .{ .no_shadow = true, .no_gloss = true });
+            p.fill(p.disc(62, 68, 6), .{ .colour = shapes.tones(.iron).dark });
+            if (p.detail) p.fill(p.disc(57, 63, 3), .{ .colour = shapes.white });
+        },
+        command.CMD_CLEAN_UP => {
+            // The handle, the band round the bristles' top, the bristles.
+            p.solid(&.{p.poly(&shapes.bar(84, 6, 50, 52, 10))}, .brown, .{});
+            p.solid(&.{p.poly(&.{ .{ 30, 52 }, .{ 62, 52 }, .{ 92, 94 }, .{ 8, 94 } })}, .yellow, .{});
+            p.solid(&.{p.rr(28, 46, 64, 56, 3)}, .red, .{ .no_shadow = true, .no_gloss = true });
+            if (p.detail) {
+                const straw = shapes.Paint{ .colour = shapes.tones(.yellow).dark };
+                p.fill(p.poly(&shapes.bar(38, 60, 28, 92, 3)), straw);
+                p.fill(p.poly(&shapes.bar(50, 60, 50, 92, 3)), straw);
+                p.fill(p.poly(&shapes.bar(62, 60, 72, 92, 3)), straw);
+            }
+        },
+        command.CMD_SNAP_GRID => {
+            // The grid behind, then the magnet: its bow, its arms, and
+            // the bare ends that hold.
+            var dots: [9]Shape = undefined;
+            for (0..9) |i| {
+                const x = 14 + @as(f32, @floatFromInt(i % 3)) * 36;
+                const y = 14 + @as(f32, @floatFromInt(i / 3)) * 36;
+                dots[i] = p.rr(x - 4, y - 4, x + 4, y + 4, 4);
+            }
+            p.ink(&dots);
+            p.solid(&.{ p.ring(50, 54, 32, 14, 180, 360), p.rr(18, 20, 36, 54, 0), p.rr(64, 20, 82, 54, 0) }, .red, .{});
+            p.solid(&.{ p.rr(18, 8, 36, 22, 0), p.rr(64, 8, 82, 22, 0) }, .metal, .{ .no_shadow = true });
+        },
+        command.CMD_SNAPSHOT => {
+            // The top with the button, the body, the lens and its glass,
+            // and the lamp.
+            p.solid(&.{ p.rr(30, 16, 62, 34, 4), p.rr(70, 20, 84, 30, 2) }, .iron, .{ .no_gloss = true });
+            p.solid(&.{p.rr(6, 28, 94, 86, 8)}, .iron, .{});
+            p.solid(&.{p.ring(50, 57, 22, 14, 0, 360)}, .metal, .{ .no_shadow = true });
+            p.fill(p.disc(50, 57, 14), .{ .colour = shapes.tones(.blue).base });
+            if (p.detail) {
+                p.fill(p.disc(45, 52, 4), .{ .colour = 0xCCFF_FFFF });
+                p.solid(&.{p.rr(14, 36, 24, 44, 2)}, .yellow, .{ .no_shadow = true, .no_gloss = true });
+            }
+        },
+        command.CMD_BACK => back(p),
+        command.CMD_FORWARD => {
+            p.mirror = true;
+            defer p.mirror = false;
+            back(p);
+        },
+        command.CMD_SHELL => {
+            // The console's window, its prompt and the cursor after it,
+            // light on the dark whatever the screen's pens are.
+            p.solid(&.{p.rr(4, 10, 96, 90, 7)}, .iron, .{});
+            const prompt = shapes.Paint{ .colour = shapes.tones(.green).light };
+            p.fill(p.poly(&.{ .{ 16, 30 }, .{ 28, 30 }, .{ 46, 50 }, .{ 28, 70 }, .{ 16, 70 }, .{ 34, 50 } }), prompt);
+            p.fill(p.rr(52, 62, 76, 70, 1), prompt);
+        },
         // The box's top and left edge, and the arrow out of its corner,
         // its head filling the opposite one.
         command.CMD_LAUNCHER => p.ink(&.{
@@ -212,6 +346,59 @@ pub fn draw(p: *Painter, glyph: u32) void {
         else => {},
     }
 }
+
+/// A closed folder from (`x0`, `y0`) to (`x1`, `y1`): its back, shaded as
+/// an open one's is, with the tab at its top left, and its front over it.
+fn folder(p: *Painter, x0: f32, y0: f32, x1: f32, y1: f32) void {
+    const tab = (x1 - x0) * 0.34;
+    const step = (y1 - y0) * 0.12;
+    p.solid(&.{p.poly(&.{ .{ x0, y0 }, .{ x0 + tab, y0 }, .{ x0 + tab + step, y0 + step }, .{ x1, y0 + step }, .{ x1, y1 }, .{ x0, y1 } })}, .yellow, .{ .shade = true, .no_gloss = true });
+    p.solid(&.{p.rr(x0, y0 + step * 2, x1, y1, 3)}, .yellow, .{});
+}
+
+/// The arrow pointing back, to the left: its head and its shaft.
+fn back(p: *Painter) void {
+    p.solid(&.{ p.poly(&.{ .{ 6, 50 }, .{ 46, 12 }, .{ 46, 88 } }), p.rr(40, 36, 94, 64, 3) }, .blue, .{});
+}
+
+/// The heads of Update's two arrows, each at the end of its band,
+/// pointing on round clockwise.
+const update_heads = [2][3][2]f32{ head(50, 50, 40, 26, 30, -36, 9), head(50, 50, 40, 26, 210, -36, 9) };
+
+/// An arrow's head at the end of a ring's band round (`cx`, `cy`), from
+/// `inner` out to `outer`: its base across the band at `angle` degrees,
+/// `spread` past it on both sides, its point on the band's middle `ahead`
+/// degrees on - anticlockwise, or clockwise when negative.
+fn head(cx: f32, cy: f32, outer: f32, inner: f32, angle: f32, ahead: f32, spread: f32) [3][2]f32 {
+    const radians = 3.14159265 / 180.0;
+    const base = angle * radians;
+    const point = (angle + ahead) * radians;
+    const middle = (outer + inner) / 2;
+    return .{
+        .{ cx + (inner - spread) * @cos(base), cy - (inner - spread) * @sin(base) },
+        .{ cx + (outer + spread) * @cos(base), cy - (outer + spread) * @sin(base) },
+        .{ cx + middle * @cos(point), cy - middle * @sin(point) },
+    };
+}
+
+/// All Files' eye round (62, 68): two bows meeting in points at its
+/// corners, 34 to each side and 20 up and down.
+const eye = blk: {
+    const cx = 62.0;
+    const cy = 68.0;
+    const half = 34.0;
+    const rise = 20.0;
+    var out: [14][2]f32 = undefined;
+    out[0] = .{ cx - half, cy };
+    out[7] = .{ cx + half, cy };
+    for (0..6) |i| {
+        const t = (@as(f32, @floatFromInt(i)) + 1) / 7 * 2 - 1;
+        const y = rise * (1 - t * t);
+        out[1 + i] = .{ cx + t * half, cy - y };
+        out[13 - i] = .{ cx + t * half, cy + y };
+    }
+    break :blk out;
+};
 
 /// The arrow turning back: most of a ring and its head.
 fn undo(p: *Painter) void {

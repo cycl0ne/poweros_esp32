@@ -16,7 +16,10 @@
 //! screen's background. Since 1.3 there are the pictures a spreadsheet's
 //! ribbon has besides: a number's format, a percent, money, a decimal
 //! more and fewer, fill and clear. Since 1.4 a text editor's: line
-//! numbers, highlighting, replace and select all.
+//! numbers, highlighting, replace and select all. Since 1.6 a file
+//! manager's: the parent, a new drawer, rename, delete, information,
+//! update, the views (icons, a list, by date, by size), all files, clean
+//! up, snap to the grid, snapshot, back and forward, and a shell.
 //!
 //! `IM_DRAWFRAME` draws the picture in the largest square that fits the
 //! box, in its middle; `IM_DRAW` in the image's own box, 24 by 24 unless
@@ -130,5 +133,50 @@ pub const CMD_REPLACE: u32 = 37;
 /// Lines of text, picked out in light blue, inside a frame of blue
 /// dashes: all of it selected. Since 1.4.
 pub const CMD_SELECT_ALL: u32 = 38;
+/// A closed yellow folder and a blue arrow up out of it: the drawer one
+/// level up. Since 1.6.
+pub const CMD_PARENT: u32 = 39;
+/// A closed yellow folder and a green plus. Since 1.6.
+pub const CMD_NEW_DRAWER: u32 = 40;
+/// A name's field, its text dark, and a blue text cursor after it.
+/// Since 1.6.
+pub const CMD_RENAME: u32 = 41;
+/// A bin, its lid and the lid's handle, ribbed. Since 1.6.
+pub const CMD_DELETE: u32 = 42;
+/// A blue disc with a white `i`. Since 1.6.
+pub const CMD_INFORMATION: u32 = 43;
+/// Two green arrows chasing each other round, clockwise: shown anew.
+/// Since 1.6.
+pub const CMD_UPDATE: u32 = 44;
+/// Four icons, each a tile with its name in the ink under it: things
+/// viewed as icons. Since 1.6.
+pub const CMD_VIEW_ICONS: u32 = 45;
+/// Three rows, each a small tile and a name in the ink beside it: things
+/// viewed as a list. Since 1.6.
+pub const CMD_VIEW_LIST: u32 = 46;
+/// A calendar's page, its top red with the rings it hangs from: things
+/// ordered by date. Since 1.6.
+pub const CMD_VIEW_DATE: u32 = 47;
+/// Three blue bars, low to high, standing on one line: things ordered
+/// by size. Since 1.6.
+pub const CMD_VIEW_SIZE: u32 = 48;
+/// A sheet of paper and an eye before it: every file shown, an icon of
+/// its own or not. Since 1.6.
+pub const CMD_ALL_FILES: u32 = 49;
+/// A broom, its handle brown and its bristles yellow: things put in
+/// order. Since 1.6.
+pub const CMD_CLEAN_UP: u32 = 50;
+/// A red magnet over a grid of dots in the ink: things put on the grid.
+/// Since 1.6.
+pub const CMD_SNAP_GRID: u32 = 51;
+/// A camera, its lens blue: where things are, kept. Since 1.6.
+pub const CMD_SNAPSHOT: u32 = 52;
+/// A blue arrow pointing left: back to where one was. Since 1.6.
+pub const CMD_BACK: u32 = 53;
+/// The same pointing right: on again. Since 1.6.
+pub const CMD_FORWARD: u32 = 54;
+/// A console: a dark window, a green prompt and the cursor after it.
+/// Since 1.6.
+pub const CMD_SHELL: u32 = 55;
 /// The last picture there is.
-pub const CMD_LAST: u32 = CMD_SELECT_ALL;
+pub const CMD_LAST: u32 = CMD_SHELL;
