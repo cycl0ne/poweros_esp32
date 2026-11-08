@@ -75,8 +75,9 @@
 //! `compile` does and hands the steps to `compiler/to_vir.zig`, the port
 //! of Mesa's nir_to_vir.c, whose programs are given registers and
 //! scheduled by Mesa's allocator and scheduler rather than by the plan.
-//! The library does not call it: none of its programs has run on the
-//! board, and the plan's have.
+//! V3DTest's MESA draws the five pictures GENERATED draws with what it
+//! makes, and on the CM5 all five come out as the plan's do, to the
+//! pixel. The library does not call it yet.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -84,6 +85,7 @@ const spirv = sdk.facet.spirv;
 const qpu = @import("qpu.zig");
 const vir = @import("compiler/vir.zig");
 const to_vir = @import("compiler/to_vir.zig");
+const allocate = @import("compiler/allocate.zig");
 
 /// The most ids a module may use. A back end carries its own bound
 /// because its tables are one word an id and it holds them on the heap,
@@ -572,9 +574,22 @@ pub fn compile(work: *Work, words: []const u32) Error!Code {
 }
 
 /// `words` compiled through Mesa's back end rather than the plan: read as
+/// `compileVir` with its working memory taken from `child` for the one
+/// compile and given back at its end, all of it in an arena: the register
+/// sets as well, which Mesa makes once for the device (v3d_compiler_init,
+/// vir.c:535) and which are four classes of 64 registers or fewer here.
+/// What it answers is in `work`, as `compile`'s is.
+pub fn compileThroughMesa(work: *Work, words: []const u32, child: std.mem.Allocator) (Error || std.mem.Allocator.Error)!Code {
+    var arena = std.heap.ArenaAllocator.init(child);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const compiler = allocate.initRegSets(allocator) catch return error.OutOfMemory;
+    return compileVir(work, words, allocator, &compiler);
+}
+
 /// `compile` reads them, then made VIR, given registers, scheduled and
-/// packed as Mesa's v3d_compile does (compiler/to_vir.zig). The library
-/// does not call it yet: no program it makes has run on the board.
+/// packed as Mesa's v3d_compile does (compiler/to_vir.zig). V3DTest's
+/// MESA draws with what it makes; the library does not call it yet.
 /// `compiler` is the register sets (`allocate.initRegSets`), made once
 /// for every compile.
 pub fn compileVir(work: *Work, words: []const u32, allocator: std.mem.Allocator, compiler: *const vir.Compiler) (Error || std.mem.Allocator.Error)!Code {
@@ -2738,7 +2753,6 @@ test "a shader that always drops its pixel is refused as a discard and not as an
 }
 
 const disasm = @import("qpu/disasm.zig");
-const allocate = @import("compiler/allocate.zig");
 
 /// Nine vectors made before any is summed: 44 floats live at once, more
 /// than the 32 registers a 4-threaded program has under Mesa's allocator.
@@ -2876,8 +2890,8 @@ test "through Mesa's back end, a texel times the colour reads the texel's halves
     try testing.expectEqualSlices(Word, &[_]Word{ .texture, .sampler }, code.stream());
     // Mesa's allocator gives 7.1's four threads 32 registers each and
     // goes round them from rf4, where `qpu.registers` keeps the
-    // hand-written programs in 16: which of the two the board's threads
-    // have is for a board run of these programs to settle.
+    // hand-written programs in 16. The board has the 32: V3DTest MESA
+    // draws this program at four threads with every pixel right.
     try testing.expectEqual(@as(u32, 28), code.registers);
     try testing.expect(code.registers > qpu.registers);
     try expectText(code, &.{
@@ -2969,4 +2983,77 @@ test "through Mesa's back end, a program compiled twice from the one work is the
     _ = try throughMesa(&work, Smooth.words);
     const second = try throughMesa(&work, Modulated.words);
     try testing.expectEqualSlices(u64, kept[0..length], second.words);
+}
+
+test "through Mesa's back end, a vector times a varying scalar is fourteen instructions, in more registers than the plan keeps to" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, Dimmed.words);
+    try testing.expectEqual(@as(u32, 5), code.varyings);
+    try testing.expectEqual(@as(usize, 0), code.stream().len);
+    try testing.expectEqual(@as(u8, 4), code.threads);
+    try testing.expect(code.center_w);
+    try testing.expect(!code.lock_scoreboard_on_first_thrsw);
+    // Past `qpu.registers` and within the 32 Mesa gives four threads.
+    try testing.expectEqual(@as(u32, 23), code.registers);
+    try expectText(code, &.{
+        text("nop", "nop", "ldvary.rf4"),
+        text("nop", "fmul rf5, rf4, rf3", "ldvary.rf7"),
+        text("fadd rf6, rf0, rf5", "fmul rf8, rf7, rf3", "ldvary.rf10"),
+        text("fadd rf9, rf0, rf8", "fmul rf11, rf10, rf3", "ldvary.rf13"),
+        text("fadd rf12, rf0, rf11", "fmul rf14, rf13, rf3", "thrsw; ldvary.rf16"),
+        text("fadd rf15, rf0, rf14", "fmul rf17, rf16, rf3", "thrsw"),
+        text("fadd rf18, rf0, rf17", "nop", ""),
+        text("nop", "fmul rf19, rf6, rf18", ""),
+        text("nop", "fmul rf20, rf9, rf18", ""),
+        text("vfpack tlb, rf19, rf20", "fmul rf21, rf12, rf18", ""),
+        text("nop", "fmul rf22, rf15, rf18", ""),
+        text("vfpack tlb, rf21, rf22", "nop", "thrsw"),
+        text("nop", "nop", ""),
+        text("nop", "nop", ""),
+    });
+}
+
+/// V3DTest's colour of its own (c/test/v3d/fragments.zig), which its MESA
+/// draws.
+const Quarters = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        b.color(b.constant(.{ 0.25, 0.5, 0.75, 1 }));
+    }
+});
+
+test "through Mesa's back end, four constants are two uniforms of halves, packed as it compiles" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, Quarters.words);
+    try testing.expectEqual(@as(u32, 0), code.varyings);
+    try testing.expect(!code.center_w);
+    // 0.25 and 0.5 as halves, 0x3400 and 0x3800; 0.75 and 1, 0x3a00 and
+    // 0x3c00.
+    try testing.expectEqualSlices(Word, &.{ .{ .float = @bitCast(@as(u32, 0x3800_3400)) }, .{ .float = @bitCast(@as(u32, 0x3c00_3a00)) } }, code.stream());
+    try expectText(code, &.{
+        text("nop", "nop", "thrsw"),
+        text("nop", "nop", "thrsw"),
+        text("nop", "nop", "ldunifrf.rf4"),
+        text("nop", "mov tlb, rf4", "thrsw; ldunifrf.rf5"),
+        text("nop", "mov tlb, rf5", ""),
+        text("nop", "nop", ""),
+    });
+}
+
+test "compileThroughMesa makes what compileVir does, its memory given back" {
+    // `testing.allocator` under the arena says whether every block of it
+    // went back.
+    inline for (.{ Smooth.words, Dimmed.words, Quarters.words, Textured.words, Modulated.words }) |words| {
+        var work: Work = .{};
+        const once = try throughMesa(&work, words);
+        const kept = try testing.allocator.dupe(u64, once.words);
+        defer testing.allocator.free(kept);
+        var second: Work = .{};
+        const code = try compileThroughMesa(&second, words, testing.allocator);
+        try testing.expectEqualSlices(u64, kept, code.words);
+        try testing.expectEqual(once.threads, code.threads);
+        try testing.expectEqual(once.uniform_count, code.uniform_count);
+    }
+    // And a refusal gives back the register sets it was made after.
+    var work: Work = .{};
+    try testing.expectError(Error.Refused, compileThroughMesa(&work, Cutout.words, testing.allocator));
 }

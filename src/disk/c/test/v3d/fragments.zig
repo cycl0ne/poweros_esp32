@@ -218,6 +218,9 @@ pub const Scene = struct {
             .coordinate = scene.program(pass),
             .coordinate_uniforms = uniforms,
             .varyings = varyings,
+            .fragment_threads = how.fragment.threads,
+            .center_w = how.fragment.center_w,
+            .lock_scoreboard_on_first_thrsw = how.fragment.lock_scoreboard_on_first_thrsw,
         });
         const vertex_stride: u32 = @sizeOf(Vertex);
         cl.attribute(&list, vertices, 4, 4, 0, vertex_stride);
@@ -865,8 +868,11 @@ const Modulated = ir.Fragment(struct {
 /// knows what they are. A program that wants them where the caller has
 /// none is not drawn with a stream it cannot read - it is refused here,
 /// as a program the back end would not compile is.
-fn compiled(work: *compile.Work, words: []const u32, stream: *[compile.most_uniforms]u32, tmu: ?[2]u32) ?struct { qpu.Fragment, []const u32 } {
-    const code = compile.compile(work, words) catch return null;
+fn compiled(back: Back, work: *compile.Work, words: []const u32, stream: *[compile.most_uniforms]u32, tmu: ?[2]u32) ?struct { qpu.Fragment, []const u32 } {
+    const code = switch (back) {
+        .plan => compile.compile(work, words),
+        .mesa => |sys| compile.compileThroughMesa(work, words, v3d.heap.of(sys)),
+    } catch return null;
     for (code.stream(), 0..) |word, k| stream[k] = switch (word) {
         .float => |each| @bitCast(each),
         // The texture's state, as the first `wrtmuc` takes it, and the
@@ -876,9 +882,48 @@ fn compiled(work: *compile.Work, words: []const u32, stream: *[compile.most_unif
         .sampler => (tmu orelse return null)[1],
     };
     return .{
-        .{ .code = code.words, .varyings = code.varyings, .uniforms = code.uniform_count },
+        .{
+            .code = code.words,
+            .varyings = code.varyings,
+            .uniforms = code.uniform_count,
+            .threads = code.threads,
+            .center_w = code.center_w,
+            .lock_scoreboard_on_first_thrsw = code.lock_scoreboard_on_first_thrsw,
+        },
         stream[0..code.uniform_count],
     };
+}
+
+/// Which back end compiles: the plan's, which `compile.compile` is, or the
+/// one ported from Mesa (`compile.compileThroughMesa`), whose working
+/// memory is the task's.
+pub const Back = union(enum) {
+    plan,
+    mesa: *ExecBase,
+
+    /// What a picture is called in the report: the plan's are
+    /// "generated", as they were before there was a second back end.
+    fn named(back: Back, comptime what: []const u8) [*:0]const u8 {
+        return switch (back) {
+            .plan => "generated " ++ what,
+            .mesa => "mesa " ++ what,
+        };
+    }
+};
+
+/// What Mesa's back end made, said before it is run: the host tests pin
+/// its words, and a board that compiled something else says so here
+/// rather than by a renderer that does not finish.
+fn said(scene: *const Scene, back: Back, comptime what: []const u8, fragment: qpu.Fragment, uniforms: []const u32) void {
+    if (back == .plan) return;
+    _ = Printf(scene.dl, "%s: %ld instructions, %ld threads, %ld uniforms, centre W %ld, scoreboard on the first switch %ld\n", .{
+        back.named(what),
+        @as(u64, fragment.code.len),
+        @as(u64, fragment.threads),
+        @as(u64, uniforms.len),
+        @as(u64, @intFromBool(fragment.center_w)),
+        @as(u64, @intFromBool(fragment.lock_scoreboard_on_first_thrsw)),
+    });
 }
 
 /// Where two programs of the same length first differ, or null where they
@@ -896,7 +941,12 @@ fn differingAt(made: []const u64, want: []const u64) ?u32 {
 /// command of its own rather than a pipeline on purpose: a program that
 /// hangs the renderer here costs a reboot, and one that hangs it inside
 /// the library costs the display.
-pub fn generatedTest(scene: *Scene, sys: *ExecBase) i32 {
+///
+/// With `back` Mesa's, the same five pictures from the code Mesa's back
+/// end makes of the same words: the host tests pin that code, so what is
+/// held to the programs written by hand here is held to them only for
+/// the plan's, and the pictures are checked the same for both.
+pub fn generatedTest(scene: *Scene, sys: *ExecBase, back: Back) i32 {
     const memory = sys.AllocVec(@sizeOf(compile.Work), exec.MEMF_CLEAR) orelse {
         _ = Printf(scene.dl, "No memory for the compiler\n", .{});
         return dos.RETURN_FAIL;
@@ -909,11 +959,12 @@ pub fn generatedTest(scene: *Scene, sys: *ExecBase) i32 {
     // The interpolated colour, over the same triangle `smoothTest` draws:
     // three colours mixed as w has them.
     {
-        const fragment, const uniforms = compiled(work, Interpolated.words, &stream, null) orelse {
-            _ = Printf(scene.dl, "generated smooth: the back end would not compile it\n", .{});
+        const fragment, const uniforms = compiled(back, work, Interpolated.words, &stream, null) orelse {
+            _ = Printf(scene.dl, "%s: the back end would not compile it\n", .{back.named("smooth")});
             return dos.RETURN_FAIL;
         };
-        if (fragment.code.len != qpu.color_fragment.code.len) {
+        said(scene, back, "smooth", fragment, uniforms);
+        if (back == .plan and fragment.code.len != qpu.color_fragment.code.len) {
             _ = Printf(scene.dl, "generated smooth: %ld instructions, not the %ld of the one written by hand\n", .{ @as(u64, fragment.code.len), @as(u64, qpu.color_fragment.code.len) });
             return dos.RETURN_FAIL;
         }
@@ -938,16 +989,19 @@ pub fn generatedTest(scene: *Scene, sys: *ExecBase) i32 {
                 tally.check(x, y, scene.pixel(x, y), backdrop, 0);
             }
         };
-        worst = @max(worst, tally.report(scene.dl, "generated smooth", scene.took_us));
+        worst = @max(worst, tally.report(scene.dl, back.named("smooth"), scene.took_us));
     }
 
     // A colour of its own: four uniforms read, packed and written out.
     {
-        const fragment, const uniforms = compiled(work, OwnColour.words, &stream, null) orelse {
-            _ = Printf(scene.dl, "generated flat: the back end would not compile it\n", .{});
+        const fragment, const uniforms = compiled(back, work, OwnColour.words, &stream, null) orelse {
+            _ = Printf(scene.dl, "%s: the back end would not compile it\n", .{back.named("flat")});
             return dos.RETURN_FAIL;
         };
-        if (uniforms.len != 4) {
+        said(scene, back, "flat", fragment, uniforms);
+        // Mesa's packs the four into halves as it compiles (opt.zig's
+        // constant ALU), so it reads fewer.
+        if (back == .plan and uniforms.len != 4) {
             _ = Printf(scene.dl, "generated flat: %ld uniforms, not four\n", .{@as(u64, uniforms.len)});
             return dos.RETURN_FAIL;
         }
@@ -974,18 +1028,19 @@ pub fn generatedTest(scene: *Scene, sys: *ExecBase) i32 {
                 tally.check(x, y, scene.pixel(x, y), backdrop, 0);
             }
         };
-        worst = @max(worst, tally.report(scene.dl, "generated flat", scene.took_us));
+        worst = @max(worst, tally.report(scene.dl, back.named("flat"), scene.took_us));
     }
 
     // A vector times a scalar: five varyings, and the light each corner
     // carries dimming the colour it carries.
     {
-        const fragment, const uniforms = compiled(work, Dimmed.words, &stream, null) orelse {
-            _ = Printf(scene.dl, "generated scaled: the back end would not compile it\n", .{});
+        const fragment, const uniforms = compiled(back, work, Dimmed.words, &stream, null) orelse {
+            _ = Printf(scene.dl, "%s: the back end would not compile it\n", .{back.named("scaled")});
             return dos.RETURN_FAIL;
         };
+        said(scene, back, "scaled", fragment, uniforms);
         if (fragment.varyings != 5) {
-            _ = Printf(scene.dl, "generated scaled: %ld varyings, not five\n", .{@as(u64, fragment.varyings)});
+            _ = Printf(scene.dl, "%s: %ld varyings, not five\n", .{ back.named("scaled"), @as(u64, fragment.varyings) });
             return dos.RETURN_FAIL;
         }
         const corners = [3]Vertex{
@@ -1010,7 +1065,7 @@ pub fn generatedTest(scene: *Scene, sys: *ExecBase) i32 {
                 tally.check(x, y, scene.pixel(x, y), backdrop, 0);
             }
         };
-        worst = @max(worst, tally.report(scene.dl, "generated scaled", scene.took_us));
+        worst = @max(worst, tally.report(scene.dl, back.named("scaled"), scene.took_us));
     }
 
     // A texture drawn one texel to a pixel, as `textureTest` draws it with
@@ -1031,22 +1086,23 @@ pub fn generatedTest(scene: *Scene, sys: *ExecBase) i32 {
         // wants, which is what `compiled` has been given them for.
         scene.begin(.{});
         const tmu = sampling(scene, &picture, .nearest, .repeat);
-        const fragment, const uniforms = compiled(work, Textured.words, &stream, tmu) orelse {
-            _ = Printf(scene.dl, "generated textured: the back end would not compile it\n", .{});
+        const fragment, const uniforms = compiled(back, work, Textured.words, &stream, tmu) orelse {
+            _ = Printf(scene.dl, "%s: the back end would not compile it\n", .{back.named("textured")});
             return dos.RETURN_FAIL;
         };
+        said(scene, back, "textured", fragment, uniforms);
         // The same instructions as the hand-written program, in the same
         // places: only the two registers the texel comes back in differ,
         // which is rf6 and rf7 here because that is what the varyings left
         // free. The host test holds the words themselves to it.
-        if (fragment.code.len != qpu.texture_fragment.code.len) {
+        if (back == .plan and fragment.code.len != qpu.texture_fragment.code.len) {
             _ = Printf(scene.dl, "generated textured: %ld instructions, not the %ld of the one written by hand\n", .{ @as(u64, fragment.code.len), @as(u64, qpu.texture_fragment.code.len) });
             return dos.RETURN_FAIL;
         }
         // Two varyings for the coordinate, and the TMU's two words and
         // nothing else in the stream.
         if (fragment.varyings != 2 or uniforms.len != 2) {
-            _ = Printf(scene.dl, "generated textured: %ld varyings and %ld uniforms, not two and two\n", .{ @as(u64, fragment.varyings), @as(u64, uniforms.len) });
+            _ = Printf(scene.dl, "%s: %ld varyings and %ld uniforms, not two and two\n", .{ back.named("textured"), @as(u64, fragment.varyings), @as(u64, uniforms.len) });
             return dos.RETURN_FAIL;
         }
         scene.draw(.{ .fragment = fragment, .uniforms = uniforms, .vertices = &corners });
@@ -1057,7 +1113,7 @@ pub fn generatedTest(scene: *Scene, sys: *ExecBase) i32 {
             const y: u32 = @intCast(row);
             tally.check(x, y, scene.pixel(x, y), placeTexel(0, x, y), 0);
         };
-        worst = @max(worst, tally.report(scene.dl, "generated textured", scene.took_us));
+        worst = @max(worst, tally.report(scene.dl, back.named("textured"), scene.took_us));
     }
 
     // That texel times the colour the vertices carry, over the geometry
@@ -1079,25 +1135,27 @@ pub fn generatedTest(scene: *Scene, sys: *ExecBase) i32 {
         rectangle(&corners, 0, 0, @floatFromInt(side), @floatFromInt(side), 0.5, Carry{});
         scene.begin(.{});
         const tmu = sampling(scene, &picture, .nearest, .repeat);
-        const fragment, const uniforms = compiled(work, Modulated.words, &stream, tmu) orelse {
-            _ = Printf(scene.dl, "generated modulated: the back end would not compile it\n", .{});
+        const fragment, const uniforms = compiled(back, work, Modulated.words, &stream, tmu) orelse {
+            _ = Printf(scene.dl, "%s: the back end would not compile it\n", .{back.named("modulated")});
             return dos.RETURN_FAIL;
         };
+        said(scene, back, "modulated", fragment, uniforms);
         // This one is the hand-written program word for word, so it is
         // held to it before it is run: the host test says the same, and a
         // board that disagrees with the host is what this is here to say.
         // A wrong instruction hangs the renderer, so it is said before the
         // draw and not after it.
-        if (fragment.code.len != qpu.texture_color_fragment.code.len) {
+        if (back == .plan and fragment.code.len != qpu.texture_color_fragment.code.len) {
             _ = Printf(scene.dl, "generated modulated: %ld instructions, not the %ld of the one written by hand\n", .{ @as(u64, fragment.code.len), @as(u64, qpu.texture_color_fragment.code.len) });
             return dos.RETURN_FAIL;
         }
-        if (differingAt(fragment.code, qpu.texture_color_fragment.code)) |which| {
+        const differing = if (back == .plan) differingAt(fragment.code, qpu.texture_color_fragment.code) else null;
+        if (differing) |which| {
             _ = Printf(scene.dl, "generated modulated: instruction %ld is %016lx, not the %016lx of the one written by hand\n", .{ @as(u64, which), fragment.code[which], qpu.texture_color_fragment.code[which] });
             return dos.RETURN_FAIL;
         }
         if (fragment.varyings != 6 or uniforms.len != 2) {
-            _ = Printf(scene.dl, "generated modulated: %ld varyings and %ld uniforms, not six and two\n", .{ @as(u64, fragment.varyings), @as(u64, uniforms.len) });
+            _ = Printf(scene.dl, "%s: %ld varyings and %ld uniforms, not six and two\n", .{ back.named("modulated"), @as(u64, fragment.varyings), @as(u64, uniforms.len) });
             return dos.RETURN_FAIL;
         }
         scene.draw(.{ .fragment = fragment, .uniforms = uniforms, .vertices = &corners });
@@ -1111,7 +1169,7 @@ pub fn generatedTest(scene: *Scene, sys: *ExecBase) i32 {
             const want = rgba(@as(f32, @floatFromInt(x * 4)) / 255 * 0.5, @as(f32, @floatFromInt(y * 4)) / 255, 128.0 / 255.0 * 0.25, 0.75);
             tally.check(x, y, scene.pixel(x, y), want, 2);
         };
-        worst = @max(worst, tally.report(scene.dl, "generated modulated", scene.took_us));
+        worst = @max(worst, tally.report(scene.dl, back.named("modulated"), scene.took_us));
     }
 
     return worst;

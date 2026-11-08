@@ -237,10 +237,19 @@ pub const Fragment = struct {
     varyings: u32,
     /// The uniforms it reads, one after the other.
     uniforms: u32,
+    /// What the shader record says of it (`cl.Programs`): a program
+    /// written here runs four threads and reads W only for its varyings;
+    /// one Mesa's back end compiled says its own.
+    threads: u8 = 4,
+    center_w: bool = false,
+    lock_scoreboard_on_first_thrsw: bool = false,
 };
 
-/// How many registers a threaded fragment program has. A destination at
-/// or past this is another thread's, on either side of an instruction.
+/// How many registers the programs written here and the plan's keep to
+/// at four threads. The hardware gives each of four threads 32, as
+/// Mesa's allocator has it ("4x has 32", vir_register_allocate.c:1583)
+/// and as programs of 23 and 28 from it draw on the CM5 (V3DTest MESA);
+/// 16 is what these were written for, and what the plan is held to.
 pub const registers = 16;
 
 /// W, as the hardware hands it to a fragment. rf0 to rf2 are the

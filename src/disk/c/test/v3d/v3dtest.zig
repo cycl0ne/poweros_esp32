@@ -3,7 +3,7 @@
 //!
 //!   V3DTest UP/S,CLEAR/S,TRIANGLE/S,OVERFLOW/S,FAULT/S,CLOCK/S,SMOOTH/S,CLIP/S,
 //!           TEXTURE/S,MIP/S,FILTER/S,MODULATE/S,DEPTH/S,BLEND/S,AREA/S,INSIDE/S,
-//!           GENERATED/S
+//!           GENERATED/S,MESA/S
 //!
 //! Alone it asks only what is safe with the core off: the firmware's clock
 //! and the power manager's reset word. UP switches the core on and prints
@@ -19,7 +19,10 @@
 //! a pipeline has, each picture checked against the sum done here
 //! (fragments.zig). GENERATED draws with QPU code the library compiled
 //! from a shader's SPIR-V (driver/v3d/compile.zig) rather than a program
-//! written by hand, and checks those pictures the same way. The core stays on after any of them. Each step is written to the kernel's log before it
+//! written by hand, and checks those pictures the same way. MESA draws
+//! the same pictures with what the back end ported from Mesa makes of the
+//! same SPIR-V (driver/v3d/compiler/), after GENERATED where both are
+//! asked. The core stays on after any of them. Each step is written to the kernel's log before it
 //! is taken, since a read of a register nothing answers halts the machine
 //! and the log is what is left.
 
@@ -37,7 +40,7 @@ pub const COMMAND_NAME = "V3DTest";
 const VERSION_STRING = "\x00$VER: V3DTest 0.2 (30.10.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "UP/S,CLEAR/S,TRIANGLE/S,OVERFLOW/S,FAULT/S,CLOCK/S,SMOOTH/S,CLIP/S,TEXTURE/S,MIP/S,FILTER/S,MODULATE/S,DEPTH/S,BLEND/S,AREA/S,INSIDE/S,GENERATED/S";
+const template = "UP/S,CLEAR/S,TRIANGLE/S,OVERFLOW/S,FAULT/S,CLOCK/S,SMOOTH/S,CLIP/S,TEXTURE/S,MIP/S,FILTER/S,MODULATE/S,DEPTH/S,BLEND/S,AREA/S,INSIDE/S,GENERATED/S,MESA/S";
 
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
     _ = args;
@@ -46,7 +49,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(lib);
     const dl: *DosBase = @ptrCast(lib);
 
-    var argv: [17]usize = @splat(0);
+    var argv: [18]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
@@ -139,7 +142,14 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     // nobody wrote by hand.
     if (argv[6 + tests.len] != 0) {
         step(sys, "the generated programs");
-        const result = fragments.generatedTest(&scene, sys);
+        const result = fragments.generatedTest(&scene, sys, .plan);
+        if (result == dos.RETURN_FAIL) return result;
+        worst = @max(worst, result);
+    }
+    // After them, because Mesa's back end is the newer of the two.
+    if (argv[7 + tests.len] != 0) {
+        step(sys, "the programs Mesa's back end compiled");
+        const result = fragments.generatedTest(&scene, sys, .{ .mesa = sys });
         if (result == dos.RETURN_FAIL) return result;
         worst = @max(worst, result);
     }

@@ -453,6 +453,16 @@ pub const Programs = struct {
     coordinate: u32,
     coordinate_uniforms: u32,
     varyings: u32,
+    /// What the fragment program says of itself, as v3dv's
+    /// pack_shader_state_record has it from the compiler's prog data
+    /// (v3dvx_pipeline.c:461-487, 554-562). The defaults are what the
+    /// programs written by hand need (qpu.zig).
+    fragment_threads: u8 = 4,
+    /// It reads W at the pixel's centre other than for a varying.
+    center_w: bool = false,
+    /// Its first thread switch, and not its last, is where it waits on
+    /// the scoreboard.
+    lock_scoreboard_on_first_thrsw: bool = false,
 };
 
 /// Values a program writes: its segment's size in sectors of 8.
@@ -460,8 +470,10 @@ const coordinate_values: u32 = 6;
 
 pub fn shaderRecord(list: *List, programs: Programs) void {
     const clipping: u32 = 1 << 1;
+    const center_w: u32 = @as(u32, @intFromBool(programs.center_w)) << 15;
+    const scoreboard_on_first: u32 = @as(u32, @intFromBool(programs.lock_scoreboard_on_first_thrsw)) << 20;
     const no_implicit_varyings: u32 = 1 << 21;
-    list.word(clipping | no_implicit_varyings | programs.varyings << 24);
+    list.word(clipping | center_w | scoreboard_on_first | no_implicit_varyings | programs.varyings << 24);
     // Size in sectors, the input's 0 for sharing the output's, and 1 less
     // than the 1 required in play.
     const coordinate_sectors = (coordinate_values + 7) / 8;
@@ -469,8 +481,12 @@ pub fn shaderRecord(list: *List, programs: Programs) void {
     list.word(coordinate_sectors | vertex_sectors << 16);
     const threadable: u32 = 1 << 0;
     const final_section: u32 = 1 << 1;
-    // A fragment program never starts in its last section: see qpu.zig.
-    list.word(programs.fragment | threadable);
+    // A fragment program never starts in its last section: see qpu.zig,
+    // and Mesa's single_seg, which is !last_thrsw (vir.c:1041), where a
+    // fragment program always has one (vir_emit_last_thrsw). It is
+    // threadable four ways only where it was compiled for four threads.
+    const four_ways: u32 = @intFromBool(programs.fragment_threads == 4);
+    list.word(programs.fragment | four_ways * threadable);
     list.word(programs.fragment_uniforms);
     list.word(programs.vertex | threadable | final_section);
     list.word(programs.vertex_uniforms);
@@ -541,4 +557,34 @@ test "the shader record and an attribute are the size the hardware reads" {
     try std.testing.expectEqual(@as(u32, 16), list.used);
     // Vec size 4 as 0, the int type, read as int, 2 and 4 values read.
     try std.testing.expectEqual(@as(u32, 0b0100_0010_1001_1000), std.mem.readInt(u32, memory[4..8], .little));
+}
+
+test "a program compiled through Mesa's back end says its threads, its W and its scoreboard" {
+    var memory: [64]u8 = undefined;
+    var list = List{ .at = &memory, .address = 0x2000 };
+    const programs: Programs = .{
+        .fragment = 0x100,
+        .fragment_uniforms = 0x200,
+        .vertex = 0x300,
+        .vertex_uniforms = 0x400,
+        .coordinate = 0x500,
+        .coordinate_uniforms = 0x600,
+        .varyings = 3,
+    };
+    shaderRecord(&list, programs);
+    // As the programs written by hand have it: clipping, no implicit
+    // varyings, and nothing else of the fragment program's.
+    try std.testing.expectEqual(@as(u32, 1 << 1 | 1 << 21 | 3 << 24), std.mem.readInt(u32, memory[0..4], .little));
+
+    var mesa = programs;
+    mesa.fragment_threads = 2;
+    mesa.center_w = true;
+    mesa.lock_scoreboard_on_first_thrsw = true;
+    list.used = 0;
+    shaderRecord(&list, mesa);
+    // The Draw Index record's bits 15 and 20 (v3d_packet.xml, "GL Shader
+    // State Record Draw Index", min_ver 71), and two threads, so not
+    // four-way threadable.
+    try std.testing.expectEqual(@as(u32, 1 << 1 | 1 << 15 | 1 << 20 | 1 << 21 | 3 << 24), std.mem.readInt(u32, memory[0..4], .little));
+    try std.testing.expectEqual(@as(u32, 0x100), std.mem.readInt(u32, memory[8..12], .little));
 }
