@@ -19,20 +19,17 @@ const install = sdk.install;
 const manifest = install.manifest;
 const rule = install.update;
 const prefs = sdk.prefs;
-const shared = @import("_update.zig");
-const source = @import("source.zig");
+const shared = @import("../run/_run.zig");
+const source = @import("../package/_package.zig");
 const Run = shared.Run;
 const Name = shared.Name;
 
 /// Where the system half's files are.
 const volume = "SYS:";
 
-/// What a path's line says is happening to it.
-const row = "  %-7s %s\n";
-
 /// Both lists walked, and the package's left as the machine's own where
 /// anything was written. The return code: 0 for nothing to do, 5 where
-/// something is to be done and CHECK only said so, 20 for a run that
+/// something is to be done and `UPD_Check` only said so, 20 for a run that
 /// could not finish.
 pub fn walk(run: *Run, installed: []const u8, fresh: []const u8) i32 {
     var mine = manifest.Reader.init(installed) catch |err| {
@@ -94,7 +91,7 @@ fn one(run: *Run, path: []const u8, had: ?manifest.Entry, want: ?manifest.Entry,
         .keep => {},
         .make => {
             run.made += 1;
-            shared.say(run, row, .{ "drawer", where.cstr() });
+            shared.row(run, "drawer", where.cstr(), 0);
             if (!run.check and run.dl.CreateDir(where.cstr()) == null) {
                 // One that is there already is no fault; anything else is.
                 if (run.dl.IoErr() != dos.ERROR_OBJECT_EXISTS) return shared.failed(run, where.cstr(), run.dl.IoErr());
@@ -102,8 +99,8 @@ fn one(run: *Run, path: []const u8, had: ?manifest.Entry, want: ?manifest.Entry,
         },
         .write => {
             const entry = want.?;
-            const what = if (had == null) "new" else if (here == .gone) "again" else "newer";
-            shared.say(run, row, .{ what, where.cstr() });
+            const what: [*:0]const u8 = if (had == null) "new" else if (here == .gone) "again" else "newer";
+            shared.row(run, what, where.cstr(), entry.size);
             run.written += 1;
             run.written_bytes += entry.size;
             if (run.check) return dos.RETURN_OK;
@@ -111,11 +108,11 @@ fn one(run: *Run, path: []const u8, had: ?manifest.Entry, want: ?manifest.Entry,
         },
         .kept => {
             run.kept += 1;
-            shared.say(run, row, .{ "kept", where.cstr() });
+            shared.row(run, "kept", where.cstr(), 0);
         },
         .delete => {
             run.deleted += 1;
-            shared.say(run, row, .{ "gone", where.cstr() });
+            shared.row(run, "gone", where.cstr(), 0);
             if (run.check) return dos.RETURN_OK;
             if (!gone.add(part.rest) or !gone.add("\n")) {
                 return shared.fail(run, "no memory for the list of what to delete\n", .{});
@@ -155,13 +152,14 @@ pub fn write(run: *Run, path: []const u8, entry: manifest.Entry, to: Target) ?i3
     // volume, and where it is kept it is renamed rather than deleted.
     if (to.keep) |old| {
         _ = dl.DeleteFile(old);
-        if (dl.Rename(to.where, old)) shared.say(run, row, .{ "kept", old });
+        if (dl.Rename(to.where, old)) shared.row(run, "kept", old, 0);
     } else _ = dl.DeleteFile(to.where);
     if (!dl.Rename(to.part, to.where)) {
         const code = dl.IoErr();
         _ = dl.DeleteFile(to.part);
         return shared.failed(run, to.where, code);
     }
+    shared.wrote(run, to.where, entry.size);
     return null;
 }
 
@@ -179,7 +177,7 @@ fn remove(run: *Run, gone: *shared.Buffer) i32 {
             const code = run.dl.IoErr();
             // Gone already, or a drawer something was put in since: said
             // and the rest goes on.
-            if (code != dos.ERROR_OBJECT_NOT_FOUND) _ = run.dl.PrintFault(code, where.cstr());
+            if (code != dos.ERROR_OBJECT_NOT_FOUND) shared.fault(run, code, where.cstr(), false);
         }
         end = start;
     }
@@ -196,7 +194,7 @@ fn saveList(run: *Run, fresh: []const u8) i32 {
     if (!prefs.save(run.dl, install.installed_manifest, fresh)) {
         return shared.failed(run, install.installed_manifest, run.dl.IoErr());
     }
-    shared.say(run, row, .{ "list", install.installed_manifest });
+    shared.row(run, "list", install.installed_manifest, 0);
     return dos.RETURN_OK;
 }
 

@@ -203,6 +203,7 @@ const modules = [_]Program{
     .{ .disk = "libs/codecs/av1.vcodec", .source = "libs/codecs/av1.zig", .name = "av1.vcodec", .imports = &.{"av1core"} },
     .{ .disk = "libs/codecs/hevc.vcodec", .source = "libs/codecs/hevc.zig", .name = "hevc.vcodec", .imports = &.{"hevccore"} },
     .{ .disk = "libs/filter.library", .source = "libs/filter/filter.zig", .name = "filter.library" },
+    .{ .disk = "libs/update.library", .source = "libs/update/update.zig", .name = "update.library" },
     .{ .disk = "libs/icon.library", .source = "libs/icon/icon.zig", .name = "icon.library" },
     .{ .disk = "libs/anvil.library", .source = "libs/anvil/anvil.zig", .name = "anvil.library" },
     .{ .disk = "libs/tls.library", .source = "libs/tls/tls.zig", .name = "tls.library" },
@@ -323,7 +324,9 @@ const esp_only = [_][]const u8{ "usbotg.device", "sdcard.device", "programs/Dock
 /// x86-64 under UEFI - have and the ESP32s do not: PCI, the command that
 /// lists it, and the USB controllers and SSDs on it. The install, which
 /// puts a system onto a card or an SSD for a machine whose firmware loads
-/// a kernel from a partition - an ESP32's kernel is in its flash. And the
+/// a kernel from a partition - an ESP32's kernel is in its flash - and
+/// update.library and C:Update, which bring such a system up to date
+/// from a package. And the
 /// dock in SYS:WBStartup, started with the desktop, the test of a chip's
 /// video decoder, DTS's module with its large tables, and the video codecs
 /// in software: the ESP32s have neither the room for them on their flash
@@ -331,7 +334,7 @@ const esp_only = [_][]const u8{ "usbotg.device", "sdcard.device", "programs/Dock
 /// chip.vcodec goes with them: it drives videodec.resource, which no
 /// ESP32 has, and carries the parameter-set readers it reads a stream's
 /// colours with - 60 KB for a chip that is not there.
-const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device", "nvme.device", "intelnet.device", "realnet.device", "install", "update", "WBStartup/Dock", "videodec", "dts.acodec", "chip.vcodec", "h264.vcodec", "hevc.vcodec", "vp8.vcodec", "vp9.vcodec", "av1.vcodec" };
+const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device", "nvme.device", "intelnet.device", "realnet.device", "install", "update", "update.library", "WBStartup/Dock", "videodec", "dts.acodec", "chip.vcodec", "h264.vcodec", "hevc.vcodec", "vp8.vcodec", "vp9.vcodec", "av1.vcodec" };
 /// Drivers of what only the Raspberry Pi CM5 has among the AArch64
 /// machines and no other chip does: its radio, a CYW43455 on the
 /// BCM2712's SD host.

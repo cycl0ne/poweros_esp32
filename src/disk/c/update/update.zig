@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
 //! Update: an installed system brought up to date from a release
 //! package, taking from it exactly what differs and leaving what was
-//! changed here alone. Built against the SDK only.
+//! changed here alone. Built against the SDK only; the work is
+//! LIBS:update.library's (`sdk.update`), which SYS:System/Update runs in
+//! a window.
 //!
 //!   Update FROM/K,CHECK/S,BOOT/S,FORCE/S,QUIET/S,CONFIRM/S,RESTART/S
 //!
@@ -64,7 +66,7 @@
 //! loads the kernel it was installed with, and a kernel written before
 //! them would be the one that came up next to files it has never seen.
 //! That partition is found through rdb.library, by the name
-//! `install.prefs` kept, and `boot.zig` has the whole of it: the slot
+//! `install.prefs` kept: the slot
 //! not in use written where the firmware starts from either of a pair,
 //! `autoboot.txt` pointed at it for a single start, and the file being
 //! replaced kept as `<name>.old` where there is no second partition.
@@ -80,36 +82,27 @@
 //! be tried it asks the firmware for that one, this once.
 //!
 //! Before the first file is written the system volume is given a
-//! snapshot (`shared.snapshot`), where it is a file system that keeps
+//! snapshot, where it is a file system that keeps
 //! them: what a system that comes up and is wrong is put back to. There
 //! is one of it and it is made again each run, since a volume is only
 //! ever put back to its newest snapshot.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
-const exec = sdk.exec;
-const http = sdk.http;
-const bsd = sdk.bsdsocket;
 const utility = sdk.utility;
-const install = sdk.install;
-const manifest = install.manifest;
 const prefs = sdk.prefs;
+const update = sdk.update;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const UtilityBase = sdk.interface.utility.UtilityBase;
-const HttpBase = sdk.interface.http.HttpBase;
-const SocketBase = sdk.interface.bsdsocket.SocketBase;
+const UpdateBase = sdk.interface.update.UpdateBase;
+const TagItem = utility.TagItem;
 const Printf = dos.stdio.Printf;
 
-const shared = @import("_update.zig");
-const source = @import("source.zig");
-const compare = @import("compare.zig");
-const boot = @import("boot.zig");
 const auto = @import("auto.zig");
-const Run = shared.Run;
 
-pub const COMMAND_NAME = shared.COMMAND_NAME;
-const VERSION_STRING = "\x00$VER: Update 1.1 (02.11.2026)\r\n";
+pub const COMMAND_NAME = "Update";
+const VERSION_STRING = "\x00$VER: Update 1.2 (08.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FROM/K,CHECK/S,BOOT/S,FORCE/S,QUIET/S,CONFIRM/S,RESTART/S,AUTO/S";
@@ -124,6 +117,24 @@ const arg_auto = 7;
 const arg_count = 8;
 
 const utility_version = 0;
+const update_version = 1;
+
+/// What the command was asked, the libraries it calls, and the run.
+pub const Command = struct {
+    sys: *ExecBase,
+    dl: *DosBase,
+    ub: *UtilityBase,
+    upd: *UpdateBase,
+    run: ?*update.Update = null,
+    check: bool = false,
+    force: bool = false,
+    quiet: bool = false,
+    want_boot: bool = false,
+    restart: bool = false,
+    auto: bool = false,
+    /// What the last walk came to.
+    info: update.UpdateInfo = .{},
+};
 
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
     _ = args;
@@ -139,6 +150,13 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(utility_lib);
     const ub: *UtilityBase = @ptrCast(utility_lib);
 
+    const update_lib = sys.OpenLibrary(update.UPDATENAME, update_version) orelse {
+        _ = Printf(dl, "%s: %s is not there\n", .{ COMMAND_NAME, update.UPDATENAME });
+        return dos.RETURN_FAIL;
+    };
+    defer sys.CloseLibrary(update_lib);
+    const upd: *UpdateBase = @ptrCast(update_lib);
+
     var argv: [arg_count]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
@@ -146,218 +164,156 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     };
     defer dl.FreeArgs(rda);
 
-    var run: Run = .{ .sys = sys, .dl = dl, .ub = ub };
-    run.check = argv[arg_check] != 0;
-    run.force = argv[arg_force] != 0;
-    run.quiet = argv[arg_quiet] != 0;
-    run.want_boot = argv[arg_boot] != 0;
-    run.restart = argv[arg_restart] != 0;
-    run.auto = argv[arg_auto] != 0;
-
-    // What the install left, which says where the files came from and
-    // which board they were built for.
-    var settings: prefs.install.Settings = .{};
-    const left = prefs.loadWhole(sys, dl, prefs.install.ENVARC_FILE);
-    defer if (left) |text| sys.FreeVec(@ptrCast(text.ptr));
-    if (left) |text| {
-        if (prefs.firstLine(text)) |line| {
-            if (prefs.install.parse(ub, line, &settings)) |wrong| {
-                return shared.fail(&run, "%s: %s\n", .{ prefs.install.ENVARC_FILE, wrong });
-            }
-        }
-    }
-
-    run.installed = &settings;
+    var command: Command = .{
+        .sys = sys,
+        .dl = dl,
+        .ub = ub,
+        .upd = upd,
+        .check = argv[arg_check] != 0,
+        .force = argv[arg_force] != 0,
+        .quiet = argv[arg_quiet] != 0,
+        .want_boot = argv[arg_boot] != 0,
+        .restart = argv[arg_restart] != 0,
+        .auto = argv[arg_auto] != 0,
+    };
 
     // CONFIRM is the started system's own step and wants no package: it
     // says the kernel that was tried came up.
     if (argv[arg_confirm] != 0) {
-        const code = boot.confirm(&run);
-        if (code == dos.RETURN_OK and argv[arg_restart] != 0) restart(&run, false);
+        const code = upd.ConfirmUpdate(&[_]TagItem{
+            .{ .tag = update.UPD_Check, .data = @intFromBool(command.check) },
+            .{ .tag = update.UPD_Quiet, .data = @intFromBool(command.quiet) },
+            .{},
+        });
+        if (code == dos.RETURN_OK and command.restart) restart(&command, false);
         return code;
     }
 
-    // What the machine was told to do by itself, which AUTO does and
-    // whose SOURCE is where any run looks when it is told no other.
-    var wanted: prefs.update.Settings = .{};
-    const told = auto.settingsOf(&run, &wanted);
-    if (told == .wrong) return dos.RETURN_FAIL;
-    const asked_for: ?*prefs.update.Settings = switch (told) {
-        .settings => |held| held,
-        else => null,
-    };
-    if (run.auto) {
-        // A machine looks nowhere unless it was told where.
-        const wants = asked_for orelse return dos.RETURN_OK;
+    // What the machine was told to do by itself, which AUTO does.
+    if (command.auto) {
+        var wanted: prefs.update.Settings = .{};
+        const wants = switch (auto.settingsOf(&command, &wanted)) {
+            .wrong => return dos.RETURN_FAIL,
+            // A machine looks nowhere unless it was told where.
+            .none => return dos.RETURN_OK,
+            .settings => |held| held,
+        };
         if (!wants.at_start) return dos.RETURN_OK;
         // A run of its own has no console: what it finds is said, and
         // writing it is asked for unless the file says otherwise.
-        run.check = !wants.apply;
-        run.want_boot = run.want_boot or wants.boot;
+        command.check = !wants.apply;
+        command.want_boot = command.want_boot or wants.boot;
     }
 
-    if (dos.rdargs.string(argv[arg_from])) |text| {
-        run.from = text;
-    } else if (asked_for != null and prefs.update.sourceText(asked_for.?).len != 0) {
-        run.from = @ptrCast(&asked_for.?.source);
-    } else {
-        const kept: [*:0]const u8 = @ptrCast(&settings.source);
-        if (kept[0] == 0) {
-            return shared.fail(&run, "no FROM, and neither %s nor %s says where to look\n", .{
-                prefs.update.ENVARC_FILE, prefs.install.ENVARC_FILE,
-            });
-        }
-        run.from = kept;
-    }
-    run.kind = if (source.isAddress(run.from[0..shared.length(run.from)])) .address else .path;
-
-    const memory = sys.AllocVec(shared.buffer_bytes, exec.MEMF_ANY) orelse {
-        return shared.fail(&run, "no memory\n", .{});
-    };
-    defer sys.FreeVec(memory);
-    const bytes: [*]u8 = @ptrCast(memory);
-    run.buffer = bytes[0..shared.buffer_bytes];
-
-    if (run.kind == .address) {
-        const socket_lib = sys.OpenLibrary(bsd.SOCKETNAME, 1) orelse {
-            return shared.fail(&run, "%s is an address and %s is not there\n", .{ run.from, bsd.SOCKETNAME });
-        };
-        defer sys.CloseLibrary(socket_lib);
-        const http_lib = sys.OpenLibrary(http.HTTPNAME, 1) orelse {
-            return shared.fail(&run, "%s is an address and %s is not there\n", .{ run.from, http.HTTPNAME });
-        };
-        defer sys.CloseLibrary(http_lib);
-        run.sb = @ptrCast(socket_lib);
-        run.hb = @ptrCast(http_lib);
-        const hb = run.hb.?;
-        run.client = hb.CreateClient(run.sb.?, &[_]utility.TagItem{
-            .{ .tag = http.HTTP_UserAgent, .data = @intFromPtr("PowerOS-Update/1.0") },
-            .{},
-        }) orelse return shared.fail(&run, "no memory for the HTTP client\n", .{});
-        defer hb.DeleteClient(run.client);
-        return whole(&run, &settings);
-    }
-    return whole(&run, &settings);
+    // Without FROM the package is the one update.prefs names, else the
+    // one the system was installed from: the library looks.
+    const from = dos.rdargs.string(argv[arg_from]);
+    command.run = upd.CreateUpdate(&[_]TagItem{
+        .{ .tag = if (from != null) update.UPD_Source else utility.TAG_IGNORE, .data = @intFromPtr(from) },
+        .{ .tag = update.UPD_Quiet, .data = @intFromBool(command.quiet) },
+        .{},
+    }) orelse return dos.RETURN_FAIL;
+    defer upd.DeleteUpdate(command.run);
+    return whole(&command);
 }
 
 /// The run, and what AUTO puts around it: a look first, what it found in
 /// the system log and on the desktop, and the writing once it is asked
 /// for. An ordinary run is the walk alone.
-fn whole(run: *Run, settings: *const prefs.install.Settings) i32 {
-    if (!run.auto) return update(run, settings);
-    const code = update(run, settings);
+fn whole(command: *Command) i32 {
+    if (!command.auto) return walk(command);
+    const code = walk(command);
     if (code == dos.RETURN_FAIL) return code;
+    const info = &command.info;
     if (code != dos.RETURN_WARN) {
         // Nothing to do, or everything done already because the file
         // said to write what was found without asking.
-        if (!compare.changed(run)) auto.logged(run, "nothing newer at %s\n", .{run.from});
+        if (!update.changes(info)) auto.logged(command, "nothing newer at %s\n", .{info.source});
         return code;
     }
-    auto.logged(run, "%ld files to write and %ld to delete at %s\n", .{
-        @as(u64, run.written), @as(u64, run.deleted), run.from,
+    auto.logged(command, "%ld files to write and %ld to delete at %s\n", .{
+        @as(u64, info.written), @as(u64, info.deleted), info.source,
     });
-    const now = auto.offer(run) orelse return code;
+    const now = auto.offer(command) orelse return code;
     if (!now) return code;
-    run.check = false;
-    run.again();
-    return update(run, settings);
+    command.check = false;
+    return walk(command);
 }
 
-/// The whole of it, once the source is known and the libraries are open.
-fn update(run: *Run, settings: *const prefs.install.Settings) i32 {
-    const sys = run.sys;
-
-    const mine = prefs.loadWhole(sys, run.dl, install.installed_manifest) orelse {
-        return shared.fail(run, "%s is not there: this system was not installed from a list, and there is nothing to compare against. C:Install leaves one\n", .{install.installed_manifest});
-    };
-    defer sys.FreeVec(@ptrCast(mine.ptr));
-
-    const theirs = source.whole(run, install.package_manifest) orelse return dos.RETURN_FAIL;
-    defer sys.FreeVec(@ptrCast(theirs.ptr));
-
-    const reader = manifest.Reader.init(theirs) catch |err| {
-        return shared.fail(run, "the package's %s: %s\n", .{ install.package_manifest, manifest.why(err) });
-    };
-    if (reader.header.chip != sdk.hardware.chip) {
-        return shared.fail(run, "that package holds files for %s; this machine is %s\n", .{
-            @as([*:0]const u8, @tagName(reader.header.chip)),
-            @as([*:0]const u8, @tagName(sdk.hardware.chip)),
-        });
-    }
-    const board: [*:0]const u8 = @ptrCast(&settings.board);
-    if (!run.force and board[0] != 0 and reader.header.board.len != 0 and
-        !manifest.samePath(board[0..shared.length(board)], reader.header.board))
-    {
-        var theirs_board: [manifest.max_board + 1:0]u8 = @splat(0);
-        theirs_board[shared.copy(&theirs_board, reader.header.board)] = 0;
-        return shared.fail(run, "that package holds a kernel for %s, and this system was installed as %s: FORCE takes it all the same\n", .{
-            @as([*:0]const u8, @ptrCast(&theirs_board)), board,
-        });
-    }
-    run.files = reader.header.counts.files;
-    run.bytes = reader.header.counts.bytes;
-
-    var size: [16:0]u8 = @splat(0);
-    shared.bytesAsText(&size, run.bytes);
-    shared.say(run, "%s: %d files, %s\n", .{ run.from, run.files, @as([*:0]const u8, @ptrCast(&size)) });
-
-    var code = compare.walk(run, mine, theirs);
+/// One walk, what it came to said, a run of its own's work put in the
+/// log, and the machine started again where RESTART asks.
+fn walk(command: *Command) i32 {
+    const run = command.run.?;
+    const code = command.upd.DoUpdate(run, &[_]TagItem{
+        .{ .tag = update.UPD_Check, .data = @intFromBool(command.check) },
+        .{ .tag = update.UPD_Boot, .data = @intFromBool(command.want_boot) },
+        .{ .tag = update.UPD_Force, .data = @intFromBool(command.force) },
+        .{},
+    });
+    command.upd.GetUpdateInfo(run, &command.info);
     if (code == dos.RETURN_FAIL) return code;
-
-    // What the firmware reads goes last: a system whose files are all
-    // there is of no use if the machine still loads the kernel it was
-    // installed with, and a kernel written before them would be the one
-    // that came up next to files it has never seen.
-    if (run.want_boot) {
-        const wrote = boot.write(run, theirs);
-        if (wrote == dos.RETURN_FAIL) return wrote;
-        if (code == dos.RETURN_OK) code = wrote;
-        if (run.check and run.boot_written != 0) code = dos.RETURN_WARN;
+    said(command);
+    const info = &command.info;
+    if (command.auto and !command.check and update.changes(info)) {
+        auto.logged(command, "%ld files written, %ld deleted\n", .{ @as(u64, info.written), @as(u64, info.deleted) });
     }
-    said(run);
-    if (run.auto and !run.check and compare.changed(run)) {
-        auto.logged(run, "%ld files written, %ld deleted\n", .{ @as(u64, run.written), @as(u64, run.deleted) });
-    }
-    if (run.restart and !run.check and code != dos.RETURN_FAIL) restart(run, run.tried != 0);
+    if (command.restart and !command.check) restart(command, info.tried != 0);
     return code;
 }
 
 /// The machine started again through `C:Reboot`, which holds every drive
 /// still first; `tried` asks the firmware for the partition that was
 /// written, this once.
-fn restart(run: *Run, tried: bool) void {
-    shared.tell(run, "Restarting.\n", .{});
+fn restart(command: *Command, tried: bool) void {
+    const dl = command.dl;
+    _ = Printf(dl, "Restarting.\n", .{});
+    _ = dl.Flush(dl.Output());
     const line: [*:0]const u8 = if (tried) "C:Reboot TRYBOOT FORCE" else "C:Reboot FORCE";
-    if (!run.dl.Execute(line, null, null)) {
-        _ = shared.fail(run, "C:Reboot is not there, so nothing was restarted\n", .{});
+    if (!dl.Execute(line, null, null)) {
+        _ = fail(command, "C:Reboot is not there, so nothing was restarted\n", .{});
     }
 }
 
+/// A line said unless QUIET.
+fn say(command: *Command, comptime format: [:0]const u8, args: anytype) void {
+    if (command.quiet) return;
+    _ = Printf(command.dl, format, args);
+}
+
+/// What went wrong, with the command's name in front of it, and the code
+/// a failed update answers.
+pub fn fail(command: *Command, comptime format: [:0]const u8, args: anytype) i32 {
+    _ = command.dl.PutStr(COMMAND_NAME ++ ": ");
+    _ = Printf(command.dl, format, args);
+    return dos.RETURN_FAIL;
+}
+
 /// What the run came to, in one line.
-fn said(run: *Run) void {
-    if (!compare.changed(run) and run.kept == 0) {
-        shared.say(run, "Nothing to do: this system is what that package holds.\n", .{});
+fn said(command: *Command) void {
+    const info = &command.info;
+    if (!update.changes(info) and info.kept == 0) {
+        say(command, "Nothing to do: this system is what that package holds.\n", .{});
         return;
     }
     var size: [16:0]u8 = @splat(0);
-    shared.bytesAsText(&size, run.written_bytes);
-    shared.say(run, "%s: %d written (%s), %d deleted, %d kept as they are, %d drawers made.\n", .{
-        if (run.check) "Would be" else "Done",
-        run.written,
+    update.bytesAsText(&size, info.written_bytes);
+    say(command, "%s: %d written (%s), %d deleted, %d kept as they are, %d drawers made.\n", .{
+        if (command.check) "Would be" else "Done",
+        info.written,
         @as([*:0]const u8, @ptrCast(&size)),
-        run.deleted,
-        run.kept,
-        run.made,
+        info.deleted,
+        info.kept,
+        info.made,
     });
-    if (run.kept != 0) {
-        shared.say(run, "What is kept was changed on this machine; FORCE takes the package's own.\n", .{});
+    if (info.kept != 0) {
+        say(command, "What is kept was changed on this machine; FORCE takes the package's own.\n", .{});
     }
-    if (!run.want_boot and run.boot != 0) {
-        shared.say(run, "The %d files the firmware reads are in the package too; BOOT writes them into the partition it reads.\n", .{run.boot});
+    if (!command.want_boot and info.boot != 0) {
+        say(command, "The %d files the firmware reads are in the package too; BOOT writes them into the partition it reads.\n", .{info.boot});
     }
-    if (run.tried != 0) {
-        shared.say(run, "That partition is the one the firmware starts from for a single start, once the machine is restarted with the flag for it set (C:Reboot TRYBOOT, or RESTART here); the start after that is on the partition it starts from now. Update CONFIRM on the system that comes up keeps the new one.\n", .{});
-    } else if (!run.check and compare.changed(run)) {
-        shared.say(run, "Restart to run what was written.\n", .{});
+    if (info.tried != 0) {
+        say(command, "That partition is the one the firmware starts from for a single start, once the machine is restarted with the flag for it set (C:Reboot TRYBOOT, or RESTART here); the start after that is on the partition it starts from now. Update CONFIRM on the system that comes up keeps the new one.\n", .{});
+    } else if (!command.check and update.changes(info)) {
+        say(command, "Restart to run what was written.\n", .{});
     }
 }

@@ -1,0 +1,393 @@
+# update.library
+
+update.library's functions: an installed system brought up to date
+from a release package, taking from it exactly what differs
+(sdk.update). Open it with OpenLibrary("update.library", 1).
+
+Generated from the source by `./zig build autodoc`.
+
+## Index
+
+- [ConfirmUpdate](#confirmupdate) - Keeps the partition the firmware was told to try as the one it starts from.
+- [CreateUpdate](#createupdate) - Makes a run of the update for one package.
+- [DeleteUpdate](#deleteupdate) - Lets a run go, with what it opened to read its package.
+- [DoUpdate](#doupdate) - Compares the package with the system and brings the system up to it.
+- [GetUpdateInfo](#getupdateinfo) - Says what a run's last DoUpdate came to.
+
+## ConfirmUpdate
+
+Keeps the partition the firmware was told to try as the one it starts from.
+
+**SYNOPSIS**
+
+```zig
+fn ConfirmUpdate(base: *UpdateBase, tags: ?[*]const TagItem) i32
+```
+
+**SINCE**
+
+1.0. LVO -36.
+
+**INPUTS**
+
+- `tags` - may be null:
+  - `UPD_Check` (bool): whether there is one to keep said, nothing
+    written.
+  - `UPD_Hook` (`*Hook`): where what it says goes, an `UpdateMessage`
+    at a time, in place of the output; the message's object is null.
+  - `UPD_Quiet` (bool): only failures on the output.
+
+**RESULT**
+
+- `RETURN_OK`: kept; or nothing to keep - a firmware that reads one
+  partition, or none being tried.
+- `RETURN_WARN`: with `UPD_Check`, one being tried that would be kept.
+- `RETURN_FAIL`: the reason said as a failure - `install.prefs` not a
+  line of settings, rdb.library 1 not there,
+  the disk's table not read, the partitions not found or not mounted,
+  `autoboot.txt` not written. With no memory for the call, nothing is
+  said (`IoErr` ERROR_NO_FREE_STORE).
+
+**BEHAVIOR**
+
+Where the firmware starts from either of two partitions, DoUpdate with
+`UPD_Boot` writes the one not in use and has `autoboot.txt` in the
+first of them try it for one start. The system that came up on it
+calls this: the two numbers in `autoboot.txt` change places, so the
+next start is on this partition with no flag set. A system that never
+comes up never calls it, and the start after the tried one is back on
+the partition that worked. The partitions are found through
+rdb.library by the names `install.prefs` gives them, and one mounted
+for the call is taken off the device list again after it.
+
+**CONTEXT**
+
+- Waits: yes - for the disk and dos's packets.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a Process.
+
+**OWNERSHIP**
+
+Nothing is left allocated.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`DoUpdate`, `GetUpdateInfo`, `sdk.install.autoboot`
+
+**EXAMPLES**
+
+```zig
+const check = [_]utility.TagItem{ .{ .tag = update.UPD_Check, .data = 1 }, .{} };
+if (upd.ConfirmUpdate(&check) == dos.RETURN_WARN) {
+    // a tried partition is running: offer to keep it
+    _ = upd.ConfirmUpdate(null);
+}
+```
+
+## CreateUpdate
+
+Makes a run of the update for one package.
+
+**SYNOPSIS**
+
+```zig
+fn CreateUpdate(base: *UpdateBase, tags: ?[*]const TagItem) ?*Run
+```
+
+**SINCE**
+
+1.0. LVO -20.
+
+**INPUTS**
+
+- `tags` - may be null:
+  - `UPD_Source` (`[*:0]const u8`): the package - a directory holding
+    `manifest`, `system/` and `boot/`, as a path, or an address with
+    `://` in it, read through LIBS:http.library. Left out, the SOURCE
+    `update.prefs` names (ENV:'s copy first, then ENVARC:'s), else the
+    source `ENVARC:Sys/install.prefs` kept.
+  - `UPD_Hook` (`*Hook`): where what the run says goes, an
+    `UpdateMessage` at a time, in place of the output.
+  - `UPD_Quiet` (bool): only failures on the output.
+
+**RESULT**
+
+The run; or null where there was no memory for it (`IoErr`
+ERROR_NO_FREE_STORE, nothing said), or where it could not start, the
+reason said as a failure: `install.prefs` or `update.prefs` not a line
+of settings, no package named and neither file naming one, a name
+longer than a path can be, an address with LIBS:bsdsocket.library or
+LIBS:http.library not there, no memory for the piece files are read in
+or for the HTTP client.
+
+**BEHAVIOR**
+
+Nothing of the package is read yet - DoUpdate reads it. The run is
+made ready: what the install left read into it (the board this system
+was built for, the partition its firmware reads), the package's name
+copied into it, a 64 KiB piece to read and write files in, and for an
+address bsdsocket.library and http.library opened with a client the
+run's requests go through, which keeps its connection from one file
+to the next.
+
+**CONTEXT**
+
+- Waits: yes - for memory and for dos's packets.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a Process: the run reads files on it and says what it says
+  on its output.
+
+**OWNERSHIP**
+
+The run is the caller's, to let go with DeleteUpdate on the same task.
+The tags are read during the call and the package's name is copied;
+the hook is called until DeleteUpdate and stays the caller's.
+
+**NOTES**
+
+A run belongs to the task that made it: dos's packets, the output and
+the network libraries are that task's, and DoUpdate checks that task
+for Ctrl-C. A program that runs the update on a process of its own
+makes the run there.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`DoUpdate`, `GetUpdateInfo`, `DeleteUpdate`, `ConfirmUpdate`,
+`sdk.update`
+
+**EXAMPLES**
+
+```zig
+const run = upd.CreateUpdate(&[_]utility.TagItem{
+    .{ .tag = update.UPD_Source, .data = @intFromPtr("http://10.0.2.2:8080/") },
+    .{},
+}) orelse return dos.RETURN_FAIL;
+defer upd.DeleteUpdate(run);
+const code = upd.DoUpdate(run, &[_]utility.TagItem{
+    .{ .tag = update.UPD_Check, .data = 1 },
+    .{},
+});
+```
+
+## DeleteUpdate
+
+Lets a run go, with what it opened to read its package.
+
+**SYNOPSIS**
+
+```zig
+fn DeleteUpdate(base: *UpdateBase, run: ?*Run) void
+```
+
+**SINCE**
+
+1.0. LVO -32.
+
+**INPUTS**
+
+- `run` - from CreateUpdate, on the task that made it; null does
+  nothing.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+The HTTP client is deleted, http.library and bsdsocket.library are
+closed where the package was an address, and the piece and the run
+are freed. Nothing on a disk changes.
+
+**CONTEXT**
+
+- Waits: yes - a connection the client holds is closed.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: the Task that made the run, whose libraries these are.
+
+**OWNERSHIP**
+
+The run is gone; an `UpdateInfo.source` read from it with it.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateUpdate`
+
+**EXAMPLES**
+
+```zig
+const run = upd.CreateUpdate(null) orelse return dos.RETURN_FAIL;
+defer upd.DeleteUpdate(run);
+```
+
+## DoUpdate
+
+Compares the package with the system and brings the system up to it.
+
+**SYNOPSIS**
+
+```zig
+fn DoUpdate(base: *UpdateBase, run: *Run, tags: ?[*]const TagItem) i32
+```
+
+**SINCE**
+
+1.0. LVO -24.
+
+**INPUTS**
+
+- `run` - from CreateUpdate, on the task that made it.
+- `tags` - may be null:
+  - `UPD_Check` (bool): what would happen said, nothing written.
+  - `UPD_Boot` (bool): the files the firmware reads written too, into
+    the partition it reads them from, after the system volume's.
+  - `UPD_Force` (bool): the package's own written over files changed
+    on the machine, and taken from a package built for another board.
+
+**RESULT**
+
+- `RETURN_OK`: nothing to do, or all of it done.
+- `RETURN_WARN`: `UPD_Check` found something to do, or the run was
+  stopped with Ctrl-C between two files.
+- `RETURN_FAIL`: it could not finish, the reason said as a failure - a
+  stop in the middle of a file read from an address,
+  no `SYS:System/manifest`, the package or its list not to be read or
+  not sound, a package for another chip or (without `UPD_Force`)
+  another board, a file that did not arrive whole, a volume that took
+  no write; with `UPD_Boot`, the firmware's partition not found or not
+  mounted.
+
+**BEHAVIOR**
+
+The run's counts start again at 0 (GetUpdateInfo reads them). The
+package's list is read whole and held against the list the machine was
+given, path by path, both sorted alike; the file itself is read only
+where the two disagree. For each path that something happens to, a row
+is said: `new`, `newer`, `again`, `kept`, `gone`, `drawer`, then
+`list` once the package's list is the machine's own.
+
+### Written
+Each file is fetched to a name of its own on its volume, held against
+the list's length and CRC-32, and renamed into place - a hook hears
+`UPDM_WROTE` for it. What the build dropped goes after everything
+else, in reverse; the package's list is written last. Before the first
+file the system volume is given a snapshot, where it keeps them.
+
+### UPD_Boot
+The firmware's partition is found through rdb.library, by the name
+`install.prefs` gives it, and mounted for the run. Where the firmware
+starts from either of two, the one not in use is written and
+`autoboot.txt` pointed at it for one start (GetUpdateInfo's `tried`);
+where it reads one, each file replaced is kept as `<name>.old`.
+
+**CONTEXT**
+
+- Waits: yes - for dos's packets, the network, the disks.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: the Process that made the run.
+
+**OWNERSHIP**
+
+Nothing the caller frees. What is read is the run's for the call.
+
+**NOTES**
+
+A run may be done again - a check, then the writing - and each counts
+for itself. Ctrl-C is looked for between files on the task that made
+the run, so a run on a process of its own is stopped with
+`Signal(process, SIGBREAKF_CTRL_C)`; what was written stays, and the
+machine's list is left as it was, so the next run finds the rest.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateUpdate`, `GetUpdateInfo`, `ConfirmUpdate`, `sdk.update`
+
+**EXAMPLES**
+
+```zig
+var code = upd.DoUpdate(run, &[_]utility.TagItem{ .{ .tag = update.UPD_Check, .data = 1 }, .{} });
+if (code == dos.RETURN_WARN) code = upd.DoUpdate(run, null);
+var info: update.UpdateInfo = .{};
+upd.GetUpdateInfo(run, &info);
+```
+
+## GetUpdateInfo
+
+Says what a run's last DoUpdate came to.
+
+**SYNOPSIS**
+
+```zig
+fn GetUpdateInfo(base: *UpdateBase, run: *Run, info: *UpdateInfo) void
+```
+
+**SINCE**
+
+1.0. LVO -28.
+
+**INPUTS**
+
+- `run` - from CreateUpdate.
+- `info` - filled in whole.
+
+**RESULT**
+
+Nothing; `info` holds the package's name, what its list says it holds,
+and the counts: files written (or, after `UPD_Check`, to be written)
+and their bytes, paths deleted, files kept, drawers made, the files
+the firmware reads in the package and those written, and the
+partition the firmware was told to try.
+
+**BEHAVIOR**
+
+The counts are those of the last DoUpdate, all 0 before the first.
+`sdk.update.changes` says whether they change the system.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none taken.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. `info.source` is the run's, valid until
+DeleteUpdate.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`DoUpdate`, `CreateUpdate`, `sdk.update`
+
+**EXAMPLES**
+
+```zig
+var info: update.UpdateInfo = .{};
+upd.GetUpdateInfo(run, &info);
+if (update.changes(&info) and info.tried != 0) {
+    // restart with C:Reboot TRYBOOT to start the new kernel
+}
+```

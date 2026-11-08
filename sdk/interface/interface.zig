@@ -36,6 +36,7 @@ pub const rdb = @import("rdb.zig");
 pub const tls = @import("tls.zig");
 pub const modbus = @import("modbus.zig");
 pub const filter = @import("filter.zig");
+pub const update = @import("update.zig");
 pub const icon = @import("icon.zig");
 pub const anvil = @import("anvil.zig");
 pub const usb = @import("usb.zig");

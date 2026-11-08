@@ -24,8 +24,9 @@ const wn = intuition.windows;
 const prefs = sdk.prefs;
 const IntuitionBase = sdk.interface.intuition.IntuitionBase;
 const TagItem = sdk.utility.TagItem;
-const shared = @import("_update.zig");
-const Run = shared.Run;
+const update = sdk.update;
+const Command = @import("update.zig").Command;
+const fail = @import("update.zig").fail;
 
 /// The title of what it asks on the desktop.
 const title = "A newer system";
@@ -47,13 +48,13 @@ pub const Told = union(enum) {
 /// What `update.prefs` says: the running system's copy where there is
 /// one, else the one that is kept. A file nobody can read stops the run
 /// rather than sending it somewhere unasked.
-pub fn settingsOf(run: *Run, into: *prefs.update.Settings) Told {
-    const text = prefs.loadWhole(run.sys, run.dl, prefs.update.ENV_FILE) orelse
-        prefs.loadWhole(run.sys, run.dl, prefs.update.ENVARC_FILE) orelse return .none;
-    defer run.sys.FreeVec(@ptrCast(text.ptr));
+pub fn settingsOf(command: *Command, into: *prefs.update.Settings) Told {
+    const text = prefs.loadWhole(command.sys, command.dl, prefs.update.ENV_FILE) orelse
+        prefs.loadWhole(command.sys, command.dl, prefs.update.ENVARC_FILE) orelse return .none;
+    defer command.sys.FreeVec(@ptrCast(text.ptr));
     const line = prefs.firstLine(text) orelse return .{ .settings = into };
-    if (prefs.update.parse(run.ub, line, into)) |wrong| {
-        _ = shared.fail(run, "%s: %s\n", .{ prefs.update.ENVARC_FILE, wrong });
+    if (prefs.update.parse(command.ub, line, into)) |wrong| {
+        _ = fail(command, "%s: %s\n", .{ prefs.update.ENVARC_FILE, wrong });
         return .wrong;
     }
     return .{ .settings = into };
@@ -61,36 +62,37 @@ pub fn settingsOf(run: *Run, into: *prefs.update.Settings) Told {
 
 /// One line into the system log, where a run with no console of its own
 /// leaves what it found: `C:Log` shows it with the start's own words.
-pub fn logged(run: *Run, comptime format: [:0]const u8, args: anytype) void {
-    exec.klog(run.sys, exec.LOG_INFO, log_mark ++ format, args);
+pub fn logged(command: *Command, comptime format: [:0]const u8, args: anytype) void {
+    exec.klog(command.sys, exec.LOG_INFO, log_mark ++ format, args);
 }
 
 /// What was found, offered on the desktop: true where it is to be
 /// written now, false where it is not, and null where there was no
 /// screen to ask on.
-pub fn offer(run: *Run) ?bool {
+pub fn offer(command: *Command) ?bool {
+    const info = &command.info;
     var body: [256:0]u8 = @splat(0);
     var at: usize = 0;
-    at += shared.copy(body[at..], "A newer system is ready.\n\n");
-    at += shared.decimal(body[at..], run.written);
-    at += shared.copy(body[at..], " files to write, ");
-    at += shared.decimal(body[at..], run.deleted);
-    at += shared.copy(body[at..], " to delete");
-    if (run.kept != 0) {
-        at += shared.copy(body[at..], ", ");
-        at += shared.decimal(body[at..], run.kept);
-        at += shared.copy(body[at..], " changed here and kept");
+    at += copy(body[at..], "A newer system is ready.\n\n");
+    at += update.decimal(body[at..], info.written);
+    at += copy(body[at..], " files to write, ");
+    at += update.decimal(body[at..], info.deleted);
+    at += copy(body[at..], " to delete");
+    if (info.kept != 0) {
+        at += copy(body[at..], ", ");
+        at += update.decimal(body[at..], info.kept);
+        at += copy(body[at..], " changed here and kept");
     }
-    at += shared.copy(body[at..], ".\n\nWrite it now?");
+    at += copy(body[at..], ".\n\nWrite it now?");
     body[at] = 0;
-    return asked(run, @ptrCast(&body), "Update now|Later");
+    return asked(command, @ptrCast(&body), "Update now|Later");
 }
 
 /// A question on the default public screen: true where the first button
 /// was pressed, false for the other, and null where there is no screen
 /// to ask on, so the caller can say it another way.
-pub fn asked(run: *Run, body: [*:0]const u8, buttons: [*:0]const u8) ?bool {
-    const sys = run.sys;
+pub fn asked(command: *Command, body: [*:0]const u8, buttons: [*:0]const u8) ?bool {
+    const sys = command.sys;
     const lib = sys.OpenLibrary(intuition.INTUITIONNAME, 0) orelse return null;
     defer sys.CloseLibrary(lib);
     const ib: *IntuitionBase = @ptrCast(lib);
@@ -113,4 +115,11 @@ pub fn asked(run: *Run, body: [*:0]const u8, buttons: [*:0]const u8) ?bool {
         .gadget_format = buttons,
     };
     return ib.EasyRequestArgs(window, &easy, null, null) == 1;
+}
+
+/// `from` into `into`: how many bytes.
+fn copy(into: []u8, from: []const u8) usize {
+    const room = @min(into.len, from.len);
+    @memcpy(into[0..room], from[0..room]);
+    return room;
 }

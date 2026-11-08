@@ -99,6 +99,8 @@ test {
     _ = @import("devs/usb/aic8800/lmac.zig");
     _ = @import("libs/modbus/tests/modbus.zig");
     _ = @import("libs/filter/tests/filter.zig");
+    _ = @import("libs/update/update_lvo.zig");
+    _ = @import("libs/update/tests/update.zig");
     _ = @import("libs/icon/tests/icon.zig");
     _ = @import("libs/audiocodec/tests/audiocodec.zig");
     _ = @import("libs/media/tests/media.zig");

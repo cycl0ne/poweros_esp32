@@ -555,6 +555,43 @@ that will not stop is named, with the restart going ahead all the same.
 partition and says so and does nothing on a board whose firmware has no
 such flag.
 
+## From a program
+
+The work under `C:Update` is `LIBS:update.library`'s, and a program
+calls it the same way (`sdk.update`, the calls in
+[autodocs](../autodocs/update.md)): a run is made for one package, done
+as often as wanted - a check, then the writing - and let go.
+
+```zig
+const upd: *UpdateBase = @ptrCast(sys.OpenLibrary(update.UPDATENAME, 1) orelse return);
+defer sys.CloseLibrary(upd.lib());
+const run = upd.CreateUpdate(&[_]utility.TagItem{
+    .{ .tag = update.UPD_Hook, .data = @intFromPtr(&hook) },
+    .{},
+}) orelse return; // why is said, through the hook
+defer upd.DeleteUpdate(run);
+if (upd.DoUpdate(run, &[_]utility.TagItem{ .{ .tag = update.UPD_Check, .data = 1 }, .{} }) == dos.RETURN_WARN) {
+    _ = upd.DoUpdate(run, null);
+}
+var info: update.UpdateInfo = .{};
+upd.GetUpdateInfo(run, &info); // what it came to, `tried` among it
+```
+
+- **CreateUpdate** takes the package (`UPD_Source`; left out, the one
+  `update.prefs` names, else the one the install wrote down) and opens
+  what it is read with. **DoUpdate** walks it - `UPD_Check`, `UPD_Boot`,
+  `UPD_Force` are CHECK, BOOT and FORCE - and answers as the command does.
+  **ConfirmUpdate** is CONFIRM.
+- **What a run says** goes to the program's output, or with `UPD_Hook`
+  to a hook: an `UpdateMessage` for each line, for each path with what
+  happens to it and the bytes written for it, and for each file once it
+  is in place - enough for a list and a gauge.
+- **A run belongs to the task that made it**, which it checks for Ctrl-C
+  between files: a program that runs it on a process of its own stops it
+  with `Signal(process, SIGBREAKF_CTRL_C)`.
+- Restarting is the program's: `C:Reboot TRYBOOT` where `info.tried`
+  says a partition was written to be tried.
+
 ## See also
 
 - [Disks and partitions](rdb.md) - the table, the GPT and the container,

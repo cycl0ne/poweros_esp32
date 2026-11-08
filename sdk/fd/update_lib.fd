@@ -1,0 +1,27 @@
+// SPDX-License-Identifier: MIT
+//! update.library's functions: an installed system brought up to date
+//! from a release package, taking from it exactly what differs
+//! (sdk.update). Open it with OpenLibrary("update.library", 1).
+##include libs/update/update as update
+##include libs/utility/utility as utility
+##basetype UpdateBase
+##name update.library
+##bias 4
+##public
+/// A run made for the package `tags` name (UPD_Source, UPD_Hook,
+/// UPD_Quiet), with what it reads it with opened; null where it cannot
+/// start, the reason said.
+?*update.Update CreateUpdate(?[*]const utility.TagItem tags)
+/// The package compared with the system and, unless UPD_Check, the system
+/// brought up to it (UPD_Boot, UPD_Force): RETURN_OK, RETURN_WARN where
+/// there is work and it was only said or the run was stopped, RETURN_FAIL.
+i32 DoUpdate(*update.Update run, ?[*]const utility.TagItem tags)
+/// What the run's last DoUpdate came to, into `info`.
+void GetUpdateInfo(*update.Update run, *update.UpdateInfo info)
+/// The run and what it opened let go.
+void DeleteUpdate(?*update.Update run)
+/// The partition the firmware was told to try kept as the one it starts
+/// from (UPD_Check, UPD_Hook, UPD_Quiet): RETURN_OK, RETURN_WARN where
+/// there is one and UPD_Check only said so, RETURN_FAIL.
+i32 ConfirmUpdate(?[*]const utility.TagItem tags)
+##end

@@ -103,6 +103,9 @@ pub const locale = @import("libs/locale/locale.zig");
 /// A release package - the files, the kernel and the list of them - which
 /// a system is installed from and brought up to date against.
 pub const install = @import("libs/install/install.zig");
+/// An installed system brought up to date from a release package,
+/// through update.library.
+pub const update = @import("libs/update/update.zig");
 pub const interface = @import("interface/interface.zig");
 
 // --- alignment ------------------------------------------------------------

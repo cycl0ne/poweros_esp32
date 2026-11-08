@@ -2,14 +2,14 @@
 //! Where a package is read from. A path on a volume and an address over
 //! HTTP answer the same two questions - a whole file into memory, which
 //! is how the list is read, and a file written to the volume with its
-//! sum and its length worked out as it goes - so the compare above does
-//! not know which of the two it is walking.
+//! sum and its length worked out as it goes - so the compare
+//! (`system/_system.zig`) does not know which of the two it is walking.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
 const http = sdk.http;
 const utility = sdk.utility;
-const shared = @import("_update.zig");
+const shared = @import("../run/_run.zig");
 const Run = shared.Run;
 const Name = shared.Name;
 
@@ -31,7 +31,7 @@ pub fn isAddress(text: []const u8) bool {
 /// The whole of the package's `rest` in memory, freed with FreeVec; null
 /// and said when it cannot be had.
 pub fn whole(run: *Run, rest: []const u8) ?[]u8 {
-    const name = Name.of(run.from[0..shared.length(run.from)], rest);
+    const name = Name.of(run.from[0..run.ub.Strlen(run.from)], rest);
     switch (run.kind) {
         .path => {
             const text = sdk.prefs.loadWhole(run.sys, run.dl, name.cstr()) orelse {
@@ -66,7 +66,7 @@ pub fn whole(run: *Run, rest: []const u8) ?[]u8 {
 /// when it is not, said already.
 pub fn fetch(run: *Run, rest: []const u8, to: [*:0]const u8, sum: *u32, length: *u64) ?i32 {
     const dl = run.dl;
-    const name = Name.of(run.from[0..shared.length(run.from)], rest);
+    const name = Name.of(run.from[0..run.ub.Strlen(run.from)], rest);
     const out = dl.Open(to, dos.MODE_NEWFILE) orelse return shared.failed(run, to, dl.IoErr());
     var crc = dos.flashfs.crcStart();
     var total: u64 = 0;

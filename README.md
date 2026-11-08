@@ -1047,6 +1047,8 @@ read, which is why an update over a 50 MB package that differs in two
 files fetches 4.7 KB. `CHECK` says what would happen and writes nothing,
 and its return code tells a script whether there is anything to do. The
 system volume is given a snapshot before the first file is written.
+The work is `LIBS:update.library`'s, which a program calls the same way
+(`sdk.update`).
 
 **By itself.** `ENVARC:Sys/update.prefs` says where a machine looks for
 a newer system, whether it looks at every start, and whether what it
