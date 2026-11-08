@@ -634,13 +634,19 @@ description as its panel; the fb display driver takes it as a display
 whose address cannot be moved and copies the picture into it, which is
 what the desktop is drawn on. Those pages are mapped so that the writes
 to them are gathered into bursts rather than each reaching the machine on
-its own. Nothing of the picture is driven - no mode is set and no
-register of it written - and a firmware that lit none leaves the machine
+its own. No mode is set, and a firmware that lit none leaves the machine
 on its serial console, which is what `./zig build q35` runs it as. Behind
-an AMD display engine the driver writes one part of it: the audio side of
-the link the firmware lit, which the firmware leaves switched off, so
-that a monitor's speakers can be played over HDMI
-(`rtg_driver/fbboard/dcn.zig`).
+an AMD display engine (`rtg_driver/fbboard/dcn.zig`) the driver writes
+two parts of it. The audio side of the link the firmware lit, which the
+firmware leaves switched off, so that a monitor's speakers can be played
+over HDMI. And where the display reads: from start-up it is flipped
+between the firmware's framebuffer and a frame of the device's own
+memory, each picture made in the frame it is not reading and taken at
+the pipe's next update, between two frames, which the pipe's interrupt
+says - so a window moved or a picture over the whole screen never shows
+half of the one before. The pointer is laid into those pictures. A flip
+the display does not take puts it back on the firmware's framebuffer for
+good, said on the boot's lines.
 
 **An AMD graphics device is held by `amdgpu.resource`.** Such a device
 is one function on PCI with several machines behind it - the display

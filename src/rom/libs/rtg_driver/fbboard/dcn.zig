@@ -7,25 +7,27 @@
 //! told the engine where to read, and all the driver is given is where
 //! those pixels are (`uefi.zig`). Nothing of that is undone here. What
 //! this does is find the engine behind that framebuffer and read what it
-//! was told, so that showing a buffer can one day be naming its address
-//! instead of copying a picture into the one buffer the firmware named.
+//! was told, so that showing a picture is naming its address instead of
+//! copying it into the one buffer the firmware named.
 //!
-//! **What is written, and what is not.** Nothing of the picture is
-//! written: the mode the firmware chose, the link it trained and the
-//! buffer the pipe reads are left as they were found - the one change to
+//! **What is written, and what is not.** The mode the firmware chose and
+//! the link it trained are left as they were found - the one change to
 //! the link is that one driven for a picture alone is moved to the kind
-//! that carries packets as well (`soundUp`) - and the picture is still
-//! copied into the firmware's framebuffer as before.
-//! Writing the address a pipe reads from instead of copying wants two
-//! more things first: a buffer of the device's own memory for the picture
-//! to live in, which the firmware's framebuffer has no room for - it is
-//! exactly one picture - and that memory's writes gathered, which the
-//! kernel does for the firmware's framebuffer and a driver has no way to
-//! ask for.
+//! that carries packets as well (`soundUp`). What the fetcher reads is
+//! written: the board shows two frames, the firmware's framebuffer and
+//! one of the device's own memory (`newFrame`), and has the fetcher read
+//! the other at the pipe's next update (`flip`) - the point in each
+//! frame where the pipe takes up what its double-buffered registers were
+//! told, between two frames, so that a picture is never shown half old
+//! and half new. That point raises an interrupt, which comes through the
+//! device's interrupt ring (`hookFrames`, `takeFrame`): it is the board's
+//! frame interrupt, what a flip and WaitVBlank wait for. A flip is taken
+//! once it is no longer pending and the fetcher reads the address it was
+//! told (`flipTaken`).
 //!
-//! What is written is the audio side of the link the firmware lit
-//! (`soundUp`), which the firmware leaves switched off and which no other
-//! driver can reach: those registers are this engine's.
+//! The audio side of the link the firmware lit is written as well
+//! (`soundUp`): the firmware leaves it switched off and no other driver
+//! can reach it, since those registers are this engine's.
 //!
 //! ## Where the registers are
 //!
@@ -91,6 +93,7 @@ const reg = sdk.hardware.mmio.reg;
 const ExecBase = sdk.interface.exec.ExecBase;
 const AMDGPUBase = sdk.interface.amdgpu.AMDGPUBase;
 const uefi = @import("uefi.zig");
+const regs = sdk.hardware.amd_dcn;
 const edid = @import("../edid.zig");
 
 /// Who says what is found, on the boot's lines.
@@ -387,6 +390,8 @@ const address_high_mask: u32 = 0xffff;
 /// be saying.
 pub const Engine = struct {
     sys: *ExecBase,
+    /// The resource that holds the device.
+    gpu: *AMDGPUBase,
     /// The device's memory as the machine reaches it, and its registers.
     memory: usize,
     memory_bytes: usize,
@@ -459,6 +464,7 @@ pub fn find(sys: *ExecBase, fb: uefi.Framebuffer) ?Engine {
     }
     var engine: Engine = .{
         .sys = sys,
+        .gpu = gpu,
         .memory = @intCast(info.window),
         .memory_bytes = @intCast(info.window_bytes),
         .registers = @intCast(info.registers),
@@ -527,6 +533,84 @@ pub fn find(sys: *ExecBase, fb: uefi.Framebuffer) ?Engine {
     });
     tellAudio(engine);
     return engine;
+}
+
+// --- the frames the fetcher is flipped between -------------------------------------
+
+/// `bytes` of the device's own memory for a frame, from a page on; null
+/// where there is no room.
+pub fn newFrame(engine: Engine, bytes: usize) ?amdgpu.GPUMemory {
+    if (bytes > 0xffff_ffff) return null;
+    var frame: amdgpu.GPUMemory = .{};
+    if (!engine.gpu.AllocGPUMemory(@intCast(bytes), 4096, &frame)) return null;
+    return frame;
+}
+
+pub fn freeFrame(engine: Engine, frame: *amdgpu.GPUMemory) void {
+    engine.gpu.FreeGPUMemory(frame);
+}
+
+/// A register of the fetcher holding the screen, to be written.
+fn fetcherRegister(engine: Engine, offset: u32) *volatile u32 {
+    return reg(engine.registers + (engine.block + offset + engine.fetcher * hubp_pipe_stride) * 4);
+}
+
+fn pipeRegister(engine: Engine, offset: u32) *volatile u32 {
+    return reg(engine.registers + (engine.block + offset + engine.pipe * otg_pipe_stride) * 4);
+}
+
+/// The fetcher told to read the frame at the device's `address` from
+/// the pipe's next update on - or, `now`, at once, wherever the scan is:
+/// what a board giving up on flipping does. Every write of the frame is
+/// sent on first: the frames are reached write-combining, and a fence
+/// drains the writes this core gathered - those of exec's workers were
+/// drained as each said it was done, which is a locked write. The high
+/// word goes first, since writing the low one arms the flip.
+pub fn flip(engine: Engine, address: u64, now: bool) void {
+    sdk.hardware.barrier.full();
+    const control = fetcherRegister(engine, regs.DCSURF_FLIP_CONTROL);
+    const kind: u32 = if (now) regs.SURFACE_FLIP_TYPE else 0;
+    control.* = control.* & ~(regs.SURFACE_FLIP_TYPE | regs.SURFACE_UPDATE_LOCK) | kind;
+    fetcherRegister(engine, regs.DCSURF_PRIMARY_SURFACE_ADDRESS_HIGH).* = @truncate(address >> 32 & regs.ADDRESS_HIGH_MASK);
+    fetcherRegister(engine, regs.DCSURF_PRIMARY_SURFACE_ADDRESS).* = @truncate(address);
+}
+
+/// Whether the flip to `address` has been taken: none is pending, and
+/// the fetcher reads it.
+pub fn flipTaken(engine: Engine, address: u64) bool {
+    if (fetcherRegister(engine, regs.DCSURF_FLIP_CONTROL).* & regs.SURFACE_FLIP_PENDING != 0) return false;
+    const low = fetcherRegister(engine, regs.DCSURF_SURFACE_EARLIEST_INUSE).*;
+    const high = fetcherRegister(engine, regs.DCSURF_SURFACE_EARLIEST_INUSE_HIGH).* & regs.ADDRESS_HIGH_MASK;
+    return (@as(u64, high) << 32 | low) == address;
+}
+
+/// The pipe's interrupt at its update point handed to `server`, and
+/// switched on at the pipe; false where the device's interrupts cannot
+/// be had. Its acknowledging is the server's (`takeFrame`).
+pub fn hookFrames(engine: Engine, server: *exec.Interrupt) bool {
+    if (!engine.gpu.AddGPUIntServer(amdgpu.GPUINT_CLIENT_DISPLAY, amdgpu.GPUINT_DISPLAY_UPDATE + engine.pipe, server)) return false;
+    const status = pipeRegister(engine, regs.OTG_GLOBAL_SYNC_STATUS);
+    // The server writes the same register on whichever core takes the
+    // device's message.
+    engine.sys.Disable();
+    status.* = status.* | regs.VUPDATE_NO_LOCK_EVENT_CLEAR | regs.VUPDATE_NO_LOCK_INT_EN;
+    engine.sys.Enable();
+    return true;
+}
+
+/// The interrupt switched off at the pipe and the server taken off.
+pub fn unhookFrames(engine: Engine, server: *exec.Interrupt) void {
+    const status = pipeRegister(engine, regs.OTG_GLOBAL_SYNC_STATUS);
+    engine.sys.Disable();
+    status.* = status.* & ~regs.VUPDATE_NO_LOCK_INT_EN | regs.VUPDATE_NO_LOCK_EVENT_CLEAR;
+    engine.sys.Enable();
+    engine.gpu.RemGPUIntServer(server);
+}
+
+/// The pipe's interrupt acknowledged, in its server.
+pub fn takeFrame(engine: Engine) void {
+    const status = pipeRegister(engine, regs.OTG_GLOBAL_SYNC_STATUS);
+    status.* = status.* | regs.VUPDATE_NO_LOCK_EVENT_CLEAR;
 }
 
 /// What the engine's audio side is holding. Read only: every line is what
