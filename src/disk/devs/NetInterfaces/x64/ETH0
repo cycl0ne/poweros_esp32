@@ -1,0 +1,16 @@
+/* DEVS:NetInterfaces/ETH0 - the interface C:net/AddNetInterface ETH0
+ * brings up as eth0. The startup-sequence brings up every file here.
+ *
+ * This one is the machine's Ethernet card, its address from the
+ * network's DHCP server. A fixed address instead would be, for example
+ *   Configure = FIXED; Address = 192.168.1.50; NetMask = 255.255.255.0
+ *   Gateway = 192.168.1.1; NameServer = 192.168.1.1
+ * Unit 0 is the first Ethernet controller of this kind in the machine.
+ * ETH1 beside this file is a card of the other kind this system drives
+ * on PCI; a machine has one or the other, and the interface whose card
+ * is not there is not added, with nothing said. A keyword this file does not know is an error, with its line and
+ * column; see C:net/AddNetInterface for the list.
+ */
+Device     = networks/intelnet.device
+Unit       = 0
+Configure  = DHCP

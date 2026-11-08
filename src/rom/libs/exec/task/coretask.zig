@@ -25,45 +25,44 @@ const Task = sdk.exec.Task;
 /// first null on.
 ///
 /// BEHAVIOR:
-/// A running task is on neither of exec's queues (`EXECLIST_TASK_READY`,
-/// `EXECLIST_TASK_WAIT`): it is each core's own. This is how a listing of
-/// every task finds the ones running - asking from core 0 up until the
-/// answer is null - and the caller's own core answers what `FindTask(null)`
-/// does.
+/// A running task is on neither of its core's lists: it is the core's
+/// own. This is how a listing of every task finds the ones running -
+/// asking from core 0 up until the answer is null - and the caller's own
+/// core answers what `FindTask(null)` does.
 ///
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: safe.
-/// - Locks: Disable, not a lock: the other core switches on its own, so the
-///   answer holds only inside `Disable`: ask there, and copy what is wanted of
-///   the task before the `Enable` - the task may end once it is let go.
+/// - Locks: none taken, and the answer holds only while that core's lists
+///   are locked: the cores switch on their own. Ask inside
+///   `LockCoreTasks(core)`, and copy what is wanted of the task before the
+///   `UnlockCoreTasks` - the task may end once it is let go.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
 /// The task is its own; nothing is handed over.
 ///
 /// NOTES:
-/// A task's `TF_CORE0` and `TF_CORE1` flags say which cores it may run
-/// on (`SetTaskAffinity`); this says where it runs.
+/// A task's `core` says which core it keeps to (`SetTaskAffinity`); this
+/// says where it runs.
 ///
 /// BUGS:
 /// None known.
 ///
 /// SEE ALSO:
-/// `FindTask`, `SetTaskAffinity`, `LockExecList`, `Disable`
+/// `FindTask`, `SetTaskAffinity`, `LockCoreTasks`
 ///
 /// EXAMPLES:
 /// ```zig
 /// var core: u32 = 0;
-/// while (true) : (core += 1) {
-///     sys.Disable();
+/// while (sys.LockCoreTasks(core) != null) : (core += 1) {
 ///     const pri = if (sys.CoreTask(core)) |task| task.node.pri else null;
-///     sys.Enable();
+///     sys.UnlockCoreTasks(core);
 ///     const running = pri orelse break;
 ///     // ... print core and running ...
 /// }
 /// ```
 pub fn CoreTask(base: *ExecBase, core: u32) ?*Task {
     if (core >= base.cores_running) return null;
-    return base.cpus[core].this_task;
+    return base.cpus_at[core].this_task;
 }

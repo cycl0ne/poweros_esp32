@@ -29,6 +29,15 @@
 //! the middle of the box. With `TEXT_Clipped` a line too wide for the box
 //! stops at its edge with three dots, as plain text does.
 //!
+//! **Scrolling.** With `TEXT_Scroll` a line too wide for the box goes
+//! along inside it instead, so the whole of it is read: it waits at its
+//! start, moves until its end is at the box's far edge, waits there and
+//! goes back, for as long as it is too wide - a song's title in a
+//! player. A text set anew starts again from its start. Where nothing
+//! moves - a gadget with `GA_Animate` false, a screen with `SA_Animate`
+//! false - or without motion.library, it is cut as `TEXT_Clipped` cuts
+//! it.
+//!
 //! A run's colour is a colour of its own, or the gadget's front pen (0),
 //! or one of the screen's pens by name (`screenPen`): the dim text of a
 //! line that says less is `screenPen(screens.DIMTEXTPEN)`, drawn in the
@@ -98,6 +107,10 @@ pub const TEXT_Wrap = TEXT_Dummy + 0x0D;
 /// `"-00:00"` for a time - whatever it shows, so a text that changes keeps
 /// the room the widest of them needs. Not copied. Made and set.
 pub const TEXT_RoomFor = TEXT_Dummy + 0x0E;
+/// Bool: a line too wide for the box goes along inside it, there and
+/// back, so the whole of it is read (false). Made and set. The gadget may
+/// then be made narrower than its text, as with `TEXT_Clipped`.
+pub const TEXT_Scroll = TEXT_Dummy + 0x0F;
 
 /// A run of text in one look.
 pub const TextRun = extern struct {

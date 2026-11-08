@@ -27,8 +27,12 @@ pub const UsbBase = extern struct {
     devices_lock: exec.SignalSemaphore = .{},
     /// One StartUSB or StopUSB at a time.
     bus_lock: exec.SignalSemaphore = .{},
-    /// Each started bus, by its number.
-    buses: [usb.USB_MAX_BUSES]?*anyopaque = @splat(null),
+    /// The buses that run, a chain of `bus/_bus.zig` Bus records newest
+    /// first, under `bus_lock`. A chain and not a table: how many buses
+    /// a machine has is what its controllers say, and a PC's are a
+    /// handful - one per group of sockets - with nothing fixing the
+    /// number.
+    bus_list: ?*anyopaque = null,
     /// The class drivers: a `bind/_bind.zig` Drivers block, read from
     /// `DEVS:usb/` when the first bus starts; and its lock, since two
     /// buses' processes bind at once.

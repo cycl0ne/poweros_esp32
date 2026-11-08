@@ -774,7 +774,7 @@ pub fn giveLock(base: *ExecBase, lock: *Lock) bool {
     lock.owner = null;
     @atomicStore(u32, &lock.state, 0, .release);
     cpu.hold_count -= 1;
-    const due = _task.switchDue(cpu);
+    const due = _task.switchDue(base);
     _interrupt.unmask(state);
     if (lock.flags & lk.LOCKF_INTERRUPT != 0) {
         base.iface().Enable(); // which takes a switch due itself
@@ -790,7 +790,7 @@ pub fn releaseCore(base: *ExecBase, lock: *const Lock) void {
     const state = _interrupt.mask();
     const cpu = base.cpu();
     cpu.hold_count -= 1;
-    const due = _task.switchDue(cpu);
+    const due = _task.switchDue(base);
     _interrupt.unmask(state);
     if (lock.flags & lk.LOCKF_INTERRUPT != 0) {
         base.iface().Enable(); // which takes a switch due itself

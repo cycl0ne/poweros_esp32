@@ -154,6 +154,9 @@ pub const LVO = struct {
     pub const WaitForAny = libraries.lvo(142);
     pub const ShareWork = libraries.lvo(143);
     pub const PostWork = libraries.lvo(144);
+    pub const LockCoreTasks = libraries.lvo(145);
+    pub const UnlockCoreTasks = libraries.lvo(146);
+    pub const CoreCount = libraries.lvo(147);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -298,6 +301,9 @@ pub const Fn = struct {
     pub const WaitForAny = *const fn (*ExecBase, [*]const *exec.Waitable, u32, u64) callconv(.c) i32;
     pub const ShareWork = *const fn (*ExecBase, exec.WorkFn, ?*anyopaque, u32) callconv(.c) u32;
     pub const PostWork = *const fn (*ExecBase, *exec.WorkJob) callconv(.c) void;
+    pub const LockCoreTasks = *const fn (*ExecBase, u32) callconv(.c) ?*exec.CoreTasks;
+    pub const UnlockCoreTasks = *const fn (*ExecBase, u32) callconv(.c) void;
+    pub const CoreCount = *const fn (*ExecBase) callconv(.c) u32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -863,8 +869,8 @@ pub const ExecBase = opaque {
     /// Set the cores `task` (null: the caller) may run on - TF_CORE0, TF_CORE1,
     /// or 0 for any - and move it if it is where it may no longer be. Returns
     /// what they were.
-    pub fn SetTaskAffinity(self: *ExecBase, task: ?*exec.Task, cores: u32) u32 {
-        return libraries.call(self, LVO.SetTaskAffinity, Fn.SetTaskAffinity, .{ task, cores });
+    pub fn SetTaskAffinity(self: *ExecBase, task: ?*exec.Task, core: u32) u32 {
+        return libraries.call(self, LVO.SetTaskAffinity, Fn.SetTaskAffinity, .{ task, core });
     }
 
     /// The task core `core` is running now, or null for a core that is not
@@ -979,5 +985,26 @@ pub const ExecBase = opaque {
     /// worker from the queue.
     pub fn PostWork(self: *ExecBase, job: *exec.WorkJob) void {
         return libraries.call(self, LVO.PostWork, Fn.PostWork, .{job});
+    }
+
+    /// Core `core`'s tasks with that core's lock taken (SINCE 1.31): the
+    /// tasks ready to run there, by priority, and the tasks waiting for a
+    /// signal there. Null past the last core the machine runs, which is how a
+    /// walk over every task in the machine ends.
+    pub fn LockCoreTasks(self: *ExecBase, core: u32) ?*exec.CoreTasks {
+        return libraries.call(self, LVO.LockCoreTasks, Fn.LockCoreTasks, .{core});
+    }
+
+    /// The lock `LockCoreTasks` took on core `core` given back (SINCE 1.31),
+    /// and a switch that came due meanwhile taken.
+    pub fn UnlockCoreTasks(self: *ExecBase, core: u32) void {
+        return libraries.call(self, LVO.UnlockCoreTasks, Fn.UnlockCoreTasks, .{core});
+    }
+
+    /// How many cores the machine runs on (SINCE 1.33): their numbers are 0 to
+    /// one less than this, which is what ReadCoreTimes, CoreTask and
+    /// LockCoreTasks answer for. Never 0, and 1 on a machine with one core.
+    pub fn CoreCount(self: *ExecBase) u32 {
+        return libraries.call(self, LVO.CoreCount, Fn.CoreCount, .{});
     }
 };

@@ -66,6 +66,10 @@ pub const media = @import("libs/media/media.zig");
 /// Films - their pictures as frames, their sound as samples - through
 /// videocodec.library.
 pub const videocodec = @import("libs/videocodec/videocodec.zig");
+/// H.264 and H.265 streams read for a decoder - their parameter sets,
+/// slice headers, order counts, references and the order their pictures
+/// are shown in - through videoparse.library.
+pub const videoparse = @import("libs/videoparse/videoparse.zig");
 /// A codec module's structures: a decoder of pictures in LIBS:codecs/,
 /// which videocodec.library chooses for a film.
 pub const vcodec = @import("libs/videocodec/vcodec.zig");
@@ -169,7 +173,7 @@ fn isFixed(comptime T: type) bool {
 comptime {
     const builtin = @import("builtin");
     const arch = builtin.cpu.arch;
-    const machine = arch == .aarch64 and builtin.os.tag == .freestanding;
+    const machine = (arch == .aarch64 or arch == .x86_64) and builtin.os.tag == .freestanding;
     if (arch == .xtensa or arch == .riscv32 or arch == .riscv64 or machine) {
         @setEvalBranchQuota(20_000_000);
         checkConstants(@This(), 0);

@@ -15,6 +15,7 @@
 //! library vector does.
 
 const builtin = @import("builtin");
+const std = @import("std");
 const sdk = @import("sdk");
 const exec = @import("exec.zig");
 const _interrupt = @import("interrupt/_interrupt.zig");
@@ -32,14 +33,6 @@ const List = sdk.exec.List;
 const Resident = sdk.exec.Resident;
 const Task = sdk.exec.Task;
 
-/// How many cores exec keeps state for: the ESP32s' two, the four of a
-/// 64-bit RISC-V or AArch64 machine (and the host's tests). A one-core
-/// ROM uses the first.
-pub const max_cores = switch (builtin.cpu.arch) {
-    .xtensa, .riscv32 => 2,
-    else => 4,
-};
-
 /// Whether this is the system's own code rather than a host build (the
 /// tests): an ARM host is AArch64 too.
 const on_machine = builtin.os.tag == .freestanding;
@@ -53,7 +46,8 @@ pub inline fn cycles() u32 {
 /// The core this code runs on: 0 or 1. On the Xtensa from PRID (0xCDCD
 /// for core 0, 0xABAB for core 1 - bit 13 tells them apart), on the
 /// ESP32-P4 from mhartid, under SBI firmware from tp, under PSCI firmware
-/// from TPIDR_EL1. The host tests have one.
+/// from TPIDR_EL1, on x86-64 from the block GS points at. The host tests
+/// have one.
 pub inline fn coreId() u32 {
     switch (comptime builtin.cpu.arch) {
         .xtensa => {
@@ -78,16 +72,74 @@ pub inline fn coreId() u32 {
                 : [id] "=r" (-> u64),
             ));
         },
+        // An x86-64 core has no register that says which core it is: each
+        // keeps its number in the block GS points at
+        // (src/arch/x64uefi/cpu.zig).
+        .x86_64 => {
+            if (comptime !on_machine) return 0;
+            return @truncate(asm volatile ("movq %%gs:0, %[id]"
+                : [id] "=r" (-> u64),
+            ));
+        },
         else => return 0,
     }
 }
 
-/// What each core has of its own: the task it runs, its Disable state, its scheduling flags and time slice, how deep it is in
-/// exceptions, its counts, and the spinlocks it holds. A task reads its
+/// Where a core's line on the raw port stands, as both exec's output and
+/// the log write it: the next character starts a line, and gets the time
+/// and the writer in front of it; a `LOG_MARK` started the line, so the
+/// next character is its level; the line being written is below the level
+/// kept, and goes nowhere.
+pub const OutLine = extern struct {
+    start: bool = true,
+    marked: bool = false,
+    dropping: bool = false,
+};
+
+/// What each core has of its own: the task it runs, its Disable state and
+/// its share of the system's two locks, its scheduling flags and time
+/// slice, how deep it is in exceptions, its counts, and the spinlocks it
+/// holds. A task reads its
 /// core's state with the core's interrupts masked or in an exception, so
 /// that it is not moved to the other core between finding the state and
 /// using it.
 pub const CpuState = extern struct {
+    /// The tasks this core has: those ready to run, by priority, and
+    /// those waiting for a signal. They are the core's own - a task is on
+    /// the lists of the core that owns it (`Task.owner`), and the core
+    /// takes the first of its ready list it may run. A core with nothing
+    /// ready takes a task from another core's lists instead
+    /// (`stealReady`), which is what spreads the work.
+    ///
+    /// First in the state, and a cache line of its own: each core's state
+    /// is a whole number of lines and starts on one (`cpus_at`), so no
+    /// two cores' locks share a line - a core taking its own would
+    /// otherwise pull the line out from under the core beside it.
+    tasks: sdk.exec.CoreTasks align(line) = .{},
+    /// The lock over `tasks`: 0, or the core holding them plus one. The
+    /// core's own dispatcher takes it, and so does another core signalling
+    /// a task of this one's or taking one away. A core holds one core's
+    /// lists at a time - its own or another's, never two - which is what
+    /// keeps two cores from waiting on each other.
+    tasks_lock: u32 = 0,
+    /// How deep this core is in the lists it holds, 0 for none, and
+    /// whose they are. **This is what says whether the core holds any**,
+    /// rather than a lock word that every core writes.
+    tasks_depth: u32 = 0,
+    tasks_which: u32 = 0,
+    /// The highest priority ready on this core, written by the core
+    /// itself whenever its ready list changes (`noteReady`), below every
+    /// priority when nothing is. It is what another core reads to see
+    /// whether there is work here worth taking: a list it does not hold
+    /// is not its to walk, since a node it read could be a task already
+    /// freed, but one word of this core's says enough.
+    ready_pri: i32 = -129,
+    /// The priority of the task this core runs, written by the core
+    /// itself as it takes one. Another core reads this word rather than
+    /// the task behind `this_task`, which it does not hold the lock for:
+    /// a task that is switched away from and ends is memory that core no
+    /// longer owns, and one word of this core's says what is wanted.
+    running_pri: i32 = -129,
     /// ThisTask: the task running on this core.
     this_task: *Task = undefined,
     /// The core's idle task, pinned to it, which runs when nothing else is
@@ -105,12 +157,28 @@ pub const CpuState = extern struct {
     /// outermost Enable - so an Enable never turns interrupts on in a
     /// context that had them off.
     id_saved: u32 = 0,
+    /// The same for the task lists' lock, which is taken from task level
+    /// as Disable is (`LockExecList`, Signal, Wait).
+    lists_saved: u32 = 0,
+    /// How often this core has taken the system's interrupt lock beyond
+    /// the first: it nests, since an interrupt handler holds it and the
+    /// code it runs takes it again. The core's, not a task's - it is
+    /// taken with the core's interrupts masked.
+    sys_nest: u32 = 0,
     /// SysFlags: SFF_SAR, SFF_TQE. Elapsed: what is left of the slice.
     sys_flags: u16 = 0,
     elapsed: u16 = 0,
     /// IdleCount, DispCount.
     idle_count: u32 = 0,
     disp_count: u32 = 0,
+    /// The cache engine's lock as this core has seen it (`CacheClearE`):
+    /// the longest it waited for it and the longest it held it, in cycles,
+    /// and when it took it.
+    engine_wait_max: u32 = 0,
+    engine_held_max: u32 = 0,
+    engine_taken_at: u32 = 0,
+    /// Where the core's line on the raw port stands (`rawio/_rawio.zig`).
+    out_line: OutLine = .{},
     /// The spinlocks the core holds, the latest last (AcquireLock): what
     /// the lock rules are checked against. They are the core's, not a
     /// task's - a holder is not switched away while it holds them.
@@ -139,6 +207,16 @@ pub const CpuState = extern struct {
     lock_wait_where: usize = 0,
     lock_taken_at: u32 = 0,
     lock_taker: usize = 0,
+    /// How the task lists' lock fares on this core, kept the same way:
+    /// the longest held and the longest waited for, each with the code
+    /// that took it (1 for an exception's dispatcher, 2 for what a
+    /// switch left behind, 3 for the time slice).
+    lists_held_max: u32 = 0,
+    lists_held_where: usize = 0,
+    lists_wait_max: u32 = 0,
+    lists_wait_where: usize = 0,
+    lists_taken_at: u32 = 0,
+    lists_taker: usize = 0,
     /// The core's task another core's RemTask is taking away, switched out
     /// at its next switch point; once it is, `stopped` until the next exit,
     /// which signals `stop_waiter`, the task taking it away.
@@ -146,6 +224,25 @@ pub const CpuState = extern struct {
     stopped: ?*Task = null,
     stop_waiter: ?*Task = null,
 };
+
+/// A core's state is a whole number of cache lines and starts on one:
+/// the aligned field in it says so, and the memory it is cut from is
+/// lined up to match (`coresStateAt`).
+const line = sdk.hardware.DCACHE_LINE_SIZE;
+
+/// The memory `cores` core states take, with room to line the first one
+/// up: what the kernel asks the allocator for before exec exists.
+pub fn coresStateSize(cores: u32) usize {
+    return cores * @sizeOf(CpuState) + line - 1;
+}
+
+/// The core states inside `block`, which `coresStateSize` asked for: the
+/// first state on the first cache line in it, so that each core's lock
+/// has lines no other core writes.
+pub fn coresStateAt(block: *anyopaque) [*]CpuState {
+    const at = (@intFromPtr(block) + line - 1) & ~@as(usize, line - 1);
+    return @ptrFromInt(at);
+}
 
 /// struct ExecBase (the part that exists so far).
 pub const ExecBase = extern struct {
@@ -169,9 +266,6 @@ pub const ExecBase = extern struct {
     /// SoftInts: queued software interrupts, one list per priority
     /// (-32, -16, 0, 16, 32).
     soft_ints: [_interrupt.softint_priorities.len]List,
-    /// TaskReady: ready tasks by priority. TaskWait: waiting tasks.
-    task_ready: List,
-    task_wait: List,
     /// The task the boot code became on core 0, "kernel".
     boot_task: ?*Task,
     /// The last number `AddTask` gave a task (`Task.id`); 0 before the
@@ -232,10 +326,11 @@ pub const ExecBase = extern struct {
     /// exec's own low-memory handler, on `mem_handlers`: libraries and
     /// devices nobody has open, expunged (`initExec` sets it up).
     library_flusher: sdk.exec.Interrupt = .{},
-    /// The system's interrupt lock, the holding core and one or 0: Disable's
-    /// and the interrupt dispatch's. A core holds it while one of its tasks
-    /// is inside Disable or while it is in an exception, so a Disable on one
-    /// core holds off what interrupts do on the other.
+    /// The system's interrupt lock, the holding core and one or 0:
+    /// Disable's and the interrupt dispatch's. A core holds it while one
+    /// of its tasks is inside Disable, and while it runs an interrupt
+    /// handler or a software interrupt, so a Disable on one core holds
+    /// off what interrupts do on every other.
     disable_lock: u32 = 0,
     /// 0 until the kernel lets multitasking start (`startMultitasking`):
     /// until then no core switches away from a running task.
@@ -250,14 +345,28 @@ pub const ExecBase = extern struct {
     /// is.
     lock_guard: u32 = 0,
 
-    /// Each core's own state (CpuState).
-    cpus: [max_cores]CpuState = @splat(.{}),
+    /// Each core's own state (CpuState), one for every core the system
+    /// was started to run on: a block of its own, cut when exec was built,
+    /// since how many cores a machine has is not known until the kernel
+    /// has looked.
+    cpus_at: [*]CpuState = undefined,
+    /// What that was cut from, which is where it is given back: the
+    /// states start on a cache line, and the memory under them starts
+    /// wherever the allocator had room.
+    cpus_block: ?*anyopaque = null,
+    /// How many there are, which is the most `coreId` may answer.
+    cores_state: u32 = 0,
 
     /// This core's own state. A task reads it with its interrupts masked,
     /// or holding a spinlock: otherwise it may be moved to the other core
     /// between asking which core it is on and reading.
     pub inline fn cpu(base: *ExecBase) *CpuState {
-        return &base.cpus[coreId()];
+        return &base.cpus_at[coreId()];
+    }
+
+    /// Every core's state, as many as there are.
+    pub inline fn cpus(base: *ExecBase) []CpuState {
+        return base.cpus_at[0..base.cores_state];
     }
 
     /// exec through its own jump table, the way everything else calls it.

@@ -56,8 +56,8 @@ const regs = @import("regs.zig");
 
 pub const DEVICE_NAME = _xhci.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 12;
-const BUILD_DATE = "01.11.2026";
+const DEVICE_REVISION = 14;
+const BUILD_DATE = "08.11.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -354,10 +354,11 @@ fn open(dev: *exec.Device, io: *exec.IORequest, unit_number: u32, flags: u32) ca
     _ = flags;
     const base = _xhci.baseOf(dev);
     const sys = base.sys_base;
-    if (unit_number >= _xhci.max_units or unit_number >= base.units) return exec.IOERR_OPENFAIL;
+    if (unit_number >= base.units) return exec.IOERR_OPENFAIL;
     sys.ObtainSemaphore(&base.open_lock);
     defer sys.ReleaseSemaphore(&base.open_lock);
-    const host = base.hosts[unit_number] orelse (makeHost(base, unit_number) orelse return exec.IOERR_OPENFAIL);
+    const hosts = base.hosts orelse return exec.IOERR_OPENFAIL;
+    const host = hosts[unit_number] orelse (makeHost(base, unit_number) orelse return exec.IOERR_OPENFAIL);
     if (host.unit.open_cnt == 0) {
         if (!command(host)) return exec.IOERR_OPENFAIL;
     }
@@ -416,7 +417,7 @@ fn makeHost(base: *XhciBase, number: u32) ?*Host {
     var board: BoardController = .{};
     var sees_caches = false;
     if (number < base.board_units) {
-        board = base.board[number];
+        board = (base.board orelse return null)[number];
         if (board.regs == 0) return null;
     } else {
         const pb = base.pci_base orelse return null;
@@ -466,7 +467,7 @@ fn makeHost(base: *XhciBase, number: u32) ?*Host {
     // A task with no signals sleeps for good, and its block and stack
     // with it: there is nothing to take them back from it.
     if (host.alive == 0) return null;
-    base.hosts[number] = host;
+    (base.hosts orelse return null)[number] = host;
     return host;
 }
 
@@ -486,14 +487,27 @@ fn findBoardControllers(base: *XhciBase) void {
     const expansion_lib = sys.OpenLibrary(expansion.EXPANSIONNAME, 1) orelse return;
     defer sys.CloseLibrary(expansion_lib);
     const eb: *ExpansionBase = @ptrCast(expansion_lib);
+    // How many of them there are, which is the highest unit a part
+    // names: the block below is allocated for that many.
+    var count: u32 = 0;
     var part = eb.FindBoardPart(null, st.PARTKIND_USB, st.CHIP_DWC3);
     while (part) |it| : (part = eb.FindBoardPart(it, st.PARTKIND_USB, st.CHIP_DWC3)) {
         if (ub.GetTagData(st.PART_UsbRoles, st.USBROLE_HOST, it.tags) & st.USBROLE_HOST == 0) continue;
-        const unit = ub.GetTagData(st.PART_BusUnit, 0, it.tags);
+        if (ub.GetTagData(st.PART_Address, 0, it.tags) == 0) continue;
+        const unit: u32 = @truncate(ub.GetTagData(st.PART_BusUnit, 0, it.tags));
+        count = @max(count, unit + 1);
+    }
+    if (count == 0) return;
+    const memory = sys.AllocMem(count * @sizeOf(BoardController), exec.MEMF_CLEAR | exec.MEMF_SYSTEM) orelse return;
+    base.board = @ptrCast(@alignCast(memory));
+    base.board_units = count;
+    part = eb.FindBoardPart(null, st.PARTKIND_USB, st.CHIP_DWC3);
+    while (part) |it| : (part = eb.FindBoardPart(it, st.PARTKIND_USB, st.CHIP_DWC3)) {
+        if (ub.GetTagData(st.PART_UsbRoles, st.USBROLE_HOST, it.tags) & st.USBROLE_HOST == 0) continue;
         const registers = ub.GetTagData(st.PART_Address, 0, it.tags);
-        if (unit >= _xhci.max_units or registers == 0) continue;
-        base.board[unit] = .{ .regs = registers, .irq = @truncate(ub.GetTagData(st.PART_Irq, 0, it.tags)) };
-        base.board_units = @max(base.board_units, @as(u32, @intCast(unit)) + 1);
+        if (registers == 0) continue;
+        const unit: u32 = @truncate(ub.GetTagData(st.PART_BusUnit, 0, it.tags));
+        base.board.?[unit] = .{ .regs = registers, .irq = @truncate(ub.GetTagData(st.PART_Irq, 0, it.tags)) };
     }
 }
 
@@ -505,8 +519,8 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
     const base = _xhci.baseOf(dev);
     base.sys_base = sys_base;
     base.seg_list = seg_list;
-    base.hosts = @splat(null);
-    base.board = @splat(.{});
+    base.hosts = null;
+    base.board = null;
     base.board_units = 0;
     base.units = 0;
     findBoardControllers(base);
@@ -514,7 +528,7 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
     if (sys_base.OpenLibrary(pci.PCINAME, 2)) |pci_lib| {
         const pb: *PCIBase = @ptrCast(pci_lib);
         var functions: u32 = 0;
-        while (base.units + functions < _xhci.max_units and functionOf(pb, functions) != null) functions += 1;
+        while (functionOf(pb, functions) != null) functions += 1;
         if (functions != 0) {
             // Kept open: the device stays.
             base.pci_base = pb;
@@ -527,6 +541,12 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
         sdk.exec.kprintf(sys_base, "%s: no xHCI controller on this board or on PCI\n", .{DEVICE_NAME});
         return null;
     }
+    // A block of its own for each unit, now that there is a number.
+    const hosts = sys_base.AllocMem(base.units * @sizeOf(?*Host), exec.MEMF_CLEAR | exec.MEMF_SYSTEM) orelse {
+        sdk.exec.kprintf(sys_base, "%s: no memory for %d unit(s)\n", .{ DEVICE_NAME, base.units });
+        return null;
+    };
+    base.hosts = @ptrCast(@alignCast(hosts));
     sys_base.InitSemaphore(&base.open_lock);
     return dev;
 }

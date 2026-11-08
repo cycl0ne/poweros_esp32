@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 //! crypto.library's base: exec's Library header, the handles it keeps,
-//! a lock for each of the chip's three engines, and the numbers ModExp
-//! works in. There is one base, shared by every opener: what a caller's
-//! computation is lives in the caller's context, not here.
+//! a lock for each of the chip's three engines, what an x86-64 core has
+//! of its own crypto instructions, and the numbers ModExp works in. There
+//! is one base, shared by every opener: what a caller's computation is
+//! lives in the caller's context, not here.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -11,14 +12,16 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const jh7110 = @import("engine/jh7110.zig");
 const _engine = @import("engine/_engine.zig");
 const _bignum = @import("bignum/_bignum.zig");
+const field = @import("math/field.zig");
 
 /// The words of the longest number ModExp takes.
 pub const number_words = _bignum.number_words;
 
 /// ModExp's working numbers, in the engine's form: 32-bit words, least
-/// significant first.
+/// significant first. Aligned to the chip's limb, so that a 64-bit
+/// chip's software takes them two words at a time.
 pub const Numbers = extern struct {
-    base_value: [number_words]u32 = @splat(0),
+    base_value: [number_words]u32 align(@alignOf(field.native_limb)) = @splat(0),
     exponent: [number_words]u32 = @splat(0),
     modulus: [number_words]u32 = @splat(0),
     /// R squared modulo the modulus, R being 2 to the engine's bits.
@@ -47,6 +50,14 @@ pub const CryptoBase = extern struct {
     numbers: Numbers = .{},
     /// The JH7110's engine, once a call has set it up.
     sec: jh7110.State = .{},
+    /// The x86-64 core's AES-NI, asked when the library is made: AES's
+    /// rounds on the core (`engine/x64.zig`). False on the other chips.
+    core_aes: bool = false,
+    /// The x86-64 core's PCLMULQDQ: GCM's multiplications on the core.
+    core_clmul: bool = false,
+    /// The x86-64 core's SHA extensions: SHA-1, SHA-224 and SHA-256 on the
+    /// core.
+    core_sha: bool = false,
 };
 
 pub fn cryptoBase(lib: *exec.Library) *CryptoBase {

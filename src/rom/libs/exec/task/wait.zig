@@ -6,6 +6,7 @@
 //! core's count of locks held is the core's and not the task's.
 
 const _task = @import("_task.zig");
+const _interrupt = @import("../interrupt/_interrupt.zig");
 
 const ExecBase = @import("../exec.zig").ExecBase;
 const _locks = @import("../locks/_locks.zig");
@@ -69,17 +70,30 @@ const _locks = @import("../locks/_locks.zig");
 pub fn Wait(base: *ExecBase, signal_set: u32) u32 {
     _locks.checkWait(base, @returnAddress());
     const sys = base.iface();
-    sys.Disable();
     const task = sys.FindTask(null).?;
+    // The interrupts as the caller had them, in this task's own word: the
+    // task lists are held across the switch below, and a task that comes
+    // back on another core would find that core's saved state, not its
+    // own.
+    const state = _interrupt.mask();
+    _task.takeTaskLists(base, @returnAddress());
     while (true) {
-        _task.runExceptions(base, task);
+        _task.runExceptions(base, task, state);
         if (task.sig_recvd & signal_set != 0) break;
         _task.blockCurrent(base, task, signal_set);
+        // Held across the switch, as every other core's dispatcher and
+        // Signal take it: until the task's context is saved it is this
+        // core's, however its state reads. The exit lets the lock go once
+        // the core runs another task, so it is taken again here.
         _task.task_hardware.switch_now(); // back here once signalled
+        _task.takeTaskLists(base, @returnAddress());
     }
     const got = task.sig_recvd & signal_set;
     task.sig_recvd &= ~got;
     task.sig_wait = 0;
-    sys.Enable();
+    _task.dropTaskLists(base);
+    const due = _task.switchDue(base);
+    _interrupt.unmask(state);
+    if (due) _task.task_hardware.switch_now();
     return got;
 }

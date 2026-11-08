@@ -165,7 +165,7 @@ pub fn Loop(comptime T: type) type {
         fn lumaEdge(f: *Filter, x: u32, y: u32, bs: u8, vertical: bool) void {
             const sps = f.sps;
             const info = f.info;
-            const depth = sps.bit_depth_luma;
+            const depth: u5 = @intCast(sps.bit_depth_luma);
             const xp = if (vertical) x - 1 else x;
             const yp = if (vertical) y else y - 1;
             const cp = info.cu(xp, yp);
@@ -260,7 +260,7 @@ pub fn Loop(comptime T: type) type {
             const info = f.info;
             const sw: u5 = sps.shiftW();
             const sh: u5 = sps.shiftH();
-            const depth = sps.bit_depth_chroma;
+            const depth: u5 = @intCast(sps.bit_depth_chroma);
             const xq = xc << sw;
             const yq = yc << sh;
             const xp = if (vertical) (xc - 1) << sw else xq;
@@ -368,7 +368,7 @@ pub fn Loop(comptime T: type) type {
             const info = f.info;
             const sw: u5 = if (c == 0) 0 else sps.shiftW();
             const sh: u5 = if (c == 0) 0 else sps.shiftH();
-            const depth: u5 = if (c == 0) sps.bit_depth_luma else sps.bit_depth_chroma;
+            const depth: u5 = @intCast(if (c == 0) sps.bit_depth_luma else sps.bit_depth_chroma);
             const max: i32 = (@as(i32, 1) << depth) - 1;
             const stride = f.store.stride[c];
             const p = plane(f, c);

@@ -20,7 +20,7 @@ const trap = @import("trap.zig");
 const hardware = @import("sdk").hardware;
 const systimer = hardware.systimer;
 const intbits = hardware.intbits;
-const max_cores = @import("../../rom/libs/exec/exec_base.zig").max_cores;
+const max_cores = @import("cpu.zig").max_cores;
 
 /// The virtual timer's PPI, each core's: its interrupt ID.
 pub const tick_irq: u32 = 27;

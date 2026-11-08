@@ -26,4 +26,14 @@ if [ ! -x "$zig" ]; then
     mv "$root/toolchain/$asset" "$root/toolchain/zig"
 fi
 
+# Keep the build cache under its size limit before this build adds to it.
+# The compiler's cache has no bound of its own: every changed source leaves
+# a new entry behind, so weeks of building fill the disk and a build dies
+# mid-stage. ZIG_CACHE_LIMIT sets the size (default 64G), ZIG_CACHE_NO_PRUNE
+# switches it off; scripts/prune-cache.sh does the work and says nothing
+# unless it removed something.
+if [ -z "${ZIG_CACHE_NO_PRUNE:-}" ] && [ -x "$root/scripts/prune-cache.sh" ]; then
+    "$root/scripts/prune-cache.sh" --quiet --interval 10 || :
+fi
+
 exec "$zig" "$@"

@@ -52,8 +52,8 @@ const TagItem = sdk.utility.TagItem;
 ///   started with: copied, each lock duplicated), NP_ExitCode and
 ///   NP_ExitData,
 ///   NP_UserData (tc_UserData, there before the process first runs),
-///   NP_Affinity (the cores it runs on, TF_CORE0 or TF_CORE1; default 0,
-///   any),
+///   NP_Affinity (the core it keeps to, counted from 0; default
+///   exec.ANY_CORE, whichever is free),
 ///   NP_EndMsg (a message replied to its reply port once the process is
 ///   gone and nothing runs on its stack; default none),
 ///   NP_HoldLibrary (a library whose code it runs, its open count handed
@@ -174,7 +174,7 @@ pub fn CreateNewProc(db: *DosBase, tags: ?[*]const TagItem) ?*Process {
             .mem_block = block,
             .mem_size = total,
             .user_data = @ptrFromInt(ub.GetTagData(dos.NP_UserData, 0, tags)),
-            .flags = @as(u8, @truncate(ub.GetTagData(dos.NP_Affinity, 0, tags))) & sdk.exec.TF_CORES,
+            .core = @truncate(ub.GetTagData(dos.NP_Affinity, sdk.exec.ANY_CORE, tags)),
             .end_msg = @ptrFromInt(ub.GetTagData(dos.NP_EndMsg, 0, tags)),
         },
         .stack_size = @intCast(stack),

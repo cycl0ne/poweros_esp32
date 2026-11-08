@@ -295,6 +295,38 @@ found once can be watched early in the next run.
 **And** `newshell [console]` for a dos shell, `debug` for the ROM
 debugger.
 
+## A machine with no serial port
+
+A machine started by UEFI need have no serial port at all, and then the
+raw port writes into nothing. Such a machine is read on its screen
+instead, and nothing has to be set for it:
+
+- The loader writes the firmware's own console, which is the screen the
+  firmware lit. Its last line is `leaving the firmware, entering the
+  kernel at <address>`, so a screen that stops there says the kernel was
+  entered and said nothing after.
+- The kernel then draws its own lines on that screen as well as writing
+  the port, in the system's font, each line clearing the width before it
+  is written. It stops when the cold-start modules have run and the
+  display driver has the screen, so the picture comes up clean.
+- Everything from before that is in the log, which `Log` shows once there
+  is a shell to run it in, and `Log TO <file>` saves.
+
+A boot that stops between the kernel's last line and the picture is in
+the cold start, where the modules are made and nothing is said about it.
+A kernel built with `-Dlogdebug` says it: the log keeps its debug lines
+from the first one, the module each core's worker is made for and then
+every module as the cold start starts it -
+
+```sh
+./zig build stick -Dboard=qemu_q35 -Dlogdebug
+```
+
+The line `the log keeps its debug lines, and cold start names each module
+(-Dlogdebug)`, between the kernel's figures and the tick's, says a
+machine is running such a kernel; the last `D: starting <module>` line on
+the screen names the module it is in the hands of.
+
 ## The system log
 
 Everything written to the raw port is kept in a ring, each line with the

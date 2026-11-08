@@ -572,7 +572,7 @@ waiting at its prompt runs none.
 | `NP_Input`, `NP_Output`, `NP_Error` | its streams (default none), the first two closed at its end unless `NP_CloseInput`, `NP_CloseOutput` say false |
 | `NP_CurrentDir`, `NP_HomeDir` | locks it takes over (default copies of the caller's) |
 | `NP_Cli` | a CLI of its own, with the caller's prompt and command path |
-| `NP_Affinity` | the cores it runs on: `exec.TF_CORE0` to `exec.TF_CORE3` (`exec.coreFlag(core)`), or 0 for any |
+| `NP_Affinity` | the core it keeps to, counted from 0, or `exec.ANY_CORE` for whichever is free |
 | `NP_EndMsg`, `NP_HoldLibrary` | a message replied once it is gone; a library open count dos closes after its code has returned |
 
 **The code a process runs must stay loaded until the process is gone.**

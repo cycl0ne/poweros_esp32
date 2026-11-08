@@ -122,8 +122,9 @@ key frame a seek landed on, is passed over. At the end of the track the
 decoder hands out the frames it still holds back, and then VCERR_END.
 A decoder that refuses the stream before its first frame - the chip
 and 10-bit H.264 - gives way to the next module that decodes the codec,
-which starts at the key frame again (SINCE 1.4; not for a film read
-through a function). The frame's `time` is when it is due, and `number`
+which starts at the key frame again (SINCE 1.4, and since 1.10 also
+when it refuses a packet sent; not for a film read through a
+function). The frame's `time` is when it is due, and `number`
 counts the frames handed out since the stream was opened or moved.
 
 **CONTEXT**

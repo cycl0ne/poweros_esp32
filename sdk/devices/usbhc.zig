@@ -26,7 +26,12 @@
 //! An interrupt transfer is asked again every `interval` milliseconds
 //! until the device answers, and is replied only then: a read of a
 //! keyboard waits like any read. A controller may ask one that has had
-//! nothing for a while less often, a few milliseconds apart.
+//! nothing for a while less often, a few milliseconds apart. A
+//! high-speed or SuperSpeed endpoint may want asking more often than a
+//! millisecond - a mouse that reports 8000 times a second wants it every
+//! microframe - which `interval` cannot say: `binterval` carries the
+//! endpoint's own, and a controller that counts microframes asks it
+//! that often.
 //!
 //! **An isochronous transfer** is a run of packets at the endpoint's
 //! interval, one each interval, at most `UHC_ISO_PACKETS` of them:
@@ -216,7 +221,14 @@ pub const IOUsbHC = extern struct {
     /// The data toggle the endpoint is at, 0 or 1: the next packet's.
     /// The controller leaves it where the endpoint is after the transfer.
     toggle: u8 = 0,
-    pad: u8 = 0,
+    /// An interrupt or isochronous endpoint's bInterval as its descriptor
+    /// has it - at high speed and SuperSpeed 2^(bInterval - 1)
+    /// microframes, which `interval` rounds up to a millisecond - or 0
+    /// when the sender does not say (usb.library's pipes do from 1.16). A
+    /// controller that counts microframes (xhci.device from 1.14) asks a
+    /// high-speed or SuperSpeed interrupt endpoint by it; every other
+    /// goes by `interval`.
+    binterval: u8 = 0,
     /// Milliseconds a device may keep answering NAK before the transfer
     /// ends with UHIOERR_NAKTIMEOUT; 0: no limit.
     nak_timeout: u32 = 0,

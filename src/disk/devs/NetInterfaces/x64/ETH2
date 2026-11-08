@@ -1,0 +1,17 @@
+/* DEVS:NetInterfaces/ETH2 - the interface C:net/AddNetInterface ETH2
+ * brings up as eth2. The startup-sequence brings up every file here.
+ *
+ * This one is the second port of a machine whose Ethernet card has two
+ * (Unit = 1, where ETH1 beside it is unit 0). A machine with one port
+ * does not add it, and nothing is said; a port whose socket is empty
+ * waits fifteen seconds for a link and is then left down, which costs
+ * the boot nothing - the network comes up behind it. A fixed address
+ * instead would be, for example
+ *   Configure = FIXED; Address = 192.168.1.51; NetMask = 255.255.255.0
+ *   Gateway = 192.168.1.1; NameServer = 192.168.1.1
+ * A keyword this file does not know is an error, with its line and
+ * column; see C:net/AddNetInterface for the list.
+ */
+Device     = networks/realnet.device
+Unit       = 1
+Configure  = DHCP

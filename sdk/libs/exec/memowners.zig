@@ -126,17 +126,20 @@ pub fn Tally(comptime max_owners: usize) type {
             return &tally.owners[tally.last];
         }
 
-        /// The owners named after the tasks there are now, under Disable.
+        /// The owners named after the tasks there are now: each core's
+        /// tasks under that core's lock, one core at a time. A task that
+        /// moves between cores while this walks them may be named twice
+        /// or not at all, which costs a name in a listing and nothing
+        /// else.
         pub fn name(tally: *Self, sys: *ExecBase) void {
-            sys.Disable();
-            defer sys.Enable();
             var core: u32 = 0;
-            while (sys.CoreTask(core)) |task| : (core += 1) tally.nameTask(task);
-            for ([_]u32{ exec.EXECLIST_TASK_READY, exec.EXECLIST_TASK_WAIT }) |which| {
-                const list = sys.LockExecList(which).?;
-                var it = list.iterator();
-                while (it.next()) |node| tally.nameTask(@fieldParentPtr("node", node));
-                sys.UnlockExecList(which);
+            while (sys.LockCoreTasks(core)) |tasks| : (core += 1) {
+                defer sys.UnlockCoreTasks(core);
+                if (sys.CoreTask(core)) |running| tally.nameTask(running);
+                for ([_]*exec.List{ &tasks.ready, &tasks.wait }) |list| {
+                    var it = list.iterator();
+                    while (it.next()) |node| tally.nameTask(@fieldParentPtr("node", node));
+                }
             }
         }
 

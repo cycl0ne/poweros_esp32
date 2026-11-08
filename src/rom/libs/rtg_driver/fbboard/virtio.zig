@@ -28,10 +28,18 @@
 //! next step needs it done: the screen's size at the start, an image for
 //! the cursor, a slot when every one is with the device.
 //!
+//! **Two ways to its registers, and one device behind them.** A
+//! memory-mapped transport is a block of registers at an address the
+//! board names; a function on PCI has the same registers spread over
+//! windows its configuration space names (`virtiopci.zig`). Only the few
+//! lines that read and write registers know which - `Transport` - and
+//! everything else, every command and every queue, is the same for both.
+//!
 //! virtio-mmio comes in two versions: 1, the legacy one, which QEMU gives
 //! unless told otherwise (`-global virtio-mmio.force-legacy=false`), is
 //! told where a queue is by its page; 2 by the addresses of its three
-//! parts. Both are taken. Its interrupts are not used: the rings are
+//! parts. Both are taken. On PCI only the arrangement the standard
+//! settled on is taken. Interrupts are not used either way: the rings are
 //! looked at.
 
 const std = @import("std");
@@ -39,7 +47,10 @@ const sdk = @import("sdk");
 const exec = sdk.exec;
 const ExecBase = sdk.interface.exec.ExecBase;
 const reg = sdk.hardware.mmio.reg;
+const reg8 = sdk.hardware.mmio.reg8;
+const reg16 = sdk.hardware.mmio.reg16;
 const barrier = sdk.hardware.barrier;
+const virtiopci = @import("virtiopci.zig");
 
 // --- the transport ----------------------------------------------------------------
 
@@ -65,6 +76,31 @@ const STATUS = 0x070;
 const QUEUE_DESC = 0x080;
 const QUEUE_DRIVER = 0x090;
 const QUEUE_DEVICE = 0x0A0;
+
+/// The fields of a PCI function's common configuration, by their offsets
+/// in that window: what the registers above are, in widths of their own.
+/// A queue's three addresses are 64-bit and written as two words, which
+/// is what the standard says and what a 32-bit machine can do.
+const COMMON_DEVICE_FEATURES_SEL = 0x00;
+const COMMON_DEVICE_FEATURES = 0x04;
+const COMMON_DRIVER_FEATURES_SEL = 0x08;
+const COMMON_DRIVER_FEATURES = 0x0C;
+const COMMON_STATUS = 0x14;
+const COMMON_QUEUE_SEL = 0x16;
+const COMMON_QUEUE_SIZE = 0x18;
+const COMMON_QUEUE_ENABLE = 0x1C;
+const COMMON_QUEUE_NOTIFY_OFF = 0x1E;
+const COMMON_QUEUE_DESC = 0x20;
+const COMMON_QUEUE_DRIVER = 0x28;
+const COMMON_QUEUE_DEVICE = 0x30;
+
+/// How the device is reached: a block of registers at an address, with
+/// the version of the memory-mapped transport it speaks, or a function on
+/// PCI with the windows its capabilities named.
+pub const Transport = union(enum) {
+    mmio: struct { base: usize, version: u32 },
+    pci: virtiopci.Windows,
+};
 
 /// "virt", little-endian.
 const MAGIC_VALUE: u32 = 0x7472_6976;
@@ -329,11 +365,14 @@ const layout = struct {
     const bytes = answer + @sizeOf(DisplayInfo);
 };
 
-/// One GPU, from `find` on; `start` brings it up.
+/// One GPU, from `find` or `findOnPci` on; `start` brings it up.
 pub const Gpu = struct {
-    /// Its transport's registers, and the transport's version.
-    base: usize,
-    version: u32,
+    /// How its registers are reached.
+    port: Transport,
+    /// Where each queue is told to look, filled as that queue is set up:
+    /// a PCI function names a place of its own per queue, a
+    /// memory-mapped transport has the one register for all of them.
+    notify_at: [2]usize = .{ 0, 0 },
     sys: *ExecBase = undefined,
     /// The block the queues and the commands are in, as AllocMem gave it.
     memory: ?*anyopaque = null,
@@ -359,20 +398,72 @@ pub const Gpu = struct {
     cursor_id: u32 = 0,
     /// Whether a command failing has been said on the raw port: once.
     told: bool = false,
-
-    fn read(gpu: *const Gpu, offset: usize) u32 {
-        return reg(gpu.base + offset).*;
-    }
-
-    fn write(gpu: *const Gpu, offset: usize, value: u32) void {
-        reg(gpu.base + offset).* = value;
-    }
-
-    fn write64(gpu: *const Gpu, offset: usize, value: usize) void {
-        gpu.write(offset, @truncate(value));
-        gpu.write(offset + 4, @truncate(@as(u64, value) >> 32));
-    }
 };
+
+/// A 64-bit field as two words, low half first: what the standard says,
+/// and what a 32-bit machine can write at all.
+fn writeWide(at: usize, value: usize) void {
+    reg(at).* = @truncate(value);
+    reg(at + 4).* = @truncate(@as(u64, value) >> 32);
+}
+
+/// What the device says of itself: the status it is in.
+fn status(gpu: *const Gpu) u32 {
+    return switch (gpu.port) {
+        .mmio => |port| reg(port.base + STATUS).*,
+        .pci => |port| reg8(port.common + COMMON_STATUS).*,
+    };
+}
+
+fn setStatus(gpu: *const Gpu, value: u32) void {
+    switch (gpu.port) {
+        .mmio => |port| reg(port.base + STATUS).* = value,
+        .pci => |port| reg8(port.common + COMMON_STATUS).* = @truncate(value),
+    }
+}
+
+/// Whether this transport asks to be told that the features are settled.
+/// The first version of the memory-mapped one was written before that
+/// step existed; everything since has it.
+fn settlesFeatures(gpu: *const Gpu) bool {
+    return switch (gpu.port) {
+        .mmio => |port| port.version != 1,
+        .pci => true,
+    };
+}
+
+/// None of the device's features taken - no 3D, no EDID - and
+/// VIRTIO_F_VERSION_1 answered where the transport is one that asks for
+/// it, since it is spoken to as the standard says and not as the
+/// arrangement before it did. False where the device does not offer that.
+fn takeFeatures(gpu: *const Gpu) bool {
+    switch (gpu.port) {
+        .mmio => |port| {
+            if (port.version == 1) {
+                reg(port.base + DRIVER_FEATURES_SEL).* = 0;
+                reg(port.base + DRIVER_FEATURES).* = 0;
+                reg(port.base + GUEST_PAGE_SIZE).* = page;
+                return true;
+            }
+            reg(port.base + DEVICE_FEATURES_SEL).* = 1;
+            if (reg(port.base + DEVICE_FEATURES).* & FEATURE_VERSION_1 == 0) return false;
+            reg(port.base + DRIVER_FEATURES_SEL).* = 1;
+            reg(port.base + DRIVER_FEATURES).* = FEATURE_VERSION_1;
+            reg(port.base + DRIVER_FEATURES_SEL).* = 0;
+            reg(port.base + DRIVER_FEATURES).* = 0;
+            return true;
+        },
+        .pci => |port| {
+            reg(port.common + COMMON_DEVICE_FEATURES_SEL).* = 1;
+            if (reg(port.common + COMMON_DEVICE_FEATURES).* & FEATURE_VERSION_1 == 0) return false;
+            reg(port.common + COMMON_DRIVER_FEATURES_SEL).* = 1;
+            reg(port.common + COMMON_DRIVER_FEATURES).* = FEATURE_VERSION_1;
+            reg(port.common + COMMON_DRIVER_FEATURES_SEL).* = 0;
+            reg(port.common + COMMON_DRIVER_FEATURES).* = 0;
+            return true;
+        },
+    }
+}
 
 /// The first of `count` transports `stride` bytes apart from `base` that
 /// has a GPU behind it. QEMU puts the first `-device` on the last
@@ -385,9 +476,16 @@ pub fn find(base: usize, count: u32, stride: usize) ?Gpu {
         const version = reg(at + VERSION).*;
         if (version != 1 and version != 2) continue;
         if (reg(at + DEVICE_ID).* != DEVICE_GPU) continue;
-        return .{ .base = at, .version = version };
+        return .{ .port = .{ .mmio = .{ .base = at, .version = version } } };
     }
     return null;
+}
+
+/// The machine's first virtio GPU on PCI, claimed and switched on
+/// (`virtiopci.zig`). Null where the machine has none, or no
+/// pci.library to find it with.
+pub fn findOnPci(sys: *ExecBase) ?Gpu {
+    return .{ .port = .{ .pci = virtiopci.find(sys) orelse return null } };
 }
 
 /// The device reset and brought up with both queues, in a block of its
@@ -405,25 +503,14 @@ pub fn start(gpu: *Gpu, sys: *ExecBase) bool {
     gpu.cursors = @ptrFromInt(base + layout.cursors);
     gpu.answer = @ptrFromInt(base + layout.answer);
 
-    gpu.write(STATUS, 0);
-    var status = STATUS_ACKNOWLEDGE | STATUS_DRIVER;
-    gpu.write(STATUS, status);
-    // None of its features: no 3D, no EDID. Version 2 wants to hear that
-    // it is spoken to as version 1 of the standard says.
-    if (gpu.version == 2) {
-        gpu.write(DEVICE_FEATURES_SEL, 1);
-        if (gpu.read(DEVICE_FEATURES) & FEATURE_VERSION_1 == 0) return fail(gpu);
-        gpu.write(DRIVER_FEATURES_SEL, 1);
-        gpu.write(DRIVER_FEATURES, FEATURE_VERSION_1);
-        gpu.write(DRIVER_FEATURES_SEL, 0);
-        gpu.write(DRIVER_FEATURES, 0);
-        status |= STATUS_FEATURES_OK;
-        gpu.write(STATUS, status);
-        if (gpu.read(STATUS) & STATUS_FEATURES_OK == 0) return fail(gpu);
-    } else {
-        gpu.write(DRIVER_FEATURES_SEL, 0);
-        gpu.write(DRIVER_FEATURES, 0);
-        gpu.write(GUEST_PAGE_SIZE, page);
+    setStatus(gpu, 0);
+    var state = STATUS_ACKNOWLEDGE | STATUS_DRIVER;
+    setStatus(gpu, state);
+    if (!takeFeatures(gpu)) return fail(gpu);
+    if (settlesFeatures(gpu)) {
+        state |= STATUS_FEATURES_OK;
+        setStatus(gpu, state);
+        if (status(gpu) & STATUS_FEATURES_OK == 0) return fail(gpu);
     }
     if (!setUpQueue(gpu, 0, &gpu.control, base + layout.control, control_size)) return fail(gpu);
     if (!setUpQueue(gpu, 1, &gpu.cursor, base + layout.cursor, cursor_size)) return fail(gpu);
@@ -432,7 +519,7 @@ pub fn start(gpu: *Gpu, sys: *ExecBase) bool {
     const slots = gpu.control.size / 2;
     gpu.busy = if (slots < control_slots) ~@as(u64, 0) << @intCast(slots) else 0;
     gpu.cursor_busy = if (gpu.cursor.size < cursor_size) ~@as(u16, 0) << @intCast(gpu.cursor.size) else 0;
-    gpu.write(STATUS, status | STATUS_DRIVER_OK);
+    setStatus(gpu, state | STATUS_DRIVER_OK);
     return true;
 }
 
@@ -442,33 +529,61 @@ fn fail(gpu: *Gpu) bool {
 }
 
 /// The device reset - which lets go of its queues and every resource -
-/// and the block given back.
+/// the block given back, and a function on PCI given back with it.
 pub fn stop(gpu: *Gpu) void {
-    gpu.write(STATUS, 0);
+    setStatus(gpu, 0);
     if (gpu.memory) |memory| gpu.sys.FreeMem(memory, gpu.memory_size);
     gpu.memory = null;
     gpu.memory_size = 0;
+    switch (gpu.port) {
+        .mmio => {},
+        .pci => |*port| virtiopci.forget(port),
+    }
 }
 
 /// Queue `index` at `address`, as many entries as the device offers up to
 /// `most`, told to the device as its version wants it. False when it
 /// offers too few for a command.
 fn setUpQueue(gpu: *Gpu, index: u32, queue: *Queue, address: usize, most: u16) bool {
-    gpu.write(QUEUE_SEL, index);
-    const offered = gpu.read(QUEUE_NUM_MAX);
-    if (offered < 2) return false;
-    const size: u16 = @intCast(@min(offered, most));
-    queue.* = Queue.at(address, size);
-    queue.avail[0] = AVAIL_NO_INTERRUPT;
-    gpu.write(QUEUE_NUM, size);
-    if (gpu.version == 1) {
-        gpu.write(QUEUE_ALIGN, page);
-        gpu.write(QUEUE_PFN, @truncate(address / page));
-    } else {
-        gpu.write64(QUEUE_DESC, address);
-        gpu.write64(QUEUE_DRIVER, address + 16 * @as(usize, size));
-        gpu.write64(QUEUE_DEVICE, address + usedAt(size));
-        gpu.write(QUEUE_READY, 1);
+    switch (gpu.port) {
+        .mmio => |port| {
+            reg(port.base + QUEUE_SEL).* = index;
+            const offered = reg(port.base + QUEUE_NUM_MAX).*;
+            if (offered < 2) return false;
+            const size: u16 = @intCast(@min(offered, most));
+            queue.* = Queue.at(address, size);
+            queue.avail[0] = AVAIL_NO_INTERRUPT;
+            reg(port.base + QUEUE_NUM).* = size;
+            if (port.version == 1) {
+                reg(port.base + QUEUE_ALIGN).* = page;
+                reg(port.base + QUEUE_PFN).* = @truncate(address / page);
+            } else {
+                writeWide(port.base + QUEUE_DESC, address);
+                writeWide(port.base + QUEUE_DRIVER, address + 16 * @as(usize, size));
+                writeWide(port.base + QUEUE_DEVICE, address + usedAt(size));
+                reg(port.base + QUEUE_READY).* = 1;
+            }
+            // One register for every queue: what is written to it is the
+            // queue's own number.
+            gpu.notify_at[index] = port.base + QUEUE_NOTIFY;
+        },
+        .pci => |port| {
+            reg16(port.common + COMMON_QUEUE_SEL).* = @intCast(index);
+            const offered = reg16(port.common + COMMON_QUEUE_SIZE).*;
+            if (offered < 2) return false;
+            const size: u16 = @min(offered, most);
+            queue.* = Queue.at(address, size);
+            queue.avail[0] = AVAIL_NO_INTERRUPT;
+            reg16(port.common + COMMON_QUEUE_SIZE).* = size;
+            writeWide(port.common + COMMON_QUEUE_DESC, address);
+            writeWide(port.common + COMMON_QUEUE_DRIVER, address + 16 * @as(usize, size));
+            writeWide(port.common + COMMON_QUEUE_DEVICE, address + usedAt(size));
+            // Where this queue is told to look: its own place in the
+            // notify window, counted in what the function said.
+            const place = reg16(port.common + COMMON_QUEUE_NOTIFY_OFF).*;
+            gpu.notify_at[index] = port.notify + @as(usize, place) * port.notify_multiplier;
+            reg16(port.common + COMMON_QUEUE_ENABLE).* = 1;
+        },
     }
     return true;
 }
@@ -476,7 +591,10 @@ fn setUpQueue(gpu: *Gpu, index: u32, queue: *Queue, address: usize, most: u16) b
 /// The device told to look at queue `index`.
 fn kick(gpu: *Gpu, index: u32) void {
     barrier.toDevice();
-    gpu.write(QUEUE_NOTIFY, index);
+    switch (gpu.port) {
+        .mmio => reg(gpu.notify_at[index]).* = index,
+        .pci => reg16(gpu.notify_at[index]).* = @intCast(index),
+    }
 }
 
 /// Waited for a moment, the `tries`th time: at once at first, then with

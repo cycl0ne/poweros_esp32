@@ -136,9 +136,38 @@ pub const Hub = struct {
 };
 
 /// A started bus.
+/// The running bus numbered `number`, or null. The library's bus lock is
+/// held by the caller.
+pub fn busOf(base: *UsbBase, number: u32) ?*Bus {
+    var it: ?*Bus = @ptrCast(@alignCast(base.bus_list));
+    while (it) |bus| : (it = bus.next) {
+        if (bus.number == number) return bus;
+    }
+    return null;
+}
+
+/// `record` taken off the chain of running buses, under the same lock.
+pub fn unlinkBus(base: *UsbBase, record: *Bus) void {
+    const head: ?*Bus = @ptrCast(@alignCast(base.bus_list));
+    if (head == record) {
+        base.bus_list = @ptrCast(record.next);
+        return;
+    }
+    var it = head;
+    while (it) |bus| : (it = bus.next) {
+        if (bus.next == record) {
+            bus.next = record.next;
+            return;
+        }
+    }
+}
+
 pub const Bus = struct {
     usb_base: *UsbBase,
     number: u32,
+    /// The next bus on the library's chain of running buses
+    /// (`bus_list`), under its bus lock.
+    next: ?*Bus = null,
     /// The controller: its device's name and unit, and the request it was
     /// opened with.
     hc_name: [*:0]const u8,

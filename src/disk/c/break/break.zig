@@ -38,7 +38,7 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Break";
-const VERSION_STRING = "\x00$VER: Break 1.0 (27.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Break 1.1 (04.11.2026)\r\n";
 
 const template = "PROCESS/N,NAME/K,ALL/S,C/S,D/S,E/S,F/S";
 const arg_process = 0;
@@ -151,20 +151,29 @@ fn signalsOf(argv: *const [arg_count]usize) u32 {
 /// `signals` raised in `task`, if it is still there. False when it has
 /// ended.
 fn signalIfThere(sys: *ExecBase, task: *exec.Task, signals: u32) bool {
-    sys.Disable();
-    defer sys.Enable();
-    if (!isThere(sys, task)) return false;
-    sys.Signal(task, signals);
-    return true;
+    // The signal goes out while the core the task was found on is still
+    // held, so it cannot have ended in between: a task is that core's
+    // until that core's lock is let go.
+    var core: u32 = 0;
+    while (sys.LockCoreTasks(core)) |tasks| : (core += 1) {
+        defer sys.UnlockCoreTasks(core);
+        if (!onCore(sys, tasks, core, task)) continue;
+        sys.Signal(task, signals);
+        return true;
+    }
+    return false;
 }
 
 /// The command `proc` runs, copied into `into` - empty when it runs none -
 /// if it is still there. False when it has ended.
 fn commandIfThere(sys: *ExecBase, proc: *dos.Process, into: *[dos.CLI_MAX_COMMAND_NAME]u8) bool {
     into[0] = 0;
-    sys.Disable();
-    defer sys.Enable();
-    if (!isThere(sys, &proc.task)) return false;
+    var core: u32 = 0;
+    const found = while (sys.LockCoreTasks(core)) |tasks| : (core += 1) {
+        defer sys.UnlockCoreTasks(core);
+        if (onCore(sys, tasks, core, &proc.task)) break true;
+    } else false;
+    if (!found) return false;
     const cli = proc.cli orelse return true;
     const command = cli.command_name orelse return true;
     var i: usize = 0;
@@ -173,16 +182,11 @@ fn commandIfThere(sys: *ExecBase, proc: *dos.Process, into: *[dos.CLI_MAX_COMMAN
     return true;
 }
 
-/// Whether `task` is there, asked under Disable: running on a core or on
-/// one of exec's task queues.
-fn isThere(sys: *ExecBase, task: *exec.Task) bool {
-    var core: u32 = 0;
-    while (sys.CoreTask(core)) |running| : (core += 1) {
-        if (running == task) return true;
-    }
-    for ([_]u32{ exec.EXECLIST_TASK_READY, exec.EXECLIST_TASK_WAIT }) |which| {
-        const list = sys.LockExecList(which) orelse continue;
-        defer sys.UnlockExecList(which);
+/// Whether `task` is core `core`'s, asked with that core's lock held:
+/// running there, ready there or waiting there.
+fn onCore(sys: *ExecBase, tasks: *exec.CoreTasks, core: u32, task: *exec.Task) bool {
+    if (sys.CoreTask(core) == task) return true;
+    for ([_]*exec.List{ &tasks.ready, &tasks.wait }) |list| {
         var it = list.iterator();
         while (it.next()) |node| {
             if (node == &task.node) return true;

@@ -404,7 +404,7 @@ pub const Parse = struct {
         ps.col_end = h.mi_col_starts[tile_col + 1];
         ps.current_q = h.base_q_idx;
         ps.c = frame_cdfs.*;
-        ps.c.intra_frame_y_mode = @import("cdfs.zig").default_intra_frame_y_mode_cdf;
+        ps.c.intra_frame_y_mode = @import("sdk").videoparse.av1.cdfs.default_intra_frame_y_mode_cdf;
         ps.r = symbol.Reader.init(data, !h.disable_cdf_update);
 
         // clear_above_context

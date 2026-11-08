@@ -67,7 +67,7 @@ done
 
 if [ "$print" = yes ]; then
     for one in $FILES; do
-        printf 'cp %s %s\n' "$one" "${target:-<the boot partition>}"
+        printf 'cp %s %s/%s\n' "$one" "${target:-<the boot partition>}" "$one"
     done
     exit 0
 fi
@@ -105,6 +105,11 @@ fi
 
 for one in $FILES; do
     printf 'write.sh: %s -> %s/%s\n' "$one" "$target" "$one"
+    # A file whose name has a path in it - the loader a UEFI firmware
+    # looks for - goes in that path, which is made where it is not there.
+    case $one in
+    */*) mkdir -p -- "$target/${one%/*}" ;;
+    esac
     cp -- "$one" "$target/$one"
 done
 sync

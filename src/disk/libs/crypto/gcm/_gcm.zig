@@ -36,7 +36,13 @@
 //!
 //! A GMAC under way keeps H, E(K, J0) and GHASH's running value in its
 //! context, and the bytes short of a block; whole blocks go through
-//! straight from the caller's memory. It is software on every chip.
+//! straight from the caller's memory.
+//!
+//! On an x86-64 core with PCLMULQDQ (`cb.core_clmul`) the products are
+//! the core's (`core` in Ghash and the functions here): four of its 64 by
+//! 64 multiplications a block, four blocks' products summed and brought
+//! into the field once by the same reduction (`coreBlocks`); with AES-NI
+//! the counter blocks are encrypted eight at a time.
 //!
 //! GHASH is linear, so on the 64-bit chips a long run of whole blocks
 //! given to a GMAC is cut into parts that the cores hash at once (exec's
@@ -56,6 +62,7 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const _cipher = @import("../cipher/_cipher.zig");
 const aes = @import("../engine/aes.zig");
 const jh7110 = @import("../engine/jh7110.zig");
+const x64 = @import("../engine/x64.zig");
 
 /// x * y without carries, 32 by 32 bits into 64.
 fn multiply32(x: u32, y: u32) u64 {
@@ -90,8 +97,12 @@ fn multiply64(x: u64, y: u64) u128 {
 }
 
 /// x * y in GCM's field, each 128 bits as a block's bytes read most
-/// significant first.
-fn multiply(x: u128, y: u128) u128 {
+/// significant first; on the x86-64 core's PCLMULQDQ if `core`.
+fn multiply(x: u128, y: u128, core: bool) u128 {
+    if (x64.built and core) {
+        const high, const low = x64.product(x, y);
+        return reduce(high, low);
+    }
     if (quarters) {
         var sum: Sum = .{};
         sum.add(Operand.of(x), &Factor.of(y));
@@ -293,37 +304,39 @@ const aggregate_least: u32 = 16 * AES_BLOCK;
 /// `h` to the power `exponent` in GCM's field, by squaring and
 /// multiplying: the steps follow the exponent - a message's length, no
 /// secret - and not `h`.
-fn power(h: u128, exponent: u32) u128 {
+fn power(h: u128, exponent: u32, core: bool) u128 {
     // The field's 1: the block whose first bit is set.
     var result: u128 = 1 << 127;
     var square = h;
     var rest = exponent;
     while (rest != 0) : (rest >>= 1) {
-        if (rest & 1 != 0) result = multiply(result, square);
-        square = multiply(square, square);
+        if (rest & 1 != 0) result = multiply(result, square, core);
+        square = multiply(square, square, core);
     }
     return result;
 }
 
 /// GHASH under way: the key H and the running value Y, each 128 bits as
-/// the block's bytes read most significant first.
+/// the block's bytes read most significant first, and whether the
+/// products are the core's.
 const Ghash = struct {
     h: u128,
     y: u128 = 0,
+    core: bool,
 
-    fn init(key: *const [AES_BLOCK]u8) Ghash {
-        return .{ .h = load128(key) };
+    fn init(key: *const [AES_BLOCK]u8, core: bool) Ghash {
+        return .{ .h = load128(key), .core = core };
     }
 
     /// Y = (Y ^ block) * H.
     fn block(ghash: *Ghash, bytes: *const [AES_BLOCK]u8) void {
-        ghash.y = multiply(ghash.y ^ load128(bytes), ghash.h);
+        ghash.y = multiply(ghash.y ^ load128(bytes), ghash.h, ghash.core);
     }
 
     /// `length` bytes, the last block padded with zeroes.
     fn update(ghash: *Ghash, data: [*]const u8, length: u32) void {
         const whole = length & ~@as(u32, AES_BLOCK - 1);
-        ghash.y = wholeBlocks(ghash.y, ghash.h, data, whole);
+        ghash.y = wholeBlocks(ghash.y, ghash.h, data, whole, ghash.core);
         if (whole == length) return;
         var padded: [AES_BLOCK]u8 = @splat(0);
         for (0..length - whole) |index| padded[index] = data[whole + index];
@@ -340,7 +353,8 @@ const Ghash = struct {
 
 /// GHASH's running value `y` after `length` bytes of whole blocks, taken
 /// where they lie: (y ^ block) * h for each.
-fn wholeBlocks(y: u128, h: u128, data: [*]const u8, length: u32) u128 {
+fn wholeBlocks(y: u128, h: u128, data: [*]const u8, length: u32, core: bool) u128 {
+    if (x64.built and core) return coreBlocks(y, h, data, length);
     if (quarters) {
         if (@intFromPtr(data) % 8 == 0) return quarterBlocks(true, y, h, data, length);
         return quarterBlocks(false, y, h, data, length);
@@ -348,9 +362,41 @@ fn wholeBlocks(y: u128, h: u128, data: [*]const u8, length: u32) u128 {
     var value = y;
     var at: u32 = 0;
     while (at < length) : (at += AES_BLOCK) {
-        value = multiply(value ^ load128(data[at..][0..AES_BLOCK]), h);
+        value = multiply(value ^ load128(data[at..][0..AES_BLOCK]), h, false);
     }
     return value;
+}
+
+/// `wholeBlocks` on the x86-64 core's PCLMULQDQ: four blocks at a time -
+/// (y ^ b1) h^4 ^ b2 h^3 ^ b3 h^2 ^ b4 h, the products summed and brought
+/// into the field once - and the rest one at a time.
+fn coreBlocks(y: u128, h: u128, data: [*]const u8, length: u32) u128 {
+    var value = y;
+    var at: u32 = 0;
+    if (length >= 4 * AES_BLOCK) {
+        const h2 = multiply(h, h, true);
+        const h3 = multiply(h2, h, true);
+        const powers = [4]u128{ multiply(h3, h, true), h3, h2, h };
+        while (length - at >= 4 * AES_BLOCK) : (at += 4 * AES_BLOCK) {
+            var high: u128 = 0;
+            var low: u128 = 0;
+            inline for (powers, 0..) |by, index| {
+                var block = loadBlock(data + at + index * AES_BLOCK);
+                if (index == 0) block ^= value;
+                const product_high, const product_low = x64.product(block, by);
+                high ^= product_high;
+                low ^= product_low;
+            }
+            value = reduce(high, low);
+        }
+    }
+    while (at < length) : (at += AES_BLOCK) value = multiply(value ^ loadBlock(data + at), h, true);
+    return value;
+}
+
+/// A block from anywhere, its bytes read most significant first.
+inline fn loadBlock(bytes: [*]const u8) u128 {
+    return @byteSwap(@as(u128, @bitCast(@as(*align(1) const [AES_BLOCK]u8, @ptrCast(bytes)).*)));
 }
 
 /// `wholeBlocks` on a 64-bit chip, `data` on an 8-byte boundary or not:
@@ -362,9 +408,9 @@ fn quarterBlocks(comptime aligned: bool, y: u128, h: u128, data: [*]const u8, le
     var value = y;
     var at: u32 = 0;
     if (length >= aggregate_least) {
-        const h2 = multiply(h, h);
-        const h3 = multiply(h2, h);
-        const powers = [4]Factor{ Factor.of(multiply(h3, h)), Factor.of(h3), Factor.of(h2), by_h };
+        const h2 = multiply(h, h, false);
+        const h3 = multiply(h2, h, false);
+        const powers = [4]Factor{ Factor.of(multiply(h3, h, false)), Factor.of(h3), Factor.of(h2), by_h };
         while (length - at >= 4 * AES_BLOCK) : (at += 4 * AES_BLOCK) {
             var sum: Sum = .{};
             inline for (&powers, 0..) |*by, index| {
@@ -390,13 +436,14 @@ const share_part: u32 = 16 * 1024;
 const share_parts_max = 4;
 
 /// A GHASH shared out (`sharedBlocks`): H, the running value before it,
-/// the blocks, and each part's GHASH - a cache line each, since the parts
-/// write them at once.
+/// the blocks, whether the products are the core's, and each part's
+/// GHASH - a cache line each, since the parts write them at once.
 const Shared = struct {
     h: u128,
     y: u128,
     data: [*]const u8,
     blocks: u32,
+    core: bool,
     results: [share_parts_max]Result = undefined,
 
     const Result = struct {
@@ -419,7 +466,7 @@ fn hashPart(data: ?*anyopaque, part: u32, parts: u32) callconv(.c) void {
     const shared: *Shared = @ptrCast(@alignCast(data.?));
     const start, const count = shared.range(part, parts);
     const from: u128 = if (part == 0) shared.y else 0;
-    shared.results[part].value = wholeBlocks(from, shared.h, shared.data + start * AES_BLOCK, count * AES_BLOCK);
+    shared.results[part].value = wholeBlocks(from, shared.h, shared.data + start * AES_BLOCK, count * AES_BLOCK, shared.core);
 }
 
 /// The parts of a GHASH shared out, done in `parts`, put together: each
@@ -428,17 +475,17 @@ fn hashPart(data: ?*anyopaque, part: u32, parts: u32) callconv(.c) void {
 fn fold(shared: *const Shared, parts: u32) u128 {
     var value = shared.results[0].value;
     if (parts < 2) return value;
-    const step = power(shared.h, shared.blocks / parts);
-    for (shared.results[1..parts]) |result| value = multiply(value, step) ^ result.value;
+    const step = power(shared.h, shared.blocks / parts, shared.core);
+    for (shared.results[1..parts]) |result| value = multiply(value, step, shared.core) ^ result.value;
     return value;
 }
 
 /// `wholeBlocks`, the blocks hashed in parts by the cores at once when
 /// there are `share_least` bytes of them or more on a 64-bit chip; alone
 /// when there are fewer, or ShareWork does the job alone.
-fn sharedBlocks(sys: *ExecBase, y: u128, h: u128, data: [*]const u8, length: u32) u128 {
-    if (!quarters or length < share_least) return wholeBlocks(y, h, data, length);
-    var shared: Shared = .{ .h = h, .y = y, .data = data, .blocks = length / AES_BLOCK };
+fn sharedBlocks(sys: *ExecBase, y: u128, h: u128, data: [*]const u8, length: u32, core: bool) u128 {
+    if (!quarters or length < share_least) return wholeBlocks(y, h, data, length, core);
+    var shared: Shared = .{ .h = h, .y = y, .data = data, .blocks = length / AES_BLOCK, .core = core };
     const parts = sys.ShareWork(&hashPart, &shared, @min(length / share_part, share_parts_max));
     return fold(&shared, parts);
 }
@@ -449,15 +496,21 @@ test "a GHASH shared out in parts comes to what one pass does" {
     random.random().bytes(&bytes);
     const h: u128 = 0x66e94bd4_ef8a2c3b_884cfa59_ca342b2e;
     const y: u128 = 0x0388dace_60b6a392_f328c2b9_71b2fe78;
-    for ([_]usize{ 0, 3 }) |offset| {
-        const data = bytes[offset..].ptr;
-        for ([_]u32{ 1, 4, 4097 }) |blocks| {
-            const whole = wholeBlocks(y, h, data, blocks * AES_BLOCK);
-            for (1..share_parts_max + 1) |parts| {
-                if (parts > blocks) continue;
-                var shared: Shared = .{ .h = h, .y = y, .data = data, .blocks = blocks };
-                for (0..parts) |part| hashPart(&shared, @intCast(part), @intCast(parts));
-                try std.testing.expectEqual(whole, fold(&shared, @intCast(parts)));
+    const core_too = x64.built and x64.features().clmul;
+    for ([_]bool{ false, true }) |core| {
+        if (core and !core_too) continue;
+        for ([_]usize{ 0, 3 }) |offset| {
+            const data = bytes[offset..].ptr;
+            for ([_]u32{ 1, 4, 5, 4097 }) |blocks| {
+                const whole = wholeBlocks(y, h, data, blocks * AES_BLOCK, core);
+                // The core's products and the software's agree.
+                try std.testing.expectEqual(wholeBlocks(y, h, data, blocks * AES_BLOCK, false), whole);
+                for (1..share_parts_max + 1) |parts| {
+                    if (parts > blocks) continue;
+                    var shared: Shared = .{ .h = h, .y = y, .data = data, .blocks = blocks, .core = core };
+                    for (0..parts) |part| hashPart(&shared, @intCast(part), @intCast(parts));
+                    try std.testing.expectEqual(whole, fold(&shared, @intCast(parts)));
+                }
             }
         }
     }
@@ -516,7 +569,7 @@ pub fn gmacBegin(cb: *CryptoBase, context: *GmacContext, key: [*]const u8, key_l
     defer session.end();
     var hash_key: [AES_BLOCK]u8 = @splat(0);
     session.block(&hash_key, &hash_key);
-    const ghash = Ghash.init(&hash_key);
+    const ghash = Ghash.init(&hash_key, cb.core_clmul);
     var j0 = firstCounter(&ghash, nonce, nonce_length);
     session.block(&j0, &context.mask);
     _cipher.wipe(&j0);
@@ -529,7 +582,8 @@ pub fn gmacBegin(cb: *CryptoBase, context: *GmacContext, key: [*]const u8, key_l
 /// `length` bytes of `data` into the GMAC: the bytes before a whole block
 /// gathered in the context, whole blocks taken where they lie - a long
 /// run of them shared between the cores (`sharedBlocks`).
-pub fn gmacAbsorb(sys: *ExecBase, context: *GmacContext, data: [*]const u8, length: u32) void {
+pub fn gmacAbsorb(cb: *CryptoBase, context: *GmacContext, data: [*]const u8, length: u32) void {
+    const core = cb.core_clmul;
     context.total += length;
     const h = load128(&context.hash_key);
     var y = load128(&context.state);
@@ -540,11 +594,11 @@ pub fn gmacAbsorb(sys: *ExecBase, context: *GmacContext, data: [*]const u8, leng
         context.buffered += take;
         at = take;
         if (context.buffered < AES_BLOCK) return;
-        y = multiply(y ^ load128(&context.partial), h);
+        y = multiply(y ^ load128(&context.partial), h, core);
         context.buffered = 0;
     }
     const whole = (length - at) & ~@as(u32, AES_BLOCK - 1);
-    y = sharedBlocks(sys, y, h, data + at, whole);
+    y = sharedBlocks(cb.sys_base, y, h, data + at, whole, core);
     at += whole;
     for (0..length - at) |index| context.partial[index] = data[at + index];
     context.buffered = length - at;
@@ -554,14 +608,15 @@ pub fn gmacAbsorb(sys: *ExecBase, context: *GmacContext, data: [*]const u8, leng
 /// The GMAC's tag: the bytes short of a block padded with zeroes, the
 /// lengths block (the data as header, no ciphertext), and the result
 /// masked with E(K, J0).
-pub fn gmacEnd(context: *GmacContext, tag: *[AES_BLOCK]u8) void {
+pub fn gmacEnd(cb: *CryptoBase, context: *GmacContext, tag: *[AES_BLOCK]u8) void {
+    const core = cb.core_clmul;
     const h = load128(&context.hash_key);
     var y = load128(&context.state);
     if (context.buffered != 0) {
         for (context.buffered..AES_BLOCK) |index| context.partial[index] = 0;
-        y = multiply(y ^ load128(&context.partial), h);
+        y = multiply(y ^ load128(&context.partial), h, core);
     }
-    y = multiply(y ^ (@as(u128, context.total * 8) << 64), h);
+    y = multiply(y ^ (@as(u128, context.total * 8) << 64), h, core);
     store128(tag, y ^ load128(&context.mask));
 }
 
@@ -577,7 +632,7 @@ pub fn run(cb: *CryptoBase, message: *const GcmMessage, seal: bool) i32 {
     defer session.end();
     var hash_key: [AES_BLOCK]u8 = @splat(0);
     session.block(&hash_key, &hash_key);
-    var ghash = Ghash.init(&hash_key);
+    var ghash = Ghash.init(&hash_key, cb.core_clmul);
     _cipher.wipe(&hash_key);
 
     var j0 = firstCounter(&ghash, message.nonce, message.nonce_length);
@@ -595,7 +650,11 @@ pub fn run(cb: *CryptoBase, message: *const GcmMessage, seal: bool) i32 {
         if (differ != 0) return crypto.CRYPTOERR_TAG;
     }
 
-    if (message.length != 0) {
+    if (message.length != 0 and session.core() != null) {
+        // The data's first counter block is the one after J0.
+        _cipher.increment32(&counter);
+        x64.ctr(session.core().?, .last32, &counter, message.input.?, message.output.?, message.length);
+    } else if (message.length != 0) {
         const from = message.input.?;
         const to = message.output.?;
         var stream: [AES_BLOCK]u8 = undefined;
@@ -663,14 +722,15 @@ fn bulk(cb: *CryptoBase, message: *const GcmMessage, seal: bool) ?i32 {
     session.end();
     const h = load128(&hash_key);
     _cipher.wipe(&hash_key);
+    const core = cb.core_clmul;
     // L ^ L': the lengths differ in the header's alone.
     var fix = (@as(u128, message.aad_length) * 8) << 64;
     if (message.aad_length != 0) {
-        var header: Ghash = .{ .h = h };
+        var header: Ghash = .{ .h = h, .core = core };
         header.update(message.aad.?, message.aad_length);
-        fix ^= multiply(header.y, power(h, (length + AES_BLOCK - 1) / AES_BLOCK));
+        fix ^= multiply(header.y, power(h, (length + AES_BLOCK - 1) / AES_BLOCK, core), core);
     }
-    store128(&tag, load128(&tag) ^ multiply(fix, h));
+    store128(&tag, load128(&tag) ^ multiply(fix, h, core));
 
     if (!seal) {
         var differ: u8 = 0;

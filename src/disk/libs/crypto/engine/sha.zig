@@ -11,6 +11,10 @@
 //! state out again, and any number of hashes take turns. The state is
 //! kept exactly as the registers hold it, which is the digest's own byte
 //! order - the finished digest is its first bytes.
+//!
+//! An x86-64 core with the SHA extensions (`cb.core_sha`) hashes SHA-1,
+//! SHA-224 and SHA-256 on them (`x64.zig`), in the same state layout;
+//! SHA-384 and SHA-512 stay with the software model there.
 
 const sdk = @import("sdk");
 const crypto = sdk.crypto;
@@ -19,6 +23,7 @@ const reg = hardware.mmio.reg;
 const CryptoBase = @import("../crypto_base.zig").CryptoBase;
 const _engine = @import("_engine.zig");
 const soft = @import("soft_sha.zig");
+const x64 = @import("x64.zig");
 
 const mode = hardware.map.SHA + 0x00;
 const start = hardware.map.SHA + 0x10;
@@ -52,6 +57,10 @@ pub fn stateWords(algorithm: u32) u32 {
 /// `state`. `first`: the hash has had no block yet, and starts from the
 /// algorithm's initial state rather than from `state`.
 pub fn run(cb: *CryptoBase, algorithm: u32, state: *[16]u32, first: bool, data: [*]const u8, blocks: u32) void {
+    if (x64.built and cb.core_sha) switch (algorithm) {
+        crypto.HASH_SHA1, crypto.HASH_SHA224, crypto.HASH_SHA256 => return x64.sha(algorithm, state, first, data, blocks),
+        else => {},
+    };
     if (!_engine.on_chip) return soft.run(algorithm, state, first, data, blocks);
     if (blocks == 0) return;
     const sys = cb.sys_base;

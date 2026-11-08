@@ -2,7 +2,7 @@
 //! Jpeg: a JPEG file decoded by the machine's codec and by software, the
 //! two timed and compared. Built against the SDK only.
 //!
-//!   Jpeg FILE/A,ROUNDS/K/N
+//!   Jpeg FILE/A,ROUNDS/K/N,WATCHDOG/K/N
 //!
 //! The file is read into memory and shown to jpeg.resource, which says
 //! what it is and whether its codec takes it; a codec that does decodes
@@ -18,6 +18,12 @@
 //!
 //! On a machine without a codec the resource is missing and only the
 //! software picture is made.
+//!
+//! WATCHDOG arms the watchdog for that many milliseconds before the first
+//! decode, feeds it after each, and disarms it at the end: a codec that
+//! stops the machine has it reset. An AMD graphics device's decoder is
+//! only started while the watchdog is armed, so its first decode needs
+//! it.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -33,15 +39,20 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const DataTypesBase = sdk.interface.datatypes.DataTypesBase;
 const TimerBase = timer.TimerBase;
+const watchdog = sdk.resources.watchdog;
+const WatchdogBase = sdk.interface.watchdog.WatchdogBase;
+const amdgpu = sdk.resources.amdgpu;
+const AMDGPUBase = sdk.interface.amdgpu.AMDGPUBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Jpeg";
-const VERSION_STRING = "\x00$VER: Jpeg 1.0 (10.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Jpeg 1.1 (07.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "FILE/A,ROUNDS/K/N";
+const template = "FILE/A,ROUNDS/K/N,WATCHDOG/K/N";
 const arg_file = 0;
 const arg_rounds = 1;
+const arg_watchdog = 2;
 
 /// A difference in a channel larger than this is counted as far apart.
 const far_apart = 24;
@@ -75,8 +86,42 @@ fn answerName(answer: u32) [*:0]const u8 {
     };
 }
 
+/// The watchdog while WATCHDOG is given: armed for the run, fed between
+/// its decodes.
+const Guard = struct {
+    wb: ?*WatchdogBase = null,
+
+    fn arm(dl: *DosBase, sys: *ExecBase, millis: u32) ?Guard {
+        const wb: *WatchdogBase = @ptrCast(sys.OpenResource(watchdog.WATCHDOGNAME) orelse {
+            _ = Printf(dl, "No %s\n", .{watchdog.WATCHDOGNAME});
+            return null;
+        });
+        if (!wb.ArmWatchdog(millis, watchdog.WATCHDOG_RESET_SYSTEM)) {
+            _ = Printf(dl, "The watchdog refuses %u ms\n", .{millis});
+            return null;
+        }
+        _ = Printf(dl, "Watchdog armed: %u ms\n", .{millis});
+        return .{ .wb = wb };
+    }
+
+    fn feed(g: Guard) void {
+        if (g.wb) |wb| wb.FeedWatchdog();
+    }
+
+    fn disarm(g: Guard) void {
+        if (g.wb) |wb| wb.DisarmWatchdog();
+    }
+};
+
+/// Whether the machine has an AMD graphics device.
+fn amdDevice(sys: *ExecBase) bool {
+    const ab: *AMDGPUBase = @ptrCast(sys.OpenResource(amdgpu.AMDGPUNAME) orelse return false);
+    var info: amdgpu.GPUInfo = .{};
+    return ab.GetGPUInfo(&info);
+}
+
 /// The codec on its own: what the file is, and one decode's time.
-fn codecAlone(dl: *DosBase, jb: *jpeg.JpegBase, tb: *TimerBase, file: []const u8, rounds: u32) void {
+fn codecAlone(sys: *ExecBase, dl: *DosBase, jb: *jpeg.JpegBase, tb: *TimerBase, file: []const u8, rounds: u32, guard: Guard) void {
     const length: u32 = @intCast(file.len);
     var info: jpeg.JPEGInfo = .{};
     const examined = jb.ExamineJPEG(file.ptr, length, &info);
@@ -94,9 +139,11 @@ fn codecAlone(dl: *DosBase, jb: *jpeg.JpegBase, tb: *TimerBase, file: []const u8
         const start = now(tb);
         const answer = jb.DecodeJPEG(file.ptr, length, &picture);
         const took = now(tb) - start;
+        guard.feed();
         jb.FreeJPEGPicture(&picture);
         if (answer != jpeg.JPEGERR_OK) {
             _ = Printf(dl, "Codec: %s\n", .{answerName(answer)});
+            if (answer == jpeg.JPEGERR_NO_ENGINE and guard.wb == null and amdDevice(sys)) _ = Printf(dl, "(an AMD graphics device's decoder starts only with WATCHDOG given)\n", .{});
             return;
         }
         best = @min(best, took);
@@ -115,7 +162,7 @@ const Made = struct {
     best: u64,
 };
 
-fn make(dt: *DataTypesBase, tb: *TimerBase, name: [*:0]const u8, want: u32, rounds: u32) ?Made {
+fn make(dt: *DataTypesBase, tb: *TimerBase, name: [*:0]const u8, want: u32, rounds: u32, guard: Guard) ?Made {
     const tags = [_]TagItem{
         .{ .tag = dtc.DTA_GroupID, .data = datatypes.GID_PICTURE },
         .{ .tag = jpegclass.JDTA_Decoder, .data = want },
@@ -127,11 +174,13 @@ fn make(dt: *DataTypesBase, tb: *TimerBase, name: [*:0]const u8, want: u32, roun
         const start = now(tb);
         const object = dt.NewDTObjectA(name, &tags) orelse return null;
         best = @min(best, now(tb) - start);
+        guard.feed();
         dt.DisposeDTObject(object);
     }
     const start = now(tb);
     const object = dt.NewDTObjectA(name, &tags) orelse return null;
     best = @min(best, now(tb) - start);
+    guard.feed();
     var decoder: usize = 0;
     var header: usize = 0;
     var pixels: usize = 0;
@@ -204,7 +253,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const lib = sys.OpenLibrary(dos.DOSNAME, 0) orelse return dos.RETURN_FAIL;
     defer sys.CloseLibrary(lib);
     const dl: *DosBase = @ptrCast(lib);
-    var argv: [2]usize = @splat(0);
+    var argv: [3]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_ERROR;
@@ -233,9 +282,16 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     dl.UnLock(lock);
     defer sys.FreeVec(file.ptr);
 
+    var guard: Guard = .{};
+    if (argv[arg_watchdog] != 0) {
+        const millis = @as(*const i32, @ptrFromInt(argv[arg_watchdog])).*;
+        guard = Guard.arm(dl, sys, @intCast(@max(1, millis))) orelse return dos.RETURN_FAIL;
+    }
+    defer guard.disarm();
+
     const codec_there = sys.OpenResource(jpeg.JPEGNAME) != null;
     if (sys.OpenResource(jpeg.JPEGNAME)) |found| {
-        codecAlone(dl, @ptrCast(found), tb, file, rounds);
+        codecAlone(sys, dl, @ptrCast(found), tb, file, rounds, guard);
     } else {
         _ = Printf(dl, "No %s: software only\n", .{jpeg.JPEGNAME});
     }
@@ -247,7 +303,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(dt_lib);
     const dt: *DataTypesBase = @ptrCast(dt_lib);
 
-    const soft = make(dt, tb, name, jpegclass.JDEC_SOFTWARE, rounds) orelse {
+    const soft = make(dt, tb, name, jpegclass.JDEC_SOFTWARE, rounds, guard) orelse {
         _ = Printf(dl, "jpeg.datatype could not read it in software\n", .{});
         return dos.RETURN_ERROR;
     };
@@ -255,7 +311,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     _ = Printf(dl, "Datatype, software: %u x %u in %ld us, read by %s\n", .{ soft.width, soft.height, soft.best, decoderName(soft.decoder) });
     if (!codec_there) return dos.RETURN_OK;
 
-    const codec = make(dt, tb, name, jpegclass.JDEC_CODEC, rounds) orelse {
+    const codec = make(dt, tb, name, jpegclass.JDEC_CODEC, rounds, guard) orelse {
         _ = Printf(dl, "Datatype, codec: refused\n", .{});
         return dos.RETURN_WARN;
     };

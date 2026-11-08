@@ -4,59 +4,14 @@
 //! adapts them once a frame is done (8.4).
 
 const tables = @import("tables.zig");
+const v9 = @import("sdk").videoparse.vp9;
 
-pub const Probs = struct {
-    tx8: [2][1]u8,
-    tx16: [2][2]u8,
-    tx32: [2][3]u8,
-    coef: [4][2][2][6][6][3]u8,
-    skip: [3]u8,
-    inter_mode: [7][3]u8,
-    interp_filter: [4][2]u8,
-    is_inter: [4]u8,
-    comp_mode: [5]u8,
-    single_ref: [5][2]u8,
-    comp_ref: [5]u8,
-    y_mode: [4][9]u8,
-    uv_mode: [10][9]u8,
-    partition: [16][3]u8,
-    mv_joint: [3]u8,
-    mv_sign: [2]u8,
-    mv_class: [2][10]u8,
-    mv_class0_bit: [2]u8,
-    mv_bits: [2][10]u8,
-    mv_class0_fr: [2][2][3]u8,
-    mv_fr: [2][3]u8,
-    mv_class0_hp: [2]u8,
-    mv_hp: [2]u8,
+/// The probabilities a frame reads its blocks with: the SDK's set, which
+/// the decoders of the chips start from too.
+pub const Probs = v9.Vp9Probs;
 
-    /// The probabilities after a reset (10.5).
-    pub const defaults: Probs = .{
-        .tx8 = .{ .{tables.default_tx_probs[1][0][0]}, .{tables.default_tx_probs[1][1][0]} },
-        .tx16 = .{ tables.default_tx_probs[2][0][0..2].*, tables.default_tx_probs[2][1][0..2].* },
-        .tx32 = tables.default_tx_probs[3],
-        .coef = tables.default_coef_probs,
-        .skip = tables.default_skip_prob,
-        .inter_mode = tables.default_inter_mode_probs,
-        .interp_filter = tables.default_interp_filter_probs,
-        .is_inter = tables.default_is_inter_prob,
-        .comp_mode = tables.default_comp_mode_prob,
-        .single_ref = tables.default_single_ref_prob,
-        .comp_ref = tables.default_comp_ref_prob,
-        .y_mode = tables.default_y_mode_probs,
-        .uv_mode = tables.default_uv_mode_probs,
-        .partition = tables.default_partition_probs,
-        .mv_joint = tables.default_mv_joint_probs,
-        .mv_sign = tables.default_mv_sign_prob,
-        .mv_class = tables.default_mv_class_probs,
-        .mv_class0_bit = tables.default_mv_class0_bit_prob,
-        .mv_bits = tables.default_mv_bits_prob,
-        .mv_class0_fr = tables.default_mv_class0_fr_probs,
-        .mv_fr = tables.default_mv_fr_probs,
-        .mv_class0_hp = tables.default_mv_class0_hp_prob,
-        .mv_hp = tables.default_mv_hp_prob,
-    };
-};
+/// The probabilities after a reset (10.5).
+pub const defaults: Probs = v9.default_probs;
 
 /// How often each value of each element was read in each context (8.3).
 pub const Counts = struct {

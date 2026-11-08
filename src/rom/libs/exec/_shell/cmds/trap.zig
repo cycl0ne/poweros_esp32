@@ -15,8 +15,19 @@ const Args = _shell.Args;
 /// AArch64 always 4. Written
 /// to the raw port: this runs in the exception, which may not wait for
 /// the console.
+///
+/// **Not on x86-64.** An instruction there is 1 to 15 bytes long and how
+/// long it is cannot be told without decoding it: prefixes, the two
+/// addressing bytes and an immediate of four widths. Stepping over one
+/// would take a decoder, and nothing else in the system wants one, so this
+/// says so and hands the exception back - the Guru then happens, which is
+/// what `trap off` means everywhere else.
 fn skipTrap(info: *sdk.exec.TrapInfo, data: ?*anyopaque) callconv(.c) i32 {
     const shell: *Shell = @ptrCast(@alignCast(data.?));
+    if (comptime builtin.cpu.arch == .x86_64) {
+        sdk.exec.kprintf(shell.base.iface(), "[trap] %s at 0x%08zx not skipped: how long an instruction is cannot be told on this architecture\n", .{ trap.causeName(info.number), info.pc });
+        return 0;
+    }
     shell.skipped_traps += 1;
     // Instruction memory only takes aligned 32-bit loads.
     const word = @as(*const volatile u32, @ptrFromInt(info.pc & ~@as(usize, 3))).*;

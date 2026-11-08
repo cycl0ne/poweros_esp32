@@ -43,8 +43,16 @@ pub const IRQ_SOFTWARE = 1;
 pub const IRQ_TIMER = 5;
 pub const IRQ_EXTERNAL = 9;
 
+/// How many cores this kernel keeps tables of its own for - the words a
+/// core leaves behind, its trap state, its timer. The machines are
+/// four-core ones: the JH7110's U74s, and QEMU's virt as the build starts
+/// it. exec keeps state for as many cores as the kernel finds, so this is
+/// what the figure is capped at, and the boot's line says what the machine
+/// had.
+pub const max_cores = 4;
+
 /// Each core's hart, as the firmware numbers it; start.S's a0.
-pub var hartids: [exec_base.max_cores]usize = @splat(0);
+pub var hartids: [max_cores]usize = @splat(0);
 
 /// The core this runs on: 0 up.
 pub inline fn coreId() u32 {

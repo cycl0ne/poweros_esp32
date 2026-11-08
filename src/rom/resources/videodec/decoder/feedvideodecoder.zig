@@ -5,6 +5,8 @@ const sdk = @import("sdk");
 const types = sdk.resources.videodec;
 const VideoDecBase = @import("../videodec_base.zig").VideoDecBase;
 const Decoder = @import("_decoder.zig").Decoder;
+const Session = @import("_session.zig").Session;
+const engine = @import("../videodec_init.zig").engine;
 
 /// Feeds a decoder one picture of its stream.
 ///
@@ -19,7 +21,9 @@ const Decoder = @import("_decoder.zig").Decoder;
 /// INPUTS:
 /// - `decoder` - the decoder.
 /// - `data` - the picture's units in Annex B form, each after a start
-///   code; the parameter sets in front of the first picture.
+///   code; the parameter sets in front of the first picture. VP9: a
+///   packet as the container holds it, a frame or a superframe (SINCE
+///   1.5).
 /// - `length` - how many bytes; 0 with VDFEED_END alone.
 /// - `time` - when the picture is shown, in the caller's units
 ///   (microseconds, say); handed back with its frame.
@@ -36,6 +40,24 @@ const Decoder = @import("_decoder.zig").Decoder;
 /// The bytes are copied into the ring the chip reads, written back out
 /// of the caches, and the chip told where they end. Nothing is decoded
 /// here: DecodeVideoFrame does it.
+///
+/// On an AMD graphics device the bytes are copied and read at once
+/// (videoparse.library): the sequence makes the stream on the device,
+/// and each picture the call completes is decoded there and read back
+/// into a frame of the system's memory, the caller's task waiting for
+/// the device meanwhile. Pictures go on being read until the stream
+/// needs a frame back that is still to be handed out or lent: then the
+/// rest of the call's bytes are read by the next DecodeVideoFrame or
+/// FeedVideoDecoder, and a call that comes while they are not answers
+/// VDERR_FULL. A stream the device does not take answers
+/// VDERR_UNSUPPORTED: H.264 other than 8-bit 4:2:0, the extended
+/// profile, lossless pictures, slice groups, larger than 4096 each way;
+/// H.265 other than Main, Main 10 and Main Still Picture, larger than
+/// 8192 x 4352; VP9 other than profile 0 and profile 2's 10 bits in
+/// 4:2:0, larger than 8192 x 4352, or a frame predicted from others that
+/// is larger than both 1920 x 1088 and every frame before it. Smaller
+/// frames, and frames predicted from pictures of other sizes, are
+/// decoded.
 ///
 /// CONTEXT:
 /// - Waits: yes, for the chip to take the command. - Interrupts: no.
@@ -64,5 +86,6 @@ pub fn FeedVideoDecoder(vb: *VideoDecBase, decoder: *types.VideoDecoder, data: ?
     const sys = vb.sys_base;
     sys.ObtainSemaphore(&vb.lock);
     defer sys.ReleaseSemaphore(&vb.lock);
+    if (comptime engine == .vcn) return Session.of(decoder).feed(data, length, time, flags);
     return Decoder.of(decoder).feed(data, length, time, flags);
 }

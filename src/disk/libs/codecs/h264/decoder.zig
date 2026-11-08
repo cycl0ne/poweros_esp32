@@ -1,26 +1,34 @@
 // SPDX-License-Identifier: MIT
-//! The decoder: NAL units in, pictures out in the order they are shown.
+//! The decoder: videoparse.library's events in, pictures out in the order
+//! they are shown. The library reads the stream - the parameter sets, the
+//! slice headers, the order counts, the marking, the lists, the bumping -
+//! and the decoder decodes the samples, by the slots the library names
+//! the pictures by (dpb.zig).
 //!
-//! A picture's slices are decoded into its store as they come, each
-//! macroblock parsed, its motion derived and its samples put together;
-//! when the next picture begins (or the stream ends) the picture is
-//! filtered, the macroblocks no slice brought are concealed, the
-//! references are marked and the picture goes into the decoded picture
-//! buffer, which gives the pictures out in their order.
+//! **A picture** (VPEV_PICTURE) begins with its first slice: its store
+//! made for the sequence (VPEV_SEQUENCE), its slice groups mapped, and
+//! each slice (VPEV_SLICE) decoded into it as it comes, each macroblock
+//! parsed, its motion derived and its samples put together. Once its
+//! slices are all given (VPEV_DECODE) the macroblocks no slice brought
+//! are concealed and the picture is filtered. A frame a stream skipped
+//! (VPEV_MISSING) is a copy of the last reference picture. A picture due
+//! (VPEV_SHOW) is queued to be shown; one the stream let go of
+//! (VPEV_FREE) is given back once nothing reads it (`giveBack`).
 //!
 //! With other cores (`useCores`) a frame whose macroblocks come one after
 //! the other is decoded by a worker instead, while the decoder goes on
-//! with the units after it: it parses the slice headers, builds the lists
-//! and marks the references, and hands each slice over. The worker
-//! conceals, filters each row once the row below it is decoded, and
-//! counts the rows that are final; a picture that refers to one waits
-//! for the rows each block reads. So as many pictures are decoded at once
-//! as there are workers, each a little behind the one before.
+//! with the events after it: it hands each slice over with its header and
+//! lists. The worker conceals, filters each row once the row below it is
+//! decoded, and counts the rows that are final; a picture that refers to
+//! one waits for the rows each block reads. So as many pictures are
+//! decoded at once as there are workers, each a little behind the one
+//! before; a store a worker reads is given back once it is done.
 
+const sdk = @import("sdk");
+const vp = sdk.videoparse;
 const bits_mod = @import("bits.zig");
 const Bits = bits_mod.Bits;
 pub const Error = bits_mod.Error;
-const nal = @import("nal.zig");
 const params = @import("params.zig");
 const slice_mod = @import("slice.zig");
 const Header = slice_mod.Header;
@@ -31,7 +39,6 @@ const MbInfo = common.MbInfo;
 const Motion = common.Motion;
 const RefPic = common.RefPic;
 const dpb_mod = @import("dpb.zig");
-const Dpb = dpb_mod.Dpb;
 const mbm = @import("mb.zig");
 const mvpred = @import("mvpred.zig");
 const recon = @import("recon.zig");
@@ -39,23 +46,15 @@ const deblock = @import("deblock.zig");
 const transform = @import("transform.zig");
 const cabac = @import("cabac.zig");
 
-/// A slice's data partitions (7.3.2.9, 7.3.2.10) waiting for each other.
+/// A slice's data partitions B and C (7.3.2.9, 7.3.2.10), as the library
+/// gave them: each one's payload and where its data starts.
 const Partitions = struct {
-    pending: bool = false,
-    unit: nal.Header = .{ .ref_idc = 0, .kind = 0 },
-    id: u32 = 0,
-    a: []u8 = &.{},
-    a_len: usize = 0,
-    /// Where partition A's slice data starts, in bits.
-    a_pos: usize = 0,
-    b: []u8 = &.{},
-    b_len: usize = 0,
-    b_pos: usize = 0,
     has_b: bool = false,
-    c: []u8 = &.{},
-    c_len: usize = 0,
-    c_pos: usize = 0,
+    b: []const u8 = &.{},
+    b_pos: usize = 0,
     has_c: bool = false,
+    c: []const u8 = &.{},
+    c_pos: usize = 0,
 };
 
 /// A picture as its slices are decoded into it - by the decoder itself,
@@ -100,7 +99,7 @@ comptime {
 }
 
 /// A slice handed to a job: its header and lists as they were when it
-/// came, and its RBSP.
+/// came, and a copy of its RBSP.
 const Posted = struct {
     hdr: Header = .{},
     lists: [2][33]RefPic = @splat(@splat(.{})),
@@ -111,16 +110,16 @@ const Posted = struct {
     slice_id: u32 = 0,
 };
 
-/// A picture decoded by a worker while the decoder goes on with the units
-/// after it: a frame whose macroblocks come one after the other, its
-/// slices handed over as they come. The worker conceals what no slice
+/// A picture decoded by a worker while the decoder goes on with the
+/// events after it: a frame whose macroblocks come one after the other,
+/// its slices handed over as they come. The worker conceals what no slice
 /// brought, filters each row once the row below it is decoded, and counts
 /// the rows that are final in the store's `progress`.
 const Job = struct {
     dec: *Decoder,
     sync: common.Sync,
     // The decoder's: whether it runs, which began first, and the stores
-    // it reads, by their place in the buffer.
+    // it reads, by their slots.
     active: bool = false,
     order: u32 = 0,
     pins: u64 = 0,
@@ -241,16 +240,14 @@ const Job = struct {
 
 pub const Decoder = struct {
     env: Env,
-    limits: params.Limits = .{},
-    sps: [32]params.Sps = @splat(.{}),
-    pps: [256]params.Pps = @splat(.{}),
-    /// Slice group maps of type 6, each PPS's own.
-    group_ids: [256][]u8 = @splat(&.{}),
-    dpb: Dpb = .{},
+    stores: dpb_mod.Stores = .{},
 
     // --- the active parameter sets and what follows from them ---
+    /// The sequence's and the picture's, copied as each began.
+    sps: params.Sps = .{},
+    pps: params.Pps = .{},
+    /// The sequence being decoded: null before the first.
     active_sps: ?*const params.Sps = null,
-    active_pps: ?*const params.Pps = null,
     width_mbs: u32 = 0,
     height_mbs: u32 = 0,
     cat: u2 = 0,
@@ -266,32 +263,28 @@ pub const Decoder = struct {
     unit_map: []u8 = &.{},
     mb_map: []u8 = &.{},
     scales: transform.Scales = undefined,
-    scales_pps: ?*const params.Pps = null,
+    /// The scaling lists `scales` were made from, once they were.
+    scales_made: bool = false,
+    scales_of: params.Scaling = .{},
 
     // --- the picture being decoded ---
+    /// What VPEV_PICTURE said of it; `beginning` until its first slice.
+    said: vp.VideoPicture = .{},
+    beginning: bool = false,
     cur: ?*Store = null,
     structure: u2 = 3,
+    /// Its first slice's header.
     hdr0: Header = .{},
     first_slice: u32 = 0,
     slice_next: u32 = 1,
     second_field: bool = false,
-    /// A first field decoded, waiting for its second.
-    lone_field: ?*Store = null,
-    lone_structure: u2 = 0,
-    lone_ref: bool = false,
     /// The last reference picture decoded: what concealment copies.
     last_ref: ?*Store = null,
     lists: [2][33]RefPic = @splat(@splat(.{})),
-    /// The end of stream or sequence was seen: the next picture is an IDR.
-    after_end: bool = false,
 
     // --- scratch ---
-    hdr: Header = .{},
     mb: mbm.Mb = .{},
     recon: recon.Scratch = .{},
-    rbsp: []u8 = &.{},
-    parts: Partitions = .{},
-    time: i64 = 0,
     /// Slices that ended in an error.
     slice_errors: u32 = 0,
 
@@ -301,19 +294,16 @@ pub const Decoder = struct {
     /// The job decoding the current picture: null while the decoder does.
     job: ?*Job = null,
     job_order: u32 = 0,
-    /// The end was sent: a picture still being decoded is waited for.
+    /// The end was said: a picture still being decoded is waited for.
     flushing: bool = false,
     /// The last picture began is a worker's.
     on_workers: bool = false,
-    /// The last picture was finished at the end of its access unit
-    /// (`endPicture`): a slice that does not begin another is passed over.
-    ended_early: bool = false,
 
     /// A decoder with nothing decoded, in memory `env` gives.
-    pub fn create(env: Env, limits: params.Limits) ?*Decoder {
+    pub fn create(env: Env) ?*Decoder {
         const bytes = env.alloc(env.ctx, @sizeOf(Decoder), false) orelse return null;
         const dec: *Decoder = @ptrCast(@alignCast(bytes));
-        dec.* = .{ .env = env, .limits = limits };
+        dec.* = .{ .env = env };
         return dec;
     }
 
@@ -332,111 +322,62 @@ pub const Decoder = struct {
             for (&j.slices) |*p| env.freeSlice(u8, p.rbsp);
             env.free(env.ctx, @ptrCast(j), @sizeOf(Job));
         }
-        for (&dec.dpb.stores) |*s| freeStoreMemory(dec, s);
-        for (&dec.group_ids) |g| env.freeSlice(u8, g);
+        for (&dec.stores.stores) |*s| freeStoreMemory(dec, s);
         env.freeSlice(MbInfo, dec.infos);
         env.freeSlice(u8, dec.unit_map);
         env.freeSlice(u8, dec.mb_map);
-        env.freeSlice(u8, dec.rbsp);
-        env.freeSlice(u8, dec.parts.a);
-        env.freeSlice(u8, dec.parts.b);
-        env.freeSlice(u8, dec.parts.c);
         env.free(env.ctx, @ptrCast(dec), @sizeOf(Decoder));
     }
 
-    // --- units ---------------------------------------------------------------
+    // --- events ----------------------------------------------------------------
 
-    /// One NAL unit (without start code or length), from a packet shown
-    /// at `time`.
-    pub fn decodeUnit(dec: *Decoder, unit: []const u8, time: i64) Error!void {
-        if (unit.len == 0) return;
+    /// One of the library's events. An error is the event's picture's or
+    /// slice's: the picture is concealed where it lacks, and the next
+    /// event is taken as before.
+    pub fn event(dec: *Decoder, e: *const vp.VideoEvent) Error!void {
         dec.flushing = false;
-        const h = try nal.header(unit[0]);
-        switch (h.kind) {
-            nal.Type.slice, nal.Type.idr, nal.Type.partition_a, nal.Type.partition_b, nal.Type.partition_c => {},
-            else => dec.ended_early = false,
-        }
-        // Data partitions B and C belong to the A before them; anything
-        // else ends the wait.
-        if (dec.parts.pending and h.kind != nal.Type.partition_b and h.kind != nal.Type.partition_c) try dec.flushPartitions();
-        switch (h.kind) {
-            nal.Type.slice, nal.Type.idr => {
-                const n = try dec.unescape(unit[1..], &dec.rbsp);
-                dec.time = time;
-                var b = Bits.init(dec.rbsp[0..n]);
-                try dec.slice(&b, h, null);
-            },
-            nal.Type.partition_a => {
-                dec.time = time;
-                try dec.partitionA(unit, h);
-            },
-            nal.Type.partition_b, nal.Type.partition_c => try dec.partitionBC(unit, h),
-            nal.Type.sps => {
-                dec.finishPicture();
-                const n = try dec.unescape(unit[1..], &dec.rbsp);
-                var b = Bits.init(dec.rbsp[0..n]);
-                var s: params.Sps = .{};
-                const id = try params.parseSps(&b, &s, dec.limits);
-                if (id >= 32) return error.Corrupt;
-                // The active one changes only at an IDR picture.
-                dec.sps[id] = s;
-            },
-            nal.Type.pps => {
-                dec.finishPicture();
-                const n = try dec.unescape(unit[1..], &dec.rbsp);
-                var b = Bits.init(dec.rbsp[0..n]);
-                var peek = b;
-                const ids = try params.ppsIds(&peek);
-                const sps = &dec.sps[ids.sps];
-                if (!sps.valid) return error.Corrupt;
-                const units = sps.width_mbs * sps.height_map_units;
-                if (dec.group_ids[ids.pps].len < units) {
-                    dec.env.freeSlice(u8, dec.group_ids[ids.pps]);
-                    dec.group_ids[ids.pps] = &.{};
-                    dec.group_ids[ids.pps] = dec.env.slice(u8, units) orelse return error.NoMemory;
-                }
-                var p: params.Pps = .{};
-                try params.parsePps(&b, &p, sps, dec.group_ids[ids.pps]);
-                dec.pps[ids.pps] = p;
-                if (dec.scales_pps == &dec.pps[ids.pps]) dec.scales_pps = null;
-            },
-            nal.Type.aud, nal.Type.sei, nal.Type.sps_ext, nal.Type.prefix, nal.Type.subset_sps, 16, 17, 18 => dec.finishPicture(),
-            nal.Type.end_of_seq, nal.Type.end_of_stream => {
-                dec.finishPicture();
-                dec.after_end = true;
-            },
+        switch (e.kind) {
+            vp.VPEV_SEQUENCE => try dec.activate(e.sequence.?),
+            vp.VPEV_MISSING => try dec.missing(e.picture.?),
+            vp.VPEV_PICTURE => dec.beginPicture(e.picture.?),
+            vp.VPEV_SLICE => try dec.slice(e.slice.?),
+            vp.VPEV_DECODE => dec.finishPicture(),
+            vp.VPEV_SHOW => dec.stores.show(e.slot, e.time),
+            vp.VPEV_FREE => dec.stores.free(e.slot),
             else => {},
         }
     }
 
-    /// The access unit ended - a packet of an MP4 or Matroska track is
-    /// one - so the picture is finished now rather than when the next one
-    /// begins: its worker is done sooner.
-    pub fn endPicture(dec: *Decoder) void {
-        dec.flushPartitions() catch {};
-        if (dec.cur == null) return;
-        dec.finishPicture();
-        dec.ended_early = true;
+    /// A slot to give back to the library (ReleaseVideoSlot), or null:
+    /// one the stream let go of, shown and read by no worker.
+    pub fn giveBack(dec: *Decoder) ?u32 {
+        if (dec.cores != null) dec.retire();
+        return dec.stores.giveBack();
     }
 
-    /// Everything decoded and every picture put out to be shown.
-    pub fn flush(dec: *Decoder) void {
-        dec.flushPartitions() catch {};
-        dec.finishPicture();
-        dec.storeLoneField();
-        dec.dpb.flush();
+    /// The library ran out of slots (VPERR_FULL), which it says between
+    /// pictures: until the worker begun first is done, and its stores with
+    /// it. False when no worker runs: the slots are the pictures waiting
+    /// to be shown, which are to be taken first.
+    pub fn makeRoom(dec: *Decoder) bool {
+        return dec.retireOldest();
+    }
+
+    /// The stream's end was said (VPERR_END): the pictures still being
+    /// decoded are waited for when they are asked for.
+    pub fn endOfStream(dec: *Decoder) void {
         dec.flushing = true;
     }
 
     /// The next picture to show, or null. It stays valid until `release`.
     /// While the pictures are workers' and that one is still decoded, null
-    /// once a worker is free - waited for when none is - so that the units
+    /// once a worker is free - waited for when none is - so that the events
     /// after it keep the workers busy, as long as no more pictures wait to
-    /// be shown than there are workers; past that, and once flushed, the
+    /// be shown than there are workers; past that, and at the end, the
     /// picture is waited for.
     pub fn next(dec: *Decoder) ?*Store {
-        const s = dec.dpb.peekOutput() orelse return null;
-        if (!dec.flushing and dec.on_workers and dec.dpb.out_count <= dec.cores.?.workers and
+        const s = dec.stores.peekOutput() orelse return null;
+        if (!dec.flushing and dec.on_workers and dec.stores.out_count <= dec.cores.?.workers and
             @atomicLoad(u32, &s.progress, .acquire) < s.height[0] >> 4)
         {
             if (dec.idle()) return null;
@@ -448,176 +389,35 @@ pub const Decoder = struct {
     }
 
     pub fn release(dec: *Decoder) void {
-        dec.dpb.taken();
+        dec.stores.taken();
     }
 
-    /// Everything dropped, for a seek: the next picture must be an IDR or
-    /// a recovery point.
+    /// Everything dropped, for a seek, as the library drops it
+    /// (ResetVideoParser): every store the decoder holds is given back
+    /// (`giveBack`) once no worker reads it.
     pub fn reset(dec: *Decoder) void {
-        dec.parts.pending = false;
         dec.drain();
         dec.flushing = false;
+        dec.beginning = false;
         dec.cur = null;
-        dec.lone_field = null;
         dec.last_ref = null;
-        while (dec.dpb.peekOutput() != null) dec.dpb.taken();
-        dec.dpb.reset();
+        dec.stores.forget();
     }
 
-    fn unescape(dec: *Decoder, payload: []const u8, buf: *[]u8) Error!usize {
-        if (buf.len < payload.len + 8) {
-            dec.env.freeSlice(u8, buf.*);
-            buf.* = &.{};
-            buf.* = dec.env.slice(u8, payload.len + 64) orelse return error.NoMemory;
-        }
-        const n = nal.unescape(payload, buf.*);
-        return n;
-    }
+    // --- pictures ------------------------------------------------------------------
 
-    // --- data partitions ---------------------------------------------------
-
-    fn partitionA(dec: *Decoder, unit: []const u8, h: nal.Header) Error!void {
-        const p = &dec.parts;
-        p.a_len = try dec.unescape(unit[1..], &p.a);
-        var b = Bits.init(p.a[0..p.a_len]);
-        // The header is read again when the slice is decoded; here only
-        // where the data starts and its slice_id.
-        var hdr: Header = .{};
-        const pps_id = try slice_mod.peekPpsId(p.a[0..p.a_len]);
-        const pps = &dec.pps[pps_id];
-        if (!pps.valid) return error.Corrupt;
-        const sps = &dec.sps[pps.sps_id];
-        if (!sps.valid) return error.Corrupt;
-        try slice_mod.parse(&b, &hdr, h, sps, pps);
-        const mbs = sps.width_mbs * sps.heightMbs();
-        p.id = try b.ueMax(mbs);
-        p.a_pos = b.pos;
-        p.unit = h;
-        p.pending = true;
-        p.has_b = false;
-        p.has_c = false;
-    }
-
-    fn partitionBC(dec: *Decoder, unit: []const u8, h: nal.Header) Error!void {
-        const p = &dec.parts;
-        if (!p.pending) return;
-        const is_b = h.kind == nal.Type.partition_b;
-        const buf = if (is_b) &p.b else &p.c;
-        const len = try dec.unescape(unit[1..], buf);
-        var b = Bits.init(buf.*[0..len]);
-        const pps_id = try slice_mod.peekPpsId(p.a[0..p.a_len]);
-        const pps = &dec.pps[pps_id];
-        const sps = &dec.sps[pps.sps_id];
-        const id = try b.ue();
-        if (id != p.id) return;
-        if (sps.separate_colour_plane) _ = b.u(2);
-        if (pps.redundant_pic_cnt_present) _ = try b.ue();
-        if (is_b) {
-            p.b_len = len;
-            p.b_pos = b.pos;
-            p.has_b = true;
-        } else {
-            p.c_len = len;
-            p.c_pos = b.pos;
-            p.has_c = true;
-            try dec.flushPartitions();
-        }
-    }
-
-    fn flushPartitions(dec: *Decoder) Error!void {
-        const p = &dec.parts;
-        if (!p.pending) return;
-        p.pending = false;
-        var b = Bits.init(p.a[0..p.a_len]);
-        try dec.slice(&b, p.unit, p);
-    }
-
-    // --- slices ----------------------------------------------------------------
-
-    fn slice(dec: *Decoder, b: *Bits, unit: nal.Header, parts: ?*Partitions) Error!void {
-        const data = b.data;
-        const pps_id = try slice_mod.peekPpsId(data);
-        const pps = &dec.pps[pps_id];
-        if (!pps.valid) return error.Corrupt;
-        const sps = &dec.sps[pps.sps_id];
-        if (!sps.valid) return error.Corrupt;
-        const hdr = &dec.hdr;
-        try slice_mod.parse(b, hdr, unit, sps, pps);
-        if (hdr.redundant_pic_cnt > 0) return;
-        // SP and SI are the Extended profile's: 4:2:0, 8 bits, 4x4 transforms.
-        if ((hdr.kind == .sp or hdr.kind == .si) and (sps.chroma_format_idc != 1 or sps.bit_depth_luma != 8 or sps.bit_depth_chroma != 8 or pps.transform_8x8)) return error.Unsupported;
-        if (parts) |p| b.pos = p.a_pos;
-
-        if (dec.cur != null and dec.newPicture(hdr, sps)) dec.finishPicture();
-        // More of a picture whose access unit ended.
-        if (dec.cur == null and dec.ended_early and !dec.newPicture(hdr, sps)) return;
-        if (dec.cur == null) try dec.startPicture(hdr, sps, pps);
-        if (dec.active_pps != pps) return error.Corrupt;
-
-        const slice_id = dec.slice_next;
-        dec.slice_next += 1;
-        var cur_poc: i32 = undefined;
-        const s = dec.cur.?;
-        cur_poc = switch (dec.structure) {
-            1 => s.poc[0],
-            2 => s.poc[1],
-            else => @min(s.poc[0], s.poc[1]),
-        };
-        const current: dpb_mod.Current = .{
-            .store = s,
-            .structure = dec.structure,
-            .frame_num = hdr.frame_num,
-            .max_frame_num = @as(u32, 1) << sps.log2_max_frame_num,
-            .second_field = dec.second_field,
-            .poc = cur_poc,
-        };
-        try dec.dpb.buildLists(hdr, &current, &dec.lists);
-        if (dec.job) |j| {
-            // Partitions are the Extended profile's, never a worker's.
-            if (parts != null) return error.Corrupt;
-            return dec.post(j, b, slice_id);
-        }
-        const pic = dec.picture(s);
-        sliceData(&pic, b, hdr, &dec.lists, slice_id, parts) catch |e| {
-            s.damaged = true;
-            dec.slice_errors += 1;
-            if (e == error.NoMemory) return e;
-        };
-    }
-
-    /// Whether the slice `h` begins a new picture (7.4.1.2.4).
-    fn newPicture(dec: *const Decoder, h: *const Header, sps: *const params.Sps) bool {
-        const o = &dec.hdr0;
-        if (h.frame_num != o.frame_num or h.pps_id != o.pps_id or h.field_pic != o.field_pic) return true;
-        if (h.field_pic and h.bottom_field != o.bottom_field) return true;
-        if ((h.nal_ref_idc == 0) != (o.nal_ref_idc == 0)) return true;
-        if (h.idr != o.idr) return true;
-        if (h.idr and h.idr_pic_id != o.idr_pic_id) return true;
-        if (sps.poc_type == 0) {
-            if (h.poc_lsb != o.poc_lsb or h.delta_poc_bottom != o.delta_poc_bottom) return true;
-        } else if (sps.poc_type == 1) {
-            if (h.delta_poc[0] != o.delta_poc[0] or h.delta_poc[1] != o.delta_poc[1]) return true;
-        }
-        return false;
-    }
-
-    // --- pictures --------------------------------------------------------------
-
-    /// The sequence `sps` made the active one; memory for its size when
-    /// that changed.
-    fn activate(dec: *Decoder, sps: *const params.Sps) Error!void {
+    /// The sequence `seq` made the active one: the macroblocks' records
+    /// made for its size, once the workers are done with the last one's.
+    fn activate(dec: *Decoder, seq: *const vp.VideoSequence) Error!void {
+        const sps = seq.h264_sps orelse return error.Corrupt;
         const same = dec.infos.len != 0 and dec.width_mbs == sps.width_mbs and dec.height_mbs == sps.heightMbs() and
             dec.chroma_format == sps.chroma_format_idc and dec.depth_y == sps.bit_depth_luma and
             dec.depth_c == sps.bit_depth_chroma and dec.cat == sps.chromaArrayType() and
             dec.colour_planes == planesOf(sps);
-        dec.active_sps = sps;
-        dec.dpb.size = sps.dpbFrames();
-        dec.dpb.reorder = if (sps.restriction) @min(sps.num_reorder_frames, dec.dpb.size) else dec.dpb.size;
+        dec.sps = sps.*;
+        dec.active_sps = &dec.sps;
         if (same) return;
-        // A new size: what is waiting is shown first.
         dec.drain();
-        dec.storeLoneField();
-        dec.dpb.flush();
         dec.last_ref = null;
         const env = dec.env;
         const mbs = sps.width_mbs * sps.heightMbs() * planesOf(sps);
@@ -627,13 +427,14 @@ pub const Decoder = struct {
         dec.unit_map = &.{};
         env.freeSlice(u8, dec.mb_map);
         dec.mb_map = &.{};
+        dec.width_mbs = 0;
         dec.infos = env.slice(MbInfo, mbs) orelse return error.NoMemory;
         for (dec.infos) |*i| i.* = .{};
         dec.unit_map = env.slice(u8, sps.width_mbs * sps.height_map_units) orelse return error.NoMemory;
         dec.mb_map = env.slice(u8, sps.width_mbs * sps.heightMbs()) orelse return error.NoMemory;
         dec.width_mbs = sps.width_mbs;
         dec.height_mbs = sps.heightMbs();
-        dec.chroma_format = sps.chroma_format_idc;
+        dec.chroma_format = @intCast(sps.chroma_format_idc);
         dec.cat = sps.chromaArrayType();
         dec.depth_y = @intCast(sps.bit_depth_luma);
         dec.depth_c = @intCast(sps.bit_depth_chroma);
@@ -655,6 +456,7 @@ pub const Decoder = struct {
 
     /// A store's samples and motion for the active sequence.
     fn prepareStore(dec: *Decoder, s: *Store) Error!void {
+        if (dec.width_mbs == 0) return error.Corrupt;
         const w = dec.width_mbs * 16;
         const h = dec.height_mbs * 16;
         var cw: u32 = w;
@@ -677,7 +479,10 @@ pub const Decoder = struct {
             const m = dec.env.alloc(dec.env.ctx, len, false) orelse return error.NoMemory;
             s.memory = m;
             s.memory_len = len;
-            s.motion = dec.env.slice(Motion, mbs) orelse return error.NoMemory;
+            s.motion = dec.env.slice(Motion, mbs) orelse {
+                freeStoreMemory(dec, s);
+                return error.NoMemory;
+            };
             s.planes = .{ m, m + luma * size, m + (luma + chroma) * size };
             s.stride = .{ w, cw, cw };
             s.width = .{ w, cw, cw };
@@ -695,136 +500,151 @@ pub const Decoder = struct {
         }
     }
 
-    fn startPicture(dec: *Decoder, hdr: *const Header, sps: *const params.Sps, pps: *const params.Pps) Error!void {
-        // A worker's picture, or the decoder's own once the workers are done.
+    /// A picture said: its slot the decoder's, and the picture begun with
+    /// its first slice, which says how it is coded. Its parameter sets
+    /// are copied now: a worker decodes with its own copy of them.
+    fn beginPicture(dec: *Decoder, pic: *const vp.VideoPicture) void {
+        dec.finishPicture();
+        dec.said = pic.*;
+        if (pic.h264_sps) |sps| dec.sps = sps.*;
+        if (pic.h264_pps) |pps| dec.pps = pps.*;
+        if (!pic.second_field) _ = dec.stores.take(pic.slot);
+        dec.beginning = true;
+    }
+
+    /// The picture VPEV_PICTURE said, begun by its first slice `hdr`: on a
+    /// worker, or by the decoder itself once the workers are done.
+    /// Until it is begun (`beginning`), it is concealed whole when it is
+    /// finished.
+    fn startPicture(dec: *Decoder, hdr: *const Header) Error!void {
+        const sps = &dec.sps;
+        const pps = &dec.pps;
+        const pic = &dec.said;
         const job = if (dec.parallel(hdr, sps, pps)) dec.freeJob(sps) else null;
         if (job == null) dec.drain();
         dec.on_workers = job != null;
-        dec.ended_early = false;
-        try dec.activate(sps);
-        dec.after_end = false;
-        dec.active_pps = pps;
-        if (dec.scales_pps != pps) {
-            dec.scales.init(&pps.scaling.m4, &pps.scaling.m8);
-            dec.scales_pps = pps;
+        dec.makeScales(pps);
+        const structure: u2 = @intCast(pic.structure);
+        const s = dec.stores.at(pic.slot);
+        dec.structure = structure;
+        dec.second_field = pic.second_field;
+        dec.hdr0 = hdr.*;
+        dec.first_slice = dec.slice_next;
+        s.poc = pic.poc;
+        if (pic.second_field) {
+            // The second field of the frame its first field began.
+            if (s.memory == null) return error.Corrupt;
+            try dec.buildSliceGroups(hdr, sps, pps);
+            dec.cur = s;
+            s.fields |= structure;
+            dec.beginning = false;
+            return;
         }
-        const structure: u2 = if (!hdr.field_pic) 3 else if (hdr.bottom_field) 2 else 1;
-        // The second field of the frame the last picture began?
-        if (dec.lone_field) |lf| {
-            const pairs = hdr.field_pic and structure != dec.lone_structure and lf.frame_num == hdr.frame_num and
-                !hdr.idr and dec.lone_ref == (hdr.nal_ref_idc != 0);
-            if (pairs) {
-                dec.lone_field = null;
-                dec.cur = lf;
-                dec.structure = structure;
-                dec.second_field = true;
-                dec.hdr0 = hdr.*;
-                dec.first_slice = dec.slice_next;
-                dec.dpb.computePoc(hdr, sps, &lf.poc);
-                lf.fields |= structure;
-                try dec.buildSliceGroups(hdr, sps, pps);
-                return;
-            }
-            dec.storeLoneField();
-        }
-        if (hdr.idr) {
-            if (!hdr.no_output_of_prior_pics) dec.dpb.flush();
-            dec.dpb.reset();
-            dec.last_ref = null;
-        } else {
-            try dec.frameNumGap(hdr, sps);
-        }
-        const s = try dec.freeStore();
         try dec.prepareStore(s);
-        s.in_use = true;
-        s.uid = dec.dpb.uid_next;
-        dec.dpb.uid_next += 1;
+        s.uid = pic.uid;
         s.progress = 0;
         s.fields = structure;
         s.frame_coded = !hdr.field_pic;
         s.mbaff = hdr.mbaff(sps);
-        s.ref = .{ .none, .none };
-        s.frame_num = hdr.frame_num;
-        s.frame_num_wrap = @intCast(hdr.frame_num);
-        s.long_term_idx = 0;
-        s.poc = .{ 0, 0 };
-        s.output_needed = false;
         s.non_existing = false;
-        s.idr = hdr.idr;
-        s.mmco5 = false;
-        s.time = dec.time;
+        s.time = pic.time;
         s.damaged = false;
-        dec.dpb.computePoc(hdr, sps, &s.poc);
-        if (hdr.field_pic) {
-            // The other field, until it comes, as this one.
-            if (structure == 1) s.poc[1] = s.poc[0] else s.poc[0] = s.poc[1];
-        }
-        dec.cur = s;
-        dec.structure = structure;
-        dec.second_field = false;
-        dec.hdr0 = hdr.*;
-        dec.first_slice = dec.slice_next;
         try dec.buildSliceGroups(hdr, sps, pps);
+        dec.cur = s;
+        dec.beginning = false;
         if (job) |j| dec.begin(j, s, sps, pps);
     }
 
-    /// Frames for the frame_num values a stream skipped (8.2.5.2): each a
-    /// short-term reference that is never shown, a copy of the last
-    /// reference picture.
-    fn frameNumGap(dec: *Decoder, hdr: *const Header, sps: *const params.Sps) Error!void {
-        const max: u32 = @as(u32, 1) << sps.log2_max_frame_num;
-        const prev = dec.dpb.prev_ref_frame_num;
-        if (hdr.frame_num == prev or hdr.frame_num == (prev + 1) % max) return;
-        var num = (prev + 1) % max;
-        // Only the last max_num_ref_frames of them outlast the sliding
-        // window; the ones before would leave at once.
-        const keep = @max(@as(u32, sps.max_num_ref_frames), 1);
-        const gap = (hdr.frame_num + max - num) % max;
-        if (gap > keep) num = (hdr.frame_num + max - keep) % max;
-        var guard: u32 = 0;
-        while (num != hdr.frame_num and guard < max) : (guard += 1) {
-            const s = try dec.freeStore();
-            try dec.prepareStore(s);
-            s.in_use = true;
-            s.uid = dec.dpb.uid_next;
-            s.progress = dec.height_mbs;
-            s.fields = 3;
-            s.frame_coded = true;
-            s.mbaff = false;
-            s.frame_num = num;
-            s.frame_num_wrap = @intCast(num);
-            s.long_term_idx = 0;
-            s.poc = .{ 0, 0 };
-            s.output_needed = false;
-            s.non_existing = true;
-            s.idr = false;
-            s.mmco5 = false;
-            s.damaged = false;
-            dec.dpb.uid_next += 1;
-            if (dec.last_ref) |src| {
-                // A store emptied since may have come back as this one.
-                if (src != s and src.in_use and src.memory_len == s.memory_len) {
-                    dec.finished(src);
-                    @memcpy(s.memory.?[0..s.memory_len], src.memory.?[0..s.memory_len]);
-                }
-            }
-            for (s.motion) |*m| m.* = .{};
-            const gh: Header = .{ .frame_num = num, .nal_ref_idc = 1 };
-            if (sps.poc_type != 0) {
-                // Their FrameNumOffset keeps the count going; type 0's
-                // count is the next real picture's alone.
-                dec.dpb.computePoc(&gh, sps, &s.poc);
-                dec.dpb.afterPicture(&gh, sps, s, false);
-            } else {
-                dec.dpb.prev_frame_num = num;
-                dec.dpb.prev_ref_frame_num = num;
-            }
-            const current: dpb_mod.Current = .{ .store = s, .structure = 3, .frame_num = num, .max_frame_num = max, .second_field = false, .poc = 0 };
-            dec.dpb.slidingWindow(sps, &current);
-            s.ref = .{ .short, .short };
-            dec.dpb.store(s);
-            num = (num + 1) % max;
+    /// The scaling of `pps`'s lists, made again only when they changed.
+    fn makeScales(dec: *Decoder, pps: *const params.Pps) void {
+        if (dec.scales_made and sameScaling(&dec.scales_of, &pps.scaling)) return;
+        dec.scales.init(&pps.scaling.m4, &pps.scaling.m8);
+        dec.scales_of = pps.scaling;
+        dec.scales_made = true;
+    }
+
+    fn sameScaling(a: *const params.Scaling, b: *const params.Scaling) bool {
+        for (a.m4, b.m4) |x, y| {
+            for (x, y) |p, q| if (p != q) return false;
         }
+        for (a.m8, b.m8) |x, y| {
+            for (x, y) |p, q| if (p != q) return false;
+        }
+        return true;
+    }
+
+    /// A frame the stream skipped (8.2.5.2): a copy of the last reference
+    /// picture, never shown, referred to as if it were there.
+    fn missing(dec: *Decoder, pic: *const vp.VideoPicture) Error!void {
+        dec.finishPicture();
+        const s = dec.stores.take(pic.slot);
+        try dec.prepareStore(s);
+        s.uid = pic.uid;
+        s.progress = dec.height_mbs;
+        s.fields = 3;
+        s.frame_coded = true;
+        s.mbaff = false;
+        s.poc = pic.poc;
+        s.non_existing = true;
+        s.time = 0;
+        s.damaged = false;
+        if (dec.last_ref) |src| {
+            // A store given back since may have come back as this one.
+            if (src != s and src.held and src.memory_len == s.memory_len) {
+                dec.finished(src);
+                @memcpy(s.memory.?[0..s.memory_len], src.memory.?[0..s.memory_len]);
+            }
+        }
+        for (s.motion) |*m| m.* = .{};
+    }
+
+    /// A slice of the current picture: decoded, or handed to its worker.
+    fn slice(dec: *Decoder, sl: *const vp.VideoSlice) Error!void {
+        const hdr = sl.h264 orelse return error.Corrupt;
+        if (dec.beginning) try dec.startPicture(hdr);
+        const s = dec.cur orelse return error.Corrupt;
+        const sps = &dec.sps;
+        const pps = &dec.pps;
+        // SP and SI are the Extended profile's: 4:2:0, 8 bits, 4x4 transforms.
+        if ((hdr.kind == .sp or hdr.kind == .si) and (sps.chroma_format_idc != 1 or sps.bit_depth_luma != 8 or sps.bit_depth_chroma != 8 or pps.transform_8x8)) return error.Unsupported;
+        const slice_id = dec.slice_next;
+        dec.slice_next += 1;
+        for (0..2) |l| {
+            for (&dec.lists[l], &sl.lists[l]) |*ref, *entry| ref.* = dec.refOf(entry);
+        }
+        if (dec.job) |j| {
+            // Partitions are the Extended profile's, never a worker's.
+            if (sl.partitioned) return error.Corrupt;
+            return dec.post(j, sl, slice_id);
+        }
+        var b = Bits.init(sl.rbsp[0..sl.rbsp_bytes]);
+        b.pos = sl.data_bit;
+        var parts: Partitions = .{};
+        if (sl.partitioned) {
+            if (sl.part_b) |data| parts = .{ .has_b = true, .b = data[0..sl.part_b_bytes], .b_pos = sl.part_b_bit };
+            if (sl.part_c) |data| {
+                parts.has_c = true;
+                parts.c = data[0..sl.part_c_bytes];
+                parts.c_pos = sl.part_c_bit;
+            }
+        }
+        const pic = dec.picture(s);
+        sliceData(&pic, &b, hdr, &dec.lists, slice_id, if (sl.partitioned) &parts else null) catch |e| {
+            s.damaged = true;
+            dec.slice_errors += 1;
+            if (e == error.NoMemory) return e;
+        };
+    }
+
+    /// A list entry as the decoding takes it: its picture's store, with
+    /// the order counts the library gives it now - an operation 5 sets
+    /// them anew once the picture is marked.
+    fn refOf(dec: *Decoder, entry: *const vp.VideoListEntry) RefPic {
+        if (entry.slot == vp.VP_NO_SLOT or entry.slot >= dpb_mod.max_stores) return .{};
+        const s = dec.stores.at(entry.slot);
+        if (!s.held or s.memory == null) return .{};
+        if (s.poc[0] != entry.poc[0] or s.poc[1] != entry.poc[1]) s.poc = entry.poc;
+        return .{ .store = s, .structure = @intCast(entry.structure & 3), .long = entry.long_term };
     }
 
     /// mbToSliceGroupMap (8.2.2) of the picture.
@@ -929,7 +749,10 @@ pub const Decoder = struct {
                     }
                 }
             },
-            6 => @memcpy(map, pps.group_ids[0..units]),
+            6 => {
+                const ids = pps.group_ids orelse return error.Corrupt;
+                @memcpy(map, ids[0..units]);
+            },
             else => return error.Unsupported,
         }
         const mbs = dec.picMbs(hdr);
@@ -951,63 +774,49 @@ pub const Decoder = struct {
         return if (hdr.field_pic) mbs / 2 else mbs;
     }
 
-    /// The first field of a pair whose second never came, kept as it is.
-    fn storeLoneField(dec: *Decoder) void {
-        const lf = dec.lone_field orelse return;
-        dec.lone_field = null;
-        dec.dpb.store(lf);
-    }
-
-    /// The picture being decoded finished: concealed where slices were
-    /// missing, filtered, marked and stored.
+    /// The picture being decoded finished (VPEV_DECODE): concealed where
+    /// slices were missing and filtered, by its worker or here. A picture
+    /// none of whose slices could be decoded is the last reference's copy.
     fn finishPicture(dec: *Decoder) void {
+        if (dec.beginning) {
+            dec.beginning = false;
+            dec.blank() catch {};
+        }
         const s = dec.cur orelse return;
         dec.cur = null;
-        const sps = dec.active_sps.?;
-        const hdr = &dec.hdr0;
         if (dec.job != null) {
             // Its worker conceals and filters it.
             dec.close();
         } else dec.concealAndFilter(s);
+        if (dec.said.reference) dec.last_ref = s;
+    }
 
-        var mmco5 = false;
-        if (hdr.nal_ref_idc != 0) {
-            const current: dpb_mod.Current = .{
-                .store = s,
-                .structure = dec.structure,
-                .frame_num = hdr.frame_num,
-                .max_frame_num = @as(u32, 1) << sps.log2_max_frame_num,
-                .second_field = dec.second_field,
-                .poc = 0,
-            };
-            mmco5 = dec.dpb.mark(hdr, sps, &current);
-            dec.last_ref = s;
+    /// The picture VPEV_PICTURE said, without a slice that began it: made
+    /// for the sequence and concealed whole when it is finished.
+    fn blank(dec: *Decoder) Error!void {
+        const pic = &dec.said;
+        const s = dec.stores.at(pic.slot);
+        dec.drain();
+        dec.on_workers = false;
+        dec.structure = 3;
+        dec.second_field = false;
+        dec.hdr0 = .{};
+        dec.first_slice = dec.slice_next;
+        if (pic.second_field) {
+            if (s.memory == null) return error.Corrupt;
+        } else {
+            try dec.prepareStore(s);
+            s.uid = pic.uid;
+            s.fields = 3;
+            s.frame_coded = true;
+            s.mbaff = false;
+            s.non_existing = false;
+            s.time = pic.time;
         }
-        if (mmco5) {
-            // Everything before is shown first; the picture counts as
-            // frame_num 0 from now on and its order count starts again
-            // from it (8.2.1, 7.4.3).
-            s.mmco5 = true;
-            s.frame_num = 0;
-            switch (dec.structure) {
-                1 => s.poc[0] = 0,
-                2 => s.poc[1] = 0,
-                else => {
-                    const t = @min(s.poc[0], s.poc[1]);
-                    s.poc[0] -= t;
-                    s.poc[1] -= t;
-                },
-            }
-            dec.dpb.flush();
-        }
-        dec.dpb.afterPicture(hdr, sps, s, mmco5);
-        if (dec.structure != 3 and !dec.second_field) {
-            dec.lone_field = s;
-            dec.lone_structure = dec.structure;
-            dec.lone_ref = hdr.nal_ref_idc != 0;
-            return;
-        }
-        dec.dpb.store(s);
+        s.poc = pic.poc;
+        s.progress = 0;
+        dec.makeScales(&dec.pps);
+        dec.cur = s;
     }
 
     /// The picture the decoder decoded itself finished: the macroblocks no
@@ -1050,8 +859,8 @@ pub const Decoder = struct {
     fn picture(dec: *Decoder, s: *Store) Pic {
         return .{
             .store = s,
-            .sps = dec.active_sps.?,
-            .pps = dec.active_pps.?,
+            .sps = &dec.sps,
+            .pps = &dec.pps,
             .scales = &dec.scales,
             .infos = dec.infos,
             .mb_map = dec.mb_map,
@@ -1156,9 +965,8 @@ pub const Decoder = struct {
     }
 
     /// A slice of the current picture handed to its worker, once there is
-    /// room: its header, its lists and its RBSP, which the decoder takes
-    /// the slot's buffer for in turn.
-    fn post(dec: *Decoder, j: *Job, b: *const Bits, slice_id: u32) void {
+    /// room: its header, its lists and a copy of its RBSP.
+    fn post(dec: *Decoder, j: *Job, sl: *const vp.VideoSlice, slice_id: u32) Error!void {
         for (&dec.lists) |*list| {
             for (list) |r| {
                 if (r.store) |rs| dec.pin(j, rs);
@@ -1172,21 +980,26 @@ pub const Decoder = struct {
             c.sleep(c.ctx, c.workers);
         }
         const p = &j.slices[posted % job_slices];
-        p.hdr = dec.hdr;
+        const len: usize = sl.rbsp_bytes;
+        if (p.rbsp.len < len) {
+            // Room for the slices of a picture that comes later too.
+            dec.env.freeSlice(u8, p.rbsp);
+            p.rbsp = &.{};
+            p.rbsp = dec.env.slice(u8, len + len / 2 + 64) orelse return error.NoMemory;
+        }
+        @memcpy(p.rbsp[0..len], sl.rbsp[0..len]);
+        p.hdr = sl.h264.?.*;
         p.lists = dec.lists;
-        const rbsp = p.rbsp;
-        p.rbsp = dec.rbsp;
-        dec.rbsp = rbsp;
-        p.len = b.data.len;
-        p.pos = b.pos;
+        p.len = len;
+        p.pos = sl.data_bit;
         p.slice_id = slice_id;
         @atomicStore(u32, &j.posted, posted + 1, .seq_cst);
         c.wake(c.ctx);
     }
 
-    /// `s` read by `j`: not used again before `j` is done.
+    /// `s` read by `j`: not given back before `j` is done.
     fn pin(dec: *Decoder, j: *Job, s: *Store) void {
-        const i = (@intFromPtr(s) - @intFromPtr(&dec.dpb.stores[0])) / @sizeOf(Store);
+        const i = dec.stores.slotOf(s);
         const bit = @as(u64, 1) << @intCast(i);
         if (j.pins & bit != 0) return;
         j.pins |= bit;
@@ -1212,7 +1025,7 @@ pub const Decoder = struct {
 
     fn retireJob(dec: *Decoder, j: *Job) void {
         var pins = j.pins;
-        while (pins != 0) : (pins &= pins - 1) dec.dpb.stores[@ctz(pins)].pinned -= 1;
+        while (pins != 0) : (pins &= pins - 1) dec.stores.stores[@ctz(pins)].pinned -= 1;
         j.pins = 0;
         j.active = false;
         dec.slice_errors += j.errors;
@@ -1221,6 +1034,7 @@ pub const Decoder = struct {
     /// Until the job begun first is done, which is then retired; false
     /// when none runs.
     fn retireOldest(dec: *Decoder) bool {
+        if (dec.cores == null) return false;
         var oldest: ?*Job = null;
         for (dec.jobs) |slot| {
             const j = slot orelse continue;
@@ -1274,15 +1088,6 @@ pub const Decoder = struct {
         const c = dec.cores orelse return;
         const sy: common.Sync = .{ .cores = c, .who = c.workers };
         sy.rows(s, rows);
-    }
-
-    /// A store for the next picture; when the only empty ones are still
-    /// read by workers, once the first of those is done.
-    fn freeStore(dec: *Decoder) Error!*Store {
-        while (true) {
-            if (dec.dpb.freeStore()) |s| return s;
-            if (!dec.retireOldest()) return error.NoMemory;
-        }
     }
 };
 
@@ -1348,7 +1153,7 @@ fn nextAddr(pic: *const Pic, addr: u32, mbs: u32) u32 {
 // --- slice data -----------------------------------------------------------
 
 /// The macroblocks of a slice decoded into `pic`, its data from `b` on.
-fn sliceData(pic: *const Pic, b: *Bits, hdr: *const Header, lists: *const [2][33]RefPic, slice_id: u32, parts: ?*Partitions) Error!void {
+fn sliceData(pic: *const Pic, b: *Bits, hdr: *const Header, lists: *const [2][33]RefPic, slice_id: u32, parts: ?*const Partitions) Error!void {
     const sps = pic.sps;
     const pps = pic.pps;
     const s = pic.store;
@@ -1377,11 +1182,11 @@ fn sliceData(pic: *const Pic, b: *Bits, hdr: *const Header, lists: *const [2][33
         d.has_b = p.has_b;
         d.has_c = p.has_c;
         if (p.has_b) {
-            d.bits_b = Bits.init(p.b[0..p.b_len]);
+            d.bits_b = Bits.init(p.b);
             d.bits_b.pos = p.b_pos;
         }
         if (p.has_c) {
-            d.bits_c = Bits.init(p.c[0..p.c_len]);
+            d.bits_c = Bits.init(p.c);
             d.bits_c.pos = p.c_pos;
         }
     }
@@ -1427,7 +1232,7 @@ fn sliceData(pic: *const Pic, b: *Bits, hdr: *const Header, lists: *const [2][33
         .depth_y = pic.depth_y,
         .depth_c = pic.depth_c,
         .weighting = if (hdr.weighted) .explicit else if (b_slice and pps.weighted_bipred_idc == 2) .implicit else .none,
-        .colour = hdr.colour_plane,
+        .colour = @intCast(hdr.colour_plane),
         .sync = pic.sync,
     };
     const mbs = if (hdr.field_pic) w * pic.height_mbs / 2 else w * pic.height_mbs;
@@ -1618,133 +1423,5 @@ fn sliceData(pic: *const Pic, b: *Bits, hdr: *const Header, lists: *const [2][33
         if (use_cabac and d.eng.overrun()) return error.Corrupt;
         if (!more) break;
         addr = nextAddr(pic, addr, mbs);
-    }
-}
-
-// --- tests (host: ./zig build test) -----------------------------------------
-
-const std = @import("std");
-const testing = std.testing;
-
-/// Workers on threads that wait by yielding: `sleep` returns at once,
-/// as it may.
-const TestCores = struct {
-    cores: common.Cores = undefined,
-    jobs: [3]usize = @splat(0),
-    args: [3]usize = @splat(0),
-    threads: [3]std.Thread = undefined,
-    quit: bool = false,
-
-    fn of(ctx: *anyopaque) *TestCores {
-        return @ptrCast(@alignCast(ctx));
-    }
-    fn run(ctx: *anyopaque, worker: u32, job: *const fn (*anyopaque) void, arg: *anyopaque) void {
-        const t = of(ctx);
-        t.args[worker] = @intFromPtr(arg);
-        @atomicStore(usize, &t.jobs[worker], @intFromPtr(job), .seq_cst);
-    }
-    fn arm(_: *anyopaque, _: u32) void {}
-    fn sleep(_: *anyopaque, _: u32) void {
-        std.Thread.yield() catch {};
-    }
-    fn wake(_: *anyopaque) void {}
-    fn work(t: *TestCores, i: usize) void {
-        while (!@atomicLoad(bool, &t.quit, .acquire)) {
-            const job = @atomicRmw(usize, &t.jobs[i], .Xchg, 0, .acq_rel);
-            if (job == 0) {
-                std.Thread.yield() catch {};
-                continue;
-            }
-            const f: *const fn (*anyopaque) void = @ptrFromInt(job);
-            f(@ptrFromInt(t.args[i]));
-        }
-    }
-};
-
-const TestMemory = struct {
-    fn alloc(_: *anyopaque, len: usize, clear: bool) ?[*]u8 {
-        const m = testing.allocator.alignedAlloc(u8, .@"16", len) catch return null;
-        if (clear) @memset(m, 0);
-        return m.ptr;
-    }
-    fn free(_: *anyopaque, memory: [*]u8, len: usize) void {
-        const s: []align(16) u8 = @alignCast(memory[0..len]);
-        testing.allocator.free(s);
-    }
-};
-
-const Decoded = struct { frames: u32 = 0, hash: u64 = 0xcbf29ce484222325 };
-
-const Way = struct {
-    /// Each access unit ended as an MP4's packet ends.
-    units_end: bool = false,
-    /// After so many units: everything dropped, as for a seek, and the
-    /// stream decoded from its start again.
-    reset_after: ?u32 = null,
-    /// After so many units: the decoder closed, whatever it is doing.
-    stop_after: ?u32 = null,
-};
-
-/// Every picture of an Annex B stream of 8-bit 4:2:0 frames without
-/// cropping, in the order shown: how many, and FNV-1a of their planes.
-fn decodeAll(stream: []const u8, cores: ?*const common.Cores, way: Way) !Decoded {
-    var ctx: u8 = 0;
-    const env: Env = .{ .ctx = &ctx, .alloc = TestMemory.alloc, .free = TestMemory.free };
-    const dec = Decoder.create(env, .{}) orelse return error.OutOfMemory;
-    defer dec.destroy();
-    if (cores) |c| dec.useCores(c);
-    var got: Decoded = .{};
-    var units = nal.AnnexB{ .data = stream };
-    var count: u32 = 0;
-    while (true) {
-        count += 1;
-        if (way.stop_after == count) return got;
-        if (way.reset_after == count) {
-            dec.reset();
-            got = .{};
-            units = .{ .data = stream };
-        }
-        if (units.next()) |unit| {
-            const units_end = way.units_end;
-            // A picture's first slice (first_mb_in_slice 0) begins the next.
-            const kind = unit[0] & 0x1F;
-            if (units_end and (kind == nal.Type.slice or kind == nal.Type.idr) and unit[1] & 0x80 != 0) dec.endPicture();
-            try dec.decodeUnit(unit, 0);
-        } else dec.flush();
-        while (dec.next()) |s| {
-            for (0..3) |p| {
-                for (0..s.height[p]) |r| {
-                    for (s.planes[p][r * s.stride[p] ..][0..s.width[p]]) |byte| got.hash = (got.hash ^ byte) *% 0x100000001b3;
-                }
-            }
-            got.frames += 1;
-            dec.release();
-        }
-        if (dec.flushing) return got;
-    }
-}
-
-// tests/rows.h264: x264 (High, CABAC) of ffmpeg's testsrc2 at 128x128,
-// 24 frames: three slices a picture, B pyramids, weighted P, four
-// references, an IDR every 12. The hash is of ffmpeg's decode.
-test "pictures decoded on three workers come out as decoded alone, as ffmpeg decodes them; a seek and a close on the way" {
-    const stream = @embedFile("tests/rows.h264");
-    const alone = try decodeAll(stream, null, .{});
-    try testing.expectEqual(@as(u32, 24), alone.frames);
-    try testing.expectEqual(@as(u64, 0xb04cc91a8a991e99), alone.hash);
-    try testing.expectEqual(alone, try decodeAll(stream, null, .{ .units_end = true }));
-    var t: TestCores = .{};
-    t.cores = .{ .ctx = &t, .workers = 3, .run = TestCores.run, .arm = TestCores.arm, .sleep = TestCores.sleep, .wake = TestCores.wake };
-    for (&t.threads, 0..) |*th, i| th.* = try std.Thread.spawn(.{}, TestCores.work, .{ &t, i });
-    defer {
-        @atomicStore(bool, &t.quit, true, .seq_cst);
-        for (t.threads) |th| th.join();
-    }
-    for (0..4) |round| try testing.expectEqual(alone, try decodeAll(stream, &t.cores, .{ .units_end = round & 1 != 0 }));
-    // A seek and a close with pictures on the workers, at many places.
-    var at: u32 = 5;
-    while (at < 60) : (at += 7) {
-        try testing.expectEqual(alone, try decodeAll(stream, &t.cores, .{ .reset_after = at }));
-        _ = try decodeAll(stream, &t.cores, .{ .stop_after = at, .units_end = at & 1 != 0 });
     }
 }

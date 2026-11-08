@@ -5,6 +5,8 @@ const sdk = @import("sdk");
 const types = sdk.resources.videodec;
 const VideoDecBase = @import("../videodec_base.zig").VideoDecBase;
 const Decoder = @import("_decoder.zig").Decoder;
+const Session = @import("_session.zig").Session;
+const engine = @import("../videodec_init.zig").engine;
 const wave511 = @import("../codec/_wave511.zig");
 
 /// Says what a decoder's stream is, once its sequence is read.
@@ -32,7 +34,9 @@ const wave511 = @import("../codec/_wave511.zig");
 /// BEHAVIOR:
 /// A decoder whose sequence is not read yet has the chip read it from
 /// what was fed, and makes its frames, as the first DecodeVideoFrame
-/// would; no picture is decoded.
+/// would; no picture is decoded. On an AMD graphics device the sequence
+/// was read as it was fed: this answers what it said, and `frames` is
+/// how many frames the decoder keeps for it.
 ///
 /// CONTEXT:
 /// - Waits: yes, for the chip. - Interrupts: no.
@@ -61,6 +65,7 @@ pub fn GetVideoDecoderInfo(vb: *VideoDecBase, decoder: *types.VideoDecoder, info
     info.* = .{};
     sys.ObtainSemaphore(&vb.lock);
     defer sys.ReleaseSemaphore(&vb.lock);
+    if (comptime engine == .vcn) return Session.of(decoder).info(info);
     const d = Decoder.of(decoder);
     const started = d.startSequence();
     if (started != types.VDERR_OK) return started;

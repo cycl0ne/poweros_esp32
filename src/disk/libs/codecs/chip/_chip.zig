@@ -1,28 +1,39 @@
 // SPDX-License-Identifier: MIT
-//! chip.vcodec's decoder: H.264 and H.265 through the board's chip,
-//! videodec.resource.
+//! chip.vcodec's decoder: H.264, H.265, VP9 and AV1 through the board's
+//! chip, videodec.resource, where it decodes them.
 //!
 //! The chip is fed a picture at a time and asked for frames in the order
 //! they are shown; it says when it needs more (VDERR_NEED_DATA), which is
-//! when ReceiveVCodecFrame asks for a packet. A packet sent is turned into
-//! Annex B form (`annexb.zig`) - with the parameter sets in front when it
-//! is a key picture - and fed, with its time. At the end of the track the
-//! chip is told so, and hands out the frames it still holds back.
+//! when ReceiveVCodecFrame asks for a packet. An H.264 or H.265 packet
+//! sent is turned into Annex B form (`annexb.zig`) - with the parameter
+//! sets in front when it is a key picture - and fed, with its time; a VP9
+//! packet, a frame or a superframe, is fed as it is, and so is an AV1
+//! one, a temporal unit, with the OBUs of the track's av1C - its sequence
+//! header - in front when it is a key one. At the end of the
+//! track the chip is told so, and hands out the frames it still holds
+//! back.
 //!
 //! A packet the chip has no room for yet stays `pending` and is fed after
 //! the next frame is taken; another packet sent meanwhile is refused
 //! (VCERR_FULL). A frame is the chip's buffer, lent out as it is; its NV12
 //! planes are the frame's picture.
 //!
-//! What a stream's numbers mean the chip does not report at all, so the
-//! track's setup record is read for it when the decoder opens
-//! (`colour.zig`), and the first packets of a film of high dynamic range
-//! are looked through for the light it was mastered for, which lives in
-//! the stream rather than the setup.
+//! What a stream's numbers mean the chip does not report at all, so an
+//! H.264 or H.265 track's setup record is read for it when the decoder
+//! opens, and an AV1 track's av1C (`colour.zig`); the first packets of a
+//! film of high dynamic range are looked through for the light it was
+//! mastered for, which lives in the stream rather than the setup, and
+//! those of a VP9 track, or an AV1 one whose av1C had no sequence header,
+//! for the colours themselves.
 //!
 //! A track of a profile the chip has not - H.264 deeper than 8 bits or
 //! with more colour than halved both ways, H.265's range extensions - is
 //! refused when it opens (VCERR_UNSUPPORTED), for the software's module.
+//! A VP9 track says its profile only in its first frame: the chip refuses
+//! one it has not (profiles 1 and 3, 12 bits) as that is fed. An AV1
+//! track's av1C says it: one of the high or the professional profile, in
+//! 12 bits or monochrome is refused when it opens; one without an av1C
+//! as its sequence header is fed.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -44,10 +55,13 @@ const colour = @import("colour.zig");
 const stream_bytes: usize = 2 * 1024 * 1024;
 const packets_kept = 4;
 
-/// How many packets of a film in PQ are looked through for the SEI unit
-/// that says the light it was mastered for. It travels with a key
-/// picture, so the first packet nearly always has it; after these the
-/// looking stops, and graphics maps from its own thousand candelas.
+/// How many packets are looked through for what the setup did not say:
+/// the light a film in PQ was mastered for, in an SEI unit or a metadata
+/// OBU, and a VP9 or AV1 track's colours, in a key frame's header or a
+/// sequence header. Both travel with a key picture, so the first packet
+/// nearly always has them; after these the looking stops - graphics maps
+/// from its own thousand candelas, and the colours are what the
+/// picture's height suggests.
 const hunt_packets: u8 = 16;
 
 /// What a frame's `private[1]` holds, so a frame that is not one of this
@@ -61,8 +75,8 @@ const Decoder = struct {
     codec: u32,
     /// How many bytes each unit's length takes in the track's packets.
     length_size: u8 = 4,
-    /// The parameter sets in Annex B form, put in front of each key
-    /// picture.
+    /// The parameter sets in Annex B form, or an AV1 track's sequence
+    /// header, put in front of each key picture.
     header: ?[*]u8 = null,
     header_size: usize = 0,
     /// A packet in Annex B form, and how large that buffer is.
@@ -71,12 +85,15 @@ const Decoder = struct {
     /// The bytes in `buffer` waiting to be fed, and their time.
     pending: usize = 0,
     pending_time: i64 = 0,
-    /// What the stream's own parameter sets say its colours are, read
-    /// when it was opened: the chip reports none of it.
+    /// What the stream's own parameter sets or headers say its colours
+    /// are: the chip reports none of it.
     colours: colour.Colour = .{},
-    /// How many packets more are to be looked through for the light the
-    /// film was mastered for; 0 once it is found, or once the looking is
-    /// given up, or for a film that is not in PQ.
+    /// How many rows the track's pictures have, which the colours are
+    /// guessed from where the stream says nothing.
+    height: u32 = 0,
+    /// How many packets more are to be looked through for what the setup
+    /// did not say (`hunt_packets`); 0 once it is found, or once the
+    /// looking is given up.
     hunt: u8 = 0,
     /// The frames lent out, by slot.
     held: u32,
@@ -116,6 +133,8 @@ fn open(sys: *ExecBase, params: *const vcodec.VCodecParams, code: *i32) ?*vcodec
     const codec: u32 = switch (params.codec) {
         vc.VCODEC_H264 => videodec.VDCODEC_H264,
         vc.VCODEC_H265 => videodec.VDCODEC_H265,
+        vc.VCODEC_VP9 => videodec.VDCODEC_VP9,
+        vc.VCODEC_AV1 => videodec.VDCODEC_AV1,
         else => return failed(code, vc.VCERR_NOCODEC),
     };
     if (params.held == 0 or params.held > vcodec.VCODEC_MOST_HELD) return failed(code, vc.VCERR_UNSUPPORTED);
@@ -124,17 +143,29 @@ fn open(sys: *ExecBase, params: *const vcodec.VCodecParams, code: *i32) ?*vcodec
     if (vb.VideoDecCodecs() & codec == 0) return failed(code, vc.VCERR_NOCODEC);
 
     const config: []const u8 = if (params.config) |bytes| bytes[0..params.config_size] else &.{};
-    const setup = (if (codec == videodec.VDCODEC_H265) annexb.hevcSetup(config, null) else annexb.avcSetup(config, null)) orelse
-        return failed(code, vc.VCERR_CORRUPT);
+    // VP9 has no setup the chip is fed; AV1's is its av1C's OBUs.
+    const setup: annexb.Setup = switch (codec) {
+        videodec.VDCODEC_VP9 => .{ .length_size = 4, .header_size = 0 },
+        videodec.VDCODEC_AV1 => .{ .length_size = 4, .header_size = av1Obus(config).len },
+        videodec.VDCODEC_H265 => annexb.hevcSetup(config, null) orelse return failed(code, vc.VCERR_CORRUPT),
+        else => annexb.avcSetup(config, null) orelse return failed(code, vc.VCERR_CORRUPT),
+    };
     // A profile the chip has not: the software's, at once.
-    if (!annexb.chipTakes(codec == videodec.VDCODEC_H265, config)) return failed(code, vc.VCERR_UNSUPPORTED);
+    const takes = switch (codec) {
+        videodec.VDCODEC_VP9 => true,
+        videodec.VDCODEC_AV1 => av1Takes(config),
+        else => annexb.chipTakes(codec == videodec.VDCODEC_H265, config),
+    };
+    if (!takes) return failed(code, vc.VCERR_UNSUPPORTED);
     const memory = sys.AllocVec(@sizeOf(Decoder), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return failed(code, vc.VCERR_NOMEMORY);
     const c: *Decoder = @ptrCast(@alignCast(memory));
-    c.* = .{ .sys = sys, .vb = vb, .decoder = undefined, .codec = codec, .length_size = setup.length_size, .held = params.held };
-    c.colours = colour.of(sys, codec == videodec.VDCODEC_H265, config, params.height);
-    // A film in PQ whose record did not say the light it was mastered
-    // for: the SEI that says it comes with the pictures.
-    if (c.colours.transfer == rtg.RTGYUV_PQ and c.colours.peak == 0) c.hunt = hunt_packets;
+    c.* = .{ .sys = sys, .vb = vb, .decoder = undefined, .codec = codec, .length_size = setup.length_size, .height = params.height, .held = params.held };
+    switch (codec) {
+        videodec.VDCODEC_H264, videodec.VDCODEC_H265 => c.colours = colour.of(sys, codec == videodec.VDCODEC_H265, config, params.height),
+        videodec.VDCODEC_AV1 => colour.readAv1(av1Obus(config), params.height, &c.colours),
+        else => {},
+    }
+    if (!settled(c)) c.hunt = hunt_packets;
     if (setup.header_size != 0) {
         const header = sys.AllocVec(setup.header_size, exec.MEMF_ANY) orelse {
             sys.FreeVec(c);
@@ -143,7 +174,11 @@ fn open(sys: *ExecBase, params: *const vcodec.VCodecParams, code: *i32) ?*vcodec
         c.header = @ptrCast(header);
         c.header_size = setup.header_size;
         const out = c.header.?[0..setup.header_size];
-        _ = if (codec == videodec.VDCODEC_H265) annexb.hevcSetup(config, out) else annexb.avcSetup(config, out);
+        switch (codec) {
+            videodec.VDCODEC_AV1 => sys.CopyMem(av1Obus(config).ptr, out.ptr, out.len),
+            videodec.VDCODEC_H265 => _ = annexb.hevcSetup(config, out),
+            else => _ = annexb.avcSetup(config, out),
+        }
     }
 
     var err: u32 = videodec.VDERR_OK;
@@ -177,17 +212,20 @@ pub fn CloseVCodec(_: *Base, decoder: ?*vcodec.VCodecDecoder) void {
     sys.FreeVec(c);
 }
 
-/// A packet turned into Annex B form and fed - or held, when the chip
-/// has no room yet; the end of the track told the chip.
+/// A packet turned into Annex B form (VP9's and AV1's as it is) and fed -
+/// or held, when the chip has no room yet; the end of the track told the
+/// chip.
 pub fn SendVCodecPacket(_: *Base, decoder: *vcodec.VCodecDecoder, packet: *const vcodec.VCodecPacket) i32 {
     const c = of(decoder);
     if (c.pending != 0) return vc.VCERR_FULL;
     if (packet.flags & vcodec.VCPKT_END != 0) return fromChip(c.vb.FeedVideoDecoder(c.decoder, null, 0, 0, videodec.VDFEED_END));
     const data = packet.data orelse return vc.VCERR_CORRUPT;
     const units = data[0..packet.size];
-    if (c.hunt != 0) lookForLight(c, units);
-    const size = annexb.convertedSize(units, c.length_size) orelse return vc.VCERR_CORRUPT;
-    const key = packet.flags & vcodec.VCPKT_KEY != 0;
+    const vp9 = c.codec == videodec.VDCODEC_VP9;
+    const as_is = vp9 or c.codec == videodec.VDCODEC_AV1;
+    if (c.hunt != 0) lookThrough(c, units);
+    const size = if (as_is) units.len else annexb.convertedSize(units, c.length_size) orelse return vc.VCERR_CORRUPT;
+    const key = !vp9 and packet.flags & vcodec.VCPKT_KEY != 0;
     const whole = size + if (key) c.header_size else 0;
     if (whole > c.buffer_size) {
         c.sys.FreeVec(c.buffer);
@@ -205,7 +243,10 @@ pub fn SendVCodecPacket(_: *Base, decoder: *vcodec.VCodecDecoder, packet: *const
         c.sys.CopyMem(c.header.?, out.ptr, c.header_size);
         at = c.header_size;
     }
-    at += annexb.convert(units, c.length_size, out[at..], Copy{ .sys = c.sys });
+    if (as_is) {
+        if (units.len != 0) c.sys.CopyMem(units.ptr, out.ptr + at, units.len);
+        at += units.len;
+    } else at += annexb.convert(units, c.length_size, out[at..], Copy{ .sys = c.sys });
     c.pending = at;
     c.pending_time = packet.time;
     const fed = feedPending(c);
@@ -291,23 +332,60 @@ fn lend(c: *const Decoder, frame: *vc.VideoFrame, got: *const videodec.VideoDecF
     };
 }
 
-/// A packet looked through for the light the film was mastered for: it
-/// is in a prefix SEI unit with the key picture, and from then on every
-/// frame says it.
-fn lookForLight(c: *Decoder, units: []const u8) void {
-    var scratch: [colour.sei_room]u8 = undefined;
-    const peak = colour.peakOf(c.codec == videodec.VDCODEC_H265, units, c.length_size, &scratch);
+/// Whether what the stream says of its colours is in hand: a VP9 or AV1
+/// track's colours, read from its headers; and for a film in PQ, the
+/// light it was mastered for. An H.264 or H.265 track's colours are its
+/// setup's or none - its parameter sets in the stream are not read.
+fn settled(c: *const Decoder) bool {
+    const headed = c.codec == videodec.VDCODEC_VP9 or c.codec == videodec.VDCODEC_AV1;
+    if (headed and !c.colours.known) return false;
+    return c.colours.transfer != rtg.RTGYUV_PQ or c.colours.peak != 0;
+}
+
+/// A packet looked through for what the setup did not say: a VP9 key
+/// frame's header, an AV1 temporal unit's sequence header and metadata
+/// OBUs, an H.264 or H.265 picture's prefix SEI units. From then on
+/// every frame says it.
+fn lookThrough(c: *Decoder, units: []const u8) void {
     c.hunt -= 1;
-    if (peak != 0) {
-        c.colours.peak = peak;
-        c.hunt = 0;
+    switch (c.codec) {
+        videodec.VDCODEC_VP9 => if (colour.ofVp9(units, c.height)) |got| {
+            c.colours = got;
+        },
+        videodec.VDCODEC_AV1 => colour.readAv1(units, c.height, &c.colours),
+        else => {
+            var scratch: [colour.sei_room]u8 = undefined;
+            const peak = colour.peakOf(c.codec == videodec.VDCODEC_H265, units, c.length_size, &scratch);
+            if (peak != 0) c.colours.peak = peak;
+        },
     }
+    if (settled(c)) c.hunt = 0;
 }
 
 fn feedPending(c: *Decoder) u32 {
     const fed = c.vb.FeedVideoDecoder(c.decoder, c.buffer.?, @intCast(c.pending), @bitCast(c.pending_time), 0);
     if (fed == videodec.VDERR_OK) c.pending = 0;
     return fed;
+}
+
+/// The OBUs of an av1C (a byte of marker and version, three of what the
+/// sequence header says, then the OBUs), the sequence header among them;
+/// none where the record is not one.
+fn av1Obus(config: []const u8) []const u8 {
+    if (config.len <= 4 or config[0] != 0x81) return &.{};
+    return config[4..];
+}
+
+/// Whether the chip takes an AV1 track as its av1C says: the main
+/// profile, in 8 or 10 bits and with colour. A track without an av1C is
+/// taken, and refused as its sequence header is fed where the chip has
+/// not its profile.
+fn av1Takes(config: []const u8) bool {
+    if (config.len < 4 or config[0] != 0x81) return true;
+    const profile = config[1] >> 5;
+    const twelve_bit = config[2] & 0x20 != 0;
+    const monochrome = config[2] & 0x10 != 0;
+    return profile == 0 and !twelve_bit and !monochrome;
 }
 
 /// The units copied by exec, whose copy each board has its own of.

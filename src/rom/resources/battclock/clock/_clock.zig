@@ -10,12 +10,14 @@ const rtctimer = @import("../source/rtctimer.zig");
 const pcf8563 = @import("../source/pcf8563.zig");
 const jh7110rtc = @import("../source/jh7110rtc.zig");
 const rpirtc = @import("../source/rpirtc.zig");
+const cmos = @import("../source/cmos.zig");
 
-/// The ESP32s' RTC timer, the JH7110's RTC and the Raspberry Pi's, each
-/// on its own chip.
+/// The ESP32s' RTC timer, the JH7110's RTC, the Raspberry Pi's and the
+/// one an x86-64 machine has in its port space, each on its own chip.
 const has_rtc_timer = sdk.hardware.chip == .esp32s3 or sdk.hardware.chip == .esp32p4;
 const has_jh7110_rtc = sdk.hardware.chip == .rv64sbi;
 const has_rpi_rtc = sdk.hardware.chip == .a64psci;
+const has_cmos = sdk.hardware.chip == .x64uefi;
 
 fn rpiBuffer(cb: *BattClockBase) *align(rpirtc.buffer_bytes) rpirtc.Buffer {
     return @ptrFromInt(cb.rtc_buffer);
@@ -54,6 +56,12 @@ pub fn secondsNow(cb: *BattClockBase) ?u32 {
             const count = rpirtc.read(cb.sys_base, cb.rtc_address, rpiBuffer(cb)) orelse return null;
             return rpirtc.secondsOf(count);
         } else return null,
+        _base.CLOCK_CMOS => if (comptime has_cmos) {
+            const regs = cmos.read(@intCast(cb.rtc_century)) orelse return null;
+            const date = cmos.dateOf(regs, @intCast(cb.rtc_settings)) orelse return null;
+            const ub = cb.utility_base orelse return null;
+            return ub.Date2Amiga(&date);
+        } else return null,
         else => return null,
     }
 }
@@ -83,13 +91,27 @@ pub fn setSeconds(cb: *BattClockBase, seconds: u32) void {
         _base.CLOCK_RPI_RTC => if (comptime has_rpi_rtc) {
             _ = rpirtc.write(cb.sys_base, cb.rtc_address, rpiBuffer(cb), rpirtc.countOf(seconds));
         },
+        _base.CLOCK_CMOS => if (comptime has_cmos) {
+            const ub = cb.utility_base orelse return;
+            var date: utility.ClockData = .{};
+            ub.Amiga2Date(seconds, &date);
+            // The clock keeps two digits of the year and, where the
+            // tables named no register for the century, nothing else: a
+            // date it cannot hold is kept as the last it can.
+            if (cb.rtc_century == 0 and (date.year < 2000 or date.year > 2099)) {
+                date = .{ .sec = 59, .min = 59, .hour = 23, .mday = 31, .month = 12, .year = 2099, .wday = 4 };
+            }
+            cmos.write(date, @intCast(cb.rtc_settings), @intCast(cb.rtc_century));
+        },
         else => {},
     }
 }
 
 /// The clock put in working order: a PCF8563's control registers
 /// cleared, so that it runs with no test mode and no interrupt. The RTC
-/// timer, the JH7110's RTC and the Raspberry Pi's need nothing.
+/// timer, the JH7110's RTC, the Raspberry Pi's and an x86-64 machine's
+/// need nothing - the last was set up by the firmware, and how it keeps
+/// its figures is read rather than changed.
 pub fn restart(cb: *BattClockBase) void {
     if (cb.clock == _base.CLOCK_PCF8563) pcf8563.restart(cb);
 }

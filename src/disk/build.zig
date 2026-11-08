@@ -46,7 +46,10 @@ pub const catalogs = [_]Catalog{
 /// H.264 decoder is h264.vcodec's, the VP8 decoder vp8.vcodec's, the VP9
 /// decoder vp9.vcodec's, the AV1 decoder av1.vcodec's and the H.265
 /// decoder hevc.vcodec's, kept apart from the system so that they are
-/// tested on the host as they are. The commodity frame is where the
+/// tested on the host as they are. The readers of H.264's and H.265's
+/// parameter sets and of VP9's and AV1's headers are videoparse.library's,
+/// and chip.vcodec's for the colours a stream says. The commodity frame is
+/// where the
 /// settings and the broker loop of every commodity in SYS:Commodities are
 /// written once.
 const inner_modules = [_]struct { name: []const u8, source: []const u8 }{
@@ -59,6 +62,10 @@ const inner_modules = [_]struct { name: []const u8, source: []const u8 }{
     .{ .name = "vp9core", .source = "libs/codecs/vp9/core.zig" },
     .{ .name = "av1core", .source = "libs/codecs/av1/core.zig" },
     .{ .name = "hevccore", .source = "libs/codecs/hevc/core.zig" },
+    .{ .name = "h264sets", .source = "libs/videoparse/h264/sets.zig" },
+    .{ .name = "hevcsets", .source = "libs/videoparse/hevc/sets.zig" },
+    .{ .name = "vp9header", .source = "libs/videoparse/vp9/header.zig" },
+    .{ .name = "av1header", .source = "libs/videoparse/av1/header.zig" },
     .{ .name = "smbclient", .source = "libs/smb/smbclient.zig" },
     .{ .name = "commodity", .source = "commodities/_frame/frame.zig" },
 };
@@ -83,7 +90,7 @@ const commands = [_][]const u8{
     "setclock",      "top",         "play",        "screendump",    "memdebug",
     "makelink",      "posfs",       "binddrivers", "pciinfo",       "record",
     "audio",         "temperature", "hash",        "break",         "status",
-    "cpuclock",      "install",     "update",      "reboot",
+    "cpuclock",      "install",     "update",      "reboot",        "shutdown",
 };
 const tests = [_][]const u8{
     "hello",       "echoargs",    "testlib",     "gfx",       "anim",
@@ -99,7 +106,7 @@ const tests = [_][]const u8{
     "sound",       "memowner",    "records",     "exall",     "disktest",
     "filetest",    "speed2d",     "windraw",     "semtest",   "membench",
     "glyphs",      "ribbon",      "taskbench",   "videodec",  "audiodec",
-    "film",        "commodities", "filmdt",
+    "film",        "commodities", "filmdt",      "watchdog",  "gpu",
 };
 const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless", "hostname", "ssh", "scp", "filter", "git" };
 
@@ -184,10 +191,11 @@ const modules = [_]Program{
     .{ .disk = "libs/codecs/opus.acodec", .source = "libs/audiocodec/opus.zig", .name = "opus.acodec" },
     .{ .disk = "libs/codecs/dts.acodec", .source = "libs/audiocodec/dts.zig", .name = "dts.acodec" },
     .{ .disk = "libs/media.library", .source = "libs/media/media.zig", .name = "media.library" },
+    .{ .disk = "libs/videoparse.library", .source = "libs/videoparse/videoparse.zig", .name = "videoparse.library", .imports = &.{ "h264sets", "hevcsets", "vp9header", "av1header" } },
     .{ .disk = "libs/codecs/mp4.container", .source = "libs/media/mp4.zig", .name = "mp4.container" },
     .{ .disk = "libs/codecs/mkv.container", .source = "libs/media/mkv.zig", .name = "mkv.container" },
     .{ .disk = "libs/videocodec.library", .source = "libs/videocodec/videocodec.zig", .name = "videocodec.library" },
-    .{ .disk = "libs/codecs/chip.vcodec", .source = "libs/codecs/chip.zig", .name = "chip.vcodec", .imports = &.{ "h264core", "hevccore" } },
+    .{ .disk = "libs/codecs/chip.vcodec", .source = "libs/codecs/chip.zig", .name = "chip.vcodec", .imports = &.{ "h264sets", "hevcsets", "vp9header", "av1header" } },
     .{ .disk = "libs/codecs/mjpeg.vcodec", .source = "libs/codecs/mjpeg.zig", .name = "mjpeg.vcodec", .imports = &.{"jpegdecode"} },
     .{ .disk = "libs/codecs/h264.vcodec", .source = "libs/codecs/h264.zig", .name = "h264.vcodec", .imports = &.{"h264core"} },
     .{ .disk = "libs/codecs/vp8.vcodec", .source = "libs/codecs/vp8.zig", .name = "vp8.vcodec", .imports = &.{"vp8core"} },
@@ -275,6 +283,8 @@ const modules = [_]Program{
     .{ .disk = "devs/sdcard.device", .source = "devs/sdcard/sdcard.zig", .name = "sdcard.device" },
     .{ .disk = "devs/rs485.device", .source = "devs/rs485/rs485.zig", .name = "rs485.device" },
     .{ .disk = "devs/networks/openeth.device", .source = "devs/networks/openeth/openeth.zig", .name = "openeth.device" },
+    .{ .disk = "devs/networks/intelnet.device", .source = "devs/networks/intelnet/intelnet.zig", .name = "intelnet.device" },
+    .{ .disk = "devs/networks/realnet.device", .source = "devs/networks/realnet/realnet.zig", .name = "realnet.device" },
     .{ .disk = "devs/networks/emac.device", .source = "devs/networks/emac/emac.zig", .name = "emac.device" },
     .{ .disk = "devs/networks/slip.device", .source = "devs/networks/slip/slip.zig", .name = "slip.device" },
     .{ .disk = "devs/networks/cyw43455.device", .source = "devs/networks/cyw43455/cyw43455.zig", .name = "cyw43455.device" },
@@ -300,27 +310,28 @@ const modules = [_]Program{
 /// its UART, Ethernet in Espressif QEMU's S3 machine. The ESP32-P4's come
 /// as drivers of their own.
 const s3_only = [_][]const u8{ "rs485.device", "openeth.device" };
-/// Drivers of hardware the ESP32-P4, the JH7110 and the RP1 have and the
-/// ESP32-S3 does not: an Ethernet MAC of the chip's own.
+/// Drivers of hardware the ESP32-P4, the JH7110 and the RP1 have and
+/// neither the ESP32-S3 nor an x86-64 machine does: an Ethernet MAC of
+/// the chip's own. An x86-64 machine's Ethernet is a card on PCI.
 const mac_only = [_][]const u8{"emac.device"};
 /// Drivers of hardware both ESP32s have and a RISC-V 64 machine under SBI
 /// does not: the DWC2 USB controller, the SD host. And the dock in
 /// SYS:Programs, started by hand: on their small screens it is not
 /// wanted from the start.
 const esp_only = [_][]const u8{ "usbotg.device", "sdcard.device", "programs/Dock" };
-/// What a RISC-V 64 machine under SBI and an AArch64 machine under PSCI
-/// have and the ESP32s do not: PCI, the command that lists it, and the
-/// USB controllers and SSDs on it. The install, which puts a system onto
-/// a card or an SSD for a machine whose firmware loads a kernel from a
-/// partition - an ESP32's kernel is in its flash. And the dock in
-/// SYS:WBStartup, started with the desktop, the test of a chip's video
-/// decoder, DTS's module with its large tables, and the video codecs in
-/// software: the ESP32s have neither the room for them on their flash
+/// What the 64-bit machines - RISC-V 64 under SBI, AArch64 under PSCI,
+/// x86-64 under UEFI - have and the ESP32s do not: PCI, the command that
+/// lists it, and the USB controllers and SSDs on it. The install, which
+/// puts a system onto a card or an SSD for a machine whose firmware loads
+/// a kernel from a partition - an ESP32's kernel is in its flash. And the
+/// dock in SYS:WBStartup, started with the desktop, the test of a chip's
+/// video decoder, DTS's module with its large tables, and the video codecs
+/// in software: the ESP32s have neither the room for them on their flash
 /// disks nor the speed, and the 64-bit machines' disks are RAM.
 /// chip.vcodec goes with them: it drives videodec.resource, which no
-/// ESP32 has, and carries the parameter-set parsers it reads a stream's
+/// ESP32 has, and carries the parameter-set readers it reads a stream's
 /// colours with - 60 KB for a chip that is not there.
-const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device", "nvme.device", "install", "update", "WBStartup/Dock", "videodec", "dts.acodec", "chip.vcodec", "h264.vcodec", "hevc.vcodec", "vp8.vcodec", "vp9.vcodec", "av1.vcodec" };
+const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device", "nvme.device", "intelnet.device", "realnet.device", "install", "update", "WBStartup/Dock", "videodec", "dts.acodec", "chip.vcodec", "h264.vcodec", "hevc.vcodec", "vp8.vcodec", "vp9.vcodec", "av1.vcodec" };
 /// Drivers of what only the Raspberry Pi CM5 has among the AArch64
 /// machines and no other chip does: its radio, a CYW43455 on the
 /// BCM2712's SD host.
@@ -356,6 +367,7 @@ pub fn builtFor(program: Program, chip: poweros_sdk.Chip) bool {
         .esp32s3 => &(mac_only ++ rv64_only ++ a64_only ++ no_3d),
         .esp32p4 => &(s3_only ++ rv64_only ++ a64_only),
         .rv64sbi => &(s3_only ++ esp_only ++ a64_only),
+        .x64uefi => &(s3_only ++ esp_only ++ a64_only ++ mac_only),
         .a64psci => &(s3_only ++ esp_only),
     };
     for (others) |name| {
@@ -422,6 +434,20 @@ pub const p4_files = [_]File{
     .{ .disk = "devs/NetInterfaces/WLAN1", .source = "devs/NetInterfaces/esp32p4/WLAN1" },
     // A photograph the size of the CrowPanel's screen, for C:test/Jpeg to
     // time the codec on.
+    .{ .disk = "tests/datatypes/Desktop.jpg", .source = "tests/datatypes/esp32p4/Desktop.jpg" },
+};
+
+/// The x86-64 machines' disk has this in place of the shared file of the
+/// same name, and two more beside it: their Ethernet is a card on PCI,
+/// and the interfaces name the two kinds of card this system drives
+/// there, with a second port for the kind that often has two. A machine
+/// has what it has, and an interface whose port is not there is not
+/// added. And the large photograph, for C:test/Jpeg to time an AMD
+/// graphics device's decoder on.
+pub const x64_files = [_]File{
+    .{ .disk = "devs/NetInterfaces/ETH0", .source = "devs/NetInterfaces/x64/ETH0" },
+    .{ .disk = "devs/NetInterfaces/ETH1", .source = "devs/NetInterfaces/x64/ETH1" },
+    .{ .disk = "devs/NetInterfaces/ETH2", .source = "devs/NetInterfaces/x64/ETH2" },
     .{ .disk = "tests/datatypes/Desktop.jpg", .source = "tests/datatypes/esp32p4/Desktop.jpg" },
 };
 
@@ -658,5 +684,5 @@ pub fn build(b: *std.Build) void {
     for (catalogs) |catalog| {
         b.addNamedLazyPath(catalog.disk, poweros_sdk.addCatalog(b, sdk, b.path(catalog.descriptor), b.path(catalog.translation), catalog.name));
     }
-    for (mac_files ++ p4_files ++ a64_files) |file| b.addNamedLazyPath(file.source, b.path(file.source));
+    for (mac_files ++ p4_files ++ a64_files ++ x64_files) |file| b.addNamedLazyPath(file.source, b.path(file.source));
 }

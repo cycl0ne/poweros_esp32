@@ -5,23 +5,27 @@
 //! built for: 32-bit RISC-V is the ESP32-P4, 64-bit RISC-V a machine under
 //! SBI firmware (`rv64sbi/`: QEMU's virt, the JH7110), freestanding
 //! AArch64 a machine under PSCI firmware (`a64psci/`: QEMU's virt, the
-//! Raspberry Pi CM5's BCM2712), Xtensa the ESP32-S3, and the host tests
-//! see the S3's - an AArch64 host as well as any other. The names below
-//! are the same on every chip; one a chip does not have yet is an error
-//! only where it is used.
+//! Raspberry Pi CM5's BCM2712), freestanding x86-64 a machine started by
+//! UEFI firmware (`x64uefi/`: QEMU's q35, a PC), Xtensa the ESP32-S3, and
+//! the host tests see the S3's - an x86-64 or AArch64 host as well as any
+//! other. The names below are the same on every chip; one a chip does not
+//! have yet is an error only where it is used.
 
 const builtin = @import("builtin");
 
 /// The chips there are.
-pub const Chip = enum { esp32s3, esp32p4, rv64sbi, a64psci };
+pub const Chip = enum { esp32s3, esp32p4, rv64sbi, a64psci, x64uefi };
 
-/// The chip this code is built for. AArch64 is the PSCI machine only
-/// where nothing runs below the code: a test built for an ARM host is a
-/// host build like any other.
+/// The chip this code is built for. AArch64 is the PSCI machine, and
+/// x86-64 the UEFI machine, only where nothing runs below the code: a test
+/// built for an ARM or an x86-64 host is a host build like any other -
+/// which matters most for x86-64, since that is what this system is built
+/// on.
 pub const chip: Chip = switch (builtin.cpu.arch) {
     .riscv32 => .esp32p4,
     .riscv64 => .rv64sbi,
     .aarch64 => if (builtin.os.tag == .freestanding) .a64psci else .esp32s3,
+    .x86_64 => if (builtin.os.tag == .freestanding) .x64uefi else .esp32s3,
     else => .esp32s3,
 };
 
@@ -31,6 +35,7 @@ const own = switch (chip) {
     .esp32p4 => @import("esp32p4/hardware.zig"),
     .rv64sbi => @import("rv64sbi/hardware.zig"),
     .a64psci => @import("a64psci/hardware.zig"),
+    .x64uefi => @import("x64uefi/hardware.zig"),
 };
 
 /// The interrupt sources, by number.
@@ -92,9 +97,9 @@ pub const ldo = if (chip == .esp32p4) own.ldo else struct {};
 pub const sbi = if (chip == .rv64sbi) own.sbi else struct {};
 pub const plic = if (chip == .rv64sbi) own.plic else struct {};
 /// The disk image the loader put in RAM, which flash.device serves on a
-/// machine under SBI or PSCI firmware. The ESP32s have flash, so there it
-/// is empty.
-pub const ramdisk = if (chip == .rv64sbi or chip == .a64psci) own.ramdisk else struct {};
+/// machine under SBI or PSCI firmware, or one the UEFI stub read off its
+/// boot partition. The ESP32s have flash, so there it is empty.
+pub const ramdisk = if (chip == .rv64sbi or chip == .a64psci or chip == .x64uefi) own.ramdisk else struct {};
 pub const trng = if (chip == .rv64sbi) own.trng else struct {};
 /// The L2 cache controller's flush, on a machine under SBI firmware whose
 /// devices do not see the caches (the JH7110). The ESP32s' caches are
@@ -118,10 +123,20 @@ pub const cpuclock = if (chip == .rv64sbi) own.cpuclock else struct {};
 /// others have neither, so there they are empty.
 pub const psci = if (chip == .a64psci) own.psci else struct {};
 pub const gic = if (chip == .a64psci) own.gic else struct {};
+/// The interrupt controllers of an x86-64 machine: one of each core's own,
+/// and the machine's I/O one in front of them. The others have neither, so
+/// there it is empty.
+pub const apic = if (chip == .x64uefi) own.apic else struct {};
 
 /// The barriers between the processor and a device that reads or writes
 /// memory itself, the same calls on every chip.
 pub const barrier = @import("barrier.zig");
+/// The firmware's description tables of a machine started by UEFI, read:
+/// where the interrupt controllers are, what cores there are, how the
+/// machine's interrupt lines are wired, and where PCI's configuration
+/// space is. A format rather than a chip's hardware, so it is built for
+/// every chip and asked only where there are such tables.
+pub const acpi = @import("acpi.zig");
 /// The VideoCore's mailbox, through which the Raspberry Pis' firmware is
 /// asked for what only it reaches (the BCM2712's); its messages are the
 /// same anywhere, so it is built for every chip, and asked only there.

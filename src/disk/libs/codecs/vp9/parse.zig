@@ -7,6 +7,7 @@
 const common = @import("common.zig");
 const tables = @import("tables.zig");
 const header = @import("header.zig");
+const v9 = @import("sdk").videoparse.vp9;
 const probs = @import("probs.zig");
 const Bool = @import("bool.zig").Bool;
 const Block = common.Block;
@@ -66,7 +67,7 @@ pub const Out = struct {
 pub const Parse = struct {
     env: common.Env,
     h: *const header.Header = undefined,
-    seg: *const header.Segmentation = undefined,
+    seg: *const v9.Vp9Segmentation = undefined,
     p: *const probs.Probs = undefined,
     /// Always there; filled only when `count`.
     counts: *probs.Counts = undefined,
@@ -134,7 +135,7 @@ pub const Parse = struct {
 
     /// The dequantisers and loop filter levels of the frame's segments
     /// (8.6.1, 8.8.1).
-    pub fn frameTables(ps: *Parse, deltas: *const header.Deltas) void {
+    pub fn frameTables(ps: *Parse, deltas: *const v9.Vp9LoopFilter) void {
         const h = ps.h;
         const sg = ps.seg;
         const bd: usize = (ps.bit_depth - 8) >> 1;
@@ -155,15 +156,15 @@ pub const Parse = struct {
                 const d = sg.feature_data[s][common.SEG_LVL_ALT_L];
                 lvl = clamp(if (sg.abs_delta) d else lvl + d, 0, 63);
             }
-            if (!deltas.enabled) {
+            if (!deltas.delta_enabled) {
                 ps.lvl[s] = @splat(@splat(@intCast(lvl)));
             } else {
                 const scale: i32 = @as(i32, 1) << @intCast(level >> 5);
-                ps.lvl[s][0][0] = @intCast(clamp(lvl + deltas.ref[0] * scale, 0, 63));
+                ps.lvl[s][0][0] = @intCast(clamp(lvl + deltas.ref_deltas[0] * scale, 0, 63));
                 ps.lvl[s][0][1] = ps.lvl[s][0][0];
                 for (1..4) |ref| {
                     for (0..2) |mode| {
-                        ps.lvl[s][ref][mode] = @intCast(clamp(lvl + deltas.ref[ref] * scale + deltas.mode[mode] * scale, 0, 63));
+                        ps.lvl[s][ref][mode] = @intCast(clamp(lvl + deltas.ref_deltas[ref] * scale + deltas.mode_deltas[mode] * scale, 0, 63));
                     }
                 }
             }

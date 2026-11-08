@@ -427,6 +427,9 @@ leave one between calls, hash in software. A message that is all at
 hand - a file read whole, a packet in its headers and body - is
 hashed with this call.
 
+On an x86-64 core with the SHA extensions SHA-1, SHA-224 and SHA-256
+run on the core's own rounds, here as in `UpdateHash`.
+
 **BUGS**
 
 None known.
@@ -1136,9 +1139,12 @@ case. On the JH7110 a modulus of 512 to 2048 bits whose top bit is
 set - an RSA key's - goes to its PKA, which multiplies while the CPU
 goes through the exponent a window at a time, every window - 1, 2 or
 4 bits, whichever takes fewest steps for the exponent's length -
-costing the same. Any other modulus there, and any on the P4, is done
-in software the same way: there too only the exponent's length shows
-in the time it takes.
+costing the same. Any other modulus there, and any on a chip without
+an engine, is done in software the same way: there too only the
+exponent's length shows in the time it takes. A 64-bit chip's
+software takes the words two at a time where the modulus has an even
+count of them, as an RSA key's has: a 2048-bit exponent on a 2048-bit
+modulus takes about 3.9 ms on a Ryzen 7 7840HS.
 
 **CONTEXT**
 
@@ -1231,7 +1237,8 @@ Nothing is allocated; the message stays the caller's.
 
 **NOTES**
 
-None.
+As in SealGcm: an x86-64 core with AES-NI and PCLMULQDQ does the work
+on its own instructions.
 
 **BUGS**
 
@@ -1371,6 +1378,10 @@ nonce give away the exclusive-or of their plaintexts and let the tags
 be forged. A counter kept for the key, or 12 bytes from RandomBytes,
 is how a nonce is made.
 
+On an x86-64 core with AES-NI and PCLMULQDQ the counter blocks are
+encrypted eight at a time and GHASH sums four blocks' products before
+one reduction: about 3.5 GB/s for AES-128 on a Ryzen 7 7840HS.
+
 **BUGS**
 
 On the S3 GHASH runs in software, bit by bit, and is slower than the
@@ -1449,7 +1460,9 @@ The secret is the caller's: feed it to HkdfExtract, then overwrite it.
 
 **NOTES**
 
-The work takes the same steps whatever the private key.
+The work takes the same steps whatever the private key. A 64-bit chip
+works the field's numbers in 64-bit limbs: on a Ryzen 7 7840HS an
+X25519 secret takes about 62 us, P-256 154 us, P-384 533 us.
 
 **BUGS**
 
@@ -1583,6 +1596,10 @@ Nothing changes hands.
 CBC does not pad: a message that is not whole blocks is padded by the
 caller, as its format says (PKCS #7, TLS).
 
+On an x86-64 core with AES-NI the blocks go through the core's own
+instructions, eight at a time where the mode lets them (all but CBC's
+encryption), and nothing waits.
+
 **BUGS**
 
 None known.
@@ -1659,6 +1676,10 @@ for a core; a caller whose own work of that priority must go on - a
 network stack sending - calls it one below (smb-handler signs a WRITE
 so while the one before it is sent).
 
+On an x86-64 core with PCLMULQDQ each block is multiplied by the
+core's carry-less product, four blocks summed before one reduction:
+about 4.9 GB/s on one core of a Ryzen 7 7840HS, 8.7 GB/s shared.
+
 **BUGS**
 
 None known.
@@ -1723,7 +1744,9 @@ Nothing changes hands; `data` is only read.
 
 **NOTES**
 
-None.
+On an x86-64 core with the SHA extensions SHA-1, SHA-224 and SHA-256
+run on the core's own rounds: SHA-256 at about 2.4 GB/s on a Ryzen 7
+7840HS. SHA-384 and SHA-512 are hashed in software there.
 
 **BUGS**
 
@@ -1870,7 +1893,9 @@ Nothing changes hands.
 Everything here is public, so it is not made to take the same time
 for every input: a bad signature fails as soon as it is seen to be
 bad. An RSA-2048 check is one short exponentiation on the engine; an
-ECDSA check two scalar multiplications in software.
+ECDSA check two scalar multiplications in software. On a Ryzen 7
+7840HS, whose software works in 64-bit limbs, an RSA-2048 check takes
+about 53 us, ECDSA on P-256 143 us, Ed25519 94 us.
 
 **BUGS**
 

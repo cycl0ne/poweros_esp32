@@ -24,7 +24,7 @@ const exec = @import("../../rom/libs/exec/exec.zig");
 const exec_base = @import("../../rom/libs/exec/exec_base.zig");
 const exec_cache = @import("../../rom/libs/exec/cache/_cache.zig");
 
-const max_cores = exec_base.max_cores;
+const max_cores = cpu.max_cores;
 
 /// Layout shared with start.S: the integer registers (x[0] unused, x[2] the
 /// interrupted stack pointer), the trap's CSRs, and the FPU's registers

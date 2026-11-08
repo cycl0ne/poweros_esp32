@@ -127,7 +127,8 @@ tags and constants, each with its doc comment.
   one, its pictures as frames lent by the decoder, its sound on a process
   of its own, keeping them together, moving to a key frame, what decodes
   what (the chip's decoder, Motion JPEG in software), writing a codec
-  module for `LIBS:codecs/`, and `C:test/Film`.
+  module for `LIBS:codecs/`, reading an H.264 or H.265 stream for a
+  decoder (videoparse.library), and `C:test/Film`.
 - [USB](guides/usb.md) - a bus and starting it, what is on it, driving
   a device from a program (claims, pipes, control transfers), writing a
   class driver, keyboards and mice as sources, sticks, serial and
@@ -177,6 +178,7 @@ first time something opens it.
 | media.library | `LIBS:` | containers - MP4 and QuickTime - opened: their tracks and the codecs' setup, each track's packets at its own pace with their times, seeks to a key packet, the tags, cover and chapters | [md](autodocs/media.md) · [doc](autodocs/media.doc), [`media.zig`](../libs/media/media.zig), [guide](guides/audio.md#aac-and-mp4) |
 | videocodec.library | `LIBS:` | films played: the pictures as frames in the order they are shown - decoded by codec modules in `LIBS:codecs/`: H.264 and H.265 on the chip's decoder, Motion JPEG in software - lent for graphics' YUV calls, the sound as 16-bit samples on a task of its own, seeks to a key frame | [md](autodocs/videocodec.md) · [doc](autodocs/videocodec.doc), [`videocodec.zig`](../libs/videocodec/videocodec.zig), [guide](guides/video.md) |
 | codecs/chip.vcodec, codecs/mjpeg.vcodec | `LIBS:codecs/` | videocodec.library's decoders of pictures, a library each: H.264 and H.265 on the chip, Motion JPEG in software; a codec module | [md](autodocs/vcodec.md) · [doc](autodocs/vcodec.doc), [`vcodec.zig`](../libs/videocodec/vcodec.zig), [guide](guides/video.md#codec-modules) |
+| videoparse.library | `LIBS:` | H.264 and H.265 streams read for a decoder: the parameter sets, each picture's slice headers, order counts and reference lists, the references the stream lacks, and when each picture is shown, as events naming the pictures by slot | [md](autodocs/videoparse.md) · [doc](autodocs/videoparse.doc), [`videoparse.zig`](../libs/videoparse/videoparse.zig), [guide](guides/video.md#reading-a-stream) |
 | icon.library | `LIBS:` | icons: the picture a file is shown with and its fields; the default that fits a file without one | [md](autodocs/icon.md) · [doc](autodocs/icon.doc) |
 | diskfont.library | `LIBS:` | fonts from `FONTS:`, bitmap and outline | [md](autodocs/diskfont.md) · [doc](autodocs/diskfont.doc) |
 | iffparse.library | `LIBS:` | reading and writing IFF | [md](autodocs/iffparse.md) · [doc](autodocs/iffparse.doc) |

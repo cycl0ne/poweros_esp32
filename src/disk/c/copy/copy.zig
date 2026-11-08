@@ -93,7 +93,7 @@ const max_path = dos.path_max;
 /// How wide one level of the listing is.
 const tab_size = 8;
 /// The most a buffer takes when its size was not asked for.
-const max_buffer: usize = if (sdk.hardware.chip == .rv64sbi or sdk.hardware.chip == .a64psci) 1 << 20 else 64 * 1024;
+const max_buffer: usize = if (sdk.hardware.chip == .rv64sbi or sdk.hardware.chip == .a64psci or sdk.hardware.chip == .x64uefi) 1 << 20 else 64 * 1024;
 const min_buffer = 1024;
 /// What one CopyFH asks its handler for: as much as a share's server
 /// copies at once.

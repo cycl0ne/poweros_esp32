@@ -1,0 +1,35 @@
+// SPDX-License-Identifier: MIT
+//! videoparse.library's functions: an H.264, HEVC or VP9 stream read for
+//! a decoder - its parameter sets and slice headers or frame headers, its
+//! pictures' order counts and references, the lists each slice decodes
+//! from and the order the pictures are shown in - event by event
+//! (sdk/libs/videoparse/). Open it with OpenLibrary("videoparse.library",
+//! 1); VP9 needs 1.1.
+##include libs/videoparse/videoparse as videoparse
+##include libs/utility/utility as utility
+##basetype VideoParseBase
+##name videoparse.library
+##bias 4
+##public
+/// A parser for a stream of `codec` (VPCODEC_*), with the track's setup
+/// (`setup`, `bytes`: an avcC; null for Annex B) and VPA_* tags. Null,
+/// and why in `err` (VPERR_*), when it failed. A task will do.
+?*videoparse.VideoParser OpenVideoParser(u32 codec, ?[*]const u8 setup, u32 bytes, ?[*]const utility.TagItem tags, ?*i32 err)
+/// The parser closed and its memory freed, its slots with it.
+void CloseVideoParser(?*videoparse.VideoParser parser)
+/// A packet handed over: VPERR_OK, VPERR_FULL while the last one still
+/// has events to ask for. Its bytes stay the caller's, and are read until
+/// NextVideoEvent answers VPERR_NEED_DATA.
+i32 ParseVideoPacket(*videoparse.VideoParser parser, *const videoparse.VideoPacket packet)
+/// The next event into `event`: VPERR_OK; VPERR_NEED_DATA when the packet
+/// is read; VPERR_END after the stream's end; VPERR_FULL when a picture
+/// needs a slot and none is given back; VPERR_CORRUPT for a unit passed
+/// over; VPERR_UNSUPPORTED, VPERR_NOMEMORY.
+i32 NextVideoEvent(*videoparse.VideoParser parser, *videoparse.VideoEvent event)
+/// A slot the caller is done with given back, once the parser said
+/// VPEV_FREE of it.
+void ReleaseVideoSlot(*videoparse.VideoParser parser, u32 slot)
+/// Everything dropped, for a seek: the next picture is a key picture; the
+/// slots the caller holds stay its to give back.
+void ResetVideoParser(*videoparse.VideoParser parser)
+##end

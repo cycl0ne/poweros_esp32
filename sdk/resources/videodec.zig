@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! videodec.resource: the chip's video decoder - the JH7110's WAVE511 on
-//! the VisionFive 2. A machine without one has no videodec.resource.
+//! the VisionFive 2, and an AMD graphics device's on x86-64 (video block
+//! 4.0.2, the Radeon 780M's). A machine without one has no
+//! videodec.resource.
 //!
 //! A decoder is opened for a codec (OpenVideoDecoder), fed the stream a
 //! picture at a time (FeedVideoDecoder) and asked for its frames in the
@@ -15,13 +17,22 @@
 //! call, with its parameter sets (H.264's SPS and PPS, H.265's VPS, SPS
 //! and PPS) in front of the first picture and wherever the stream repeats
 //! them. A container's packets (MP4's length-prefixed units) are turned
-//! into that before they are fed; videocodec.library does it.
+//! into that before they are fed; videocodec.library does it. VP9 is fed
+//! a packet a call as the container holds it: a frame, or a superframe
+//! of several. AV1 is fed a temporal unit a call - its OBUs, each with
+//! its size - with the sequence header in front of the first.
 //!
 //! **What comes out**: 8-bit 4:2:0 frames as two planes, NV12 - a plane
 //! of brightness, then one of the two colour differences side by side,
-//! Cb first, at half the size each way - in memory below 4 GiB. The chip
-//! decodes H.264 (baseline, main, high) and H.265 (main), 4K at its best
-//! speed; 10-bit streams are not taken.
+//! Cb first, at half the size each way. The WAVE511 decodes H.264
+//! (baseline, main, high) and H.265 (main, and main 10 written in 8
+//! bits), 4K at its best speed, into memory below 4 GiB. The AMD
+//! device's decoder takes H.264 (baseline without slice groups, main,
+//! high; 8-bit 4:2:0) up to 4096 x 4096, H.265 (main, main 10 rounded
+//! to 8 bits, main still picture), VP9 (profile 0, and profile 2's
+//! 10 bits rounded to 8; 4:2:0) and AV1 (main: 4:2:0 in 8 bits, and 10
+//! rounded to 8, film grain applied) up to 8192 x 4352, its frames copied
+//! into the system's memory.
 //!
 //! Get its base with OpenResource(VIDEODECNAME); its functions are in
 //! sdk/interface/videodec.zig.
@@ -35,6 +46,10 @@ pub const VIDEODECNAME = "videodec.resource";
 /// one: a bit each.
 pub const VDCODEC_H264: u32 = 1 << 0;
 pub const VDCODEC_H265: u32 = 1 << 1;
+/// Since 1.5, on the AMD graphics devices' decoder.
+pub const VDCODEC_VP9: u32 = 1 << 2;
+/// Since 1.6, on the AMD graphics devices' decoder.
+pub const VDCODEC_AV1: u32 = 1 << 3;
 
 /// What the calls answer.
 pub const VDERR_OK: u32 = 0;
@@ -54,7 +69,8 @@ pub const VDERR_CORRUPT: u32 = 4;
 pub const VDERR_NO_ENGINE: u32 = 5;
 /// A codec, a stream or a frame the decoder does not take: another
 /// codec, 10-bit H.264, a size too large, a size that changes within
-/// the stream.
+/// the stream (VP9: at a frame predicted from others that is larger
+/// than both 1920 x 1088 and every frame before it).
 pub const VDERR_UNSUPPORTED: u32 = 6;
 /// No memory for the decoder or its frames.
 pub const VDERR_NO_MEMORY: u32 = 7;
@@ -102,11 +118,12 @@ pub const VideoDecFrame = extern struct {
 
 /// What GetVideoDecoderInfo says of a stream: the picture as shown, the
 /// size it is coded at and where the shown part starts in it, its bit
-/// depth (8, or 10 for H.265 Main10 - whose frames come out in 8 bits
-/// all the same; SINCE 1.1), its codec's profile number (H.264's profile_idc, H.265's
-/// general_profile_idc), its frames a second as `rate_num` / `rate_den`
-/// (both 0 when the stream does not say), and how many frame buffers the
-/// decoder made.
+/// depth (8, or 10 for H.265 Main10 and VP9's profile 2 - whose frames
+/// come out in 8 bits all the same; SINCE 1.1), its codec's profile
+/// number (H.264's profile_idc, H.265's general_profile_idc, VP9's
+/// profile), its frames a second as `rate_num` / `rate_den` (both 0 when
+/// the stream does not say, as VP9 never does), and how many frame
+/// buffers the decoder made.
 pub const VideoDecInfo = extern struct {
     width: u32 = 0,
     height: u32 = 0,

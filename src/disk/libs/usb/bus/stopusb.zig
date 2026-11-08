@@ -4,7 +4,8 @@
 const sdk = @import("sdk");
 const usb = sdk.usb;
 const UsbBase = @import("../usb_base.zig").UsbBase;
-const Bus = @import("_bus.zig").Bus;
+const _bus = @import("_bus.zig");
+const Bus = _bus.Bus;
 
 /// Stops a bus: every device on it let go, its controller closed.
 ///
@@ -16,8 +17,8 @@ const Bus = @import("_bus.zig").Bus;
 /// SINCE: 1.0. LVO -24.
 ///
 /// INPUTS:
-/// - `bus` - which bus, as StartUSB took it. One that does not run is
-///   left as it is.
+/// - `bus` - which bus, as StartUSB numbered it. One that does not run
+///   is left as it is.
 ///
 /// RESULT:
 /// Nothing.
@@ -51,11 +52,9 @@ const Bus = @import("_bus.zig").Bus;
 /// ```
 pub fn StopUSB(base: *UsbBase, bus: u32) void {
     const sys = base.sys_base;
-    if (bus >= usb.USB_MAX_BUSES) return;
     sys.ObtainSemaphore(&base.bus_lock);
     defer sys.ReleaseSemaphore(&base.bus_lock);
-    const found = base.buses[bus] orelse return;
-    const record: *Bus = @ptrCast(@alignCast(found));
+    const record = _bus.busOf(base, bus) orelse return;
     const signal = sys.AllocSignal(-1);
     if (signal < 0) return;
     defer sys.FreeSignal(signal);
@@ -63,6 +62,6 @@ pub fn StopUSB(base: *UsbBase, bus: u32) void {
     record.waiter_signal = signal;
     sys.Signal(record.process.?, record.stop_signal);
     _ = sys.Wait(@as(u32, 1) << @intCast(signal));
-    base.buses[bus] = null;
+    _bus.unlinkBus(base, record);
     sys.FreeMem(record, @sizeOf(Bus));
 }

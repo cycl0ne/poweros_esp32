@@ -199,10 +199,16 @@ pub const Nature = enum { disk, drawer, tool, script, project };
 
 /// What `name` is; null when there is no such thing.
 pub fn natureOf(base: *IconBase, name: [*:0]const u8) ?Nature {
-    const sys = base.sys_base;
     const dl = base.dos_base;
     const lock = dl.Lock(name, dos.SHARED_LOCK) orelse return null;
     defer dl.UnLock(lock);
+    return natureAt(base, lock);
+}
+
+/// What the thing `lock` is on is; null when it cannot be examined.
+pub fn natureAt(base: *IconBase, lock: *dos.FileLock) ?Nature {
+    const sys = base.sys_base;
+    const dl = base.dos_base;
     const memory = sys.AllocVec(@sizeOf(dos.FileInfoBlock), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return null;
     defer sys.FreeVec(memory);
     const fib: *dos.FileInfoBlock = @ptrCast(@alignCast(memory));

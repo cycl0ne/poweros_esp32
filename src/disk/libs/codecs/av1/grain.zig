@@ -3,7 +3,7 @@
 //! settings, added to a copy of a shown frame, 32 rows at a time.
 
 const common = @import("common.zig");
-const tables = @import("tables.zig");
+const av1 = @import("sdk").videoparse.av1;
 const header = @import("header.zig");
 const Env = common.Env;
 const Error = common.Error;
@@ -112,7 +112,7 @@ const Synth = struct {
         var rng: Rng = .{ .r = g.grain_seed };
         for (0..73) |y| {
             for (0..82) |x| {
-                const v: i32 = if (g.num_y_points > 0) tables.gaussian_sequence[rng.next(11)] else 0;
+                const v: i32 = if (g.num_y_points > 0) av1.gaussian_sequence[rng.next(11)] else 0;
                 n.luma[y][x] = common.round2(v, shift);
             }
         }
@@ -143,7 +143,7 @@ const Synth = struct {
             rng.r = g.grain_seed ^ seeds[k];
             for (0..ch) |y| {
                 for (0..cw) |x| {
-                    const v: i32 = if (chroma_noise[k]) tables.gaussian_sequence[rng.next(11)] else 0;
+                    const v: i32 = if (chroma_noise[k]) av1.gaussian_sequence[rng.next(11)] else 0;
                     t[y][x] = common.round2(v, shift);
                 }
             }

@@ -8,7 +8,8 @@
 //! partitioner and HDToolBox use: `INIT GPT`, `ADDGPT` per boot
 //! partition, the container, `ADD` twice, `MOUNT`, and a format each. The
 //! boot partitions come first because a firmware looks for its files in
-//! the first ones, and because the container takes what they leave.
+//! the first ones, and because the container takes what they leave. What
+//! they are marked as is the firmware's business too (`boot_type`).
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -24,6 +25,18 @@ const Printf = dos.stdio.Printf;
 /// The system partition's boot priority: above a disk image's `DH0`,
 /// which has none, so a machine with both starts from the medium.
 const boot_priority: i32 = 5;
+
+/// What the boot partitions are marked as. A firmware that reads a
+/// partition by its place in the table, as the loaders of the two other
+/// 64-bit machines do, takes a FAT partition whatever it is called; a
+/// UEFI firmware looks for the EFI System type and reads
+/// `EFI/BOOT/BOOTX64.EFI` out of that one alone, so on a machine whose
+/// firmware is UEFI the boot partitions carry that type instead - a disk
+/// marked otherwise is one such a machine will not start from.
+const boot_type = switch (sdk.hardware.chip) {
+    .x64uefi => gpt.TYPE_EFI_SYSTEM,
+    else => gpt.TYPE_BASIC_DATA,
+};
 
 /// rdb.library's version, and the revision whose UnmountPartition takes
 /// a drive off the list again.
@@ -135,7 +148,7 @@ fn table(run: *Run, handle: *rdb.RDBHandle) ?i32 {
     const block_bytes = handle.geometry.sector_size;
     const boot_blocks = (shared.boot_bytes + block_bytes - 1) / block_bytes;
     for (run.boot[0..run.slots]) |*drive| {
-        var entry: gpt.Entry = .{ .partition_type_guid = gpt.TYPE_BASIC_DATA };
+        var entry: gpt.Entry = .{ .partition_type_guid = boot_type };
         const text = drive.name[0..shared.length(drive.name)];
         gpt.setName(&entry, text);
         // What the firmware reads is the firmware's: no drive is made

@@ -84,7 +84,7 @@ pub const credit_bytes: u32 = 64 * 1024;
 
 /// The most one READ or WRITE moves: 1 MiB where memory is plenty, so a
 /// big file costs a round trip a MiB; a credit's worth on the ESP32s.
-pub const io_max: u32 = if (sdk.hardware.chip == .rv64sbi or sdk.hardware.chip == .a64psci) 1 << 20 else credit_bytes;
+pub const io_max: u32 = if (sdk.hardware.chip == .rv64sbi or sdk.hardware.chip == .a64psci or sdk.hardware.chip == .x64uefi) 1 << 20 else credit_bytes;
 
 /// The largest message either way: a READ's answer or a WRITE's request
 /// of `io_max`, and their headers.
@@ -116,7 +116,7 @@ const stream_piece: usize = 128 * 1024;
 /// plenty, so the server's work on one - signing or checking a MiB, its
 /// disk - is hidden behind the other's data on the wire; one on the
 /// ESP32s.
-pub const ahead_max: usize = if (sdk.hardware.chip == .rv64sbi or sdk.hardware.chip == .a64psci) 2 else 1;
+pub const ahead_max: usize = if (sdk.hardware.chip == .rv64sbi or sdk.hardware.chip == .a64psci or sdk.hardware.chip == .x64uefi) 2 else 1;
 
 /// Credits each request asks for: more than the most one costs.
 const credits_asked: u16 = 32;

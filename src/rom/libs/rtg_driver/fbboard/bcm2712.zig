@@ -1021,7 +1021,15 @@ pub fn aviFrame(sink: edid.Sink, mode: *const edid.Timing, output: Output) Infof
         aspect << 4 | 8,
         range << 2,
         aviVic(sink, mode),
-        0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
     });
 }
 

@@ -35,13 +35,15 @@ pub const VERSION: u16 = 2;
 
 /// `machine`: ELF's e_machine for the CPU the code is for.
 pub const MACHINE_XTENSA: u16 = 94;
+pub const MACHINE_X86_64: u16 = 62;
 pub const MACHINE_AARCH64: u16 = 183;
 pub const MACHINE_RISCV: u16 = 243;
 
 const builtin = @import("builtin");
 
 /// Whether this is the system's own code rather than a host build: an
-/// AArch64 host (an ARM Mac, ARM64 Linux) is a host all the same.
+/// AArch64 host (an ARM Mac, ARM64 Linux) or an x86-64 one is a host all
+/// the same.
 const freestanding = builtin.os.tag == .freestanding;
 
 /// The CPU this code is built for, as a load file names it: a host build
@@ -49,6 +51,7 @@ const freestanding = builtin.os.tag == .freestanding;
 pub const native_machine: u16 = switch (builtin.cpu.arch) {
     .riscv32, .riscv64 => MACHINE_RISCV,
     .aarch64 => if (freestanding) MACHINE_AARCH64 else MACHINE_XTENSA,
+    .x86_64 => if (freestanding) MACHINE_X86_64 else MACHINE_XTENSA,
     else => MACHINE_XTENSA,
 };
 
@@ -57,6 +60,7 @@ pub const native_machine: u16 = switch (builtin.cpu.arch) {
 pub const native_word_size: u8 = switch (builtin.cpu.arch) {
     .riscv64 => 8,
     .aarch64 => if (freestanding) 8 else 4,
+    .x86_64 => if (freestanding) 8 else 4,
     else => 4,
 };
 

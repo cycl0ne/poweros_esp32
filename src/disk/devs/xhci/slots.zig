@@ -103,6 +103,19 @@ pub fn intervalOfMs(speed: u32, ms: u16) u32 {
     return @min(@max(exponent, 3), 10);
 }
 
+/// A periodic endpoint's interval from the request for it: a high-speed
+/// or SuperSpeed interrupt endpoint's by its bInterval where the request
+/// says it (`binterval`) - the milliseconds of `interval` cannot say the
+/// microframe that a mouse reporting 8000 times a second wants, and
+/// asked once a millisecond it drops off the bus - everything else by
+/// `interval`. An isochronous endpoint's packets are planned in frames,
+/// so it goes by `interval` too.
+pub fn intervalOfRequest(speed: u32, kind: u32, interval: u16, b_interval: u8) u32 {
+    const interrupt = kind == regs.EP_INTERRUPT_IN or kind == regs.EP_INTERRUPT_OUT;
+    if (interrupt and speed >= regs.SPEED_HIGH and b_interval != 0) return intervalOf(speed, b_interval);
+    return intervalOfMs(speed, interval);
+}
+
 /// What an endpoint of a configuration is to be: its bursts as a
 /// request says them (sdk/devices/usbhc.zig) - from its SuperSpeed
 /// companion, or a high-speed periodic one's wMaxPacketSize.
@@ -159,11 +172,15 @@ pub fn endpointsOf(config: []const u8, value: u8, speed: u32, into: *[32]Spec) u
                             .interval = if (isPeriodic(kind)) intervalOf(speed, config[at + 6]) else 0,
                         };
                         // A high-speed periodic endpoint's more
-                        // transactions a microframe.
+                        // transactions a microframe, and its bytes an
+                        // interval where it has more: with one a packet's,
+                        // 0 as a request has it, so the endpoint's first
+                        // transfer finds it as it was added and does not
+                        // add it afresh at the request's interval.
                         if (speed == regs.SPEED_HIGH and isPeriodic(kind)) {
                             const more = @min((packet >> 11) & 3, 2);
                             into[dci].burst = more;
-                            into[dci].esit = (packet & 0x7FF) * (more + 1);
+                            into[dci].esit = if (more != 0) (packet & 0x7FF) * (more + 1) else 0;
                         }
                         found |= regs.addFlag(dci);
                         last = dci;
@@ -602,7 +619,7 @@ pub fn ensureEndpoint(host: *Host, slot: *Slot, dci: u32, req: *const usbhc.IOUs
     if (ep.enabled) letGo(host, ep);
     ep.kind = kind;
     ep.max_packet = packet;
-    ep.interval = if (periodic) intervalOfMs(slot.speed, req.interval) else 0;
+    ep.interval = if (periodic) intervalOfRequest(slot.speed, kind, req.interval, req.binterval) else 0;
     ep.burst = burst;
     ep.mult = mult;
     ep.esit = esit;

@@ -4,6 +4,8 @@
 
 const sdk = @import("sdk");
 
+const _task = @import("_task.zig");
+
 const ExecBase = @import("../exec.zig").ExecBase;
 const Task = sdk.exec.Task;
 const Message = sdk.exec.Message;
@@ -45,7 +47,7 @@ const Message = sdk.exec.Message;
 ///
 /// CONTEXT:
 /// - Waits: no.
-/// - Interrupts: no. It takes Disable.
+/// - Interrupts: no. It takes the task lists' lock.
 /// - Locks: none needed.
 /// - Process: a Task will do.
 ///
@@ -73,9 +75,8 @@ const Message = sdk.exec.Message;
 /// _ = sys.GetMsg(port);
 /// ```
 pub fn SetTaskEndMsg(base: *ExecBase, task: ?*Task, msg: ?*Message) void {
-    const sys = base.iface();
-    sys.Disable();
-    defer sys.Enable();
+    _task.lockTaskLists(base);
+    defer _task.unlockTaskLists(base);
     const target = task orelse base.cpu().this_task;
     target.end_msg = msg;
 }

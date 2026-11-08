@@ -51,9 +51,12 @@ const rsa = @import("../engine/rsa.zig");
 /// set - an RSA key's - goes to its PKA, which multiplies while the CPU
 /// goes through the exponent a window at a time, every window - 1, 2 or
 /// 4 bits, whichever takes fewest steps for the exponent's length -
-/// costing the same. Any other modulus there, and any on the P4, is done
-/// in software the same way: there too only the exponent's length shows
-/// in the time it takes.
+/// costing the same. Any other modulus there, and any on a chip without
+/// an engine, is done in software the same way: there too only the
+/// exponent's length shows in the time it takes. A 64-bit chip's
+/// software takes the words two at a time where the modulus has an even
+/// count of them, as an RSA key's has: a 2048-bit exponent on a 2048-bit
+/// modulus takes about 3.9 ms on a Ryzen 7 7840HS.
 ///
 /// CONTEXT:
 /// - Waits: yes, for the RSA engine while another task has it; the

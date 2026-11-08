@@ -177,7 +177,7 @@ const Core = struct {
     loaded: u32 = 0,
 };
 
-var cores: [exec_base.max_cores]Core = @splat(.{});
+var cores: [cpu.max_cores]Core = @splat(.{});
 
 /// The core this runs on. Everything here runs in an exception or with
 /// interrupts masked, so it stays on it.

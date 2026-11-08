@@ -1,7 +1,7 @@
 # USB
 
-A USB socket on a board is a bus: the machine's controller is its host, and
-keyboards, mice, sticks and hubs are plugged into it and pulled out while
+A USB controller is a bus: the sockets it drives are its own, and
+keyboards, mice, sticks and hubs are plugged into them and pulled out while
 the system runs. `usb.library`, in `LIBS:`, runs a bus: it finds what is
 plugged in, gives each device an address and a configuration, drives
 the hubs itself, and hands every other interface to a class driver in
@@ -54,10 +54,16 @@ and writing a controller.
 
 ## A bus
 
-A bus is one of the board's USB sockets that may be a host: the
-`PARTKIND_USB` parts of the board's system tag list with `USBROLE_HOST`,
-numbered from 0 in the order the board lists them. Opening the library
-starts nothing; `StartUSB` starts a bus, `StopUSB` stops it.
+A bus is a controller. The board's own come first: the `PARTKIND_USB`
+parts of its system tag list with `USBROLE_HOST`, numbered from 0 in the
+order the board lists them - a controller built into a chip, which nothing
+could find by itself. Every number past those is an xHCI controller on
+PCI, as many as the machine has: a machine whose controllers are all
+functions on a bus lists no part at all, and how many buses it has is its
+own answer rather than a number written down anywhere. `USBERR_NOBUS` is
+what the number after the last one gives, so a walk starts at 0 and ends
+there. Opening the library starts nothing; `StartUSB` starts a bus,
+`StopUSB` stops it.
 
 ```sh
 USB START          ; bus 0
@@ -100,8 +106,12 @@ port 0, the full-speed OTG controller port 1, the high-speed one port 2
 - and nothing is switched; the resource only keeps who holds which.
 
 A controller on PCI has no port to share. xhci.device bids for none: its
-root ports are its own, and its bus is the board's `PARTKIND_USB` part
-on `BUS_PCI`, the nth xHCI function pci.library found (`PART_BusUnit`).
+root ports are its own, and its bus is one of the xHCI functions
+pci.library found, in the order they lie on PCI - the first number past
+the board's own controllers is the first function, and so on for as many
+as the machine has. A PC's sockets come in groups with a controller each,
+some at the front, some at the back, more behind the chip's own bridges,
+so this is the usual way a machine has several buses.
 
 A started bus has a process of its own. It sets up the root hub, then
 each device as it comes: the port debounced and reset, the device asked
@@ -235,8 +245,11 @@ are set, and what the endpoint moves besides a packet at a time:
 `burst` (wire packets a burst less one - a SuperSpeed endpoint's from
 its companion descriptor, a high-speed interrupt or isochronous one's
 more transactions a microframe from wMaxPacketSize), `mult` (a
-SuperSpeed isochronous endpoint's bursts an interval less one) and
-`interval_bytes` (a periodic endpoint's bytes an interval). The program
+SuperSpeed isochronous endpoint's bursts an interval less one),
+`interval_bytes` (a periodic endpoint's bytes an interval) and
+`binterval` (a periodic endpoint's bInterval as it stands, which at
+high speed and SuperSpeed can be shorter than the millisecond
+`interval` rounds it up to; usb.library 1.16). The program
 sets the data and sends it, as often as it likes; the endpoint's data
 toggle stays in the pipe.
 
@@ -276,6 +289,10 @@ a controller without streams answers the first transfer
   every 8 ms until the device answers, so an idle keyboard or mouse
   costs little, and the first report after a pause is at most 8 ms
   late. Read one packet at a time: a device sends a report a packet.
+  A high-speed or SuperSpeed endpoint may ask to be read more often -
+  every microframe for a mouse that reports 8000 times a second -
+  and xhci.device (1.14) asks it as its `binterval` says; asked only
+  once a millisecond, such a mouse drops off the bus.
 - An **isochronous** transfer is a run of packets, one each
   `interval`, at most `UHC_ISO_PACKETS` of them, nothing resent:
   `std.length` bytes cut into packets of `iso_packet` (the endpoint's
@@ -685,13 +702,20 @@ and xhci.device follows the bus:
   port reaches at its own speed.
 - Errors are `UHIOERR_*`: a stall, a timeout, a device gone.
 
-A controller is found by its board part: `PARTKIND_USB`, its chip -
-`StartUSB` opens usbotg.device for `CHIP_DWC2` and xhci.device for
-`CHIP_XHCI` - which of the chip's controllers (`PART_BusUnit`), and how
-the socket is wired
+A controller built into a chip is found by its board part:
+`PARTKIND_USB`, its chip - `StartUSB` opens usbotg.device for `CHIP_DWC2`
+and xhci.device for `CHIP_XHCI` - which of the chip's controllers
+(`PART_BusUnit`), and how the socket is wired
 - its roles (`PART_UsbRoles`), its speed (`PART_UsbSpeed`), where its
 5 V comes from (`PART_UsbVbus`), a hub's reset line (`PART_PinReset`),
 a switch that gives it its pads (`PART_PinSwitch`).
+
+A controller on PCI is described by nothing at all. For a bus number past
+the board's parts `StartUSB` opens xhci.device with that number less the
+parts' count as its unit, and the device's own scan of PCI says how many
+functions there are: the unit past the last one is `USBERR_CONTROLLER`,
+which `StartUSB` gives back as `USBERR_NOBUS`. So the one place that
+knows how many buses a machine has is the machine.
 
 A controller that shares a port starts by bidding for it with `OwnUSBPort`
 (`sdk/resources/usbport.zig`): a `USBPortHandle` with its priority

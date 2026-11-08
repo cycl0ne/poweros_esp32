@@ -6,7 +6,9 @@
 //! side's, for the end of the picture. On the JH7110: the codec found
 //! among the board's parts and the server on its interrupt; it is woken by
 //! the first decode, so its power domain stays off until a file is
-//! decoded.
+//! decoded. On an x86-64 machine: nothing - the AMD graphics device's
+//! decoder is found through amdgpu.resource, which starts after this, and
+//! started by the first decode that may start it.
 //!
 //! On a chip or board without the codec (the host the tests run on) the
 //! resource is made all the same, without the codec: ExamineJPEG works,
@@ -25,19 +27,21 @@ const JpegBase = @import("jpeg_base.zig").JpegBase;
 /// The name it is opened by. The SDK's.
 pub const RESOURCE_NAME = types.JPEGNAME;
 pub const RESOURCE_VERSION = 1;
-pub const RESOURCE_REVISION = 1;
-const BUILD_DATE = "29.10.2026";
+pub const RESOURCE_REVISION = 2;
+const BUILD_DATE = "07.11.2026";
 const RESOURCE_VERSION_STRING =
     "\x00$VER: " ++ RESOURCE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ RESOURCE_VERSION, RESOURCE_REVISION }) ++
     " (" ++ BUILD_DATE ++ ")\r\n";
 
 /// The codec the chip may have: the ESP32-P4's, the JH7110's CODAJ12 -
-/// where the board lists it - or none.
-pub const Engine = enum { none, esp32p4, codaj12 };
+/// where the board lists it - an AMD graphics device's - where the machine
+/// has one - or none.
+pub const Engine = enum { none, esp32p4, codaj12, amdgpu };
 pub const engine: Engine = switch (hardware.chip) {
     .esp32p4 => .esp32p4,
     .rv64sbi => .codaj12,
+    .x64uefi => .amdgpu,
     else => .none,
 };
 
@@ -68,10 +72,11 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     jb.jpu_irq = 0;
     jb.jpu_awake = false;
     jb.jpu_dead = false;
+    jb.gpu = .{};
     switch (comptime engine) {
         .esp32p4 => startCodec(jb, sys_base),
         .codaj12 => findJpu(jb, sys_base),
-        .none => {},
+        .amdgpu, .none => {},
     }
     return lib;
 }

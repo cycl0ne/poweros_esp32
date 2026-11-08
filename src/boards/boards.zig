@@ -33,6 +33,7 @@ pub const system = switch (build_options.board) {
     .visionfive2 => @import("visionfive2/system.zig"),
     .qemu_virt_a64 => @import("qemu_virt_a64/system.zig"),
     .rpi_cm5 => @import("rpi_cm5/system.zig"),
+    .qemu_q35 => @import("qemu_q35/system.zig"),
 };
 
 pub const romtags = switch (build_options.board) {
@@ -46,6 +47,7 @@ pub const romtags = switch (build_options.board) {
     .visionfive2 => @import("visionfive2/romtags.zig"),
     .qemu_virt_a64 => @import("qemu_virt_a64/romtags.zig"),
     .rpi_cm5 => @import("rpi_cm5/romtags.zig"),
+    .qemu_q35 => @import("qemu_q35/romtags.zig"),
 };
 
 /// What the board does before the firmware resets the machine - its own
@@ -110,7 +112,9 @@ pub fn fact(comptime tag: Tag, comptime default: usize) usize {
 }
 
 /// How many cores the kernel runs tasks on: the build's `-Dcores`, or
-/// else the board's SYSTAG_Cores (1 without it).
+/// else the board's SYSTAG_Cores (1 without it). 0 is the board saying
+/// every core the machine has, which the kernel reads from the machine
+/// itself.
 pub const cores: u32 = if (build_options.cores != 0) build_options.cores else fact(st.SYSTAG_Cores, 1);
 
 /// A string from the board's root list (SYSTAG_Name).

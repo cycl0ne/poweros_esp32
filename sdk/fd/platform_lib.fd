@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! platform.resource's functions: what machine this is - the chip, its
-//! clocks, where the code and the stacks are, and whether there is PSRAM.
+//! clocks, where the code and the stacks are, and whether there is PSRAM -
+//! and what a range of memory is to the cores.
 //! A resource: no Open or Close, its first function in the first slot. The
 //! base comes from OpenResource("platform.resource").
 ##include resources/platform as platform
@@ -27,4 +28,8 @@ u32 CpuClock()
 /// The kernel tick in Hz. Not timer.device's units, and not the 1/50 s
 /// Delay counts in.
 u32 TickRate()
+/// The memory from `start`, `length` bytes, made `kind` (MEMTYPE_*) to
+/// the cores: uncached, write-combining or cached. False where the
+/// machine's map cannot mark it, or the chip keeps no such kinds.
+bool SetMemoryType(usize start, usize length, u32 kind)
 ##end

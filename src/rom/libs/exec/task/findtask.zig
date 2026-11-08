@@ -5,6 +5,7 @@
 
 const sdk = @import("sdk");
 const _interrupt = @import("../interrupt/_interrupt.zig");
+const _task = @import("_task.zig");
 
 const ExecBase = @import("../exec.zig").ExecBase;
 const Task = sdk.exec.Task;
@@ -34,16 +35,15 @@ const Task = sdk.exec.Task;
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: the null case only, and even then the answer is whichever
-///   task was interrupted. A named search takes Disable.
-/// - Locks: takes Disable, since the task lists are what an interrupt's switch
-///   touches.
+///   task was interrupted. A named search takes the task lists' lock.
+/// - Locks: takes the task lists' lock, since a search walks them.
 /// - Process: a Task will do. `FindTask(null)` is also how code finds out
 ///   whether it is a task or a process, from the node's type.
 ///
 /// OWNERSHIP:
 /// Nothing is allocated. The pointer is only good while the task exists,
-/// and nothing here stops it ending the moment Disable is let go - which is
-/// why a task is usually found in order to `Signal` it immediately.
+/// and nothing here stops it ending the moment the lock is let go - which
+/// is why a task is usually found in order to `Signal` it immediately.
 ///
 /// NOTES:
 /// Two tasks may share a name, and then which one is answered is not worth
@@ -64,20 +64,29 @@ const Task = sdk.exec.Task;
 pub fn FindTask(base: *ExecBase, name: ?[*:0]const u8) ?*Task {
     const wanted = name orelse return running(base);
     const sys = base.iface();
-    sys.Disable();
-    defer sys.Enable();
+    // The caller's interrupts masked for the whole walk - it keeps its
+    // core, and the core it is on cannot take an exception in the middle
+    // - and each core's lists taken in turn: there is no one list of the
+    // machine's tasks, and a core holds one core's lists at a time.
+    const state = _interrupt.mask();
+    defer _interrupt.unmask(state);
     const own = base.cpu().this_task;
     if (own.node.name) |own_name| {
         if (sameName(own_name, wanted)) return own;
     }
-    for (base.cpus[0..base.cores_running]) |*cpu| {
-        if (cpu.this_task == own) continue;
-        if (cpu.this_task.node.name) |other_name| {
-            if (sameName(other_name, wanted)) return cpu.this_task;
+    for (0..base.cores_running) |number| {
+        const core: u32 = @intCast(number);
+        _task.takeTasks(base, core, @returnAddress());
+        defer _task.dropTaskLists(base);
+        const there = base.cpus_at[core].this_task;
+        if (there != own) {
+            if (there.node.name) |other_name| {
+                if (sameName(other_name, wanted)) return there;
+            }
         }
-    }
-    for ([_]*sdk.exec.List{ &base.task_ready, &base.task_wait }) |list| {
-        if (sys.FindName(list, wanted)) |node| return @fieldParentPtr("node", node);
+        for ([_]*sdk.exec.List{ &base.cpus_at[core].tasks.ready, &base.cpus_at[core].tasks.wait }) |list| {
+            if (sys.FindName(list, wanted)) |node| return @fieldParentPtr("node", node);
+        }
     }
     return null;
 }

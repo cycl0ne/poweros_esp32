@@ -100,9 +100,27 @@ pub const LIBRARY_VERSION = 1;
 /// PostWork - a job run beside its poster on another core's worker, and
 /// replied when done; the workers take posted jobs by priority, ShareWork
 /// hands parts to the idle ones only, and their stacks are the standard
-/// (32 KiB on 64-bit).
-pub const LIBRARY_REVISION = 27;
-const BUILD_DATE = "31.10.2026";
+/// (32 KiB on 64-bit). 28: x86-64 - the core's number from the segment
+/// register the machine keeps it in, the interrupt flag masked and
+/// unmasked in its own place, caches that need nothing said about them,
+/// the Guru's backtrace by frame pointers, and the debug shell's own
+/// instruction to fault on. 29: the core a task keeps to is a number of
+/// its own (`Task.core`, `SetTaskAffinity`, `ANY_CORE`) rather than flags
+/// in its flags byte, so no machine has more cores than a task can name.
+/// 30: each core's state is cut beside exec's base as it is built, one for
+/// every core the kernel found, in place of an array of a fixed size -
+/// with the raw port's line and the cache engine's figures in it, which
+/// were arrays of their own - so what exec keeps is what the machine has.
+/// 31: every core has ready and waiting lists of its own, under a lock of
+/// its own, in place of the one ready list every core shared under
+/// Disable - a task is on the lists of the core that owns it, a core with
+/// nothing worth running takes the best task it may run from another's
+/// (LockCoreTasks answers one core's), and the two numbers that named the
+/// machine's ready and waiting lists answer no list now. So a signal to a
+/// task waits only for the core that owns it, and a core choosing what to
+/// run next waits for no handler and for no other core's signal.
+pub const LIBRARY_REVISION = 33;
+const BUILD_DATE = "06.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
@@ -139,13 +157,15 @@ pub export const exec_tag: Resident linksection(".resident") = .{
 /// switches memory debugging on where BOOTF_MEMDEBUG asks, right after
 /// those two tasks, and goes on with the system start.
 fn initExec(lib: *Library, seg_list: ?*anyopaque, _: *exec.interface.ExecBase) callconv(.c) ?*Library {
-    // First the raw serial port, for kprintf: nothing is printed before.
+    // Every core's own state as it starts, as many as the kernel said the
+    // machine has: no Disable, no locks held. First of all, since the raw
+    // port keeps each core's line in it.
+    const sys: *ExecBase = @fieldParentPtr("lib", lib);
+    for (sys.cpus()) |*cpu| cpu.* = .{};
+    // Then the raw serial port, for kprintf: nothing is printed before.
     // Direct, not through the table: SysBase is set further down, so there
     // is nothing to call a vector through yet (codex rule 1).
-    const sys: *ExecBase = @fieldParentPtr("lib", lib);
     exec.RawIOInit(sys);
-    // Every core's own state as it starts: no Disable, no locks held.
-    sys.cpus = @splat(.{});
     sys.log_followers = @splat(.{});
     sys.log_told = 0;
     sys.log_ticks = 0;
@@ -182,6 +202,10 @@ fn initExec(lib: *Library, seg_list: ?*anyopaque, _: *exec.interface.ExecBase) c
     // first blocks walled are the library list's and the residents'.
     if (boot_info) |boot| {
         if (boot.flags & exec.BOOTF_MEMDEBUG != 0) _ = sys_base.MemDebug(sdk.exec.MEMDEBUG_ON, null, null, 0);
+        // The debug lines kept from here, where the kernel was built for
+        // it: what the modules say as they start is then in the log and
+        // on whatever the machine's output is.
+        if (boot.flags & exec.BOOTF_LOGDEBUG != 0) _ = sys_base.LogControl(sdk.exec.LOGCTRL_LEVEL, sdk.exec.LOG_DEBUG);
     }
     sys_base.AddLibrary(lib);
     // When memory runs out, the libraries and devices nobody has open are
@@ -234,6 +258,8 @@ const exec_task_stack = 16 * 1024;
 /// init starts the RTF_AFTERDOS residents. Then the task returns and ends
 /// quietly: RemTask frees it.
 pub fn execTask(_: *exec.interface.ExecBase) callconv(.c) void {
+    exec.klog(sdk.exec.LOG_DEBUG, "a worker on each core\n", .{});
     _workers.setUp(exec.SysBase);
+    exec.klog(sdk.exec.LOG_DEBUG, "cold start\n", .{});
     _ = exec.SysBase.iface().InitCode(sdk.exec.RTF_COLDSTART, 0);
 }

@@ -182,13 +182,13 @@ pub const Info = struct {
         info.free(env);
         info.width = sps.width;
         info.height = sps.height;
-        info.log2_ctb = sps.log2_ctb;
+        info.log2_ctb = @intCast(sps.log2_ctb);
         info.wctb = sps.widthCtbs();
         info.hctb = sps.heightCtbs();
         // Whole CTBs, so that what a CTB writes past the picture's edge
         // stays inside.
-        const w = info.wctb << sps.log2_ctb;
-        const h = info.hctb << sps.log2_ctb;
+        const w = info.wctb << info.log2_ctb;
+        const h = info.hctb << info.log2_ctb;
         info.w8 = w >> 3;
         info.w4 = w >> 2;
         info.h4 = h >> 2;

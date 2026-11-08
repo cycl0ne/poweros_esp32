@@ -1,0 +1,22 @@
+// SPDX-License-Identifier: MIT
+//! power.resource's functions: what the machine can do about its own
+//! power, turning it off, and who is told when its power button is
+//! pressed. A resource: no Open or Close, its first function in the first
+//! slot. The base comes from OpenResource("power.resource").
+##include libs/exec/exec as exec
+##include resources/power as power
+##basetype PowerBase
+##name power.resource
+##bias 0
+##public
+/// What this machine can do about its own power (POWERF_*); 0 where it
+/// can do nothing.
+u32 PowerAbilities()
+/// The machine turned off. It returns only where that could not be done.
+void PowerOff()
+/// `signals` sent to `task` when the machine's power button is pressed;
+/// null on a machine with no such button, or without memory.
+?*power.PowerNotify AddPowerNotify(*exec.Task task, u32 signals)
+/// No more of that.
+void RemPowerNotify(?*power.PowerNotify notify)
+##end

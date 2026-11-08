@@ -62,9 +62,10 @@ const TaskFn = sdk.exec.TaskFn;
 /// CONTEXT:
 /// - Waits: no, but it may switch, so the caller may lose the processor
 ///   here.
-/// - Interrupts: no. It takes Disable and touches the scheduler's lists.
-/// - Locks: takes Disable. Tasks that must not start before one another are
-///   made to wait for a signal before they start their work.
+/// - Interrupts: no. It takes the task lists' lock.
+/// - Locks: takes the task lists' lock. Tasks that must not start before
+///   one another are made to wait for a signal before they start their
+///   work.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -107,7 +108,12 @@ pub fn AddTask(base: *ExecBase, task: *Task, init_pc: TaskFn, final_pc: ?TaskFn)
     task.sp_reg = _task.task_hardware.init_context(task.sp_upper, vec(_task.taskEntry), task);
 
     const sys = base.iface();
-    sys.Disable();
+    // The core the task starts on: the one it keeps to, or the core
+    // adding it, whose lists are the ones this takes. From there the
+    // cores spread the work between them.
+    const here = @import("../exec_base.zig").coreId();
+    task.owner = if (task.core != sdk.exec.ANY_CORE and task.core < base.cores_state) task.core else here;
+    _task.lockTasksOf(base, task.owner);
     // A number SetMemOwner gave the task before it started is kept; a
     // task that ran before gets a new one.
     if (task.state != .invalid or task.id == sdk.exec.MEMOWNER_SYSTEM) task.id = _task.nextTaskId(base);
@@ -116,8 +122,9 @@ pub fn AddTask(base: *ExecBase, task: *Task, init_pc: TaskFn, final_pc: ?TaskFn)
     // creator - is its own from here, not its creator's.
     if (task.mem_block) |block| _memory.setOwner(block, task.id);
     task.state = .ready;
-    sys.Enqueue(&base.task_ready, &task.node);
+    sys.Enqueue(&base.cpus_at[task.owner].tasks.ready, &task.node);
+    _task.noteReady(&base.cpus_at[task.owner]);
     _task.wakeFor(base, task);
-    sys.Enable(); // switches now if needed
+    _task.unlockTaskLists(base); // switches now if needed
     return task;
 }

@@ -5,6 +5,8 @@ const sdk = @import("sdk");
 const types = sdk.resources.videodec;
 const VideoDecBase = @import("../videodec_base.zig").VideoDecBase;
 const Decoder = @import("_decoder.zig").Decoder;
+const Session = @import("_session.zig").Session;
+const engine = @import("../videodec_init.zig").engine;
 
 /// Gives a frame DecodeVideoFrame handed out back to the decoder.
 ///
@@ -51,5 +53,6 @@ pub fn ReleaseVideoFrame(vb: *VideoDecBase, decoder: *types.VideoDecoder, frame:
     const sys = vb.sys_base;
     sys.ObtainSemaphore(&vb.lock);
     defer sys.ReleaseSemaphore(&vb.lock);
+    if (comptime engine == .vcn) return Session.of(decoder).release(frame);
     Decoder.of(decoder).release(frame);
 }

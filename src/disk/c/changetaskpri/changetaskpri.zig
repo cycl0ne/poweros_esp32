@@ -26,7 +26,7 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "ChangeTaskPri";
-const VERSION_STRING = "\x00$VER: ChangeTaskPri 1.0 (16.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: ChangeTaskPri 1.1 (04.11.2026)\r\n";
 
 const template = "PRI=PRIORITY/A/N,PROCESS/K/N";
 const arg_pri = 0;
@@ -79,23 +79,29 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 /// `task`'s priority set, if it is still there: under Disable, running on
 /// a core or on one of exec's task queues. False when it has ended.
 fn setIfThere(sys: *ExecBase, task: *exec.Task, pri: i8) bool {
-    sys.Disable();
-    defer sys.Enable();
-    var there = false;
+    // Each core's tasks under that core's lock, one core at a time: the
+    // priority is set while the core the task was found on is still
+    // held, so it cannot have ended in between.
     var core: u32 = 0;
-    while (sys.CoreTask(core)) |running| : (core += 1) {
-        if (running == task) there = true;
+    while (sys.LockCoreTasks(core)) |tasks| : (core += 1) {
+        defer sys.UnlockCoreTasks(core);
+        if (sys.CoreTask(core) != task and !onLists(tasks, task)) continue;
+        _ = sys.SetTaskPri(task, pri);
+        return true;
     }
-    for ([_]u32{ exec.EXECLIST_TASK_READY, exec.EXECLIST_TASK_WAIT }) |which| {
-        const list = sys.LockExecList(which) orelse continue;
+    return false;
+}
+
+/// Whether `task` is on either of `tasks`' lists, with that core's lock
+/// held.
+fn onLists(tasks: *exec.CoreTasks, task: *exec.Task) bool {
+    for ([_]*exec.List{ &tasks.ready, &tasks.wait }) |list| {
         var it = list.iterator();
         while (it.next()) |node| {
-            if (node == &task.node) there = true;
+            if (node == &task.node) return true;
         }
-        sys.UnlockExecList(which);
     }
-    if (there) _ = sys.SetTaskPri(task, pri);
-    return there;
+    return false;
 }
 
 /// The "$VER:" string every PowerOS module carries, which `Version <file>`

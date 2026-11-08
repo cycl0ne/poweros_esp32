@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! platform.resource's functions: what machine this is - the chip, its
-//! clocks, where the code and the stacks are, and whether there is PSRAM.
+//! clocks, where the code and the stacks are, and whether there is PSRAM -
+//! and what a range of memory is to the cores.
 //! A resource: no Open or Close, its first function in the first slot. The
 //! base comes from OpenResource("platform.resource").
 //!
@@ -19,6 +20,7 @@ pub const LVO = struct {
     pub const PlatformName = libraries.lvo(1);
     pub const CpuClock = libraries.lvo(2);
     pub const TickRate = libraries.lvo(3);
+    pub const SetMemoryType = libraries.lvo(4);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -28,6 +30,7 @@ pub const Fn = struct {
     pub const PlatformName = *const fn (*PlatformBase) callconv(.c) [*:0]const u8;
     pub const CpuClock = *const fn (*PlatformBase) callconv(.c) u32;
     pub const TickRate = *const fn (*PlatformBase) callconv(.c) u32;
+    pub const SetMemoryType = *const fn (*PlatformBase, usize, usize, u32) callconv(.c) bool;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -67,5 +70,12 @@ pub const PlatformBase = opaque {
     /// Delay counts in.
     pub fn TickRate(self: *PlatformBase) u32 {
         return libraries.call(self, LVO.TickRate, Fn.TickRate, .{});
+    }
+
+    /// The memory from `start`, `length` bytes, made `kind` (MEMTYPE_*) to
+    /// the cores: uncached, write-combining or cached. False where the
+    /// machine's map cannot mark it, or the chip keeps no such kinds.
+    pub fn SetMemoryType(self: *PlatformBase, start: usize, length: usize, kind: u32) bool {
+        return libraries.call(self, LVO.SetMemoryType, Fn.SetMemoryType, .{ start, length, kind });
     }
 };

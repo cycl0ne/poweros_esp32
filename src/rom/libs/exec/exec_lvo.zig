@@ -69,6 +69,9 @@ comptime {
 /// The files whose call carries its contract, above `pub fn <Name>`: every
 /// call of the table.
 const contract_files = [_][]const u8{
+    @embedFile("task/corecount.zig"),
+    @embedFile("task/lockcoretasks.zig"),
+    @embedFile("task/unlockcoretasks.zig"),
     @embedFile("list/lockexeclist.zig"),
     @embedFile("list/unlockexeclist.zig"),
     @embedFile("library/detachlibrary.zig"),
@@ -357,6 +360,9 @@ pub const exec_vectors = [_]*const anyopaque{
     vec(lvoWaitForAny),
     vec(lvoShareWork),
     vec(lvoPostWork),
+    vec(lvoLockCoreTasks),
+    vec(lvoUnlockCoreTasks),
+    vec(lvoCoreCount),
 };
 
 // --- libraries --------------------------------------------------------------
@@ -870,8 +876,8 @@ fn lvoReleaseOtherCores(base: *ExecBase) callconv(.c) void {
     exec.ReleaseOtherCores(base);
 }
 
-fn lvoSetTaskAffinity(base: *ExecBase, task: ?*Task, cores: u32) callconv(.c) u32 {
-    return exec.SetTaskAffinity(base, task, cores);
+fn lvoSetTaskAffinity(base: *ExecBase, task: ?*Task, core: u32) callconv(.c) u32 {
+    return exec.SetTaskAffinity(base, task, core);
 }
 
 fn lvoCoreTask(base: *ExecBase, core: u32) callconv(.c) ?*Task {
@@ -933,6 +939,15 @@ fn lvoWaitForAny(base: *ExecBase, waitables: [*]const *Waitable, count: u32, tim
 fn lvoShareWork(base: *ExecBase, work: WorkFn, data: ?*anyopaque, parts: u32) callconv(.c) u32 {
     return exec.ShareWork(base, work, data, parts);
 }
+fn lvoLockCoreTasks(base: *ExecBase, core: u32) callconv(.c) ?*sdk.exec.CoreTasks {
+    return exec.LockCoreTasks(base, core);
+}
+fn lvoUnlockCoreTasks(base: *ExecBase, core: u32) callconv(.c) void {
+    exec.UnlockCoreTasks(base, core);
+}
+fn lvoCoreCount(base: *ExecBase) callconv(.c) u32 {
+    return exec.CoreCount(base);
+}
 fn lvoPostWork(base: *ExecBase, job: *sdk.exec.WorkJob) callconv(.c) void {
     exec.PostWork(base, job);
 }
@@ -960,10 +975,27 @@ test "LockExecList hands back exec's own lists, and IntVector its own vectors" {
     lvoUnlockExecList(base, sdk.exec.EXECLIST_SEMAPHORES);
     try testing.expectEqual(&base.mem_list, lvoLockExecListFor(sdk.exec.EXECLIST_MEMORY).?);
     lvoUnlockExecList(base, sdk.exec.EXECLIST_MEMORY);
-    try testing.expectEqual(&base.task_ready, lvoLockExecListFor(sdk.exec.EXECLIST_TASK_READY).?);
-    lvoUnlockExecList(base, sdk.exec.EXECLIST_TASK_READY);
-    try testing.expectEqual(&base.task_wait, lvoLockExecListFor(sdk.exec.EXECLIST_TASK_WAIT).?);
-    lvoUnlockExecList(base, sdk.exec.EXECLIST_TASK_WAIT);
+    // The tasks are no one list: each core has its own, which
+    // LockCoreTasks answers.
+    try testing.expect(lvoLockExecListFor(sdk.exec.EXECLIST_TASK_READY) == null);
+    try testing.expect(lvoLockExecListFor(sdk.exec.EXECLIST_TASK_WAIT) == null);
+    try testing.expectEqual(&base.cpus_at[0].tasks, lvoLockCoreTasks(base, 0).?);
+    try testing.expect(base.cpus_at[0].tasks_lock != 0);
+    lvoUnlockCoreTasks(base, 0);
+    try testing.expectEqual(@as(u32, 0), base.cpus_at[0].tasks_lock);
+    // Past the last core the machine runs: nothing, and nothing taken.
+    try testing.expect(lvoLockCoreTasks(base, base.cores_running) == null);
+    lvoUnlockCoreTasks(base, base.cores_running);
+    // And that last core is the one CoreCount names, so a program that
+    // asks it and then walks what it said reaches every core and stops.
+    try testing.expectEqual(base.cores_running, lvoCoreCount(base));
+    try testing.expect(lvoCoreCount(base) >= 1);
+    var counted: u32 = 0;
+    while (lvoLockCoreTasks(base, counted)) |_| {
+        lvoUnlockCoreTasks(base, counted);
+        counted += 1;
+    }
+    try testing.expectEqual(lvoCoreCount(base), counted);
     try testing.expectEqual(&base.mem_handlers, lvoLockExecListFor(sdk.exec.EXECLIST_MEM_HANDLERS).?);
     lvoUnlockExecList(base, sdk.exec.EXECLIST_MEM_HANDLERS);
     // A number it has not got is no list at all.

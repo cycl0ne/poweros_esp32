@@ -4,8 +4,10 @@
 //! There is no SysBase yet, so no AllocMem. The RAM regions become
 //! MemHeaders, and exec's own ROM tag is looked up in the .resident
 //! section. exec.library is built from the tag's InitTable with Allocate on
-//! the first region that has room (a stripped-down MakeLibrary), and the
-//! regions go on MemList. Then exec's init routine (initExec) sets up the
+//! the first region that has room (a stripped-down MakeLibrary), with the
+//! cores' own state cut from the same region beside it - as many as the
+//! kernel found cores to run on, which is why it is not part of the base -
+//! and the regions go on MemList. Then exec's init routine (initExec) sets up the
 //! rest and starts the system: the ROM scan, the exec task and the
 //! RTF_SINGLETASK residents. A kernel built with -Dmemdebug=true tells it
 //! to switch memory debugging on as it starts (BOOTF_MEMDEBUG).
@@ -18,11 +20,17 @@ const layout = switch (sdk.hardware.chip) {
     .esp32p4 => @import("arch/esp32p4/layout.zig"),
     .rv64sbi => @import("arch/rv64sbi/layout.zig"),
     .a64psci => @import("arch/a64psci/layout.zig"),
+    .x64uefi => @import("arch/x64uefi/layout.zig"),
 };
 
 pub const Error = error{ NoExecTag, NoMemory, ExecInitFailed };
 
-pub fn bootStrap(regions: []const exec.MemRegion) Error!*exec.ExecBase {
+/// INPUTS:
+/// - `regions` - the machine's RAM.
+/// - `cores` - how many cores the system is to run on, which is what exec
+///   keeps state for: what the machine answered, down to what the board
+///   asked for. 1 at least.
+pub fn bootStrap(regions: []const exec.MemRegion, cores: u32) Error!*exec.ExecBase {
     const rom_start = layout.residentStart();
     const rom_end = layout.residentEnd();
     const tag = exec.findTag(rom_start, rom_end, exec.LIBRARY_NAME) orelse return error.NoExecTag;
@@ -39,9 +47,14 @@ pub fn bootStrap(regions: []const exec.MemRegion) Error!*exec.ExecBase {
     var pending: exec.List = .{};
     pending.init(.memory);
     var block: ?*anyopaque = null;
+    var cpus: ?*anyopaque = null;
+    const kept = @max(cores, 1);
     for (regions) |r| {
         const mh = exec.CreateMemHeader(no_base, r.size, r.attributes, r.pri, r.base, r.name) orelse continue;
-        if (block == null) block = exec.allocateExecBlock(mh, sizes.neg + sizes.pos);
+        if (block == null) {
+            block = exec.allocateExecBlock(mh, sizes.neg + sizes.pos);
+            if (block != null) cpus = exec.allocateExecBlock(mh, exec.coresStateSize(kept));
+        }
         exec.Enqueue(no_base, &pending, &mh.node);
     }
     const lib = exec.buildLibrary(@ptrCast(block orelse return error.NoMemory), vectors, sizes);
@@ -50,6 +63,10 @@ pub fn bootStrap(regions: []const exec.MemRegion) Error!*exec.ExecBase {
     lib.version = tag.version;
     lib.id_string = tag.id_string;
     const sys: *exec.ExecBase = @fieldParentPtr("lib", lib);
+    const cpus_block = cpus orelse return error.NoMemory;
+    sys.cpus_block = cpus_block;
+    sys.cpus_at = exec.coresStateAt(cpus_block);
+    sys.cores_state = kept;
     sys.mem_list.init(.memory);
     while (exec.RemHead(sys, &pending)) |node| exec.Enqueue(sys, &sys.mem_list, node);
 
@@ -59,7 +76,8 @@ pub fn bootStrap(regions: []const exec.MemRegion) Error!*exec.ExecBase {
         .rom_start = rom_start,
         .rom_end = rom_end,
         .abs_exec_base = @intFromPtr(sdk.exec.AbsExecBase),
-        .flags = if (build_options.memdebug) exec.BOOTF_MEMDEBUG else 0,
+        .flags = (if (build_options.memdebug) exec.BOOTF_MEMDEBUG else 0) |
+            (if (build_options.logdebug) exec.BOOTF_LOGDEBUG else 0),
     };
     _ = init(lib, @constCast(&info), @ptrCast(sys)) orelse return error.ExecInitFailed;
     return sys;

@@ -21,8 +21,9 @@ const BattClockBase = @import("../battclock_base.zig").BattClockBase;
 /// date, or there is no clock.
 ///
 /// BEHAVIOR:
-/// Reads the board's clock chip, asks the Raspberry Pi's firmware for
-/// its RTC, or works the date out from the chip's RTC timer. A clock that
+/// Reads the board's clock chip or the machine's own, asks the Raspberry
+/// Pi's firmware for its RTC, or works the date out from the chip's RTC
+/// timer. A clock that
 /// holds no date - a chip whose cell ran low or whose registers hold no
 /// date, a Raspberry Pi's RTC before 1978 after a power-on without a
 /// cell, an RTC timer after a power-on - is put in working order and set

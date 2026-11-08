@@ -5,6 +5,11 @@
 //! the first OpenVideoDecoder, so its power domain stays off until a
 //! video is decoded.
 //!
+//! On x86-64 the decoder is an AMD graphics device's, found through
+//! amdgpu.resource - by reading only: it is powered, its firmware loaded
+//! and started by the first OpenVideoDecoder, and only while the
+//! watchdog is armed. It is driven for H.264, H.265 and VP9.
+//!
 //! On a chip or board without the decoder (the host the tests run on) the
 //! resource is made all the same, without it: VideoDecCodecs answers 0,
 //! OpenVideoDecoder VDERR_NO_ENGINE.
@@ -20,22 +25,24 @@ const base = @import("videodec_base.zig");
 const VideoDecBase = base.VideoDecBase;
 const Decoder = @import("decoder/_decoder.zig").Decoder;
 const wave511 = @import("codec/_wave511.zig");
+const vcn = @import("codec/_vcn.zig");
 
 /// The name it is opened by. The SDK's.
 pub const RESOURCE_NAME = types.VIDEODECNAME;
 pub const RESOURCE_VERSION = 1;
-pub const RESOURCE_REVISION = 1;
-const BUILD_DATE = "29.10.2026";
+pub const RESOURCE_REVISION = 6;
+const BUILD_DATE = "07.11.2026";
 const RESOURCE_VERSION_STRING =
     "\x00$VER: " ++ RESOURCE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ RESOURCE_VERSION, RESOURCE_REVISION }) ++
     " (" ++ BUILD_DATE ++ ")\r\n";
 
 /// The decoder the chip may have: the JH7110's WAVE511 - where the board
-/// lists it - or none.
-pub const Engine = enum { none, wave511 };
+/// lists it - an AMD graphics device's on x86-64, or none.
+pub const Engine = enum { none, wave511, vcn };
 pub const engine: Engine = switch (hardware.chip) {
     .rv64sbi => .wave511,
+    .x64uefi => .vcn,
     else => .none,
 };
 
@@ -44,7 +51,7 @@ fn videoDecBase(lib: *exec.Library) *VideoDecBase {
 }
 
 /// ResInit: the lock, and on the JH7110 the decoder's part and its
-/// interrupt.
+/// interrupt; on x86-64 the AMD graphics device's decoder, if it has one.
 ///
 /// CONTEXT:
 /// - Waits: no. - Interrupts: no; it runs on the exec task at cold start.
@@ -65,7 +72,11 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     vb.code = 0;
     vb.decoders = @splat(null);
     vb.hooked = false;
+    vb.vcn = .{};
     if (comptime engine == .wave511) findVdec(vb, sys_base);
+    if (comptime engine == .vcn) {
+        if (vcn.find(sys_base, &vb.vcn)) vb.codecs = types.VDCODEC_H264 | types.VDCODEC_H265 | types.VDCODEC_VP9 | types.VDCODEC_AV1;
+    }
     return lib;
 }
 
@@ -115,13 +126,14 @@ const init_table = exec.InitTable{
 };
 
 /// Cold start at 60: after expansion.library (102), which has the
-/// JH7110's part.
+/// JH7110's part. At 40 on x86-64: after amdgpu.resource (45), which
+/// holds the graphics device.
 pub export const videodec_resource_tag: exec.Resident linksection(".resident") = .{
     .match_tag = &videodec_resource_tag,
     .flags = exec.RTF_COLDSTART | exec.RTF_AUTOINIT,
     .version = RESOURCE_VERSION,
     .type = .resource,
-    .pri = 60,
+    .pri = if (engine == .vcn) 40 else 60,
     .name = RESOURCE_NAME,
     .id_string = RESOURCE_VERSION_STRING[1..],
     .init = &init_table,

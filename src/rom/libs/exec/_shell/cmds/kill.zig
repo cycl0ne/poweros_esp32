@@ -21,13 +21,12 @@ pub const help =
 
 pub fn run(shell: *Shell, args: *Args) anyerror!void {
     const base = shell.base;
-    const sys = base.iface();
     const id = try args.number();
     var task_name: [33]u8 = undefined;
-    sys.Disable();
+    // findById takes each core's lists in turn: there is no one lock
+    // over all of them, and a task found is read before it is used.
     const found = _task.findById(base, id);
     if (found) |task| _ = _shell.copyName(&task_name, task.node.name);
-    sys.Enable();
     const task = found orelse {
         shell.print("kill: no task #%u\n", .{id});
         return;

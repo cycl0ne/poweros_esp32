@@ -218,7 +218,7 @@ void ReleaseOtherCores()
 /// Set the cores `task` (null: the caller) may run on - TF_CORE0, TF_CORE1,
 /// or 0 for any - and move it if it is where it may no longer be. Returns
 /// what they were.
-u32 SetTaskAffinity(?*exec.Task task, u32 cores)
+u32 SetTaskAffinity(?*exec.Task task, u32 core)
 /// The task core `core` is running now, or null for a core that is not
 /// running. Asked inside Disable; copy what is wanted before the Enable.
 ?*exec.Task CoreTask(u32 core)
@@ -287,4 +287,16 @@ u32 ShareWork(exec.WorkFn work, ?*anyopaque data, u32 parts)
 /// the poster holds, and no waiting - a job that waits keeps a core's
 /// worker from the queue.
 void PostWork(*exec.WorkJob job)
+/// Core `core`'s tasks with that core's lock taken (SINCE 1.31): the
+/// tasks ready to run there, by priority, and the tasks waiting for a
+/// signal there. Null past the last core the machine runs, which is how a
+/// walk over every task in the machine ends.
+?*exec.CoreTasks LockCoreTasks(u32 core)
+/// The lock `LockCoreTasks` took on core `core` given back (SINCE 1.31),
+/// and a switch that came due meanwhile taken.
+void UnlockCoreTasks(u32 core)
+/// How many cores the machine runs on (SINCE 1.33): their numbers are 0 to
+/// one less than this, which is what ReadCoreTimes, CoreTask and
+/// LockCoreTasks answer for. Never 0, and 1 on a machine with one core.
+u32 CoreCount()
 ##end

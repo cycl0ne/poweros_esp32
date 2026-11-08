@@ -5,6 +5,8 @@ const sdk = @import("sdk");
 const types = sdk.resources.videodec;
 const VideoDecBase = @import("../videodec_base.zig").VideoDecBase;
 const Decoder = @import("_decoder.zig").Decoder;
+const Session = @import("_session.zig").Session;
+const engine = @import("../videodec_init.zig").engine;
 
 /// Closes a decoder OpenVideoDecoder made.
 ///
@@ -52,9 +54,16 @@ const Decoder = @import("_decoder.zig").Decoder;
 pub fn CloseVideoDecoder(vb: *VideoDecBase, decoder: ?*types.VideoDecoder) void {
     const handle = decoder orelse return;
     const sys = vb.sys_base;
-    const d = Decoder.of(handle);
     sys.ObtainSemaphore(&vb.lock);
     defer sys.ReleaseSemaphore(&vb.lock);
+    if (comptime engine == .vcn) {
+        const s = Session.of(handle);
+        s.end();
+        vb.decoders[s.slot] = null;
+        sys.FreeMem(@ptrCast(s), @sizeOf(Session));
+        return;
+    }
+    const d = Decoder.of(handle);
     d.end();
     sys.Disable();
     vb.decoders[d.instance.id] = null;

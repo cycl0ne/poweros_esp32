@@ -10,6 +10,7 @@ const CryptoBase = @import("../crypto_base.zig").CryptoBase;
 const _cipher = @import("_cipher.zig");
 const aes = @import("../engine/aes.zig");
 const jh7110 = @import("../engine/jh7110.zig");
+const x64 = @import("../engine/x64.zig");
 
 /// Encrypts or decrypts data with the context's cipher.
 ///
@@ -52,6 +53,10 @@ const jh7110 = @import("../engine/jh7110.zig");
 /// CBC does not pad: a message that is not whole blocks is padded by the
 /// caller, as its format says (PKCS #7, TLS).
 ///
+/// On an x86-64 core with AES-NI the blocks go through the core's own
+/// instructions, eight at a time where the mode lets them (all but CBC's
+/// encryption), and nothing waits.
+///
 /// BUGS:
 /// None known.
 ///
@@ -84,6 +89,21 @@ pub fn UpdateCipher(cb: *CryptoBase, context: *CipherContext, input: ?*const any
     // CTR encrypts its counter blocks whichever way the data goes.
     var session = aes.begin(cb, &context.key, context.key_length, decrypt and cipher != crypto.CIPHER_AES_CTR);
     defer session.end();
+    // The core's instructions take the whole blocks many at a time; a
+    // CTR call's last part block goes on below.
+    if (session.core()) |keys| {
+        const whole = (length - at) / AES_BLOCK * AES_BLOCK;
+        switch (cipher) {
+            crypto.CIPHER_AES_ECB => x64.ecb(keys, decrypt, from + at, to + at, whole / AES_BLOCK),
+            crypto.CIPHER_AES_CBC => if (decrypt)
+                x64.cbcDecrypt(keys, &context.chain, from + at, to + at, whole / AES_BLOCK)
+            else
+                x64.cbcEncrypt(keys, &context.chain, from + at, to + at, whole / AES_BLOCK),
+            else => x64.ctr(keys, .whole, &context.chain, from + at, to + at, whole),
+        }
+        at += whole;
+        if (at == length) return crypto.CRYPTOERR_OK;
+    }
     switch (cipher) {
         crypto.CIPHER_AES_ECB => while (at < length) : (at += AES_BLOCK) {
             var block: [AES_BLOCK]u8 = from[at..][0..AES_BLOCK].*;

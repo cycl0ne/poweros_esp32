@@ -73,28 +73,23 @@ pub fn GetDiskObjectNew(base: *IconBase, name: [*:0]const u8) ?*icon.DiskObject 
     const dl = base.dos_base;
     if (ib.GetDiskObject(name)) |object| return object;
     const failure = dl.IoErr();
-    const nature = _object.natureOf(base, name) orelse {
+    // One lock for what the name is and, for a project, its group.
+    const lock = dl.Lock(name, dos.SHARED_LOCK);
+    defer if (lock) |held| dl.UnLock(held);
+    const nature = (if (lock) |held| _object.natureAt(base, held) else null) orelse {
         if (isDisk(dl.FilePart(name))) return ib.GetDefDiskObject(icon.WBDISK);
         _ = dl.SetIoErr(if (failure != 0) failure else dos.ERROR_OBJECT_NOT_FOUND);
         return null;
     };
     const slot: ?usize = switch (nature) {
         .script => _default.SCRIPT,
-        .project => groupOf(base, name),
+        .project => _default.groupSlot(base, lock.?),
         else => null,
     };
     if (slot) |special| {
         if (_default.get(base, special)) |object| return object;
     }
     return ib.GetDefDiskObject(_object.kindOf(nature));
-}
-
-/// The default slot of the group `name` is in, when it is in one.
-fn groupOf(base: *IconBase, name: [*:0]const u8) ?usize {
-    const dl = base.dos_base;
-    const lock = dl.Lock(name, dos.SHARED_LOCK) orelse return null;
-    defer dl.UnLock(lock);
-    return _default.groupSlot(base, lock);
 }
 
 fn isDisk(part: [*:0]const u8) bool {

@@ -31,7 +31,8 @@
 //! nothing to say takes no room; when a song has more lines or fewer than
 //! the one before, the window measures its layout again (`WM_RETHINK`),
 //! and grows when the block needs more height. A line too long for the
-//! room ends in three dots. The cover is the picture the
+//! room goes along inside it, there and back, so the whole of it is read
+//! (text.gadget's `TEXT_Scroll`). The cover is the picture the
 //! tags hold, or one lying beside the file (cover.zig), kept square and
 //! as tall as the room beside it, from 64 to 160 pixels: it grows with the
 //! window, read once for each song and scaled again when a sizing gives it
@@ -70,11 +71,12 @@
 //! leading colours when it has some (colours.zig), and in their own
 //! otherwise.
 //!
-//! A press on the picture goes to the next; the Picture menu picks one.
-//! A double-click on it - the look it was before the first press -
-//! Picture > Whole screen or the F key show it over the whole screen, on
-//! a borderless window of its own (whole.zig), the song's title faded in
-//! over it at each new song; a key or a press ends it.
+//! A press on the picture goes to the next, however quickly the presses
+//! come; the Picture menu picks one. Picture > Whole screen or the F key
+//! show it over the whole screen, on a borderless window of its own
+//! (whole.zig), the song's title faded in over it at each new song - a
+//! title too wide for the screen going along to its end before it fades
+//! out; a key or a press ends it.
 //!
 //! **Menus and keys.** Project: Open..., Open drawer... (a drawer's songs,
 //! asked with `ASLFR_DrawersOnly`), Open URL... (a station's address, in
@@ -311,8 +313,8 @@ const Text = sdk.locale.Strings(strings);
 const Id = strings.Id;
 
 pub const COMMAND_NAME = "Player";
-const VERSION = "1.27";
-const DATE = "02.11.2026";
+const VERSION = "1.28";
+const DATE = "08.11.2026";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (" ++ DATE ++ ")\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while the window is active.
@@ -717,12 +719,6 @@ const App = struct {
     /// for its fonts.
     whole: ?whole_screen.Whole = null,
     dfb: ?*DiskfontBase = null,
-    /// The last press on the picture, and the look before it: a press
-    /// soon after makes a double-click.
-    pressed: bool = false,
-    pressed_seconds: u32 = 0,
-    pressed_micros: u32 = 0,
-    look_before: visual.Mode = .plasma,
 
     timer: *motion.Timer = undefined,
     tick_mask: u32 = 0,
@@ -2277,6 +2273,8 @@ const App = struct {
         for ([_][*:0]const u8{ audio_file.ENV_FILE, audio_file.ENVARC_FILE }) |path| _ = prefs.save(app.dl, path, text[0..length]);
     }
 
+    /// The next look: a press on the picture, each one however soon after
+    /// the last - the whole screen is the menu's and the F key's.
     fn cycleLook(app: *App) void {
         app.visual.cycle();
         app.showMenuTicks();
@@ -2859,7 +2857,7 @@ const App = struct {
                 app.showTime();
             },
             ID_VOLUME => app.volumeTo(code),
-            ID_PICTURE => app.picturePressed(),
+            ID_PICTURE => app.cycleLook(),
             ID_OUTPUT => app.pickOutput(code),
             ID_PRESET => app.pickPreset(code),
             ID_SHUFFLE => app.shuffleTurned(code != 0),
@@ -3134,24 +3132,6 @@ const App = struct {
         if (app.page == page_picture) app.drawPicture();
         app.ib.ActivateWindow(app.window);
         app.wake();
-    }
-
-    /// A press on the picture: the next look - or, a second press soon
-    /// after the first, the look before it over the whole screen.
-    fn picturePressed(app: *App) void {
-        var now_seconds: u32 = 0;
-        var now_micros: u32 = 0;
-        app.ib.CurrentTime(&now_seconds, &now_micros);
-        if (app.pressed and app.ib.DoubleClick(app.pressed_seconds, app.pressed_micros, now_seconds, now_micros)) {
-            app.pressed = false;
-            app.lookTo(app.look_before);
-            return app.openWhole();
-        }
-        app.pressed = true;
-        app.pressed_seconds = now_seconds;
-        app.pressed_micros = now_micros;
-        app.look_before = app.visual.mode;
-        app.cycleLook();
     }
 
     /// The sound's process says something: the song that follows is heard
@@ -3596,7 +3576,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer loose.dispose(ib);
     app.block = loose.add(ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
         pair(tx.TEXT_Runs, @intFromPtr(&app.runs)),
-        pair(tx.TEXT_Clipped, 1),
+        pair(tx.TEXT_Scroll, 1),
         pair(gc.GA_Width, 240),
         .{},
     })) orelse return noWindow(&text, dl);
@@ -3755,7 +3735,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const forget_button = loose.add(button(ib, text.get(.MSG_FORGET_BUTTON), radio_page.ID_REMOVE)) orelse return noWindow(&text, dl);
     app.radio.status = loose.add(ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
         pair(tx.TEXT_Text, @intFromPtr(&app.radio.status_text)),
-        pair(tx.TEXT_Clipped, 1),
+        pair(tx.TEXT_Scroll, 1),
         .{},
     })) orelse return noWindow(&text, dl);
     const search_row = group(ib, &loose, &.{ pair(lg.LAYOUTA_Orientation, lg.LORIENT_HORIZ), pair(lg.LAYOUTA_Spacing, 6) }, &.{

@@ -11,10 +11,12 @@
 //!                     keyboard and mouse are USB has them from the start
 //!   USB               which buses run
 //!
-//! A bus is one of the board's USB sockets that may be a host, in the
-//! order the board lists them (usb.library's StartUSB). On the ESP32-S3
-//! boards the socket is the console's too, so AUTO leaves it, and
-//! starting its bus is to take it over.
+//! A bus is a controller: the board's own first, in the order it lists
+//! them, then every xHCI controller found on PCI (usb.library's
+//! StartUSB). AUTO walks from 0 up and stops where there is no bus, so a
+//! machine with five controllers gets five buses without a number written
+//! down anywhere. On the ESP32-S3 boards the socket is the console's too,
+//! so AUTO leaves it, and starting its bus is to take it over.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -29,7 +31,7 @@ const st = st_expansion.systemtags;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "USB";
-const VERSION_STRING = "\x00$VER: USB 1.0 (11.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: USB 1.1 (06.11.2026)\r\n";
 
 const template = "START/S,STOP/S,AUTO/S,BUS/K/N";
 const arg_start = 0;
@@ -80,21 +82,18 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     }
     if (argv[arg_auto] != 0) return startHostOnly(sys, dl, ub);
 
-    // Which buses run: those with a root hub on the list.
-    var running: [usb.USB_MAX_BUSES]bool = @splat(false);
+    // Which buses run: a bus that runs has a root hub on the list, and
+    // only one, so the hubs are the buses - however many there are.
     const list = ub.ObtainUSBDeviceList();
+    var any = false;
     var it = list.iterator();
     while (it.next()) |node| {
         const device: *usb.USBDevice = @fieldParentPtr("node", node);
-        if (device.depth == 0 and device.bus < running.len) running[device.bus] = true;
+        if (device.depth != 0) continue;
+        any = true;
+        _ = Printf(dl, "bus %d runs\n", .{device.bus});
     }
     ub.ReleaseUSBDeviceList();
-    var any = false;
-    for (running, 0..) |runs, number| {
-        if (!runs) continue;
-        any = true;
-        _ = Printf(dl, "bus %d runs\n", .{@as(u32, @intCast(number))});
-    }
     if (!any) _ = dl.PutStr("no bus runs\n");
     return dos.RETURN_OK;
 }
@@ -117,6 +116,15 @@ fn startHostOnly(sys: *ExecBase, dl: *DosBase, ub: *UsbBase) i32 {
             const result = ub.StartUSB(bus);
             if (result != 0) _ = Printf(dl, "bus %d did not start (%d)\n", .{ bus, result });
         }
+        bus += 1;
+    }
+    // Past the board's own parts, every controller found on PCI: a
+    // socket on one of those can only be a host. How many there are is
+    // the machine's answer - the number that is no bus ends the walk.
+    while (true) {
+        const result = ub.StartUSB(bus);
+        if (result == usb.USBERR_NOBUS) break;
+        if (result != 0) _ = Printf(dl, "bus %d did not start (%d)\n", .{ bus, result });
         bus += 1;
     }
     return dos.RETURN_OK;

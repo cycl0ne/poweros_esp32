@@ -43,7 +43,7 @@ const SignalSemaphore = sdk.exec.SignalSemaphore;
 const WorkFn = sdk.exec.WorkFn;
 const WorkJob = sdk.exec.WorkJob;
 const SIGF_SINGLE = sdk.exec.tasks.SIGF_SINGLE;
-const max_cores = exec_base.max_cores;
+const _task = @import("_task.zig");
 
 /// Each worker's stack, the standard one: a part and a posted job run on
 /// it.
@@ -62,8 +62,6 @@ pub const State = enum(u32) {
     /// Running posted jobs until the queue is empty.
     jobs,
 };
-
-const worker_names = [4][*:0]const u8{ "exec worker 0", "exec worker 1", "exec worker 2", "exec worker 3" };
 
 pub const Worker = extern struct {
     task: ?*Task = null,
@@ -84,7 +82,10 @@ pub const Worker = extern struct {
 pub const Pool = extern struct {
     /// Held while a job is shared out.
     lock: SignalSemaphore = .{},
-    workers: [max_cores]Worker = @splat(.{}),
+    /// The workers, one for each core that runs: a block of their own,
+    /// allocated when they are made, since there are as many as the
+    /// machine has cores.
+    workers_at: [*]Worker = undefined,
     /// How many there are: none until the exec task has made them, and on
     /// a machine with one core.
     count: u32 = 0,
@@ -189,7 +190,7 @@ pub fn post(base: *ExecBase, job: *WorkJob) void {
 /// the job lock.
 fn idleWorker(pool: *Pool, here: u32) ?*Worker {
     var found: ?*Worker = null;
-    for (pool.workers[0..pool.count]) |*worker| {
+    for (pool.workers_at[0..pool.count]) |*worker| {
         if (worker.state != .idle) continue;
         if (worker.core != here) return worker;
         found = worker;
@@ -220,20 +221,30 @@ pub fn setUp(base: *ExecBase) void {
     initQueue(base);
     var cores: u32 = 0;
     var times: sdk.exec.CoreTimes = .{};
-    for (0..max_cores) |core| {
-        if (!sys.ReadCoreTimes(@intCast(core), &times)) continue;
-        pool.workers[cores] = .{ .core = @intCast(core) };
-        cores += 1;
+    for (0..base.cores_state) |core| {
+        if (sys.ReadCoreTimes(@intCast(core), &times)) cores += 1;
     }
     if (cores < 2) return;
+    // A block of their own, the system's: they last as long as it runs.
+    sys.BeginSystemMemory();
+    const room = sys.AllocMem(cores * @sizeOf(Worker), sdk.exec.MEMF_CLEAR);
+    sys.EndSystemMemory();
+    pool.workers_at = @ptrCast(@alignCast(room orelse return));
+    var filled: u32 = 0;
+    for (0..base.cores_state) |core| {
+        if (!sys.ReadCoreTimes(@intCast(core), &times)) continue;
+        pool.workers_at[filled] = .{ .core = @intCast(core) };
+        filled += 1;
+    }
     pool.asker = sys.FindTask(null);
     _ = sys.SetSignal(0, SIGF_SINGLE);
     @atomicStore(u32, &pool.remaining, cores, .release);
     var made: u32 = 0;
     sys.BeginSystemMemory();
-    for (pool.workers[0..cores]) |*worker| {
-        const task = sys.CreateTask(worker_names[worker.core], 0, &workerCode, worker_stack) orelse break;
-        _ = sys.SetTaskAffinity(task, sdk.exec.coreFlag(worker.core));
+    for (pool.workers_at[0..cores]) |*worker| {
+        var name: [32]u8 = undefined;
+        const task = sys.CreateTask(_task.numberedName(&name, "exec worker", worker.core), 0, &workerCode, worker_stack) orelse break;
+        _ = sys.SetTaskAffinity(task, worker.core);
         worker.task = task;
         @atomicStore(?*anyopaque, &task.user_data, worker, .release);
         sys.Signal(task, SIGF_SINGLE);
@@ -265,17 +276,17 @@ pub fn share(base: *ExecBase, work: WorkFn, data: ?*anyopaque, wanted: u32) u32 
     // Where the asker is now; should it move, a worker shares its core,
     // which is slower but no less right.
     const here = exec_base.coreId();
-    var chosen: [max_cores]*Worker = undefined;
     var helpers: u32 = 0;
-    // Idle ones only, claimed: a worker running posted jobs is not waited
-    // for.
+    // Idle ones only, claimed with the part each is to do: a worker
+    // running posted jobs is not waited for. The claim is what marks them,
+    // so there is no list of them to keep - and no count of cores in one.
     sys.AcquireLock(&pool.job_lock);
-    for (pool.workers[0..pool.count]) |*worker| {
+    for (pool.workers_at[0..pool.count]) |*worker| {
         if (helpers + 1 >= wanted) break;
         if (worker.core == here or worker.state != .idle) continue;
         worker.state = .part;
-        chosen[helpers] = worker;
         helpers += 1;
+        worker.part = helpers;
     }
     sys.ReleaseLock(&pool.job_lock);
     if (helpers == 0) return alone(work, data);
@@ -285,8 +296,8 @@ pub fn share(base: *ExecBase, work: WorkFn, data: ?*anyopaque, wanted: u32) u32 
     pool.asker = me;
     _ = sys.SetSignal(0, SIGF_SINGLE);
     @atomicStore(u32, &pool.remaining, helpers, .release);
-    for (chosen[0..helpers], 1..) |worker, part| {
-        worker.part = @intCast(part);
+    for (pool.workers_at[0..pool.count]) |*worker| {
+        if (worker.state != .part) continue;
         const task = worker.task.?;
         if (task.node.pri != me.node.pri) _ = sys.SetTaskPri(task, me.node.pri);
         @atomicStore(u32, &worker.handed, 1, .release);

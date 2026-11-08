@@ -35,7 +35,7 @@ const Url = _protocol.Url;
 /// 2), where 512 KiB let the server send bursts that came back as
 /// retransmissions, 100 MB/s. Elsewhere as wide as a window goes without
 /// window scaling.
-const ring_bytes: i32 = if (sdk.hardware.chip == .rv64sbi or sdk.hardware.chip == .a64psci) 128 * 1024 else 64 * 1024;
+const ring_bytes: i32 = if (sdk.hardware.chip == .rv64sbi or sdk.hardware.chip == .a64psci or sdk.hardware.chip == .x64uefi) 128 * 1024 else 64 * 1024;
 
 /// The longest host name a connection keeps.
 pub const host_most = 255;

@@ -39,6 +39,11 @@ pub fn flush() void {
 /// The next byte from the host, if any - whether or not output was given
 /// up: a host that opens the port after the machine's first lines found
 /// nobody is heard all the same.
+/// The chip's own port is always there.
+pub fn present() bool {
+    return true;
+}
+
 pub fn read() ?u8 {
     if (reg(usj.EP1_CONF).* & usj.EP1_OUT_EP_DATA_AVAIL == 0) return null;
     usb_alive = true;

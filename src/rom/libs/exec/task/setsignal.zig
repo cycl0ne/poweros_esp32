@@ -2,6 +2,8 @@
 //! SetSignal: reads the running task's received signals and changes some
 //! of them, in one step.
 
+const _task = @import("_task.zig");
+
 const ExecBase = @import("../exec.zig").ExecBase;
 
 /// Reads or changes the calling task's signals without waiting.
@@ -32,7 +34,7 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// - Waits: no. It is the call for when waiting is what you do not want.
 /// - Interrupts: no - it reads the running task, and an interrupt has none
 ///   of its own.
-/// - Locks: takes Disable.
+/// - Locks: takes the task lists' lock.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -52,8 +54,8 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// ```
 pub fn SetSignal(base: *ExecBase, new_signals: u32, signal_mask: u32) u32 {
     const sys = base.iface();
-    sys.Disable();
-    defer sys.Enable();
+    _task.lockTaskLists(base);
+    defer _task.unlockTaskLists(base);
     const task = sys.FindTask(null).?;
     const old = task.sig_recvd;
     task.sig_recvd = (old & ~signal_mask) | (new_signals & signal_mask);

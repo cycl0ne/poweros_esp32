@@ -46,8 +46,9 @@
 //! or past it.
 //!
 //! **Reading ahead**: after a read that follows the one before, or
-//! starts the file, the pieces after it are asked for at once
-//! (`readAhead`) - as many READs as may be ahead (`ahead_max`, two on
+//! starts the file and wants more than its open read, the pieces after
+//! it are asked for at once (`readAhead`) - as many READs as may be
+//! ahead (`ahead_max`, two on
 //! the 64-bit boards), so the server works on the next while the one
 //! before is on the wire - and their answers read as they come, between
 //! packets, into buffers of the handler's, one more than may be coming.
@@ -1188,12 +1189,15 @@ pub const FileSystem = struct {
 
     /// READ: from the position, what was read ahead first, the rest in
     /// pieces; and when it followed the read before, the piece after it
-    /// asked for ahead.
+    /// asked for ahead. A file's first read follows nothing: it is read
+    /// ahead of only when it wants more than its open read, so a look at
+    /// how a file starts - which program or picture it is, for its icon
+    /// - costs no more than the open.
     fn read(fs: *FileSystem, args: dos.IOArgs) Error!usize {
         const lock = try fs.fileOf(args.fh);
         const buffer = args.buffer orelse return 0;
         const length: usize = if (args.length > 0) @intCast(args.length) else 0;
-        const following = lock.pos == lock.read_end;
+        const following = lock.pos == lock.read_end and (lock.read_end != 0 or length > first_bytes);
         var recovered = false;
         var done: usize = 0;
         while (done < length) {

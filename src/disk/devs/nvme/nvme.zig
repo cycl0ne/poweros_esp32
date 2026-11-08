@@ -76,8 +76,8 @@ const mount = @import("mount.zig");
 
 pub const DEVICE_NAME = _nvme.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 7;
-const BUILD_DATE = "29.10.2026";
+const DEVICE_REVISION = 8;
+const BUILD_DATE = "05.11.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -213,9 +213,9 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
     return dev;
 }
 
-/// pci.library, opened. The ROM's copy is made at cold start, before
-/// ramlib, which makes a library the ROM has when it is first opened: the
-/// library is made from its ROM tag here then, as ramlib would.
+/// pci.library, opened. In a ROM it is made with the cold start, ahead of
+/// this; a ROM whose list leaves it out has it made from its tag here, as
+/// ramlib would once there is a ramlib.
 fn openPci(sys: *ExecBase) ?*exec.Library {
     if (sys.OpenLibrary(pci.PCINAME, 2)) |lib| return lib;
     if (!in_rom) return null;

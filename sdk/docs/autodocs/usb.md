@@ -669,6 +669,14 @@ isochronous transfer comes back with what became of its packets
 (`iso_lost`, the list's `status`), the frame it started in and its
 gap behind the one before (sdk/devices/usbhc.zig).
 
+An interrupt or isochronous pipe carries the endpoint's bInterval
+as well (`binterval`, Since 1.16). At high speed and SuperSpeed an
+interrupt endpoint may want asking every microframe, or every second
+or fourth, which the interval in milliseconds rounds up to one: a
+mouse that reports 8000 times a second, asked once a millisecond,
+drops off the bus. xhci.device asks such an endpoint by `binterval`
+(Since its 1.14).
+
 An isochronous endpoint's interval is 2^(bInterval - 1) frames or, at
 high speed, microframes; it is taken only at a millisecond or more,
 which every endpoint of a full-speed device is. Its packets are the
@@ -974,13 +982,17 @@ fn StartUSB(base: *UsbBase, bus: u32) i32
 
 - `bus` - which bus, from 0: the board's USB sockets that may be a
   host (`PARTKIND_USB`, `USBROLE_HOST`), in the order its parts list
-  them.
+  them, and after them the xHCI controllers on PCI, in the order
+  xhci.device numbers them.
 
 **RESULT**
 
-0 when the bus runs (or already did); `USBERR_NOBUS` if the board has
-no such bus, `USBERR_CONTROLLER` if its controller could not be
-opened, `USBERR_NOMEM` without memory or a process.
+0 when the bus runs (or already did); `USBERR_NOBUS` if there is no
+such bus, `USBERR_CONTROLLER` if its controller could not be opened,
+`USBERR_NOMEM` without memory or a process.
+
+There is no highest bus number: a machine has as many buses as it has
+controllers. `USBERR_NOBUS` is what a walk from 0 up stops on.
 
 **BEHAVIOR**
 
@@ -1004,9 +1016,15 @@ The bus is the library's until StopUSB.
 
 **NOTES**
 
-The buses are the board's `PARTKIND_USB` parts that may be hosts,
-each on the device that drives its chip (`CHIP_DWC2`:
-usbotg.device; `CHIP_XHCI`, `CHIP_DWC3`: xhci.device).
+A bus is a controller. The board's `PARTKIND_USB` parts that may be
+hosts are the first of them, each on the device that drives its chip
+(`CHIP_DWC2`: usbotg.device; `CHIP_XHCI`, `CHIP_DWC3`: xhci.device) -
+those are described because nothing can find a controller that is
+part of a chip. Every number past them is an xHCI controller on PCI,
+which is found instead: the sockets of a machine of that kind are in
+groups with a controller each, and how many there are is the
+machine's answer. A bus that is not started leaves its sockets dark,
+since a hub's ports are given their power when their bus starts.
 
 **BUGS**
 
@@ -1038,8 +1056,8 @@ fn StopUSB(base: *UsbBase, bus: u32) void
 
 **INPUTS**
 
-- `bus` - which bus, as StartUSB took it. One that does not run is
-  left as it is.
+- `bus` - which bus, as StartUSB numbered it. One that does not run
+  is left as it is.
 
 **RESULT**
 

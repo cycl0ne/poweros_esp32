@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 //! battclock.resource's ROM tag, and the init routine it names: the clock
-//! chosen - the board's clock chip, the JH7110's RTC or the Raspberry
-//! Pi's, else the chip's RTC timer - and the system time set from it.
+//! chosen - the board's clock chip, the JH7110's RTC, the Raspberry Pi's
+//! or an x86-64 machine's own, else the chip's RTC timer - and the system
+//! time set from it.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -16,19 +17,22 @@ const rtctimer = @import("source/rtctimer.zig");
 const pcf8563 = @import("source/pcf8563.zig");
 const jh7110rtc = @import("source/jh7110rtc.zig");
 const rpirtc = @import("source/rpirtc.zig");
+const cmos = @import("source/cmos.zig");
 
 /// The ESP32s have an RTC timer that counts through a reset; the JH7110
 /// has an RTC of its own, which the board lists; so does a Raspberry Pi,
-/// behind its firmware.
+/// behind its firmware; and an x86-64 machine has one in its port space,
+/// which the kernel lists from the firmware's tables.
 const has_rtc_timer = sdk.hardware.chip == .esp32s3 or sdk.hardware.chip == .esp32p4;
 const has_jh7110_rtc = sdk.hardware.chip == .rv64sbi;
 const has_rpi_rtc = sdk.hardware.chip == .a64psci;
+const has_cmos = sdk.hardware.chip == .x64uefi;
 
 /// The name it is opened by. The SDK's.
 pub const RESOURCE_NAME = sdk.resources.battclock.BATTCLOCKNAME;
 pub const RESOURCE_VERSION = 1;
-pub const RESOURCE_REVISION = 1;
-const BUILD_DATE = "25.10.2026";
+pub const RESOURCE_REVISION = 2;
+const BUILD_DATE = "04.11.2026";
 const RESOURCE_VERSION_STRING =
     "\x00$VER: " ++ RESOURCE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ RESOURCE_VERSION, RESOURCE_REVISION }) ++
@@ -59,6 +63,11 @@ fn findChip(cb: *BattClockBase) u32 {
         st.CHIP_JH7110_RTC, st.CHIP_RPI_RTC => {
             cb.rtc_address = @intCast(ub.GetTagData(st.PART_Address, 0, part.tags));
             if (cb.rtc_address == 0) return st.CHIP_NONE;
+        },
+        st.CHIP_MC146818 => {
+            if (ub.GetTagData(st.PART_Bus, st.BUS_PORT, part.tags) != st.BUS_PORT) return st.CHIP_NONE;
+            cb.rtc_address = @intCast(ub.GetTagData(st.PART_Address, cmos.INDEX_PORT, part.tags));
+            cb.rtc_century = @truncate(ub.GetTagData(st.PART_Century, 0, part.tags));
         },
         else => return st.CHIP_NONE,
     }
@@ -106,6 +115,8 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     cb.i2c_address = 0;
     cb.rtc_address = 0;
     cb.rtc_buffer = 0;
+    cb.rtc_century = 0;
+    cb.rtc_settings = 0;
     cb.period = 0;
     cb.start_count = 0;
     cb.start_ticks = 0;
@@ -128,6 +139,7 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
             }
         },
         st.CHIP_RPI_RTC => if (comptime has_rpi_rtc) startRpi(cb),
+        st.CHIP_MC146818 => if (comptime has_cmos) startCmos(cb),
         else => {},
     }
     if (comptime has_rtc_timer) {
@@ -143,6 +155,24 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     }
     if (cb.clock != _base.CLOCK_NONE) setSystemTime(cb);
     return lib;
+}
+
+/// The machine's own battery-backed clock taken if it answers with a
+/// date: how it keeps its figures is read once and kept, since the
+/// firmware set that up and nothing here changes it. A clock with no cell
+/// behind it, or none there at all, says so in the log and the system
+/// starts at the date dos last saved.
+fn startCmos(cb: *BattClockBase) void {
+    cb.rtc_settings = cmos.settings();
+    const regs = cmos.read(@intCast(cb.rtc_century)) orelse {
+        exec.kprintf(cb.sys_base, "%s: the clock at port 0x%x never settles\n", .{ RESOURCE_NAME, @as(u32, @truncate(cb.rtc_address)) });
+        return;
+    };
+    if (cmos.dateOf(regs, @intCast(cb.rtc_settings)) == null) {
+        exec.kprintf(cb.sys_base, "%s: the clock at port 0x%x holds no date\n", .{ RESOURCE_NAME, @as(u32, @truncate(cb.rtc_address)) });
+        return;
+    }
+    cb.clock = _base.CLOCK_CMOS;
 }
 
 /// The Raspberry Pi's RTC taken if its firmware answers, its buffer kept

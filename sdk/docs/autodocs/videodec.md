@@ -124,6 +124,14 @@ meanwhile, the CPU free.
 The frame's bytes are dropped from the caches before it is handed
 out; they are the chip's, written by it - read them, do not write.
 
+On an AMD graphics device the pictures were decoded as they were
+fed: each call hands out the next frame due, and reads on in what was
+fed where the stream waited for a frame back. Its frames are in the
+system's memory, the rows shown alone, read back from the device as
+each picture was decoded. A VP9 frame that is shown again - its
+stream says so of a reference - is handed out again, the same planes
+lent once more: each is released.
+
 **CONTEXT**
 
 - Waits: yes, for the chip. - Interrupts: no.
@@ -139,7 +147,9 @@ them until then.
 **NOTES**
 
 A frame's time is the time of the picture it shows as it was fed: of
-the pictures decoded and not yet shown, the earliest.
+the pictures decoded and not yet shown, the earliest. A VP9 frame's
+is that of the packet that shows it, its frames shown in the order
+they come.
 
 **BUGS**
 
@@ -178,7 +188,9 @@ fn FeedVideoDecoder(vb: *VideoDecBase, decoder: *VideoDecoder,
 
 - `decoder` - the decoder.
 - `data` - the picture's units in Annex B form, each after a start
-  code; the parameter sets in front of the first picture.
+  code; the parameter sets in front of the first picture. VP9: a
+  packet as the container holds it, a frame or a superframe (SINCE
+  1.5).
 - `length` - how many bytes; 0 with VDFEED_END alone.
 - `time` - when the picture is shown, in the caller's units
   (microseconds, say); handed back with its frame.
@@ -197,6 +209,24 @@ stream before, or the chip did not take the data.
 The bytes are copied into the ring the chip reads, written back out
 of the caches, and the chip told where they end. Nothing is decoded
 here: DecodeVideoFrame does it.
+
+On an AMD graphics device the bytes are copied and read at once
+(videoparse.library): the sequence makes the stream on the device,
+and each picture the call completes is decoded there and read back
+into a frame of the system's memory, the caller's task waiting for
+the device meanwhile. Pictures go on being read until the stream
+needs a frame back that is still to be handed out or lent: then the
+rest of the call's bytes are read by the next DecodeVideoFrame or
+FeedVideoDecoder, and a call that comes while they are not answers
+VDERR_FULL. A stream the device does not take answers
+VDERR_UNSUPPORTED: H.264 other than 8-bit 4:2:0, the extended
+profile, lossless pictures, slice groups, larger than 4096 each way;
+H.265 other than Main, Main 10 and Main Still Picture, larger than
+8192 x 4352; VP9 other than profile 0 and profile 2's 10 bits in
+4:2:0, larger than 8192 x 4352, or a frame predicted from others that
+is larger than both 1920 x 1088 and every frame before it. Smaller
+frames, and frames predicted from pictures of other sizes, are
+decoded.
 
 **CONTEXT**
 
@@ -319,7 +349,9 @@ VDERR_CORRUPT).
 
 A decoder whose sequence is not read yet has the chip read it from
 what was fed, and makes its frames, as the first DecodeVideoFrame
-would; no picture is decoded.
+would; no picture is decoded. On an AMD graphics device the sequence
+was read as it was fed: this answers what it said, and `frames` is
+how many frames the decoder keeps for it.
 
 **CONTEXT**
 
@@ -375,9 +407,12 @@ fn OpenVideoDecoder(vb: *VideoDecBase, codec: u32,
 
 The decoder, or null and in `err` why not: VDERR_NO_ENGINE when the
 board has no decoder, its firmware is not in
-DEVS:firmware/wave511_dec_fw.bin, or it would not wake or start;
-VDERR_UNSUPPORTED for a codec it does not take; VDERR_BUSY when eight
-decoders are open; VDERR_NO_MEMORY.
+DEVS:firmware/wave511_dec_fw.bin, or it would not wake or start - and
+on an AMD graphics device while the watchdog is not armed, where its
+firmware or the security processor's table of contents is not in
+DEVS:firmware/amdgpu/, or without videoparse.library; VDERR_UNSUPPORTED
+for a codec it does not take; VDERR_BUSY when eight decoders are open;
+VDERR_NO_MEMORY.
 
 **BEHAVIOR**
 
@@ -390,6 +425,29 @@ made when its first picture is decoded, or its stream asked about
 (GetVideoDecoderInfo): as many compressed frames as the stream needs
 and one, as many shown frames as that and VDA_HeldFrames (2 by
 default, at most 16) - about 3 MiB each at 1080p.
+
+On an AMD graphics device the first decoder, opened while the
+watchdog is armed, has amdgpu.resource power the decoder up, start
+the security processor with its table of contents and load the
+decoder's firmware - both files read from DEVS:firmware/amdgpu/,
+named for the blocks' versions - then has the security processor
+apply the decoder's start, a list of its register writes, and checks
+that the firmware reads its ring. Each decoder reads its stream with
+videoparse.library (opened here, from LIBS:) and is a stream on the
+device, made when its sequence is read: in the device's memory a
+context (128 KiB, and for H.264 192 bytes a macroblock for each
+reference and the picture decoded, for H.265 about 3 MiB at 1080p,
+for VP9 about 10.4 MiB at any size, the default probabilities written
+into it, for AV1 34.7 MiB, the four sets of default CDFs written into
+it), a surface for each of those, and the surface pictures are
+written to - about 26 MiB at 1080p with four H.264 references, 24 MiB
+for H.265 with five pictures in its buffer, 188 MiB for 10-bit H.265
+at 4K with six, 41 MiB for VP9 at 1080p with its nine, 65 MiB for AV1
+at 1080p and 262 MiB for 10-bit AV1 at 4K. An AV1 stream has a piece
+of 20 KiB more for its frames' tables.
+Its frames are in the system's memory, one for each picture the
+stream holds and VDA_HeldFrames and two more; VDA_StreamSize is not
+read.
 
 **CONTEXT**
 
@@ -505,13 +563,16 @@ None.
 **RESULT**
 
 A VDCODEC_* bit for each codec: VDCODEC_H264 | VDCODEC_H265 on the
-JH7110. 0 when the board has no decoder, or it would not wake or its
-firmware would not start.
+JH7110, and with VDCODEC_VP9 (SINCE 1.5) and VDCODEC_AV1 (SINCE 1.6)
+on x86-64 with an AMD graphics device whose video block is 4.0.2. 0
+when the machine has no decoder, or it would not wake or its firmware
+would not start.
 
 **BEHAVIOR**
 
-Answered from what the board lists; the chip is not woken. Whether the
-firmware is on the disk only the first OpenVideoDecoder finds out.
+Answered from what the board lists, or the graphics device's table of
+blocks; the chip is not woken. Whether the firmware is on the disk
+only the first OpenVideoDecoder finds out.
 
 **CONTEXT**
 

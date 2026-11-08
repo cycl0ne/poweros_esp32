@@ -58,7 +58,7 @@ const unit_count = 5;
 /// The chip's alarms and E-clock.
 const alarms = switch (sdk.hardware.chip) {
     .esp32s3, .esp32p4 => @import("systimer_alarms.zig"),
-    .rv64sbi, .a64psci => @import("comparator_alarms.zig"),
+    .rv64sbi, .a64psci, .x64uefi => @import("comparator_alarms.zig"),
 };
 
 /// The E-clock's rate.

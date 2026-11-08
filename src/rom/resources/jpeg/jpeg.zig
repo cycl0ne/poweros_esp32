@@ -53,6 +53,7 @@ test {
     _ = @import("jpeg_lvo.zig");
     _ = @import("header/_header.zig");
     _ = @import("codec/_codaj12.zig");
+    _ = @import("codec/_amdgpu.zig");
     _ = @import("codec/ycc.zig");
     _ = @import("picture/examinejpeg.zig");
     _ = @import("picture/decodejpeg.zig");
