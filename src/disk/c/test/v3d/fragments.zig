@@ -230,7 +230,7 @@ pub const Scene = struct {
         if (varyings > 0) cl.attribute(&list, vertices + 32, @min(varyings, 4), 0, @min(varyings, 4), vertex_stride);
         if (varyings > 4) cl.attribute(&list, vertices + 48, varyings - 4, 0, varyings - 4, vertex_stride);
 
-        v3d.frame.writeDrawState(&scene.bin, &.{
+        v3d.frame.writeDrawState(&scene.bin, &scene.frame, &.{
             .clip = how.clip,
             .cfg = how.cfg,
             .mixing = how.mixing,

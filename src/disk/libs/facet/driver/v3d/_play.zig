@@ -557,7 +557,12 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
     if (left == right or top == bottom) return;
     const whole = left == 0 and top == 0 and right == framebuffer.width and bottom == framebuffer.height;
     const clears = command.parts[part].color_loads[0] == .clear;
-    const tiles = ((framebuffer.width + 63) / 64) * ((framebuffer.height + 63) / 64);
+    // The tile its samples and its one render target fit, at 32 bits of
+    // internal colour whatever the format: one sample until step V4 draws
+    // a frame of four (docs/facet-vulkan10.md item 61).
+    const four = false;
+    const tile = frames.chooseTile(4, four);
+    const tiles = ((framebuffer.width + tile.width - 1) / tile.width) * ((framebuffer.height + tile.height - 1) / tile.height);
     if (!sized(queue, &player.tile_lists, tileListsBytes(tiles, 0))) return;
     player.triangles = 0;
     if (!sized(queue, &player.tile_state, tiles * tile_state_bytes)) return;
@@ -600,6 +605,8 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
             break :kept made;
         },
         .area = if (whole) null else player.area,
+        .four = four,
+        .tile = tile,
     };
     player.bin = .{ .at = list.cpu, .address = list.address };
     player.binned = false;
@@ -727,7 +734,7 @@ fn clearRectangle(queue: *Queue, clip: frames.Area, color: u32, channels: u32, d
     };
     const uniforms = carve(queue, 4, 4) orelse return noRoom(queue, "a clear with no memory for its uniforms");
     if (!roomOnList(queue)) return noRoom(queue, "a clear with no memory for the binner's list");
-    frames.writeDrawState(&player.bin, &state);
+    frames.writeDrawState(&player.bin, &player.frame, &state);
     if (!sendVertices(queue, vertices.address, 4, player.hardware.programs.color, uniforms.address, null)) return;
     cl.indexBufferSetup(&player.bin, indices.address, @sizeOf(@TypeOf(corners)));
     cl.indexedPrimList(&player.bin, cl.PRIM_TRIANGLES, corners.len);
@@ -1102,6 +1109,17 @@ fn mixingOf(player: *const Player, pipeline: *const Pipeline) cl.Mixing {
     };
 }
 
+/// The samples a draw writes. In a frame of four, the pipeline's mask
+/// where it has four, and all four where it has one, as v3dv's
+/// `pipeline_set_sample_mask` (v3dv_pipeline.c:2903-2913): a pipeline of
+/// one in a frame of four is against Vulkan. In a frame of one the
+/// hardware wants all four bits or none (:2908-2909), and none is a draw
+/// facet leaves out (`draw`).
+fn sampleMaskOf(player: *const Player, pipeline: *const Pipeline) u4 {
+    if (!player.frame.four) return if (pipeline.sample_mask & 1 != 0) 0xF else 0;
+    return if (pipeline.samples > 1) @truncate(pipeline.sample_mask) else 0xF;
+}
+
 /// What a draw is drawn with, or null where nothing of it can be seen.
 fn drawStateOf(player: *const Player, pipeline: *const Pipeline, viewport: *const facet.Viewport) ?frames.DrawState {
     const scissor = pipeline.scissor orelse player.scissor;
@@ -1150,6 +1168,7 @@ fn drawStateOf(player: *const Player, pipeline: *const Pipeline, viewport: *cons
         .height = viewport.height,
         .min_depth = viewport.min_depth,
         .max_depth = viewport.max_depth,
+        .sample_mask = sampleMaskOf(player, pipeline),
     };
 }
 
@@ -1216,7 +1235,7 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
     // cores there is no counter that a masked-off draw still owes, and
     // returning here is exact. (Since 1.89, item 61 of
     // docs/facet-vulkan10.md.)
-    if (pipeline.draws_nothing or pipeline.sample_mask & 1 == 0 or count == 0 or instances == 0) return;
+    if (pipeline.draws_nothing or sampleMaskOf(player, pipeline) == 0 or count == 0 or instances == 0) return;
     const viewport = pipeline.viewport orelse player.viewport;
     const state = drawStateOf(player, pipeline, &viewport) orelse return;
     const indices = _vertices.indicesOf(player, pipeline, first, count, vertex_offset) orelse return;
@@ -1368,7 +1387,7 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
     const record_bytes = recordStride(varyings);
     if (!roomOnList(queue)) return noRoom(queue, "a draw with no memory for the binner's list");
     countSamples(queue);
-    frames.writeDrawState(&player.bin, &state);
+    frames.writeDrawState(&player.bin, &player.frame, &state);
     for (0..instances) |k| {
         const instance = first_instance +% @as(u32, @intCast(k));
         _vertices.readInputs(player, pipeline, lowest, vertices, instance, inputs[0 .. @as(usize, vertices) * locations]);

@@ -4197,4 +4197,39 @@ pub const LIBRARY_VERSION = 1;
 /// Tests: the V3D's 140, one new: each field at its bit, a multisampled
 /// packet differing from its one-sample twin in that bit alone, the
 /// binner's bit 14, where 4.2 had its multisample bit, staying clear.
-pub const LIBRARY_REVISION = 144;
+///
+/// 145: **The V3D chooses its tile as v3dv does, and a frame of four
+/// samples writes each draw's sample mask (docs/facet-vulkan10.md item 61,
+/// step V2).** Every frame is still of one sample, so each draws as at
+/// 1.144:
+///
+/// - `frame.chooseTile` is `v3d_choose_tile_size`'s 7.1 branch
+///   (v3d_util.c:104-182): the largest of 64 x 64 down to 8 x 8 whose
+///   colour and depth fit the tile buffer, four times over at four
+///   samples, the depth's small buffer lending its main one to the colour
+///   where the depth fits it. Double buffering, which facet does not use,
+///   is left out. For facet's one 32-bit render target it is 64 x 64 at
+///   one sample, `tile_pixels` as before (a comptime check), and 32 x 32
+///   at four.
+/// - `Frame.tile` and `Frame.four` carry that to the binner's mode, the
+///   renderer's common packet and render target, the frame's tiles and
+///   supertiles, and the memory of the binner's lists, where 64 was taken
+///   for granted.
+/// - `writeDrawState` takes the frame. In a frame of four it oversamples
+///   and writes SAMPLE_STATE with the draw's mask, as v3dv writes it with
+///   each pipeline (v3dv_cmd_buffer.c:3017-3018). That mask is the
+///   pipeline's where it has four samples, and all four bits where it has
+///   one, as `pipeline_set_sample_mask` keeps it (v3dv_pipeline.c:
+///   2903-2913). A frame of one sample keeps `beginBin`'s, and a draw is
+///   left out where the mask covers none of its samples, the first alone
+///   at one sample as before.
+///
+/// Tests: the V3D's 142, two new, frame.zig's first:
+///
+/// - The chooser against eight cases worked through `tile_size_valid` by
+///   hand, from one RGBA8 target to eight of 128 bits at four samples,
+///   16 x 8.
+/// - A frame of four's tiles, its binner's and renderer's log2 sizes, its
+///   multisample bit and its render target's stride, and a draw's
+///   oversampling and mask, which a frame of one does not write.
+pub const LIBRARY_REVISION = 145;

@@ -31,6 +31,7 @@ test {
     _ = qpu;
     _ = compile;
     _ = cl;
+    _ = frame;
     _ = tiling;
     _ = heap;
     _ = @import("qpu/tests.zig");
