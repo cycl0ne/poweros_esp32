@@ -128,25 +128,12 @@ fn begin(d: *Desktop, held: *Held) bool {
         plain.draw(d.gb, rp, &drag_look, corner);
     }
     // Where the press was, in the picture.
-    const press_x = held.x - borderLeft(d, held) + origin.x - corner.x;
-    const press_y = held.y - borderTop(d, held) + origin.y - corner.y;
+    const press: icons.Origin = if (held.drawer) |dr| drawer.inside(d, dr, held.x, held.y) else .{ .x = held.x, .y = held.y };
+    const press_x = press.x + origin.x - corner.x;
+    const press_y = press.y + origin.y - corner.y;
     const hot_x: u32 = @intCast(@max(0, @min(press_x, @as(i32, @intCast(size - 1)))));
     const hot_y: u32 = @intCast(@max(0, @min(press_y, @as(i32, @intCast(size - 1)))));
     return d.ib.BeginDrag(held.window, surface, hot_x, hot_y);
-}
-
-fn windowAttr(d: *Desktop, window: *intuition.Window, tag: utility.Tag) i32 {
-    var value: usize = 0;
-    d.ib.GetWindowAttrs(window, &[_]TagItem{ .{ .tag = tag, .data = @intFromPtr(&value) }, .{} });
-    return @bitCast(@as(u32, @truncate(value)));
-}
-
-fn borderLeft(d: *Desktop, held: *const Held) i32 {
-    return if (held.drawer != null) windowAttr(d, held.window, wn.WA_BorderLeft) else 0;
-}
-
-fn borderTop(d: *Desktop, held: *const Held) i32 {
-    return if (held.drawer != null) windowAttr(d, held.window, wn.WA_BorderTop) else 0;
 }
 
 /// The button let go with an icon held: a drag ended where it is - or a
@@ -211,9 +198,11 @@ fn drop(d: *Desktop, held: *const Held, window: *intuition.Window, screen_x: i32
     // An icon under the point that is not one being dragged: dropped on.
     const on: ?*Icon = if (into_drawer) |dr| drawer.iconAt(d, dr, x, y) else d.volumeAt(x, y);
     if (on) |ic| if (!ic.selected) return dropOn(d, held, into_drawer, ic);
-    // The window the drag came from: the icons move on its ground.
+    // The window the drag came from: the icons move on its ground - not
+    // when let go over the strip above the view, where they would go
+    // under it.
     if (window == held.window) {
-        if (held.drawer) |dr| if (dr.view != .icon) return false;
+        if (held.drawer) |dr| if (dr.view != .icon or drawer.inside(d, dr, x, y).y < 0) return false;
         // A view the wheel moved since the press moves the icons as far.
         const moved_by: icons.Origin = if (held.drawer) |dr| .{ .x = dr.origin.x - held.origin.x, .y = dr.origin.y - held.origin.y } else .{};
         moveIcons(d, held, x - held.x + moved_by.x, y - held.y + moved_by.y);

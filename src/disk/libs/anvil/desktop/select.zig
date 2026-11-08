@@ -85,6 +85,8 @@ pub fn clearAll(d: *Desktop) void {
 /// A press of the left button in a window of the desktop.
 pub fn press(d: *Desktop, said: Said, where: ?*Drawer) void {
     const at: icons.Origin = if (where) |dr| drawer.inside(d, dr, said.x, said.y) else .{ .x = said.x, .y = said.y };
+    // Over the strip above a drawer's view: not the drawer's.
+    if (where != null and at.y < 0) return;
     const hit: ?*Icon = if (where) |dr| drawer.iconAt(d, dr, said.x, said.y) else d.volumeAt(said.x, said.y);
     const shift = said.qualifier & (ie.IEQUALIFIER_LSHIFT | ie.IEQUALIFIER_RSHIFT) != 0;
     const tap = intuition.Tap{ .seconds = said.seconds, .micros = said.micros, .x = said.x, .y = said.y };
@@ -141,7 +143,7 @@ fn drawBand(d: *Desktop, band: *const Band) void {
     drawer.hold(d, dr);
     defer drawer.release(d, dr);
     d.gb.SetRPAttrs(dr.rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_DrMd, .data = graphics.DRMD_COMPLEMENT }, .{} });
-    d.gb.DrawRect(dr.rp, &boxOf(band));
+    d.gb.DrawRect(dr.rp, &drawer.onInside(dr, boxOf(band)));
     d.gb.SetRPAttrs(dr.rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_DrMd, .data = graphics.DRMD_JAM1 }, .{} });
 }
 

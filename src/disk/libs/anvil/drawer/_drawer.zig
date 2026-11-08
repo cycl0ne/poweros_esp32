@@ -29,6 +29,14 @@
 //! stay where they lie, and what the window grows by - and where its
 //! border was - comes as a refresh.
 //!
+//! **The strip above the view**: the inside's top may be given to
+//! something that is not the drawer - a row of titles, a ribbon -
+//! `Drawer.top` pixels of it (`setTop`). The drawer is the box below, the
+//! view, `inner_width` by `inner_height`: a point of the drawer is counted
+//! from the view's corner, and what is drawn for the drawer, with the
+//! layer held, is cut at the view's top, so an icon scrolled up never
+//! reaches over the strip.
+//!
 //! **Following**: the drawer is watched with StartNotify and read again
 //! when it changes - whoever changed it.
 //!
@@ -82,6 +90,11 @@ const drawer_idcmp = wn.IDCMP_MOUSEBUTTONS | wn.IDCMP_MOUSEMOVE | wn.IDCMP_MENUP
 /// The longest title: the name and how full its disk is.
 const title_max = 160;
 
+/// The smallest a drawer's window may be, border included - and the strip
+/// above the view on top of the height.
+const least_width = 120;
+const least_height = 80;
+
 pub const Drawer = struct {
     node: exec.Node = .{},
     window: *intuition.Window,
@@ -89,8 +102,16 @@ pub const Drawer = struct {
     /// held while anything is drawn into it.
     rp: *graphics.RastPort,
     layer: *sdk.layers.Layer,
+    /// The view's size: the inside below the strip at its top.
     inner_width: i32 = 0,
     inner_height: i32 = 0,
+    /// How high the strip across the inside's top is that is not the
+    /// drawer's (`setTop`); the view starts below it.
+    top: i32 = 0,
+    /// How often the layer is held (`hold`), and the clip the first hold
+    /// found, to put back at the last release.
+    holds: u32 = 0,
+    held_clip: Rect = .{},
     path: [dos.path_max + 1]u8 = @splat(0),
     path_len: u16 = 0,
     is_volume: bool = false,
@@ -204,8 +225,8 @@ pub fn open(d: *Desktop, wanted: []const u8) bool {
         .{ .tag = wn.WA_Top, .data = @bitCast(@as(isize, place_at.min_y)) },
         .{ .tag = wn.WA_Width, .data = @intCast(place_at.max_x - place_at.min_x) },
         .{ .tag = wn.WA_Height, .data = @intCast(place_at.max_y - place_at.min_y) },
-        .{ .tag = wn.WA_MinWidth, .data = 120 },
-        .{ .tag = wn.WA_MinHeight, .data = 80 },
+        .{ .tag = wn.WA_MinWidth, .data = least_width },
+        .{ .tag = wn.WA_MinHeight, .data = least_height },
         .{ .tag = wn.WA_MaxWidth, .data = @bitCast(@as(isize, -1)) },
         .{ .tag = wn.WA_MaxHeight, .data = @bitCast(@as(isize, -1)) },
         .{ .tag = wn.WA_Title, .data = @intFromPtr(&dr.title) },
@@ -302,7 +323,7 @@ fn defaultBox(d: *Desktop) Rect {
     return .{ .min_x = 40 + cascade, .min_y = top + 20 + cascade, .max_x = 40 + cascade + width, .max_y = top + 20 + cascade + height };
 }
 
-/// The inside's size, as the window is now.
+/// The view's size, as the window is now: the inside below the strip.
 fn measure(d: *Desktop, dr: *Drawer) void {
     const width = windowAttr(d, dr.window, wn.WA_Width);
     const height = windowAttr(d, dr.window, wn.WA_Height);
@@ -311,7 +332,7 @@ fn measure(d: *Desktop, dr: *Drawer) void {
     const right = windowAttr(d, dr.window, wn.WA_BorderRight);
     const bottom = windowAttr(d, dr.window, wn.WA_BorderBottom);
     dr.inner_width = @max(0, width - left - right);
-    dr.inner_height = @max(0, height - top - bottom);
+    dr.inner_height = @max(0, height - top - bottom - dr.top);
 }
 
 /// The window's title: the drawer's name, and for a disk how full it is.
@@ -536,7 +557,7 @@ fn addEntry(d: *Desktop, dr: *Drawer, name: []const u8, data: *const dos.ExAllDa
     d.sys.AddTail(&dr.icons, &ic.node);
     hold(d, dr);
     defer release(d, dr);
-    ic.draw(d.gb, dr.rp, &d.drawer_look, dr.origin);
+    ic.draw(d.gb, dr.rp, &d.drawer_look, cornerOnGround(dr));
 }
 
 /// An icon put in the next free cell along the rows, past the icons that
@@ -612,20 +633,42 @@ fn forgetIcons(d: *Desktop, dr: *Drawer) void {
 
 // --- drawing -------------------------------------------------------------------
 
-/// The drawer's layer held, for drawing into it; a holder may take it
-/// again. Nothing but graphics is called while it is held.
+/// The drawer's layer held, for drawing into it, and what is drawn cut
+/// at the view's top; a holder may take it again. Nothing but graphics is
+/// called while it is held. The cut keeps the clip's other edges - the
+/// layer's own, which while the window is being sized can be past the
+/// size last measured.
 pub fn hold(d: *Desktop, dr: *Drawer) void {
     d.lb.LockLayer(dr.layer);
+    dr.holds += 1;
+    if (dr.holds > 1) return;
+    d.gb.GetRPAttrs(dr.rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&dr.held_clip) }, .{} });
+    var below = dr.held_clip;
+    below.min_y = @max(below.min_y, dr.top);
+    d.gb.SetRPAttrs(dr.rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&below) }, .{} });
 }
 
 pub fn release(d: *Desktop, dr: *Drawer) void {
+    dr.holds -= 1;
+    if (dr.holds == 0) d.gb.SetRPAttrs(dr.rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&dr.held_clip) }, .{} });
     d.lb.UnlockLayer(dr.layer);
+}
+
+/// The point of the drawer's ground at the inside's corner - (0, 0) of
+/// its RastPort, the strip's height above the view's corner.
+fn cornerOnGround(dr: *const Drawer) icons.Origin {
+    return .{ .x = dr.origin.x, .y = dr.origin.y - dr.top };
+}
+
+/// A box of the view as a box of the inside's RastPort.
+pub fn onInside(dr: *const Drawer, area: Rect) Rect {
+    return area.offset(0, dr.top);
 }
 
 fn clearInside(d: *Desktop, dr: *Drawer) void {
     hold(d, dr);
     defer release(d, dr);
-    const whole = Rect{ .min_x = 0, .min_y = 0, .max_x = dr.inner_width, .max_y = dr.inner_height };
+    const whole = onInside(dr, .{ .max_x = dr.inner_width, .max_y = dr.inner_height });
     d.gb.EraseRect(dr.rp, &whole);
 }
 
@@ -665,7 +708,7 @@ fn drawOn(d: *Desktop, dr: *Drawer, rp: *graphics.RastPort, at: icons.Origin, wi
 pub fn drawShown(d: *Desktop, dr: *Drawer) void {
     hold(d, dr);
     defer release(d, dr);
-    drawOn(d, dr, dr.rp, dr.origin, dr.inner_width, dr.inner_height);
+    drawOn(d, dr, dr.rp, cornerOnGround(dr), dr.inner_width, dr.top + dr.inner_height);
 }
 
 /// The inside drawn again.
@@ -673,19 +716,24 @@ pub fn drawInside(d: *Desktop, dr: *Drawer) void {
     drawArea(d, dr, .{ .max_x = dr.inner_width, .max_y = dr.inner_height });
 }
 
-/// `area` of the inside drawn again: its ground and what shows over it,
+/// `area` of the view drawn again: its ground and what shows over it,
 /// drawn into a picture of the area - the ground painted as the window's
 /// layer paints it, in the window's font - and put on the window in one
 /// copy. Without the memory for the picture it is cleared and drawn in
-/// place.
+/// place, cut at the area.
 fn drawArea(d: *Desktop, dr: *Drawer, area: Rect) void {
     if (area.isEmpty()) return;
     if (drawAside(d, dr, area)) return;
     hold(d, dr);
     defer release(d, dr);
-    d.gb.EraseRect(dr.rp, &area);
-    const at = icons.Origin{ .x = dr.origin.x + area.min_x, .y = dr.origin.y + area.min_y };
-    drawOn(d, dr, dr.rp, at, area.width(), area.height());
+    const shown = onInside(dr, area);
+    d.gb.EraseRect(dr.rp, &shown);
+    var was: Rect = .{};
+    d.gb.GetRPAttrs(dr.rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&was) }, .{} });
+    const within = Rect.intersect(was, shown);
+    d.gb.SetRPAttrs(dr.rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&within) }, .{} });
+    defer d.gb.SetRPAttrs(dr.rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&was) }, .{} });
+    drawOn(d, dr, dr.rp, cornerOnGround(dr), shown.max_x, shown.max_y);
 }
 
 /// `drawArea` through a picture; false, and nothing drawn, without the
@@ -718,14 +766,15 @@ fn drawAside(d: *Desktop, dr: *Drawer, area: Rect) bool {
     drawOn(d, dr, rp, at, area.width(), area.height());
     hold(d, dr);
     defer release(d, dr);
-    gb.BltBitMapRastPort(surface, 0, 0, dr.rp, area.min_x, area.min_y, area.width(), area.height());
+    gb.BltBitMapRastPort(surface, 0, 0, dr.rp, area.min_x, area.min_y + dr.top, area.width(), area.height());
     return true;
 }
 
 /// Between BeginRefresh and EndRefresh: what was uncovered drawn again, a
-/// piece at a time - each part of the inside the refresh lets through
-/// drawn whole (`drawArea`), so whatever was there already, icons
-/// included, is drawn over once and never twice.
+/// piece at a time - each part of the view the refresh lets through drawn
+/// whole (`drawArea`), so whatever was there already, icons included, is
+/// drawn over once and never twice, and each part of the strip above it
+/// given its ground (`drawAbove`).
 pub fn refresh(d: *Desktop, dr: *Drawer) void {
     d.ib.BeginRefresh(dr.window);
     defer d.ib.EndRefresh(dr.window, true);
@@ -739,9 +788,40 @@ pub fn refresh(d: *Desktop, dr: *Drawer) void {
     d.lb.GetLayerAttrs(dr.layer, &[_]TagItem{ .{ .tag = sdk.layers.LATAG_GetBounds, .data = @intFromPtr(&bounds) }, .{} });
     const whole = Rect{ .max_x = bounds.width(), .max_y = bounds.height() };
     // A RastPort with no pieces lets the whole of it through.
-    if (pieces == 0) return drawArea(d, dr, whole);
+    if (pieces == 0) return refreshPart(d, dr, whole);
     var piece: ?*const graphics.ClipTarget = @ptrFromInt(pieces);
-    while (piece) |each| : (piece = each.next) drawArea(d, dr, Rect.intersect(each.rect, whole));
+    while (piece) |each| : (piece = each.next) refreshPart(d, dr, Rect.intersect(each.rect, whole));
+}
+
+/// A part of the inside, in its RastPort's coordinates, drawn again: what
+/// of it is the strip above the view, and what is the view.
+fn refreshPart(d: *Desktop, dr: *Drawer, part: Rect) void {
+    var above = part;
+    above.max_y = @min(part.max_y, dr.top);
+    if (!above.isEmpty()) drawAbove(d, dr, above);
+    var below = part;
+    below.min_y = @max(part.min_y, dr.top);
+    drawArea(d, dr, below.offset(0, -dr.top));
+}
+
+/// A part of the strip above the view drawn again: its ground, for what
+/// stands there to draw over.
+fn drawAbove(d: *Desktop, dr: *Drawer, part: Rect) void {
+    d.lb.LockLayer(dr.layer);
+    defer d.lb.UnlockLayer(dr.layer);
+    d.gb.EraseRect(dr.rp, &part);
+}
+
+/// The strip across the inside's top made `height` high: the view
+/// measured again below it and kept on the ground, the bars set, the
+/// window's least height grown by it, and the inside drawn again.
+pub fn setTop(d: *Desktop, dr: *Drawer, height: i32) void {
+    if (height == dr.top) return;
+    dr.top = @max(0, height);
+    _ = d.ib.WindowLimits(dr.window, least_width, least_height + dr.top, 0, 0);
+    _ = fit(d, dr);
+    drawAbove(d, dr, .{ .max_x = dr.inner_width, .max_y = dr.top });
+    drawInside(d, dr);
 }
 
 /// The window resized: the inside measured, the view kept on the ground,
@@ -750,14 +830,21 @@ pub fn refresh(d: *Desktop, dr: *Drawer) void {
 /// by, and where its border was, comes as a refresh. Rows are laid out
 /// across the width, and are drawn again.
 pub fn resized(d: *Desktop, dr: *Drawer) void {
+    const moved = fit(d, dr);
+    if (dr.view == .icon and !moved) return;
+    drawInside(d, dr);
+}
+
+/// The view measured, kept on the ground and the bars set; whether it had
+/// to move to stay there.
+fn fit(d: *Desktop, dr: *Drawer) bool {
     measure(d, dr);
     const reach = extent(d, dr);
     const was = dr.origin;
     dr.origin.x = @max(0, @min(dr.origin.x, reach.max_x - dr.inner_width));
     dr.origin.y = @max(0, @min(dr.origin.y, reach.max_y - dr.inner_height));
     setBars(d, dr);
-    if (dr.view == .icon and dr.origin.x == was.x and dr.origin.y == was.y) return;
-    drawInside(d, dr);
+    return dr.origin.x != was.x or dr.origin.y != was.y;
 }
 
 /// A bar moved: the view follows it, a step at a time.
@@ -823,9 +910,10 @@ pub fn showAs(d: *Desktop, dr: *Drawer, view: View, show_all: bool) void {
     reread(d, dr);
 }
 
-/// The point (`x`, `y`) of the window as a point of the inside.
+/// The point (`x`, `y`) of the window as a point of the view; over the
+/// strip above it, `y` is below 0.
 pub fn inside(d: *Desktop, dr: *Drawer, x: i32, y: i32) icons.Origin {
-    return .{ .x = x - windowAttr(d, dr.window, wn.WA_BorderLeft), .y = y - windowAttr(d, dr.window, wn.WA_BorderTop) };
+    return .{ .x = x - windowAttr(d, dr.window, wn.WA_BorderLeft), .y = y - windowAttr(d, dr.window, wn.WA_BorderTop) - dr.top };
 }
 
 /// One icon drawn again where it shows (`drawArea`): the part of the
@@ -874,16 +962,15 @@ pub fn eachIn(d: *Desktop, dr: *Drawer, band: Rect, context: anytype, comptime e
     }
 }
 
-/// The icon at the point (`x`, `y`) of the window, if any.
+/// The icon at the point (`x`, `y`) of the window, if any: none over the
+/// strip above the view.
 pub fn iconAt(d: *Desktop, dr: *Drawer, x: i32, y: i32) ?*Icon {
-    const left = windowAttr(d, dr.window, wn.WA_BorderLeft);
-    const top = windowAttr(d, dr.window, wn.WA_BorderTop);
-    const inside_x = x - left;
-    const inside_y = y - top;
+    const at = inside(d, dr, x, y);
+    if (at.y < 0) return null;
     if (dr.view != .icon) {
         const cols = textview.columns(&d.drawer_look, dr.inner_width);
-        const row = @divFloor(inside_y + dr.origin.y, cols.row_height);
-        if (inside_y < 0 or row < 0) return null;
+        const row = @divFloor(at.y + dr.origin.y, cols.row_height);
+        if (row < 0) return null;
         var n: i32 = 0;
         var it = dr.icons.iterator();
         while (it.next()) |node| : (n += 1) {
@@ -895,7 +982,7 @@ pub fn iconAt(d: *Desktop, dr: *Drawer, x: i32, y: i32) ?*Icon {
     var it = dr.icons.iterator();
     while (it.next()) |node| {
         const ic: *Icon = @alignCast(@fieldParentPtr("node", node));
-        if (ic.hit(&d.drawer_look, dr.origin, inside_x, inside_y)) found = ic;
+        if (ic.hit(&d.drawer_look, dr.origin, at.x, at.y)) found = ic;
     }
     return found;
 }
