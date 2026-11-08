@@ -297,12 +297,14 @@ const disk_icons = [_]DiskIcon{
     .{ .path = "System/NetLoad.info", .picture = "utilities-system-monitor", .fields = &.{ "KIND=TOOL", icon_stack } },
     .{ .path = "System/MemMap.info", .picture = "computer", .fields = &.{ "KIND=TOOL", icon_stack } },
     .{ .path = "System/Shares.info", .picture = "folder-remote", .fields = &.{ "KIND=TOOL", icon_stack } },
+    .{ .path = "System/Update.info", .picture = "system-software-update", .fields = &.{ "KIND=TOOL", icon_stack }, .chips = &.{ .rv64sbi, .a64psci, .x64uefi } },
     .{ .path = "System/Docs.info", .picture = "folder", .fields = &.{"KIND=DRAWER"} },
     .{ .path = "System/Docs/CPULoad.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "System/Docs/NetLoad.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "System/Docs/HDToolBox.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "System/Docs/MemMap.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "System/Docs/Shares.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
+    .{ .path = "System/Docs/Update.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack }, .chips = &.{ .rv64sbi, .a64psci, .x64uefi } },
     // The commodities, each icon with the tool types it reads, and what
     // each is in SYS:Commodities/Docs. The pictures are the ones the
     // fetch drew, so the ones that work on the same thing share a

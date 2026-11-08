@@ -45,6 +45,7 @@ categories/preferences-desktop
 categories/applications-system
 categories/applications-other
 categories/applications-games
+apps/system-software-update
 "
 sizes="48 40"
 

@@ -457,6 +457,11 @@ lines above the list.
   written. It is there only once a check has found something to do.
 - **Stop** ends the run where it is: what was written stays, the
   machine's list stays as it was, and the next check finds the rest.
+- **Restart**, once an update has written something, is `RESTART`: the
+  machine started again through `C:Reboot`, on the partition written for
+  a try where there is one.
+- **Keep this system** is `CONFIRM`, there while the firmware is told to
+  try a partition - for the system that came up on it.
 
 The run goes on a process of its own, so the window answers while a
 package is read over the network; closing the window stops the run

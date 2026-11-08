@@ -55,7 +55,12 @@ update.library/GetUpdateInfo
 	Nothing is left allocated.
 
    BUGS
-	None known.
+	Both the check and the keeping go by `autoboot.txt` alone, not by the
+	partition this system was started from: a system that wrote a
+	partition to try and was not restarted yet, or one the firmware came
+	back to after a try that did not come up, is answered the same as the
+	system on the tried partition - and keeping there makes the tried
+	partition the one the firmware starts from.
 
    SEE ALSO
 	`DoUpdate`, `GetUpdateInfo`, `sdk.install.autoboot`

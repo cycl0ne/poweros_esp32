@@ -23,9 +23,18 @@
 //!   was changed on this machine, where the package changed it too.
 //!
 //! **Update** writes what the check found, the gauge filling by the bytes
-//! written; **Stop** ends it between two files, with what was written in
-//! place and this machine's list as it was, so the next check finds the
-//! rest.
+//! written; **Stop** ends it where it is, with what was written in place
+//! and this machine's list as it was, so the next check finds the rest.
+//! **Restart** starts the machine again through `C:Reboot` once an update
+//! has written something - with the kernel written to a partition the
+//! firmware is to try, on that partition, for one start.
+//!
+//! **Keep this system** is there while the firmware is told to try a
+//! partition at the next start - a look as the window opens
+//! (`ConfirmUpdate` with `UPD_Check`) says so - and on the system that
+//! came up on it, makes it the partition the firmware starts from. The
+//! look goes by `autoboot.txt`, not by the partition this system started
+//! from, so the note says which system the button is for.
 //!
 //! The work is done on a process of its own (`worker.zig`), through
 //! update.library, so the window keeps answering while a package is read
@@ -61,7 +70,7 @@ const cb_class = sdk.gadgets.checkbox;
 const fg = sdk.gadgets.fuelgauge;
 
 pub const COMMAND_NAME = "Update";
-const VERSION = "1.0";
+const VERSION = "1.1";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (08.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
@@ -82,6 +91,8 @@ const ID_FORCE = 4;
 const ID_LIST = 5;
 const ID_UPDATE = 6;
 const ID_STOP = 7;
+const ID_RESTART = 8;
+const ID_KEEP = 9;
 
 /// A field says which key ended it, as the raw key it was: Return and the
 /// keypad's Enter check, where Tab and a press elsewhere only leave it.
@@ -157,6 +168,8 @@ const App = struct {
     gauge: ?*Object = null,
     update_button: ?*Object = null,
     stop_button: ?*Object = null,
+    restart_button: ?*Object = null,
+    keep_button: ?*Object = null,
 
     /// What the list shows: the rows of the last run.
     rows: exec.List = .{},
@@ -177,6 +190,12 @@ const App = struct {
     /// whether it found anything to do.
     to_write: u64 = 0,
     work_found: bool = false,
+    /// An update has written something, which a restart runs; and with
+    /// the kernel, into a partition the firmware is to try.
+    restart_wanted: bool = false,
+    tried: bool = false,
+    /// The firmware is told to try a partition, which Keep keeps.
+    keep_offered: bool = false,
 
     // --- the gadgets ---------------------------------------------------------------
 
@@ -217,6 +236,8 @@ const App = struct {
         app.enable(app.force_box, !going);
         app.enable(app.update_button, !going and app.work_found);
         app.enable(app.stop_button, going);
+        app.enable(app.restart_button, !going and app.restart_wanted);
+        app.enable(app.keep_button, !going and app.keep_offered);
     }
 
     fn showGauge(app: *App, level: u64, most: u64) void {
@@ -232,8 +253,9 @@ const App = struct {
 
     // --- a run ---------------------------------------------------------------------
 
-    /// A run started: a check of what the field names, or the update the
-    /// last check found.
+    /// A run started: a look at this system, a check of what the field
+    /// names, the update the last check found, or this system kept. A
+    /// check and an update start the list and the gauge again.
     fn begin(app: *App, kind: worker.Kind) void {
         if (app.job.running()) return;
         const job = &app.job;
@@ -244,22 +266,63 @@ const App = struct {
             job.force = app.checked(app.force_box);
             app.work_found = false;
         }
-        app.set(app.list, &.{ pair(lb.LISTBROWSER_Rows, lb.LISTBROWSER_DETACH), .{} });
-        lb.freeRows(app.sys, &app.rows);
-        app.set(app.list, &.{ pair(lb.LISTBROWSER_Rows, @intFromPtr(&app.rows)), .{} });
+        if (kind == .check or kind == .update) {
+            app.set(app.list, &.{ pair(lb.LISTBROWSER_Rows, lb.LISTBROWSER_DETACH), .{} });
+            lb.freeRows(app.sys, &app.rows);
+            app.set(app.list, &.{ pair(lb.LISTBROWSER_Rows, @intFromPtr(&app.rows)), .{} });
+            app.wrote_bytes = 0;
+            app.wrote_files = 0;
+            app.showGauge(0, if (kind == .update) app.to_write else 0);
+        }
         app.stop_asked = false;
-        app.wrote_bytes = 0;
-        app.wrote_files = 0;
-        app.showGauge(0, if (kind == .update) app.to_write else 0);
+        const doing: [*:0]const u8 = switch (kind) {
+            .look => "Looking at this system ...",
+            .check => "Looking at the package ...",
+            .update => "Updating ...",
+            .keep => "Keeping this system ...",
+        };
         if (!job.start()) {
             app.status.say(app.sys, "no process to run the update on", .{});
-            app.note.say(app.sys, "", .{});
         } else {
-            app.status.say(app.sys, "%s", .{@as([*:0]const u8, if (kind == .check) "Looking at the package ..." else "Updating ...")});
-            app.note.say(app.sys, "", .{});
+            app.status.say(app.sys, "%s", .{doing});
         }
+        app.note.say(app.sys, "", .{});
         app.showStatus();
         app.showButtons();
+    }
+
+    /// The machine started again through C:Reboot, on the partition the
+    /// update wrote for a try where it wrote one. What comes back is a
+    /// restart that did not happen, said with why.
+    fn restart(app: *App) void {
+        const dl = app.dl;
+        const sys = app.sys;
+        const nil_in = dl.Open("NIL:", dos.MODE_OLDFILE);
+        defer if (nil_in) |file| {
+            _ = dl.Close(file);
+        };
+        const nil_out = dl.Open("NIL:", dos.MODE_NEWFILE);
+        defer if (nil_out) |file| {
+            _ = dl.Close(file);
+        };
+        const line: [*:0]const u8 = if (app.tried) "C:Reboot TRYBOOT FORCE" else "C:Reboot FORCE";
+        app.status.say(sys, "Restarting ...", .{});
+        app.note.say(sys, "", .{});
+        app.showStatus();
+        const code = dl.SystemTagList(line, &[_]TagItem{
+            pair(if (nil_in != null) dos.SYS_Input else sdk.utility.TAG_IGNORE, @intFromPtr(nil_in)),
+            pair(if (nil_out != null) dos.SYS_Output else sdk.utility.TAG_IGNORE, @intFromPtr(nil_out)),
+            .{},
+        });
+        switch (code) {
+            dos.RETURN_WARN => app.status.say(sys, "The firmware has no start to try, so nothing was restarted.", .{}),
+            dos.RETURN_FAIL => app.status.say(sys, "The firmware's flag for a tried start could not be set, so nothing was restarted.", .{}),
+            else => if (code < 0)
+                app.status.say(sys, "C:Reboot is not there, so nothing was restarted.", .{})
+            else
+                app.status.say(sys, "C:Reboot answered %ld, and nothing was restarted.", .{@as(i64, code)}),
+        }
+        app.showStatus();
     }
 
     /// What the run has said since the last look: its rows added to the
@@ -294,6 +357,25 @@ const App = struct {
         const job = &app.job;
         const info = &job.info;
         const sys = app.sys;
+        switch (job.kind) {
+            // Its words are not shown, only what it found; the check
+            // that opening the window starts follows it.
+            .look => {
+                app.keep_offered = job.code == dos.RETURN_WARN;
+                app.begin(.check);
+                return;
+            },
+            // What ConfirmUpdate said is on the status line already.
+            .keep => {
+                if (job.code == dos.RETURN_OK) app.keep_offered = false;
+                if (app.heard_line[0] == 0) app.status.say(sys, "%s", .{@as([*:0]const u8, if (job.code == dos.RETURN_OK) "Kept." else "This system could not be kept.")});
+                app.note.say(sys, "", .{});
+                app.showStatus();
+                app.showButtons();
+                return;
+            },
+            .check, .update => {},
+        }
         app.note.say(sys, "", .{});
         // The field shows the package that was read, where it was empty.
         if (app.fieldText()[0] == 0 and job.used[0] != 0) {
@@ -350,12 +432,20 @@ const App = struct {
             } else {
                 app.work_found = false;
                 app.showGauge(app.to_write, app.to_write);
+                if (update.changes(info) or info.boot_written != 0) app.restart_wanted = true;
                 if (info.tried != 0) {
-                    app.note.say(sys, "The new kernel is tried once at the next start: restart with C:Reboot TRYBOOT, then keep it with Update CONFIRM.", .{});
-                } else if (update.changes(info) or info.boot_written != 0) {
+                    // The partition being tried is the one just written,
+                    // not this system's.
+                    app.tried = true;
+                    app.keep_offered = false;
+                    app.note.say(sys, "Restart starts the new kernel once, to try it; Keep this system, on the system that comes up, keeps it.", .{});
+                } else if (app.restart_wanted) {
                     app.note.say(sys, "Restart to run what was written.", .{});
                 }
             }
+        }
+        if (app.keep_offered and app.note.length == 0) {
+            app.note.say(sys, "The firmware is told to try a partition: on the system that came up on it, Keep this system makes it the one it starts from.", .{});
         }
         app.showStatus();
         app.showButtons();
@@ -421,6 +511,8 @@ fn buildLayout(app: *App, boot: bool) ?*Object {
     });
     app.update_button = button(ib, "Update", ID_UPDATE);
     app.stop_button = button(ib, "Stop", ID_STOP);
+    app.restart_button = button(ib, "Restart", ID_RESTART);
+    app.keep_button = button(ib, "Keep this system", ID_KEEP);
 
     const row_height = fontHeight(app);
     const top = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
@@ -464,6 +556,10 @@ fn buildLayout(app: *App, boot: bool) ?*Object {
         pair(lg.LAYOUTA_AddChild, @intFromPtr(app.update_button orelse return null)),
         pair(lg.CHILDA_WeightWidth, 0),
         pair(lg.LAYOUTA_AddChild, @intFromPtr(app.stop_button orelse return null)),
+        pair(lg.CHILDA_WeightWidth, 0),
+        pair(lg.LAYOUTA_AddChild, @intFromPtr(app.restart_button orelse return null)),
+        pair(lg.CHILDA_WeightWidth, 0),
+        pair(lg.LAYOUTA_AddChild, @intFromPtr(app.keep_button orelse return null)),
         pair(lg.CHILDA_WeightWidth, 0),
         .{},
     }) orelse return null;
@@ -584,7 +680,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     _ = ib.GetAttr(wc.WINDOWA_Window, app.object.?, &at);
     app.window = @ptrFromInt(at);
 
-    app.begin(.check);
+    app.begin(.look);
 
     const news = app.job.signal();
     const ends = app.job.endSignal();
@@ -607,6 +703,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
                     ID_CHECK, ID_BOOT, ID_FORCE => app.begin(.check),
                     ID_SOURCE => if (entered(code_word)) app.begin(.check),
                     ID_UPDATE => if (app.work_found) app.begin(.update),
+                    ID_RESTART => if (app.restart_wanted and !app.job.running()) app.restart(),
+                    ID_KEEP => if (app.keep_offered) app.begin(.keep),
                     ID_STOP => if (app.job.running()) {
                         app.stop_asked = true;
                         app.job.stop();

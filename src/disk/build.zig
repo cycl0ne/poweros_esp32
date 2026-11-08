@@ -364,6 +364,12 @@ const no_3d_files = [_][]const u8{
     "programs/Docs/Cobra.md",
 };
 
+/// What the programs only the 64-bit machines have (`rv64_only`) are, in
+/// SYS:System/Docs: left off the ESP32s' disks with them.
+const rv64_only_files = [_][]const u8{
+    "System/Docs/Update.md",
+};
+
 /// Whether `program` is built for `chip`. The lists name a program by its
 /// name, or by its place on the disk where one program has two.
 pub fn builtFor(program: Program, chip: poweros_sdk.Chip) bool {
@@ -380,11 +386,16 @@ pub fn builtFor(program: Program, chip: poweros_sdk.Chip) bool {
     return true;
 }
 
-/// Whether `file` goes on `chip`'s disk. Every chip's has all of them
-/// but the ESP32-S3's, which has nothing that reads a model (`no_3d`).
+/// Whether `file` goes on `chip`'s disk. The 64-bit machines' have all
+/// of them; the ESP32s' leave out what goes with a program they do not
+/// have, and the ESP32-S3's also what reads a model (`no_3d`).
 pub fn fileFor(file: File, chip: poweros_sdk.Chip) bool {
-    if (chip != .esp32s3) return true;
-    for (no_3d_files) |path| {
+    const others: []const []const u8 = switch (chip) {
+        .esp32s3 => &(no_3d_files ++ rv64_only_files),
+        .esp32p4 => &rv64_only_files,
+        .rv64sbi, .x64uefi, .a64psci => &.{},
+    };
+    for (others) |path| {
         if (std.mem.eql(u8, file.disk, path)) return false;
     }
     return true;
@@ -619,6 +630,7 @@ pub const files = [_]File{
     .{ .disk = "System/Docs/NetLoad.md", .source = "system/netload/README.md" },
     .{ .disk = "System/Docs/MemMap.md", .source = "system/memmap/README.md" },
     .{ .disk = "System/Docs/Shares.md", .source = "system/shares/README.md" },
+    .{ .disk = "System/Docs/Update.md", .source = "system/update/README.md" },
     // SYS:Commodities/Docs - the same for the commodities.
     .{ .disk = "Commodities/Docs/Exchange.md", .source = "commodities/exchange/README.md" },
     .{ .disk = "Commodities/Docs/NoCapsLock.md", .source = "commodities/nocapslock/README.md" },
