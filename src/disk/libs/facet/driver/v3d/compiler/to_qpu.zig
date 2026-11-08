@@ -2,9 +2,9 @@
 //! A compile's VIR, its temporaries given registers, made into the QPU's
 //! instructions and packed into the words the QPU runs: the port of
 //! Mesa's src/broadcom/compiler/vir_to_qpu.c, its 7.1 paths. Mesa does
-//! it in one call, v3d_vir_to_qpu, which schedules the instructions
-//! between its two halves; until qpu_schedule.c is ported the halves are
-//! `generateCode` and `packCode`, called in turn.
+//! it in one call, v3d_vir_to_qpu, `virToQpu` here, which schedules the
+//! instructions (schedule.zig) between its two halves, `generateCode`
+//! and `packCode`.
 //!
 //! On 7.1 an operand is a register of the register file or a small
 //! immediate, which VIR keeps in raddr_b until it is placed in the
@@ -18,6 +18,7 @@ const disasm = @import("../qpu/disasm.zig");
 const validator = @import("validate.zig");
 const vir = @import("vir.zig");
 const dump = @import("dump.zig");
+const schedule = @import("schedule.zig");
 const Compile = vir.Compile;
 const Inst = vir.Inst;
 const Block = vir.Block;
@@ -225,4 +226,14 @@ pub fn packCode(c: *Compile) vir.Error!?validator.Failure {
         return failure;
     }
     return null;
+}
+
+/// v3d_vir_to_qpu (vir_to_qpu.c:470): the code generated with the
+/// registers the temporaries were given, scheduled, and packed. What
+/// packCode answers is answered; the cycles the scheduler counts are not
+/// kept, as in Mesa.
+pub fn virToQpu(c: *Compile, temp_registers: []const QpuReg) vir.Error!?validator.Failure {
+    generateCode(c, temp_registers);
+    _ = try schedule.qpuScheduleInstructions(c);
+    return packCode(c);
 }

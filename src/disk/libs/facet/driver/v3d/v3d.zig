@@ -33,6 +33,8 @@ test {
     _ = @import("qpu/tests.zig");
     _ = @import("compiler/validate.zig");
     _ = @import("compiler/list.zig");
+    _ = @import("compiler/dag.zig");
+    _ = @import("compiler/schedule.zig");
     _ = @import("compiler/ra.zig");
     _ = @import("compiler/allocate.zig");
     _ = @import("compiler/tests.zig");

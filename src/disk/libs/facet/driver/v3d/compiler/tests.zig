@@ -349,7 +349,9 @@ fn shortProgram(c: *Compile) !void {
     // A move of a register to itself, which is left out.
     _ = try c.mulDest(.mov, product, .{product});
     _ = try c.mulDest(.mov, vir.magicReg(.tmud), .{product});
-    _ = try c.mulDest(.mov, vir.magicReg(.tmua), .{sum});
+    // The lookup's last write, which says how many ldtmus it has.
+    const lookup = try c.mulDest(.mov, vir.magicReg(.tmua), .{sum});
+    lookup.ldtmu_count = 1;
     const texel = try c.ldtmu();
     const three = try c.addDest(.add, try c.getTemp(), .{ texel, vir.reg(.small_imm, 3) });
     three.qpu.raddr_b = pack.smallImmPack(3).?;
@@ -451,6 +453,237 @@ test "a program that breaks a rule, or an instruction that does not pack, fails 
         try testing.expectEqual(@as(usize, 8), failure.ip);
         try testing.expectEqual(vir.Result.failed, c.compilation_result);
     }
+}
+
+fn expectProgram(c: *const Compile, expected: []const []const u8) !void {
+    try testing.expectEqual(expected.len, c.qpu_insts.len);
+    for (c.qpu_insts, expected) |word, text| {
+        var buffer: [disasm.most_text]u8 = undefined;
+        try testing.expectEqualStrings(text, disasm.disasm(word, &buffer).?);
+    }
+}
+
+test "scheduled, a chain keeps its order, and the thread end's signal goes back into an ldtmu" {
+    const c = try Compile.create(testing.allocator);
+    defer c.destroy();
+    try shortProgram(c);
+
+    try testing.expectEqual(@as(?@import("validate.zig").Failure, null), try to_qpu.virToQpu(c, &short_registers));
+    try testing.expectEqual(vir.Result.succeeded, c.compilation_result);
+    try expectProgram(c, &.{
+        qpuText("nop", "nop", "ldunifrf.rf1"),
+        qpuText("nop", "nop", "ldunif"),
+        qpuText("fadd rf2, rf0, rf1", "nop", ""),
+        qpuText("nop", "fmul rf3, rf2, rf1", ""),
+        qpuText("nop", "mov tmud, rf3", ""),
+        qpuText("nop", "mov tmua, rf2", ""),
+        // Not the add after it, which writes a register, nor the tmua
+        // write, which reads rf2: the fragment shader's setup may write
+        // rf2 and rf3 in the thread end's delay slots.
+        qpuText("nop", "nop", "thrsw; ldtmu.rf4"),
+        qpuText("add rf5, rf4, 3", "nop", ""),
+        qpuText("nop", "nop", ""),
+    });
+    try testing.expectEqual(@as(u32, 1), c.nop_count);
+    // The uniforms in the order they are read.
+    try testing.expectEqual(@as(usize, 2), c.uniform_data.len);
+    try testing.expectEqual(@as(u32, @bitCast(@as(f32, 1.0))), c.uniform_data[0]);
+    try testing.expectEqual(@as(u32, @bitCast(@as(f32, 2.0))), c.uniform_data[1]);
+    try testing.expect(c.last_thrsw == null);
+}
+
+fn regs(comptime indices: []const u6) [indices.len]vir.QpuReg {
+    var out: [indices.len]vir.QpuReg = undefined;
+    for (indices, &out) |index, *r| r.* = .{ .index = index };
+    return out;
+}
+
+const no_failure: ?@import("validate.zig").Failure = null;
+
+test "scheduled, independent operations pair: an add or a sub moved to the mul side, a mov to the add side" {
+    const c = try Compile.create(testing.allocator);
+    defer c.destroy();
+    const one = try c.uniformF(1.0);
+    const two = try c.uniformF(2.0);
+    _ = try c.add(.add, .{ one, two });
+    _ = try c.add(.fadd, .{ one, two });
+    _ = try c.mul(.fmul, .{ one, two });
+    _ = try c.add(.sub, .{ one, two });
+    _ = try c.mul(.mov, .{one});
+    _ = try c.mul(.fmul, .{ one, one });
+
+    try testing.expectEqual(no_failure, try to_qpu.virToQpu(c, &regs(&.{ 1, 2, 3, 4, 5, 6, 7, 8 })));
+    try expectProgram(c, &.{
+        qpuText("nop", "nop", "ldunifrf.rf1"),
+        // The mov into the second ldunif's free mul side, then moved to
+        // the add side for the fmul.
+        qpuText("mov rf7, rf1", "fmul rf8, rf1, rf1", "ldunifrf.rf2"),
+        // The fadd cannot go to the mul side: the add before it does.
+        qpuText("fadd rf4, rf1, rf2", "add rf3, rf1, rf2", ""),
+        qpuText("sub rf6, rf1, rf2", "fmul rf5, rf1, rf2", ""),
+        // Nothing before can take the thread end's signal: each writes
+        // a register from its ALUs.
+        qpuText("nop", "nop", "thrsw"),
+        qpuText("nop", "nop", ""),
+        qpuText("nop", "nop", ""),
+    });
+    try testing.expectEqual(@as(u32, 2), c.nop_count);
+    try testing.expectEqual(@as(u32, 0), c.qpu_inst_stalled_count);
+}
+
+test "scheduled, a write of a register pairs with the read of it before" {
+    const c = try Compile.create(testing.allocator);
+    defer c.destroy();
+    const one = try c.uniformF(1.0);
+    _ = try c.add(.fadd, .{ one, one });
+    _ = try c.mul(.fmul, .{ one, one });
+
+    // The fmul's temporary given the fadd's operand's register, free
+    // after the fadd reads it.
+    try testing.expectEqual(no_failure, try to_qpu.virToQpu(c, &regs(&.{ 1, 3, 1 })));
+    try expectProgram(c, &.{
+        qpuText("nop", "nop", "ldunifrf.rf1"),
+        qpuText("fadd rf3, rf1, rf1", "fmul rf1, rf1, rf1", ""),
+        qpuText("nop", "nop", "thrsw"),
+        qpuText("nop", "nop", ""),
+        qpuText("nop", "nop", ""),
+    });
+}
+
+test "scheduled, the last thread switch goes back two instructions and is told by a second in a row" {
+    const c = try Compile.create(testing.allocator);
+    defer c.destroy();
+    const one = try c.uniformF(1.0);
+    const lookup = try c.mulDest(.mov, vir.magicReg(.tmua), .{one});
+    lookup.ldtmu_count = 1;
+    try c.emitThrsw();
+    const switch_inst = c.last_thrsw.?;
+    switch_inst.is_last_thrsw = true;
+    const texel = try c.ldtmu();
+    _ = try c.add(.fadd, .{ texel, one });
+
+    try testing.expectEqual(no_failure, try to_qpu.virToQpu(c, &regs(&.{ 1, 2, 3 })));
+    try expectProgram(c, &.{
+        qpuText("nop", "nop", "thrsw; ldunifrf.rf1"),
+        qpuText("nop", "mov tmua, rf1", "thrsw"),
+        // The ldtmu is not moved before the switch, which is what the
+        // switch is for.
+        qpuText("nop", "nop", ""),
+        qpuText("nop", "nop", "ldtmu.rf2"),
+        // fadd's operands in the order it packs in.
+        qpuText("fadd rf3, rf1, rf2", "nop", ""),
+        // An ldtmu writing rf2 may not be in the thread end.
+        qpuText("nop", "nop", "thrsw"),
+        qpuText("nop", "nop", ""),
+        qpuText("nop", "nop", ""),
+    });
+    // The compile's last thread switch is the instruction its signal went
+    // into.
+    try testing.expect(c.last_thrsw.?.qpu.sig.ldunifrf);
+    try testing.expect(c.last_thrsw.?.qpu.sig.thrsw);
+}
+
+test "scheduled, a branch fills its delay slots from before it, and from its successor where it jumps always" {
+    const c = try Compile.create(testing.allocator);
+    defer c.destroy();
+    const entry = c.entryBlock();
+    const one = try c.uniformF(1.0);
+    const sum = try c.add(.fadd, .{ one, one });
+    _ = c.emitNondef(try c.branchInst(.always));
+    const skipped = try c.newBlock();
+    const target = try c.newBlock();
+    try c.linkBlocks(entry, target);
+    c.setEmitBlock(skipped);
+    _ = try c.mul(.fmul, .{ one, one });
+    try c.linkBlocks(skipped, target);
+    c.setEmitBlock(target);
+    _ = try c.add(.fadd, .{ sum, sum });
+
+    try testing.expectEqual(no_failure, try to_qpu.virToQpu(c, &regs(&.{ 1, 2, 3, 4 })));
+    try expectProgram(c, &.{
+        qpuText("nop", "nop", "ldunifrf.rf1"),
+        // Past the delay slots and one more instruction.
+        "bu  16, r:unif",
+        // The fadd before the branch moved into its first delay slot, and
+        // the target's first instruction copied into the second, which
+        // the branch now jumps past. The last is not looked at.
+        qpuText("fadd rf2, rf1, rf1", "nop", ""),
+        qpuText("fadd rf4, rf2, rf2", "nop", ""),
+        qpuText("nop", "nop", ""),
+        qpuText("nop", "fmul rf3, rf1, rf1", ""),
+        qpuText("fadd rf4, rf2, rf2", "nop", ""),
+        qpuText("nop", "nop", "thrsw"),
+        qpuText("nop", "nop", ""),
+        qpuText("nop", "nop", ""),
+    });
+    try testing.expectEqual(@as(u32, 0), entry.start_qpu_ip);
+    try testing.expectEqual(@as(u32, 1), entry.branch_qpu_ip);
+    try testing.expectEqual(@as(u32, 4), entry.end_qpu_ip);
+    try testing.expectEqual(@as(u32, 5), skipped.start_qpu_ip);
+    try testing.expectEqual(@as(u32, 6), target.start_qpu_ip);
+    // The branch's uniform, the jump in the uniforms: none, as the
+    // blocks between read none.
+    try testing.expectEqual(@as(u32, 1), entry.branch_uniform);
+    try testing.expectEqual(@as(u32, 0), c.uniform_data[1]);
+    try testing.expectEqual(@as(u32, 3), c.nop_count);
+}
+
+/// An input interpolated as Mesa's emit_fragment_varying does it: the
+/// ldvary, its value times w, plus the C coefficient it leaves in rf0.
+fn interpolate(c: *Compile, w: Reg) !void {
+    const ld = try c.addInst(.nop, c.undef, c.undef, c.undef);
+    ld.qpu.sig.ldvary = true;
+    const value = try c.emitDef(ld);
+    _ = try c.add(.fadd, .{ try c.mul(.fmul, .{ value, w }), vir.reg(.reg, 0) });
+}
+
+test "scheduled, a fragment program's ldvarys go first, the second moved up for the first's sum to pair with its product" {
+    const c = try Compile.create(testing.allocator);
+    defer c.destroy();
+    c.num_inputs = 2;
+    const w = try c.uniformF(2.0);
+    try interpolate(c, w);
+    try interpolate(c, w);
+
+    try testing.expectEqual(no_failure, try to_qpu.virToQpu(c, &regs(&.{ 3, 1, 2, 4, 5, 6, 7 })));
+    try expectProgram(c, &.{
+        // The uniform waits while there are ldvarys to come, as long as
+        // something else can go.
+        qpuText("nop", "nop", "ldvary.rf1"),
+        qpuText("nop", "nop", "ldunifrf.rf3"),
+        // The second ldvary, paired with the first's sum, moved up a
+        // cycle: its rf0 write lands with the sum, which reads the
+        // first's.
+        qpuText("nop", "fmul rf2, rf1, rf3", "ldvary.rf5"),
+        qpuText("fadd rf4, rf0, rf2", "fmul rf6, rf5, rf3", ""),
+        qpuText("fadd rf7, rf0, rf6", "nop", ""),
+        qpuText("nop", "nop", "thrsw"),
+        qpuText("nop", "nop", ""),
+        qpuText("nop", "nop", ""),
+    });
+}
+
+test "scheduled, an SFU result read the cycle after is counted as a stall, and its latency in the cycles" {
+    const c = try Compile.create(testing.allocator);
+    defer c.destroy();
+    const one = try c.uniformF(1.0);
+    const r = try c.add(.recip, .{one});
+    _ = try c.add(.fadd, .{ r, r });
+
+    to_qpu.generateCode(c, &regs(&.{ 1, 2, 3 }));
+    // One cycle for the ldunif, two for the SFU's result.
+    try testing.expectEqual(@as(u32, 3), try @import("schedule.zig").qpuScheduleInstructions(c));
+    try testing.expectEqual(no_failure, try to_qpu.packCode(c));
+    try expectProgram(c, &.{
+        qpuText("nop", "nop", "ldunifrf.rf1"),
+        qpuText("recip rf2, rf1", "nop", ""),
+        qpuText("fadd rf3, rf2, rf2", "nop", ""),
+        // An SFU operation may not be in a thread switch's delay slots.
+        qpuText("nop", "nop", "thrsw"),
+        qpuText("nop", "nop", ""),
+        qpuText("nop", "nop", ""),
+    });
+    try testing.expectEqual(@as(u32, 1), c.qpu_inst_stalled_count);
 }
 
 fn expectRange(c: *const Compile, t: Reg, start: i32, end: i32) !void {

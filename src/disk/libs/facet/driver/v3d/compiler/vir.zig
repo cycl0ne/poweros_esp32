@@ -382,6 +382,12 @@ pub const Compile = struct {
     qpu_insts: []u64 = &.{},
     qpu_inst_count: u32 = 0,
     nop_count: u32 = 0,
+    /// Instructions the scheduler could not keep from stalling on an SFU
+    /// result.
+    qpu_inst_stalled_count: u32 = 0,
+    /// The fragment program's inputs, which its ldvarys read; the
+    /// scheduler pipelines that many.
+    num_inputs: u32 = 0,
 
     compilation_result: Result = .succeeded,
 
