@@ -56,7 +56,7 @@ const regs = @import("regs.zig");
 
 pub const DEVICE_NAME = _xhci.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 14;
+const DEVICE_REVISION = 15;
 const BUILD_DATE = "08.11.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++

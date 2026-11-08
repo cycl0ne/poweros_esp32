@@ -18,6 +18,7 @@ const roothub = @import("../roothub.zig");
 const controller = @import("../controller.zig");
 const transfer = @import("../transfer.zig");
 const _xhci = @import("../_xhci.zig");
+const dwc3 = @import("../dwc3.zig");
 
 const testing = std.testing;
 const Trb = ring.Trb;
@@ -528,4 +529,20 @@ test "what an isochronous TD's completion code makes of its packet" {
     try testing.expectEqual(sdk.devices.usbhc.UHIOERR_MISSED, transfer.isoStatus(regs.CC_MISSED_SERVICE));
     try testing.expectEqual(sdk.devices.usbhc.UHIOERR_CRCERROR, transfer.isoStatus(regs.CC_TRANSACTION));
     try testing.expectEqual(sdk.devices.usbhc.UHIOERR_OVERFLOW, transfer.isoStatus(regs.CC_BABBLE));
+}
+
+test "the RP1's DWC3 set up as its device tree asks: NAKs, the TX threshold, the AXI limit" {
+    // GUCTL1: park mode off at SuperSpeed (17) and full and low speed
+    // (15), more handshakes to full-speed async endpoints (19); the rest
+    // kept.
+    try testing.expectEqual(@as(u32, 0x000A_8000), dwc3.hostUctl1(0));
+    try testing.expectEqual(@as(u32, 0x800A_8001), dwc3.hostUctl1(0x8000_0001));
+    // GTXTHRCFG: the count selected (29), 2 packets (27:24), bursts of 8
+    // (23:16), whatever was in those fields replaced, the rest kept.
+    try testing.expectEqual(@as(u32, 0x2208_0000), dwc3.hostTxThreshold(0));
+    try testing.expectEqual(@as(u32, 0x2208_1234), dwc3.hostTxThreshold(0x2FFF_1234));
+    // GSBUSCFG1: 8 transfers, the field one less (11:8); EN1KPAGE (12)
+    // and the rest kept.
+    try testing.expectEqual(@as(u32, 0x0000_0700), dwc3.hostBusCfg1(0x0000_0300));
+    try testing.expectEqual(@as(u32, 0x0000_1700), dwc3.hostBusCfg1(0x0000_1F00));
 }
