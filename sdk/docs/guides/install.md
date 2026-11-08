@@ -49,7 +49,10 @@ name such a firmware reads off a boot partition; `kernel.bin`, which that
 loader reads from beside itself; and `disk-x64.bin`, the disk image the
 machine runs on. So the stick carries a whole machine - it comes up to a
 console and a desktop with `SYS:` in RAM, and nothing has to be installed
-to try one.
+to try one. Its disk image boots above any system partition `C:Install`
+makes, so a machine started from the stick runs the stick's system even
+where a disk of its own holds one: that is how a machine whose own system
+no longer starts is installed afresh.
 
 From there the machine installs itself onto a disk of its own with no
 network and no second machine, because the running system is a source

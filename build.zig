@@ -659,6 +659,9 @@ pub fn build(b: *std.Build) void {
     const x64_tree = make_x64_disk.addPrefixedOutputDirectoryArg("--tree=", "disk-x64");
     const x64_manifest = make_x64_disk.addPrefixedOutputFileArg("--manifest=", "disk-x64.manifest");
     const x64_disk_made = make_x64_disk.addOutputFileArg("disk-x64-made.bin");
+    // And as the stick's, which a machine started from it boots whatever
+    // its own disks hold (mkfs `--medium`).
+    const x64_medium_made = make_x64_disk.addPrefixedOutputFileArg("--medium=", "disk-x64-medium-made.bin");
     const x64_system_disk = make_x64_disk.addPrefixedOutputFileArg("--gpt=", "system-x64.bin");
     make_x64_disk.addArg(b.fmt("--gpt-bytes={d}", .{virt_system_bytes}));
     const disks: DiskImages = .{ .runs = .{ make_disk, make_p4_disk, make_rv64_disk, make_a64_disk, make_x64_disk } };
@@ -982,6 +985,10 @@ pub fn build(b: *std.Build) void {
     pad_x64_disk.addFileArg(x64_disk_made);
     const x64_disk_bin = pad_x64_disk.addOutputFileArg("disk-x64.bin");
     pad_x64_disk.addArg(b.fmt("{d}", .{ram_disk_size}));
+    const pad_x64_medium = b.addRunArtifact(padimage);
+    pad_x64_medium.addFileArg(x64_medium_made);
+    const x64_medium_bin = pad_x64_medium.addOutputFileArg("disk-x64.bin");
+    pad_x64_medium.addArg(b.fmt("{d}", .{ram_disk_size}));
     if (board == .qemu_q35) b.getInstallStep().dependOn(&b.addInstallBinFile(x64_system_disk, "system-x64.bin").step);
     if (chipOf(board) == .x64uefi) {
         b.getInstallStep().dependOn(&b.addInstallBinFile(x64_disk_bin, "disk-x64.bin").step);
@@ -1367,7 +1374,10 @@ pub fn build(b: *std.Build) void {
     // for, the kernel, and the disk image the machine runs on until
     // `C:Install` puts a system on a disk of its own. So one stick
     // carries a whole machine, and nothing has to be installed to try
-    // one.
+    // one. Its disk image boots above an installed system partition
+    // (mkfs `--medium`): a machine started from the stick runs the
+    // stick's system, which is how one whose own system no longer starts
+    // is installed afresh.
     const stick_step = b.step("stick", "Make the boot medium for -Dboard= (UEFI machines): release/stick-<board>.img");
     const stick_size = b.option(u64, "stick-size", "How many mebibytes the `stick` step's medium is (default: 320, the least a FAT32 volume of 4 KiB clusters can be with room over)");
     if (chipOf(board) != .x64uefi) {
@@ -1387,7 +1397,7 @@ pub fn build(b: *std.Build) void {
         // the two the loader then reads from beside itself.
         make_stick.addPrefixedFileArg("EFI/BOOT/BOOTX64.EFI=", uefi_stub.getEmittedBin());
         make_stick.addPrefixedFileArg("kernel.bin=", built.image);
-        make_stick.addPrefixedFileArg(b.fmt("{s}=", .{ramDiskName(.x64uefi)}), x64_disk_bin);
+        make_stick.addPrefixedFileArg(b.fmt("{s}=", .{ramDiskName(.x64uefi)}), x64_medium_bin);
         // What the tool says of the medium it made. A run the build
         // caches has its standard output sent nowhere, so the report is
         // captured and read back out by a step of its own, after the

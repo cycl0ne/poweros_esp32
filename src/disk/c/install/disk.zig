@@ -23,7 +23,9 @@ const Drive = shared.Drive;
 const Printf = dos.stdio.Printf;
 
 /// The system partition's boot priority: above a disk image's `DH0`,
-/// which has none, so a machine with both starts from the medium.
+/// which has none, so a machine with both starts from the medium; below
+/// a stick's (mkfs `--medium`), so a machine started from one runs the
+/// stick's system.
 const boot_priority: i32 = 5;
 
 /// What the boot partitions are marked as. A firmware that reads a

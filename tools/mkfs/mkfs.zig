@@ -3,7 +3,7 @@
 //! flash file system on it - so the board boots with a `C:` instead of the
 //! shell copying programs into RAM: at every start.
 //!
-//! usage: mkfs [--tree=<dir>] [--manifest=<file>]
+//! usage: mkfs [--tree=<dir>] [--manifest=<file>] [--medium=<file>]
 //!            [--gpt=<file> --gpt-bytes=<bytes> [--gpt-file=<path>[=<host-file>] ...]]
 //!            <out.bin> <volume> <partition> <sectors> <partition-sectors>
 //!            <sector-size> <page-size> <rdb-sectors>
@@ -32,6 +32,14 @@
 //! The image holds only the blocks it touched - the RDB's, and the file
 //! system's - and stops there; the rest of the disk area is left as it is,
 //! which on flash means erased.
+//!
+//! **The same disk as the medium a machine is started from**
+//! (`--medium`): a second image, the same blocks but for the partition's
+//! boot priority, which stands above the one `C:Install` gives a system
+//! partition (`medium_boot_pri`). A machine started from a stick then runs
+//! the stick's system, whatever a disk of its own holds; the disk image
+//! an installed machine's loader brings along stays below its system
+//! partition.
 //!
 //! **The same volume on a disk with a GPT** (`--gpt`): an image of
 //! `--gpt-bytes` for a disk of 512-byte blocks - an SSD - with what
@@ -297,6 +305,12 @@ fn fill(fs: anytype, entries: []const Entry) void {
     }
 }
 
+/// The partition's boot priority on the medium a machine is started from
+/// (`--medium`): above the 5 `C:Install` gives a system partition
+/// (src/disk/c/install/disk.zig), so the medium's system is the one that
+/// runs.
+const medium_boot_pri: i32 = 10;
+
 /// A structure into its block of the image, with the checksum that makes it
 /// sound.
 fn putBlock(store: []u8, block: u32, sector: u32, value: anytype) void {
@@ -314,6 +328,7 @@ pub fn main(init: std.process.Init) !void {
     // with "--".
     var tree_path: ?[]const u8 = null;
     var manifest_path: ?[]const u8 = null;
+    var medium_path: ?[]const u8 = null;
     var gpt_path: ?[]const u8 = null;
     var gpt_bytes: u64 = 0;
     var blank = false;
@@ -326,6 +341,8 @@ pub fn main(init: std.process.Init) !void {
             tree_path = arg["--tree=".len..];
         } else if (mem.startsWith(u8, arg, "--manifest=")) {
             manifest_path = arg["--manifest=".len..];
+        } else if (mem.startsWith(u8, arg, "--medium=")) {
+            medium_path = arg["--medium=".len..];
         } else if (mem.startsWith(u8, arg, "--gpt=")) {
             gpt_path = arg["--gpt=".len..];
         } else if (mem.startsWith(u8, arg, "--gpt-bytes=")) {
@@ -417,6 +434,12 @@ pub fn main(init: std.process.Init) !void {
 
     const used = flashfsVolume(store, rdb_blocks, part_sectors, sector_size, page_size, label, entries.items[0..shared], arena);
     try cwd.writeFile(io, .{ .sub_path = out_path, .data = store[0..used] });
+    if (medium_path) |path| {
+        var started = part;
+        started.environment.boot_pri = medium_boot_pri;
+        putBlock(store, partition_block, sector_size, &started);
+        try cwd.writeFile(io, .{ .sub_path = path, .data = store[0..used] });
+    }
     if (gpt_path) |path| gptDisk(io, cwd, path, gpt_bytes, label, drive, true, entries.items, arena);
 }
 
