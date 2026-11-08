@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.42 (07.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.43 (08.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -1871,14 +1871,23 @@ fn dynamicChecks(probe: *Probe) void {
     var properties: facet.PhysicalDeviceProperties = undefined;
     fb.GetPhysicalDeviceProperties(probe.physical, &properties);
     // Vulkan counts the two dynamic kinds apart, where facet folded them
-    // into one number until 1.82. The library's cap is per set layout, so
-    // each kind carries the whole of it.
-    const most = properties.limits.max_descriptor_set_uniform_buffers_dynamic;
-    probe.checkEqual(most, properties.limits.max_descriptor_set_storage_buffers_dynamic, "the two dynamic kinds are capped alike");
-    probe.check(most != 0, "the limit says how many a set holds");
+    // into one number until 1.82, and over a whole pipeline layout. Since
+    // 1.85 they are Vulkan's floor, eight and four, and one set holds the
+    // two together: twelve, of either kind.
+    const uniforms = properties.limits.max_descriptor_set_uniform_buffers_dynamic;
+    const storages = properties.limits.max_descriptor_set_storage_buffers_dynamic;
+    probe.check(uniforms >= 8 and storages >= 4, "the two dynamic kinds at Vulkan's floor, eight and four");
+    const most = uniforms + storages;
+    const whole = [2]facet.DescriptorSetLayoutBinding{
+        .{ .binding = 0, .descriptor_type = .uniform_buffer_dynamic, .descriptor_count = uniforms, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+        .{ .binding = 1, .descriptor_type = .storage_buffer_dynamic, .descriptor_count = storages, .stage_flags = facet.SHADER_STAGE_COMPUTE },
+    };
+    var held: ?*facet.DescriptorSetLayout = null;
+    probe.check(fb.CreateDescriptorSetLayout(device, &.{ .binding_count = whole.len, .bindings = &whole }, &held) == .success, "a set of the whole of both made");
+    if (held) |each| fb.DestroyDescriptorSetLayout(device, each);
     var none: ?*facet.DescriptorSetLayout = null;
     const too_many = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .uniform_buffer_dynamic, .descriptor_count = most + 1 };
-    probe.check(fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&too_many) }, &none) == .error_feature_not_present, "a set of more than the limit refused");
+    probe.check(fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&too_many) }, &none) == .error_feature_not_present, "a set of more than the two together refused");
     probe.check(none == null, "and nothing given back for that either");
 
     var module: ?*facet.ShaderModule = null;
@@ -2015,8 +2024,23 @@ fn queryChecks(probe: *Probe) void {
     if (laid == .success) {
         var needs: facet.MemoryRequirements = undefined;
         fb.GetImageMemoryRequirements(device, biggest.?, &needs);
-        probe.checkEqual(shape.max_resource_size, needs.size, "its memory is what max_resource_size said");
         probe.check(needs.size > @as(u64, shape.max_extent.width) * shape.max_extent.height * 4, "which is more than one level of one layer");
+        // Where the answer says four samples a pixel, it is the larger of
+        // that image and the largest of four, one level as such an image
+        // is (since 1.98): the two are kept apart, a texture of levels
+        // against rows of samples.
+        var most = needs.size;
+        if (shape.sample_counts & facet.SAMPLE_COUNT_4 != 0) {
+            var four: ?*facet.Image = null;
+            const four_laid = fb.CreateImage(device, &.{ .format = .b8g8r8a8_unorm, .extent = shape.max_extent, .array_layers = shape.max_array_layers, .samples = 4, .usage = sampled }, &four);
+            probe.check(four_laid == .success, "and the largest of four samples a pixel");
+            if (four_laid == .success) {
+                fb.GetImageMemoryRequirements(device, four.?, &needs);
+                most = @max(most, needs.size);
+            }
+            fb.DestroyImage(device, four);
+        }
+        probe.checkEqual(shape.max_resource_size, most, "its memory is what max_resource_size said");
     }
     fb.DestroyImage(device, biggest);
 
@@ -2225,10 +2249,12 @@ fn inputChecks(probe: *Probe) void {
     const pass = probe.renderPass(pass_info) orelse return probe.check(false, "a pass whose second subpass reads the first's");
     probe.check(true, "a pass whose second subpass reads the first's");
 
-    // A subpass that reads what it draws is a loop, and a depth
-    // attachment has no rows to read.
+    // A subpass that reads what it draws, which Vulkan allows - a loop
+    // whose reads it leaves undefined where nothing orders the write
+    // before them - is drawn since 1.134, with the self-dependency or
+    // without it; it was refused until then.
     const loop = facet.SubpassDescription{ .input_attachment_count = 1, .input_attachments = &to_first, .color_attachment_count = 1, .color_attachments = &to_first };
-    probe.check(probe.renderPass(.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&loop) }) == null, "a subpass that reads what it draws refused");
+    probe.check(probe.renderPass(.{ .attachment_count = 2, .attachments = &attachments, .subpass_count = 1, .subpasses = @ptrCast(&loop) }) != null, "a subpass that reads what it draws made");
     const with_depth = [2]facet.AttachmentDescription{
         .{ .format = .d16_unorm, .final_layout = .general },
         .{ .format = .b8g8r8a8_unorm, .load_op = .clear, .store_op = .store, .final_layout = .general },
@@ -4999,13 +5025,17 @@ fn pointChecks(probe: *Probe) void {
 
     // The range the device gives: one pixel at the narrow end and wider
     // than one at the other, which is what Vulkan's `largePoints` says,
-    // and every size between them drawn as it is.
+    // and the step between two sizes the rasterizer's own sub-pixel
+    // precision. It was 0 until 1.82, which Vulkan reads as no size
+    // between the ends at all.
     var properties: facet.PhysicalDeviceProperties = undefined;
     fb.GetPhysicalDeviceProperties(probe.physical, &properties);
     const range = properties.limits.point_size_range;
     probe.check(range[0] == 1, "the narrowest point is one pixel");
     probe.check(range[1] > 1, "and the widest is wider than one, as largePoints says");
-    probe.check(properties.limits.point_size_granularity == 0, "every size between them is drawn as it is");
+    const step = @as(f32, 1) / @as(f32, @floatFromInt(@as(u32, 1) << @intCast(properties.limits.sub_pixel_precision_bits)));
+    probe.check(properties.limits.point_size_granularity == step, "the sizes between them a sub-pixel step apart");
+    probe.check(properties.limits.point_size_granularity <= 1, "which is no more than a pixel, as Vulkan has it");
 
     var slot: usize = 0;
     for (probe.memories, 0..) |each, k| if (each == null) {
