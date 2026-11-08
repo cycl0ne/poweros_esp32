@@ -7,6 +7,7 @@
 test {
     _ = @import("classes/gadgets/textedit/text.zig");
     _ = @import("classes/gadgets/textedit/undo.zig");
+    _ = @import("classes/gadgets/text/_scroll.zig");
     _ = @import("programs/notepad/highlight.zig");
     _ = @import("programs/boing/bounce.zig");
     _ = @import("programs/cobra/ship.zig");

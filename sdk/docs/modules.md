@@ -635,6 +635,7 @@ flowchart TB
     m_text_datatype --> m_dos_library
     m_text_datatype --> m_iffparse_library
     m_text_gadget --> m_diskfont_library
+    m_text_gadget --> m_motion_library
     m_textedit_gadget --> m_keymap_library
     m_textedit_gadget --> m_scroller_gadget
     m_toolbutton_gadget --> m_icon_library

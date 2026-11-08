@@ -85,8 +85,9 @@ The window's title is the song's: `Fire - Player`.
   kind of file, its rate, mono or stereo, and its bit rate. A line the
   tags have nothing for is left out, and the window grows when a song
   needs more lines than it has room for. A line too long for the room
-  ends in three dots. The title is in the window's font, half again as
-  tall, when diskfont.library can render it so; the dim lines are in
+  goes along inside it, there and back, so the whole of it is read. The
+  title is in the window's font, half again as tall, when
+  diskfont.library can render it so; the dim lines are in
   the screen's dim text colour, which **Prefs > Colours** sets as
   *Dim text*.
 - A slider across that is where the song is, the time heard before it
@@ -157,11 +158,12 @@ keep their own.
 A press on the picture goes to the next one; the **Picture** menu picks
 one and ticks the one shown.
 
-**Over the whole screen**: Picture > Whole screen, the F key, or a
-double-click on the picture - which shows the one it was before the
-first press - shows the picture over everything on the screen, the dock
-too, with no pointer. At each new song its title and artist fade in at
-the lower left, stay three seconds and fade out. A key or a press of any
+**Over the whole screen**: Picture > Whole screen or the F key shows
+the picture over everything on the screen, the dock too, with no
+pointer. At each new song its title and artist fade in at the lower
+left, stay three seconds and fade out; a title or artist too wide for
+the screen goes along to its end first, and waits there before it
+fades. A key or a press of any
 button ends it, and the picture is back in the window. The picture keeps in step with what is
 heard, not with what has been decoded: the sound card's own delay is
 taken off. When the sound stops, the picture settles for two

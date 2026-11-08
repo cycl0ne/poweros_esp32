@@ -395,6 +395,11 @@ const time = ib.NewObjectTagList(null, tx.TEXT_CLASS, &.{
 });
 ```
 
+A line that can be longer than its room - a song's title - either ends
+in three dots at the edge (`TEXT_Clipped`) or, with `TEXT_Scroll`, goes
+along inside the room, there and back, so the whole of it is read; the
+Player's lines do that.
+
 A child is replaced in a window that is open: `LAYOUTA_ModifyChild`
 names it and `CHILDA_Replace` gives the new one, which takes its place,
 its label and its sizes; the layout disposes of the old one. Only the

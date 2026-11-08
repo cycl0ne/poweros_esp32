@@ -27,6 +27,15 @@
 //! when it is drawn - so it follows the screen's pens and the style. Its
 //! size is measured the same way on a RastPort of its own over a bitmap
 //! of a pixel.
+//!
+//! **Scrolling** (`TEXT_Scroll`) is `_scroll.zig`'s clock: a line too
+//! wide is drawn whole, moved left by how far along it is, with the
+//! RastPort's clip narrowed to the box's columns for the drawing - nothing
+//! else would hold it inside the box - and put back after. The drawing
+//! measures the lines and tells the clock how far the widest runs past the
+//! box; a text set anew starts it from the beginning. Where the gadget or
+//! its screen does not move, or the clock could not be had, a line too
+//! wide is cut as a clipped one is.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -43,6 +52,8 @@ const support = gadgets.support;
 const tx = gadgets.text;
 /// Rich text: markup into runs, runs into lines.
 pub const rich = @import("_runs.zig");
+/// A line too wide going along inside the box.
+const scrolling = @import("_scroll.zig");
 const Class = classes.Class;
 const Object = classes.Object;
 const TagItem = utility.TagItem;
@@ -51,8 +62,8 @@ const TagItem = utility.TagItem;
 pub const Library = gadgets.ClassLibrary(.{
     .name = tx.TEXT_CLASS,
     .version = 1,
-    .revision = 4,
-    .date = "28.10.2026",
+    .revision = 5,
+    .date = "08.11.2026",
     .super = classusr.GADGETCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -92,10 +103,14 @@ const Data = extern struct {
     parsed: ?*rich.Parsed = null,
     markup: u8 = 0,
     wrap: u8 = 0,
-    pad2: [2]u8 = .{ 0, 0 },
+    /// `TEXT_Scroll`: a line too wide goes along inside the box.
+    scrolls: u8 = 0,
+    pad2: u8 = 0,
     /// `TEXT_RoomFor`: the text whose width it keeps at the least, the
     /// caller's.
     room_for: ?[*:0]const u8 = null,
+    /// How far along a line too wide is, while it scrolls.
+    scroll: scrolling.Scroll = .{},
 };
 
 /// Markup parsed into runs of its own, what was parsed before let go.
@@ -143,7 +158,7 @@ fn shown(base: *gadgets.Base, own: *Data) ?[*:0]const u8 {
 }
 
 /// The attributes among `tags`: whether anything that shows changed.
-fn setAttrs(base: *gadgets.Base, own: *Data, tags: ?[*]const TagItem, new: bool) bool {
+fn setAttrs(base: *gadgets.Base, o: *Object, own: *Data, tags: ?[*]const TagItem, new: bool) bool {
     const ub = base.utility_base;
     const ib = base.intuition_base;
     var changed = false;
@@ -156,6 +171,7 @@ fn setAttrs(base: *gadgets.Base, own: *Data, tags: ?[*]const TagItem, new: bool)
             tx.TEXT_Text => {
                 takeText(base, own, @ptrFromInt(item.data));
                 if (own.markup != 0) takeMarkup(base, own, own.text);
+                own.scroll.again();
                 changed = true;
             },
             tx.TEXT_Markup => if (new) {
@@ -165,6 +181,7 @@ fn setAttrs(base: *gadgets.Base, own: *Data, tags: ?[*]const TagItem, new: bool)
                 rich.free(base.sys_base, base.graphics_base, own.parsed);
                 own.parsed = null;
                 own.runs = @ptrFromInt(item.data);
+                own.scroll.again();
                 changed = true;
             },
             tx.TEXT_Wrap => {
@@ -174,6 +191,7 @@ fn setAttrs(base: *gadgets.Base, own: *Data, tags: ?[*]const TagItem, new: bool)
             tx.TEXT_Number => {
                 own.number = @truncate(@as(isize, @bitCast(item.data)));
                 own.shows_number = 1;
+                own.scroll.again();
                 changed = true;
             },
             tx.TEXT_Format => {
@@ -216,6 +234,14 @@ fn setAttrs(base: *gadgets.Base, own: *Data, tags: ?[*]const TagItem, new: bool)
             },
             tx.TEXT_RoomFor => {
                 own.room_for = @ptrFromInt(item.data);
+                changed = true;
+            },
+            // The clock is made here, on the task that makes or sets the
+            // gadget and later disposes of it.
+            tx.TEXT_Scroll => {
+                own.scrolls = @intFromBool(item.data != 0);
+                if (own.scrolls != 0) _ = own.scroll.make(base, o);
+                own.scroll.again();
                 changed = true;
             },
             else => {},
@@ -297,20 +323,29 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     own.overrun = 0;
     if (own.border != 0) if (own.frame) |frame| support.drawGadgetFrame(ib, o, frame, rp, b, ic.IDS_NORMAL, info.draw_info, sdk.intuition.style.PART_MAIN);
 
+    // Going along while it scrolls and anything moves here; otherwise a
+    // line too wide is cut.
+    const scrolls = own.scrolls != 0 and own.scroll.animation != null and gc.animates(gc.gadget(o), info.draw_info);
+    const clipped = own.clipped != 0 or own.scrolls != 0;
     if (own.runs) |runs| {
-        const right = drawRuns(base, own, rp, runs, area, front, &styled);
-        own.overrun = @max(right - (b.left + b.width), 0);
+        const drawn = drawRuns(base, own, rp, runs, area, front, &styled, clipped, scrolls);
+        own.overrun = @max(drawn.right - (b.left + b.width), 0);
+        if (own.scroll.animation != null) own.scroll.follow(drawn.most, drawn.rows);
         return ghostIfDisabled(base, o, rp, b, info);
     }
     const text = shown(base, own) orelse return;
     const count: u32 = @intCast(textLen(text));
     const width = gb.TextLength(rp, text, count);
-    // Too wide and clipped: as much as fits from the left, and the dots.
-    const cut = own.clipped != 0 and width > area.width;
     var line: u32 = 0;
     const ask = [_]TagItem{ .{ .tag = graphics.RPTAG_FontHeight, .data = @intFromPtr(&line) }, .{} };
     gb.GetRPAttrs(rp, &ask);
-    const left = if (cut) area.left else switch (own.justification) {
+    const over = width - area.width;
+    if (own.scroll.animation != null) own.scroll.follow(if (scrolls) @max(over, 0) else 0, line);
+    // Too wide: along by as much as it has gone, or, clipped, as much as
+    // fits from the left and the dots.
+    const along = scrolls and over > 0;
+    const cut = !along and clipped and over > 0;
+    const left = if (along) area.left - own.scroll.at(over) else if (cut) area.left else switch (own.justification) {
         tx.TEXT_JUSTIFY_RIGHT => area.left + area.width - width,
         tx.TEXT_JUSTIFY_CENTER => area.left + @divTrunc(area.width - width, 2),
         else => area.left,
@@ -323,7 +358,11 @@ fn render(base: *gadgets.Base, cl: *Class, o: *Object, r: *gc.GpRender) void {
     const mode = [_]TagItem{ .{ .tag = graphics.RPTAG_DrMd, .data = graphics.DRMD_JAM1 }, .{} };
     gb.SetRPAttrs(rp, &mode);
     gb.Move(rp, left, top + @as(i32, @intCast(baseline)));
-    if (cut) {
+    if (along) {
+        const was = holdColumns(gb, rp, area);
+        gb.Text(rp, text, count);
+        putClip(gb, rp, was);
+    } else if (cut) {
         _ = gb.TextFitted(rp, text, count, @max(area.width, 0));
     } else {
         gb.Text(rp, text, count);
@@ -353,27 +392,61 @@ fn ghostIfDisabled(base: *gadgets.Base, o: *Object, rp: *graphics.RastPort, b: g
     if (gc.gadget(o).flags & gc.GFLG_DISABLED != 0) support.ghost(base.graphics_base, rp, b, info.block_pen);
 }
 
+/// What drawing rich text came to: how far right the lines reached, how
+/// far the widest ran past the area, and how tall that one is.
+const Drawn = struct { right: i32, most: i32 = 0, rows: u32 = 0 };
+
 /// Rich text in `area`: wrapped lines from its top while they fit, or the
 /// lines its line breaks make as one block in its middle - each cut at
-/// the area's edge when it is clipped. How far right the lines reached.
-fn drawRuns(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, runs: [*]const tx.TextRun, area: gc.Box, front: graphics.Pen, pens: *const [sc.NUMDRIPENS]graphics.Pen) i32 {
+/// the area's edge when `clipped`, or, when it `scrolls`, one too wide
+/// gone along by its share of the offset and held to the area's columns.
+fn drawRuns(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, runs: [*]const tx.TextRun, area: gc.Box, front: graphics.Pen, pens: *const [sc.NUMDRIPENS]graphics.Pen, clipped: bool, scrolls: bool) Drawn {
     const gb = base.graphics_base;
-    const ink = rich.Ink{ .gb = gb, .rp = rp, .font = fontOf(gb, rp) orelse return area.left, .front = front, .pens = pens };
+    const ink = rich.Ink{ .gb = gb, .rp = rp, .font = fontOf(gb, rp) orelse return .{ .right = area.left }, .front = front, .pens = pens };
     const wrap = own.wrap != 0;
-    const limit: ?i32 = if (own.clipped != 0) area.left + area.width else null;
+    const edge = area.left + area.width;
+    const limit: ?i32 = if (clipped) edge else null;
     var top = area.top;
     if (!wrap) top += @max(@divTrunc(area.height - blockHeight(ink, runs, area.width), 2), 0);
-    var right = area.left;
+    var drawn = Drawn{ .right = area.left };
     var pos = rich.Pos{};
     while (rich.lineAt(ink, runs, pos, area.width, wrap)) |line| {
         if (top + line.height > area.top + area.height and !(top == area.top)) break;
-        const width = if (limit != null) @min(line.width, area.width) else line.width;
-        right = @max(right, rich.drawLine(ink, runs, line, lineLeft(own, area, width), top, limit));
+        const over = line.width - area.width;
+        if (scrolls and over > 0) {
+            const was = holdColumns(gb, rp, area);
+            const right = rich.drawLine(ink, runs, line, area.left - own.scroll.at(over), top, null);
+            putClip(gb, rp, was);
+            drawn.right = @max(drawn.right, @min(right, edge));
+            if (over > drawn.most) {
+                drawn.most = over;
+                drawn.rows = @intCast(line.height);
+            }
+        } else {
+            const width = if (limit != null) @min(line.width, area.width) else line.width;
+            drawn.right = @max(drawn.right, rich.drawLine(ink, runs, line, lineLeft(own, area, width), top, limit));
+        }
         top += line.height;
         if (line.end.run == pos.run and line.end.at == pos.at) break;
         pos = line.end;
     }
-    return right;
+    return drawn;
+}
+
+/// The RastPort's clip narrowed to `area`'s columns: what it was, to put
+/// back with `putClip`.
+fn holdColumns(gb: anytype, rp: *graphics.RastPort, area: gc.Box) graphics.Rect {
+    var was: graphics.Rect = .{};
+    gb.GetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&was) }, .{} });
+    var held = was;
+    held.min_x = @max(was.min_x, area.left);
+    held.max_x = @min(was.max_x, area.left + area.width);
+    gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&held) }, .{} });
+    return was;
+}
+
+fn putClip(gb: anytype, rp: *graphics.RastPort, was: graphics.Rect) void {
+    gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&was) }, .{} });
 }
 
 /// How tall the lines of `runs` are together, laid out in `width`.
@@ -438,7 +511,7 @@ fn domain(base: *gadgets.Base, own: *Data, g: *const gc.Gadget, gi: ?*const clas
         const measured = measureRuns(base, own, runs, own.font orelse measure.font, if (own.wrap != 0) g.given_width - room.width else 0x7FFF);
         const lines = gc.Box{ .width = @max(measured.width, kept) + room.width, .height = @max(measured.height, 1) + room.height };
         return switch (which) {
-            gc.GDOMAIN_MINIMUM => .{ .width = if (own.wrap != 0 or own.clipped != 0) 0 else lines.width, .height = lines.height },
+            gc.GDOMAIN_MINIMUM => .{ .width = if (own.wrap != 0 or own.clipped != 0 or own.scrolls != 0) 0 else lines.width, .height = lines.height },
             gc.GDOMAIN_NOMINAL => .{ .width = @max(lines.width, g.given_width), .height = lines.height },
             else => .{ .width = gc.GDOMAIN_UNLIMITED, .height = lines.height },
         };
@@ -454,7 +527,7 @@ fn domain(base: *gadgets.Base, own: *Data, g: *const gc.Gadget, gi: ?*const clas
     box.width += room.width;
     box.height += room.height;
     return switch (which) {
-        gc.GDOMAIN_MINIMUM => .{ .width = if (own.clipped != 0) 0 else box.width, .height = box.height },
+        gc.GDOMAIN_MINIMUM => .{ .width = if (own.clipped != 0 or own.scrolls != 0) 0 else box.width, .height = box.height },
         gc.GDOMAIN_NOMINAL => .{ .width = @max(box.width, g.given_width), .height = box.height },
         else => .{ .width = gc.GDOMAIN_UNLIMITED, .height = box.height },
     };
@@ -475,7 +548,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const new: *classusr.OpSet = @ptrCast(@alignCast(msg));
             const own = classes.instData(Data, cl, obj);
             own.* = .{};
-            _ = setAttrs(base, own, new.attr_list, true);
+            _ = setAttrs(base, obj, own, new.attr_list, true);
             const ub = base.utility_base;
             if (ub.FindTagItem(gc.GA_Width, new.attr_list) == null and ub.FindTagItem(gc.GA_Height, new.attr_list) == null) {
                 const size = domain(base, own, gc.gadget(obj), null, gc.GDOMAIN_NOMINAL);
@@ -493,13 +566,14 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const own = classes.instData(Data, cl, o orelse return 0);
             if (own.owns_text != 0) base.sys_base.FreeVec(@ptrCast(@constCast(own.text)));
             rich.free(base.sys_base, base.graphics_base, own.parsed);
+            own.scroll.dispose(base);
             ib.DisposeObject(own.frame);
             return ib.SendSuperMessage(cl, o, msg);
         },
         classusr.OM_SET, classusr.OM_UPDATE => {
             const set: *classusr.OpSet = @ptrCast(@alignCast(msg));
             var changed = ib.SendSuperMessage(cl, o, msg);
-            if (setAttrs(base, classes.instData(Data, cl, o.?), set.attr_list, false)) changed = 1;
+            if (setAttrs(base, o.?, classes.instData(Data, cl, o.?), set.attr_list, false)) changed = 1;
             if (changed != 0 and classes.objectClass(o.?) == cl and set.gadget_info != null) {
                 support.redraw(ib, o.?, set.gadget_info);
                 return 0;
