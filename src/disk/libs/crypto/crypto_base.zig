@@ -12,14 +12,16 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const jh7110 = @import("engine/jh7110.zig");
 const _engine = @import("engine/_engine.zig");
 const _bignum = @import("bignum/_bignum.zig");
+const field = @import("math/field.zig");
 
 /// The words of the longest number ModExp takes.
 pub const number_words = _bignum.number_words;
 
 /// ModExp's working numbers, in the engine's form: 32-bit words, least
-/// significant first.
+/// significant first. Aligned to the chip's limb, so that a 64-bit
+/// chip's software takes them two words at a time.
 pub const Numbers = extern struct {
-    base_value: [number_words]u32 = @splat(0),
+    base_value: [number_words]u32 align(@alignOf(field.native_limb)) = @splat(0),
     exponent: [number_words]u32 = @splat(0),
     modulus: [number_words]u32 = @splat(0),
     /// R squared modulo the modulus, R being 2 to the engine's bits.

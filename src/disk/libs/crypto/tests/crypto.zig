@@ -27,6 +27,7 @@ const testing = std.testing;
 test {
     _ = @import("../crypto_lvo.zig");
     _ = @import("../gcm/_gcm.zig");
+    _ = @import("../engine/soft_rsa.zig");
 }
 
 /// exec and the library; the base the tests open is theirs.

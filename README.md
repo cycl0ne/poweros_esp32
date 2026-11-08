@@ -732,7 +732,11 @@ work on the 128-bit registers a task switch already saves. On a Ryzen 7
 download keeps up with a 1 Gbit/s link (`C:net/HTTPGet`: 256 MiB at
 115 MB/s, the same as plain HTTP). SHA-384 and SHA-512, which the core
 has nothing for, and a core without them run the software, which the
-other 64-bit machines use.
+other 64-bit machines use. The curves and RSA, which no instruction
+helps, are worked in 64-bit limbs on every 64-bit machine, multiplied 64
+by 64 bits into 128: on the same core an X25519 key agreement takes
+62 us where it took 143, a P-256 one 154 us where it took 360, and an
+RSA-2048 signature check 53 us where it took 146.
 
 **A virtio GPU is taken where the machine has one.** The display driver
 speaks virtio over two transports now: a block of registers at an address

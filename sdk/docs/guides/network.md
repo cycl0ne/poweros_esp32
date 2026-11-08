@@ -253,7 +253,7 @@ TLS 1.1 and older, CBC, RC4 and RSA key exchange are never offered. All
 of it runs on crypto.library: the hashes and AES on the chip's engines,
 AES, GCM's hash, SHA-1 and SHA-256 on an x86-64 core's own instructions
 (AES-NI, PCLMULQDQ and the SHA extensions), which keep up with a
-1 Gbit/s link.
+1 Gbit/s link; the curves and RSA in 64-bit limbs on a 64-bit chip.
 `GetSessionAttr(TLS_Version)` and `TLS_Suite` say what a session came to.
 
 **The server's certificates** are checked as the session opens: a chain

@@ -897,9 +897,12 @@ crypto.library/VerifySignature
 	set - an RSA key's - goes to its PKA, which multiplies while the CPU
 	goes through the exponent a window at a time, every window - 1, 2 or
 	4 bits, whichever takes fewest steps for the exponent's length -
-	costing the same. Any other modulus there, and any on the P4, is done
-	in software the same way: there too only the exponent's length shows
-	in the time it takes.
+	costing the same. Any other modulus there, and any on a chip without
+	an engine, is done in software the same way: there too only the
+	exponent's length shows in the time it takes. A 64-bit chip's
+	software takes the words two at a time where the modulus has an even
+	count of them, as an RSA key's has: a 2048-bit exponent on a 2048-bit
+	modulus takes about 3.9 ms on a Ryzen 7 7840HS.
 
    CONTEXT
 	- Waits: yes, for the RSA engine while another task has it; the
@@ -1152,7 +1155,9 @@ crypto.library/VerifySignature
 	The secret is the caller's: feed it to HkdfExtract, then overwrite it.
 
    NOTES
-	The work takes the same steps whatever the private key.
+	The work takes the same steps whatever the private key. A 64-bit chip
+	works the field's numbers in 64-bit limbs: on a Ryzen 7 7840HS an
+	X25519 secret takes about 62 us, P-256 154 us, P-384 533 us.
 
    BUGS
 	None known.
@@ -1493,7 +1498,9 @@ crypto.library/VerifySignature
 	Everything here is public, so it is not made to take the same time
 	for every input: a bad signature fails as soon as it is seen to be
 	bad. An RSA-2048 check is one short exponentiation on the engine; an
-	ECDSA check two scalar multiplications in software.
+	ECDSA check two scalar multiplications in software. On a Ryzen 7
+	7840HS, whose software works in 64-bit limbs, an RSA-2048 check takes
+	about 53 us, ECDSA on P-256 143 us, Ed25519 94 us.
 
    BUGS
 	None known.
