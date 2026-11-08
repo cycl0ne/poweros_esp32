@@ -129,7 +129,8 @@ pub const Drawer = struct {
     /// How high the row of headings is: 0 unless viewed as text.
     heads: i32 = 0,
     /// The ribbon across the inside's top, how high it is, and what its
-    /// buttons show (`ribbon.zig`); none without its classes.
+    /// buttons show (`ribbon.zig`); none without its classes or with the
+    /// prefs' RIBBON=NO.
     ribbon: ?*rb.Built = null,
     ribbon_height: i32 = 0,
     ribbon_state: ribbon.State = .{},
@@ -970,8 +971,11 @@ pub fn sortBy(d: *Desktop, dr: *Drawer, view: View) void {
 /// the bars set. Icons stay where they lie, so unless the view had to move
 /// to stay on the ground nothing they show changes - what the window grew
 /// by, and where its border was, comes as a refresh. Rows are laid out
-/// across the width, and are drawn again.
+/// across the width, and are drawn again. A ribbon that folds to its row
+/// of tabs, or opens out again, as the window is sized across
+/// `ribbon.minimize_below` moves the view with it, which is drawn again.
 pub fn resized(d: *Desktop, dr: *Drawer) void {
+    if (ribbon.measureAgain(d, dr)) return;
     const moved = fit(d, dr);
     if (dr.view == .icon and !moved) return;
     if (dr.view != .icon) drawStrip(d, dr);

@@ -153,8 +153,8 @@ const looks = intuition.style;
 const Pen = graphics.Pen;
 
 pub const COMMAND_NAME = "Prefs";
-const VERSION = "1.24";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (03.11.2026)\r\n";
+const VERSION = "1.25";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (08.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while one of its windows is active.
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
@@ -488,6 +488,7 @@ const Editor = struct {
     icon_size: *Object = undefined,
     snap: *Object = undefined,
     new_window: *Object = undefined,
+    ribbon: *Object = undefined,
     view: *Object = undefined,
     /// The sound page: audio.device, when the machine has one; the
     /// outputs as the page has them, and as they were when it opened, for
@@ -1044,6 +1045,8 @@ const Editor = struct {
         p.snap = value != 0;
         _ = e.ib.GetAttr(cb.CHECKBOX_Checked, e.new_window, &value);
         p.new_window = value != 0;
+        _ = e.ib.GetAttr(cb.CHECKBOX_Checked, e.ribbon, &value);
+        p.ribbon = value != 0;
         _ = e.ib.GetAttr(ch.CHOOSER_Active, e.view, &value);
         p.view = @enumFromInt(@min(value, anvil_file.view_names.len - 1));
         return p;
@@ -2321,13 +2324,17 @@ noinline fn build(e: *Editor) ?*Object {
         pair(cb.CHECKBOX_Checked, @intFromBool(e.desktop.new_window)),
         .{},
     }) orelse return null;
+    e.ribbon = ib.NewObjectTagList(null, cb.CHECKBOX_CLASS, &[_]TagItem{
+        pair(cb.CHECKBOX_Checked, @intFromBool(e.desktop.ribbon)),
+        .{},
+    }) orelse return null;
     const ground_note = ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
         pair(tx.TEXT_Wrap, 1),
         pair(tx.TEXT_Text, @intFromPtr("A colour #RRGGBB, or two #top..#bottom shaded down the desktop; empty for the screen's background.")),
         .{},
     }) orelse return null;
     const ground_group = column(ib, "Ground", &.{ ground_row, ground_note, e.picture, e.place }, &.{ "_Ground", null, "P_icture", "Pl_ace" }) orelse return null;
-    const icons_group = column(ib, "Icons", &.{ e.icon_size, e.snap, e.view, e.new_window }, &.{ "Icon si_ze", "Snap _to grid", "Drawers' _view", "A _window per drawer" }) orelse return null;
+    const icons_group = column(ib, "Icons", &.{ e.icon_size, e.snap, e.view, e.new_window, e.ribbon }, &.{ "Icon si_ze", "Snap _to grid", "Drawers' _view", "A _window per drawer", "A _ribbon in each drawer" }) orelse return null;
     pages[page_desktop] = column(ib, null, &.{ ground_group, icons_group }, &.{}) orelse return null;
 
     // The system page.

@@ -156,7 +156,7 @@ test "anvil.prefs: a line read, its picture quoted, written back" {
     const ub = try utilityUp();
     defer kexec.deinit();
     var settings: prefs.anvil.Settings = .{};
-    try testing.expect(prefs.anvil.parse(ub, "ground=#3A5F8A..#14253A PICTURE=\"SYS:Prefs/Sea Side.png\" place=scaled ICONSIZE=64 VIEW=name snap=yes newwindow=YES", &settings) == null);
+    try testing.expect(prefs.anvil.parse(ub, "ground=#3A5F8A..#14253A PICTURE=\"SYS:Prefs/Sea Side.png\" place=scaled ICONSIZE=64 VIEW=name snap=yes newwindow=YES ribbon=no", &settings) == null);
     try testing.expect(settings.ground_given);
     try testing.expect(settings.shaded());
     try testing.expectEqual(@as(u32, 0xFF3A_5F8A), settings.top);
@@ -167,9 +167,10 @@ test "anvil.prefs: a line read, its picture quoted, written back" {
     try testing.expectEqual(prefs.anvil.View.name, settings.view);
     try testing.expect(settings.snap);
     try testing.expect(settings.new_window);
+    try testing.expect(!settings.ribbon);
     var out: [240]u8 = undefined;
     const written = out[0..prefs.anvil.write(&settings, &out)];
-    try testing.expectEqualStrings("GROUND=#3A5F8A..#14253A PICTURE=\"SYS:Prefs/Sea Side.png\" PLACE=SCALED ICONSIZE=64 VIEW=NAME SNAP=YES NEWWINDOW=YES", written);
+    try testing.expectEqualStrings("GROUND=#3A5F8A..#14253A PICTURE=\"SYS:Prefs/Sea Side.png\" PLACE=SCALED ICONSIZE=64 VIEW=NAME SNAP=YES NEWWINDOW=YES RIBBON=NO", written);
     var again: prefs.anvil.Settings = .{};
     try testing.expect(prefs.anvil.parse(ub, written, &again) == null);
     try testing.expectEqualSlices(u8, std.mem.asBytes(&settings), std.mem.asBytes(&again));
@@ -179,9 +180,9 @@ test "anvil.prefs: a line read, its picture quoted, written back" {
     try testing.expect(prefs.anvil.parse(ub, "GROUND=#336699 PICTURE=NONE", &plain) == null);
     try testing.expect(!plain.shaded());
     try testing.expect(plain.pictureName() == null);
-    try testing.expectEqualStrings("GROUND=#336699 PICTURE=NONE PLACE=TILED ICONSIZE=48 VIEW=ICON SNAP=NO NEWWINDOW=NO", out[0..prefs.anvil.write(&plain, &out)]);
+    try testing.expectEqualStrings("GROUND=#336699 PICTURE=NONE PLACE=TILED ICONSIZE=48 VIEW=ICON SNAP=NO NEWWINDOW=NO RIBBON=YES", out[0..prefs.anvil.write(&plain, &out)]);
     // Left out entirely, the ground is the screen's pen and is not written.
-    try testing.expectEqualStrings("PICTURE=NONE PLACE=TILED ICONSIZE=48 VIEW=ICON SNAP=NO NEWWINDOW=NO", out[0..prefs.anvil.write(&prefs.anvil.Settings{}, &out)]);
+    try testing.expectEqualStrings("PICTURE=NONE PLACE=TILED ICONSIZE=48 VIEW=ICON SNAP=NO NEWWINDOW=NO RIBBON=YES", out[0..prefs.anvil.write(&prefs.anvil.Settings{}, &out)]);
     try testing.expectEqual(@as(?[2]u32, null), prefs.anvil.groundOf("#33669"));
     try testing.expectEqual(@as(?[2]u32, .{ 0xFF33_6699, 0xFF00_0000 }), prefs.anvil.groundOf("#336699..#000000"));
 
@@ -195,6 +196,7 @@ test "anvil.prefs: a line read, its picture quoted, written back" {
     try testing.expect(prefs.anvil.parse(ub, "PICTURE=\"open", &plain) != null);
     try testing.expect(prefs.anvil.parse(ub, "WALLPAPER=x", &plain) != null);
     try testing.expect(prefs.anvil.parse(ub, "SNAP=SOMETIMES", &plain) != null);
+    try testing.expect(prefs.anvil.parse(ub, "RIBBON=MAYBE", &plain) != null);
     try utilityDown(ub);
 }
 

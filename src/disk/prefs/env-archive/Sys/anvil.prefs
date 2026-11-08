@@ -18,7 +18,9 @@
 # NEWWINDOW YES to open each drawer in a window of its own, NO to
 #           open a drawer in its parent's window. A disk opens a
 #           window of its own either way.
+# RIBBON    YES for a ribbon across the top of each drawer's
+#           window, the drawer's commands as buttons; NO for none.
 #
 # One left out keeps the desktop's own. These are its own:
 #
-# PICTURE=NONE PLACE=TILED ICONSIZE=48 VIEW=ICON SNAP=NO NEWWINDOW=NO
+# PICTURE=NONE PLACE=TILED ICONSIZE=48 VIEW=ICON SNAP=NO NEWWINDOW=NO RIBBON=YES

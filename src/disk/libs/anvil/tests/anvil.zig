@@ -3,8 +3,9 @@
 //! in the first free cell, the ground's geometry, the title's figures,
 //! the tool types as Information writes them, the startup drawer's order
 //! and waits, how far the wheel scrolls a drawer, a list's rows sorted
-//! and the heading under a point, a drawer's ribbon - its buttons and
-//! what they show - a copy's rate, and the jump table.
+//! and the heading under a point, a drawer's ribbon - its buttons, what
+//! they show, and the Window menu's item for it - a copy's rate, and the
+//! jump table.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -16,6 +17,7 @@ const drawer_path = @import("../drawer/path.zig");
 const textview = @import("../drawer/textview.zig");
 const drawer = @import("../drawer/_drawer.zig");
 const ribbon = @import("../drawer/ribbon.zig");
+const menus = @import("../desktop/menus.zig");
 const leaveout = @import("../desktop/leaveout.zig");
 const information = @import("../info/information.zig");
 const startup = @import("../desktop/startup.zig");
@@ -389,4 +391,25 @@ test "a drawer's ribbon: a button for each command, found by its ID; off and che
     try testing.expect(list.off & ribbon.bit(.open) == 0);
     try testing.expect(list.off & ribbon.bit(.delete) != 0);
     try testing.expectEqual(ribbon.bit(.by_date), list.on);
+}
+
+test "a drawer's ribbon: the Window menu's Ribbon is the item ITEM_RIBBON numbers, a mark that turns over" {
+    const mn = sdk.intuition.menus;
+    var menu: i32 = -1;
+    var item: i32 = -1;
+    const found = for (menus.table) |line| {
+        switch (line.type) {
+            mn.NM_TITLE => {
+                menu += 1;
+                item = -1;
+            },
+            mn.NM_ITEM => {
+                item += 1;
+                if (menu == menus.MENU_WINDOW and item == menus.ITEM_RIBBON) break line;
+            },
+            else => {},
+        }
+    } else return error.NoItem;
+    try testing.expectEqualStrings("Ribbon", std.mem.span(found.label.?));
+    try testing.expectEqual(@as(u32, mn.CHECKIT | mn.MENUTOGGLE), found.flags);
 }

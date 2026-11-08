@@ -142,7 +142,7 @@ icons on - one line in `ENV:Sys/anvil.prefs`, read and written by
 `SYS:Programs/Prefs`:
 
 ```
-GROUND=#3A5F8A..#14253A PICTURE="SYS:Prefs/Sea.png" PLACE=SCALED ICONSIZE=48 VIEW=ICON SNAP=NO
+GROUND=#3A5F8A..#14253A PICTURE="SYS:Prefs/Sea.png" PLACE=SCALED ICONSIZE=48 VIEW=ICON SNAP=NO RIBBON=YES
 ```
 
 `GROUND` is a colour, or two shaded from the top down (left out, the
@@ -152,7 +152,8 @@ the desktop; `ICONSIZE` the most pixels an icon is shown at each way,
 16 to 256, a larger picture scaled down; `VIEW` `ICON`, `NAME`, `DATE`
 or `SIZE`; `SNAP` `YES` to put an icon that is moved into the nearest
 free cell of its ground's grid, as the desktop's Window menu switches it
-([desktop guide](anvil.md#working-with-files)). The names under the icons are in `font.prefs`'s `ICON` font.
+([desktop guide](anvil.md#working-with-files)); `RIBBON` `NO` for
+drawers' windows without their ribbon ([drawers](anvil.md#drawers)). The names under the icons are in `font.prefs`'s `ICON` font.
 
 ## Making icons on the host
 

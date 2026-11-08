@@ -378,15 +378,31 @@ pub fn cleanUpBy(d: *Desktop, where: ?*Drawer, sub: u32) void {
     cleanUp(d, where);
 }
 
-/// Snap to Grid switched `on` or off: kept in anvil.prefs, in ENV: for
-/// now and in ENVARC: across a boot, with the rest of the file as the
-/// desktop has it. The file's notification then finds nothing drawn
-/// changed, so nothing is made anew.
+/// Snap to Grid switched `on` or off, and kept in anvil.prefs.
 pub fn snapToGrid(d: *Desktop, on: bool) void {
     d.prefs.snap = on;
+    keepPrefs(d, "Snap to Grid");
+}
+
+/// Ribbon switched `on` or off: every drawer's window given its ribbon or
+/// rid of it at once, the mark and the buttons set, and kept in
+/// anvil.prefs.
+pub fn showRibbons(d: *Desktop, on: bool) void {
+    d.prefs.ribbon = on;
+    drawer_ribbon.followAll(d);
+    rethink(d, d.active_window);
+    keepPrefs(d, "Ribbon");
+}
+
+/// The prefs as the desktop has them, after a switch of the Window menu
+/// - `what`, named in what is said when they cannot be kept - written to
+/// anvil.prefs: in ENV: for now and in ENVARC: across a boot, after the
+/// file's explanation. The file's notification then finds nothing
+/// changed, so nothing is made anew.
+fn keepPrefs(d: *Desktop, comptime what: []const u8) void {
     const line_room = 240;
     const room = anvil_prefs.header.len + line_room + 1;
-    const memory = d.sys.AllocVec(room, exec.MEMF_ANY) orelse return d.say("Snap to Grid could not be kept");
+    const memory = d.sys.AllocVec(room, exec.MEMF_ANY) orelse return d.say(what ++ " could not be kept");
     defer d.sys.FreeVec(memory);
     const text: [*]u8 = @ptrCast(memory);
     var length: usize = anvil_prefs.header.len;
@@ -396,7 +412,7 @@ pub fn snapToGrid(d: *Desktop, on: bool) void {
     length += 1;
     const now = sdk.prefs.save(d.dl, anvil_prefs.ENV_FILE, text[0..length]);
     const kept = sdk.prefs.save(d.dl, anvil_prefs.ENVARC_FILE, text[0..length]);
-    if (!now or !kept) d.say("Snap to Grid could not be written to anvil.prefs");
+    if (!now or !kept) d.say(what ++ " could not be written to anvil.prefs");
 }
 
 /// Snapshot Window: the window's box, view - a list's order with it - and
@@ -439,8 +455,9 @@ pub fn snapshotWindow(d: *Desktop, dr: *Drawer, all: bool) void {
 /// items only in a drawer, and Open Parent not at a disk's root; Clean Up
 /// and Clean Up By only where icons are shown, and on the desktop's
 /// ground by name alone, since a disk has no date or size of its own.
-/// Snap to Grid's mark is the prefs'. Every drawer's ribbon is set the
-/// same way, for its own window (`ribbon.show`).
+/// Snap to Grid's and Ribbon's marks are the prefs', and Ribbon is off
+/// without the ribbon's classes. Every drawer's ribbon is set the same
+/// way, for its own window (`ribbon.show`).
 pub fn rethink(d: *Desktop, active: ?*intuition.Window) void {
     const strip = d.menu_strip orelse return;
     const Tally = struct {
@@ -490,6 +507,7 @@ pub fn rethink(d: *Desktop, active: ?*intuition.Window) void {
         .{ .menu = menus.MENU_WINDOW, .item = menus.ITEM_SNAPSHOT_WINDOW, .on = in_drawer },
         .{ .menu = menus.MENU_WINDOW, .item = menus.ITEM_SHOW, .on = in_drawer },
         .{ .menu = menus.MENU_WINDOW, .item = menus.ITEM_VIEW_BY, .on = in_drawer },
+        .{ .menu = menus.MENU_WINDOW, .item = menus.ITEM_RIBBON, .on = d.has_ribbon },
         .{ .menu = menus.MENU_ICONS, .item = menus.ITEM_OPEN, .on = can.open },
         .{ .menu = menus.MENU_ICONS, .item = menus.ITEM_COPY, .on = can.copy },
         .{ .menu = menus.MENU_ICONS, .item = menus.ITEM_RENAME, .on = can.rename },
@@ -514,9 +532,13 @@ pub fn rethink(d: *Desktop, active: ?*intuition.Window) void {
     if (backdrop) |item| {
         if (d.as_backdrop) item.flags |= mn.CHECKED else item.flags &= ~mn.CHECKED;
     }
-    const snap = d.ib.ItemAddress(strip, mn.FULLMENUNUM(menus.MENU_WINDOW, menus.ITEM_SNAP_TO_GRID, mn.NOSUB));
-    if (snap) |item| {
-        if (d.prefs.snap) item.flags |= mn.CHECKED else item.flags &= ~mn.CHECKED;
+    const marks = [_]struct { item: u32, on: bool }{
+        .{ .item = menus.ITEM_SNAP_TO_GRID, .on = d.prefs.snap },
+        .{ .item = menus.ITEM_RIBBON, .on = d.prefs.ribbon },
+    };
+    for (marks) |mark| {
+        const item = d.ib.ItemAddress(strip, mn.FULLMENUNUM(menus.MENU_WINDOW, mark.item, mn.NOSUB)) orelse continue;
+        if (mark.on) item.flags |= mn.CHECKED else item.flags &= ~mn.CHECKED;
     }
     if (dr) |held| d.showChecks(held.view, held.show_all);
     // Every drawer's ribbon as its own window is, and the picked as here.

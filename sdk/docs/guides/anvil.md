@@ -64,7 +64,7 @@ What lies under the icons is one line in `ENV:Sys/anvil.prefs`
 (`sdk.prefs.anvil`, edited on the Desktop page of `SYS:Programs/Prefs`):
 
 ```
-GROUND=#3A5F8A..#14253A PICTURE="SYS:Prefs/Sea.png" PLACE=SCALED ICONSIZE=48 VIEW=ICON SNAP=NO NEWWINDOW=NO
+GROUND=#3A5F8A..#14253A PICTURE="SYS:Prefs/Sea.png" PLACE=SCALED ICONSIZE=48 VIEW=ICON SNAP=NO NEWWINDOW=NO RIBBON=YES
 ```
 
 A colour, or two shaded from the top down - left out, the screen's
@@ -151,7 +151,8 @@ past 9,999 of one unit in the next: M, G, T, P. The drawer is watched
 (StartNotify) and read again when anything changes it.
 
 The Window menu has Open Parent, Close, Update, Show (only icons, or all
-files) and View By (icon, name, date, size) for the drawer it is used in.
+files) and View By (icon, name, date, size) for the drawer it is used in,
+and Ribbon for every drawer's window at once.
 
 A ribbon runs across the top of each drawer's window, the drawer's
 commands as buttons on two tabs. Home has Parent (Go), New Drawer and
@@ -164,11 +165,21 @@ root, the Icons buttons with nothing picked they work on, Clean Up in a
 list. In a narrow window the groups are made smaller, down to a button
 each that drops its group down. The mark at the right end of the row of
 tabs, or a double click on a tab, minimizes the ribbon to its row and
-brings it back, and the view moves up or down with it. The buttons have
+brings it back, and the view moves up or down with it. In a window less
+than 400 pixels high inside the ribbon is its row of tabs by itself, a
+tab's page dropping down over the window when the tab is pressed; it
+opens out again as the window is made higher. The buttons have
 no keys of their own: a letter typed in a drawer's window would press
 one by mistake, and the menus' keys are the commands'. Without
 toolbutton.gadget, command.image and ribbon.gadget in `SYS:classes/` a
 drawer has no ribbon.
+
+**Ribbon** in the Window menu, ticked, gives every drawer's window its
+ribbon; unticked, all of them lose it at once and the view moves up into
+its room. The mark is kept in `anvil.prefs` as `RIBBON=YES` or
+`RIBBON=NO` - YES when the file does not say - in `ENV:` and `ENVARC:`,
+as Snap to Grid's is, and A ribbon in each drawer on the Desktop page of
+`SYS:Programs/Prefs` sets it too.
 
 ## Selecting and opening
 

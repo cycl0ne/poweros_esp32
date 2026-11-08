@@ -36,6 +36,8 @@ pub const ITEM_SNAP_TO_GRID = 8;
 pub const ITEM_SNAPSHOT_WINDOW = 10;
 pub const ITEM_SHOW = 11;
 pub const ITEM_VIEW_BY = 12;
+/// Every drawer's window with its ribbon, or none.
+pub const ITEM_RIBBON = 14;
 /// Clean Up By's subitems.
 pub const SUB_CLEAN_BY_NAME = 0;
 pub const SUB_CLEAN_BY_DATE = 1;
@@ -114,6 +116,8 @@ pub const table = [_]mn.NewMenu{
     sub("Name", pick, 0b1101),
     sub("Date", pick, 0b1011),
     sub("Size", pick, 0b0111),
+    bar,
+    item("Ribbon", null, mn.CHECKIT | mn.MENUTOGGLE),
 
     .{ .type = mn.NM_TITLE, .label = "Icons" },
     item("Open", "O", 0),

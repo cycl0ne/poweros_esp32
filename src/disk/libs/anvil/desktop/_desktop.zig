@@ -929,6 +929,7 @@ pub const Desktop = struct {
                 menus.ITEM_CLEAN_UP => commands.cleanUp(d, null),
                 menus.ITEM_CLEAN_UP_BY => commands.cleanUpBy(d, null, mn.SUBNUM(number)),
                 menus.ITEM_SNAP_TO_GRID => commands.snapToGrid(d, d.isChecked(number)),
+                menus.ITEM_RIBBON => commands.showRibbons(d, d.isChecked(number)),
                 else => {},
             }
             return;
@@ -938,6 +939,7 @@ pub const Desktop = struct {
             menus.ITEM_CLEAN_UP => commands.cleanUp(d, dr),
             menus.ITEM_CLEAN_UP_BY => commands.cleanUpBy(d, dr, mn.SUBNUM(number)),
             menus.ITEM_SNAP_TO_GRID => commands.snapToGrid(d, d.isChecked(number)),
+            menus.ITEM_RIBBON => commands.showRibbons(d, d.isChecked(number)),
             menus.ITEM_SNAPSHOT_WINDOW => commands.snapshotWindow(d, dr, mn.SUBNUM(number) == menus.SUB_SNAPSHOT_ALL),
             menus.ITEM_SELECT_CONTENTS => select.contents(d, dr),
             menus.ITEM_OPEN_PARENT => drawer.openParent(d, dr),
@@ -1043,14 +1045,16 @@ pub const Desktop = struct {
     }
 
     /// anvil.prefs read again after it changed: whether the desktop has
-    /// to be made anew. A change of SNAP alone - the Window menu's own
-    /// writing it, or Prefs - is taken as it is, its mark set.
+    /// to be made anew. A change of SNAP or RIBBON - by Prefs; the Window
+    /// menu's own writing finds them as the desktop has them - is taken
+    /// as it is: its mark set, and for RIBBON every drawer's ribbon put in
+    /// or taken out.
     fn lookChanged(d: *Desktop) bool {
         const was = d.prefs;
         d.readPrefs();
-        if (!anvil_prefs.sameLook(&was, &d.prefs)) return true;
+        if (was.ribbon != d.prefs.ribbon) drawer_ribbon.followAll(d);
         commands.rethink(d, d.active_window);
-        return false;
+        return !anvil_prefs.sameLook(&was, &d.prefs);
     }
 
     /// The desktop's screen brought to the front - from any task.
