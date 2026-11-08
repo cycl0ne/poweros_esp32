@@ -23,8 +23,9 @@ const Buffer = @import("_buffer.zig").Buffer;
 /// - `buffer` - where the buffer is written; null when it fails.
 ///
 /// RESULT:
-/// `success`; `error_out_of_device_memory` for a size of nothing;
-/// `error_out_of_host_memory`.
+/// `success`; `error_validation_failed` for a size of nothing
+/// (VUID-VkBufferCreateInfo-size-00912; `error_out_of_device_memory` until
+/// 1.134); `error_out_of_host_memory`.
 ///
 /// BEHAVIOR:
 /// The buffer has no memory until BindBufferMemory binds it into some;
@@ -58,7 +59,8 @@ const Buffer = @import("_buffer.zig").Buffer;
 /// ```
 pub fn CreateBuffer(base: *FacetBase, device: *facet.Device, info: *const facet.BufferCreateInfo, buffer: *?*facet.Buffer) facet.Result {
     buffer.* = null;
-    if (info.size == 0) return .error_out_of_device_memory;
+    // VUID-VkBufferCreateInfo-size-00912: no memory has run out.
+    if (info.size == 0) return .error_validation_failed;
     const made = _objects.create(base.sys_base, Buffer) orelse return .error_out_of_host_memory;
     made.* = .{ .device = _objects.of(Device, device), .size = info.size, .usage = info.usage };
     buffer.* = _objects.handle(facet.Buffer, made);

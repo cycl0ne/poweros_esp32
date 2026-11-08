@@ -7,10 +7,10 @@
 //! The board part is what finds it: where the machine has no such part the
 //! instance lists no device of it. It is switched on when a device first
 //! wants it, and what that makes - the MMU's table, the interrupts, the
-//! programs - stays while any queue or block of memory is left, in the one
-//! `Hardware` all the instances of the library share. It goes back to
-//! nothing but stays powered: a second power-up after a power-down halted
-//! the machine.
+//! programs - stays while any queue, block of memory or pipeline's program
+//! is left, in the one `Hardware` all the instances of the library share.
+//! It goes back to nothing but stays powered: a second power-up after a
+//! power-down halted the machine.
 //!
 //! Vertex functions stay the program's, and run on the cores; pixels are the
 //! V3D's, and it has a program for each fixed form of fragment function
@@ -82,7 +82,8 @@ pub const Hardware = struct {
     gpu: v3d.Gpu,
     space: v3d.Space,
     engine: v3d.Engine,
-    /// The queues and the blocks of memory that hold it.
+    /// The queues, the blocks of memory and the pipelines' programs that
+    /// hold it.
     users: u32,
     programs_block: Block,
     programs: Programs,
@@ -393,6 +394,23 @@ pub fn hold(base: *FacetBase) ?*Hardware {
     return hardware;
 }
 
+/// The V3D held once more for a block of memory or a program a device
+/// makes. The device's queue holds it from CreateDevice to DestroyDevice
+/// (`_play.open`), so it is there and this cannot fail, as v3dv's device
+/// works on the hardware its physical device opened (v3dv_device.c:1514
+/// `create_physical_device`). Since 1.134: AllocateMemory and the fragment
+/// program held it with `hold`, and answered `error_initialization_failed`
+/// where it would not come up, which neither call lists and no program
+/// reached.
+fn holdAgain(base: *FacetBase) *Hardware {
+    const sys = base.sys_base;
+    sys.ObtainSemaphore(&base.v3d_lock);
+    defer sys.ReleaseSemaphore(&base.v3d_lock);
+    const hardware: *Hardware = @ptrCast(@alignCast(base.v3d.?));
+    hardware.users += 1;
+    return hardware;
+}
+
 fn bringUp(sys: *ExecBase, hardware: *Hardware) bool {
     hardware.users = 1;
     hardware.stale = false;
@@ -469,10 +487,7 @@ fn allocateMemory(device: *Device, memory: *DeviceMemory) callconv(.c) facet.Res
     const base = device.base;
     const sys = device.sys;
     const kept = _objects.create(sys, Block) orelse return .error_out_of_host_memory;
-    const hardware = hold(base) orelse {
-        _objects.destroy(sys, kept);
-        return .error_initialization_failed;
-    };
+    const hardware = holdAgain(base);
     sys.ObtainSemaphore(&base.v3d_lock);
     const block = hardware.space.alloc(bytes);
     if (block != null) hardware.stale = true;
@@ -531,6 +546,14 @@ pub const Shader = struct {
 };
 
 fn makePipeline(pipeline: *Pipeline) callconv(.c) facet.Result {
+    // A pipeline that draws nothing - its rasterizer discarding, or every
+    // face culled - has no program to make: a draw with it ends before one
+    // is read (`_play.draw`), and this device counts no statistics a
+    // stage would owe. So such a pipeline of no fragment stage is made
+    // here, which is the one Vulkan allows beside a discarding rasterizer
+    // (VUID-VkGraphicsPipelineCreateInfo-pStages-06894; since 1.134,
+    // refused before as item 85's V3D half refuses the others).
+    if (pipeline.draws_nothing) return .success;
     const fixed = pipeline.fixed;
     // Alpha to coverage wants a QPU program that writes the coverage,
     // which none does yet: step V6 of item 61 of docs/facet-vulkan10.md
@@ -575,10 +598,7 @@ fn compiled(pipeline: *Pipeline) facet.Result {
     // them rather than a pipeline that was put together wrongly.
     if (code.varyings != pipeline.varyings) return .error_feature_not_present;
     const kept = _objects.create(sys, Shader) orelse return .error_out_of_host_memory;
-    const hardware = hold(base) orelse {
-        _objects.destroy(sys, kept);
-        return .error_initialization_failed;
-    };
+    const hardware = holdAgain(base);
     sys.ObtainSemaphore(&base.v3d_lock);
     const block = hardware.space.alloc(@intCast(code.words.len * 8));
     if (block) |each| {

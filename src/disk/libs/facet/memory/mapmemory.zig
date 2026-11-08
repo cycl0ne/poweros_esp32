@@ -26,8 +26,13 @@ const DeviceMemory = @import("_memory.zig").DeviceMemory;
 ///   null when it fails.
 ///
 /// RESULT:
-/// `success`; `error_memory_map_failed` for lazily allocated memory, for
-/// a block mapped already, and for a range past its end.
+/// `success`; `error_validation_failed` for lazily allocated memory, the
+/// one type that is not MEMORY_PROPERTY_HOST_VISIBLE, for a block mapped
+/// already, and for a range of nothing or past the block's end
+/// (VUID-vkMapMemory-memory-00682, -memory-00678, -offset-00679,
+/// -size-00680, -size-00681; `error_memory_map_failed` until 1.134). A
+/// mapping is never refused for want of addresses, which is what Vulkan's
+/// `error_memory_map_failed` is: the address handed out is the block's own.
 ///
 /// BEHAVIOR:
 /// Mapping is handing out the address: the memory is the machine's RAM,
@@ -66,9 +71,13 @@ pub fn MapMemory(base: *FacetBase, device: *facet.Device, memory: *facet.DeviceM
     _ = flags;
     data.* = null;
     const made = _objects.of(DeviceMemory, memory);
-    const start = made.data orelse return .error_memory_map_failed;
-    if (made.mapped or offset >= made.size) return .error_memory_map_failed;
-    if (size != facet.WHOLE_SIZE and (size == 0 or size > made.size - offset)) return .error_memory_map_failed;
+    // Each of these breaks one of Vulkan's rules, and none is a mapping not
+    // had (VUID-vkMapMemory-memory-00682, -memory-00678, -offset-00679,
+    // -size-00680, -size-00681; since 1.134): only the lazily allocated
+    // type, which is not HOST_VISIBLE, has nothing behind it.
+    const start = made.data orelse return .error_validation_failed;
+    if (made.mapped or offset >= made.size) return .error_validation_failed;
+    if (size != facet.WHOLE_SIZE and (size == 0 or size > made.size - offset)) return .error_validation_failed;
     made.mapped = true;
     data.* = start + @as(usize, @intCast(offset));
     return .success;

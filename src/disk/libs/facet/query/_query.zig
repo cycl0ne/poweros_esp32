@@ -254,8 +254,10 @@ inline fn storeLane(lane: *u64, value: u64) void {
 }
 
 /// The queries `first` to `count` past it written into `into`, `stride`
-/// bytes apart, as `flags` says: false where `into` is too small for them,
-/// and `not_ready` where a query is not available and nothing waited.
+/// bytes apart, as `flags` says: `error_validation_failed` where `into` is
+/// too small for them (VUID-vkGetQueryPoolResults-dataSize-00817;
+/// `error_out_of_host_memory` until 1.134), and `not_ready` where a query
+/// is not available and nothing waited.
 pub fn write(pool: *Pool, first: u32, count: u32, into: []u8, stride: u64, flags: u32) facet.Result {
     const wide = flags & facet.QUERY_RESULT_64 != 0;
     const unit: u64 = if (wide) 8 else 4;
@@ -266,8 +268,12 @@ pub fn write(pool: *Pool, first: u32, count: u32, into: []u8, stride: u64, flags
     for (0..count) |k| {
         const index = first + @as(u32, @intCast(k));
         if (index >= pool.count) break;
-        const at: usize = @intCast(k * stride);
-        if (@as(u64, at) + values * unit > into.len) return .error_out_of_host_memory;
+        // Room for each query asked for (VUID-vkGetQueryPoolResults-dataSize-00817),
+        // worked out so that no stride or size overflows: a program's
+        // mistake, and no memory run out (since 1.134).
+        const offset = std.math.mul(u64, k, stride) catch return .error_validation_failed;
+        if (offset > into.len or values * unit > into.len - offset) return .error_validation_failed;
+        const at: usize = @intCast(offset);
         const ready = isAvailable(pool, index);
         if (!ready) answer = .not_ready;
         for (0..pool.stride) |slot| {
@@ -411,7 +417,11 @@ test "the values written as they were asked for: four bytes or eight, availabili
     into = @splat(0xAA);
     try testing.expectEqual(facet.Result.success, write(&pool, 0, 1, &into, 8, facet.QUERY_RESULT_64));
     try testing.expectEqual(5, std.mem.readInt(u64, into[0..8], .little));
-    try testing.expectEqual(facet.Result.error_out_of_host_memory, write(&pool, 0, 1, into[0..4], 8, facet.QUERY_RESULT_64));
+    // Too small breaks Vulkan's rules (VUID-vkGetQueryPoolResults-dataSize-00817;
+    // `error_out_of_host_memory` until 1.134), and so does a stride that
+    // runs past what can be counted: refused, not overflowed.
+    try testing.expectEqual(facet.Result.error_validation_failed, write(&pool, 0, 1, into[0..4], 8, facet.QUERY_RESULT_64));
+    try testing.expectEqual(facet.Result.error_validation_failed, write(&pool, 0, 2, &into, 0xFFFF_FFFF_FFFF_FFF8, facet.QUERY_RESULT_64));
     // Past the pool's last: what is there is written and no more, and the
     // one that is not available still says it is not ready.
     try testing.expectEqual(facet.Result.not_ready, write(&pool, 1, 4, &into, 8, facet.QUERY_RESULT_PARTIAL));

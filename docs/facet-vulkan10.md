@@ -2056,9 +2056,9 @@ These figures are estimates, not counts. Items 12, 32, 34, 59 and 60 are prerequ
 
 *synchronisation* &mdash; feature-gap, medium
 
-Grouped because the finding is that nothing is owed, and why — which is worth writing down rather than changing. facet over-synchronises everywhere, so no conformant program can observe the discarded barriers: the queue runs one command buffer to completion before the next, each command finished before the next starts, and the V3D driver flushes every chunk and the target image to the GPU before a job, invalidates after, and invalidates the L2T and slice caches before every bin and every render. Subpass dependencies are read for exactly one question — does this subpass depend on itself by region, which lets a fragment read the tile it is drawing into — and subpasses always run in index order. One queue family of one queue satisfies Vulkan 1.0, which requires only one family supporting graphics and compute. The moment any of that changes — several queues, async compute, the binner overlapping the previous render — the barrier becomes load-bearing and the arrays have to be there to read, which is a struct change plus a per-barrier payload since _command.record already takes a variable-length one. Note the two gap documents use "only one queue" as the reason events are absent, which it is not.
+Grouped because the finding is that nothing is owed, and why — which is worth writing down rather than changing. facet over-synchronises everywhere, so no conformant program can observe the discarded barriers: the queue runs one command buffer to completion before the next, each command finished before the next starts, and the V3D driver flushes every chunk and the target image to the GPU before a job, invalidates after, and invalidates the L2T and slice caches before every bin and every render. Subpass dependencies are not read at all since 1.134 — until then they answered one question, whether a subpass depends on itself by region, which a subpass reading the tile it draws into had to — and subpasses always run in index order. One queue family of one queue satisfies Vulkan 1.0, which requires only one family supporting graphics and compute. The moment any of that changes — several queues, async compute, the binner overlapping the previous render — the barrier becomes load-bearing and the arrays have to be there to read, which is a struct change plus a per-barrier payload since _command.record already takes a variable-length one. Note the two gap documents use "only one queue" as the reason events are absent, which it is not.
 
-> Verified: cmdpipelinebarrier.zig:67-78 discards all three arrays; queue/_queue.zig:245-254 waits for each command buffer's done before the next; driver/v3d/_play.zig:680-708 rangeToGpu over every chunk and the image before the job and rangeFromGpu after; driver/v3d/engine.zig:108-137 invalidateCaches() before every bin and render; createrenderpass.zig:421-434 `fn byRegion` is the only reader of info.dependencies, and :165-169 says so; getphysicaldevicequeuefamilyproperties.zig:57-66 always answers count 1; createdevice.zig:67-70 refuses more than one queue.
+> Verified: cmdpipelinebarrier.zig:67-78 discards all three arrays; queue/_queue.zig:245-254 waits for each command buffer's done before the next; driver/v3d/_play.zig:680-708 rangeToGpu over every chunk and the image before the job and rangeFromGpu after; driver/v3d/engine.zig:108-137 invalidateCaches() before every bin and render; createrenderpass.zig reads none of info.dependencies since 1.134 (`fn byRegion` was their one reader, item 91); getphysicaldevicequeuefamilyproperties.zig:57-66 always answers count 1; createdevice.zig:75-81 refuses more than one queue.
 
 ### 76. Give the limits table a required-minimum column, and write the formats section neither document has
 
@@ -2577,9 +2577,11 @@ things the item did not say:
   where the shader writes colour 0 (lp_state_fs.c:1181-1185), which the
   no-op does not.
 
-The V3D refuses such a pipeline with `error_feature_not_present`, at the
-check it already made for a fragment stage that ships no SPIR-V
-(driver/v3d/driver.zig, `makePipeline`). Its half is v3dv's: a fragment
+The V3D refuses such a pipeline where it draws, with
+`error_feature_not_present`, at the check it already made for a fragment
+stage that ships no SPIR-V (driver/v3d/driver.zig, `makePipeline`); one
+that draws nothing it makes with no program since 1.134 (item 91). Its
+half is v3dv's: a fragment
 shader of no instructions built for the pipeline and compiled
 (v3dv_pipeline.c:2616-2642), here a fragment program of the library's own
 handed to the back end, with a board check.
@@ -2815,7 +2817,7 @@ takes nothing, as two uncompressed images of two sizes already did.
 
 ### 91. error_initialization_failed and error_format_not_supported are answered for invalid usage, from calls Vulkan does not list them for
 
-*result codes* &mdash; conformance-blocking, medium, found while doing item 81
+*result codes* &mdash; conformance-blocking, medium, found while doing item 81 &mdash; **first half done in 1.134**
 
 Item 81 moved the refusals that answered `error_feature_not_present` for
 invalid usage to `error_validation_failed`. Two more codes do the same
@@ -2848,6 +2850,268 @@ vkCreateGraphicsPipelines and vkCreateComputePipelines alike, and item 4
 settled keeping it.
 
 > `grep -rn 'error_initialization_failed\|error_format_not_supported' src/disk/libs/facet/ --exclude-dir=tests`, comments aside, 07.11.2026; what each command lists is vk.xml's `errorcodes`.
+
+**The first half, `error_initialization_failed`, done in 1.134**, in
+145 lines of code and 455 of tests, comments aside. The count of
+66 was right, and of them:
+
+- **52 answer `error_validation_failed`**, each with the rule it breaks
+  named beside it or in its call's RESULT, a VUID for all but two. One
+  had been read wrong when the work was planned: a colour attachment
+  named twice in one subpass has no VUID of its own, but the render pass
+  chapter forbids it under VkAttachmentDescription ("A given attachment
+  index must not be used multiple times in a single subpass", an input
+  attachment beside another use excepted). The other, facet's own blend
+  constants for each attachment counted past the 4 colours a subpass may
+  have (`_render.most_colors`), nothing reaches: they are counted as the
+  subpass's colours, which the blend count is held to before it, and
+  CreateRenderPass holds a subpass to 4 colours
+  (VUID-VkSubpassDescription-colorAttachmentCount-00845).
+- **One answers `error_feature_not_present`**: a colour other than the
+  first read as an input attachment, in a subpass whose colours are drawn
+  together. Only facet's own `SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER` draws
+  them so, and the refusal goes with the flag, item 80.
+- **Six were two answers in one, and are split.** Three of
+  CreateFramebuffer's - a colour, a resolve and a depth view smaller than
+  the size - are `error_validation_failed` for an image smaller than it
+  and `error_feature_not_present` for a level smaller than it of an image
+  that is not; CreateRenderPass's subpass that reads its own depth
+  attachment is `error_validation_failed` for an attachment of a colour
+  format and `error_feature_not_present` for one of a depth format. Those
+  two refusals are item 92. The other two had a half that refused what
+  Vulkan allows, and takes it now: a colour of its own a subpass reads is
+  `error_validation_failed` where it is of a depth format, and where it is
+  read without a dependency on itself by region - which Vulkan calls a
+  feedback loop, and whose reads it leaves undefined where nothing orders
+  the write before them - it is drawn as with the dependency; and
+  CreateBufferView's view of less than a texel is `error_validation_failed`
+  where its range is given, and for WHOLE_SIZE a view of none, which reads 0.
+- **Five keep the code**, each a cause outside the program:
+  CreateDevice's queue not started, on a call Vulkan lists the code for;
+  the screen's and the window's libraries not opened or too old, on
+  CreateScreenSurface and CreateWindowSurface, facet's own calls, whose
+  RESULT lists it where Vulkan's surface calls list no such code. The
+  screen's Screen record and the record of its own buffer not had
+  answered it as well, and are `error_out_of_host_memory` now.
+- **Two go**, the V3D driver's: AllocateMemory and the fragment program a
+  pipeline compiles held the V3D and answered the code where it would not
+  come up, which neither call lists. No program reached them. The
+  device's queue holds the V3D from CreateDevice to DestroyDevice
+  (`_play.open`, driver/v3d/_play.zig:172-182, from `_queue.start`), and
+  CreateDevice answers the code where it does not come up; the two count
+  one more user of what the queue holds now (`holdAgain`), which cannot
+  fail, as v3dv's device works on the hardware its physical device opened
+  (src/broadcom/vulkan/v3dv_device.c:1514 `create_physical_device`). Not
+  yet run on the board.
+
+Reading the VUIDs found more than the 66:
+
+- CreateGraphicsPipelines looked at states Vulkan does not have it read -
+  the viewport, multisample, depth and colour blend states where the
+  rasterizer discards, a depth state where the subpass has no depth
+  attachment, a blend state where it has no colour one - and refused one
+  that was null or held what it did not take. They are not looked at now,
+  as Mesa's `vk_graphics_pipeline_state_fill` does not
+  (src/vulkan/runtime/vk_graphics_state.c:1482-1493
+  `may_have_rasterization`, :1600, :1662-1663, :1701-1702, :1841-1861).
+  The V3D's driver refused a discarding pipeline, which has no fragment
+  stage (VUID-VkGraphicsPipelineCreateInfo-pStages-06894), as it refused
+  every pipeline of none; a pipeline that draws nothing - its rasterizer
+  discarding, or every face culled - is taken now, its draw returning
+  before any program is needed, and only one of none that draws is
+  refused, until item 85's V3D half. A
+  discarding draw on the cores counted as a target's first, and laid a
+  subpass of no attachments out for its samples; it does not now. Where
+  the first draw that rasterizes lays the tiles again for its samples, it
+  starts their arena over, and copies the push constants and descriptors
+  again: a discarding draw before it had copied them there, and the copy
+  went with the arena.
+- CreateBufferView cut a range past the buffer's end to the end, where a
+  texel was left there. That breaks VUID-VkBufferViewCreateInfo-offset-00931,
+  and is `error_validation_failed` now.
+- Two arrays a count says are there were read through when null, and
+  panicked: a subpass's colours and a pipeline's blend attachments. They
+  are `error_validation_failed`
+  (VUID-VkSubpassDescription-pColorAttachments-parameter,
+  VUID-VkPipelineColorBlendStateCreateInfo-pAttachments-07353).
+- An attachment's samples that are none of Vulkan's - 0, 3, more than 64 -
+  were `error_feature_not_present`, and are `error_validation_failed`
+  (VUID-VkAttachmentDescription-samples-parameter).
+- The memory calls answered memory codes for invalid usage, no memory
+  having run out: `error_out_of_device_memory` from CreateBuffer of size 0
+  (VUID-VkBufferCreateInfo-size-00912), AllocateMemory of a type the
+  device has not got or of no bytes (VUID-vkAllocateMemory-pAllocateInfo-01714,
+  VUID-VkMemoryAllocateInfo-allocationSize-07897), and BindBufferMemory and
+  BindImageMemory into a type the object may not be in, off its
+  alignment, past the block's end or bound already (-memory-01035 and
+  -01047, -None-10739 and -10735, -None-10741 and -10737, -buffer-07459
+  and -image-07460; a swapchain's image is bound as it is handed out);
+  `error_memory_map_failed` from MapMemory of lazily allocated memory,
+  which is not HOST_VISIBLE, of a block mapped already, or of a range of
+  none or past the end (-memory-00682, -memory-00678, -size-00680,
+  -offset-00679, -size-00681). AllocateMemory of more bytes than its
+  type's heap holds went on to the device's driver, which answered
+  `error_out_of_device_memory`, finding no room for it - or, of the lazily
+  allocated type, which takes nothing and never reaches the driver, was
+  made, and on the V3D a size from 0xFFFF_D001 to 0xFFFF_FFFF overflowed
+  the 32-bit page rounding of `Space.alloc` (driver/v3d/space.zig:107-108)
+  and panicked (VUID-vkAllocateMemory-pAllocateInfo-01713);
+  GetQueryPoolResults into
+  fewer bytes than its results take answered `error_out_of_host_memory`,
+  and a stride too large for 64 bits overflowed the sum it was checked
+  with (VUID-vkGetQueryPoolResults-dataSize-00817). They are
+  `error_validation_failed`, and no call answers `error_memory_map_failed`
+  now: MapMemory hands out the block's own address.
+- GetImageMemoryRequirements offered the lazily allocated memory type to
+  every depth attachment that is not read. Vulkan lets it be offered to
+  an image made IMAGE_USAGE_TRANSIENT_ATTACHMENT and to no other
+  (VkMemoryRequirements: `memoryTypeBits` "must not refer to" it
+  otherwise), and it is now offered to a transient depth attachment
+  alone: a transient colour attachment, kept in rows, is offered only the
+  types with memory behind them, as before. A transient depth attachment
+  read as an input attachment as well, which
+  VUID-VkImageCreateInfo-usage-00963 does not forbid, CreateImage does not
+  make, and GetPhysicalDeviceImageFormatProperties says so. Vulkan would
+  have its memory types be those of a transient depth attachment of its
+  format, the lazily allocated type among them (VkMemoryRequirements),
+  and bound there nothing would be behind the pixels a later subpass
+  reads. A program that makes one after the query declined it breaks
+  VUID-VkImageCreateInfo-imageCreateMaxMipLevels-02251, so its
+  `error_format_not_supported` is the second half's to read with the
+  others; so is that of a transient colour attachment read as an input
+  attachment, refused at the same line although no colour image is
+  offered the lazily allocated type.
+- UpdateDescriptorSets took the sampler of a write into a binding that
+  holds samplers of its own for a sampler, before the binding's own took
+  its place. Vulkan does not have it read there
+  (VUID-VkWriteDescriptorSet-descriptorType-00325 asks for one only where
+  the layout holds none), so it may be anything, and a handle that was not
+  a sampler's stopped the call on its alignment. It is not looked at now.
+- CreateSampler told a device that reads no unnormalized coordinates
+  before the five rules such a sampler keeps; the rules come first now.
+  Which of `error_validation_failed` and `error_feature_not_present` a
+  call answers when it is asked for both is not promised otherwise, which
+  the Result's doc says: Vulkan leaves the call undefined either way, and
+  CreateRenderPass alone answers each at about twenty places, in the order
+  it meets them. CreateFramebuffer
+  holds every view to Vulkan's rules before it answers a level it cannot
+  draw into.
+
+The second half, `error_format_not_supported`, is still to do, and
+1.135's. A review of the first half found more that answers a code
+Vulkan's rules do not give it, left for the second half or their own
+items, each to be read as the 66 were:
+
+- QueuePresent answers `error_out_of_date` for an image the program does
+  not hold (VUID-VkPresentInfoKHR-pImageIndices-01430). A swapchain named
+  twice (-pSwapchain-09231) is answered `error_out_of_date` where both
+  name one image, the first naming having handed it on, and is presented
+  twice, answering `success`, where they name two images the program
+  holds. Both are `error_validation_failed` in 1.135, the second looked
+  for over the whole list. Out of date asks the program to make its
+  swapchain again, which hides its mistake.
+- QueuePresent answers `error_out_of_date` for each swapchain it meets
+  once eight images of one present have been taken
+  (`_swapchain.max_presents`; those it refused do not count), and Vulkan
+  sets no such limit: a program makes that swapchain again and is refused
+  again. The presents go in a list as long as the count, 1.135.
+- CreateSwapchain's size, `error_validation_failed` since 1.134
+  (-pNext-07781), cannot tell a program that asked for the wrong size from
+  one whose window changed size between its
+  GetPhysicalDeviceSurfaceCapabilities and the call. Made at the size
+  asked, the swapchain's presents and AcquireNextImage would answer
+  `error_out_of_date`, which `_swapchain.fit` does already; Mesa's WSI
+  (src/vulkan/wsi, not in the tree read for this) is to be read for it
+  before 1.135 settles it.
+- CreateSwapchain looks at the surface's newest swapchain alone
+  (`surface.swapchain`, cleared when that one is destroyed), not at
+  `old_swapchain`'s surface or whether it is retired: it answers
+  `error_native_window_in_use` for any `old_swapchain` but the newest
+  while the newest lives - one retired on this surface among them - and
+  takes any where there is no newest, one retired after the newest was
+  destroyed and one of another surface, which it retires, among them.
+  Another surface's newest, retired so, stays that surface's newest: that
+  surface takes it back, retired, as its `old_swapchain`.
+  VUID-VkSwapchainCreateInfoKHR-oldSwapchain-01933 has it be the
+  surface's own and not retired: `error_validation_failed`, 1.135, from a
+  look at the old swapchain itself, its surface and whether it is
+  retired.
+- CreateGraphicsPipelines and CreateComputePipelines answer
+  `error_invalid_shader_nv` where the pipeline's stages break a VUID - an
+  entry point not found, a stage that is not a graphics one, no vertex
+  stage, one tessellation stage without the other, a compute stage that is
+  not COMPUTE. Item 4 kept that code for words that are not SPIR-V, which
+  core Vulkan leaves undefined; a vk.xml list that has the code is no
+  reason to keep it for a VUID, the memory codes having moved although
+  their calls list them. `error_validation_failed`, 1.135, and the code
+  stays for words no device runs.
+- A fragment function that writes as many colours as its subpass has, in a
+  subpass without `SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER`, is refused with
+  `error_invalid_shader_nv`. Vulkan allows it: `error_feature_not_present`
+  under item 80, which draws such a subpass in parts.
+- AllocateDescriptorSets past the pool's sets answers
+  `error_out_of_pool_memory`, VK_KHR_maintenance1's code, which item 4 kept
+  on purpose. On a 1.0 device without that extension
+  VUID-VkDescriptorSetAllocateInfo-apiVersion-07895 forbids the call:
+  settled with the second half.
+- CreateImage takes a depth attachment made TRANSIENT_ATTACHMENT beside
+  TRANSFER_SRC or TRANSFER_DST (`depth_usage`, image/_image.zig:710-711),
+  which VUID-VkImageCreateInfo-usage-00963 forbids:
+  `error_validation_failed`, 1.135, with the other usage bits read
+  against it.
+
+> The 66, and where each went: the 134 note in facet_version.zig;
+> `git show 305d3c74:<file> | grep -n error_initialization_failed` beside
+> the file now, 08.11.2026.
+
+### 92. A framebuffer larger than a view's level, and a subpass reading its own depth attachment, are refused
+
+*render passes* &mdash; conformance-blocking, medium, found while doing item 91
+
+Two refusals of valid usage that answered `error_initialization_failed`,
+and since 1.134 answer `error_feature_not_present` until this item:
+
+- **A framebuffer larger than the level a view names, of an image that
+  is not.** Vulkan holds a framebuffer's size to each attachment's image,
+  its first level (VUID-VkFramebufferCreateInfo-flags-04533 and -04534:
+  "created with a VkImageCreateInfo::extent.width greater than or equal
+  to width"), not to the level the view names, and the render area to
+  the framebuffer alone ("must be contained within the framebuffer
+  dimensions"). Load, store and resolve act on "the pixels whose x and y
+  coordinates fall within the render area on all attachments", which for
+  a level smaller than the area are the level's own. A pass here has no
+  rows past the level's to draw into, so CreateFramebuffer refuses the
+  view (`fitOf`'s `level_smaller`, for a colour, a resolve and a depth
+  view), once every view has been held to Vulkan's rules.
+  The fix is each attachment's load, clear, store and resolve clipped to
+  that attachment's own level, not to the framebuffer: on the cores the
+  Target refuses an area past a surface
+  (driver/cpu/raster/target.zig:714, `error.OutOfBounds`), a depth or
+  stencil Plane carries no size of its own (target.zig:477-484), and
+  `clearLayers` writes straight into the rows
+  (driver/cpu/_play.zig:440-459); a colour Surface already carries its
+  level's size (_play.zig:392-397). The V3D's tile loads and stores want
+  the same.
+- **A subpass that reads its own depth attachment as an input
+  attachment.** Vulkan allows it: an attachment may not be used twice in
+  a subpass, "with one exception", an input attachment beside a colour or
+  depth/stencil use - "the same view can be used simultaneously as an
+  input and color or depth/stencil attachment". The cores keep the depth
+  in the tile and read an input attachment from the image's rows, so the
+  subpass would read the depth as it was before the pass. CreateRenderPass
+  refuses it where the attachment is of a depth format. The fix is the
+  depth read from the tile, as a colour attachment read as an input has
+  been since 1.65 (`shader.Fragments.input`, then `colorAt`) - which is
+  v3dv's answer: an input attachment that is the subpass's own depth
+  attachment is read from the tile buffer as `FRAG_RESULT_DEPTH`
+  (src/broadcom/vulkan/v3dv_pass.c:122-124, lowered by
+  `lower_tlb_input_attachment_instr`, v3dv_pipeline.c:301-355).
+
+> `render/createframebuffer.zig` `fitOf` and its three callers;
+> `render/createrenderpass.zig`, the input attachments' loop
+> (`depth.attachment == reference.attachment`); the spec's
+> VkFramebufferCreateInfo, VkRenderPassBeginInfo::renderArea and
+> VkAttachmentDescription's body; 08.11.2026.
 
 ## Deferred by the decision, not out of reach
 

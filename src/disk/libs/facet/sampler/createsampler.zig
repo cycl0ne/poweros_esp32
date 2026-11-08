@@ -35,11 +35,12 @@ const Sampler = _sampler.Sampler;
 /// that is none of its six
 /// (VUID-VkSamplerCreateInfo-addressModeU-parameter and the other members'
 /// own, -compareEnable-01080, -addressModeU-01078;
-/// `error_feature_not_present` until 1.133); `error_feature_not_present`
-/// for `unnormalized_coordinates` on a device that reads none
-/// (`Capabilities.unnormalized_coordinates`);
-/// `error_initialization_failed` for `unnormalized_coordinates` asked for
-/// beside something Vulkan does not allow with it;
+/// `error_feature_not_present` until 1.133); `error_validation_failed` for `unnormalized_coordinates` asked for
+/// beside something Vulkan does not allow with it, on any device
+/// (VUID-VkSamplerCreateInfo-unnormalizedCoordinates-01072 to -01077;
+/// `error_initialization_failed` until 1.134); `error_feature_not_present`
+/// for `unnormalized_coordinates` that keeps to them on a device that
+/// reads none (`Capabilities.unnormalized_coordinates`);
 /// `error_out_of_host_memory`.
 ///
 /// BEHAVIOR:
@@ -61,8 +62,8 @@ const Sampler = _sampler.Sampler;
 /// `unnormalized_coordinates` places the sample in texels of the texture
 /// rather than 0 to 1 across it, for a program that reads a texture as a
 /// table of values (since 1.67). Vulkan asks five things of such a
-/// sampler, and all five are held to here, an
-/// `error_initialization_failed` for each:
+/// sampler, and all five are held to here, an `error_validation_failed`
+/// for each (`error_initialization_failed` until 1.134):
 /// - one filter for both: `mag_filter` and `min_filter` the same. Which of
 ///   the two a sample would take is worked out from how fast the
 ///   coordinates change, which says nothing in texels - so Vulkan has
@@ -139,16 +140,18 @@ pub fn CreateSampler(base: *FacetBase, device: *facet.Device, info: *const facet
     // In texels rather than 0 to 1, where the device samples that way:
     // what Vulkan asks of such a sampler is asked here too, since the
     // sampling holds it to the first level and to one sample and so
-    // cannot answer for a sampler that says otherwise (since 1.67).
+    // cannot answer for a sampler that says otherwise (since 1.67). The
+    // rules hold on every device, so they are asked first, and only a
+    // sampler that keeps them hears that a device reads none (since 1.134).
     if (info.unnormalized_coordinates) {
-        if (!owner.physical.can.unnormalized_coordinates) return .error_feature_not_present;
-        if (info.mag_filter != info.min_filter) return .error_initialization_failed;
-        if (info.mipmap_mode != .nearest) return .error_initialization_failed;
-        if (info.min_lod != 0 or info.max_lod != 0) return .error_initialization_failed;
-        if (info.anisotropy_enable or info.compare_enable) return .error_initialization_failed;
+        if (info.mag_filter != info.min_filter) return .error_validation_failed;
+        if (info.mipmap_mode != .nearest) return .error_validation_failed;
+        if (info.min_lod != 0 or info.max_lod != 0) return .error_validation_failed;
+        if (info.anisotropy_enable or info.compare_enable) return .error_validation_failed;
         for ([2]facet.SamplerAddressMode{ info.address_mode_u, info.address_mode_v }) |mode| {
-            if (mode != .clamp_to_edge and mode != .clamp_to_border) return .error_initialization_failed;
+            if (mode != .clamp_to_edge and mode != .clamp_to_border) return .error_validation_failed;
         }
+        if (!owner.physical.can.unnormalized_coordinates) return .error_feature_not_present;
     }
     const mag = _sampler.filterOf(info.mag_filter) orelse return .error_validation_failed;
     const min = _sampler.filterOf(info.min_filter) orelse return .error_validation_failed;

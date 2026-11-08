@@ -24,8 +24,9 @@ const CommandPool = @import("_command.zig").CommandPool;
 /// - `pool` - where the pool is written; null when it fails.
 ///
 /// RESULT:
-/// `success`; `error_initialization_failed` for a queue family the device
-/// has not got; `error_out_of_host_memory`.
+/// `success`; `error_validation_failed` for a queue family the device
+/// has not got (VUID-vkCreateCommandPool-queueFamilyIndex-01937;
+/// `error_initialization_failed` until 1.134); `error_out_of_host_memory`.
 ///
 /// BEHAVIOR:
 /// The pool keeps its command buffers: DestroyCommandPool frees all of
@@ -59,7 +60,7 @@ const CommandPool = @import("_command.zig").CommandPool;
 /// ```
 pub fn CreateCommandPool(base: *FacetBase, device: *facet.Device, info: *const facet.CommandPoolCreateInfo, pool: *?*facet.CommandPool) facet.Result {
     pool.* = null;
-    if (info.queue_family_index != 0) return .error_initialization_failed;
+    if (info.queue_family_index != 0) return .error_validation_failed;
     const made = _objects.create(base.sys_base, CommandPool) orelse return .error_out_of_host_memory;
     made.* = .{ .device = _objects.of(Device, device), .flags = info.flags };
     pool.* = _objects.handle(facet.CommandPool, made);

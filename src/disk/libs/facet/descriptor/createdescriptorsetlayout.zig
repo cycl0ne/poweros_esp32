@@ -33,7 +33,9 @@ const Sampler = @import("../sampler/_sampler.zig").Sampler;
 /// for a kind the device has not got (below), for samplers of the layout's
 /// own on a device without `Capabilities.immutable_samplers`, a binding
 /// numbered past 255, or more than 65535 descriptors;
-/// `error_initialization_failed` for a binding given twice;
+/// `error_validation_failed` for a binding given twice
+/// (VUID-VkDescriptorSetLayoutCreateInfo-binding-00279;
+/// `error_initialization_failed` until 1.134);
 /// `error_out_of_host_memory`.
 ///
 /// BEHAVIOR:
@@ -140,7 +142,7 @@ pub fn CreateDescriptorSetLayout(base: *FacetBase, device: *facet.Device, info: 
     for (given) |binding| {
         if (named[binding.binding]) {
             base.sys_base.FreeVec(memory);
-            return .error_initialization_failed;
+            return .error_validation_failed;
         }
         named[binding.binding] = true;
         bindings[binding.binding].kind = binding.descriptor_type;

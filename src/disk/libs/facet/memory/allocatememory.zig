@@ -24,15 +24,22 @@ const DeviceMemory = _memory.DeviceMemory;
 /// - `memory` - where the block is written; null when it fails.
 ///
 /// RESULT:
-/// `success`; `error_out_of_device_memory` when no region with the
-/// type's attributes has room, for no bytes, and for a type the device
-/// has not got; `error_out_of_host_memory`.
+/// `success`; `error_validation_failed` for no bytes, for a type the
+/// device has not got, and for more than the type's heap holds
+/// (VUID-VkMemoryAllocateInfo-allocationSize-07897,
+/// VUID-vkAllocateMemory-pAllocateInfo-01714, -01713;
+/// `error_out_of_device_memory` until 1.134, except that a block of the
+/// lazily allocated type, which takes nothing, was made however far past
+/// its heap, and the V3D panicked at a size in the last 12 KiB below
+/// 4 GiB); `error_out_of_device_memory` when no region with the type's
+/// attributes has room; `error_out_of_host_memory`.
 ///
 /// BEHAVIOR:
 /// The memory is exec's (AllocMem, with the attributes of the type's
-/// heap), aligned to a cache line and not cleared. Memory of the lazily
-/// allocated type takes nothing: it is for an attachment whose pixels
-/// stay in the tiles, and cannot be mapped.
+/// heap): on the cores aligned to a cache line and not cleared, on the
+/// V3D whole pages, cleared. Memory of the lazily allocated type takes
+/// nothing: it is for an attachment whose pixels stay in the tiles, and
+/// cannot be mapped.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -67,7 +74,12 @@ pub fn AllocateMemory(base: *FacetBase, device: *facet.Device, info: *const face
     const owner = _objects.of(Device, device);
     const properties = &owner.physical.memory;
     const index = info.memory_type_index;
-    if (index >= properties.memory_type_count or info.allocation_size == 0) return .error_out_of_device_memory;
+    if (index >= properties.memory_type_count or info.allocation_size == 0) return .error_validation_failed;
+    // No more than the type's heap holds (VUID-vkAllocateMemory-pAllocateInfo-01713;
+    // since 1.134 - the driver found no room for it before, but for the
+    // V3D's 32-bit rounding near 4 GiB, which panicked, and the lazily
+    // allocated type, which takes nothing, was made however large).
+    if (info.allocation_size > properties.memory_heaps[properties.memory_types[index].heap_index].size) return .error_validation_failed;
     const sys = base.sys_base;
     const made = _objects.create(sys, DeviceMemory) orelse return .error_out_of_host_memory;
     made.* = .{ .device = owner, .size = info.allocation_size, .type_index = index };

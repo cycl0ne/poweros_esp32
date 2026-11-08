@@ -320,15 +320,22 @@ facet.library/WaitForFences
 	- `memory` - where the block is written; null when it fails.
 
    RESULT
-	`success`; `error_out_of_device_memory` when no region with the
-	type's attributes has room, for no bytes, and for a type the device
-	has not got; `error_out_of_host_memory`.
+	`success`; `error_validation_failed` for no bytes, for a type the
+	device has not got, and for more than the type's heap holds
+	(VUID-VkMemoryAllocateInfo-allocationSize-07897,
+	VUID-vkAllocateMemory-pAllocateInfo-01714, -01713;
+	`error_out_of_device_memory` until 1.134, except that a block of the
+	lazily allocated type, which takes nothing, was made however far past
+	its heap, and the V3D panicked at a size in the last 12 KiB below
+	4 GiB); `error_out_of_device_memory` when no region with the type's
+	attributes has room; `error_out_of_host_memory`.
 
    BEHAVIOR
 	The memory is exec's (AllocMem, with the attributes of the type's
-	heap), aligned to a cache line and not cleared. Memory of the lazily
-	allocated type takes nothing: it is for an attachment whose pixels
-	stay in the tiles, and cannot be mapped.
+	heap): on the cores aligned to a cache line and not cleared, on the
+	V3D whole pages, cleared. Memory of the lazily allocated type takes
+	nothing: it is for an attachment whose pixels stay in the tiles, and
+	cannot be mapped.
 
    CONTEXT
 	- Waits: no.
@@ -417,10 +424,12 @@ facet.library/WaitForFences
 	- `offset` - where in it the buffer starts.
 
    RESULT
-	`success`; `error_out_of_device_memory` when the buffer does not fit
+	`success`; `error_validation_failed` when the buffer does not fit
 	there - past the block's end, the offset not aligned as
 	GetBufferMemoryRequirements says, or a type the buffer may not be in -
-	or it is bound already.
+	or it is bound already (VUID-vkBindBufferMemory-memoryOffset-01031,
+	-None-10741, -None-10739, -memory-01035, -buffer-07459;
+	`error_out_of_device_memory` until 1.134).
 
    BEHAVIOR
 	The buffer's bytes are the block's from `offset` on, for as long as
@@ -466,10 +475,13 @@ facet.library/WaitForFences
 	- `offset` - where in it the image starts.
 
    RESULT
-	`success`; `error_out_of_device_memory` when the image does not fit
+	`success`; `error_validation_failed` when the image does not fit
 	there - past the block's end, the offset not aligned as
 	GetImageMemoryRequirements says, or a type the image may not be in -
-	or it is bound already, as a swapchain's image always is.
+	or it is bound already, as a swapchain's image always is: Vulkan has
+	those bound as they are handed out
+	(VUID-vkBindImageMemory-memoryOffset-01046, -None-10737, -None-10735,
+	-memory-01047, -image-07460; `error_out_of_device_memory` until 1.134).
 
    BEHAVIOR
 	The image's texels are the block's from `offset` on, for as long as
@@ -2864,8 +2876,9 @@ facet.library/WaitForFences
 	- `buffer` - where the buffer is written; null when it fails.
 
    RESULT
-	`success`; `error_out_of_device_memory` for a size of nothing;
-	`error_out_of_host_memory`.
+	`success`; `error_validation_failed` for a size of nothing
+	(VUID-VkBufferCreateInfo-size-00912; `error_out_of_device_memory` until
+	1.134); `error_out_of_host_memory`.
 
    BEHAVIOR
 	The buffer has no memory until BindBufferMemory binds it into some;
@@ -2934,9 +2947,13 @@ facet.library/WaitForFences
 	`error_feature_not_present` where the device has no texel buffers;
 	`error_validation_failed` for a buffer not made for them
 	(VUID-VkBufferViewCreateInfo-buffer-00932; `error_feature_not_present`
-	until 1.133); `error_initialization_failed` for an
-	offset that is not the limit's, a range that is not the format's size,
-	a range of no texels, or a buffer with no memory;
+	until 1.133), and for an offset that is not on the limit or is past
+	the buffer's end, a range that is not a multiple of the format's size,
+	is 0, or reaches past the buffer's end, or a buffer with no memory
+	(-buffer-02750, -buffer-02751, -offset-00925, -range-00929,
+	-range-00928, -offset-00931, -buffer-00935;
+	`error_initialization_failed` until 1.134, and a range past the end
+	was cut to it where a texel was left there);
 	`error_out_of_host_memory`.
 
    BEHAVIOR
@@ -2945,11 +2962,19 @@ facet.library/WaitForFences
 	So a program writing the buffer through its mapped memory is seen by
 	the next function that reads the view, with no copy anywhere.
 
-	The range is held to the buffer: a range reaching past its end is cut
-	to it, and what is left has to be a texel at least.
+	A range given is held to the buffer as Vulkan has it: one reaching
+	past its end is refused (VUID-VkBufferViewCreateInfo-offset-00931).
+	Until 1.134 it was cut to the end, and refused only where less than a
+	texel was left there. `WHOLE_SIZE` is the bytes from the offset to the
+	end, as many whole texels as they hold, which Vulkan has be "the
+	nearest smaller multiple" of a texel and does not ask to be one: where
+	less than a texel is left the view has none, and a function reads 0
+	from it, as it does past the last texel of any view
+	(`shader.Texels.at`). Until 1.134 such a view was refused.
 
 	The offset is held to the limit alone, as Vulkan has it
-	(VUID-VkBufferViewCreateInfo-offset-00926): a texel is read a byte at a
+	(VUID-VkBufferViewCreateInfo-buffer-02750, -buffer-02751, which were
+	-offset-00926 when 1.125 said so): a texel is read a byte at a
 	time, so nothing asks it to start on a multiple of its own size, and
 	three channels of 32 bits, 12 bytes, may start at 16, which no power
 	of two that is a limit could have said otherwise. lavapipe and v3dv
@@ -2982,11 +3007,14 @@ facet.library/WaitForFences
 	a 32-bit integer format wants: a value past 2^24 is more than `at`'s
 	float carries exactly.
 
-	No image is kept in the formats 1.54 added and no vertex attribute is
-	read in one: they say `UNIFORM_TEXEL_BUFFER` and
-	`STORAGE_TEXEL_BUFFER` in `buffer_features` and nothing else. The two
-	that were already image formats, `r8_unorm` and `r16g16b16a16_sfloat`,
-	keep what they had and gain these.
+	No vertex attribute is read in the formats 1.54 added, and on the V3D
+	no image is kept in one either: there they say `UNIFORM_TEXEL_BUFFER`
+	and `STORAGE_TEXEL_BUFFER` in `buffer_features` and nothing else. On
+	the cores the 16-bit `_unorm` ones and `r8g8_unorm` are images as well
+	since 1.69 (`Capabilities.wide_channels`), and the whole numbers since
+	1.70 (`Capabilities.whole_textures`). The two that were already image
+	formats, `r8_unorm` and `r16g16b16a16_sfloat`, keep what they had and
+	gain these.
 
    BUGS
 	None known.
@@ -3015,8 +3043,9 @@ facet.library/WaitForFences
 	- `pool` - where the pool is written; null when it fails.
 
    RESULT
-	`success`; `error_initialization_failed` for a queue family the device
-	has not got; `error_out_of_host_memory`.
+	`success`; `error_validation_failed` for a queue family the device
+	has not got (VUID-vkCreateCommandPool-queueFamilyIndex-01937;
+	`error_initialization_failed` until 1.134); `error_out_of_host_memory`.
 
    BEHAVIOR
 	The pool keeps its command buffers: DestroyCommandPool frees all of
@@ -3142,8 +3171,9 @@ facet.library/WaitForFences
 	- `pool` - where the pool is written; null when it fails.
 
    RESULT
-	`success`; `error_initialization_failed` for a pool of no sets;
-	`error_out_of_host_memory`.
+	`success`; `error_validation_failed` for a pool of no sets
+	(VUID-VkDescriptorPoolCreateInfo-descriptorPoolOverallocation-09227;
+	`error_initialization_failed` until 1.134); `error_out_of_host_memory`.
 
    BEHAVIOR
 	The pool counts the sets it has given out against `max_sets`. The
@@ -3197,7 +3227,9 @@ facet.library/WaitForFences
 	for a kind the device has not got (below), for samplers of the layout's
 	own on a device without `Capabilities.immutable_samplers`, a binding
 	numbered past 255, or more than 65535 descriptors;
-	`error_initialization_failed` for a binding given twice;
+	`error_validation_failed` for a binding given twice
+	(VUID-VkDescriptorSetLayoutCreateInfo-binding-00279;
+	`error_initialization_failed` until 1.134);
 	`error_out_of_host_memory`.
 
    BEHAVIOR
@@ -3271,8 +3303,15 @@ facet.library/WaitForFences
 	- `device` - where the device is written; null when it fails.
 
    RESULT
-	`success`; `error_initialization_failed` for queues the family has
-	not got, and when the queue's task cannot be made;
+	`success`; `error_validation_failed` for queues the device has not
+	got - of a family other than its one, more than one, or the family
+	asked for twice (VUID-VkDeviceQueueCreateInfo-queueFamilyIndex-00381,
+	-queueCount-00382, VUID-VkDeviceCreateInfo-queueFamilyIndex-02802,
+	-pQueueCreateInfos-06755; `error_initialization_failed` until 1.134);
+	`error_feature_not_present` for a feature asked for that the device
+	has not got; `error_initialization_failed` when the device's queue
+	cannot be started - the V3D's hardware not coming up, or the memory
+	the queue's player or its task's stack wants not being had;
 	`error_out_of_host_memory`.
 
    BEHAVIOR
@@ -3413,17 +3452,29 @@ facet.library/WaitForFences
 	- `framebuffer` - where the framebuffer is written; null when it fails.
 
    RESULT
-	`success`; `error_initialization_failed` for views that do not fit the
-	pass - another number of them, a colour view of an image not made for a
-	colour attachment or in another format than its attachment's - the
-	view's own, which since 1.131 may differ from its image's (CreateImageView,
-	IMAGE_CREATE_MUTABLE_FORMAT) - a depth view of an image not
-	made for depth, an image smaller than the size, a view of fewer layers
-	than the framebuffer has, a view that swizzles its channels (since
-	1.120, VUID-VkFramebufferCreateInfo-pAttachments-00884) - and for a
-	size or layers of none, or of more
-	than the device takes (`PhysicalDeviceLimits.max_framebuffer_width`,
-	`max_framebuffer_height` and `max_framebuffer_layers`);
+	`success`; `error_validation_failed` for views that do not fit the
+	pass - another number of them, or none given where it has some; a
+	colour or resolve view of an image not made for a colour attachment,
+	or in another format than its attachment's - the view's own, which
+	since 1.131 may differ from its image's (CreateImageView,
+	IMAGE_CREATE_MUTABLE_FORMAT); a depth view of an image not made for
+	depth; a view of other samples than its attachment's, or one that
+	swizzles its channels (since 1.120); an image smaller than the size,
+	or a view of fewer layers than the framebuffer has - and for a size or
+	layers of none, or of more than the device takes
+	(`PhysicalDeviceLimits.max_framebuffer_width`, `max_framebuffer_height`
+	and `max_framebuffer_layers`)
+	(VUID-VkFramebufferCreateInfo-attachmentCount-00876, -flags-02778,
+	-pAttachments-00877, -00880, -02633, -00881, -00884, -flags-04533,
+	-04534, -04535, -width-00885, -00886, -height-00887, -00888,
+	-layers-00889, -00890; `error_initialization_failed` until 1.134);
+	`error_feature_not_present` for a view of a level smaller than the
+	size, of an image that is not, which Vulkan allows and this library
+	does not draw into (docs/facet-vulkan10.md item 92;
+	`error_initialization_failed` until 1.134), and for a depth the pass
+	keeps in an image with no memory behind it - both answered once every
+	view has been held to Vulkan's rules, so that a framebuffer breaking
+	one of them as well is `error_validation_failed` (since 1.134);
 	`error_out_of_host_memory`.
 
    BEHAVIOR
@@ -3431,6 +3482,11 @@ facet.library/WaitForFences
 	1.119, and of its first before, and of any of its layers since 1.91:
 	the pass draws into the level and the layer the view begins at, and it
 	is that level's rows that have to hold the size, as a depth view's do.
+	Vulkan holds only the image's first level to the size
+	(VUID-VkFramebufferCreateInfo-flags-04533, -04534), so a level smaller
+	than it is `error_feature_not_present` here, a pass having no rows past
+	the level's to draw into (docs/facet-vulkan10.md item 92), and an image
+	smaller than it `error_validation_failed`.
 	The size may be smaller than the images: the framebuffer is their top
 	left. So each level of one image, drawn into in turn, is its own mip
 	level, and a later pass samples the image they make (CreateImage).
@@ -3453,9 +3509,10 @@ facet.library/WaitForFences
 
 	A depth view names the level and the layer the pass draws into - levels
 	since 1.63, layers since 1.58 - and it is that level's rows that have
-	to hold the size, not the image's first. So the levels of one depth
-	image are a shadow map and the smaller copies a pass draws for
-	themselves, each through a framebuffer of that level's size.
+	to hold the size, not the image's first, as for a colour view. So the
+	levels of one depth image are a shadow map and the smaller copies a
+	pass draws for themselves, each through a framebuffer of that level's
+	size.
 
    CONTEXT
 	- Waits: no.
@@ -3519,10 +3576,16 @@ facet.library/WaitForFences
 	location past its limits, or a topology, polygon mode, blend factor or
 	blend operation that is none of Vulkan 1.0's;
 	`error_format_not_supported` for an attribute in a format it does not
-	read; `error_initialization_failed` for state that does not hold
-	together - an attribute of a binding not given, no viewport where it is
-	not set by commands; `error_out_of_host_memory`. Those made are made
-	either way.
+	read; `error_validation_failed` as well for state that does not hold
+	together - a subpass the pass has not got, an attribute of a binding
+	not given, tessellation functions without a patch list and its state
+	or a patch list without them, a sample count that is not the
+	subpass's, a compare or stencil operation that is none of Vulkan's,
+	other than a blend state for each colour attachment, no viewport or
+	scissor where commands do not set them (`error_initialization_failed`
+	until 1.134); `error_out_of_host_memory`. Those made are made either
+	way. A state Vulkan does not have the pipeline read is not looked at
+	(BEHAVIOR).
 
    BEHAVIOR
 	A pipeline takes its vertex and fragment functions from the modules by
@@ -3540,15 +3603,18 @@ facet.library/WaitForFences
 	colour attachment keeps what it held; alpha to coverage, which takes
 	the alpha of a colour that is not written, changes no sample, as in
 	llvmpipe (lp_state_fs.c:1181-1185). A device with a processor of its
-	own has no code for it and refuses it with `error_feature_not_present`:
-	the V3D, until v3dv's no-op fragment shader is ported
-	(v3dv_pipeline.c:2616-2642, docs/facet-vulkan10.md item 85).
+	own has no code for it and refuses it with `error_feature_not_present`
+	where it draws: the V3D, until v3dv's no-op fragment shader is ported
+	(v3dv_pipeline.c:2616-2642, docs/facet-vulkan10.md item 85). One that
+	draws nothing - its rasterizer discarding, or every face culled - wants
+	no program, and the V3D makes it (since 1.134).
 
 	With tessellation functions, the topology is `patch_list` and the
 	`tessellation_state` says the vertices of a patch, 1 to 32: the cores make
 	each patch into triangles or lines (`shader.Tessellation`), for a device
 	with a processor of its own too, and those are drawn; without them,
-	`patch_list` is `error_initialization_failed`. The evaluation entry says
+	`patch_list` is `error_validation_failed` (`error_initialization_failed`
+	until 1.134). The evaluation entry says
 	the domain, which way round its triangles go, and how the fraction of a
 	level is spent (`shader.Spacing`, since 1.50): a domain or a spacing of a
 	value this library has not is `error_invalid_shader_nv`. The control entry
@@ -3579,6 +3645,23 @@ facet.library/WaitForFences
 	CmdSetStencilReference;
 	the others are taken and do nothing). A pipeline with the rasterizer
 	discarding, or culling front and back, draws nothing.
+
+	A pipeline whose rasterizer discards has no multisample, depth or
+	colour blend state: they are fragment shader and fragment output
+	interface state, which Vulkan has a complete pipeline include only
+	where the rasterizer does not discard ("If ... rasterizerDiscardEnable
+	... is VK_FALSE ... fragment shader state and fragment output interface
+	state is included in a complete graphics pipeline"). Its viewport
+	state Vulkan does not ask for there either
+	(VUID-VkGraphicsPipelineCreateInfo-rasterizerDiscardEnable-09024). So
+	those four are not read, and may be null. Nor is the depth state of a
+	pipeline whose subpass has no depth attachment, nor the colour blend
+	state of one whose subpass has no colour attachment but those named
+	ATTACHMENT_UNUSED. Mesa's runtime reads them the same way
+	(`may_have_rasterization`, vk_graphics_state.c:1482-1493, and
+	`vk_graphics_pipeline_state_fill`, :1600, :1662-1663, :1701-1702,
+	:1841-1861). Until 1.134 each was read wherever it was given, and a
+	pipeline could be refused for what one held.
 
 	`PIPELINE_CREATE_DEPTH_PREPASS` in `flags`, facet.library's own, has the
 	pipeline's triangles' depth drawn first in each tile and each pixel then
@@ -3733,7 +3816,9 @@ facet.library/WaitForFences
 	- D16_UNORM, S8_UINT or D16_UNORM_S8_UINT with
 	  DEPTH_STENCIL_ATTACHMENT, optimal, one level: a depth that lives in
 	  the tiles alone, never stored, whose memory may be of the lazily
-	  allocated type. With a load or a store op it is kept in rows instead
+	  allocated type where it is made TRANSIENT_ATTACHMENT as well (since
+	  1.134; transient or not before). With a load or a store op it is
+	  kept in rows instead
 	  (CreateRenderPass), and with SAMPLED as well those rows are the
 	  texture a sampler reads: a shadow map drawn into and sampled out of
 	  with nothing copied (`Capabilities.sampled_depth`, since
@@ -4207,8 +4292,10 @@ facet.library/WaitForFences
 	`max_push_constants_size`, which Vulkan holds a layout to
 	(VUID-VkPipelineLayoutCreateInfo-setLayoutCount-00286,
 	VUID-VkPushConstantRange-offset-00294, -size-00298), and
-	`error_feature_not_present` until 1.133; `error_initialization_failed`
-	for a range not on 4 bytes; `error_out_of_host_memory`.
+	`error_feature_not_present` until 1.133; `error_validation_failed` as
+	well for a range not on 4 bytes or of none
+	(VUID-VkPushConstantRange-offset-00295, -size-00296, -size-00297;
+	`error_initialization_failed` until 1.134); `error_out_of_host_memory`.
 
    BEHAVIOR
 	A shader reads set `n` as `Resources.sets[n]` and the push constants
@@ -4262,10 +4349,10 @@ facet.library/WaitForFences
 	(`Capabilities.pipeline_statistics_queries`), a bit that is none of
 	Vulkan's or a kind that is none of them
 	(VUID-VkQueryPoolCreateInfo-queryType-00791, -queryType-00792,
-	-queryType-parameter; `error_feature_not_present` until 1.133);
-	`error_initialization_failed`
-	for no queries at all, or a statistics pool that counts nothing;
-	`error_out_of_host_memory`. A geometry shader's two statistics may be
+	-queryType-parameter; `error_feature_not_present` until 1.133), and
+	for no queries at all, or a statistics pool that counts nothing
+	(-queryCount-02763, -queryType-09534; `error_initialization_failed`
+	until 1.134); `error_out_of_host_memory`. A geometry shader's two statistics may be
 	asked for since 1.43, there being no such stage to count: they read 0,
 	which is what Vulkan has a statistic of a stage that never ran hold. A
 	timestamp pool is made on every device since 1.93, with a clock or
@@ -4351,10 +4438,31 @@ facet.library/WaitForFences
 	`error_feature_not_present` until 1.133);
 	`error_format_not_supported` for an attachment in
 	a format it cannot draw into, or read as an input attachment;
-	`error_initialization_failed` for a subpass that names an attachment
-	there is not, or reads one it draws into itself without saying so in a
-	dependency by region (BEHAVIOR);
-	`error_out_of_host_memory`.
+	`error_validation_failed` as well for an attachment of a count of
+	samples that is none of Vulkan's (VUID-VkAttachmentDescription-samples-parameter;
+	`error_feature_not_present` until 1.134), and for a subpass that names
+	an attachment there is not, or none where it counts some; attachments
+	of one subpass of different counts of samples; a resolve attachment
+	for an unused colour or one of one sample, or of more than one sample
+	or another format than its colour's; a colour attachment that is the
+	depth attachment as well, or one named twice; a colour attachment of
+	a depth format that it reads as an input attachment as well, or a
+	depth attachment of a colour format that it reads so
+	(VUID-VkRenderPassCreateInfo-attachment-00834,
+	VUID-VkSubpassDescription-pInputAttachments-parameter,
+	-pColorAttachments-parameter, -pColorAttachments-09430,
+	-pDepthStencilAttachment-01418, -pResolveAttachments-00847 to -00850,
+	-pDepthStencilAttachment-04438, -pColorAttachments-02648,
+	-pDepthStencilAttachment-02650, and for the one named twice the render
+	pass chapter under VkAttachmentDescription: "A given attachment index
+	must not be used multiple times in a single subpass";
+	`error_initialization_failed` until 1.134);
+	`error_feature_not_present` for a subpass that reads its own depth
+	attachment, which Vulkan allows and this library does not draw
+	(docs/facet-vulkan10.md item 92), and for one of colours drawn together
+	that reads another than the first, which only this library's own
+	SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER asks for (item 80; both
+	`error_initialization_failed` until 1.134); `error_out_of_host_memory`.
 
    BEHAVIOR
 	The pass has up to 4 subpasses and up to 8 attachments. A subpass draws
@@ -4390,8 +4498,8 @@ facet.library/WaitForFences
 	device without the capability holds one sample: one of more is
 	`error_feature_not_present`. A resolve attachment for a colour of one
 	sample, or of another format or count, and attachments of one subpass
-	whose counts differ, are `error_initialization_failed`, as Vulkan has
-	none of them.
+	whose counts differ, are `error_validation_failed`, as Vulkan has none
+	of them (`error_initialization_failed` until 1.134).
 
 	A colour attachment of a subpass may be ATTACHMENT_UNUSED: what the
 	fragment function writes at that location is discarded, and the
@@ -4403,8 +4511,9 @@ facet.library/WaitForFences
 	drawn as a subpass of none. One whose colours go together
 	(SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER) would have a plane in its tiles
 	with no image behind it, and is `error_feature_not_present`. A resolve
-	attachment for an unused colour is `error_initialization_failed`
-	(VUID-VkSubpassDescription-pResolveAttachments-00847).
+	attachment for an unused colour is `error_validation_failed`
+	(VUID-VkSubpassDescription-pResolveAttachments-00847;
+	`error_initialization_failed` until 1.134).
 
 	The subpasses are drawn one after another. A colour attachment's load op
 	CLEAR clears the render area the first time a subpass names it; LOAD,
@@ -4491,10 +4600,12 @@ facet.library/WaitForFences
 	(CreateImage).
 
 	**A subpass may read the colour attachment it is drawing into** since
-	1.64, which is Vulkan's self-dependency by region: the subpass names
-	one of its own colour attachments as an input attachment, and the pass
-	carries a `SubpassDependency` of that subpass on itself with
-	DEPENDENCY_BY_REGION. It is read as any input attachment is - the
+	1.64: the subpass names one of its own colour attachments as an input
+	attachment, which Vulkan allows - "the same view can be used
+	simultaneously as an input and color or depth/stencil attachment".
+	Until 1.134 the pass also had to carry Vulkan's self-dependency by
+	region, a `SubpassDependency` of that subpass on itself with
+	DEPENDENCY_BY_REGION; it is not read now. It is read as any input attachment is - the
 	`input_attachment` descriptor written with a view of it, and
 	`shader.Fragments.input` then `colorAt` at the fragment's own place -
 	and what it answers there is the tile, which already holds that pixel
@@ -4505,14 +4616,20 @@ facet.library/WaitForFences
 	in other tiles, drawn on other cores or not yet drawn, and reads as
 	transparent black - which is all Vulkan's by-region dependency
 	promises either. A subpass of several colour attachments drawn
-	together reads the first of them this way and no other; reading the
-	depth attachment it draws into is not among this.
+	together reads the first of them this way, and another of them is
+	`error_feature_not_present`: only the library's own flag draws them
+	together, and that goes with the flag (docs/facet-vulkan10.md item 80).
+	Reading the depth attachment it draws into is not among this either,
+	and is `error_feature_not_present` as well (item 92; both
+	`error_initialization_failed` until 1.134).
 
-	Without that dependency, drawing into an attachment
-	and reading it in the same subpass is a loop, which is
-	`error_initialization_failed`, and only a device whose
-	`input_attachments` is true reads any - the cores, not the V3D -
-	others answering `error_feature_not_present`. The pass does not say
+	Without that dependency the subpass is drawn the same way since 1.134.
+	Vulkan allows such a pass - a feedback loop, whose reads it leaves
+	undefined where nothing orders the write before them - and the tile's
+	pixel is an answer it allows; until then the pass was refused, with
+	`error_initialization_failed`. Only a device whose `input_attachments`
+	is true reads any - the cores, not the V3D - others answering
+	`error_feature_not_present`. The pass does not say
 	which descriptor a subpass reads one through: the set written with the
 	`input_attachment` descriptor does (UpdateDescriptorSets), and the
 	image wants IMAGE_USAGE_INPUT_ATTACHMENT (CreateImage).
@@ -4541,9 +4658,9 @@ facet.library/WaitForFences
 
 	Attachments a subpass does not name are left as they are. The
 	dependencies say nothing of what waits for what - a queue's commands
-	are done one after the other - and are read for one thing alone: a
-	subpass's dependency on itself by region, which lets it read the
-	attachment it draws into (since 1.64).
+	are done one after the other - and are not read. From 1.64 to 1.133
+	one thing was read of them: a subpass's dependency on itself by
+	region, without which it could not read the attachment it draws into.
 
    CONTEXT
 	- Waits: no.
@@ -4598,11 +4715,12 @@ facet.library/WaitForFences
 	that is none of its six
 	(VUID-VkSamplerCreateInfo-addressModeU-parameter and the other members'
 	own, -compareEnable-01080, -addressModeU-01078;
-	`error_feature_not_present` until 1.133); `error_feature_not_present`
-	for `unnormalized_coordinates` on a device that reads none
-	(`Capabilities.unnormalized_coordinates`);
-	`error_initialization_failed` for `unnormalized_coordinates` asked for
-	beside something Vulkan does not allow with it;
+	`error_feature_not_present` until 1.133); `error_validation_failed` for `unnormalized_coordinates` asked for
+	beside something Vulkan does not allow with it, on any device
+	(VUID-VkSamplerCreateInfo-unnormalizedCoordinates-01072 to -01077;
+	`error_initialization_failed` until 1.134); `error_feature_not_present`
+	for `unnormalized_coordinates` that keeps to them on a device that
+	reads none (`Capabilities.unnormalized_coordinates`);
 	`error_out_of_host_memory`.
 
    BEHAVIOR
@@ -4624,8 +4742,8 @@ facet.library/WaitForFences
 	`unnormalized_coordinates` places the sample in texels of the texture
 	rather than 0 to 1 across it, for a program that reads a texture as a
 	table of values (since 1.67). Vulkan asks five things of such a
-	sampler, and all five are held to here, an
-	`error_initialization_failed` for each:
+	sampler, and all five are held to here, an `error_validation_failed`
+	for each (`error_initialization_failed` until 1.134):
 	- one filter for both: `mag_filter` and `min_filter` the same. Which of
 	  the two a sample would take is worked out from how fast the
 	  coordinates change, which says nothing in texels - so Vulkan has
@@ -4915,13 +5033,15 @@ facet.library/WaitForFences
 	`success`; `error_out_of_device_memory` when the display's memory has
 	no room for that many pictures; `error_native_window_in_use` when the
 	surface has a swapchain that is not `old_swapchain`;
-	`error_initialization_failed` for a size that is not the surface's;
 	`error_format_not_supported` for a format that is not its;
 	`error_validation_failed` for a use, a present mode or layers the
 	surface does not have, as GetPhysicalDeviceSurfaceCapabilities and
 	GetPhysicalDeviceSurfacePresentModes give them
 	(VUID-VkSwapchainCreateInfoKHR-presentMode-01427, -imageArrayLayers-01275,
-	-presentMode-01281; `error_feature_not_present` until 1.133);
+	-presentMode-01281; `error_feature_not_present` until 1.133), and for
+	a size that is not the surface's, its least and its most extent being
+	the one it has (-pNext-07781; `error_initialization_failed` until
+	1.134);
 	`error_surface_lost` when the window the surface is over has closed;
 	`error_out_of_host_memory`.
 
@@ -6061,7 +6181,9 @@ facet.library/WaitForFences
 	while it recorded; `error_feature_not_present` when a command asked for
 	more than the library draws, as CmdDraw does of more vertices than a draw
 	works. Either way the buffer cannot be submitted, and is recorded again
-	after a reset; `error_initialization_failed` for a buffer not recording.
+	after a reset; `error_validation_failed` for a buffer not recording
+	(VUID-vkEndCommandBuffer-commandBuffer-00059;
+	`error_initialization_failed` until 1.134).
 
    BEHAVIOR
 	The buffer is executable: QueueSubmit plays it, as often as it is submitted.
@@ -6567,9 +6689,15 @@ facet.library/WaitForFences
 	An offset aligned to a cache line, 64 bytes. A texture's size is its
 	levels in blocks, an 8888 texel at 8 bytes; rows' are their pitch, the
 	width rounded up to a cache line, times the height. A depth attachment
-	may be in any memory type, the lazily allocated one too, and nothing
-	of its memory is touched; every other image needs a type with memory
-	behind it.
+	made IMAGE_USAGE_TRANSIENT_ATTACHMENT may be in any memory type, the
+	lazily allocated one too: a pass that neither loads nor stores it, nor
+	hands it on to a later part, touches nothing of its memory, and
+	CreateFramebuffer answers `error_feature_not_present` for one in the
+	lazily allocated type that a pass keeps. Every other image needs a type
+	with memory behind it, Vulkan letting the lazily allocated type be
+	offered to a transient image alone (since 1.134; before, facet offered
+	it to every depth attachment neither sampled nor read as an input
+	attachment).
 
    CONTEXT
 	- Waits: no.
@@ -7480,8 +7608,10 @@ facet.library/WaitForFences
    RESULT
 	`success` where every query read was available; `not_ready` where one
 	was not, the others written all the same; `error_device_lost`;
-	`error_out_of_host_memory` where `size` is too small for what was asked
-	for, nothing written past what fitted.
+	`error_validation_failed` where `size` is too small for what was asked
+	for, nothing written past what fitted
+	(VUID-vkGetQueryPoolResults-dataSize-00817; `error_out_of_host_memory`
+	until 1.134).
 
    BEHAVIOR
 	A statistics query writes one value for each statistic it counts, in the
@@ -7700,8 +7830,13 @@ facet.library/WaitForFences
 	  null when it fails.
 
    RESULT
-	`success`; `error_memory_map_failed` for lazily allocated memory, for
-	a block mapped already, and for a range past its end.
+	`success`; `error_validation_failed` for lazily allocated memory, the
+	one type that is not MEMORY_PROPERTY_HOST_VISIBLE, for a block mapped
+	already, and for a range of nothing or past the block's end
+	(VUID-vkMapMemory-memory-00682, -memory-00678, -offset-00679,
+	-size-00680, -size-00681; `error_memory_map_failed` until 1.134). A
+	mapping is never refused for want of addresses, which is what Vulkan's
+	`error_memory_map_failed` is: the address handed out is the block's own.
 
    BEHAVIOR
 	Mapping is handing out the address: the memory is the machine's RAM,

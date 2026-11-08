@@ -1277,7 +1277,7 @@ fn texelBufferChecks(probe: *Probe) void {
     // Refused: a format no view takes, and an offset that is not a texel's.
     var none: ?*facet.BufferView = null;
     probe.check(fb.CreateBufferView(device, &.{ .buffer = floats, .format = .d16_unorm }, &none) == .error_format_not_supported, "a format no view takes refused");
-    probe.check(fb.CreateBufferView(device, &.{ .buffer = floats, .format = .r32g32b32a32_sfloat, .offset = 4 }, &none) == .error_initialization_failed, "an offset that is not a texel's refused");
+    probe.check(fb.CreateBufferView(device, &.{ .buffer = floats, .format = .r32g32b32a32_sfloat, .offset = 4 }, &none) == .error_validation_failed, "an offset that is not a texel's refused");
     probe.check(none == null, "and nothing given back for either");
 
     var module: ?*facet.ShaderModule = null;
@@ -4475,17 +4475,17 @@ fn texelChecks(probe: *Probe) void {
     var refused: ?*facet.Sampler = null;
     var two_filters = in_texels;
     two_filters.min_filter = .linear;
-    probe.check(fb.CreateSampler(device, &two_filters, &refused) == .error_initialization_failed, "two filters with it refused");
+    probe.check(fb.CreateSampler(device, &two_filters, &refused) == .error_validation_failed, "two filters with it refused");
     var levelled = in_texels;
     levelled.max_lod = facet.texture.lod_unclamped;
-    probe.check(fb.CreateSampler(device, &levelled, &refused) == .error_initialization_failed, "and a level past the first");
+    probe.check(fb.CreateSampler(device, &levelled, &refused) == .error_validation_failed, "and a level past the first");
     var tapped = in_texels;
     tapped.anisotropy_enable = true;
     tapped.max_anisotropy = 4;
-    probe.check(fb.CreateSampler(device, &tapped, &refused) == .error_initialization_failed, "and several samples along an axis");
+    probe.check(fb.CreateSampler(device, &tapped, &refused) == .error_validation_failed, "and several samples along an axis");
     var tiled = in_texels;
     tiled.address_mode_u = .repeat;
-    probe.check(fb.CreateSampler(device, &tiled, &refused) == .error_initialization_failed, "and an edge that is neither held nor bordered");
+    probe.check(fb.CreateSampler(device, &tiled, &refused) == .error_validation_failed, "and an edge that is neither held nor bordered");
     probe.check(refused == null, "and nothing given back for any of them");
 
     // The texture of the small texels' two colours, its left half and its

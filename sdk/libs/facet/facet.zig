@@ -101,8 +101,10 @@ pub const Result = enum(i32) {
     error_initialization_failed = -3,
     /// The device can do nothing more: its queue's task is gone.
     error_device_lost = -4,
-    /// The memory cannot be mapped: it is lazily allocated, or mapped
-    /// already.
+    /// The memory cannot be mapped for want of addresses. Vulkan's code,
+    /// which no call answers: MapMemory hands out the block's own address,
+    /// and what it refuses - lazily allocated memory, a block mapped
+    /// already - is `error_validation_failed` since 1.134.
     error_memory_map_failed = -5,
     /// A layer asked for is not there. Vulkan's
     /// `VK_ERROR_LAYER_NOT_PRESENT`: this library has no layers and no
@@ -143,7 +145,10 @@ pub const Result = enum(i32) {
     error_unknown = -13,
     /// What was asked breaks one of Vulkan's valid-usage rules, and the
     /// call saw it: a feature the device has not got, a limit it reports
-    /// passed, or a value or a bit that is none of Vulkan's. Vulkan's
+    /// passed, a value or a bit that is none of Vulkan's, or since 1.134
+    /// what does not hold together - a reference to what is not there, a
+    /// count of none where Vulkan asks for some, a binding named twice, a
+    /// command buffer ended that is not recording. Vulkan's
     /// `VK_ERROR_VALIDATION_FAILED`, which vk.xml requires in version 1.0's
     /// own block ("Retroactively promoted from VK_EXT_debug_report for
     /// compatibility with VulkanSC") with the extension's number, so that a
@@ -152,8 +157,18 @@ pub const Result = enum(i32) {
     /// may return VK_ERROR_VALIDATION_FAILED if a violation of valid usage
     /// is detected." Mesa's drivers do not look, and leave such a call
     /// undefined; facet looks where it would otherwise do other than what
-    /// was asked. (Since 1.133: those calls answered
-    /// `error_feature_not_present` until then.)
+    /// was asked. A call asked for something that breaks a rule and for
+    /// something this library does not do as well may answer this or
+    /// `error_feature_not_present`: which it looks at first is not
+    /// promised, Vulkan leaving the call undefined either way, except where
+    /// the call's own RESULT says so (CreateFramebuffer, CreateSampler).
+    /// (Since 1.133: those calls answered `error_feature_not_present` until
+    /// then; and since 1.134 those that answered
+    /// `error_initialization_failed`, and the memory calls' -
+    /// `error_out_of_device_memory` from CreateBuffer, AllocateMemory,
+    /// BindBufferMemory and BindImageMemory, `error_memory_map_failed` from
+    /// MapMemory, `error_out_of_host_memory` from GetQueryPoolResults -
+    /// where no memory had run out.)
     error_validation_failed = -1000011001,
     /// A descriptor pool has no room for another set.
     error_out_of_pool_memory = -1000069000,
@@ -1301,8 +1316,10 @@ pub const BufferViewCreateInfo = extern struct {
     /// How its bytes are read: one of the formats whose `buffer_features`
     /// say `UNIFORM_TEXEL_BUFFER` (GetPhysicalDeviceFormatProperties).
     format: Format,
-    /// Where the texels start in the buffer, a multiple of the format's
-    /// size, and how many bytes of them; `WHOLE_SIZE` reaches the end.
+    /// Where the texels start in the buffer, a multiple of
+    /// `PhysicalDeviceLimits.min_texel_buffer_offset_alignment`, and how
+    /// many bytes of them, a multiple of the format's size and within the
+    /// buffer; `WHOLE_SIZE` reaches the end.
     offset: u64 align(4) = 0,
     range: u64 align(4) = WHOLE_SIZE,
 };
@@ -1719,7 +1736,8 @@ pub const SamplerCreateInfo = extern struct {
     /// filter for both, `nearest` mipmapping, `min_lod` and `max_lod` 0,
     /// no anisotropy, no comparison, and `address_mode_u` and
     /// `address_mode_v` either `clamp_to_edge` or `clamp_to_border` -
-    /// anything else is `error_initialization_failed`.
+    /// anything else is `error_validation_failed` (since 1.134;
+    /// `error_initialization_failed` before).
     unnormalized_coordinates: bool = false,
 };
 
@@ -2098,8 +2116,11 @@ pub const SubpassDescription = extern struct {
 pub const SUBPASS_EXTERNAL: u32 = ~@as(u32, 0);
 
 /// SubpassDependency.dependency_flags: the work depends on what was
-/// written at the same pixel alone, which is what lets a subpass read the
-/// attachment it is drawing into (`CreateRenderPass`, since 1.64).
+/// written at the same pixel alone, which Vulkan has a subpass that reads
+/// the attachment it is drawing into wait on. Taken and not read since
+/// 1.134: a subpass reads what it draws with it or without it, the pixel
+/// being the tile's either way; from 1.64 it had to carry it
+/// (`CreateRenderPass`).
 pub const DEPENDENCY_BY_REGION: u32 = 0x1;
 
 /// What one subpass's work waits for of another's, or of the work

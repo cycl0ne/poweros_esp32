@@ -118,6 +118,12 @@ pub fn UpdateDescriptorSets(base: *FacetBase, device: *facet.Device, write_count
                     // A sampler of its own has no image, and a sampled
                     // image no sampler; a combined one has both.
                     const with: ?*const facet.texture.Sampler = if (write.descriptor_type == .sampled_image or write.descriptor_type == .storage_image) null else sampler: {
+                        // A binding that holds a sampler of its own does
+                        // not read the write's, which may be anything
+                        // (VUID-VkWriteDescriptorSet-descriptorType-00325
+                        // asks for a sampler only where the layout holds
+                        // none): it is not looked at (since 1.134).
+                        if (fixed) break :sampler null;
                         const with_sampler = info.sampler orelse break :sampler null;
                         break :sampler &_objects.of(Sampler, with_sampler).kept;
                     };

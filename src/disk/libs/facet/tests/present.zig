@@ -269,12 +269,15 @@ test "a swapchain: its images the surface's buffers, handed out in turn, shown i
     try testing.expectEqual(facet.Result.incomplete, fb.GetSwapchainImages(bench.device, swapchain.?, &count, &images));
     count = 2;
     try testing.expectEqual(facet.Result.success, fb.GetSwapchainImages(bench.device, swapchain.?, &count, &images));
-    // Bound already, and the program's to neither bind nor destroy.
+    // Bound already, and the program's to neither bind nor destroy: Vulkan
+    // has a swapchain's images bound as they are handed out, so binding one
+    // breaks its rules (VUID-vkBindImageMemory-image-07460;
+    // `error_out_of_device_memory` until 1.134).
     var needs: facet.MemoryRequirements = undefined;
     fb.GetImageMemoryRequirements(bench.device, images[0], &needs);
     const block = try rig_zig.allocate(&bench.rig, bench.device, needs.size);
     defer fb.FreeMemory(bench.device, block);
-    try testing.expectEqual(facet.Result.error_out_of_device_memory, fb.BindImageMemory(bench.device, images[0], block, 0));
+    try testing.expectEqual(facet.Result.error_validation_failed, fb.BindImageMemory(bench.device, images[0], block, 0));
     fb.DestroyImage(bench.device, images[0]);
 
     // The first is shown as the swapchain starts: the second is handed out,
@@ -405,7 +408,7 @@ test "refused: a surface that changed, a swapchain handed on, no room, a second 
     acquired, _ = bench.acquire(second.?, 0);
     try testing.expectEqual(facet.Result.error_out_of_date, acquired);
     result, _ = bench.swapchain(1, second);
-    try testing.expectEqual(facet.Result.error_initialization_failed, result);
+    try testing.expectEqual(facet.Result.error_validation_failed, result);
     fb.DestroySwapchain(bench.device, second);
     try testing.expectEqual(@as(u32, 0), fake.made);
 }

@@ -31,10 +31,10 @@ const _query = @import("_query.zig");
 /// (`Capabilities.pipeline_statistics_queries`), a bit that is none of
 /// Vulkan's or a kind that is none of them
 /// (VUID-VkQueryPoolCreateInfo-queryType-00791, -queryType-00792,
-/// -queryType-parameter; `error_feature_not_present` until 1.133);
-/// `error_initialization_failed`
-/// for no queries at all, or a statistics pool that counts nothing;
-/// `error_out_of_host_memory`. A geometry shader's two statistics may be
+/// -queryType-parameter; `error_feature_not_present` until 1.133), and
+/// for no queries at all, or a statistics pool that counts nothing
+/// (-queryCount-02763, -queryType-09534; `error_initialization_failed`
+/// until 1.134); `error_out_of_host_memory`. A geometry shader's two statistics may be
 /// asked for since 1.43, there being no such stage to count: they read 0,
 /// which is what Vulkan has a statistic of a stage that never ran hold. A
 /// timestamp pool is made on every device since 1.93, with a clock or
@@ -103,14 +103,14 @@ pub fn CreateQueryPool(base: *FacetBase, device: *facet.Device, info: *const fac
         .pipeline_statistics => {
             if (!can.pipeline_statistics_queries) return .error_validation_failed;
             if (info.pipeline_statistics & ~facet.QUERY_PIPELINE_STATISTIC_ALL != 0) return .error_validation_failed;
-            if (info.pipeline_statistics == 0) return .error_initialization_failed;
+            if (info.pipeline_statistics == 0) return .error_validation_failed;
         },
         // With a clock or without: without one, the queue family's
         // timestamp_valid_bits of 0 is what says so (CmdWriteTimestamp).
         .timestamp => {},
         else => return .error_validation_failed,
     }
-    if (info.query_count == 0) return .error_initialization_failed;
+    if (info.query_count == 0) return .error_validation_failed;
     const made = _query.make(base.sys_base, owner, info) orelse return .error_out_of_host_memory;
     pool.* = _objects.handle(facet.QueryPool, made);
     return .success;

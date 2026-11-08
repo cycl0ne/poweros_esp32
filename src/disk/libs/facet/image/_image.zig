@@ -13,7 +13,8 @@
 //!   samples in its own way, by that device's (Ops.texture_memory);
 //! - a depth attachment is `depth`: its pixels live in the tiles alone,
 //!   cleared as each tile starts and never stored, so its memory is never
-//!   touched and may be of the lazily allocated type.
+//!   touched and, where it is made transient, may be of the lazily
+//!   allocated type.
 //!
 //! **An image both drawn into and sampled is `rows`** (since 1.119), and
 //! sampled where its rows lie, as a sampled depth attachment is: nothing
@@ -932,12 +933,15 @@ pub fn texelsOver(image: *const Image, memory: [*]u8) texture.Texture.Error!text
     return made;
 }
 
-/// What an image needs of its memory: a depth attachment any type, the
-/// lazily allocated one too; the rest a type with something behind it - a
-/// depth one that is sampled among them, its rows being read.
+/// What an image needs of its memory: a transient depth attachment any
+/// type, the lazily allocated one too; the rest a type with something
+/// behind it - a depth one that is sampled among them, its rows being read.
+/// Vulkan has the lazily allocated type offered to an image made
+/// IMAGE_USAGE_TRANSIENT_ATTACHMENT, and to no other (since 1.134: every
+/// depth attachment that is not read was offered it before).
 pub fn requirements(image: *const Image) facet.MemoryRequirements {
     const properties = &image.device.physical.memory;
-    const anywhere = image.kind == .depth and !keptDepth(image);
+    const anywhere = image.kind == .depth and !keptDepth(image) and image.usage & facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT != 0;
     return .{
         .size = image.bytes,
         .alignment = image.alignment,

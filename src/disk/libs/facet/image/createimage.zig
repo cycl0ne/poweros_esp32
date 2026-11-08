@@ -51,7 +51,9 @@ const _image = @import("_image.zig");
 /// - D16_UNORM, S8_UINT or D16_UNORM_S8_UINT with
 ///   DEPTH_STENCIL_ATTACHMENT, optimal, one level: a depth that lives in
 ///   the tiles alone, never stored, whose memory may be of the lazily
-///   allocated type. With a load or a store op it is kept in rows instead
+///   allocated type where it is made TRANSIENT_ATTACHMENT as well (since
+///   1.134; transient or not before). With a load or a store op it is
+///   kept in rows instead
 ///   (CreateRenderPass), and with SAMPLED as well those rows are the
 ///   texture a sampler reads: a shadow map drawn into and sampled out of
 ///   with nothing copied (`Capabilities.sampled_depth`, since

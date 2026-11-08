@@ -58,7 +58,8 @@ The answer is `error_validation_failed` where Vulkan does not let a
 program ask that of a device whose features, limits or surface say what
 this one's do, and `error_feature_not_present` where Vulkan does and
 facet does not do it (since 1.133; `error_feature_not_present` for both
-before).
+before - and since 1.134 for what answered `error_initialization_failed`,
+or a memory code where no memory had run out).
 
 ## Samplers, and what a sampler still cannot ask for
 
@@ -112,7 +113,8 @@ time. What is left out:
   the device says it reads them
   (`PhysicalDeviceFeatures.unnormalized_coordinates`: the cores do, the
   V3D reads no sampler at all). Vulkan allows little beside it, and each
-  of those is `error_initialization_failed`: one filter for both,
+  of those is `error_validation_failed` on any device (since 1.134;
+  `error_initialization_failed` before): one filter for both,
   `nearest` mipmapping with `min_lod` and `max_lod` 0, no anisotropy, no
   comparison, and `address_mode_u` and `address_mode_v` either
   `clamp_to_edge` or `clamp_to_border`. A 3D texture's `r` is then counted
@@ -277,7 +279,8 @@ pass's depth. What is left out:
   the shadow map's pipeline, of a vertex stage alone, drawn with a
   function of the library's own that does nothing. Each colour
   attachment keeps what it held, and alpha to coverage changes no
-  sample. The V3D refuses it.
+  sample. The V3D refuses it where it draws; one that draws nothing - its
+  rasterizer discarding, or every face culled - it makes since 1.134.
 
 ## Images written through, and what they still are not
 
@@ -433,7 +436,10 @@ them and `CmdSetBlendConstantsAt` one attachment's own. What is left out:
   factors do not exist.
 - `attachment_count` is either none - the default over all of them - or
   exactly the subpass's colour attachments; anything between is
-  `error_initialization_failed`.
+  `error_validation_failed` (VUID-VkGraphicsPipelineCreateInfo-renderPass-07609;
+  `error_initialization_failed` until 1.134). Where the subpass has no
+  colour attachment, or the rasterizer discards, the blend state is not
+  read at all since 1.134, as Vulkan has it.
 
 ## Input attachments, and what they still are not
 
@@ -457,10 +463,10 @@ exist now. What is left out:
 - **An attachment another subpass drew is read out of the image's
   memory**, so it is read where the image stands: what that subpass drew
   and stored.
-- **A subpass reads the attachment it draws into since 1.64**, which is
-  Vulkan's self-dependency by region: the subpass names its own colour
-  attachment as an input attachment and the pass carries a
-  `SubpassDependency` of that subpass on itself with
+- **A subpass reads the attachment it draws into since 1.64**: the
+  subpass names its own colour attachment as an input attachment, and
+  until 1.134 the pass had to carry Vulkan's self-dependency by region as
+  well, a `SubpassDependency` of that subpass on itself with
   DEPENDENCY_BY_REGION. It is read as any input attachment is - the
   descriptor written with a view of it, then
   `shader.Fragments.input(set, binding, element)` and `colorAt(x, y)` at
@@ -470,13 +476,17 @@ exist now. What is left out:
   1.64 handed it over beside the quads instead). A fragment function
   reads every input attachment through `Fragments.input` for that reason:
   `Resources.input` is the descriptor as written, and for this one that
-  is the wrong memory. Without the dependency it is the loop it was,
+  is the wrong memory. Without the dependency it is drawn the same way
+  since 1.134: Vulkan calls that a feedback loop and leaves its reads
+  undefined where nothing orders the write before them, and the tile's
+  pixel is an answer it allows; until then it was
   `error_initialization_failed`. What is left out: reading **another**
   pixel of it, which is `VK_EXT_shader_framebuffer_fetch`'s and no part
   of Vulkan 1.0 - the rest of the attachment is in other tiles, on other
   cores or not yet drawn, and reads as transparent black; reading the
-  depth attachment the subpass draws into; and, of several colour
-  attachments drawn together, any but the first.
+  depth attachment the subpass draws into (docs/facet-vulkan10.md item
+  92); and, of several colour attachments drawn together, any but the
+  first (item 80).
 - **A depth attachment is readable since 1.62**
   (`PhysicalDeviceFeatures.sampled_depth` beside `input_attachments`):
   the image is made IMAGE_USAGE_INPUT_ATTACHMENT of one of the three
@@ -644,13 +654,13 @@ Vulkan allows them, and facet does not do them.
 
 | What | Where it is refused |
 |---|---|
-| An attachment of more than one sample but four, or of four on a device that does not draw them: the V3D, until item 61's V5 | `render/createrenderpass.zig` |
+| An attachment of 2, 8, 16, 32 or 64 samples, or of four on a device that does not draw them: the V3D, until item 61's V5. A count that is none of Vulkan's is `error_validation_failed` since 1.134 | `render/createrenderpass.zig` |
 | A subpass with no colour attachment, on a device that draws none: the V3D, until docs/facet-vulkan10.md item 43's V3D half (`colorless_subpasses`, the cores' since 1.113) | `render/createrenderpass.zig` |
-| A colour reference of `ATTACHMENT_UNUSED` in a subpass whose colours go together (`SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER`), until docs/facet-vulkan10.md item 80; drawn apart it is taken since 1.118 | `render/createrenderpass.zig` |
-| A pipeline of no fragment stage, on a device with a processor of its own: the V3D, until docs/facet-vulkan10.md item 85's V3D half (the cores' since 1.115) | `driver/v3d/driver.zig` |
+| A colour reference of `ATTACHMENT_UNUSED` in a subpass whose colours go together (`SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER`), until docs/facet-vulkan10.md item 80; drawn apart it is taken since 1.118. Of colours drawn together, one but the first read as an input attachment, until item 80 too (`error_initialization_failed` until 1.134) | `render/createrenderpass.zig` |
+| A pipeline of no fragment stage that draws, on a device with a processor of its own: the V3D, until docs/facet-vulkan10.md item 85's V3D half (the cores' since 1.115; one that draws nothing, the V3D's since 1.134) | `driver/v3d/driver.zig` |
 | A depth bias on a device that takes none: every device takes one since 1.47 (`depth_bias`) | `pipeline/creategraphicspipelines.zig` |
 | An input attachment on a device that reads none: the V3D (`input_attachments`) | `render/createrenderpass.zig` |
-| An input attachment of a colour format whose pixels are not kept in rows (a depth format is read since 1.62); a subpass that reads what it draws without a dependency on itself by region (since 1.64) | `render/createrenderpass.zig` |
+| A subpass that reads its own depth attachment as an input attachment, until docs/facet-vulkan10.md item 92 (`error_initialization_failed` until 1.134) | `render/createrenderpass.zig` |
 | An image both INPUT_ATTACHMENT and TRANSIENT_ATTACHMENT; one both INPUT_ATTACHMENT and STORAGE but as a colour attachment written through is (above); one sampled as well as drawn into or read as an input attachment on a device whose images lie in a layout of its own: the V3D, until docs/facet-vulkan10.md item 48's V3D half (the cores' since 1.119) | `image/createimage.zig` |
 | A depth or stencil op for a plane the format has not, or on a device that keeps neither (`stored_depth`, `stored_stencil`) | `render/createrenderpass.zig` |
 | An `input_attachment` layout on a device that reads none: the V3D (`input_attachments`) | `descriptor/createdescriptorsetlayout.zig` |
@@ -660,6 +670,7 @@ Vulkan allows them, and facet does not do them.
 | A fixed fragment form that samples through a sampler, on the V3D: nor one that reads a sampler | `driver/v3d/driver.zig` |
 | A depth or stencil attachment of `d16_unorm_s8_uint` that loads or stores, on a device that stores a tile buffer whole: the V3D (`stored_both`, 1.47). Either plane of a format that holds it alone is kept on every device | `render/createrenderpass.zig` |
 | A depth attachment kept, whose image has no memory behind it | `render/createframebuffer.zig` |
+| A view of a level smaller than the framebuffer, of an image that is not, until docs/facet-vulkan10.md item 92 (`error_initialization_failed` until 1.134). Both this and the row above are answered once every view has been held to Vulkan's rules | `render/createframebuffer.zig` |
 | A sampled depth image on a device that samples none: the V3D (`sampled_depth`); a transient one, or one written through as a storage image; one of more levels than halving its longer side gives, or of type `3d`. Any of the three depth formats is taken since 1.58 and levels of its own since 1.63, and a view of it names one plane, or both at once since 1.94 for a framebuffer, sampling the depth (`image/createimageview.zig`) | `image/createimage.zig` |
 
 And these are answered with `error_validation_failed` (since 1.133;
@@ -683,6 +694,22 @@ them of a device that says what this one says of itself
 | A sampler's filter, mipmap mode, address mode or compare operation that is none of Vulkan 1.0's, or such a border colour where an address mode clamps to it; elsewhere the border colour is not read, and is taken since 1.133 | `sampler/createsampler.zig` |
 | A pipeline layout of more than `max_bound_descriptor_sets` sets, or push constants past `max_push_constants_size` | `pipeline/createpipelinelayout.zig` |
 | A render pass of no subpass, a subpass bound to compute, of more than `max_color_attachments` colour attachments, or of a flag that is none of Vulkan's or facet's | `render/createrenderpass.zig` |
+
+Since 1.134 `error_validation_failed` is also the answer to what does not
+hold together, which answered `error_initialization_failed` until then -
+a reference to an attachment there is not, a count of none where Vulkan
+asks for some, a binding or an attachment named twice, an image smaller
+than the framebuffer it is drawn through, a push constant range off 4 bytes, a
+command buffer ended that is not recording - and to the memory calls'
+invalid usage, which answered `error_out_of_device_memory`,
+`error_memory_map_failed` or `error_out_of_host_memory`: a buffer of size
+0, a memory type the device has not got or more bytes than its heap holds,
+memory bound off its alignment, past its end or twice, a mapping of lazily
+allocated memory or of a block mapped already, a query's results into
+fewer bytes than they take. Each
+call's RESULT lists its own, with the VUIDs (docs/facet-vulkan10.md item
+91). Where a call is asked for both kinds at once, which of the two it
+answers is not promised (`Result.error_validation_failed`).
 
 One consequence does not appear in that table:
 

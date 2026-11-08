@@ -40,7 +40,10 @@ const Screen = struct {
 pub const ops = _surface.Ops{ .shape = &shape, .most = &most, .make = &make, .unmake = &unmake, .show = &show, .close = &close };
 
 /// `surface`'s ops and context set for `screen`; error_initialization_failed
-/// without intuition.library or a new enough rtg.library.
+/// without intuition.library or a new enough rtg.library, and
+/// error_out_of_host_memory without the memory the surface's record or
+/// the screen's own buffer wants (since 1.134;
+/// error_initialization_failed before).
 pub fn open(sys: *ExecBase, surface: *Surface, screen: *intuition.Screen) facet.Result {
     const intuition_lib = sys.OpenLibrary(intuition.INTUITIONNAME, intuition.INTUITION_VERSION) orelse return .error_initialization_failed;
     const rtg_lib = sys.OpenLibrary(rtg.RTGNAME, 1) orelse {
@@ -48,23 +51,23 @@ pub fn open(sys: *ExecBase, surface: *Surface, screen: *intuition.Screen) facet.
         return .error_initialization_failed;
     };
     const ib: *IntuitionBase = @ptrCast(intuition_lib);
-    const made = made: {
-        if (rtg_lib.revision < rtg_revision) break :made null;
-        const kept = _objects.create(sys, Screen) orelse break :made null;
+    const refused: facet.Result = refused: {
+        if (rtg_lib.revision < rtg_revision) break :refused .error_initialization_failed;
+        const kept = _objects.create(sys, Screen) orelse break :refused .error_out_of_host_memory;
+        // The screen's own bitmap, so no display memory: the buffer's
+        // record is all it allocates.
         const own = ib.AllocScreenBuffer(screen, sc.SB_SCREEN_BITMAP) orelse {
             _objects.destroy(sys, kept);
-            break :made null;
+            break :refused .error_out_of_host_memory;
         };
         kept.* = .{ .sys = sys, .ib = ib, .rb = @ptrCast(rtg_lib), .screen = screen, .own = own };
-        break :made kept;
-    } orelse {
-        sys.CloseLibrary(rtg_lib);
-        sys.CloseLibrary(intuition_lib);
-        return .error_initialization_failed;
+        surface.ops = &ops;
+        surface.context = kept;
+        return .success;
     };
-    surface.ops = &ops;
-    surface.context = made;
-    return .success;
+    sys.CloseLibrary(rtg_lib);
+    sys.CloseLibrary(intuition_lib);
+    return refused;
 }
 
 fn of(surface: *Surface) *Screen {

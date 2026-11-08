@@ -434,9 +434,14 @@ test "a device with its queue, and queues the family has not got refused" {
 
     var refused: ?*facet.Device = null;
     const two = facet.DeviceQueueCreateInfo{ .queue_count = 2 };
-    try testing.expectEqual(facet.Result.error_initialization_failed, rig.fb.CreateDevice(physical, &.{ .queue_create_info_count = 1, .queue_create_infos = @ptrCast(&two) }, &refused));
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.CreateDevice(physical, &.{ .queue_create_info_count = 1, .queue_create_infos = @ptrCast(&two) }, &refused));
     const other = facet.DeviceQueueCreateInfo{ .queue_family_index = 1 };
-    try testing.expectEqual(facet.Result.error_initialization_failed, rig.fb.CreateDevice(physical, &.{ .queue_create_info_count = 1, .queue_create_infos = @ptrCast(&other) }, &refused));
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.CreateDevice(physical, &.{ .queue_create_info_count = 1, .queue_create_infos = @ptrCast(&other) }, &refused));
+    // The one family asked for twice, a queue each time: more queues than
+    // it has (VUID-VkDeviceCreateInfo-queueFamilyIndex-02802,
+    // -pQueueCreateInfos-06755; `error_initialization_failed` until 1.134).
+    const twice = [2]facet.DeviceQueueCreateInfo{ .{}, .{} };
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.CreateDevice(physical, &.{ .queue_create_info_count = 2, .queue_create_infos = &twice }, &refused));
     try testing.expect(refused == null);
 
     // Without a queue: a device for memory and objects alone.
@@ -476,29 +481,44 @@ test "memory: from its type's heap, aligned to a cache line, mapped once; the la
     try testing.expectEqual(@as(usize, 0), address % 64);
     // Every byte of it is the program's.
     @memset(@as([*]u8, @ptrCast(data.?))[0..100_000], 0x5A);
+    // Mapped twice, a range of nothing, or one past the block's end: each
+    // breaks one of Vulkan's rules (VUID-vkMapMemory-memory-00678,
+    // -size-00680, -size-00681, -offset-00679; `error_memory_map_failed`
+    // until 1.134).
     var twice: ?*anyopaque = null;
-    try testing.expectEqual(facet.Result.error_memory_map_failed, rig.fb.MapMemory(device, memory.?, 0, facet.WHOLE_SIZE, 0, &twice));
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.MapMemory(device, memory.?, 0, facet.WHOLE_SIZE, 0, &twice));
     try testing.expect(twice == null);
     rig.fb.UnmapMemory(device, memory.?);
     try testing.expectEqual(facet.Result.success, rig.fb.MapMemory(device, memory.?, 4096, 1000, 0, &twice));
     try testing.expectEqual(address + 4096, @intFromPtr(twice.?));
     rig.fb.UnmapMemory(device, memory.?);
-    try testing.expectEqual(facet.Result.error_memory_map_failed, rig.fb.MapMemory(device, memory.?, 99_000, 2000, 0, &twice));
-    try testing.expectEqual(facet.Result.error_memory_map_failed, rig.fb.MapMemory(device, memory.?, 100_000, facet.WHOLE_SIZE, 0, &twice));
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.MapMemory(device, memory.?, 4096, 0, 0, &twice));
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.MapMemory(device, memory.?, 99_000, 2000, 0, &twice));
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.MapMemory(device, memory.?, 100_000, facet.WHOLE_SIZE, 0, &twice));
+    try testing.expect(twice == null);
 
-    // A type the device has not got cannot be had, nor no bytes, nor
-    // more than there is.
+    // More than there is cannot be had; more than the heap holds, a type
+    // the device has not got, and no bytes, break Vulkan's rules
+    // (VUID-vkAllocateMemory-pAllocateInfo-01713, -01714,
+    // VUID-VkMemoryAllocateInfo-allocationSize-07897;
+    // `error_out_of_device_memory` until 1.134).
     var refused: ?*facet.DeviceMemory = null;
-    try testing.expectEqual(facet.Result.error_out_of_device_memory, rig.fb.AllocateMemory(device, &.{ .allocation_size = region_bytes, .memory_type_index = 0 }, &refused));
-    try testing.expectEqual(facet.Result.error_out_of_device_memory, rig.fb.AllocateMemory(device, &.{ .allocation_size = 64, .memory_type_index = 3 }, &refused));
-    try testing.expectEqual(facet.Result.error_out_of_device_memory, rig.fb.AllocateMemory(device, &.{ .allocation_size = 0, .memory_type_index = 0 }, &refused));
+    var heaps: facet.PhysicalDeviceMemoryProperties = undefined;
+    rig.fb.GetPhysicalDeviceMemoryProperties(physical, &heaps);
+    const heap = heaps.memory_heaps[heaps.memory_types[0].heap_index].size;
+    try testing.expectEqual(facet.Result.error_out_of_device_memory, rig.fb.AllocateMemory(device, &.{ .allocation_size = heap, .memory_type_index = 0 }, &refused));
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.AllocateMemory(device, &.{ .allocation_size = heap + 1, .memory_type_index = 0 }, &refused));
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.AllocateMemory(device, &.{ .allocation_size = 64, .memory_type_index = 3 }, &refused));
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.AllocateMemory(device, &.{ .allocation_size = 0, .memory_type_index = 0 }, &refused));
     try testing.expect(refused == null);
 
     var lazy: ?*facet.DeviceMemory = null;
     const before = rig.header.free;
     try testing.expectEqual(facet.Result.success, rig.fb.AllocateMemory(device, &.{ .allocation_size = 4 << 20, .memory_type_index = 2 }, &lazy));
     try testing.expect(before - rig.header.free < 4096);
-    try testing.expectEqual(facet.Result.error_memory_map_failed, rig.fb.MapMemory(device, lazy.?, 0, facet.WHOLE_SIZE, 0, &twice));
+    // The lazily allocated type is not HOST_VISIBLE
+    // (VUID-vkMapMemory-memory-00682; `error_memory_map_failed` until 1.134).
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.MapMemory(device, lazy.?, 0, facet.WHOLE_SIZE, 0, &twice));
 
     rig.fb.FreeMemory(device, lazy);
     rig.fb.FreeMemory(device, memory);
@@ -676,7 +696,10 @@ test "a buffer: its requirements, and bound only where it fits" {
     defer rig.fb.DestroyDevice(device);
 
     var buffer: ?*facet.Buffer = null;
-    try testing.expectEqual(facet.Result.error_out_of_device_memory, rig.fb.CreateBuffer(device, &.{ .size = 0, .usage = facet.BUFFER_USAGE_VERTEX_BUFFER }, &buffer));
+    // A size of nothing (VUID-VkBufferCreateInfo-size-00912;
+    // `error_out_of_device_memory` until 1.134).
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.CreateBuffer(device, &.{ .size = 0, .usage = facet.BUFFER_USAGE_VERTEX_BUFFER }, &buffer));
+    try testing.expect(buffer == null);
     try testing.expectEqual(facet.Result.success, rig.fb.CreateBuffer(device, &.{ .size = 1000, .usage = facet.BUFFER_USAGE_VERTEX_BUFFER }, &buffer));
     defer rig.fb.DestroyBuffer(device, buffer);
     var needs: facet.MemoryRequirements = undefined;
@@ -690,11 +713,16 @@ test "a buffer: its requirements, and bound only where it fits" {
     var lazy: ?*facet.DeviceMemory = null;
     try testing.expectEqual(facet.Result.success, rig.fb.AllocateMemory(device, &.{ .allocation_size = 4096, .memory_type_index = 2 }, &lazy));
     defer rig.fb.FreeMemory(device, lazy);
-    try testing.expectEqual(facet.Result.error_out_of_device_memory, rig.fb.BindBufferMemory(device, buffer.?, lazy.?, 0));
-    try testing.expectEqual(facet.Result.error_out_of_device_memory, rig.fb.BindBufferMemory(device, buffer.?, memory, 8));
-    try testing.expectEqual(facet.Result.error_out_of_device_memory, rig.fb.BindBufferMemory(device, buffer.?, memory, 3200));
+    // A type the buffer may not be in, an offset off its alignment, past
+    // the block's end, and bound twice: each breaks one of Vulkan's rules
+    // (VUID-vkBindBufferMemory-memory-01035, -None-10739, -None-10741,
+    // -buffer-07459; `error_out_of_device_memory` until 1.134).
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.BindBufferMemory(device, buffer.?, lazy.?, 0));
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.BindBufferMemory(device, buffer.?, memory, 8));
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.BindBufferMemory(device, buffer.?, memory, 3200));
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.BindBufferMemory(device, buffer.?, memory, 4096));
     try testing.expectEqual(facet.Result.success, rig.fb.BindBufferMemory(device, buffer.?, memory, 3088));
-    try testing.expectEqual(facet.Result.error_out_of_device_memory, rig.fb.BindBufferMemory(device, buffer.?, memory, 0));
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.BindBufferMemory(device, buffer.?, memory, 0));
     var data: ?*anyopaque = null;
     try testing.expectEqual(facet.Result.success, rig.fb.MapMemory(device, memory, 0, facet.WHOLE_SIZE, 0, &data));
     const made = _objects.of(@import("../buffer/_buffer.zig").Buffer, buffer.?);
@@ -722,7 +750,24 @@ test "an image: a texture, rows or a depth, by what it is for" {
     rig.fb.GetImageSubresourceLayout(device, image.?, &.{ .mip_level = 1 }, &layout);
     try testing.expectEqual(@as(u64, 256 * 256 * 8), layout.offset);
     try testing.expectEqual(@as(u64, 128 * 128 * 8), layout.size);
-    rig.fb.DestroyImage(device, image);
+    // Bound where Vulkan has it bound: into a type it may be in, on its
+    // alignment, inside the block, and once (VUID-vkBindImageMemory-memory-01047,
+    // -None-10735, -None-10737, -image-07460; `error_out_of_device_memory`
+    // until 1.134).
+    {
+        const block = try allocate(&rig, device, needs.size + 64);
+        defer rig.fb.FreeMemory(device, block);
+        var nothing_behind: ?*facet.DeviceMemory = null;
+        try testing.expectEqual(facet.Result.success, rig.fb.AllocateMemory(device, &.{ .allocation_size = needs.size, .memory_type_index = 2 }, &nothing_behind));
+        defer rig.fb.FreeMemory(device, nothing_behind);
+        try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.BindImageMemory(device, image.?, nothing_behind.?, 0));
+        try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.BindImageMemory(device, image.?, block, 32));
+        try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.BindImageMemory(device, image.?, block, 128));
+        try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.BindImageMemory(device, image.?, block, needs.size + 64));
+        try testing.expectEqual(facet.Result.success, rig.fb.BindImageMemory(device, image.?, block, 64));
+        try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.BindImageMemory(device, image.?, block, 0));
+        rig.fb.DestroyImage(device, image);
+    }
 
     // A texture of any size, since 1.42: each level the one before halved
     // and no less than one, its blocks laid out by the next power of two
@@ -753,7 +798,14 @@ test "an image: a texture, rows or a depth, by what it is for" {
     try testing.expectEqual(@as(u64, 256), layout.row_pitch);
     rig.fb.DestroyImage(device, image);
 
-    // A depth: any memory type, the lazily allocated one too.
+    // A depth not made transient: a type with memory behind it, Vulkan
+    // offering the lazily allocated type to a transient image alone
+    // (since 1.134; any type before).
+    try testing.expectEqual(facet.Result.success, rig.fb.CreateImage(device, &.{ .format = .d16_unorm, .extent = .{ .width = 800, .height = 600 }, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT }, &image));
+    rig.fb.GetImageMemoryRequirements(device, image.?, &needs);
+    try testing.expectEqual(@as(u32, 0b011), needs.memory_type_bits);
+    rig.fb.DestroyImage(device, image);
+    // A transient depth: any memory type, the lazily allocated one too.
     try testing.expectEqual(facet.Result.success, rig.fb.CreateImage(device, &.{ .format = .d16_unorm, .extent = .{ .width = 800, .height = 600 }, .usage = facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT }, &image));
     rig.fb.GetImageMemoryRequirements(device, image.?, &needs);
     try testing.expectEqual(@as(u32, 0b111), needs.memory_type_bits);
@@ -1491,18 +1543,26 @@ test "a device says what it does, and a false is what a create call refuses" {
     const color = facet.AttachmentReference{ .attachment = 0, .layout = .color_attachment_optimal };
     var pass: ?*facet.RenderPass = null;
 
-    // An input attachment that is drawn in the same subpass is a loop,
-    // whatever the feature says.
+    // An input attachment that is drawn in the same subpass, with no
+    // dependency of the subpass on itself: a feedback loop, which Vulkan
+    // allows, the attachment in the general layout for both
+    // (VUID-VkSubpassDescription-attachment-06912, -layout-02519). Made
+    // since 1.134 on a device that reads input attachments, as this one
+    // does; until then refused as a loop, whatever the feature said.
     {
-        const attachment = facet.AttachmentDescription{ .format = .b8g8r8a8_unorm, .load_op = .clear, .final_layout = .color_attachment_optimal };
+        try testing.expect(can.input_attachments);
+        const own = facet.AttachmentReference{ .attachment = 0, .layout = .general };
+        const attachment = facet.AttachmentDescription{ .format = .b8g8r8a8_unorm, .load_op = .clear, .final_layout = .general };
         const subpass = facet.SubpassDescription{
             .input_attachment_count = 1,
-            .input_attachments = @ptrCast(&color),
+            .input_attachments = @ptrCast(&own),
             .color_attachment_count = 1,
-            .color_attachments = @ptrCast(&color),
+            .color_attachments = @ptrCast(&own),
         };
         const info = facet.RenderPassCreateInfo{ .attachment_count = 1, .attachments = @ptrCast(&attachment), .subpass_count = 1, .subpasses = @ptrCast(&subpass) };
-        try testing.expectEqual(facet.Result.error_initialization_failed, rig.fb.CreateRenderPass(device, &info, &pass));
+        try testing.expectEqual(facet.Result.success, rig.fb.CreateRenderPass(device, &info, &pass));
+        rig.fb.DestroyRenderPass(device, pass);
+        pass = null;
     }
 
     // Logic operations, which features deny.
@@ -1561,7 +1621,7 @@ test "a draw of more vertices than one works is refused as it is recorded" {
     try testing.expectEqual(facet.Result.error_feature_not_present, rig.fb.EndCommandBuffer(buffer));
 
     // Spent: it records again only after a reset, and the refusal is not kept.
-    try testing.expectEqual(facet.Result.error_initialization_failed, rig.fb.EndCommandBuffer(buffer));
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.EndCommandBuffer(buffer));
     try testing.expectEqual(facet.Result.success, rig.fb.ResetCommandBuffer(buffer, 0));
     try testing.expectEqual(facet.Result.success, rig.fb.BeginCommandBuffer(buffer, &.{}));
     rig.fb.CmdDraw(buffer, 3, 1, 0, 0);
@@ -1612,6 +1672,11 @@ test "a submission plays its command buffers in order, then signals its fence; a
     try testing.expectEqual(facet.Result.success, rig.fb.BindImageMemory(device, image.?, image_memory, 0));
 
     var pool: ?*facet.CommandPool = null;
+    // A pool for a family the device has not got
+    // (VUID-vkCreateCommandPool-queueFamilyIndex-01937;
+    // `error_initialization_failed` until 1.134).
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.CreateCommandPool(device, &.{ .queue_family_index = 1 }, &pool));
+    try testing.expect(pool == null);
     try testing.expectEqual(facet.Result.success, rig.fb.CreateCommandPool(device, &.{}, &pool));
     defer rig.fb.DestroyCommandPool(device, pool);
     var commands: [2]?*facet.CommandBuffer = undefined;
@@ -1621,7 +1686,7 @@ test "a submission plays its command buffers in order, then signals its fence; a
     // Recorded outside a recording: nothing.
     const region = facet.BufferImageCopy{ .image_extent = .{ .width = 16, .height = 16 } };
     rig.fb.CmdCopyBufferToImage(commands[0].?, staging, image.?, .transfer_dst_optimal, 1, @ptrCast(&region));
-    try testing.expectEqual(facet.Result.error_initialization_failed, rig.fb.EndCommandBuffer(commands[0].?));
+    try testing.expectEqual(facet.Result.error_validation_failed, rig.fb.EndCommandBuffer(commands[0].?));
 
     try testing.expectEqual(facet.Result.success, rig.fb.BeginCommandBuffer(commands[0].?, &.{ .flags = facet.COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT }));
     const barrier = facet.ImageMemoryBarrier{ .new_layout = .transfer_dst_optimal, .image = image.? };

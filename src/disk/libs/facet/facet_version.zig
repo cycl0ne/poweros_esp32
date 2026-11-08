@@ -3473,4 +3473,170 @@ pub const LIBRARY_VERSION = 1;
 /// `error_feature_not_present`; and the code is Vulkan's number. Each of
 /// 38 changes put back fails them. C:test/FacetProbe expects the new code
 /// for a workgroup over the limits.
-pub const LIBRARY_REVISION = 133;
+///
+/// 134: **What breaks Vulkan's rules and answered
+/// `error_initialization_failed`, or a memory code, is
+/// `error_validation_failed`.** The first half of item 91 of
+/// docs/facet-vulkan10.md. Vulkan has `VK_ERROR_INITIALIZATION_FAILED` mean
+/// "Initialization of an object could not be completed for
+/// implementation-specific reasons", and of Vulkan 1.0's calls and the
+/// surfaces' lists it for vkCreateInstance, vkEnumeratePhysicalDevices,
+/// vkCreateDevice and vkCreateSwapchainKHR; facet answered it at 66 places,
+/// most of them for what was asked wrongly. Each was read against its
+/// call's valid usage, as 1.133's were.
+///
+/// Moved, 52 places: a command buffer ended that is not recording; a
+/// command pool or a queue of a family there is not, more than one queue,
+/// or two infos for one family; a descriptor pool of no sets; a binding
+/// named twice; a push constant range off 4 bytes or of none; a query pool
+/// of no queries, or of statistics that count none; a swapchain not of
+/// the surface's size; a sampler of unnormalized coordinates beside what
+/// Vulkan does not allow with them; a buffer view of a buffer without
+/// memory, off its alignment, or of a range not of whole texels; of a
+/// pipeline, a subpass the pass has not got, an
+/// attribute of a binding not given, a tessellation state missing where
+/// there are tessellation stages, or a topology or control points it does
+/// not take, a patch list without them, samples other than the subpass's,
+/// a stencil or depth compare operation or a stencil op none of Vulkan's, a
+/// blend count other than the subpass's colours, a viewport state, or its
+/// viewports or scissors, missing, and blend constants for each attachment
+/// counted past the 4 colours a subpass may have, which nothing reaches;
+/// of a render pass, a reference to an attachment there is not, inputs
+/// that are null where they are
+/// counted, attachments of one subpass of different samples, a resolve for
+/// an unused colour, of one sample or into more than one or another format,
+/// a colour that is the depth attachment as well or is named twice, and an
+/// attachment one subpass draws as a colour and another as a depth, which
+/// nothing reaches either; of a
+/// framebuffer, views that do not fit its pass - another number of them,
+/// none where it has some, other samples, a swizzle, an image not made for
+/// the attachment or of another format, fewer layers than the
+/// framebuffer - and a size or layers of none or past the device's limits.
+///
+/// Split, 6: three of CreateFramebuffer's, a view smaller than the size,
+/// which is `error_validation_failed` for an image smaller than it and
+/// `error_feature_not_present` for a level smaller than it of an image
+/// that is not (item 92); a subpass reading its own depth attachment,
+/// `error_validation_failed` for an attachment of a colour format and
+/// `error_feature_not_present` for one of a depth format (item 92); and two
+/// whose other half refused what Vulkan allows, and takes it now - a
+/// colour of its own a subpass reads, `error_validation_failed` where the
+/// attachment is of a depth format and drawn without a dependency on
+/// itself by region where it is not, a feedback loop Vulkan leaves
+/// undefined where nothing orders the write before the read, drawn as with
+/// the dependency, so that subpass dependencies are not read at all
+/// (`byRegion` is gone); and CreateBufferView's view of less than a texel,
+/// `error_validation_failed` where its range is given, and a view of none,
+/// which reads 0, for WHOLE_SIZE. To `error_feature_not_present`, 1: of
+/// colours drawn together, one but the first read as an input attachment,
+/// which only facet's own SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER asks for
+/// (item 80). Kept, 5, causes outside the program: CreateDevice's queue
+/// not started, on a call Vulkan lists the code for; and the screen's and
+/// the window's libraries not opened or too old, on facet's own surface
+/// calls, whose RESULT lists it where Vulkan's surface calls list no such
+/// code. The screen's Screen record and its own buffer's record not had
+/// are `error_out_of_host_memory` now. Gone, 2: the V3D driver's
+/// AllocateMemory and fragment program held the V3D and answered the code
+/// where it would not come up, which neither call lists, and no program
+/// reached them - the device's queue holds it from CreateDevice to
+/// DestroyDevice, and CreateDevice answers the code where it does not come
+/// up. They count one more user of what the queue holds now, which cannot
+/// fail, as v3dv's device works on the hardware its physical device
+/// opened. Not yet run on the board.
+///
+/// Found while reading the VUIDs:
+/// - CreateGraphicsPipelines looked at states Vulkan does not have it read
+///   - the viewport, multisample, depth and colour blend states where the
+///   rasterizer discards, the depth state where the subpass has no depth
+///   attachment, the blend state where it has no colour one - and refused
+///   one that was null or held what it did not take. They are not read
+///   now, as Mesa's `vk_graphics_pipeline_state_fill` does not
+///   (src/vulkan/runtime/vk_graphics_state.c:1482-1493
+///   `may_have_rasterization`, :1600, :1662-1663, :1701-1702, :1841-1861);
+///   a discarding pipeline has one sample, no depth test and no blend. A
+///   discarding draw on the cores no longer counts as a target's first, so
+///   a subpass of no attachments is laid out for the samples of the first
+///   draw that rasterizes; laying the tiles again, that draw copies the
+///   push constants and descriptors again, the arena a discarding draw
+///   before it copied them into having started over. The V3D's driver
+///   makes no program for a pipeline that draws nothing, which its draw
+///   returns from before one is needed. It refused a discarding pipeline,
+///   which has no fragment stage
+///   (VUID-VkGraphicsPipelineCreateInfo-pStages-06894), as it refused
+///   every pipeline of none; one of none that draws it refuses still,
+///   until item 85's V3D half. Not yet run on the board.
+/// - Arrays a count says are there were read through where null, and
+///   panicked: a subpass's colours and a pipeline's blend attachments
+///   (VUID-VkSubpassDescription-pColorAttachments-parameter,
+///   VUID-VkPipelineColorBlendStateCreateInfo-pAttachments-07353).
+/// - An attachment's samples none of Vulkan's were
+///   `error_feature_not_present` (VUID-VkAttachmentDescription-samples-parameter),
+///   and CreateBufferView cut a range past the buffer's end to it where a
+///   texel was left there (VUID-VkBufferViewCreateInfo-offset-00931).
+/// - The memory calls answered memory codes where no memory had run out:
+///   CreateBuffer of size 0, AllocateMemory of a type the device has not
+///   got, of no bytes or of more than the type's heap holds - which the
+///   lazily allocated type, taking nothing, was made at -
+///   BindBufferMemory and BindImageMemory into a type the object may not
+///   be in, off its alignment, past the block's end or bound already,
+///   `error_out_of_device_memory`; MapMemory of lazily allocated memory,
+///   which is not HOST_VISIBLE, of a block mapped already, or of a range
+///   of none or past the end, `error_memory_map_failed`; and
+///   GetQueryPoolResults into fewer bytes than its results take,
+///   `error_out_of_host_memory`, a stride too large for 64 bits
+///   overflowing the sum it was checked with. No call answers
+///   `error_memory_map_failed` now. On the V3D, AllocateMemory of a size
+///   from 0xFFFF_D001 to 0xFFFF_FFFF, past its heap, overflowed the 32-bit
+///   page rounding of its block and panicked; the heap's size is looked at
+///   first now.
+/// - GetImageMemoryRequirements offered the lazily allocated type to every
+///   depth attachment that is not read; Vulkan has it offered to an image
+///   made IMAGE_USAGE_TRANSIENT_ATTACHMENT alone (VkMemoryRequirements),
+///   and so it is now.
+/// - UpdateDescriptorSets took the sampler of a write into a binding that
+///   holds samplers of its own for one, before the binding's own took its
+///   place: a handle that was not a sampler's stopped the call on its
+///   alignment. Vulkan does not have it read there
+///   (VUID-VkWriteDescriptorSet-descriptorType-00325), and it is not.
+/// - CreateSampler told a device that reads no unnormalized coordinates
+///   before the rules such a sampler keeps; the rules come first.
+///   Otherwise which of the two codes a call asked for both answers is not
+///   promised (`Result.error_validation_failed`), and CreateFramebuffer
+///   holds every view to Vulkan's rules before it answers what it cannot
+///   draw.
+///
+/// Tests: the 62 test lines that expected `error_initialization_failed`
+/// or a memory code of these expect `error_validation_failed` or
+/// `error_feature_not_present`, and what no test asked before is asked
+/// now: of a render pass, inputs null or past the attachments, a colour
+/// that is the depth attachment or of a depth format read as an input, a
+/// resolve past the attachments, 3, 0 or 128 samples, a null colour list,
+/// and the second of colours drawn together read; of a pipeline, a patch
+/// list without tessellation, tessellation without its state, stencil and
+/// depth operations none of Vulkan's, and a viewport state or its arrays
+/// missing; of a framebuffer, a resolve or a depth image smaller than it,
+/// a resolve of fewer layers, and a level smaller than it answered after a
+/// later view's rule; a buffer view of a buffer bound to nothing or of a
+/// range of none; a command pool of another family, a descriptor pool of
+/// no sets, push constant ranges off 4 bytes or of none, and two queue
+/// infos; and a sampler's rules, held before the capability on a device
+/// that reads no unnormalized coordinates. A subpass reading what it draws
+/// is drawn alike with the dependency and without, and its own depth
+/// attachment is refused as a depth and as a colour; a zero-texel
+/// WHOLE_SIZE view reads 0 and a range past the end is refused; a
+/// discarding pipeline is made with every other state null, and states it
+/// does not read are not looked at, while a pipeline that reads them is
+/// refused for them; a subpass of no attachments takes its samples from
+/// the first draw that rasterizes, and the draw after a discarding one
+/// reads its own push constants; memory is refused bound twice, off its
+/// alignment, past its end or into a type it may not be in, allocated past
+/// its heap, and mapped twice, of none or past the end; a query's results
+/// are refused into too few bytes and at a stride past 64 bits; a depth
+/// attachment that is not transient is not offered the lazily allocated
+/// type; and a sampler a binding does not read is not looked at. Each of
+/// 103 changes put back fails them: 79 at the same expectation in two runs
+/// of batches, each time beside other changes, and 24 alone. No host test
+/// opens a screen or runs the V3D, so the screen's records not had and the
+/// V3D's pipeline that draws nothing are not among them. C:test/FacetProbe
+/// expects the new code for five refusals.
+pub const LIBRARY_REVISION = 134;

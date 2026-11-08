@@ -49,9 +49,13 @@ const Device = @import("../device/_device.zig").Device;
 /// `error_feature_not_present` where the device has no texel buffers;
 /// `error_validation_failed` for a buffer not made for them
 /// (VUID-VkBufferViewCreateInfo-buffer-00932; `error_feature_not_present`
-/// until 1.133); `error_initialization_failed` for an
-/// offset that is not the limit's, a range that is not the format's size,
-/// a range of no texels, or a buffer with no memory;
+/// until 1.133), and for an offset that is not on the limit or is past
+/// the buffer's end, a range that is not a multiple of the format's size,
+/// is 0, or reaches past the buffer's end, or a buffer with no memory
+/// (-buffer-02750, -buffer-02751, -offset-00925, -range-00929,
+/// -range-00928, -offset-00931, -buffer-00935;
+/// `error_initialization_failed` until 1.134, and a range past the end
+/// was cut to it where a texel was left there);
 /// `error_out_of_host_memory`.
 ///
 /// BEHAVIOR:
@@ -60,11 +64,19 @@ const Device = @import("../device/_device.zig").Device;
 /// So a program writing the buffer through its mapped memory is seen by
 /// the next function that reads the view, with no copy anywhere.
 ///
-/// The range is held to the buffer: a range reaching past its end is cut
-/// to it, and what is left has to be a texel at least.
+/// A range given is held to the buffer as Vulkan has it: one reaching
+/// past its end is refused (VUID-VkBufferViewCreateInfo-offset-00931).
+/// Until 1.134 it was cut to the end, and refused only where less than a
+/// texel was left there. `WHOLE_SIZE` is the bytes from the offset to the
+/// end, as many whole texels as they hold, which Vulkan has be "the
+/// nearest smaller multiple" of a texel and does not ask to be one: where
+/// less than a texel is left the view has none, and a function reads 0
+/// from it, as it does past the last texel of any view
+/// (`shader.Texels.at`). Until 1.134 such a view was refused.
 ///
 /// The offset is held to the limit alone, as Vulkan has it
-/// (VUID-VkBufferViewCreateInfo-offset-00926): a texel is read a byte at a
+/// (VUID-VkBufferViewCreateInfo-buffer-02750, -buffer-02751, which were
+/// -offset-00926 when 1.125 said so): a texel is read a byte at a
 /// time, so nothing asks it to start on a multiple of its own size, and
 /// three channels of 32 bits, 12 bytes, may start at 16, which no power
 /// of two that is a limit could have said otherwise. lavapipe and v3dv
@@ -97,11 +109,14 @@ const Device = @import("../device/_device.zig").Device;
 /// a 32-bit integer format wants: a value past 2^24 is more than `at`'s
 /// float carries exactly.
 ///
-/// No image is kept in the formats 1.54 added and no vertex attribute is
-/// read in one: they say `UNIFORM_TEXEL_BUFFER` and
-/// `STORAGE_TEXEL_BUFFER` in `buffer_features` and nothing else. The two
-/// that were already image formats, `r8_unorm` and `r16g16b16a16_sfloat`,
-/// keep what they had and gain these.
+/// No vertex attribute is read in the formats 1.54 added, and on the V3D
+/// no image is kept in one either: there they say `UNIFORM_TEXEL_BUFFER`
+/// and `STORAGE_TEXEL_BUFFER` in `buffer_features` and nothing else. On
+/// the cores the 16-bit `_unorm` ones and `r8g8_unorm` are images as well
+/// since 1.69 (`Capabilities.wide_channels`), and the whole numbers since
+/// 1.70 (`Capabilities.whole_textures`). The two that were already image
+/// formats, `r8_unorm` and `r16g16b16a16_sfloat`, keep what they had and
+/// gain these.
 ///
 /// BUGS:
 /// None known.
@@ -123,16 +138,18 @@ pub fn CreateBufferView(base: *FacetBase, device: *facet.Device, info: *const fa
     const buffer = _objects.of(Buffer, info.buffer);
     const wanted = facet.BUFFER_USAGE_UNIFORM_TEXEL_BUFFER | facet.BUFFER_USAGE_STORAGE_TEXEL_BUFFER;
     if (buffer.usage & wanted == 0) return .error_validation_failed;
-    if (buffer.data == null) return .error_initialization_failed;
+    if (buffer.data == null) return .error_validation_failed;
     const size = texels.bytes();
     const alignment = owner.physical.properties.limits.min_texel_buffer_offset_alignment;
-    if (info.offset % alignment != 0 or info.offset >= buffer.size) return .error_initialization_failed;
+    if (info.offset % alignment != 0 or info.offset >= buffer.size) return .error_validation_failed;
     const left = buffer.size - info.offset;
     const bytes = if (info.range == facet.WHOLE_SIZE) left else range: {
-        if (info.range % size != 0) return .error_initialization_failed;
-        break :range @min(info.range, left);
+        // Of whole texels, some, and within the buffer
+        // (VUID-VkBufferViewCreateInfo-range-00929, -range-00928,
+        // -offset-00931).
+        if (info.range % size != 0 or info.range == 0 or info.range > left) return .error_validation_failed;
+        break :range info.range;
     };
-    if (bytes < size) return .error_initialization_failed;
     const made = _objects.create(base.sys_base, BufferView) orelse return .error_out_of_host_memory;
     made.* = .{
         .device = owner,

@@ -52,10 +52,16 @@ const _instance = @import("../instance/_instance.zig");
 /// location past its limits, or a topology, polygon mode, blend factor or
 /// blend operation that is none of Vulkan 1.0's;
 /// `error_format_not_supported` for an attribute in a format it does not
-/// read; `error_initialization_failed` for state that does not hold
-/// together - an attribute of a binding not given, no viewport where it is
-/// not set by commands; `error_out_of_host_memory`. Those made are made
-/// either way.
+/// read; `error_validation_failed` as well for state that does not hold
+/// together - a subpass the pass has not got, an attribute of a binding
+/// not given, tessellation functions without a patch list and its state
+/// or a patch list without them, a sample count that is not the
+/// subpass's, a compare or stencil operation that is none of Vulkan's,
+/// other than a blend state for each colour attachment, no viewport or
+/// scissor where commands do not set them (`error_initialization_failed`
+/// until 1.134); `error_out_of_host_memory`. Those made are made either
+/// way. A state Vulkan does not have the pipeline read is not looked at
+/// (BEHAVIOR).
 ///
 /// BEHAVIOR:
 /// A pipeline takes its vertex and fragment functions from the modules by
@@ -73,15 +79,18 @@ const _instance = @import("../instance/_instance.zig");
 /// colour attachment keeps what it held; alpha to coverage, which takes
 /// the alpha of a colour that is not written, changes no sample, as in
 /// llvmpipe (lp_state_fs.c:1181-1185). A device with a processor of its
-/// own has no code for it and refuses it with `error_feature_not_present`:
-/// the V3D, until v3dv's no-op fragment shader is ported
-/// (v3dv_pipeline.c:2616-2642, docs/facet-vulkan10.md item 85).
+/// own has no code for it and refuses it with `error_feature_not_present`
+/// where it draws: the V3D, until v3dv's no-op fragment shader is ported
+/// (v3dv_pipeline.c:2616-2642, docs/facet-vulkan10.md item 85). One that
+/// draws nothing - its rasterizer discarding, or every face culled - wants
+/// no program, and the V3D makes it (since 1.134).
 ///
 /// With tessellation functions, the topology is `patch_list` and the
 /// `tessellation_state` says the vertices of a patch, 1 to 32: the cores make
 /// each patch into triangles or lines (`shader.Tessellation`), for a device
 /// with a processor of its own too, and those are drawn; without them,
-/// `patch_list` is `error_initialization_failed`. The evaluation entry says
+/// `patch_list` is `error_validation_failed` (`error_initialization_failed`
+/// until 1.134). The evaluation entry says
 /// the domain, which way round its triangles go, and how the fraction of a
 /// level is spent (`shader.Spacing`, since 1.50): a domain or a spacing of a
 /// value this library has not is `error_invalid_shader_nv`. The control entry
@@ -112,6 +121,23 @@ const _instance = @import("../instance/_instance.zig");
 /// CmdSetStencilReference;
 /// the others are taken and do nothing). A pipeline with the rasterizer
 /// discarding, or culling front and back, draws nothing.
+///
+/// A pipeline whose rasterizer discards has no multisample, depth or
+/// colour blend state: they are fragment shader and fragment output
+/// interface state, which Vulkan has a complete pipeline include only
+/// where the rasterizer does not discard ("If ... rasterizerDiscardEnable
+/// ... is VK_FALSE ... fragment shader state and fragment output interface
+/// state is included in a complete graphics pipeline"). Its viewport
+/// state Vulkan does not ask for there either
+/// (VUID-VkGraphicsPipelineCreateInfo-rasterizerDiscardEnable-09024). So
+/// those four are not read, and may be null. Nor is the depth state of a
+/// pipeline whose subpass has no depth attachment, nor the colour blend
+/// state of one whose subpass has no colour attachment but those named
+/// ATTACHMENT_UNUSED. Mesa's runtime reads them the same way
+/// (`may_have_rasterization`, vk_graphics_state.c:1482-1493, and
+/// `vk_graphics_pipeline_state_fill`, :1600, :1662-1663, :1701-1702,
+/// :1841-1861). Until 1.134 each was read wherever it was given, and a
+/// pipeline could be refused for what one held.
 ///
 /// `PIPELINE_CREATE_DEPTH_PREPASS` in `flags`, facet.library's own, has the
 /// pipeline's triangles' depth drawn first in each tile and each pixel then
@@ -306,7 +332,8 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
     // rather than read as whichever form it lands on (since 1.75).
     const fixed_form = fragment_entry.fixed() orelse return .error_invalid_shader_nv;
     const pass = _objects.of(_render.RenderPass, info.render_pass);
-    if (info.subpass >= pass.subpass_count) return .error_initialization_failed;
+    // VUID-VkGraphicsPipelineCreateInfo-renderPass-06046.
+    if (info.subpass >= pass.subpass_count) return .error_validation_failed;
     const subpass = pass.subpasses[info.subpass];
     // The subpass's colour attachments as Vulkan counts them, those named
     // ATTACHMENT_UNUSED too, which the blend state has an entry for each
@@ -377,7 +404,9 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
             // VUID-VkVertexInputAttributeDescription-location-00620.
             if (made.attribute_count == _instance.max_vertex_input_attributes or attribute.location >= _instance.max_vertex_input_attributes) return .error_validation_failed;
             if (!_pipeline.attributeFormat(attribute.format)) return .error_format_not_supported;
-            if (attribute.binding >= _instance.max_vertex_input_bindings or given_bindings >> @intCast(attribute.binding) & 1 == 0) return .error_initialization_failed;
+            // VUID-VkVertexInputAttributeDescription-binding-00621,
+            // VUID-VkPipelineVertexInputStateCreateInfo-binding-00615.
+            if (attribute.binding >= _instance.max_vertex_input_bindings or given_bindings >> @intCast(attribute.binding) & 1 == 0) return .error_validation_failed;
             made.attributes[made.attribute_count] = .{ .location = attribute.location, .binding = attribute.binding, .format = attribute.format, .offset = attribute.offset };
             made.attribute_count += 1;
             made.locations = @max(made.locations, attribute.location + 1);
@@ -395,8 +424,14 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
     }
     made.drawn_topology = made.topology;
     if (evaluation) |entry| {
-        const state = info.tessellation_state orelse return .error_initialization_failed;
-        if (made.topology != .patch_list or state.patch_control_points == 0 or state.patch_control_points > _instance.max_patch_points) return .error_initialization_failed;
+        // A patch list, and the vertices of a patch, 1 to facet's own
+        // `max_patch_points`, 32: Vulkan's `max_tessellation_patch_size`
+        // reads 0, `tessellation_shader` being false, and these are the
+        // rules facet's own stages follow as Vulkan's would
+        // (VUID-VkGraphicsPipelineCreateInfo-pStages-09022, -pStages-08888,
+        // VUID-VkPipelineTessellationStateCreateInfo-patchControlPoints-01214).
+        const state = info.tessellation_state orelse return .error_validation_failed;
+        if (made.topology != .patch_list or state.patch_control_points == 0 or state.patch_control_points > _instance.max_patch_points) return .error_validation_failed;
         const way = entry.tessellation() orelse return .error_invalid_shader_nv;
         // What the control function writes for the whole patch (since
         // 1.50): its entry's own count, held to the limit.
@@ -411,7 +446,11 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
             .own = own,
         };
         made.drawn_topology = if (way.domain == .isolines) .line_list else .triangle_list;
-    } else if (made.topology == .patch_list) return .error_initialization_failed;
+    } else if (made.topology == .patch_list) {
+        // Patches without the functions that make them into something
+        // (VUID-VkGraphicsPipelineCreateInfo-topology-08889).
+        return .error_validation_failed;
+    }
 
     // The rasterization.
     const rasterization = info.rasterization_state;
@@ -456,7 +495,20 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         made.draws_nothing = true;
         made.culls_everything = false;
     }
-    if (info.multisample_state) |multisample| {
+    // What Vulkan has the pipeline read, as Mesa's runtime reads it
+    // (`may_have_rasterization`, vk_graphics_state.c:1482-1493, and
+    // `vk_graphics_pipeline_state_fill`, :1600, :1662-1663, :1701-1702,
+    // :1841-1861): no multisample, depth, blend or viewport state where
+    // the rasterizer discards, no depth state where the subpass has no
+    // depth attachment, and no blend state where it has no colour
+    // attachment but unused ones. What is not read may be null, and is not
+    // looked at (since 1.134).
+    const rasterizes = !rasterization.rasterizer_discard_enable;
+    const first = pass.parts[subpass.first_part];
+    const multisample_state = if (rasterizes) info.multisample_state else null;
+    const depth_stencil_state = if (rasterizes and first.depth != null) info.depth_stencil_state else null;
+    const color_blend_state = if (rasterizes and first.color_count != 0) info.color_blend_state else null;
+    if (multisample_state) |multisample| {
         // Features no device has (VUID-VkPipelineMultisampleStateCreateInfo-sampleShadingEnable-00784,
         // -alphaToOneEnable-00785).
         if (multisample.sample_shading_enable or multisample.alpha_to_one_enable) return .error_validation_failed;
@@ -479,9 +531,9 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         // A subpass of no attachment has no count of its own: it draws at
         // its pipelines', one of `framebuffer_no_attachments_sample_counts`
         // (VUID-VkGraphicsPipelineCreateInfo-subpass-00758, since 1.114).
-        const first = pass.parts[subpass.first_part];
         const no_attachment = first.color_count == 0 and first.depth == null;
-        if (!no_attachment and samples != first.samples) return .error_initialization_failed;
+        // The subpass's own count (-multisampledRenderToSingleSampled-06853).
+        if (!no_attachment and samples != first.samples) return .error_validation_failed;
         made.samples = samples;
         // One word of the mask, which at one sample a pixel is one bit of
         // it: `PhysicalDeviceLimits.max_sample_mask_words` is 1 and Vulkan
@@ -491,7 +543,7 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         // call. (Since 1.89, item 61 of docs/facet-vulkan10.md.)
         if (multisample.sample_mask) |mask| made.sample_mask = mask[0];
     }
-    if (info.depth_stencil_state) |depth| {
+    if (depth_stencil_state) |depth| {
         if (depth.depth_bounds_test_enable) {
             // VUID-VkPipelineDepthStencilStateCreateInfo-depthBoundsTestEnable-00598.
             if (!device.physical.can.depth_bounds) return .error_validation_failed;
@@ -501,9 +553,11 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         if (depth.stencil_test_enable) {
             var faces: [2]_pipeline.StencilFace = undefined;
             for ([2]facet.StencilOpState{ depth.front, depth.back }, &faces) |state, *face| {
-                if (@intFromEnum(state.compare_op) > 7) return .error_initialization_failed;
+                // None of Vulkan's (VUID-VkStencilOpState-compareOp-parameter,
+                // -failOp-parameter, -passOp-parameter, -depthFailOp-parameter).
+                if (@intFromEnum(state.compare_op) > 7) return .error_validation_failed;
                 for ([3]facet.StencilOp{ state.fail_op, state.pass_op, state.depth_fail_op }) |op| {
-                    if (@intFromEnum(op) > 7) return .error_initialization_failed;
+                    if (@intFromEnum(op) > 7) return .error_validation_failed;
                 }
                 face.* = .{
                     .fail = state.fail_op,
@@ -518,15 +572,21 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
             made.stencil = faces;
         }
         if (depth.depth_test_enable) {
-            if (@intFromEnum(depth.depth_compare_op) > 7) return .error_initialization_failed;
+            // VUID-VkPipelineDepthStencilStateCreateInfo-depthCompareOp-parameter.
+            if (@intFromEnum(depth.depth_compare_op) > 7) return .error_validation_failed;
             made.depth_test = depth.depth_compare_op;
             made.depth_write = depth.depth_write_enable;
         }
     }
-    if (info.color_blend_state) |blend| {
+    if (color_blend_state) |blend| {
         // No device has `logic_op` (VUID-VkPipelineColorBlendStateCreateInfo-logicOpEnable-00606).
         if (blend.logic_op_enable) return .error_validation_failed;
-        if (blend.attachment_count != 0 and blend.attachment_count != colors) return .error_initialization_failed;
+        // One for each colour attachment (VUID-VkGraphicsPipelineCreateInfo-renderPass-07609),
+        // or none for all of them, which is facet.library's own.
+        if (blend.attachment_count != 0 and blend.attachment_count != colors) return .error_validation_failed;
+        // VUID-VkPipelineColorBlendStateCreateInfo-pAttachments-07353
+        // (since 1.134; a panic before).
+        if (blend.attachment_count != 0 and blend.attachments == null) return .error_validation_failed;
         // A device without `independent_blend` wants them all alike, and
         // says so rather than drawing what was not asked for
         // (VUID-VkPipelineColorBlendStateCreateInfo-pAttachments-00605).
@@ -563,7 +623,10 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         for (&made.mixings) |*mixing| mixing.constants = blend.blend_constants;
         if (blend.attachment_constants) |given| {
             const count = if (blend.attachment_count != 0) blend.attachment_count else colors;
-            if (count > _render.most_colors) return .error_initialization_failed;
+            // No more than a subpass has, which is no more than the device's
+            // `max_color_attachments`: a count the check above lets through
+            // is one the render pass took, so this holds already.
+            if (count > _render.most_colors) return .error_validation_failed;
             for (given[0..count], made.mixings[0..count]) |constants, *mixing| mixing.constants = constants;
         }
     }
@@ -594,14 +657,16 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
             else => {},
         };
     }
-    if (!dynamic_viewport or !dynamic_scissor) {
-        const view = info.viewport_state orelse return .error_initialization_failed;
+    if (rasterizes and (!dynamic_viewport or !dynamic_scissor)) {
+        // VUID-VkGraphicsPipelineCreateInfo-rasterizerDiscardEnable-09024.
+        const view = info.viewport_state orelse return .error_validation_failed;
         // One of each: no device has `multi_viewport`, and none is not
         // allowed (VUID-VkPipelineViewportStateCreateInfo-viewportCount-01216,
         // -scissorCount-01217, -viewportCount-04135, -scissorCount-04136).
         if (view.viewport_count != 1 or view.scissor_count != 1) return .error_validation_failed;
-        if (!dynamic_viewport) made.viewport = (view.viewports orelse return .error_initialization_failed)[0];
-        if (!dynamic_scissor) made.scissor = (view.scissors orelse return .error_initialization_failed)[0];
+        // VUID-VkGraphicsPipelineCreateInfo-pDynamicStates-04130, -04131.
+        if (!dynamic_viewport) made.viewport = (view.viewports orelse return .error_validation_failed)[0];
+        if (!dynamic_scissor) made.scissor = (view.scissors orelse return .error_validation_failed)[0];
     }
     return .success;
 }

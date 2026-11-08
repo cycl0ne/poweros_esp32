@@ -36,10 +36,31 @@ const _surface = @import("../surface/_surface.zig");
 /// `error_feature_not_present` until 1.133);
 /// `error_format_not_supported` for an attachment in
 /// a format it cannot draw into, or read as an input attachment;
-/// `error_initialization_failed` for a subpass that names an attachment
-/// there is not, or reads one it draws into itself without saying so in a
-/// dependency by region (BEHAVIOR);
-/// `error_out_of_host_memory`.
+/// `error_validation_failed` as well for an attachment of a count of
+/// samples that is none of Vulkan's (VUID-VkAttachmentDescription-samples-parameter;
+/// `error_feature_not_present` until 1.134), and for a subpass that names
+/// an attachment there is not, or none where it counts some; attachments
+/// of one subpass of different counts of samples; a resolve attachment
+/// for an unused colour or one of one sample, or of more than one sample
+/// or another format than its colour's; a colour attachment that is the
+/// depth attachment as well, or one named twice; a colour attachment of
+/// a depth format that it reads as an input attachment as well, or a
+/// depth attachment of a colour format that it reads so
+/// (VUID-VkRenderPassCreateInfo-attachment-00834,
+/// VUID-VkSubpassDescription-pInputAttachments-parameter,
+/// -pColorAttachments-parameter, -pColorAttachments-09430,
+/// -pDepthStencilAttachment-01418, -pResolveAttachments-00847 to -00850,
+/// -pDepthStencilAttachment-04438, -pColorAttachments-02648,
+/// -pDepthStencilAttachment-02650, and for the one named twice the render
+/// pass chapter under VkAttachmentDescription: "A given attachment index
+/// must not be used multiple times in a single subpass";
+/// `error_initialization_failed` until 1.134);
+/// `error_feature_not_present` for a subpass that reads its own depth
+/// attachment, which Vulkan allows and this library does not draw
+/// (docs/facet-vulkan10.md item 92), and for one of colours drawn together
+/// that reads another than the first, which only this library's own
+/// SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER asks for (item 80; both
+/// `error_initialization_failed` until 1.134); `error_out_of_host_memory`.
 ///
 /// BEHAVIOR:
 /// The pass has up to 4 subpasses and up to 8 attachments. A subpass draws
@@ -75,8 +96,8 @@ const _surface = @import("../surface/_surface.zig");
 /// device without the capability holds one sample: one of more is
 /// `error_feature_not_present`. A resolve attachment for a colour of one
 /// sample, or of another format or count, and attachments of one subpass
-/// whose counts differ, are `error_initialization_failed`, as Vulkan has
-/// none of them.
+/// whose counts differ, are `error_validation_failed`, as Vulkan has none
+/// of them (`error_initialization_failed` until 1.134).
 ///
 /// A colour attachment of a subpass may be ATTACHMENT_UNUSED: what the
 /// fragment function writes at that location is discarded, and the
@@ -88,8 +109,9 @@ const _surface = @import("../surface/_surface.zig");
 /// drawn as a subpass of none. One whose colours go together
 /// (SUBPASS_DESCRIPTION_OUTPUTS_TOGETHER) would have a plane in its tiles
 /// with no image behind it, and is `error_feature_not_present`. A resolve
-/// attachment for an unused colour is `error_initialization_failed`
-/// (VUID-VkSubpassDescription-pResolveAttachments-00847).
+/// attachment for an unused colour is `error_validation_failed`
+/// (VUID-VkSubpassDescription-pResolveAttachments-00847;
+/// `error_initialization_failed` until 1.134).
 ///
 /// The subpasses are drawn one after another. A colour attachment's load op
 /// CLEAR clears the render area the first time a subpass names it; LOAD,
@@ -176,10 +198,12 @@ const _surface = @import("../surface/_surface.zig");
 /// (CreateImage).
 ///
 /// **A subpass may read the colour attachment it is drawing into** since
-/// 1.64, which is Vulkan's self-dependency by region: the subpass names
-/// one of its own colour attachments as an input attachment, and the pass
-/// carries a `SubpassDependency` of that subpass on itself with
-/// DEPENDENCY_BY_REGION. It is read as any input attachment is - the
+/// 1.64: the subpass names one of its own colour attachments as an input
+/// attachment, which Vulkan allows - "the same view can be used
+/// simultaneously as an input and color or depth/stencil attachment".
+/// Until 1.134 the pass also had to carry Vulkan's self-dependency by
+/// region, a `SubpassDependency` of that subpass on itself with
+/// DEPENDENCY_BY_REGION; it is not read now. It is read as any input attachment is - the
 /// `input_attachment` descriptor written with a view of it, and
 /// `shader.Fragments.input` then `colorAt` at the fragment's own place -
 /// and what it answers there is the tile, which already holds that pixel
@@ -190,14 +214,20 @@ const _surface = @import("../surface/_surface.zig");
 /// in other tiles, drawn on other cores or not yet drawn, and reads as
 /// transparent black - which is all Vulkan's by-region dependency
 /// promises either. A subpass of several colour attachments drawn
-/// together reads the first of them this way and no other; reading the
-/// depth attachment it draws into is not among this.
+/// together reads the first of them this way, and another of them is
+/// `error_feature_not_present`: only the library's own flag draws them
+/// together, and that goes with the flag (docs/facet-vulkan10.md item 80).
+/// Reading the depth attachment it draws into is not among this either,
+/// and is `error_feature_not_present` as well (item 92; both
+/// `error_initialization_failed` until 1.134).
 ///
-/// Without that dependency, drawing into an attachment
-/// and reading it in the same subpass is a loop, which is
-/// `error_initialization_failed`, and only a device whose
-/// `input_attachments` is true reads any - the cores, not the V3D -
-/// others answering `error_feature_not_present`. The pass does not say
+/// Without that dependency the subpass is drawn the same way since 1.134.
+/// Vulkan allows such a pass - a feedback loop, whose reads it leaves
+/// undefined where nothing orders the write before them - and the tile's
+/// pixel is an answer it allows; until then the pass was refused, with
+/// `error_initialization_failed`. Only a device whose `input_attachments`
+/// is true reads any - the cores, not the V3D - others answering
+/// `error_feature_not_present`. The pass does not say
 /// which descriptor a subpass reads one through: the set written with the
 /// `input_attachment` descriptor does (UpdateDescriptorSets), and the
 /// image wants IMAGE_USAGE_INPUT_ATTACHMENT (CreateImage).
@@ -226,9 +256,9 @@ const _surface = @import("../surface/_surface.zig");
 ///
 /// Attachments a subpass does not name are left as they are. The
 /// dependencies say nothing of what waits for what - a queue's commands
-/// are done one after the other - and are read for one thing alone: a
-/// subpass's dependency on itself by region, which lets it read the
-/// attachment it draws into (since 1.64).
+/// are done one after the other - and are not read. From 1.64 to 1.133
+/// one thing was read of them: a subpass's dependency on itself by
+/// region, without which it could not read the attachment it draws into.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -267,10 +297,15 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
     if (info.attachment_count > _render.most_attachments) return .error_feature_not_present;
     const attachments: []const facet.AttachmentDescription = if (info.attachments) |given| given[0..info.attachment_count] else &.{};
     var plan = _render.RenderPass{ .device = owner, .attachment_count = info.attachment_count, .subpass_count = info.subpass_count };
-    // One sample a pixel, or four where the device draws them (since 1.100).
+    // One of Vulkan's counts, a power of two up to 64
+    // (VUID-VkAttachmentDescription-samples-parameter; since 1.134,
+    // `error_feature_not_present` before), and of those one sample a
+    // pixel, or four where the device draws them (since 1.100).
     for (attachments, 0..) |attachment, index| {
-        if (attachment.samples != 1 and !(attachment.samples == 4 and owner.physical.can.multisampling)) return .error_feature_not_present;
-        plan.samples[index] = attachment.samples;
+        const samples = attachment.samples;
+        if (samples == 0 or samples > 64 or samples & (samples - 1) != 0) return .error_validation_failed;
+        if (samples != 1 and !(samples == 4 and owner.physical.can.multisampling)) return .error_feature_not_present;
+        plan.samples[index] = samples;
     }
     var drawn: [_render.most_attachments]bool = @splat(false);
     // For each depth attachment, the last part that drew into it, or null
@@ -292,10 +327,12 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
         if (subpass.input_attachment_count != 0) {
             if (!owner.physical.can.input_attachments) return .error_feature_not_present;
             if (subpass.input_attachment_count > _render.most_attachments) return .error_feature_not_present;
-            const inputs = subpass.input_attachments orelse return .error_initialization_failed;
+            // VUID-VkSubpassDescription-pInputAttachments-parameter.
+            const inputs = subpass.input_attachments orelse return .error_validation_failed;
             for (inputs[0..subpass.input_attachment_count]) |reference| {
                 if (reference.attachment == facet.ATTACHMENT_UNUSED) continue;
-                if (reference.attachment >= attachments.len) return .error_initialization_failed;
+                // VUID-VkRenderPassCreateInfo-attachment-00834.
+                if (reference.attachment >= attachments.len) return .error_validation_failed;
                 const read = attachments[reference.attachment];
                 // Read out of the image's memory, pixel by pixel, so an
                 // earlier subpass has to have drawn it (or it holds what
@@ -326,27 +363,41 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
                 // Drawn and read in the same subpass: the pixels being
                 // read are the ones being written, which is the
                 // fragment's own pixel and nothing else. Since 1.64 that
-                // is drawn where it lies, in the tile - the pass saying
-                // so in a dependency of the subpass on itself, by region,
-                // as Vulkan wants - and the fragment function is given
-                // what is already there (`shader.Fragments.keptAt`).
-                // Without the dependency it is the loop it always was.
+                // is drawn where it lies, in the tile, and the fragment
+                // function is given what is already there
+                // (`shader.Fragments.keptAt`). Until 1.134 the pass had to
+                // say so in a dependency of the subpass on itself, by
+                // region; Vulkan allows the loop without one and leaves
+                // what it reads undefined, and it is drawn the same way.
                 if (subpass.color_attachments) |colors| {
                     for (colors[0..subpass.color_attachment_count]) |drawn_now| {
                         if (drawn_now.attachment != reference.attachment) continue;
-                        if (depth_read or !byRegion(info, @intCast(number))) return .error_initialization_failed;
+                        // A colour attachment of a depth format, which no
+                        // device draws into (VUID-VkSubpassDescription-pColorAttachments-02648).
+                        if (depth_read) return .error_validation_failed;
                         if (!owner.physical.can.input_attachments) return .error_feature_not_present;
                         reads_own[reference.attachment] = true;
                         reads_any = true;
                     }
                 }
-                if (subpass.depth_stencil_attachment) |depth| if (depth.attachment == reference.attachment) return .error_initialization_failed;
+                // Its own depth attachment, tested and read at once in a
+                // layout of both, which Vulkan allows: the depth is in the
+                // tile, and an input attachment is read from the image's
+                // rows (docs/facet-vulkan10.md item 92). An attachment of a
+                // colour format is no depth attachment at all
+                // (VUID-VkSubpassDescription-pDepthStencilAttachment-02650).
+                if (subpass.depth_stencil_attachment) |depth| {
+                    if (depth.attachment == reference.attachment) return if (depth_read) .error_feature_not_present else .error_validation_failed;
+                }
             }
         }
         // The device's `max_color_attachments` (VUID-VkSubpassDescription-colorAttachmentCount-00845).
         if (subpass.color_attachment_count > _render.most_colors) return .error_validation_failed;
         // None, on a device that draws a subpass of none (since 1.113).
         if (subpass.color_attachment_count == 0 and !owner.physical.can.colorless_subpasses) return .error_feature_not_present;
+        // VUID-VkSubpassDescription-pColorAttachments-parameter (since
+        // 1.134; a panic before).
+        if (subpass.color_attachment_count != 0 and subpass.color_attachments == null) return .error_validation_failed;
         const colors = colorsOf(subpass);
         // facet.library's own flag: the subpass's colour attachments are
         // drawn together, in one pass over the tiles, by a fragment
@@ -372,7 +423,8 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
         var stores_stencil = false;
         if (subpass.depth_stencil_attachment) |reference| {
             if (reference.attachment != facet.ATTACHMENT_UNUSED) {
-                if (reference.attachment >= attachments.len) return .error_initialization_failed;
+                // VUID-VkRenderPassCreateInfo-attachment-00834.
+                if (reference.attachment >= attachments.len) return .error_validation_failed;
                 const depth = attachments[reference.attachment];
                 tests_depth = _image.hasDepth(depth.format);
                 tests_stencil = _image.hasStencil(depth.format);
@@ -458,9 +510,12 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
         };
         for (colors) |reference| {
             if (reference.attachment == facet.ATTACHMENT_UNUSED) continue;
-            if (reference.attachment >= attachments.len) return .error_initialization_failed;
+            // VUID-VkRenderPassCreateInfo-attachment-00834.
+            if (reference.attachment >= attachments.len) return .error_validation_failed;
             const count = attachments[reference.attachment].samples;
-            if ((samples orelse count) != count) return .error_initialization_failed;
+            // VUID-VkSubpassDescription-pColorAttachments-09430,
+            // -pDepthStencilAttachment-01418.
+            if ((samples orelse count) != count) return .error_validation_failed;
             samples = count;
         }
         whole.samples = samples orelse 1;
@@ -470,12 +525,19 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
             if (color_index == facet.ATTACHMENT_UNUSED) {
                 // Nothing to resolve where nothing is drawn
                 // (VUID-VkSubpassDescription-pResolveAttachments-00847).
-                if (resolves.len != 0 and resolves[k].attachment != facet.ATTACHMENT_UNUSED) return .error_initialization_failed;
+                if (resolves.len != 0 and resolves[k].attachment != facet.ATTACHMENT_UNUSED) return .error_validation_failed;
                 continue;
             }
-            if (color_index >= attachments.len) return .error_initialization_failed;
-            if (color_index == depth_index) return .error_initialization_failed;
-            for (colors[0..k]) |earlier| if (earlier.attachment == color_index) return .error_initialization_failed;
+            // Past the attachments, which the loop above has refused
+            // already (-attachment-00834), or the depth attachment as well
+            // (VUID-VkSubpassDescription-pDepthStencilAttachment-04438).
+            if (color_index >= attachments.len) return .error_validation_failed;
+            if (color_index == depth_index) return .error_validation_failed;
+            // At two locations of the subpass: "A given attachment index
+            // must not be used multiple times in a single subpass", other
+            // than as an input attachment beside its other use (the render
+            // pass chapter, under VkAttachmentDescription).
+            for (colors[0..k]) |earlier| if (earlier.attachment == color_index) return .error_validation_failed;
             const color = attachments[color_index];
             if (!_surface.drawable(color.format)) return .error_format_not_supported;
             const load: _render.ColorLoad = if (color.load_op == .clear and !drawn[color_index]) .clear else .keep;
@@ -486,18 +548,21 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
             // and -00850.
             const resolve: ?u32 = if (resolves.len == 0 or resolves[k].attachment == facet.ATTACHMENT_UNUSED) null else resolve: {
                 const index = resolves[k].attachment;
-                if (index >= attachments.len) return .error_initialization_failed;
+                // VUID-VkRenderPassCreateInfo-attachment-00834.
+                if (index >= attachments.len) return .error_validation_failed;
                 const into = attachments[index];
-                if (color.samples == 1 or into.samples != 1 or into.format != color.format) return .error_initialization_failed;
+                if (color.samples == 1 or into.samples != 1 or into.format != color.format) return .error_validation_failed;
                 break :resolve index;
             };
             if (together) {
                 // The one part draws them all: a plane of each tile for
                 // each of them. What it reads of its own is the first of
                 // them, that being the one plane a fragment function is
-                // given; another of them read as well is the loop it was.
+                // given. Another of them read as well is one this library
+                // does not draw; only its own flag draws colours together,
+                // and this goes with it (docs/facet-vulkan10.md item 80).
                 if (reads_own[color_index]) {
-                    if (k != 0) return .error_initialization_failed;
+                    if (k != 0) return .error_feature_not_present;
                     whole.reads_target = true;
                 }
                 whole.colors[whole.color_count] = color_index;
@@ -546,24 +611,15 @@ pub fn CreateRenderPass(base: *FacetBase, device: *facet.Device, info: *const fa
         // so the last of them is enough. (Since 1.52.)
         if (depth_index) |index| depths[index] = plan.part_count - 1;
     }
-    for (plan.parts[0..plan.part_count]) |part| if (part.depth) |depth| if (drawn[depth]) return .error_initialization_failed;
+    // A depth attachment drawn as a colour as well, in one subpass or
+    // another: no format is both (VUID-VkSubpassDescription-pColorAttachments-02648,
+    // -pDepthStencilAttachment-02650), and the checks above have refused
+    // either the one or the other already.
+    for (plan.parts[0..plan.part_count]) |part| if (part.depth) |depth| if (drawn[depth]) return .error_validation_failed;
     const made = _objects.create(base.sys_base, _render.RenderPass) orelse return .error_out_of_host_memory;
     made.* = plan;
     render_pass.* = _objects.handle(facet.RenderPass, made);
     return .success;
-}
-
-/// Whether the pass says this subpass depends on itself, by region: what
-/// Vulkan asks for of a subpass that reads the attachment it is drawing
-/// into, and what tells this library to hand the tile's pixels to the
-/// fragment function. (Since 1.64.)
-fn byRegion(info: *const facet.RenderPassCreateInfo, subpass: u32) bool {
-    const given = info.dependencies orelse return false;
-    for (given[0..info.dependency_count]) |one| {
-        if (one.src_subpass == subpass and one.dst_subpass == subpass and
-            one.dependency_flags & facet.DEPENDENCY_BY_REGION != 0) return true;
-    }
-    return false;
 }
 
 /// Whether a subpass draws into just what the one before it does, the

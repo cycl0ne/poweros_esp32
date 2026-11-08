@@ -66,10 +66,10 @@ pub const Part = struct {
     loads_stencil: bool = false,
     stores_stencil: bool = false,
     /// Whether the subpass reads the colour attachment this part draws
-    /// into: it named it as an input attachment of its own and the pass
-    /// has a self-dependency by region for it, so the fragment function
-    /// is given the pixels already in the tile
-    /// (`shader.Fragments.keptAt`, since 1.64).
+    /// into: it named it as an input attachment of its own, so the
+    /// fragment function is given the pixels already in the tile
+    /// (`shader.Fragments.keptAt`, since 1.64; with a self-dependency by
+    /// region alone until 1.134).
     reads_target: bool = false,
     /// The samples a pixel of its attachments holds: 1, or 4 on a device
     /// that draws them (`Capabilities.multisampling`, since 1.100). Vulkan

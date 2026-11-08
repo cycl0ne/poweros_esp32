@@ -35,8 +35,10 @@ const Pool = _query.Pool;
 /// RESULT:
 /// `success` where every query read was available; `not_ready` where one
 /// was not, the others written all the same; `error_device_lost`;
-/// `error_out_of_host_memory` where `size` is too small for what was asked
-/// for, nothing written past what fitted.
+/// `error_validation_failed` where `size` is too small for what was asked
+/// for, nothing written past what fitted
+/// (VUID-vkGetQueryPoolResults-dataSize-00817; `error_out_of_host_memory`
+/// until 1.134).
 ///
 /// BEHAVIOR:
 /// A statistics query writes one value for each statistic it counts, in the

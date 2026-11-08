@@ -32,13 +32,15 @@ const Surface = _surface.Surface;
 /// `success`; `error_out_of_device_memory` when the display's memory has
 /// no room for that many pictures; `error_native_window_in_use` when the
 /// surface has a swapchain that is not `old_swapchain`;
-/// `error_initialization_failed` for a size that is not the surface's;
 /// `error_format_not_supported` for a format that is not its;
 /// `error_validation_failed` for a use, a present mode or layers the
 /// surface does not have, as GetPhysicalDeviceSurfaceCapabilities and
 /// GetPhysicalDeviceSurfacePresentModes give them
 /// (VUID-VkSwapchainCreateInfoKHR-presentMode-01427, -imageArrayLayers-01275,
-/// -presentMode-01281; `error_feature_not_present` until 1.133);
+/// -presentMode-01281; `error_feature_not_present` until 1.133), and for
+/// a size that is not the surface's, its least and its most extent being
+/// the one it has (-pNext-07781; `error_initialization_failed` until
+/// 1.134);
 /// `error_surface_lost` when the window the surface is over has closed;
 /// `error_out_of_host_memory`.
 ///
@@ -105,7 +107,7 @@ pub fn CreateSwapchain(base: *FacetBase, device: *facet.Device, info: *const fac
     const old: ?*Swapchain = if (info.old_swapchain) |handle| _objects.of(Swapchain, handle) else null;
     if (surface.swapchain) |live| if (live != old) return .error_native_window_in_use;
     const now = surface.ops.shape(surface) orelse return .error_surface_lost;
-    if (info.image_extent.width != now.width or info.image_extent.height != now.height) return .error_initialization_failed;
+    if (info.image_extent.width != now.width or info.image_extent.height != now.height) return .error_validation_failed;
     if (info.image_format != now.format or !_surface.drawable(now.format)) return .error_format_not_supported;
     if (info.image_usage & ~_surface.usage != 0 or info.image_array_layers != 1 or info.present_mode != .fifo) return .error_validation_failed;
     const count = @max(1, @min(info.min_image_count, _swapchain.max_images));

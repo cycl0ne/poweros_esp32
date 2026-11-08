@@ -177,8 +177,14 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
     // which Vulkan does not allow, draws at the first's; and a pipeline
     // of four in a subpass whose attachments have one, not compatible
     // with its own pass (VUID-vkCmdDraw-renderPass-02684), draws at
-    // theirs, since the tiles are laid again over no surface.
-    if (target.stats.draws == 0 and pipeline.samples > 1 and target.attachments.samples == 1 and
+    // theirs, since the tiles are laid again over no surface. A pipeline
+    // whose rasterizer discards has no count of its own, its multisample
+    // state not being read (since 1.134), so its draw is not the one that
+    // lays them: the first that rasterizes is. v3dv counts every draw
+    // there, and draws such a subpass at one sample after a discarding
+    // first draw.
+    const discards = pipeline.draws_nothing and !pipeline.culls_everything;
+    if (!discards and target.stats.draws == 0 and pipeline.samples > 1 and target.attachments.samples == 1 and
         target.attachments.color_count == 0 and !target.attachments.depth.used and !target.attachments.stencil.used)
     {
         var attachments = target.attachments;
@@ -186,8 +192,12 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
         target.moveToAll(&.{}, target.area, attachments) catch
             return _play.noRoom(queue, "a draw of four samples a pixel in a subpass of no attachment");
         target.begin();
+        // Laying the tiles again starts the arena over, so a copy of the
+        // resources an earlier draw made there - a discarding draw, which
+        // is not the first - went with it (since 1.134).
+        player.drawn = null;
     }
-    target.stats.draws += 1;
+    if (!discards) target.stats.draws += 1;
     const resources = player.drawn orelse resources: {
         const copy = target.arena.create(shader.Resources) orelse return;
         copy.* = player.resources;
