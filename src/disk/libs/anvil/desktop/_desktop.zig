@@ -77,6 +77,7 @@ const title_text = @import("title.zig");
 const menus = @import("menus.zig");
 const drawer = @import("../drawer/_drawer.zig");
 const Drawer = drawer.Drawer;
+const drawer_ribbon = @import("../drawer/ribbon.zig");
 const drawer_path = @import("../drawer/path.zig");
 const select = @import("select.zig");
 const drag = @import("drag.zig");
@@ -97,7 +98,7 @@ const backdrop_idcmp = wn.IDCMP_MOUSEBUTTONS | wn.IDCMP_MOUSEMOVE | wn.IDCMP_MEN
     wn.IDCMP_DISKINSERTED | wn.IDCMP_DISKREMOVED | wn.IDCMP_NEWPREFS | wn.IDCMP_ACTIVEWINDOW | wn.IDCMP_NEWSIZE;
 
 /// Which library is which in `libraries`.
-const Lib = enum(u3) { intuition, graphics, utility, icon, layers, datatypes, diskfont, scroller };
+const Lib = enum(u4) { intuition, graphics, utility, icon, layers, datatypes, diskfont, scroller, toolbutton, command, ribbon };
 
 /// What a message from a window said, copied before it is replied.
 pub const Said = struct {
@@ -126,7 +127,7 @@ pub const Desktop = struct {
     start_signal: u5 = 0,
     start_error: i32 = 0,
 
-    libraries: [8]?*exec.Library = @splat(null),
+    libraries: [@typeInfo(Lib).@"enum".fields.len]?*exec.Library = @splat(null),
     /// The board's battery, for the title; a resource, never closed.
     battery: ?*sdk.interface.battery.BatteryBase = null,
     /// Whether the machine's RAM is one kind (SYSTAG_UnifiedMemory): the
@@ -141,6 +142,9 @@ pub const Desktop = struct {
     df: ?*DiskfontBase = null,
     /// Whether drawers have scroll bars: scroller.gadget opened.
     has_scroller: bool = false,
+    /// Whether drawers have ribbons: toolbutton.gadget, command.image and
+    /// ribbon.gadget opened.
+    has_ribbon: bool = false,
     /// The signal the desktop gives itself while a drawer is still being
     /// read, so its loop goes on between pieces.
     read_signal: i8 = -1,
@@ -261,6 +265,10 @@ pub const Desktop = struct {
         d.unified = unifiedMemory(sys, d.ub);
         d.df = @ptrCast(d.open(.diskfont, sdk.diskfont.DISKFONTNAME, 0));
         d.has_scroller = d.open(.scroller, sdk.gadgets.scroller.SCROLLER_LIBRARY, 0) != null;
+        const tool_buttons = d.open(.toolbutton, sdk.gadgets.toolbutton.TOOLBUTTON_LIBRARY, 0);
+        const pictures = d.open(.command, sdk.images.command.COMMAND_LIBRARY, 0);
+        const ribbons = d.open(.ribbon, sdk.gadgets.ribbon.RIBBON_LIBRARY, 0);
+        d.has_ribbon = tool_buttons != null and pictures != null and ribbons != null;
 
         d.windows_port = sys.CreateMsgPort() orelse return dos.ERROR_NO_FREE_STORE;
         d.notify_port = sys.CreateMsgPort() orelse return dos.ERROR_NO_FREE_STORE;
@@ -707,6 +715,12 @@ pub const Desktop = struct {
                 said.gadget = @truncate(d.ub.GetTagData(intuition.gadgetclass.GA_ID, 0, tags));
                 said.top = @bitCast(@as(u32, @truncate(d.ub.GetTagData(sdk.gadgets.scroller.SCROLLER_Top, 0, tags))));
             }
+            // A button's ID, read from the gadget the message names.
+            if (said.class == wn.IDCMP_GADGETUP) {
+                var id: usize = 0;
+                _ = d.ib.GetAttr(intuition.gadgetclass.GA_ID, @ptrCast(@alignCast(im.iaddress)), &id);
+                said.gadget = @truncate(id);
+            }
             // A refresh is answered between BeginRefresh and EndRefresh
             // before the message goes back, as intuition asks.
             if (said.class == wn.IDCMP_REFRESHWINDOW) d.refresh(said.window);
@@ -742,6 +756,7 @@ pub const Desktop = struct {
                 d.drawWhole();
             },
             wn.IDCMP_IDCMPUPDATE => if (in_drawer) |dr| drawer.scrolled(d, dr, said.gadget, said.top),
+            wn.IDCMP_GADGETUP => if (in_drawer) |dr| drawer_ribbon.pressed(d, dr, said.gadget, said.code),
             wn.IDCMP_MOUSEWHEEL => if (in_drawer) |dr| drawer.wheeled(d, dr, wn.wheelAcross(said.code), wn.wheelDown(said.code)),
             wn.IDCMP_ACTIVEWINDOW => d.active_window = said.window,
             wn.IDCMP_MOUSEBUTTONS => switch (said.code) {
@@ -765,9 +780,10 @@ pub const Desktop = struct {
             },
             else => {},
         }
-        // What the menus may do depends on the window and what is picked.
+        // What the menus and the ribbons' buttons may do depends on the
+        // window and what is picked.
         switch (said.class) {
-            wn.IDCMP_MOUSEBUTTONS, wn.IDCMP_MENUPICK, wn.IDCMP_ACTIVEWINDOW => commands.rethink(d, d.active_window),
+            wn.IDCMP_MOUSEBUTTONS, wn.IDCMP_MENUPICK, wn.IDCMP_ACTIVEWINDOW, wn.IDCMP_GADGETUP => commands.rethink(d, d.active_window),
             else => {},
         }
     }

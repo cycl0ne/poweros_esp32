@@ -3,7 +3,8 @@
 //! in the first free cell, the ground's geometry, the title's figures,
 //! the tool types as Information writes them, the startup drawer's order
 //! and waits, how far the wheel scrolls a drawer, a list's rows sorted
-//! and the heading under a point, a copy's rate, and the jump table.
+//! and the heading under a point, a drawer's ribbon - its buttons and
+//! what they show - a copy's rate, and the jump table.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -14,6 +15,7 @@ const title = @import("../desktop/title.zig");
 const drawer_path = @import("../drawer/path.zig");
 const textview = @import("../drawer/textview.zig");
 const drawer = @import("../drawer/_drawer.zig");
+const ribbon = @import("../drawer/ribbon.zig");
 const leaveout = @import("../desktop/leaveout.zig");
 const information = @import("../info/information.zig");
 const startup = @import("../desktop/startup.zig");
@@ -350,4 +352,41 @@ test "a copy's rate in the unit that suits it, rounded down" {
     for (cases) |case| try testing.expectEqualStrings(case.shown, text[0..work.rateText(&text, case.per_second)]);
     // The most there is still fits.
     try testing.expect(work.rateText(&text, std.math.maxInt(u64)) <= text.len);
+}
+
+test "a drawer's ribbon: a button for each command, found by its ID; off and checked as the drawer and the picked are" {
+    const rb = sdk.gadgets.ribbon;
+    const tb = sdk.gadgets.toolbutton;
+    // Each command has one button, of the kind it is; nothing else has an
+    // ID the ribbon's commands answer to.
+    var seen: u32 = 0;
+    for (ribbon.table) |line| {
+        if (line.type != rb.RB_LARGE and line.type != rb.RB_MEDIUM and line.type != rb.RB_SMALL) continue;
+        const which = ribbon.commandOf(line.id) orelse return error.NoCommand;
+        try testing.expect(seen & ribbon.bit(which) == 0);
+        seen |= ribbon.bit(which);
+        try testing.expectEqual(ribbon.isToggle(which), line.kind == tb.TBKIND_TOGGLE);
+        try testing.expect(line.glyph != sdk.images.command.CMD_NONE);
+    }
+    try testing.expectEqual(@as(u32, (1 << @typeInfo(ribbon.Command).@"enum".fields.len) - 1), seen);
+    try testing.expect(ribbon.commandOf(drawer.ID_VERT) == null);
+    try testing.expect(ribbon.commandOf(drawer.ID_HORIZ) == null);
+    try testing.expect(ribbon.commandOf(ribbon.ID_RIBBON) == null);
+
+    // A disk's root as icons, all files, the grid snapped to, nothing
+    // picked: Parent off, the Icons commands off, Icons, All Files and
+    // Snap to Grid checked.
+    const root = ribbon.stateOf(.icon, true, true, true, .{});
+    for ([_]ribbon.Command{ .parent, .open, .copy, .rename, .information, .delete }) |which| try testing.expect(root.off & ribbon.bit(which) != 0);
+    for ([_]ribbon.Command{ .new_drawer, .update, .clean_up, .snapshot }) |which| try testing.expect(root.off & ribbon.bit(which) == 0);
+    try testing.expectEqual(ribbon.bit(.by_icon) | ribbon.bit(.all_files) | ribbon.bit(.snap), root.on);
+
+    // A drawer as a list by date, only icons, a file picked that can be
+    // opened and renamed but not deleted: Clean Up off, Date alone checked.
+    const list = ribbon.stateOf(.date, false, false, false, .{ .open = true, .rename = true, .information = true });
+    try testing.expect(list.off & ribbon.bit(.parent) == 0);
+    try testing.expect(list.off & ribbon.bit(.clean_up) != 0);
+    try testing.expect(list.off & ribbon.bit(.open) == 0);
+    try testing.expect(list.off & ribbon.bit(.delete) != 0);
+    try testing.expectEqual(ribbon.bit(.by_date), list.on);
 }

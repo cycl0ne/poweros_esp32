@@ -34,6 +34,7 @@ const leaveout = @import("leaveout.zig");
 const volumes = @import("volumes.zig");
 const select = @import("select.zig");
 const textview = @import("../drawer/textview.zig");
+const drawer_ribbon = @import("../drawer/ribbon.zig");
 const anvil_prefs = sdk.prefs.anvil;
 
 /// An icon picked, and the ground it lies on (none: the desktop's).
@@ -431,14 +432,15 @@ pub fn snapshotWindow(d: *Desktop, dr: *Drawer, all: bool) void {
 // --- which items are on -------------------------------------------------------------
 
 /// Each item of the menus on or off for the window `active` and the icons
-/// picked, as the original decides it: the Icons items only with icons
-/// picked, and of them only Open for programs' icons alone; Delete not
-/// for a disk or the trash, Empty Trash only for the trash, Format only
-/// for disks, Leave Out only for icons in drawers, Put Away only for
-/// left-out ones; the drawer's own items only in a drawer; Clean Up and
-/// Clean Up By only where icons are shown, and on the desktop's ground by
-/// name alone, since a disk has no date or size of its own. Snap to
-/// Grid's mark is the prefs'.
+/// picked: the Icons items only with icons picked, and of them only Open
+/// for programs' icons alone; Delete not for a disk or the trash, Empty
+/// Trash only for the trash, Format only for disks, Leave Out only for
+/// icons in drawers, Put Away only for left-out ones; the drawer's own
+/// items only in a drawer, and Open Parent not at a disk's root; Clean Up
+/// and Clean Up By only where icons are shown, and on the desktop's
+/// ground by name alone, since a disk has no date or size of its own.
+/// Snap to Grid's mark is the prefs'. Every drawer's ribbon is set the
+/// same way, for its own window (`ribbon.show`).
 pub fn rethink(d: *Desktop, active: ?*intuition.Window) void {
     const strip = d.menu_strip orelse return;
     const Tally = struct {
@@ -466,12 +468,21 @@ pub fn rethink(d: *Desktop, active: ?*intuition.Window) void {
     };
     var tally: Tally = .{};
     eachPicked(d, &tally, Tally.each);
+    // What the Icons items and buttons can do with what is picked.
+    const can = drawer_ribbon.Picked{
+        .open = tally.any,
+        .copy = tally.others,
+        .rename = tally.files,
+        .information = tally.files,
+        .delete = tally.others and !tally.disks and !tally.trash,
+    };
     const dr = drawer.find(d, active);
     const in_drawer = dr != null;
     const shows_icons = if (dr) |held| held.view == .icon else true;
+    const below_root = if (dr) |held| !held.is_volume else false;
     const set = [_]struct { menu: u32, item: u32, on: bool }{
         .{ .menu = menus.MENU_WINDOW, .item = menus.ITEM_NEW_DRAWER, .on = in_drawer },
-        .{ .menu = menus.MENU_WINDOW, .item = menus.ITEM_OPEN_PARENT, .on = in_drawer },
+        .{ .menu = menus.MENU_WINDOW, .item = menus.ITEM_OPEN_PARENT, .on = below_root },
         .{ .menu = menus.MENU_WINDOW, .item = menus.ITEM_CLOSE, .on = in_drawer },
         .{ .menu = menus.MENU_WINDOW, .item = menus.ITEM_UPDATE, .on = in_drawer },
         .{ .menu = menus.MENU_WINDOW, .item = menus.ITEM_CLEAN_UP, .on = shows_icons },
@@ -479,15 +490,15 @@ pub fn rethink(d: *Desktop, active: ?*intuition.Window) void {
         .{ .menu = menus.MENU_WINDOW, .item = menus.ITEM_SNAPSHOT_WINDOW, .on = in_drawer },
         .{ .menu = menus.MENU_WINDOW, .item = menus.ITEM_SHOW, .on = in_drawer },
         .{ .menu = menus.MENU_WINDOW, .item = menus.ITEM_VIEW_BY, .on = in_drawer },
-        .{ .menu = menus.MENU_ICONS, .item = menus.ITEM_OPEN, .on = tally.any },
-        .{ .menu = menus.MENU_ICONS, .item = menus.ITEM_COPY, .on = tally.others },
-        .{ .menu = menus.MENU_ICONS, .item = menus.ITEM_RENAME, .on = tally.files },
-        .{ .menu = menus.MENU_ICONS, .item = menus.ITEM_INFORMATION, .on = tally.files },
+        .{ .menu = menus.MENU_ICONS, .item = menus.ITEM_OPEN, .on = can.open },
+        .{ .menu = menus.MENU_ICONS, .item = menus.ITEM_COPY, .on = can.copy },
+        .{ .menu = menus.MENU_ICONS, .item = menus.ITEM_RENAME, .on = can.rename },
+        .{ .menu = menus.MENU_ICONS, .item = menus.ITEM_INFORMATION, .on = can.information },
         .{ .menu = menus.MENU_ICONS, .item = menus.ITEM_SNAPSHOT, .on = tally.files },
         .{ .menu = menus.MENU_ICONS, .item = menus.ITEM_UNSNAPSHOT, .on = tally.files },
         .{ .menu = menus.MENU_ICONS, .item = menus.ITEM_LEAVE_OUT, .on = tally.in_drawers },
         .{ .menu = menus.MENU_ICONS, .item = menus.ITEM_PUT_AWAY, .on = tally.left_out },
-        .{ .menu = menus.MENU_ICONS, .item = menus.ITEM_DELETE, .on = tally.others and !tally.disks and !tally.trash },
+        .{ .menu = menus.MENU_ICONS, .item = menus.ITEM_DELETE, .on = can.delete },
         .{ .menu = menus.MENU_ICONS, .item = menus.ITEM_FORMAT, .on = tally.disks and !tally.others and !tally.trash },
         .{ .menu = menus.MENU_ICONS, .item = menus.ITEM_EMPTY_TRASH, .on = tally.trash and !tally.others and !tally.disks },
     };
@@ -508,6 +519,12 @@ pub fn rethink(d: *Desktop, active: ?*intuition.Window) void {
         if (d.prefs.snap) item.flags |= mn.CHECKED else item.flags &= ~mn.CHECKED;
     }
     if (dr) |held| d.showChecks(held.view, held.show_all);
+    // Every drawer's ribbon as its own window is, and the picked as here.
+    var it = d.drawers.iterator();
+    while (it.next()) |node| {
+        const each: *Drawer = @alignCast(@fieldParentPtr("node", node));
+        drawer_ribbon.show(d, each, drawer_ribbon.stateOf(each.view, each.show_all, each.is_volume, d.prefs.snap, can));
+    }
 }
 
 /// Execute Command: a command asked for and run in a shell of its own,

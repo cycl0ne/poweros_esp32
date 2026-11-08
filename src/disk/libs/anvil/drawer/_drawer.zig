@@ -33,13 +33,14 @@
 //! stay where they lie, and what the window grows by - and where its
 //! border was - comes as a refresh.
 //!
-//! **The strip above the view**: the inside's top may be given to
-//! something that is not the drawer - the row of headings, a ribbon -
-//! `Drawer.top` pixels of it (`setTop`). The drawer is the box below, the
-//! view, `inner_width` by `inner_height`: a point of the drawer is counted
-//! from the view's corner, and what is drawn for the drawer, with the
-//! layer held, is cut at the view's top, so an icon scrolled up never
-//! reaches over the strip.
+//! **The strip above the view**: the inside's top is given to what is not
+//! the drawer - the ribbon (`ribbon.zig`) and under it the row of
+//! headings - `Drawer.top` pixels of it (`setTop`). The drawer is the box
+//! below, the view, `inner_width` by `inner_height`: a point of the drawer
+//! is counted from the view's corner, and what is drawn for the drawer,
+//! with the layer held, is cut at the view's top, so an icon scrolled up
+//! never reaches over the strip. The ribbon is a gadget, which intuition
+//! draws; of the strip, the desktop draws only the headings.
 //!
 //! **Following**: the drawer is watched with StartNotify and read again
 //! when it changes - whoever changed it.
@@ -71,6 +72,8 @@ const icons = @import("../icons/_icons.zig");
 const Icon = icons.Icon;
 const path = @import("path.zig");
 const textview = @import("textview.zig");
+const ribbon = @import("ribbon.zig");
+const rb = sdk.gadgets.ribbon;
 const Desktop = @import("../desktop/_desktop.zig").Desktop;
 const select = @import("../desktop/select.zig");
 
@@ -89,7 +92,7 @@ const margin = 8;
 /// The IDCMP classes a drawer window takes.
 const drawer_idcmp = wn.IDCMP_MOUSEBUTTONS | wn.IDCMP_MOUSEMOVE | wn.IDCMP_MENUPICK | wn.IDCMP_REFRESHWINDOW |
     wn.IDCMP_CLOSEWINDOW | wn.IDCMP_NEWSIZE | wn.IDCMP_IDCMPUPDATE | wn.IDCMP_ACTIVEWINDOW |
-    wn.IDCMP_DISKINSERTED | wn.IDCMP_DISKREMOVED | wn.IDCMP_NEWPREFS | wn.IDCMP_MOUSEWHEEL;
+    wn.IDCMP_DISKINSERTED | wn.IDCMP_DISKREMOVED | wn.IDCMP_NEWPREFS | wn.IDCMP_MOUSEWHEEL | wn.IDCMP_GADGETUP;
 
 /// The longest title: the name and how full its disk is.
 const title_max = 160;
@@ -125,6 +128,11 @@ pub const Drawer = struct {
     show_all: bool = true,
     /// How high the row of headings is: 0 unless viewed as text.
     heads: i32 = 0,
+    /// The ribbon across the inside's top, how high it is, and what its
+    /// buttons show (`ribbon.zig`); none without its classes.
+    ribbon: ?*rb.Built = null,
+    ribbon_height: i32 = 0,
+    ribbon_state: ribbon.State = .{},
     /// The heading a press is on, until the button is let go.
     pressed: ?textview.Heading = null,
     icons: exec.List = .{},
@@ -284,6 +292,7 @@ pub fn open(d: *Desktop, wanted: []const u8) bool {
     d.ib.SetWindowTitles(window, &dr.title, wn.TITLE_UNCHANGED);
     if (d.menu_strip) |strip| _ = d.ib.SetMenuStrip(window, strip);
     makeBars(d, dr);
+    ribbon.make(d, dr);
     placeStrip(d, dr);
     d.sys.AddTail(&d.drawers, &dr.node);
     d.showChecks(dr.view, dr.show_all);
@@ -835,19 +844,11 @@ fn refreshPart(d: *Desktop, dr: *Drawer, part: Rect) void {
 }
 
 /// A part of the strip above the view drawn again: the row of headings
-/// at its foot, and above them the ground, for what stands there to draw
-/// over.
+/// at its foot. Above them is the ribbon, which intuition draws before
+/// the window hears it needs drawing.
 fn drawAbove(d: *Desktop, dr: *Drawer, part: Rect) void {
-    const row_top = dr.top - dr.heads;
-    var rest = part;
-    rest.max_y = @min(part.max_y, row_top);
-    if (!rest.isEmpty()) {
-        d.lb.LockLayer(dr.layer);
-        defer d.lb.UnlockLayer(dr.layer);
-        d.gb.EraseRect(dr.rp, &rest);
-    }
     var row = part;
-    row.min_y = @max(part.min_y, row_top);
+    row.min_y = @max(part.min_y, dr.top - dr.heads);
     row.max_y = @min(part.max_y, dr.top);
     if (row.isEmpty()) return;
     drawHeads(d, dr, row);
@@ -906,11 +907,11 @@ fn setTop(d: *Desktop, dr: *Drawer, height: i32) void {
     drawStrip(d, dr);
 }
 
-/// The strip made as high as what stands in it, and drawn: the row of
-/// headings, viewed as text.
-fn placeStrip(d: *Desktop, dr: *Drawer) void {
+/// The strip made as high as what stands in it, and drawn: the ribbon,
+/// and under it the row of headings, viewed as text.
+pub fn placeStrip(d: *Desktop, dr: *Drawer) void {
     dr.heads = if (dr.view == .icon) 0 else textview.headingsHeight(&d.drawer_look);
-    setTop(d, dr, dr.heads);
+    setTop(d, dr, dr.ribbon_height + dr.heads);
 }
 
 /// The look changed - the font, the pens: the strip made as high as its
@@ -1180,6 +1181,7 @@ pub fn close(d: *Desktop, dr: *Drawer) void {
     // Whatever of this window is still on the shared port goes with it.
     d.ib.CloseWindow(dr.window);
     for (dr.bars) |bar| d.ib.DisposeObject(bar);
+    ribbon.free(d, dr);
     forgetIcons(d, dr);
     d.sys.FreeVec(dr);
 }

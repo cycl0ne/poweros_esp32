@@ -153,6 +153,23 @@ past 9,999 of one unit in the next: M, G, T, P. The drawer is watched
 The Window menu has Open Parent, Close, Update, Show (only icons, or all
 files) and View By (icon, name, date, size) for the drawer it is used in.
 
+A ribbon runs across the top of each drawer's window, the drawer's
+commands as buttons on two tabs. Home has Parent (Go), New Drawer and
+Update (Drawer), and Open, Rename, Delete, Information and Copy for the
+icons picked (Icons); View has Icons, Name, Date and Size - the view
+shown checked (View) - All Files, checked while every file shows (Show),
+and Clean Up, Snap to Grid and Snapshot (Arrange). A button does what
+its menu item does and is off where the item is: Parent at a disk's
+root, the Icons buttons with nothing picked they work on, Clean Up in a
+list. In a narrow window the groups are made smaller, down to a button
+each that drops its group down. The mark at the right end of the row of
+tabs, or a double click on a tab, minimizes the ribbon to its row and
+brings it back, and the view moves up or down with it. The buttons have
+no keys of their own: a letter typed in a drawer's window would press
+one by mistake, and the menus' keys are the commands'. Without
+toolbutton.gadget, command.image and ribbon.gadget in `SYS:classes/` a
+drawer has no ribbon.
+
 ## Selecting and opening
 
 A click or a tap on an icon picks it alone; with Shift it is added or let
@@ -444,7 +461,8 @@ and of them only Open for programs' icons; Tools only while programs have
 items in it; Delete not for a disk or the trash, Empty Trash only for the trash,
 Format Disk only for disks, Leave Out only for icons in drawers, Put Away
 only for left-out ones; Open Parent, Close, Update, New Drawer, Show, View
-By and Snapshot Window only in a drawer; Clean Up and Clean Up By only
+By and Snapshot Window only in a drawer, and Open Parent not at a disk's
+root; Clean Up and Clean Up By only
 where icons are shown, and on the desktop's ground by name alone. Snap to
 Grid is on everywhere, its mark the prefs'.
 
