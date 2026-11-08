@@ -32,7 +32,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.10 (08.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.11 (08.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -351,6 +351,23 @@ const Shipped = struct {
             b.color(b.add(b.scale(b.input(0, .f32x4), b.push(16, .f32x1)), b.push(0, .f32x4)));
         }
     });
+    /// The texture with its pixel dropped where its red is under a half,
+    /// and where it is over: the checks of `texelAt`'s first level are
+    /// 0xF0 and 0x20 of red, so each drops half of them.
+    const Cutout = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const taken = b.sample(0, 0, b.input(0, .f32x2));
+            b.discardIf(b.lessThan(b.component(taken, 0), b.scalar(0.5)));
+            b.color(taken);
+        }
+    });
+    const CutoutOther = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const taken = b.sample(0, 0, b.input(0, .f32x2));
+            b.discardIf(b.greaterThan(b.component(taken, 0), b.scalar(0.5)));
+            b.color(taken);
+        }
+    });
 };
 
 /// The entries that ship words, after all the others, and the words of
@@ -367,11 +384,14 @@ const shipped_entries = [_]shader.Entry{
     Shipped.Modulated.entry("shipped modulated"),
     Shipped.Pushed.entry("shipped pushed"),
     Shipped.Tinted.entry("shipped tinted"),
+    Shipped.Cutout.entry("shipped cutout"),
+    Shipped.CutoutOther.entry("shipped cutout other"),
 };
 const shipped_words = [_]shader.Spirv{
-    .{},                     .{},                  .{},                  .{},
-    Shipped.Smooth.spirv,    Shipped.Flat.spirv,   Shipped.Dimmed.spirv, Shipped.Textured.spirv,
-    Shipped.Modulated.spirv, Shipped.Pushed.spirv, Shipped.Tinted.spirv,
+    .{},                       .{},                  .{},                  .{},
+    Shipped.Smooth.spirv,      Shipped.Flat.spirv,   Shipped.Dimmed.spirv, Shipped.Textured.spirv,
+    Shipped.Modulated.spirv,   Shipped.Pushed.spirv, Shipped.Tinted.spirv, Shipped.Cutout.spirv,
+    Shipped.CutoutOther.spirv,
 };
 
 const plain_entries = [_]shader.Entry{
@@ -1930,6 +1950,19 @@ const Cases = struct {
         side.draw(clockwise_at, 6);
         side.end();
     }
+    /// The texture with half its checks dropped, in front of the far
+    /// triangle and drawn first: the triangle shows where a pixel was
+    /// dropped, and only there. A dropped pixel that wrote its depth
+    /// all the same would hide it.
+    fn cutoutInFront(side: *Side) Failure!void {
+        side.begin(.{});
+        side.sampled();
+        try side.use(.{ .vertex = "texture", .fragment = "shipped cutout", .layout = side.sampler_layout.?, .test_depth = true, .write_depth = true });
+        side.draw(quad_at, 6);
+        try side.use(.{ .test_depth = true, .write_depth = true });
+        side.draw(far_at, 3);
+        side.end();
+    }
     fn missing(side: *Side) Failure!void {
         side.begin(.{});
         try side.use(.{ .vertex = "texture", .fragment = "nearest" });
@@ -2063,6 +2096,9 @@ const cases = [_]Case{
     .{ .name = "shipped texture times colour", .run = Cases.shipped("modulate as it is", "shipped modulated", true, quad_at) },
     .{ .name = "shipped push, pushed again", .run = Cases.pushed },
     .{ .name = "shipped push times colour", .run = Cases.tinted },
+    .{ .name = "shipped cutout", .run = Cases.shipped("texture", "shipped cutout", true, quad_at) },
+    .{ .name = "shipped cutout the other way", .run = Cases.shipped("texture", "shipped cutout other", true, quad_at) },
+    .{ .name = "shipped cutout in front", .run = Cases.cutoutInFront },
     .{ .name = "no texture", .run = &Cases.missing },
     .{ .name = "drawn in rgba", .target = .rgba, .run = Cases.onTarget(.rgba) },
     .{ .name = "drawn in 565", .target = .rgb565, .run = Cases.onTarget(.rgb565) },

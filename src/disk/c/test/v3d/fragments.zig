@@ -221,6 +221,8 @@ pub const Scene = struct {
             .fragment_threads = how.fragment.threads,
             .center_w = how.fragment.center_w,
             .lock_scoreboard_on_first_thrsw = how.fragment.lock_scoreboard_on_first_thrsw,
+            .writes_z = how.fragment.writes_z,
+            .disable_ez = how.fragment.disable_ez,
         });
         const vertex_stride: u32 = @sizeOf(Vertex);
         cl.attribute(&list, vertices, 4, 4, 0, vertex_stride);
@@ -892,6 +894,8 @@ fn compiled(back: Back, work: *compile.Work, words: []const u32, stream: *[compi
             .threads = code.threads,
             .center_w = code.center_w,
             .lock_scoreboard_on_first_thrsw = code.lock_scoreboard_on_first_thrsw,
+            .writes_z = code.writes_z,
+            .disable_ez = code.disable_ez,
         },
         stream[0..code.uniform_count],
     };

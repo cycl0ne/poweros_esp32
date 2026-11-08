@@ -43,6 +43,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const instr = @import("../qpu/instr.zig");
 const vir = @import("vir.zig");
+const list = @import("list.zig");
 const allocate = @import("allocate.zig");
 const to_qpu = @import("to_qpu.zig");
 const opt = @import("opt.zig");
@@ -71,6 +72,8 @@ const tlb_sample_mode_per_pixel: u32 = 1 << 2;
 const tlb_f16_swap_hi_lo: u32 = 1 << 1;
 const tlb_vec_size_4_f16: u32 = 1 << 0;
 const tlb_vec_size_2_f16: u32 = 0 << 0;
+const tlb_type_depth: u32 = (2 << 6) | (0 << 4);
+const tlb_v42_depth_type_invariant: u32 = 0 << 3;
 
 /// What the TMU is to hand back: both words of a texel, each two
 /// half-floats, which is what `tiling.parameter0` writes beside the
@@ -110,6 +113,11 @@ pub const Program = struct {
     /// W read for something other than a varying that is not centroid
     /// (vir_check_payload_w, nir_to_vir.c:5117), for the shader record.
     uses_center_w: bool,
+    /// The program writes Z, and early Z is to be off: prog_data's
+    /// writes_z and disable_ez (vir.c:1011-1013), which a program that
+    /// drops pixels has.
+    writes_z: bool,
+    disable_ez: bool,
 
     pub fn destroy(program: Program) void {
         program.c.destroy();
@@ -148,6 +156,10 @@ const Emit = struct {
     output_fifo_size: u32 = 0,
     total_count: u32 = 0,
     uses_center_w: bool = false,
+    /// A terminate_if was emitted (c->emitted_discard), which is what
+    /// info.fs.uses_discard says of the NIR here.
+    uses_discard: bool = false,
+    writes_z: bool = false,
 };
 
 /// v3d_compile (vir.c:2605): the steps compiled under each strategy in
@@ -180,7 +192,15 @@ pub fn compileSteps(allocator: std.mem.Allocator, compiler: *const vir.Compiler,
             .succeeded => {},
         }
         kept = true;
-        return .{ .c = c, .registers = registers, .uses_center_w = e.uses_center_w };
+        return .{
+            .c = c,
+            .registers = registers,
+            .uses_center_w = e.uses_center_w,
+            .writes_z = e.writes_z,
+            // !info.fs.early_fragment_tests, which emit_frag_end set to
+            // !uses_discard: v3dv has no can_earlyz_with_discard.
+            .disable_ez = e.uses_discard,
+        };
     }
     return if (failed_register_allocation) Error.Registers else Error.Invalid;
 }
@@ -196,7 +216,7 @@ fn attemptCompile(e: *Emit, strategy: Strategy) Error!u32 {
     const restore = try emitLastThrsw(c);
     try emitFragEnd(e);
     try opt.optimize(c);
-    // sched_flags: there are no flags here to schedule.
+    schedFlags(c);
     checkPayloadW(e);
     return nirToVirFinish(c, strategy, restore);
 }
@@ -265,11 +285,6 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
         .constant => {
             for (0..parts) |k| e.defs[at][k] = try c.uniformUi(@bitCast(e.work.pool[each.at + k]));
         },
-        // try_emit_uniform (nir_to_vir.c:2847): a word of the push
-        // constants each, as QUNIFORM_UNIFORM at the offset over four.
-        .push => {
-            for (0..parts) |k| e.defs[at][k] = try c.uniform(.uniform, @intCast(each.at + k));
-        },
         .component => e.defs[at][0] = try getSrc(e, each.a, each.at),
         .construct => {
             for (0..parts) |k| e.defs[at][k] = try getSrc(e, each.from[k], each.part[k]);
@@ -287,8 +302,63 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
             try emitTex(e, each, at);
             try unpackTexel(e, at);
         },
+        // ntq_emit_alu's comparisons (nir_to_vir.c:1727): the comparison
+        // into the flags, and the bool made of them.
+        .compare => {
+            const cond = try emitComparison(e, each);
+            e.defs[at][0] = try condToBool(c, cond);
+        },
+        // nir_intrinsic_terminate_if (nir_to_vir.c:3833), outside of any
+        // control flow: the pixel's mask cleared where the condition
+        // holds.
+        .discard => {
+            e.uses_discard = true;
+            try flushTmu(e);
+            const cond = try boolToCond(e, each.a);
+            vir.setCond(try c.addDest(.setmsf, vir.nopReg(), .{try c.uniformUi(0)}), cond);
+        },
+        // try_emit_uniform (nir_to_vir.c:2847): a word of the push
+        // constants each, as QUNIFORM_UNIFORM at the offset over four.
+        .push => {
+            for (0..parts) |k| e.defs[at][k] = try c.uniform(.uniform, @intCast(each.at + k));
+        },
     }
     e.defined[at] = true;
+}
+
+/// ntq_emit_comparison (nir_to_vir.c:1173), for the two comparisons
+/// there are: a < b is FCMP a, b pushing N, and a > b is b < a.
+fn emitComparison(e: *Emit, compare: Step) Error!instr.Cond {
+    const c = e.c;
+    const src0 = try getSrc(e, compare.a, 0);
+    const src1 = try getSrc(e, compare.b, 0);
+    const less = compare.at == 0;
+    // NIR has no greater-than: spirv_to_nir reads OpFOrdGreaterThan as
+    // flt with its operands swapped (vtn_nir_alu_op_for_spirv_opcode).
+    const inst = try c.addDest(.fcmp, vir.nopReg(), if (less) .{ src0, src1 } else .{ src1, src0 });
+    c.setPf(inst, .pushn);
+    return .ifa;
+}
+
+/// ntq_emit_cond_to_bool (nir_to_vir.c:1284): ~0 where the condition
+/// holds, 0 where not, and the flags remembered as holding it.
+fn condToBool(c: *Compile, cond: instr.Cond) Error!Reg {
+    const result = try c.mul(.mov, .{try c.sel(cond, try c.uniformUi(~@as(u32, 0)), try c.uniformUi(0))});
+    c.flags_temp = @intCast(result.index);
+    c.flags_cond = cond;
+    return result;
+}
+
+/// ntq_emit_bool_to_cond (nir_to_vir.c:1262): the flags as they are where
+/// they still hold the bool, the comparison emitted again where its
+/// step is one, and the bool tested against 0 where it is not.
+fn boolToCond(e: *Emit, step: u16) Error!instr.Cond {
+    const c = e.c;
+    const qsrc = try getSrc(e, step, 0);
+    if (qsrc.file == .temp and c.flags_temp == @as(i32, @intCast(qsrc.index))) return c.flags_cond;
+    if (e.work.steps[step].tag == .compare) return emitComparison(e, e.work.steps[step]);
+    c.setPf(try c.mulDest(.mov, vir.nopReg(), .{qsrc}), .pushz);
+    return .ifna;
 }
 
 /// ntq_get_src (nir_to_vir.c:856): a float of a step, which a TMU
@@ -472,7 +542,61 @@ fn restoreLastThrsw(c: *Compile, restore: Restore) void {
 /// fragment tests are promoted, nothing discards and nothing reads Z, so
 /// Z is not written and there is the colour alone.
 fn emitFragEnd(e: *Emit) Error!void {
+    const c = e.c;
+    // The colour is always written, so early_fragment_tests is
+    // !uses_discard (nir_to_vir.c:2073-2081), and where it is false the
+    // program writes Z (nir_to_vir.c:2098). It has no gl_FragDepth, so
+    // that Z is the one the rasterizer made, written through as it is.
+    if (e.uses_discard) {
+        e.writes_z = true;
+        const inst = try c.mulDest(.mov, vir.magicReg(.tlbu), .{vir.nopReg()});
+        // The spec says PER_PIXEL is ignored for invariant writes, but
+        // the simulator demands it (nir_to_vir.c:2120).
+        const tlb_specifier = tlb_type_depth | tlb_v42_depth_type_invariant | tlb_sample_mode_per_pixel;
+        inst.uniform = try c.getUniformIndex(.constant, tlb_specifier | 0xffffff00);
+        inst.is_tlb_z_write = true;
+    }
     try emitTlbColorWrite(e, 0);
+}
+
+/// sched_flags (nir_to_vir.c:4902) for the one block there is: each
+/// instruction that writes the flags and nothing else moved up to just
+/// after the last instruction it must follow, so that what it reads is
+/// live no longer than it has to be.
+fn schedFlags(c: *Compile) void {
+    var blocks = c.eachBlock();
+    while (blocks.next()) |block| schedFlagsInBlock(block);
+}
+
+/// sched_flags_in_block (nir_to_vir.c:4854).
+fn schedFlagsInBlock(block: *vir.Block) void {
+    var flags_inst: ?*Inst = null;
+    var insts = list.EachSafe(Inst, "link", .backward){ .head = &block.instructions, .pos = block.instructions.prev.? };
+    while (insts.next()) |inst| {
+        // What would keep the flags instruction from moving earlier than
+        // this one: it reads what this one writes, or this one reads or
+        // writes the flags.
+        if (flags_inst) |flags| {
+            if (readsReg(flags, inst.dst) or instr.writesFlags(&inst.qpu) or instr.readsFlags(&inst.qpu)) {
+                flags.link.moveTo(&inst.link);
+                flags_inst = null;
+            }
+        }
+        // Only an instruction that does nothing but write the flags.
+        if (inst.qpu.kind != .alu or inst.dst.file != .null or !instr.writesFlags(&inst.qpu)) continue;
+        assert(flags_inst == null);
+        flags_inst = inst;
+    }
+    // At the top of the block, where nothing held it back.
+    if (flags_inst) |flags| flags.link.moveTo(&block.instructions);
+}
+
+/// vir_inst_reads_reg (nir_to_vir.c:4843).
+fn readsReg(inst: *const Inst, r: Reg) bool {
+    for (inst.src[0..vir.getNsrc(inst)]) |src| {
+        if (src.file == r.file and src.index == r.index) return true;
+    }
+    return false;
 }
 
 /// vir_emit_tlb_color_write (nir_to_vir.c:1955), for a render target of

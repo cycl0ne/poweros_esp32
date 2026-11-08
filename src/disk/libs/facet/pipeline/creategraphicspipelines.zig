@@ -333,6 +333,13 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
     // the program wrote: a kind byte that names no form is refused here
     // rather than read as whichever form it lands on (since 1.75).
     const fixed_form = fragment_entry.fixed() orelse return .error_invalid_shader_nv;
+    // Words the walk could not read to their end may hold an `OpKill`
+    // past where it stopped: the depth waits for those too.
+    const words_discard = fragment_words.len != 0 and switch (facet.spirv.look(fragment_words, facet.spirv.facet_profile)) {
+        .seen => |seen| seen.discards,
+        .fault => true,
+    };
+    const discards = fixed_form.discards() or words_discard;
     const pass = _objects.of(_render.RenderPass, info.render_pass);
     // VUID-VkGraphicsPipelineCreateInfo-renderPass-06046.
     if (info.subpass >= pass.subpass_count) return .error_validation_failed;
@@ -358,6 +365,7 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         .fragment = @ptrCast(@alignCast(fragment_entry.function)),
         .fixed = fixed_form,
         .fragment_words = fragment_words,
+        .discards = discards,
         // What is drawn carries, which with tessellation is the
         // evaluation function's output and not the vertex function's: the
         // patch's own vertices are as wide as `Tessellated.vertex_varyings`
@@ -379,7 +387,7 @@ fn settle(made: *Pipeline, device: *Device, info: *const facet.GraphicsPipelineC
         .depth_write = false,
         .biased = false,
         .bias = null,
-        .prepass = info.flags & facet.PIPELINE_CREATE_DEPTH_PREPASS != 0 and !fixed_form.discards(),
+        .prepass = info.flags & facet.PIPELINE_CREATE_DEPTH_PREPASS != 0 and !discards,
         .stencil = null,
         .dynamic_stencil_compare = false,
         .dynamic_stencil_write = false,

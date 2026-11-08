@@ -152,6 +152,12 @@ pub const Pipeline = struct {
     /// The words are the program's own memory and live as long as it
     /// keeps them there (since 1.75).
     fragment_words: []const u32 = &.{},
+    /// Whether the fragment shader may drop a pixel, which makes the depth
+    /// wait for it: its fixed form says so, or the SPIR-V shipped beside
+    /// it holds an `OpKill`, as llvmpipe goes by the shader's
+    /// `info.fs.uses_discard` (since 1.139). A function shipped with no
+    /// words and no form that drops is taken at its word that it does not.
+    discards: bool = false,
     varyings: u32,
     /// The locations the vertex function's inputs take: the highest an
     /// attribute reads into, and one.

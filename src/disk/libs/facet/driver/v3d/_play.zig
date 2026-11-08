@@ -875,6 +875,8 @@ fn sendVertices(queue: *Queue, vertices: u32, varyings: u32, fragment: u32, unif
         .fragment_threads = if (own) |made| made.threads else 4,
         .center_w = if (own) |made| made.center_w else false,
         .lock_scoreboard_on_first_thrsw = if (own) |made| made.lock_scoreboard_on_first_thrsw else false,
+        .writes_z = if (own) |made| made.writes_z else false,
+        .disable_ez = if (own) |made| made.disable_ez else false,
     });
     const stride = recordStride(varyings);
     cl.attribute(&list, vertices, 4, 4, 0, stride);

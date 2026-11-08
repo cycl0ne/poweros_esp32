@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 //! Modules a real toolchain produced, to compile against: `glslc`'s own
-//! output for two shaders whose facet forms `tests/spirv_reference.zig`
-//! keeps, the interpolated colour and, since 1.138, the colour tinted by
-//! the push constants.
+//! output for shaders whose facet forms `tests/spirv_reference.zig`
+//! keeps: the interpolated colour, the colour tinted by the push
+//! constants (since 1.138), and the texture whose pixel is dropped where
+//! its alpha is under a half (since 1.139).
 //!
 //! They are here rather than beside the other reference modules because a
 //! Zig module cannot import a file above its own root, and these are read
@@ -190,4 +191,96 @@ pub const glslc_tinted = [_]u32{
     0x0004003D, 0x00000007, 0x00000019, 0x00000018, 0x00050081, 0x00000007,
     0x0000001A, 0x00000015, 0x00000019, 0x0003003E, 0x00000009, 0x0000001A,
     0x000100FD, 0x00010038,
+};
+
+/// glslc's output for a texture whose pixel is dropped where its alpha is
+/// under a half: what `compile.zig`'s Cutout is, written by a real
+/// toolchain (since 1.139).
+///
+/// ```sh
+/// # cutout.frag: #version 450, in vec2 uv at 0, out vec4 ocolor at 0,
+/// # a sampler2D at set 0 binding 0; void main() { vec4 texel =
+/// # texture(tex, uv); if (texel.a < 0.5) discard; ocolor = texel; }
+/// glslc -O -fshader-stage=frag cutout.frag -o cutout.spv   # 147 words
+/// spirv-val --target-env vulkan1.0 cutout.spv              # no output, and 0
+/// ```
+///
+/// With `-O`: without it glslang keeps `texel` in a variable of the
+/// function's own, which this back end has no place for, and reads the
+/// alpha through an access chain into it. Optimized, it is the shape
+/// facet's emitter writes: the comparison, a selection whose block is
+/// `OpKill` alone, and the merge block.
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 33
+/// ; Schema: 0
+/// OpCapability Shader
+/// %1 = OpExtInstImport "GLSL.std.450"
+/// OpMemoryModel Logical GLSL450
+/// OpEntryPoint Fragment %4 "main" %17 %32
+/// OpExecutionMode %4 OriginUpperLeft
+/// OpDecorate %13 Binding 0
+/// OpDecorate %13 DescriptorSet 0
+/// OpDecorate %17 Location 0
+/// OpDecorate %32 Location 0
+/// %2 = OpTypeVoid
+/// %3 = OpTypeFunction %2
+/// %6 = OpTypeFloat 32
+/// %7 = OpTypeVector %6 4
+/// %10 = OpTypeImage %6 2D 0 0 0 1 Unknown
+/// %11 = OpTypeSampledImage %10
+/// %12 = OpTypePointer UniformConstant %11
+/// %13 = OpVariable %12 UniformConstant
+/// %15 = OpTypeVector %6 2
+/// %16 = OpTypePointer Input %15
+/// %17 = OpVariable %16 Input
+/// %25 = OpConstant %6 0.5
+/// %26 = OpTypeBool
+/// %31 = OpTypePointer Output %7
+/// %32 = OpVariable %31 Output
+/// %4 = OpFunction %2 None %3
+/// %5 = OpLabel
+/// %14 = OpLoad %11 %13
+/// %18 = OpLoad %15 %17
+/// %19 = OpImageSampleImplicitLod %7 %14 %18
+/// %24 = OpCompositeExtract %6 %19 3
+/// %27 = OpFOrdLessThan %26 %24 %25
+/// OpSelectionMerge %29 None
+/// OpBranchConditional %27 %28 %29
+/// %28 = OpLabel
+/// OpKill
+/// %29 = OpLabel
+/// OpStore %32 %19
+/// OpReturn
+/// OpFunctionEnd
+/// ```
+pub const glslc_cutout = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000021, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000011, 0x00000020, 0x00030010,
+    0x00000004, 0x00000007, 0x00040047, 0x0000000D, 0x00000021, 0x00000000,
+    0x00040047, 0x0000000D, 0x00000022, 0x00000000, 0x00040047, 0x00000011,
+    0x0000001E, 0x00000000, 0x00040047, 0x00000020, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002, 0x00030016,
+    0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006, 0x00000004,
+    0x00090019, 0x0000000A, 0x00000006, 0x00000001, 0x00000000, 0x00000000,
+    0x00000000, 0x00000001, 0x00000000, 0x0003001B, 0x0000000B, 0x0000000A,
+    0x00040020, 0x0000000C, 0x00000000, 0x0000000B, 0x0004003B, 0x0000000C,
+    0x0000000D, 0x00000000, 0x00040017, 0x0000000F, 0x00000006, 0x00000002,
+    0x00040020, 0x00000010, 0x00000001, 0x0000000F, 0x0004003B, 0x00000010,
+    0x00000011, 0x00000001, 0x0004002B, 0x00000006, 0x00000019, 0x3F000000,
+    0x00020014, 0x0000001A, 0x00040020, 0x0000001F, 0x00000003, 0x00000007,
+    0x0004003B, 0x0000001F, 0x00000020, 0x00000003, 0x00050036, 0x00000002,
+    0x00000004, 0x00000000, 0x00000003, 0x000200F8, 0x00000005, 0x0004003D,
+    0x0000000B, 0x0000000E, 0x0000000D, 0x0004003D, 0x0000000F, 0x00000012,
+    0x00000011, 0x00050057, 0x00000007, 0x00000013, 0x0000000E, 0x00000012,
+    0x00050051, 0x00000006, 0x00000018, 0x00000013, 0x00000003, 0x000500B8,
+    0x0000001A, 0x0000001B, 0x00000018, 0x00000019, 0x000300F7, 0x0000001D,
+    0x00000000, 0x000400FA, 0x0000001B, 0x0000001C, 0x0000001D, 0x000200F8,
+    0x0000001C, 0x000100FC, 0x000200F8, 0x0000001D, 0x0003003E, 0x00000020,
+    0x00000013, 0x000100FD, 0x00010038,
 };

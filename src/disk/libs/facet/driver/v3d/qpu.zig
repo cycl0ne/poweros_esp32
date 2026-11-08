@@ -243,6 +243,8 @@ pub const Fragment = struct {
     threads: u8 = 4,
     center_w: bool = false,
     lock_scoreboard_on_first_thrsw: bool = false,
+    writes_z: bool = false,
+    disable_ez: bool = false,
 };
 
 /// How many registers the programs written here and the plan's keep to

@@ -463,6 +463,10 @@ pub const Programs = struct {
     /// Its first thread switch, and not its last, is where it waits on
     /// the scoreboard.
     lock_scoreboard_on_first_thrsw: bool = false,
+    /// It writes Z, and early Z is to be off for it: what a program that
+    /// drops pixels says (v3dvx_pipeline.c:454-459). Since 1.139.
+    writes_z: bool = false,
+    disable_ez: bool = false,
 };
 
 /// Values a program writes: its segment's size in sectors of 8.
@@ -470,10 +474,12 @@ const coordinate_values: u32 = 6;
 
 pub fn shaderRecord(list: *List, programs: Programs) void {
     const clipping: u32 = 1 << 1;
+    const writes_z: u32 = @as(u32, @intFromBool(programs.writes_z)) << 12;
+    const disable_ez: u32 = @as(u32, @intFromBool(programs.disable_ez)) << 13;
     const center_w: u32 = @as(u32, @intFromBool(programs.center_w)) << 15;
     const scoreboard_on_first: u32 = @as(u32, @intFromBool(programs.lock_scoreboard_on_first_thrsw)) << 20;
     const no_implicit_varyings: u32 = 1 << 21;
-    list.word(clipping | center_w | scoreboard_on_first | no_implicit_varyings | programs.varyings << 24);
+    list.word(clipping | writes_z | disable_ez | center_w | scoreboard_on_first | no_implicit_varyings | programs.varyings << 24);
     // Size in sectors, the input's 0 for sharing the output's, and 1 less
     // than the 1 required in play.
     const coordinate_sectors = (coordinate_values + 7) / 8;
@@ -587,4 +593,13 @@ test "a program compiled through Mesa's back end says its threads, its W and its
     // four-way threadable.
     try std.testing.expectEqual(@as(u32, 1 << 1 | 1 << 15 | 1 << 20 | 1 << 21 | 3 << 24), std.mem.readInt(u32, memory[0..4], .little));
     try std.testing.expectEqual(@as(u32, 0x100), std.mem.readInt(u32, memory[8..12], .little));
+
+    // A program that drops pixels: "Fragment shader does Z writes" at 12
+    // and "Turn off early-z test" at 13.
+    var drops = programs;
+    drops.writes_z = true;
+    drops.disable_ez = true;
+    list.used = 0;
+    shaderRecord(&list, drops);
+    try std.testing.expectEqual(@as(u32, 1 << 1 | 1 << 12 | 1 << 13 | 1 << 21 | 3 << 24), std.mem.readInt(u32, memory[0..4], .little));
 }

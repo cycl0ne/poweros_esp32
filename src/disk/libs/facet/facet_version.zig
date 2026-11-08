@@ -3849,4 +3849,64 @@ pub const LIBRARY_VERSION = 1;
 ///   cases. Those five count as they did with 1.137. All 162 cases stay
 ///   within one pixel in a thousand. C:test/FacetProbe passes its 829
 ///   checks, 332 of them on the V3D.
-pub const LIBRARY_REVISION = 138;
+///
+/// 139: **The V3D compiles a fragment shader that drops pixels.** Until now
+/// such a module was refused by the V3D's walk, `Error.Discards`, and
+/// drawn by the cores. The walk takes a conditional discard in the one
+/// shape it has in SPIR-V: a float compared with another
+/// (`OpFOrdLessThan`, `OpFOrdGreaterThan`), then `OpSelectionMerge`, then
+/// `OpBranchConditional` to a block of `OpKill` alone and to the merge
+/// block the body goes on in. That shape is what nir_opt_peephole_select
+/// with `discard_ok` (nir_to_vir.c:2293) makes a terminate_if of, and it
+/// is ported as Mesa emits one:
+///
+/// - The comparison is FCMP into the flags, pushing N
+///   (ntq_emit_comparison, nir_to_vir.c:1173). A greater-than is a
+///   less-than with its operands swapped, as spirv_to_nir reads it.
+/// - SETMSF clears the pixel's mask where the condition holds
+///   (nir_to_vir.c:3833).
+/// - sched_flags (nir_to_vir.c:4854) moves the flags instruction up.
+/// - A program that drops pixels has no early fragment tests, so it
+///   writes Z itself: the rasterizer's Z, written through to the tile
+///   buffer before the colour (emit_frag_end, nir_to_vir.c:2083-2136).
+/// - The shader record says so, as v3dv packs it
+///   (v3dvx_pipeline.c:454-459): "Fragment shader does Z writes" and
+///   "Turn off early-z test", bits 12 and 13 of the Draw Index record.
+///
+/// An `OpKill` anywhere else, a branch of any other shape and a bool read
+/// as a float are refused. The plan answers `Error.Discards` for every
+/// discard, by name.
+///
+/// Tests:
+///
+/// **And the cores' depth waits for a generated function that drops
+/// pixels.** The cores tested and wrote a pipeline's depth before its
+/// fragment function unless its fixed form dropped pixels, and nothing in
+/// a generated entry says that it does. So a dropped pixel of one kept its
+/// depth and hid what was drawn behind it later. The pipeline now reads
+/// that from the SPIR-V shipped beside the function (`Pipeline.discards`:
+/// `spirv.look`'s `discards`, or words it could not read to the end), as
+/// llvmpipe goes by `info.fs.uses_discard`. FacetBoth found it, the V3D
+/// being right where the cores were not.
+///
+/// Tests:
+///
+/// - 3032 host tests.
+/// - V3D tests: 132. The cutout's 13 instructions are pinned: the
+///   alpha's half compared in place, SETMSF where it holds, the Z write
+///   from the rasterizer before the colour. glslc's own cutout
+///   (`glslc_cutout`, from `glslc -O`) compiles to the same words. The
+///   other shapes are refused, and the record's two bits are pinned.
+/// - tests/draw.zig's cut-out test runs for the graph that means the
+///   fixed form, its words shipped: the far quad shows where the near
+///   one dropped its pixels. With the cores' old line put back it fails
+///   there, black where blue should be.
+/// - On the board: C:test/FacetBoth 1.11 has three cases more: the
+///   texture dropped where its red is under a half, where it is over,
+///   and the first drawn in front of the far triangle. The first two are
+///   0 pixels of 230,400 apart from the cores. The third was 20,395 apart
+///   before the cores' fix, all where the V3D showed the far triangle
+///   through a dropped pixel and the cores did not. It is 3 apart with
+///   the fix, at the triangle's edge. All 165 cases stay within one pixel
+///   in a thousand, and C:test/FacetProbe passes its 829 checks.
+pub const LIBRARY_REVISION = 139;

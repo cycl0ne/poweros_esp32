@@ -9896,6 +9896,27 @@ const CutoutScene = struct {
     const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
 };
 
+/// The same cut made by a graph, its SPIR-V shipped beside its function.
+/// Nothing in a generated entry says it drops pixels: the pipeline reads
+/// it from the words, as llvmpipe reads `info.fs.uses_discard` (since
+/// 1.139). Until then the cores tested and wrote its depth before the
+/// function ran, and a dropped pixel hid what was drawn behind it.
+const GeneratedCut = struct {
+    const Cut = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const taken = b.sampleBy(0, 0, b.input(0, .f32x2), .{ .filter = .nearest });
+            b.discardIf(b.lessThan(b.component(taken, 3), b.scalar(0.5)));
+            b.color(taken);
+        }
+    });
+    const entries = [_]shader.Entry{
+        shader.vertex("cut", &CutoutScene.cut, 2),
+        Cut.entry("cut"),
+    };
+    const table = [_]shader.Spirv{ .{}, Cut.spirv };
+    const code = shader.Module{ .entry_count = entries.len, .entries = &entries, .spirv = &table, .spirv_count = table.len };
+};
+
 test "a cut-out texture drops its pixels and leaves no depth behind them" {
     var bench = try Bench.up();
     defer bench.down();
@@ -9935,14 +9956,28 @@ test "a cut-out texture drops its pixels and leaves no depth behind them" {
     const frame = try framebuffer(&bench, pass, &.{ picture.view, depth }, 64, 64);
     defer fb.DestroyFramebuffer(device, frame);
 
-    const cut_module = try module(&bench, &CutoutScene.code);
-    defer fb.DestroyShaderModule(device, cut_module);
+    // The fixed form, and the graph that means the same: each pipeline
+    // says it drops pixels, the one by its form and the other by its words.
+    const fixed_module = try module(&bench, &CutoutScene.code);
+    defer fb.DestroyShaderModule(device, fixed_module);
+    var generated_module: ?*facet.ShaderModule = null;
+    try testing.expectEqual(facet.Result.success, fb.CreateShaderModule(device, &.{
+        .flags = facet.SHADER_MODULE_CREATE_SPIRV,
+        .code_size = @sizeOf(shader.Module),
+        .code = &GeneratedCut.code,
+    }, &generated_module));
+    defer fb.DestroyShaderModule(device, generated_module);
+    try testing.expect(GeneratedCut.Cut.discards);
     const cut_layout = try pipelineLayout(&bench, &.{set_layout.?}, 0);
     defer fb.DestroyPipelineLayout(device, cut_layout);
     const tested: facet.PipelineDepthStencilStateCreateInfo = .{ .depth_test_enable = true, .depth_write_enable = true };
-    const cut_result, const cut_pipeline = makePipeline(&bench, .{ .module = cut_module, .name = "cut", .layout = cut_layout, .pass = pass, .depth = tested });
-    try testing.expectEqual(facet.Result.success, cut_result);
-    defer fb.DestroyPipeline(device, cut_pipeline);
+    var cut_pipelines: [2]?*facet.Pipeline = undefined;
+    for ([2]*facet.ShaderModule{ fixed_module, generated_module.? }, &cut_pipelines) |each, *into| {
+        const cut_result, into.* = makePipeline(&bench, .{ .module = each, .name = "cut", .layout = cut_layout, .pass = pass, .depth = tested });
+        try testing.expectEqual(facet.Result.success, cut_result);
+        try testing.expect(_objects.of(_pipeline.Pipeline, into.*.?).discards);
+    }
+    defer for (cut_pipelines) |each| fb.DestroyPipeline(device, each);
 
     const flat_module = try module(&bench, &Flat.code);
     defer fb.DestroyShaderModule(device, flat_module);
@@ -9951,6 +9986,7 @@ test "a cut-out texture drops its pixels and leaves no depth behind them" {
     const flat_result, const flat_pipeline = makePipeline(&bench, .{ .module = flat_module, .layout = flat_layout, .pass = pass, .depth = tested });
     try testing.expectEqual(facet.Result.success, flat_result);
     defer fb.DestroyPipeline(device, flat_pipeline);
+    try testing.expect(!_objects.of(_pipeline.Pipeline, flat_pipeline.?).discards);
 
     // The cut-out quad near, at 0.2; the flat one behind it, at 0.5.
     const far = [4][3]f32{ .{ -1, -1, 0.5 }, .{ 1, -1, 0.5 }, .{ 1, 1, 0.5 }, .{ -1, 1, 0.5 } };
@@ -9965,29 +10001,32 @@ test "a cut-out texture drops its pixels and leaves no depth behind them" {
     const black = clears(0xFF00_0000);
     const offset: u64 = 0;
     const region = facet.BufferImageCopy{ .image_extent = .{ .width = 8, .height = 8 } };
-    const commands = try bench.record();
-    fb.CmdCopyBufferToImage(commands, staging, texture_image, .transfer_dst_optimal, 1, @ptrCast(&region));
-    fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 2, .clear_values = &black }, .@"inline");
-    fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
-    fb.CmdBindIndexBuffer(commands, index_buffer, 0, .uint16);
-    // Near first, so that the one behind it has to pass a depth the dropped
-    // pixels must not have written.
-    fb.CmdBindDescriptorSets(commands, .graphics, cut_layout, 0, 1, @ptrCast(&set), 0, null);
-    fb.CmdBindPipeline(commands, .graphics, cut_pipeline.?);
-    fb.CmdDrawIndexed(commands, indices.len, 1, 0, 0, 0);
-    fb.CmdBindPipeline(commands, .graphics, flat_pipeline.?);
-    fb.CmdPushConstants(commands, flat_layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &blue);
-    fb.CmdDrawIndexed(commands, indices.len, 1, 0, 4, 0);
-    fb.CmdEndRenderPass(commands);
-    try bench.submit();
+    for (cut_pipelines) |cut_pipeline| {
+        const commands = try bench.record();
+        fb.CmdCopyBufferToImage(commands, staging, texture_image, .transfer_dst_optimal, 1, @ptrCast(&region));
+        fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = frame, .render_area = .{ .extent = .{ .width = 64, .height = 64 } }, .clear_value_count = 2, .clear_values = &black }, .@"inline");
+        fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
+        fb.CmdBindIndexBuffer(commands, index_buffer, 0, .uint16);
+        // Near first, so that the one behind it has to pass a depth the
+        // dropped pixels must not have written.
+        fb.CmdBindDescriptorSets(commands, .graphics, cut_layout, 0, 1, @ptrCast(&set), 0, null);
+        fb.CmdBindPipeline(commands, .graphics, cut_pipeline.?);
+        fb.CmdDrawIndexed(commands, indices.len, 1, 0, 0, 0);
+        fb.CmdBindPipeline(commands, .graphics, flat_pipeline.?);
+        fb.CmdPushConstants(commands, flat_layout, facet.SHADER_STAGE_FRAGMENT, 0, 4, &blue);
+        fb.CmdDrawIndexed(commands, indices.len, 1, 0, 4, 0);
+        fb.CmdEndRenderPass(commands);
+        try bench.submit();
 
-    // Where the texture was opaque the near quad stands, and the far one was
-    // held off by its depth. Where it was clear, nothing of the near quad is
-    // left - not its colour and not its depth - so the far one shows through.
-    try testing.expectEqual(@as(u32, 0xFFFF_0000), picture.at(48, 20));
-    try testing.expectEqual(@as(u32, 0xFFFF_0000), picture.at(40, 50));
-    try testing.expectEqual(blue, picture.at(16, 20));
-    try testing.expectEqual(blue, picture.at(4, 50));
+        // Where the texture was opaque the near quad stands, and the far
+        // one was held off by its depth. Where it was clear, nothing of
+        // the near quad is left - not its colour and not its depth - so
+        // the far one shows through.
+        try testing.expectEqual(@as(u32, 0xFFFF_0000), picture.at(48, 20));
+        try testing.expectEqual(@as(u32, 0xFFFF_0000), picture.at(40, 50));
+        try testing.expectEqual(blue, picture.at(16, 20));
+        try testing.expectEqual(blue, picture.at(4, 50));
+    }
 }
 
 /// What the sampler tests draw: one quad over the whole picture, with the

@@ -546,6 +546,10 @@ pub const Shader = struct {
     threads: u8,
     center_w: bool,
     lock_scoreboard_on_first_thrsw: bool,
+    /// Whether it writes Z and has early Z off: a program that drops
+    /// pixels (since 1.139).
+    writes_z: bool,
+    disable_ez: bool,
 
     pub fn stream(made: *const Shader) []const compile.Word {
         return made.uniforms[0..made.uniform_count];
@@ -639,6 +643,8 @@ fn compiled(pipeline: *Pipeline) facet.Result {
         .threads = code.threads,
         .center_w = code.center_w,
         .lock_scoreboard_on_first_thrsw = code.lock_scoreboard_on_first_thrsw,
+        .writes_z = code.writes_z,
+        .disable_ez = code.disable_ez,
     };
     pipeline.driver = kept;
     return .success;

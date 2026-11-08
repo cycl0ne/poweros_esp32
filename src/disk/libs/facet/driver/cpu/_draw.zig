@@ -263,7 +263,7 @@ pub fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_in
         .stencil = stencil,
         .prepass = pipeline.prepass and stencil == null,
         .varyings = pipeline.varyings,
-        .discards = pipeline.fixed.discards(),
+        .discards = pipeline.discards,
         .alpha_to_coverage = pipeline.alpha_to_coverage,
         .fragment = pipeline.fragment,
         .resources = resources,

@@ -218,23 +218,25 @@ pub const Sampler = struct {
 pub const profile: spirv.Profile = .{
     .capabilities = &.{.shader},
     .opcodes = &.{
-        .capability,      .memory_model,  .entry_point,         .execution_mode,
-        .decorate,        .type_void,     .type_float,          .type_vector,
-        .type_pointer,    .type_function, .constant,            .constant_composite,
-        .variable,        .function,      .label,               .load,
+        .capability,      .memory_model,       .entry_point,         .execution_mode,
+        .decorate,        .type_void,          .type_float,          .type_vector,
+        .type_pointer,    .type_function,      .constant,            .constant_composite,
+        .variable,        .function,           .label,               .load,
         // What a real toolchain writes around the instructions: an
         // extended set imported but not used (`ext_inst` is absent, so a
         // call into one is still refused) and the names and source
         // strings glslc always emits. None of them is computation.
-        .ext_inst_import, .source,        .source_extension,    .name,
-        .member_name,     .store,         .composite_extract,   .composite_construct,
-        .f_add,           .f_mul,         .vector_times_scalar, .returns,
-        .function_end,    .type_image,    .type_sampled_image,  .image_sample_implicit_lod,
-        // Taken here and refused by name below. It is not a thing this
-        // device can do - a dropped pixel wants the flag registers - but
-        // `Error.Discards` says which family is missing where
-        // `Error.Refused` would only say that some word was not known.
-        .kill,
+        .ext_inst_import, .source,             .source_extension,    .name,
+        .member_name,     .store,              .composite_extract,   .composite_construct,
+        .f_add,           .f_mul,              .vector_times_scalar, .returns,
+        .function_end,    .type_image,         .type_sampled_image,  .image_sample_implicit_lod,
+        // A pixel dropped where a float is less or greater than another,
+        // in the one shape a conditional discard has in SPIR-V: the
+        // comparison, a selection whose true block is `OpKill` alone, and
+        // the merge block the body goes on in (since 1.139). An `OpKill`
+        // in any other place is refused by name, `Error.Discards`.
+        .kill,            .type_bool,          .f_ord_less_than,     .f_ord_greater_than,
+        .selection_merge, .branch_conditional,
         // The same: taken here so that a module carrying a constant texel
         // offset is refused for the operand and not for the integer type
         // the offset's constant is declared with. `profile.image_operands`
@@ -245,12 +247,12 @@ pub const profile: spirv.Profile = .{
         // is the only place one is read: a value of it anywhere else is
         // refused in the body, this back end computing with 32-bit
         // floats and their vectors alone.
-                   .type_int,
+        .type_int,
         // The push constants: a block of floats and vectors of them, one
         // member read at a time through an access chain whose indexes
         // are constants (since 1.138).
-             .type_struct,         .member_decorate,
-        .access_chain,
+                   .type_struct,
+        .member_decorate, .access_chain,
     },
     .storage_classes = &.{ .input, .output, .function, .uniform_constant, .push_constant },
     .image_dims = &.{.dim_2d},
@@ -282,6 +284,13 @@ pub const Tag = enum {
     input,
     /// Floats the draw hands over, one uniform each.
     constant,
+    /// Whether a float is less than (`at` 0) or greater than (`at` 1)
+    /// another: a bool, which only a `discard` reads (since 1.139).
+    compare,
+    /// The pixel dropped where `a`, a `compare`, holds: what
+    /// nir_opt_peephole_select makes of a selection whose block is a
+    /// terminate alone (`discard_ok`, nir_to_vir.c:2293), terminate_if.
+    discard,
     /// Floats of the push constants, one uniform each: `at` is the word
     /// the first of them is (its byte offset over four). The words are
     /// the draw's, read when the uniform stream is written (since 1.138).
@@ -439,6 +448,13 @@ pub const Code = struct {
     threads: u8 = 4,
     center_w: bool = false,
     lock_scoreboard_on_first_thrsw: bool = false,
+    /// Whether the program writes the depth itself, and whether early Z
+    /// is to be off for it: both for a program that drops pixels, which
+    /// writes the depth the rasterizer made (emit_frag_end,
+    /// nir_to_vir.c:2083-2136) and is not tested early, as v3dv packs
+    /// them (v3dvx_pipeline.c:454-459). Since 1.139.
+    writes_z: bool = false,
+    disable_ez: bool = false,
 
     /// The uniform stream, in the order the program reads it.
     pub fn stream(code: *const Code) []const Word {
@@ -582,7 +598,7 @@ pub const Work = struct {
     code: [most_words]u64 = undefined,
     word_count: u32 = 0,
 
-    pub const Thing = enum(u8) { none, other, float, vector, image, sampled_image, pointer, constant, variable, function, value, int, int_constant, structure, member_pointer };
+    pub const Thing = enum(u8) { none, other, float, vector, image, sampled_image, pointer, constant, variable, function, value, int, int_constant, structure, member_pointer, boolean };
 
     /// `chain_part` of a pointer to a whole member.
     pub const whole: u8 = 0xFF;
@@ -603,9 +619,14 @@ pub const Work = struct {
 /// already been turned down by `CreateShaderModule`.
 pub fn compile(work: *Work, words: []const u32) Error!Code {
     try readModule(work, words);
-    // No hand-written program reads a push constant, so the plan has
-    // nothing to hold one to: only Mesa's back end compiles them.
-    for (work.program()) |each| if (each.tag == .push) return Error.Storage;
+    // No hand-written program reads a push constant or drops a pixel, so
+    // the plan has nothing to hold either to: only Mesa's back end
+    // compiles them.
+    for (work.program()) |each| switch (each.tag) {
+        .push => return Error.Storage,
+        .discard => return Error.Discards,
+        else => {},
+    };
     try settle(work);
     try encode(work);
     return .{
@@ -682,6 +703,8 @@ pub fn compileVir(work: *Work, words: []const u32, allocator: std.mem.Allocator,
         .threads = c.threads,
         .center_w = program.uses_center_w,
         .lock_scoreboard_on_first_thrsw = c.lock_scoreboard_on_first_thrsw,
+        .writes_z = program.writes_z,
+        .disable_ez = program.disable_ez,
     };
 }
 
@@ -701,7 +724,8 @@ fn readModule(work: *Work, words: []const u32) Error!void {
         },
     };
     if (seen.stage != .fragment) return Error.Stage;
-    if (seen.discards) return Error.Discards;
+    // A discard is read in the body: where it is the one shape taken, it
+    // is a step, and anywhere else `read` answers `Error.Discards`.
     try read(work, words, seen);
 }
 
@@ -716,6 +740,12 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
     var in_body = false;
     var blocks: u32 = 0;
     var returned = false;
+    // Where a conditional discard is in its shape: OpSelectionMerge, then
+    // OpBranchConditional to a block of `OpKill` alone and to the merge
+    // block, then that block, then the merge block's label.
+    var flow: enum { body, branch, kill_label, kill, merge_label } = .body;
+    var merge: u32 = 0;
+    var dropped: u32 = 0;
     while (reader.next() catch return Error.Refused) |instruction| {
         const operands = instruction.operands();
         if (returned) {
@@ -810,6 +840,10 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 if (operands[1] != 32) return Error.Type;
                 work.thing[id] = .float;
                 work.wide[id] = 1;
+            },
+            .type_bool => {
+                if (operands.len < 1) return Error.Body;
+                work.thing[try idOf(operands[0])] = .boolean;
             },
             .type_int => {
                 // 32 bits, signed or not: `look` has held the width. It
@@ -1002,14 +1036,63 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 in_body = true;
             },
             .label => {
-                if (!in_body) return Error.Body;
-                blocks += 1;
-                if (blocks > 1) return Error.Branches;
+                if (!in_body or operands.len < 1) return Error.Body;
+                switch (flow) {
+                    .body => {
+                        blocks += 1;
+                        if (blocks > 1) return Error.Branches;
+                    },
+                    .kill_label => {
+                        if (operands[0] != dropped) return Error.Branches;
+                        flow = .kill;
+                    },
+                    .merge_label => {
+                        if (operands[0] != merge) return Error.Branches;
+                        flow = .body;
+                    },
+                    .branch, .kill => return Error.Branches,
+                }
             },
-            .returns => returned = true,
+            .selection_merge => {
+                // MergeBlock, SelectionControl. Whether it asks for the
+                // branch flattened or kept is a hint, and there is no
+                // branch here either way.
+                if (!in_body or blocks == 0 or flow != .body) return Error.Branches;
+                if (operands.len < 2) return Error.Body;
+                merge = operands[0];
+                flow = .branch;
+            },
+            .branch_conditional => {
+                // Condition, True Label, False Label, and maybe weights.
+                // The false label is the merge block: the true one drops
+                // the pixel, and the body goes on in the other. An `if`
+                // whose block holds anything else is a branch, refused.
+                if (flow != .branch) return Error.Branches;
+                if (operands.len < 3) return Error.Body;
+                if (operands[2] != merge or operands[1] == merge) return Error.Branches;
+                const condition = work.step_of[try idOf(operands[0])];
+                if (condition == none or work.steps[condition].tag != .compare) return Error.Body;
+                _ = try put(work, .{ .tag = .discard, .kind = .f32x1, .a = condition });
+                dropped = operands[1];
+                flow = .kill_label;
+            },
+            .kill => {
+                // Only as the block a conditional discard branches to: a
+                // pixel dropped always, or in a block of more than this,
+                // is the family's and refused by its name.
+                if (flow != .kill) return Error.Discards;
+                flow = .merge_label;
+            },
+            .returns => {
+                if (flow != .body) return Error.Branches;
+                returned = true;
+            },
             .function_end => {},
             else => {
                 if (!in_body or blocks == 0) return Error.Body;
+                // Nothing between the branch and the merge block's label
+                // but the block that drops the pixel.
+                if (flow != .body) return Error.Branches;
                 try step(work, instruction);
             },
         }
@@ -1145,6 +1228,7 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             const id = try idOf(operands[1]);
             const of = work.step_of[try idOf(operands[2])];
             if (of == none) return Error.Body;
+            if (work.steps[of].tag == .compare) return Error.Type;
             if (operands[3] >= work.steps[of].kind.parts()) return Error.Body;
             work.step_of[id] = try put(work, .{ .tag = .component, .kind = .f32x1, .a = of, .at = operands[3] });
         },
@@ -1170,6 +1254,7 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 else
                     try operand(work, each, std.enums.fromInt(Kind, work.wide[each_id]) orelse return Error.Type);
                 if (of == none) return Error.Body;
+                if (work.steps[of].tag == .compare) return Error.Type;
                 const parts = work.steps[of].kind.parts();
                 var part: u8 = 0;
                 while (part < parts) : (part += 1) {
@@ -1181,6 +1266,18 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             }
             if (floats != kind.parts()) return Error.Body;
             work.step_of[id] = try put(work, made);
+        },
+        .f_ord_less_than, .f_ord_greater_than => {
+            // Two floats, and a bool: a vector compared would be a vector
+            // of bools, which nothing here reads.
+            if (operands.len != 4) return Error.Body;
+            const type_id = try idOf(operands[0]);
+            const id = try idOf(operands[1]);
+            if (work.thing[type_id] != .boolean) return Error.Type;
+            const a = try operand(work, operands[2], .f32x1);
+            const b = try operand(work, operands[3], .f32x1);
+            const which: u32 = if (instruction.op == .f_ord_less_than) 0 else 1;
+            work.step_of[id] = try put(work, .{ .tag = .compare, .kind = .f32x1, .a = a, .b = b, .at = which });
         },
         .f_add, .f_mul => {
             if (operands.len != 4) return Error.Body;
@@ -1239,6 +1336,8 @@ fn indexOf(work: *const Work, word: u32) Error!u16 {
 fn operand(work: *Work, word: u32, kind: Kind) Error!u16 {
     const id = try idOf(word);
     if (work.step_of[id] != none) {
+        // A bool is no float, whatever its step's width says.
+        if (work.steps[work.step_of[id]].tag == .compare) return Error.Type;
         if (work.steps[work.step_of[id]].kind != kind) return Error.Type;
         return work.step_of[id];
     }
@@ -1332,6 +1431,7 @@ fn settle(work: *Work) Error!void {
             .input, .component, .construct => {},
             // Refused by `compile` before the plan is laid out.
             .push => return Error.Storage,
+            .compare, .discard => return Error.Discards,
             // A float of its own, read where it is first wanted rather
             // than at the top: a uniform is the next one in the stream
             // wherever the instruction sits, and holding them to the end
@@ -1919,7 +2019,8 @@ const Twice = ir.Fragment(struct {
     }
 });
 
-/// A pixel dropped, which wants the flag registers: refused as well.
+/// A pixel dropped where the texel's alpha is under a half: the plan
+/// refuses it, and Mesa's back end compiles it (since 1.139).
 const Cutout = ir.Fragment(struct {
     pub fn body(b: *ir.Build) void {
         const taken = b.sample(0, 0, b.input(0, .f32x2));
@@ -2541,8 +2642,9 @@ test "what this back end has no program for is refused by name, and nothing is m
     // Two textures: there is one TMU, and every hand-written program
     // writes it once and reads it once.
     try testing.expectError(Error.Samplers, compile(&work, Twice.words));
-    // A pixel dropped: the flag registers.
-    try testing.expectError(Error.Refused, compile(&work, Cutout.words));
+    // A pixel dropped: no hand-written program does, so the plan says
+    // which family it is.
+    try testing.expectError(Error.Discards, compile(&work, Cutout.words));
     // A constant texel offset on the sample: the cores apply one, and the
     // TMU here is told a filter and a wrap and nothing else. Said by
     // name, which is what tells it from a word this walk simply did not
@@ -2927,11 +3029,12 @@ test "a decoration this back end does not take is refused by name, whatever its 
 
 test "a shader that always drops its pixel is refused as a discard and not as an unknown word" {
     var work: Work = .{};
-    // `OpKill` is in `profile` so that the refusal can name the family
-    // that is missing. A *conditional* discard is refused earlier, for
-    // the bool type and the branch it needs, which is why `Cutout`
-    // above answers `Refused`: that is honest, both are missing.
+    // `OpKill` is in `profile` for the one shape a conditional discard
+    // has; anywhere else it is refused by the family's name. Through
+    // Mesa's back end too: the walk refuses it before either back end
+    // sees a step.
     try testing.expectError(Error.Discards, compile(&work, comptime built(.{ .always_kill = true })));
+    try testing.expectError(Error.Discards, throughMesa(&work, comptime built(.{ .always_kill = true })));
 }
 
 const disasm = @import("qpu/disasm.zig");
@@ -2963,9 +3066,11 @@ fn throughMesa(work: *Work, words: []const u32) !Code {
 /// An instruction as Mesa's disassembler prints it: the add side, the mul
 /// side, the signals.
 fn text(comptime add: []const u8, comptime mul: []const u8, comptime sig: []const u8) []const u8 {
-    const first = add ++ (" " ** (30 - add.len)) ++ "; " ++ mul;
+    // Padded to its column where it is shorter than it, as the
+    // disassembler pads it.
+    const first = add ++ (" " ** (30 -| add.len)) ++ "; " ++ mul;
     if (sig.len == 0) return first;
-    return first ++ (" " ** (60 - first.len)) ++ "; " ++ sig;
+    return first ++ (" " ** (60 -| first.len)) ++ "; " ++ sig;
 }
 
 fn expectText(code: Code, expected: []const []const u8) !void {
@@ -3148,7 +3253,6 @@ test "through Mesa's back end, what does not fit 4 threads is compiled at 2, whe
 test "through Mesa's back end, a module is refused for what the reading refuses, by the same name" {
     var work: Work = .{};
     try testing.expectError(Error.Samplers, throughMesa(&work, Twice.words));
-    try testing.expectError(Error.Refused, throughMesa(&work, Cutout.words));
     try testing.expectError(Error.Operands, throughMesa(&work, Offset.words));
     try testing.expectError(Error.Stage, throughMesa(&work, &vertex_words));
     try testing.expectError(Error.Varyings, throughMesa(&work, Wide.words));
@@ -3300,10 +3404,70 @@ test "push constants the tables cannot hold, or that are not a block of floats, 
     try testing.expectError(Error.Refused, throughMesa(&work, &comptime patched(tinted, .decorate, 2, 1, @intFromEnum(spirv.Decoration.flat))));
 }
 
+test "through Mesa's back end, a pixel dropped: the comparison into the flags, SETMSF where it holds, and Z written through" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, Cutout.words);
+    try testing.expectEqual(@as(u32, 2), code.varyings);
+    try testing.expect(code.writes_z);
+    try testing.expect(code.disable_ez);
+    // The two configuration words, and the depth's write specifier:
+    // TLB_TYPE_DEPTH, invariant, per pixel (nir_to_vir.c:2115-2134). The
+    // half the alpha is compared with, and the 0 SETMSF writes, are
+    // small immediates; the bool made of the flags is dead and gone.
+    // The specifier is a NaN as a float, so it is held by its bits.
+    const stream = code.stream();
+    try testing.expectEqual(@as(usize, 3), stream.len);
+    try testing.expect(stream[0] == .texture and stream[1] == .sampler);
+    try testing.expectEqual(@as(u32, 0xffffff84), @as(u32, @bitCast(stream[2].float)));
+    try expectText(code, &.{
+        text("nop", "nop", "ldvary.rf4; wrtmuc"),
+        text("nop", "fmul rf5, rf4, rf3", "ldvary.rf7; wrtmuc"),
+        text("fadd rf6, rf0, rf5", "fmul rf8, rf7, rf3", ""),
+        text("fadd rf9, rf0, rf8", "nop", "thrsw"),
+        text("nop", "mov tmut, rf9", "thrsw"),
+        text("nop", "mov tmus, rf6", ""),
+        text("nop", "nop", "ldtmu.rf10"),
+        text("nop", "nop", "ldtmu.rf11"),
+        // The alpha is the second word's high half, read as it is by
+        // the comparison: the unpack was copied into it.
+        text("fcmp.pushn -, rf11.h, 0x3f000000", "nop", ""),
+        text("setmsf.ifa -, 0", "nop", ""),
+        // Z from the rasterizer, its source anything (rf5, as
+        // vir_to_qpu.c:290 has a null source), before the colour.
+        text("nop", "mov tlbu, rf5", "thrsw"),
+        text("vfpack tlb, rf10.l, rf10.h", "nop", ""),
+        text("vfpack tlb, rf11.l, rf11.h", "nop", ""),
+    });
+}
+
+test "through Mesa's back end, glslc's discard is facet's, to the word" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, Cutout.words);
+    const kept = try testing.allocator.dupe(u64, code.words);
+    defer testing.allocator.free(kept);
+    var theirs: Work = .{};
+    const glslc = try throughMesa(&theirs, &reference.glslc_cutout);
+    try testing.expectEqualSlices(u64, kept, glslc.words);
+    try testing.expect(glslc.writes_z and glslc.disable_ez);
+    var plan: Work = .{};
+    try testing.expectError(Error.Discards, compile(&plan, &reference.glslc_cutout));
+}
+
+test "a discard in any shape but the one is refused, and nothing is compiled of it" {
+    var work: Work = .{};
+    // The selection's false label not its merge block: the body would go
+    // on somewhere else.
+    try testing.expectError(Error.Branches, throughMesa(&work, &comptime patched(Cutout.words, .branch_conditional, 0, 2, 24)));
+    // The branch on something that is not a comparison: the colour.
+    try testing.expectError(Error.Body, throughMesa(&work, &comptime patched(Cutout.words, .branch_conditional, 0, 0, 20)));
+    // A comparison read as a float.
+    try testing.expectError(Error.Type, throughMesa(&work, &comptime patched(Cutout.words, .store, 0, 1, 22)));
+}
+
 test "compileThroughMesa makes what compileVir does, its memory given back" {
     // `testing.allocator` under the arena says whether every block of it
     // went back.
-    inline for (.{ Smooth.words, Dimmed.words, Quarters.words, Textured.words, Modulated.words, Pushed.words, PushTinted.words }) |words| {
+    inline for (.{ Smooth.words, Dimmed.words, Quarters.words, Textured.words, Modulated.words, Pushed.words, PushTinted.words, Cutout.words }) |words| {
         var work: Work = .{};
         const once = try throughMesa(&work, words);
         const kept = try testing.allocator.dupe(u64, once.words);
@@ -3316,5 +3480,5 @@ test "compileThroughMesa makes what compileVir does, its memory given back" {
     }
     // And a refusal gives back the register sets it was made after.
     var work: Work = .{};
-    try testing.expectError(Error.Refused, compileThroughMesa(&work, Cutout.words, testing.allocator));
+    try testing.expectError(Error.Samplers, compileThroughMesa(&work, Twice.words, testing.allocator));
 }

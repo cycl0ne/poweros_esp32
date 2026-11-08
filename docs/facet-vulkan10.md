@@ -1822,6 +1822,8 @@ discarding_fragment_forms is false on the V3D, so the texture_cutout form is ref
 
 Found independently by: features, semantics, doc-staleness (3 strands).
 
+**A module's own discard is done in 1.139** (item 59, "Then discards"): the flags, SETMSF and the Z write are Mesa's, ported. The fixed form `texture_cutout` is what remains here.
+
 ### 54. V3D: a QPU program that reads the bound sampler for every form, with unnormalized coordinates and anisotropy **[critical path]**
 
 *V3D compiler and TMU* &mdash; conformance-blocking, large
@@ -1941,6 +1943,16 @@ Two places where Mesa reads back what it does not pack again are kept as Mesa ha
 - `compileVir` maps the stream's `.uniform` words to `Word.push`, and `_play.zig` writes each from `Resources.push` as the draw is played.
 
 The walk refuses an index computed in the body (Mesa would fall back to a TMU read, `ntq_emit_tmu_general`), a block it cannot hold, and any other struct. The plan has no hand-written program for it and answers `Error.Storage`. `ir.Build.push` writes such a shader, and its function on the cores reads the same floats. The host tests pin the program for a pushed colour. glslc's tinted module (`glslc_reference.glslc_tinted`) and facet's emitter's (`spirv_reference.min_push`) compile to the same 13 instructions and the same stream. On the CM5, FacetBoth 1.10's two push cases are 10 and 8 pixels of 230,400 apart from the cores, all at the triangles' edges like the other shipped colour cases. All 162 cases stay within one in a thousand, and FacetProbe passes 829 of 829.
+
+**Then discards**, facet.library 1.139, which is item 53's for a module's own shader. The walk takes a conditional discard in the shape SPIR-V gives it: a float compared with another (`OpFOrdLessThan`, `OpFOrdGreaterThan`), `OpSelectionMerge`, then `OpBranchConditional` to a block of `OpKill` alone and to the merge block the body goes on in. That is the shape nir_opt_peephole_select with `discard_ok` (nir_to_vir.c:2293) makes a terminate_if of. The port emits it as Mesa does:
+
+- The comparison: FCMP into the flags, pushing N (ntq_emit_comparison, nir_to_vir.c:1173). A greater-than is a less-than with its operands swapped, as spirv_to_nir reads it. The bool made of it (ntq_emit_cond_to_bool) is dead and goes in vir_optimize.
+- SETMSF where the flags hold (nir_intrinsic_terminate_if, nir_to_vir.c:3833).
+- sched_flags (nir_to_vir.c:4854) moves the flags instruction up.
+- With a discard there are no early fragment tests, so the program writes the rasterizer's Z to the tile buffer before the colour (emit_frag_end, nir_to_vir.c:2083-2136).
+- The record's "Fragment shader does Z writes" and "Turn off early-z test", bits 12 and 13 (v3dvx_pipeline.c:454-459).
+
+`OpKill` anywhere else is still `Error.Discards`, and so is every discard in the plan. glslc's own cutout (`glslc -O`; without `-O` it keeps the texel in a variable of the function's own) compiles to the same 13 instructions as facet's emitter's. On the CM5, FacetBoth 1.11's cutouts are 0 pixels apart from the cores. A cutout drawn in front of a far triangle found a bug in the cores, not the V3D: a generated function's depth was tested and written before it ran, because only a fixed form said it dropped pixels. The pipeline now reads that from the shipped SPIR-V (`Pipeline.discards`), as llvmpipe reads `info.fs.uses_discard`. That case went from 20,395 pixels apart to 3. What is left of item 53 is the fixed form `texture_cutout`, whose QPU program is written by hand and still refused (`discarding_fragment_forms` false).
 
 ### 60. Compile SPIR-V vertex and compute stages for the V3D **[critical path]**
 
