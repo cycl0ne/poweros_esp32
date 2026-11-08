@@ -210,6 +210,10 @@ pub const Error = error{
 pub const Sampler = struct {
     set: u32,
     binding: u32,
+    /// Whether the program compares what it reads with a reference, an
+    /// OpImageSampleDrefImplicitLod: the draw hands the TMU the bound
+    /// sampler's comparison then, and refuses it otherwise (since 1.143).
+    compared: bool = false,
 };
 
 /// What this back end takes. It is narrower than `spirv.facet_profile` on
@@ -219,24 +223,24 @@ pub const Sampler = struct {
 pub const profile: spirv.Profile = .{
     .capabilities = &.{.shader},
     .opcodes = &.{
-        .capability,      .memory_model,       .entry_point,         .execution_mode,
-        .decorate,        .type_void,          .type_float,          .type_vector,
-        .type_pointer,    .type_function,      .constant,            .constant_composite,
-        .variable,        .function,           .label,               .load,
+        .capability,      .memory_model,       .entry_point,                    .execution_mode,
+        .decorate,        .type_void,          .type_float,                     .type_vector,
+        .type_pointer,    .type_function,      .constant,                       .constant_composite,
+        .variable,        .function,           .label,                          .load,
         // What a real toolchain writes around the instructions: an
         // extended set imported but not used (`ext_inst` is absent, so a
         // call into one is still refused) and the names and source
         // strings glslc always emits. None of them is computation.
-        .ext_inst_import, .source,             .source_extension,    .name,
-        .member_name,     .store,              .composite_extract,   .composite_construct,
-        .f_add,           .f_mul,              .vector_times_scalar, .returns,
-        .function_end,    .type_image,         .type_sampled_image,  .image_sample_implicit_lod,
+        .ext_inst_import, .source,             .source_extension,               .name,
+        .member_name,     .store,              .composite_extract,              .composite_construct,
+        .f_add,           .f_mul,              .vector_times_scalar,            .returns,
+        .function_end,    .type_image,         .type_sampled_image,             .image_sample_implicit_lod,
         // A pixel dropped where a float is less or greater than another,
         // in the one shape a conditional discard has in SPIR-V: the
         // comparison, a selection whose true block is `OpKill` alone, and
         // the merge block the body goes on in (since 1.139). An `OpKill`
         // in any other place is refused by name, `Error.Discards`.
-        .kill,            .type_bool,          .f_ord_less_than,     .f_ord_greater_than,
+        .kill,            .type_bool,          .f_ord_less_than,                .f_ord_greater_than,
         .selection_merge, .branch_conditional,
         // The same: taken here so that a module carrying a constant texel
         // offset is refused for the operand and not for the integer type
@@ -252,8 +256,11 @@ pub const profile: spirv.Profile = .{
         // The push constants: a block of floats and vectors of them, one
         // member read at a time through an access chain whose indexes
         // are constants (since 1.138).
-                   .type_struct,
+                              .type_struct,
         .member_decorate, .access_chain,
+        // A depth compared with a reference, the TMU told it through
+        // TMUDREF (v3d_tex.c:155-157; since 1.143).
+              .image_sample_dref_implicit_lod,
     },
     .storage_classes = &.{ .input, .output, .function, .uniform_constant, .push_constant },
     .image_dims = &.{.dim_2d},
@@ -306,6 +313,10 @@ pub const Tag = enum {
     /// registers: the TMU hands back two words of two half-floats each,
     /// and `Work.slot_half` says which half of which word a float is.
     sample,
+    /// A depth compared with `b`, the reference, at `a`: one float, what
+    /// passed, the first half of the TMU's first word. Mesa's back end
+    /// alone compiles it (`compileVir`; since 1.143).
+    sample_compared,
 };
 
 /// Which half of a packed pair of half-floats a float is, where it is one
@@ -620,12 +631,13 @@ pub const Work = struct {
 /// already been turned down by `CreateShaderModule`.
 pub fn compile(work: *Work, words: []const u32) Error!Code {
     try readModule(work, words);
-    // No hand-written program reads a push constant or drops a pixel, so
-    // the plan has nothing to hold either to: only Mesa's back end
-    // compiles them.
+    // No hand-written program reads a push constant, drops a pixel or
+    // compares, so the plan has nothing to hold any of them to: only
+    // Mesa's back end compiles them.
     for (work.program()) |each| switch (each.tag) {
         .push => return Error.Storage,
         .discard => return Error.Discards,
+        .sample_compared => return Error.Samplers,
         else => {},
     };
     try settle(work);
@@ -699,7 +711,7 @@ pub fn compileVir(work: *Work, words: []const u32, allocator: std.mem.Allocator,
         .varyings = work.varyings,
         .uniforms = work.stream,
         .uniform_count = work.stream_count,
-        .sampler = if (work.sample_count == 0) null else work.samplers[work.steps[work.sampled].at],
+        .sampler = if (work.sample_count == 0) null else samplerRead(work),
         .registers = program.registers,
         .threads = c.threads,
         .center_w = program.uses_center_w,
@@ -707,6 +719,15 @@ pub fn compileVir(work: *Work, words: []const u32, allocator: std.mem.Allocator,
         .writes_z = program.writes_z,
         .disable_ez = program.disable_ez,
     };
+}
+
+/// The combined image sampler the program's one sample reads, and whether
+/// it compares.
+fn samplerRead(work: *const Work) Sampler {
+    const taken = work.steps[work.sampled];
+    var made = work.samplers[taken.at];
+    made.compared = taken.tag == .sample_compared;
+    return made;
 }
 
 /// The words looked at against the profile and read into `work`: what
@@ -891,15 +912,16 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 // ImageFormat. `look` has held the dimensionality to the
                 // profile's and Sampled to 1 already; what is left is the
                 // three that say this is the plain 2D texture the TMU is
-                // written for here. A depth image compares rather than
-                // reads, an arrayed one wants a layer in TMUI and a
-                // multisampled one is not a texture at all - each is its
-                // own family, with its own hand-written program to be
-                // held against, and none of them is this one.
+                // written for here. An arrayed one wants a layer in TMUI
+                // and a multisampled one is not a texture at all - each is
+                // its own family, and neither is this one. Depth is
+                // taken whatever it says since 1.143: whether a sample
+                // compares is its opcode's, not the type's, as SPIR-V has
+                // it, and a depth image is read as any texture is.
                 if (operands.len < 8) return Error.Body;
                 const id = try idOf(operands[0]);
                 if (work.thing[try idOf(operands[1])] != .float) return Error.Type;
-                if (operands[3] != 0 or operands[4] != 0 or operands[5] != 0) return Error.Refused;
+                if (operands[3] > 2 or operands[4] != 0 or operands[5] != 0) return Error.Refused;
                 work.thing[id] = .image;
             },
             .type_sampled_image => {
@@ -1311,6 +1333,24 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             work.sampled = made;
             work.sample_count = 1;
         },
+        .image_sample_dref_implicit_lod => {
+            // ResultType, Result, SampledImage, Coordinate, Dref: one
+            // float, compared with the reference (since 1.143). An image
+            // operand past them is refused as it is for a plain sample.
+            if (operands.len != 5) return Error.Body;
+            const type_id = try idOf(operands[0]);
+            const id = try idOf(operands[1]);
+            if (try kindOf(work, type_id) != .f32x1) return Error.Type;
+            const which = work.sampler_of[try idOf(operands[2])];
+            if (which == none) return Error.Body;
+            const where = try coordinateOf(work, operands[3]);
+            const against = try operand(work, operands[4], .f32x1);
+            if (work.sample_count != 0) return Error.Samplers;
+            const made = try put(work, .{ .tag = .sample_compared, .kind = .f32x1, .a = where, .b = against, .at = which });
+            work.step_of[id] = made;
+            work.sampled = made;
+            work.sample_count = 1;
+        },
         .vector_times_scalar => {
             if (operands.len != 4) return Error.Body;
             const type_id = try idOf(operands[0]);
@@ -1334,6 +1374,21 @@ fn indexOf(work: *const Work, word: u32) Error!u16 {
 
 /// An operand id as a step of `kind`. A constant becomes a step of its
 /// own the first time it is read, which is one uniform a float.
+/// A shadow sample's coordinate: two floats or more, the TMU given the
+/// first two. SPIR-V lets a coordinate be wider than its image needs, the
+/// floats it does not use after those it does, and glslc's
+/// `texture(sampler2DShadow, vec3(uv, reference))` is one: the reference
+/// is the third float, extracted from it as the Dref (since 1.143).
+fn coordinateOf(work: *Work, word: u32) Error!u16 {
+    const id = try idOf(word);
+    const kind = if (work.step_of[id] != none)
+        work.steps[work.step_of[id]].kind
+    else
+        std.enums.fromInt(Kind, work.wide[id]) orelse return Error.Type;
+    if (kind == .f32x1) return Error.Type;
+    return operand(work, word, kind);
+}
+
 fn operand(work: *Work, word: u32, kind: Kind) Error!u16 {
     const id = try idOf(word);
     if (work.step_of[id] != none) {
@@ -1433,6 +1488,7 @@ fn settle(work: *Work) Error!void {
             // Refused by `compile` before the plan is laid out.
             .push => return Error.Storage,
             .compare, .discard => return Error.Discards,
+            .sample_compared => return Error.Samplers,
             // A float of its own, read where it is first wanted rather
             // than at the top: a uniform is the next one in the stream
             // wherever the instruction sits, and holding them to the end
@@ -2035,6 +2091,15 @@ const Cutout = ir.Fragment(struct {
 const Offset = ir.Fragment(struct {
     pub fn body(b: *ir.Build) void {
         b.color(b.sampleOffset(0, 0, b.input(0, .f32x2), .{ 1, -2 }));
+    }
+});
+
+/// A depth compared with the reference the vertices carry, (1, 0, 0, 1)
+/// times what passed: `glslc_shadow`'s shader, and `min_shadow`'s
+/// (since 1.143).
+const Shadowed = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        b.color(b.scale(b.constant(.{ 1, 0, 0, 1 }), b.sampleCompared(0, 0, b.input(0, .f32x2), b.input(1, .f32x1))));
     }
 });
 
@@ -3169,6 +3234,68 @@ test "through Mesa's back end, a texture: the lookup started in the delay slots 
         text("vfpack tlb, rf10.l, rf10.h", "nop", "ldtmu.rf11"),
         text("vfpack tlb, rf11.l, rf11.h", "nop", ""),
     });
+}
+
+test "through Mesa's back end, a depth compared: the reference to TMUDREF after T and before S, and what passed the first word's low half" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, Shadowed.words);
+    try testing.expectEqual(@as(u32, 3), code.varyings);
+    // The draw is told the program compares, and hands the TMU the
+    // sampler's comparison and a depth.
+    try testing.expectEqual(Sampler{ .set = 0, .binding = 0, .compared = true }, code.sampler.?);
+    // v3d_tex.c's order: the coordinate's T, the comparator, then S last,
+    // which starts the lookup; and both words read back, as P0 asks.
+    var buffer: [disasm.most_text]u8 = undefined;
+    var t_at: ?usize = null;
+    var dref_at: ?usize = null;
+    var s_at: ?usize = null;
+    var ldtmu: u32 = 0;
+    var read_low = false;
+    var first_word: ?[]const u8 = null;
+    var named: [16]u8 = undefined;
+    for (code.words, 0..) |word, at| {
+        const line = disasm.disasm(word, &buffer).?;
+        if (std.mem.indexOf(u8, line, "mov tmut,") != null) t_at = at;
+        if (std.mem.indexOf(u8, line, "mov tmudref,") != null) dref_at = at;
+        if (std.mem.indexOf(u8, line, "mov tmus,") != null) s_at = at;
+        if (first_word) |register| {
+            if (std.mem.indexOf(u8, line, register) != null) read_low = true;
+        }
+        if (std.mem.indexOf(u8, line, "ldtmu.")) |found| {
+            ldtmu += 1;
+            // The first word's register, as an operand of its low half:
+            // `rfN.l`.
+            if (first_word == null) {
+                const start = found + "ldtmu.".len;
+                var end = start;
+                while (end < line.len and line[end] != ' ' and line[end] != ';') end += 1;
+                first_word = try std.fmt.bufPrint(&named, "{s}.l", .{line[start..end]});
+            }
+        }
+    }
+    try testing.expect(t_at.? < dref_at.? and dref_at.? < s_at.?);
+    try testing.expectEqual(@as(u32, 2), ldtmu);
+    // What passed is the first word's low half, read where it is used:
+    // vir_opt_alu folds the unpacking fmov into the product, as Mesa
+    // does (`fmul rf15, 0x3f800000, rf13.l`).
+    try testing.expect(read_low);
+    // The plan has no program to hold it to.
+    var planned: Work = .{};
+    try testing.expectError(Error.Samplers, compile(&planned, Shadowed.words));
+}
+
+test "through Mesa's back end, glslc's shadow sample is facet's, to the word: its coordinate of three floats given the TMU as two" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, Shadowed.words);
+    const kept = try testing.allocator.dupe(u64, code.words);
+    defer testing.allocator.free(kept);
+    var theirs: Work = .{};
+    const glslc = try throughMesa(&theirs, &reference.glslc_shadow);
+    try testing.expectEqualSlices(u64, kept, glslc.words);
+    try testing.expectEqual(Sampler{ .set = 0, .binding = 0, .compared = true }, glslc.sampler.?);
+    // The plan refuses it, as it refuses facet's own.
+    var plan: Work = .{};
+    try testing.expectError(Error.Samplers, compile(&plan, &reference.glslc_shadow));
 }
 
 test "through Mesa's back end, a texel times the colour reads the texel's halves in its products" {

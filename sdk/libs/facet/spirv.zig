@@ -108,6 +108,8 @@ pub const Op = enum(u16) {
     sampled_image = 86,
     image_sample_implicit_lod = 87,
     image_sample_explicit_lod = 88,
+    image_sample_dref_implicit_lod = 89,
+    image_sample_dref_explicit_lod = 90,
     image_write = 99,
     convert_f_to_s = 110,
     convert_s_to_f = 111,
@@ -622,10 +624,12 @@ pub const facet_opcodes: []const Op = &.{
     .f_negate,                  .vector_times_scalar, .matrix_times_vector,      .dot,
     .f_ord_less_than,           .f_ord_greater_than,  .f_ord_greater_than_equal, .select,
     .image_sample_implicit_lod, .selection_merge,     .label,                    .branch,
-    .branch_conditional,        .kill,                .returns,
+    // The last, a depth compared with a reference: a shadow sample (since
+    // 1.143).
+    .branch_conditional,        .kill,                .returns,                  .image_sample_dref_implicit_lod,
     // Declarations and annotations, which say nothing a device runs.
-                     .ext_inst_import,
-    .source,                    .source_extension,    .name,                     .member_name,
+    .ext_inst_import,           .source,              .source_extension,         .name,
+    .member_name,
 };
 
 /// The format's own profile, which is what `CreateShaderModule` reads a
@@ -792,10 +796,14 @@ pub fn look(words: []const u32, profile: Profile) Outcome {
             // 1.87 none of this was read anywhere in the tree, so a
             // module asking for a bias, a lod or an offset walked
             // through `look` untouched and was sampled without it.
-            .image_sample_implicit_lod => {
-                if (operands.len < 4) return .{ .fault = .truncated_instruction };
-                if (operands.len > 4) {
-                    var mask = operands[4];
+            //
+            // A Dref sample has a fifth before the optional ones, the
+            // reference it compares with (since 1.143).
+            .image_sample_implicit_lod, .image_sample_dref_implicit_lod => {
+                const fixed: u32 = if (instruction.op == .image_sample_dref_implicit_lod) 5 else 4;
+                if (operands.len < fixed) return .{ .fault = .truncated_instruction };
+                if (operands.len > fixed) {
+                    var mask = operands[fixed];
                     var ids: u32 = 0;
                     while (mask != 0) {
                         // The lowest bit set, and then that bit cleared.
@@ -808,8 +816,8 @@ pub fn look(words: []const u32, profile: Profile) Outcome {
                     // One id for each bit, no more and no fewer: a mask
                     // whose ids are missing is a truncated instruction
                     // and not an operand this device refuses.
-                    if (operands.len != 5 + ids) return .{ .fault = .truncated_instruction };
-                    for (operands[5..]) |id| if (id >= bound) return .{ .fault = .id_over_bound };
+                    if (operands.len != fixed + 1 + ids) return .{ .fault = .truncated_instruction };
+                    for (operands[fixed + 1 ..]) |id| if (id >= bound) return .{ .fault = .id_over_bound };
                 }
             },
             .kill => seen.discards = true,

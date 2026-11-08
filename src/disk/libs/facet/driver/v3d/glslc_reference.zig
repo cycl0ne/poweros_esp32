@@ -2,8 +2,9 @@
 //! Modules a real toolchain produced, to compile against: `glslc`'s own
 //! output for shaders whose facet forms `tests/spirv_reference.zig`
 //! keeps: the interpolated colour, the colour tinted by the push
-//! constants (since 1.138), and the texture whose pixel is dropped where
-//! its alpha is under a half (since 1.139).
+//! constants (since 1.138), the texture whose pixel is dropped where
+//! its alpha is under a half (since 1.139), and a shadow sample (since
+//! 1.143).
 //!
 //! They are here rather than beside the other reference modules because a
 //! Zig module cannot import a file above its own root, and these are read
@@ -283,4 +284,119 @@ pub const glslc_cutout = [_]u32{
     0x00000000, 0x000400FA, 0x0000001B, 0x0000001C, 0x0000001D, 0x000200F8,
     0x0000001C, 0x000100FC, 0x000200F8, 0x0000001D, 0x0003003E, 0x00000020,
     0x00000013, 0x000100FD, 0x00010038,
+};
+
+/// glslc's own output for a shadow sample: a depth compared with the
+/// reference the vertices carry, what passed times (1, 0, 0, 1) - the
+/// same shader as `Shadowed` in `compile.zig`'s tests, from GLSL (since
+/// 1.143).
+///
+/// ```sh
+/// # shadow.frag: #version 450, in vec2 uv at 0, in float ref at 1,
+/// # out vec4 colour at 0, uniform sampler2DShadow map at set 0, binding
+/// # 0; void main() { colour = vec4(1, 0, 0, 1) * texture(map, vec3(uv, ref)); }
+/// glslc -fshader-stage=frag shadow.frag -o shadow.spv   # 220 words
+/// spirv-val --target-env vulkan1.0 shadow.spv           # no output, and 0
+/// ```
+///
+/// Its coordinate is three floats, the reference the third, and the Dref
+/// is that float extracted again: SPIR-V lets a coordinate be wider than
+/// the image needs, and `compile.zig` gives the TMU its first two.
+///
+/// ```
+/// ; SPIR-V
+/// ; Version: 1.0
+/// ; Generator: Google Shaderc over Glslang; 11
+/// ; Bound: 32
+/// ; Schema: 0
+/// OpCapability Shader
+/// %1 = OpExtInstImport "GLSL.std.450"
+/// OpMemoryModel Logical GLSL450
+/// OpEntryPoint Fragment %4 "main" %9 %20 %23
+/// OpExecutionMode %4 OriginUpperLeft
+/// OpSource GLSL 450
+/// OpSourceExtension "GL_GOOGLE_cpp_style_line_directive"
+/// OpSourceExtension "GL_GOOGLE_include_directive"
+/// OpName %4 "main"
+/// OpName %9 "colour"
+/// OpName %16 "map"
+/// OpName %20 "uv"
+/// OpName %23 "ref"
+/// OpDecorate %9 Location 0
+/// OpDecorate %16 Binding 0
+/// OpDecorate %16 DescriptorSet 0
+/// OpDecorate %20 Location 0
+/// OpDecorate %23 Location 1
+/// %2 = OpTypeVoid
+/// %3 = OpTypeFunction %2
+/// %6 = OpTypeFloat 32
+/// %7 = OpTypeVector %6 4
+/// %8 = OpTypePointer Output %7
+/// %9 = OpVariable %8 Output
+/// %10 = OpConstant %6 1
+/// %11 = OpConstant %6 0
+/// %12 = OpConstantComposite %7 %10 %11 %11 %10
+/// %13 = OpTypeImage %6 2D 1 0 0 1 Unknown
+/// %14 = OpTypeSampledImage %13
+/// %15 = OpTypePointer UniformConstant %14
+/// %16 = OpVariable %15 UniformConstant
+/// %18 = OpTypeVector %6 2
+/// %19 = OpTypePointer Input %18
+/// %20 = OpVariable %19 Input
+/// %22 = OpTypePointer Input %6
+/// %23 = OpVariable %22 Input
+/// %25 = OpTypeVector %6 3
+/// %4 = OpFunction %2 None %3
+/// %5 = OpLabel
+/// %17 = OpLoad %14 %16
+/// %21 = OpLoad %18 %20
+/// %24 = OpLoad %6 %23
+/// %26 = OpCompositeExtract %6 %21 0
+/// %27 = OpCompositeExtract %6 %21 1
+/// %28 = OpCompositeConstruct %25 %26 %27 %24
+/// %29 = OpCompositeExtract %6 %28 2
+/// %30 = OpImageSampleDrefImplicitLod %6 %17 %28 %29
+/// %31 = OpVectorTimesScalar %7 %12 %30
+/// OpStore %9 %31
+/// OpReturn
+/// OpFunctionEnd
+/// ```
+pub const glslc_shadow = [_]u32{
+    0x07230203, 0x00010000, 0x000D000B, 0x00000020, 0x00000000, 0x00020011,
+    0x00000001, 0x0006000B, 0x00000001, 0x4C534C47, 0x6474732E, 0x3035342E,
+    0x00000000, 0x0003000E, 0x00000000, 0x00000001, 0x0008000F, 0x00000004,
+    0x00000004, 0x6E69616D, 0x00000000, 0x00000009, 0x00000014, 0x00000017,
+    0x00030010, 0x00000004, 0x00000007, 0x00030003, 0x00000002, 0x000001C2,
+    0x000A0004, 0x475F4C47, 0x4C474F4F, 0x70635F45, 0x74735F70, 0x5F656C79,
+    0x656E696C, 0x7269645F, 0x69746365, 0x00006576, 0x00080004, 0x475F4C47,
+    0x4C474F4F, 0x6E695F45, 0x64756C63, 0x69645F65, 0x74636572, 0x00657669,
+    0x00040005, 0x00000004, 0x6E69616D, 0x00000000, 0x00040005, 0x00000009,
+    0x6F6C6F63, 0x00007275, 0x00030005, 0x00000010, 0x0070616D, 0x00030005,
+    0x00000014, 0x00007675, 0x00030005, 0x00000017, 0x00666572, 0x00040047,
+    0x00000009, 0x0000001E, 0x00000000, 0x00040047, 0x00000010, 0x00000021,
+    0x00000000, 0x00040047, 0x00000010, 0x00000022, 0x00000000, 0x00040047,
+    0x00000014, 0x0000001E, 0x00000000, 0x00040047, 0x00000017, 0x0000001E,
+    0x00000001, 0x00020013, 0x00000002, 0x00030021, 0x00000003, 0x00000002,
+    0x00030016, 0x00000006, 0x00000020, 0x00040017, 0x00000007, 0x00000006,
+    0x00000004, 0x00040020, 0x00000008, 0x00000003, 0x00000007, 0x0004003B,
+    0x00000008, 0x00000009, 0x00000003, 0x0004002B, 0x00000006, 0x0000000A,
+    0x3F800000, 0x0004002B, 0x00000006, 0x0000000B, 0x00000000, 0x0007002C,
+    0x00000007, 0x0000000C, 0x0000000A, 0x0000000B, 0x0000000B, 0x0000000A,
+    0x00090019, 0x0000000D, 0x00000006, 0x00000001, 0x00000001, 0x00000000,
+    0x00000000, 0x00000001, 0x00000000, 0x0003001B, 0x0000000E, 0x0000000D,
+    0x00040020, 0x0000000F, 0x00000000, 0x0000000E, 0x0004003B, 0x0000000F,
+    0x00000010, 0x00000000, 0x00040017, 0x00000012, 0x00000006, 0x00000002,
+    0x00040020, 0x00000013, 0x00000001, 0x00000012, 0x0004003B, 0x00000013,
+    0x00000014, 0x00000001, 0x00040020, 0x00000016, 0x00000001, 0x00000006,
+    0x0004003B, 0x00000016, 0x00000017, 0x00000001, 0x00040017, 0x00000019,
+    0x00000006, 0x00000003, 0x00050036, 0x00000002, 0x00000004, 0x00000000,
+    0x00000003, 0x000200F8, 0x00000005, 0x0004003D, 0x0000000E, 0x00000011,
+    0x00000010, 0x0004003D, 0x00000012, 0x00000015, 0x00000014, 0x0004003D,
+    0x00000006, 0x00000018, 0x00000017, 0x00050051, 0x00000006, 0x0000001A,
+    0x00000015, 0x00000000, 0x00050051, 0x00000006, 0x0000001B, 0x00000015,
+    0x00000001, 0x00060050, 0x00000019, 0x0000001C, 0x0000001A, 0x0000001B,
+    0x00000018, 0x00050051, 0x00000006, 0x0000001D, 0x0000001C, 0x00000002,
+    0x00060059, 0x00000006, 0x0000001E, 0x00000011, 0x0000001C, 0x0000001D,
+    0x0005008E, 0x00000007, 0x0000001F, 0x0000000C, 0x0000001E, 0x0003003E,
+    0x00000009, 0x0000001F, 0x000100FD, 0x00010038,
 };

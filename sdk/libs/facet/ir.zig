@@ -109,6 +109,12 @@ pub const Tag = enum(u8) {
     push,
     /// A texture read at a coordinate.
     sample,
+    /// A depth texture compared with a reference at a coordinate, through
+    /// the sampler bound beside it: one float, how much of the sample
+    /// passed, 1 for all of it and 0 for none. SPIR-V's
+    /// OpImageSampleDrefImplicitLod; `a` is the coordinate and `b` the
+    /// reference. (Since 1.143.)
+    sample_compared,
     multiply,
     add,
     subtract,
@@ -166,6 +172,9 @@ pub const Sampled = struct {
     set: u32,
     binding: u32,
     sampling: texture.Sampling,
+    /// Read by a `sample_compared`: a depth image, which the words
+    /// declare with Depth 1 (since 1.143).
+    compared: bool = false,
 };
 
 /// A member of the shader's one push-constant block: where it is and
@@ -303,6 +312,20 @@ pub const Build = struct {
         });
     }
 
+    /// A depth texture, bound at `set` and `binding` with a sampler that
+    /// compares, compared with `reference` at `coordinate`: a shadow
+    /// sample. The coordinate is two floats and the reference one, 0 to 1
+    /// as the depth is; the answer is one float, how much of the sample
+    /// passed. The comparison and the filter are the bound sampler's, on
+    /// either device, and so is what a sample that does not pass reads:
+    /// Vulkan has a sampler that compares used by such a sample and no
+    /// other (since 1.143).
+    pub fn sampleCompared(build: *Build, comptime set: u32, comptime binding: u32, coordinate: u16, reference: u16) u16 {
+        if (build.ops[coordinate].kind != .f32x2) @compileError("a texture is read at two coordinates");
+        if (build.ops[reference].kind != .f32x1) @compileError("a reference is one float");
+        return build.put(.{ .tag = .sample_compared, .kind = .f32x1, .a = coordinate, .b = reference, .at = set << 16 | binding });
+    }
+
     fn pair(build: *Build, tag: Tag, a: u16, b: u16) u16 {
         if (!build.ops[a].kind.sameSize(build.ops[b].kind)) @compileError("these two are not the same width");
         return build.put(.{ .tag = tag, .kind = build.ops[a].kind, .a = a, .b = b });
@@ -393,8 +416,8 @@ pub fn graphOf(comptime body: fn (*Build) void) Graph {
                     push_count += 1;
                 }
             },
-            .sample => {
-                sampled[sampled_count] = .{ .set = op.at >> 16, .binding = op.at & 0xFFFF, .sampling = op.sampling };
+            .sample, .sample_compared => {
+                sampled[sampled_count] = .{ .set = op.at >> 16, .binding = op.at & 0xFFFF, .sampling = op.sampling, .compared = op.tag == .sample_compared };
                 sampled_count += 1;
             },
             .discard_if => discards = true,
@@ -493,13 +516,20 @@ fn wordsOf(comptime graph: Graph) []const u32 {
             const of_type = vectorFor(&emit, &vector_types, float_type, each.kind);
             emit.variable(emit.typePointer(.input, of_type), input_ids[k], .input);
         }
+        // A texture that is compared is a depth image, as glslc declares
+        // a sampler2DShadow: Depth 1, a type of its own beside the
+        // other's, each declared where it is first wanted.
         var sampled_type: u32 = 0;
-        for (graph.sampled, 0..) |_, k| {
-            if (sampled_type == 0) {
-                const image = emit.typeImage(float_type, .dim_2d, 0, 0, 0, 1, .unknown);
-                sampled_type = emit.typeSampledImage(image);
-            }
-            emit.variable(emit.typePointer(.uniform_constant, sampled_type), sampler_ids[k], .uniform_constant);
+        var compared_type: u32 = 0;
+        for (graph.sampled, 0..) |each, k| {
+            const of_type = if (each.compared) compared: {
+                if (compared_type == 0) compared_type = emit.typeSampledImage(emit.typeImage(float_type, .dim_2d, 1, 0, 0, 1, .unknown));
+                break :compared compared_type;
+            } else plain: {
+                if (sampled_type == 0) sampled_type = emit.typeSampledImage(emit.typeImage(float_type, .dim_2d, 0, 0, 0, 1, .unknown));
+                break :plain sampled_type;
+            };
+            emit.variable(emit.typePointer(.uniform_constant, of_type), sampler_ids[k], .uniform_constant);
         }
         var bool_type: u32 = 0;
         for (graph.ops) |op| if (op.kind == .boolean and bool_type == 0) {
@@ -603,6 +633,16 @@ fn wordsOf(comptime graph: Graph) []const u32 {
                     }
                     value_ids[k] = taken;
                 },
+                .sample_compared => {
+                    const which = sampledBefore(graph, k);
+                    const held = emit.id();
+                    emit.at(.load, &.{ compared_type, held, sampler_ids[which] });
+                    const where = loadInput(&emit, graph, &value_ids, &input_ids, &vector_types, float_type, op.a);
+                    const reference = loadInput(&emit, graph, &value_ids, &input_ids, &vector_types, float_type, op.b);
+                    const taken = emit.id();
+                    emit.at(.image_sample_dref_implicit_lod, &.{ float_type, taken, held, where, reference });
+                    value_ids[k] = taken;
+                },
                 .multiply, .add, .subtract => {
                     const left = loadInput(&emit, graph, &value_ids, &input_ids, &vector_types, float_type, op.a);
                     const right = loadInput(&emit, graph, &value_ids, &input_ids, &vector_types, float_type, op.b);
@@ -673,7 +713,7 @@ fn pushMember(comptime graph: Graph, comptime op: Op) u32 {
 fn sampledBefore(comptime graph: Graph, comptime at: usize) u32 {
     comptime {
         var which: u32 = 0;
-        for (graph.ops[0..at]) |before| if (before.tag == .sample) {
+        for (graph.ops[0..at]) |before| if (before.tag == .sample or before.tag == .sample_compared) {
             which += 1;
         };
         return which;
@@ -774,8 +814,11 @@ fn functionOf(comptime graph: Graph) shader.FragmentFn {
                 pictures[which] = fragments.resources.sampled(each.set, each.binding, 0);
                 if (fragments.resources.samplerOf(each.set, each.binding, 0)) |bound| {
                     // No `continue` here: the loop is unrolled and this
-                    // is a runtime condition.
-                    if (texture.samplingOf(bound, each.sampling.format)) |said| {
+                    // is a runtime condition. A comparison is the whole
+                    // sampler's, a pixel at a time (since 1.143).
+                    if (each.compared) {
+                        sampled_by[which] = bound;
+                    } else if (texture.samplingOf(bound, each.sampling.format)) |said| {
                         sampled_how[which] = said;
                     } else {
                         // Whole and untouched, which is the agreement
@@ -792,7 +835,9 @@ fn functionOf(comptime graph: Graph) shader.FragmentFn {
                         // program's own fault and what it draws is
                         // undefined; drawing what the fixed form draws
                         // is the one answer that keeps the device
-                        // consistent with itself.
+                        // consistent with itself. A graph that means to
+                        // compare says `sample_compared`, which carries
+                        // its reference (since 1.143).
                         sampled_by[which] = bound;
                     }
                 }
@@ -831,6 +876,10 @@ fn functionOf(comptime graph: Graph) shader.FragmentFn {
                             sampleThrough(whole, pictures[which], quad.*, values[op.a][0], values[op.a][1], op.offset)
                         else
                             sampleAt(sampled_how[which] orelse op.sampling, pictures[which], quad.*, values[op.a][0], values[op.a][1], op.offset);
+                    },
+                    .sample_compared => {
+                        const which = comptime sampledBefore(graph, i);
+                        values[i][0] = sampleCompared(sampled_by[which], pictures[which], quad.*, values[op.a][0], values[op.a][1], values[op.b][0]);
                     },
                     .multiply => inline for (0..comptime op.kind.parts()) |part| {
                         values[i][part] = values[op.a][part] * values[op.b][part];
@@ -969,6 +1018,41 @@ inline fn sampleThrough(sampler: *const texture.Sampler, picture: ?*const textur
                 .offset = offset,
             }));
             inline for (0..4) |channel| made[channel][pixel] = colour[channel];
+        }
+    }
+    return made;
+}
+
+/// A shadow sample of a quad's four pixels, each compared with its own
+/// reference through the whole of the bound sampler: what passed, the red
+/// of what `texture.sampleBy` hands back for a sampler that compares,
+/// since a view of a depth reads what passed in its depth's place
+/// (since 1.121). The call the fixed form `texture_shadow` makes
+/// (`shader.texturedBy`), so a generated shadow sample and the fixed form
+/// draw the same thing. Where there is no texture or no sampler, the
+/// missing colour's red, as a sample without them reads it. (Since
+/// 1.143.)
+inline fn sampleCompared(sampler: ?*const texture.Sampler, picture: ?*const texture.Texture, quad: shader.Quad, u: Pixels, v: Pixels, reference: Pixels) Pixels {
+    @setRuntimeSafety(false);
+    const missing: Pixels = @splat(channelsOf(shader.missing)[0]);
+    const given = picture orelse return missing;
+    const with = sampler orelse return missing;
+    var made: Pixels = @splat(0);
+    const du_dx = u[1] - u[0];
+    const du_dy = u[2] - u[0];
+    const dv_dx = v[1] - v[0];
+    const dv_dy = v[2] - v[0];
+    inline for (0..4) |pixel| {
+        if (quad.covered >> @intCast(pixel) & 1 != 0) {
+            made[pixel] = channelsOf(texture.sampleBy(given, with, 0, .{
+                .u = u[pixel],
+                .v = v[pixel],
+                .du_dx = du_dx,
+                .dv_dx = dv_dx,
+                .du_dy = du_dy,
+                .dv_dy = dv_dy,
+                .reference = reference[pixel],
+            }))[0];
         }
     }
     return made;

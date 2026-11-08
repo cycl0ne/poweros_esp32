@@ -4113,4 +4113,60 @@ pub const LIBRARY_VERSION = 1;
 ///   All are at triangle edges, as its plain depth cases are (4 to 9).
 ///   The other 185 cases are as they were at 1.141, and all 188 within
 ///   one pixel in a thousand.
-pub const LIBRARY_REVISION = 142;
+///
+/// 143: **A generated shader compares: SPIR-V's
+/// OpImageSampleDrefImplicitLod, on both devices (docs/facet-vulkan10.md
+/// item 58, the rest of it).** Until now no layer took a Dref sample.
+/// `facet_profile` did not list the opcode, the IR had no reference to
+/// give, and the V3D's reader refused a depth image's type. A shadow map
+/// was sampled only through the fixed form `texture_shadow`. It goes in
+/// at each layer:
+///
+/// - **`spirv.zig`.** The opcodes 89 and 90, the implicit one in
+///   `facet_profile`, and `look` reading the Dref sample's fifth
+///   operand, the reference, before the optional image operands.
+/// - **`ir.zig`.** `Build.sampleCompared(set, binding, coordinate,
+///   reference)` is a `sample_compared` op, one float of what passed.
+///   Its words declare the image with Depth 1, as glslc declares a
+///   `sampler2DShadow`, and `Sampled.compared` says which texture that
+///   is. The cores' function takes the bound sampler whole through
+///   `texture.sampleBy` with the reference, the call the fixed form
+///   makes (`shader.texturedBy`), and reads what passed out of the red.
+/// - **`compile.zig` and `to_vir.zig`, the V3D.** The sample is a
+///   `sample_compared` step, and its coordinate may be wider than two
+///   floats. glslc's `texture(sampler2DShadow, vec3(uv, ref))` is one:
+///   the reference is the third float, extracted again as the Dref.
+///   `emitTex` writes the comparator to TMUDREF after T and before S, as
+///   v3d_tex.c's handle_tex_src does (v3d_tex.c:155-157), three TMU
+///   writes (:222). What passed is the first word's low half, the
+///   unpacking fmov folded into its reader as Mesa's vir_opt_alu folds it.
+///   A depth image's type is taken; whether a sample compares is its
+///   opcode's, as SPIR-V has it. The hand-planned path refuses the step
+///   (`Error.Samplers`), having no program to hold it to.
+/// - **`_play.zig`.** `compile.Sampler.compared` tells the draw, which
+///   hands the TMU the sampler's comparison and the depth's state.
+///
+/// OpImageSampleDrefExplicitLod is named and not taken: the IR has no
+/// explicit level of detail for any sample.
+///
+/// Tests:
+///
+/// - 3042 host tests, four new, the V3D's two among them:
+///   - the IR's shadow module is `min_shadow` word for word, written as
+///     assembly, assembled by spirv-as and accepted by spirv-val, and
+///     `look` reads it and its opaque twin as the graph has them;
+///   - the cores' generated shadow sample is the fixed form's bit for bit
+///     over nearest `less`, nearest `greater` and a mixed
+///     `less_or_equal`, and the first two answer each pixel the other way
+///     round;
+///   - on the V3D (139 tests), the program writes TMUT, TMUDREF and TMUS
+///     in that order, reads both words back, and uses the first word's
+///     low half;
+///   - glslc's own shadow module (`glslc_shadow`, spirv-val'd) compiles to
+///     facet's program word for word.
+/// - On the board, C:test/FacetBoth 1.15 draws 1.14's three shadow maps
+///   through a generated shader too. Each is as far from the cores as
+///   through the fixed form: 3, 3 and 5 pixels of 230,400, at the same
+///   triangle edges. The other 188 cases are as they were. FacetProbe
+///   1.46 passes its 888 checks, 386 of them on the V3D.
+pub const LIBRARY_REVISION = 143;

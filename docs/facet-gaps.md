@@ -72,7 +72,9 @@ was compiled with - `shader.FixedKind.texture_sampled` and
 what a fixed form's has not: the two levels round a point mixed, a bias on
 the level and a clamp, mirrored and bordered edges, up to
 `max_sampler_anisotropy` samples along the longer axis, and a comparison
-with a reference in place of a colour. All five of Vulkan's address modes
+with a reference in place of a colour. A generated shader compares too
+since 1.143 (`ir.Build.sampleCompared`, SPIR-V's
+OpImageSampleDrefImplicitLod), on the cores and on the V3D. All five of Vulkan's address modes
 are taken, and a sampler the set layout holds of its own
 (`immutable_samplers`).
 

@@ -302,6 +302,15 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
             try emitTex(e, each, at);
             try unpackTexel(e, at);
         },
+        // What passed is where a depth is read, the first half of the
+        // first word: one float out, as nir_lower_tex's packing_16 leaves
+        // the one component a shadow sample's def has.
+        .sample_compared => {
+            try emitTex(e, each, at);
+            const float = try c.mul(.fmov, .{try getWord(e, at, 0)});
+            vir.setUnpack(c.defs[float.index].?, 0, .l);
+            e.defs[at][0] = float;
+        },
         // ntq_emit_alu's comparisons (nir_to_vir.c:1727): the comparison
         // into the flags, and the bool made of them.
         .compare => {
@@ -412,15 +421,18 @@ fn wrtmuc(c: *Compile, contents: vir.Uniform, data: u32) Error!void {
 
 /// v3d_vir_emit_tex (v3d_tex.c:230), for what the profile samples: a 2D
 /// texture at a coordinate of two floats, with an implicit level of
-/// detail, its texels in 16-bit floats.
+/// detail, its texels in 16-bit floats; a `sample_compared` writes the
+/// reference too (since 1.143).
 fn emitTex(e: *Emit, each: Step, at: u16) Error!void {
     const c = e.c;
+    const compared = each.tag == .sample_compared;
     // P0: the words to hand back; P2, the default, regular lookup.
     const return_words = texel_words;
 
-    // get_required_tex_tmu_writes (v3d_tex.c:222): T and S. The input
-    // FIFO has 16 slots across all threads.
-    const tmu_writes: u32 = 2;
+    // get_required_tex_tmu_writes (v3d_tex.c:222): T and S, and the
+    // comparator's TMUDREF. The input FIFO has 16 slots across all
+    // threads.
+    const tmu_writes: u32 = if (compared) 3 else 2;
     while (tmu_writes > 16 / @as(u32, c.threads)) c.threads /= 2;
 
     // Pipelining it would overflow the TMU's FIFOs: flush what waits.
@@ -431,6 +443,9 @@ fn emitTex(e: *Emit, each: Step, at: u16) Error!void {
     // for the end, and T is written first.
     const s = try getSrc(e, each.a, 0);
     _ = try tmuWrite(c, .tmut, try getSrc(e, each.a, 1));
+    // The comparator after the coordinate, as NIR's sources come
+    // (v3d_tex.c:155-157).
+    if (compared) _ = try tmuWrite(c, .tmudref, try getSrc(e, each.b, 0));
 
     // The texture's number in the high bits of the address, for the
     // driver to put the texture's state there.

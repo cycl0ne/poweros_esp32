@@ -1044,16 +1044,20 @@ fn textureUniforms(queue: *Queue, fixed: shader.Fixed) ?u32 {
 /// The sampler is the whole of it since 1.140 - its levels mixed, held
 /// and shifted, its five wraps an axis apiece, its border, its anisotropy
 /// and its texels - as v3dv packs it (`tiling.samplerOf`). Null where
-/// nothing is bound, or for a sampler that compares, which is the one
-/// `tiling.samplerOf` turns down: the draw paints `shader.missing` for
-/// it. Until 1.140 this went through `texture.samplingOf`, which is the
+/// nothing is bound, or for a sampler that compares beside a program that
+/// does not, which is the one `tiling.samplerOf` turns down: the draw
+/// paints `shader.missing` for it. A program that compares has its
+/// sampler's comparison, and a depth to compare with (since 1.143).
+/// Until 1.140 this went through `texture.samplingOf`, which is the
 /// cores' fast path, and so painted that colour for every sampler but one
 /// filter, one wrap of two and every level as it is.
 fn sampledBy(queue: *Queue, which: compile.Sampler) ?Configuration {
     const player = playerOf(queue);
     const sampler = player.resources.samplerOf(which.set, which.binding, 0) orelse return null;
-    const how = tiling.samplerOf(sampler, false) orelse return null;
-    return tmuConfiguration(queue, which.set, which.binding, how, false);
+    // A program that compares writes the reference to TMUDREF, and the
+    // sampler's comparison goes to the TMU with it (since 1.143).
+    const how = tiling.samplerOf(sampler, which.compared) orelse return null;
+    return tmuConfiguration(queue, which.set, which.binding, how, which.compared);
 }
 
 /// A stencil operation as the hardware numbers them: keep and zero the other

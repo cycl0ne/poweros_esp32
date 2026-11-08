@@ -34,7 +34,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.14 (08.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.15 (08.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -412,6 +412,16 @@ const Shipped = struct {
             b.color(taken);
         }
     });
+    /// A shadow sample of `Side.shadow_sets`' map, the reference the
+    /// vertices' third float: what passed in red and alpha 1, the colour
+    /// the fixed form `texture_shadow` draws (since 1.15). The V3D
+    /// compiles its OpImageSampleDrefImplicitLod to a TMUDREF write.
+    const Shadowed = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            const passed = b.sampleCompared(0, 0, b.input(0, .f32x2), b.input(1, .f32x1));
+            b.color(b.add(b.scale(b.constant(.{ 1, 0, 0, 0 }), passed), b.constant(.{ 0, 0, 0, 1 })));
+        }
+    });
 };
 
 /// The entries that ship words, after all the others, and the words of
@@ -430,12 +440,13 @@ const shipped_entries = [_]shader.Entry{
     Shipped.Tinted.entry("shipped tinted"),
     Shipped.Cutout.entry("shipped cutout"),
     Shipped.CutoutOther.entry("shipped cutout other"),
+    Shipped.Shadowed.entry("shipped shadow"),
 };
 const shipped_words = [_]shader.Spirv{
-    .{},                       .{},                  .{},                  .{},
-    Shipped.Smooth.spirv,      Shipped.Flat.spirv,   Shipped.Dimmed.spirv, Shipped.Textured.spirv,
-    Shipped.Modulated.spirv,   Shipped.Pushed.spirv, Shipped.Tinted.spirv, Shipped.Cutout.spirv,
-    Shipped.CutoutOther.spirv,
+    .{},                       .{},                    .{},                  .{},
+    Shipped.Smooth.spirv,      Shipped.Flat.spirv,     Shipped.Dimmed.spirv, Shipped.Textured.spirv,
+    Shipped.Modulated.spirv,   Shipped.Pushed.spirv,   Shipped.Tinted.spirv, Shipped.Cutout.spirv,
+    Shipped.CutoutOther.spirv, Shipped.Shadowed.spirv,
 };
 
 const plain_entries = [_]shader.Entry{
@@ -2243,14 +2254,16 @@ const Cases = struct {
         }.run;
     }
     /// A shadow map drawn and then compared with, over the whole picture,
-    /// through `texture_shadow` and the sampler of `shadow_ops[which]`:
+    /// through `fragment` - the fixed form `texture_shadow`, or a
+    /// generated shader that compares (since 1.15) - and the sampler of
+    /// `shadow_ops[which]`:
     /// red where the comparison passed and black where it did not, since a
     /// view of a depth reads (D, 0, 0, 1). The map is the far and the near
     /// triangle at 0.75 and 0.25 in the clear's 1, or, `tilted`, a fan
     /// whose depth slopes past the reference; `vertex` sets the reference.
     /// The pass leaves the map for the shader to read, and the barrier
     /// says the sample comes after the depth was written, as Vulkan asks.
-    fn shadowed(comptime tilted: bool, comptime which: usize, comptime vertex: [*:0]const u8) *const fn (side: *Side) Failure!void {
+    fn shadowed(comptime tilted: bool, comptime which: usize, comptime vertex: [*:0]const u8, comptime fragment: [*:0]const u8) *const fn (side: *Side) Failure!void {
         return &struct {
             fn run(side: *Side) Failure!void {
                 const fb = side.fb;
@@ -2278,7 +2291,7 @@ const Cases = struct {
                 fb.CmdPipelineBarrier(commands, facet.PIPELINE_STAGE_LATE_FRAGMENT_TESTS, facet.PIPELINE_STAGE_FRAGMENT_SHADER, 0, 0, null, 0, null, 1, @ptrCast(&written));
                 side.begin(.{});
                 fb.CmdBindDescriptorSets(commands, .graphics, side.sampler_layout.?, 0, 1, @ptrCast(&side.shadow_sets[which]), 0, null);
-                try side.use(.{ .vertex = vertex, .fragment = "shadow", .layout = side.sampler_layout.? });
+                try side.use(.{ .vertex = vertex, .fragment = fragment, .layout = side.sampler_layout.? });
                 side.draw(quad_at, 6);
                 side.end();
             }
@@ -2525,9 +2538,14 @@ const cases = [_]Case{
     .{ .name = "subpasses, second picture", .target = .rgba, .run = &Cases.subpasses },
     .{ .name = "two attachments, first", .run = &Cases.twoColors },
     .{ .name = "two attachments, second", .target = .rgba, .run = &Cases.twoColors },
-    .{ .name = "shadow map, less than a half", .run = Cases.shadowed(false, 0, "whole at a half") },
-    .{ .name = "shadow map, greater than 0.6", .run = Cases.shadowed(false, 1, "whole at 0.6") },
-    .{ .name = "shadow map, a slope less than a half", .run = Cases.shadowed(true, 0, "whole at a half") },
+    .{ .name = "shadow map, less than a half", .run = Cases.shadowed(false, 0, "whole at a half", "shadow") },
+    .{ .name = "shadow map, greater than 0.6", .run = Cases.shadowed(false, 1, "whole at 0.6", "shadow") },
+    .{ .name = "shadow map, a slope less than a half", .run = Cases.shadowed(true, 0, "whole at a half", "shadow") },
+    // The same through a generated shader, which the V3D compiles
+    // (since 1.15).
+    .{ .name = "shadow map, generated, less than a half", .run = Cases.shadowed(false, 0, "whole at a half", "shipped shadow") },
+    .{ .name = "shadow map, generated, greater than 0.6", .run = Cases.shadowed(false, 1, "whole at 0.6", "shipped shadow") },
+    .{ .name = "shadow map, generated, a slope less than a half", .run = Cases.shadowed(true, 0, "whole at a half", "shipped shadow") },
 };
 
 /// A case for each of `throughs`, after the shipped ones.

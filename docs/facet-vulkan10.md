@@ -1791,7 +1791,7 @@ paid only by the samples that ask for more.
 
 Two things were decided doing it. The sampler is carried **untouched**,
 comparison included: a graph's `sample` is an ordinary sample and has no
-reference operand, there being no Dref operation in this IR, so a sampler
+reference operand, there being no Dref operation in this IR until 1.143's `sample_compared` (item 58), so a sampler
 with `compare` set compares against 0 - which Vulkan leaves undefined,
 since it forbids a `compareEnable` sampler to anything but an
 `OpImage*Dref*`, and which is exactly what `texturedBy` already does with
@@ -1932,7 +1932,18 @@ Found independently by: features, formats.
 - **The comparison.** The program writes the reference to TMUDREF, waddr 38, before TMUS (v3d_tex.c:155-157), and the sampler's function goes into the configuration parameter as v3dv packs it (v3dvx_device.c:262-264): NEVER where compare is off. That is `qpu.shadow_code`, and `texture_shadow` runs on the V3D since 1.142.
 - **What stays out.** No FILTER_LINEAR for a depth (`Capabilities.filtered_depth`; v3dv_formats.c:273-276), and no sampled `d16_unorm_s8_uint` (`Capabilities.sampled_stencil`). v3dv's only format of both is D24_UNORM_S8_UINT (v3dvx_formats.c:209), which is not here.
 
-What is left of the item is the generated program: compile.zig and to_vir.zig take no OpImageSampleDref* yet, so a SPIR-V shader that compares is still refused on the V3D.
+**The generated program, 1.143: a SPIR-V shader that compares, on both devices.** No layer took a Dref sample before, so it goes in at each:
+
+- **The format.** `spirv.Op` has OpImageSampleDrefImplicitLod and ExplicitLod (89, 90). `facet_profile` takes the implicit one, and `look` reads its fifth operand, the reference, before the optional image operands.
+- **The IR.** `ir.Build.sampleCompared(set, binding, coordinate, reference)` is a `sample_compared`: one float, what passed. Its words declare the image with Depth 1, as glslc declares a `sampler2DShadow`. `tests/spirv_reference.zig`'s `min_shadow` is written as assembly, assembled with spirv-as and accepted by spirv-val, and the emitter matches it word for word.
+- **The cores.** The generated function takes the bound sampler whole through `texture.sampleBy` with the reference, the call the fixed form `texture_shadow` makes (`shader.texturedBy`), and reads what passed out of the red. A host test holds the two together bit for bit over nearest `less`, nearest `greater` and a mixed `less_or_equal`.
+- **The V3D.** `compile.zig` reads the sample into a `sample_compared` step, and takes a coordinate wider than two floats. glslc writes `texture(sampler2DShadow, vec3(uv, ref))` with the reference as the coordinate's third float, extracted again as the Dref, which SPIR-V allows.
+  - `to_vir.zig`'s `emitTex` writes the comparator to TMUDREF after T and before S, as v3d_tex.c's handle_tex_src does with nir_tex_src_comparator (v3d_tex.c:155-157), so the TMU takes three writes (get_required_tex_tmu_writes, :222).
+  - What passed is the low half of the first word the TMU hands back. Mesa's vir_opt_alu folds the unpacking fmov into the instruction that reads it.
+  - `compile.Code.sampler.compared` tells the draw, which hands the TMU the bound sampler's comparison and the depth's texture state (`_play.sampledBy`).
+  - `glslc_shadow` in `glslc_reference.zig`, glslc's own output, compiles to facet's program word for word.
+
+Item 58 is done for what facet takes: a 2D depth, compared at an implicit level of detail. OpImageSampleDrefExplicitLod is named but not taken, since the IR has no explicit lod for any sample. On the board, FacetBoth 1.15's three shadow-map cases through the generated shader are as far from the cores as through the fixed form (3, 3 and 5 pixels of 230,400, at the same triangle edges), and its other 188 cases are as they were.
 
 On the board: FacetProbe 1.46 passes its 888 checks, 386 of them on the V3D (362 at 1.141). The V3D runs the whole of the sampled-depth part now: 16 bits compared, layers and levels. FacetBoth 1.14's three shadow-map cases are 3, 3 and 5 pixels of 230,400 from the cores, all at triangle edges, as its plain depth cases are.
 

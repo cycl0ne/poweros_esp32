@@ -69,6 +69,30 @@ const Cutout = ir.Fragment(struct {
     }
 });
 
+/// A depth compared with the reference the vertices carry, (1, 0, 0, 1)
+/// times what passed: `min_shadow` (since 1.143).
+const Shadowed = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        b.color(b.scale(b.constant(.{ 1, 0, 0, 1 }), b.sampleCompared(0, 0, b.input(0, .f32x2), b.input(1, .f32x1))));
+    }
+});
+
+/// The same with alpha 1, which is the colour the fixed form
+/// `texture_shadow` draws through a view of a depth: what passed in red.
+const ShadowedOpaque = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const passed = b.sampleCompared(0, 0, b.input(0, .f32x2), b.input(1, .f32x1));
+        b.color(b.add(b.scale(b.constant(.{ 1, 0, 0, 0 }), passed), b.constant(.{ 0, 0, 0, 1 })));
+    }
+});
+
+test "a shadow sample is the module an assembler writes: a depth image, and the reference its own operand" {
+    try expectWords(&reference.min_shadow, Shadowed.words);
+    try std.testing.expectEqual(@as(u32, 3), Shadowed.varyings);
+    try std.testing.expectEqual(@as(usize, 1), Shadowed.graph.sampled.len);
+    try std.testing.expect(Shadowed.graph.sampled[0].compared);
+}
+
 test "a colour of its own is the module an assembler writes" {
     try expectWords(&reference.min_flat, Flat.words);
     try std.testing.expectEqual(@as(u32, 0), Flat.varyings);
@@ -97,7 +121,7 @@ test "a dropped pixel is the module an assembler writes" {
 }
 
 test "what the graph says about itself is what the reader sees in the words" {
-    inline for (.{ Flat, Smooth, Textured, Modulated, Cutout }) |Shape| {
+    inline for (.{ Flat, Smooth, Textured, Modulated, Cutout, Shadowed, ShadowedOpaque }) |Shape| {
         switch (spirv.look(Shape.words, spirv.facet_profile)) {
             .fault => |fault| {
                 std.debug.print("refused: {s}\n", .{@tagName(fault)});
@@ -834,4 +858,79 @@ test "a graph carrying every varying the library takes: built, and a module a de
             return error.TestUnexpectedResult;
         },
     }
+}
+
+// --- a shadow sample (since 1.143) -------------------------------------------
+
+/// An 8x8 depth, a slope from 0 at the top left to about 0.9 at the bottom
+/// right, so that a reference across a quad passes at some pixels and not
+/// at others.
+var depths: [8 * 8 * 2]u8 align(8) = undefined;
+
+/// One quad compared twice with the same depth, sampler and reference: by
+/// the graph's own function and by the fixed form `texture_shadow`
+/// (`shader.texturedBy` with `shadow`), which both take the sampler whole
+/// through `texture.sampleBy`. The texture reads as a view of a depth
+/// does, green and blue 0 and alpha 1 (`createimageview.zig`'s
+/// `depthRead`).
+fn bothCompared(sampler: *const texture.Sampler, u: shader.Plane, v: shader.Plane, r: shader.Plane) [2][4]u32 {
+    var picture = texture.Texture.init(.d16, 8, 8, 1, &depths) catch unreachable;
+    picture.swizzle = .{ .g = .zero, .b = .zero, .a = .one };
+    for (0..8) |y| for (0..8) |x| {
+        picture.setParts(0, 0, @intCast(x), @intCast(y), .{ @as(f32, @floatFromInt(x + y)) / 15.5, 0, 0, 0 });
+    };
+    const slots = [1]shader.Slot{.{ .pointer = &picture, .sampler = sampler }};
+    const firsts = [2]u16{ 0, 1 };
+    const set = shader.Set{ .first = &firsts, .binding_count = 1, .slots = &slots };
+    var resources = shader.Resources{};
+    resources.sets[0] = &set;
+
+    var quads = [1]shader.Quad{.{ .x = 0, .y = 0, .covered = 0xF, .kept = 0xF }};
+    var planes = [4]shader.Plane{ .{ .origin = 1, .dx = 0, .dy = 0 }, u, v, r };
+    var generated = [1][4]u32{@splat(0)};
+    var fixed = [1][4]u32{@splat(0)};
+    const mine = shader.Fragments{ .quads = &quads, .count = 1, .colors = &generated, .planes = &planes, .plane_count = 4, .x = 0, .y = 0, .exact = true, .resources = &resources };
+    ShadowedOpaque.function(&mine);
+    const theirs = shader.Fragments{ .quads = &quads, .count = 1, .colors = &fixed, .planes = &planes, .plane_count = 4, .x = 0, .y = 0, .exact = true, .resources = &resources };
+    shader.texturedBy(true, .{}, &theirs, &picture, sampler);
+    return .{ fixed[0], generated[0] };
+}
+
+test "a generated shadow sample is the fixed form texture_shadow, bit for bit, and compares as its sampler says" {
+    // Across the slope, so that the depth under the four pixels differs
+    // - from about 0.26 to 0.52 - and a reference between them.
+    const u = shader.Plane{ .origin = 0.3, .dx = 0.13, .dy = 0.02 };
+    const v = shader.Plane{ .origin = 0.35, .dx = 0.03, .dy = 0.15 };
+    const r = shader.Plane{ .origin = 0.42, .dx = 0, .dy = 0 };
+    const samplers = [_]texture.Sampler{
+        .{ .mag_filter = .nearest, .min_filter = .nearest, .compare = .less },
+        .{ .mag_filter = .nearest, .min_filter = .nearest, .compare = .greater },
+        // Percentage-closer filtering: the four texels compared, what
+        // passed mixed.
+        .{ .compare = .less_or_equal },
+    };
+    var answers: [samplers.len][4]u32 = undefined;
+    for (&samplers, &answers) |*sampler, *answer| {
+        const both = bothCompared(sampler, u, v, r);
+        try std.testing.expectEqualSlices(u32, &both[0], &both[1]);
+        // Green and blue 0 and alpha 1 at every pixel: what passed is red.
+        for (both[1]) |pixel| try std.testing.expectEqual(@as(u32, 0xFF00_0000), pixel & 0xFF00_FFFF);
+        answer.* = both[1];
+    }
+    // At nearest, `less` and `greater` answer each pixel the other way
+    // round, the reference never landing on a depth exactly here, and
+    // both pass somewhere and fail somewhere.
+    var passed_less: u32 = 0;
+    for (answers[0], answers[1]) |less, greater| {
+        try std.testing.expect((less == 0xFFFF_0000) != (greater == 0xFFFF_0000));
+        if (less == 0xFFFF_0000) passed_less += 1;
+    }
+    try std.testing.expect(passed_less > 0 and passed_less < 4);
+    // And a mix is a fraction somewhere: neither 0 nor 1 at one pixel.
+    var mixed = false;
+    for (answers[2]) |pixel| {
+        const red = pixel >> 16 & 0xFF;
+        if (red != 0 and red != 0xFF) mixed = true;
+    }
+    try std.testing.expect(mixed);
 }
