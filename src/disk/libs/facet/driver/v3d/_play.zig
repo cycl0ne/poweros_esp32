@@ -133,6 +133,9 @@ pub const Player = struct {
     /// in step over (since 1.91). Mesa's v3dv adds the same to every load
     /// and store it emits (`v3dv_layer_offset`, v3dv_image.c).
     image_first: usize = 0,
+    /// And the bytes from there the frame stores into: the rows of its
+    /// height, or a level of four samples (since 1.147).
+    image_bytes: usize = 0,
     /// The image whose rows hold the depth or the stencil the frame keeps,
     /// for the caches either side of the job: null where the pass keeps
     /// neither (since 1.47).
@@ -558,9 +561,11 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
     const whole = left == 0 and top == 0 and right == framebuffer.width and bottom == framebuffer.height;
     const clears = command.parts[part].color_loads[0] == .clear;
     // The tile its samples and its one render target fit, at 32 bits of
-    // internal colour whatever the format: one sample until step V4 draws
-    // a frame of four (docs/facet-vulkan10.md item 61).
-    const four = false;
+    // internal colour whatever the format. Four samples where the colour
+    // has four, which its depth has too, Vulkan having a subpass's
+    // attachments of one count (since 1.147, docs/facet-vulkan10.md item
+    // 61, step V4).
+    const four = image.samples > 1;
     const tile = frames.chooseTile(4, four);
     const tiles = ((framebuffer.width + tile.width - 1) / tile.width) * ((framebuffer.height + tile.height - 1) / tile.height);
     if (!sized(queue, &player.tile_lists, tileListsBytes(tiles, 0))) return;
@@ -574,7 +579,9 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
     // The layer the view begins at, an image kept in rows having layers
     // since 1.91: until then the frame began at the image's first byte
     // whatever its view said.
-    player.image_first = _image.rowsAt(image, 0, framebuffer.colors[0].base_layer).at;
+    const place = colorPlace(image, framebuffer.colors[0].base_layer, framebuffer.height);
+    player.image_first = place.first;
+    player.image_bytes = place.bytes;
     player.kept_image = null;
     // `beginBin` stops the hardware's counter, so the frame starts with no
     // word and writes the packet again at the first draw that counts.
@@ -586,7 +593,8 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
         .width = framebuffer.width,
         .height = framebuffer.height,
         .image = address + @as(u32, @intCast(player.image_first)),
-        .stride = image.pitch,
+        .stride = place.stride,
+        .memory = place.memory,
         .format = output[0],
         .swap_rb = output[1],
         // Red in the low byte.
@@ -615,6 +623,25 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
     if (clears and !whole) clearArea(queue, color);
 }
 
+/// Where a frame stores its colour: the rows of the layer its view begins
+/// at, or for an image of four samples that layer's level, where the
+/// device keeps each pixel's four together and the tiles store them all
+/// at once, in the level's own tiling (`_image.Image.quads`, since 1.147;
+/// v3dvx_cmd_buffer.c:396-406, 408-409).
+fn colorPlace(image: *const _image.Image, layer: u32, height: u32) struct { first: usize, bytes: usize, stride: u32, memory: u64 } {
+    if (image.quads) {
+        const layout = imageLayout(image);
+        const level = &layout.levels[0];
+        return .{
+            .first = layerAt(image, &layout, 0, layer) + level.offset,
+            .bytes = level.slice_bytes,
+            .stride = tiling.blocksDown(&layout, 0),
+            .memory = memoryOf(level.kind),
+        };
+    }
+    return .{ .first = _image.rowsAt(image, 0, layer).at, .bytes = @as(usize, image.pitch) * height, .stride = image.pitch, .memory = cl.MEMORY_RASTER };
+}
+
 /// The depth or the stencil a part keeps in its image's rows, or null where
 /// both live in the tiles alone. One plane at most: a format that holds
 /// them both is refused on this device, the hardware storing a plane as its
@@ -633,7 +660,9 @@ fn keptOf(queue: *Queue, part: *const _render.Part, framebuffer: *const _render.
     // A depth image sampled as well lies as a texture (since 1.142,
     // `_image.deviceLaid`): the level and the layer the view names, stored
     // in that level's own tiling, as v3dv stores into a slice of its image
-    // (v3dvx_cmd_buffer.c:396-406), so the TMU reads it where it lies.
+    // (v3dvx_cmd_buffer.c:396-406), so the TMU reads it where it lies. And
+    // one of four samples, kept together in its level, which the frame of
+    // four stores all of (since 1.147).
     if (_image.deviceLaid(image)) {
         const layout = imageLayout(image);
         const level = &layout.levels[view.base_level];
@@ -783,7 +812,7 @@ fn endRenderPass(queue: *Queue) void {
 
     const space = &hardware.space;
     const image = player.image;
-    const image_bytes: usize = @as(usize, image.pitch) * player.frame.height;
+    const image_bytes = player.image_bytes;
     for (player.chunks[0..player.chunk_count]) |*chunk| {
         if (chunk.used != 0) space.rangeToGpu(chunk.block.cpu, chunk.used);
     }

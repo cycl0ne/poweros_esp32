@@ -94,7 +94,12 @@ pub const Frame = struct {
     width: u32,
     height: u32,
     image: u32,
+    /// Its rows' bytes, or for a UIF level its height in UIF blocks.
     stride: u32,
+    /// How the image lies: rows, or the level of four samples a device
+    /// keeps them together in (`cl.MEMORY_UIF`, `_image.Image.quads`,
+    /// since 1.147).
+    memory: u64 = cl.MEMORY_RASTER,
     /// How the image holds a pixel.
     format: u64 = cl.OUTPUT_RGBA8,
     /// The image is blue first, not red.
@@ -127,7 +132,8 @@ pub const Frame = struct {
     area: ?Area = null,
     /// The tiles hold four samples a pixel: each draw then writes its
     /// sample mask, and takes its coverage at four places
-    /// (`writeDrawState`).
+    /// (`writeDrawState`), and every load and store moves all four
+    /// samples of the colour and of what is kept (`writeTileList`).
     four: bool = false,
     /// The tile's size, `chooseTile`'s for the frame's colour and samples.
     tile: cl.Tile = .{ .width = tile_pixels, .height = tile_pixels },
@@ -240,13 +246,16 @@ pub fn writeBin(list: *List, frame: *const Frame, record: u32, attributes: u32, 
 /// What each tile does, in its own list: `render` branches to it for every
 /// tile. `load` is whether this list's tiles read the image first, which is
 /// `frame.load` unless the frame wants a second list for the tiles its
-/// cleared area covers whole.
+/// cleared area covers whole. In a frame of four samples each load and
+/// store moves all of them, as v3dv's do for an image of more than one
+/// (v3dvx_cmd_buffer.c:206-209, 408-413), the images being of four too.
 pub fn writeTileList(list: *List, frame: *const Frame, load: bool) void {
+    const samples: cl.Decimate = if (frame.four) .all_samples else .sample_0;
     list.byte(cl.TILE_COORDINATES_IMPLICIT);
-    if (load) cl.load(list, cl.STORE_RENDER_TARGET_0, frame.format, frame.swap_rb, frame.image, frame.stride, cl.MEMORY_RASTER, .sample_0);
+    if (load) cl.load(list, cl.STORE_RENDER_TARGET_0, frame.format, frame.swap_rb, frame.image, frame.stride, frame.memory, samples);
     // The depth or the stencil read in after the colour, as Mesa orders
     // them, whether or not this list's tiles read the colour.
-    if (frame.kept) |kept| if (kept.load) cl.load(list, kept.buffer, kept.format, false, kept.image, kept.stride, kept.memory, .sample_0);
+    if (frame.kept) |kept| if (kept.load) cl.load(list, kept.buffer, kept.format, false, kept.image, kept.stride, kept.memory, samples);
     list.byte(cl.END_OF_LOADS);
     // The binner starts each tile's list assuming triangles.
     cl.primListFormat(list, cl.LIST_TRIANGLES);
@@ -256,8 +265,8 @@ pub fn writeTileList(list: *List, frame: *const Frame, load: bool) void {
     }
     // And written out before it: the hardware clears the tiles' depth and
     // stencil between tiles by itself, so neither store asks for a clear.
-    if (frame.kept) |kept| if (kept.store) cl.store(list, kept.buffer, kept.format, false, kept.image, kept.stride, kept.memory, .sample_0);
-    cl.store(list, cl.STORE_RENDER_TARGET_0, frame.format, frame.swap_rb, frame.image, frame.stride, cl.MEMORY_RASTER, .sample_0);
+    if (frame.kept) |kept| if (kept.store) cl.store(list, kept.buffer, kept.format, false, kept.image, kept.stride, kept.memory, samples);
+    cl.store(list, cl.STORE_RENDER_TARGET_0, frame.format, frame.swap_rb, frame.image, frame.stride, frame.memory, samples);
     list.byte(cl.CLEAR_RENDER_TARGETS);
     list.byte(cl.END_OF_TILE_MARKER);
     list.byte(cl.RETURN_FROM_SUB_LIST);
@@ -401,4 +410,71 @@ test "a frame of four takes its tile, its multisample bit, and a mask and oversa
     try std.testing.expectEqual(@as(u8, 121), memory[9]);
     const target = std.mem.readInt(u64, memory[10..18], .little);
     try std.testing.expectEqual(@as(u64, 15), target >> 18 & 0x7F);
+}
+
+test "a frame of four samples loads and stores all of them, the colour where its level lies and the depth where it is kept" {
+    var memory: [128]u8 = undefined;
+    var list = List{ .at = &memory, .address = 0x1000 };
+    var frame = Frame{
+        .width = 64,
+        .height = 64,
+        .image = 0x10_0000,
+        .stride = 7,
+        .memory = cl.MEMORY_UIF_XOR,
+        .swap_rb = true,
+        .clear = 0,
+        .tile_lists = 0x20_0000,
+        .binned = false,
+        .load = true,
+        .four = true,
+        .tile = chooseTile(4, true),
+        .kept = .{ .buffer = cl.STORE_Z, .format = cl.OUTPUT_D16, .image = 0x30_0000, .stride = 3, .memory = cl.MEMORY_UIF, .load = true, .store = true },
+    };
+    const Seen = struct { code: u8, fields: u64, address: u32 };
+    const seen = struct {
+        fn at(bytes: []const u8, place: usize) Seen {
+            return .{ .code = bytes[place], .fields = std.mem.readInt(u64, bytes[place + 1 ..][0..8], .little), .address = std.mem.readInt(u32, bytes[place + 9 ..][0..4], .little) };
+        }
+    }.at;
+    for ([_]bool{ true, false }) |four| {
+        frame.four = four;
+        list.used = 0;
+        writeTileList(&list, &frame, true);
+        const decimate: u64 = if (four) 3 else 0;
+        try std.testing.expectEqual(cl.TILE_COORDINATES_IMPLICIT, memory[0]);
+        // The colour's load, then the depth's; END_OF_LOADS; the list's
+        // format; the depth's store, then the colour's.
+        const color_load = seen(&memory, 1);
+        const depth_load = seen(&memory, 14);
+        try std.testing.expectEqual(cl.END_OF_LOADS, memory[27]);
+        const depth_store = seen(&memory, 30);
+        const color_store = seen(&memory, 43);
+        try std.testing.expectEqual(@as(u8, 30), color_load.code);
+        try std.testing.expectEqual(@as(u8, 30), depth_load.code);
+        try std.testing.expectEqual(@as(u8, 29), depth_store.code);
+        try std.testing.expectEqual(@as(u8, 29), color_store.code);
+        for ([_]Seen{ color_load, color_store }) |color| {
+            try std.testing.expectEqual(cl.STORE_RENDER_TARGET_0, color.fields & 0xF);
+            try std.testing.expectEqual(cl.MEMORY_UIF_XOR, color.fields >> 4 & 7);
+            try std.testing.expectEqual(decimate, color.fields >> 10 & 3);
+            try std.testing.expectEqual(@as(u64, 1), color.fields >> 20 & 1);
+            try std.testing.expectEqual(@as(u64, 7), color.fields >> 28 & 0xFFFFF);
+            try std.testing.expectEqual(@as(u32, 0x10_0000), color.address);
+        }
+        for ([_]Seen{ depth_load, depth_store }) |depth| {
+            try std.testing.expectEqual(cl.STORE_Z, depth.fields & 0xF);
+            try std.testing.expectEqual(cl.MEMORY_UIF, depth.fields >> 4 & 7);
+            try std.testing.expectEqual(decimate, depth.fields >> 10 & 3);
+            try std.testing.expectEqual(@as(u64, 3), depth.fields >> 28 & 0xFFFFF);
+            try std.testing.expectEqual(@as(u32, 0x30_0000), depth.address);
+        }
+    }
+    // A frame in rows, as every frame was before: raster, the first sample.
+    frame = .{ .width = 64, .height = 64, .image = 0x10_0000, .stride = 256, .swap_rb = false, .clear = 0, .tile_lists = 0x20_0000, .binned = false, .load = true };
+    list.used = 0;
+    writeTileList(&list, &frame, true);
+    const rows = seen(&memory, 1);
+    try std.testing.expectEqual(cl.MEMORY_RASTER, rows.fields >> 4 & 7);
+    try std.testing.expectEqual(@as(u64, 0), rows.fields >> 10 & 3);
+    try std.testing.expectEqual(@as(u64, 256), rows.fields >> 28 & 0xFFFFF);
 }

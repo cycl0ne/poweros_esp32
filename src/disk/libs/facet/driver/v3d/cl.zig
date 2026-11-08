@@ -89,7 +89,10 @@ pub fn log2Tile(pixels: u32) u32 {
 
 /// The common part: first of the rendering mode's packets. A depth buffer
 /// of 16 bits, in the tiles alone, or none. The coarse early test stays off:
-/// each pixel is still tested before its program runs. `four` is the
+/// each pixel is still tested before its program runs. That is also what
+/// GFXH-1918 asks of a frame that loads a depth of 16 bits at four
+/// samples, whose early test may read wrong depths (v3dvx_cmd_buffer.c:
+/// 1854-1882). `four` is the
 /// "Multisample Mode (4x)" bit at 42, as v3dv sets it from its frame's
 /// tiling (v3dvx_cmd_buffer.c:977): the tiles then hold four samples a
 /// pixel, which is also why they are smaller (`v3d_choose_tile_size`,

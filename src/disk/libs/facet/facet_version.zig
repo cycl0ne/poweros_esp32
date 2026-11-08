@@ -4264,4 +4264,30 @@ pub const LIBRARY_VERSION = 1;
 /// sample written through its plane lies in its pixel's quad, and a
 /// resolve, a clear and a copy reach every sample. A depth image of four
 /// is kept so too, and a sampled one is refused at four.
-pub const LIBRARY_REVISION = 146;
+///
+/// 147: **The V3D bins and renders a frame of four samples
+/// (docs/facet-vulkan10.md item 61, step V4).** It still makes no image
+/// of four, `can.multisampling` being off there until step V5, so every
+/// frame it draws is of one sample and writes what it did at 1.146:
+///
+/// - A pass whose colour has four samples is a frame of four: its tile
+///   is `chooseTile`'s at four, 32 x 32, and its renderer's common packet
+///   says so (1.144, 1.145).
+/// - Its colour, kept together (`Image.quads`, 1.146), is stored where
+///   its layer's level lies, in that level's tiling and its height in
+///   UIF blocks, as v3dv stores into a slice of its image
+///   (v3dvx_cmd_buffer.c:396-406): `Frame.memory`, and `colorPlace`
+///   for the frame's place and its bytes, over which the caches are kept
+///   in step. A depth or a stencil of four is kept so already, as a
+///   sampled depth has been since 1.142.
+/// - In a frame of four every load and store moves all four samples, of
+///   the colour and of what is kept, as v3dv's do for an image of more
+///   than one (v3dvx_cmd_buffer.c:206-209, 408-413).
+/// - GFXH-1918, a frame that loads a 16-bit depth at four samples, has
+///   v3dv turn the early depth test off (v3dvx_cmd_buffer.c:1854-1882).
+///   facet's is off in every frame.
+///
+/// Tests: the V3D's 144, one new: a frame of four's tile list loads and
+/// stores all four samples, the colour in its level's tiling and the
+/// depth where it is kept, and a frame of one the first, in rows.
+pub const LIBRARY_REVISION = 147;
