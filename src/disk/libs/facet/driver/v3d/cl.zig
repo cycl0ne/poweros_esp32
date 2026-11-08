@@ -68,6 +68,16 @@ pub const LIST_TRIANGLES: u8 = 2;
 pub const TILE_INITIAL_BLOCK_ENUM: u32 = 1;
 pub const TILE_OVERFLOW_BLOCK_ENUM: u32 = 0;
 
+/// A tile's size in pixels, each side 8, 16, 32 or 64: what
+/// `v3d_choose_tile_size` picks, from 64 x 64 down to 8 x 8, the width
+/// never under the height (v3d_util.c:131-139). Both the binner and the
+/// renderer are told it (v3d_packet.xml, "Log2 Tile Width" and "Log2 Tile
+/// Height", min_ver 71).
+pub const Tile = struct {
+    width: u32,
+    height: u32,
+};
+
 pub fn log2Tile(pixels: u32) u32 {
     return switch (pixels) {
         8 => 0,
@@ -79,19 +89,29 @@ pub fn log2Tile(pixels: u32) u32 {
 
 /// The common part: first of the rendering mode's packets. A depth buffer
 /// of 16 bits, in the tiles alone, or none. The coarse early test stays off:
-/// each pixel is still tested before its program runs.
-pub fn renderingCommon(list: *List, width: u32, height: u32, tile: u32, depth: bool) void {
-    const log2 = @as(u64, log2Tile(tile));
+/// each pixel is still tested before its program runs. `four` is the
+/// "Multisample Mode (4x)" bit at 42, as v3dv sets it from its frame's
+/// tiling (v3dvx_cmd_buffer.c:977): the tiles then hold four samples a
+/// pixel, which is also why they are smaller (`v3d_choose_tile_size`,
+/// v3d_util.c:170-171).
+pub fn renderingCommon(list: *List, width: u32, height: u32, tile: Tile, depth: bool, four: bool) void {
+    const log2_width = @as(u64, log2Tile(tile.width));
+    const log2_height = @as(u64, log2Tile(tile.height));
+    const multisample: u64 = @as(u64, @intFromBool(four)) << 42;
     const no_depth_buffer: u64 = @as(u64, @intFromBool(!depth)) << 44;
     const depth_16: u64 = 2 << 47;
     list.byte(TILE_RENDERING_MODE_CFG);
-    list.double(@as(u64, width) << 8 | @as(u64, height) << 24 | no_depth_buffer | 1 << 46 | depth_16 | log2 << 52 | log2 << 55);
+    list.double(@as(u64, width) << 8 | @as(u64, height) << 24 | multisample | no_depth_buffer | 1 << 46 | depth_16 |
+        log2_width << 52 | log2_height << 55);
 }
 
 /// Render target 0, at 32 bits a pixel and 8 bits of normalized channel,
-/// and the colour it clears to.
-pub fn renderTarget0(list: *List, tile: u32, clear: u32) void {
-    const stride: u64 = tile / 2;
+/// and the colour it clears to. Its stride is the tile's width alone, in
+/// 128 bits for two rows, at four samples as at one
+/// (`v3d_compute_rt_row_row_stride_128_bits`, v3d_util.c:316-325, as
+/// v3dvx_cmd_buffer.c:1155-1157 calls it).
+pub fn renderTarget0(list: *List, tile_width: u32, clear: u32) void {
+    const stride: u64 = tile_width / 2;
     const type_8: u64 = 8;
     list.byte(TILE_RENDERING_MODE_CFG);
     list.double(2 | (stride - 1) << 18 | type_8 << 27 | @as(u64, clear) << 32);
@@ -144,20 +164,37 @@ pub const MEMORY_UBLINEAR_2: u64 = 3;
 pub const MEMORY_UIF: u64 = 4;
 pub const MEMORY_UIF_XOR: u64 = 5;
 
+/// Which of a tile's samples a store or a load reaches ("Decimate Mode",
+/// v3d_packet.xml:117-121, the field at bit 10): the first alone, a frame
+/// of one sample's only one; the four averaged into one pixel, which is a
+/// resolve as the tiles are stored; or all four, to and from an image of
+/// four samples. v3dv loads all of them into an image of more than one,
+/// and stores all of them there, the average where it resolves, and the
+/// first otherwise (v3dvx_cmd_buffer.c:206-209, 408-413).
+pub const Decimate = enum(u2) {
+    sample_0 = 0,
+    four = 1,
+    all_samples = 3,
+};
+
 /// A store to an image, or to none at all. `stride` is "Height in UB or
 /// Stride": the bytes of a row in rows, a UIF level's height in UIF
 /// blocks, and nothing for the other tilings.
-pub fn store(list: *List, buffer: u64, format: u64, swap_rb: bool, address: u32, stride: u32, memory: u64) void {
+pub fn store(list: *List, buffer: u64, format: u64, swap_rb: bool, address: u32, stride: u32, memory: u64, decimate: Decimate) void {
     list.byte(29);
-    list.double(buffer | memory << 4 | format << 12 | @as(u64, @intFromBool(swap_rb)) << 20 | @as(u64, stride) << 28);
+    list.double(buffer | memory << 4 | @as(u64, @intFromEnum(decimate)) << 10 | format << 12 |
+        @as(u64, @intFromBool(swap_rb)) << 20 | @as(u64, stride) << 28);
     list.word(address);
 }
 
 /// A buffer of the tiles loaded from an image, as `store` reaches one:
-/// the render target, or the depth or the stencil.
-pub fn load(list: *List, buffer: u64, format: u64, swap_rb: bool, address: u32, stride: u32, memory: u64) void {
+/// the render target, or the depth or the stencil. A load is never
+/// `.four`: there is nothing to average a pixel into.
+pub fn load(list: *List, buffer: u64, format: u64, swap_rb: bool, address: u32, stride: u32, memory: u64, decimate: Decimate) void {
+    std.debug.assert(decimate != .four);
     list.byte(30);
-    list.double(buffer | memory << 4 | format << 12 | @as(u64, @intFromBool(swap_rb)) << 20 | @as(u64, stride) << 28);
+    list.double(buffer | memory << 4 | @as(u64, @intFromEnum(decimate)) << 10 | format << 12 |
+        @as(u64, @intFromBool(swap_rb)) << 20 | @as(u64, stride) << 28);
     list.word(address);
 }
 
@@ -184,11 +221,15 @@ pub fn branchToImplicitTileList(list: *List) void {
 
 // --- binning ----------------------------------------------------------------
 
-pub fn binningMode(list: *List, width: u32, height: u32, tile: u32) void {
-    const log2 = @as(u64, log2Tile(tile));
+/// The binner's mode. At 7.1 it has no multisample bit, only the tile's
+/// size, which is smaller at four samples (v3dvx_cmd_buffer.c:93-112;
+/// v3d_packet.xml, "Tile Binning Mode Cfg", min_ver 71).
+pub fn binningMode(list: *List, width: u32, height: u32, tile: Tile) void {
+    const log2_width = @as(u64, log2Tile(tile.width));
+    const log2_height = @as(u64, log2Tile(tile.height));
     list.byte(120);
     list.double(@as(u64, TILE_INITIAL_BLOCK_ENUM) << 2 | @as(u64, TILE_OVERFLOW_BLOCK_ENUM) << 4 |
-        log2 << 8 | log2 << 11 | @as(u64, width - 1) << 32 | @as(u64, height - 1) << 48);
+        log2_width << 8 | log2_height << 11 | @as(u64, width - 1) << 32 | @as(u64, height - 1) << 48);
 }
 
 /// Where the hardware counts the samples that passed the tests and the
@@ -235,6 +276,11 @@ pub const Cfg = struct {
     /// not clipping, so the clip to the z planes goes off with it, as
     /// Vulkan has a depth clamp.
     clamped: bool = false,
+    /// "Rasterizer Oversample Mode" 1, at bit 6: coverage taken at four
+    /// places a pixel. v3dv sets it for a pipeline of more than one sample,
+    /// lines drawn with end caps as facet's are (v3dvx_pipeline.c:173-174,
+    /// 193-196).
+    oversample: bool = false,
 };
 
 pub fn cfgBits(list: *List, cfg: Cfg) void {
@@ -242,6 +288,7 @@ pub fn cfgBits(list: *List, cfg: Cfg) void {
         @as(u32, @intFromBool(cfg.reverse)) << 1 |
         @as(u32, @intFromBool(cfg.clockwise)) << 2 |
         @as(u32, @intFromBool(cfg.biased)) << 3 |
+        @as(u32, @intFromBool(cfg.oversample)) << 6 |
         @as(u32, @intFromBool(cfg.bounded)) << 5 |
         @as(u32, @intFromBool(cfg.clamped)) << 10 |
         cfg.compare << 12 |
@@ -346,11 +393,13 @@ pub fn stencilCfg(list: *List, face: *const StencilFace, front: bool) void {
     list.byte(face.write_mask);
 }
 
-/// One sample's worth of coverage, in all 4 of its bits.
-pub fn sampleState(list: *List) void {
+/// The samples a draw may write, Vulkan's sample mask, at a coverage of
+/// 1.0 as `f187`: v3dv's per draw (v3dvx_cmd_buffer.c:1615-1618). A frame
+/// of one sample has all four bits on, as before 4x.
+pub fn sampleState(list: *List, mask: u4) void {
     const one_as_f187: u32 = 0x3F80;
     list.byte(91);
-    list.word(0xF | one_as_f187 << 16);
+    list.word(@as(u32, mask) | one_as_f187 << 16);
 }
 
 pub const ZERO_ALL_CENTROID_FLAGS: u8 = 88;
@@ -530,7 +579,7 @@ test "the packets have Mesa's lengths and its fields" {
     var memory: [64]u8 = undefined;
     var list = List{ .at = &memory, .address = 0x1000 };
 
-    renderingCommon(&list, 1280, 720, 64, false);
+    renderingCommon(&list, 1280, 720, .{ .width = 64, .height = 64 }, false, false);
     try std.testing.expectEqual(@as(u32, 9), list.used);
     // Image size at 8 and 24, early-Z off at 46, log2 of the tile at 52, 55.
     try std.testing.expectEqual(@as(u8, 121), memory[0]);
@@ -542,7 +591,7 @@ test "the packets have Mesa's lengths and its fields" {
     try std.testing.expectEqual(@as(u64, 3), common >> 55 & 7);
 
     list.used = 0;
-    store(&list, STORE_RENDER_TARGET_0, OUTPUT_RGBA8, true, 0x12345000, 5120, MEMORY_RASTER);
+    store(&list, STORE_RENDER_TARGET_0, OUTPUT_RGBA8, true, 0x12345000, 5120, MEMORY_RASTER, .sample_0);
     try std.testing.expectEqual(@as(u32, 13), list.used);
     const fields = std.mem.readInt(u64, memory[1..9], .little);
     try std.testing.expectEqual(OUTPUT_RGBA8, fields >> 12 & 0x3F);
@@ -555,7 +604,7 @@ test "the packets have Mesa's lengths and its fields" {
     // (v3dvx_cmd_buffer.c:396-406): the tiling at bit 4, the height in
     // UIF blocks where a raster store has its stride.
     list.used = 0;
-    store(&list, STORE_Z, OUTPUT_D16, false, 0x2000_0000, 12, MEMORY_UIF_XOR);
+    store(&list, STORE_Z, OUTPUT_D16, false, 0x2000_0000, 12, MEMORY_UIF_XOR, .sample_0);
     const tiled = std.mem.readInt(u64, memory[1..9], .little);
     try std.testing.expectEqual(STORE_Z, tiled & 0xF);
     try std.testing.expectEqual(MEMORY_UIF_XOR, tiled >> 4 & 7);
@@ -566,6 +615,85 @@ test "the packets have Mesa's lengths and its fields" {
     tileCoordinates(&list, 0x123, 0x456);
     try std.testing.expectEqual(@as(u32, 4), list.used);
     try std.testing.expectEqual(@as(u32, 0x456123), std.mem.readInt(u32, memory[0..4], .little) >> 8);
+}
+
+test "the 4x fields lie where v3d_packet.xml has them, and one sample's packets are as before" {
+    var memory: [64]u8 = undefined;
+    var list = List{ .at = &memory, .address = 0x1000 };
+
+    // COMMON: the multisample bit at 42, and the tile's log2 width at 52
+    // and height at 55 apart, 32 x 16 being one of v3d_choose_tile_size's.
+    renderingCommon(&list, 800, 600, .{ .width = 32, .height = 16 }, true, true);
+    const four = std.mem.readInt(u64, memory[1..9], .little);
+    try std.testing.expectEqual(@as(u64, 1), four >> 42 & 1);
+    try std.testing.expectEqual(@as(u64, 0), four >> 44 & 1);
+    try std.testing.expectEqual(@as(u64, 2), four >> 52 & 7);
+    try std.testing.expectEqual(@as(u64, 1), four >> 55 & 7);
+    try std.testing.expectEqual(@as(u64, 800), four >> 8 & 0xFFFF);
+    try std.testing.expectEqual(@as(u64, 600), four >> 24 & 0xFFFF);
+    list.used = 0;
+    renderingCommon(&list, 800, 600, .{ .width = 32, .height = 16 }, true, false);
+    const one = std.mem.readInt(u64, memory[1..9], .little);
+    try std.testing.expectEqual(four & ~(@as(u64, 1) << 42), one);
+
+    // The binner's mode: the two log2s at 8 and 11, nothing at 14, where
+    // 4.2 had its multisample bit.
+    list.used = 0;
+    binningMode(&list, 800, 600, .{ .width = 64, .height = 32 });
+    try std.testing.expectEqual(@as(u32, 9), list.used);
+    const bin = std.mem.readInt(u64, memory[1..9], .little);
+    try std.testing.expectEqual(@as(u64, 3), bin >> 8 & 7);
+    try std.testing.expectEqual(@as(u64, 2), bin >> 11 & 7);
+    try std.testing.expectEqual(@as(u64, 0), bin >> 14 & 3);
+    try std.testing.expectEqual(@as(u64, 799), bin >> 32 & 0xFFFF);
+    try std.testing.expectEqual(@as(u64, 599), bin >> 48 & 0xFFFF);
+
+    // The render target's stride, from the width alone.
+    list.used = 0;
+    renderTarget0(&list, 32, 0);
+    const target = std.mem.readInt(u64, memory[1..9], .little);
+    try std.testing.expectEqual(@as(u64, 15), target >> 18 & 0x7F);
+
+    // Decimate at 10 on a store and a load, and nothing else moved.
+    list.used = 0;
+    store(&list, STORE_RENDER_TARGET_0, OUTPUT_RGBA8, true, 0x12345000, 128, MEMORY_RASTER, .sample_0);
+    const first = std.mem.readInt(u64, memory[1..9], .little);
+    try std.testing.expectEqual(@as(u64, 0), first >> 10 & 3);
+    for ([_]Decimate{ .four, .all_samples }, [_]u64{ 1, 3 }) |decimate, bits| {
+        list.used = 0;
+        store(&list, STORE_RENDER_TARGET_0, OUTPUT_RGBA8, true, 0x12345000, 128, MEMORY_RASTER, decimate);
+        const stored = std.mem.readInt(u64, memory[1..9], .little);
+        try std.testing.expectEqual(bits, stored >> 10 & 3);
+        try std.testing.expectEqual(first, stored & ~(@as(u64, 3) << 10));
+    }
+    list.used = 0;
+    load(&list, STORE_Z, OUTPUT_D16, false, 0x2000_0000, 12, MEMORY_UIF_XOR, .all_samples);
+    try std.testing.expectEqual(@as(u32, 13), list.used);
+    const loaded = std.mem.readInt(u64, memory[1..9], .little);
+    try std.testing.expectEqual(@as(u64, 3), loaded >> 10 & 3);
+    try std.testing.expectEqual(STORE_Z, loaded & 0xF);
+    try std.testing.expectEqual(MEMORY_UIF_XOR, loaded >> 4 & 7);
+    try std.testing.expectEqual(OUTPUT_D16, loaded >> 12 & 0x3F);
+
+    // Oversample at 6 in CFG_BITS, alone.
+    list.used = 0;
+    cfgBits(&list, .{});
+    const plain = std.mem.readInt(u24, memory[1..4], .little);
+    list.used = 0;
+    cfgBits(&list, .{ .oversample = true });
+    try std.testing.expectEqual(@as(u32, 4), list.used);
+    const over = std.mem.readInt(u24, memory[1..4], .little);
+    try std.testing.expectEqual(plain | 1 << 6, over);
+
+    // SAMPLE_STATE: the mask in the low 4 bits, coverage 1.0 as f187 at 16.
+    list.used = 0;
+    sampleState(&list, 0x5);
+    try std.testing.expectEqual(@as(u32, 5), list.used);
+    try std.testing.expectEqual(@as(u8, 91), memory[0]);
+    try std.testing.expectEqual(@as(u32, 0x3F80_0005), std.mem.readInt(u32, memory[1..5], .little));
+    list.used = 0;
+    sampleState(&list, 0xF);
+    try std.testing.expectEqual(@as(u32, 0x3F80_000F), std.mem.readInt(u32, memory[1..5], .little));
 }
 
 test "the shader record and an attribute are the size the hardware reads" {

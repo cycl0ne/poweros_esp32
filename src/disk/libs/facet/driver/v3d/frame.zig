@@ -127,12 +127,12 @@ pub const DrawState = struct {
 /// The start of the binner's list for a frame: what stays the same for all
 /// its draws.
 pub fn beginBin(list: *List, frame: *const Frame) void {
-    cl.binningMode(list, frame.width, frame.height, tile_pixels);
+    cl.binningMode(list, frame.width, frame.height, .{ .width = tile_pixels, .height = tile_pixels });
     list.byte(cl.FLUSH_VCD_CACHE);
     cl.occlusionQueryOff(list);
     list.byte(cl.START_TILE_BINNING);
     cl.colorWriteMasks(list, 0xF);
-    cl.sampleState(list);
+    cl.sampleState(list, 0xF);
     list.byte(cl.ZERO_ALL_FLAT_SHADE_FLAGS);
     list.byte(cl.ZERO_ALL_NON_PERSPECTIVE_FLAGS);
     list.byte(cl.ZERO_ALL_CENTROID_FLAGS);
@@ -187,10 +187,10 @@ pub fn writeBin(list: *List, frame: *const Frame, record: u32, attributes: u32, 
 /// cleared area covers whole.
 pub fn writeTileList(list: *List, frame: *const Frame, load: bool) void {
     list.byte(cl.TILE_COORDINATES_IMPLICIT);
-    if (load) cl.load(list, cl.STORE_RENDER_TARGET_0, frame.format, frame.swap_rb, frame.image, frame.stride, cl.MEMORY_RASTER);
+    if (load) cl.load(list, cl.STORE_RENDER_TARGET_0, frame.format, frame.swap_rb, frame.image, frame.stride, cl.MEMORY_RASTER, .sample_0);
     // The depth or the stencil read in after the colour, as Mesa orders
     // them, whether or not this list's tiles read the colour.
-    if (frame.kept) |kept| if (kept.load) cl.load(list, kept.buffer, kept.format, false, kept.image, kept.stride, kept.memory);
+    if (frame.kept) |kept| if (kept.load) cl.load(list, kept.buffer, kept.format, false, kept.image, kept.stride, kept.memory, .sample_0);
     list.byte(cl.END_OF_LOADS);
     // The binner starts each tile's list assuming triangles.
     cl.primListFormat(list, cl.LIST_TRIANGLES);
@@ -200,8 +200,8 @@ pub fn writeTileList(list: *List, frame: *const Frame, load: bool) void {
     }
     // And written out before it: the hardware clears the tiles' depth and
     // stencil between tiles by itself, so neither store asks for a clear.
-    if (frame.kept) |kept| if (kept.store) cl.store(list, kept.buffer, kept.format, false, kept.image, kept.stride, kept.memory);
-    cl.store(list, cl.STORE_RENDER_TARGET_0, frame.format, frame.swap_rb, frame.image, frame.stride, cl.MEMORY_RASTER);
+    if (frame.kept) |kept| if (kept.store) cl.store(list, kept.buffer, kept.format, false, kept.image, kept.stride, kept.memory, .sample_0);
+    cl.store(list, cl.STORE_RENDER_TARGET_0, frame.format, frame.swap_rb, frame.image, frame.stride, cl.MEMORY_RASTER, .sample_0);
     list.byte(cl.CLEAR_RENDER_TARGETS);
     list.byte(cl.END_OF_TILE_MARKER);
     list.byte(cl.RETURN_FROM_SUB_LIST);
@@ -215,7 +215,7 @@ pub fn writeTileList(list: *List, frame: *const Frame, load: bool) void {
 pub fn writeRender(list: *List, frame: *const Frame, tiles: TileList, inside: ?TileList) void {
     const tiles_x = frame.tilesX();
     const tiles_y = frame.tilesY();
-    cl.renderingCommon(list, frame.width, frame.height, tile_pixels, frame.depth or frame.stencil);
+    cl.renderingCommon(list, frame.width, frame.height, .{ .width = tile_pixels, .height = tile_pixels }, frame.depth or frame.stencil, false);
     cl.renderTarget0(list, tile_pixels, frame.clear);
     cl.zsClear(list, frame.clear_depth, frame.clear_stencil);
     cl.tileListInitialBlock(list);
@@ -239,7 +239,7 @@ pub fn writeRender(list: *List, frame: *const Frame, tiles: TileList, inside: ?T
     while (round < 2) : (round += 1) {
         cl.tileCoordinates(list, 0, 0);
         list.byte(cl.END_OF_LOADS);
-        cl.store(list, cl.STORE_NONE, frame.format, false, 0, 0, cl.MEMORY_RASTER);
+        cl.store(list, cl.STORE_NONE, frame.format, false, 0, 0, cl.MEMORY_RASTER, .sample_0);
         if (round == 0) list.byte(cl.CLEAR_RENDER_TARGETS);
         list.byte(cl.END_OF_TILE_MARKER);
     }

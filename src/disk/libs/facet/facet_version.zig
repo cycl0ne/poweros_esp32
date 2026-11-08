@@ -4169,4 +4169,32 @@ pub const LIBRARY_VERSION = 1;
 ///   through the fixed form: 3, 3 and 5 pixels of 230,400, at the same
 ///   triangle edges. The other 188 cases are as they were. FacetProbe
 ///   1.46 passes its 888 checks, 386 of them on the V3D.
-pub const LIBRARY_REVISION = 143;
+///
+/// 144: **The V3D's packets carry four samples' fields (docs/facet-vulkan10.md
+/// item 61, step V1).** Nothing draws at four yet; each field is where
+/// v3d_packet.xml has it at 7.1, and a frame of one sample writes the bits
+/// it wrote at 1.143:
+///
+/// - `cl.Tile`: a tile's width and height apart, as `v3d_choose_tile_size`
+///   picks them (64 x 32 and 32 x 16 among them), each given to the
+///   binner's mode at 8 and 11 and to the rendering mode's common packet
+///   at 52 and 55.
+/// - `renderingCommon` takes "Multisample Mode (4x)", bit 42, as v3dv
+///   sets it from its frame's tiling (v3dvx_cmd_buffer.c:977). Against
+///   the first plan, the binner's mode has no such bit at 7.1: only 4.2's
+///   had one (v3dvx_cmd_buffer.c:101-112).
+/// - `store` and `load` take `cl.Decimate`, the field at 10: the first
+///   sample, the four averaged, or all four, as v3dv picks it for an
+///   image of more than one sample and for a resolve
+///   (v3dvx_cmd_buffer.c:206-209, 408-413). A load is never averaged.
+/// - `Cfg.oversample`, "Rasterizer Oversample Mode" at bit 6, which v3dv
+///   sets for a pipeline of more than one sample (v3dvx_pipeline.c:193-196).
+/// - `sampleState` takes the sample mask, at a coverage of 1.0 as before
+///   (v3dvx_cmd_buffer.c:1615-1618); the frame still gives all four bits.
+/// - `renderTarget0`'s stride is the tile's width alone, at four samples
+///   as at one (`v3d_compute_rt_row_row_stride_128_bits`, v3d_util.c:316).
+///
+/// Tests: the V3D's 140, one new: each field at its bit, a multisampled
+/// packet differing from its one-sample twin in that bit alone, the
+/// binner's bit 14, where 4.2 had its multisample bit, staying clear.
+pub const LIBRARY_REVISION = 144;
