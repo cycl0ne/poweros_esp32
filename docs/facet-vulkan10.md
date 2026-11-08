@@ -1916,6 +1916,8 @@ That is 2,084 lines from Mesa's 4,847, the 4.x paths left out. `qpu/tests.zig` h
 
 Two places where Mesa reads back what it does not pack again are kept as Mesa has them. The ten one-operand float operations, ffloor to ftoc, read an `abs` unpack that their pack refuses. And fxcd and fycd are three raddr_b values each, read as one operation and packed as the first. Nothing in facet.library calls this yet: compile.zig still emits `qpu.zig`'s words.
 
+**Then the validator**, Mesa's qpu_validate.c, which holds a finished program to the hardware's instruction restrictions: `driver/v3d/compiler/validate.zig`, its 7.1 paths (the r4 of an SFU result and the rules of 4.2 alone are left out). It answers the first rule broken and where, in Mesa's own words, where Mesa aborts. It checks finished programs before Mesa's scheduler is ported to make them. Every hand-written program in `qpu.zig` keeps every rule, and so does every program `compile.zig`'s tests compile, since `sound` now runs it over each.
+
 ### 60. Compile SPIR-V vertex and compute stages for the V3D **[critical path]**
 
 *V3D compiler* &mdash; conformance-blocking, large, also serves the shim

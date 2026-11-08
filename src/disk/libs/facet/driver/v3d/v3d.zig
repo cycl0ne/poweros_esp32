@@ -31,4 +31,5 @@ test {
     _ = cl;
     _ = tiling;
     _ = @import("qpu/tests.zig");
+    _ = @import("compiler/validate.zig");
 }

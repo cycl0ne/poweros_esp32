@@ -1934,7 +1934,20 @@ fn sound(work: *const Work, code: Code) !void {
     var counted: u32 = 0;
     for (work.plan()) |each| counted += each.words();
     try testing.expectEqual(@as(usize, counted), code.words.len);
+    // And every word keeps the rules Mesa holds a finished program to
+    // (compiler/validate.zig, its qpu_validate.c), as a fragment program
+    // with its last thread section.
+    var insts: [most_words]qpu_instr.Instr = undefined;
+    for (code.words, insts[0..code.words.len]) |instruction, *inst| inst.* = qpu_pack.unpack(instruction).?;
+    if (validator.validate(.{ .insts = insts[0..code.words.len], .last_thrsw = true })) |failure| {
+        std.debug.print("broken at {d}: {s}\n", .{ failure.ip, failure.message });
+        return error.TestUnexpectedResult;
+    }
 }
+
+const qpu_instr = @import("qpu/instr.zig");
+const qpu_pack = @import("qpu/pack.zig");
+const validator = @import("compiler/validate.zig");
 
 test "the interpolated colour comes to the program that was written by hand, word for word" {
     var work: Work = .{};
