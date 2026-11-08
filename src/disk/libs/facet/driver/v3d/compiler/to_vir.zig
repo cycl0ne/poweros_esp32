@@ -1,0 +1,541 @@
+// SPDX-License-Identifier: MIT
+//! Mesa's nir_to_vir.c, the paths a fragment program of compile.zig's
+//! profile takes through it, with v3d_tex.c's sample and vir.c's compile
+//! strategies around them: compile.zig's steps made into VIR, which the
+//! register allocator, the scheduler and the packer (allocate.zig,
+//! schedule.zig, to_qpu.zig) make into the QPU's instructions.
+//!
+//! Mesa walks NIR; this walks the steps compile.zig reads a module into,
+//! which are what the NIR is for this profile once spirv_to_nir and v3d's
+//! passes are done with it. Each vector op is an op a float
+//! (nir_lower_alu_to_scalar), the scalar of a vector times a scalar is
+//! read by every product, a constant is a uniform a float where it is
+//! first read (ntq_emit_load_const, nir_to_vir.c:2640), and a component or
+//! a construct names floats rather than moving them, as nir_copy_prop
+//! leaves them for the ops that read them. A texel's half-floats are read
+//! out as floats right after the sample, where nir_lower_tex's packing_16
+//! puts the unpacking; the unpacking is the VIR Mesa makes of a pair of
+//! half-floats it reads from the tile buffer (vir_emit_tlb_color_read,
+//! nir_to_vir.c:2731), an fmov of each half.
+//!
+//! What Mesa does to the VIR before it allocates registers is not done
+//! yet: vir_optimize (vir.c:2907), its copy propagation and its dead code
+//! elimination above all, is not ported, so every step costs what
+//! nir_to_vir emits for it, its movs too, and the payload's moves stay
+//! where nothing reads them.
+//!
+//! Where it is not Mesa's:
+//! - Every varying the draw carries is read, in order: the vertex record
+//!   holds them all (`_play.zig`'s `writeRecord`), where Mesa's linking
+//!   drops what the fragment program does not read.
+//! - interpolateAt is not in the profile, so emit_fragment_varying's copy
+//!   of the C coefficient for it is left out.
+//! - The TMU hands back both of its words whatever the program reads of a
+//!   texel: the draw writes P0 asking for both (`tiling.parameter0`),
+//!   where Mesa asks for the words read (v3d_tex.c:257).
+//! - The colour is moved out where the body ends and not at its OpStore,
+//!   which the steps do not keep: what comes after the store is not
+//!   handed on.
+//! - The key is the one this device's draws have: render target 0, of
+//!   16-bit floats, red and blue not swapped, one sample a pixel.
+//! - Of the strategies (vir.c:2214), 0 and 2. 1, 3 and 4 turn off what is
+//!   not done here (GCM, loop unrolling, UBO load sorting, moving buffer
+//!   loads, TMU pipelining) and so would make the same program, and 5's
+//!   fallback scheduler is not ported.
+
+const std = @import("std");
+const assert = std.debug.assert;
+const instr = @import("../qpu/instr.zig");
+const vir = @import("vir.zig");
+const allocate = @import("allocate.zig");
+const to_qpu = @import("to_qpu.zig");
+const compile = @import("../compile.zig");
+const Compile = vir.Compile;
+const Inst = vir.Inst;
+const Reg = vir.Reg;
+const Work = compile.Work;
+const Step = compile.Step;
+
+pub const Error = vir.Error || error{
+    /// No strategy could give the temporaries registers.
+    Registers,
+    /// What the strategies made does not pack, or breaks a rule of
+    /// qpu_validate: the port's fault, never the module's.
+    Invalid,
+};
+
+/// MAX_TMU_QUEUE_SIZE (v3d_compiler.h:62).
+const max_tmu_queue_size = 8;
+
+// The tile buffer's write specifiers (nir_to_vir.c:1930).
+const tlb_type_f16_color: u32 = 3 << 6;
+const tlb_render_target_shift = 3;
+const tlb_sample_mode_per_pixel: u32 = 1 << 2;
+const tlb_f16_swap_hi_lo: u32 = 1 << 1;
+const tlb_vec_size_4_f16: u32 = 1 << 0;
+const tlb_vec_size_2_f16: u32 = 0 << 0;
+
+/// What the TMU is to hand back: both words of a texel, each two
+/// half-floats, which is what `tiling.parameter0` writes beside the
+/// texture's state. TMU Config Parameter 0's return words are its bits
+/// 0 to 3 (cle/v3d_packet.xml:1537).
+pub const texel_words: u32 = 0b11;
+
+/// The one combined image sampler there is, as Mesa numbers the texture
+/// and the sampler for the driver in the high bits of P0 and P1.
+const texture_index = 0;
+const sampler_index = 0;
+
+/// A compile strategy, of the fields that change anything here (struct
+/// v3d_compiler_strategy, v3d_compiler.h).
+const Strategy = struct {
+    name: []const u8,
+    max_threads: u8,
+    min_threads: u8,
+    max_tmu_spills: u32,
+};
+
+/// Strategies 0 and 2 (vir.c:2214): 4 threads without spilling, then 2
+/// with as many spills as it takes.
+const strategies = [_]Strategy{
+    .{ .name = "default", .max_threads = 4, .min_threads = 4, .max_tmu_spills = 0 },
+    .{ .name = "lower thread count", .max_threads = 2, .min_threads = 1, .max_tmu_spills = std.math.maxInt(u32) },
+};
+
+/// A program compiled: its instructions in `c.qpu_insts`, the uniforms it
+/// reads in the order it reads them in `c.uniform_contents` and
+/// `c.uniform_data`, up to `c.num_uniforms`, and its threads, varyings and
+/// scoreboard lock in the compile's own fields.
+pub const Program = struct {
+    c: *Compile,
+    /// One past the highest register the temporaries were given.
+    registers: u32,
+    /// W read for something other than a varying that is not centroid
+    /// (vir_check_payload_w, nir_to_vir.c:5117), for the shader record.
+    uses_center_w: bool,
+
+    pub fn destroy(program: Program) void {
+        program.c.destroy();
+    }
+};
+
+/// One TMU operation waiting for its thread switch and LDTMUs
+/// (v3d_compiler.h:631).
+const Pending = struct {
+    step: u16,
+    component_mask: u32,
+};
+
+/// What nir_to_vir keeps while it walks: what each step's floats are in
+/// (Mesa's def_ht), the varyings, the payload, the colour, and the TMU
+/// operations not yet flushed.
+const Emit = struct {
+    c: *Compile,
+    work: *const Work,
+    defs: [compile.most_steps][4]Reg = undefined,
+    /// A step's floats are there: a sample's are not until it is
+    /// unpacked, nor its words until the TMU is flushed (the def that
+    /// ntq_get_src does not find).
+    defined: [compile.most_steps]bool = @splat(false),
+    /// A sample's words as the TMU hands them back.
+    words: [compile.most_steps][4]Reg = undefined,
+    words_defined: [compile.most_steps]bool = @splat(false),
+    inputs: [compile.most_varyings]Reg = undefined,
+    start_msf: Reg = .{},
+    payload_w: Reg = .{},
+    payload_w_centroid: Reg = .{},
+    payload_z: Reg = .{},
+    outputs: [4]Reg = undefined,
+    flush: [max_tmu_queue_size]Pending = undefined,
+    flush_count: u32 = 0,
+    output_fifo_size: u32 = 0,
+    total_count: u32 = 0,
+    uses_center_w: bool = false,
+};
+
+/// v3d_compile (vir.c:2605): the steps compiled under each strategy in
+/// turn until one gives every temporary a register. Each attempt starts
+/// from the steps again, as Mesa's starts from the NIR. The program is
+/// the caller's, given back with `Program.destroy`.
+pub fn compileSteps(allocator: std.mem.Allocator, compiler: *const vir.Compiler, work: *const Work) Error!Program {
+    const e = try allocator.create(Emit);
+    defer allocator.destroy(e);
+    var failed_register_allocation = false;
+    for (strategies) |strategy| {
+        const c = try Compile.create(allocator);
+        var kept = false;
+        defer if (!kept) c.destroy();
+        // vir_compile_init (vir.c:573), what of it is the strategy's.
+        c.compiler = compiler;
+        c.stage = .fragment;
+        c.threads = strategy.max_threads;
+        c.max_tmu_spills = strategy.max_tmu_spills;
+        e.* = .{ .c = c, .work = work };
+
+        const registers = try attemptCompile(e, strategy);
+        switch (c.compilation_result) {
+            // Broken shader or driver bug.
+            .failed => continue,
+            .failed_register_allocation => {
+                failed_register_allocation = true;
+                continue;
+            },
+            .succeeded => {},
+        }
+        kept = true;
+        return .{ .c = c, .registers = registers, .uses_center_w = e.uses_center_w };
+    }
+    return if (failed_register_allocation) Error.Registers else Error.Invalid;
+}
+
+/// v3d_attempt_compile (vir.c:1955) and v3d_nir_to_vir
+/// (nir_to_vir.c:5134), for a fragment program: the VIR, the last thread
+/// switch, the tile buffer writes, and then registers and the QPU's
+/// instructions. It answers how many registers the program uses.
+fn attemptCompile(e: *Emit, strategy: Strategy) Error!u32 {
+    const c = e.c;
+    try nirToVir(e);
+    // The last thread switch before the tile buffer writes.
+    const restore = try emitLastThrsw(c);
+    try emitFragEnd(e);
+    // vir_optimize and sched_flags: not ported, and there are no flags.
+    checkPayloadW(e);
+    return nirToVirFinish(c, strategy, restore);
+}
+
+/// nir_to_vir (nir_to_vir.c:4909), for a fragment program: the payload
+/// moved out of the registers it comes in, the varyings, and the body.
+fn nirToVir(e: *Emit) Error!void {
+    const c = e.c;
+    e.start_msf = try c.add(.msf, .{});
+    // W is rf3 on 7.1, and rf0 before it.
+    e.payload_w = try c.mul(.mov, .{vir.reg(.reg, 3)});
+    e.payload_w_centroid = try c.mul(.mov, .{vir.reg(.reg, 1)});
+    e.payload_z = try c.mul(.mov, .{vir.reg(.reg, 2)});
+    // No primitive id, point or line coordinate is in the profile.
+    try setupFsInputs(e);
+    // ntq_setup_outputs: the colour is location 0, which needs nothing
+    // emitted.
+    try emitBlock(e);
+}
+
+/// ntq_setup_fs_inputs (nir_to_vir.c:2503): each varying in the order of
+/// its location, a float at a time (emit_fragment_input,
+/// nir_to_vir.c:1123). compile.zig has numbered the floats so already.
+fn setupFsInputs(e: *Emit) Error!void {
+    var varying: u32 = 0;
+    while (varying < e.work.varyings) : (varying += 1) {
+        e.inputs[varying] = try emitFragmentVarying(e);
+    }
+}
+
+/// emit_fragment_varying (nir_to_vir.c:1049), for a varying interpolated
+/// with perspective, which is all the profile has: the ldvary, and the
+/// value times W plus the C coefficient the ldvary leaves in rf0.
+fn emitFragmentVarying(e: *Emit) Error!Reg {
+    const c = e.c;
+    const c_reg = vir.reg(.reg, 0);
+    const ldvary = try c.addInst(.nop, c.undef, c.undef, c.undef);
+    ldvary.qpu.sig.ldvary = true;
+    const vary = try c.emitDef(ldvary);
+    c.num_inputs += 1;
+    return emitSmoothVarying(c, vary, e.payload_w, c_reg);
+}
+
+/// emit_smooth_varying (nir_to_vir.c:1027).
+fn emitSmoothVarying(c: *Compile, vary: Reg, w: Reg, c_reg: Reg) Error!Reg {
+    return c.add(.fadd, .{ try c.mul(.fmul, .{ vary, w }), c_reg });
+}
+
+/// ntq_emit_block (nir_to_vir.c:4677) for the one block there is: its
+/// steps, the colour's store, and the TMU flushed in the block that used
+/// it.
+fn emitBlock(e: *Emit) Error!void {
+    for (e.work.steps[0..e.work.step_count], 0..) |each, at| try emitStep(e, each, @intCast(at));
+    try emitColorWrite(e);
+    try flushTmu(e);
+}
+
+fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
+    const c = e.c;
+    const parts = each.kind.parts();
+    switch (each.tag) {
+        .input => {
+            const input = e.work.inputs[each.at];
+            for (0..parts) |k| e.defs[at][k] = e.inputs[input.first + k];
+        },
+        .constant => {
+            for (0..parts) |k| e.defs[at][k] = try c.uniformUi(@bitCast(e.work.pool[each.at + k]));
+        },
+        .component => e.defs[at][0] = try getSrc(e, each.a, each.at),
+        .construct => {
+            for (0..parts) |k| e.defs[at][k] = try getSrc(e, each.from[k], each.part[k]);
+        },
+        // ntq_emit_alu (nir_to_vir.c:1365): the sources, then the op.
+        .add, .mul => {
+            const b_scalar = e.work.steps[each.b].kind == .f32x1;
+            for (0..parts) |k| {
+                const a = try getSrc(e, each.a, k);
+                const b = try getSrc(e, each.b, if (b_scalar) 0 else k);
+                e.defs[at][k] = if (each.tag == .add) try c.add(.fadd, .{ a, b }) else try c.mul(.fmul, .{ a, b });
+            }
+        },
+        .sample => {
+            try emitTex(e, each, at);
+            try unpackTexel(e, at);
+        },
+    }
+    e.defined[at] = true;
+}
+
+/// ntq_get_src (nir_to_vir.c:856): a float of a step, which a TMU
+/// operation not yet flushed may still owe.
+fn getSrc(e: *Emit, step: u16, i: usize) Error!Reg {
+    if (!e.defined[step]) try flushTmu(e);
+    assert(e.defined[step]);
+    return e.defs[step][i];
+}
+
+/// A word of a sample, as ntq_get_src has it for the sample's own def.
+fn getWord(e: *Emit, step: u16, i: usize) Error!Reg {
+    if (!e.words_defined[step]) try flushTmu(e);
+    assert(e.words_defined[step]);
+    return e.words[step][i];
+}
+
+/// The texel's two words read out as four floats, red and green from the
+/// first, blue and alpha from the second, each low half first
+/// (vir_emit_tlb_color_read's unpacking, nir_to_vir.c:2731).
+fn unpackTexel(e: *Emit, at: u16) Error!void {
+    const c = e.c;
+    for (0..2) |word| {
+        const pair = try getWord(e, at, word);
+        for ([_]instr.InputUnpack{ .l, .h }, 0..) |half, k| {
+            const float = try c.mul(.fmov, .{pair});
+            vir.setUnpack(c.defs[float.index].?, 0, half);
+            e.defs[at][word * 2 + k] = float;
+        }
+    }
+}
+
+/// ntq_emit_color_write (nir_to_vir.c:3020): the colour moved out of what
+/// the body made it in.
+fn emitColorWrite(e: *Emit) Error!void {
+    for (&e.outputs, 0..) |*output, k| output.* = try e.c.mul(.mov, .{try getSrc(e, e.work.stored, k)});
+}
+
+/// vir_TMU_WRITE (v3d_tex.c:34).
+fn tmuWrite(c: *Compile, waddr: vir.Waddr, val: Reg) Error!*Inst {
+    return c.mulDest(.mov, vir.magicReg(waddr), .{val});
+}
+
+/// vir_WRTMUC (v3d_tex.c:57): a TMU configuration parameter, from the
+/// uniform stream.
+fn wrtmuc(c: *Compile, contents: vir.Uniform, data: u32) Error!void {
+    const inst = try c.nop();
+    inst.qpu.sig.wrtmuc = true;
+    inst.uniform = try c.getUniformIndex(contents, data);
+}
+
+/// v3d_vir_emit_tex (v3d_tex.c:230), for what the profile samples: a 2D
+/// texture at a coordinate of two floats, with an implicit level of
+/// detail, its texels in 16-bit floats.
+fn emitTex(e: *Emit, each: Step, at: u16) Error!void {
+    const c = e.c;
+    // P0: the words to hand back; P2, the default, regular lookup.
+    const return_words = texel_words;
+
+    // get_required_tex_tmu_writes (v3d_tex.c:222): T and S. The input
+    // FIFO has 16 slots across all threads.
+    const tmu_writes: u32 = 2;
+    while (tmu_writes > 16 / @as(u32, c.threads)) c.threads /= 2;
+
+    // Pipelining it would overflow the TMU's FIFOs: flush what waits.
+    const dest_components = @popCount(return_words);
+    if (tmuFifoOverflow(e, dest_components)) try flushTmu(e);
+
+    // handle_tex_src (v3d_tex.c:85): S starts the lookup, so it is kept
+    // for the end, and T is written first.
+    const s = try getSrc(e, each.a, 0);
+    _ = try tmuWrite(c, .tmut, try getSrc(e, each.a, 1));
+
+    // The texture's number in the high bits of the address, for the
+    // driver to put the texture's state there.
+    const p0_packed = return_words | texture_index << 24;
+    try wrtmuc(c, .tmu_config_p0, p0_packed);
+
+    // P1 is needed: a sample needs a sampler. Its output 16-bit, the
+    // per-pixel mask off in a fragment program that keeps its helper
+    // invocations, the coordinates normalized: all its bits 0, and the
+    // sampler's number above them. P2 is the default, so neither it nor
+    // the P1 a P2 would need is written.
+    const p1_packed: u32 = 0;
+    try wrtmuc(c, .tmu_config_p1, p1_packed | sampler_index << 24);
+
+    const retiring = try tmuWrite(c, .tmus, s);
+    // Mesa's own count, which is the mask of the words rather than how
+    // many: the scheduler only holds a lookup back for it.
+    retiring.ldtmu_count = return_words;
+    try addPendingTmuFlush(e, at, return_words);
+}
+
+/// ntq_tmu_fifo_overflow (nir_to_vir.c:252): whether `components` more
+/// LDTMUs would overflow the TMU's output FIFO, which cannot stall.
+fn tmuFifoOverflow(e: *const Emit, components: u32) bool {
+    if (e.flush_count >= max_tmu_queue_size) return true;
+    return components > 0 and e.output_fifo_size + components > 16 / @as(u32, e.c.threads);
+}
+
+/// ntq_flush_tmu (nir_to_vir.c:266): the thread switch, and the LDTMUs or
+/// the TMUWT, for every TMU operation waiting.
+fn flushTmu(e: *Emit) Error!void {
+    if (e.flush_count == 0) return;
+    const c = e.c;
+    try c.emitThrsw();
+
+    var emitted_tmuwt = false;
+    for (e.flush[0..e.flush_count]) |pending| {
+        if (pending.component_mask > 0) {
+            for (0..4) |j| {
+                if (pending.component_mask & @as(u32, 1) << @intCast(j) != 0) {
+                    e.words[pending.step][j] = try c.mul(.mov, .{try c.ldtmu()});
+                }
+            }
+            e.words_defined[pending.step] = true;
+        } else if (!emitted_tmuwt) {
+            _ = try c.addNodst(.tmuwt, .{});
+            emitted_tmuwt = true;
+        }
+    }
+    e.output_fifo_size = 0;
+    e.flush_count = 0;
+}
+
+/// ntq_add_pending_tmu_flush (nir_to_vir.c:302): a thread switch and
+/// LDTMUs owed for a TMU operation. Every value here is SSA, so there are
+/// no registers waiting on it.
+fn addPendingTmuFlush(e: *Emit, step: u16, component_mask: u32) Error!void {
+    const num_components = @popCount(component_mask);
+    assert(!tmuFifoOverflow(e, num_components));
+    if (num_components > 0) e.output_fifo_size += num_components;
+    e.flush[e.flush_count] = .{ .step = step, .component_mask = component_mask };
+    e.flush_count += 1;
+    e.total_count += 1;
+}
+
+/// What vir_emit_last_thrsw keeps to undo what it adds.
+const Restore = struct {
+    last_thrsw: ?*Inst,
+    scoreboard_lock: bool,
+};
+
+/// vir_emit_last_thrsw (nir_to_vir.c:5059): a last thread switch at the
+/// top level, which spilling cannot put another after. Where the program
+/// has one already, another is added all the same, and taken out again
+/// where nothing spills (vir_restore_last_thrsw).
+fn emitLastThrsw(c: *Compile) Error!Restore {
+    var restore: Restore = .{ .last_thrsw = c.last_thrsw, .scoreboard_lock = false };
+
+    // A last thread switch in conditional code: another, to flag as the
+    // last.
+    if (c.last_thrsw != null and !c.last_thrsw_at_top_level) try c.emitThrsw();
+
+    // A fragment program has a last thread switch, to emit as a pair.
+    if (c.last_thrsw == null and c.stage == .fragment) try c.emitThrsw();
+
+    // None added yet: one now, so that any spill comes before it.
+    if (restore.last_thrsw == c.last_thrsw) {
+        if (restore.last_thrsw) |thrsw| thrsw.is_last_thrsw = false;
+        restore.scoreboard_lock = c.lock_scoreboard_on_first_thrsw;
+        try c.emitThrsw();
+    } else {
+        restore.last_thrsw = c.last_thrsw;
+    }
+
+    c.last_thrsw.?.is_last_thrsw = true;
+    return restore;
+}
+
+/// vir_restore_last_thrsw (nir_to_vir.c:5099).
+fn restoreLastThrsw(c: *Compile, restore: Restore) void {
+    c.removeInstruction(c.last_thrsw.?);
+    c.last_thrsw = restore.last_thrsw;
+    if (c.last_thrsw) |thrsw| thrsw.is_last_thrsw = true;
+    c.lock_scoreboard_on_first_thrsw = restore.scoreboard_lock;
+}
+
+/// emit_frag_end (nir_to_vir.c:2041), for a program that writes no depth,
+/// no sample mask and no image or buffer, and writes a colour: its early
+/// fragment tests are promoted, nothing discards and nothing reads Z, so
+/// Z is not written and there is the colour alone.
+fn emitFragEnd(e: *Emit) Error!void {
+    try emitTlbColorWrite(e, 0);
+}
+
+/// vir_emit_tlb_color_write (nir_to_vir.c:1955), for a render target of
+/// 16-bit floats and one sample a pixel: two pairs packed to the tile
+/// buffer, the first with its specifier where it is not the one the
+/// register is preloaded with.
+fn emitTlbColorWrite(e: *Emit, rt: u32) Error!void {
+    const c = e.c;
+    const num_components = 4;
+    var conf: u32 = 0xffffff00;
+    conf |= tlb_sample_mode_per_pixel;
+    conf |= (7 - rt) << tlb_render_target_shift;
+    conf |= tlb_type_f16_color | tlb_f16_swap_hi_lo;
+    conf |= if (num_components >= 3) tlb_vec_size_4_f16 else tlb_vec_size_2_f16;
+
+    const color = e.outputs;
+    const inst = try c.addDest(.vfpack, vir.magicReg(.tlb), .{ color[0], color[1] });
+    if (conf != ~@as(u32, 0)) {
+        inst.dst = vir.magicReg(.tlbu);
+        inst.uniform = try c.getUniformIndex(.constant, conf);
+    }
+    if (num_components >= 3) _ = try c.addDest(.vfpack, vir.magicReg(.tlb), .{ color[2], color[3] });
+}
+
+/// vir_check_payload_w (nir_to_vir.c:5117).
+fn checkPayloadW(e: *Emit) void {
+    var insts = e.c.eachInstInorder();
+    while (insts.next()) |inst| {
+        for (inst.src[0..vir.getNsrc(inst)]) |src| {
+            if (src.file == e.payload_w.file and src.index == e.payload_w.index) {
+                e.uses_center_w = true;
+                return;
+            }
+        }
+    }
+}
+
+/// v3d_nir_to_vir_finish (nir_to_vir.c:5219): registers for the
+/// temporaries, at fewer threads where they do not fit and the strategy
+/// lets it go lower; the last thread switch put back where nothing
+/// spilled; and the QPU's instructions. It answers one past the highest
+/// register given.
+fn nirToVirFinish(c: *Compile, strategy: Strategy, restore: Restore) Error!u32 {
+    const min_threads = 2;
+    const temp_registers = while (true) {
+        if (try allocate.registerAllocate(c)) |registers| {
+            assert(c.spills + c.fills <= c.max_tmu_spills);
+            break registers;
+        }
+        if (c.threads <= @max(strategy.min_threads, min_threads)) {
+            c.compilation_result = .failed_register_allocation;
+            return 0;
+        }
+        c.spills = 0;
+        c.fills = 0;
+        c.threads /= 2;
+        // One thread, which the minimum of 2 keeps from happening:
+        // vir_remove_thrsw is not ported.
+        assert(c.threads > 1);
+    };
+    defer c.allocator.free(temp_registers);
+
+    if (c.spills == 0 and c.last_thrsw != restore.last_thrsw) restoreLastThrsw(c, restore);
+
+    var registers: u32 = 0;
+    for (temp_registers) |r| registers = @max(registers, @as(u32, r.index) + 1);
+    if (try to_qpu.virToQpu(c, temp_registers) != null) assert(c.compilation_result == .failed);
+    return registers;
+}

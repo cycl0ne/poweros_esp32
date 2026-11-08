@@ -70,11 +70,20 @@
 //! `_play.zig`'s `Carried.colors_from` divides them back out as the vertex
 //! records are written. A pipeline whose fragment program is generated
 //! carries its varyings `as_they_are`.
+//!
+//! **Mesa's back end, beside the plan.** `compileVir` reads the words as
+//! `compile` does and hands the steps to `compiler/to_vir.zig`, the port
+//! of Mesa's nir_to_vir.c, whose programs are given registers and
+//! scheduled by Mesa's allocator and scheduler rather than by the plan.
+//! The library does not call it: none of its programs has run on the
+//! board, and the plan's have.
 
 const std = @import("std");
 const sdk = @import("sdk");
 const spirv = sdk.facet.spirv;
 const qpu = @import("qpu.zig");
+const vir = @import("compiler/vir.zig");
+const to_vir = @import("compiler/to_vir.zig");
 
 /// The most ids a module may use. A back end carries its own bound
 /// because its tables are one word an id and it holds them on the heap,
@@ -181,6 +190,9 @@ pub const Error = error{
     /// number, so it is held against a bound before it is stored rather
     /// than landing on a sentinel and being read back as absent.
     Numbered,
+    /// What Mesa's back end made of it does not pack, or breaks a rule of
+    /// qpu_validate (`compileVir`): the port's fault, never the module's.
+    Invalid,
 };
 
 /// The combined image sampler a module reads, by where the draw binds it.
@@ -397,6 +409,14 @@ pub const Code = struct {
     sampler: ?Sampler,
     /// The registers it keeps values in, for a test to read.
     registers: u32,
+    /// What the shader record says of the program, which Mesa's back end
+    /// decides (`compileVir`) and the plan keeps as the hand-written
+    /// programs have it: the threads it runs as, whether it reads W for
+    /// something besides a centroid varying, and whether the scoreboard is
+    /// locked at its first thread switch rather than its last.
+    threads: u8 = 4,
+    center_w: bool = false,
+    lock_scoreboard_on_first_thrsw: bool = false,
 
     /// The uniform stream, in the order the program reads it.
     pub fn stream(code: *const Code) []const Word {
@@ -538,6 +558,73 @@ pub const Work = struct {
 /// follows a pointer out of them, and a module that is not one has
 /// already been turned down by `CreateShaderModule`.
 pub fn compile(work: *Work, words: []const u32) Error!Code {
+    try readModule(work, words);
+    try settle(work);
+    try encode(work);
+    return .{
+        .words = work.code[0..work.word_count],
+        .varyings = work.varyings,
+        .uniforms = work.stream,
+        .uniform_count = work.stream_count,
+        .sampler = if (work.sample_count == 0) null else work.samplers[work.steps[work.sampled].at],
+        .registers = work.high_water,
+    };
+}
+
+/// `words` compiled through Mesa's back end rather than the plan: read as
+/// `compile` reads them, then made VIR, given registers, scheduled and
+/// packed as Mesa's v3d_compile does (compiler/to_vir.zig). The library
+/// does not call it yet: no program it makes has run on the board.
+/// `compiler` is the register sets (`allocate.initRegSets`), made once
+/// for every compile.
+pub fn compileVir(work: *Work, words: []const u32, allocator: std.mem.Allocator, compiler: *const vir.Compiler) (Error || std.mem.Allocator.Error)!Code {
+    try readModule(work, words);
+    const program = to_vir.compileSteps(allocator, compiler, work) catch |err| return switch (err) {
+        error.OutOfMemory => error.OutOfMemory,
+        error.Registers => Error.Registers,
+        error.Invalid => Error.Invalid,
+    };
+    defer program.destroy();
+    const c = program.c;
+    std.debug.assert(c.num_inputs == work.varyings);
+
+    if (c.qpu_insts.len > most_words) return Error.TooLong;
+    @memcpy(work.code[0..c.qpu_insts.len], c.qpu_insts);
+    work.word_count = @intCast(c.qpu_insts.len);
+
+    // The stream in the order the program reads it, which is the order
+    // the scheduler left the uniforms in.
+    if (c.num_uniforms > most_uniforms) return Error.Uniforms;
+    for (c.uniform_contents[0..c.num_uniforms], c.uniform_data[0..c.num_uniforms], 0..) |contents, data, at| {
+        work.stream[at] = switch (contents) {
+            .constant => .{ .float = @bitCast(data) },
+            // The draw's own words, which `tiling.parameter0` and
+            // `parameter1` write as these are: both words of the one
+            // texture, and its sampler.
+            .tmu_config_p0 => if (data == to_vir.texel_words) .texture else return Error.Invalid,
+            .tmu_config_p1 => if (data == 0) .sampler else return Error.Invalid,
+            // A spill's offset or size: a draw has no memory to spill to.
+            else => return Error.Registers,
+        };
+    }
+    work.stream_count = c.num_uniforms;
+
+    return .{
+        .words = work.code[0..work.word_count],
+        .varyings = work.varyings,
+        .uniforms = work.stream,
+        .uniform_count = work.stream_count,
+        .sampler = if (work.sample_count == 0) null else work.samplers[work.steps[work.sampled].at],
+        .registers = program.registers,
+        .threads = c.threads,
+        .center_w = program.uses_center_w,
+        .lock_scoreboard_on_first_thrsw = c.lock_scoreboard_on_first_thrsw,
+    };
+}
+
+/// The words looked at against the profile and read into `work`: what
+/// `compile` and `compileVir` share.
+fn readModule(work: *Work, words: []const u32) Error!void {
     work.* = .{};
     const seen = switch (spirv.look(words, profile)) {
         .seen => |each| each,
@@ -553,16 +640,6 @@ pub fn compile(work: *Work, words: []const u32) Error!Code {
     if (seen.stage != .fragment) return Error.Stage;
     if (seen.discards) return Error.Discards;
     try read(work, words, seen);
-    try settle(work);
-    try encode(work);
-    return .{
-        .words = work.code[0..work.word_count],
-        .varyings = work.varyings,
-        .uniforms = work.stream,
-        .uniform_count = work.stream_count,
-        .sampler = if (work.sample_count == 0) null else work.samplers[work.steps[work.sampled].at],
-        .registers = work.high_water,
-    };
 }
 
 // --- reading the words -------------------------------------------------------
@@ -2658,4 +2735,225 @@ test "a shader that always drops its pixel is refused as a discard and not as an
     // the bool type and the branch it needs, which is why `Cutout`
     // above answers `Refused`: that is honest, both are missing.
     try testing.expectError(Error.Discards, compile(&work, comptime built(.{ .always_kill = true })));
+}
+
+const disasm = @import("qpu/disasm.zig");
+const allocate = @import("compiler/allocate.zig");
+
+/// Nine vectors made before any is summed: 44 floats live at once, more
+/// than the 32 registers a 4-threaded program has under Mesa's allocator.
+const Crowded = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const a = b.input(0, .f32x4);
+        const c = b.input(1, .f32x4);
+        const made = [_]u16{
+            b.mul(a, c), b.add(a, c), b.mul(a, a),
+            b.mul(c, c), b.add(a, a), b.add(c, c),
+            b.mul(c, a), b.add(c, a), b.mul(a, c),
+        };
+        var sum = made[0];
+        for (made[1..]) |each| sum = b.add(sum, each);
+        b.color(sum);
+    }
+});
+
+/// What Mesa's back end makes of `words`, with register sets of its own.
+fn throughMesa(work: *Work, words: []const u32) !Code {
+    var compiler = try allocate.initRegSets(testing.allocator);
+    defer compiler.deinit();
+    return compileVir(work, words, testing.allocator, &compiler);
+}
+
+/// An instruction as Mesa's disassembler prints it: the add side, the mul
+/// side, the signals.
+fn text(comptime add: []const u8, comptime mul: []const u8, comptime sig: []const u8) []const u8 {
+    const first = add ++ (" " ** (30 - add.len)) ++ "; " ++ mul;
+    if (sig.len == 0) return first;
+    return first ++ (" " ** (60 - first.len)) ++ "; " ++ sig;
+}
+
+fn expectText(code: Code, expected: []const []const u8) !void {
+    try testing.expectEqual(expected.len, code.words.len);
+    for (code.words, expected) |word, line| {
+        var buffer: [disasm.most_text]u8 = undefined;
+        try testing.expectEqualStrings(line, disasm.disasm(word, &buffer).?);
+    }
+}
+
+test "through Mesa's back end, the interpolated colour: the last thread switch among the varyings" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, Smooth.words);
+    try testing.expectEqual(@as(u32, 4), code.varyings);
+    try testing.expectEqual(@as(usize, 0), code.stream().len);
+    try testing.expectEqual(@as(u8, 4), code.threads);
+    // W is read for the varyings, and the scoreboard locked at the last
+    // thread switch, as the hand-written programs have it.
+    try testing.expect(code.center_w);
+    try testing.expect(!code.lock_scoreboard_on_first_thrsw);
+    try expectText(code, &.{
+        // W is read where it comes, rf3: its temporary was given the
+        // register it was moved out of, and the move left out. The
+        // centroid's W and Z were moved likewise and nothing reads them,
+        // nor the msf: Mesa's dead code elimination (vir_optimize) takes
+        // them out, and is not ported yet.
+        text("msf rf4", "nop", "ldvary.rf5"),
+        text("nop", "fmul rf6, rf5, rf3", "ldvary.rf8"),
+        // The last thread switch, a pair, moved up among the ldvarys,
+        // which 7.1 lets sit in the first two delay slots of one.
+        text("fadd rf7, rf0, rf6", "fmul rf9, rf8, rf3", "thrsw; ldvary.rf11"),
+        text("fadd rf10, rf0, rf9", "fmul rf12, rf11, rf3", "thrsw; ldvary.rf14"),
+        text("fadd rf13, rf0, rf12", "fmul rf15, rf14, rf3", ""),
+        // The colour moved out of the sums (ntq_emit_color_write) and
+        // packed: the moves are copy propagation's to take out.
+        text("mov rf18, rf10", "mov rf17, rf7", ""),
+        text("fadd rf16, rf0, rf15", "mov rf19, rf13", ""),
+        text("vfpack tlb, rf17, rf18", "mov rf20, rf16", ""),
+        // The program's end.
+        text("vfpack tlb, rf19, rf20", "nop", "thrsw"),
+        text("nop", "nop", ""),
+        text("nop", "nop", ""),
+    });
+}
+
+test "through Mesa's back end, a colour of its own: a uniform a float, the 1 read once for red and alpha" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, Plain.words);
+    try testing.expectEqual(@as(u32, 0), code.varyings);
+    try testing.expectEqualSlices(Word, &[_]Word{ .{ .float = 1 }, .{ .float = 0.5 }, .{ .float = 0 } }, code.stream());
+    // No varying, so nothing reads W.
+    try testing.expect(!code.center_w);
+    try expectText(code, &.{
+        text("msf rf4", "nop", "thrsw; ldunifrf.rf5"),
+        text("mov rf10, rf5", "mov rf7, rf5", "thrsw; ldunifrf.rf6"),
+        text("nop", "mov rf8, rf6", "ldunif"),
+        text("vfpack tlb, rf7, rf8", "mov rf9, rf0", ""),
+        text("vfpack tlb, rf9, rf10", "nop", "thrsw"),
+        text("nop", "nop", ""),
+        text("nop", "nop", ""),
+    });
+}
+
+test "through Mesa's back end, a texture: the lookup started in the delay slots of the last thread switch" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, Textured.words);
+    try testing.expectEqual(@as(u32, 2), code.varyings);
+    try testing.expectEqual(Sampler{ .set = 0, .binding = 0 }, code.sampler.?);
+    // The draw's two words, as the hand-written program reads them.
+    try testing.expectEqualSlices(Word, &[_]Word{ .texture, .sampler }, code.stream());
+    try expectText(code, &.{
+        // The configuration first: the scheduler lets the two wrtmuc go
+        // ahead of T, as long as S, which starts the lookup, comes last.
+        text("msf rf4", "nop", "ldvary.rf5; wrtmuc"),
+        text("nop", "fmul rf6, rf5, rf3", "ldvary.rf8; wrtmuc"),
+        text("fadd rf7, rf0, rf6", "fmul rf9, rf8, rf3", ""),
+        // The last thread switch is the one the sample waits at: the
+        // lookup is started in its delay slots, and both words are read
+        // after it. vir_emit_last_thrsw added a pair of its own, taken
+        // out again when nothing spilled.
+        text("fadd rf10, rf0, rf9", "nop", "thrsw"),
+        text("nop", "mov tmut, rf10", "thrsw"),
+        text("nop", "mov tmus, rf7", ""),
+        text("nop", "nop", "ldtmu.rf11"),
+        text("nop", "mov rf12, rf11", "ldtmu.rf13"),
+        // Each half read out as a float, and packed back for the tile
+        // buffer: where the hand-written program moves the two words out
+        // as they are, this is what nir_to_vir makes of a texel drawn
+        // as it comes.
+        text("fmov rf16, rf12.h", "fmov rf15, rf12.l", ""),
+        text("mov rf19, rf15", "mov rf14, rf13", ""),
+        text("fmov rf17, rf14.l", "mov rf20, rf16", ""),
+        text("mov rf21, rf17", "fmov rf18, rf14.h", ""),
+        text("vfpack tlb, rf19, rf20", "mov rf22, rf18", ""),
+        text("vfpack tlb, rf21, rf22", "nop", "thrsw"),
+        text("nop", "nop", ""),
+        text("nop", "nop", ""),
+    });
+}
+
+test "through Mesa's back end, a texel times the colour takes 32 registers, a 4-threaded program's under Mesa" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, Modulated.words);
+    try testing.expectEqual(@as(u32, 6), code.varyings);
+    try testing.expectEqual(@as(u8, 4), code.threads);
+    try testing.expectEqualSlices(Word, &[_]Word{ .texture, .sampler }, code.stream());
+    // Mesa's allocator gives 7.1's four threads 32 registers each and
+    // goes round them from rf4, where `qpu.registers` keeps the
+    // hand-written programs in 16: which of the two the board's threads
+    // have is for the first board run of these programs to settle.
+    try testing.expectEqual(@as(u32, 32), code.registers);
+    try testing.expect(code.registers > qpu.registers);
+}
+
+test "through Mesa's back end, a texel added to: the floats of its own read around the thread switch" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, Tinted.words);
+    try testing.expectEqualSlices(Word, &[_]Word{
+        .texture,          .sampler,
+        .{ .float = 0.1 }, .{ .float = 0.2 },
+        .{ .float = 0.3 }, .{ .float = 0 },
+    }, code.stream());
+    try expectText(code, &.{
+        text("msf rf4", "nop", "ldvary.rf5; wrtmuc"),
+        text("nop", "fmul rf6, rf5, rf3", "ldvary.rf8; wrtmuc"),
+        // The floats of its own, read around the thread switch: Mesa
+        // reads the uniform stream in the last section as anywhere else.
+        // The last, the 0, is an ldunif to rf0, which the alpha's sum
+        // reads eight instructions on.
+        text("fadd rf7, rf0, rf6", "fmul rf9, rf8, rf3", "ldunifrf.rf19"),
+        text("fadd rf10, rf0, rf9", "nop", "thrsw; ldunifrf.rf20"),
+        text("nop", "mov tmut, rf10", "thrsw; ldunifrf.rf21"),
+        text("nop", "mov tmus, rf7", "ldunif"),
+        text("nop", "nop", "ldtmu.rf11"),
+        text("nop", "mov rf12, rf11", "ldtmu.rf13"),
+        text("fmov rf16, rf12.h", "fmov rf15, rf12.l", ""),
+        text("fadd rf22, rf15, rf19", "mov rf14, rf13", ""),
+        text("fadd rf23, rf16, rf20", "fmov rf17, rf14.l", ""),
+        text("mov rf26, rf22", "fmov rf18, rf14.h", ""),
+        text("fadd rf24, rf17, rf21", "mov rf27, rf23", ""),
+        text("fadd rf25, rf0, rf18", "mov rf28, rf24", ""),
+        text("vfpack tlb, rf26, rf27", "mov rf29, rf25", ""),
+        text("vfpack tlb, rf28, rf29", "nop", "thrsw"),
+        text("nop", "nop", ""),
+        text("nop", "nop", ""),
+    });
+}
+
+test "through Mesa's back end, what does not fit 4 threads is compiled at 2, where the plan refuses it" {
+    var work: Work = .{};
+    try testing.expectError(Error.Registers, compile(&work, Crowded.words));
+    const code = try throughMesa(&work, Crowded.words);
+    // Strategy 0 failed to allocate; strategy 2's two threads have all 64
+    // registers, and it fits them without a spill: a spill would have
+    // put the spill's uniforms in the stream, which a draw cannot fill.
+    try testing.expectEqual(@as(u8, 2), code.threads);
+    try testing.expectEqual(@as(u32, 64), code.registers);
+    try testing.expectEqual(@as(u32, 8), code.varyings);
+    try testing.expectEqual(@as(usize, 0), code.stream().len);
+    // It ends as every program does: the last tile buffer write with the
+    // thread end's signal, and its two delay slots.
+    var buffer: [disasm.most_text]u8 = undefined;
+    try testing.expect(std.mem.endsWith(u8, disasm.disasm(code.words[code.words.len - 3], &buffer).?, "; thrsw"));
+    try testing.expectEqualSlices(u64, &.{ qpu.nop, qpu.nop }, code.words[code.words.len - 2 ..]);
+}
+
+test "through Mesa's back end, a module is refused for what the reading refuses, by the same name" {
+    var work: Work = .{};
+    try testing.expectError(Error.Samplers, throughMesa(&work, Twice.words));
+    try testing.expectError(Error.Refused, throughMesa(&work, Cutout.words));
+    try testing.expectError(Error.Operands, throughMesa(&work, Offset.words));
+    try testing.expectError(Error.Stage, throughMesa(&work, &vertex_words));
+    try testing.expectError(Error.Varyings, throughMesa(&work, Wide.words));
+    try testing.expectError(Error.Refused, throughMesa(&work, &flat_words));
+    try testing.expectError(Error.Refused, throughMesa(&work, &[_]u32{}));
+}
+
+test "through Mesa's back end, a program compiled twice from the one work is the same program" {
+    var work: Work = .{};
+    const first = try throughMesa(&work, Modulated.words);
+    var kept: [most_words]u64 = undefined;
+    const length = first.words.len;
+    @memcpy(kept[0..length], first.words);
+    _ = try throughMesa(&work, Smooth.words);
+    const second = try throughMesa(&work, Modulated.words);
+    try testing.expectEqualSlices(u64, kept[0..length], second.words);
 }
