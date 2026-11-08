@@ -92,8 +92,8 @@ const LayersBase = sdk.interface.layers.LayersBase;
 pub const Library = gadgets.ClassLibrary(.{
     .name = rb.RIBBON_CLASS,
     .version = 1,
-    .revision = 3,
-    .date = "29.10.2026",
+    .revision = 4,
+    .date = "08.11.2026",
     .super = classusr.GROUPGCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -1660,16 +1660,23 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 own.list_frame = ib.NewObjectTagList(null, classusr.FRAMEICLASS, &list_tags);
             }
             // A group starts with no size; the ribbon is as big as it
-            // looks right, or as it was asked to be.
+            // looks right, or as it was asked to be - a width or a height
+            // given against the window's room (`GA_RelWidth`,
+            // `GA_RelHeight`) kept as it was given.
             const size = domain(base, own, gc.gadget(obj), null, gc.GDOMAIN_NOMINAL);
             const width = if (ub.FindTagItem(gc.GA_Width, new.attr_list)) |item| item.data else @as(usize, @intCast(size.width));
             const height = if (ub.FindTagItem(gc.GA_Height, new.attr_list)) |item| item.data else @as(usize, @intCast(size.height));
-            const tags = [_]TagItem{
-                .{ .tag = gc.GA_RelVerify, .data = 1 },
-                .{ .tag = gc.GA_Width, .data = width },
-                .{ .tag = gc.GA_Height, .data = height },
-                .{},
-            };
+            var tags: [4]TagItem = @splat(.{});
+            tags[0] = .{ .tag = gc.GA_RelVerify, .data = 1 };
+            var count: usize = 1;
+            if (ub.FindTagItem(gc.GA_RelWidth, new.attr_list) == null) {
+                tags[count] = .{ .tag = gc.GA_Width, .data = width };
+                count += 1;
+            }
+            if (ub.FindTagItem(gc.GA_RelHeight, new.attr_list) == null) {
+                tags[count] = .{ .tag = gc.GA_Height, .data = height };
+                count += 1;
+            }
             var set = classusr.OpSet{ .method_id = classusr.OM_SET, .attr_list = &tags };
             _ = ib.SendSuperMessage(cl, obj, @ptrCast(&set));
             show(base, cl, obj, own, fit(base, own, obj, null));

@@ -13,7 +13,10 @@
 //! lines up.
 //!
 //! The ribbon is as tall as its tallest page needs and never changes
-//! height when the tab does, and as wide as its widest page.
+//! height when the tab does, and as wide as its widest page - unless it
+//! is made with a size of its own: `GA_Width` and `GA_Height`, or against
+//! the window's room with `GA_RelWidth` and `GA_RelHeight`, as a gadget
+//! put straight into a window is, across its top (since 1.4).
 //!
 //! **Narrower than that, groups are made smaller**, one step at a time:
 //! large tool buttons become medium ones, then every tool button small,

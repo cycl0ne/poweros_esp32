@@ -4119,7 +4119,7 @@ test "ribbon.gadget: the tabs the row has no room for are behind a », which dro
     try rig.down();
 }
 
-test "ribbon.build: a table made into a ribbon - its tabs, groups, buttons and their pictures, a gadget of the program's - each entry found by its ID; out of order, nothing" {
+test "ribbon.build: a table made into a ribbon - its tabs, groups, buttons and their pictures, a gadget of the program's - each entry found by its ID; a width against the window's room kept; out of order, nothing" {
     var heard = Heard{ .tag = rbn.RIBBON_Current, .ib = undefined };
     var rig = try Rig.upAfter(&ribbon.Library.resident_tag, &heard, &ribbon_needs);
     const ib = rig.ib;
@@ -4196,6 +4196,26 @@ test "ribbon.build: a table made into a ribbon - its tabs, groups, buttons and t
     // The ribbon takes the entries with it, the pictures go after it.
     ib.DisposeObject(built.ribbon);
     built.free(sys, ib);
+
+    // Made as wide as the window's room less 8, it stays so, and a height
+    // given is its height.
+    const plain = [_]rbn.NewRibbon{
+        .{ .type = rbn.RB_TAB, .label = "_Home" },
+        .{ .type = rbn.RB_GROUP, .label = "Clipboard" },
+        .{ .type = rbn.RB_MEDIUM, .id = 11, .label = "Cu_t", .glyph = cmd.CMD_CUT },
+        .{},
+    };
+    const across = rbn.build(sys, ib, &plain, &[_]TagItem{
+        .{ .tag = gc.GA_RelWidth, .data = @bitCast(@as(isize, -8)) },
+        .{ .tag = gc.GA_Height, .data = 30 },
+        .{},
+    }).?;
+    try testing.expect(gc.gadget(across.ribbon).flags & gc.GFLG_RELWIDTH != 0);
+    try testing.expectEqual(@as(i32, -8), gc.gadget(across.ribbon).width);
+    try testing.expect(gc.gadget(across.ribbon).flags & gc.GFLG_RELHEIGHT == 0);
+    try testing.expectEqual(@as(i32, 30), gc.gadget(across.ribbon).height);
+    ib.DisposeObject(across.ribbon);
+    across.free(sys, ib);
 
     // An entry before any group, and a null gadget: nothing made, and the
     // gadgets given disposed of - the classes are expunged below only
