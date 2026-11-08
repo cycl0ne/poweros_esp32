@@ -20,7 +20,8 @@ This guide is the medium a machine is first reached with, what an install
 leaves on the disk, the command and each of its keywords, the two sources
 it copies from, the release package's form, what it writes down about
 itself, what the machine then starts from, how a system that is installed
-already is brought up to date from a later package (`C:Update`), how its
+already is brought up to date from a later package (`C:Update`, or
+`SYS:System/Update` in a window), how its
 kernel is replaced with a way back from one that does not come up, and
 how a machine looks for a newer system by itself.
 
@@ -378,7 +379,9 @@ Update AUTO                         what the machine was told to do
 
 The return code is 0 for a run that did something or found nothing to
 do, 5 from `CHECK` where there is something to do and from a run stopped
-with Ctrl-C, and 20 for one that could not finish, with the reason said.
+with Ctrl-C between two files, and 20 for one that could not finish, with
+the reason said - Ctrl-C in the middle of a file read from an address is
+one, said as the break it was.
 
 Three things are compared, not two - the list the machine was given
 (`SYS:System/manifest`), the list in the package, and the file itself:
@@ -434,6 +437,30 @@ that path again names it again.
 
 Without `BOOT` the files the firmware reads are counted and left alone,
 and the line that says how many of them the package holds says so.
+
+## In a window
+
+`SYS:System/Update` is the same run in a window, started from the
+desktop or as `SYS:System/Update FROM <package>`. It checks as it opens -
+the package FROM gives, else the one `update.prefs` names, else the one
+the install wrote down - and puts the package it read in the field at
+the top, a row in the list for every path something would happen to,
+with how much is written for it, and what the check comes to in the two
+lines above the list.
+
+- **Check** looks again, at what the field holds: another package is
+  typed in and checked, Return in the field doing the same.
+- **With the kernel** is `BOOT`, and starts as BOOT in `update.prefs`
+  has it; **Replace changed files** is `FORCE`. Changing either checks
+  again.
+- **Update** writes what the check found, the gauge filling by the bytes
+  written. It is there only once a check has found something to do.
+- **Stop** ends the run where it is: what was written stays, the
+  machine's list stays as it was, and the next check finds the rest.
+
+The run goes on a process of its own, so the window answers while a
+package is read over the network; closing the window stops the run
+first.
 
 ## The kernel and the way back
 
@@ -587,8 +614,9 @@ upd.GetUpdateInfo(run, &info); // what it came to, `tried` among it
   happens to it and the bytes written for it, and for each file once it
   is in place - enough for a list and a gauge.
 - **A run belongs to the task that made it**, which it checks for Ctrl-C
-  between files: a program that runs it on a process of its own stops it
-  with `Signal(process, SIGBREAKF_CTRL_C)`.
+  between files, and whose wait on the network Ctrl-C breaks: a program
+  that runs it on a process of its own stops it with
+  `Signal(process, SIGBREAKF_CTRL_C)` - `SYS:System/Update` does.
 - Restarting is the program's: `C:Reboot TRYBOOT` where `info.tried`
   says a partition was written to be tried.
 

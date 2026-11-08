@@ -38,13 +38,13 @@ const _boot = @import("../boot/_boot.zig");
 /// - `RETURN_OK`: nothing to do, or all of it done.
 /// - `RETURN_WARN`: `UPD_Check` found something to do, or the run was
 ///   stopped with Ctrl-C between two files.
-/// - `RETURN_FAIL`: it could not finish, the reason said as a failure - a
-///   stop in the middle of a file read from an address,
-///   no `SYS:System/manifest`, the package or its list not to be read or
-///   not sound, a package for another chip or (without `UPD_Force`)
-///   another board, a file that did not arrive whole, a volume that took
-///   no write; with `UPD_Boot`, the firmware's partition not found or not
-///   mounted.
+/// - `RETURN_FAIL`: it could not finish. Ctrl-C in the middle of a file
+///   read from an address is said as the break it was; anything else is
+///   said as a failure - no `SYS:System/manifest`, the package or its list
+///   not to be read or not sound, a package for another chip or (without
+///   `UPD_Force`) another board, a file that did not arrive whole, a
+///   volume that took no write; with `UPD_Boot`, the firmware's partition
+///   not found or not mounted.
 ///
 /// BEHAVIOR:
 /// The run's counts start again at 0 (GetUpdateInfo reads them). The

@@ -8,6 +8,7 @@
 const sdk = @import("sdk");
 const dos = sdk.dos;
 const http = sdk.http;
+const bsd = sdk.bsdsocket;
 const utility = sdk.utility;
 const shared = @import("../run/_run.zig");
 const Run = shared.Run;
@@ -120,7 +121,7 @@ fn get(run: *Run, url: [*:0]const u8, buffer: ?*shared.Buffer, out: ?*dos.FileHa
         .{ .tag = http.HTTP_UserAgent, .data = @intFromPtr(user_agent) },
         .{},
     }, &err) orelse {
-        _ = shared.fail(run, "%s: %s\n", .{ url, why(err) });
+        if (!broken(run, err)) _ = shared.fail(run, "%s: %s\n", .{ url, why(err) });
         return false;
     };
     defer hb.CloseRequest(request);
@@ -138,7 +139,7 @@ fn get(run: *Run, url: [*:0]const u8, buffer: ?*shared.Buffer, out: ?*dos.FileHa
         const got = hb.ReadRequest(request, run.buffer.ptr, @intCast(run.buffer.len));
         if (got == 0) break;
         if (got < 0) {
-            _ = shared.fail(run, "%s: %s\n", .{ url, why(got) });
+            if (!broken(run, got)) _ = shared.fail(run, "%s: %s\n", .{ url, why(got) });
             return false;
         }
         const piece: usize = @intCast(got);
@@ -158,6 +159,17 @@ fn get(run: *Run, url: [*:0]const u8, buffer: ?*shared.Buffer, out: ?*dos.FileHa
         total += piece;
     }
     if (count) |into| into.* = total;
+    return true;
+}
+
+/// Whether a request that failed with `code` was Ctrl-C breaking the
+/// socket's wait - bsdsocket ends that wait with EINTR, which http.library
+/// hands on as HTTPERR_IO: then it is said as the stop it was.
+fn broken(run: *Run, code: i32) bool {
+    if (code != http.HTTPERR_IO) return false;
+    const sb = run.sb orelse return false;
+    if (sb.Errno() != bsd.EINTR) return false;
+    shared.fault(run, dos.ERROR_BREAK, null, false);
     return true;
 }
 

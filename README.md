@@ -233,7 +233,8 @@ Beside them:
   system put onto a card or an SSD by one command, from the running
   system or from a release package (`C:Install`), and brought up to date
   from a package afterwards, only what differs fetched, the kernel with a
-  way back from one that does not come up (`C:Update`, `C:Reboot`).
+  way back from one that does not come up (`C:Update`,
+  `SYS:System/Update`, `C:Reboot`).
 - **Devices:** timer, serial, console, input from keyboards, mice and
   touch, flash, SD card, NVMe, I2C, RS-485, clipboard; USB hosts on the
   ESP32s' OTG and on xHCI, there up to SuperSpeed (5 Gbit/s), bulk
@@ -261,7 +262,7 @@ Beside them:
   ([locale guide](sdk/docs/guides/locale.md)).
 - **Programs:** in `SYS:Programs` MultiView, Notepad, Sheet, Terminal,
   Player, FontView, Battery, Prefs and Volume; in `SYS:System` the Shell,
-  HDToolBox, Shares, CPULoad, NetLoad and MemMap; in `SYS:Commodities`
+  HDToolBox, Shares, Update, CPULoad, NetLoad and MemMap; in `SYS:Commodities`
   Exchange, which lists the commodities running and makes each active or
   inactive, shows or hides its window, or ends it, and the commodities
   themselves - Blanker, a screen that darkens when nothing happens;
@@ -1047,7 +1048,9 @@ read, which is why an update over a 50 MB package that differs in two
 files fetches 4.7 KB. `CHECK` says what would happen and writes nothing,
 and its return code tells a script whether there is anything to do. The
 system volume is given a snapshot before the first file is written.
-The work is `LIBS:update.library`'s, which a program calls the same way
+`SYS:System/Update` does the same in a window: a check as it opens, a
+row for every path, a gauge while it writes, and Stop. The work is
+`LIBS:update.library`'s, which a program calls the same way
 (`sdk.update`).
 
 **By itself.** `ENVARC:Sys/update.prefs` says where a machine looks for
