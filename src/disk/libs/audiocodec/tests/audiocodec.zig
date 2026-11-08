@@ -455,8 +455,8 @@ test "ACA_Codecs: the kinds whose modules are here, with no stream and with one"
         .{},
     }));
     const every = [_]u32{
-        ac.ACODEC_WAV,  ac.ACODEC_MP3,  ac.ACODEC_FLAC, ac.ACODEC_VORBIS,
-        ac.ACODEC_AAC,  ac.ACODEC_AC3,  ac.ACODEC_EAC3, ac.ACODEC_OPUS,
+        ac.ACODEC_WAV, ac.ACODEC_MP3, ac.ACODEC_FLAC, ac.ACODEC_VORBIS,
+        ac.ACODEC_AAC, ac.ACODEC_AC3, ac.ACODEC_EAC3, ac.ACODEC_OPUS,
         ac.ACODEC_DTS,
     };
     var wanted: u32 = 0;

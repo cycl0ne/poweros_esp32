@@ -88,7 +88,6 @@ pub const ACODEC_FRAME_TEXT_BYTES = 1024;
 /// frame's in stereo.
 pub const ACODEC_MOST_SAMPLES = 1152 * 2;
 
-
 /// The libraries a stream is read and decoded through.
 pub const ACodecLibs = extern struct {
     sys_base: *interface_exec.ExecBase,

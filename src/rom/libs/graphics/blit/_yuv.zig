@@ -759,7 +759,7 @@ pub fn toneFor(picture: *const rtg.RtgYuv, into: *Tone) ?*const Tone {
         else => null,
     };
     // HLG says nothing about the light it was made for; a thousand
-      // candelas is what its curve is drawn for.
+    // candelas is what its curve is drawn for.
     const nits: u32 = if (picture.transfer == rtg.RTGYUV_PQ and picture.peak != 0)
         picture.peak
     else
@@ -970,8 +970,8 @@ test "a matrix, a range, a depth or a layout it does not know is refused" {
 
 test "a picture of ten bits says what the same picture of eight says" {
     const colours = [_][3]u8{
-        .{ 255, 0, 0 },   .{ 0, 255, 0 },   .{ 0, 0, 255 },    .{ 255, 255, 0 },
-        .{ 0, 255, 255 }, .{ 255, 0, 255 }, .{ 200, 100, 50 }, .{ 30, 160, 220 },
+        .{ 255, 0, 0 },   .{ 0, 255, 0 },     .{ 0, 0, 255 },    .{ 255, 255, 0 },
+        .{ 0, 255, 255 }, .{ 255, 0, 255 },   .{ 200, 100, 50 }, .{ 30, 160, 220 },
         .{ 16, 16, 16 },  .{ 235, 235, 235 },
     };
     for ([_]u8{ rtg.RTGYUV_BT601, rtg.RTGYUV_BT709, rtg.RTGYUV_BT2020 }) |matrix| {
@@ -1064,11 +1064,13 @@ fn toneReference(peak_nits: f64, signal: [3]f64, prim: ?[9]f64) [3]u8 {
 test "a film of high dynamic range is mapped into the screen's range, within a step or two of the standard" {
     if (!tone_able) return error.SkipZigTest;
     const colours = [_][3]f64{
-        .{ 0.0, 0.0, 0.0 },    .{ 0.5081, 0.5081, 0.5081 }, // black, and 100 candelas of grey
+        .{ 0.0, 0.0, 0.0 }, .{ 0.5081, 0.5081, 0.5081 }, // black, and 100 candelas of grey
         .{ 0.5807, 0.5807, 0.5807 }, // the reference white, 203 candelas
         .{ 0.7518, 0.7518, 0.7518 }, // 1000 candelas: a highlight
-        .{ 0.65, 0.20, 0.10 },  .{ 0.10, 0.62, 0.33 },
-        .{ 0.22, 0.30, 0.71 },  .{ 0.90, 0.80, 0.40 },
+        .{ 0.65, 0.20, 0.10 },
+        .{ 0.10, 0.62, 0.33 },
+        .{ 0.22, 0.30, 0.71 },
+        .{ 0.90, 0.80, 0.40 },
     };
     const kr = 0.2627;
     const kb = 0.0593;

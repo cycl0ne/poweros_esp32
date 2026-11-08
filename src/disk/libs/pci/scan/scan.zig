@@ -277,8 +277,8 @@ fn Walker(comptime Space: type, comptime Delay: type) type {
             };
             const info = &node.info;
             self.say("%s: %d.%d.%d is %lx:%lx, class %lx\n", .{
-                pci.PCINAME,                  @as(u32, at.bus),             @as(u32, at.device),
-                @as(u32, at.function),        @as(i64, info.vendor_id),     @as(i64, info.device_id),
+                pci.PCINAME,               @as(u32, at.bus),         @as(u32, at.device),
+                @as(u32, at.function),     @as(i64, info.vendor_id), @as(i64, info.device_id),
                 @as(i64, info.class_code),
             });
             if (info.interrupt_pin != 0) {
@@ -448,9 +448,9 @@ fn Walker(comptime Space: type, comptime Delay: type) type {
         fn sayBar(self: *Self, at: Address, which: u32, bar: pci.PCIBar) void {
             if (bar.address == 0 and bar.size == 0) return;
             self.say("%s: %d.%d.%d: BAR %d at 0x%lx, 0x%lx byte(s)%s\n", .{
-                pci.PCINAME,            @as(u32, at.bus), @as(u32, at.device),
-                @as(u32, at.function),  which,            bar.address,
-                @as(u64, bar.size),     @as([*:0]const u8, if (bar.flags & pci.PCIBAR_IO != 0) ", in the port space" else ""),
+                pci.PCINAME,           @as(u32, at.bus),                                                                      @as(u32, at.device),
+                @as(u32, at.function), which,                                                                                 bar.address,
+                @as(u64, bar.size),    @as([*:0]const u8, if (bar.flags & pci.PCIBAR_IO != 0) ", in the port space" else ""),
             });
         }
 
@@ -533,7 +533,7 @@ fn Walker(comptime Space: type, comptime Delay: type) type {
             node.subordinate = subordinate;
             if (subordinate > self.result.last_bus) self.result.last_bus = subordinate;
             self.say("%s: %d.%d.%d: it forwards buses %d to %d, as the firmware left it\n", .{
-                pci.PCINAME,          @as(u32, at.bus), @as(u32, at.device),
+                pci.PCINAME,           @as(u32, at.bus),    @as(u32, at.device),
                 @as(u32, at.function), @as(u32, secondary), @as(u32, subordinate),
             });
             if (secondary <= at.bus or self.depth == max_depth) return;

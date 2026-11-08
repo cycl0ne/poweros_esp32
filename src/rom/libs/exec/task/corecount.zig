@@ -70,4 +70,3 @@ const ExecBase = @import("../exec.zig").ExecBase;
 pub fn CoreCount(base: *ExecBase) u32 {
     return base.cores_running;
 }
-

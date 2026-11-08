@@ -215,7 +215,7 @@ fn computeVertices(groups: *const shader.Groups) callconv(.c) void {
     const out = groups.resources.storage(Vertex, 0, 0) orelse return;
     const along = groups.resources.constants([2]f32).*;
     const number = groups.group[0];
-    for (geometry[far_at + number * 3..][0..3], out[number * 3..][0..3]) |given, *into| {
+    for (geometry[far_at + number * 3 ..][0..3], out[number * 3 ..][0..3]) |given, *into| {
         into.* = given;
         into.p[0] += along[0];
         into.p[1] += along[1];

@@ -61,9 +61,9 @@ fn texturedVertex(vertices: *const shader.Vertices) callconv(.c) void {
         const lit = lightOn(constants, vertices.input(@intCast(k), 1));
         const clip = shader.transform(&constants.transform, .{ p[0], p[1], p[2] });
         vertices.output(@intCast(k))[0..10].* = .{
-            clip[0],                                  clip[1],                                  clip[2],                                  clip[3],
-            uv[0],                                    uv[1],
-            shader.channel(constants.color[0] * lit), shader.channel(constants.color[1] * lit), shader.channel(constants.color[2] * lit), shader.channel(1),
+            clip[0],                                  clip[1],           clip[2],                                  clip[3],
+            uv[0],                                    uv[1],             shader.channel(constants.color[0] * lit), shader.channel(constants.color[1] * lit),
+            shader.channel(constants.color[2] * lit), shader.channel(1),
         };
     }
 }

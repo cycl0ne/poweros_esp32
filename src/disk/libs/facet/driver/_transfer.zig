@@ -454,26 +454,26 @@ pub fn blitImage(command: *const _command.BlitImage) void {
             const from_layer = from_layers.first + @as(u32, @intCast(slice * from_layers.count / to_layers.count));
             var y = top;
             while (y < bottom) : (y += 1) {
-            const v = along(y, to_y, from_y);
-            var x = left;
-            while (x < right) : (x += 1) {
-                const u = along(x, to_x, from_x);
-                const color = if (command.filter == .linear) linear: {
-                    const low_u = u - 0.5;
-                    const low_v = v - 0.5;
-                    const whole_u = @floor(low_u);
-                    const whole_v = @floor(low_v);
-                    const first_u: i32 = @intFromFloat(whole_u);
-                    const first_v: i32 = @intFromFloat(whole_v);
-                    const across = low_u - whole_u;
-                    const upper = mixed(colorAt(source, from_level, from_layer, held(first_u, from_size[0]), held(first_v, from_size[1])), colorAt(source, from_level, from_layer, held(first_u + 1, from_size[0]), held(first_v, from_size[1])), across);
-                    const lower = mixed(colorAt(source, from_level, from_layer, held(first_u, from_size[0]), held(first_v + 1, from_size[1])), colorAt(source, from_level, from_layer, held(first_u + 1, from_size[0]), held(first_v + 1, from_size[1])), across);
-                    break :linear mixed(upper, lower, low_v - whole_v);
-                } else colorAt(source, from_level, from_layer, held(@intFromFloat(@floor(u)), from_size[0]), held(@intFromFloat(@floor(v)), from_size[1]));
-                var texel: [4]u8 = undefined;
-                _image.bytesOfColor(destination.format, color, &texel);
-                _image.writeTexel(destination, to_level, to_layer, @intCast(x), @intCast(y), &texel);
-            }
+                const v = along(y, to_y, from_y);
+                var x = left;
+                while (x < right) : (x += 1) {
+                    const u = along(x, to_x, from_x);
+                    const color = if (command.filter == .linear) linear: {
+                        const low_u = u - 0.5;
+                        const low_v = v - 0.5;
+                        const whole_u = @floor(low_u);
+                        const whole_v = @floor(low_v);
+                        const first_u: i32 = @intFromFloat(whole_u);
+                        const first_v: i32 = @intFromFloat(whole_v);
+                        const across = low_u - whole_u;
+                        const upper = mixed(colorAt(source, from_level, from_layer, held(first_u, from_size[0]), held(first_v, from_size[1])), colorAt(source, from_level, from_layer, held(first_u + 1, from_size[0]), held(first_v, from_size[1])), across);
+                        const lower = mixed(colorAt(source, from_level, from_layer, held(first_u, from_size[0]), held(first_v + 1, from_size[1])), colorAt(source, from_level, from_layer, held(first_u + 1, from_size[0]), held(first_v + 1, from_size[1])), across);
+                        break :linear mixed(upper, lower, low_v - whole_v);
+                    } else colorAt(source, from_level, from_layer, held(@intFromFloat(@floor(u)), from_size[0]), held(@intFromFloat(@floor(v)), from_size[1]));
+                    var texel: [4]u8 = undefined;
+                    _image.bytesOfColor(destination.format, color, &texel);
+                    _image.writeTexel(destination, to_level, to_layer, @intCast(x), @intCast(y), &texel);
+                }
             }
         }
     }
@@ -482,7 +482,7 @@ pub fn blitImage(command: *const _command.BlitImage) void {
 test "scaled, turned round and rounded as it should" {
     const testing = std.testing;
     try testing.expectEqual(@as(f32, 2), along(0, .{ 0, 4 }, .{ 0, 16 }));
-    try testing.expectEqual(@as(f32, 14), along(0, .{ 4, 0 }, .{ 0, 16 }) );
+    try testing.expectEqual(@as(f32, 14), along(0, .{ 4, 0 }, .{ 0, 16 }));
     try testing.expectEqual(@as(u32, 0x8080_8080), mixed(0, 0xFFFF_FFFF, 0.5));
     try testing.expectEqual(@as(u32, 0), held(-3, 8));
     try testing.expectEqual(@as(u32, 7), held(30, 8));

@@ -275,8 +275,12 @@ fn talkTo(base: *CywBase) host_file.Error!void {
         base.station = address;
         exec.kprintf(sys, "%s: station address %02x:%02x:%02x:%02x:%02x:%02x\n", .{
             @as([*:0]const u8, DEVICE_NAME),
-            @as(u32, address[0]), @as(u32, address[1]), @as(u32, address[2]),
-            @as(u32, address[3]), @as(u32, address[4]), @as(u32, address[5]),
+            @as(u32, address[0]),
+            @as(u32, address[1]),
+            @as(u32, address[2]),
+            @as(u32, address[3]),
+            @as(u32, address[4]),
+            @as(u32, address[5]),
         });
     } else sayStatus(sys, "cur_etheraddr", known);
     if (boot.loadClm(base)) say(sys, "the CLM blob is loaded");

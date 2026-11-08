@@ -393,9 +393,9 @@ fn placeOf(aspect: f32, m: [9]f32, across: f32, down: f32, x: f32, y: f32) [16]f
     const unit_y = if (narrow) aspect / middle_x else 1.0 / @as(f32, middle_y);
     const unit_x = unit_y / aspect;
     return .{
-        unit_x * across * m[0], unit_y * down * m[3], 0, 0,
-        unit_x * across * m[1], unit_y * down * m[4], 0, 0,
-        unit_x * across * m[2], unit_y * down * m[5], 0, 0,
+        unit_x * across * m[0],  unit_y * down * m[3],    0,   0,
+        unit_x * across * m[1],  unit_y * down * m[4],    0,   0,
+        unit_x * across * m[2],  unit_y * down * m[5],    0,   0,
         unit_x * (x - middle_x), unit_y * (y - middle_y), 0.5, 1,
     };
 }
@@ -902,7 +902,7 @@ fn writePicture(dl: *DosBase, pixels: [*]const u8, pitch: usize, format: facet.F
     for (0..picture_height) |y| {
         const from = pixels + y * pitch;
         for (0..picture_width) |x| {
-            const out = row[x * 3..][0..3];
+            const out = row[x * 3 ..][0..3];
             switch (format) {
                 .r5g6b5_unorm_pack16 => {
                     const pixel: u32 = @as(*align(1) const u16, @ptrCast(from + x * 2)).*;
@@ -911,7 +911,7 @@ fn writePicture(dl: *DosBase, pixels: [*]const u8, pitch: usize, format: facet.F
                     const b = pixel & 0x1F;
                     out.* = .{ @intCast(r << 3 | r >> 2), @intCast(g << 2 | g >> 4), @intCast(b << 3 | b >> 2) };
                 },
-                .r8g8b8a8_unorm => out.* = from[x * 4..][0..3].*,
+                .r8g8b8a8_unorm => out.* = from[x * 4 ..][0..3].*,
                 else => out.* = .{ from[x * 4 + 2], from[x * 4 + 1], from[x * 4] },
             }
         }

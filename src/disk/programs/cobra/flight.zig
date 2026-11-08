@@ -142,9 +142,9 @@ pub fn momentAt(t: f32) Moment {
         .ship = ship,
         .eye = eye,
         .view = .{
-            right[0],        top[0],        ahead[0],        0,
-            right[1],        top[1],        ahead[1],        0,
-            right[2],        top[2],        ahead[2],        0,
+            right[0],         top[0],         ahead[0],         0,
+            right[1],         top[1],         ahead[1],         0,
+            right[2],         top[2],         ahead[2],         0,
             -dot(right, eye), -dot(top, eye), -dot(ahead, eye), 1,
         },
         .sky = .{

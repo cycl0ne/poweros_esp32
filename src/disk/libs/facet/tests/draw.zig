@@ -972,11 +972,13 @@ test "points and lines: where they should be, and as wide; a triangle's edges an
         .{ c(20), c(30), 0.5 },              .{ c(40), c(30), 0.5 },
         .{ c(40), c(50), 0.5 },
         // Points.
-        .{ c(5), c(5), 0.5 },                .{ c(60), c(60), 0.5 },
+                     .{ c(5), c(5), 0.5 },
+        .{ c(60), c(60), 0.5 },
         // A triangle one way round, and the other.
-        .{ -0.5, -0.5, 0.5 },                .{ 0.5, -0.5, 0.5 },
-        .{ -0.5, 0.5, 0.5 },                 .{ -0.5, -0.5, 0.5 },
-        .{ -0.5, 0.5, 0.5 },                 .{ 0.5, -0.5, 0.5 },
+                     .{ -0.5, -0.5, 0.5 },
+        .{ 0.5, -0.5, 0.5 },                 .{ -0.5, 0.5, 0.5 },
+        .{ -0.5, -0.5, 0.5 },                .{ -0.5, 0.5, 0.5 },
+        .{ 0.5, -0.5, 0.5 },
     };
     const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER);
     @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
@@ -1197,7 +1199,7 @@ test "the stencil: marked, then drawn only where marked; a face's own test; its 
     defer fb.DestroyPipelineLayout(device, layout);
     const vertices = [_][3]f32{
         // All of the picture.
-        .{ -1, -1, 0.5 }, .{ 1, -1, 0.5 }, .{ -1, 1, 0.5 }, .{ -1, 1, 0.5 }, .{ 1, -1, 0.5 }, .{ 1, 1, 0.5 },
+        .{ -1, -1, 0.5 },  .{ 1, -1, 0.5 },  .{ -1, 1, 0.5 },  .{ -1, 1, 0.5 },  .{ 1, -1, 0.5 },  .{ 1, 1, 0.5 },
         // The left half, one way round, nearer; and the right, the other.
         .{ -1, -1, 0.25 }, .{ 0, -1, 0.25 }, .{ -1, 1, 0.25 }, .{ -1, 1, 0.25 }, .{ 0, -1, 0.25 }, .{ 0, 1, 0.25 },
         .{ 0, -1, 0.25 },  .{ 0, 1, 0.25 },  .{ 1, -1, 0.25 }, .{ 1, -1, 0.25 }, .{ 0, 1, 0.25 },  .{ 1, 1, 0.25 },
@@ -4344,10 +4346,10 @@ test "a stencil attachment that outlives its pass: stored as the tiles are drawn
     defer fb.DestroyPipelineLayout(device, layout);
     // All of the picture, then its left half.
     const vertices = [_][3]f32{
-        .{ -1, -1, 0.5 }, .{ 1, -1, 0.5 },  .{ -1, 1, 0.5 },
-        .{ -1, 1, 0.5 },  .{ 1, -1, 0.5 },  .{ 1, 1, 0.5 },
-        .{ -1, -1, 0.5 }, .{ 0, -1, 0.5 },  .{ -1, 1, 0.5 },
-        .{ -1, 1, 0.5 },  .{ 0, -1, 0.5 },  .{ 0, 1, 0.5 },
+        .{ -1, -1, 0.5 }, .{ 1, -1, 0.5 }, .{ -1, 1, 0.5 },
+        .{ -1, 1, 0.5 },  .{ 1, -1, 0.5 }, .{ 1, 1, 0.5 },
+        .{ -1, -1, 0.5 }, .{ 0, -1, 0.5 }, .{ -1, 1, 0.5 },
+        .{ -1, 1, 0.5 },  .{ 0, -1, 0.5 }, .{ 0, 1, 0.5 },
     };
     const vertex_buffer, const vertex_bytes = try bench.buffer(@sizeOf(@TypeOf(vertices)), facet.BUFFER_USAGE_VERTEX_BUFFER);
     @memcpy(vertex_bytes[0..@sizeOf(@TypeOf(vertices))], std.mem.asBytes(&vertices));
@@ -4500,7 +4502,6 @@ test "a depth kept wants memory behind it: a transient image is refused the fram
     const commands = try bench.record();
     fb.CmdClearDepthStencilImage(commands, transient_image, 0, &value, 1, @ptrCast(&range));
     try bench.submit();
-
 }
 
 test "a device that keeps no depth, as the V3D keeps none: the pass that asks for one is refused" {
@@ -7688,7 +7689,7 @@ test "textures of layers: arrays, cube maps, 3D, copied a layer at a time; compr
     fb.CmdCopyImage(commands, array_image, .general, into_image, .general, 1, @ptrCast(&layer_copy));
     fb.CmdCopyImageToBuffer(commands, array_image, .general, read_buffer, 1, @ptrCast(&read_region));
     try bench.submit();
-    try testing.expectEqualSlices(u8, &LayerScene.texel(1, 8, 0), read_back[8 * 4..][0..4]);
+    try testing.expectEqualSlices(u8, &LayerScene.texel(1, 8, 0), read_back[8 * 4 ..][0..4]);
     try testing.expectEqualSlices(u8, &LayerScene.texel(2, 0, 8), read_back[stack_bytes + 8 * 16 * 4 ..][0..4]);
 
     var set_layout: ?*facet.DescriptorSetLayout = null;

@@ -265,7 +265,6 @@ const Flat = struct {
     const code = facet.shader.Code{ .entry_count = entries.len, .entries = &entries };
 };
 
-
 /// The colour the vertices carry, which is one of the fixed forms every
 /// device draws (`shader.FixedKind.color`): the vertices are three floats
 /// at location 0 and the colour is white at every one of them, so what a
@@ -300,10 +299,10 @@ const Painted = struct {
             const p = vertices.input(@intCast(k), 0);
             const rgb = vertices.input(@intCast(k), 1);
             vertices.output(@intCast(k))[0..8].* = .{
-                p[0],                           p[1],
-                p[2],                           1,
-                facet.shader.channel(rgb[0]),   facet.shader.channel(rgb[1]),
-                facet.shader.channel(rgb[2]),   full,
+                p[0],                         p[1],
+                p[2],                         1,
+                facet.shader.channel(rgb[0]), facet.shader.channel(rgb[1]),
+                facet.shader.channel(rgb[2]), full,
             };
         }
     }

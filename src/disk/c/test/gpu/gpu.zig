@@ -324,9 +324,9 @@ fn display(sys: *ExecBase, dl: *DosBase, ab: *AMDGPUBase, info: amdgpu.GPUInfo, 
     }
     const engine = Display{ .registers = @intCast(info.registers), .segment = block.addresses[2], .pipe = pipe, .fetcher = fetcher };
     _ = Printf(dl, "Display engine %u.%u.%u: pipe %u, frame %u, interrupts %x; fetcher %u reads 0x%lx, told 0x%lx, flip control %x\n", .{
-        @as(u32, block.major),                         @as(u32, block.minor),                      @as(u32, block.revision),
-        pipe,                                          engine.otg(dcn.OTG_STATUS_FRAME_COUNT).*,   engine.otg(dcn.OTG_GLOBAL_SYNC_STATUS).*,
-        fetcher,                                       engine.reading(),                           engine.told(),
+        @as(u32, block.major),                  @as(u32, block.minor),                    @as(u32, block.revision),
+        pipe,                                   engine.otg(dcn.OTG_STATUS_FRAME_COUNT).*, engine.otg(dcn.OTG_GLOBAL_SYNC_STATUS).*,
+        fetcher,                                engine.reading(),                         engine.told(),
         engine.hubp(dcn.DCSURF_FLIP_CONTROL).*,
     });
 
@@ -413,9 +413,9 @@ fn flipTo(frames: *Frames, tb: *TimerBase, address: u64) Flip {
 fn sayFlip(dl: *DosBase, what: [*:0]const u8, address: u64, flip: Flip) bool {
     const taken = !flip.pending and flip.reading == address;
     _ = Printf(dl, "%s 0x%lx: %s after %u frames, %lu us; the fetcher reads 0x%lx\n", .{
-        what,                                                              address,
+        what,                                                    address,
         if (taken) @as([*:0]const u8, "taken") else "NOT taken", flip.frames,
-        flip.micros,                                                       flip.reading,
+        flip.micros,                                             flip.reading,
     });
     _ = dl.Flush(dl.Output());
     return taken;

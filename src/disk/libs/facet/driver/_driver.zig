@@ -130,12 +130,12 @@ pub const stamp: u64 = blk: {
     sum = mixed(sum, facet_version.LIBRARY_VERSION);
     sum = mixed(sum, facet_version.LIBRARY_REVISION);
     const shared = [_]type{
-        Ops,                   TextureMemory,            PhysicalDevice,          _instance.Instance,
-        FacetBase,             Device,                   DeviceMemory,            Queue,
-        Pipeline,              _pipeline.Tessellated,    _image.Image,            _image.ImageView,
-        _buffer.Buffer,        _render.Part,             _render.Subpass,         _render.RenderPass,
-        _render.Target,        _render.Framebuffer,      _descriptor.Set,         CommandBuffer,
-        _stream.Stream,        _stream.Head,             _vertices.Bound,
+        Ops,            TextureMemory,         PhysicalDevice,  _instance.Instance,
+        FacetBase,      Device,                DeviceMemory,    Queue,
+        Pipeline,       _pipeline.Tessellated, _image.Image,    _image.ImageView,
+        _buffer.Buffer, _render.Part,          _render.Subpass, _render.RenderPass,
+        _render.Target, _render.Framebuffer,   _descriptor.Set, CommandBuffer,
+        _stream.Stream, _stream.Head,          _vertices.Bound,
     };
     for (shared) |T| sum = shapeOf(sum, T);
     // Every command as it is recorded.

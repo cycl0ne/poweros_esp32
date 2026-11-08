@@ -569,4 +569,3 @@ pub fn main(sys: *ExecBase) callconv(.c) void {
     }
     sys.ReleaseSemaphore(&own.alive);
 }
-

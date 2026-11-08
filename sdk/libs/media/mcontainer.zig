@@ -76,7 +76,6 @@ pub const MCONTAINER_MOST_TRACKS = 16;
 pub const MCONTAINER_NAME_BYTES = 128;
 pub const MCONTAINER_COMMENT_BYTES = 256;
 
-
 /// The libraries a file is read through.
 pub const MContainerLibs = extern struct {
     sys_base: *interface_exec.ExecBase,

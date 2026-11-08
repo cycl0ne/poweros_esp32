@@ -62,8 +62,8 @@ pub fn findAll(base: *NvmeBase) void {
         if (base.controller_count == _nvme.max_controllers) break;
         const number: u8 = @intCast(base.controller_count);
         exec.klog(sys, exec.LOG_DEBUG, "%s: controller %ld: %04lx:%04lx at %ld.%ld.%ld\n", .{
-            _nvme.DEVICE_NAME,                 @as(i64, number),           @as(i64, function.vendor_id),
-            @as(i64, function.device_id),      @as(i64, function.bus),     @as(i64, function.device),
+            _nvme.DEVICE_NAME,            @as(i64, number),       @as(i64, function.vendor_id),
+            @as(i64, function.device_id), @as(i64, function.bus), @as(i64, function.device),
             @as(i64, function.function),
         });
         if (pb.ClaimPCIDevice(function, _nvme.DEVICE_NAME)) |holder| {

@@ -388,7 +388,7 @@ pub fn run(sys: *ExecBase, pipeline: *const Pipeline, resources: *const shader.R
         levels[number] = .{};
         // A patch with a vertex that is not there is left out.
         var whole_patch = true;
-        for (corners[number * tessellated.points..][0..tessellated.points]) |corner| {
+        for (corners[number * tessellated.points ..][0..tessellated.points]) |corner| {
             if (corner == _vertices.no_corner) whole_patch = false;
         }
         if (whole_patch) {
@@ -451,7 +451,7 @@ fn patchOf(tessellated: anytype, points: [*]const f32, point_stride: u32, corner
     return .{
         .points = points,
         .point_stride = point_stride,
-        .corners = corners[number * size..].ptr,
+        .corners = corners[number * size ..].ptr,
         .count = size,
         .number = @intCast(number),
         .instance = instance,
