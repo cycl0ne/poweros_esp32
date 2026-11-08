@@ -3,7 +3,9 @@
 //! device after them, a CM5's V3D, and each pair compared pixel by pixel:
 //! the cores are the reference. A case is a command buffer's worth - a kind
 //! of draw, a piece of a pipeline's state, a render area, a format - in
-//! pictures the program reads back.
+//! pictures the program reads back. The cases called "shipped" draw with
+//! fragment shaders whose SPIR-V the module ships beside the functions:
+//! the cores run the functions, and the V3D compiles the words.
 //!
 //!   FacetBoth SIZE/K,ONLY/K
 //!
@@ -23,13 +25,14 @@ const dos = sdk.dos;
 const exec = sdk.exec;
 const facet = sdk.facet;
 const shader = facet.shader;
+const ir = facet.ir;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.8 (31.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.9 (08.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -153,6 +156,44 @@ fn modulateVertex(vertices: *const shader.Vertices) callconv(.c) void {
     }
 }
 
+/// The place alone, for a fragment shader that reads no varyings.
+fn placeVertex(vertices: *const shader.Vertices) callconv(.c) void {
+    for (0..vertices.count) |k| vertices.output(@intCast(k))[0..4].* = place(vertices, k);
+}
+
+/// The colour as it is, 0 to 1, as a fragment shader the program ships
+/// the SPIR-V of reads it: its function scales it where it writes a pixel
+/// on the cores, and the V3D takes it as it is (1.76). Not
+/// `shader.channel`, which a fixed form's vertex function calls.
+fn asItIsVertex(vertices: *const shader.Vertices) callconv(.c) void {
+    for (0..vertices.count) |k| {
+        const p = place(vertices, k);
+        const c = vertices.input(@intCast(k), 1);
+        vertices.output(@intCast(k))[0..8].* = .{ p[0], p[1], p[2], p[3], c[0], c[1], c[2], c[3] };
+    }
+}
+
+/// The colour as it is and a fifth float, the light, which falls off
+/// along the texture's first coordinate.
+fn dimmedVertex(vertices: *const shader.Vertices) callconv(.c) void {
+    for (0..vertices.count) |k| {
+        const p = place(vertices, k);
+        const c = vertices.input(@intCast(k), 1);
+        const uv = vertices.input(@intCast(k), 2);
+        vertices.output(@intCast(k))[0..9].* = .{ p[0], p[1], p[2], p[3], c[0], c[1], c[2], c[3], 1 - 0.5 * uv[0] };
+    }
+}
+
+/// `modulateVertex`'s coordinate and colour, the colour as it is.
+fn modulateAsItIsVertex(vertices: *const shader.Vertices) callconv(.c) void {
+    for (0..vertices.count) |k| {
+        const p = place(vertices, k);
+        const c = vertices.input(@intCast(k), 1);
+        const uv = vertices.input(@intCast(k), 2);
+        vertices.output(@intCast(k))[0..10].* = .{ p[0], p[1], p[2], p[3], uv[0], uv[1], c[0], c[1], c[2], c[3] };
+    }
+}
+
 /// The quad's corner as a place at the middle of the picture, `scale` of its
 /// size, without the instance's move: the instance here is a layer.
 fn plain(vertices: *const shader.Vertices, k: usize, scale: f32) [4]f32 {
@@ -215,7 +256,7 @@ fn computeVertices(groups: *const shader.Groups) callconv(.c) void {
     const out = groups.resources.storage(Vertex, 0, 0) orelse return;
     const along = groups.resources.constants([2]f32).*;
     const number = groups.group[0];
-    for (geometry[far_at + number * 3..][0..3], out[number * 3..][0..3]) |given, *into| {
+    for (geometry[far_at + number * 3 ..][0..3], out[number * 3 ..][0..3]) |given, *into| {
         into.* = given;
         into.p[0] += along[0];
         into.p[1] += along[1];
@@ -267,7 +308,59 @@ fn levelsOf(comptime outer: [4]f32, comptime inner: [2]f32) shader.ControlFn {
     }.control;
 }
 
-const entries = [_]shader.Entry{
+// Fragment shaders the module ships the SPIR-V of: the cores run each
+// graph's function, the V3D compiles its words (since 1.76, through Mesa's
+// back end since 1.137). V3DTest's GENERATED and MESA draw these five as
+// well, from the V3D's own objects; these go through the library.
+const Shipped = struct {
+    const Smooth = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            b.color(b.input(0, .f32x4));
+        }
+    });
+    const Flat = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            b.color(b.constant(.{ 0.25, 0.5, 0.75, 1 }));
+        }
+    });
+    const Dimmed = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            b.color(b.scale(b.input(0, .f32x4), b.input(1, .f32x1)));
+        }
+    });
+    /// Set 0, binding 0: a combined image sampler (`Side.sampler_set`).
+    const Textured = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            b.color(b.sample(0, 0, b.input(0, .f32x2)));
+        }
+    });
+    const Modulated = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            b.color(b.mul(b.sample(0, 0, b.input(0, .f32x2)), b.input(1, .f32x4)));
+        }
+    });
+};
+
+/// The entries that ship words, after all the others, and the words of
+/// each in the same order: `shader.Module.spirv` is index for index.
+const shipped_entries = [_]shader.Entry{
+    shader.vertex("place", &placeVertex, 0),
+    shader.vertex("as it is", &asItIsVertex, 4),
+    shader.vertex("dimmed", &dimmedVertex, 5),
+    shader.vertex("modulate as it is", &modulateAsItIsVertex, 6),
+    Shipped.Smooth.entry("shipped smooth"),
+    Shipped.Flat.entry("shipped flat"),
+    Shipped.Dimmed.entry("shipped dimmed"),
+    Shipped.Textured.entry("shipped texture"),
+    Shipped.Modulated.entry("shipped modulated"),
+};
+const shipped_words = [_]shader.Spirv{
+    .{},                     .{},                .{},                  .{},
+    Shipped.Smooth.spirv,    Shipped.Flat.spirv, Shipped.Dimmed.spirv, Shipped.Textured.spirv,
+    Shipped.Modulated.spirv,
+};
+
+const plain_entries = [_]shader.Entry{
     shader.compute("vertices", &computeVertices),
     shader.compute("numbers", &computeNumbers),
     shader.control("even", levelsOf(.{ 4, 4, 4, 4 }, .{ 4, 4 }), 0),
@@ -297,7 +390,9 @@ const entries = [_]shader.Entry{
     shader.fixedFragment("clamp", .{ .kind = .texture, .sampling = .{ .filter = .bilinear, .address = .clamp } }),
     shader.fixedFragment("modulate", .{ .kind = .texture_color, .sampling = .{ .filter = .nearest } }),
 };
-const code = shader.Code{ .entry_count = entries.len, .entries = &entries };
+const entries = plain_entries ++ shipped_entries;
+const words = [_]shader.Spirv{.{}} ** plain_entries.len ++ shipped_words;
+const code = shader.Module{ .entry_count = entries.len, .entries = &entries, .spirv = &words, .spirv_count = words.len };
 
 const texture_side: u32 = 64;
 const picture_usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_TRANSFER_SRC | facet.IMAGE_USAGE_TRANSFER_DST;
@@ -485,6 +580,8 @@ const Options = struct {
     target: Target = .bgra,
     depth: bool = true,
     load: bool = false,
+    /// In place of `Side.layout`, whose set 0 is a sampled image.
+    layout: ?*facet.PipelineLayout = null,
 };
 
 /// What a pass of a case is.
@@ -543,6 +640,13 @@ const Side = struct {
     sets: [formats.len]?*facet.DescriptorSet = @splat(null),
     layout: ?*facet.PipelineLayout = null,
     module: ?*facet.ShaderModule = null,
+    /// What a shipped shader that samples reads: the first texture
+    /// through a sampler of its own, as a combined image sampler at set
+    /// 0, binding 0.
+    sampler: ?*facet.Sampler = null,
+    sampler_set_layout: ?*facet.DescriptorSetLayout = null,
+    sampler_layout: ?*facet.PipelineLayout = null,
+    sampler_set: ?*facet.DescriptorSet = null,
     command_pool: ?*facet.CommandPool = null,
     commands: ?*facet.CommandBuffer = null,
     fence: ?*facet.Fence = null,
@@ -633,7 +737,7 @@ const Side = struct {
 
         const binding = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .sampled_image, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
         try expect(fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&binding) }, &side.set_layout), error.Refused);
-        try expect(fb.CreateDescriptorPool(device, &.{ .max_sets = formats.len + 1 + layered_count }, &side.descriptor_pool), error.Refused);
+        try expect(fb.CreateDescriptorPool(device, &.{ .max_sets = formats.len + 2 + layered_count }, &side.descriptor_pool), error.Refused);
         const layouts: [formats.len]?*facet.DescriptorSetLayout = @splat(side.set_layout);
         try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = formats.len, .set_layouts = @ptrCast(&layouts) }, &side.sets), error.Refused);
         for (side.sets, side.texture_views) |set, texture_view| {
@@ -641,7 +745,23 @@ const Side = struct {
             const write = facet.WriteDescriptorSet{ .dst_set = set.?, .dst_binding = 0, .descriptor_type = .sampled_image, .image_info = @ptrCast(&image_info) };
             fb.UpdateDescriptorSets(device, 1, @ptrCast(&write), 0, null);
         }
-        try expect(fb.CreateShaderModule(device, &.{ .code = &code }, &side.module), error.Refused);
+        const combined = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .combined_image_sampler, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
+        try expect(fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&combined) }, &side.sampler_set_layout), error.Refused);
+        try expect(fb.CreatePipelineLayout(device, &.{ .set_layout_count = 1, .set_layouts = @ptrCast(&side.sampler_set_layout) }, &side.sampler_layout), error.Refused);
+        // The texture's own levels: the V3D samples through no sampler
+        // that holds them to fewer (`texture.samplingOf`), and draws the
+        // missing colour instead.
+        try expect(fb.CreateSampler(device, &.{ .mag_filter = .nearest, .min_filter = .nearest, .max_lod = facet.texture.lod_unclamped }, &side.sampler), error.Refused);
+        var sampled_sets: [1]?*facet.DescriptorSet = undefined;
+        try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = 1, .set_layouts = @ptrCast(&side.sampler_set_layout) }, &sampled_sets), error.Refused);
+        side.sampler_set = sampled_sets[0];
+        const sampled_info = facet.DescriptorImageInfo{ .sampler = side.sampler, .image_view = side.texture_views[0] };
+        const sampled_write = facet.WriteDescriptorSet{ .dst_set = side.sampler_set.?, .dst_binding = 0, .descriptor_type = .combined_image_sampler, .image_info = @ptrCast(&sampled_info) };
+        fb.UpdateDescriptorSets(device, 1, @ptrCast(&sampled_write), 0, null);
+        // The module ships the SPIR-V of the shaders above beside the
+        // functions: the flag says so, and `code_size` that the program's
+        // memory is a `shader.Module` wide.
+        try expect(fb.CreateShaderModule(device, &.{ .flags = facet.SHADER_MODULE_CREATE_SPIRV, .code_size = @sizeOf(shader.Module), .code = &code }, &side.module), error.Refused);
         try expect(fb.CreatePipelineLayout(device, &.{ .set_layout_count = 1, .set_layouts = @ptrCast(&side.set_layout) }, &side.layout), error.Refused);
         try expect(fb.CreateCommandPool(device, &.{ .flags = facet.COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER }, &side.command_pool), error.Refused);
         var commands: [1]?*facet.CommandBuffer = undefined;
@@ -903,9 +1023,12 @@ const Side = struct {
         fb.DestroyRenderPass(device, side.two_colors);
         fb.DestroyCommandPool(device, side.command_pool);
         fb.DestroyPipelineLayout(device, side.layout);
+        fb.DestroyPipelineLayout(device, side.sampler_layout);
         fb.DestroyShaderModule(device, side.module);
         fb.DestroyDescriptorPool(device, side.descriptor_pool);
         fb.DestroyDescriptorSetLayout(device, side.set_layout);
+        fb.DestroyDescriptorSetLayout(device, side.sampler_set_layout);
+        fb.DestroySampler(device, side.sampler);
         for (&side.framebuffers) |*pair| for (pair) |each| fb.DestroyFramebuffer(device, each);
         for (side.stencil_framebuffers) |each| fb.DestroyFramebuffer(device, each);
         for (side.stencil_passes) |each| fb.DestroyRenderPass(device, each);
@@ -1048,7 +1171,7 @@ const Side = struct {
             .depth_stencil_state = &depth,
             .color_blend_state = &blend,
             .dynamic_state = &dynamic,
-            .layout = side.layout.?,
+            .layout = options.layout orelse side.layout.?,
             .render_pass = options.pass orelse if (options.stencil != .none) side.stencil_passes[@intFromEnum(options.stencil) - 1].? else side.passes[@intFromEnum(options.target)][@intFromBool(options.depth)][@intFromBool(options.load)].?,
             .subpass = options.subpass,
         };
@@ -1071,6 +1194,11 @@ const Side = struct {
 
     fn texture(side: *Side, format: usize) void {
         side.fb.CmdBindDescriptorSets(side.commands.?, .graphics, side.layout.?, 0, 1, @ptrCast(&side.sets[format]), 0, null);
+    }
+
+    /// The combined image sampler a shipped shader samples through.
+    fn sampled(side: *Side) void {
+        side.fb.CmdBindDescriptorSets(side.commands.?, .graphics, side.sampler_layout.?, 0, 1, @ptrCast(&side.sampler_set), 0, null);
     }
 };
 
@@ -1744,6 +1872,20 @@ const Cases = struct {
         side.draw(quad_at, 6);
         side.end();
     }
+    /// A fragment shader the module ships the words of, drawn with the
+    /// vertex function `vertex` over the geometry at `first`; through the
+    /// combined image sampler where it samples.
+    fn shipped(comptime vertex: [*:0]const u8, comptime fragment: [*:0]const u8, comptime samples: bool, comptime first: u32) *const fn (side: *Side) Failure!void {
+        return &struct {
+            fn run(side: *Side) Failure!void {
+                side.begin(.{});
+                if (samples) side.sampled();
+                try side.use(.{ .vertex = vertex, .fragment = fragment, .layout = if (samples) side.sampler_layout.? else null });
+                side.draw(first, 6);
+                side.end();
+            }
+        }.run;
+    }
     fn missing(side: *Side) Failure!void {
         side.begin(.{});
         try side.use(.{ .vertex = "texture", .fragment = "nearest" });
@@ -1870,6 +2012,11 @@ const cases = [_]Case{
     .{ .name = "texture in rgba", .run = Cases.textured("nearest", 1, quad_at) },
     .{ .name = "texture in 565", .run = Cases.textured("nearest 565", 2, quad_at) },
     .{ .name = "texture times colour", .run = &Cases.modulate },
+    .{ .name = "shipped colour", .run = Cases.shipped("as it is", "shipped smooth", false, clockwise_at) },
+    .{ .name = "shipped flat", .run = Cases.shipped("place", "shipped flat", false, clockwise_at) },
+    .{ .name = "shipped dimmed", .run = Cases.shipped("dimmed", "shipped dimmed", false, clockwise_at) },
+    .{ .name = "shipped texture", .run = Cases.shipped("texture", "shipped texture", true, quad_at) },
+    .{ .name = "shipped texture times colour", .run = Cases.shipped("modulate as it is", "shipped modulated", true, quad_at) },
     .{ .name = "no texture", .run = &Cases.missing },
     .{ .name = "drawn in rgba", .target = .rgba, .run = Cases.onTarget(.rgba) },
     .{ .name = "drawn in 565", .target = .rgb565, .run = Cases.onTarget(.rgb565) },

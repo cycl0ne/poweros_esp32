@@ -669,7 +669,7 @@ fn clearRectangle(queue: *Queue, clip: frames.Area, color: u32, channels: u32, d
     const uniforms = carve(queue, 4, 4) orelse return noRoom(queue, "a clear with no memory for its uniforms");
     if (!roomOnList(queue)) return noRoom(queue, "a clear with no memory for the binner's list");
     frames.writeDrawState(&player.bin, &state);
-    if (!sendVertices(queue, vertices.address, 4, player.hardware.programs.color, uniforms.address)) return;
+    if (!sendVertices(queue, vertices.address, 4, player.hardware.programs.color, uniforms.address, null)) return;
     cl.indexBufferSetup(&player.bin, indices.address, @sizeOf(@TypeOf(corners)));
     cl.indexedPrimList(&player.bin, cl.PRIM_TRIANGLES, corners.len);
     player.binned = true;
@@ -845,7 +845,11 @@ fn writeRecord(into: [*]u8, output: [*]const f32, viewport: *const ViewportScale
 
 /// A vertex's record's attributes, its programs and its shader state, and
 /// the packet that says so.
-fn sendVertices(queue: *Queue, vertices: u32, varyings: u32, fragment: u32, uniforms: u32) bool {
+///
+/// `own` is the pipeline's own compiled program where `fragment` is it,
+/// which says its threads, its W and its scoreboard; null for one written
+/// by hand, whose are `cl.Programs`' defaults.
+fn sendVertices(queue: *Queue, vertices: u32, varyings: u32, fragment: u32, uniforms: u32, own: ?*const driver.Shader) bool {
     const player = playerOf(queue);
     const programs = &player.hardware.programs;
     const attributes: u32 = 2 + @as(u32, @intFromBool(varyings > 0)) + @as(u32, @intFromBool(varyings > 4));
@@ -868,6 +872,9 @@ fn sendVertices(queue: *Queue, vertices: u32, varyings: u32, fragment: u32, unif
         .coordinate = programs.coordinate,
         .coordinate_uniforms = uniforms,
         .varyings = varyings,
+        .fragment_threads = if (own) |made| made.threads else 4,
+        .center_w = if (own) |made| made.center_w else false,
+        .lock_scoreboard_on_first_thrsw = if (own) |made| made.lock_scoreboard_on_first_thrsw else false,
     });
     const stride = recordStride(varyings);
     cl.attribute(&list, vertices, 4, 4, 0, stride);
@@ -1204,6 +1211,8 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
     var carried: Carried = .as_they_are;
     var fragment: u32 = undefined;
     var uniforms: u32 = undefined;
+    // The pipeline's own program, where it is what `fragment` is.
+    var own: ?*const driver.Shader = null;
     switch (fixed.kind) {
         .color => {
             carried = .{ .colors_from = 0 };
@@ -1252,6 +1261,7 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
                 uniforms = place.address;
             } else {
                 fragment = made.address;
+                own = made;
                 carried = .as_they_are;
                 const stream = made.stream();
                 const bytes: u32 = @max(4, @as(u32, @intCast(stream.len * 4)));
@@ -1343,7 +1353,7 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
             writeRecord(records.cpu + vertex * record_bytes, drawn + vertex * stride, &scale, varyings, carried);
         }
         if (!roomOnList(queue)) return noRoom(queue, "a draw with no memory for the binner's list");
-        if (!sendVertices(queue, records.address, varyings, fragment, uniforms)) return noRoom(queue, "a draw with no memory for its shader record");
+        if (!sendVertices(queue, records.address, varyings, fragment, uniforms, own)) return noRoom(queue, "a draw with no memory for its shader record");
         cl.indexBufferSetup(&player.bin, index_place.address, kept * 4);
         cl.indexedPrimList(&player.bin, cl.PRIM_TRIANGLES, kept);
         player.binned = true;

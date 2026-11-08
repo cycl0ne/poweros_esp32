@@ -3782,4 +3782,33 @@ pub const LIBRARY_VERSION = 1;
 /// v3d.fdriver - wanted 16384, found 65535, the clear before the pass - and
 /// passes them with this one: 332 checks on the V3D and 497 on the cores,
 /// none failed. It had not run on the board since 1.79.
-pub const LIBRARY_REVISION = 136;
+///
+/// 137: **The V3D compiles a program's own fragment shader with the back
+/// end ported from Mesa.** A pipeline of no fixed form whose module ships
+/// its SPIR-V was compiled by the plan (`driver/v3d/compile.zig`'s
+/// `compile`), whose programs keep to 16 registers and four threads and
+/// refuse what does not fit. It is compiled now as Mesa's v3d_compile does
+/// it (`compile.compileThroughMesa`, `driver/v3d/compiler/`): VIR made of
+/// the steps, optimized, given registers - 32 a thread at four threads,
+/// and 64 at two where four do not fit - scheduled, and packed. The
+/// shader record says what the compile decided, as v3dv's
+/// pack_shader_state_record does: four-way threadable only for a program
+/// of four threads, the real pixel centre's W where it reads it, and the
+/// wait on the scoreboard at the first thread switch where it moved it
+/// there. The programs are shorter - the interpolated colour nine
+/// instructions where the plan's was twenty-one - and some the plan
+/// refused are drawn by the V3D now. What it refuses the cores draw, as
+/// before. The compiler's lists and graphs are in an arena of the calling
+/// task's for the one compile, over AllocVec (`driver/v3d/heap.zig`).
+///
+/// Tests: the host's do not run the V3D. On the board, C:test/FacetBoth
+/// 1.9's five cases of a module that ships its fragment shaders' SPIR-V -
+/// an interpolated colour, a colour of its own, a colour dimmed by a
+/// fifth varying, a texture, a texel times the colour - compared with
+/// the cores: with 1.136's v3d.fdriver, the plan's code, and with this
+/// one, Mesa's, the same counts, 8 of 230,400 pixels apart at the
+/// triangles' edges for the first three and none for the textures. All
+/// 160 of its cases stay within one pixel in a thousand, and
+/// C:test/FacetProbe passes its 332 checks on the V3D. V3DTest MESA drew
+/// the same five from the V3D's own objects first, with no pixel wrong.
+pub const LIBRARY_REVISION = 137;

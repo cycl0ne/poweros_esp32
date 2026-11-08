@@ -539,6 +539,13 @@ pub const Shader = struct {
     /// the draw is to look for the texture and the sampler whose state
     /// those two words are.
     sampler: ?compile.Sampler,
+    /// What the shader record says of the program, which Mesa's back end
+    /// decided as it compiled (`cl.Programs`): its threads, whether it
+    /// reads W at the pixel's centre, and where it waits on the
+    /// scoreboard (since 1.137).
+    threads: u8,
+    center_w: bool,
+    lock_scoreboard_on_first_thrsw: bool,
 
     pub fn stream(made: *const Shader) []const compile.Word {
         return made.uniforms[0..made.uniform_count];
@@ -585,13 +592,22 @@ fn makePipeline(pipeline: *Pipeline) callconv(.c) facet.Result {
 /// reads it. The compiler's working memory is a block of its own and some
 /// kilobytes wide, so it is taken for the call and given back: a pipeline
 /// is made once and drawn with many times.
+///
+/// The compiler is the one ported from Mesa (compile.compileThroughMesa,
+/// driver/v3d/compiler/), since 1.137: the plan's (compile.compile) is
+/// what V3DTest's GENERATED still draws with, and reads the same words.
+/// Its lists and graphs are in an arena of the calling task's for the one
+/// compile. What it refuses the cores draw, as before.
 fn compiled(pipeline: *Pipeline) facet.Result {
     const device = pipeline.device;
     const base = device.base;
     const sys = device.sys;
     const work = _objects.create(sys, compile.Work) orelse return .error_out_of_host_memory;
     defer _objects.destroy(sys, work);
-    const code = compile.compile(work, pipeline.fragment_words) catch return .error_feature_not_present;
+    const code = compile.compileThroughMesa(work, pipeline.fragment_words, v3d.heap.of(sys)) catch |err| return switch (err) {
+        error.OutOfMemory => .error_out_of_host_memory,
+        else => .error_feature_not_present,
+    };
     // The vertex function writes the varyings the fragment program reads.
     // CreateGraphicsPipelines already holds the two entries to the one
     // count, so this is the words disagreeing with the entry that shipped
@@ -620,6 +636,9 @@ fn compiled(pipeline: *Pipeline) facet.Result {
         .uniforms = code.uniforms,
         .uniform_count = code.uniform_count,
         .sampler = code.sampler,
+        .threads = code.threads,
+        .center_w = code.center_w,
+        .lock_scoreboard_on_first_thrsw = code.lock_scoreboard_on_first_thrsw,
     };
     pipeline.driver = kept;
     return .success;

@@ -77,7 +77,10 @@
 //! scheduled by Mesa's allocator and scheduler rather than by the plan.
 //! V3DTest's MESA draws the five pictures GENERATED draws with what it
 //! makes, and on the CM5 all five come out as the plan's do, to the
-//! pixel. The library does not call it yet.
+//! pixel. Since facet.library 1.137 it is what the library compiles a
+//! pipeline's own fragment shader with (`compileThroughMesa`, from
+//! driver.zig's `compiled`); `compile`, the plan, is what V3DTest's
+//! GENERATED and the tests below still hold to the hand-written programs.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -589,7 +592,8 @@ pub fn compileThroughMesa(work: *Work, words: []const u32, child: std.mem.Alloca
 
 /// `compile` reads them, then made VIR, given registers, scheduled and
 /// packed as Mesa's v3d_compile does (compiler/to_vir.zig). V3DTest's
-/// MESA draws with what it makes; the library does not call it yet.
+/// MESA draws with what it makes, and the library compiles with it
+/// through `compileThroughMesa` (since 1.137).
 /// `compiler` is the register sets (`allocate.initRegSets`), made once
 /// for every compile.
 pub fn compileVir(work: *Work, words: []const u32, allocator: std.mem.Allocator, compiler: *const vir.Compiler) (Error || std.mem.Allocator.Error)!Code {
