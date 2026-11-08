@@ -229,8 +229,10 @@ pub const Capabilities = extern struct {
     /// everything a sampler says: the two
     /// levels round a point mixed, a bias on the level and a clamp,
     /// mirrored and bordered edges, and a comparison with a reference. A
-    /// device without it refuses such a pipeline, as with a dropping form;
-    /// samplers are made and written into sets on either. This one differs
+    /// device without it refuses such a pipeline, as with a dropping form,
+    /// or some of them: the V3D draws the 2D, array, cube and 3D ones
+    /// since 1.141 and refuses the shadow one and the cube of an array. Samplers are made and
+    /// written into sets on either. This one differs
     /// between the devices of a machine, though it is down here: a field is
     /// added at the end so that none already there moves.
     samplers: bool = false,

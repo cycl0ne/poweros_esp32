@@ -298,10 +298,12 @@ pub const FixedKind = enum(u8) {
     /// mixed, a bias and a clamp on them, mirrored and bordered edges, and
     /// anisotropy. (Since 1.49.)
     texture_array_sampled = 11,
-    /// A cube map the same way: varyings x, y and z, the direction. The
-    /// sample is taken inside the face the direction falls on, so the
-    /// sampler's edges are that face's - where `texture_cube` reads over
-    /// the seam into the next face. (Since 1.49.)
+    /// A cube map the same way: varyings x, y and z, the direction. Since
+    /// 1.60 a sample is read over the seam into the next face, as
+    /// `texture_cube` reads it, and the sampler's wraps say nothing of a
+    /// cube (`texture.sampleCubeBy`); from 1.49 to 1.60 it was taken
+    /// inside the one face, with the sampler's edges as that face's.
+    /// (Since 1.49.)
     texture_cube_sampled = 12,
     /// A 3D texture the same way: varyings s, t and r, each 0 to 1 across
     /// it, with `wrap[2]` for what lies past the first and last slice and
@@ -313,10 +315,10 @@ pub const FixedKind = enum(u8) {
     texture_3d_sampled = 13,
     /// One cube of an array of them as the sampler bound beside it says:
     /// varyings x, y and z, the direction, and then which cube, as
-    /// `texture_cube_array` has them. The sample is taken inside the face
-    /// the direction falls on, that cube's own, so the sampler's edges are
-    /// that face's - where `texture_cube_array` reads over the seam into
-    /// the next face of the same cube. (Since 1.53.)
+    /// `texture_cube_array` has them. Since 1.60 a sample is read over the
+    /// seam into the next face of the same cube, as `texture_cube_array`
+    /// reads it, and the sampler's wraps say nothing of a cube
+    /// (`texture.sampleCubeBy`). (Since 1.53.)
     texture_cube_array_sampled = 14,
 };
 
@@ -346,7 +348,8 @@ pub const Fixed = struct {
     /// Whether the form samples through a sampler bound with the texture,
     /// rather than as `sampling` says. A device whose fragment programs are
     /// its own has one for each form it can draw, so such a pipeline is
-    /// refused where `Capabilities.samplers` is false.
+    /// refused where `Capabilities.samplers` is false - all of them, or
+    /// some: the V3D draws the 2D, array, cube and 3D ones since 1.141.
     pub fn needsSampler(fixed: Fixed) bool {
         return switch (fixed.kind) {
             .texture_sampled, .texture_shadow => true,

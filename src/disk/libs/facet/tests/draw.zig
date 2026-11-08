@@ -9876,6 +9876,44 @@ test "CmdClearColorImage sets every texel of the levels it names, and no others"
     for (texels[0 .. side * side]) |texel| try testing.expectEqual(@as(u32, 0xFFFF_0000), texel);
 }
 
+test "CmdClearColorImage clears every slice of a 3D image's level, though Vulkan's range names its one array layer" {
+    var bench = try Bench.up();
+    defer bench.down();
+    const fb = bench.rig.fb;
+    const side = 8;
+    const image = try bench.bareImage(.{
+        .format = .b8g8r8a8_unorm,
+        .image_type = .@"3d",
+        .extent = .{ .width = side, .height = side, .depth = 4 },
+        .mip_levels = 2,
+        .usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST | facet.IMAGE_USAGE_TRANSFER_SRC,
+    }, false);
+    const big = side * side * 4;
+    const small = big / 4;
+    const out, const read = try bench.buffer(4 * big + 2 * small, facet.BUFFER_USAGE_TRANSFER_DST);
+    @memset(read[0 .. 4 * big + 2 * small], 0);
+
+    // Level 0 red and level 1 green, each range one layer, as Vulkan has
+    // a 3D image's: until 1.141 that cleared slice 0 alone.
+    const red = facet.ClearColorValue{ .float32 = .{ 1, 0, 0, 1 } };
+    const green = facet.ClearColorValue{ .float32 = .{ 0, 1, 0, 1 } };
+    const first = facet.ImageSubresourceRange{ .level_count = 1, .layer_count = 1 };
+    const second = facet.ImageSubresourceRange{ .base_mip_level = 1, .level_count = 1, .layer_count = 1 };
+    const regions = [2]facet.BufferImageCopy{
+        .{ .image_extent = .{ .width = side, .height = side, .depth = 4 } },
+        .{ .buffer_offset = 4 * big, .image_subresource = .{ .mip_level = 1 }, .image_extent = .{ .width = side / 2, .height = side / 2, .depth = 2 } },
+    };
+    const commands = try bench.record();
+    fb.CmdClearColorImage(commands, image, .transfer_dst_optimal, &red, 1, @ptrCast(&first));
+    fb.CmdClearColorImage(commands, image, .transfer_dst_optimal, &green, 1, @ptrCast(&second));
+    fb.CmdCopyImageToBuffer(commands, image, .transfer_src_optimal, out, 2, &regions);
+    try bench.submit();
+
+    const texels: [*]align(1) const u32 = @ptrCast(read);
+    for (texels[0 .. 4 * side * side]) |texel| try testing.expectEqual(@as(u32, 0xFFFF_0000), texel);
+    for (texels[4 * side * side ..][0 .. 2 * side * side / 4]) |texel| try testing.expectEqual(@as(u32, 0xFF00_FF00), texel);
+}
+
 /// A cut-out texture drawn over a flat quad behind it: what shows whether a
 /// dropped pixel left its depth behind.
 const CutoutScene = struct {
@@ -11164,8 +11202,9 @@ const OwnLayout = struct {
         break :ops made;
     };
 
-    fn memoryOf(format: facet.Format, width: u32, height: u32, levels: u32) callconv(.c) _driver.TextureMemory {
+    fn memoryOf(format: facet.Format, width: u32, height: u32, depth: u32, levels: u32) callconv(.c) _driver.TextureMemory {
         _ = format;
+        _ = depth;
         _ = levels;
         return .{ .bytes = @as(u64, width) * height * 8, .alignment = 64 };
     }

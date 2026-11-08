@@ -29,7 +29,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetProbe";
-const VERSION_STRING = "\x00$VER: FacetProbe 1.44 (08.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetProbe 1.45 (08.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "CORES/S,V3D/S,QUIET/S";
@@ -60,8 +60,9 @@ const side = 64;
 /// V3D broke that in 1.140, sampling through a sampler's anisotropy and
 /// its texels from a generated program while its fixed forms still read
 /// none. So it is read off the device's type now: the cores, `cpu`, run
-/// those forms, and the V3D's QPU programs for them are item 54's other
-/// half. A sample in texels is no longer asked at all: Vulkan requires it
+/// every one of those forms. The V3D runs all but two since 1.141 - the
+/// shadow form and the cube of an array - so `samplers` false means "not
+/// every one" and the checks say which. A sample in texels is no longer asked at all: Vulkan requires it
 /// of every implementation, both devices take it since 1.140, and the
 /// probe holds each to it.
 const Can = struct {
@@ -4523,12 +4524,8 @@ fn texelChecks(probe: *Probe) void {
     probe.check(fb.CreateSampler(device, &tiled, &refused) == .error_validation_failed, "and an edge that is neither held nor bordered");
     probe.check(refused == null, "and nothing given back for any of them");
 
-    // The draw below is a fixed form's, `texture_sampled`, which a device
-    // that runs no fixed form reading a sampler refuses. Such a device -
-    // the V3D - samples in texels from a generated program instead, and
-    // FacetBoth draws that on both devices and compares them ("shipped
-    // texture in texels").
-    if (!probe.can.samplers) return;
+    // The draw below is a fixed form's, `texture_sampled`, which every
+    // device draws since 1.141.
 
     // The texture of the small texels' two colours, its left half and its
     // right, and a picture to draw it into.
@@ -5319,17 +5316,6 @@ fn heldChecks(probe: *Probe) void {
     }) orelse return probe.check(false, "a pass to draw in");
     const attributes = [1]facet.VertexInputAttributeDescription{.{ .location = 0, .binding = 0, .format = .r32g32b32_sfloat }};
 
-    // Where the device runs no form that reads a sampler, every one of
-    // them is refused there and the program draws on the cores instead.
-    if (!probe.can.samplers) {
-        var refused = false;
-        for ([4][*:0]const u8{ "arrayby", "cubeby", "volumeby", "cubesby" }) |name| {
-            if (pipelineOf(probe, pass, module.?, written_pipes.?, .{ .attributes = &attributes, .stride = 12, .name = name }) == null) refused = true else refused = false;
-            if (!refused) break;
-        }
-        return probe.check(refused, "a form past 2D that reads a sampler is refused where the device reads none");
-    }
-
     // Bound without a view of their own: a plain 2D one is not what
     // either of these is read as.
     const cube_image = probe.bound(.{ .flags = facet.IMAGE_CREATE_CUBE_COMPATIBLE, .format = .b8g8r8a8_unorm, .extent = .{ .width = across, .height = across }, .array_layers = 6, .usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST }, 0) orelse
@@ -5342,11 +5328,19 @@ fn heldChecks(probe: *Probe) void {
         return probe.check(false, "a view of it as an array");
     const cube_view = probe.viewed(.{ .image = cube_image, .format = .b8g8r8a8_unorm, .view_type = .cube, .subresource_range = .{ .layer_count = 6 } }) orelse
         return probe.check(false, "and one as a cube");
+    // The 2D form reads a 2D view, as Vulkan has a sampler2D read one:
+    // until 1.141 it was given the cube's, which only the cores drew.
+    const face_view = probe.viewed(.{ .image = cube_image, .format = .b8g8r8a8_unorm, .subresource_range = .{ .layer_count = 1 } }) orelse
+        return probe.check(false, "and one of its first face alone");
     const volume_view = probe.viewed(.{ .image = volume_image, .format = .b8g8r8a8_unorm, .view_type = .@"3d" }) orelse
         return probe.check(false, "a view of the 3D image");
-    const cubes_view = probe.viewed(.{ .image = cubes_image, .format = .b8g8r8a8_unorm, .view_type = .cube_array, .subresource_range = .{ .layer_count = 12 } }) orelse
+    // A view of cubes as an array is made only where the device has them
+    // (`image_cube_array`): not on the V3D, which since 1.141 gets this
+    // far, and whose cases of it are left out below.
+    const arrays = probe.can.cube_arrays;
+    const cubes_view = if (!arrays) null else probe.viewed(.{ .image = cubes_image, .format = .b8g8r8a8_unorm, .view_type = .cube_array, .subresource_range = .{ .layer_count = 12 } }) orelse
         return probe.check(false, "a view of the two cubes as an array of them");
-    const second_view = probe.viewed(.{ .image = cubes_image, .format = .b8g8r8a8_unorm, .view_type = .cube_array, .subresource_range = .{ .base_array_layer = 6, .layer_count = 6 } }) orelse
+    const second_view = if (!arrays) null else probe.viewed(.{ .image = cubes_image, .format = .b8g8r8a8_unorm, .view_type = .cube_array, .subresource_range = .{ .base_array_layer = 6, .layer_count = 6 } }) orelse
         return probe.check(false, "and one that begins at the second cube");
 
     const texels, const texel_bytes = probe.buffer(layer_bytes * 6, facet.BUFFER_USAGE_TRANSFER_SRC) orelse
@@ -5408,16 +5402,25 @@ fn heldChecks(probe: *Probe) void {
         return probe.check(false, "one whose form reads a cube through a sampler");
     const of_volume = pipelineOf(probe, pass, module.?, written_pipes.?, .{ .attributes = &attributes, .stride = 12, .name = "volumeby" }) orelse
         return probe.check(false, "one whose form reads a 3D texture through a sampler");
-    const of_cubes = pipelineOf(probe, pass, module.?, written_pipes.?, .{ .attributes = &attributes, .stride = 12, .name = "cubesby" }) orelse
-        return probe.check(false, "one whose form reads a cube of an array through a sampler");
+    // A cube of an array through a sampler is drawn where every form that
+    // reads one is - the cores. The V3D draws the others since 1.141, its
+    // programs those of the forms without a sampler, and has no program
+    // for a cube of an array: refused there, and its checks below left
+    // out. Until 1.141 every form here was refused on the V3D.
+    const of_cubes = pipelineOf(probe, pass, module.?, written_pipes.?, .{ .attributes = &attributes, .stride = 12, .name = "cubesby" });
+    if (probe.can.samplers) {
+        probe.check(of_cubes != null, "one whose form reads a cube of an array through a sampler");
+    } else {
+        probe.check(of_cubes == null, "one whose form reads a cube of an array through a sampler refused where not every form that reads one is drawn");
+    }
     const of_wide = pipelineOf(probe, pass, module.?, written_pipes.?, .{ .attributes = &attributes, .stride = 12, .name = "wideby" }) orelse
         return probe.check(false, "one that reads past the texture's edges");
     const of_held = pipelineOf(probe, pass, module.?, held_pipes.?, .{ .attributes = &attributes, .stride = 12, .name = "wideby" }) orelse
         return probe.check(false, "and the same over the layout that holds a sampler");
 
     const Case = struct {
-        pipeline: *facet.Pipeline,
-        view: *facet.ImageView,
+        pipeline: ?*facet.Pipeline,
+        view: ?*facet.ImageView,
         instance: u32,
         sets: *[1]?*facet.DescriptorSet,
         layout: *facet.PipelineLayout,
@@ -5445,17 +5448,19 @@ fn heldChecks(probe: *Probe) void {
         .{ .pipeline = of_cubes, .view = second_view, .instance = 1, .sets = &written_set, .layout = written_pipes.?, .want = Held.layerColor(4), .at = middle, .says = "a view that begins at the second cube reads it as cube 0" },
         // Past the edges, with the tiling sampler written into the set:
         // the texture again.
-        .{ .pipeline = of_wide, .view = cube_view, .instance = 0, .sets = &written_set, .layout = written_pipes.?, .want = Held.layerColor(0), .at = corner, .says = "the written sampler tiles past the texture's edge" },
+        .{ .pipeline = of_wide, .view = face_view, .instance = 0, .sets = &written_set, .layout = written_pipes.?, .want = Held.layerColor(0), .at = corner, .says = "the written sampler tiles past the texture's edge" },
         // The same draw through the layout that holds the bordered
         // sampler: the layout's wins, so the border is read there.
-        .{ .pipeline = of_held, .view = cube_view, .instance = 0, .sets = &held_set, .layout = held_pipes.?, .want = 0xFFFF_FFFF, .at = corner, .says = "the layout's own sampler is read instead of the one written" },
+        .{ .pipeline = of_held, .view = face_view, .instance = 0, .sets = &held_set, .layout = held_pipes.?, .want = 0xFFFF_FFFF, .at = corner, .says = "the layout's own sampler is read instead of the one written" },
     }) |case| {
-        const info = facet.DescriptorImageInfo{ .sampler = tiled, .image_view = case.view };
+        const drawn = case.pipeline orelse continue;
+        const read = case.view orelse continue;
+        const info = facet.DescriptorImageInfo{ .sampler = tiled, .image_view = read };
         const write = facet.WriteDescriptorSet{ .dst_set = case.sets[0].?, .dst_binding = 0, .descriptor_type = .combined_image_sampler, .descriptor_count = 1, .image_info = @ptrCast(&info) };
         fb.UpdateDescriptorSets(device, 1, @ptrCast(&write), 0, null);
         commands = probe.record() orelse return probe.check(false, "a recording of the draw");
         fb.CmdBeginRenderPass(commands, &.{ .render_pass = pass, .framebuffer = onto, .render_area = area, .clear_value_count = 1, .clear_values = &clear }, .@"inline");
-        fb.CmdBindPipeline(commands, .graphics, case.pipeline);
+        fb.CmdBindPipeline(commands, .graphics, drawn);
         fb.CmdBindDescriptorSets(commands, .graphics, case.layout, 0, 1, @ptrCast(case.sets), 0, null);
         fb.CmdBindVertexBuffers(commands, 0, 1, @ptrCast(&vertex_buffer), @ptrCast(&offset));
         fb.CmdDraw(commands, 6, 1, 0, case.instance);
@@ -6460,6 +6465,60 @@ fn mutableChecks(probe: *Probe) void {
     probe.check(others, "beside the bytes copied in, where they lie");
 }
 
+/// A clear of one level of a texture of levels, and of a 3D texture's
+/// level, read back whole (since 1.141). Until then the V3D's clear wrote
+/// a level where the cores keep it, and its level 0 lies last; and on
+/// every device a clear of a 3D image's one array layer, which is what
+/// Vulkan's range names, cleared its first slice alone.
+fn levelClearChecks(probe: *Probe) void {
+    const fb = probe.fb;
+    defer probe.give();
+    const across = 16;
+    const usage = facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_TRANSFER_DST | facet.IMAGE_USAGE_TRANSFER_SRC;
+    const flat = probe.bound(.{ .format = .b8g8r8a8_unorm, .extent = .{ .width = across, .height = across }, .mip_levels = 2, .usage = usage }, 0) orelse
+        return probe.check(false, "a texture of two levels to clear");
+    const deep = probe.bound(.{ .format = .b8g8r8a8_unorm, .image_type = .@"3d", .extent = .{ .width = across, .height = across, .depth = 4 }, .mip_levels = 2, .usage = usage }, 0) orelse
+        return probe.check(false, "a 3D texture of four slices and two levels to clear");
+    // Read back in this order: the flat one's levels, then the 3D one's
+    // four slices of level 0 and two of level 1.
+    const big = across * across * 4;
+    const small = big / 4;
+    const total = big + small + 4 * big + 2 * small;
+    const back, const back_bytes = probe.buffer(total, facet.BUFFER_USAGE_TRANSFER_DST) orelse
+        return probe.check(false, "a buffer the levels are read back into");
+    @memset(back_bytes[0..total], 0);
+    const blue = facet.ClearColorValue{ .float32 = .{ 0, 0, 1, 1 } };
+    const red = facet.ClearColorValue{ .float32 = .{ 1, 0, 0, 1 } };
+    const level_0 = facet.ImageSubresourceRange{ .level_count = 1, .layer_count = 1 };
+    const level_1 = facet.ImageSubresourceRange{ .base_mip_level = 1, .level_count = 1, .layer_count = 1 };
+    const outs = [4]facet.BufferImageCopy{
+        .{ .image_extent = .{ .width = across, .height = across } },
+        .{ .buffer_offset = big, .image_subresource = .{ .mip_level = 1 }, .image_extent = .{ .width = across / 2, .height = across / 2 } },
+        .{ .buffer_offset = big + small, .image_extent = .{ .width = across, .height = across, .depth = 4 } },
+        .{ .buffer_offset = 5 * big + small, .image_subresource = .{ .mip_level = 1 }, .image_extent = .{ .width = across / 2, .height = across / 2, .depth = 2 } },
+    };
+    const commands = probe.record() orelse return probe.check(false, "a recording of the clears");
+    for ([2]*facet.Image{ flat, deep }) |image| {
+        fb.CmdClearColorImage(commands, image, .transfer_dst_optimal, &blue, 1, @ptrCast(&level_0));
+        fb.CmdClearColorImage(commands, image, .transfer_dst_optimal, &red, 1, @ptrCast(&level_1));
+    }
+    fb.CmdCopyImageToBuffer(commands, flat, .general, back, 2, &outs);
+    fb.CmdCopyImageToBuffer(commands, deep, .general, back, 2, outs[2..]);
+    if (!probe.submit()) return probe.check(false, "the clears submitted");
+    const Part = struct { from: u32, bytes: u32, want: u32, says: [*:0]const u8 };
+    for ([_]Part{
+        .{ .from = 0, .bytes = big, .want = 0xFF00_00FF, .says = "a clear of level 0 of a texture of levels writes all of it" },
+        .{ .from = big, .bytes = small, .want = 0xFFFF_0000, .says = "and a clear of level 1 all of that, and nothing of level 0" },
+        .{ .from = big + small, .bytes = 4 * big, .want = 0xFF00_00FF, .says = "a clear of a 3D texture's level 0 writes each of its four slices" },
+        .{ .from = 5 * big + small, .bytes = 2 * small, .want = 0xFFFF_0000, .says = "and of its level 1 both of that level's two" },
+    }) |part| {
+        // The first texel that is not the colour, or the last one.
+        var at = part.from;
+        while (at + 4 < part.from + part.bytes and std.mem.readInt(u32, back_bytes[at..][0..4], .little) == part.want) at += 4;
+        probe.checkEqual(part.want, std.mem.readInt(u32, back_bytes[at..][0..4], .little), part.says);
+    }
+}
+
 fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical: *facet.PhysicalDevice, quiet: bool) struct { u32, u32 } {
     var properties: facet.PhysicalDeviceProperties = undefined;
     fb.GetPhysicalDeviceProperties(physical, &properties);
@@ -6500,6 +6559,7 @@ fn probeDevice(fb: *FacetBase, dl: *DosBase, instance: *facet.Instance, physical
     eventChecks(&probe);
     cacheChecks(&probe);
     mutableChecks(&probe);
+    levelClearChecks(&probe);
     return .{ probe.passed, probe.failed };
 }
 

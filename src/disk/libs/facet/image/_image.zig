@@ -78,6 +78,9 @@ pub const Image = struct {
     levels: u32,
     /// An array's layers, a cube's faces, or a 3D image's slices.
     layers: u32 = 1,
+    /// From a layer to the next. Of a 3D image on a device of a layout of
+    /// its own, from one slice of level 0 to the next, the device placing
+    /// the slices of each level (`Ops.texture_memory`, since 1.141).
     layer_bytes: u64 = 0,
     /// The samples each pixel holds: 1, or 4 on a device that draws them
     /// (`Capabilities.multisampling`, since 1.98). Sample s of a pixel lies
@@ -832,13 +835,22 @@ fn laidOut(physical: *_instance.PhysicalDevice, info: *const facet.ImageCreateIn
         image.kind = .texture;
         var one_layer: u64 = texture.Texture.bytes(kept, extent.width, extent.height, info.mip_levels) catch return null;
         one_layer = std.mem.alignForward(u64, one_layer, row_alignment);
+        var all = one_layer * layers;
         if (physical.ops.texture_memory) |own| {
-            const memory = own(kept_format, extent.width, extent.height, info.mip_levels);
+            const memory = own(kept_format, extent.width, extent.height, if (volume) layers else 1, info.mip_levels);
             one_layer = std.mem.alignForward(u64, memory.bytes, memory.alignment);
+            all = one_layer * layers;
             image.alignment = memory.alignment;
+            // A 3D image's slices are the device's to place, each level
+            // holding its own (since 1.141): its memory is all of them,
+            // and the step from a slice to the next level 0's.
+            if (volume) {
+                all = one_layer;
+                one_layer = memory.layer_bytes;
+            }
         }
         image.layer_bytes = one_layer;
-        image.bytes = one_layer * layers;
+        image.bytes = all;
         // Its levels' layout, over no memory yet: BindImageMemory moves it.
         image.texels = texelsOver(&image, @ptrFromInt(_memory.alignment)) catch return null;
         return withPlanes(image, info.samples);
@@ -1410,10 +1422,11 @@ fn texelOf(format: facet.Format, bytes: []const u8) u32 {
 }
 
 /// Where a level's texels are on a device with a layout of its own, in bytes
-/// from the image's memory.
+/// from the image's memory: the layer, or a 3D image's slice, placed by
+/// the device too (since 1.141).
 fn deviceOffset(image: *const Image, level: u32, layer: u32, x: u32, y: u32) ?usize {
     const offset = image.device.physical.ops.texture_offset orelse return null;
-    return layer * @as(usize, @intCast(image.layer_bytes)) + offset(image, level, x, y);
+    return offset(image, level, layer, x, y);
 }
 
 /// Whether an image's texels can be read and written: it has memory, and they

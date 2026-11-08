@@ -4846,12 +4846,15 @@ facet.library/WaitForFences
 	read as 0 to 1 whatever its format, and Vulkan 1.0 has no border but
 	transparent black, opaque black and opaque white.
 
-	A sampler is made on either device, but is read by the sampling the
-	cores do: a pipeline whose fragment form samples through one
-	(`shader.FixedKind.texture_sampled`, `texture_shadow`, since 1.49
-	`texture_array_sampled`, `texture_cube_sampled` and `texture_3d_sampled`,
-	and since 1.53 `texture_cube_array_sampled`)
-	is refused on a device whose `Capabilities.samplers` is false.
+	A sampler is made on either device and read by either: the cores'
+	sampling takes it whole, and the V3D's TMU is told it whole as v3dv
+	packs it (since 1.140), but for a comparison. A pipeline whose fragment
+	form samples through one (`shader.FixedKind.texture_sampled`,
+	`texture_shadow`, since 1.49 `texture_array_sampled`,
+	`texture_cube_sampled` and `texture_3d_sampled`, and since 1.53
+	`texture_cube_array_sampled`) is refused on a device whose
+	`Capabilities.samplers` is false, or some of them are: the V3D draws
+	the 2D, array, cube and 3D ones since 1.141.
 
    CONTEXT
 	- Waits: no.

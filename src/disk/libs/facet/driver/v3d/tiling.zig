@@ -5,6 +5,8 @@
 //!
 //! The TMU works out the layout of a level from its size, and where the
 //! smaller levels lie from where level 0 does: none of this can be chosen.
+//! A 3D texture's level is its slices one after another, so a level's
+//! place counts every slice of each smaller level (since 1.141).
 //!   - A level no more than a microtile (64 bytes) in one direction is
 //!     `lineartile`: one line of microtiles.
 //!   - One no wider than 1 or 2 UIF blocks (2 x 2 microtiles) is `ublinear`:
@@ -41,11 +43,17 @@ pub const Level = struct {
     padded_height: u32,
     /// The rows of blocks it was padded by, if it is `uif`.
     block_pad: u32,
+    /// Its slices, one after another: 1 but for a 3D texture's level.
+    slices: u32,
+    /// The bytes of one slice, from its start to the next one's.
+    slice_bytes: u32,
 };
 
 pub const Layout = struct {
     /// Bytes a pixel: 1, 2 or 4.
     pixel: u32,
+    /// Level 0's slices: a 3D texture's depth, and 1 for any other.
+    depth: u32,
     count: u32,
     levels: [most_levels]Level,
     /// All the texture takes: to be bound on `alignment`.
@@ -84,9 +92,16 @@ fn blockPad(pixel: u32, height: u32) u32 {
 }
 
 /// The layout of a texture of `count` levels, whose level 0 is `width` by
-/// `height`, of `pixel` bytes each.
-pub fn layoutOf(pixel: u32, width: u32, height: u32, count: u32) Layout {
-    var layout = Layout{ .pixel = pixel, .count = count, .levels = undefined, .bytes = 0 };
+/// `height`, of `pixel` bytes each, and `depth` slices: a 3D texture's,
+/// or 1 for any other, whose layers are each a texture of their own.
+///
+/// It is Mesa's v3d_setup_slices (src/broadcom/vulkan/v3dv_image.c:
+/// 112-282). A 3D texture's level is all its slices (:174-178, :264-265),
+/// as the TMU finds it from level 0's place. Until 1.141 each slice was
+/// a texture of its own, as a layer is, and the TMU read a level past
+/// level 0 a slice or more from where it lay.
+pub fn layoutOf(pixel: u32, width: u32, height: u32, depth: u32, count: u32) Layout {
+    var layout = Layout{ .pixel = pixel, .depth = depth, .count = count, .levels = undefined, .bytes = 0 };
     const micro_w = microtileWidth(pixel);
     const micro_h = microtileHeight(pixel);
     const block_w = 2 * micro_w;
@@ -94,6 +109,8 @@ pub fn layoutOf(pixel: u32, width: u32, height: u32, count: u32) Layout {
     // From level 2 on, sizes count from a power of two.
     const pot_width = 2 * std.math.ceilPowerOfTwoAssert(u32, minify(width, 1));
     const pot_height = 2 * std.math.ceilPowerOfTwoAssert(u32, minify(height, 1));
+    // And the slices from level 1 on (v3dv_image.c:132-134, 174-178).
+    const pot_depth = 2 * std.math.ceilPowerOfTwoAssert(u32, minify(depth, 1));
     var offset: u32 = 0;
     var level = count;
     while (level > 0) {
@@ -125,7 +142,9 @@ pub fn layoutOf(pixel: u32, width: u32, height: u32, count: u32) Layout {
         }
         made.offset = offset;
         made.padded_height = down;
-        var taken = across * pixel * down;
+        made.slices = if (level < 1) depth else minify(pot_depth, level);
+        made.slice_bytes = across * pixel * down;
+        var taken = made.slice_bytes * made.slices;
         // The hardware puts level 1 on a page if it or a smaller one could
         // be uif_xor; the smaller ones, being powers of two, then stay so.
         if (level == 1 and across > 4 * block_w and down > page_cache_rows_less * block_h) {
@@ -140,7 +159,15 @@ pub fn layoutOf(pixel: u32, width: u32, height: u32, count: u32) Layout {
     return layout;
 }
 
-/// Where texel (x, y) of level `level` lies, from the texture's start.
+/// Where slice `slice` of level `level` of a 3D texture begins, from where
+/// the level does: the slices one after another (v3dv_image.c:384-385,
+/// v3dv_layer_offset). 0 for any other texture's level, which has one.
+pub fn sliceAt(layout: *const Layout, level: u32, slice: u32) u32 {
+    return slice * layout.levels[level].slice_bytes;
+}
+
+/// Where texel (x, y) of level `level` lies, from the texture's start: of
+/// a 3D texture's level, in its first slice (`sliceAt`).
 pub fn texelOffset(layout: *const Layout, level: u32, x: u32, y: u32) u32 {
     const made = &layout.levels[level];
     const pixel = layout.pixel;
@@ -501,7 +528,7 @@ pub fn parameter1(sampler: u32, unnormalized: bool) u32 {
 }
 
 test "the levels are in Mesa's layouts, smallest first" {
-    const layout = layoutOf(4, 64, 64, 7);
+    const layout = layoutOf(4, 64, 64, 1, 7);
     try std.testing.expectEqual(Kind.lineartile, layout.levels[6].kind);
     try std.testing.expectEqual(Kind.lineartile, layout.levels[4].kind);
     try std.testing.expectEqual(Kind.ublinear_1, layout.levels[3].kind);
@@ -513,13 +540,38 @@ test "the levels are in Mesa's layouts, smallest first" {
     try std.testing.expect(layout.bytes >= 64 * 64 * 4 + layout.levels[0].offset);
 }
 
+test "a 3D texture's level is its slices, as v3d_setup_slices lays them out" {
+    // Four slices of 16 x 16 and two levels: level 1 is two slices of
+    // 8 x 8, one after the other just before level 0, and level 0 four.
+    const layout = layoutOf(4, 16, 16, 4, 2);
+    try std.testing.expectEqual(@as(u32, 4), layout.levels[0].slices);
+    try std.testing.expectEqual(@as(u32, 2), layout.levels[1].slices);
+    try std.testing.expectEqual(@as(u32, 8 * 8 * 4), layout.levels[1].slice_bytes);
+    try std.testing.expectEqual(@as(u32, 16 * 16 * 4), layout.levels[0].slice_bytes);
+    try std.testing.expectEqual(layout.levels[0].offset, layout.levels[1].offset + 2 * layout.levels[1].slice_bytes);
+    try std.testing.expectEqual(@as(u32, 0), layout.levels[0].offset % alignment);
+    try std.testing.expectEqual(layout.levels[0].offset + 4 * layout.levels[0].slice_bytes, layout.bytes);
+    try std.testing.expectEqual(@as(u32, 256), sliceAt(&layout, 1, 1));
+    // From level 1 on the slices count from a power of two, as the
+    // sizes do: six slices are three at level 1 to Vulkan, and four here
+    // (v3dv_image.c:132-134).
+    const six = layoutOf(4, 16, 16, 6, 3);
+    try std.testing.expectEqual(@as(u32, 6), six.levels[0].slices);
+    try std.testing.expectEqual(@as(u32, 4), six.levels[1].slices);
+    try std.testing.expectEqual(@as(u32, 2), six.levels[2].slices);
+    // A texture that is not 3D has one slice a level, and lies as before.
+    const flat = layoutOf(4, 16, 16, 1, 2);
+    try std.testing.expectEqual(@as(u32, 1), flat.levels[1].slices);
+    try std.testing.expectEqual(flat.levels[0].offset, flat.levels[1].offset + flat.levels[1].slice_bytes);
+}
+
 test "a level's texels each have a place of their own" {
     // Sizes in every layout, for each size of texel - one byte as well
     // since 1.48, whose microtile is 8 x 8 rather than 8 x 4 or 4 x 4.
     const sizes = [_][2]u32{ .{ 4, 4 }, .{ 8, 8 }, .{ 16, 16 }, .{ 32, 32 }, .{ 64, 64 }, .{ 256, 64 }, .{ 64, 256 }, .{ 128, 128 } };
     var seen: [256 * 256 * 4]bool = undefined;
     for ([_]u32{ 1, 2, 4 }) |pixel| for (sizes) |size| {
-        const layout = layoutOf(pixel, size[0], size[1], 1);
+        const layout = layoutOf(pixel, size[0], size[1], 1, 1);
         @memset(&seen, false);
         for (0..size[1]) |y| for (0..size[0]) |x| {
             const at = texelOffset(&layout, 0, @intCast(x), @intCast(y));
@@ -532,7 +584,7 @@ test "a level's texels each have a place of their own" {
 }
 
 test "the UIF layout is v3d_tiling.c's" {
-    const layout = layoutOf(4, 64, 64, 1);
+    const layout = layoutOf(4, 64, 64, 1, 1);
     // A block is 8 x 8 at 4 bytes a texel; the next microtile right is 64
     // bytes on, the next down 128.
     try std.testing.expectEqual(@as(u32, 4), texelOffset(&layout, 0, 1, 0));
@@ -547,13 +599,13 @@ test "one byte a texel: Mesa's 8 x 8 microtile, and the TMU's R8 with the swizzl
     // 8 x 8: the next byte right is 1 on, the next row 8, the next
     // microtile right 64 and the one below 128 (two microtiles of a
     // block, 64 each).
-    const layout = layoutOf(1, 64, 64, 1);
+    const layout = layoutOf(1, 64, 64, 1, 1);
     try std.testing.expectEqual(@as(u32, 1), texelOffset(&layout, 0, 1, 0));
     try std.testing.expectEqual(@as(u32, 8), texelOffset(&layout, 0, 0, 1));
     try std.testing.expectEqual(@as(u32, 64), texelOffset(&layout, 0, 8, 0));
     try std.testing.expectEqual(@as(u32, 128), texelOffset(&layout, 0, 0, 8));
     // A level of 64 x 64 bytes takes a quarter of what one of words takes.
-    const words = layoutOf(4, 64, 64, 1);
+    const words = layoutOf(4, 64, 64, 1, 1);
     try std.testing.expectEqual(words.bytes - words.levels[0].offset, 4 * (layout.bytes - layout.levels[0].offset));
 
     var state: [texture_state_bytes]u8 = undefined;
@@ -573,7 +625,7 @@ test "a view's swizzle over the format's own: a channel the view takes read from
     // is, and the red from the TMU's blue, which is where the format
     // keeps it (since 1.120).
     var state: [texture_state_bytes]u8 = undefined;
-    writeTextureState(&state, &layoutOf(4, 64, 64, 1), .bgra, .{ .alpha, .zero, .one, .red }, 0x10_0000, 0, 0, 1, 0);
+    writeTextureState(&state, &layoutOf(4, 64, 64, 1, 1), .bgra, .{ .alpha, .zero, .one, .red }, 0x10_0000, 0, 0, 1, 0);
     var second = std.mem.readInt(u64, state[8..16], .little);
     try std.testing.expectEqual(SWIZZLE_ALPHA, second >> (108 - 64) & 7);
     try std.testing.expectEqual(SWIZZLE_ZERO, second >> (111 - 64) & 7);
@@ -581,7 +633,7 @@ test "a view's swizzle over the format's own: a channel the view takes read from
     try std.testing.expectEqual(SWIZZLE_BLUE, second >> (117 - 64) & 7);
     // R8 viewed as its alpha, its green and its red twice: the alpha and
     // the green it has not got read 1 and 0, as Vulkan reads them.
-    writeTextureState(&state, &layoutOf(1, 64, 64, 1), .r8, .{ .alpha, .green, .red, .red }, 0x20_0000, 0, 0, 1, 0);
+    writeTextureState(&state, &layoutOf(1, 64, 64, 1, 1), .r8, .{ .alpha, .green, .red, .red }, 0x20_0000, 0, 0, 1, 0);
     second = std.mem.readInt(u64, state[8..16], .little);
     try std.testing.expectEqual(SWIZZLE_ONE, second >> (108 - 64) & 7);
     try std.testing.expectEqual(SWIZZLE_ZERO, second >> (111 - 64) & 7);
@@ -590,7 +642,7 @@ test "a view's swizzle over the format's own: a channel the view takes read from
 }
 
 test "the states have their fields where the packet file has them" {
-    const layout = layoutOf(4, 64, 32, 1);
+    const layout = layoutOf(4, 64, 32, 1, 1);
     var state: [texture_state_bytes]u8 = undefined;
     writeTextureState(&state, &layout, .bgra, own_picks, 0x10_0000, 0, 0, 1, 0);
     const first = std.mem.readInt(u64, state[0..8], .little);

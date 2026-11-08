@@ -1848,13 +1848,36 @@ The V3D now reports these as v3dv does (v3dv_device.c:349, 1153, 1158-1159):
 - `max_sampler_anisotropy` 16, `max_sampler_lod_bias` 14 and `mipmap_precision_bits` 8;
 - one sampler a stage, beside its one sampled image.
 
-What is left is the other half: `samplers` stays false. No fixed form that reads a sampler has a QPU program yet, so the cores still draw those forms.
+That left the other half: no fixed form that reads a sampler ran on the V3D, so the cores drew those forms.
 
 On the board:
 
 - V3DTest FILTER draws each of the five wraps, nearest and bilinear, against Vulkan's formulas worked out on the CPU: no pixel wrong.
 - FacetBoth 1.12's seven sampler cases are levels mixed and shifted, levels held, a wrap of its own an axis, a white border, mirrored once, four samples along an axis, and texels. Against the cores they are 0 to 16 pixels of 230,400 apart.
 - The anisotropic case agrees within five steps a channel, not two. Vulkan leaves anisotropic filtering's samples to the implementation; the case says where the two differ.
+
+**Then the fixed forms, in 1.141: the other half, bar two.** No program was needed for them. The sampler reaches the TMU through configuration parameter 1, which v3dv writes as the draw is recorded (v3dv_uniforms.c:187-221, write_tmu_p1); the program only writes the coordinates. So a form that samples through the bound sampler runs the program of the form it is without one, and `textureUniforms` gives the TMU the sampler through `tiling.samplerOf`.
+
+- `texture_sampled`, `texture_array_sampled`, `texture_cube_sampled` and `texture_3d_sampled` run on the V3D (`samplesHere`, driver/v3d/driver.zig).
+- A cube is read over its seams, and its wraps say nothing of it, as Vulkan has it and the cores since 1.60. v3dv packs the wraps as they are (v3dvx_device.c:255-257), and so does this.
+- `texture_shadow` stays refused. The TMU compares only where the program writes TMUDREF (v3d_tex.c:155-157): item 58.
+- `texture_cube_array_sampled` stays refused, with `texture_cube_array`: neither has a program for the fourth coordinate.
+
+`samplers` stays false, because those two are still drawn on the cores.
+
+On the board, FacetBoth 1.13 has 13 cases more:
+
+- 1.140's seven samplers are drawn again, through the fixed sampled form. They are as far from the cores as the generated path is: 0 to 16 pixels of 230,400.
+- Six more go through a sampler to an array, a cube and a 3D texture. They are 0 to 14 pixels apart; the cube across an edge has 14, as many as without a sampler.
+- All 185 cases stay within one pixel in a thousand.
+
+Running the forms on the V3D brought three faults out, put right in 1.141 too:
+
+- A 3D texture's levels lie as v3d_setup_slices lays them out (v3dv_image.c:112-282): each level its slices one after another. The TMU finds a level from level 0's place, and each slice had been a texture of its own, so past level 0 it read a slice or more from where the level lay.
+- A clear of a V3D texture finds the level where the V3D keeps it (`Ops.texture_level`) and writes the image format's texel, not the cores' 64-bit one.
+- A clear of a 3D image clears every slice of the level, on both devices: Vulkan's range names its one array layer.
+
+FacetProbe 1.45 checks all three and passes its 864 checks, 362 of them on the V3D.
 
 > Verified: driver/v3d/driver.zig:154 `.samplers = false` with the comment "there is no program that reads a sampler", :155 `.sampler_anisotropy = false`, :158 `.unnormalized_coordinates = false` ("Nothing here reads a sampler at all"); refusal at driver.zig:460; TMU state is filter+wrap only at driver/v3d/tiling.zig:274 `writeSamplerState(into, filter, wrap)`; what a sampler may ask for at sdk/libs/facet/texture.zig:535-565 against samplingOf at :446-461.
 

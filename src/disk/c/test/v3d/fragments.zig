@@ -478,7 +478,7 @@ const Picture = struct {
 };
 
 fn makePicture(scene: *Scene, across: u32, down: u32, levels: u32) ?Picture {
-    const layout = tiling.layoutOf(4, across, down, levels);
+    const layout = tiling.layoutOf(4, across, down, 1, levels);
     const block = scene.space.alloc(layout.bytes) orelse return null;
     if (!scene.space.flush()) return null;
     var picture = Picture{ .block = block, .layout = layout };

@@ -34,7 +34,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.12 (08.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.13 (08.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -437,6 +437,10 @@ const plain_entries = [_]shader.Entry{
     shader.fixedFragment("cube bilinear", .{ .kind = .texture_cube, .sampling = .{ .filter = .bilinear } }),
     shader.fixedFragment("volume", .{ .kind = .texture_3d, .sampling = .{ .filter = .nearest } }),
     shader.fixedFragment("volume bilinear", .{ .kind = .texture_3d, .sampling = .{ .filter = .bilinear } }),
+    shader.fixedFragment("sampled", .{ .kind = .texture_sampled }),
+    shader.fixedFragment("array sampled", .{ .kind = .texture_array_sampled }),
+    shader.fixedFragment("cube sampled", .{ .kind = .texture_cube_sampled }),
+    shader.fixedFragment("volume sampled", .{ .kind = .texture_3d_sampled }),
     shader.fixedFragment("color", .{ .kind = .color }),
     shader.fixedFragment("texture", .{ .kind = .texture, .sampling = .{ .filter = .bilinear } }),
     shader.fixedFragment("nearest", .{ .kind = .texture, .sampling = .{ .filter = .nearest } }),
@@ -453,19 +457,35 @@ const picture_usage = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_TRA
 const texture_levels = 7;
 const formats = [_]facet.Format{ .b8g8r8a8_unorm, .r8g8b8a8_unorm, .r5g6b5_unorm_pack16 };
 
-/// A sampler the shipped texture is drawn through, as a case of its own:
-/// the vertex function and the part of `geometry` it is drawn with, which
-/// say what of the sampler shows. Each is in a set of its own beside
-/// `Side.sampler_set`, with the first texture, or with its first level
-/// alone where `one_level`.
+/// A sampler a texture is drawn through, as a case of its own: the
+/// fragment shader that samples, the vertex function and the part of
+/// `geometry` it is drawn with, which say what of the sampler shows, and
+/// the texture. Each is in a set of its own beside `Side.sampler_set`. The
+/// case is called `label` and then `what`.
 const Through = struct {
-    name: [*:0]const u8,
+    label: [:0]const u8 = "shipped texture",
+    what: [:0]const u8,
+    /// The shipped shader that samples, or a fixed form that reads the
+    /// bound sampler.
+    fragment: [*:0]const u8 = "shipped texture",
     info: facet.SamplerCreateInfo,
     vertex: [*:0]const u8,
-    first: u32,
-    one_level: bool = false,
+    first: u32 = quad_at,
+    instance: u32 = 0,
+    view: View = .texture,
     /// `Case.slack`.
     slack: ?u32 = null,
+
+    const View = enum {
+        /// The first texture, all its levels.
+        texture,
+        /// Its first level alone, which a sampler in texels is read
+        /// through: Vulkan has such a sampler read a view of one level.
+        first_level,
+        array,
+        cube,
+        volume,
+    };
 };
 
 /// What a sampler says beyond one filter, one wrap and every level as it
@@ -473,33 +493,31 @@ const Through = struct {
 /// they are the TMU's own since (`tiling.samplerOf`). "tiled" reads the
 /// texture eight times over the quad, which is about level 1; the wide
 /// quad reads it from -1.25 to 2.25, at level 0.
-const throughs = [_]Through{
+const shipped_throughs = [_]Through{
     .{
-        .name = "shipped texture, levels mixed and shifted",
+        .what = "levels mixed and shifted",
         .info = .{ .mipmap_mode = .linear, .mip_lod_bias = 1.5, .max_lod = facet.texture.lod_unclamped },
         .vertex = "tiled",
-        .first = quad_at,
     },
     .{
-        .name = "shipped texture, levels held to 3 and 4",
+        .what = "levels held to 3 and 4",
         .info = .{ .mag_filter = .nearest, .min_filter = .nearest, .min_lod = 3, .max_lod = 4 },
         .vertex = "tiled",
-        .first = quad_at,
     },
     .{
-        .name = "shipped texture, mirrored across and held down",
+        .what = "mirrored across and held down",
         .info = .{ .address_mode_u = .mirrored_repeat, .address_mode_v = .clamp_to_edge, .max_lod = facet.texture.lod_unclamped },
         .vertex = "texture",
         .first = wide_at,
     },
     .{
-        .name = "shipped texture, bordered in white",
+        .what = "bordered in white",
         .info = .{ .address_mode_u = .clamp_to_border, .address_mode_v = .clamp_to_border, .border_color = .float_opaque_white, .max_lod = facet.texture.lod_unclamped },
         .vertex = "texture",
         .first = wide_at,
     },
     .{
-        .name = "shipped texture, mirrored once",
+        .what = "mirrored once",
         .info = .{ .mag_filter = .nearest, .min_filter = .nearest, .address_mode_u = .mirror_clamp_to_edge, .address_mode_v = .mirror_clamp_to_edge, .max_lod = facet.texture.lod_unclamped },
         .vertex = "texture",
         .first = wide_at,
@@ -517,20 +535,98 @@ const throughs = [_]Through{
     // TMU that took one sample would read about two levels further, each
     // a colour of its own, which is far past five steps.
     .{
-        .name = "shipped texture, four samples along",
+        .what = "four samples along",
         .info = .{ .mipmap_mode = .linear, .anisotropy_enable = true, .max_anisotropy = 4, .max_lod = facet.texture.lod_unclamped },
         .vertex = "stretched",
-        .first = quad_at,
         .slack = 5,
     },
     .{
-        .name = "shipped texture in texels",
+        .what = "in texels",
         .info = .{ .mag_filter = .nearest, .min_filter = .nearest, .address_mode_u = .clamp_to_edge, .address_mode_v = .clamp_to_edge, .unnormalized_coordinates = true },
         .vertex = "in texels",
         .first = wide_at,
-        .one_level = true,
+        .view = .first_level,
     },
 };
+
+/// The same through the fixed form that reads the bound sampler,
+/// `texture_sampled`, which the V3D draws since 1.141 with the program of
+/// `texture` and the TMU told the sampler.
+const formed_throughs = formed: {
+    var made = shipped_throughs;
+    for (&made) |*each| {
+        each.label = "sampled form";
+        each.fragment = "sampled";
+    }
+    break :formed made;
+};
+
+/// A layer of an array, a cube and a 3D texture through a sampler: the
+/// fixed forms `texture_array_sampled`, `texture_cube_sampled` and
+/// `texture_3d_sampled`, which the V3D draws the same way since 1.141.
+/// "small array" reads the array's further levels; "cube" at instance 6
+/// looks across the edge of two faces, which a cube is read over whatever
+/// the sampler's wraps, here the default `repeat`; "volume" at instance
+/// `volume_depth` goes across the slices from left to right, so that a
+/// border past them shows at both sides.
+const layered_throughs = [_]Through{
+    .{
+        .label = "array",
+        .what = "through a sampler, levels mixed and shifted",
+        .fragment = "array sampled",
+        .info = .{ .mipmap_mode = .linear, .mip_lod_bias = 1, .max_lod = facet.texture.lod_unclamped },
+        .vertex = "small array",
+        .instance = 2,
+        .view = .array,
+    },
+    .{
+        .label = "array",
+        .what = "through a sampler, past the last",
+        .fragment = "array sampled",
+        .info = .{ .mag_filter = .nearest, .min_filter = .nearest, .max_lod = facet.texture.lod_unclamped },
+        .vertex = "array",
+        .instance = 7,
+        .view = .array,
+    },
+    .{
+        .label = "cube",
+        .what = "through a sampler, +z",
+        .fragment = "cube sampled",
+        .info = .{ .mag_filter = .nearest, .min_filter = .nearest, .max_lod = facet.texture.lod_unclamped },
+        .vertex = "cube",
+        .instance = 4,
+        .view = .cube,
+    },
+    .{
+        .label = "cube",
+        .what = "through a sampler, across an edge",
+        .fragment = "cube sampled",
+        .info = .{ .max_lod = facet.texture.lod_unclamped },
+        .vertex = "cube",
+        .instance = 6,
+        .view = .cube,
+    },
+    .{
+        .label = "3D",
+        .what = "through a sampler, across, bordered",
+        .fragment = "volume sampled",
+        .info = .{ .address_mode_w = .clamp_to_border, .border_color = .float_opaque_white, .max_lod = facet.texture.lod_unclamped },
+        .vertex = "volume",
+        .instance = volume_depth,
+        .view = .volume,
+    },
+    .{
+        .label = "3D",
+        .what = "through a sampler, a slice held to its edges",
+        .fragment = "volume sampled",
+        .info = .{ .mag_filter = .nearest, .min_filter = .nearest, .address_mode_u = .clamp_to_edge, .address_mode_v = .mirrored_repeat, .max_lod = facet.texture.lod_unclamped },
+        .vertex = "volume",
+        .instance = 3,
+        .view = .volume,
+    },
+};
+
+const throughs = shipped_throughs ++ formed_throughs ++ layered_throughs;
 
 const layer_side: u32 = 32;
 const array_layers = 4;
@@ -780,9 +876,8 @@ const Side = struct {
     sampler_set_layout: ?*facet.DescriptorSetLayout = null,
     sampler_layout: ?*facet.PipelineLayout = null,
     sampler_set: ?*facet.DescriptorSet = null,
-    /// `throughs`, each in a set of its own, and the first texture's first
-    /// level alone, which a sampler in texels is read through: Vulkan
-    /// has such a sampler read a view of one level.
+    /// `throughs`, each in a set of its own (`upThroughs`), and the first
+    /// texture's first level alone (`Through.View.first_level`).
     through: [throughs.len]?*facet.Sampler = @splat(null),
     through_sets: [throughs.len]?*facet.DescriptorSet = @splat(null),
     first_level: ?*facet.ImageView = null,
@@ -903,14 +998,6 @@ const Side = struct {
         const sampled_write = facet.WriteDescriptorSet{ .dst_set = side.sampler_set.?, .dst_binding = 0, .descriptor_type = .combined_image_sampler, .image_info = @ptrCast(&sampled_info) };
         fb.UpdateDescriptorSets(device, 1, @ptrCast(&sampled_write), 0, null);
         side.first_level = try side.view(side.textures[0].?, formats[0], facet.IMAGE_ASPECT_COLOR, 1);
-        const through_layouts: [throughs.len]?*facet.DescriptorSetLayout = @splat(side.sampler_set_layout);
-        try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = throughs.len, .set_layouts = @ptrCast(&through_layouts) }, &side.through_sets), error.Refused);
-        for (throughs, &side.through, side.through_sets) |each, *made, set| {
-            try expect(fb.CreateSampler(device, &each.info, made), error.Refused);
-            const info = facet.DescriptorImageInfo{ .sampler = made.*, .image_view = if (each.one_level) side.first_level else side.texture_views[0] };
-            const write = facet.WriteDescriptorSet{ .dst_set = set.?, .dst_binding = 0, .descriptor_type = .combined_image_sampler, .image_info = @ptrCast(&info) };
-            fb.UpdateDescriptorSets(device, 1, @ptrCast(&write), 0, null);
-        }
         // The module ships the SPIR-V of the shaders above beside the
         // functions: the flag says so, and `code_size` that the program's
         // memory is a `shader.Module` wide.
@@ -948,7 +1035,30 @@ const Side = struct {
         try expect(fb.CreateFence(device, &.{}, &side.fence), error.Refused);
         try side.stageTextures();
         try side.upLayered();
+        try side.upThroughs();
         try side.upPasses();
+    }
+
+    /// `throughs`' samplers, each in a set of its own with its texture:
+    /// after the layered ones, which some of them read.
+    fn upThroughs(side: *Side) Failure!void {
+        const fb = side.fb;
+        const device = side.device.?;
+        const through_layouts: [throughs.len]?*facet.DescriptorSetLayout = @splat(side.sampler_set_layout);
+        try expect(fb.AllocateDescriptorSets(device, &.{ .descriptor_pool = side.descriptor_pool.?, .descriptor_set_count = throughs.len, .set_layouts = @ptrCast(&through_layouts) }, &side.through_sets), error.Refused);
+        for (throughs, &side.through, side.through_sets) |each, *made, set| {
+            try expect(fb.CreateSampler(device, &each.info, made), error.Refused);
+            const read = switch (each.view) {
+                .texture => side.texture_views[0],
+                .first_level => side.first_level,
+                .array => side.layered_views[@intFromEnum(Layered.array)],
+                .cube => side.layered_views[@intFromEnum(Layered.cube)],
+                .volume => side.layered_views[@intFromEnum(Layered.volume)],
+            };
+            const info = facet.DescriptorImageInfo{ .sampler = made.*, .image_view = read };
+            const write = facet.WriteDescriptorSet{ .dst_set = set.?, .dst_binding = 0, .descriptor_type = .combined_image_sampler, .image_info = @ptrCast(&info) };
+            fb.UpdateDescriptorSets(device, 1, @ptrCast(&write), 0, null);
+        }
     }
 
     fn upPasses(side: *Side) Failure!void {
@@ -2046,14 +2156,15 @@ const Cases = struct {
             }
         }.run;
     }
-    /// The shipped texture through `throughs[k]`.
+    /// A texture through `throughs[k]`.
     fn through(comptime k: usize) *const fn (side: *Side) Failure!void {
         return &struct {
             fn run(side: *Side) Failure!void {
+                const each = throughs[k];
                 side.begin(.{});
                 side.fb.CmdBindDescriptorSets(side.commands.?, .graphics, side.sampler_layout.?, 0, 1, @ptrCast(&side.through_sets[k]), 0, null);
-                try side.use(.{ .vertex = throughs[k].vertex, .fragment = "shipped texture", .layout = side.sampler_layout.? });
-                side.draw(throughs[k].first, 6);
+                try side.use(.{ .vertex = each.vertex, .fragment = each.fragment, .layout = side.sampler_layout.? });
+                side.fb.CmdDraw(side.commands.?, 6, 1, each.first, each.instance);
                 side.end();
             }
         }.run;
@@ -2291,7 +2402,7 @@ const cases = [_]Case{
 /// A case for each of `throughs`, after the shipped ones.
 fn throughCases() [throughs.len]Case {
     var made: [throughs.len]Case = undefined;
-    inline for (&made, throughs, 0..) |*into, each, k| into.* = .{ .name = each.name, .run = Cases.through(k), .slack = each.slack };
+    inline for (&made, throughs, 0..) |*into, each, k| into.* = .{ .name = each.label ++ ", " ++ each.what, .run = Cases.through(k), .slack = each.slack };
     return made;
 }
 

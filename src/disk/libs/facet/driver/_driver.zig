@@ -58,8 +58,21 @@ const CommandBuffer = @import("../command/_command.zig").CommandBuffer;
 
 /// What a sampled image of a device's own layout needs of its memory.
 pub const TextureMemory = extern struct {
+    /// A layer's, or all of a 3D image.
     bytes: u64,
     alignment: u64,
+    /// Of a 3D image, the bytes from one slice of level 0 to the next: its
+    /// levels are each its own slices one after another, as v3dv lays them
+    /// out (v3dv_image.c:135, `cube_map_stride`; since 1.141). 0 for any
+    /// other image, whose layers are each `bytes` aligned.
+    layer_bytes: u64 = 0,
+};
+
+/// Where a level of a layer of an image lies, in bytes from its memory,
+/// and how many bytes it takes.
+pub const Span = extern struct {
+    at: u64,
+    bytes: u64,
 };
 
 pub const Ops = extern struct {
@@ -97,11 +110,18 @@ pub const Ops = extern struct {
     /// same.
     execute: *const fn (queue: *Queue, buffer: *CommandBuffer, done: *exec.Waitable) callconv(.c) void,
     /// A sampled image's memory, for a device that does not read textures
-    /// in the rasterizer's layout. Null for one that does.
-    texture_memory: ?*const fn (format: facet.Format, width: u32, height: u32, levels: u32) callconv(.c) TextureMemory = null,
+    /// in the rasterizer's layout. Null for one that does. `depth` is a 3D
+    /// image's slices and 1 for any other (since 1.141).
+    texture_memory: ?*const fn (format: facet.Format, width: u32, height: u32, depth: u32, levels: u32) callconv(.c) TextureMemory = null,
     /// Where a texel of such an image is, in bytes from its memory: null for
-    /// the rasterizer's layout, kept as `Image.texels` says.
-    texture_offset: ?*const fn (image: *const @import("../image/_image.zig").Image, level: u32, x: u32, y: u32) callconv(.c) usize = null,
+    /// the rasterizer's layout, kept as `Image.texels` says. `layer` is a
+    /// layer, or a 3D image's slice (since 1.141; the library placed the
+    /// layers before, and a 3D image's slices as layers).
+    texture_offset: ?*const fn (image: *const @import("../image/_image.zig").Image, level: u32, layer: u32, x: u32, y: u32) callconv(.c) usize = null,
+    /// Where a level of a layer of such an image lies, or of a 3D image's
+    /// slice, all of it: what a clear fills (since 1.141). Null with the
+    /// two above.
+    texture_level: ?*const fn (image: *const @import("../image/_image.zig").Image, level: u32, layer: u32) callconv(.c) Span = null,
     /// What a swapchain's pictures in the machine's memory have to be, for
     /// the device to reach them.
     picture_memory: u32 = exec.MEMF_ANY,
@@ -138,12 +158,12 @@ pub const stamp: u64 = blk: {
     sum = mixed(sum, facet_version.LIBRARY_VERSION);
     sum = mixed(sum, facet_version.LIBRARY_REVISION);
     const shared = [_]type{
-        Ops,                   TextureMemory,            PhysicalDevice,          _instance.Instance,
-        FacetBase,             Device,                   DeviceMemory,            Queue,
-        Pipeline,              _pipeline.Tessellated,    _image.Image,            _image.ImageView,
-        _buffer.Buffer,        _render.Part,             _render.Subpass,         _render.RenderPass,
-        _render.Target,        _render.Framebuffer,      _descriptor.Set,         CommandBuffer,
-        _stream.Stream,        _stream.Head,             _vertices.Bound,
+        Ops,            TextureMemory,         PhysicalDevice,  _instance.Instance,
+        FacetBase,      Device,                DeviceMemory,    Queue,
+        Pipeline,       _pipeline.Tessellated, _image.Image,    _image.ImageView,
+        _buffer.Buffer, _render.Part,          _render.Subpass, _render.RenderPass,
+        _render.Target, _render.Framebuffer,   _descriptor.Set, CommandBuffer,
+        _stream.Stream, _stream.Head,          _vertices.Bound, Span,
     };
     for (shared) |T| sum = shapeOf(sum, T);
     // Every command as it is recorded.

@@ -207,8 +207,23 @@ pub fn broken(queue: *const Queue) bool {
 }
 
 /// A sampled image's layout in memory.
-pub fn layoutOf(format: facet.Format, width: u32, height: u32, levels: u32) tiling.Layout {
-    return tiling.layoutOf(_image.bytesOf(format), width, height, @min(levels, tiling.most_levels));
+pub fn layoutOf(format: facet.Format, width: u32, height: u32, depth: u32, levels: u32) tiling.Layout {
+    return tiling.layoutOf(_image.bytesOf(format), width, height, depth, @min(levels, tiling.most_levels));
+}
+
+/// A texture image's layout: of a 3D image, its slices in each level
+/// (since 1.141).
+pub fn imageLayout(image: *const _image.Image) tiling.Layout {
+    return layoutOf(image.format, image.width, image.height, if (image.volume) image.layers else 1, image.levels);
+}
+
+/// Where layer `layer` of a texture image begins, or slice `layer` of
+/// level `level` of a 3D one, from where the image's level does: a layer
+/// is a texture of its own, `layer_bytes` from the one before, and a 3D
+/// image's slices lie in each level (`tiling.sliceAt`, since 1.141).
+pub fn layerAt(image: *const _image.Image, layout: *const tiling.Layout, level: u32, layer: u32) usize {
+    if (image.volume) return tiling.sliceAt(layout, level, layer);
+    return layer * @as(usize, @intCast(image.layer_bytes));
 }
 
 /// The commands of `buffer`, in order.
@@ -917,12 +932,16 @@ fn tmuConfiguration(queue: *Queue, set: u32, binding: u32, how: tiling.Sampled) 
         .r8_unorm => .r8,
         else => return null,
     };
-    const layout = layoutOf(image.format, image.width, image.height, image.levels);
+    const layout = imageLayout(image);
     const state = carve(queue, tiling.texture_state_bytes, tiling.texture_state_alignment) orelse return null;
     // The view's swizzle, which the TMU applies over the format's own
     // (since 1.120).
     const picks = [4]tiling.Pick{ pickOf(view.swizzle.r), pickOf(view.swizzle.g), pickOf(view.swizzle.b), pickOf(view.swizzle.a) };
-    tiling.writeTextureState(state.cpu[0..tiling.texture_state_bytes], &layout, texels, picks, @intCast(@intFromPtr(image.data) + view.base_layer * image.layer_bytes), view.base_level, view.base_level + view.level_count - 1, view.layer_count, @intCast(image.layer_bytes));
+    // A 3D image's slices are told by the step between level 0's, which
+    // is its `layer_bytes`, as v3dv tells them (v3dvx_image.c:107,
+    // v3dv_image.c:135): the TMU finds a smaller level's from there.
+    const first_layer = if (image.volume) 0 else view.base_layer * image.layer_bytes;
+    tiling.writeTextureState(state.cpu[0..tiling.texture_state_bytes], &layout, texels, picks, @intCast(@intFromPtr(image.data) + first_layer), view.base_level, view.base_level + view.level_count - 1, view.layer_count, @intCast(image.layer_bytes));
     const sampler = carve(queue, tiling.sampler_state_bytes, tiling.sampler_state_alignment) orelse return null;
     tiling.writeSamplerState(sampler.cpu[0..tiling.sampler_state_bytes], how.state);
     return .{ .texture = tiling.parameter0(state.address), .sampler = tiling.parameter1(sampler.address, how.unnormalized) };
@@ -931,16 +950,27 @@ fn tmuConfiguration(queue: *Queue, set: u32, binding: u32, how: tiling.Sampled) 
 /// The two uniforms of a fixed form that samples, in a place of their
 /// own: the form says how it is sampled, and the texture is the one
 /// bound at set 0, binding 0, which is where a fixed form's is.
+///
+/// A form that samples through the sampler bound beside the texture
+/// (`Fixed.needsSampler`) takes that sampler, at set 0, binding 0 as the
+/// cores read it (`shader.zig`'s `texturedBy` and `layeredBy`), whole
+/// (`tiling.samplerOf`, since 1.141); null where none is bound there.
 fn textureUniforms(queue: *Queue, fixed: shader.Fixed) ?u32 {
-    const filter: tiling.Filter = switch (fixed.sampling.filter) {
-        .nearest => .nearest,
-        .bilinear => .bilinear,
+    const how: tiling.Sampled = if (fixed.needsSampler()) bound: {
+        const sampler = playerOf(queue).resources.samplerOf(0, 0, 0) orelse return null;
+        break :bound tiling.samplerOf(sampler) orelse return null;
+    } else own: {
+        const filter: tiling.Filter = switch (fixed.sampling.filter) {
+            .nearest => .nearest,
+            .bilinear => .bilinear,
+        };
+        const wrap: tiling.Wrap = if (fixed.kind == .texture_cube) .clamp else switch (fixed.sampling.address) {
+            .wrap => .repeat,
+            .clamp => .clamp,
+        };
+        break :own .{ .state = .{ .mag = filter, .min = filter, .wrap = @splat(wrap) } };
     };
-    const wrap: tiling.Wrap = if (fixed.kind == .texture_cube) .clamp else switch (fixed.sampling.address) {
-        .wrap => .repeat,
-        .clamp => .clamp,
-    };
-    const made = tmuConfiguration(queue, 0, 0, .{ .state = .{ .mag = filter, .min = filter, .wrap = @splat(wrap) } }) orelse return null;
+    const made = tmuConfiguration(queue, 0, 0, how) orelse return null;
     const place = carve(queue, 8, 4) orelse return null;
     const words: [*]u32 = @ptrCast(@alignCast(place.cpu));
     words[0] = made.texture;
@@ -1191,13 +1221,16 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
             const place = carve(queue, 4, 4) orelse return noRoom(queue, "a draw with no memory for its uniforms");
             uniforms = place.address;
         },
-        .texture, .texture_color, .texture_array, .texture_cube, .texture_3d => {
+        // The forms that sample through the bound sampler run the
+        // programs of the forms they are otherwise, the TMU told the
+        // sampler (`textureUniforms`, since 1.141).
+        .texture, .texture_color, .texture_array, .texture_cube, .texture_3d, .texture_sampled, .texture_array_sampled, .texture_cube_sampled, .texture_3d_sampled => {
             if (fixed.kind == .texture_color) carried = .{ .colors_from = 2 };
             fragment = switch (fixed.kind) {
-                .texture => programs.texture,
+                .texture, .texture_sampled => programs.texture,
                 .texture_color => programs.texture_color,
-                .texture_array => programs.array,
-                .texture_cube => programs.cube,
+                .texture_array, .texture_array_sampled => programs.array,
+                .texture_cube, .texture_cube_sampled => programs.cube,
                 else => programs.volume,
             };
             uniforms = textureUniforms(queue, fixed) orelse missing: {
@@ -1256,12 +1289,10 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
                 uniforms = place.address;
             }
         },
-        // Refused when the pipeline was made (driver.zig): no program drops
-        // pixels, and none reads a sampler, so none of these reaches a
-        // frame here.
-        .texture_cutout, .texture_sampled, .texture_shadow, .texture_cube_array => return,
-        .texture_array_sampled, .texture_cube_sampled, .texture_3d_sampled => return,
-        .texture_cube_array_sampled => return,
+        // Refused when the pipeline was made (driver.zig): no fixed form's
+        // program drops pixels, compares or reads a cube of an array
+        // (`samplesHere`), so none of these reaches a frame here.
+        .texture_cutout, .texture_shadow, .texture_cube_array, .texture_cube_array_sampled => return,
     }
 
     const scale = ViewportScale{
@@ -1389,11 +1420,11 @@ fn copyToTexture(image: *Image, from: []const u8, region: *const facet.BufferIma
     const row_length = if (region.buffer_row_length != 0) region.buffer_row_length else region.image_extent.width;
     const source_pitch = @as(usize, row_length) * pixel;
     const start = std.math.cast(usize, region.buffer_offset) orelse return;
-    const layout = layoutOf(image.format, image.width, image.height, image.levels);
+    const layout = imageLayout(image);
     const range = _image.layersOf(image, region.image_subresource, region.image_offset.z, region.image_extent.depth) orelse return;
     const slice_height = if (region.buffer_image_height != 0) region.buffer_image_height else region.image_extent.height;
     for (0..range.count) |slice| {
-        const layer_data = data + (range.first + slice) * @as(usize, @intCast(image.layer_bytes));
+        const layer_data = data + layerAt(image, &layout, level, range.first + @as(u32, @intCast(slice)));
         for (0..height) |row| {
             const at = start + slice * slice_height * source_pitch + row * source_pitch;
             if (at + width * pixel > from.len) return;

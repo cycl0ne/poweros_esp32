@@ -42,6 +42,7 @@ const Pipeline = @import("../../pipeline/_pipeline.zig").Pipeline;
 const Queue = @import("../../queue/_queue.zig").Queue;
 const CommandBuffer = @import("../../command/_command.zig").CommandBuffer;
 const _driver = @import("../_driver.zig");
+const _image = @import("../../image/_image.zig");
 const _format = @import("../_format.zig");
 const _play = @import("_play.zig");
 const qpu = v3d.qpu;
@@ -61,6 +62,7 @@ pub const ops = _driver.Ops{
     .execute = &execute,
     .texture_offset = &textureOffset,
     .texture_memory = &textureMemory,
+    .texture_level = &textureLevel,
     .picture_memory = exec.MEMF_DMA,
 };
 
@@ -113,16 +115,16 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // decide it (`_instance.limits`).
         .limits = said: {
             var said = _instance.limits;
-            // A generated program samples through the sampler bound beside
-            // its texture, and the TMU is given all of it as v3dv packs it
+            // A program samples through the sampler bound beside its
+            // texture, and the TMU is given all of it as v3dv packs it
             // (`tiling.samplerOf`, since 1.140): one a stage, as there is
-            // one texture a stage below, since the program samples once.
+            // one texture a stage below, since a program samples once.
             // The bias, the anisotropy and the precision are v3dv's for
             // this GPU (v3dv_device.c:1153, 1158, 1159); the bias is what
-            // Vulkan asks at least 2 of, and the field holds -128 to just under 128
-            // (`tiling.SamplerState.bias`). The fixed forms that want a
-            // sampler are still refused here and drawn on the cores
-            // (`can.samplers` below): no QPU program of theirs reads one.
+            // Vulkan asks at least 2 of, and the field holds -128 to just
+            // under 128 (`tiling.SamplerState.bias`). A fixed form that
+            // wants a sampler reads it the same way where this device
+            // draws it (`samplesHere`, since 1.141).
             said.max_per_stage_descriptor_samplers = 1;
             said.max_descriptor_set_samplers = facet.shader.MAX_SETS;
             said.max_sampler_lod_bias = 14;
@@ -236,12 +238,13 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         .tessellation_on_device = false,
         // No QPU program discards yet, so texture_cutout is refused above.
         .discarding_fragment_forms = false,
-        // A fixed form's TMU state is written from the form's own
-        // `sampling` as a draw is played, and no fixed form's program
-        // reads a sampler, so the forms that want one are refused and
-        // drawn on the cores. A generated program's sampler is another
-        // matter: it is the TMU's whole since 1.140 (`tiling.samplerOf`).
-        // docs/facet-vulkan10.md item 54 is the fixed forms' half.
+        // Not every fixed form that wants a sampler: the 2D, array, cube
+        // and 3D ones run here since 1.141, their programs the ones of
+        // the forms without a sampler and the TMU told the bound sampler
+        // whole (`samplesHere` beside makePipeline), but the shadow one
+        // and the cube of an array are refused and drawn on the cores. A
+        // generated program's sampler is the TMU's whole since 1.140
+        // (`tiling.samplerOf`).
         .samplers = false,
         // The TMU's own, 2 to 16 samples, as v3dv has it
         // (v3dv_device.c:349; `tiling.anisotropyOf`). Until 1.140 this was
@@ -588,15 +591,34 @@ fn makePipeline(pipeline: *Pipeline) callconv(.c) facet.Result {
         if (pipeline.fragment_words.len == 0) return .error_feature_not_present;
         return compiled(pipeline);
     }
-    // A form that drops pixels needs a QPU program that discards, and one
-    // that samples through a sampler a program that reads it: there is
-    // neither yet, so such a pipeline is refused here and drawn on the
-    // cores.
-    // Nor is there one for a cube of an array, which reads a fourth
-    // coordinate (since 1.46) - `texture_cube_array_sampled` reads a
-    // sampler besides, so `needsSampler` already refuses it (since 1.53).
-    if (fixed.kind == .texture_cube_array or fixed.discards() or fixed.needsSampler() or pipeline.varyings != fixed.varyings()) return .error_feature_not_present;
+    // A form that drops pixels needs a QPU program that discards, which no
+    // fixed form's has yet, so such a pipeline is refused here and drawn
+    // on the cores. Nor is there a program for a cube of an array, which
+    // reads a fourth coordinate (since 1.46). A form that samples through
+    // the sampler bound beside its texture is drawn where `samplesHere`
+    // says, and refused elsewhere.
+    if (fixed.kind == .texture_cube_array or fixed.discards() or (fixed.needsSampler() and !samplesHere(fixed)) or pipeline.varyings != fixed.varyings()) return .error_feature_not_present;
     return .success;
+}
+
+/// Whether this device draws `fixed`, a form that samples through the
+/// sampler bound beside its texture. It runs the program of the form it is
+/// otherwise, with the TMU told the sampler whole as v3dv packs it
+/// (`_play.zig`'s `textureUniforms`, since 1.141): a 2D texture, a layer
+/// of an array, a cube and a 3D texture. A cube is read over its seams
+/// with the sampler's wraps saying nothing of it, as Vulkan has it (the
+/// spec's "Wrapping Operation") and as the cores read it since 1.60
+/// (`texture.sampleCubeBy`); v3dv packs the wraps as they are whatever
+/// the view (v3dvx_device.c:255-257), and so does this. Two it refuses:
+/// - `texture_shadow` compares, and the TMU compares only where the
+///   program writes the reference to TMUDREF (v3d_tex.c:155-157), which
+///   none of the hand-written programs does.
+/// - `texture_cube_array_sampled`: no program reads a cube of an array.
+fn samplesHere(fixed: facet.shader.Fixed) bool {
+    return switch (fixed.kind) {
+        .texture_sampled, .texture_array_sampled, .texture_cube_sampled, .texture_3d_sampled => true,
+        else => false,
+    };
 }
 
 /// The pipeline's own fragment shader compiled and put where the V3D
@@ -679,13 +701,24 @@ fn execute(queue: *Queue, buffer: *CommandBuffer, done: *exec.Waitable) callconv
     queue.device.sys.SignalWaitable(done);
 }
 
-fn textureMemory(format: facet.Format, width: u32, height: u32, levels: u32) callconv(.c) _driver.TextureMemory {
-    const layout = _play.layoutOf(format, width, height, levels);
-    return .{ .bytes = layout.bytes, .alignment = tiling.alignment };
+/// A layer's memory, or a 3D image's whole: its levels each its slices one
+/// after another, the step from a slice to the next level 0's (since
+/// 1.141, `tiling.layoutOf`).
+fn textureMemory(format: facet.Format, width: u32, height: u32, depth: u32, levels: u32) callconv(.c) _driver.TextureMemory {
+    const layout = _play.layoutOf(format, width, height, depth, levels);
+    return .{ .bytes = layout.bytes, .alignment = tiling.alignment, .layer_bytes = if (depth > 1) layout.levels[0].slice_bytes else 0 };
 }
 
-/// Where a texel of a texture is, in bytes from its memory.
-fn textureOffset(image: *const @import("../../image/_image.zig").Image, level: u32, x: u32, y: u32) callconv(.c) usize {
-    const layout = _play.layoutOf(image.format, image.width, image.height, image.levels);
-    return tiling.texelOffset(&layout, level, x, y);
+/// Where a texel of a layer of a texture is, or of a 3D texture's slice,
+/// in bytes from its memory.
+fn textureOffset(image: *const _image.Image, level: u32, layer: u32, x: u32, y: u32) callconv(.c) usize {
+    const layout = _play.imageLayout(image);
+    return _play.layerAt(image, &layout, level, layer) + tiling.texelOffset(&layout, level, x, y);
+}
+
+/// A level of a layer of a texture, or of a 3D texture's slice: all of
+/// its texels, the padding of its tiles with them.
+fn textureLevel(image: *const _image.Image, level: u32, layer: u32) callconv(.c) _driver.Span {
+    const layout = _play.imageLayout(image);
+    return .{ .at = _play.layerAt(image, &layout, level, layer) + layout.levels[level].offset, .bytes = layout.levels[level].slice_bytes };
 }

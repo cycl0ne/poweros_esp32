@@ -3962,4 +3962,91 @@ pub const LIBRARY_VERSION = 1;
 ///   forms read a sampler off the device type, since the V3D's
 ///   anisotropy no longer says so. It passes its 834 checks, 337 of them
 ///   on the V3D.
-pub const LIBRARY_REVISION = 140;
+///
+/// 141: **The V3D draws the fixed forms that read a sampler.** Until now
+/// it refused every form that wanted one (`samplers`), and the cores drew
+/// them. Now four of the six run on the V3D: `texture_sampled`,
+/// `texture_array_sampled`, `texture_cube_sampled` and
+/// `texture_3d_sampled`. No new QPU program was needed. Each runs the
+/// program of the form it is without a sampler. The program writes only
+/// the coordinates; the sampler reaches the TMU through configuration
+/// parameter 1, which v3dv writes as the draw is recorded
+/// (v3dv_uniforms.c:187-221, write_tmu_p1). `textureUniforms` does the
+/// same: it gives the TMU the bound sampler whole, through
+/// `tiling.samplerOf` as in 1.140, in place of the form's own filter and
+/// wrap.
+///
+/// A cube is read over its seams, and the sampler's wraps say nothing of
+/// it, as Vulkan has it and as the cores have read it since 1.60. v3dv
+/// packs the wraps as they are whatever the view (v3dvx_device.c:255-257),
+/// and so does this. Two forms stay refused (`samplesHere`):
+///
+/// - `texture_shadow` compares, and the TMU compares only where the
+///   program writes TMUDREF (v3d_tex.c:155-157). That is item 58's.
+/// - `texture_cube_array_sampled` reads a fourth coordinate, as
+///   `texture_cube_array` does, and neither has a program.
+///
+/// `samplers` stays false, since not every form that wants a sampler
+/// runs here. Its docs and `needsSampler`'s say which do. The shader.zig
+/// docs of the two cube forms said the wraps held a cube's edges. They
+/// have not since 1.60, and the docs now say so.
+///
+/// **What the V3D's sampled forms showed, put right:**
+///
+/// - **A 3D texture's levels lie as v3dv lays them out.** Each slice was a
+///   texture of its own, as a layer is. The TMU finds a level from level
+///   0's place, counting every slice of each smaller level, so past level
+///   0 it read a slice or more from where the level lay. FacetProbe's
+///   level 1 read 0 where its first slice was. `tiling.layoutOf` takes
+///   the depth now, as v3d_setup_slices does (v3dv_image.c:112-282): a
+///   level is its slices one after another, from level 1 on as many as a
+///   power of two gives (:132-134, :174-178). The texture state steps
+///   from slice to slice by level 0's (:135, v3dvx_image.c:107).
+///   `Ops.texture_memory` takes the depth and `texture_offset` the layer,
+///   so the driver places a 3D image's slices; the library placed them
+///   as layers before.
+/// - **A clear of a V3D texture writes the V3D's texels where it keeps
+///   them.** `clearColorImage` found a level, and made its texel, as the
+///   cores keep them. The V3D's level 0 lies last, so one level of a
+///   texture of levels was cleared over another's place. An 8888 texel
+///   went in as the cores' 64 bits, every second word read back as a
+///   texel, alpha 0. A new `Ops.texture_level` says where the level lies,
+///   and the texel is the image format's, as `_image.readTexel` reads it.
+/// - **A clear of a 3D image clears every slice of the level, on every
+///   device.** Vulkan's range names a 3D image's one array layer.
+///   `clearColorImage` took the slices for layers, so a range of one
+///   layer cleared the first slice alone.
+///
+/// Tests:
+///
+/// - 3038 host tests, two new, the V3D's below among them. A clear of
+///   each level of a 3D image of four slices, its range one layer, reads
+///   back every slice of each level its colour.
+/// - 137 V3D tests, one new: a 3D texture's levels lie as v3d_setup_slices
+///   has them. Level 1's two slices come just before level 0's four, a
+///   slice's bytes apart. Six slices are four at level 1, not three. A
+///   texture that is not 3D lies as before.
+/// - On the board, C:test/FacetBoth 1.13 has 13 cases more. The seven
+///   samplers of 1.140's shipped texture are drawn again through the
+///   fixed sampled form. They are as far from the cores as the shipped
+///   texture is: 1, 0, 16, 2, 0, 0 and 0 pixels of 230,400. Six more go
+///   through a sampler to a layer, a cube and a 3D texture:
+///   - an array's levels mixed and shifted: 9 apart;
+///   - past the last layer: 0;
+///   - a cube's +z: 0;
+///   - a cube across an edge: 14, as many as the cube without a sampler;
+///   - a 3D texture bordered in white: 0;
+///   - a slice held to its edges: 0.
+/// - All 185 cases stay within one pixel in a thousand.
+/// - C:test/FacetProbe 1.45 no longer turns the V3D's sampled forms down
+///   before it asks. It expects a pipeline of the cube-array form where a
+///   device draws it and a refusal where it does not, and makes a view of
+///   cubes as an array only where the device has them. It reads the held
+///   and wide cases through a 2D view of the cube's first face. That
+///   reached 1.59's 3D texture of levels on the V3D, whose four checks
+///   failed until the layout was v3dv's. Four checks are new: a clear of
+///   each level of a texture of levels and of a 3D texture, each level
+///   read back whole. All four failed on the V3D, alpha 0, until the
+///   clear wrote its texels. FacetProbe passes its
+///   864 checks, 362 of them on the V3D (337 at 1.140).
+pub const LIBRARY_REVISION = 141;

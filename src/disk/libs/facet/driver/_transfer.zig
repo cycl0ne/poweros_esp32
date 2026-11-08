@@ -365,12 +365,17 @@ pub fn clearColorImage(command: *const _command.ClearColorImage) bool {
         const layers = if (range.layer_count == facet.REMAINING) image.layers - first_layer else @min(range.layer_count, image.layers - first_layer);
         // Every sample's plane, each the whole image at one sample (since
         // 1.99).
-        for (0..image.samples) |sample| for (first_layer..first_layer + layers) |layer| {
-            const layer_at = @as(usize, @intCast(image.sample_bytes)) * sample + @as(usize, @intCast(image.layer_bytes)) * layer;
-            for (first_level..first_level + levels) |level| {
-                const span = spanOf(image, @intCast(level)) orelse continue;
-                if (layer_at + span.at + span.bytes > image.bytes) continue;
-                fill(data + layer_at + span.at, span.bytes, texel);
+        for (0..image.samples) |sample| for (first_level..first_level + levels) |level| {
+            const sample_at = @as(usize, @intCast(image.sample_bytes)) * sample;
+            // A 3D image's level is every slice it has, fewer at each
+            // level, whatever the range: Vulkan's names its one array
+            // layer (since 1.141; until then its slices were taken for
+            // layers, and the first alone cleared where the range said 1).
+            const from: usize, const to: usize = if (image.volume) .{ 0, image.texels.slicesAt(@intCast(level)) } else .{ first_layer, first_layer + layers };
+            for (from..to) |layer| {
+                const span = spanOf(image, @intCast(level), @intCast(layer)) orelse continue;
+                if (sample_at + span.at + span.bytes > image.bytes) continue;
+                fill(data + sample_at + span.at, span.bytes, texel);
             }
         };
     }
@@ -434,23 +439,32 @@ pub fn clearDepthImage(command: *const _command.ClearDepthStencilImage) bool {
     return true;
 }
 
-/// Where a level lies in a layer and how many bytes it is. Null for a level
-/// the image does not keep that way.
-fn spanOf(image: *const Image, level: u32) ?struct { at: usize, bytes: usize } {
+/// Where a level of a layer lies, from the image's memory, and how many
+/// bytes it is. Null for a level the image does not keep that way.
+fn spanOf(image: *const Image, level: u32, layer: u32) ?struct { at: usize, bytes: usize } {
     switch (image.kind) {
         // A level's rows, each of the level's own pitch: the padding at a
         // row's end is written too, being the image's own memory and read
         // by nothing. An image kept in rows has levels since 1.119.
         .rows => {
-            const rows = _image.rowsAt(image, level, 0);
+            const rows = _image.rowsAt(image, level, layer);
             return .{ .at = rows.at, .bytes = @as(usize, rows.pitch) * _image.levelSize(image, level)[1] };
         },
         .texture => {
+            if (level >= image.levels) return null;
+            // On a device of a layout of its own, where its driver says
+            // (since 1.141): the cores' places for the levels are not the
+            // V3D's, whose level 0 lies last.
+            if (image.device.physical.ops.texture_level) |own| {
+                const span = own(image, level, layer);
+                return .{ .at = @intCast(span.at), .bytes = @intCast(span.bytes) };
+            }
             const texels = &image.texels;
             if (level >= texels.levels) return null;
+            const layer_at = @as(usize, @intCast(image.layer_bytes)) * layer;
             const at = texels.layout[level].start;
             const end = if (level + 1 < texels.levels) texels.layout[level + 1].start else @as(u32, @intCast(image.layer_bytes));
-            return if (end <= at) null else .{ .at = at, .bytes = end - at };
+            return if (end <= at) null else .{ .at = layer_at + at, .bytes = end - at };
         },
         .depth => return null,
     }
@@ -503,7 +517,17 @@ fn texelOf(image: *const Image, color: u32, parts: [4]f32, words: [4]u32) ?Texel
             .r5g6b5_unorm_pack16 => .{ .two = narrow(color) },
             else => null,
         },
-        .texture => switch (image.texels.format) {
+        // On a device of a layout of its own a texel is kept as a buffer
+        // holds it in the image's format (`_image.readTexel`), not as the
+        // cores keep it: until 1.141 the clear wrote the cores' 64-bit
+        // texel there, every second word of it read as a texel.
+        .texture => if (image.device.physical.ops.texture_offset != null) switch (image.format) {
+            .b8g8r8a8_unorm => .{ .four = color },
+            .r8g8b8a8_unorm => .{ .four = color & 0xFF00_FF00 | (color >> 16 & 0xFF) | (color & 0xFF) << 16 },
+            .r5g6b5_unorm_pack16 => .{ .two = narrow(color) },
+            .r8_unorm => .{ .one = @truncate(color >> 16) },
+            else => null,
+        } else switch (image.texels.format) {
             .rgba8888 => .{ .eight = texture.spread(color) },
             // A texel kept smaller than its colour (since 1.48): the word
             // as it is, and the red alone.
