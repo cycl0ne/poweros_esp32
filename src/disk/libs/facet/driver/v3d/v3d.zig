@@ -19,10 +19,16 @@ pub const frame = @import("frame.zig");
 pub const qpu = @import("qpu.zig");
 pub const compile = @import("compile.zig");
 pub const tiling = @import("tiling.zig");
+/// The QPU's instructions as Mesa has them (src/broadcom/qpu), which the
+/// compiler is ported onto: unpacked, packed, and printed.
+pub const qpu_instr = @import("qpu/instr.zig");
+pub const qpu_pack = @import("qpu/pack.zig");
+pub const qpu_disasm = @import("qpu/disasm.zig");
 
 test {
     _ = qpu;
     _ = compile;
     _ = cl;
     _ = tiling;
+    _ = @import("qpu/tests.zig");
 }

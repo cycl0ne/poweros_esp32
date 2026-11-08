@@ -1906,6 +1906,16 @@ On 7.1 the SFU ops are entries of the add table (qpu_pack.c:658-663) and come wi
 
 The list above leaves out four things: the VIR layer itself, liveness, the validator, and the uniform stream growing into Mesa's `quniform_contents`. Storage buffers are covered by no item. The citations have drifted: the profile is compile.zig:196-230, the error set 126-184, and the single sampler field driver.zig:523-526.
 
+**Begun, 08.11.2026, from the bottom: the QPU's instructions.** `driver/v3d/qpu/` holds Mesa's src/broadcom/qpu of 7.1, which VIR, the scheduler and the register allocator are ported onto next:
+
+- `instr.zig`: an instruction unpacked, and what it reads, writes and waits on (qpu_instr.h, qpu_instr.c);
+- `pack.zig`: an instruction to its 64 bits and back - the signal map, the small immediates, the condition field, both opcode tables, each side and a branch (qpu_pack.c's v3d71 paths);
+- `disasm.zig`: an instruction as Mesa prints it (qpu_disasm.c).
+
+That is 2,084 lines from Mesa's 4,847, the 4.x paths left out. `qpu/tests.zig` holds them to Mesa's own rows (tests/qpu_disasm.c: its seven of 7.1, and its seven branches, whose code asks no version), to every word the hand-written programs in `qpu.zig` run on the board, and to every opcode with every raddr of either side, every signal and every condition code, each read back and packed again. A script compared the tables with Mesa's row by row, and they are its own: 144 add rows, 33 mul rows, 28 signals, and the operand counts of 107 and 22 operations.
+
+Two places where Mesa reads back what it does not pack again are kept as Mesa has them. The ten one-operand float operations, ffloor to ftoc, read an `abs` unpack that their pack refuses. And fxcd and fycd are three raddr_b values each, read as one operation and packed as the first. Nothing in facet.library calls this yet: compile.zig still emits `qpu.zig`'s words.
+
 ### 60. Compile SPIR-V vertex and compute stages for the V3D **[critical path]**
 
 *V3D compiler* &mdash; conformance-blocking, large, also serves the shim
