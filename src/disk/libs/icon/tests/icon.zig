@@ -220,6 +220,40 @@ fn expectTestPicture(image: *const icon.IconImage) !void {
     };
 }
 
+test "the fields: a list's order turned over is ORDER, beside SHOW" {
+    var drawer = icon.DrawerData{ .flags = icon.DDFLAGS_SHOWICONS | icon.DDFLAGS_REVERSED, .view_modes = icon.DDVM_BYDATE };
+    const object = icon.DiskObject{ .kind = icon.WBDRAWER, .drawer_data = &drawer };
+    var text: [128]u8 = undefined;
+    const length = iconfile.writeFields(&object, &text).?;
+    try testing.expectEqualStrings("KIND=DRAWER\nVIEW=DATE\nSHOW=ICONS\nORDER=REVERSED\n", text[0..length]);
+    try testing.expectEqual(@as(?u32, icon.DDFLAGS_REVERSED), iconfile.orderOf(" reversed "));
+    try testing.expectEqual(@as(?u32, 0), iconfile.orderOf("First"));
+    try testing.expect(iconfile.orderOf("sideways") == null);
+}
+
+test "a drawer's icon keeps its list's order turned over beside what it shows" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch unreachable;
+    const dl = rig.dosLib();
+    const ib = rig.ib;
+    dl.UnLock(dl.CreateDir("WORK:Box") orelse return error.NoDir);
+    try rig.write("WORK:Box.info", interlaced_png);
+
+    const object = ib.GetDiskObject("WORK:Box") orelse return error.NoIcon;
+    defer ib.FreeDiskObject(object);
+    var data = icon.DrawerData{ .flags = icon.DDFLAGS_SHOWICONS | icon.DDFLAGS_REVERSED, .view_modes = icon.DDVM_BYDATE };
+    const was = object.drawer_data;
+    object.drawer_data = &data;
+    defer object.drawer_data = was;
+    try testing.expect(ib.PutDiskObject("WORK:Box", object));
+
+    const back = ib.GetDiskObject("WORK:Box") orelse return error.NoIcon;
+    defer ib.FreeDiskObject(back);
+    try testing.expectEqual(icon.DDFLAGS_SHOWICONS | icon.DDFLAGS_REVERSED, back.drawer_data.?.flags);
+    try testing.expectEqual(icon.DDVM_BYDATE, back.drawer_data.?.view_modes);
+}
+
 test "a picture without fields is an icon, plain or interlaced, of the kind of what it belongs to" {
     var rig: Rig = undefined;
     try rig.init();

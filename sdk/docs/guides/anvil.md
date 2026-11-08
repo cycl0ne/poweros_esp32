@@ -132,15 +132,23 @@ rows from the top left.
 
 Viewed by name, date or size, the drawer is rows of text - the name, the
 size or "Drawer", the date and the protection bits - drawers first, then
-by the name, the newest or the largest. Bars in the right and bottom
-borders scroll it, a step at a time, and the wheel anywhere over the
-window scrolls it as far a notch as over the bar - across with Shift
-held. A box being drawn keeps its first corner on the icons it started
-at, and icons dragged in the window land where they are let go in the
-view as it is then. A disk's window says in its title
-how full the disk is - `Work  45% full, 1,234K free, 980K in use` - in
-K, or past 9,999 of one unit in the next: M, G, T, P. The drawer is watched (StartNotify) and read again
-when anything changes it.
+by the name, the newest or the largest. A row of headings stands over
+the columns, staying at the top as the rows scroll and moving across
+with them. A press on Name, Size or Date, let go over it, sorts the rows
+by that column; on the column already sorted by, it turns the order
+over - Z to A, the oldest first, the smallest first - with the drawers
+still first. A small triangle at the right of the sorted column points
+up in its first order and down turned over; Protection does not sort.
+The rows are put in their new order where they are, not read again.
+View By Name, Date or Size takes the column in its first order. Bars in
+the right and bottom borders scroll it, a step at a time, and the wheel
+anywhere over the window scrolls it as far a notch as over the bar -
+across with Shift held. A box being drawn keeps its first corner on the
+icons it started at, and icons dragged in the window land where they are
+let go in the view as it is then. A disk's window says in its title how
+full the disk is - `Work  45% full, 1,234K free, 980K in use` - in K, or
+past 9,999 of one unit in the next: M, G, T, P. The drawer is watched
+(StartNotify) and read again when anything changes it.
 
 The Window menu has Open Parent, Close, Update, Show (only icons, or all
 files) and View By (icon, name, date, size) for the drawer it is used in.
@@ -263,8 +271,9 @@ The Icons menu works on the icons picked:
 
 The Window menu adds New Drawer (asks the name, makes the drawer and its
 icon), Clean Up (the icons laid out in rows again), Clean Up By, Snap to
-Grid and Snapshot: Window writes the window's box, view and shown files
-into the drawer's icon, and All writes every icon's place as well.
+Grid and Snapshot: Window writes the window's box, view - a list's order
+with it - and shown files into the drawer's icon, and All writes every
+icon's place as well.
 
 **Clean Up By** Name, Date or Size sorts the icons - drawers first, then
 by the name, the newest or the largest, a tie by the name, as a drawer

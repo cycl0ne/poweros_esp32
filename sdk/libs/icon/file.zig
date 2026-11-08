@@ -17,6 +17,7 @@
 //!   SCROLL=0,0                 how far a drawer's view is scrolled
 //!   VIEW=NAME                  ICON, NAME, DATE, SIZE
 //!   SHOW=ALL                   ICONS, ALL
+//!   ORDER=REVERSED             FIRST, REVERSED: a list's order turned over
 //!
 //! A field left out has its default: no place, no tool, no tool types,
 //! the usual stack, a drawer's window chosen by whoever opens it. A line
@@ -44,14 +45,16 @@ pub const FIELDS_MAX = 16 * 1024;
 pub const PICTURE_MAX = 256;
 
 /// The keys of the fields.
-pub const Key = enum { kind, at, tool, type, stack, window, scroll, view, show };
-const key_names = [_][]const u8{ "KIND", "AT", "TOOL", "TYPE", "STACK", "WINDOW", "SCROLL", "VIEW", "SHOW" };
+pub const Key = enum { kind, at, tool, type, stack, window, scroll, view, show, order };
+const key_names = [_][]const u8{ "KIND", "AT", "TOOL", "TYPE", "STACK", "WINDOW", "SCROLL", "VIEW", "SHOW", "ORDER" };
 
 /// The words of KIND, by the kind's number; VIEW's by `DDVM_*`; SHOW's
-/// by `DDFLAGS_*`.
+/// by `DDFLAGS_*` within `DDFLAGS_SHOWMASK`; ORDER's by whether
+/// `DDFLAGS_REVERSED` is set.
 pub const kind_names = [_][]const u8{ "", "DISK", "DRAWER", "TOOL", "PROJECT", "TRASHCAN" };
 pub const view_names = [_][]const u8{ "DEFAULT", "ICON", "NAME", "DATE", "SIZE" };
 pub const show_names = [_][]const u8{ "DEFAULT", "ICONS", "ALL" };
+pub const order_names = [_][]const u8{ "FIRST", "REVERSED" };
 
 /// One field: its key and its value as written.
 pub const Field = struct {
@@ -93,6 +96,12 @@ pub fn viewOf(value: []const u8) ?u32 {
 }
 pub fn showOf(value: []const u8) ?u32 {
     return if (wordIn(&show_names, value)) |at| @intCast(at) else null;
+}
+
+/// ORDER's word as its `DDFLAGS_REVERSED` bit: 0 for FIRST.
+pub fn orderOf(value: []const u8) ?u32 {
+    const at = wordIn(&order_names, value) orelse return null;
+    return if (at == 0) 0 else icon.DDFLAGS_REVERSED;
 }
 
 /// `count` whole numbers, a comma between each, as a value holds them:
@@ -174,11 +183,13 @@ pub fn writeFields(object: *const icon.DiskObject, into: []u8) ?usize {
             out.text(view_names[drawer.view_modes]);
             out.text("\n");
         }
-        if (drawer.flags != icon.DDFLAGS_SHOWDEFAULT and drawer.flags < show_names.len) {
+        const show = drawer.flags & icon.DDFLAGS_SHOWMASK;
+        if (show != icon.DDFLAGS_SHOWDEFAULT and show < show_names.len) {
             out.text("SHOW=");
-            out.text(show_names[drawer.flags]);
+            out.text(show_names[show]);
             out.text("\n");
         }
+        if (drawer.flags & icon.DDFLAGS_REVERSED != 0) out.text("ORDER=REVERSED\n");
     }
     return if (out.full) null else out.length;
 }

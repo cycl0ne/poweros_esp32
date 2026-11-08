@@ -35,7 +35,7 @@ pub fn main(init: std.process.Init) !void {
     var text: std.ArrayList(u8) = .empty;
     for (args[3..]) |field| {
         var one = iconfile.Fields{ .text = field };
-        _ = one.next() orelse fatal("{s}: not a field (KIND, AT, TOOL, TYPE, STACK, WINDOW, SCROLL, VIEW, SHOW)", .{field});
+        _ = one.next() orelse fatal("{s}: not a field (KIND, AT, TOOL, TYPE, STACK, WINDOW, SCROLL, VIEW, SHOW, ORDER)", .{field});
         try text.appendSlice(arena, field);
         try text.append(arena, '\n');
     }

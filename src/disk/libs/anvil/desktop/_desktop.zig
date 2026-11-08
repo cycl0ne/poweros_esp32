@@ -198,6 +198,8 @@ pub const Desktop = struct {
     drawer_look: icons.Look = .{},
     /// The names' font when the desktop opened one; the screen's otherwise.
     own_font: ?*graphics.TextFont = null,
+    /// The frame a list's headings are drawn in, made when the first is.
+    heading_frame: ?*intuition.Object = null,
     /// The disks' icons, and the drawers open.
     volumes: exec.List = .{},
     drawers: exec.List = .{},
@@ -575,6 +577,8 @@ pub const Desktop = struct {
         ground_area.free(d.groundLibs(), old_ground);
         if (old_font) |held| d.gb.CloseFont(held);
         d.drawWhole();
+        var it = d.drawers.iterator();
+        while (it.next()) |node| drawer.relook(d, @alignCast(@fieldParentPtr("node", node)));
         volumes.scan(d);
         app_area.showAgain(d);
     }
@@ -745,6 +749,7 @@ pub const Desktop = struct {
                 wn.SELECTUP => {
                     select.released(d);
                     drag.released(d, said);
+                    if (in_drawer) |dr| drawer.released(d, dr, said.x, said.y);
                 },
                 else => {},
             },
@@ -925,7 +930,7 @@ pub const Desktop = struct {
             menus.ITEM_SHOW => drawer.showAs(d, dr, dr.view, mn.SUBNUM(number) == menus.SUB_ALL_FILES),
             menus.ITEM_VIEW_BY => {
                 const sub = mn.SUBNUM(number);
-                if (sub <= menus.SUB_BY_SIZE) drawer.showAs(d, dr, @enumFromInt(sub), dr.show_all);
+                if (sub <= menus.SUB_BY_SIZE) drawer.viewBy(d, dr, @enumFromInt(sub));
             },
             else => {},
         }
@@ -1073,6 +1078,7 @@ pub const Desktop = struct {
             d.ib.CloseWindow(window);
         }
         if (d.menu_strip) |strip| d.ib.FreeMenus(strip);
+        if (d.heading_frame) |frame| d.ib.DisposeObject(frame);
         if (d.libraries[@intFromEnum(Lib.graphics)] != null) {
             ground_area.free(d.groundLibs(), d.ground);
             if (d.own_font) |font| d.gb.CloseFont(font);

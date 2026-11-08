@@ -371,7 +371,7 @@ pub fn cleanUpBy(d: *Desktop, where: ?*Drawer, sub: u32) void {
     // The desktop's ground is the hook's to read: held while its list is
     // taken apart and put together again.
     if (where == null) d.change();
-    while (d.sys.RemHead(list)) |node| textview.insert(d.sys, &sorted, @alignCast(@fieldParentPtr("node", node)), view);
+    while (d.sys.RemHead(list)) |node| textview.insert(d.sys, &sorted, @alignCast(@fieldParentPtr("node", node)), view, false);
     while (d.sys.RemHead(&sorted)) |node| d.sys.AddTail(list, node);
     if (where == null) d.changed();
     cleanUp(d, where);
@@ -398,8 +398,9 @@ pub fn snapToGrid(d: *Desktop, on: bool) void {
     if (!now or !kept) d.say("Snap to Grid could not be written to anvil.prefs");
 }
 
-/// Snapshot Window: the window's box, view and shown files written into
-/// the drawer's icon; with `all` every icon's place too.
+/// Snapshot Window: the window's box, view - a list's order with it - and
+/// shown files written into the drawer's icon; with `all` every icon's
+/// place too.
 pub fn snapshotWindow(d: *Desktop, dr: *Drawer, all: bool) void {
     var full: [dos.path_max + 1:0]u8 = @splat(0);
     @memcpy(full[0..dr.path_len], dr.pathText());
@@ -415,6 +416,7 @@ pub fn snapshotWindow(d: *Desktop, dr: *Drawer, all: bool) void {
     data.current_y = dr.origin.y;
     data.view_modes = @as(u32, @intFromEnum(dr.view)) + icon.DDVM_BYICON;
     data.flags = if (dr.show_all) icon.DDFLAGS_SHOWALL else icon.DDFLAGS_SHOWICONS;
+    if (dr.reversed) data.flags |= icon.DDFLAGS_REVERSED;
     // The icon's own block stays the library's; this one is the
     // desktop's while the icon is written.
     const was = object.drawer_data;

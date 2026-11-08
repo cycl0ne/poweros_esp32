@@ -50,10 +50,15 @@ pub const DDVM_BYDATE: u32 = 3;
 pub const DDVM_BYSIZE: u32 = 4;
 
 /// `DrawerData.flags`: which files it shows - as the one showing it
-/// likes, only those with icons, or all.
+/// likes, only those with icons, or all - in its two lowest bits
+/// (`DDFLAGS_SHOWMASK`).
 pub const DDFLAGS_SHOWDEFAULT: u32 = 0;
 pub const DDFLAGS_SHOWICONS: u32 = 1;
 pub const DDFLAGS_SHOWALL: u32 = 2;
+pub const DDFLAGS_SHOWMASK: u32 = 3;
+/// `DrawerData.flags`, a bit beside those: viewed as a list, its order
+/// turned over - Z to A, the oldest first, the smallest first.
+pub const DDFLAGS_REVERSED: u32 = 4;
 
 /// The window a disk or a drawer opens into, and how it shows what is in
 /// it. A box of no width or height is no box: whoever opens it chooses.

@@ -85,8 +85,8 @@ pub fn clearAll(d: *Desktop) void {
 /// A press of the left button in a window of the desktop.
 pub fn press(d: *Desktop, said: Said, where: ?*Drawer) void {
     const at: icons.Origin = if (where) |dr| drawer.inside(d, dr, said.x, said.y) else .{ .x = said.x, .y = said.y };
-    // Over the strip above a drawer's view: not the drawer's.
-    if (where != null and at.y < 0) return;
+    // Over the strip above a drawer's view: its headings', if anything's.
+    if (where) |dr| if (at.y < 0) return drawer.pressAbove(d, dr, at);
     const hit: ?*Icon = if (where) |dr| drawer.iconAt(d, dr, said.x, said.y) else d.volumeAt(said.x, said.y);
     const shift = said.qualifier & (ie.IEQUALIFIER_LSHIFT | ie.IEQUALIFIER_RSHIFT) != 0;
     const tap = intuition.Tap{ .seconds = said.seconds, .micros = said.micros, .x = said.x, .y = said.y };

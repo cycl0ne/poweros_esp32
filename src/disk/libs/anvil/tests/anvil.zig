@@ -2,8 +2,8 @@
 //! Host tests of anvil.library's parts that need no window: icons placed
 //! in the first free cell, the ground's geometry, the title's figures,
 //! the tool types as Information writes them, the startup drawer's order
-//! and waits, how far the wheel scrolls a drawer, a copy's rate, and the
-//! jump table.
+//! and waits, how far the wheel scrolls a drawer, a list's rows sorted
+//! and the heading under a point, a copy's rate, and the jump table.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -18,6 +18,8 @@ const leaveout = @import("../desktop/leaveout.zig");
 const information = @import("../info/information.zig");
 const startup = @import("../desktop/startup.zig");
 const work = @import("../desktop/work.zig");
+const icons = @import("../icons/_icons.zig");
+const kexec = @import("host_rom").exec;
 const Rect = graphics.Rect;
 
 const testing = std.testing;
@@ -158,6 +160,82 @@ test "rows: names in order case aside, the protection as hsparwed" {
     try testing.expectEqualStrings("----rwed", &bits);
     textview.protectionText(&bits, sdk.dos.FIBF_SCRIPT | sdk.dos.FIBF_DELETE | sdk.dos.FIBF_WRITE);
     try testing.expectEqualStrings("-s--r-e-", &bits);
+}
+
+/// The rows' names in their order, a space between each.
+fn rowNames(list: *sdk.exec.List, into: []u8) []const u8 {
+    var length: usize = 0;
+    var it = list.iterator();
+    while (it.next()) |node| {
+        const row: *icons.Icon = @alignCast(@fieldParentPtr("node", node));
+        if (length > 0) {
+            into[length] = ' ';
+            length += 1;
+        }
+        @memcpy(into[length..][0..row.label_len], row.name());
+        length += row.label_len;
+    }
+    return into[0..length];
+}
+
+test "rows: sorted where they are by name, date or size, and turned over - drawers first either way" {
+    try kexec.setUp();
+    defer kexec.deinit();
+    const sys = kexec.SysBase.iface();
+    const Given = struct { name: []const u8, drawer: bool, size: u64, days: i32 };
+    const given = [_]Given{
+        .{ .name = "beta", .drawer = false, .size = 300, .days = 2 },
+        .{ .name = "Zeta", .drawer = true, .size = 0, .days = 1 },
+        .{ .name = "alpha", .drawer = false, .size = 100, .days = 3 },
+        .{ .name = "gamma", .drawer = false, .size = 200, .days = 1 },
+        .{ .name = "Apps", .drawer = true, .size = 0, .days = 5 },
+        .{ .name = "delta", .drawer = false, .size = 50, .days = 4 },
+    };
+    var rows: [given.len]icons.Icon = @splat(.{});
+    var list: sdk.exec.List = .{};
+    list.init(.unknown);
+    for (&rows, given) |*row, each| {
+        @memcpy(row.label[0..each.name.len], each.name);
+        row.label_len = @intCast(each.name.len);
+        row.entry = .{ .kind = if (each.drawer) sdk.dos.ST_USERDIR else sdk.dos.ST_FILE, .size = each.size, .date = .{ .days = each.days } };
+        sys.AddTail(&list, &row.node);
+    }
+    var text: [64]u8 = undefined;
+    textview.sort(sys, &list, .name, false);
+    try testing.expectEqualStrings("Apps Zeta alpha beta delta gamma", rowNames(&list, &text));
+    textview.sort(sys, &list, .name, true);
+    try testing.expectEqualStrings("Zeta Apps gamma delta beta alpha", rowNames(&list, &text));
+    textview.sort(sys, &list, .date, false);
+    try testing.expectEqualStrings("Apps Zeta delta alpha beta gamma", rowNames(&list, &text));
+    textview.sort(sys, &list, .date, true);
+    try testing.expectEqualStrings("Zeta Apps gamma beta alpha delta", rowNames(&list, &text));
+    // Drawers are all the same size: by name, then turned over with the rest.
+    textview.sort(sys, &list, .size, false);
+    try testing.expectEqualStrings("Apps Zeta beta gamma alpha delta", rowNames(&list, &text));
+    textview.sort(sys, &list, .size, true);
+    try testing.expectEqualStrings("Zeta Apps delta alpha gamma beta", rowNames(&list, &text));
+    // A row read later goes where the order puts it.
+    var late: icons.Icon = .{};
+    @memcpy(late.label[0..3], "eta");
+    late.label_len = 3;
+    late.entry = .{ .size = 75 };
+    textview.insert(sys, &list, &late, .size, true);
+    try testing.expectEqualStrings("Zeta Apps delta eta alpha gamma beta", rowNames(&list, &text));
+    while (sys.RemHead(&list)) |_| {}
+}
+
+test "the headings: under a point, the last reaching the view's edge; which sort" {
+    const look = icons.Look{ .font_height = 10 };
+    const cols = textview.columns(&look, 800);
+    try testing.expectEqual(textview.Heading.name, textview.headingAt(cols, 0, 800).?);
+    try testing.expectEqual(textview.Heading.name, textview.headingAt(cols, cols.size_left - 1, 800).?);
+    try testing.expectEqual(textview.Heading.size, textview.headingAt(cols, cols.size_left, 800).?);
+    try testing.expectEqual(textview.Heading.date, textview.headingAt(cols, cols.date_x, 800).?);
+    try testing.expectEqual(textview.Heading.protection, textview.headingAt(cols, cols.protection_x, 800).?);
+    try testing.expectEqual(textview.Heading.protection, textview.headingAt(cols, 1199, 1200).?);
+    try testing.expect(textview.headingAt(cols, 1200, 1200) == null);
+    try testing.expect(textview.sortsBy(.protection) == null);
+    try testing.expectEqual(textview.View.date, textview.sortsBy(.date).?);
 }
 
 test "a drawer's cells: one after another along the rows, past what lies where its file says" {

@@ -25,6 +25,7 @@ WINDOW=40,30,400,200      a drawer's window: left, top, width, height
 SCROLL=0,0                how far a drawer's view is scrolled
 VIEW=NAME                 ICON, NAME, DATE, SIZE
 SHOW=ALL                  ICONS, ALL
+ORDER=REVERSED            FIRST, REVERSED: a list's order turned over
 ```
 
 A field left out has its default. A PNG with no `icOn` at all is an

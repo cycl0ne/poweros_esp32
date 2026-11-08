@@ -20,7 +20,11 @@
 //!
 //! **Icons** lie where their files say; the rest go in the next free cell
 //! along the rows, one after another as they are read. **As text**, a row
-//! for each file (`textview.zig`).
+//! for each file under a row of headings (`textview.zig`): a press on
+//! Name, Size or Date, let go over it, sorts the rows by that column, and
+//! on the column already sorted by turns the order over - the rows put in
+//! their new order where they are, not read again. The drawer's icon keeps
+//! the order with the view (`DDFLAGS_REVERSED`).
 //!
 //! **Drawing** an area again - after a scroll, a new size, a refresh -
 //! draws its ground and what shows over it into a picture of the area and
@@ -30,7 +34,7 @@
 //! border was - comes as a refresh.
 //!
 //! **The strip above the view**: the inside's top may be given to
-//! something that is not the drawer - a row of titles, a ribbon -
+//! something that is not the drawer - the row of headings, a ribbon -
 //! `Drawer.top` pixels of it (`setTop`). The drawer is the box below, the
 //! view, `inner_width` by `inner_height`: a point of the drawer is counted
 //! from the view's corner, and what is drawn for the drawer, with the
@@ -116,7 +120,13 @@ pub const Drawer = struct {
     path_len: u16 = 0,
     is_volume: bool = false,
     view: View = .icon,
+    /// Viewed as text: the order turned over.
+    reversed: bool = false,
     show_all: bool = true,
+    /// How high the row of headings is: 0 unless viewed as text.
+    heads: i32 = 0,
+    /// The heading a press is on, until the button is let go.
+    pressed: ?textview.Heading = null,
     icons: exec.List = .{},
     /// How far it has been read: a lock while there is more.
     lock: ?*dos.FileLock = null,
@@ -177,16 +187,18 @@ fn windowAttr(d: *Desktop, window: *intuition.Window, tag: utility.Tag) i32 {
     return @bitCast(@as(u32, @truncate(value)));
 }
 
-/// How a drawer's icon says it is shown: its view and whether all files
-/// show, the prefs' view and all files where it says nothing.
-const Shown = struct { view: View, show_all: bool };
+/// How a drawer's icon says it is shown: its view, which way round a
+/// list's order is and whether all files show; the prefs' view, the
+/// first order and all files where it says nothing.
+const Shown = struct { view: View, reversed: bool, show_all: bool };
 
 fn shownBy(d: *Desktop, object: ?*icon.DiskObject) Shown {
-    var shown = Shown{ .view = d.prefs.view, .show_all = true };
+    var shown = Shown{ .view = d.prefs.view, .reversed = false, .show_all = true };
     const held = object orelse return shown;
     const data = held.drawer_data orelse return shown;
     if (data.view_modes >= icon.DDVM_BYICON and data.view_modes <= icon.DDVM_BYSIZE) shown.view = @enumFromInt(data.view_modes - icon.DDVM_BYICON);
-    if (data.flags & icon.DDFLAGS_SHOWICONS != 0) shown.show_all = false;
+    if (data.flags & icon.DDFLAGS_SHOWMASK == icon.DDFLAGS_SHOWICONS) shown.show_all = false;
+    shown.reversed = data.flags & icon.DDFLAGS_REVERSED != 0;
     return shown;
 }
 
@@ -262,6 +274,7 @@ pub fn open(d: *Desktop, wanted: []const u8) bool {
         .path_len = @intCast(wanted.len),
         .is_volume = wanted[wanted.len - 1] == ':',
         .view = shown.view,
+        .reversed = shown.reversed,
         .show_all = shown.show_all,
     };
     @memcpy(dr.path[0..wanted.len], wanted);
@@ -271,6 +284,7 @@ pub fn open(d: *Desktop, wanted: []const u8) bool {
     d.ib.SetWindowTitles(window, &dr.title, wn.TITLE_UNCHANGED);
     if (d.menu_strip) |strip| _ = d.ib.SetMenuStrip(window, strip);
     makeBars(d, dr);
+    placeStrip(d, dr);
     d.sys.AddTail(&d.drawers, &dr.node);
     d.showChecks(dr.view, dr.show_all);
     follow(d, dr);
@@ -299,12 +313,15 @@ pub fn browse(d: *Desktop, dr: *Drawer, wanted: []const u8) void {
     dr.path_len = @intCast(wanted.len);
     dr.is_volume = wanted[wanted.len - 1] == ':';
     dr.view = shown.view;
+    dr.reversed = shown.reversed;
     dr.show_all = shown.show_all;
     dr.origin = .{};
+    dr.pressed = null;
     makeTitle(d, dr);
     d.ib.SetWindowTitles(dr.window, &dr.title, wn.TITLE_UNCHANGED);
     d.showChecks(dr.view, dr.show_all);
     follow(d, dr);
+    placeStrip(d, dr);
     clearInside(d, dr);
     startReading(d, dr);
 }
@@ -435,7 +452,7 @@ fn extent(d: *Desktop, dr: *Drawer) Rect {
         var count: i32 = 0;
         var it = dr.icons.iterator();
         while (it.next()) |_| count += 1;
-        return .{ .max_x = textview.rowsWidth(&d.drawer_look, cols), .max_y = count * cols.row_height };
+        return .{ .max_x = cols.right, .max_y = count * cols.row_height };
     }
     var reach = Rect{};
     var it = dr.icons.iterator();
@@ -544,7 +561,7 @@ fn addEntry(d: *Desktop, dr: *Drawer, name: []const u8, data: *const dos.ExAllDa
         .protection = data.prot,
     };
     if (dr.view != .icon) {
-        textview.insert(d.sys, &dr.icons, ic, dr.view);
+        textview.insert(d.sys, &dr.icons, ic, dr.view, dr.reversed);
         return;
     }
     ic.measure(d.gb, dr.rp, &d.drawer_look);
@@ -716,29 +733,43 @@ pub fn drawInside(d: *Desktop, dr: *Drawer) void {
     drawArea(d, dr, .{ .max_x = dr.inner_width, .max_y = dr.inner_height });
 }
 
-/// `area` of the view drawn again: its ground and what shows over it,
-/// drawn into a picture of the area - the ground painted as the window's
-/// layer paints it, in the window's font - and put on the window in one
-/// copy. Without the memory for the picture it is cleared and drawn in
-/// place, cut at the area.
+/// `area` of the view drawn again: its ground and what shows over it
+/// (`drawBox`).
 fn drawArea(d: *Desktop, dr: *Drawer, area: Rect) void {
-    if (area.isEmpty()) return;
-    if (drawAside(d, dr, area)) return;
-    hold(d, dr);
-    defer release(d, dr);
-    const shown = onInside(dr, area);
-    d.gb.EraseRect(dr.rp, &shown);
-    var was: Rect = .{};
-    d.gb.GetRPAttrs(dr.rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&was) }, .{} });
-    const within = Rect.intersect(was, shown);
-    d.gb.SetRPAttrs(dr.rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&within) }, .{} });
-    defer d.gb.SetRPAttrs(dr.rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&was) }, .{} });
-    drawOn(d, dr, dr.rp, cornerOnGround(dr), shown.max_x, shown.max_y);
+    const Paint = struct {
+        d: *Desktop,
+        dr: *Drawer,
+        fn paint(self: @This(), rp: *graphics.RastPort, corner: icons.Origin, width: i32, height: i32) void {
+            const at = cornerOnGround(self.dr);
+            drawOn(self.d, self.dr, rp, .{ .x = at.x + corner.x, .y = at.y + corner.y }, width, height);
+        }
+    };
+    drawBox(d, dr, onInside(dr, area), Paint{ .d = d, .dr = dr }, Paint.paint);
 }
 
-/// `drawArea` through a picture; false, and nothing drawn, without the
+/// `part` of the inside drawn again by `paint`: into a picture of it -
+/// the ground painted as the window's layer paints it, in the window's
+/// font - put on the window in one copy, so the window never shows it
+/// cleared. Without the memory for the picture it is cleared and drawn in
+/// place, cut at it. `paint` is handed the RastPort, the point of the
+/// inside at its (0, 0), and how far from there it reaches.
+fn drawBox(d: *Desktop, dr: *Drawer, part: Rect, context: anytype, comptime paint: fn (@TypeOf(context), *graphics.RastPort, icons.Origin, i32, i32) void) void {
+    if (part.isEmpty()) return;
+    if (drawAside(d, dr, part, context, paint)) return;
+    d.lb.LockLayer(dr.layer);
+    defer d.lb.UnlockLayer(dr.layer);
+    var was: Rect = .{};
+    d.gb.GetRPAttrs(dr.rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&was) }, .{} });
+    const within = Rect.intersect(was, part);
+    d.gb.SetRPAttrs(dr.rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&within) }, .{} });
+    defer d.gb.SetRPAttrs(dr.rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&was) }, .{} });
+    d.gb.EraseRect(dr.rp, &part);
+    paint(context, dr.rp, .{}, part.max_x, part.max_y);
+}
+
+/// `drawBox` through a picture; false, and nothing drawn, without the
 /// memory for one.
-fn drawAside(d: *Desktop, dr: *Drawer, area: Rect) bool {
+fn drawAside(d: *Desktop, dr: *Drawer, part: Rect, context: anytype, comptime paint: fn (@TypeOf(context), *graphics.RastPort, icons.Origin, i32, i32) void) bool {
     const gb = d.gb;
     var font: usize = 0;
     var ground: usize = 0;
@@ -748,8 +779,8 @@ fn drawAside(d: *Desktop, dr: *Drawer, area: Rect) bool {
         .{},
     });
     const surface = gb.AllocBitMapTagList(&[_]TagItem{
-        .{ .tag = graphics.BMTAG_Width, .data = @intCast(area.width()) },
-        .{ .tag = graphics.BMTAG_Height, .data = @intCast(area.height()) },
+        .{ .tag = graphics.BMTAG_Width, .data = @intCast(part.width()) },
+        .{ .tag = graphics.BMTAG_Height, .data = @intCast(part.height()) },
         .{ .tag = graphics.BMTAG_Friend, .data = @intFromPtr(dr.rp) },
         .{},
     }) orelse return false;
@@ -761,12 +792,11 @@ fn drawAside(d: *Desktop, dr: *Drawer, area: Rect) bool {
         .{},
     }) orelse return false;
     defer gb.FreeRastPort(rp);
-    gb.EraseRect(rp, &.{ .max_x = area.width(), .max_y = area.height() });
-    const at = icons.Origin{ .x = dr.origin.x + area.min_x, .y = dr.origin.y + area.min_y };
-    drawOn(d, dr, rp, at, area.width(), area.height());
-    hold(d, dr);
-    defer release(d, dr);
-    gb.BltBitMapRastPort(surface, 0, 0, dr.rp, area.min_x, area.min_y + dr.top, area.width(), area.height());
+    gb.EraseRect(rp, &.{ .max_x = part.width(), .max_y = part.height() });
+    paint(context, rp, .{ .x = part.min_x, .y = part.min_y }, part.width(), part.height());
+    d.lb.LockLayer(dr.layer);
+    defer d.lb.UnlockLayer(dr.layer);
+    gb.BltBitMapRastPort(surface, 0, 0, dr.rp, part.min_x, part.min_y, part.width(), part.height());
     return true;
 }
 
@@ -804,23 +834,134 @@ fn refreshPart(d: *Desktop, dr: *Drawer, part: Rect) void {
     drawArea(d, dr, below.offset(0, -dr.top));
 }
 
-/// A part of the strip above the view drawn again: its ground, for what
-/// stands there to draw over.
+/// A part of the strip above the view drawn again: the row of headings
+/// at its foot, and above them the ground, for what stands there to draw
+/// over.
 fn drawAbove(d: *Desktop, dr: *Drawer, part: Rect) void {
-    d.lb.LockLayer(dr.layer);
-    defer d.lb.UnlockLayer(dr.layer);
-    d.gb.EraseRect(dr.rp, &part);
+    const row_top = dr.top - dr.heads;
+    var rest = part;
+    rest.max_y = @min(part.max_y, row_top);
+    if (!rest.isEmpty()) {
+        d.lb.LockLayer(dr.layer);
+        defer d.lb.UnlockLayer(dr.layer);
+        d.gb.EraseRect(dr.rp, &rest);
+    }
+    var row = part;
+    row.min_y = @max(part.min_y, row_top);
+    row.max_y = @min(part.max_y, dr.top);
+    if (row.isEmpty()) return;
+    drawHeads(d, dr, row);
 }
 
-/// The strip across the inside's top made `height` high: the view
-/// measured again below it and kept on the ground, the bars set, the
-/// window's least height grown by it, and the inside drawn again.
-pub fn setTop(d: *Desktop, dr: *Drawer, height: i32) void {
-    if (height == dr.top) return;
-    dr.top = @max(0, height);
-    _ = d.ib.WindowLimits(dr.window, least_width, least_height + dr.top, 0, 0);
-    _ = fit(d, dr);
+/// The whole strip above the view drawn again.
+fn drawStrip(d: *Desktop, dr: *Drawer) void {
     drawAbove(d, dr, .{ .max_x = dr.inner_width, .max_y = dr.top });
+}
+
+/// `part` of the row of headings drawn again (`drawBox`): the titles at
+/// the columns the rows are laid out in, moved across with them.
+fn drawHeads(d: *Desktop, dr: *Drawer, part: Rect) void {
+    const screen = d.screen orelse return;
+    const draw_info = d.ib.GetScreenDrawInfo(screen);
+    defer d.ib.FreeScreenDrawInfo(screen, draw_info);
+    const Paint = struct {
+        d: *Desktop,
+        dr: *Drawer,
+        heads: textview.Headings,
+        fn paint(self: @This(), rp: *graphics.RastPort, corner: icons.Origin, width: i32, _: i32) void {
+            const shown = self.dr;
+            const cols = textview.columns(&self.d.drawer_look, shown.inner_width);
+            const scroll = shown.origin.x + corner.x;
+            const reach = scroll + @max(width, shown.inner_width - corner.x);
+            textview.drawHeadings(self.d.ib, self.d.gb, rp, &self.d.drawer_look, cols, self.heads, shown.top - shown.heads - corner.y, shown.heads, scroll, width, reach);
+        }
+    };
+    const heads = textview.Headings{
+        .sorted = dr.view,
+        .reversed = dr.reversed,
+        .pressed = dr.pressed,
+        .draw_info = draw_info,
+        .frame = headingFrame(d),
+    };
+    drawBox(d, dr, part, Paint{ .d = d, .dr = dr, .heads = heads }, Paint.paint);
+}
+
+/// The frame every heading is drawn in, made at the first: none without
+/// the memory, and the headings are drawn without one.
+fn headingFrame(d: *Desktop) ?*intuition.Object {
+    if (d.heading_frame == null) d.heading_frame = d.ib.NewObjectTagList(null, intuition.classusr.FRAMEICLASS, null);
+    return d.heading_frame;
+}
+
+/// The strip across the inside's top made `height` high - the view
+/// measured again below it and kept on the ground, the bars set, the
+/// window's least height grown by it - and drawn. The view is the
+/// caller's to draw again.
+fn setTop(d: *Desktop, dr: *Drawer, height: i32) void {
+    if (height != dr.top) {
+        dr.top = @max(0, height);
+        _ = d.ib.WindowLimits(dr.window, least_width, least_height + dr.top, 0, 0);
+        _ = fit(d, dr);
+    }
+    drawStrip(d, dr);
+}
+
+/// The strip made as high as what stands in it, and drawn: the row of
+/// headings, viewed as text.
+fn placeStrip(d: *Desktop, dr: *Drawer) void {
+    dr.heads = if (dr.view == .icon) 0 else textview.headingsHeight(&d.drawer_look);
+    setTop(d, dr, dr.heads);
+}
+
+/// The look changed - the font, the pens: the strip made as high as its
+/// headings now are, and a list drawn again in the new font.
+pub fn relook(d: *Desktop, dr: *Drawer) void {
+    if (dr.view == .icon) return;
+    placeStrip(d, dr);
+    drawInside(d, dr);
+}
+
+/// A press over the strip above the view: on a heading that sorts, the
+/// heading is pressed until the button is let go (`released`).
+pub fn pressAbove(d: *Desktop, dr: *Drawer, at: icons.Origin) void {
+    const heading = headingAt(d, dr, at) orelse return;
+    if (textview.sortsBy(heading) == null) return;
+    dr.pressed = heading;
+    drawStrip(d, dr);
+}
+
+/// The heading at the point `at` of the view - above it, over the row of
+/// headings - if any.
+fn headingAt(d: *Desktop, dr: *Drawer, at: icons.Origin) ?textview.Heading {
+    if (dr.heads == 0 or at.y < -dr.heads or at.y >= 0) return null;
+    const cols = textview.columns(&d.drawer_look, dr.inner_width);
+    return textview.headingAt(cols, at.x + dr.origin.x, dr.origin.x + dr.inner_width);
+}
+
+/// The button let go at the point (`x`, `y`) of the window: a heading
+/// pressed is let go, and sorted by (`sortBy`) when the pointer is still
+/// over it.
+pub fn released(d: *Desktop, dr: *Drawer, x: i32, y: i32) void {
+    const heading = dr.pressed orelse return;
+    dr.pressed = null;
+    if (headingAt(d, dr, inside(d, dr, x, y)) == heading) {
+        if (textview.sortsBy(heading)) |view| return sortBy(d, dr, view);
+    }
+    drawStrip(d, dr);
+}
+
+/// The rows sorted by `view`'s column: in its first order, or turned over
+/// when they are sorted by it already - put in their new order where they
+/// are, not read again.
+pub fn sortBy(d: *Desktop, dr: *Drawer, view: View) void {
+    if (dr.view == .icon or view == .icon) return;
+    if (view == dr.view) dr.reversed = !dr.reversed else {
+        dr.view = view;
+        dr.reversed = false;
+    }
+    textview.sort(d.sys, &dr.icons, dr.view, dr.reversed);
+    d.showChecks(dr.view, dr.show_all);
+    drawStrip(d, dr);
     drawInside(d, dr);
 }
 
@@ -832,6 +973,7 @@ pub fn setTop(d: *Desktop, dr: *Drawer, height: i32) void {
 pub fn resized(d: *Desktop, dr: *Drawer) void {
     const moved = fit(d, dr);
     if (dr.view == .icon and !moved) return;
+    if (dr.view != .icon) drawStrip(d, dr);
     drawInside(d, dr);
 }
 
@@ -858,6 +1000,7 @@ pub fn scrolled(d: *Desktop, dr: *Drawer, id: u32, top: i32) void {
         ID_HORIZ => {
             if (at == dr.origin.x) return;
             dr.origin.x = at;
+            if (dr.heads > 0) drawStrip(d, dr);
         },
         else => return,
     }
@@ -875,6 +1018,7 @@ pub fn wheeled(d: *Desktop, dr: *Drawer, across: i32, down: i32) void {
     dr.origin.x = wheelTo(dr.origin.x, across, unit, dr.inner_width, reach.max_x);
     if (dr.origin.x == was.x and dr.origin.y == was.y) return;
     setBars(d, dr);
+    if (dr.heads > 0 and dr.origin.x != was.x) drawStrip(d, dr);
     drawInside(d, dr);
     select.scrolled(d, dr, dr.origin.x - was.x, dr.origin.y - was.y);
 }
@@ -900,14 +1044,25 @@ pub fn wheelTop(top: i32, notches: i32, visible: i32, total: i32) i32 {
     return @max(0, @min(top + notches * per_notch, last));
 }
 
-/// The view changed - by icon, name, date or size - or what is shown:
-/// read again in the new way.
+/// The view changed - by icon, name, date or size, a list in its first
+/// order - or what is shown: read again in the new way.
 pub fn showAs(d: *Desktop, dr: *Drawer, view: View, show_all: bool) void {
     if (view == dr.view and show_all == dr.show_all) return;
+    if (view != dr.view) dr.reversed = false;
     dr.view = view;
     dr.show_all = show_all;
     dr.origin = .{};
+    dr.pressed = null;
+    placeStrip(d, dr);
     reread(d, dr);
+}
+
+/// View By: the drawer as icons, or as a list by a column in its first
+/// order - turned back when it is the column sorted by, the other way
+/// round.
+pub fn viewBy(d: *Desktop, dr: *Drawer, view: View) void {
+    if (view == dr.view and view != .icon and dr.reversed) return sortBy(d, dr, view);
+    showAs(d, dr, view, dr.show_all);
 }
 
 /// The point (`x`, `y`) of the window as a point of the view; over the

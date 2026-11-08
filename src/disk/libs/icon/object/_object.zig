@@ -103,7 +103,10 @@ pub fn make(base: *IconBase, fields: []const u8, kind: u32, picture: ?*Picture) 
             made.drawer.view_modes = view;
         },
         .show => if (iconfile.showOf(field.value)) |show| {
-            made.drawer.flags = show;
+            made.drawer.flags = made.drawer.flags & ~icon.DDFLAGS_SHOWMASK | show;
+        },
+        .order => if (iconfile.orderOf(field.value)) |order| {
+            made.drawer.flags = made.drawer.flags & ~icon.DDFLAGS_REVERSED | order;
         },
     };
     if (types > 0) {
