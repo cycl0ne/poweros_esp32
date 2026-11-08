@@ -32,4 +32,6 @@ test {
     _ = tiling;
     _ = @import("qpu/tests.zig");
     _ = @import("compiler/validate.zig");
+    _ = @import("compiler/list.zig");
+    _ = @import("compiler/tests.zig");
 }
