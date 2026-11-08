@@ -3811,4 +3811,42 @@ pub const LIBRARY_VERSION = 1;
 /// 160 of its cases stay within one pixel in a thousand, and
 /// C:test/FacetProbe passes its 332 checks on the V3D. V3DTest MESA drew
 /// the same five from the V3D's own objects first, with no pixel wrong.
-pub const LIBRARY_REVISION = 137;
+///
+/// 138: **The V3D compiles a fragment shader that reads the push
+/// constants.** Until now the V3D's profile left out their storage class,
+/// so such a pipeline was drawn by the cores. The V3D reads them as v3dv
+/// does. Its lowering (lower_load_push_constant, v3dv_pipeline.c:571)
+/// makes each read a uniform load. ntq_emit_load_uniform
+/// (nir_to_vir.c:2880) then asks for each float as a word of the uniform
+/// stream, QUNIFORM_UNIFORM at the byte offset over four. The draw writes
+/// that word from the push constants the command buffer set before it, as
+/// v3dv_write_uniforms does (v3dv_uniforms.c:513). The walk takes the
+/// block: one struct decorated `Block`, each member a float or a vector
+/// of them, each at an offset that is a multiple of four inside
+/// `shader.MAX_PUSH_CONSTANTS_SIZE`. A member is read through an access
+/// chain whose indexes are constants: a member, and maybe one float of
+/// it. It refuses an index computed in the body, a block it cannot hold
+/// and any other struct. The plan has no hand-written program to hold
+/// one to and answers `Error.Storage`. `ir.Build.push` writes such a
+/// shader, and the cores' function reads the floats from
+/// `Resources.push`.
+///
+/// Tests:
+///
+/// - V3D tests: 129 (3 new). A colour pushed is four push words, packed
+///   for the tile buffer. The tinted module compiles from glslc's words
+///   and from facet's emitter to the same 13 instructions and the same
+///   stream. Each kind of block the walk refuses is refused.
+/// - tests/ir.zig: the emitter's words held to `min_push`, and the cores'
+///   function held to the constant it should come to.
+/// - spirv-check: 11 modules, `min_push` and `glslc_tinted` among them.
+/// - On the board: C:test/FacetBoth 1.10 has two cases more. In one a
+///   colour is pushed, drawn, then pushed again in part and drawn again.
+///   In the other the vertices' colour is scaled by a pushed float and a
+///   pushed colour is added. Against the cores they are 10 and 8 pixels
+///   of 230,400 apart. All of those pixels are at the triangles' edges,
+///   where the V3D leaves the backdrop, as in the other shipped colour
+///   cases. Those five count as they did with 1.137. All 162 cases stay
+///   within one pixel in a thousand. C:test/FacetProbe passes its 829
+///   checks, 332 of them on the V3D.
+pub const LIBRARY_REVISION = 138;

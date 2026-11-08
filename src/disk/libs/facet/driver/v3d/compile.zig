@@ -103,6 +103,9 @@ pub const most_varyings = qpu.most_varyings;
 pub const most_uniforms = 32;
 /// The constants a module may declare, read or not.
 pub const most_constants = 32;
+/// The members the push constants' block may have: one float each fills
+/// `shader.MAX_PUSH_CONSTANTS_SIZE`.
+pub const most_members = sdk.facet.shader.MAX_PUSH_CONSTANTS_SIZE / 4;
 /// The combined image samplers a module may declare. One is read: the
 /// TMU is written once and read once here, as in every hand-written
 /// program, and a module that declares one it never samples costs
@@ -154,7 +157,9 @@ pub const Error = error{
     /// A type other than a 32-bit float and its vectors of 2 to 4.
     Type,
     /// A variable in a storage class this back end has no answer for:
-    /// a uniform, a push constant, a sampler.
+    /// a uniform, a variable of the function's own, a sampler of
+    /// anything but a 2D texture. Also the plan's answer to a module that
+    /// reads its push constants, which only Mesa's back end compiles.
     Storage,
     /// Input locations that are not 0 upwards without a gap, or a colour
     /// out that is not location 0.
@@ -235,12 +240,19 @@ pub const profile: spirv.Profile = .{
         // the offset's constant is declared with. `profile.image_operands`
         // is empty, so `look` turns the operand away and `compile` answers
         // `Error.Operands`; this list taking `.type_int` is what lets the
-        // walk get that far. A module that declares an integer for any
-        // other reason is refused in the body with `Error.Type`, this
-        // back end holding 32-bit floats and their vectors alone.
+        // walk get that far. Since 1.138 an integer is also what an
+        // access chain into the push constants is indexed with, and that
+        // is the only place one is read: a value of it anywhere else is
+        // refused in the body, this back end computing with 32-bit
+        // floats and their vectors alone.
                    .type_int,
+        // The push constants: a block of floats and vectors of them, one
+        // member read at a time through an access chain whose indexes
+        // are constants (since 1.138).
+             .type_struct,         .member_decorate,
+        .access_chain,
     },
-    .storage_classes = &.{ .input, .output, .function, .uniform_constant },
+    .storage_classes = &.{ .input, .output, .function, .uniform_constant, .push_constant },
     .image_dims = &.{.dim_2d},
     .stages = &.{.fragment},
     .most_ids = most_ids,
@@ -270,6 +282,10 @@ pub const Tag = enum {
     input,
     /// Floats the draw hands over, one uniform each.
     constant,
+    /// Floats of the push constants, one uniform each: `at` is the word
+    /// the first of them is (its byte offset over four). The words are
+    /// the draw's, read when the uniform stream is written (since 1.138).
+    push,
     /// One float of a value.
     component,
     /// Floats of other values, gathered.
@@ -294,6 +310,7 @@ pub const Step = struct {
     b: u16 = 0,
     /// `input`: which varying its first float is. `component`: which
     /// float of `a`. `constant`: where its floats start in `pool`.
+    /// `push`: which word of the push constants its first float is.
     /// `sample`: which sampler it reads.
     at: u32 = 0,
     /// `construct`: the step each of its floats comes from, and which
@@ -439,6 +456,11 @@ pub const Word = union(enum) {
     texture,
     /// The sampler's state, as the second takes it.
     sampler,
+    /// A word of the push constants, by its place among them (the byte
+    /// offset over four): what Mesa's QUNIFORM_UNIFORM is in v3dv, filled
+    /// from the command buffer's push constants as the stream is written
+    /// (v3dv_uniforms.c:513, v3dv_write_uniforms).
+    push: u32,
 };
 
 // --- the work ----------------------------------------------------------------
@@ -468,6 +490,20 @@ pub const Work = struct {
     sampler_of: [most_ids]u16 = @splat(none),
     /// Which step a value id answers.
     step_of: [most_ids]u16 = @splat(none),
+    /// `member_pointer`: which float of the member it names, or `whole`
+    /// where it names all of them.
+    chain_part: [most_ids]u8 = @splat(whole),
+
+    /// The push constants' block: the struct type decorated `Block`, the
+    /// struct its members' offsets were given for, and the one variable
+    /// of it. Each member is a float or a vector of them, with its type
+    /// and its byte offset, from OpMemberDecorate Offset.
+    block: u16 = none,
+    offsets_of: u16 = none,
+    push_variable: u16 = none,
+    member_type: [most_members]u16 = @splat(none),
+    member_offset: [most_members]u16 = @splat(none),
+    member_count: u32 = 0,
 
     /// Every constant the module declares, read or not. A float of a
     /// vector's is declared on its own as well, and most of those are
@@ -546,7 +582,10 @@ pub const Work = struct {
     code: [most_words]u64 = undefined,
     word_count: u32 = 0,
 
-    pub const Thing = enum(u8) { none, other, float, vector, image, sampled_image, pointer, constant, variable, function, value };
+    pub const Thing = enum(u8) { none, other, float, vector, image, sampled_image, pointer, constant, variable, function, value, int, int_constant, structure, member_pointer };
+
+    /// `chain_part` of a pointer to a whole member.
+    pub const whole: u8 = 0xFF;
 
     /// The steps the body came to, for a test to read.
     pub fn program(work: *const Work) []const Step {
@@ -564,6 +603,9 @@ pub const Work = struct {
 /// already been turned down by `CreateShaderModule`.
 pub fn compile(work: *Work, words: []const u32) Error!Code {
     try readModule(work, words);
+    // No hand-written program reads a push constant, so the plan has
+    // nothing to hold one to: only Mesa's back end compiles them.
+    for (work.program()) |each| if (each.tag == .push) return Error.Storage;
     try settle(work);
     try encode(work);
     return .{
@@ -622,6 +664,8 @@ pub fn compileVir(work: *Work, words: []const u32, allocator: std.mem.Allocator,
             // texture, and its sampler.
             .tmu_config_p0 => if (data == to_vir.texel_words) .texture else return Error.Invalid,
             .tmu_config_p1 => if (data == 0) .sampler else return Error.Invalid,
+            // A word of the push constants: `Step.at` of a `.push`.
+            .uniform => .{ .push = data },
             // A spill's offset or size: a draw has no memory to spill to.
             else => return Error.Registers,
         };
@@ -715,6 +759,15 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 // decoration this is here to turn down by name.
                 switch (what) {
                     .location, .descriptor_set, .binding => {},
+                    // The push constants' block, which carries no
+                    // literal. There is one: a uniform buffer would be
+                    // the other kind of block, and its storage class is
+                    // not in the profile.
+                    .block => {
+                        if (work.block != none) return Error.Refused;
+                        work.block = id;
+                        continue;
+                    },
                     else => return Error.Refused,
                 }
                 if (operands.len < 3) return Error.Body;
@@ -731,12 +784,63 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     else => unreachable,
                 }
             },
+            .member_decorate => {
+                // StructureType, Member, Decoration, its literal. The one
+                // decoration taken is the member's byte offset, which is
+                // where its floats are among the push constants: a word
+                // of them each, so it is a multiple of four. A block's
+                // other member decorations are for matrices and the
+                // vertex stage's built-ins, neither of which is here.
+                if (operands.len < 3) return Error.Body;
+                const id = try idOf(operands[0]);
+                const what = std.enums.fromInt(spirv.Decoration, operands[2]) orelse return Error.Refused;
+                if (what != .offset) return Error.Refused;
+                if (operands.len < 4) return Error.Body;
+                if (work.offsets_of != none and work.offsets_of != id) return Error.Refused;
+                work.offsets_of = id;
+                const member = operands[1];
+                if (member >= most_members) return Error.Storage;
+                const offset = operands[3];
+                if (offset % 4 != 0 or offset >= sdk.facet.shader.MAX_PUSH_CONSTANTS_SIZE) return Error.Storage;
+                work.member_offset[member] = @intCast(offset);
+            },
             .type_float => {
                 if (operands.len < 2) return Error.Body;
                 const id = try idOf(operands[0]);
                 if (operands[1] != 32) return Error.Type;
                 work.thing[id] = .float;
                 work.wide[id] = 1;
+            },
+            .type_int => {
+                // 32 bits, signed or not: `look` has held the width. It
+                // is read as an access chain's index and nowhere else.
+                if (operands.len < 3) return Error.Body;
+                const id = try idOf(operands[0]);
+                if (operands[1] != 32) return Error.Type;
+                work.thing[id] = .int;
+            },
+            .type_struct => {
+                // The push constants' block and no other struct: a value
+                // of one would be a step of many kinds, and none is. Each
+                // member is a float or a vector of them, with an offset
+                // that keeps all of its floats inside the push constants.
+                if (operands.len < 1) return Error.Body;
+                const id = try idOf(operands[0]);
+                if (id != work.block or id != work.offsets_of) return Error.Type;
+                const members = operands[1..];
+                if (members.len == 0 or members.len > most_members) return Error.Storage;
+                for (members, 0..) |each, k| {
+                    const member = try idOf(each);
+                    const kind = try kindOf(work, member);
+                    const offset = work.member_offset[k];
+                    if (offset == none) return Error.Storage;
+                    if (offset + 4 * kind.parts() > sdk.facet.shader.MAX_PUSH_CONSTANTS_SIZE) return Error.Storage;
+                    work.member_type[k] = member;
+                }
+                // An offset given for a member the struct does not have.
+                for (work.member_offset[members.len..]) |offset| if (offset != none) return Error.Storage;
+                work.member_count = @intCast(members.len);
+                work.thing[id] = .structure;
             },
             .type_vector => {
                 if (operands.len < 3) return Error.Body;
@@ -785,6 +889,14 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 if (operands.len < 3) return Error.Body;
                 const type_id = try idOf(operands[0]);
                 const id = try idOf(operands[1]);
+                if (work.thing[type_id] == .int) {
+                    // An index into the push constants, read as one by an
+                    // access chain. A value past the table's is `none`,
+                    // which no member is.
+                    work.thing[id] = .int_constant;
+                    work.points[id] = if (operands[2] < none) @intCast(operands[2]) else none;
+                    continue;
+                }
                 if (work.thing[type_id] != .float) return Error.Type;
                 if (work.pool_count == work.pool.len) return Error.Uniforms;
                 work.thing[id] = .constant;
@@ -819,6 +931,17 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 const class = std.enums.fromInt(spirv.StorageClass, operands[2]) orelse return Error.Refused;
                 if (@as(u8, @intCast(@intFromEnum(class))) != work.class[type_id]) return Error.Body;
                 const pointee = work.points[type_id];
+                if (class == .push_constant) {
+                    // The block, and once: Vulkan has an entry point use
+                    // one push constant variable at most, and a member is
+                    // found by its offset, which two blocks would share.
+                    if (work.thing[pointee] != .structure) return Error.Storage;
+                    if (work.push_variable != none) return Error.Storage;
+                    work.thing[id] = .variable;
+                    work.class[id] = @intCast(@intFromEnum(class));
+                    work.push_variable = id;
+                    continue;
+                }
                 if (class == .uniform_constant) {
                     // A combined image sampler and nothing else. There is
                     // one TMU, it is configured from two words of the
@@ -952,6 +1075,22 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             if (operands.len < 3) return Error.Body;
             const id = try idOf(operands[1]);
             const from = try idOf(operands[2]);
+            if (work.thing[from] == .member_pointer) {
+                // Floats of the push constants: a uniform each, which
+                // Mesa reads as QUNIFORM_UNIFORM at the word the offset
+                // names (ntq_emit_load_uniform, nir_to_vir.c:2880, after
+                // v3dv's lower_load_push_constant, v3dv_pipeline.c:571).
+                // Two loads of one member are two steps, and the second
+                // costs no word of the stream: vir_uniform finds it there
+                // already (vir_get_uniform_index, vir.c:2771).
+                const kind = try kindOf(work, try idOf(operands[0]));
+                if (kind.parts() != work.wide[from]) return Error.Type;
+                const member = work.points[from];
+                const part: u32 = if (work.chain_part[from] == Work.whole) 0 else work.chain_part[from];
+                const at = work.member_offset[member] / 4 + part;
+                work.step_of[id] = try put(work, .{ .tag = .push, .kind = kind, .at = at });
+                return;
+            }
             if (work.thing[from] != .variable) return Error.Body;
             if (work.class[from] == @intFromEnum(spirv.StorageClass.uniform_constant)) {
                 // The sampler itself, which is no value: it says which
@@ -970,6 +1109,36 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 work.inputs[which].step = made;
             }
             work.step_of[id] = work.inputs[which].step;
+        },
+        .access_chain => {
+            // ResultType, Result, Base, then the indexes: a member of
+            // the push constants, and maybe one float of it, each a
+            // constant. An index computed in the body would want the
+            // push constants read through the TMU (Mesa's
+            // ntq_emit_tmu_general fallback), which is not here.
+            if (operands.len < 4 or operands.len > 5) return Error.Body;
+            const type_id = try idOf(operands[0]);
+            const id = try idOf(operands[1]);
+            if (try idOf(operands[2]) != work.push_variable) return Error.Storage;
+            const member = try indexOf(work, operands[3]);
+            if (member >= work.member_count) return Error.Body;
+            const member_kind = try kindOf(work, work.member_type[member]);
+            var part: u8 = Work.whole;
+            var parts = member_kind.parts();
+            if (operands.len == 5) {
+                const which = try indexOf(work, operands[4]);
+                if (member_kind == .f32x1 or which >= parts) return Error.Body;
+                part = @intCast(which);
+                parts = 1;
+            }
+            // A pointer of the push constants' class to what it names.
+            if (work.thing[type_id] != .pointer) return Error.Type;
+            if (work.class[type_id] != @intFromEnum(spirv.StorageClass.push_constant)) return Error.Body;
+            if ((try kindOf(work, work.points[type_id])).parts() != parts) return Error.Type;
+            work.thing[id] = .member_pointer;
+            work.points[id] = member;
+            work.chain_part[id] = part;
+            work.wide[id] = @intCast(parts);
         },
         .composite_extract => {
             if (operands.len != 4) return Error.Body;
@@ -1056,6 +1225,13 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
         },
         else => return Error.Refused,
     }
+}
+
+/// An access chain's index: an integer constant's value.
+fn indexOf(work: *const Work, word: u32) Error!u16 {
+    const id = try idOf(word);
+    if (work.thing[id] != .int_constant) return Error.Body;
+    return work.points[id];
 }
 
 /// An operand id as a step of `kind`. A constant becomes a step of its
@@ -1154,6 +1330,8 @@ fn settle(work: *Work) Error!void {
             // Loaded above; a component or a construct names floats that
             // are already in registers, so neither costs an instruction.
             .input, .component, .construct => {},
+            // Refused by `compile` before the plan is laid out.
+            .push => return Error.Storage,
             // A float of its own, read where it is first wanted rather
             // than at the top: a uniform is the next one in the stream
             // wherever the instruction sits, and holding them to the end
@@ -3043,10 +3221,89 @@ test "through Mesa's back end, four constants are two uniforms of halves, packed
     });
 }
 
+/// A colour the draw pushes: four words of the push constants.
+const Pushed = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        b.color(b.push(0, .f32x4));
+    }
+});
+
+/// The colour the vertices carry times a float pushed, plus a vector
+/// pushed: what `reference.glslc_tinted` is, as facet's emitter writes it.
+const PushTinted = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        b.color(b.add(b.scale(b.input(0, .f32x4), b.push(16, .f32x1)), b.push(0, .f32x4)));
+    }
+});
+
+test "through Mesa's back end, a colour pushed is four uniforms of the push constants, packed for the tile buffer" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, Pushed.words);
+    try testing.expectEqual(@as(u32, 0), code.varyings);
+    try testing.expect(!code.center_w);
+    // The draw's words, not the module's: nothing is folded, as
+    // `Quarters`' four constants are into two words of halves.
+    try testing.expectEqualSlices(Word, &.{ .{ .push = 0 }, .{ .push = 1 }, .{ .push = 2 }, .{ .push = 3 } }, code.stream());
+    try expectText(code, &.{
+        text("nop", "nop", "thrsw; ldunifrf.rf4"),
+        text("nop", "nop", "thrsw; ldunifrf.rf5"),
+        text("nop", "nop", "ldunifrf.rf6"),
+        text("vfpack tlb, rf4, rf5", "nop", "thrsw; ldunifrf.rf7"),
+        text("vfpack tlb, rf6, rf7", "nop", ""),
+        text("nop", "nop", ""),
+    });
+    // The plan has no hand-written program to hold one to.
+    var plan: Work = .{};
+    try testing.expectError(Error.Storage, compile(&plan, Pushed.words));
+}
+
+test "through Mesa's back end, glslc's push constants are facet's: a float and a vector of them, read once each" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, PushTinted.words);
+    const kept = try testing.allocator.dupe(u64, code.words);
+    defer testing.allocator.free(kept);
+    try testing.expectEqual(@as(u32, 4), code.varyings);
+    try testing.expect(code.center_w);
+    // The float at 16 is word 4, read once for the four products.
+    try testing.expectEqualSlices(Word, &.{ .{ .push = 4 }, .{ .push = 0 }, .{ .push = 1 }, .{ .push = 2 }, .{ .push = 3 } }, code.stream());
+    try testing.expectEqual(@as(usize, 13), code.words.len);
+    // glslang reads the varying before the float and declares its types
+    // in another order, with names around them; what is made is the same
+    // program to the word.
+    var theirs: Work = .{};
+    const glslc = try throughMesa(&theirs, &reference.glslc_tinted);
+    try testing.expectEqualSlices(u64, kept, glslc.words);
+    try testing.expectEqualSlices(Word, code.stream(), glslc.stream());
+    var plan: Work = .{};
+    try testing.expectError(Error.Storage, compile(&plan, &reference.glslc_tinted));
+}
+
+test "push constants the tables cannot hold, or that are not a block of floats, are refused" {
+    const tinted = &reference.glslc_tinted;
+    const max = sdk.facet.shader.MAX_PUSH_CONSTANTS_SIZE;
+    var work: Work = .{};
+    // The second OpMemberDecorate is the float's, `%13 1 Offset 16`. An
+    // offset not on a word: a uniform is a word.
+    try testing.expectError(Error.Storage, throughMesa(&work, &comptime patched(tinted, .member_decorate, 1, 3, 18)));
+    // Past the push constants, and inside them with the float past them.
+    try testing.expectError(Error.Storage, throughMesa(&work, &comptime patched(tinted, .member_decorate, 1, 3, max)));
+    _ = try throughMesa(&work, &comptime patched(tinted, .member_decorate, 1, 3, max - 4));
+    // The vector's, `%13 0 Offset 0`, moved to where its last float is
+    // past them.
+    try testing.expectError(Error.Storage, throughMesa(&work, &comptime patched(tinted, .member_decorate, 0, 3, max - 12)));
+    // A member's decoration that is not its offset.
+    try testing.expectError(Error.Refused, throughMesa(&work, &comptime patched(tinted, .member_decorate, 1, 2, @intFromEnum(spirv.Decoration.row_major))));
+    // The first OpConstant, `%17 = OpConstant %16 1`, is the float's
+    // index: a member the block does not have.
+    try testing.expectError(Error.Body, throughMesa(&work, &comptime patched(tinted, .constant, 0, 2, 2)));
+    // The block decorated `Flat` instead of `Block`.
+    try testing.expectError(Error.Refused, throughMesa(&work, &comptime patched(tinted, .decorate, 2, 1, @intFromEnum(spirv.Decoration.flat))));
+}
+
 test "compileThroughMesa makes what compileVir does, its memory given back" {
     // `testing.allocator` under the arena says whether every block of it
     // went back.
-    inline for (.{ Smooth.words, Dimmed.words, Quarters.words, Textured.words, Modulated.words }) |words| {
+    inline for (.{ Smooth.words, Dimmed.words, Quarters.words, Textured.words, Modulated.words, Pushed.words, PushTinted.words }) |words| {
         var work: Work = .{};
         const once = try throughMesa(&work, words);
         const kept = try testing.allocator.dupe(u64, once.words);

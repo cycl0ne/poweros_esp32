@@ -265,6 +265,11 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
         .constant => {
             for (0..parts) |k| e.defs[at][k] = try c.uniformUi(@bitCast(e.work.pool[each.at + k]));
         },
+        // try_emit_uniform (nir_to_vir.c:2847): a word of the push
+        // constants each, as QUNIFORM_UNIFORM at the offset over four.
+        .push => {
+            for (0..parts) |k| e.defs[at][k] = try c.uniform(.uniform, @intCast(each.at + k));
+        },
         .component => e.defs[at][0] = try getSrc(e, each.a, each.at),
         .construct => {
             for (0..parts) |k| e.defs[at][k] = try getSrc(e, each.from[k], each.part[k]);

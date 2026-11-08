@@ -880,6 +880,9 @@ fn compiled(back: Back, work: *compile.Work, words: []const u32, stream: *[compi
         // where it sits, because the order is the back end's to pick.
         .texture => (tmu orelse return null)[0],
         .sampler => (tmu orelse return null)[1],
+        // No scene here pushes constants: the library's draws are where
+        // a program that reads them is held to the cores (FacetBoth).
+        .push => return null,
     };
     return .{
         .{

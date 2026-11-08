@@ -269,6 +269,59 @@ test "a varying of one float is a float: the module Khronos' validator takes" {
     try std.testing.expectEqual(@as(u32, 5), Dimmed.varyings);
 }
 
+/// The colour the vertices carry times a float of the push constants,
+/// plus a vector of them: a block of a `vec4` at 0 and a `float` at 16
+/// (since 1.138).
+const PushTinted = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        b.color(b.add(b.scale(b.input(0, .f32x4), b.push(16, .f32x1)), b.push(0, .f32x4)));
+    }
+});
+
+/// What PushTinted comes to on a pixel whose colour is (0.5, 0.25, 0, 1),
+/// pushed (0, 0.25, 0.5, 0) and 0.5: every product and sum of it exact.
+const PushTintedMade = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        b.color(b.constant(.{ 0.25, 0.375, 0.5, 0.5 }));
+    }
+});
+
+test "the push constants are a block the reader counts, in the words Khronos' validator takes" {
+    try expectWords(&reference.min_push, PushTinted.words);
+    try std.testing.expectEqual(@as(u32, 4), PushTinted.varyings);
+    try std.testing.expectEqual(@as(usize, 2), PushTinted.graph.pushes.len);
+    switch (spirv.look(PushTinted.words, spirv.facet_profile)) {
+        .fault => |fault| {
+            std.debug.print("refused: {s}\n", .{@tagName(fault)});
+            return error.TestUnexpectedResult;
+        },
+        .seen => |seen| {
+            try std.testing.expectEqual(@as(u32, 1), seen.push_constants);
+            try std.testing.expectEqual(@as(u32, 1), seen.inputs);
+        },
+    }
+}
+
+test "a generated colour reads the push constants the draw set, at their offsets" {
+    var mine = Batch.flat(1, &.{ 0.5, 0.25, 0, 1 });
+    const tint = [4]f32{ 0, 0.25, 0.5, 0 };
+    const light: f32 = 0.5;
+    @memcpy(mine.resources.push[0..16], std.mem.asBytes(&tint));
+    @memcpy(mine.resources.push[16..20], std.mem.asBytes(&light));
+    const made = mine.fragments(5);
+    PushTinted.function(&made);
+
+    var theirs = Batch.flat(1, &.{});
+    const constant = theirs.fragments(1);
+    PushTintedMade.function(&constant);
+    try std.testing.expectEqualSlices(u32, &theirs.colors[0], &mine.colors[0]);
+    // And nothing pushed is nothing added and nothing to scale by.
+    var zero = Batch.flat(1, &.{ 0.5, 0.25, 0, 1 });
+    const unpushed = zero.fragments(5);
+    PushTinted.function(&unpushed);
+    try std.testing.expectEqual(@as(u32, 0), zero.colors[0][0]);
+}
+
 // --- rung 4 for the sampler family -----------------------------------------
 //
 // The generated function that samples against `shader.textured`, which is

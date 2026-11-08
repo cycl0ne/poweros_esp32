@@ -1267,12 +1267,20 @@ fn draw(queue: *Queue, first: u32, count: u32, vertex_offset: ?i32, first_instan
                 const bytes: u32 = @max(4, @as(u32, @intCast(stream.len * 4)));
                 const place = carve(queue, bytes, 4) orelse return noRoom(queue, "a draw with no memory for its uniforms");
                 const words: [*]u32 = @ptrCast(@alignCast(place.cpu));
+                // The push constants as the command buffer last set them
+                // before this draw (`CmdPushConstants`, `.push_constants`
+                // above), read as v3dv reads QUNIFORM_UNIFORM
+                // (v3dv_uniforms.c:513).
+                const pushed = &playerOf(queue).resources.push;
                 for (stream, 0..) |word, k| words[k] = switch (word) {
                     .float => |each| @bitCast(each),
                     // `Code.sampler` is set for exactly the streams that
                     // hold these, so `tmu` is there whenever they are.
                     .texture => if (tmu) |each| each.texture else 0,
                     .sampler => if (tmu) |each| each.sampler else 0,
+                    // `compile` holds every word inside the push
+                    // constants, so `at` is one of theirs.
+                    .push => |at| std.mem.readInt(u32, pushed[at * 4 ..][0..4], .little),
                 };
                 uniforms = place.address;
             }

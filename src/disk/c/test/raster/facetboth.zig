@@ -32,7 +32,7 @@ const FacetBase = sdk.interface.facet.FacetBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "FacetBoth";
-const VERSION_STRING = "\x00$VER: FacetBoth 1.9 (08.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: FacetBoth 1.10 (08.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "SIZE/K,ONLY/K";
@@ -339,6 +339,18 @@ const Shipped = struct {
             b.color(b.mul(b.sample(0, 0, b.input(0, .f32x2)), b.input(1, .f32x4)));
         }
     });
+    /// The push constants (`Side.push_layout`): a colour at 0, and a
+    /// float at 16 the vertices' colour is scaled by before it is added.
+    const Pushed = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            b.color(b.push(0, .f32x4));
+        }
+    });
+    const Tinted = ir.Fragment(struct {
+        pub fn body(b: *ir.Build) void {
+            b.color(b.add(b.scale(b.input(0, .f32x4), b.push(16, .f32x1)), b.push(0, .f32x4)));
+        }
+    });
 };
 
 /// The entries that ship words, after all the others, and the words of
@@ -353,11 +365,13 @@ const shipped_entries = [_]shader.Entry{
     Shipped.Dimmed.entry("shipped dimmed"),
     Shipped.Textured.entry("shipped texture"),
     Shipped.Modulated.entry("shipped modulated"),
+    Shipped.Pushed.entry("shipped pushed"),
+    Shipped.Tinted.entry("shipped tinted"),
 };
 const shipped_words = [_]shader.Spirv{
-    .{},                     .{},                .{},                  .{},
-    Shipped.Smooth.spirv,    Shipped.Flat.spirv, Shipped.Dimmed.spirv, Shipped.Textured.spirv,
-    Shipped.Modulated.spirv,
+    .{},                     .{},                  .{},                  .{},
+    Shipped.Smooth.spirv,    Shipped.Flat.spirv,   Shipped.Dimmed.spirv, Shipped.Textured.spirv,
+    Shipped.Modulated.spirv, Shipped.Pushed.spirv, Shipped.Tinted.spirv,
 };
 
 const plain_entries = [_]shader.Entry{
@@ -647,6 +661,9 @@ const Side = struct {
     sampler_set_layout: ?*facet.DescriptorSetLayout = null,
     sampler_layout: ?*facet.PipelineLayout = null,
     sampler_set: ?*facet.DescriptorSet = null,
+    /// What a shipped shader that reads the push constants is made with:
+    /// no set, and the fragment stage's 20 bytes of them.
+    push_layout: ?*facet.PipelineLayout = null,
     command_pool: ?*facet.CommandPool = null,
     commands: ?*facet.CommandBuffer = null,
     fence: ?*facet.Fence = null,
@@ -748,6 +765,8 @@ const Side = struct {
         const combined = facet.DescriptorSetLayoutBinding{ .binding = 0, .descriptor_type = .combined_image_sampler, .stage_flags = facet.SHADER_STAGE_FRAGMENT };
         try expect(fb.CreateDescriptorSetLayout(device, &.{ .binding_count = 1, .bindings = @ptrCast(&combined) }, &side.sampler_set_layout), error.Refused);
         try expect(fb.CreatePipelineLayout(device, &.{ .set_layout_count = 1, .set_layouts = @ptrCast(&side.sampler_set_layout) }, &side.sampler_layout), error.Refused);
+        const fragment_push = facet.PushConstantRange{ .stage_flags = facet.SHADER_STAGE_FRAGMENT, .size = 20 };
+        try expect(fb.CreatePipelineLayout(device, &.{ .push_constant_range_count = 1, .push_constant_ranges = @ptrCast(&fragment_push) }, &side.push_layout), error.Refused);
         // The texture's own levels: the V3D samples through no sampler
         // that holds them to fewer (`texture.samplingOf`), and draws the
         // missing colour instead.
@@ -1024,6 +1043,7 @@ const Side = struct {
         fb.DestroyCommandPool(device, side.command_pool);
         fb.DestroyPipelineLayout(device, side.layout);
         fb.DestroyPipelineLayout(device, side.sampler_layout);
+        fb.DestroyPipelineLayout(device, side.push_layout);
         fb.DestroyShaderModule(device, side.module);
         fb.DestroyDescriptorPool(device, side.descriptor_pool);
         fb.DestroyDescriptorSetLayout(device, side.set_layout);
@@ -1886,6 +1906,30 @@ const Cases = struct {
             }
         }.run;
     }
+    /// A colour pushed, drawn; then its green alone pushed again, by
+    /// four bytes at offset 4, and drawn over another part of the
+    /// picture. Each draw reads what was pushed before it, and the bytes
+    /// not pushed again keep what they were.
+    fn pushed(side: *Side) Failure!void {
+        side.begin(.{});
+        try side.use(.{ .vertex = "place", .fragment = "shipped pushed", .layout = side.push_layout.? });
+        const first = [4]f32{ 0.25, 0.5, 0.75, 1 };
+        side.fb.CmdPushConstants(side.commands.?, side.push_layout.?, facet.SHADER_STAGE_FRAGMENT, 0, 16, &first);
+        side.draw(clockwise_at, 6);
+        const green_only: f32 = 0.125;
+        side.fb.CmdPushConstants(side.commands.?, side.push_layout.?, facet.SHADER_STAGE_FRAGMENT, 4, 4, &green_only);
+        side.draw(glass_at, 3);
+        side.end();
+    }
+    /// The vertices' colour times a pushed float, plus a pushed colour.
+    fn tinted(side: *Side) Failure!void {
+        side.begin(.{});
+        try side.use(.{ .vertex = "as it is", .fragment = "shipped tinted", .layout = side.push_layout.? });
+        const values = [5]f32{ 0.125, 0, 0.25, 0, 0.5 };
+        side.fb.CmdPushConstants(side.commands.?, side.push_layout.?, facet.SHADER_STAGE_FRAGMENT, 0, 20, &values);
+        side.draw(clockwise_at, 6);
+        side.end();
+    }
     fn missing(side: *Side) Failure!void {
         side.begin(.{});
         try side.use(.{ .vertex = "texture", .fragment = "nearest" });
@@ -2017,6 +2061,8 @@ const cases = [_]Case{
     .{ .name = "shipped dimmed", .run = Cases.shipped("dimmed", "shipped dimmed", false, clockwise_at) },
     .{ .name = "shipped texture", .run = Cases.shipped("texture", "shipped texture", true, quad_at) },
     .{ .name = "shipped texture times colour", .run = Cases.shipped("modulate as it is", "shipped modulated", true, quad_at) },
+    .{ .name = "shipped push, pushed again", .run = Cases.pushed },
+    .{ .name = "shipped push times colour", .run = Cases.tinted },
     .{ .name = "no texture", .run = &Cases.missing },
     .{ .name = "drawn in rgba", .target = .rgba, .run = Cases.onTarget(.rgba) },
     .{ .name = "drawn in 565", .target = .rgb565, .run = Cases.onTarget(.rgb565) },

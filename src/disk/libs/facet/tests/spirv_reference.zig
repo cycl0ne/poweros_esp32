@@ -537,3 +537,86 @@ pub const min_scaled = [_]u32{
     0x0005008E, 0x00000008, 0x0000000F, 0x0000000D, 0x0000000E, 0x0003003E,
     0x00000002, 0x0000000F, 0x000100FD, 0x00010038,
 };
+
+/// The colour the vertices carry times a float of the push constants, plus
+/// a vector of them: `vcolor * pc.light + pc.tint` over a block of a
+/// `vec4` at offset 0 and a `float` at 16. The block is declared once, its
+/// members' pointer types as each is first read, and each member is
+/// reached through an access chain indexed by a signed integer constant,
+/// as glslang indexes one (since 1.138).
+///
+/// Facet's own output, like `min_scaled` above: its ids are the emitter's.
+/// Khronos' validator says it is a module:
+///
+/// ```sh
+/// spirv-val --target-env vulkan1.0 facet_push.spv   # no output, and 0
+/// ```
+///
+/// Read back with `spirv-dis --raw-id --no-header`:
+///
+/// ```
+///                OpCapability Shader
+///                OpMemoryModel Logical GLSL450
+///                OpEntryPoint Fragment %1 "main" %2 %3
+///                OpExecutionMode %1 OriginUpperLeft
+///                OpDecorate %2 Location 0
+///                OpDecorate %3 Location 0
+///                OpDecorate %11 Block
+///                OpMemberDecorate %11 0 Offset 0
+///                OpMemberDecorate %11 1 Offset 16
+///           %5 = OpTypeVoid
+///           %6 = OpTypeFunction %5
+///           %7 = OpTypeFloat 32
+///           %8 = OpTypeVector %7 4
+///           %9 = OpTypePointer Output %8
+///           %2 = OpVariable %9 Output
+///          %10 = OpTypePointer Input %8
+///           %3 = OpVariable %10 Input
+///          %11 = OpTypeStruct %8 %7
+///          %12 = OpTypePointer PushConstant %11
+///           %4 = OpVariable %12 PushConstant
+///          %13 = OpTypeInt 32 1
+///          %14 = OpConstant %13 0
+///          %15 = OpTypePointer PushConstant %8
+///          %16 = OpConstant %13 1
+///          %17 = OpTypePointer PushConstant %7
+///           %1 = OpFunction %5 None %6
+///          %18 = OpLabel
+///          %19 = OpAccessChain %17 %4 %16
+///          %20 = OpLoad %7 %19
+///          %21 = OpLoad %8 %3
+///          %22 = OpVectorTimesScalar %8 %21 %20
+///          %23 = OpAccessChain %15 %4 %14
+///          %24 = OpLoad %8 %23
+///          %25 = OpFAdd %8 %22 %24
+///                OpStore %2 %25
+///                OpReturn
+///                OpFunctionEnd
+/// ```
+pub const min_push = [_]u32{
+    0x07230203, 0x00010000, 0x0000004B, 0x0000001A, 0x00000000, 0x00020011,
+    0x00000001, 0x0003000E, 0x00000000, 0x00000001, 0x0007000F, 0x00000004,
+    0x00000001, 0x6E69616D, 0x00000000, 0x00000002, 0x00000003, 0x00030010,
+    0x00000001, 0x00000007, 0x00040047, 0x00000002, 0x0000001E, 0x00000000,
+    0x00040047, 0x00000003, 0x0000001E, 0x00000000, 0x00030047, 0x0000000B,
+    0x00000002, 0x00050048, 0x0000000B, 0x00000000, 0x00000023, 0x00000000,
+    0x00050048, 0x0000000B, 0x00000001, 0x00000023, 0x00000010, 0x00020013,
+    0x00000005, 0x00030021, 0x00000006, 0x00000005, 0x00030016, 0x00000007,
+    0x00000020, 0x00040017, 0x00000008, 0x00000007, 0x00000004, 0x00040020,
+    0x00000009, 0x00000003, 0x00000008, 0x0004003B, 0x00000009, 0x00000002,
+    0x00000003, 0x00040020, 0x0000000A, 0x00000001, 0x00000008, 0x0004003B,
+    0x0000000A, 0x00000003, 0x00000001, 0x0004001E, 0x0000000B, 0x00000008,
+    0x00000007, 0x00040020, 0x0000000C, 0x00000009, 0x0000000B, 0x0004003B,
+    0x0000000C, 0x00000004, 0x00000009, 0x00040015, 0x0000000D, 0x00000020,
+    0x00000001, 0x0004002B, 0x0000000D, 0x0000000E, 0x00000000, 0x00040020,
+    0x0000000F, 0x00000009, 0x00000008, 0x0004002B, 0x0000000D, 0x00000010,
+    0x00000001, 0x00040020, 0x00000011, 0x00000009, 0x00000007, 0x00050036,
+    0x00000005, 0x00000001, 0x00000000, 0x00000006, 0x000200F8, 0x00000012,
+    0x00050041, 0x00000011, 0x00000013, 0x00000004, 0x00000010, 0x0004003D,
+    0x00000007, 0x00000014, 0x00000013, 0x0004003D, 0x00000008, 0x00000015,
+    0x00000003, 0x0005008E, 0x00000008, 0x00000016, 0x00000015, 0x00000014,
+    0x00050041, 0x0000000F, 0x00000017, 0x00000004, 0x0000000E, 0x0004003D,
+    0x00000008, 0x00000018, 0x00000017, 0x00050081, 0x00000008, 0x00000019,
+    0x00000016, 0x00000018, 0x0003003E, 0x00000002, 0x00000019, 0x000100FD,
+    0x00010038,
+};

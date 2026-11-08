@@ -104,6 +104,9 @@ pub const Tag = enum(u8) {
     input,
     /// A value of the shader's own.
     constant,
+    /// Floats the draw hands over in its push constants
+    /// (CmdPushConstants), `at` bytes in. (Since 1.138.)
+    push,
     /// A texture read at a coordinate.
     sample,
     multiply,
@@ -165,11 +168,26 @@ pub const Sampled = struct {
     sampling: texture.Sampling,
 };
 
+/// A member of the shader's one push-constant block: where it is and
+/// what it holds.
+pub const Push = struct {
+    offset: u32,
+    kind: Kind,
+
+    /// How many bytes it is.
+    pub fn bytes(member: Push) u32 {
+        return 4 * member.kind.parts();
+    }
+};
+
 /// A shader, recorded. Everything here is comptime.
 pub const Graph = struct {
     ops: []const Op,
     inputs: []const Input,
     sampled: []const Sampled,
+    /// The push-constant block's members, each place it is read at once,
+    /// in the order of their offsets.
+    pushes: []const Push = &.{},
     /// The floats the vertex function writes past the position, which is
     /// what the entry's word has to say.
     varyings: u32,
@@ -219,6 +237,27 @@ pub const Build = struct {
 
     pub fn constant(build: *Build, comptime parts: [4]f32) u16 {
         return build.put(.{ .tag = .constant, .kind = .f32x4, .value = parts });
+    }
+
+    /// Floats of the push constants, `offset` bytes in: a member of the
+    /// shader's one push-constant block, at that Offset, which the draw
+    /// fills with CmdPushConstants. Vulkan lays such a block out by
+    /// std430's rules (the Vulkan specification's "Offset and Stride
+    /// Assignment"), so a vector of two floats sits at a multiple of 8
+    /// and one of three or four at a multiple of 16; and all of it lies
+    /// within `shader.MAX_PUSH_CONSTANTS_SIZE`. Two reads of one place
+    /// and one width are one member; two members may not overlap.
+    /// (Since 1.138.)
+    pub fn push(build: *Build, comptime offset: u32, comptime kind: Kind) u16 {
+        if (kind == .boolean) @compileError("a push constant is floats");
+        const alignment: u32 = switch (kind) {
+            .f32x1 => 4,
+            .f32x2 => 8,
+            else => 16,
+        };
+        if (offset % alignment != 0) @compileError("a push constant is placed as std430 places it: 4 for a float, 8 for two, 16 for three or four");
+        if (offset + 4 * kind.parts() > shader.MAX_PUSH_CONSTANTS_SIZE) @compileError("the push constants are shader.MAX_PUSH_CONSTANTS_SIZE bytes");
+        return build.put(.{ .tag = .push, .kind = kind, .at = offset });
     }
 
     /// A texture, bound at `set` and `binding`, read at `coordinate`. The
@@ -328,10 +367,31 @@ pub fn graphOf(comptime body: fn (*Build) void) Graph {
         var sampled: [most_ops]Sampled = undefined;
         var sampled_count: u32 = 0;
         var discards = false;
+        var pushes: [most_ops]Push = undefined;
+        var push_count: u32 = 0;
         for (build.ops[0..build.count]) |op| switch (op.tag) {
             .input => {
                 inputs[input_count] = .{ .location = op.at, .kind = op.kind, .first = @bitCast(op.value[0]) };
                 input_count += 1;
+            },
+            .push => {
+                const member = Push{ .offset = op.at, .kind = op.kind };
+                var known = false;
+                for (pushes[0..push_count]) |each| {
+                    if (each.offset == member.offset and each.kind == member.kind) {
+                        known = true;
+                    } else if (member.offset < each.offset + each.bytes() and each.offset < member.offset + member.bytes()) {
+                        @compileError("two push constants overlap: a block's members may not");
+                    }
+                }
+                if (!known) {
+                    // In the order of their offsets, which is the order a
+                    // block's members are declared in.
+                    var at = push_count;
+                    while (at > 0 and pushes[at - 1].offset > member.offset) : (at -= 1) pushes[at] = pushes[at - 1];
+                    pushes[at] = member;
+                    push_count += 1;
+                }
             },
             .sample => {
                 sampled[sampled_count] = .{ .set = op.at >> 16, .binding = op.at & 0xFFFF, .sampling = op.sampling };
@@ -343,10 +403,12 @@ pub fn graphOf(comptime body: fn (*Build) void) Graph {
         const kept_ops = build.ops[0..build.count].*;
         const kept_inputs = inputs[0..input_count].*;
         const kept_sampled = sampled[0..sampled_count].*;
+        const kept_pushes = pushes[0..push_count].*;
         return .{
             .ops = &kept_ops,
             .inputs = &kept_inputs,
             .sampled = &kept_sampled,
+            .pushes = &kept_pushes,
             .varyings = build.varyings,
             .discards = discards,
         };
@@ -398,6 +460,9 @@ fn wordsOf(comptime graph: Graph) []const u32 {
         for (graph.inputs, 0..) |_, k| input_ids[k] = emit.id();
         var sampler_ids: [most_ops]u32 = @splat(0);
         for (graph.sampled, 0..) |_, k| sampler_ids[k] = emit.id();
+        // The push-constant block's variable, where there is a block:
+        // taken last, so that a graph with none is the module it was.
+        const push_id: u32 = if (graph.pushes.len == 0) 0 else emit.id();
 
         emit.capability(.shader);
         emit.memoryModel(.logical, .glsl450);
@@ -440,6 +505,28 @@ fn wordsOf(comptime graph: Graph) []const u32 {
         for (graph.ops) |op| if (op.kind == .boolean and bool_type == 0) {
             bool_type = emit.typeBool();
         };
+
+        // The push constants: one block, a member for each place read, at
+        // its Offset, and a pointer in the PushConstant class for each
+        // member's type, which an access chain answers. The chain's index
+        // is a 32-bit signed integer constant, as glslc writes it. Lazy,
+        // as the offsets below are: a graph without push constants
+        // declares none of it.
+        var member_pointers: [most_ops]u32 = @splat(0);
+        var member_indices: [most_ops]u32 = @splat(0);
+        if (graph.pushes.len != 0) {
+            var member_types: [most_ops]u32 = @splat(0);
+            for (graph.pushes, 0..) |each, k| member_types[k] = vectorFor(&emit, &vector_types, float_type, each.kind);
+            const block = emit.typeStruct(member_types[0..graph.pushes.len]);
+            emit.decorate(block, .block, &.{});
+            for (graph.pushes, 0..) |each, k| emit.memberDecorate(block, k, .offset, &.{each.offset});
+            emit.variable(emit.typePointer(.push_constant, block), push_id, .push_constant);
+            const int_type = emit.typeInt(32, true);
+            for (graph.pushes, 0..) |_, k| {
+                member_indices[k] = emit.constant(int_type, k);
+                member_pointers[k] = emit.typePointer(.push_constant, member_types[k]);
+            }
+        }
 
         // The constants, in the order they are first asked for: each
         // float once, then a composite for a value of several.
@@ -490,6 +577,16 @@ fn wordsOf(comptime graph: Graph) []const u32 {
             switch (op.tag) {
                 .input => {},
                 .constant => value_ids[k] = constant_ids[k],
+                .push => {
+                    // Loaded where it is read, through a chain to its
+                    // member, as glslc writes `pc.colour`.
+                    const member = pushMember(graph, op);
+                    const pointer = emit.id();
+                    emit.at(.access_chain, &.{ member_pointers[member], pointer, push_id, member_indices[member] });
+                    const made = emit.id();
+                    emit.at(.load, &.{ vectorFor(&emit, &vector_types, float_type, op.kind), made, pointer });
+                    value_ids[k] = made;
+                },
                 .sample => {
                     const which = sampledBefore(graph, k);
                     const held = emit.id();
@@ -560,6 +657,14 @@ fn wordsOf(comptime graph: Graph) []const u32 {
         emit.at(.returns, &.{});
         emit.functionEnd();
         return emit.finish();
+    }
+}
+
+/// Which member of the push-constant block an operation reads.
+fn pushMember(comptime graph: Graph, comptime op: Op) u32 {
+    comptime {
+        for (graph.pushes, 0..) |each, k| if (each.offset == op.at and each.kind == op.kind) return k;
+        unreachable;
     }
 }
 
@@ -692,6 +797,9 @@ fn functionOf(comptime graph: Graph) shader.FragmentFn {
                     }
                 }
             }
+            // The push constants as floats, once a call: the draw's, the
+            // same for every pixel.
+            const pushed: *const [shader.MAX_PUSH_CONSTANTS_SIZE / 4]f32 = @ptrCast(&fragments.resources.push);
             for (0..fragments.count) |k| {
                 const quad = &fragments.quads[k];
                 const out = &fragments.colors[k];
@@ -713,6 +821,9 @@ fn functionOf(comptime graph: Graph) shader.FragmentFn {
                     },
                     .constant => inline for (0..comptime op.kind.parts()) |part| {
                         values[i][part] = @splat(op.value[part]);
+                    },
+                    .push => inline for (0..comptime op.kind.parts()) |part| {
+                        values[i][part] = @splat(pushed[op.at / 4 + part]);
                     },
                     .sample => {
                         const which = comptime sampledBefore(graph, i);
