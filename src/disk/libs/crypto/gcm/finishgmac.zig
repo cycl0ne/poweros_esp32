@@ -58,9 +58,9 @@ const _gcm = @import("_gcm.zig");
 /// for (tag, sent) |a, b| differ |= a ^ b;
 /// if (differ != 0) return error.Forged;
 /// ```
-pub fn FinishGmac(_: *CryptoBase, context: *GmacContext, tag: *anyopaque) i32 {
+pub fn FinishGmac(cb: *CryptoBase, context: *GmacContext, tag: *anyopaque) i32 {
     if (context.key_length == 0) return crypto.CRYPTOERR_CONTEXT;
-    _gcm.gmacEnd(context, @ptrCast(tag));
+    _gcm.gmacEnd(cb, context, @ptrCast(tag));
     const size = context.size;
     const bytes: [*]u8 = @ptrCast(context);
     for (bytes[0..@sizeOf(GmacContext)]) |*byte| @as(*volatile u8, byte).* = 0;

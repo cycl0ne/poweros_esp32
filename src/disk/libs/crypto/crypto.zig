@@ -6,7 +6,10 @@
 //!
 //! The work is done by the chip's engines - SHA, AES and RSA's big-number
 //! unit - fed by the CPU; the library adds the modes, the padding and the
-//! numbers' set-up around them (`engine/_engine.zig`). A computation
+//! numbers' set-up around them (`engine/_engine.zig`). An x86-64 core
+//! with AES-NI and PCLMULQDQ does AES and GCM's hash on those
+//! instructions instead (`engine/x64.zig`); every other chip without an
+//! engine runs the engines' software models. A computation
 //! under way is a context the caller keeps, so the one base is shared by
 //! every opener and holds only the engines' locks and ModExp's working
 //! numbers.

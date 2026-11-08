@@ -6,6 +6,11 @@
 //! above the engine - the modes, the padding, the chaining, the numbers'
 //! set-up - against the standards' own test vectors, and against Zig's
 //! std.crypto on inputs of every length and split.
+//!
+//! The host is an x86-64 core, whose AES-NI and PCLMULQDQ the library
+//! uses where the core has them (`engine/x64.zig`): the AES and GCM tests
+//! run once with them and once with the software alone
+//! (`Rig.software`), which is what the other chips run.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -13,6 +18,7 @@ const crypto = sdk.crypto;
 const ExecBase = sdk.interface.exec.ExecBase;
 const CryptoBase = sdk.interface.crypto.CryptoBase;
 const crypto_init = @import("../crypto_init.zig");
+const crypto_base = @import("../crypto_base.zig");
 const kexec = @import("host_rom").exec;
 
 const testing = std.testing;
@@ -35,6 +41,14 @@ const Rig = struct {
         const library: *sdk.exec.Library = @ptrCast(@alignCast(made));
         const opened = sys.OpenLibrary(crypto.CRYPTONAME, crypto_init.LIBRARY_VERSION) orelse return error.NoBase;
         return .{ .sys = sys, .library = library, .cb = @ptrCast(opened) };
+    }
+
+    /// The library made to use the software alone, as a core without
+    /// AES-NI and PCLMULQDQ does.
+    fn software(rig: *Rig) void {
+        const base: *crypto_base.CryptoBase = @ptrCast(@alignCast(rig.cb));
+        base.core_aes = false;
+        base.core_clmul = false;
     }
 
     /// The library closed and expunged, and nothing left behind.
@@ -319,220 +333,313 @@ test "RFC 2202's HMAC-MD5, and keys of every length as std.crypto has them" {
 // --- AES ----------------------------------------------------------------------
 
 test "FIPS 197's AES-128 and AES-256 blocks, both ways" {
-    var rig = try Rig.init();
-    defer rig.deinit() catch unreachable;
-    const cb = rig.cb;
-    const plain = hex("00112233445566778899aabbccddeeff");
-    const key = hex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
-    const Case = struct { length: u32, cipher: [16]u8 };
-    for ([_]Case{
-        .{ .length = 16, .cipher = hex("69c4e0d86a7b0430d8cdb78070b4c55a") },
-        .{ .length = 32, .cipher = hex("8ea2b7ca516745bfeafc49904b496089") },
-    }) |case| {
-        var context: crypto.CipherContext = .{};
-        var block = plain;
-        try testing.expectEqual(crypto.CRYPTOERR_OK, cb.InitCipher(&context, crypto.CIPHER_AES_ECB, &key, case.length, null));
-        try testing.expectEqual(crypto.CRYPTOERR_OK, cb.UpdateCipher(&context, &block, &block, 16));
-        try testing.expectEqualSlices(u8, &case.cipher, &block);
-        _ = cb.InitCipher(&context, crypto.CIPHER_AES_ECB | crypto.CIPHERF_DECRYPT, &key, case.length, null);
-        _ = cb.UpdateCipher(&context, &block, &block, 16);
-        try testing.expectEqualSlices(u8, &plain, &block);
+    for ([_]bool{ true, false }) |core| {
+        var rig = try Rig.init();
+        defer rig.deinit() catch unreachable;
+        if (!core) rig.software();
+        const cb = rig.cb;
+        const plain = hex("00112233445566778899aabbccddeeff");
+        const key = hex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
+        const Case = struct { length: u32, cipher: [16]u8 };
+        for ([_]Case{
+            .{ .length = 16, .cipher = hex("69c4e0d86a7b0430d8cdb78070b4c55a") },
+            .{ .length = 32, .cipher = hex("8ea2b7ca516745bfeafc49904b496089") },
+        }) |case| {
+            var context: crypto.CipherContext = .{};
+            var block = plain;
+            try testing.expectEqual(crypto.CRYPTOERR_OK, cb.InitCipher(&context, crypto.CIPHER_AES_ECB, &key, case.length, null));
+            try testing.expectEqual(crypto.CRYPTOERR_OK, cb.UpdateCipher(&context, &block, &block, 16));
+            try testing.expectEqualSlices(u8, &case.cipher, &block);
+            _ = cb.InitCipher(&context, crypto.CIPHER_AES_ECB | crypto.CIPHERF_DECRYPT, &key, case.length, null);
+            _ = cb.UpdateCipher(&context, &block, &block, 16);
+            try testing.expectEqualSlices(u8, &plain, &block);
+        }
     }
 }
 
 test "SP 800-38A's CBC and CTR, in pieces, and back" {
-    var rig = try Rig.init();
-    defer rig.deinit() catch unreachable;
-    const cb = rig.cb;
-    const key = hex("2b7e151628aed2a6abf7158809cf4f3c");
-    const plain = hex("6bc1bee22e409f96e93d7e117393172aae2d8a571e03ac9c9eb76fac45af8e51");
-    var context: crypto.CipherContext = .{};
+    for ([_]bool{ true, false }) |core| {
+        var rig = try Rig.init();
+        defer rig.deinit() catch unreachable;
+        if (!core) rig.software();
+        const cb = rig.cb;
+        const key = hex("2b7e151628aed2a6abf7158809cf4f3c");
+        const plain = hex("6bc1bee22e409f96e93d7e117393172aae2d8a571e03ac9c9eb76fac45af8e51");
+        var context: crypto.CipherContext = .{};
 
-    var data = plain;
-    _ = cb.InitCipher(&context, crypto.CIPHER_AES_CBC, &key, 16, &hex("000102030405060708090a0b0c0d0e0f"));
-    _ = cb.UpdateCipher(&context, &data, &data, 16);
-    _ = cb.UpdateCipher(&context, data[16..].ptr, data[16..].ptr, 16);
-    try testing.expectEqualSlices(u8, &hex("7649abac8119b246cee98e9b12e9197d5086cb9b507219ee95db113a917678b2"), &data);
-    _ = cb.InitCipher(&context, crypto.CIPHER_AES_CBC | crypto.CIPHERF_DECRYPT, &key, 16, &hex("000102030405060708090a0b0c0d0e0f"));
-    _ = cb.UpdateCipher(&context, &data, &data, 32);
-    try testing.expectEqualSlices(u8, &plain, &data);
+        var data = plain;
+        _ = cb.InitCipher(&context, crypto.CIPHER_AES_CBC, &key, 16, &hex("000102030405060708090a0b0c0d0e0f"));
+        _ = cb.UpdateCipher(&context, &data, &data, 16);
+        _ = cb.UpdateCipher(&context, data[16..].ptr, data[16..].ptr, 16);
+        try testing.expectEqualSlices(u8, &hex("7649abac8119b246cee98e9b12e9197d5086cb9b507219ee95db113a917678b2"), &data);
+        _ = cb.InitCipher(&context, crypto.CIPHER_AES_CBC | crypto.CIPHERF_DECRYPT, &key, 16, &hex("000102030405060708090a0b0c0d0e0f"));
+        _ = cb.UpdateCipher(&context, &data, &data, 32);
+        try testing.expectEqualSlices(u8, &plain, &data);
 
-    data = plain;
-    _ = cb.InitCipher(&context, crypto.CIPHER_AES_CTR, &key, 16, &hex("f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff"));
-    _ = cb.UpdateCipher(&context, &data, &data, 5);
-    _ = cb.UpdateCipher(&context, data[5..].ptr, data[5..].ptr, 20);
-    _ = cb.UpdateCipher(&context, data[25..].ptr, data[25..].ptr, 7);
-    try testing.expectEqualSlices(u8, &hex("874d6191b620e3261bef6864990db6ce9806f66b7970fdff8617187bb9fffdff"), &data);
+        data = plain;
+        _ = cb.InitCipher(&context, crypto.CIPHER_AES_CTR, &key, 16, &hex("f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff"));
+        _ = cb.UpdateCipher(&context, &data, &data, 5);
+        _ = cb.UpdateCipher(&context, data[5..].ptr, data[5..].ptr, 20);
+        _ = cb.UpdateCipher(&context, data[25..].ptr, data[25..].ptr, 7);
+        try testing.expectEqualSlices(u8, &hex("874d6191b620e3261bef6864990db6ce9806f66b7970fdff8617187bb9fffdff"), &data);
 
-    try testing.expectEqual(crypto.CRYPTOERR_OK, cb.UpdateCipher(&context, null, null, 0));
-    _ = cb.InitCipher(&context, crypto.CIPHER_AES_CBC, &key, 16, &hex("000102030405060708090a0b0c0d0e0f"));
-    try testing.expectEqual(crypto.CRYPTOERR_LENGTH, cb.UpdateCipher(&context, &data, &data, 15));
-    try testing.expectEqual(crypto.CRYPTOERR_KEY, cb.InitCipher(&context, crypto.CIPHER_AES_ECB, &key, 24, null));
-    try testing.expectEqual(crypto.CRYPTOERR_LENGTH, cb.InitCipher(&context, crypto.CIPHER_AES_CTR, &key, 16, null));
-    try testing.expectEqual(crypto.CRYPTOERR_ALGORITHM, cb.InitCipher(&context, 7, &key, 16, null));
-    try testing.expectEqual(crypto.CRYPTOERR_ALGORITHM, cb.UpdateCipher(&context, &data, &data, 16));
+        try testing.expectEqual(crypto.CRYPTOERR_OK, cb.UpdateCipher(&context, null, null, 0));
+        _ = cb.InitCipher(&context, crypto.CIPHER_AES_CBC, &key, 16, &hex("000102030405060708090a0b0c0d0e0f"));
+        try testing.expectEqual(crypto.CRYPTOERR_LENGTH, cb.UpdateCipher(&context, &data, &data, 15));
+        try testing.expectEqual(crypto.CRYPTOERR_KEY, cb.InitCipher(&context, crypto.CIPHER_AES_ECB, &key, 24, null));
+        try testing.expectEqual(crypto.CRYPTOERR_LENGTH, cb.InitCipher(&context, crypto.CIPHER_AES_CTR, &key, 16, null));
+        try testing.expectEqual(crypto.CRYPTOERR_ALGORITHM, cb.InitCipher(&context, 7, &key, 16, null));
+        try testing.expectEqual(crypto.CRYPTOERR_ALGORITHM, cb.UpdateCipher(&context, &data, &data, 16));
+    }
 }
 
 // --- GCM ----------------------------------------------------------------------
 
 test "the GCM paper's test case 4, sealed and opened, and a forgery refused" {
-    var rig = try Rig.init();
-    defer rig.deinit() catch unreachable;
-    const cb = rig.cb;
-    const key = hex("feffe9928665731c6d6a8f9467308308");
-    const nonce = hex("cafebabefacedbaddecaf888");
-    const aad = hex("feedfacedeadbeeffeedfacedeadbeefabaddad2");
-    const plain = hex("d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a721c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b39");
-    const sealed = hex("42831ec2217774244b7221b784d0d49ce3aa212f2c02a4e035c17e2329aca12e21d514b25466931c7d8f6a5aac84aa051ba30b396a0aac973d58e091");
-    var data = plain;
-    var tag: [crypto.GCM_TAG]u8 = undefined;
-    const message: crypto.GcmMessage = .{
-        .key = &key,
-        .key_length = 16,
-        .nonce = &nonce,
-        .nonce_length = 12,
-        .aad = &aad,
-        .aad_length = aad.len,
-        .input = &data,
-        .output = &data,
-        .length = data.len,
-        .tag = &tag,
-    };
-    try testing.expectEqual(crypto.CRYPTOERR_OK, cb.SealGcm(&message));
-    try testing.expectEqualSlices(u8, &sealed, &data);
-    try testing.expectEqualSlices(u8, &hex("5bc94fbc3221a5db94fae95ae7121a47"), &tag);
+    for ([_]bool{ true, false }) |core| {
+        var rig = try Rig.init();
+        defer rig.deinit() catch unreachable;
+        if (!core) rig.software();
+        const cb = rig.cb;
+        const key = hex("feffe9928665731c6d6a8f9467308308");
+        const nonce = hex("cafebabefacedbaddecaf888");
+        const aad = hex("feedfacedeadbeeffeedfacedeadbeefabaddad2");
+        const plain = hex("d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a721c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b39");
+        const sealed = hex("42831ec2217774244b7221b784d0d49ce3aa212f2c02a4e035c17e2329aca12e21d514b25466931c7d8f6a5aac84aa051ba30b396a0aac973d58e091");
+        var data = plain;
+        var tag: [crypto.GCM_TAG]u8 = undefined;
+        const message: crypto.GcmMessage = .{
+            .key = &key,
+            .key_length = 16,
+            .nonce = &nonce,
+            .nonce_length = 12,
+            .aad = &aad,
+            .aad_length = aad.len,
+            .input = &data,
+            .output = &data,
+            .length = data.len,
+            .tag = &tag,
+        };
+        try testing.expectEqual(crypto.CRYPTOERR_OK, cb.SealGcm(&message));
+        try testing.expectEqualSlices(u8, &sealed, &data);
+        try testing.expectEqualSlices(u8, &hex("5bc94fbc3221a5db94fae95ae7121a47"), &tag);
 
-    tag[3] ^= 1;
-    try testing.expectEqual(crypto.CRYPTOERR_TAG, cb.OpenGcm(&message));
-    try testing.expectEqualSlices(u8, &sealed, &data);
-    tag[3] ^= 1;
-    try testing.expectEqual(crypto.CRYPTOERR_OK, cb.OpenGcm(&message));
-    try testing.expectEqualSlices(u8, &plain, &data);
+        tag[3] ^= 1;
+        try testing.expectEqual(crypto.CRYPTOERR_TAG, cb.OpenGcm(&message));
+        try testing.expectEqualSlices(u8, &sealed, &data);
+        tag[3] ^= 1;
+        try testing.expectEqual(crypto.CRYPTOERR_OK, cb.OpenGcm(&message));
+        try testing.expectEqualSlices(u8, &plain, &data);
+    }
 }
 
 test "GCM of every length as std.crypto has it, and a nonce that is not 12 bytes" {
-    var rig = try Rig.init();
-    defer rig.deinit() catch unreachable;
-    const cb = rig.cb;
-    const Gcm = std.crypto.aead.aes_gcm.Aes256Gcm;
-    var key: [32]u8 = undefined;
-    for (&key, 0..) |*byte, index| byte.* = @truncate(index * 3);
-    const nonce = [12]u8{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 };
-    var plain: [70]u8 = undefined;
-    for (&plain, 0..) |*byte, index| byte.* = @truncate(index * 5);
-    const aad = "header";
-    for (0..plain.len + 1) |length| {
-        var expected: [70]u8 = undefined;
-        var expected_tag: [16]u8 = undefined;
-        Gcm.encrypt(expected[0..length], &expected_tag, plain[0..length], aad, nonce, key);
-        var out: [70]u8 = undefined;
-        var tag: [16]u8 = undefined;
-        const message: crypto.GcmMessage = .{ .key = &key, .key_length = 32, .nonce = &nonce, .nonce_length = 12, .aad = aad, .aad_length = aad.len, .input = &plain, .output = &out, .length = @intCast(length), .tag = &tag };
-        try testing.expectEqual(crypto.CRYPTOERR_OK, cb.SealGcm(&message));
-        try testing.expectEqualSlices(u8, expected[0..length], out[0..length]);
-        try testing.expectEqualSlices(u8, &expected_tag, &tag);
+    for ([_]bool{ true, false }) |core| {
+        var rig = try Rig.init();
+        defer rig.deinit() catch unreachable;
+        if (!core) rig.software();
+        const cb = rig.cb;
+        const Gcm = std.crypto.aead.aes_gcm.Aes256Gcm;
+        var key: [32]u8 = undefined;
+        for (&key, 0..) |*byte, index| byte.* = @truncate(index * 3);
+        const nonce = [12]u8{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 };
+        var plain: [70]u8 = undefined;
+        for (&plain, 0..) |*byte, index| byte.* = @truncate(index * 5);
+        const aad = "header";
+        for (0..plain.len + 1) |length| {
+            var expected: [70]u8 = undefined;
+            var expected_tag: [16]u8 = undefined;
+            Gcm.encrypt(expected[0..length], &expected_tag, plain[0..length], aad, nonce, key);
+            var out: [70]u8 = undefined;
+            var tag: [16]u8 = undefined;
+            const message: crypto.GcmMessage = .{ .key = &key, .key_length = 32, .nonce = &nonce, .nonce_length = 12, .aad = aad, .aad_length = aad.len, .input = &plain, .output = &out, .length = @intCast(length), .tag = &tag };
+            try testing.expectEqual(crypto.CRYPTOERR_OK, cb.SealGcm(&message));
+            try testing.expectEqualSlices(u8, expected[0..length], out[0..length]);
+            try testing.expectEqualSlices(u8, &expected_tag, &tag);
+        }
+        // Longer ones, header and data.
+        var long: [1100]u8 = undefined;
+        for (&long, 0..) |*byte, index| byte.* = @truncate(index *% 11 +% 7);
+        for ([_]usize{ 256, 300, 1100 }) |length| {
+            var expected: [1100]u8 = undefined;
+            var expected_tag: [16]u8 = undefined;
+            Gcm.encrypt(expected[0..length], &expected_tag, long[0..length], long[0 .. length / 2 + 128], nonce, key);
+            var out: [1100]u8 = undefined;
+            var tag: [16]u8 = undefined;
+            const message: crypto.GcmMessage = .{ .key = &key, .key_length = 32, .nonce = &nonce, .nonce_length = 12, .aad = &long, .aad_length = @intCast(length / 2 + 128), .input = &long, .output = &out, .length = @intCast(length), .tag = &tag };
+            try testing.expectEqual(crypto.CRYPTOERR_OK, cb.SealGcm(&message));
+            try testing.expectEqualSlices(u8, expected[0..length], out[0..length]);
+            try testing.expectEqualSlices(u8, &expected_tag, &tag);
+        }
+        // The GCM paper's test case 6: a 60-byte nonce, hashed into J0.
+        const key6 = hex("feffe9928665731c6d6a8f9467308308");
+        const nonce6 = hex("9313225df88406e555909c5aff5269aa6a7a9538534f7da1e4c303d2a318a728c3c0c95156809539fcf0e2429a6b525416aedbf5a0de6a57a637b39b");
+        const aad6 = hex("feedfacedeadbeeffeedfacedeadbeefabaddad2");
+        var data6 = hex("d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a721c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b39");
+        var tag6: [16]u8 = undefined;
+        const message6: crypto.GcmMessage = .{ .key = &key6, .key_length = 16, .nonce = &nonce6, .nonce_length = nonce6.len, .aad = &aad6, .aad_length = aad6.len, .input = &data6, .output = &data6, .length = data6.len, .tag = &tag6 };
+        try testing.expectEqual(crypto.CRYPTOERR_OK, cb.SealGcm(&message6));
+        try testing.expectEqualSlices(u8, &hex("8ce24998625615b603a033aca13fb894be9112a5c3a211a8ba262a3cca7e2ca701e4a9a4fba43c90ccdcb281d48c7c6fd62875d2aca417034c34aee5"), &data6);
+        try testing.expectEqualSlices(u8, &hex("619cc5aefffe0bfa462af43c1699d050"), &tag6);
     }
-    // Longer ones, header and data.
-    var long: [1100]u8 = undefined;
-    for (&long, 0..) |*byte, index| byte.* = @truncate(index *% 11 +% 7);
-    for ([_]usize{ 256, 300, 1100 }) |length| {
-        var expected: [1100]u8 = undefined;
-        var expected_tag: [16]u8 = undefined;
-        Gcm.encrypt(expected[0..length], &expected_tag, long[0..length], long[0 .. length / 2 + 128], nonce, key);
-        var out: [1100]u8 = undefined;
-        var tag: [16]u8 = undefined;
-        const message: crypto.GcmMessage = .{ .key = &key, .key_length = 32, .nonce = &nonce, .nonce_length = 12, .aad = &long, .aad_length = @intCast(length / 2 + 128), .input = &long, .output = &out, .length = @intCast(length), .tag = &tag };
-        try testing.expectEqual(crypto.CRYPTOERR_OK, cb.SealGcm(&message));
-        try testing.expectEqualSlices(u8, expected[0..length], out[0..length]);
-        try testing.expectEqualSlices(u8, &expected_tag, &tag);
-    }
-    // The GCM paper's test case 6: a 60-byte nonce, hashed into J0.
-    const key6 = hex("feffe9928665731c6d6a8f9467308308");
-    const nonce6 = hex("9313225df88406e555909c5aff5269aa6a7a9538534f7da1e4c303d2a318a728c3c0c95156809539fcf0e2429a6b525416aedbf5a0de6a57a637b39b");
-    const aad6 = hex("feedfacedeadbeeffeedfacedeadbeefabaddad2");
-    var data6 = hex("d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a721c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b39");
-    var tag6: [16]u8 = undefined;
-    const message6: crypto.GcmMessage = .{ .key = &key6, .key_length = 16, .nonce = &nonce6, .nonce_length = nonce6.len, .aad = &aad6, .aad_length = aad6.len, .input = &data6, .output = &data6, .length = data6.len, .tag = &tag6 };
-    try testing.expectEqual(crypto.CRYPTOERR_OK, cb.SealGcm(&message6));
-    try testing.expectEqualSlices(u8, &hex("8ce24998625615b603a033aca13fb894be9112a5c3a211a8ba262a3cca7e2ca701e4a9a4fba43c90ccdcb281d48c7c6fd62875d2aca417034c34aee5"), &data6);
-    try testing.expectEqualSlices(u8, &hex("619cc5aefffe0bfa462af43c1699d050"), &tag6);
 }
 
 test "GMAC a piece at a time: std.crypto's tag however the data is cut, a long nonce, and what it refuses" {
+    for ([_]bool{ true, false }) |core| {
+        var rig = try Rig.init();
+        defer rig.deinit() catch unreachable;
+        if (!core) rig.software();
+        const cb = rig.cb;
+        var key: [32]u8 = undefined;
+        for (&key, 0..) |*byte, index| byte.* = @truncate(index *% 7 +% 1);
+        const nonce = [12]u8{ 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1 };
+        var data: [200]u8 = undefined;
+        for (&data, 0..) |*byte, index| byte.* = @truncate(index *% 13 +% 5);
+        const Pair = struct { key_length: u32, reference: type };
+        const pairs = [_]Pair{
+            .{ .key_length = 16, .reference = std.crypto.aead.aes_gcm.Aes128Gcm },
+            .{ .key_length = 32, .reference = std.crypto.aead.aes_gcm.Aes256Gcm },
+        };
+        inline for (pairs) |pair| {
+            for (0..data.len + 1) |length| {
+                // GMAC: the data as the header, no plaintext.
+                var expected: [16]u8 = undefined;
+                pair.reference.encrypt(&.{}, &expected, &.{}, data[0..length], nonce, key[0..pair.key_length].*);
+                // In three pieces, cut at different places.
+                var context: crypto.GmacContext = .{};
+                try testing.expectEqual(crypto.CRYPTOERR_OK, cb.InitGmac(&context, &key, pair.key_length, &nonce, nonce.len));
+                const first = length / 3;
+                const second = length - length / 5;
+                cb.UpdateGmac(&context, data[0..].ptr, @intCast(first));
+                cb.UpdateGmac(&context, data[first..].ptr, @intCast(second - first));
+                cb.UpdateGmac(&context, null, 0);
+                cb.UpdateGmac(&context, data[second..].ptr, @intCast(length - second));
+                var tag: [16]u8 = undefined;
+                try testing.expectEqual(crypto.CRYPTOERR_OK, cb.FinishGmac(&context, &tag));
+                try testing.expectEqualSlices(u8, &expected, &tag);
+                // Wiped: the context takes nothing more until InitGmac.
+                try testing.expectEqual(@as(u32, 0), context.key_length);
+                try testing.expectEqual(crypto.CRYPTOERR_CONTEXT, cb.FinishGmac(&context, &tag));
+            }
+        }
+
+        // Longer data, in one piece and in two, against std.crypto.
+        var long: [1100]u8 = undefined;
+        for (&long, 0..) |*byte, index| byte.* = @truncate(index *% 29 +% 3);
+        for ([_]usize{ 255, 256, 257, 271, 320, 333, 1024, 1100 }) |length| {
+            var expected: [16]u8 = undefined;
+            std.crypto.aead.aes_gcm.Aes128Gcm.encrypt(&.{}, &expected, &.{}, long[0..length], nonce, key[0..16].*);
+            for ([_]usize{ length, length / 3 + 1 }) |first| {
+                var context: crypto.GmacContext = .{};
+                try testing.expectEqual(crypto.CRYPTOERR_OK, cb.InitGmac(&context, &key, 16, &nonce, nonce.len));
+                cb.UpdateGmac(&context, long[0..].ptr, @intCast(first));
+                cb.UpdateGmac(&context, long[first..].ptr, @intCast(length - first));
+                var tag: [16]u8 = undefined;
+                try testing.expectEqual(crypto.CRYPTOERR_OK, cb.FinishGmac(&context, &tag));
+                try testing.expectEqualSlices(u8, &expected, &tag);
+            }
+        }
+
+        // A 60-byte nonce, hashed into J0: the tag SealGcm gives the data as
+        // its header.
+        const long_nonce = hex("9313225df88406e555909c5aff5269aa6a7a9538534f7da1e4c303d2a318a728c3c0c95156809539fcf0e2429a6b525416aedbf5a0de6a57a637b39b");
+        var sealed: [16]u8 = undefined;
+        const message: crypto.GcmMessage = .{ .key = &key, .key_length = 16, .nonce = &long_nonce, .nonce_length = long_nonce.len, .aad = &data, .aad_length = data.len, .tag = &sealed };
+        try testing.expectEqual(crypto.CRYPTOERR_OK, cb.SealGcm(&message));
+        var context: crypto.GmacContext = .{};
+        try testing.expectEqual(crypto.CRYPTOERR_OK, cb.InitGmac(&context, &key, 16, &long_nonce, long_nonce.len));
+        for (data) |byte| cb.UpdateGmac(&context, &byte, 1);
+        var tag: [16]u8 = undefined;
+        try testing.expectEqual(crypto.CRYPTOERR_OK, cb.FinishGmac(&context, &tag));
+        try testing.expectEqualSlices(u8, &sealed, &tag);
+
+        // Refused: a key of 24 bytes, a nonce of none, a context too small.
+        try testing.expectEqual(crypto.CRYPTOERR_KEY, cb.InitGmac(&context, &key, 24, &nonce, nonce.len));
+        cb.UpdateGmac(&context, &data, data.len);
+        try testing.expectEqual(crypto.CRYPTOERR_CONTEXT, cb.FinishGmac(&context, &tag));
+        try testing.expectEqual(crypto.CRYPTOERR_LENGTH, cb.InitGmac(&context, &key, 16, &nonce, 0));
+        var small: crypto.GmacContext = .{ .size = 100 };
+        try testing.expectEqual(crypto.CRYPTOERR_CONTEXT, cb.InitGmac(&small, &key, 16, &nonce, nonce.len));
+        try testing.expectEqual(@as(u32, 0), small.key_length);
+    }
+}
+
+/// Every mode - ECB, CBC and CTR both ways, GCM sealed and opened - with
+/// AES-128 and AES-256 over data of `cross_lengths` at two alignments,
+/// each checked against its own way back and GCM against std.crypto,
+/// and what each wrote laid one after another into `out`: how many bytes.
+fn everyMode(cb: *CryptoBase, out: []u8) !usize {
+    var source: [cross_most + 3]u8 = undefined;
+    for (&source, 0..) |*byte, index| byte.* = @truncate(index *% 31 +% 17);
+    var key: [32]u8 = undefined;
+    for (&key, 0..) |*byte, index| byte.* = @truncate(index *% 7 +% 3);
+    const iv = hex("f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff");
+    const nonce = [12]u8{ 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 1, 2 };
+    var back: [cross_most]u8 = undefined;
+    var at: usize = 0;
+    for ([_]u32{ 16, 32 }) |key_length| {
+        for ([_]usize{ 0, 3 }) |offset| {
+            for (cross_lengths) |length| {
+                const input = source[offset..][0..length];
+                for ([_]u32{ crypto.CIPHER_AES_ECB, crypto.CIPHER_AES_CBC, crypto.CIPHER_AES_CTR }) |cipher| {
+                    const ctr = cipher == crypto.CIPHER_AES_CTR;
+                    const usable: u32 = if (ctr) length else length / 16 * 16;
+                    // In two pieces: CTR's cut inside a block.
+                    const cut: u32 = if (ctr) usable / 2 else usable / 32 * 16;
+                    const sealed = out[at..][0..usable];
+                    var context: crypto.CipherContext = .{};
+                    try testing.expectEqual(crypto.CRYPTOERR_OK, cb.InitCipher(&context, cipher, &key, key_length, if (cipher == crypto.CIPHER_AES_ECB) null else &iv));
+                    try testing.expectEqual(crypto.CRYPTOERR_OK, cb.UpdateCipher(&context, input.ptr, sealed.ptr, cut));
+                    try testing.expectEqual(crypto.CRYPTOERR_OK, cb.UpdateCipher(&context, input[cut..].ptr, sealed[cut..].ptr, usable - cut));
+                    // Back again, in place.
+                    @memcpy(back[0..usable], sealed);
+                    try testing.expectEqual(crypto.CRYPTOERR_OK, cb.InitCipher(&context, cipher | crypto.CIPHERF_DECRYPT, &key, key_length, if (cipher == crypto.CIPHER_AES_ECB) null else &iv));
+                    try testing.expectEqual(crypto.CRYPTOERR_OK, cb.UpdateCipher(&context, &back, &back, usable));
+                    try testing.expectEqualSlices(u8, input[0..usable], back[0..usable]);
+                    at += usable;
+                }
+                const header = source[1..][0 .. length / 3];
+                var expected: [cross_most]u8 = undefined;
+                var expected_tag: [16]u8 = undefined;
+                if (key_length == 16)
+                    std.crypto.aead.aes_gcm.Aes128Gcm.encrypt(expected[0..length], &expected_tag, input, header, nonce, key[0..16].*)
+                else
+                    std.crypto.aead.aes_gcm.Aes256Gcm.encrypt(expected[0..length], &expected_tag, input, header, nonce, key);
+                var tag: [16]u8 = undefined;
+                const sealing: crypto.GcmMessage = .{ .key = &key, .key_length = key_length, .nonce = &nonce, .nonce_length = nonce.len, .aad = header.ptr, .aad_length = @intCast(header.len), .input = input.ptr, .output = out[at..].ptr, .length = length, .tag = &tag };
+                try testing.expectEqual(crypto.CRYPTOERR_OK, cb.SealGcm(&sealing));
+                try testing.expectEqualSlices(u8, expected[0..length], out[at..][0..length]);
+                try testing.expectEqualSlices(u8, &expected_tag, &tag);
+                at += length;
+                @memcpy(out[at..][0..16], &tag);
+                at += 16;
+                @memcpy(back[0..length], expected[0..length]);
+                const opening: crypto.GcmMessage = .{ .key = &key, .key_length = key_length, .nonce = &nonce, .nonce_length = nonce.len, .aad = header.ptr, .aad_length = @intCast(header.len), .input = &back, .output = &back, .length = length, .tag = &expected_tag };
+                try testing.expectEqual(crypto.CRYPTOERR_OK, cb.OpenGcm(&opening));
+                try testing.expectEqualSlices(u8, input, back[0..length]);
+            }
+        }
+    }
+    return at;
+}
+
+/// The lengths `everyMode` takes: around a block, around the core's run
+/// of eight, and long.
+const cross_lengths = [_]u32{ 0, 1, 15, 16, 17, 63, 64, 65, 127, 128, 129, 143, 255, 256, 1000, 4103 };
+const cross_most = 4103;
+
+test "the core's AES-NI and PCLMULQDQ give the software's bytes in every mode, at any length and alignment" {
     var rig = try Rig.init();
     defer rig.deinit() catch unreachable;
-    const cb = rig.cb;
-    var key: [32]u8 = undefined;
-    for (&key, 0..) |*byte, index| byte.* = @truncate(index *% 7 +% 1);
-    const nonce = [12]u8{ 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1 };
-    var data: [200]u8 = undefined;
-    for (&data, 0..) |*byte, index| byte.* = @truncate(index *% 13 +% 5);
-    const Pair = struct { key_length: u32, reference: type };
-    const pairs = [_]Pair{
-        .{ .key_length = 16, .reference = std.crypto.aead.aes_gcm.Aes128Gcm },
-        .{ .key_length = 32, .reference = std.crypto.aead.aes_gcm.Aes256Gcm },
-    };
-    inline for (pairs) |pair| {
-        for (0..data.len + 1) |length| {
-            // GMAC: the data as the header, no plaintext.
-            var expected: [16]u8 = undefined;
-            pair.reference.encrypt(&.{}, &expected, &.{}, data[0..length], nonce, key[0..pair.key_length].*);
-            // In three pieces, cut at different places.
-            var context: crypto.GmacContext = .{};
-            try testing.expectEqual(crypto.CRYPTOERR_OK, cb.InitGmac(&context, &key, pair.key_length, &nonce, nonce.len));
-            const first = length / 3;
-            const second = length - length / 5;
-            cb.UpdateGmac(&context, data[0..].ptr, @intCast(first));
-            cb.UpdateGmac(&context, data[first..].ptr, @intCast(second - first));
-            cb.UpdateGmac(&context, null, 0);
-            cb.UpdateGmac(&context, data[second..].ptr, @intCast(length - second));
-            var tag: [16]u8 = undefined;
-            try testing.expectEqual(crypto.CRYPTOERR_OK, cb.FinishGmac(&context, &tag));
-            try testing.expectEqualSlices(u8, &expected, &tag);
-            // Wiped: the context takes nothing more until InitGmac.
-            try testing.expectEqual(@as(u32, 0), context.key_length);
-            try testing.expectEqual(crypto.CRYPTOERR_CONTEXT, cb.FinishGmac(&context, &tag));
-        }
-    }
-
-    // Longer data, in one piece and in two, against std.crypto.
-    var long: [1100]u8 = undefined;
-    for (&long, 0..) |*byte, index| byte.* = @truncate(index *% 29 +% 3);
-    for ([_]usize{ 255, 256, 257, 271, 320, 333, 1024, 1100 }) |length| {
-        var expected: [16]u8 = undefined;
-        std.crypto.aead.aes_gcm.Aes128Gcm.encrypt(&.{}, &expected, &.{}, long[0..length], nonce, key[0..16].*);
-        for ([_]usize{ length, length / 3 + 1 }) |first| {
-            var context: crypto.GmacContext = .{};
-            try testing.expectEqual(crypto.CRYPTOERR_OK, cb.InitGmac(&context, &key, 16, &nonce, nonce.len));
-            cb.UpdateGmac(&context, long[0..].ptr, @intCast(first));
-            cb.UpdateGmac(&context, long[first..].ptr, @intCast(length - first));
-            var tag: [16]u8 = undefined;
-            try testing.expectEqual(crypto.CRYPTOERR_OK, cb.FinishGmac(&context, &tag));
-            try testing.expectEqualSlices(u8, &expected, &tag);
-        }
-    }
-
-    // A 60-byte nonce, hashed into J0: the tag SealGcm gives the data as
-    // its header.
-    const long_nonce = hex("9313225df88406e555909c5aff5269aa6a7a9538534f7da1e4c303d2a318a728c3c0c95156809539fcf0e2429a6b525416aedbf5a0de6a57a637b39b");
-    var sealed: [16]u8 = undefined;
-    const message: crypto.GcmMessage = .{ .key = &key, .key_length = 16, .nonce = &long_nonce, .nonce_length = long_nonce.len, .aad = &data, .aad_length = data.len, .tag = &sealed };
-    try testing.expectEqual(crypto.CRYPTOERR_OK, cb.SealGcm(&message));
-    var context: crypto.GmacContext = .{};
-    try testing.expectEqual(crypto.CRYPTOERR_OK, cb.InitGmac(&context, &key, 16, &long_nonce, long_nonce.len));
-    for (data) |byte| cb.UpdateGmac(&context, &byte, 1);
-    var tag: [16]u8 = undefined;
-    try testing.expectEqual(crypto.CRYPTOERR_OK, cb.FinishGmac(&context, &tag));
-    try testing.expectEqualSlices(u8, &sealed, &tag);
-
-    // Refused: a key of 24 bytes, a nonce of none, a context too small.
-    try testing.expectEqual(crypto.CRYPTOERR_KEY, cb.InitGmac(&context, &key, 24, &nonce, nonce.len));
-    cb.UpdateGmac(&context, &data, data.len);
-    try testing.expectEqual(crypto.CRYPTOERR_CONTEXT, cb.FinishGmac(&context, &tag));
-    try testing.expectEqual(crypto.CRYPTOERR_LENGTH, cb.InitGmac(&context, &key, 16, &nonce, 0));
-    var small: crypto.GmacContext = .{ .size = 100 };
-    try testing.expectEqual(crypto.CRYPTOERR_CONTEXT, cb.InitGmac(&small, &key, 16, &nonce, nonce.len));
-    try testing.expectEqual(@as(u32, 0), small.key_length);
+    const room = 4 * 3 * cross_lengths.len * (cross_most + 16) + 64;
+    const with_core = try testing.allocator.alloc(u8, room);
+    defer testing.allocator.free(with_core);
+    const alone = try testing.allocator.alloc(u8, room);
+    defer testing.allocator.free(alone);
+    const written = try everyMode(rig.cb, with_core);
+    rig.software();
+    try testing.expectEqual(written, try everyMode(rig.cb, alone));
+    try testing.expectEqualSlices(u8, alone[0..written], with_core[0..written]);
 }
 
 // --- ModExp -------------------------------------------------------------------
