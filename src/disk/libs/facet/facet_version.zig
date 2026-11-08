@@ -3762,4 +3762,24 @@ pub const LIBRARY_VERSION = 1;
 /// stored_both. C:test/FacetProbe has not run on the board yet: the board
 /// runs main's kernel, whose Task this branch's programs do not match until
 /// main is merged in.
-pub const LIBRARY_REVISION = 135;
+///
+/// 136: **A depth or a stencil the V3D keeps through a frame that does not
+/// load it is what the V3D stored.** The range of the image a frame keeps
+/// its depth or its stencil in went out of the CPU's caches before the
+/// frame only where the frame loads it, and was dropped from them after a
+/// store. On this machine a line is dropped with a write-back first
+/// (exec's CachePostDMA, `dc civac`), so a line the CPU had left dirty
+/// there landed over what the V3D stored: a CmdClearDepthStencilImage,
+/// which the CPU writes on this device, before a pass that clears the
+/// depth and stores it read back as the clear before the pass. The range
+/// goes out before every frame that keeps it now, as the colour image's
+/// always has. The cores read and write their own memory, and QEMU's
+/// machine sees the caches, so neither could show it.
+///
+/// Tests: no host test runs the V3D. On the board, after main was merged
+/// into this branch, C:test/FacetProbe 1.43 failed its two checks of a
+/// depth kept through a view of an image's second layer with 1.135's
+/// v3d.fdriver - wanted 16384, found 65535, the clear before the pass - and
+/// passes them with this one: 332 checks on the V3D and 497 on the cores,
+/// none failed. It had not run on the board since 1.79.
+pub const LIBRARY_REVISION = 136;

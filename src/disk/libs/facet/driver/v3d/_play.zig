@@ -722,10 +722,14 @@ fn endRenderPass(queue: *Queue) void {
     }
     space.rangeToGpu(image.data.? + player.image_first, image_bytes);
     // The depth or the stencil the frame keeps lies in another image: what
-    // the CPU wrote there goes out to memory before a load reads it, and
-    // what a store writes is dropped from the CPU's caches after.
+    // the CPU wrote there goes out to memory before the frame, and what a
+    // store writes is dropped from the CPU's caches after. Out before a
+    // store as well as a load (since 1.136): a line is dropped with a
+    // write-back first (exec's CachePostDMA, `dc civac`), so one the CPU
+    // left dirty - a CmdClearDepthStencilImage, which the CPU writes -
+    // landed over what the V3D stored, where only a load sent it out.
     const kept_bytes: usize = if (player.frame.kept) |kept| @as(usize, kept.stride) * player.frame.height else 0;
-    if (player.frame.kept) |kept| if (kept.load) space.rangeToGpu(player.kept_image.?.data.? + player.kept_first, kept_bytes);
+    if (player.frame.kept != null) space.rangeToGpu(player.kept_image.?.data.? + player.kept_first, kept_bytes);
 
     sys.ObtainSemaphore(&device.base.v3d_lock);
     defer sys.ReleaseSemaphore(&device.base.v3d_lock);

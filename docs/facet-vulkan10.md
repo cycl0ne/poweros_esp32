@@ -2819,7 +2819,7 @@ takes nothing, as two uncompressed images of two sizes already did.
 
 ### 91. error_initialization_failed and error_format_not_supported are answered for invalid usage, from calls Vulkan does not list them for
 
-*result codes* &mdash; conformance-blocking, medium, found while doing item 81 &mdash; **done in 1.134 and 1.135**; what the reviews found beside it is 1.136's
+*result codes* &mdash; conformance-blocking, medium, found while doing item 81 &mdash; **done in 1.134 and 1.135**; what the reviews found beside it is 1.137's
 
 Item 81 moved the refusals that answered `error_feature_not_present` for
 invalid usage to `error_validation_failed`. Two more codes do the same
@@ -3138,7 +3138,7 @@ Reading the VUIDs found more:
   D16_UNORM attachment refused, which keeps nothing since 1.106. All
   three ask what they meant to now.
 
-Left for 1.136, each to be read as the 23 were - what the review of the
+Left for 1.137, each to be read as the 23 were - what the review of the
 first half found, and the review of this half beside it:
 
 - QueuePresent answers `error_out_of_date` for an image the program does
