@@ -27,17 +27,21 @@ pub const ITEM_QUIT = 9;
 // Window
 pub const ITEM_NEW_DRAWER = 0;
 pub const ITEM_OPEN_PARENT = 1;
-pub const ITEM_CLOSE = 2;
-pub const ITEM_UPDATE = 3;
-pub const ITEM_SELECT_CONTENTS = 5;
-pub const ITEM_CLEAN_UP = 6;
-pub const ITEM_CLEAN_UP_BY = 7;
-pub const ITEM_SNAP_TO_GRID = 8;
-pub const ITEM_SNAPSHOT_WINDOW = 10;
-pub const ITEM_SHOW = 11;
-pub const ITEM_VIEW_BY = 12;
+pub const ITEM_BACK = 2;
+pub const ITEM_FORWARD = 3;
+pub const ITEM_CLOSE = 4;
+pub const ITEM_UPDATE = 5;
+/// A shell whose current directory is the drawer.
+pub const ITEM_SHELL = 6;
+pub const ITEM_SELECT_CONTENTS = 8;
+pub const ITEM_CLEAN_UP = 9;
+pub const ITEM_CLEAN_UP_BY = 10;
+pub const ITEM_SNAP_TO_GRID = 11;
+pub const ITEM_SNAPSHOT_WINDOW = 13;
+pub const ITEM_SHOW = 14;
+pub const ITEM_VIEW_BY = 15;
 /// Every drawer's window with its ribbon, or none.
-pub const ITEM_RIBBON = 14;
+pub const ITEM_RIBBON = 17;
 /// Clean Up By's subitems.
 pub const SUB_CLEAN_BY_NAME = 0;
 pub const SUB_CLEAN_BY_DATE = 1;
@@ -94,8 +98,11 @@ pub const table = [_]mn.NewMenu{
     .{ .type = mn.NM_TITLE, .label = "Window" },
     item("New Drawer", "N", 0),
     item("Open Parent", "K", 0),
+    item("Back", null, 0),
+    item("Forward", null, 0),
     item("Close", "W", 0),
     item("Update", null, 0),
+    item("Shell", null, 0),
     bar,
     item("Select Contents", "A", 0),
     item("Clean Up", ".", 0),

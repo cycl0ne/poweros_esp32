@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! The ribbon across the top of a drawer's window: the drawer's commands
-//! as buttons, on two tabs. Home has the parent (Go), a new drawer and
-//! Update (Drawer), and what is done to the icons picked - Open, Rename,
+//! as buttons, on two tabs. Home has Back, Forward and the parent (Go), a
+//! new drawer, Update and a shell in the drawer (Drawer), and what is done
+//! to the icons picked - Open, Rename,
 //! Delete, Information, Copy (Icons); View has the views (View: icons, or
 //! a list by name, date or size, the one shown checked), all files or
 //! only icons (Show), and Clean Up, Snap to Grid and Snapshot (Arrange).
@@ -19,7 +20,8 @@
 //!
 //! A button does what its menu item does, through the same function
 //! (`pressed`), and is off where the item is off and checked where the
-//! item is (`show`, from `commands.rethink`): Parent at a disk's root,
+//! item is (`show`, from `commands.rethink`): Back and Forward with
+//! nowhere to go, Parent at a disk's root,
 //! Open, Rename, Delete, Information and Copy with nothing picked that
 //! they work on, Clean Up in a list. The buttons have no keys of their
 //! own: a drawer's window has nothing to type into, so a letter typed in
@@ -43,6 +45,7 @@ const View = _drawer.View;
 const Desktop = @import("../desktop/_desktop.zig").Desktop;
 const commands = @import("../desktop/commands.zig");
 const menus = @import("../desktop/menus.zig");
+const run = @import("../desktop/run.zig");
 
 /// The ribbon's own gadget ID, which it reports a tab turned, or itself
 /// minimized and brought back, with.
@@ -71,6 +74,9 @@ pub const Command = enum(u32) {
     clean_up,
     snap,
     snapshot,
+    back,
+    forward,
+    shell,
 };
 
 /// The first command's gadget ID, above the bars'.
@@ -110,10 +116,13 @@ fn button(size: u32, which: Command, label: [*:0]const u8, glyph: u32) rb.NewRib
 pub const table = [_]rb.NewRibbon{
     .{ .type = rb.RB_TAB, .label = "Home" },
     group("Go", command.CMD_PARENT, 0),
+    button(rb.RB_MEDIUM, .back, "Back", command.CMD_BACK),
+    button(rb.RB_MEDIUM, .forward, "Forward", command.CMD_FORWARD),
     button(rb.RB_LARGE, .parent, "Parent", command.CMD_PARENT),
     group("Drawer", command.CMD_NEW_DRAWER, 1),
     button(rb.RB_MEDIUM, .new_drawer, "New Drawer", command.CMD_NEW_DRAWER),
     button(rb.RB_MEDIUM, .update, "Update", command.CMD_UPDATE),
+    button(rb.RB_MEDIUM, .shell, "Shell", command.CMD_SHELL),
     group("Icons", command.CMD_OPEN, 2),
     button(rb.RB_MEDIUM, .open, "Open", command.CMD_OPEN),
     button(rb.RB_MEDIUM, .rename, "Rename", command.CMD_RENAME),
@@ -149,12 +158,20 @@ pub const Picked = struct {
     delete: bool = false,
 };
 
+/// Where a drawer's window can go from the drawer it shows.
+pub const Went = struct {
+    back: bool = false,
+    forward: bool = false,
+};
+
 /// What a drawer's buttons are to show: viewed as `view`, all files shown
-/// or not, a disk's root or a drawer, the grid snapped to or not, and
-/// what is picked.
-pub fn stateOf(view: View, show_all: bool, is_volume: bool, snap: bool, picked: Picked) State {
+/// or not, a disk's root or a drawer, the grid snapped to or not, what is
+/// picked, and whether the window can go back or forward.
+pub fn stateOf(view: View, show_all: bool, is_volume: bool, snap: bool, picked: Picked, went: Went) State {
     var state = State{};
     const offs = [_]struct { which: Command, off: bool }{
+        .{ .which = .back, .off = !went.back },
+        .{ .which = .forward, .off = !went.forward },
         .{ .which = .parent, .off = is_volume },
         .{ .which = .open, .off = !picked.open },
         .{ .which = .copy, .off = !picked.copy },
@@ -282,9 +299,12 @@ pub fn pressed(d: *Desktop, dr: *Drawer, id: u32, code: u32) void {
         if (code != 0) dr.ribbon_state.on |= bit(which) else dr.ribbon_state.on &= ~bit(which);
     }
     switch (which) {
+        .back => _drawer.goBack(d, dr),
+        .forward => _drawer.goForward(d, dr),
         .parent => _drawer.openParent(d, dr),
         .new_drawer => commands.newDrawer(d, dr),
         .update => _drawer.reread(d, dr),
+        .shell => run.shell(d, dr.pathText()),
         .open => commands.iconsItem(d, iconsItem(menus.ITEM_OPEN)),
         .rename => commands.iconsItem(d, iconsItem(menus.ITEM_RENAME)),
         .delete => commands.iconsItem(d, iconsItem(menus.ITEM_DELETE)),

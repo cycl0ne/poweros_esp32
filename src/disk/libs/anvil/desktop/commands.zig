@@ -452,7 +452,8 @@ pub fn snapshotWindow(d: *Desktop, dr: *Drawer, all: bool) void {
 /// for programs' icons alone; Delete not for a disk or the trash, Empty
 /// Trash only for the trash, Format only for disks, Leave Out only for
 /// icons in drawers, Put Away only for left-out ones; the drawer's own
-/// items only in a drawer, and Open Parent not at a disk's root; Clean Up
+/// items only in a drawer, Open Parent not at a disk's root, Back and
+/// Forward only where the window has been (`history.zig`); Clean Up
 /// and Clean Up By only where icons are shown, and on the desktop's
 /// ground by name alone, since a disk has no date or size of its own.
 /// Snap to Grid's and Ribbon's marks are the prefs', and Ribbon is off
@@ -497,11 +498,15 @@ pub fn rethink(d: *Desktop, active: ?*intuition.Window) void {
     const in_drawer = dr != null;
     const shows_icons = if (dr) |held| held.view == .icon else true;
     const below_root = if (dr) |held| !held.is_volume else false;
+    const went = if (dr) |held| wentFrom(held) else drawer_ribbon.Went{};
     const set = [_]struct { menu: u32, item: u32, on: bool }{
         .{ .menu = menus.MENU_WINDOW, .item = menus.ITEM_NEW_DRAWER, .on = in_drawer },
         .{ .menu = menus.MENU_WINDOW, .item = menus.ITEM_OPEN_PARENT, .on = below_root },
+        .{ .menu = menus.MENU_WINDOW, .item = menus.ITEM_BACK, .on = went.back },
+        .{ .menu = menus.MENU_WINDOW, .item = menus.ITEM_FORWARD, .on = went.forward },
         .{ .menu = menus.MENU_WINDOW, .item = menus.ITEM_CLOSE, .on = in_drawer },
         .{ .menu = menus.MENU_WINDOW, .item = menus.ITEM_UPDATE, .on = in_drawer },
+        .{ .menu = menus.MENU_WINDOW, .item = menus.ITEM_SHELL, .on = in_drawer },
         .{ .menu = menus.MENU_WINDOW, .item = menus.ITEM_CLEAN_UP, .on = shows_icons },
         .{ .menu = menus.MENU_WINDOW, .item = menus.ITEM_CLEAN_UP_BY, .on = shows_icons },
         .{ .menu = menus.MENU_WINDOW, .item = menus.ITEM_SNAPSHOT_WINDOW, .on = in_drawer },
@@ -545,8 +550,13 @@ pub fn rethink(d: *Desktop, active: ?*intuition.Window) void {
     var it = d.drawers.iterator();
     while (it.next()) |node| {
         const each: *Drawer = @alignCast(@fieldParentPtr("node", node));
-        drawer_ribbon.show(d, each, drawer_ribbon.stateOf(each.view, each.show_all, each.is_volume, d.prefs.snap, can));
+        drawer_ribbon.show(d, each, drawer_ribbon.stateOf(each.view, each.show_all, each.is_volume, d.prefs.snap, can, wentFrom(each)));
     }
+}
+
+/// Where `dr`'s window can go: back, and forward again.
+fn wentFrom(dr: *Drawer) drawer_ribbon.Went {
+    return .{ .back = dr.history.canGoBack(), .forward = dr.history.canGoForward() };
 }
 
 /// Execute Command: a command asked for and run in a shell of its own,

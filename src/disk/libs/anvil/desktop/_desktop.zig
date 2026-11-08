@@ -943,8 +943,11 @@ pub const Desktop = struct {
             menus.ITEM_SNAPSHOT_WINDOW => commands.snapshotWindow(d, dr, mn.SUBNUM(number) == menus.SUB_SNAPSHOT_ALL),
             menus.ITEM_SELECT_CONTENTS => select.contents(d, dr),
             menus.ITEM_OPEN_PARENT => drawer.openParent(d, dr),
+            menus.ITEM_BACK => drawer.goBack(d, dr),
+            menus.ITEM_FORWARD => drawer.goForward(d, dr),
             menus.ITEM_CLOSE => drawer.close(d, dr),
             menus.ITEM_UPDATE => drawer.reread(d, dr),
+            menus.ITEM_SHELL => run_area.shell(d, dr.pathText()),
             menus.ITEM_SHOW => drawer.showAs(d, dr, dr.view, mn.SUBNUM(number) == menus.SUB_ALL_FILES),
             menus.ITEM_VIEW_BY => {
                 const sub = mn.SUBNUM(number);

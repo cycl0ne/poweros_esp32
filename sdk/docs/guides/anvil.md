@@ -115,6 +115,15 @@ does Open Parent. A disk, and a drawer left out on the desktop, always
 opens a window of its own. Where a drawer opens a window of its own and
 one is open on it already, that one comes to the front.
 
+A window that drawers open in remembers where it has been: Back in the
+Window menu turns it to the drawer it showed before - wherever that was,
+not only the one above - and Forward on again to the one it went back
+from. Going to any other drawer forgets what was ahead. Up to 32 drawers
+are kept each way, the oldest let go; a window that has been nowhere
+else, as every window is with `NEWWINDOW=YES`, has Back and Forward off.
+Shell starts a shell in a console of its own whose current directory is
+the drawer, `S:Shell-Startup` read first.
+
 A new window's box, and in either case the drawer's view and which files
 it shows, come from the drawer's icon (`DrawerData`: the `WINDOW`,
 `VIEW` and `SHOW` fields of [the icon file](icons.md#the-file)); without
@@ -150,29 +159,30 @@ full the disk is - `Work  45% full, 1,234K free, 980K in use` - in K, or
 past 9,999 of one unit in the next: M, G, T, P. The drawer is watched
 (StartNotify) and read again when anything changes it.
 
-The Window menu has Open Parent, Close, Update, Show (only icons, or all
-files) and View By (icon, name, date, size) for the drawer it is used in,
-and Ribbon for every drawer's window at once.
+The Window menu has Open Parent, Back, Forward, Close, Update, Shell,
+Show (only icons, or all files) and View By (icon, name, date, size) for
+the drawer it is used in, and Ribbon for every drawer's window at once.
 
 A ribbon runs across the top of each drawer's window, the drawer's
-commands as buttons on two tabs. Home has Parent (Go), New Drawer and
-Update (Drawer), and Open, Rename, Delete, Information and Copy for the
-icons picked (Icons); View has Icons, Name, Date and Size - the view
-shown checked (View) - All Files, checked while every file shows (Show),
-and Clean Up, Snap to Grid and Snapshot (Arrange). A button does what
-its menu item does and is off where the item is: Parent at a disk's
-root, the Icons buttons with nothing picked they work on, Clean Up in a
-list. In a narrow window the groups are made smaller, down to a button
-each that drops its group down. The mark at the right end of the row of
-tabs, or a double click on a tab, minimizes the ribbon to its row and
-brings it back, and the view moves up or down with it. In a window less
-than 400 pixels high inside the ribbon is its row of tabs by itself, a
-tab's page dropping down over the window when the tab is pressed; it
-opens out again as the window is made higher. The buttons have
-no keys of their own: a letter typed in a drawer's window would press
-one by mistake, and the menus' keys are the commands'. Without
-toolbutton.gadget, command.image and ribbon.gadget in `SYS:classes/` a
-drawer has no ribbon.
+commands as buttons on two tabs. Home has Back, Forward and Parent (Go),
+New Drawer, Update and Shell (Drawer), and Open, Rename, Delete,
+Information and Copy for the icons picked (Icons); View has Icons, Name,
+Date and Size - the view shown checked (View) - All Files, checked while
+every file shows (Show), and Clean Up, Snap to Grid and Snapshot
+(Arrange). A button does what its menu item does and is off where the
+item is: Back and Forward with nowhere to go, Parent at a disk's root,
+the Icons buttons with nothing picked they work on, Clean Up in a list.
+In a narrow window the groups are made smaller, down to a button each
+that drops its group down. The mark at the right end of the row of tabs,
+or a double click on a tab, minimizes the ribbon to its row and brings
+it back, and the view moves up or down with it. In a window less than
+400 pixels high inside the ribbon is its row of tabs by itself, a tab's
+page dropping down over the window when the tab is pressed; it opens out
+again as the window is made higher. The buttons have no keys of their
+own: a letter typed in a drawer's window would press one by mistake, and
+the menus' keys are the commands'. Without toolbutton.gadget,
+command.image and ribbon.gadget in `SYS:classes/` a drawer has no
+ribbon.
 
 **Ribbon** in the Window menu, ticked, gives every drawer's window its
 ribbon; unticked, all of them lose it at once and the view moves up into

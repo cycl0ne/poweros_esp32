@@ -50,7 +50,8 @@
 //! new drawer read in, the box left as it is - unless `anvil.prefs` says
 //! NEWWINDOW=YES, when it opens a window of its own (`open`). A disk, and
 //! anything opened from the desktop's ground, always gets a window of its
-//! own.
+//! own. A window taken over keeps where it has been (`history.zig`), and
+//! Back and Forward turn it there again (`goBack`, `goForward`).
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -73,6 +74,7 @@ const Icon = icons.Icon;
 const path = @import("path.zig");
 const textview = @import("textview.zig");
 const ribbon = @import("ribbon.zig");
+const History = @import("history.zig").History;
 const rb = sdk.gadgets.ribbon;
 const Desktop = @import("../desktop/_desktop.zig").Desktop;
 const select = @import("../desktop/select.zig");
@@ -134,6 +136,9 @@ pub const Drawer = struct {
     ribbon: ?*rb.Built = null,
     ribbon_height: i32 = 0,
     ribbon_state: ribbon.State = .{},
+    /// The drawers the window showed before, and after once it has gone
+    /// back, for Back and Forward.
+    history: History = .{},
     /// The heading a press is on, until the button is let go.
     pressed: ?textview.Heading = null,
     icons: exec.List = .{},
@@ -288,6 +293,7 @@ pub fn open(d: *Desktop, wanted: []const u8) bool {
     };
     @memcpy(dr.path[0..wanted.len], wanted);
     dr.icons.init(.unknown);
+    dr.history.init();
     measure(d, dr);
     makeTitle(d, dr);
     d.ib.SetWindowTitles(window, &dr.title, wn.TITLE_UNCHANGED);
@@ -303,10 +309,33 @@ pub fn open(d: *Desktop, wanted: []const u8) bool {
 }
 
 /// `dr`'s window turned to the drawer `wanted`, in place of the one it
-/// shows: the icons let go, the watch moved, the new drawer read in with
-/// the view and the files its icon says. The window keeps its box and
-/// place.
+/// shows, which Back goes to again (`turnTo`).
 pub fn browse(d: *Desktop, dr: *Drawer, wanted: []const u8) void {
+    if (wanted.len == 0 or wanted.len > dos.path_max) return;
+    if (!same(wanted, dr.pathText())) dr.history.left(d.sys, dr.pathText());
+    turnTo(d, dr, wanted);
+}
+
+/// Back: `dr`'s window turned to the drawer it showed before this one,
+/// which Forward goes to again; nothing with nothing behind.
+pub fn goBack(d: *Desktop, dr: *Drawer) void {
+    var wanted: [dos.path_max]u8 = undefined;
+    const there = dr.history.stepBack(d.sys, dr.pathText(), &wanted) orelse return;
+    turnTo(d, dr, there);
+}
+
+/// Forward: `dr`'s window turned to the drawer it went back from, which
+/// Back goes to again; nothing with nothing ahead.
+pub fn goForward(d: *Desktop, dr: *Drawer) void {
+    var wanted: [dos.path_max]u8 = undefined;
+    const there = dr.history.stepForward(d.sys, dr.pathText(), &wanted) orelse return;
+    turnTo(d, dr, there);
+}
+
+/// `dr`'s window turned to the drawer `wanted`: the icons let go, the
+/// watch moved, the new drawer read in with the view and the files its
+/// icon says. The window keeps its box and place.
+fn turnTo(d: *Desktop, dr: *Drawer, wanted: []const u8) void {
     if (wanted.len == 0 or wanted.len > dos.path_max) return;
     var name: [dos.path_max + 1:0]u8 = @splat(0);
     @memcpy(name[0..wanted.len], wanted);
@@ -1187,6 +1216,7 @@ pub fn close(d: *Desktop, dr: *Drawer) void {
     for (dr.bars) |bar| d.ib.DisposeObject(bar);
     ribbon.free(d, dr);
     forgetIcons(d, dr);
+    dr.history.free(d.sys);
     d.sys.FreeVec(dr);
 }
 

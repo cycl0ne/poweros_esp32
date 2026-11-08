@@ -4,8 +4,9 @@
 //! the tool types as Information writes them, the startup drawer's order
 //! and waits, how far the wheel scrolls a drawer, a list's rows sorted
 //! and the heading under a point, a drawer's ribbon - its buttons, what
-//! they show, and the Window menu's item for it - a copy's rate, and the
-//! jump table.
+//! they show - the Window menu's items where their numbers say, a
+//! window's history for Back and Forward, a copy's rate, and the jump
+//! table.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -18,6 +19,7 @@ const textview = @import("../drawer/textview.zig");
 const drawer = @import("../drawer/_drawer.zig");
 const ribbon = @import("../drawer/ribbon.zig");
 const menus = @import("../desktop/menus.zig");
+const history = @import("../drawer/history.zig");
 const leaveout = @import("../desktop/leaveout.zig");
 const information = @import("../info/information.zig");
 const startup = @import("../desktop/startup.zig");
@@ -378,38 +380,114 @@ test "a drawer's ribbon: a button for each command, found by its ID; off and che
     // A disk's root as icons, all files, the grid snapped to, nothing
     // picked: Parent off, the Icons commands off, Icons, All Files and
     // Snap to Grid checked.
-    const root = ribbon.stateOf(.icon, true, true, true, .{});
-    for ([_]ribbon.Command{ .parent, .open, .copy, .rename, .information, .delete }) |which| try testing.expect(root.off & ribbon.bit(which) != 0);
-    for ([_]ribbon.Command{ .new_drawer, .update, .clean_up, .snapshot }) |which| try testing.expect(root.off & ribbon.bit(which) == 0);
+    const root = ribbon.stateOf(.icon, true, true, true, .{}, .{});
+    for ([_]ribbon.Command{ .back, .forward, .parent, .open, .copy, .rename, .information, .delete }) |which| try testing.expect(root.off & ribbon.bit(which) != 0);
+    for ([_]ribbon.Command{ .new_drawer, .update, .shell, .clean_up, .snapshot }) |which| try testing.expect(root.off & ribbon.bit(which) == 0);
     try testing.expectEqual(ribbon.bit(.by_icon) | ribbon.bit(.all_files) | ribbon.bit(.snap), root.on);
 
     // A drawer as a list by date, only icons, a file picked that can be
-    // opened and renamed but not deleted: Clean Up off, Date alone checked.
-    const list = ribbon.stateOf(.date, false, false, false, .{ .open = true, .rename = true, .information = true });
+    // opened and renamed but not deleted, gone back to: Clean Up and Back
+    // off, Forward on, Date alone checked.
+    const list = ribbon.stateOf(.date, false, false, false, .{ .open = true, .rename = true, .information = true }, .{ .forward = true });
     try testing.expect(list.off & ribbon.bit(.parent) == 0);
+    try testing.expect(list.off & ribbon.bit(.back) != 0);
+    try testing.expect(list.off & ribbon.bit(.forward) == 0);
     try testing.expect(list.off & ribbon.bit(.clean_up) != 0);
     try testing.expect(list.off & ribbon.bit(.open) == 0);
     try testing.expect(list.off & ribbon.bit(.delete) != 0);
     try testing.expectEqual(ribbon.bit(.by_date), list.on);
 }
 
-test "a drawer's ribbon: the Window menu's Ribbon is the item ITEM_RIBBON numbers, a mark that turns over" {
+/// The item `number` of the menu `menu` in the desktop's table.
+fn menuItem(menu: u32, number: u32) ?sdk.intuition.menus.NewMenu {
     const mn = sdk.intuition.menus;
-    var menu: i32 = -1;
-    var item: i32 = -1;
-    const found = for (menus.table) |line| {
+    var menu_at: i32 = -1;
+    var item_at: i32 = -1;
+    for (menus.table) |line| {
         switch (line.type) {
             mn.NM_TITLE => {
-                menu += 1;
-                item = -1;
+                menu_at += 1;
+                item_at = -1;
             },
             mn.NM_ITEM => {
-                item += 1;
-                if (menu == menus.MENU_WINDOW and item == menus.ITEM_RIBBON) break line;
+                item_at += 1;
+                if (menu_at == menu and item_at == number) return line;
             },
             else => {},
         }
-    } else return error.NoItem;
-    try testing.expectEqualStrings("Ribbon", std.mem.span(found.label.?));
-    try testing.expectEqual(@as(u32, mn.CHECKIT | mn.MENUTOGGLE), found.flags);
+    }
+    return null;
+}
+
+test "the Window menu: each item where its number says, Ribbon a mark that turns over" {
+    const mn = sdk.intuition.menus;
+    const named = [_]struct { number: u32, label: []const u8 }{
+        .{ .number = menus.ITEM_NEW_DRAWER, .label = "New Drawer" },
+        .{ .number = menus.ITEM_OPEN_PARENT, .label = "Open Parent" },
+        .{ .number = menus.ITEM_BACK, .label = "Back" },
+        .{ .number = menus.ITEM_FORWARD, .label = "Forward" },
+        .{ .number = menus.ITEM_CLOSE, .label = "Close" },
+        .{ .number = menus.ITEM_UPDATE, .label = "Update" },
+        .{ .number = menus.ITEM_SHELL, .label = "Shell" },
+        .{ .number = menus.ITEM_SELECT_CONTENTS, .label = "Select Contents" },
+        .{ .number = menus.ITEM_CLEAN_UP, .label = "Clean Up" },
+        .{ .number = menus.ITEM_CLEAN_UP_BY, .label = "Clean Up By" },
+        .{ .number = menus.ITEM_SNAP_TO_GRID, .label = "Snap to Grid" },
+        .{ .number = menus.ITEM_SNAPSHOT_WINDOW, .label = "Snapshot" },
+        .{ .number = menus.ITEM_SHOW, .label = "Show" },
+        .{ .number = menus.ITEM_VIEW_BY, .label = "View By" },
+        .{ .number = menus.ITEM_RIBBON, .label = "Ribbon" },
+    };
+    for (named) |each| {
+        const found = menuItem(menus.MENU_WINDOW, each.number) orelse return error.NoItem;
+        try testing.expectEqualStrings(each.label, std.mem.span(found.label.?));
+    }
+    try testing.expectEqual(@as(u32, mn.CHECKIT | mn.MENUTOGGLE), menuItem(menus.MENU_WINDOW, menus.ITEM_RIBBON).?.flags);
+}
+
+test "a window's history: back and on again, a step elsewhere forgetting what was ahead, the oldest let go" {
+    try kexec.setUp();
+    defer kexec.deinit();
+    const sys = kexec.SysBase.iface();
+    var kept: history.History = .{};
+    kept.init();
+    var into: [64]u8 = undefined;
+    try testing.expect(!kept.canGoBack());
+    try testing.expect(kept.stepBack(sys, "Work:", &into) == null);
+
+    // Work: -> Work:a -> Work:a/b, then back twice and forward once.
+    kept.left(sys, "Work:");
+    kept.left(sys, "Work:a");
+    try testing.expectEqualStrings("Work:a", kept.stepBack(sys, "Work:a/b", &into).?);
+    try testing.expect(kept.canGoForward());
+    try testing.expectEqualStrings("Work:", kept.stepBack(sys, "Work:a", &into).?);
+    try testing.expect(!kept.canGoBack());
+    try testing.expectEqualStrings("Work:a", kept.stepForward(sys, "Work:", &into).?);
+    try testing.expect(kept.canGoBack());
+    try testing.expect(kept.canGoForward());
+
+    // From Work:a elsewhere: Work:a/b ahead is forgotten, Work:a kept.
+    kept.left(sys, "Work:a");
+    try testing.expect(!kept.canGoForward());
+    try testing.expectEqualStrings("Work:a", kept.stepBack(sys, "Work:c", &into).?);
+    try testing.expectEqualStrings("Work:", kept.stepBack(sys, "Work:a", &into).?);
+    try testing.expect(kept.stepBack(sys, "Work:", &into) == null);
+    kept.free(sys);
+
+    // Past the most kept, the oldest go: the last `kept_most` are left.
+    var name: [16]u8 = undefined;
+    for (0..history.kept_most + 5) |n| {
+        name[0] = 'D';
+        name[1] = ':';
+        name[2] = @intCast('a' + n / 26);
+        name[3] = @intCast('a' + n % 26);
+        kept.left(sys, name[0..4]);
+    }
+    var steps: usize = 0;
+    var last: []const u8 = "";
+    while (kept.stepBack(sys, "D:zz", &into)) |there| : (steps += 1) last = there;
+    try testing.expectEqual(@as(usize, history.kept_most), steps);
+    try testing.expectEqualStrings("D:af", last);
+    kept.free(sys);
+    try kexec.expectNoLeaks();
 }

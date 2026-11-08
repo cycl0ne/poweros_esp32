@@ -27,6 +27,10 @@
 //! the last has. A program that asked for a file to be opened with an end
 //! message of its own (`ANVO_EndMsg`) has that given to the process
 //! instead, and the desktop does not count it.
+//!
+//! **A shell** in a drawer (`shell`, Window > Shell) talks on a console of
+//! its own, starts in that drawer and reads S:Shell-Startup first, as
+//! SYS:System/Shell starts one; it runs on by itself, not counted.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -519,6 +523,34 @@ pub fn command(d: *Desktop, line: [*:0]const u8, title: []const u8) void {
         return;
     }
     d.running += 1;
+}
+
+/// The console a shell started in a drawer talks on.
+const shell_window = "CON:0/0//300/PowerOS Shell/CLOSE";
+
+/// A shell in a console of its own, its current directory the drawer
+/// `path`, S:Shell-Startup read first when there is one. It runs on by
+/// itself: the desktop neither waits for it nor counts it.
+pub fn shell(d: *Desktop, path: []const u8) void {
+    const dl = d.dl;
+    if (path.len > dos.path_max) return;
+    var name: [dos.path_max + 1:0]u8 = @splat(0);
+    @memcpy(name[0..path.len], path);
+    const home = dl.Lock(&name, dos.SHARED_LOCK) orelse return d.say("The shell's drawer could not be found");
+    const script = dl.Open("S:Shell-Startup", dos.MODE_OLDFILE);
+    const tags = [_]TagItem{
+        .{ .tag = dos.SYS_Window, .data = @intFromPtr(shell_window) },
+        .{ .tag = dos.SYS_Asynch, .data = 1 },
+        .{ .tag = dos.SYS_UserShell, .data = 1 },
+        .{ .tag = dos.SYS_ScriptFile, .data = @intFromPtr(script) },
+        .{ .tag = dos.NP_CurrentDir, .data = @intFromPtr(home) },
+        .{},
+    };
+    if (dl.SystemTagList(null, &tags) < 0) {
+        if (script) |file| _ = dl.Close(file);
+        dl.UnLock(home);
+        d.say("The shell could not be started");
+    }
 }
 
 /// A tool type's number, -128 to 127; null for anything else.
