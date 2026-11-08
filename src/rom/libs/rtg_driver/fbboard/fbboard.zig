@@ -8,7 +8,8 @@
 //! (`uefi.zig`), which reads the one buffer it was given - behind which
 //! the engine doing the reading is looked at where it is one this knows
 //! (`dcn.zig`, through amdgpu.resource, which holds the device), to say
-//! what it is and to switch on the sound the link it lit can carry.
+//! what it is, to switch on the sound the link it lit can carry, and to
+//! flip it between that buffer and a frame of the device's own.
 //!
 //! A module of its own, on the same footing as the other drivers: it
 //! opens rtg.library at cold start and hands in a driver called "fb",
@@ -149,9 +150,24 @@
 //! writes back only its own pixels, a run a row, so tiles drawn on
 //! several cores can each hand on their own.
 //!
+//! An AMD display behind the firmware's framebuffer is shown two frames
+//! the same way, for a reason of its own: a picture copied into the one
+//! buffer it reads, while it reads it, shows the top of one picture and
+//! the bottom of the other. The frames are that buffer and one of the
+//! device's own memory, both reached write-combining, so nothing is
+//! written back: the gathered writes are fenced before the flip. The
+//! engine takes a flip at the pipe's next update, between two frames,
+//! and says when it has: a flip it has not taken two frames after the one
+//! waited for puts the display back on the firmware's buffer for good,
+//! each picture then made in it, and says so on the log. The display has
+//! no cursor plane, so the pointer is laid in the pictures with the
+//! overlay, its old and new places noted as a move is made.
+//!
 //! Where the display raises an interrupt at each frame (the board's part
-//! gives it as PART_Irq), a flip and WaitVBlank wait for it; elsewhere,
-//! and should it stop coming, they wait as long as a frame takes.
+//! gives it as PART_Irq; on the AMD display, the pipe's update, through
+//! the device's interrupt ring), a flip and WaitVBlank wait for it;
+//! elsewhere, and should it stop coming, they wait as long as a frame
+//! takes.
 //!
 //! The module keeps nothing of its own: a ROM image is read only, so the
 //! driver node and everything that changes are allocated at init and found
@@ -183,7 +199,7 @@ const timer = sdk.devices.timer;
 const MODULE_NAME = "rtg-fb";
 const DRIVER_NAME = "fb";
 const VERSION = 1;
-const REVISION = 28;
+const REVISION = 29;
 const BUILD_DATE = "08.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -256,10 +272,16 @@ const Screen = struct {
     frame_us: u32 = 16_667,
     /// Behind the firmware's framebuffer, the display engine reading it
     /// where that engine is one this driver knows: what it says of itself,
-    /// read when the board is made, with nothing written to it
-    /// (`dcn.zig`). Null on every other display, and on a machine whose
-    /// engine this is not.
+    /// read when the board is made (`dcn.zig`). Null on every other
+    /// display, and on a machine whose engine this is not.
     dcn: ?dcn.Engine = null,
+    /// On that engine: the frame of the device's own memory the display
+    /// is flipped to and from the firmware's framebuffer, whether it still
+    /// is - it is given up on once a flip is not taken - and the device's
+    /// address of the frame last flipped to.
+    amd_frame: ?sdk.resources.amdgpu.GPUMemory = null,
+    amd_flipping: bool = false,
+    flip_wanted: u64 = 0,
     /// Behind an HDMI port: what the monitor says of itself - HDMI or DVI,
     /// sound, range, its fastest clock - from its EDID; whether it was on
     /// the port when last looked at, how many looks in a row have seen
@@ -436,8 +458,13 @@ fn waitFrames(screen: *Screen, frames: u32) bool {
 fn frameServer(data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
     _ = int_number;
     const screen: *Screen = @ptrCast(@alignCast(data.?));
-    const raised = switch (screen.scanout) {
+    const raised: u32 = switch (screen.scanout) {
         .bcm2712 => bcm2712.takeInterrupts(),
+        // The device's ring hands on the pipe's update alone.
+        .uefi => taken: {
+            dcn.takeFrame(screen.dcn.?);
+            break :taken 1;
+        },
         else => jh7110.takeInterrupts(),
     };
     if (raised == 0) return 0;
@@ -450,16 +477,35 @@ fn frameServer(data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
     return 1;
 }
 
-/// The frame interrupt's server on, once the display runs.
+/// The frame interrupt's server on, once the display runs: the board
+/// part's interrupt behind an HDMI port, the pipe's update through the
+/// device's interrupt ring on the AMD display (`dcn.hookFrames`).
 fn hookFrames(screen: *Screen) void {
-    if (screen.frame_irq == 0 or screen.frame_hooked) return;
+    if (screen.frame_hooked) return;
+    if (screen.frame_irq == 0 and screen.dcn == null) return;
     screen.frame_int = .{
         .node = .{ .type = .interrupt, .pri = 0, .name = MODULE_NAME },
         .data = screen,
         .code = &frameServer,
     };
+    if (screen.dcn) |found| {
+        screen.frame_hooked = dcn.hookFrames(found, &screen.frame_int);
+        if (!screen.frame_hooked) exec.kprintf(screen.sys, "%s: the display's frames cannot be had from the device, so they are timed by the clock\n", .{MODULE_NAME});
+        return;
+    }
     screen.sys.AddIntServer(screen.frame_irq, &screen.frame_int);
     screen.frame_hooked = true;
+}
+
+/// The frame interrupt's server off again.
+fn unhookFrames(screen: *Screen) void {
+    if (!screen.frame_hooked) return;
+    if (screen.dcn) |found| {
+        dcn.unhookFrames(found, &screen.frame_int);
+    } else {
+        screen.sys.RemIntServer(screen.frame_irq, &screen.frame_int);
+    }
+    screen.frame_hooked = false;
 }
 
 /// Wait `micros` on timer.device, the CPU given away meanwhile. Nothing
@@ -496,9 +542,11 @@ fn screenOf(board: *rtg.RtgBoard) *Screen {
 // --- the display -------------------------------------------------------------
 
 /// `length` bytes at `from`, which the CPU has written, written back out
-/// of the caches, where the machine's display goes past them.
+/// of the caches, where the machine's display goes past them. Nothing on
+/// the firmware's framebuffer: the display reads only what is reached
+/// write-combining there, and the buffers drawn in are read by the cores.
 fn writeBack(screen: *Screen, from: [*]u8, length: usize) void {
-    if (length == 0) return;
+    if (length == 0 or screen.scanout == .uefi) return;
     screen.sys.CacheClearE(from, @intCast(length), exec.CACRF_ClearD);
 }
 
@@ -534,8 +582,9 @@ fn handOn(screen: *Screen, picture: *const rtg.RtgBitMap, box: Box) void {
         // The firmware's framebuffer holds what the display reads, so
         // what was written in the picture it is reading goes into it.
         // Another picture is not the display's to see until it is shown,
-        // and showing it copies the whole of it (`scanFrom`).
-        .uefi => |fb| if (screen.scanning == @intFromPtr(pixels)) copyOut(screen, fb, @intFromPtr(pixels), box),
+        // and showing it copies the whole of it (`scanFrom`). Where the
+        // display is flipped, what is handed on is a frame of its own.
+        .uefi => |fb| if (!flips(screen) and screen.scanning == @intFromPtr(pixels)) copyOut(screen, fb, @intFromPtr(pixels), box),
         else => {},
     }
 }
@@ -587,10 +636,25 @@ fn scanFrom(screen: *Screen, address: usize) void {
             .pitch = screen.pitch,
             .height = screen.height,
         }, screen.width, screen.height, Waiter{ .screen = screen }),
-        // Nothing can tell this display to read elsewhere: the picture is
-        // copied into the one buffer the firmware gave it, whole.
+        // The AMD display flipped to the frame, from the pipe's next
+        // update on (`dcn.flip`), named by the device's own address of
+        // it: the framebuffer's the fetcher read at start, the frame's
+        // the resource gave with it. The frame is not in the window the
+        // framebuffer is in - on a machine whose device memory is part of
+        // its RAM the CPU reaches it there - so its address in the
+        // machine says nothing of the device's. Where it is not flipped,
+        // nothing tells it to read elsewhere: the picture is copied into
+        // the one buffer the firmware gave it, whole. Where flipping was
+        // given up, the frames are that buffer.
         .uefi => |fb| done: {
-            copyOut(screen, fb, address, whole(screen));
+            if (screen.amd_flipping) {
+                const found = screen.dcn.?;
+                const frame = screen.amd_frame.?;
+                screen.flip_wanted = if (address == @intFromPtr(screen.flip_frames[1])) frame.device else found.surface;
+                dcn.flip(found, screen.flip_wanted, false);
+            } else if (!flips(screen)) {
+                copyOut(screen, fb, address, whole(screen));
+            }
             break :done true;
         },
     };
@@ -911,6 +975,10 @@ fn setPointer(board: *rtg.RtgBoard, image: ?*const rtg.RtgPointerImage) callconv
         cursorImage(screen, image);
         return err.RTGERR_OK;
     }
+    if (flips(screen)) {
+        pointerFlipped(screen, image);
+        return err.RTGERR_OK;
+    }
     change(screen, struct {
         fn apply(on: *Screen, given: anytype) void {
             on.pointer = given;
@@ -926,6 +994,7 @@ fn movePointer(board: *rtg.RtgBoard, left: i32, top: i32) callconv(.c) void {
         screen.pointer_top = top;
         return cursorPlane(screen);
     }
+    if (flips(screen)) return pointerMoved(screen, left, top);
     change(screen, struct {
         fn apply(on: *Screen, place: anytype) void {
             on.pointer_left = place[0];
@@ -945,6 +1014,10 @@ fn showPointer(board: *rtg.RtgBoard, show: bool) callconv(.c) i32 {
         } else if (was != show) {
             cursorImage(screen, screen.pointer);
         }
+        return err.RTGERR_OK;
+    }
+    if (flips(screen)) {
+        pointerShown(screen, show);
         return err.RTGERR_OK;
     }
     const unused = unused: {
@@ -1476,22 +1549,17 @@ const flipper_pri = 19;
 
 /// Whether the display is shown two frames of the driver's own, the next
 /// picture made in the one it is not reading (`flipFrames`), rather than
-/// the buffers themselves: where it reads past the caches.
+/// the buffers themselves: where it reads past the caches, and on the AMD
+/// display, which would otherwise be copied into while it is read.
 fn flips(screen: *const Screen) bool {
-    return screen.flip_memory != null;
+    return screen.flipper != null;
 }
 
-/// The two frames taken, each a picture of the largest mode from a page
-/// on, black and written back, and the task that makes the pictures
-/// started. False without memory for either.
+/// The two frames taken (`takeFrames`) and the task that makes the
+/// pictures started. False where there are no frames, or no task.
 fn startFlipping(screen: *Screen) bool {
     const sys = screen.sys;
-    const size = std.mem.alignForward(usize, screen.frame_bytes, page);
-    const own = takeOwn(screen, 2 * size) orelse return false;
-    @memset(own.at[0 .. 2 * size], 0);
-    writeBack(screen, own.at, 2 * size);
-    screen.flip_frames = .{ own.at, own.at + size };
-    screen.flip_bytes = 2 * size;
+    if (!takeFrames(screen)) return false;
     screen.front = 0;
     sys.InitSemaphore(&screen.flip_lock);
     sys.InitSemaphore(&screen.bands_lock);
@@ -1502,26 +1570,79 @@ fn startFlipping(screen: *Screen) bool {
     const task = sys.CreateTask(flipper_name, flipper_pri, &flipperCode, 0);
     sys.EndSystemMemory();
     const made = task orelse {
-        sys.FreeMem(own.memory, screen.flip_bytes + page);
+        giveFrames(screen);
         return false;
     };
-    screen.flip_memory = own.memory;
     screen.flipper = made;
     @atomicStore(?*anyopaque, &made.user_data, screen, .release);
     sys.Signal(made, exec.SIGF_SINGLE);
     return true;
 }
 
+/// The two frames the display is flipped between. Behind an HDMI port
+/// two of the driver's own, each a picture of the largest mode from a
+/// page on, black and written back. On the AMD display the firmware's
+/// framebuffer and a frame of the device's own memory (`dcn.newFrame`),
+/// which the fetcher reads with the framebuffer's pitch - so only where
+/// the board's rows are as far apart as the firmware's; they are cleared
+/// as the mode is set (`beginFlipped`). False without memory for them, and
+/// on the AMD display said why.
+fn takeFrames(screen: *Screen) bool {
+    if (screen.scanout == .uefi) {
+        const fb = screen.scanout.uefi;
+        const found = screen.dcn orelse return false;
+        if (fb.pitch != screen.pitch or fb.height < screen.height) {
+            exec.kprintf(screen.sys, "%s: the firmware's rows are %d bytes apart and the board's %d, so the picture is copied into its framebuffer\n", .{ MODULE_NAME, fb.pitch, screen.pitch });
+            return false;
+        }
+        const frame = dcn.newFrame(found, screen.frame_bytes) orelse {
+            exec.kprintf(screen.sys, "%s: no room in the device's memory for a frame, so the picture is copied into the firmware's framebuffer\n", .{MODULE_NAME});
+            return false;
+        };
+        screen.amd_frame = frame;
+        screen.amd_flipping = true;
+        screen.flip_frames = .{ @ptrFromInt(fb.pixels), @ptrFromInt(@as(usize, @intCast(frame.cpu))) };
+        exec.kprintf(screen.sys, "%s: the display is flipped between the firmware's framebuffer and a frame at 0x%lx\n", .{ MODULE_NAME, frame.device });
+        return true;
+    }
+    const size = std.mem.alignForward(usize, screen.frame_bytes, page);
+    const own = takeOwn(screen, 2 * size) orelse return false;
+    @memset(own.at[0 .. 2 * size], 0);
+    writeBack(screen, own.at, 2 * size);
+    screen.flip_frames = .{ own.at, own.at + size };
+    screen.flip_bytes = 2 * size;
+    screen.flip_memory = own.memory;
+    return true;
+}
+
+/// The frames given back. The AMD display's is only once the fetcher
+/// reads the firmware's framebuffer again, told so at once: one it would
+/// not leave is kept.
+fn giveFrames(screen: *Screen) void {
+    if (screen.flip_memory) |memory| screen.sys.FreeMem(memory, screen.flip_bytes + page);
+    screen.flip_memory = null;
+    var frame = screen.amd_frame orelse return;
+    screen.amd_frame = null;
+    screen.amd_flipping = false;
+    const found = screen.dcn.?;
+    dcn.flip(found, found.surface, true);
+    var looks: u32 = 0;
+    while (!dcn.flipTaken(found, found.surface)) : (looks += 1) {
+        if (looks == 3) return;
+        pace(screen, 1);
+    }
+    dcn.freeFrame(found, &frame);
+}
+
 /// The task stopped and the frames given back.
 fn stopFlipping(screen: *Screen) void {
     const sys = screen.sys;
-    const memory = screen.flip_memory orelse return;
+    if (screen.flipper == null) return;
     @atomicStore(bool, &screen.stopping, true, .release);
     sys.SignalWaitable(&screen.work);
     _ = sys.WaitForAny(&[_]*exec.Waitable{&screen.stopped}, 1, exec.WAIT_FOREVER);
-    sys.FreeMem(memory, screen.flip_bytes + page);
-    screen.flip_memory = null;
     screen.flipper = null;
+    giveFrames(screen);
 }
 
 /// The task: a picture made each time something was noted, at most one a
@@ -1670,6 +1791,11 @@ fn flipFrames(screen: *Screen) bool {
     const fresh = screen.fresh;
     screen.fresh = .{};
     const over = Laid{ .image = screen.overlay, .left = screen.overlay_left, .top = screen.overlay_top };
+    const pointer = Laid{
+        .image = if (screen.cursor == null and screen.pointer_shown) screen.pointer else null,
+        .left = screen.pointer_left,
+        .top = screen.pointer_top,
+    };
     const stale = screen.direct != null and !fresh.isEmpty();
     if (stale) screen.direct = null;
     sys.ReleaseLock(&screen.damage_lock);
@@ -1678,20 +1804,64 @@ fn flipFrames(screen: *Screen) bool {
     var boxes = fresh;
     if (stale) boxes.add(whole(screen)) else boxes.addAll(&screen.last);
     sys.ObtainSemaphore(&screen.bands_lock);
-    for (boxes.list()) |box| makeBox(screen, back, box, over);
+    for (boxes.list()) |box| makeBox(screen, back, box, over, pointer);
     sys.ReleaseSemaphore(&screen.bands_lock);
     screen.last = if (stale) boxes else fresh;
     scanFrom(screen, @intFromPtr(back));
     pace(screen, 1);
-    screen.front ^= 1;
     screen.updates +%= 1;
+    if (!flipTaken(screen)) {
+        giveUpFlipping(screen);
+        return true;
+    }
+    screen.front ^= 1;
     return true;
 }
 
+/// Whether the display took the flip just made, the frame after it was
+/// made waited for. Behind an HDMI port the controller takes it at that
+/// frame. On the AMD display it is taken once the fetcher reads the new
+/// frame (`dcn.flipTaken`) - looked at then, and after each of two
+/// frames more: one made just as the pipe's update came is taken at the
+/// next. The frame it read until then is not written before.
+fn flipTaken(screen: *Screen) bool {
+    if (!screen.amd_flipping) return true;
+    const found = screen.dcn.?;
+    var looks: u32 = 0;
+    while (!dcn.flipTaken(found, screen.flip_wanted)) : (looks += 1) {
+        if (looks == 2) return false;
+        pace(screen, 1);
+    }
+    return true;
+}
+
+/// The AMD display's flips given up, once one was not taken: the fetcher
+/// told to read the firmware's framebuffer again at once, both frames
+/// that framebuffer from now on - each picture made in it, as the copying
+/// did - and the whole picture noted for the next. Said once on the log.
+/// The device's frame is kept: the fetcher might still read it. Made
+/// holding `flip_lock`.
+fn giveUpFlipping(screen: *Screen) void {
+    const sys = screen.sys;
+    const found = screen.dcn.?;
+    screen.amd_flipping = false;
+    dcn.flip(found, found.surface, true);
+    exec.kprintf(sys, "%s: the display did not take the flip to 0x%lx, so the picture goes into the firmware's framebuffer again\n", .{ MODULE_NAME, screen.flip_wanted });
+    const fb = screen.flip_frames[0];
+    screen.flip_frames[1] = fb;
+    screen.front = 0;
+    screen.scanning = @intFromPtr(fb);
+    sys.AcquireLock(&screen.damage_lock);
+    noteBox(screen, whole(screen));
+    sys.ReleaseLock(&screen.damage_lock);
+    sys.SignalWaitable(&screen.work);
+}
+
 /// One rectangle of a picture, in the frame at `into`: each row from its
-/// band, black where nothing is shown, the overlay laid over it, and
-/// written out of the caches.
-fn makeBox(screen: *Screen, into: [*]u8, box: Box, over: Laid) void {
+/// band, black where nothing is shown, the overlay laid over it and the
+/// pointer over that - where the display has no plane of its own for it -
+/// and written out of the caches.
+fn makeBox(screen: *Screen, into: [*]u8, box: Box, over: Laid, pointer: Laid) void {
     var picture = pictureAt(screen, into);
     if (screen.band_count == 0) {
         const area = rtg.RtgRect{
@@ -1705,6 +1875,7 @@ fn makeBox(screen: *Screen, into: [*]u8, box: Box, over: Laid) void {
         copyInto(screen, into, box);
     }
     _ = layOver(screen, into, over.image, over.left, over.top, box);
+    _ = layOver(screen, into, pointer.image, pointer.left, pointer.top, box);
     handOn(screen, &picture, box);
 }
 
@@ -1829,6 +2000,45 @@ fn overlayMoved(screen: *Screen, left: i32, top: i32) void {
     sys.SignalWaitable(&screen.work);
 }
 
+/// Where the display that is flipped has no plane for the pointer - the
+/// AMD display - the pointer is laid in the pictures made, as the
+/// overlay is: its image changed, its old and new places noted. The image
+/// laid until now is not read again once this returns.
+fn pointerFlipped(screen: *Screen, image: ?*const rtg.RtgPointerImage) void {
+    const sys = screen.sys;
+    sys.ObtainSemaphore(&screen.flip_lock);
+    sys.AcquireLock(&screen.damage_lock);
+    if (screen.pointer_shown) noteImage(screen, screen.pointer, screen.pointer_left, screen.pointer_top);
+    screen.pointer = image;
+    if (screen.pointer_shown) noteImage(screen, image, screen.pointer_left, screen.pointer_top);
+    sys.ReleaseLock(&screen.damage_lock);
+    sys.ReleaseSemaphore(&screen.flip_lock);
+    sys.SignalWaitable(&screen.work);
+}
+
+/// The pointer laid in the pictures moved, its old and new places noted.
+fn pointerMoved(screen: *Screen, left: i32, top: i32) void {
+    const sys = screen.sys;
+    sys.AcquireLock(&screen.damage_lock);
+    if (screen.pointer_shown) noteImage(screen, screen.pointer, screen.pointer_left, screen.pointer_top);
+    screen.pointer_left = left;
+    screen.pointer_top = top;
+    if (screen.pointer_shown) noteImage(screen, screen.pointer, left, top);
+    sys.ReleaseLock(&screen.damage_lock);
+    sys.SignalWaitable(&screen.work);
+}
+
+/// The pointer laid in the pictures shown or hidden, its place noted.
+fn pointerShown(screen: *Screen, show: bool) void {
+    const sys = screen.sys;
+    sys.AcquireLock(&screen.damage_lock);
+    const changed = screen.pointer_shown != show;
+    screen.pointer_shown = show;
+    if (changed) noteImage(screen, screen.pointer, screen.pointer_left, screen.pointer_top);
+    sys.ReleaseLock(&screen.damage_lock);
+    if (changed) sys.SignalWaitable(&screen.work);
+}
+
 // --- the board -------------------------------------------------------------------
 
 /// The display the part describes, if it is there.
@@ -1909,9 +2119,8 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
     }
     if (scanout == .uefi) {
         // The engine reading the firmware's framebuffer, where it is one
-        // this driver knows. What it says of itself goes in the boot's
-        // lines, and the picture is copied into the framebuffer as before
-        // either way: nothing of the picture is written.
+        // this driver knows: what it says of itself goes in the boot's
+        // lines, and the display is flipped (below).
         screen.dcn = dcn.find(sys, screen.scanout.uefi);
         // The sound the link it lit can carry, which the firmware leaves
         // switched off and which no other driver can reach. The machine's
@@ -1974,6 +2183,13 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
         screen.overlay_images = null;
         return err.RTGERR_NO_MEMORY;
     }
+    // The AMD display behind the firmware's framebuffer is flipped too,
+    // its frames counted by the pipe's interrupt. Where it cannot be, it
+    // is said why, and the picture is copied into the framebuffer.
+    if (scanout == .uefi and screen.dcn != null) {
+        hookFrames(screen);
+        _ = startFlipping(screen);
+    }
     board.region = .{
         .size = frames * frame,
         .alignment = row_alignment,
@@ -1997,11 +2213,12 @@ fn destroy(board: *rtg.RtgBoard) callconv(.c) void {
     const screen = screenOf(board);
     // The GPU lets go of the buffers before they are given back.
     if (screen.scanout == .virtio) virtio.stop(&screen.scanout.virtio);
-    // The device is amdgpu.resource's, which is never given back.
-    screen.dcn = null;
+    // The frames go before the frame interrupt, which giving the AMD
+    // display's back waits by. The device is amdgpu.resource's, which is
+    // never given back.
     stopFlipping(screen);
-    if (screen.frame_hooked) screen.sys.RemIntServer(screen.frame_irq, &screen.frame_int);
-    screen.frame_hooked = false;
+    unhookFrames(screen);
+    screen.dcn = null;
     if (screen.timer_open) screen.sys.CloseDevice(&screen.timer_io.node);
     screen.timer_open = false;
     if (screen.composed_memory) |memory| screen.sys.FreeMem(memory, screen.frame_bytes + page);

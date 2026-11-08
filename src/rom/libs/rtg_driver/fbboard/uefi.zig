@@ -12,15 +12,18 @@
 //! either: what the firmware said is all there is to know, and where it
 //! said nothing the part is not there at all.
 //!
-//! **The address cannot be moved.** Every other display this driver has
-//! is told where to read, so showing a buffer is naming its address; this
-//! one reads the buffer the firmware gave it and nothing here can tell it
-//! otherwise. So the picture is copied into it: the whole of it when
-//! another buffer is shown, and a rectangle alone when the buffer shown
-//! is refreshed - which is what the virtio GPU does with its copy in the
-//! emulator, and the reason that kind rather than the ramfb's is the one
-//! this follows. The copying is `fbboard.zig`'s, which holds the pictures
-//! and the engine that moves them.
+//! **The address cannot be moved, unless the engine is known.** Every
+//! other display this driver has is told where to read, so showing a
+//! buffer is naming its address; this one reads the buffer the firmware
+//! gave it and nothing here can tell it otherwise. So the picture is
+//! copied into it: the whole of it when another buffer is shown, and a
+//! rectangle alone when the buffer shown is refreshed - which is what the
+//! virtio GPU does with its copy in the emulator, and the reason that kind
+//! rather than the ramfb's is the one this follows. The copying is
+//! `fbboard.zig`'s, which holds the pictures and the engine that moves
+//! them. Where the engine behind the buffer is an AMD display engine
+//! (`dcn.zig`), it is told where to read after all, and is flipped
+//! between this buffer and a frame of the device's own.
 //!
 //! **The memory is the display's, not the machine's.** It is never handed
 //! to exec, and the kernel's map has it write-combining

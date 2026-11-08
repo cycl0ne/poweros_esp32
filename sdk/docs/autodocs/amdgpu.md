@@ -2,8 +2,9 @@
 
 amdgpu.resource's functions: the machine's AMD graphics device, where
 its register window is and where each of its blocks' registers are,
-its blocks powered up and down, its own memory handed out, and the
-firmware its blocks run loaded through its security processor.
+its blocks powered up and down, its own memory handed out, the
+firmware its blocks run loaded through its security processor, and
+its interrupts handed to the drivers of the blocks that raise them.
 A resource: no Open or Close, its first function in the first slot.
 The base comes from OpenResource("amdgpu.resource").
 
@@ -11,13 +12,91 @@ Generated from the source by `./zig build autodoc`.
 
 ## Index
 
+- [AddGPUIntServer](#addgpuintserver) - A server for one of the device's interrupts: run for each entry the interrupt block writes for `client` and `source`.
 - [AllocGPUMemory](#allocgpumemory) - A piece of the device's own memory, for its blocks to read and write.
 - [FindGPUBlock](#findgpublock) - One of the device's blocks: its version and where its registers are.
 - [FreeGPUMemory](#freegpumemory) - A piece of the device's memory given back.
 - [GetGPUInfo](#getgpuinfo) - What the device is and where the machine reaches it.
 - [LoadGPUFirmware](#loadgpufirmware) - A block's firmware loaded by the security processor into its protected region, or a list of a block's register writes applied by it.
+- [RemGPUIntServer](#remgpuintserver) - A server AddGPUIntServer added taken off again.
 - [SetGPUPower](#setgpupower) - A block of the device powered up or down by its power manager.
 - [StartGPUSecurity](#startgpusecurity) - The security processor made ready to load firmware: its ring made, its table of contents loaded, and the protected region it asks for set up.
+
+## AddGPUIntServer
+
+A server for one of the device's interrupts: run for each entry the interrupt block writes for `client` and `source`.
+
+**SYNOPSIS**
+
+```zig
+fn AddGPUIntServer(ab: *AMDGPUBase, client: u32, source: u32,
+    server: *exec.Interrupt) bool
+```
+
+**SINCE**
+
+1.4. LVO -32.
+
+**INPUTS**
+
+- `client` - the block that raises it (`GPUINT_CLIENT_*`).
+- `source` - which of that block's interrupts (`GPUINT_DISPLAY_*`
+  and the like, the pipe or fetcher added).
+- `server` - its `code` an `IntServerFn`, `data` handed to it.
+
+**RESULT**
+
+True once the server is on. False where the resource holds as many
+servers as it keeps, the interrupt block is not one whose ring is
+known, the ring could not be started - after which it is not tried
+again - and on a machine without the device.
+
+**BEHAVIOR**
+
+The first server starts the ring: a piece of the device's memory for
+it, the device's message vector from pci.library, and the interrupt
+block told to write the ring, all said on the raw port. Each entry
+the block writes is then handed, in the device's message, to every
+server added for its client and source, which is given the source as
+its interrupt number; what it answers is not looked at. A server may
+be added for a client and source that already has one.
+
+Nothing is switched on at the block that raises the interrupt: its
+driver does that in the block's own registers once the server is on,
+and acknowledges it there in the server.
+
+**CONTEXT**
+
+- Waits: for another task adding a server; the first, for the ring
+  to start.
+- Interrupts: no.
+- Locks: takes the resource's interrupt lock, then Disable.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The server stays the caller's and must stay in place until it is
+taken off with RemGPUIntServer.
+
+**NOTES**
+
+The server runs in the device's message: it must not wait, and what it
+shares with a task is shared as with any interrupt.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`RemGPUIntServer`, exec's `AddIntServer`
+
+**EXAMPLES**
+
+```zig
+frame = .{ .node = .{ .type = .interrupt, .name = "frames" }, .data = screen, .code = &frameServer };
+if (!ab.AddGPUIntServer(amdgpu.GPUINT_CLIENT_DISPLAY, amdgpu.GPUINT_DISPLAY_UPDATE + pipe, &frame)) return;
+```
 
 ## AllocGPUMemory
 
@@ -380,6 +459,65 @@ if (!ab.LoadGPUFirmware(amdgpu.GPUFIRMWARE_VIDEO, vcn.ptr, @intCast(vcn.len), &a
 // inside the block.
 const writes = [_]u32{ 0xd6, 0x0ff00200 };
 _ = ab.LoadGPUFirmware(amdgpu.GPUFIRMWARE_VIDEO_REGISTERS, @ptrCast(&writes), 8, &at);
+```
+
+## RemGPUIntServer
+
+A server AddGPUIntServer added taken off again.
+
+**SYNOPSIS**
+
+```zig
+fn RemGPUIntServer(ab: *AMDGPUBase, server: *exec.Interrupt) void
+```
+
+**SINCE**
+
+1.4. LVO -36.
+
+**INPUTS**
+
+- `server` - one added, or one never added.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+The server is run no more once this returns. One added several times
+is taken off each time it was; one not added is nothing. The ring
+goes on running without servers: entries no server wants are read
+and passed over.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe. It takes Disable.
+- Locks: takes Disable.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The server is the caller's again.
+
+**NOTES**
+
+The block's driver switches the interrupt off in its own registers
+first, so that the block stops raising it.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`AddGPUIntServer`
+
+**EXAMPLES**
+
+```zig
+ab.RemGPUIntServer(&frame);
 ```
 
 ## SetGPUPower

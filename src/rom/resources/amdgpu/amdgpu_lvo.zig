@@ -15,6 +15,8 @@ const AllocGPUMemory = @import("memory/allocgpumemory.zig").AllocGPUMemory;
 const FreeGPUMemory = @import("memory/freegpumemory.zig").FreeGPUMemory;
 const StartGPUSecurity = @import("security/startgpusecurity.zig").StartGPUSecurity;
 const LoadGPUFirmware = @import("security/loadgpufirmware.zig").LoadGPUFirmware;
+const AddGPUIntServer = @import("interrupt/addgpuintserver.zig").AddGPUIntServer;
+const RemGPUIntServer = @import("interrupt/remgpuintserver.zig").RemGPUIntServer;
 
 /// amdgpu.resource's interface, as the SDK generates it from
 /// sdk/fd/amdgpu_lib.fd.
@@ -47,6 +49,8 @@ const contract_files = [_][]const u8{
     @embedFile("memory/freegpumemory.zig"),
     @embedFile("security/startgpusecurity.zig"),
     @embedFile("security/loadgpufirmware.zig"),
+    @embedFile("interrupt/addgpuintserver.zig"),
+    @embedFile("interrupt/remgpuintserver.zig"),
 };
 
 fn lvoGetGPUInfo(ab: *AMDGPUBase, info: *amdgpu.GPUInfo) callconv(.c) bool {
@@ -70,6 +74,12 @@ fn lvoStartGPUSecurity(ab: *AMDGPUBase, toc: [*]const u8, length: u32) callconv(
 fn lvoLoadGPUFirmware(ab: *AMDGPUBase, kind: u32, image: [*]const u8, length: u32, address: *u64) callconv(.c) bool {
     return LoadGPUFirmware(ab, kind, image, length, address);
 }
+fn lvoAddGPUIntServer(ab: *AMDGPUBase, client: u32, source: u32, server: *exec.Interrupt) callconv(.c) bool {
+    return AddGPUIntServer(ab, client, source, server);
+}
+fn lvoRemGPUIntServer(ab: *AMDGPUBase, server: *exec.Interrupt) callconv(.c) void {
+    RemGPUIntServer(ab, server);
+}
 
 /// The jump table, in slot order: a resource has no standard vectors, so
 /// its first function is in the first slot.
@@ -81,4 +91,6 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoFreeGPUMemory),
     vec(lvoStartGPUSecurity),
     vec(lvoLoadGPUFirmware),
+    vec(lvoAddGPUIntServer),
+    vec(lvoRemGPUIntServer),
 };

@@ -105,6 +105,10 @@ test "a machine without the device has the resource, and it answers false" {
     try testing.expect(!call(ab).LoadGPUFirmware(amdgpu.GPUFIRMWARE_VIDEO, &file, file.len, &address));
     try testing.expect(!call(ab).LoadGPUFirmware(amdgpu.GPUFIRMWARE_VIDEO_REGISTERS, &file, file.len, &address));
     try testing.expectEqual(@as(u64, 7), address);
+    var server: exec.Interrupt = .{};
+    try testing.expect(!call(ab).AddGPUIntServer(amdgpu.GPUINT_CLIENT_DISPLAY, amdgpu.GPUINT_DISPLAY_UPDATE, &server));
+    call(ab).RemGPUIntServer(&server);
+    try testing.expect(!ab.ih_running);
     try tearDown(ab);
 }
 
