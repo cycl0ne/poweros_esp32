@@ -2,8 +2,9 @@
 //! amdgpu.resource's base: the device's function, as it was claimed, what
 //! is answered about it, the table of its blocks it was read from, the
 //! power manager its mailbox reaches, the device's own memory with what
-//! of it is handed out, and the security processor's ring with the
-//! protected region it was given.
+//! of it is handed out, the security processor's ring with the
+//! protected region it was given, and the interrupt block's ring with the
+//! servers its entries are handed to.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -12,6 +13,7 @@ const PCIDevice = sdk.pci.PCIDevice;
 const PCIBase = sdk.interface.pci.PCIBase;
 const ExecBase = sdk.interface.exec.ExecBase;
 const Arena = @import("memory/_arena.zig").Arena;
+const _interrupt = @import("interrupt/_interrupt.zig");
 
 pub const AMDGPUBase = extern struct {
     lib: exec.Library,
@@ -61,4 +63,21 @@ pub const AMDGPUBase = extern struct {
     security_dead: bool = false,
     protected: amdgpu.GPUMemory = .{},
     security_lock: exec.SignalSemaphore,
+    /// The interrupt block, where it is one whose ring is known; the piece
+    /// its ring is in, and where the next entry is read from. Whether the
+    /// ring runs, and whether it failed to start - after which it is not
+    /// tried again. The servers the entries are handed to, the message's
+    /// own server, the entries read and the overflows seen, and the lock
+    /// the ring is started under.
+    interrupts: amdgpu.GPUBlock = .{},
+    interrupts_known: bool = false,
+    ih_ring: amdgpu.GPUMemory = .{},
+    ih_read: u32 = 0,
+    ih_running: bool = false,
+    ih_failed: bool = false,
+    servers: [_interrupt.servers_max]_interrupt.Server = @splat(.{}),
+    ih_vector: exec.Interrupt = .{},
+    ih_entries: u32 = 0,
+    ih_overflows: u32 = 0,
+    interrupt_lock: exec.SignalSemaphore,
 };

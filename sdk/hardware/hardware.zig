@@ -59,6 +59,9 @@ pub const usb_serial_jtag = own.usb_serial_jtag;
 /// on every chip, are `usb_dwc`.
 pub const usb_otg = own.usb_otg;
 pub const usb_dwc = @import("usb_dwc.zig");
+/// An AMD graphics device's display engine's registers, which a machine
+/// with one on PCI has whatever its chip.
+pub const amd_dcn = @import("amd_dcn.zig");
 /// The SAR ADC's first unit as the kernel's entropy source and
 /// battery.resource share it: which pad is which channel, the eFuse's
 /// calibration, the last sample and its millivolts.

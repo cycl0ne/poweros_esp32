@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: MIT
 //! amdgpu.resource's functions: the machine's AMD graphics device, where
 //! its register window is and where each of its blocks' registers are,
-//! its blocks powered up and down, its own memory handed out, and the
-//! firmware its blocks run loaded through its security processor.
+//! its blocks powered up and down, its own memory handed out, the
+//! firmware its blocks run loaded through its security processor, and
+//! its interrupts handed to the drivers of the blocks that raise them.
 //! A resource: no Open or Close, its first function in the first slot.
 //! The base comes from OpenResource("amdgpu.resource").
+##include libs/exec/exec as exec
 ##include resources/amdgpu as amdgpu
 ##basetype AMDGPUBase
 ##name amdgpu.resource
@@ -36,4 +38,12 @@ bool StartGPUSecurity([*]const u8 toc, u32 length)
 /// (GPUFIRMWARE_*), loaded by the security processor into its protected
 /// region; true with `address` holding where it is there, to the device.
 bool LoadGPUFirmware(u32 kind, [*]const u8 image, u32 length, *u64 address)
+/// `server` called, in the interrupt, for each entry of the device's
+/// interrupt ring from `client` (GPUINT_CLIENT_*) with `source`, which it
+/// is handed as its interrupt number; the ring is started with the first
+/// server. False where there is no room for one more, the ring cannot be
+/// started, or there is no device.
+bool AddGPUIntServer(u32 client, u32 source, *exec.Interrupt server)
+/// A server AddGPUIntServer added taken off again.
+void RemGPUIntServer(*exec.Interrupt server)
 ##end

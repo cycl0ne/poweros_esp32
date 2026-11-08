@@ -43,6 +43,15 @@
 //! files are read from the disk by the driver that needs them
 //! (DEVS:firmware/amdgpu/) and given as they are.
 //!
+//! **Interrupts.** Every block raises its interrupts through the one
+//! interrupt block, which writes an entry for each into a ring and sends
+//! the device's one message on PCI. The resource reads the ring and hands
+//! each entry to the servers added for its client and source
+//! (AddGPUIntServer) - the display engine's pipe at each frame, say. The
+//! driver of the block switches the interrupt on in that block's own
+//! registers, and acknowledges it there in its server; the ring is
+//! started with the first server.
+//!
 //! A machine without such a device has the resource all the same:
 //! GetGPUInfo and FindGPUBlock answer false, and so do SetGPUPower and
 //! AllocGPUMemory.
@@ -62,6 +71,9 @@ pub const GPUBLOCK_VIDEO: u32 = 12;
 /// The hub the memory traffic of the video, display and security blocks
 /// goes through.
 pub const GPUBLOCK_MEMORY_HUB: u32 = 34;
+/// The interrupt block, which every other block raises its interrupts
+/// through: AddGPUIntServer's.
+pub const GPUBLOCK_INTERRUPTS: u32 = 40;
 /// The device's side of the bus: its configuration, its memory's size.
 pub const GPUBLOCK_BUS: u32 = 108;
 /// The security processor: loads every firmware the device's processors
@@ -111,6 +123,18 @@ pub const GPUPOWER_JPEG: u32 = 2;
 /// the video decoder, which the processor applies itself.
 pub const GPUFIRMWARE_VIDEO: u32 = 13;
 pub const GPUFIRMWARE_VIDEO_REGISTERS: u32 = 49;
+
+/// AddGPUIntServer's clients - which of the device's blocks raised an
+/// interrupt - and their sources, as the interrupt block numbers them.
+/// The display engine.
+pub const GPUINT_CLIENT_DISPLAY: u32 = 4;
+/// The display engine's sources. A pipe's timing generator at the point
+/// in each frame where it takes up what its double-buffered registers
+/// were told - the address a flip names among them - whatever their lock
+/// says: the first pipe's, the next pipes' after it. Its fetchers' flip
+/// taken: the first fetcher's, the next ones' after it.
+pub const GPUINT_DISPLAY_UPDATE: u32 = 0x57;
+pub const GPUINT_DISPLAY_FLIP: u32 = 0x4f;
 
 /// A piece of the device's own memory, from AllocGPUMemory: where the CPU
 /// reaches it, where the device's blocks reach it, and how many bytes it

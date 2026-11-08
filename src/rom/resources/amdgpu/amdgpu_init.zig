@@ -29,12 +29,13 @@ const _table = @import("table/_table.zig");
 const _memory = @import("memory/_memory.zig");
 const _security = @import("security/_security.zig");
 const _power = @import("power/_power.zig");
+const _interrupt = @import("interrupt/_interrupt.zig");
 
 /// The name it is opened by. The SDK's.
 pub const RESOURCE_NAME = amdgpu.AMDGPUNAME;
 pub const RESOURCE_VERSION = 1;
-pub const RESOURCE_REVISION = 3;
-const BUILD_DATE = "07.11.2026";
+pub const RESOURCE_REVISION = 4;
+const BUILD_DATE = "08.11.2026";
 const RESOURCE_VERSION_STRING =
     "\x00$VER: " ++ RESOURCE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ RESOURCE_VERSION, RESOURCE_REVISION }) ++
@@ -80,12 +81,24 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     ab.security_dead = false;
     ab.protected = .{};
     sys_base.InitSemaphore(&ab.security_lock);
+    ab.interrupts = .{};
+    ab.interrupts_known = false;
+    ab.ih_ring = .{};
+    ab.ih_read = 0;
+    ab.ih_running = false;
+    ab.ih_failed = false;
+    ab.servers = @splat(.{});
+    ab.ih_vector = .{};
+    ab.ih_entries = 0;
+    ab.ih_overflows = 0;
+    sys_base.InitSemaphore(&ab.interrupt_lock);
     if (_device.take(ab)) {
         const gpu: *sdk.interface.amdgpu.AMDGPUBase = @ptrCast(&ab.lib);
         var block: amdgpu.GPUBlock = .{};
         if (gpu.FindGPUBlock(amdgpu.GPUBLOCK_MEMORY_HUB, 0, &block)) _memory.take(ab, block);
         if (gpu.FindGPUBlock(amdgpu.GPUBLOCK_POWER, 0, &block)) _power.take(ab, block);
         if (gpu.FindGPUBlock(amdgpu.GPUBLOCK_SECURITY, 0, &block)) _security.take(ab, block);
+        if (gpu.FindGPUBlock(amdgpu.GPUBLOCK_INTERRUPTS, 0, &block)) _interrupt.take(ab, block);
         tell(ab);
     }
     return lib;
@@ -100,6 +113,7 @@ const named = [_]struct { id: u32, name: [*:0]const u8 }{
     .{ .id = amdgpu.GPUBLOCK_POWER, .name = "power manager" },
     .{ .id = amdgpu.GPUBLOCK_MEMORY_HUB, .name = "memory hub" },
     .{ .id = amdgpu.GPUBLOCK_BUS, .name = "bus" },
+    .{ .id = amdgpu.GPUBLOCK_INTERRUPTS, .name = "interrupts" },
 };
 
 /// What the device says of itself, on the boot's lines.

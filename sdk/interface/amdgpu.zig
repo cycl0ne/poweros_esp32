@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 //! amdgpu.resource's functions: the machine's AMD graphics device, where
 //! its register window is and where each of its blocks' registers are,
-//! its blocks powered up and down, its own memory handed out, and the
-//! firmware its blocks run loaded through its security processor.
+//! its blocks powered up and down, its own memory handed out, the
+//! firmware its blocks run loaded through its security processor, and
+//! its interrupts handed to the drivers of the blocks that raise them.
 //! A resource: no Open or Close, its first function in the first slot.
 //! The base comes from OpenResource("amdgpu.resource").
 //!
@@ -10,6 +11,7 @@
 //! and run `zig build fd`, not this one.
 
 const libraries = @import("../libs/exec/libraries.zig");
+const exec = @import("../libs/exec/exec.zig");
 const amdgpu = @import("../resources/amdgpu.zig");
 
 /// The name to open it by (OpenLibrary, OpenDevice).
@@ -24,6 +26,8 @@ pub const LVO = struct {
     pub const FreeGPUMemory = libraries.lvo(4);
     pub const StartGPUSecurity = libraries.lvo(5);
     pub const LoadGPUFirmware = libraries.lvo(6);
+    pub const AddGPUIntServer = libraries.lvo(7);
+    pub const RemGPUIntServer = libraries.lvo(8);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -36,6 +40,8 @@ pub const Fn = struct {
     pub const FreeGPUMemory = *const fn (*AMDGPUBase, *amdgpu.GPUMemory) callconv(.c) void;
     pub const StartGPUSecurity = *const fn (*AMDGPUBase, [*]const u8, u32) callconv(.c) bool;
     pub const LoadGPUFirmware = *const fn (*AMDGPUBase, u32, [*]const u8, u32, *u64) callconv(.c) bool;
+    pub const AddGPUIntServer = *const fn (*AMDGPUBase, u32, u32, *exec.Interrupt) callconv(.c) bool;
+    pub const RemGPUIntServer = *const fn (*AMDGPUBase, *exec.Interrupt) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -91,5 +97,19 @@ pub const AMDGPUBase = opaque {
     /// region; true with `address` holding where it is there, to the device.
     pub fn LoadGPUFirmware(self: *AMDGPUBase, kind: u32, image: [*]const u8, length: u32, address: *u64) bool {
         return libraries.call(self, LVO.LoadGPUFirmware, Fn.LoadGPUFirmware, .{ kind, image, length, address });
+    }
+
+    /// `server` called, in the interrupt, for each entry of the device's
+    /// interrupt ring from `client` (GPUINT_CLIENT_*) with `source`, which it
+    /// is handed as its interrupt number; the ring is started with the first
+    /// server. False where there is no room for one more, the ring cannot be
+    /// started, or there is no device.
+    pub fn AddGPUIntServer(self: *AMDGPUBase, client: u32, source: u32, server: *exec.Interrupt) bool {
+        return libraries.call(self, LVO.AddGPUIntServer, Fn.AddGPUIntServer, .{ client, source, server });
+    }
+
+    /// A server AddGPUIntServer added taken off again.
+    pub fn RemGPUIntServer(self: *AMDGPUBase, server: *exec.Interrupt) void {
+        return libraries.call(self, LVO.RemGPUIntServer, Fn.RemGPUIntServer, .{server});
     }
 };

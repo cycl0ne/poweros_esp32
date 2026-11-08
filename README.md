@@ -660,10 +660,20 @@ own runs it from a protected region only the security processor writes:
 the resource makes that processor's ring of commands, gives it the table
 of contents its firmware comes with and the region it asks for
 (`StartGPUSecurity`), and has it check and load a file, or apply a list
-of a block's register writes (`LoadGPUFirmware`). `C:test/Gpu WATCHDOG
+of a block's register writes (`LoadGPUFirmware`). Every block's
+interrupts come through the device's interrupt block, which writes an
+entry for each into a ring and sends the device's message on PCI: the
+resource starts that ring with the first server a driver adds for a
+block's interrupt, and hands each entry to the servers for its client
+and source (`AddGPUIntServer`, `RemGPUIntServer`). `C:test/Gpu WATCHDOG
 15000` loads the video decoder's firmware from `DEVS:firmware/amdgpu/`:
 on the Radeon 780M the processor asks for a 64 MiB region and takes the
-decoder's firmware into it with nothing else loaded.
+decoder's firmware into it with nothing else loaded. `C:test/Gpu FRAMES
+WATCHDOG 4000` counts the display's interrupt at each frame for three
+seconds - sixty a second there, as many as the pipe counts frames - and
+`C:test/Gpu FLIP WATCHDOG 4000` has the display read a copy of the
+screen in the device's memory for three seconds and back, the flip
+taken at the next frame each way.
 
 **The video decoder is videodec.resource's on such a device.** The first
 decoder opened while the watchdog is armed starts it: the firmware
@@ -871,7 +881,7 @@ to come back by before anything risky is tried on it. `C:test/watchdog
 ARM 15000` arms it for 15 s, `FEED` starts that over, `OFF` stops it;
 `C:test/Jpeg ... WATCHDOG 15000` arms it around its decodes, and
 `C:test/Gpu WATCHDOG 15000` around its commands to the graphics
-device's security processor, and `C:test/VideoDec ... WATCHDOG 15000`
+device's security processor and its writes to the display engine, and `C:test/VideoDec ... WATCHDOG 15000`
 around the video decoder's start and its pictures.
 
 `./zig build q35` boots QEMU's q35 machine with 512 MB on the serial
