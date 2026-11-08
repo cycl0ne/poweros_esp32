@@ -61,8 +61,10 @@ const process_pri = 5;
 /// hosts are the first of them, each on the device that drives its chip
 /// (`CHIP_DWC2`: usbotg.device; `CHIP_XHCI`, `CHIP_DWC3`: xhci.device) -
 /// those are described because nothing can find a controller that is
-/// part of a chip. Every number past them is an xHCI controller on PCI,
-/// which is found instead: the sockets of a machine of that kind are in
+/// part of a chip. Every number past them is an xHCI controller on PCI
+/// that no part names (Since 1.17: before, a board's own xHCI controllers
+/// came round again there, each a second bus on its controller), which
+/// is found instead: the sockets of a machine of that kind are in
 /// groups with a controller each, and how many there are is the
 /// machine's answer. A bus that is not started leaves its sockets dark,
 /// since a hub's ports are given their power when their bus starts.
@@ -148,7 +150,7 @@ fn openHelpers(base: *UsbBase) bool {
     return true;
 }
 
-const Controller = struct {
+pub const Controller = struct {
     name: [*:0]const u8,
     unit: u32,
     /// Whether it was found rather than described: a controller on PCI,
@@ -173,19 +175,57 @@ fn findController(base: *UsbBase, bus: u32) ?Controller {
     const expansion_lib = sys.OpenLibrary(sdk.expansion.EXPANSIONNAME, 1) orelse return null;
     defer sys.CloseLibrary(expansion_lib);
     const eb: *sdk.interface.expansion.ExpansionBase = @ptrCast(expansion_lib);
-    var count: u32 = 0;
+    var walk: Walk = .{ .bus = bus };
     var part = eb.FindBoardPart(null, st.PARTKIND_USB, st.CHIP_ANY);
     while (part) |it| : (part = eb.FindBoardPart(it, st.PARTKIND_USB, st.CHIP_ANY)) {
         if (ub.GetTagData(st.PART_UsbRoles, st.USBROLE_HOST, it.tags) & st.USBROLE_HOST == 0) continue;
-        if (count == bus) {
-            const name: [*:0]const u8 = switch (ub.GetTagData(st.PART_Chip, st.CHIP_NONE, it.tags)) {
+        walk.part(@truncate(ub.GetTagData(st.PART_Chip, st.CHIP_NONE, it.tags)), @truncate(ub.GetTagData(st.PART_BusUnit, 0, it.tags)));
+    }
+    return walk.controller();
+}
+
+/// The board's USB parts that may be hosts, walked in the order they are
+/// listed, for one bus number: the bus's own part where it is one of
+/// them, and the xhci.device units they name.
+///
+/// xhci.device numbers its units the board's controllers first and the
+/// xHCI functions on PCI after them, and a part names its controller by
+/// that number (`PART_BusUnit`) - a DWC3 of the chip's own, or the first
+/// function on PCI on a board that describes it. So the controllers on
+/// PCI that are buses of their own start after the highest unit a part
+/// names: counted from 0 instead, a board's own controllers were each
+/// started a second time, as a bus that opened the unit its part had
+/// opened already.
+pub const Walk = struct {
+    bus: u32,
+    /// The parts walked so far.
+    count: u32 = 0,
+    /// One past the highest xhci.device unit a part names.
+    named: u32 = 0,
+    /// The bus's own part, where it is one of them.
+    chip: u32 = st.CHIP_NONE,
+    unit: u32 = 0,
+
+    /// The next part: its chip and the unit its device has it as.
+    pub fn part(walk: *Walk, chip: u32, unit: u32) void {
+        if (walk.count == walk.bus) {
+            walk.chip = chip;
+            walk.unit = unit;
+        }
+        walk.count += 1;
+        if (chip == st.CHIP_XHCI or chip == st.CHIP_DWC3) walk.named = @max(walk.named, unit + 1);
+    }
+
+    /// The bus's controller once every part has been walked.
+    pub fn controller(walk: Walk) ?Controller {
+        if (walk.bus < walk.count) {
+            const name: [*:0]const u8 = switch (walk.chip) {
                 st.CHIP_DWC2 => "usbotg.device",
                 st.CHIP_XHCI, st.CHIP_DWC3 => "xhci.device",
                 else => return null,
             };
-            return .{ .name = name, .unit = @truncate(ub.GetTagData(st.PART_BusUnit, 0, it.tags)) };
+            return .{ .name = name, .unit = walk.unit };
         }
-        count += 1;
+        return .{ .name = "xhci.device", .unit = walk.named + (walk.bus - walk.count), .found = true };
     }
-    return .{ .name = "xhci.device", .unit = bus - count, .found = true };
-}
+};

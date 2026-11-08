@@ -38,6 +38,7 @@ const usb_init = @import("../usb_init.zig");
 const usbBase = @import("../usb_base.zig").usbBase;
 const _bind = @import("../bind/_bind.zig");
 const _linkpower = @import("../bus/_linkpower.zig");
+const startusb = @import("../bus/startusb.zig");
 const timer = sdk.devices.timer;
 const UsbLibrary = sdk.interface.usb.UsbBase;
 
@@ -1114,4 +1115,49 @@ test "a SuperSpeed device's link rests in U1 and U2: not a hub's, not one with i
     try testing.expect(childOf(hub_device, 1) == null);
     try testing.expectEqual([2]u8{ 0, 0 }, hc.functions[hub].timeouts[0]);
     try rig.deinit();
+}
+
+/// Bus `bus`'s controller on a board whose USB host parts are `parts`,
+/// each its chip and the unit its device has it as.
+fn controllerOn(parts: []const [2]u32, bus: u32) ?startusb.Controller {
+    var walk: startusb.Walk = .{ .bus = bus };
+    for (parts) |part| walk.part(part[0], part[1]);
+    return walk.controller();
+}
+
+fn expectController(found: ?startusb.Controller, name: []const u8, unit: u32, on_pci: bool) !void {
+    const controller = found orelse return error.TestExpectedController;
+    try testing.expectEqualStrings(name, std.mem.span(controller.name));
+    try testing.expectEqual(unit, controller.unit);
+    try testing.expectEqual(on_pci, controller.found);
+}
+
+test "a bus past the board's parts is a controller on PCI that no part names" {
+    const st = sdk.expansion.systemtags;
+    // The CM5: the RP1's two DWC3s are xhci.device units 0 and 1, so the
+    // first bus on PCI is unit 2 - not unit 0 again, a second bus on the
+    // controller bus 0 has.
+    const cm5 = [_][2]u32{ .{ st.CHIP_DWC3, 0 }, .{ st.CHIP_DWC3, 1 } };
+    try expectController(controllerOn(&cm5, 0), "xhci.device", 0, false);
+    try expectController(controllerOn(&cm5, 1), "xhci.device", 1, false);
+    try expectController(controllerOn(&cm5, 2), "xhci.device", 2, true);
+    try expectController(controllerOn(&cm5, 3), "xhci.device", 3, true);
+    // The VisionFive 2 and QEMU's virt machines describe the first xHCI
+    // function on PCI, unit 0: the next bus is the second one.
+    const vf2 = [_][2]u32{.{ st.CHIP_XHCI, 0 }};
+    try expectController(controllerOn(&vf2, 0), "xhci.device", 0, false);
+    try expectController(controllerOn(&vf2, 1), "xhci.device", 1, true);
+    // A PC describes none: bus n is unit n.
+    try expectController(controllerOn(&.{}, 0), "xhci.device", 0, true);
+    try expectController(controllerOn(&.{}, 4), "xhci.device", 4, true);
+    // A DWC2 is usbotg.device's and names no xhci.device unit.
+    const esp32 = [_][2]u32{.{ st.CHIP_DWC2, 0 }};
+    try expectController(controllerOn(&esp32, 0), "usbotg.device", 0, false);
+    try expectController(controllerOn(&esp32, 1), "xhci.device", 0, true);
+    // A part of a chip no device here drives keeps its number, and has
+    // no controller.
+    const unknown = [_][2]u32{ .{ st.CHIP_NONE, 0 }, .{ st.CHIP_DWC3, 0 } };
+    try testing.expect(controllerOn(&unknown, 0) == null);
+    try expectController(controllerOn(&unknown, 1), "xhci.device", 0, false);
+    try expectController(controllerOn(&unknown, 2), "xhci.device", 1, true);
 }

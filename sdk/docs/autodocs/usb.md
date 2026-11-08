@@ -1020,8 +1020,10 @@ A bus is a controller. The board's `PARTKIND_USB` parts that may be
 hosts are the first of them, each on the device that drives its chip
 (`CHIP_DWC2`: usbotg.device; `CHIP_XHCI`, `CHIP_DWC3`: xhci.device) -
 those are described because nothing can find a controller that is
-part of a chip. Every number past them is an xHCI controller on PCI,
-which is found instead: the sockets of a machine of that kind are in
+part of a chip. Every number past them is an xHCI controller on PCI
+that no part names (Since 1.17: before, a board's own xHCI controllers
+came round again there, each a second bus on its controller), which
+is found instead: the sockets of a machine of that kind are in
 groups with a controller each, and how many there are is the
 machine's answer. A bus that is not started leaves its sockets dark,
 since a hub's ports are given their power when their bus starts.
